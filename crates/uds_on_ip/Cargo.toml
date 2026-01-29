@@ -1,0 +1,21 @@
+[package]
+name = "uds_on_ip"
+version = "0.1.0"
+edition = "2021"
+description = "UDS session management over DoIP transport"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/luminartech/[INTERNAL_PROJECT_REDACTED]"
+authors = ["Luminar Technologies <support@luminartech.com>"]
+
+[dependencies]
+simple_doip = { path = "../simple_doip", features = ["client"] }
+uds_protocol = { path = "../uds_protocol" }
+
+async-trait = "0.1"
+thiserror = "1"
+tokio = { version = "1", features = ["macros", "rt", "time", "sync"] }
+tracing = "0.1"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+tracing-subscriber = { version = "0.3", features = ["fmt"] }
