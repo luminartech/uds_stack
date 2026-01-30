@@ -20,6 +20,15 @@ pub struct SessionConfig {
     /// Whether to automatically send tester present messages.
     /// Default is true.
     pub auto_tester_present: bool,
+
+    /// Whether to automatically reconnect on connection failures.
+    /// Default is true.
+    pub auto_reconnect: bool,
+
+    /// Total time to spend attempting reconnection.
+    /// Default is None, which uses the response_timeout value.
+    /// Each reconnection attempt uses a 1 second timeout.
+    pub reconnect_timeout: Option<Duration>,
 }
 
 impl Default for SessionConfig {
@@ -29,6 +38,8 @@ impl Default for SessionConfig {
             response_timeout: Duration::from_secs(5),
             response_pending_timeout: Duration::from_secs(25),
             auto_tester_present: true,
+            auto_reconnect: true,
+            reconnect_timeout: None,
         }
     }
 }
@@ -61,5 +72,24 @@ impl SessionConfig {
     pub fn with_auto_tester_present(mut self, enabled: bool) -> Self {
         self.auto_tester_present = enabled;
         self
+    }
+
+    /// Enable or disable automatic reconnection on connection failures.
+    pub fn with_auto_reconnect(mut self, enabled: bool) -> Self {
+        self.auto_reconnect = enabled;
+        self
+    }
+
+    /// Set the total time to spend attempting reconnection.
+    /// Each reconnection attempt uses a 1 second timeout.
+    /// If not set, defaults to the response_timeout value.
+    pub fn with_reconnect_timeout(mut self, timeout: Duration) -> Self {
+        self.reconnect_timeout = Some(timeout);
+        self
+    }
+
+    /// Get the effective reconnect timeout (uses response_timeout if not explicitly set).
+    pub fn effective_reconnect_timeout(&self) -> Duration {
+        self.reconnect_timeout.unwrap_or(self.response_timeout)
     }
 }

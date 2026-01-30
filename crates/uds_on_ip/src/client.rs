@@ -2,7 +2,7 @@
 
 use std::marker::PhantomData;
 use std::net::{IpAddr, SocketAddr};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use simple_doip::{
     client::{AddressType, Client, ClientOptions, RoutingActivationOptions},
@@ -11,7 +11,7 @@ use simple_doip::{
     LogicalAddress, TCP_PORT, TESTER_LOGICAL_ADDRESS,
 };
 use tokio::sync::Mutex;
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 use uds_protocol::{
     DiagnosticDefinition, DiagnosticSessionType, ProtocolRequest, ProtocolResponse, Request,
     Response, SingleValueWireFormat, UdsSpec, WireFormat,
@@ -196,6 +196,9 @@ where
     /// This method automatically handles NRC 0x78 (Response Pending) by waiting with
     /// an extended timeout (P2*) for the final response without re-sending the request.
     ///
+    /// If the connection is lost, it will attempt to reconnect and resend the request
+    /// (if `auto_reconnect` is enabled in the session config).
+    ///
     /// # Errors
     ///
     /// Returns an error if the request fails or the response is invalid.
@@ -216,23 +219,56 @@ where
 
         let mut client = self.doip_client.lock().await;
 
-        // Send the request (waits for DoIP ACK only)
-        client
+        // Attempt to send, with reconnection if needed
+        let send_result = client
             .send_diagnostic_message(AddressType::Physical, request_bytes.clone())
-            .await?;
+            .await;
+
+        if let Err(ref e) = send_result {
+            if self.config.auto_reconnect && Self::is_connection_error(e) {
+                warn!("Connection error during send, attempting reconnect: {}", e);
+                let reconnect_timeout = self.config.effective_reconnect_timeout();
+                Self::attempt_reconnect(&mut client, reconnect_timeout).await?;
+
+                // Retry the send after reconnection
+                client
+                    .send_diagnostic_message(AddressType::Physical, request_bytes.clone())
+                    .await?;
+            } else {
+                return Err(Error::Transport(send_result.unwrap_err()));
+            }
+        }
 
         // Wait for response with P2 timeout initially
         let mut timeout = self.config.response_timeout;
 
         loop {
-            let message =
-                client
-                    .receive_diagnostic_response(timeout)
-                    .await
-                    .map_err(|e| match e {
-                        simple_doip::Error::ResponseTimeoutExceeded => Error::Timeout(timeout),
-                        other => Error::Transport(other),
-                    })?;
+            let receive_result = client.receive_diagnostic_response(timeout).await;
+
+            let message = match receive_result {
+                Ok(msg) => msg,
+                Err(ref e) if self.config.auto_reconnect && Self::is_connection_error(e) => {
+                    warn!(
+                        "Connection error during receive, attempting reconnect: {}",
+                        e
+                    );
+                    let reconnect_timeout = self.config.effective_reconnect_timeout();
+                    Self::attempt_reconnect(&mut client, reconnect_timeout).await?;
+
+                    // Resend the request after reconnection
+                    client
+                        .send_diagnostic_message(AddressType::Physical, request_bytes.clone())
+                        .await?;
+
+                    // Reset timeout and wait for response
+                    timeout = self.config.response_timeout;
+                    continue;
+                }
+                Err(simple_doip::Error::ResponseTimeoutExceeded) => {
+                    return Err(Error::Timeout(timeout));
+                }
+                Err(e) => return Err(Error::Transport(e)),
+            };
 
             let response_bytes = Self::extract_diagnostic_payload(&message)?;
             debug!("Received UDS response: {:02X?}", response_bytes);
@@ -259,6 +295,9 @@ where
     /// This method automatically handles NRC 0x78 (Response Pending) by waiting with
     /// an extended timeout (P2*) for the final response without re-sending the request.
     ///
+    /// If the connection is lost, it will attempt to reconnect and resend the request
+    /// (if `auto_reconnect` is enabled in the session config).
+    ///
     /// # Errors
     ///
     /// Returns an error if the request fails.
@@ -267,23 +306,56 @@ where
 
         let mut client = self.doip_client.lock().await;
 
-        // Send the request (waits for DoIP ACK only)
-        client
+        // Attempt to send, with reconnection if needed
+        let send_result = client
             .send_diagnostic_message(AddressType::Physical, request_bytes.clone())
-            .await?;
+            .await;
+
+        if let Err(ref e) = send_result {
+            if self.config.auto_reconnect && Self::is_connection_error(e) {
+                warn!("Connection error during send, attempting reconnect: {}", e);
+                let reconnect_timeout = self.config.effective_reconnect_timeout();
+                Self::attempt_reconnect(&mut client, reconnect_timeout).await?;
+
+                // Retry the send after reconnection
+                client
+                    .send_diagnostic_message(AddressType::Physical, request_bytes.clone())
+                    .await?;
+            } else {
+                return Err(Error::Transport(send_result.unwrap_err()));
+            }
+        }
 
         // Wait for response with P2 timeout initially
         let mut timeout = self.config.response_timeout;
 
         loop {
-            let message =
-                client
-                    .receive_diagnostic_response(timeout)
-                    .await
-                    .map_err(|e| match e {
-                        simple_doip::Error::ResponseTimeoutExceeded => Error::Timeout(timeout),
-                        other => Error::Transport(other),
-                    })?;
+            let receive_result = client.receive_diagnostic_response(timeout).await;
+
+            let message = match receive_result {
+                Ok(msg) => msg,
+                Err(ref e) if self.config.auto_reconnect && Self::is_connection_error(e) => {
+                    warn!(
+                        "Connection error during receive, attempting reconnect: {}",
+                        e
+                    );
+                    let reconnect_timeout = self.config.effective_reconnect_timeout();
+                    Self::attempt_reconnect(&mut client, reconnect_timeout).await?;
+
+                    // Resend the request after reconnection
+                    client
+                        .send_diagnostic_message(AddressType::Physical, request_bytes.clone())
+                        .await?;
+
+                    // Reset timeout and wait for response
+                    timeout = self.config.response_timeout;
+                    continue;
+                }
+                Err(simple_doip::Error::ResponseTimeoutExceeded) => {
+                    return Err(Error::Timeout(timeout));
+                }
+                Err(e) => return Err(Error::Transport(e)),
+            };
 
             let response_bytes = Self::extract_diagnostic_payload(&message)?;
             debug!("Received raw UDS response: {:02X?}", response_bytes);
@@ -382,6 +454,61 @@ where
         info!("Shutting down UDS client");
         let client = self.doip_client.into_inner();
         client.shut_down().await;
+    }
+
+    /// Check if an error is a connection error that should trigger reconnection.
+    fn is_connection_error(error: &simple_doip::Error) -> bool {
+        matches!(
+            error,
+            simple_doip::Error::ConnectionClosed
+                | simple_doip::Error::SocketClosedUnexpectedly
+                | simple_doip::Error::SocketNotBound
+                | simple_doip::Error::NetworkError(_)
+        )
+    }
+
+    /// Attempt to reconnect to the server.
+    ///
+    /// Retries reconnection attempts with 1 second intervals until the
+    /// configured reconnect timeout is reached.
+    ///
+    /// Returns Ok(()) if reconnection succeeds, or an error if all attempts fail.
+    async fn attempt_reconnect(
+        client: &mut Client<Conn>,
+        reconnect_timeout: Duration,
+    ) -> Result<()> {
+        let start = Instant::now();
+        let mut attempts = 0u32;
+
+        while start.elapsed() < reconnect_timeout {
+            attempts += 1;
+            info!(
+                "Reconnection attempt {} (elapsed: {:?})",
+                attempts,
+                start.elapsed()
+            );
+
+            match tokio::time::timeout(Duration::from_secs(1), client.reconnect()).await {
+                Ok(Ok(_)) => {
+                    info!("Reconnected successfully after {} attempts", attempts);
+                    return Ok(());
+                }
+                Ok(Err(e)) => {
+                    warn!("Reconnection attempt {} failed: {}", attempts, e);
+                }
+                Err(_) => {
+                    warn!("Reconnection attempt {} timed out", attempts);
+                }
+            }
+
+            // Small delay before next attempt to avoid tight loop
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+
+        Err(Error::ReconnectionFailed {
+            attempts,
+            elapsed: start.elapsed(),
+        })
     }
 
     /// Extract the diagnostic payload from a DoIP message.

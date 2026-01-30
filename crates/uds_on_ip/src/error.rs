@@ -33,4 +33,13 @@ pub enum Error {
         /// The Negative Response Code.
         nrc: u8,
     },
+
+    /// Reconnection failed after multiple attempts.
+    #[error("Reconnection failed after {attempts} attempts over {elapsed:?}")]
+    ReconnectionFailed {
+        /// Number of reconnection attempts made.
+        attempts: u32,
+        /// Total time spent trying to reconnect.
+        elapsed: std::time::Duration,
+    },
 }
