@@ -187,7 +187,7 @@ impl UdsClient {
 
         // Send the request (waits for DoIP ACK only)
         client
-            .send_diagnostic_message_only(AddressType::Physical, request_bytes)
+            .send_diagnostic_message_only(AddressType::Physical, request_bytes.clone())
             .await?;
 
         // Wait for response with P2 timeout initially
@@ -204,6 +204,9 @@ impl UdsClient {
 
             let response_bytes = Self::extract_diagnostic_payload(&message)?;
             debug!("Received UDS response: {:02X?}", response_bytes);
+
+            // Validate response corresponds to our request
+            Self::validate_response_matches_request(&request_bytes, &response_bytes)?;
 
             // Check for NRC 0x78 (Response Pending)
             if Self::is_response_pending(&response_bytes) {
@@ -234,7 +237,7 @@ impl UdsClient {
 
         // Send the request (waits for DoIP ACK only)
         client
-            .send_diagnostic_message_only(AddressType::Physical, request_bytes)
+            .send_diagnostic_message_only(AddressType::Physical, request_bytes.clone())
             .await?;
 
         // Wait for response with P2 timeout initially
@@ -251,6 +254,9 @@ impl UdsClient {
 
             let response_bytes = Self::extract_diagnostic_payload(&message)?;
             debug!("Received raw UDS response: {:02X?}", response_bytes);
+
+            // Validate response corresponds to our request
+            Self::validate_response_matches_request(&request_bytes, &response_bytes)?;
 
             // Check for NRC 0x78 (Response Pending)
             if Self::is_response_pending(&response_bytes) {
@@ -359,5 +365,55 @@ impl UdsClient {
     /// NRC 0x78 = RequestCorrectlyReceivedResponsePending
     fn is_response_pending(response_bytes: &[u8]) -> bool {
         response_bytes.len() >= 3 && response_bytes[0] == 0x7F && response_bytes[2] == 0x78
+    }
+
+    /// Validate that a UDS response corresponds to the given request.
+    ///
+    /// UDS response correlation rules:
+    /// - Positive response: SID = request_SID + 0x40
+    /// - Negative response: [0x7F, request_SID, NRC]
+    ///
+    /// Returns Ok(()) if the response matches, or an error describing the mismatch.
+    fn validate_response_matches_request(
+        request_bytes: &[u8],
+        response_bytes: &[u8],
+    ) -> Result<()> {
+        if request_bytes.is_empty() {
+            return Err(Error::InvalidResponse("Empty request".to_string()));
+        }
+        if response_bytes.is_empty() {
+            return Err(Error::InvalidResponse("Empty response".to_string()));
+        }
+
+        let request_sid = request_bytes[0];
+        let response_sid = response_bytes[0];
+
+        // Check for negative response (0x7F)
+        if response_sid == 0x7F {
+            if response_bytes.len() < 2 {
+                return Err(Error::InvalidResponse(
+                    "Negative response too short".to_string(),
+                ));
+            }
+            let neg_response_for_sid = response_bytes[1];
+            if neg_response_for_sid != request_sid {
+                return Err(Error::InvalidResponse(format!(
+                    "Negative response for SID {:#04x} but expected {:#04x}",
+                    neg_response_for_sid, request_sid
+                )));
+            }
+            return Ok(());
+        }
+
+        // Check for positive response (request SID + 0x40)
+        let expected_positive_sid = request_sid.wrapping_add(0x40);
+        if response_sid != expected_positive_sid {
+            return Err(Error::InvalidResponse(format!(
+                "Response SID {:#04x} doesn't match request SID {:#04x} (expected {:#04x} or 0x7F)",
+                response_sid, request_sid, expected_positive_sid
+            )));
+        }
+
+        Ok(())
     }
 }
