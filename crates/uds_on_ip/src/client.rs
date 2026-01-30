@@ -4,7 +4,7 @@ use std::net::{IpAddr, SocketAddr};
 use std::time::Duration;
 
 use simple_doip::{
-    client::{AddressType, Client, ClientOptions, RoutingActivationOptions, SendResult},
+    client::{AddressType, Client, ClientOptions, RoutingActivationOptions},
     connection::ConnectorSocket,
     messages::{ActivationTypeCode, Message, Payload, ProtocolVersion},
     LogicalAddress, TCP_PORT, TESTER_LOGICAL_ADDRESS,
@@ -22,11 +22,17 @@ use crate::{Error, Result, SessionConfig};
 ///
 /// This client wraps the low-level DoIP client and provides a higher-level
 /// interface for sending UDS requests and receiving responses.
+///
+/// ## NRC 0x78 Handling
+///
+/// This client automatically handles UDS Negative Response Code 0x78 (Response Pending).
+/// When the server needs more time to process a request, it sends NRC 0x78 and this client
+/// will wait with an extended timeout (P2*) for the final response, without re-sending
+/// the original request.
 pub struct UdsClient {
     /// The underlying DoIP client.
     doip_client: Mutex<Client<ConnectorSocket>>,
     /// Session configuration (used for automatic tester present and timeout handling).
-    #[allow(dead_code)]
     config: SessionConfig,
 }
 
@@ -153,6 +159,9 @@ impl UdsClient {
 
     /// Send a UDS request and wait for the response.
     ///
+    /// This method automatically handles NRC 0x78 (Response Pending) by waiting with
+    /// an extended timeout (P2*) for the final response without re-sending the request.
+    ///
     /// # Errors
     ///
     /// Returns an error if the request fails or the response is invalid.
@@ -174,30 +183,46 @@ impl UdsClient {
 
         debug!("Sending UDS request: {:02X?}", request_bytes);
 
-        // Send via DoIP
         let mut client = self.doip_client.lock().await;
-        let result = client
-            .send_diagnostic_message(AddressType::Physical, request_bytes)
+
+        // Send the request (waits for DoIP ACK only)
+        client
+            .send_diagnostic_message_only(AddressType::Physical, request_bytes)
             .await?;
 
-        match result {
-            SendResult::Response(message) => {
-                let response_bytes = Self::extract_diagnostic_payload(&message)?;
-                debug!("Received UDS response: {:02X?}", response_bytes);
+        // Wait for response with P2 timeout initially
+        let mut timeout = self.config.response_timeout;
 
-                // Decode the response
-                let response = Response::<D>::decode(&mut response_bytes.as_slice())
-                    .map_err(|e| Error::InvalidResponse(format!("Failed to decode response: {e}")))?;
+        loop {
+            let message = client
+                .receive_diagnostic_response(timeout)
+                .await
+                .map_err(|e| match e {
+                    simple_doip::Error::ResponseTimeoutExceeded => Error::Timeout(timeout),
+                    other => Error::Transport(other),
+                })?;
 
-                Ok(response)
+            let response_bytes = Self::extract_diagnostic_payload(&message)?;
+            debug!("Received UDS response: {:02X?}", response_bytes);
+
+            // Check for NRC 0x78 (Response Pending)
+            if Self::is_response_pending(&response_bytes) {
+                debug!("Received NRC 0x78 (Response Pending), waiting with P2* timeout");
+                timeout = self.config.response_pending_timeout;
+                continue; // Wait for next response WITHOUT re-sending
             }
-            SendResult::Suppressed => {
-                Err(Error::InvalidResponse("Response was suppressed".to_string()))
-            }
+
+            // Final response - decode and return
+            let response = Response::<D>::decode(&mut response_bytes.as_slice())
+                .map_err(|e| Error::InvalidResponse(format!("Failed to decode response: {e}")))?;
+            return Ok(response);
         }
     }
 
     /// Send a raw UDS request (as bytes) and wait for the response.
+    ///
+    /// This method automatically handles NRC 0x78 (Response Pending) by waiting with
+    /// an extended timeout (P2*) for the final response without re-sending the request.
     ///
     /// # Errors
     ///
@@ -206,19 +231,36 @@ impl UdsClient {
         debug!("Sending raw UDS request: {:02X?}", request_bytes);
 
         let mut client = self.doip_client.lock().await;
-        let result = client
-            .send_diagnostic_message(AddressType::Physical, request_bytes)
+
+        // Send the request (waits for DoIP ACK only)
+        client
+            .send_diagnostic_message_only(AddressType::Physical, request_bytes)
             .await?;
 
-        match result {
-            SendResult::Response(message) => {
-                let response_bytes = Self::extract_diagnostic_payload(&message)?;
-                debug!("Received raw UDS response: {:02X?}", response_bytes);
-                Ok(response_bytes)
+        // Wait for response with P2 timeout initially
+        let mut timeout = self.config.response_timeout;
+
+        loop {
+            let message = client
+                .receive_diagnostic_response(timeout)
+                .await
+                .map_err(|e| match e {
+                    simple_doip::Error::ResponseTimeoutExceeded => Error::Timeout(timeout),
+                    other => Error::Transport(other),
+                })?;
+
+            let response_bytes = Self::extract_diagnostic_payload(&message)?;
+            debug!("Received raw UDS response: {:02X?}", response_bytes);
+
+            // Check for NRC 0x78 (Response Pending)
+            if Self::is_response_pending(&response_bytes) {
+                debug!("Received NRC 0x78 (Response Pending), waiting with P2* timeout");
+                timeout = self.config.response_pending_timeout;
+                continue; // Wait for next response WITHOUT re-sending
             }
-            SendResult::Suppressed => {
-                Err(Error::InvalidResponse("Response was suppressed".to_string()))
-            }
+
+            // Final response
+            return Ok(response_bytes);
         }
     }
 
@@ -284,8 +326,8 @@ impl UdsClient {
                 .map_err(|e| Error::InvalidResponse(format!("Failed to encode request: {e}")))?;
 
             let mut client = self.doip_client.lock().await;
-            let _ = client
-                .send_diagnostic_message(AddressType::Physical, request_bytes)
+            client
+                .send_diagnostic_message_only(AddressType::Physical, request_bytes)
                 .await?;
             Ok(None)
         } else {
@@ -309,5 +351,13 @@ impl UdsClient {
                 other
             ))),
         }
+    }
+
+    /// Check if response bytes represent NRC 0x78 (Response Pending).
+    ///
+    /// UDS negative response format: [0x7F, service_id, nrc]
+    /// NRC 0x78 = RequestCorrectlyReceivedResponsePending
+    fn is_response_pending(response_bytes: &[u8]) -> bool {
+        response_bytes.len() >= 3 && response_bytes[0] == 0x7F && response_bytes[2] == 0x78
     }
 }
