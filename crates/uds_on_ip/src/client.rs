@@ -1,11 +1,12 @@
 //! UDS client for sending diagnostic requests over DoIP.
 
+use std::marker::PhantomData;
 use std::net::{IpAddr, SocketAddr};
 use std::time::Duration;
 
 use simple_doip::{
     client::{AddressType, Client, ClientOptions, RoutingActivationOptions},
-    connection::ConnectorSocket,
+    connection::{Connector, ConnectorSocket},
     messages::{ActivationTypeCode, Message, Payload, ProtocolVersion},
     LogicalAddress, TCP_PORT, TESTER_LOGICAL_ADDRESS,
 };
@@ -29,11 +30,17 @@ use crate::{Error, Result, SessionConfig};
 /// When the server needs more time to process a request, it sends NRC 0x78 and this client
 /// will wait with an extended timeout (P2*) for the final response, without re-sending
 /// the original request.
-pub struct UdsClient {
+///
+/// ## Generic Connection Type
+///
+/// The client is generic over the connection type `Conn`, allowing it to work with
+/// different transport implementations (e.g., standard TCP sockets or VCC-specific listeners).
+pub struct UdsClient<Conn = ConnectorSocket> {
     /// The underlying DoIP client.
-    doip_client: Mutex<Client<ConnectorSocket>>,
+    doip_client: Mutex<Client<Conn>>,
     /// Session configuration (used for automatic tester present and timeout handling).
     config: SessionConfig,
+    _phantom: PhantomData<Conn>,
 }
 
 /// Options for connecting to a UDS server.
@@ -110,23 +117,17 @@ impl UdsClientOptions {
         self.session_config = config;
         self
     }
-}
 
-impl UdsClient {
-    /// Connect to a UDS server over DoIP.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the connection fails or routing activation fails.
-    pub async fn connect(options: UdsClientOptions) -> Result<Self> {
-        let doip_options = ClientOptions {
-            server_address: SocketAddr::new(options.server_ip, options.server_port),
-            server_logical_address: options.server_logical_address,
-            server_physical_address: options.server_physical_address,
+    /// Convert to DoIP ClientOptions.
+    pub fn to_doip_options(&self) -> ClientOptions {
+        ClientOptions {
+            server_address: SocketAddr::new(self.server_ip, self.server_port),
+            server_logical_address: self.server_logical_address,
+            server_physical_address: self.server_physical_address,
             client_address: IpAddr::from([0, 0, 0, 0]),
-            client_logical_address: options.client_logical_address,
-            protocol_version: options.protocol_version,
-            routing_activation_options: if options.routing_activation {
+            client_logical_address: self.client_logical_address,
+            protocol_version: self.protocol_version,
+            routing_activation_options: if self.routing_activation {
                 Some(RoutingActivationOptions {
                     activation_type: ActivationTypeCode::Default,
                     oem_specific: None,
@@ -134,13 +135,24 @@ impl UdsClient {
             } else {
                 None
             },
-            tester_present_interval: if options.session_config.auto_tester_present {
-                options.session_config.tester_present_interval
+            tester_present_interval: if self.session_config.auto_tester_present {
+                self.session_config.tester_present_interval
             } else {
                 Duration::from_secs(86400 * 365) // ~1 year, effectively disabled
             },
             suppress_tester_present: true,
-        };
+        }
+    }
+}
+
+impl UdsClient<ConnectorSocket> {
+    /// Connect to a UDS server over DoIP using the default connector.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the connection fails or routing activation fails.
+    pub async fn connect(options: UdsClientOptions) -> Result<Self> {
+        let doip_options = options.to_doip_options();
 
         info!(
             "Connecting to UDS server at {}:{}",
@@ -154,7 +166,29 @@ impl UdsClient {
         Ok(Self {
             doip_client: Mutex::new(client),
             config: options.session_config,
+            _phantom: PhantomData,
         })
+    }
+}
+
+impl<Conn> UdsClient<Conn>
+where
+    Conn: Connector + 'static + Send + Sync,
+{
+    /// Create a UDS client from an existing DoIP client.
+    ///
+    /// This is useful when you have a pre-connected DoIP client (e.g., for VCC).
+    pub fn from_doip_client(client: Client<Conn>, config: SessionConfig) -> Self {
+        Self {
+            doip_client: Mutex::new(client),
+            config,
+            _phantom: PhantomData,
+        }
+    }
+
+    /// Get the session configuration.
+    pub fn config(&self) -> &SessionConfig {
+        &self.config
     }
 
     /// Send a UDS request and wait for the response.
@@ -187,7 +221,7 @@ impl UdsClient {
 
         // Send the request (waits for DoIP ACK only)
         client
-            .send_diagnostic_message_only(AddressType::Physical, request_bytes.clone())
+            .send_diagnostic_message(AddressType::Physical, request_bytes.clone())
             .await?;
 
         // Wait for response with P2 timeout initially
@@ -237,7 +271,7 @@ impl UdsClient {
 
         // Send the request (waits for DoIP ACK only)
         client
-            .send_diagnostic_message_only(AddressType::Physical, request_bytes.clone())
+            .send_diagnostic_message(AddressType::Physical, request_bytes.clone())
             .await?;
 
         // Wait for response with P2 timeout initially
@@ -333,7 +367,7 @@ impl UdsClient {
 
             let mut client = self.doip_client.lock().await;
             client
-                .send_diagnostic_message_only(AddressType::Physical, request_bytes)
+                .send_diagnostic_message(AddressType::Physical, request_bytes)
                 .await?;
             Ok(None)
         } else {
