@@ -1,6 +1,7 @@
 //! UDS client for sending diagnostic requests over DoIP.
 
 use std::net::{IpAddr, SocketAddr};
+use std::time::Duration;
 
 use simple_doip::{
     client::{AddressType, Client, ClientOptions, RoutingActivationOptions, SendResult},
@@ -25,7 +26,7 @@ pub struct UdsClient {
     /// The underlying DoIP client.
     doip_client: Mutex<Client<ConnectorSocket>>,
     /// Session configuration (used for automatic tester present and timeout handling).
-    #[allow(dead_code)] // Will be used when auto tester present is implemented
+    #[allow(dead_code)]
     config: SessionConfig,
 }
 
@@ -127,7 +128,11 @@ impl UdsClient {
             } else {
                 None
             },
-            tester_present_interval: options.session_config.tester_present_interval,
+            tester_present_interval: if options.session_config.auto_tester_present {
+                options.session_config.tester_present_interval
+            } else {
+                Duration::from_secs(86400 * 365) // ~1 year, effectively disabled
+            },
             suppress_tester_present: true,
         };
 
