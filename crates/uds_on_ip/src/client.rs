@@ -199,10 +199,7 @@ where
     /// # Errors
     ///
     /// Returns an error if the request fails or the response is invalid.
-    pub async fn send<D: DiagnosticDefinition>(
-        &self,
-        request: Request<D>,
-    ) -> Result<Response<D>>
+    pub async fn send<D: DiagnosticDefinition>(&self, request: Request<D>) -> Result<Response<D>>
     where
         D::DID: SingleValueWireFormat,
         D::DiagnosticPayload: SingleValueWireFormat,
@@ -228,13 +225,14 @@ where
         let mut timeout = self.config.response_timeout;
 
         loop {
-            let message = client
-                .receive_diagnostic_response(timeout)
-                .await
-                .map_err(|e| match e {
-                    simple_doip::Error::ResponseTimeoutExceeded => Error::Timeout(timeout),
-                    other => Error::Transport(other),
-                })?;
+            let message =
+                client
+                    .receive_diagnostic_response(timeout)
+                    .await
+                    .map_err(|e| match e {
+                        simple_doip::Error::ResponseTimeoutExceeded => Error::Timeout(timeout),
+                        other => Error::Transport(other),
+                    })?;
 
             let response_bytes = Self::extract_diagnostic_payload(&message)?;
             debug!("Received UDS response: {:02X?}", response_bytes);
@@ -278,13 +276,14 @@ where
         let mut timeout = self.config.response_timeout;
 
         loop {
-            let message = client
-                .receive_diagnostic_response(timeout)
-                .await
-                .map_err(|e| match e {
-                    simple_doip::Error::ResponseTimeoutExceeded => Error::Timeout(timeout),
-                    other => Error::Transport(other),
-                })?;
+            let message =
+                client
+                    .receive_diagnostic_response(timeout)
+                    .await
+                    .map_err(|e| match e {
+                        simple_doip::Error::ResponseTimeoutExceeded => Error::Timeout(timeout),
+                        other => Error::Transport(other),
+                    })?;
 
             let response_bytes = Self::extract_diagnostic_payload(&message)?;
             debug!("Received raw UDS response: {:02X?}", response_bytes);
@@ -354,7 +353,10 @@ where
     /// # Errors
     ///
     /// Returns an error if the message fails.
-    pub async fn tester_present(&self, suppress_response: bool) -> Result<Option<ProtocolResponse>> {
+    pub async fn tester_present(
+        &self,
+        suppress_response: bool,
+    ) -> Result<Option<ProtocolResponse>> {
         debug!("Sending tester present");
         let request = ProtocolRequest::tester_present(suppress_response);
 
