@@ -26,9 +26,9 @@ pub struct SessionConfig {
     pub auto_reconnect: bool,
 
     /// Total time to spend attempting reconnection.
-    /// Default is None, which uses the response_timeout value.
-    /// Each reconnection attempt uses a 1 second timeout.
-    pub reconnect_timeout: Option<Duration>,
+    /// Default is 10 seconds. Each reconnection attempt may take up to ~6 seconds
+    /// (due to simple_doip's internal 5-second wait for in-flight messages).
+    pub reconnect_timeout: Duration,
 }
 
 impl Default for SessionConfig {
@@ -39,7 +39,7 @@ impl Default for SessionConfig {
             response_pending_timeout: Duration::from_secs(25),
             auto_tester_present: true,
             auto_reconnect: true,
-            reconnect_timeout: None,
+            reconnect_timeout: Duration::from_secs(10),
         }
     }
 }
@@ -81,15 +81,9 @@ impl SessionConfig {
     }
 
     /// Set the total time to spend attempting reconnection.
-    /// Each reconnection attempt uses a 1 second timeout.
-    /// If not set, defaults to the response_timeout value.
+    /// Each reconnection attempt may take up to ~6 seconds.
     pub fn with_reconnect_timeout(mut self, timeout: Duration) -> Self {
-        self.reconnect_timeout = Some(timeout);
+        self.reconnect_timeout = timeout;
         self
-    }
-
-    /// Get the effective reconnect timeout (uses response_timeout if not explicitly set).
-    pub fn effective_reconnect_timeout(&self) -> Duration {
-        self.reconnect_timeout.unwrap_or(self.response_timeout)
     }
 }

@@ -42,4 +42,10 @@ pub enum Error {
         /// Total time spent trying to reconnect.
         elapsed: std::time::Duration,
     },
+
+    /// Connection was lost but successfully restored.
+    /// The original request may have succeeded (e.g., EcuReset causing reboot),
+    /// but no response was received. The caller should proceed with subsequent requests.
+    #[error("Connection lost and restored - no response received for request")]
+    ReconnectedWithoutResponse,
 }
