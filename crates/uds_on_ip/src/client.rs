@@ -2,6 +2,7 @@
 
 use std::marker::PhantomData;
 use std::net::{IpAddr, SocketAddr};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use simple_doip::{
@@ -36,10 +37,15 @@ use crate::{Error, Result, SessionConfig};
 /// The client is generic over the connection type `Conn`, allowing it to work with
 /// different transport implementations (e.g., standard TCP sockets or VCC-specific listeners).
 pub struct UdsClient<Conn = ConnectorSocket> {
-    /// The underlying DoIP client.
-    doip_client: Mutex<Client<Conn>>,
+    /// The underlying DoIP client, shared with the keepalive task.
+    doip_client: Arc<Mutex<Client<Conn>>>,
     /// Session configuration (used for automatic tester present and timeout handling).
     config: SessionConfig,
+    /// Tracks the last time a UDS message was sent, so the keepalive task
+    /// only sends TesterPresent when the session is idle.
+    last_activity: Arc<std::sync::Mutex<Instant>>,
+    /// Handle for the background keepalive task, if auto_tester_present is enabled.
+    keepalive_handle: Option<tokio::task::JoinHandle<()>>,
     _phantom: PhantomData<Conn>,
 }
 
@@ -139,6 +145,39 @@ impl UdsClientOptions {
     }
 }
 
+/// Background task that sends TesterPresent (0x3E 0x80) when the session is idle.
+///
+/// Runs in a loop, sleeping for `interval` and then checking if enough time has
+/// elapsed since the last UDS activity. If idle, sends TesterPresent with the
+/// suppress-positive-response sub-function to keep the ECU's S3 timer alive.
+async fn keepalive_loop<Conn>(
+    doip_client: Arc<Mutex<Client<Conn>>>,
+    last_activity: Arc<std::sync::Mutex<Instant>>,
+    interval: Duration,
+) where
+    Conn: Connector + 'static + Send + Sync,
+{
+    loop {
+        tokio::time::sleep(interval).await;
+
+        let elapsed = last_activity.lock().unwrap().elapsed();
+        if elapsed < interval {
+            continue;
+        }
+
+        let mut client = doip_client.lock().await;
+        if let Err(e) = client
+            .send_diagnostic_message(AddressType::Physical, vec![0x3E, 0x80])
+            .await
+        {
+            warn!("Keepalive TesterPresent failed: {}", e);
+        } else {
+            debug!("Sent keepalive TesterPresent");
+        }
+        *last_activity.lock().unwrap() = Instant::now();
+    }
+}
+
 impl UdsClient<ConnectorSocket> {
     /// Connect to a UDS server over DoIP using the default connector.
     ///
@@ -157,9 +196,23 @@ impl UdsClient<ConnectorSocket> {
 
         info!("Connected to UDS server");
 
+        let doip_client = Arc::new(Mutex::new(client));
+        let last_activity = Arc::new(std::sync::Mutex::new(Instant::now()));
+        let keepalive_handle = if options.session_config.auto_tester_present {
+            Some(tokio::spawn(keepalive_loop(
+                Arc::clone(&doip_client),
+                Arc::clone(&last_activity),
+                options.session_config.tester_present_interval,
+            )))
+        } else {
+            None
+        };
+
         Ok(Self {
-            doip_client: Mutex::new(client),
+            doip_client,
             config: options.session_config,
+            last_activity,
+            keepalive_handle,
             _phantom: PhantomData,
         })
     }
@@ -173,9 +226,23 @@ where
     ///
     /// This is useful when you have a pre-connected DoIP client (e.g., for VCC).
     pub fn from_doip_client(client: Client<Conn>, config: SessionConfig) -> Self {
+        let doip_client = Arc::new(Mutex::new(client));
+        let last_activity = Arc::new(std::sync::Mutex::new(Instant::now()));
+        let keepalive_handle = if config.auto_tester_present {
+            Some(tokio::spawn(keepalive_loop(
+                Arc::clone(&doip_client),
+                Arc::clone(&last_activity),
+                config.tester_present_interval,
+            )))
+        } else {
+            None
+        };
+
         Self {
-            doip_client: Mutex::new(client),
+            doip_client,
             config,
+            last_activity,
+            keepalive_handle,
             _phantom: PhantomData,
         }
     }
@@ -213,6 +280,7 @@ where
 
         debug!("Sending UDS request: {:02X?}", request_bytes);
 
+        *self.last_activity.lock().unwrap() = Instant::now();
         let mut client = self.doip_client.lock().await;
 
         // Attempt to send, with reconnection if needed
@@ -327,6 +395,7 @@ where
     pub async fn send_raw(&self, request_bytes: Vec<u8>) -> Result<Vec<u8>> {
         debug!("Sending raw UDS request: {:02X?}", request_bytes);
 
+        *self.last_activity.lock().unwrap() = Instant::now();
         let mut client = self.doip_client.lock().await;
 
         // Attempt to send, with reconnection if needed
@@ -478,6 +547,7 @@ where
         suppress_response: bool,
     ) -> Result<Option<ProtocolResponse>> {
         debug!("Sending tester present");
+        *self.last_activity.lock().unwrap() = Instant::now();
         let request = ProtocolRequest::tester_present(suppress_response);
 
         if suppress_response {
@@ -498,9 +568,20 @@ where
     }
 
     /// Shut down the client connection.
-    pub async fn shutdown(self) {
+    pub async fn shutdown(mut self) {
         info!("Shutting down UDS client");
-        let client = self.doip_client.into_inner();
+        if let Some(handle) = self.keepalive_handle.take() {
+            handle.abort();
+            let _ = handle.await;
+        }
+        // Clone the Arc before dropping self so we can unwrap it afterward.
+        // Drop will be a no-op since keepalive_handle was already taken.
+        let doip_client = Arc::clone(&self.doip_client);
+        drop(self);
+        let mutex = Arc::try_unwrap(doip_client)
+            .ok()
+            .expect("no other references after dropping UdsClient");
+        let client = mutex.into_inner();
         client.shut_down().await;
     }
 
@@ -634,5 +715,13 @@ where
         }
 
         Ok(())
+    }
+}
+
+impl<Conn> Drop for UdsClient<Conn> {
+    fn drop(&mut self) {
+        if let Some(handle) = self.keepalive_handle.take() {
+            handle.abort();
+        }
     }
 }
