@@ -135,12 +135,6 @@ impl UdsClientOptions {
             } else {
                 None
             },
-            tester_present_interval: if self.session_config.auto_tester_present {
-                self.session_config.tester_present_interval
-            } else {
-                Duration::from_secs(86400 * 365) // ~1 year, effectively disabled
-            },
-            suppress_tester_present: true,
         }
     }
 }
