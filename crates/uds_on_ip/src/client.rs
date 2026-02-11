@@ -254,6 +254,9 @@ where
 
     /// Send a UDS request and wait for the response.
     ///
+    /// Returns `Ok(None)` when the request has the SPRMIB (Suppress Positive Response
+    /// Message Indication Bit) set, since the ECU will not send a positive response.
+    ///
     /// This method automatically handles NRC 0x78 (Response Pending) by waiting with
     /// an extended timeout (P2*) for the final response without re-sending the request.
     ///
@@ -265,13 +268,18 @@ where
     /// # Errors
     ///
     /// Returns an error if the request fails or the response is invalid.
-    pub async fn send<D: DiagnosticDefinition>(&self, request: Request<D>) -> Result<Response<D>>
+    pub async fn send<D: DiagnosticDefinition>(
+        &self,
+        request: Request<D>,
+    ) -> Result<Option<Response<D>>>
     where
         D::DID: SingleValueWireFormat,
         D::DiagnosticPayload: SingleValueWireFormat,
         D::RID: SingleValueWireFormat,
         D::RoutinePayload: SingleValueWireFormat,
     {
+        let suppress_response = request.is_positive_response_suppressed();
+
         // Encode the request to bytes
         let mut request_bytes = Vec::with_capacity(request.required_size());
         request
@@ -301,6 +309,12 @@ where
             } else {
                 return Err(Error::Transport(send_result.unwrap_err()));
             }
+        }
+
+        // When SPRMIB is set, the ECU will not send a positive response
+        if suppress_response {
+            debug!("Positive response suppressed (SPRMIB set), not waiting for response");
+            return Ok(None);
         }
 
         // Wait for response - keep retrying reconnection until overall timeout is reached
@@ -375,7 +389,7 @@ where
             // Final response - decode and return
             let response = Response::<D>::decode(&mut response_bytes.as_slice())
                 .map_err(|e| Error::InvalidResponse(format!("Failed to decode response: {e}")))?;
-            return Ok(response);
+            return Ok(Some(response));
         }
     }
 
@@ -506,7 +520,10 @@ where
             false,
             DiagnosticSessionType::ExtendedDiagnosticSession,
         );
-        self.send::<UdsSpec>(request).await
+        // Safe to unwrap: suppress_positive_response is false
+        self.send::<UdsSpec>(request)
+            .await
+            .map(|opt| opt.expect("response expected for non-suppressed request"))
     }
 
     /// Request the default diagnostic session.
@@ -520,7 +537,9 @@ where
             false,
             DiagnosticSessionType::DefaultSession,
         );
-        self.send::<UdsSpec>(request).await
+        self.send::<UdsSpec>(request)
+            .await
+            .map(|opt| opt.expect("response expected for non-suppressed request"))
     }
 
     /// Request a programming session.
@@ -534,7 +553,9 @@ where
             false,
             DiagnosticSessionType::ProgrammingSession,
         );
-        self.send::<UdsSpec>(request).await
+        self.send::<UdsSpec>(request)
+            .await
+            .map(|opt| opt.expect("response expected for non-suppressed request"))
     }
 
     /// Send a tester present message.
@@ -550,21 +571,7 @@ where
         *self.last_activity.lock().unwrap() = Instant::now();
         let request = ProtocolRequest::tester_present(suppress_response);
 
-        if suppress_response {
-            // Send raw bytes and don't wait for response
-            let mut request_bytes = Vec::with_capacity(request.required_size());
-            request
-                .encode(&mut request_bytes)
-                .map_err(|e| Error::InvalidResponse(format!("Failed to encode request: {e}")))?;
-
-            let mut client = self.doip_client.lock().await;
-            client
-                .send_diagnostic_message(AddressType::Physical, request_bytes)
-                .await?;
-            Ok(None)
-        } else {
-            self.send::<UdsSpec>(request).await.map(Some)
-        }
+        self.send::<UdsSpec>(request).await
     }
 
     /// Shut down the client connection.
