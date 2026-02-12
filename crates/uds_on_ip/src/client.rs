@@ -260,10 +260,9 @@ where
     /// This method automatically handles NRC 0x78 (Response Pending) by waiting with
     /// an extended timeout (P2*) for the final response without re-sending the request.
     ///
-    /// If the connection is lost during send, it will attempt to reconnect and retry.
-    /// If the connection is lost while waiting for a response (e.g., after EcuReset),
-    /// it will reconnect and return `Error::ReconnectedWithoutResponse` to indicate
-    /// the request likely succeeded but no response was received.
+    /// If the connection is lost (e.g., sensor reboot after a session change), this
+    /// method will reconnect and wait for the response on the new connection. Only if
+    /// the response does not arrive within the timeout will the request be re-sent.
     ///
     /// # Errors
     ///
@@ -291,6 +290,13 @@ where
         *self.last_activity.lock().unwrap() = Instant::now();
         let mut client = self.doip_client.lock().await;
 
+        // Track whether a reconnection happened without re-sending the request.
+        // When the connection drops after sending, the request was likely already
+        // received by the server. We reconnect and wait for the response on the
+        // new connection first. Only if no response arrives do we re-send.
+        let mut reconnected_without_resend = false;
+        let mut pending_message: Option<Message> = None;
+
         // Attempt to send, with reconnection if needed
         let send_result = client
             .send_diagnostic_message(AddressType::Physical, request_bytes.clone())
@@ -300,12 +306,18 @@ where
             if self.config.auto_reconnect && Self::is_connection_error(e) {
                 warn!("Connection error during send, attempting reconnect: {}", e);
                 let reconnect_timeout = self.config.reconnect_timeout;
-                Self::attempt_reconnect(&mut client, reconnect_timeout).await?;
-
-                // Retry the send after reconnection
-                client
-                    .send_diagnostic_message(AddressType::Physical, request_bytes.clone())
-                    .await?;
+                match Self::attempt_reconnect(&mut client, reconnect_timeout).await {
+                    Ok(Some(msg)) => {
+                        pending_message = Some(msg);
+                    }
+                    Ok(None) => {
+                        // Reconnected but no response yet — the request was likely
+                        // received before the disconnect. Wait for the response on
+                        // the new connection before re-sending.
+                        reconnected_without_resend = true;
+                    }
+                    Err(e) => return Err(e),
+                }
             } else {
                 return Err(Error::Transport(send_result.unwrap_err()));
             }
@@ -317,24 +329,39 @@ where
             return Ok(None);
         }
 
-        // Wait for response - keep retrying reconnection until overall timeout is reached
-        let overall_start = Instant::now();
-        let overall_timeout = self.config.reconnect_timeout;
-        // Message that may have been captured during reconnection
-        let mut pending_message: Option<Message> = None;
+        // Wait for response using the response timeout (not reconnect timeout).
+        // The response timeout is reset after each reconnection, so reconnection
+        // time doesn't eat into the response wait time.
+        let mut response_start = Instant::now();
+        let response_timeout = self.config.response_timeout;
 
         loop {
-            // Check if we've exceeded overall timeout
-            if overall_start.elapsed() >= overall_timeout {
-                return Err(Error::Timeout(overall_timeout));
+            // Check if we've exceeded response timeout
+            if response_start.elapsed() >= response_timeout {
+                if reconnected_without_resend {
+                    // No response arrived on the new connection — re-send the request.
+                    // This is safe because the server is already in the requested state
+                    // (e.g., session control response was lost with the old connection).
+                    info!("No response after reconnection, re-sending request");
+                    client
+                        .send_diagnostic_message(
+                            AddressType::Physical,
+                            request_bytes.clone(),
+                        )
+                        .await?;
+                    reconnected_without_resend = false;
+                    response_start = Instant::now();
+                    continue;
+                }
+                return Err(Error::Timeout(response_timeout));
             }
 
             // Use pending message from reconnection if available, otherwise wait for one
             let message = if let Some(msg) = pending_message.take() {
                 msg
             } else {
-                // Use remaining time or 1 second, whichever is smaller
-                let remaining = overall_timeout.saturating_sub(overall_start.elapsed());
+                // Use remaining response time or 1 second, whichever is smaller
+                let remaining = response_timeout.saturating_sub(response_start.elapsed());
                 let receive_timeout = remaining.min(Duration::from_secs(1));
 
                 let receive_result = client.receive_diagnostic_response(receive_timeout).await;
@@ -344,30 +371,33 @@ where
                     Err(ref e)
                         if self.config.auto_reconnect && Self::is_connection_error(e) =>
                     {
-                        // Connection lost while waiting for response - reconnect and wait
-                        // for the server to send the response after coming back up.
+                        // Connection lost while waiting for response — reconnect and
+                        // continue waiting. The request was likely already processed.
                         warn!(
-                            "Connection error during receive, attempting reconnect: {} (elapsed: {:?})",
+                            "Connection error during receive, attempting reconnect: {}",
                             e,
-                            overall_start.elapsed()
                         );
-                        let remaining = overall_timeout.saturating_sub(overall_start.elapsed());
-                        if remaining.is_zero() {
-                            return Err(Error::Timeout(overall_timeout));
+                        let reconnect_timeout = self.config.reconnect_timeout;
+                        match Self::attempt_reconnect(&mut client, reconnect_timeout).await {
+                            Ok(Some(msg)) => {
+                                info!("Using message received during reconnection");
+                                pending_message = Some(msg);
+                                response_start = Instant::now();
+                                continue;
+                            }
+                            Ok(None) => {
+                                // Reconnected — continue waiting for the response on
+                                // the new connection. Will re-send if timeout expires.
+                                info!("Reconnected — waiting for response on new connection");
+                                reconnected_without_resend = true;
+                                response_start = Instant::now();
+                                continue;
+                            }
+                            Err(e) => return Err(e),
                         }
-                        let maybe_msg = Self::attempt_reconnect(&mut client, remaining).await?;
-
-                        // If we got a message during reconnection, use it
-                        if let Some(msg) = maybe_msg {
-                            info!("Using message received during reconnection");
-                            pending_message = Some(msg);
-                        } else {
-                            info!("Reconnected - waiting for response");
-                        }
-                        continue;
                     }
                     Err(simple_doip::Error::ResponseTimeoutExceeded) => {
-                        // Per-receive timeout - continue loop to check overall timeout
+                        // Per-receive timeout - continue loop to check response timeout
                         continue;
                     }
                     Err(e) => return Err(Error::Transport(e)),
@@ -398,10 +428,9 @@ where
     /// This method automatically handles NRC 0x78 (Response Pending) by waiting with
     /// an extended timeout (P2*) for the final response without re-sending the request.
     ///
-    /// If the connection is lost during send, it will attempt to reconnect and retry.
-    /// If the connection is lost while waiting for a response (e.g., after EcuReset),
-    /// it will reconnect and return `Error::ReconnectedWithoutResponse` to indicate
-    /// the request likely succeeded but no response was received.
+    /// If the connection is lost (e.g., sensor reboot after a session change), this
+    /// method will reconnect and wait for the response on the new connection. Only if
+    /// the response does not arrive within the timeout will the request be re-sent.
     ///
     /// # Errors
     ///
@@ -412,6 +441,10 @@ where
         *self.last_activity.lock().unwrap() = Instant::now();
         let mut client = self.doip_client.lock().await;
 
+        // Track whether a reconnection happened without re-sending the request.
+        let mut reconnected_without_resend = false;
+        let mut pending_message: Option<Message> = None;
+
         // Attempt to send, with reconnection if needed
         let send_result = client
             .send_diagnostic_message(AddressType::Physical, request_bytes.clone())
@@ -421,35 +454,48 @@ where
             if self.config.auto_reconnect && Self::is_connection_error(e) {
                 warn!("Connection error during send, attempting reconnect: {}", e);
                 let reconnect_timeout = self.config.reconnect_timeout;
-                Self::attempt_reconnect(&mut client, reconnect_timeout).await?;
-
-                // Retry the send after reconnection
-                client
-                    .send_diagnostic_message(AddressType::Physical, request_bytes.clone())
-                    .await?;
+                match Self::attempt_reconnect(&mut client, reconnect_timeout).await {
+                    Ok(Some(msg)) => {
+                        pending_message = Some(msg);
+                    }
+                    Ok(None) => {
+                        reconnected_without_resend = true;
+                    }
+                    Err(e) => return Err(e),
+                }
             } else {
                 return Err(Error::Transport(send_result.unwrap_err()));
             }
         }
 
-        // Wait for response - keep retrying reconnection until overall timeout is reached
-        let overall_start = Instant::now();
-        let overall_timeout = self.config.reconnect_timeout;
-        // Message that may have been captured during reconnection
-        let mut pending_message: Option<Message> = None;
+        // Wait for response using the response timeout (not reconnect timeout).
+        let mut response_start = Instant::now();
+        let response_timeout = self.config.response_timeout;
 
         loop {
-            // Check if we've exceeded overall timeout
-            if overall_start.elapsed() >= overall_timeout {
-                return Err(Error::Timeout(overall_timeout));
+            // Check if we've exceeded response timeout
+            if response_start.elapsed() >= response_timeout {
+                if reconnected_without_resend {
+                    info!("No response after reconnection, re-sending request");
+                    client
+                        .send_diagnostic_message(
+                            AddressType::Physical,
+                            request_bytes.clone(),
+                        )
+                        .await?;
+                    reconnected_without_resend = false;
+                    response_start = Instant::now();
+                    continue;
+                }
+                return Err(Error::Timeout(response_timeout));
             }
 
             // Use pending message from reconnection if available, otherwise wait for one
             let message = if let Some(msg) = pending_message.take() {
                 msg
             } else {
-                // Use remaining time or 1 second, whichever is smaller
-                let remaining = overall_timeout.saturating_sub(overall_start.elapsed());
+                // Use remaining response time or 1 second, whichever is smaller
+                let remaining = response_timeout.saturating_sub(response_start.elapsed());
                 let receive_timeout = remaining.min(Duration::from_secs(1));
 
                 let receive_result = client.receive_diagnostic_response(receive_timeout).await;
@@ -459,30 +505,28 @@ where
                     Err(ref e)
                         if self.config.auto_reconnect && Self::is_connection_error(e) =>
                     {
-                        // Connection lost while waiting for response - reconnect and wait
-                        // for the server to send the response after coming back up.
                         warn!(
-                            "Connection error during receive, attempting reconnect: {} (elapsed: {:?})",
+                            "Connection error during receive, attempting reconnect: {}",
                             e,
-                            overall_start.elapsed()
                         );
-                        let remaining = overall_timeout.saturating_sub(overall_start.elapsed());
-                        if remaining.is_zero() {
-                            return Err(Error::Timeout(overall_timeout));
+                        let reconnect_timeout = self.config.reconnect_timeout;
+                        match Self::attempt_reconnect(&mut client, reconnect_timeout).await {
+                            Ok(Some(msg)) => {
+                                info!("Using message received during reconnection");
+                                pending_message = Some(msg);
+                                response_start = Instant::now();
+                                continue;
+                            }
+                            Ok(None) => {
+                                info!("Reconnected — waiting for response on new connection");
+                                reconnected_without_resend = true;
+                                response_start = Instant::now();
+                                continue;
+                            }
+                            Err(e) => return Err(e),
                         }
-                        let maybe_msg = Self::attempt_reconnect(&mut client, remaining).await?;
-
-                        // If we got a message during reconnection, use it
-                        if let Some(msg) = maybe_msg {
-                            info!("Using message received during reconnection");
-                            pending_message = Some(msg);
-                        } else {
-                            info!("Reconnected - waiting for response");
-                        }
-                        continue;
                     }
                     Err(simple_doip::Error::ResponseTimeoutExceeded) => {
-                        // Per-receive timeout - continue loop to check overall timeout
                         continue;
                     }
                     Err(e) => return Err(Error::Transport(e)),
@@ -607,7 +651,7 @@ where
     ///
     /// Retries reconnection attempts until the configured reconnect timeout is reached.
     /// Note: simple_doip's reconnect() has an internal 5-second wait for in-flight messages,
-    /// so each attempt may take up to ~6 seconds.
+    /// so each attempt may take up to ~15 seconds (with connection setup overhead).
     ///
     /// Returns Ok(Option<Message>) if reconnection succeeds. The Option contains any
     /// in-flight message that was received during reconnection (e.g., a response that
@@ -627,9 +671,10 @@ where
                 start.elapsed()
             );
 
-            // simple_doip's reconnect() has an internal 5-second wait for in-flight messages,
-            // so we give it enough time to complete (6 seconds) before considering it timed out
-            match tokio::time::timeout(Duration::from_secs(6), client.reconnect()).await {
+            // simple_doip's reconnect() does bind_socket + routing activation (~1-2s)
+            // followed by a 5-second wait for in-flight messages. Give it 15 seconds
+            // total to account for slow connections.
+            match tokio::time::timeout(Duration::from_secs(15), client.reconnect()).await {
                 Ok(Ok(maybe_message)) => {
                     info!("Reconnected successfully after {} attempts", attempts);
                     if maybe_message.is_some() {

@@ -26,8 +26,10 @@ pub struct SessionConfig {
     pub auto_reconnect: bool,
 
     /// Total time to spend attempting reconnection.
-    /// Default is 10 seconds. Each reconnection attempt may take up to ~6 seconds
+    /// Default is 30 seconds. Each reconnection attempt may take up to ~6 seconds
     /// (due to simple_doip's internal 5-second wait for in-flight messages).
+    /// Must be long enough to cover sensor reboot times (typically 5-10 seconds)
+    /// plus successful reconnection overhead.
     pub reconnect_timeout: Duration,
 }
 
@@ -39,7 +41,7 @@ impl Default for SessionConfig {
             response_pending_timeout: Duration::from_secs(25),
             auto_tester_present: true,
             auto_reconnect: true,
-            reconnect_timeout: Duration::from_secs(10),
+            reconnect_timeout: Duration::from_secs(30),
         }
     }
 }
