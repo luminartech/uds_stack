@@ -61,10 +61,12 @@
 
 pub mod client;
 pub mod error;
+pub mod request_sender;
 pub mod session;
 
 pub use client::{UdsClient, UdsClientOptions};
 pub use error::Error;
+pub use request_sender::RequestSender;
 pub use session::SessionConfig;
 
 /// Result type for UDS on IP operations.
