@@ -413,7 +413,8 @@ where
 
             // Check for NRC 0x78 (Response Pending)
             if Self::is_response_pending(&response_bytes) {
-                debug!("Received NRC 0x78 (Response Pending), continuing to wait for final response");
+                debug!("Received NRC 0x78 (Response Pending), resetting timeout and waiting for final response");
+                response_start = Instant::now();
                 continue; // Wait for next response WITHOUT re-sending
             }
 
@@ -542,7 +543,8 @@ where
 
             // Check for NRC 0x78 (Response Pending)
             if Self::is_response_pending(&response_bytes) {
-                debug!("Received NRC 0x78 (Response Pending), continuing to wait for final response");
+                debug!("Received NRC 0x78 (Response Pending), resetting timeout and waiting for final response");
+                response_start = Instant::now();
                 continue; // Wait for next response WITHOUT re-sending
             }
 
