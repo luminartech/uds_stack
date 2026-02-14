@@ -68,6 +68,7 @@ pub use client::{UdsClient, UdsClientOptions};
 pub use error::Error;
 pub use request_sender::RequestSender;
 pub use session::SessionConfig;
+pub use simple_doip::client::AddressType;
 
 /// Result type for UDS on IP operations.
 pub type Result<T> = std::result::Result<T, Error>;

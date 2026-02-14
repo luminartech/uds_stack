@@ -270,6 +270,7 @@ where
     pub async fn send<D: DiagnosticDefinition>(
         &self,
         request: Request<D>,
+        address_type: AddressType,
     ) -> Result<Option<Response<D>>>
     where
         D::DID: SingleValueWireFormat,
@@ -299,7 +300,7 @@ where
 
         // Attempt to send, with reconnection if needed
         let send_result = client
-            .send_diagnostic_message(AddressType::Physical, request_bytes.clone())
+            .send_diagnostic_message(address_type, request_bytes.clone())
             .await;
 
         if let Err(ref e) = send_result {
@@ -345,7 +346,7 @@ where
                     info!("No response after reconnection, re-sending request");
                     client
                         .send_diagnostic_message(
-                            AddressType::Physical,
+                            address_type,
                             request_bytes.clone(),
                         )
                         .await?;
@@ -565,7 +566,7 @@ where
             DiagnosticSessionType::ExtendedDiagnosticSession,
         );
         // Safe to unwrap: suppress_positive_response is false
-        self.send::<UdsSpec>(request)
+        self.send::<UdsSpec>(request, AddressType::Physical)
             .await
             .map(|opt| opt.expect("response expected for non-suppressed request"))
     }
@@ -581,7 +582,7 @@ where
             false,
             DiagnosticSessionType::DefaultSession,
         );
-        self.send::<UdsSpec>(request)
+        self.send::<UdsSpec>(request, AddressType::Physical)
             .await
             .map(|opt| opt.expect("response expected for non-suppressed request"))
     }
@@ -597,7 +598,7 @@ where
             false,
             DiagnosticSessionType::ProgrammingSession,
         );
-        self.send::<UdsSpec>(request)
+        self.send::<UdsSpec>(request, AddressType::Physical)
             .await
             .map(|opt| opt.expect("response expected for non-suppressed request"))
     }
@@ -615,7 +616,7 @@ where
         *self.last_activity.lock().unwrap() = Instant::now();
         let request = ProtocolRequest::tester_present(suppress_response);
 
-        self.send::<UdsSpec>(request).await
+        self.send::<UdsSpec>(request, AddressType::Physical).await
     }
 
     /// Shut down the client connection.
