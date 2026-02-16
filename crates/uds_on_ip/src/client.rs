@@ -6,10 +6,10 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use simple_doip::{
+    LogicalAddress, TCP_PORT, TESTER_LOGICAL_ADDRESS,
     client::{AddressType, Client, ClientOptions, RoutingActivationOptions},
     connection::{Connector, ConnectorSocket},
     messages::{ActivationTypeCode, Message, Payload, ProtocolVersion},
-    LogicalAddress, TCP_PORT, TESTER_LOGICAL_ADDRESS,
 };
 use tokio::sync::Mutex;
 use tracing::{debug, info, warn};
@@ -345,10 +345,7 @@ where
                     // (e.g., session control response was lost with the old connection).
                     info!("No response after reconnection, re-sending request");
                     client
-                        .send_diagnostic_message(
-                            address_type,
-                            request_bytes.clone(),
-                        )
+                        .send_diagnostic_message(address_type, request_bytes.clone())
                         .await?;
                     reconnected_without_resend = false;
                     response_start = Instant::now();
@@ -369,9 +366,7 @@ where
 
                 match receive_result {
                     Ok(msg) => msg,
-                    Err(ref e)
-                        if self.config.auto_reconnect && Self::is_connection_error(e) =>
-                    {
+                    Err(ref e) if self.config.auto_reconnect && Self::is_connection_error(e) => {
                         // Connection lost while waiting for response — reconnect and
                         // continue waiting. The request was likely already processed.
                         warn!(
@@ -413,7 +408,9 @@ where
 
             // Check for NRC 0x78 (Response Pending)
             if Self::is_response_pending(&response_bytes) {
-                debug!("Received NRC 0x78 (Response Pending), resetting timeout and waiting for final response");
+                debug!(
+                    "Received NRC 0x78 (Response Pending), resetting timeout and waiting for final response"
+                );
                 response_start = Instant::now();
                 continue; // Wait for next response WITHOUT re-sending
             }
@@ -480,10 +477,7 @@ where
                 if reconnected_without_resend {
                     info!("No response after reconnection, re-sending request");
                     client
-                        .send_diagnostic_message(
-                            AddressType::Physical,
-                            request_bytes.clone(),
-                        )
+                        .send_diagnostic_message(AddressType::Physical, request_bytes.clone())
                         .await?;
                     reconnected_without_resend = false;
                     response_start = Instant::now();
@@ -504,9 +498,7 @@ where
 
                 match receive_result {
                     Ok(msg) => msg,
-                    Err(ref e)
-                        if self.config.auto_reconnect && Self::is_connection_error(e) =>
-                    {
+                    Err(ref e) if self.config.auto_reconnect && Self::is_connection_error(e) => {
                         warn!(
                             "Connection error during receive, attempting reconnect: {}",
                             e,
@@ -543,7 +535,9 @@ where
 
             // Check for NRC 0x78 (Response Pending)
             if Self::is_response_pending(&response_bytes) {
-                debug!("Received NRC 0x78 (Response Pending), resetting timeout and waiting for final response");
+                debug!(
+                    "Received NRC 0x78 (Response Pending), resetting timeout and waiting for final response"
+                );
                 response_start = Instant::now();
                 continue; // Wait for next response WITHOUT re-sending
             }
