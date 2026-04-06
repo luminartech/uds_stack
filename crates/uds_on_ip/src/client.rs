@@ -382,14 +382,16 @@ where
                         let reconnect_timeout = self.config.reconnect_timeout;
                         match Self::attempt_reconnect(&mut client, reconnect_timeout).await {
                             Ok(Some(msg)) => {
-                                Self::send_tester_present_locked(&mut client, &self.last_activity).await;
+                                Self::send_tester_present_locked(&mut client, &self.last_activity)
+                                    .await;
                                 info!("Using message received during reconnection");
                                 pending_message = Some(msg);
                                 response_start = Instant::now();
                                 continue;
                             }
                             Ok(None) => {
-                                Self::send_tester_present_locked(&mut client, &self.last_activity).await;
+                                Self::send_tester_present_locked(&mut client, &self.last_activity)
+                                    .await;
                                 // Reconnected — continue waiting for the response on
                                 // the new connection. Will re-send if timeout expires.
                                 info!("Reconnected — waiting for response on new connection");
@@ -516,14 +518,16 @@ where
                         let reconnect_timeout = self.config.reconnect_timeout;
                         match Self::attempt_reconnect(&mut client, reconnect_timeout).await {
                             Ok(Some(msg)) => {
-                                Self::send_tester_present_locked(&mut client, &self.last_activity).await;
+                                Self::send_tester_present_locked(&mut client, &self.last_activity)
+                                    .await;
                                 info!("Using message received during reconnection");
                                 pending_message = Some(msg);
                                 response_start = Instant::now();
                                 continue;
                             }
                             Ok(None) => {
-                                Self::send_tester_present_locked(&mut client, &self.last_activity).await;
+                                Self::send_tester_present_locked(&mut client, &self.last_activity)
+                                    .await;
                                 info!("Reconnected — waiting for response on new connection");
                                 reconnected_without_resend = true;
                                 response_start = Instant::now();
