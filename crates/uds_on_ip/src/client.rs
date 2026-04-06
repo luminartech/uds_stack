@@ -166,15 +166,19 @@ async fn keepalive_loop<Conn>(
         }
 
         let mut client = doip_client.lock().await;
-        if let Err(e) = client
+        match client
             .send_diagnostic_message(AddressType::Physical, vec![0x3E, 0x80])
             .await
         {
-            warn!("Keepalive TesterPresent failed: {}", e);
-        } else {
-            debug!("Sent keepalive TesterPresent");
+            Ok(()) => {
+                debug!("Sent keepalive TesterPresent");
+                *last_activity.lock().unwrap() = Instant::now();
+            }
+            Err(e) => {
+                warn!("Keepalive TesterPresent failed: {}", e);
+                // Don't update last_activity on failure so we retry sooner
+            }
         }
-        *last_activity.lock().unwrap() = Instant::now();
     }
 }
 
@@ -309,9 +313,11 @@ where
                 let reconnect_timeout = self.config.reconnect_timeout;
                 match Self::attempt_reconnect(&mut client, reconnect_timeout).await {
                     Ok(Some(msg)) => {
+                        Self::send_tester_present_locked(&mut client, &self.last_activity).await;
                         pending_message = Some(msg);
                     }
                     Ok(None) => {
+                        Self::send_tester_present_locked(&mut client, &self.last_activity).await;
                         // Reconnected but no response yet — the request was likely
                         // received before the disconnect. Wait for the response on
                         // the new connection before re-sending.
@@ -376,12 +382,16 @@ where
                         let reconnect_timeout = self.config.reconnect_timeout;
                         match Self::attempt_reconnect(&mut client, reconnect_timeout).await {
                             Ok(Some(msg)) => {
+                                Self::send_tester_present_locked(&mut client, &self.last_activity)
+                                    .await;
                                 info!("Using message received during reconnection");
                                 pending_message = Some(msg);
                                 response_start = Instant::now();
                                 continue;
                             }
                             Ok(None) => {
+                                Self::send_tester_present_locked(&mut client, &self.last_activity)
+                                    .await;
                                 // Reconnected — continue waiting for the response on
                                 // the new connection. Will re-send if timeout expires.
                                 info!("Reconnected — waiting for response on new connection");
@@ -455,9 +465,11 @@ where
                 let reconnect_timeout = self.config.reconnect_timeout;
                 match Self::attempt_reconnect(&mut client, reconnect_timeout).await {
                     Ok(Some(msg)) => {
+                        Self::send_tester_present_locked(&mut client, &self.last_activity).await;
                         pending_message = Some(msg);
                     }
                     Ok(None) => {
+                        Self::send_tester_present_locked(&mut client, &self.last_activity).await;
                         reconnected_without_resend = true;
                     }
                     Err(e) => return Err(e),
@@ -506,12 +518,16 @@ where
                         let reconnect_timeout = self.config.reconnect_timeout;
                         match Self::attempt_reconnect(&mut client, reconnect_timeout).await {
                             Ok(Some(msg)) => {
+                                Self::send_tester_present_locked(&mut client, &self.last_activity)
+                                    .await;
                                 info!("Using message received during reconnection");
                                 pending_message = Some(msg);
                                 response_start = Instant::now();
                                 continue;
                             }
                             Ok(None) => {
+                                Self::send_tester_present_locked(&mut client, &self.last_activity)
+                                    .await;
                                 info!("Reconnected — waiting for response on new connection");
                                 reconnected_without_resend = true;
                                 response_start = Instant::now();
@@ -695,6 +711,30 @@ where
             attempts,
             elapsed: start.elapsed(),
         })
+    }
+
+    /// Send a TesterPresent message to keep the ECU's S3 timer alive.
+    ///
+    /// Called after a successful reconnection while the doip_client lock is
+    /// already held, so the keepalive task (which also needs the lock) cannot
+    /// run. Without this, the ECU may revert to the default session during the
+    /// reconnection window.
+    async fn send_tester_present_locked(
+        client: &mut Client<Conn>,
+        last_activity: &std::sync::Mutex<Instant>,
+    ) {
+        match client
+            .send_diagnostic_message(AddressType::Physical, vec![0x3E, 0x80])
+            .await
+        {
+            Ok(()) => {
+                debug!("Sent TesterPresent after reconnection");
+                *last_activity.lock().unwrap() = Instant::now();
+            }
+            Err(e) => {
+                warn!("TesterPresent after reconnection failed: {}", e);
+            }
+        }
     }
 
     /// Extract the diagnostic payload from a DoIP message.
