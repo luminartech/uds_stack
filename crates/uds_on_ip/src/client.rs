@@ -326,6 +326,10 @@ where
         let mut pending_message: Option<Message> = None;
         let reconnect_timeout = self.config.reconnect_timeout;
         let max_pending = self.config.max_response_pending_count;
+        // Matches the predicate used to decide whether to spawn the background
+        // keepalive task. Threaded through so that post-reconnect TPs are
+        // skipped for the same configs that skip keepalive spawning.
+        let keepalive_active = should_run_keepalive(&self.config);
         let mut pending_count: u32 = 0;
 
         // Attempt to send, with reconnection if needed
@@ -336,10 +340,11 @@ where
         if let Err(ref e) = send_result {
             if self.config.auto_reconnect && Self::is_connection_error(e) {
                 warn!("Connection error during send, attempting reconnect: {}", e);
-                match Self::reconnect_and_keepalive(
+                match Self::reconnect_and_maybe_keepalive(
                     &mut client,
                     &self.last_activity,
                     reconnect_timeout,
+                    keepalive_active,
                 )
                 .await?
                 {
@@ -410,10 +415,11 @@ where
                         Ok(()) => {}
                         Err(e) if self.config.auto_reconnect && Self::is_connection_error(&e) => {
                             warn!("TP send detected dead connection, reconnecting: {}", e);
-                            match Self::reconnect_and_keepalive(
+                            match Self::reconnect_and_maybe_keepalive(
                                 &mut client,
                                 &self.last_activity,
                                 reconnect_timeout,
+                                keepalive_active,
                             )
                             .await?
                             {
@@ -460,10 +466,11 @@ where
                             "Connection error during receive, attempting reconnect: {}",
                             e,
                         );
-                        match Self::reconnect_and_keepalive(
+                        match Self::reconnect_and_maybe_keepalive(
                             &mut client,
                             &self.last_activity,
                             reconnect_timeout,
+                            keepalive_active,
                         )
                         .await?
                         {
@@ -547,6 +554,8 @@ where
         let mut pending_message: Option<Message> = None;
         let reconnect_timeout = self.config.reconnect_timeout;
         let max_pending = self.config.max_response_pending_count;
+        // Matches the keepalive-spawn predicate; see send().
+        let keepalive_active = should_run_keepalive(&self.config);
         let mut pending_count: u32 = 0;
 
         // Attempt to send, with reconnection if needed
@@ -557,10 +566,11 @@ where
         if let Err(ref e) = send_result {
             if self.config.auto_reconnect && Self::is_connection_error(e) {
                 warn!("Connection error during send, attempting reconnect: {}", e);
-                match Self::reconnect_and_keepalive(
+                match Self::reconnect_and_maybe_keepalive(
                     &mut client,
                     &self.last_activity,
                     reconnect_timeout,
+                    keepalive_active,
                 )
                 .await?
                 {
@@ -612,10 +622,11 @@ where
                         Ok(()) => {}
                         Err(e) if self.config.auto_reconnect && Self::is_connection_error(&e) => {
                             warn!("TP send detected dead connection, reconnecting: {}", e);
-                            match Self::reconnect_and_keepalive(
+                            match Self::reconnect_and_maybe_keepalive(
                                 &mut client,
                                 &self.last_activity,
                                 reconnect_timeout,
+                                keepalive_active,
                             )
                             .await?
                             {
@@ -653,10 +664,11 @@ where
                             "Connection error during receive, attempting reconnect: {}",
                             e,
                         );
-                        match Self::reconnect_and_keepalive(
+                        match Self::reconnect_and_maybe_keepalive(
                             &mut client,
                             &self.last_activity,
                             reconnect_timeout,
+                            keepalive_active,
                         )
                         .await?
                         {
@@ -926,18 +938,26 @@ where
         Self::send_tester_present_while_lock_held(client, last_activity).await
     }
 
-    /// Drive a reconnection and immediately emit a keep-alive TP on the
-    /// new connection. Returns any in-flight message surfaced by the
-    /// reconnect. The post-reconnect TP failure (if any) is intentionally
-    /// swallowed: the next send/receive will surface a still-broken link
-    /// through the normal error paths.
-    async fn reconnect_and_keepalive(
+    /// Drive a reconnection and, when keepalives are enabled, immediately
+    /// emit a TP on the new connection. Returns any in-flight message
+    /// surfaced by the reconnect. `send_tp_after_reconnect` must match the
+    /// same predicate used for spawning the background keepalive task
+    /// (see `should_run_keepalive`) so `auto_tester_present = false` and
+    /// `tester_present_interval = Duration::ZERO` both skip the post-
+    /// reconnect TP, keeping config semantics consistent. The post-
+    /// reconnect TP failure (if any) is intentionally swallowed: the next
+    /// send/receive will surface a still-broken link through the normal
+    /// error paths.
+    async fn reconnect_and_maybe_keepalive(
         client: &mut Client<Conn>,
         last_activity: &std::sync::Mutex<Instant>,
         reconnect_timeout: Duration,
+        send_tp_after_reconnect: bool,
     ) -> Result<Option<Message>> {
         let maybe_msg = Self::attempt_reconnect(client, reconnect_timeout).await?;
-        let _ = Self::send_tester_present_while_lock_held(client, last_activity).await;
+        if send_tp_after_reconnect {
+            let _ = Self::send_tester_present_while_lock_held(client, last_activity).await;
+        }
         Ok(maybe_msg)
     }
 
