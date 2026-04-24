@@ -620,10 +620,7 @@ where
                     None => {
                         info!("Reconnected — re-sending request on new connection");
                         client
-                            .send_diagnostic_message(
-                                AddressType::Physical,
-                                request_bytes.clone(),
-                            )
+                            .send_diagnostic_message(AddressType::Physical, request_bytes.clone())
                             .await?;
                     }
                 }
@@ -1170,7 +1167,10 @@ mod classify_response_tests {
         match m {
             ResponseMatch::ForOtherRequest { response_sid, nack } => {
                 assert_eq!(response_sid, 0x7E);
-                assert!(!nack, "0x7E positive response must not be classified as NACK");
+                assert!(
+                    !nack,
+                    "0x7E positive response must not be classified as NACK"
+                );
             }
             other => panic!("expected ForOtherRequest, got {other:?}"),
         }

@@ -751,10 +751,13 @@ async fn stray_tp_nack_during_pending_wait_is_ignored() {
     )
     .await;
 
-    let response = timeout(Duration::from_secs(10), client.send_raw(UDS_SLOW_REQ.to_vec()))
-        .await
-        .expect("send_raw timed out — stray TP NACK likely aborted the primary request")
-        .expect("send_raw failed — stray TP NACK should not fail the primary request");
+    let response = timeout(
+        Duration::from_secs(10),
+        client.send_raw(UDS_SLOW_REQ.to_vec()),
+    )
+    .await
+    .expect("send_raw timed out — stray TP NACK likely aborted the primary request")
+    .expect("send_raw failed — stray TP NACK should not fail the primary request");
 
     assert_eq!(
         response,
