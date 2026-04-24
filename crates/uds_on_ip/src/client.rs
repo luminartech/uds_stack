@@ -33,8 +33,9 @@ enum ResponseMatch {
     /// the ECU chose to NACK. The caller should log and discard it
     /// and keep waiting for the real response.
     ForOtherRequest {
-        /// The SID the stray response is for (pre-`0x40` form for
-        /// positive responses, or the inner SID for 0x7F NACKs).
+        /// The on-wire SID of the stray response (e.g. `0x7E` for a
+        /// positive TesterPresent response, or the inner SID from a
+        /// `0x7F` NACK). Used only for log triage.
         response_sid: u8,
         /// `true` if this was a NACK (0x7F), `false` for a positive
         /// response. Used only for log triage.
@@ -385,6 +386,7 @@ where
                         client
                             .send_diagnostic_message(address_type, request_bytes.clone())
                             .await?;
+                        *lock_activity(&self.last_activity) = Instant::now();
                     }
                 }
             } else {
@@ -454,6 +456,7 @@ where
                                             request_bytes.clone(),
                                         )
                                         .await?;
+                                    *lock_activity(&self.last_activity) = Instant::now();
                                 }
                             }
                             response_start = Instant::now();
@@ -507,6 +510,7 @@ where
                                 client
                                     .send_diagnostic_message(address_type, request_bytes.clone())
                                     .await?;
+                                *lock_activity(&self.last_activity) = Instant::now();
                             }
                         }
                         response_start = Instant::now();
@@ -622,6 +626,7 @@ where
                         client
                             .send_diagnostic_message(AddressType::Physical, request_bytes.clone())
                             .await?;
+                        *lock_activity(&self.last_activity) = Instant::now();
                     }
                 }
             } else {
@@ -680,6 +685,7 @@ where
                                             request_bytes.clone(),
                                         )
                                         .await?;
+                                    *lock_activity(&self.last_activity) = Instant::now();
                                 }
                             }
                             response_start = Instant::now();
@@ -727,6 +733,7 @@ where
                                         request_bytes.clone(),
                                     )
                                     .await?;
+                                *lock_activity(&self.last_activity) = Instant::now();
                             }
                         }
                         response_start = Instant::now();
