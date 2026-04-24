@@ -490,6 +490,92 @@ async fn run_forever_pending_server(listener: TcpListener) {
     }
 }
 
+/// After an NRC 0x78 (Response Pending) the client must widen its wait
+/// from P2 (`response_timeout`) to P2* (`response_pending_timeout`) per
+/// ISO 14229. This test sets P2 = 400 ms and P2* = 3 s and has the
+/// server reply with one NRC 0x78 at ~200 ms then the final response at
+/// ~1.2 s — well past P2 but inside P2*. If the client failed to switch
+/// timers it would either time out at 400 ms or, with reconnect off,
+/// fall into `Err(Timeout)`.
+async fn run_p2_star_server(listener: TcpListener) {
+    let (mut stream, _) = listener.accept().await.expect("accept failed");
+    let (pt, payload) = read_frame(&mut stream)
+        .await
+        .expect("missing routing activation");
+    assert_eq!(pt, PT_ROUTING_ACTIVATION_REQ);
+    let tester = LogicalAddress(u16::from_be_bytes([payload[0], payload[1]]));
+    stream
+        .write_all(&build_routing_activation_rsp(tester, SERVER_PHYSICAL))
+        .await
+        .expect("write activation rsp");
+
+    let (pt, payload) = read_frame(&mut stream).await.expect("missing slow req");
+    assert_eq!(pt, PT_DIAG_MESSAGE);
+    let addr = LogicalAddress(u16::from_be_bytes([payload[0], payload[1]]));
+    let user_data = &payload[4..];
+    stream
+        .write_all(&build_diag_ack(SERVER_PHYSICAL, addr, user_data))
+        .await
+        .expect("write diag ack");
+
+    // NRC 0x78 within P2 (200 ms after request).
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    stream
+        .write_all(&build_diag_msg(
+            SERVER_PHYSICAL,
+            addr,
+            &[0x7F, UDS_SLOW_REQ[0], 0x78],
+        ))
+        .await
+        .expect("write NRC 0x78");
+
+    // Final response ~1 s later — past P2 (400 ms) but within P2* (3 s).
+    tokio::time::sleep(Duration::from_millis(1000)).await;
+    stream
+        .write_all(&build_diag_msg(SERVER_PHYSICAL, addr, UDS_SLOW_FINAL_RSP))
+        .await
+        .expect("write final rsp");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn nrc78_widens_timeout_from_p2_to_p2_star() {
+    let _ = tracing_subscriber::fmt().with_test_writer().try_init();
+
+    let listener = TcpListener::bind(("127.0.0.1", 0))
+        .await
+        .expect("failed to bind listener");
+    let port = listener.local_addr().unwrap().port();
+
+    let server_task = tokio::spawn(run_p2_star_server(listener));
+
+    let client = connect_client(
+        port,
+        SessionConfig {
+            tester_present_interval: Duration::from_millis(500),
+            auto_tester_present: true,
+            auto_reconnect: false,
+            // Short P2: a client that fails to switch to P2* after NRC 0x78
+            // will time out waiting for the final response.
+            response_timeout: Duration::from_millis(400),
+            response_pending_timeout: Duration::from_secs(3),
+            ..SessionConfig::default()
+        },
+    )
+    .await;
+
+    let response = timeout(
+        Duration::from_secs(5),
+        client.send_raw(UDS_SLOW_REQ.to_vec()),
+    )
+    .await
+    .expect("send_raw outer timeout — NRC 0x78 likely did not widen timeout to P2*")
+    .expect("send_raw failed — NRC 0x78 likely did not widen timeout to P2*");
+    assert_eq!(response, UDS_SLOW_FINAL_RSP);
+
+    drop(client);
+    let _ = server_task.await;
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn nrc78_cap_aborts_stuck_server() {
     let _ = tracing_subscriber::fmt().with_test_writer().try_init();

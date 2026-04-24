@@ -362,15 +362,17 @@ where
             return Ok(None);
         }
 
-        // Wait for response using the response timeout (not reconnect timeout).
-        // The response timeout is reset after each reconnection, so reconnection
-        // time doesn't eat into the response wait time.
+        // Wait for a response. Start with P2 (response_timeout); on the first
+        // NRC 0x78 the effective timeout widens to P2* (response_pending_timeout)
+        // for the rest of the request, per UDS ISO 14229 semantics. The timer
+        // resets after each reconnection so reconnection time doesn't eat into
+        // the response wait.
         let mut response_start = Instant::now();
-        let response_timeout = self.config.response_timeout;
+        let mut current_timeout = self.config.response_timeout;
 
         loop {
-            // Check if we've exceeded response timeout
-            if response_start.elapsed() >= response_timeout {
+            // Check if we've exceeded the effective timeout (P2 or P2*).
+            if response_start.elapsed() >= current_timeout {
                 if reconnected_without_resend {
                     // No response arrived on the new connection — re-send the request.
                     // This is safe because the server is already in the requested state
@@ -383,7 +385,7 @@ where
                     response_start = Instant::now();
                     continue;
                 }
-                return Err(Error::Timeout(response_timeout));
+                return Err(Error::Timeout(current_timeout));
             }
 
             // Use pending message from reconnection if available, otherwise wait for one
@@ -440,7 +442,7 @@ where
                 // the interval cap when keepalives are on and the interval is
                 // non-zero — callers with keepalives off shouldn't get extra
                 // wakeups, and a zero interval would otherwise spin this loop.
-                let remaining = response_timeout.saturating_sub(response_start.elapsed());
+                let remaining = current_timeout.saturating_sub(response_start.elapsed());
                 let mut receive_timeout = remaining.min(Duration::from_secs(1));
                 if self.config.auto_tester_present && !self.config.tester_present_interval.is_zero()
                 {
@@ -496,7 +498,7 @@ where
             // Check for NRC 0x78 (Response Pending)
             if Self::is_response_pending(&response_bytes) {
                 debug!(
-                    "Received NRC 0x78 (Response Pending), resetting timeout and waiting for final response"
+                    "Received NRC 0x78 (Response Pending), switching to P2* and waiting for final response"
                 );
                 if let Some(max) = max_pending {
                     pending_count += 1;
@@ -508,6 +510,10 @@ where
                     }
                 }
                 response_start = Instant::now();
+                // Per ISO 14229, each NRC 0x78 extends the wait by P2* rather
+                // than P2. Widen the effective timeout for the remainder of
+                // this request (it's a no-op if already at P2*).
+                current_timeout = self.config.response_pending_timeout;
                 continue; // Wait for next response WITHOUT re-sending
             }
 
@@ -566,13 +572,14 @@ where
             }
         }
 
-        // Wait for response using the response timeout (not reconnect timeout).
+        // See send() for rationale: start at P2 (response_timeout), widen to
+        // P2* (response_pending_timeout) after the first NRC 0x78.
         let mut response_start = Instant::now();
-        let response_timeout = self.config.response_timeout;
+        let mut current_timeout = self.config.response_timeout;
 
         loop {
-            // Check if we've exceeded response timeout
-            if response_start.elapsed() >= response_timeout {
+            // Check if we've exceeded the effective timeout (P2 or P2*).
+            if response_start.elapsed() >= current_timeout {
                 if reconnected_without_resend {
                     info!("No response after reconnection, re-sending request");
                     client
@@ -582,7 +589,7 @@ where
                     response_start = Instant::now();
                     continue;
                 }
-                return Err(Error::Timeout(response_timeout));
+                return Err(Error::Timeout(current_timeout));
             }
 
             // Use pending message from reconnection if available, otherwise wait for one
@@ -630,7 +637,7 @@ where
 
                 // Same gating as send(): only cap receive_timeout by the keepalive
                 // interval when keepalives are on and the interval is non-zero.
-                let remaining = response_timeout.saturating_sub(response_start.elapsed());
+                let remaining = current_timeout.saturating_sub(response_start.elapsed());
                 let mut receive_timeout = remaining.min(Duration::from_secs(1));
                 if self.config.auto_tester_present && !self.config.tester_present_interval.is_zero()
                 {
@@ -681,7 +688,7 @@ where
             // Check for NRC 0x78 (Response Pending)
             if Self::is_response_pending(&response_bytes) {
                 debug!(
-                    "Received NRC 0x78 (Response Pending), resetting timeout and waiting for final response"
+                    "Received NRC 0x78 (Response Pending), switching to P2* and waiting for final response"
                 );
                 if let Some(max) = max_pending {
                     pending_count += 1;
@@ -693,6 +700,9 @@ where
                     }
                 }
                 response_start = Instant::now();
+                // Per ISO 14229, widen the effective timeout to P2* for the
+                // remainder of this request (no-op once already at P2*).
+                current_timeout = self.config.response_pending_timeout;
                 continue; // Wait for next response WITHOUT re-sending
             }
 
