@@ -48,4 +48,13 @@ pub enum Error {
     /// but no response was received. The caller should proceed with subsequent requests.
     #[error("Connection lost and restored - no response received for request")]
     ReconnectedWithoutResponse,
+
+    /// The server sent more consecutive NRC 0x78 (Response Pending) responses
+    /// than `SessionConfig::max_response_pending_count` allows, suggesting it
+    /// is stuck and will never produce a final response.
+    #[error("server sent more than {max} consecutive NRC 0x78 responses without final answer")]
+    Nrc78PendingExceeded {
+        /// The configured maximum that was exceeded.
+        max: u32,
+    },
 }

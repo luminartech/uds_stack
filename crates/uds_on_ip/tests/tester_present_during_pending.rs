@@ -13,6 +13,10 @@ use std::{
     time::Duration,
 };
 
+// Counters only track aggregate "did this happen" state, so Relaxed is
+// sufficient across the threads that touch them.
+const COUNTER_ORDER: Ordering = Ordering::Relaxed;
+
 use async_trait::async_trait;
 use simple_doip::{
     LogicalAddress,
@@ -140,7 +144,7 @@ async fn run_fake_server(
             .expect("failed to send diag ack");
 
         if user_data == UDS_TESTER_PRESENT {
-            tp_counter.fetch_add(1, Ordering::SeqCst);
+            tp_counter.fetch_add(1, COUNTER_ORDER);
             // TP is sent with suppress-positive-response (0x80), no UDS response.
             continue;
         }
@@ -168,7 +172,7 @@ async fn run_fake_server(
                                 .await
                                 .expect("failed to ack TP during pending");
                             if tp_user == UDS_TESTER_PRESENT {
-                                tp_counter.fetch_add(1, Ordering::SeqCst);
+                                tp_counter.fetch_add(1, COUNTER_ORDER);
                             }
                         }
                         Ok(Some(_)) => {}
@@ -290,7 +294,7 @@ async fn tester_present_fires_during_nrc78_wait() {
 
     // Count TPs that arrived *after* the slow request starts, so the pre-request
     // keepalive-task sends (if any) don't confuse the assertion.
-    let tp_before = tp_counter.load(Ordering::SeqCst);
+    let tp_before = tp_counter.load(COUNTER_ORDER);
 
     let response = timeout(
         Duration::from_secs(20),
@@ -303,7 +307,7 @@ async fn tester_present_fires_during_nrc78_wait() {
 
     // Give the server a beat to flush any final ACKs before tearing down.
     tokio::time::sleep(Duration::from_millis(50)).await;
-    let tp_after = tp_counter.load(Ordering::SeqCst);
+    let tp_after = tp_counter.load(COUNTER_ORDER);
     let during = tp_after - tp_before;
 
     drop(client);
@@ -312,6 +316,13 @@ async fn tester_present_fires_during_nrc78_wait() {
     assert!(
         during >= 4,
         "expected at least 4 TesterPresent messages during the ~2s NRC 0x78 wait, got {during} (total {tp_after})",
+    );
+    // Upper bound catches regressions where we accidentally double-fire
+    // (e.g., background keepalive task suddenly starts racing the in-request
+    // path). Expected ~10 with 200 ms interval over ~2 s.
+    assert!(
+        during <= 20,
+        "TesterPresent fired too often during the ~2s wait: got {during} (total {tp_after})",
     );
 }
 
@@ -352,7 +363,7 @@ async fn tester_present_not_sent_when_disabled() {
     assert_eq!(response, UDS_SLOW_FINAL_RSP);
 
     tokio::time::sleep(Duration::from_millis(50)).await;
-    let total = tp_counter.load(Ordering::SeqCst);
+    let total = tp_counter.load(COUNTER_ORDER);
     drop(client);
     let _ = server_task.await;
 
@@ -360,4 +371,166 @@ async fn tester_present_not_sent_when_disabled() {
         total, 0,
         "no TesterPresent should be sent when auto_tester_present is false, got {total}",
     );
+}
+
+/// Even with `auto_tester_present: true`, a zero `tester_present_interval`
+/// must not produce a busy-send loop in the receive path. With the helper
+/// properly guarding zero intervals, the expected TP count during the wait
+/// is exactly 0, and the slow request still completes normally.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn tester_present_not_sent_when_interval_is_zero() {
+    let _ = tracing_subscriber::fmt().with_test_writer().try_init();
+
+    let listener = TcpListener::bind(("127.0.0.1", 0))
+        .await
+        .expect("failed to bind listener");
+    let port = listener.local_addr().unwrap().port();
+
+    let tp_counter = Arc::new(AtomicUsize::new(0));
+    let server_tp = Arc::clone(&tp_counter);
+    let server_task = tokio::spawn(async move {
+        run_fake_server(listener, server_tp, 3, Duration::from_millis(200)).await;
+    });
+
+    let client = connect_client(
+        port,
+        SessionConfig {
+            auto_tester_present: true,
+            auto_reconnect: false,
+            tester_present_interval: Duration::ZERO,
+            response_timeout: Duration::from_secs(30),
+            ..SessionConfig::default()
+        },
+    )
+    .await;
+
+    let response = timeout(
+        Duration::from_secs(10),
+        client.send_raw(UDS_SLOW_REQ.to_vec()),
+    )
+    .await
+    .expect("send_raw timed out — possible busy-spin on zero interval")
+    .expect("send_raw failed");
+    assert_eq!(response, UDS_SLOW_FINAL_RSP);
+
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    let total = tp_counter.load(COUNTER_ORDER);
+    drop(client);
+    let _ = server_task.await;
+
+    assert_eq!(
+        total, 0,
+        "zero interval must disable TP emission, got {total}",
+    );
+}
+
+// TODO (coverage gap): an end-to-end test for the "reconnect during an
+// in-request NRC 0x78 wait then emit a TP on the new connection" path
+// would exercise `reconnect_and_keepalive` under test. It requires an
+// `auto_reconnect: true` client and a fake server that implements DoIP's
+// listener-side reconnect (see `simple_doip::client::Client::reconnect`
+// and `bind_socket`), which is a substantial amount of plumbing beyond
+// this test's scope. Behavior is verified today via the live flash on a
+// real sensor (see the #543 test report) and implicitly by the
+// `nrc78_cap_aborts_stuck_server` test below, which exercises the same
+// receive loop without reconnect.
+
+/// A server stuck in NRC 0x78 forever exercises
+/// `max_response_pending_count`. With a small cap the client must abort
+/// the request with `Error::Nrc78PendingExceeded` rather than waiting
+/// indefinitely.
+async fn run_forever_pending_server(listener: TcpListener) {
+    let (mut stream, _) = listener.accept().await.expect("accept failed");
+    let (pt, payload) = read_frame(&mut stream)
+        .await
+        .expect("missing routing activation");
+    assert_eq!(pt, PT_ROUTING_ACTIVATION_REQ);
+    let tester = LogicalAddress(u16::from_be_bytes([payload[0], payload[1]]));
+    stream
+        .write_all(&build_routing_activation_rsp(tester, SERVER_PHYSICAL))
+        .await
+        .expect("write activation rsp");
+
+    let (pt, payload) = read_frame(&mut stream).await.expect("missing slow req");
+    assert_eq!(pt, PT_DIAG_MESSAGE);
+    let addr = LogicalAddress(u16::from_be_bytes([payload[0], payload[1]]));
+    let user_data = &payload[4..];
+    stream
+        .write_all(&build_diag_ack(SERVER_PHYSICAL, addr, user_data))
+        .await
+        .expect("write diag ack");
+
+    // Infinite NRC 0x78 loop. Ack any TP that arrives in between.
+    loop {
+        stream
+            .write_all(&build_diag_msg(
+                SERVER_PHYSICAL,
+                addr,
+                &[0x7F, UDS_SLOW_REQ[0], 0x78],
+            ))
+            .await
+            .expect("write NRC 0x78");
+        let sleep_until = tokio::time::Instant::now() + Duration::from_millis(150);
+        loop {
+            let remaining = sleep_until.saturating_duration_since(tokio::time::Instant::now());
+            if remaining.is_zero() {
+                break;
+            }
+            match timeout(remaining, read_frame(&mut stream)).await {
+                Ok(Some((PT_DIAG_MESSAGE, pl))) if pl.len() >= 4 => {
+                    let a = LogicalAddress(u16::from_be_bytes([pl[0], pl[1]]));
+                    let _ = stream
+                        .write_all(&build_diag_ack(SERVER_PHYSICAL, a, &pl[4..]))
+                        .await;
+                }
+                Ok(Some(_)) => {}
+                Ok(None) | Err(_) => break,
+            }
+        }
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn nrc78_cap_aborts_stuck_server() {
+    let _ = tracing_subscriber::fmt().with_test_writer().try_init();
+
+    let listener = TcpListener::bind(("127.0.0.1", 0))
+        .await
+        .expect("failed to bind listener");
+    let port = listener.local_addr().unwrap().port();
+
+    let server_task = tokio::spawn(run_forever_pending_server(listener));
+
+    let max = 5u32;
+    let client = connect_client(
+        port,
+        SessionConfig {
+            tester_present_interval: Duration::from_millis(500),
+            auto_tester_present: true,
+            auto_reconnect: false,
+            response_timeout: Duration::from_secs(10),
+            max_response_pending_count: Some(max),
+            ..SessionConfig::default()
+        },
+    )
+    .await;
+
+    let err = timeout(
+        Duration::from_secs(10),
+        client.send_raw(UDS_SLOW_REQ.to_vec()),
+    )
+    .await
+    .expect("send_raw timed out instead of returning Nrc78PendingExceeded")
+    .expect_err("expected error but got positive response");
+
+    match err {
+        uds_on_ip::Error::Nrc78PendingExceeded { max: reported_max } => {
+            assert_eq!(reported_max, max);
+        }
+        other => panic!("expected Nrc78PendingExceeded, got {other:?}"),
+    }
+
+    drop(client);
+    server_task.abort();
+    let _ = server_task.await;
 }

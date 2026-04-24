@@ -31,6 +31,15 @@ pub struct SessionConfig {
     /// Must be long enough to cover sensor reboot times (typically 5-10 seconds)
     /// plus successful reconnection overhead.
     pub reconnect_timeout: Duration,
+
+    /// Maximum number of consecutive NRC 0x78 (Response Pending) responses to
+    /// accept for a single request before giving up with
+    /// [`Error::Nrc78PendingExceeded`](crate::Error::Nrc78PendingExceeded).
+    /// `None` disables the cap (original unbounded behavior).
+    /// Default is `Some(60)` — with the 25 s P2* each NRC 0x78 resets the wait,
+    /// so 60 bounds a single request at ~25 minutes of NRC 0x78 flapping even
+    /// though each individual wait may still be up to P2*.
+    pub max_response_pending_count: Option<u32>,
 }
 
 impl Default for SessionConfig {
@@ -42,6 +51,7 @@ impl Default for SessionConfig {
             auto_tester_present: true,
             auto_reconnect: true,
             reconnect_timeout: Duration::from_secs(30),
+            max_response_pending_count: Some(60),
         }
     }
 }
@@ -86,6 +96,13 @@ impl SessionConfig {
     /// Each reconnection attempt may take up to ~6 seconds.
     pub fn with_reconnect_timeout(mut self, timeout: Duration) -> Self {
         self.reconnect_timeout = timeout;
+        self
+    }
+
+    /// Set the maximum number of consecutive NRC 0x78 (Response Pending)
+    /// responses to accept. Use `None` to disable the cap.
+    pub fn with_max_response_pending_count(mut self, max: Option<u32>) -> Self {
+        self.max_response_pending_count = max;
         self
     }
 }

@@ -20,6 +20,21 @@ use uds_protocol::{
 
 use crate::{Error, Result, SessionConfig};
 
+/// Lock a poison-tolerant `Instant` mutex.
+///
+/// The activity timestamp is only ever written inside critical sections that
+/// cannot panic (a scalar assignment or an `elapsed()` call), so poisoning
+/// would indicate a panic elsewhere while the guard happened to be held.
+/// In that case recovering the inner value and continuing is strictly
+/// better than cascading panics through every subsequent UDS call — the
+/// timestamp's precision is not load-bearing for correctness, only for
+/// keep-alive cadence.
+fn lock_activity(activity: &std::sync::Mutex<Instant>) -> std::sync::MutexGuard<'_, Instant> {
+    activity
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
 /// A UDS client that manages diagnostic sessions over DoIP.
 ///
 /// This client wraps the low-level DoIP client and provides a higher-level
@@ -160,7 +175,7 @@ async fn keepalive_loop<Conn>(
     loop {
         tokio::time::sleep(interval).await;
 
-        let elapsed = last_activity.lock().unwrap().elapsed();
+        let elapsed = lock_activity(&last_activity).elapsed();
         if elapsed < interval {
             continue;
         }
@@ -172,7 +187,7 @@ async fn keepalive_loop<Conn>(
         {
             Ok(()) => {
                 debug!("Sent keepalive TesterPresent");
-                *last_activity.lock().unwrap() = Instant::now();
+                *lock_activity(&last_activity) = Instant::now();
             }
             Err(e) => {
                 warn!("Keepalive TesterPresent failed: {}", e);
@@ -180,6 +195,14 @@ async fn keepalive_loop<Conn>(
             }
         }
     }
+}
+
+/// Should the background keepalive loop be spawned for this config?
+///
+/// A zero interval would make the loop spin, and an explicit disable skips
+/// it entirely.
+fn should_run_keepalive(config: &SessionConfig) -> bool {
+    config.auto_tester_present && !config.tester_present_interval.is_zero()
 }
 
 impl UdsClient<ConnectorSocket> {
@@ -202,7 +225,7 @@ impl UdsClient<ConnectorSocket> {
 
         let doip_client = Arc::new(Mutex::new(client));
         let last_activity = Arc::new(std::sync::Mutex::new(Instant::now()));
-        let keepalive_handle = if options.session_config.auto_tester_present {
+        let keepalive_handle = if should_run_keepalive(&options.session_config) {
             Some(tokio::spawn(keepalive_loop(
                 Arc::clone(&doip_client),
                 Arc::clone(&last_activity),
@@ -232,7 +255,7 @@ where
     pub fn from_doip_client(client: Client<Conn>, config: SessionConfig) -> Self {
         let doip_client = Arc::new(Mutex::new(client));
         let last_activity = Arc::new(std::sync::Mutex::new(Instant::now()));
-        let keepalive_handle = if config.auto_tester_present {
+        let keepalive_handle = if should_run_keepalive(&config) {
             Some(tokio::spawn(keepalive_loop(
                 Arc::clone(&doip_client),
                 Arc::clone(&last_activity),
@@ -292,7 +315,7 @@ where
 
         debug!("Sending UDS request: {:02X?}", request_bytes);
 
-        *self.last_activity.lock().unwrap() = Instant::now();
+        *lock_activity(&self.last_activity) = Instant::now();
         let mut client = self.doip_client.lock().await;
 
         // Track whether a reconnection happened without re-sending the request.
@@ -301,6 +324,9 @@ where
         // new connection first. Only if no response arrives do we re-send.
         let mut reconnected_without_resend = false;
         let mut pending_message: Option<Message> = None;
+        let reconnect_timeout = self.config.reconnect_timeout;
+        let max_pending = self.config.max_response_pending_count;
+        let mut pending_count: u32 = 0;
 
         // Attempt to send, with reconnection if needed
         let send_result = client
@@ -310,20 +336,20 @@ where
         if let Err(ref e) = send_result {
             if self.config.auto_reconnect && Self::is_connection_error(e) {
                 warn!("Connection error during send, attempting reconnect: {}", e);
-                let reconnect_timeout = self.config.reconnect_timeout;
-                match Self::attempt_reconnect(&mut client, reconnect_timeout).await {
-                    Ok(Some(msg)) => {
-                        Self::send_tester_present_locked(&mut client, &self.last_activity).await;
-                        pending_message = Some(msg);
-                    }
-                    Ok(None) => {
-                        Self::send_tester_present_locked(&mut client, &self.last_activity).await;
+                match Self::reconnect_and_keepalive(
+                    &mut client,
+                    &self.last_activity,
+                    reconnect_timeout,
+                )
+                .await?
+                {
+                    Some(msg) => pending_message = Some(msg),
+                    None => {
                         // Reconnected but no response yet — the request was likely
                         // received before the disconnect. Wait for the response on
                         // the new connection before re-sending.
                         reconnected_without_resend = true;
                     }
-                    Err(e) => return Err(e),
                 }
             } else {
                 return Err(Error::Transport(send_result.unwrap_err()));
@@ -367,14 +393,45 @@ where
                 // Emit keepalive TesterPresent if the interval has elapsed since the last
                 // outgoing message. The background keepalive task contends for the same
                 // doip_client lock we hold, so during long NRC 0x78 waits it is starved;
-                // we fire it ourselves here while the lock is already in hand.
+                // we fire it ourselves here while the lock is already in hand. A
+                // connection error from the TP send is a proactive signal that the
+                // socket is dead even though the receive side may still yield buffered
+                // data — escalate to reconnect instead of spinning on failed sends.
                 if self.config.auto_tester_present {
-                    Self::maybe_send_tester_present_locked(
+                    match Self::maybe_send_tester_present_while_lock_held(
                         &mut client,
                         &self.last_activity,
                         self.config.tester_present_interval,
                     )
-                    .await;
+                    .await
+                    {
+                        Ok(()) => {}
+                        Err(e) if self.config.auto_reconnect && Self::is_connection_error(&e) => {
+                            warn!("TP send detected dead connection, reconnecting: {}", e);
+                            match Self::reconnect_and_keepalive(
+                                &mut client,
+                                &self.last_activity,
+                                reconnect_timeout,
+                            )
+                            .await?
+                            {
+                                Some(msg) => {
+                                    info!("Using message received during reconnection");
+                                    pending_message = Some(msg);
+                                }
+                                None => {
+                                    info!("Reconnected — waiting for response on new connection");
+                                    reconnected_without_resend = true;
+                                }
+                            }
+                            response_start = Instant::now();
+                            continue;
+                        }
+                        Err(_) => {
+                            // Non-connection error already logged at DEBUG inside the
+                            // helper; the subsequent receive will surface it if fatal.
+                        }
+                    }
                 }
 
                 // Cap the receive timeout so we wake at least once per keepalive
@@ -401,28 +458,26 @@ where
                             "Connection error during receive, attempting reconnect: {}",
                             e,
                         );
-                        let reconnect_timeout = self.config.reconnect_timeout;
-                        match Self::attempt_reconnect(&mut client, reconnect_timeout).await {
-                            Ok(Some(msg)) => {
-                                Self::send_tester_present_locked(&mut client, &self.last_activity)
-                                    .await;
+                        match Self::reconnect_and_keepalive(
+                            &mut client,
+                            &self.last_activity,
+                            reconnect_timeout,
+                        )
+                        .await?
+                        {
+                            Some(msg) => {
                                 info!("Using message received during reconnection");
                                 pending_message = Some(msg);
-                                response_start = Instant::now();
-                                continue;
                             }
-                            Ok(None) => {
-                                Self::send_tester_present_locked(&mut client, &self.last_activity)
-                                    .await;
+                            None => {
                                 // Reconnected — continue waiting for the response on
                                 // the new connection. Will re-send if timeout expires.
                                 info!("Reconnected — waiting for response on new connection");
                                 reconnected_without_resend = true;
-                                response_start = Instant::now();
-                                continue;
                             }
-                            Err(e) => return Err(e),
                         }
+                        response_start = Instant::now();
+                        continue;
                     }
                     Err(simple_doip::Error::ResponseTimeoutExceeded) => {
                         // Per-receive timeout - continue loop to check response timeout
@@ -443,6 +498,15 @@ where
                 debug!(
                     "Received NRC 0x78 (Response Pending), resetting timeout and waiting for final response"
                 );
+                if let Some(max) = max_pending {
+                    pending_count += 1;
+                    if pending_count > max {
+                        warn!(
+                            "Exceeded NRC 0x78 cap ({max}); server appears stuck, aborting request"
+                        );
+                        return Err(Error::Nrc78PendingExceeded { max });
+                    }
+                }
                 response_start = Instant::now();
                 continue; // Wait for next response WITHOUT re-sending
             }
@@ -469,12 +533,15 @@ where
     pub async fn send_raw(&self, request_bytes: Vec<u8>) -> Result<Vec<u8>> {
         debug!("Sending raw UDS request: {:02X?}", request_bytes);
 
-        *self.last_activity.lock().unwrap() = Instant::now();
+        *lock_activity(&self.last_activity) = Instant::now();
         let mut client = self.doip_client.lock().await;
 
         // Track whether a reconnection happened without re-sending the request.
         let mut reconnected_without_resend = false;
         let mut pending_message: Option<Message> = None;
+        let reconnect_timeout = self.config.reconnect_timeout;
+        let max_pending = self.config.max_response_pending_count;
+        let mut pending_count: u32 = 0;
 
         // Attempt to send, with reconnection if needed
         let send_result = client
@@ -484,17 +551,15 @@ where
         if let Err(ref e) = send_result {
             if self.config.auto_reconnect && Self::is_connection_error(e) {
                 warn!("Connection error during send, attempting reconnect: {}", e);
-                let reconnect_timeout = self.config.reconnect_timeout;
-                match Self::attempt_reconnect(&mut client, reconnect_timeout).await {
-                    Ok(Some(msg)) => {
-                        Self::send_tester_present_locked(&mut client, &self.last_activity).await;
-                        pending_message = Some(msg);
-                    }
-                    Ok(None) => {
-                        Self::send_tester_present_locked(&mut client, &self.last_activity).await;
-                        reconnected_without_resend = true;
-                    }
-                    Err(e) => return Err(e),
+                match Self::reconnect_and_keepalive(
+                    &mut client,
+                    &self.last_activity,
+                    reconnect_timeout,
+                )
+                .await?
+                {
+                    Some(msg) => pending_message = Some(msg),
+                    None => reconnected_without_resend = true,
                 }
             } else {
                 return Err(Error::Transport(send_result.unwrap_err()));
@@ -524,21 +589,47 @@ where
             let message = if let Some(msg) = pending_message.take() {
                 msg
             } else {
-                // See send_and_receive for rationale: the background keepalive task is
+                // See send() for rationale: the background keepalive task is
                 // blocked on the doip_client lock we hold, so we emit TesterPresent
-                // ourselves when the interval has elapsed since the last outgoing message.
+                // ourselves when the interval has elapsed since the last outgoing
+                // message. A connection-error from the TP send is a proactive dead
+                // connection signal — escalate to reconnect rather than spinning.
                 if self.config.auto_tester_present {
-                    Self::maybe_send_tester_present_locked(
+                    match Self::maybe_send_tester_present_while_lock_held(
                         &mut client,
                         &self.last_activity,
                         self.config.tester_present_interval,
                     )
-                    .await;
+                    .await
+                    {
+                        Ok(()) => {}
+                        Err(e) if self.config.auto_reconnect && Self::is_connection_error(&e) => {
+                            warn!("TP send detected dead connection, reconnecting: {}", e);
+                            match Self::reconnect_and_keepalive(
+                                &mut client,
+                                &self.last_activity,
+                                reconnect_timeout,
+                            )
+                            .await?
+                            {
+                                Some(msg) => {
+                                    info!("Using message received during reconnection");
+                                    pending_message = Some(msg);
+                                }
+                                None => {
+                                    info!("Reconnected — waiting for response on new connection");
+                                    reconnected_without_resend = true;
+                                }
+                            }
+                            response_start = Instant::now();
+                            continue;
+                        }
+                        Err(_) => {}
+                    }
                 }
 
-                // Same gating as send_and_receive: only cap receive_timeout by
-                // the keepalive interval when keepalives are on and the interval
-                // is non-zero.
+                // Same gating as send(): only cap receive_timeout by the keepalive
+                // interval when keepalives are on and the interval is non-zero.
                 let remaining = response_timeout.saturating_sub(response_start.elapsed());
                 let mut receive_timeout = remaining.min(Duration::from_secs(1));
                 if self.config.auto_tester_present && !self.config.tester_present_interval.is_zero()
@@ -555,26 +646,24 @@ where
                             "Connection error during receive, attempting reconnect: {}",
                             e,
                         );
-                        let reconnect_timeout = self.config.reconnect_timeout;
-                        match Self::attempt_reconnect(&mut client, reconnect_timeout).await {
-                            Ok(Some(msg)) => {
-                                Self::send_tester_present_locked(&mut client, &self.last_activity)
-                                    .await;
+                        match Self::reconnect_and_keepalive(
+                            &mut client,
+                            &self.last_activity,
+                            reconnect_timeout,
+                        )
+                        .await?
+                        {
+                            Some(msg) => {
                                 info!("Using message received during reconnection");
                                 pending_message = Some(msg);
-                                response_start = Instant::now();
-                                continue;
                             }
-                            Ok(None) => {
-                                Self::send_tester_present_locked(&mut client, &self.last_activity)
-                                    .await;
+                            None => {
                                 info!("Reconnected — waiting for response on new connection");
                                 reconnected_without_resend = true;
-                                response_start = Instant::now();
-                                continue;
                             }
-                            Err(e) => return Err(e),
                         }
+                        response_start = Instant::now();
+                        continue;
                     }
                     Err(simple_doip::Error::ResponseTimeoutExceeded) => {
                         continue;
@@ -594,6 +683,15 @@ where
                 debug!(
                     "Received NRC 0x78 (Response Pending), resetting timeout and waiting for final response"
                 );
+                if let Some(max) = max_pending {
+                    pending_count += 1;
+                    if pending_count > max {
+                        warn!(
+                            "Exceeded NRC 0x78 cap ({max}); server appears stuck, aborting request"
+                        );
+                        return Err(Error::Nrc78PendingExceeded { max });
+                    }
+                }
                 response_start = Instant::now();
                 continue; // Wait for next response WITHOUT re-sending
             }
@@ -665,7 +763,7 @@ where
         suppress_response: bool,
     ) -> Result<Option<ProtocolResponse>> {
         debug!("Sending tester present");
-        *self.last_activity.lock().unwrap() = Instant::now();
+        *lock_activity(&self.last_activity) = Instant::now();
         let request = ProtocolRequest::tester_present(suppress_response);
 
         self.send::<UdsSpec>(request, AddressType::Physical).await
@@ -713,6 +811,13 @@ where
         client: &mut Client<Conn>,
         reconnect_timeout: Duration,
     ) -> Result<Option<Message>> {
+        /// Cap each individual `client.reconnect()` call — simple_doip's
+        /// reconnect() does bind_socket + routing activation (~1-2s) followed
+        /// by a 5-second wait for in-flight messages, which bounds a healthy
+        /// attempt at roughly this value. Any single attempt taking longer is
+        /// almost certainly never returning.
+        const MAX_PER_ATTEMPT: Duration = Duration::from_secs(15);
+
         let start = Instant::now();
         let mut attempts = 0u32;
 
@@ -724,10 +829,15 @@ where
                 start.elapsed()
             );
 
-            // simple_doip's reconnect() does bind_socket + routing activation (~1-2s)
-            // followed by a 5-second wait for in-flight messages. Give it 15 seconds
-            // total to account for slow connections.
-            match tokio::time::timeout(Duration::from_secs(15), client.reconnect()).await {
+            // Respect the outer budget: the per-attempt cap must not stretch
+            // past `reconnect_timeout`, otherwise a configured 5-second
+            // reconnect budget could be ignored for up to 15s.
+            let remaining = reconnect_timeout.saturating_sub(start.elapsed());
+            let per_attempt = remaining.min(MAX_PER_ATTEMPT);
+            if per_attempt.is_zero() {
+                break;
+            }
+            match tokio::time::timeout(per_attempt, client.reconnect()).await {
                 Ok(Ok(maybe_message)) => {
                     info!("Reconnected successfully after {} attempts", attempts);
                     if maybe_message.is_some() {
@@ -753,26 +863,32 @@ where
         })
     }
 
-    /// Send a TesterPresent message to keep the ECU's S3 timer alive.
+    /// Send a TesterPresent while the caller already holds the `doip_client`
+    /// lock. Used after a successful reconnection and from the in-request
+    /// keep-alive path, where the background keepalive task is blocked on the
+    /// same mutex and cannot run.
     ///
-    /// Called after a successful reconnection while the doip_client lock is
-    /// already held, so the keepalive task (which also needs the lock) cannot
-    /// run. Without this, the ECU may revert to the default session during the
-    /// reconnection window.
-    async fn send_tester_present_locked(
+    /// Returns the underlying send error on failure so the caller can decide
+    /// whether to escalate (e.g. treat a connection error as a trigger for
+    /// reconnection). On success (and on failure) the error/success is logged
+    /// at DEBUG — callers that want a louder signal should log it themselves
+    /// with the context they have.
+    async fn send_tester_present_while_lock_held(
         client: &mut Client<Conn>,
         last_activity: &std::sync::Mutex<Instant>,
-    ) {
+    ) -> std::result::Result<(), simple_doip::Error> {
         match client
             .send_diagnostic_message(AddressType::Physical, vec![0x3E, 0x80])
             .await
         {
             Ok(()) => {
                 debug!("Sent TesterPresent while lock held");
-                *last_activity.lock().unwrap() = Instant::now();
+                *lock_activity(last_activity) = Instant::now();
+                Ok(())
             }
             Err(e) => {
-                warn!("TesterPresent while lock held failed: {}", e);
+                debug!("TesterPresent while lock held failed: {}", e);
+                Err(e)
             }
         }
     }
@@ -781,16 +897,38 @@ where
     /// last outgoing message. Intended for callers that already hold the
     /// `doip_client` lock across a long wait (e.g. NRC 0x78 response-pending
     /// loops), during which the background keepalive task is blocked.
-    async fn maybe_send_tester_present_locked(
+    ///
+    /// A zero interval is treated as "disabled" to avoid turning the receive
+    /// loop into a busy-spin. On a connection error the underlying error is
+    /// returned so callers can escalate to reconnect; otherwise `Ok(())`.
+    async fn maybe_send_tester_present_while_lock_held(
         client: &mut Client<Conn>,
         last_activity: &std::sync::Mutex<Instant>,
         interval: Duration,
-    ) {
-        let elapsed = last_activity.lock().unwrap().elapsed();
-        if elapsed < interval {
-            return;
+    ) -> std::result::Result<(), simple_doip::Error> {
+        if interval.is_zero() {
+            return Ok(());
         }
-        Self::send_tester_present_locked(client, last_activity).await;
+        let elapsed = lock_activity(last_activity).elapsed();
+        if elapsed < interval {
+            return Ok(());
+        }
+        Self::send_tester_present_while_lock_held(client, last_activity).await
+    }
+
+    /// Drive a reconnection and immediately emit a keep-alive TP on the
+    /// new connection. Returns any in-flight message surfaced by the
+    /// reconnect. The post-reconnect TP failure (if any) is intentionally
+    /// swallowed: the next send/receive will surface a still-broken link
+    /// through the normal error paths.
+    async fn reconnect_and_keepalive(
+        client: &mut Client<Conn>,
+        last_activity: &std::sync::Mutex<Instant>,
+        reconnect_timeout: Duration,
+    ) -> Result<Option<Message>> {
+        let maybe_msg = Self::attempt_reconnect(client, reconnect_timeout).await?;
+        let _ = Self::send_tester_present_while_lock_held(client, last_activity).await;
+        Ok(maybe_msg)
     }
 
     /// Extract the diagnostic payload from a DoIP message.
