@@ -1074,9 +1074,13 @@ where
         let request_sid = request_bytes[0];
         let response_sid = response_bytes[0];
 
-        // Negative response (0x7F)
+        // Negative response (0x7F). A well-formed NACK is
+        // `[0x7F, request_sid, NRC]` — three bytes minimum. A two-byte
+        // `[0x7F, sid]` is missing the NRC and must be rejected as
+        // malformed, not classified by inspecting `response_bytes[1]`
+        // alone.
         if response_sid == 0x7F {
-            if response_bytes.len() < 2 {
+            if response_bytes.len() < 3 {
                 return ResponseMatch::Malformed("Negative response too short".to_string());
             }
             let neg_response_for_sid = response_bytes[1];
@@ -1189,9 +1193,30 @@ mod classify_response_tests {
     }
 
     #[test]
-    fn truncated_nack_is_malformed() {
+    fn truncated_nack_one_byte_is_malformed() {
         // NACK must be at least [0x7F, request_sid, NRC].
         let m = TestClient::classify_response(&[0x10, 0x03], &[0x7F]);
         assert!(matches!(m, ResponseMatch::Malformed(_)), "got {m:?}");
+    }
+
+    #[test]
+    fn truncated_nack_two_bytes_is_malformed() {
+        // A two-byte NACK [0x7F, <sid>] has no NRC byte and must be
+        // rejected — otherwise classifying by `response_bytes[1]` alone
+        // would misclassify this as either `ForRequest` (when the
+        // second byte happens to match the request SID) or
+        // `ForOtherRequest` (when it doesn't), instead of surfacing the
+        // truncation. Lock this behavior in.
+        let m_matching_sid = TestClient::classify_response(&[0x10, 0x03], &[0x7F, 0x10]);
+        assert!(
+            matches!(m_matching_sid, ResponseMatch::Malformed(_)),
+            "two-byte NACK whose inner byte matches the request SID must be Malformed, got {m_matching_sid:?}",
+        );
+
+        let m_other_sid = TestClient::classify_response(&[0x10, 0x03], &[0x7F, 0x3E]);
+        assert!(
+            matches!(m_other_sid, ResponseMatch::Malformed(_)),
+            "two-byte NACK whose inner byte is some other SID must be Malformed, got {m_other_sid:?}",
+        );
     }
 }
