@@ -627,3 +627,142 @@ async fn nrc78_cap_aborts_stuck_server() {
     server_task.abort();
     let _ = server_task.await;
 }
+
+/// Fake server that NACKs the first TesterPresent it sees during a
+/// UDS_SLOW_REQ pending wait, then delivers the final positive response
+/// for the primary request. Exercises the `classify_response` fix — the
+/// stray NACK for SID 0x3E must not abort the UDS_SLOW_REQ correlation.
+async fn run_server_that_nacks_tp_during_pending(listener: TcpListener) {
+    let (mut stream, _) = listener
+        .accept()
+        .await
+        .expect("fake server failed to accept");
+
+    // Routing activation.
+    let (pt, payload) = read_frame(&mut stream)
+        .await
+        .expect("client closed before routing activation");
+    assert_eq!(pt, PT_ROUTING_ACTIVATION_REQ);
+    let tester_addr = LogicalAddress(u16::from_be_bytes([payload[0], payload[1]]));
+    stream
+        .write_all(&build_routing_activation_rsp(tester_addr, SERVER_PHYSICAL))
+        .await
+        .expect("failed to send activation response");
+
+    // Primary request.
+    let (pt, payload) = read_frame(&mut stream)
+        .await
+        .expect("client closed before UDS_SLOW_REQ");
+    assert_eq!(pt, PT_DIAG_MESSAGE);
+    let client_addr = LogicalAddress(u16::from_be_bytes([payload[0], payload[1]]));
+    let user_data = &payload[4..];
+    assert_eq!(user_data, UDS_SLOW_REQ, "expected UDS_SLOW_REQ first");
+    stream
+        .write_all(&build_diag_ack(SERVER_PHYSICAL, client_addr, user_data))
+        .await
+        .expect("failed to ack UDS_SLOW_REQ");
+
+    // First NRC 0x78 immediately to push the client into P2* / "wait
+    // long enough that a TP gets emitted".
+    stream
+        .write_all(&build_diag_msg(
+            SERVER_PHYSICAL,
+            client_addr,
+            &[0x7F, UDS_SLOW_REQ[0], 0x78],
+        ))
+        .await
+        .expect("failed to send first NRC 0x78");
+
+    // Next inbound frame MUST be a TP (the in-lock keepalive fires
+    // because the interval has elapsed). ACK the DoIP layer, then NACK
+    // the UDS request inside — this is the exact shape that used to
+    // abort the primary request with "Negative response for SID 0x3e
+    // but expected 0x22".
+    let (pt, payload) = read_frame(&mut stream)
+        .await
+        .expect("client closed before TP arrived");
+    assert_eq!(pt, PT_DIAG_MESSAGE);
+    let tp_user = &payload[4..];
+    assert_eq!(tp_user, UDS_TESTER_PRESENT, "expected TesterPresent");
+    stream
+        .write_all(&build_diag_ack(SERVER_PHYSICAL, client_addr, tp_user))
+        .await
+        .expect("failed to ack TP");
+    // Stray NACK for the TP with NRC 0x22 (conditionsNotCorrect) —
+    // lands on the same TCP stream as the primary-request response.
+    stream
+        .write_all(&build_diag_msg(
+            SERVER_PHYSICAL,
+            client_addr,
+            &[0x7F, 0x3E, 0x22],
+        ))
+        .await
+        .expect("failed to send stray TP NACK");
+
+    // Final positive response for the primary request.
+    stream
+        .write_all(&build_diag_msg(
+            SERVER_PHYSICAL,
+            client_addr,
+            UDS_SLOW_FINAL_RSP,
+        ))
+        .await
+        .expect("failed to send final response");
+
+    // Drain anything else (possible extra TPs) so the connection stays
+    // up long enough for the client to finish reading. Abort via the
+    // test harness.
+    loop {
+        if read_frame(&mut stream).await.is_none() {
+            return;
+        }
+    }
+}
+
+/// Regression: a stray NACK for an in-flight TesterPresent (0x3E) that
+/// arrives on the same TCP stream while the client is waiting on the
+/// primary request's response must be **ignored**, not treated as a
+/// failed primary response.
+///
+/// Pre-fix, this produced `Error::InvalidResponse("Negative response
+/// for SID 0x3e but expected 0x22")` and aborted the [INTERNAL_PROJECT_REDACTED] run (observed
+/// at `[8/37] Error: Command failed: ...` in the reported [INTERNAL_PROJECT_REDACTED] log).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn stray_tp_nack_during_pending_wait_is_ignored() {
+    let _ = tracing_subscriber::fmt().with_test_writer().try_init();
+
+    let listener = TcpListener::bind(("127.0.0.1", 0))
+        .await
+        .expect("failed to bind listener");
+    let port = listener.local_addr().unwrap().port();
+
+    let server_task = tokio::spawn(run_server_that_nacks_tp_during_pending(listener));
+
+    let client = connect_client(
+        port,
+        SessionConfig {
+            tester_present_interval: Duration::from_millis(200),
+            auto_tester_present: true,
+            auto_reconnect: false,
+            response_timeout: Duration::from_secs(2),
+            response_pending_timeout: Duration::from_secs(10),
+            ..SessionConfig::default()
+        },
+    )
+    .await;
+
+    let response = timeout(Duration::from_secs(10), client.send_raw(UDS_SLOW_REQ.to_vec()))
+        .await
+        .expect("send_raw timed out — stray TP NACK likely aborted the primary request")
+        .expect("send_raw failed — stray TP NACK should not fail the primary request");
+
+    assert_eq!(
+        response,
+        UDS_SLOW_FINAL_RSP.to_vec(),
+        "primary request must return the final positive response, not the stray TP NACK",
+    );
+
+    drop(client);
+    server_task.abort();
+    let _ = server_task.await;
+}
