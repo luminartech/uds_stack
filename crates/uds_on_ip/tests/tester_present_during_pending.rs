@@ -23,7 +23,6 @@ use simple_doip::{
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::{TcpListener, TcpSocket, TcpStream},
-    sync::Mutex as AsyncMutex,
     time::timeout,
 };
 use uds_on_ip::{SessionConfig, UdsClient};
@@ -259,10 +258,6 @@ async fn connect_client(port: u16, session_config: SessionConfig) -> UdsClient<L
         .expect("doip client connect failed");
     UdsClient::from_doip_client(doip_client, session_config)
 }
-
-/// Suppress unused-import warnings for the async Mutex used only in one test.
-#[allow(dead_code)]
-fn _tombstone(_: AsyncMutex<()>) {}
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn tester_present_fires_during_nrc78_wait() {

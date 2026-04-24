@@ -379,11 +379,16 @@ where
 
                 // Cap the receive timeout so we wake at least once per keepalive
                 // interval; otherwise a long interval could delay response-timeout
-                // checks, and a short one could miss its TP deadline.
+                // checks, and a short one could miss its TP deadline. Only apply
+                // the interval cap when keepalives are on and the interval is
+                // non-zero — callers with keepalives off shouldn't get extra
+                // wakeups, and a zero interval would otherwise spin this loop.
                 let remaining = response_timeout.saturating_sub(response_start.elapsed());
-                let receive_timeout = remaining
-                    .min(Duration::from_secs(1))
-                    .min(self.config.tester_present_interval);
+                let mut receive_timeout = remaining.min(Duration::from_secs(1));
+                if self.config.auto_tester_present && !self.config.tester_present_interval.is_zero()
+                {
+                    receive_timeout = receive_timeout.min(self.config.tester_present_interval);
+                }
 
                 let receive_result = client.receive_diagnostic_response(receive_timeout).await;
 
@@ -531,10 +536,15 @@ where
                     .await;
                 }
 
+                // Same gating as send_and_receive: only cap receive_timeout by
+                // the keepalive interval when keepalives are on and the interval
+                // is non-zero.
                 let remaining = response_timeout.saturating_sub(response_start.elapsed());
-                let receive_timeout = remaining
-                    .min(Duration::from_secs(1))
-                    .min(self.config.tester_present_interval);
+                let mut receive_timeout = remaining.min(Duration::from_secs(1));
+                if self.config.auto_tester_present && !self.config.tester_present_interval.is_zero()
+                {
+                    receive_timeout = receive_timeout.min(self.config.tester_present_interval);
+                }
 
                 let receive_result = client.receive_diagnostic_response(receive_timeout).await;
 
