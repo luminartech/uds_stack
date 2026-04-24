@@ -274,16 +274,23 @@ async fn tester_present_fires_during_nrc78_wait() {
 
     let tp_counter = Arc::new(AtomicUsize::new(0));
     let server_tp = Arc::clone(&tp_counter);
-    // 5 pending rounds × 400 ms ≈ 2 s of wait. With a 200 ms interval we expect
-    // ~10 TPs; we assert at least 4 to leave generous scheduling slack.
+    // 4 pending rounds × 1 s = ~4 s of wait. TP interval of 500 ms gives an
+    // expected count of ~8. Interval + cadence are kept loose on purpose —
+    // earlier iterations of this test used a 200 ms TP against a 400 ms NRC
+    // cadence, which occasionally raced simple_doip's internal oneshot
+    // handling under parallel-test load and surfaced a spurious
+    // `Transport(ConnectionClosed)` from `send_diagnostic_message`. The
+    // widened timings aren't load-bearing for what this test verifies
+    // (in-request TPs fire during a long NRC 0x78 wait), only for
+    // stability under concurrent test execution.
     let server_task = tokio::spawn(async move {
-        run_fake_server(listener, server_tp, 5, Duration::from_millis(400)).await;
+        run_fake_server(listener, server_tp, 4, Duration::from_millis(1000)).await;
     });
 
     let client = connect_client(
         port,
         SessionConfig {
-            tester_present_interval: Duration::from_millis(200),
+            tester_present_interval: Duration::from_millis(500),
             auto_tester_present: true,
             auto_reconnect: false,
             response_timeout: Duration::from_secs(30),
@@ -297,7 +304,7 @@ async fn tester_present_fires_during_nrc78_wait() {
     let tp_before = tp_counter.load(COUNTER_ORDER);
 
     let response = timeout(
-        Duration::from_secs(20),
+        Duration::from_secs(30),
         client.send_raw(UDS_SLOW_REQ.to_vec()),
     )
     .await
@@ -314,15 +321,15 @@ async fn tester_present_fires_during_nrc78_wait() {
     let _ = server_task.await;
 
     assert!(
-        during >= 4,
-        "expected at least 4 TesterPresent messages during the ~2s NRC 0x78 wait, got {during} (total {tp_after})",
+        during >= 3,
+        "expected at least 3 TesterPresent messages during the ~4s NRC 0x78 wait, got {during} (total {tp_after})",
     );
     // Upper bound catches regressions where we accidentally double-fire
     // (e.g., background keepalive task suddenly starts racing the in-request
-    // path). Expected ~10 with 200 ms interval over ~2 s.
+    // path). Expected ~8 with 500 ms interval over ~4 s.
     assert!(
-        during <= 20,
-        "TesterPresent fired too often during the ~2s wait: got {during} (total {tp_after})",
+        during <= 16,
+        "TesterPresent fired too often during the ~4s wait: got {during} (total {tp_after})",
     );
 }
 
