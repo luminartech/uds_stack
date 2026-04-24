@@ -17,5 +17,5 @@ tokio = { workspace = true, features = ["rt", "time", "sync"] }
 tracing.workspace = true
 
 [dev-dependencies]
-tokio.workspace = true
+tokio = { workspace = true, features = ["io-util", "net", "time", "sync", "macros", "rt-multi-thread"] }
 tracing-subscriber = { workspace = true, features = ["fmt"] }

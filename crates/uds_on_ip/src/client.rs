@@ -364,9 +364,26 @@ where
             let message = if let Some(msg) = pending_message.take() {
                 msg
             } else {
-                // Use remaining response time or 1 second, whichever is smaller
+                // Emit keepalive TesterPresent if the interval has elapsed since the last
+                // outgoing message. The background keepalive task contends for the same
+                // doip_client lock we hold, so during long NRC 0x78 waits it is starved;
+                // we fire it ourselves here while the lock is already in hand.
+                if self.config.auto_tester_present {
+                    Self::maybe_send_tester_present_locked(
+                        &mut client,
+                        &self.last_activity,
+                        self.config.tester_present_interval,
+                    )
+                    .await;
+                }
+
+                // Cap the receive timeout so we wake at least once per keepalive
+                // interval; otherwise a long interval could delay response-timeout
+                // checks, and a short one could miss its TP deadline.
                 let remaining = response_timeout.saturating_sub(response_start.elapsed());
-                let receive_timeout = remaining.min(Duration::from_secs(1));
+                let receive_timeout = remaining
+                    .min(Duration::from_secs(1))
+                    .min(self.config.tester_present_interval);
 
                 let receive_result = client.receive_diagnostic_response(receive_timeout).await;
 
@@ -502,9 +519,22 @@ where
             let message = if let Some(msg) = pending_message.take() {
                 msg
             } else {
-                // Use remaining response time or 1 second, whichever is smaller
+                // See send_and_receive for rationale: the background keepalive task is
+                // blocked on the doip_client lock we hold, so we emit TesterPresent
+                // ourselves when the interval has elapsed since the last outgoing message.
+                if self.config.auto_tester_present {
+                    Self::maybe_send_tester_present_locked(
+                        &mut client,
+                        &self.last_activity,
+                        self.config.tester_present_interval,
+                    )
+                    .await;
+                }
+
                 let remaining = response_timeout.saturating_sub(response_start.elapsed());
-                let receive_timeout = remaining.min(Duration::from_secs(1));
+                let receive_timeout = remaining
+                    .min(Duration::from_secs(1))
+                    .min(self.config.tester_present_interval);
 
                 let receive_result = client.receive_diagnostic_response(receive_timeout).await;
 
@@ -728,13 +758,29 @@ where
             .await
         {
             Ok(()) => {
-                debug!("Sent TesterPresent after reconnection");
+                debug!("Sent TesterPresent while lock held");
                 *last_activity.lock().unwrap() = Instant::now();
             }
             Err(e) => {
-                warn!("TesterPresent after reconnection failed: {}", e);
+                warn!("TesterPresent while lock held failed: {}", e);
             }
         }
+    }
+
+    /// Emit a TesterPresent if the configured interval has elapsed since the
+    /// last outgoing message. Intended for callers that already hold the
+    /// `doip_client` lock across a long wait (e.g. NRC 0x78 response-pending
+    /// loops), during which the background keepalive task is blocked.
+    async fn maybe_send_tester_present_locked(
+        client: &mut Client<Conn>,
+        last_activity: &std::sync::Mutex<Instant>,
+        interval: Duration,
+    ) {
+        let elapsed = last_activity.lock().unwrap().elapsed();
+        if elapsed < interval {
+            return;
+        }
+        Self::send_tester_present_locked(client, last_activity).await;
     }
 
     /// Extract the diagnostic payload from a DoIP message.
