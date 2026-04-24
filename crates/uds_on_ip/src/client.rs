@@ -382,11 +382,11 @@ where
                 {
                     Some(msg) => pending_message = Some(msg),
                     None => {
-                        info!("Reconnected — re-sending request on new connection");
-                        client
-                            .send_diagnostic_message(address_type, request_bytes.clone())
-                            .await?;
-                        *lock_activity(&self.last_activity) = Instant::now();
+                        // The request never reached the ECU (send failed before
+                        // transmission). Callers that need session context (e.g.
+                        // a programming sequence) must retry from the top rather
+                        // than blindly re-sending into a potentially wrong session.
+                        return Err(Error::ReconnectedWithoutResponse);
                     }
                 }
             } else {
@@ -622,11 +622,7 @@ where
                 {
                     Some(msg) => pending_message = Some(msg),
                     None => {
-                        info!("Reconnected — re-sending request on new connection");
-                        client
-                            .send_diagnostic_message(AddressType::Physical, request_bytes.clone())
-                            .await?;
-                        *lock_activity(&self.last_activity) = Instant::now();
+                        return Err(Error::ReconnectedWithoutResponse);
                     }
                 }
             } else {
