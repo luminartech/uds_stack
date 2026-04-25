@@ -20,6 +20,32 @@ use uds_protocol::{
 
 use crate::{Error, Result, SessionConfig};
 
+/// Classification of an incoming UDS message relative to the primary
+/// request we are currently waiting for. See
+/// [`UdsClient::classify_response`] for usage.
+#[derive(Debug)]
+enum ResponseMatch {
+    /// The message is the (positive or negative) response to the
+    /// primary request. Consume it normally.
+    ForRequest,
+    /// The message is a response to a different SID — almost always
+    /// one of our own in-flight `TesterPresent` (0x3E) messages that
+    /// the ECU chose to NACK. The caller should log and discard it
+    /// and keep waiting for the real response.
+    ForOtherRequest {
+        /// The on-wire SID of the stray response (e.g. `0x7E` for a
+        /// positive TesterPresent response, or the inner SID from a
+        /// `0x7F` NACK). Used only for log triage.
+        response_sid: u8,
+        /// `true` if this was a NACK (0x7F), `false` for a positive
+        /// response. Used only for log triage.
+        nack: bool,
+    },
+    /// The message is malformed (empty, truncated NACK, etc.). The
+    /// caller should surface this as [`Error::InvalidResponse`].
+    Malformed(String),
+}
+
 /// Lock a poison-tolerant `Instant` mutex.
 ///
 /// The activity timestamp is only ever written inside critical sections that
@@ -318,11 +344,17 @@ where
         *lock_activity(&self.last_activity) = Instant::now();
         let mut client = self.doip_client.lock().await;
 
-        // Track whether a reconnection happened without re-sending the request.
-        // When the connection drops after sending, the request was likely already
-        // received by the server. We reconnect and wait for the response on the
-        // new connection first. Only if no response arrives do we re-send.
-        let mut reconnected_without_resend = false;
+        // When `auto_reconnect` fires during a request's lifetime, the new
+        // TCP socket has no record of the request — and any stray response
+        // (typically a NACK for one of our own in-flight TesterPresent
+        // messages) that arrives on the fresh stream would otherwise be
+        // mis-correlated as a failed response to the primary request. So
+        // after a successful reconnect with no buffered message we re-send
+        // the request immediately rather than waiting for P2/P2* to expire.
+        // ISO 14229 services the client issues here are idempotent enough
+        // that a one-shot retry is safer than leaving the ECU without a
+        // request in flight. See the `classify_response` path for the
+        // matching defense against stray cross-SID responses.
         let mut pending_message: Option<Message> = None;
         let reconnect_timeout = self.config.reconnect_timeout;
         let max_pending = self.config.max_response_pending_count;
@@ -331,6 +363,10 @@ where
         // skipped for the same configs that skip keepalive spawning.
         let keepalive_active = should_run_keepalive(&self.config);
         let mut pending_count: u32 = 0;
+        // Set to true after a reconnect when no response has arrived yet.
+        // The timeout path will re-send once before giving up, giving the
+        // ECU a chance to respond on the new connection within the S3 timer.
+        let mut reconnected_without_resend = false;
 
         // Attempt to send, with reconnection if needed
         let send_result = client
@@ -350,9 +386,7 @@ where
                 {
                     Some(msg) => pending_message = Some(msg),
                     None => {
-                        // Reconnected but no response yet — the request was likely
-                        // received before the disconnect. Wait for the response on
-                        // the new connection before re-sending.
+                        info!("Reconnected — will re-send after P2 wait");
                         reconnected_without_resend = true;
                     }
                 }
@@ -379,13 +413,15 @@ where
             // Check if we've exceeded the effective timeout (P2 or P2*).
             if response_start.elapsed() >= current_timeout {
                 if reconnected_without_resend {
-                    // No response arrived on the new connection — re-send the request.
-                    // This is safe because the server is already in the requested state
-                    // (e.g., session control response was lost with the old connection).
+                    // No response arrived on the new connection — re-send the
+                    // request. This handles ECUs that drop the DoIP connection
+                    // during a session transition but remain in that session
+                    // for the S3 timer duration.
                     info!("No response after reconnection, re-sending request");
                     client
                         .send_diagnostic_message(address_type, request_bytes.clone())
                         .await?;
+                    *lock_activity(&self.last_activity) = Instant::now();
                     reconnected_without_resend = false;
                     response_start = Instant::now();
                     continue;
@@ -397,14 +433,13 @@ where
             let message = if let Some(msg) = pending_message.take() {
                 msg
             } else {
-                // Emit keepalive TesterPresent if the interval has elapsed since the last
-                // outgoing message. The background keepalive task contends for the same
-                // doip_client lock we hold, so during long NRC 0x78 waits it is starved;
-                // we fire it ourselves here while the lock is already in hand. A
-                // connection error from the TP send is a proactive signal that the
-                // socket is dead even though the receive side may still yield buffered
-                // data — escalate to reconnect instead of spinning on failed sends.
-                if self.config.auto_tester_present {
+                // Emit keepalive TesterPresent if the interval has elapsed since the
+                // last outgoing message — but only when the ECU is not already in an
+                // active NRC 0x78 response-pending cycle. While the ECU is sending
+                // NRC 0x78 messages it is demonstrably alive and keeping the S3
+                // session timer alive itself; injecting TP during a long operation
+                // (e.g. flash erase) can disrupt the ECU's response-pending cadence.
+                if self.config.auto_tester_present && pending_count == 0 {
                     match Self::maybe_send_tester_present_while_lock_held(
                         &mut client,
                         &self.last_activity,
@@ -428,7 +463,7 @@ where
                                     pending_message = Some(msg);
                                 }
                                 None => {
-                                    info!("Reconnected — waiting for response on new connection");
+                                    info!("Reconnected — will re-send after P2 wait");
                                     reconnected_without_resend = true;
                                 }
                             }
@@ -479,9 +514,7 @@ where
                                 pending_message = Some(msg);
                             }
                             None => {
-                                // Reconnected — continue waiting for the response on
-                                // the new connection. Will re-send if timeout expires.
-                                info!("Reconnected — waiting for response on new connection");
+                                info!("Reconnected — will re-send after P2 wait");
                                 reconnected_without_resend = true;
                             }
                         }
@@ -499,8 +532,25 @@ where
             let response_bytes = Self::extract_diagnostic_payload(&message)?;
             debug!("Received UDS response: {:02X?}", response_bytes);
 
-            // Validate response corresponds to our request
-            Self::validate_response_matches_request(&request_bytes, &response_bytes)?;
+            // Correlate response against the in-flight request. Skip
+            // stray responses to other SIDs (typically NACKs for our
+            // own background TesterPresent) instead of treating them
+            // as failures of this request.
+            match Self::classify_response(&request_bytes, &response_bytes) {
+                ResponseMatch::ForRequest => {}
+                ResponseMatch::ForOtherRequest { response_sid, nack } => {
+                    debug!(
+                        "Ignoring stray {} for SID {:#04x} while waiting on SID {:#04x}",
+                        if nack { "NACK" } else { "positive response" },
+                        response_sid,
+                        request_bytes[0],
+                    );
+                    continue;
+                }
+                ResponseMatch::Malformed(reason) => {
+                    return Err(Error::InvalidResponse(reason));
+                }
+            }
 
             // Check for NRC 0x78 (Response Pending)
             if Self::is_response_pending(&response_bytes) {
@@ -516,6 +566,11 @@ where
                         return Err(Error::Nrc78PendingExceeded { max });
                     }
                 }
+                // Treat the ECU's NRC 0x78 as activity so the in-loop TP sender
+                // doesn't fire while the ECU is actively processing — sending TP
+                // during a long-running operation (e.g. flash erase) can disrupt
+                // the ECU's response-pending cadence.
+                *lock_activity(&self.last_activity) = Instant::now();
                 response_start = Instant::now();
                 // Per ISO 14229, each NRC 0x78 extends the wait by P2* rather
                 // than P2. Widen the effective timeout for the remainder of
@@ -549,14 +604,15 @@ where
         *lock_activity(&self.last_activity) = Instant::now();
         let mut client = self.doip_client.lock().await;
 
-        // Track whether a reconnection happened without re-sending the request.
-        let mut reconnected_without_resend = false;
+        // See send() for the full rationale on reconnect handling and
+        // cross-SID response classification below.
         let mut pending_message: Option<Message> = None;
         let reconnect_timeout = self.config.reconnect_timeout;
         let max_pending = self.config.max_response_pending_count;
         // Matches the keepalive-spawn predicate; see send().
         let keepalive_active = should_run_keepalive(&self.config);
         let mut pending_count: u32 = 0;
+        let mut reconnected_without_resend = false;
 
         // Attempt to send, with reconnection if needed
         let send_result = client
@@ -575,7 +631,10 @@ where
                 .await?
                 {
                     Some(msg) => pending_message = Some(msg),
-                    None => reconnected_without_resend = true,
+                    None => {
+                        info!("Reconnected — will re-send after P2 wait");
+                        reconnected_without_resend = true;
+                    }
                 }
             } else {
                 return Err(Error::Transport(send_result.unwrap_err()));
@@ -595,6 +654,7 @@ where
                     client
                         .send_diagnostic_message(AddressType::Physical, request_bytes.clone())
                         .await?;
+                    *lock_activity(&self.last_activity) = Instant::now();
                     reconnected_without_resend = false;
                     response_start = Instant::now();
                     continue;
@@ -606,12 +666,10 @@ where
             let message = if let Some(msg) = pending_message.take() {
                 msg
             } else {
-                // See send() for rationale: the background keepalive task is
-                // blocked on the doip_client lock we hold, so we emit TesterPresent
-                // ourselves when the interval has elapsed since the last outgoing
-                // message. A connection-error from the TP send is a proactive dead
-                // connection signal — escalate to reconnect rather than spinning.
-                if self.config.auto_tester_present {
+                // See send() for rationale: suppress in-loop TP while the ECU is
+                // in an active NRC 0x78 pending cycle — it is keeping the session
+                // alive itself and injecting TP can disrupt long operations.
+                if self.config.auto_tester_present && pending_count == 0 {
                     match Self::maybe_send_tester_present_while_lock_held(
                         &mut client,
                         &self.last_activity,
@@ -635,7 +693,7 @@ where
                                     pending_message = Some(msg);
                                 }
                                 None => {
-                                    info!("Reconnected — waiting for response on new connection");
+                                    info!("Reconnected — will re-send after P2 wait");
                                     reconnected_without_resend = true;
                                 }
                             }
@@ -677,7 +735,7 @@ where
                                 pending_message = Some(msg);
                             }
                             None => {
-                                info!("Reconnected — waiting for response on new connection");
+                                info!("Reconnected — will re-send after P2 wait");
                                 reconnected_without_resend = true;
                             }
                         }
@@ -694,8 +752,24 @@ where
             let response_bytes = Self::extract_diagnostic_payload(&message)?;
             debug!("Received raw UDS response: {:02X?}", response_bytes);
 
-            // Validate response corresponds to our request
-            Self::validate_response_matches_request(&request_bytes, &response_bytes)?;
+            // See the matching block in `send_and_receive` for the full
+            // rationale: skip stray responses (typically our own
+            // background-TP NACKs) rather than failing this request.
+            match Self::classify_response(&request_bytes, &response_bytes) {
+                ResponseMatch::ForRequest => {}
+                ResponseMatch::ForOtherRequest { response_sid, nack } => {
+                    debug!(
+                        "Ignoring stray {} for SID {:#04x} while waiting on SID {:#04x}",
+                        if nack { "NACK" } else { "positive response" },
+                        response_sid,
+                        request_bytes[0],
+                    );
+                    continue;
+                }
+                ResponseMatch::Malformed(reason) => {
+                    return Err(Error::InvalidResponse(reason));
+                }
+            }
 
             // Check for NRC 0x78 (Response Pending)
             if Self::is_response_pending(&response_bytes) {
@@ -711,6 +785,7 @@ where
                         return Err(Error::Nrc78PendingExceeded { max });
                     }
                 }
+                *lock_activity(&self.last_activity) = Instant::now();
                 response_start = Instant::now();
                 // Per ISO 14229, widen the effective timeout to P2* for the
                 // remainder of this request (no-op once already at P2*).
@@ -980,54 +1055,75 @@ where
         response_bytes.len() >= 3 && response_bytes[0] == 0x7F && response_bytes[2] == 0x78
     }
 
-    /// Validate that a UDS response corresponds to the given request.
+    /// Classify a UDS response against the in-flight request.
     ///
     /// UDS response correlation rules:
     /// - Positive response: SID = request_SID + 0x40
     /// - Negative response: [0x7F, request_SID, NRC]
     ///
-    /// Returns Ok(()) if the response matches, or an error describing the mismatch.
-    fn validate_response_matches_request(
-        request_bytes: &[u8],
-        response_bytes: &[u8],
-    ) -> Result<()> {
+    /// Background `TesterPresent` (0x3E 0x80) traffic can arrive on the same
+    /// TCP stream while we are waiting for the primary request's response
+    /// — both the background keepalive task and the in-lock
+    /// `maybe_send_tester_present_while_lock_held` path can emit a TP during
+    /// a long wait. The ECU normally suppresses the positive TP response
+    /// (sub-function 0x80) but it is still allowed to NACK the TP, and
+    /// that NACK arrives on the same stream. Treating such a NACK as a
+    /// failed primary response (the pre-fix behavior) produces spurious
+    /// errors like "Negative response for SID 0x3e but expected 0x31"
+    /// that abort the overall operation.
+    ///
+    /// Returns a [`ResponseMatch`] the caller can use to decide whether to
+    /// consume the message, skip it, or error out.
+    fn classify_response(request_bytes: &[u8], response_bytes: &[u8]) -> ResponseMatch {
         if request_bytes.is_empty() {
-            return Err(Error::InvalidResponse("Empty request".to_string()));
+            return ResponseMatch::Malformed("Empty request".to_string());
         }
         if response_bytes.is_empty() {
-            return Err(Error::InvalidResponse("Empty response".to_string()));
+            return ResponseMatch::Malformed("Empty response".to_string());
         }
 
         let request_sid = request_bytes[0];
         let response_sid = response_bytes[0];
 
-        // Check for negative response (0x7F)
+        // Negative response (0x7F). A well-formed NACK is
+        // `[0x7F, request_sid, NRC]` — three bytes minimum. A two-byte
+        // `[0x7F, sid]` is missing the NRC and must be rejected as
+        // malformed, not classified by inspecting `response_bytes[1]`
+        // alone.
         if response_sid == 0x7F {
-            if response_bytes.len() < 2 {
-                return Err(Error::InvalidResponse(
-                    "Negative response too short".to_string(),
-                ));
+            if response_bytes.len() < 3 {
+                return ResponseMatch::Malformed("Negative response too short".to_string());
             }
             let neg_response_for_sid = response_bytes[1];
-            if neg_response_for_sid != request_sid {
-                return Err(Error::InvalidResponse(format!(
-                    "Negative response for SID {:#04x} but expected {:#04x}",
-                    neg_response_for_sid, request_sid
-                )));
+            if neg_response_for_sid == request_sid {
+                return ResponseMatch::ForRequest;
             }
-            return Ok(());
+            // NACK for some other SID — almost always one of our own
+            // in-flight TesterPresent messages. Tell the caller to drop
+            // it and keep waiting for the real response.
+            return ResponseMatch::ForOtherRequest {
+                response_sid: neg_response_for_sid,
+                nack: true,
+            };
         }
 
-        // Check for positive response (request SID + 0x40)
+        // Positive response (request SID + 0x40).
         let expected_positive_sid = request_sid.wrapping_add(0x40);
-        if response_sid != expected_positive_sid {
-            return Err(Error::InvalidResponse(format!(
-                "Response SID {:#04x} doesn't match request SID {:#04x} (expected {:#04x} or 0x7F)",
-                response_sid, request_sid, expected_positive_sid
-            )));
+        if response_sid == expected_positive_sid {
+            return ResponseMatch::ForRequest;
         }
 
-        Ok(())
+        // Positive response for a different SID. The only path that
+        // legitimately emits such a response on our stream is an
+        // in-flight TP without the suppress-positive bit set (i.e. a
+        // TP response at 0x7E). Background keepalive and in-lock TPs
+        // both use sub-function 0x80, so this should be vanishingly
+        // rare in practice — but it is still not a reason to fail the
+        // primary request.
+        ResponseMatch::ForOtherRequest {
+            response_sid,
+            nack: false,
+        }
     }
 }
 
@@ -1036,5 +1132,102 @@ impl<Conn> Drop for UdsClient<Conn> {
         if let Some(handle) = self.keepalive_handle.take() {
             handle.abort();
         }
+    }
+}
+
+#[cfg(test)]
+mod classify_response_tests {
+    use super::*;
+
+    // Use a concrete client type just so the associated fn is reachable.
+    type TestClient = UdsClient<ConnectorSocket>;
+
+    #[test]
+    fn positive_response_for_request_matches() {
+        // Request: DiagnosticSessionControl (0x10), sub-function 0x03.
+        // Response: 0x50 (0x10 + 0x40), sub-function 0x03.
+        let m = TestClient::classify_response(&[0x10, 0x03], &[0x50, 0x03]);
+        assert!(matches!(m, ResponseMatch::ForRequest), "got {m:?}");
+    }
+
+    #[test]
+    fn negative_response_for_request_matches() {
+        // NACK for RoutineControl (0x31), NRC 0x22 (conditionsNotCorrect).
+        let m = TestClient::classify_response(&[0x31, 0x01, 0x02, 0x03], &[0x7F, 0x31, 0x22]);
+        assert!(matches!(m, ResponseMatch::ForRequest), "got {m:?}");
+    }
+
+    #[test]
+    fn nack_for_tester_present_while_waiting_on_routine_control_is_stray() {
+        // Primary request: RoutineControl (0x31). Server NACKs a
+        // background TesterPresent (0x3E) on the same stream — this is
+        // the exact shape of the [INTERNAL_PROJECT_REDACTED] failure we're fixing.
+        let m = TestClient::classify_response(&[0x31, 0x01, 0x02, 0x03], &[0x7F, 0x3E, 0x22]);
+        match m {
+            ResponseMatch::ForOtherRequest { response_sid, nack } => {
+                assert_eq!(response_sid, 0x3E);
+                assert!(nack, "0x7F response must be classified as NACK");
+            }
+            other => panic!("expected ForOtherRequest, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn positive_response_for_other_sid_is_stray() {
+        // Primary request: RoutineControl (0x31, expected response 0x71).
+        // Stream carries a positive TesterPresent response (0x7E) —
+        // vanishingly rare because SPRMIB is always set, but not a
+        // reason to fail the primary request.
+        let m = TestClient::classify_response(&[0x31, 0x01, 0x02, 0x03], &[0x7E]);
+        match m {
+            ResponseMatch::ForOtherRequest { response_sid, nack } => {
+                assert_eq!(response_sid, 0x7E);
+                assert!(
+                    !nack,
+                    "0x7E positive response must not be classified as NACK"
+                );
+            }
+            other => panic!("expected ForOtherRequest, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn empty_request_is_malformed() {
+        let m = TestClient::classify_response(&[], &[0x50]);
+        assert!(matches!(m, ResponseMatch::Malformed(_)), "got {m:?}");
+    }
+
+    #[test]
+    fn empty_response_is_malformed() {
+        let m = TestClient::classify_response(&[0x10, 0x03], &[]);
+        assert!(matches!(m, ResponseMatch::Malformed(_)), "got {m:?}");
+    }
+
+    #[test]
+    fn truncated_nack_one_byte_is_malformed() {
+        // NACK must be at least [0x7F, request_sid, NRC].
+        let m = TestClient::classify_response(&[0x10, 0x03], &[0x7F]);
+        assert!(matches!(m, ResponseMatch::Malformed(_)), "got {m:?}");
+    }
+
+    #[test]
+    fn truncated_nack_two_bytes_is_malformed() {
+        // A two-byte NACK [0x7F, <sid>] has no NRC byte and must be
+        // rejected — otherwise classifying by `response_bytes[1]` alone
+        // would misclassify this as either `ForRequest` (when the
+        // second byte happens to match the request SID) or
+        // `ForOtherRequest` (when it doesn't), instead of surfacing the
+        // truncation. Lock this behavior in.
+        let m_matching_sid = TestClient::classify_response(&[0x10, 0x03], &[0x7F, 0x10]);
+        assert!(
+            matches!(m_matching_sid, ResponseMatch::Malformed(_)),
+            "two-byte NACK whose inner byte matches the request SID must be Malformed, got {m_matching_sid:?}",
+        );
+
+        let m_other_sid = TestClient::classify_response(&[0x10, 0x03], &[0x7F, 0x3E]);
+        assert!(
+            matches!(m_other_sid, ResponseMatch::Malformed(_)),
+            "two-byte NACK whose inner byte is some other SID must be Malformed, got {m_other_sid:?}",
+        );
     }
 }
