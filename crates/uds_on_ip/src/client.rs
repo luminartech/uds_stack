@@ -363,6 +363,10 @@ where
         // skipped for the same configs that skip keepalive spawning.
         let keepalive_active = should_run_keepalive(&self.config);
         let mut pending_count: u32 = 0;
+        // Set to true after a reconnect when no response has arrived yet.
+        // The timeout path will re-send once before giving up, giving the
+        // ECU a chance to respond on the new connection within the S3 timer.
+        let mut reconnected_without_resend = false;
 
         // Attempt to send, with reconnection if needed
         let send_result = client
@@ -382,11 +386,8 @@ where
                 {
                     Some(msg) => pending_message = Some(msg),
                     None => {
-                        // The request never reached the ECU (send failed before
-                        // transmission). Callers that need session context (e.g.
-                        // a programming sequence) must retry from the top rather
-                        // than blindly re-sending into a potentially wrong session.
-                        return Err(Error::ReconnectedWithoutResponse);
+                        info!("Reconnected — will re-send after P2 wait");
+                        reconnected_without_resend = true;
                     }
                 }
             } else {
@@ -411,6 +412,20 @@ where
         loop {
             // Check if we've exceeded the effective timeout (P2 or P2*).
             if response_start.elapsed() >= current_timeout {
+                if reconnected_without_resend {
+                    // No response arrived on the new connection — re-send the
+                    // request. This handles ECUs that drop the DoIP connection
+                    // during a session transition but remain in that session
+                    // for the S3 timer duration.
+                    info!("No response after reconnection, re-sending request");
+                    client
+                        .send_diagnostic_message(address_type, request_bytes.clone())
+                        .await?;
+                    *lock_activity(&self.last_activity) = Instant::now();
+                    reconnected_without_resend = false;
+                    response_start = Instant::now();
+                    continue;
+                }
                 return Err(Error::Timeout(current_timeout));
             }
 
@@ -449,14 +464,8 @@ where
                                     pending_message = Some(msg);
                                 }
                                 None => {
-                                    info!("Reconnected — re-sending request on new connection");
-                                    client
-                                        .send_diagnostic_message(
-                                            address_type,
-                                            request_bytes.clone(),
-                                        )
-                                        .await?;
-                                    *lock_activity(&self.last_activity) = Instant::now();
+                                    info!("Reconnected — will re-send after P2 wait");
+                                    reconnected_without_resend = true;
                                 }
                             }
                             response_start = Instant::now();
@@ -506,11 +515,8 @@ where
                                 pending_message = Some(msg);
                             }
                             None => {
-                                info!("Reconnected — re-sending request on new connection");
-                                client
-                                    .send_diagnostic_message(address_type, request_bytes.clone())
-                                    .await?;
-                                *lock_activity(&self.last_activity) = Instant::now();
+                                info!("Reconnected — will re-send after P2 wait");
+                                reconnected_without_resend = true;
                             }
                         }
                         response_start = Instant::now();
@@ -594,15 +600,15 @@ where
         *lock_activity(&self.last_activity) = Instant::now();
         let mut client = self.doip_client.lock().await;
 
-        // See send() for the full rationale on the immediate
-        // re-send-after-reconnect posture and the cross-SID response
-        // handling below.
+        // See send() for the full rationale on reconnect handling and
+        // cross-SID response classification below.
         let mut pending_message: Option<Message> = None;
         let reconnect_timeout = self.config.reconnect_timeout;
         let max_pending = self.config.max_response_pending_count;
         // Matches the keepalive-spawn predicate; see send().
         let keepalive_active = should_run_keepalive(&self.config);
         let mut pending_count: u32 = 0;
+        let mut reconnected_without_resend = false;
 
         // Attempt to send, with reconnection if needed
         let send_result = client
@@ -622,7 +628,8 @@ where
                 {
                     Some(msg) => pending_message = Some(msg),
                     None => {
-                        return Err(Error::ReconnectedWithoutResponse);
+                        info!("Reconnected — will re-send after P2 wait");
+                        reconnected_without_resend = true;
                     }
                 }
             } else {
@@ -638,6 +645,16 @@ where
         loop {
             // Check if we've exceeded the effective timeout (P2 or P2*).
             if response_start.elapsed() >= current_timeout {
+                if reconnected_without_resend {
+                    info!("No response after reconnection, re-sending request");
+                    client
+                        .send_diagnostic_message(AddressType::Physical, request_bytes.clone())
+                        .await?;
+                    *lock_activity(&self.last_activity) = Instant::now();
+                    reconnected_without_resend = false;
+                    response_start = Instant::now();
+                    continue;
+                }
                 return Err(Error::Timeout(current_timeout));
             }
 
@@ -674,14 +691,8 @@ where
                                     pending_message = Some(msg);
                                 }
                                 None => {
-                                    info!("Reconnected — re-sending request on new connection");
-                                    client
-                                        .send_diagnostic_message(
-                                            AddressType::Physical,
-                                            request_bytes.clone(),
-                                        )
-                                        .await?;
-                                    *lock_activity(&self.last_activity) = Instant::now();
+                                    info!("Reconnected — will re-send after P2 wait");
+                                    reconnected_without_resend = true;
                                 }
                             }
                             response_start = Instant::now();
@@ -722,14 +733,8 @@ where
                                 pending_message = Some(msg);
                             }
                             None => {
-                                info!("Reconnected — re-sending request on new connection");
-                                client
-                                    .send_diagnostic_message(
-                                        AddressType::Physical,
-                                        request_bytes.clone(),
-                                    )
-                                    .await?;
-                                *lock_activity(&self.last_activity) = Instant::now();
+                                info!("Reconnected — will re-send after P2 wait");
+                                reconnected_without_resend = true;
                             }
                         }
                         response_start = Instant::now();
