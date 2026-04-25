@@ -567,6 +567,11 @@ where
                         return Err(Error::Nrc78PendingExceeded { max });
                     }
                 }
+                // Treat the ECU's NRC 0x78 as activity so the in-loop TP sender
+                // doesn't fire while the ECU is actively processing — sending TP
+                // during a long-running operation (e.g. flash erase) can disrupt
+                // the ECU's response-pending cadence.
+                *lock_activity(&self.last_activity) = Instant::now();
                 response_start = Instant::now();
                 // Per ISO 14229, each NRC 0x78 extends the wait by P2* rather
                 // than P2. Widen the effective timeout for the remainder of
@@ -783,6 +788,7 @@ where
                         return Err(Error::Nrc78PendingExceeded { max });
                     }
                 }
+                *lock_activity(&self.last_activity) = Instant::now();
                 response_start = Instant::now();
                 // Per ISO 14229, widen the effective timeout to P2* for the
                 // remainder of this request (no-op once already at P2*).
