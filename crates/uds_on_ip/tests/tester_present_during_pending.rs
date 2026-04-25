@@ -1,8 +1,11 @@
-//! Verifies that TesterPresent is emitted at the configured interval while the
-//! client is holding the `doip_client` lock through a long NRC 0x78
-//! (Response Pending) wait. Prior to the in-request keepalive, the background
-//! task was starved on the same mutex, so TesterPresent stopped firing for the
-//! duration of slow operations like a flash-memory erase.
+//! Verifies TesterPresent keepalive behaviour around NRC 0x78 (Response
+//! Pending) waits. Key invariants:
+//!
+//! * TP is suppressed while the ECU is actively sending NRC 0x78 responses —
+//!   the ECU is demonstrably alive and keeps the S3 session timer itself.
+//! * A stray TP NACK that arrives during a pending wait (e.g. the ECU
+//!   responding to a TP sent before the NRC 0x78 cycle began) must be ignored
+//!   rather than aborting the primary request.
 
 use std::{
     net::{IpAddr, Ipv4Addr},
@@ -263,8 +266,12 @@ async fn connect_client(port: u16, session_config: SessionConfig) -> UdsClient<L
     UdsClient::from_doip_client(doip_client, session_config)
 }
 
+/// Once the ECU has sent at least one NRC 0x78, the client must suppress
+/// in-loop TesterPresent sends. The ECU is actively processing and its
+/// NRC 0x78 responses keep the S3 session timer alive — injecting TP
+/// during a long operation (e.g. flash erase) can disrupt the cadence.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn tester_present_fires_during_nrc78_wait() {
+async fn tester_present_suppressed_during_nrc78_wait() {
     let _ = tracing_subscriber::fmt().with_test_writer().try_init();
 
     let listener = TcpListener::bind(("127.0.0.1", 0))
@@ -274,17 +281,12 @@ async fn tester_present_fires_during_nrc78_wait() {
 
     let tp_counter = Arc::new(AtomicUsize::new(0));
     let server_tp = Arc::clone(&tp_counter);
-    // 4 pending rounds × 1 s = ~4 s of wait. TP interval of 500 ms gives an
-    // expected count of ~8. Interval + cadence are kept loose on purpose —
-    // earlier iterations of this test used a 200 ms TP against a 400 ms NRC
-    // cadence, which occasionally raced simple_doip's internal oneshot
-    // handling under parallel-test load and surfaced a spurious
-    // `Transport(ConnectionClosed)` from `send_diagnostic_message`. The
-    // widened timings aren't load-bearing for what this test verifies
-    // (in-request TPs fire during a long NRC 0x78 wait), only for
-    // stability under concurrent test execution.
+    // 4 pending rounds × 100 ms = ~400 ms of wait. The first NRC 0x78
+    // arrives at ~100 ms, before the 500 ms TP interval elapses, so
+    // pending_count > 0 suppresses all TP sends for the entire wait.
+    // Without suppression ~2 TPs would fire; we assert zero.
     let server_task = tokio::spawn(async move {
-        run_fake_server(listener, server_tp, 4, Duration::from_millis(1000)).await;
+        run_fake_server(listener, server_tp, 4, Duration::from_millis(100)).await;
     });
 
     let client = connect_client(
@@ -299,8 +301,6 @@ async fn tester_present_fires_during_nrc78_wait() {
     )
     .await;
 
-    // Count TPs that arrived *after* the slow request starts, so the pre-request
-    // keepalive-task sends (if any) don't confuse the assertion.
     let tp_before = tp_counter.load(COUNTER_ORDER);
 
     let response = timeout(
@@ -312,24 +312,15 @@ async fn tester_present_fires_during_nrc78_wait() {
     .expect("send_raw failed");
     assert_eq!(response, UDS_SLOW_FINAL_RSP);
 
-    // Give the server a beat to flush any final ACKs before tearing down.
     tokio::time::sleep(Duration::from_millis(50)).await;
-    let tp_after = tp_counter.load(COUNTER_ORDER);
-    let during = tp_after - tp_before;
+    let during = tp_counter.load(COUNTER_ORDER) - tp_before;
 
     drop(client);
     let _ = server_task.await;
 
-    assert!(
-        during >= 3,
-        "expected at least 3 TesterPresent messages during the ~4s NRC 0x78 wait, got {during} (total {tp_after})",
-    );
-    // Upper bound catches regressions where we accidentally double-fire
-    // (e.g., background keepalive task suddenly starts racing the in-request
-    // path). Expected ~8 with 500 ms interval over ~4 s.
-    assert!(
-        during <= 16,
-        "TesterPresent fired too often during the ~4s wait: got {during} (total {tp_after})",
+    assert_eq!(
+        during, 0,
+        "TesterPresent must be suppressed while ECU is sending NRC 0x78, got {during}",
     );
 }
 
@@ -628,10 +619,11 @@ async fn nrc78_cap_aborts_stuck_server() {
     let _ = server_task.await;
 }
 
-/// Fake server that NACKs the first TesterPresent it sees during a
-/// UDS_SLOW_REQ pending wait, then delivers the final positive response
-/// for the primary request. Exercises the `classify_response` fix — the
-/// stray NACK for SID 0x3E must not abort the UDS_SLOW_REQ correlation.
+/// Fake server that spontaneously injects a stray TP NACK during a
+/// UDS_SLOW_REQ pending wait (simulating the ECU responding to a TP
+/// that was sent before the NRC 0x78 cycle began), then delivers the
+/// final positive response. Exercises the `classify_response` fix —
+/// the stray NACK for SID 0x3E must not abort the UDS_SLOW_REQ.
 async fn run_server_that_nacks_tp_during_pending(listener: TcpListener) {
     let (mut stream, _) = listener
         .accept()
@@ -662,8 +654,7 @@ async fn run_server_that_nacks_tp_during_pending(listener: TcpListener) {
         .await
         .expect("failed to ack UDS_SLOW_REQ");
 
-    // First NRC 0x78 immediately to push the client into P2* / "wait
-    // long enough that a TP gets emitted".
+    // NRC 0x78 to push the client into the pending wait.
     stream
         .write_all(&build_diag_msg(
             SERVER_PHYSICAL,
@@ -671,25 +662,13 @@ async fn run_server_that_nacks_tp_during_pending(listener: TcpListener) {
             &[0x7F, UDS_SLOW_REQ[0], 0x78],
         ))
         .await
-        .expect("failed to send first NRC 0x78");
+        .expect("failed to send NRC 0x78");
 
-    // Next inbound frame MUST be a TP (the in-lock keepalive fires
-    // because the interval has elapsed). ACK the DoIP layer, then NACK
-    // the UDS request inside — this is the exact shape that used to
-    // abort the primary request with "Negative response for SID 0x3e
-    // but expected 0x22".
-    let (pt, payload) = read_frame(&mut stream)
-        .await
-        .expect("client closed before TP arrived");
-    assert_eq!(pt, PT_DIAG_MESSAGE);
-    let tp_user = &payload[4..];
-    assert_eq!(tp_user, UDS_TESTER_PRESENT, "expected TesterPresent");
-    stream
-        .write_all(&build_diag_ack(SERVER_PHYSICAL, client_addr, tp_user))
-        .await
-        .expect("failed to ack TP");
-    // Stray NACK for the TP with NRC 0x22 (conditionsNotCorrect) —
-    // lands on the same TCP stream as the primary-request response.
+    // Spontaneously inject a stray TP NACK — simulates the ECU
+    // responding to a TesterPresent that was sent before the NRC 0x78
+    // cycle began. This arrives on the same TCP stream as the primary
+    // response and must be ignored by the client.
+    tokio::time::sleep(Duration::from_millis(50)).await;
     stream
         .write_all(&build_diag_msg(
             SERVER_PHYSICAL,
@@ -709,9 +688,6 @@ async fn run_server_that_nacks_tp_during_pending(listener: TcpListener) {
         .await
         .expect("failed to send final response");
 
-    // Drain anything else (possible extra TPs) so the connection stays
-    // up long enough for the client to finish reading. Abort via the
-    // test harness.
     loop {
         if read_frame(&mut stream).await.is_none() {
             return;

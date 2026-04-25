@@ -433,14 +433,13 @@ where
             let message = if let Some(msg) = pending_message.take() {
                 msg
             } else {
-                // Emit keepalive TesterPresent if the interval has elapsed since the last
-                // outgoing message. The background keepalive task contends for the same
-                // doip_client lock we hold, so during long NRC 0x78 waits it is starved;
-                // we fire it ourselves here while the lock is already in hand. A
-                // connection error from the TP send is a proactive signal that the
-                // socket is dead even though the receive side may still yield buffered
-                // data — escalate to reconnect instead of spinning on failed sends.
-                if self.config.auto_tester_present {
+                // Emit keepalive TesterPresent if the interval has elapsed since the
+                // last outgoing message — but only when the ECU is not already in an
+                // active NRC 0x78 response-pending cycle. While the ECU is sending
+                // NRC 0x78 messages it is demonstrably alive and keeping the S3
+                // session timer alive itself; injecting TP during a long operation
+                // (e.g. flash erase) can disrupt the ECU's response-pending cadence.
+                if self.config.auto_tester_present && pending_count == 0 {
                     match Self::maybe_send_tester_present_while_lock_held(
                         &mut client,
                         &self.last_activity,
@@ -667,12 +666,10 @@ where
             let message = if let Some(msg) = pending_message.take() {
                 msg
             } else {
-                // See send() for rationale: the background keepalive task is
-                // blocked on the doip_client lock we hold, so we emit TesterPresent
-                // ourselves when the interval has elapsed since the last outgoing
-                // message. A connection-error from the TP send is a proactive dead
-                // connection signal — escalate to reconnect rather than spinning.
-                if self.config.auto_tester_present {
+                // See send() for rationale: suppress in-loop TP while the ECU is
+                // in an active NRC 0x78 pending cycle — it is keeping the session
+                // alive itself and injecting TP can disrupt long operations.
+                if self.config.auto_tester_present && pending_count == 0 {
                     match Self::maybe_send_tester_present_while_lock_held(
                         &mut client,
                         &self.last_activity,
