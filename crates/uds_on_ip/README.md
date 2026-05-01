@@ -155,6 +155,35 @@ cargo run -p uds_on_ip --example extended_session -- 192.168.1.100
 | `response_pending_timeout` | 25s | Extended timeout after NRC 0x78 (P2* max) |
 | `auto_tester_present` | true | Whether to automatically send keepalives |
 
+## Recent behavior changes
+
+If you have downstream code built against an older `uds_on_ip`, these are
+the behavior changes worth knowing about:
+
+- **TesterPresent suppressed during NRC 0x78.** Once the ECU returns NRC
+  0x78 (response pending), the in-loop tester-present is held off until
+  the response cycle completes. This prevents the rare ECU
+  configurations that NACK a TP mid-pending (observed during app→FBL
+  transitions) from corrupting the in-flight request.
+- **P2\* applied after NRC 0x78.** The session switches from the regular
+  `response_timeout` (P2) to `response_pending_timeout` (P2\*) once a
+  pending response arrives, instead of timing out at the original P2.
+- **Initial-send reconnect returns `ReconnectedWithoutResponse`.** A
+  reconnect that happens before the first response is no longer reported
+  as a generic timeout — callers can distinguish "reconnected but the
+  request was never answered" from "request was sent and timed out."
+- **Timeout-path re-send restored after reconnect.** If a reconnect
+  happens during the wait, the request is automatically re-sent on the
+  new connection rather than dropped silently.
+- **2-byte NACKs rejected as malformed.** Truncated NACKs no longer
+  decode into bogus negative responses; they surface as a protocol error.
+- **Stray cross-SID responses ignored on reconnect.** If a stale response
+  for a previous SID arrives after reconnect, it's discarded and the
+  current request is re-sent immediately.
+- **Post-reconnect TP gated on keepalive-active.** After a reconnect, the
+  tester-present pump only resumes if keepalive was active before — it
+  doesn't start sending TPs on a session that wasn't using them.
+
 ## Dependencies
 
 - [`uds_protocol`](../uds_protocol/README.md) - UDS message types and encoding
