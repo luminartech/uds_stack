@@ -5,7 +5,10 @@ edition = "2024"
 description = "UDS session management over DoIP transport"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/luminartech/[INTERNAL_PROJECT_REDACTED]"
-authors = ["Luminar Technologies <support@luminartech.com>"]
+authors = [
+    "Zachary Heylmun <zachary_heylmun@microvision.com>",
+    "Justin Kovacich <justin_kovacich@microvision.com>",
+]
 
 [dependencies]
 simple_doip = { workspace = true, features = ["client"] }
