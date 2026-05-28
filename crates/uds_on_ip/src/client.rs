@@ -579,9 +579,26 @@ where
                 continue; // Wait for next response WITHOUT re-sending
             }
 
-            // Final response - decode and return
-            let response = Response::<D>::decode(&mut response_bytes.as_slice())
-                .map_err(|e| Error::InvalidResponse(format!("Failed to decode response: {e}")))?;
+            // Final response - decode and return.
+            // Log the raw bytes on decode failure so the caller (and the
+            // operator reading the trace) can see exactly what the ECU
+            // put on the wire — without this, the only signal is the
+            // typed-decoder error message, which strips the underlying
+            // byte stream. Useful for firmware-vs-spec drift debugging
+            // (e.g. when the ECU returns a positive response but the
+            // echoed DID doesn't match the requested one).
+            let response = match Response::<D>::decode(&mut response_bytes.as_slice()) {
+                Ok(r) => r,
+                Err(e) => {
+                    warn!(
+                        "Failed to decode UDS response: {e} · raw bytes: {:02X?}",
+                        response_bytes
+                    );
+                    return Err(Error::InvalidResponse(format!(
+                        "Failed to decode response: {e}"
+                    )));
+                }
+            };
             return Ok(Some(response));
         }
     }
