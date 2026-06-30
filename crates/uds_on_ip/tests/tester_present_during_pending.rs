@@ -1,4 +1,4 @@
-//! Verifies TesterPresent keepalive behaviour around NRC 0x78 (Response
+//! Verifies TesterPresent keepalive behavior around NRC 0x78 (Response
 //! Pending) waits. Key invariants:
 //!
 //! * TP is suppressed while the ECU is actively sending NRC 0x78 responses —
