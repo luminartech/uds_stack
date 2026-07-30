@@ -69,6 +69,16 @@ pub use error::Error;
 pub use request_sender::RequestSender;
 pub use session::SessionConfig;
 pub use simple_doip::client::AddressType;
+// Re-exported so a downstream crate's *production* code can name
+// `Connector`/`ConnectorSocket` — e.g. to declare its own client type generic
+// over the connector, defaulted to `ConnectorSocket`, the way `UdsClient<Conn
+// = ConnectorSocket>` itself is — without needing `simple_doip` in its own
+// `[dependencies]`. (A downstream crate's *tests* may still reach for
+// `simple_doip` directly as a dev-dependency, e.g. to build a custom
+// `Connector` without `ConnectorSocket`'s hardcoded port-13400 check, mirroring
+// `uds_on_ip/tests/tester_present_during_pending.rs`; that's a test-only
+// concern this re-export doesn't need to solve.)
+pub use simple_doip::connection::{Connector, ConnectorSocket};
 
 /// Result type for UDS on IP operations.
 pub type Result<T> = std::result::Result<T, Error>;
