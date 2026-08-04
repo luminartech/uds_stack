@@ -9,7 +9,7 @@ use simple_doip::{
     LogicalAddress, TCP_PORT, TESTER_LOGICAL_ADDRESS,
     client::{AddressType, Client, ClientOptions, RoutingActivationOptions},
     connection::{Connector, ConnectorSocket},
-    messages::{ActivationTypeCode, Message, Payload, ProtocolVersion},
+    messages::{ActivationTypeCode, OwnedMessage, OwnedPayload, ProtocolVersion},
 };
 use tokio::sync::Mutex;
 use tracing::{debug, info, warn};
@@ -356,7 +356,7 @@ where
         // that a one-shot retry is safer than leaving the ECU without a
         // request in flight. See the `classify_response` path for the
         // matching defense against stray cross-SID responses.
-        let mut pending_message: Option<Message> = None;
+        let mut pending_message: Option<OwnedMessage> = None;
         let reconnect_timeout = self.config.reconnect_timeout;
         let max_pending = self.config.max_response_pending_count;
         // Matches the predicate used to decide whether to spawn the background
@@ -624,7 +624,7 @@ where
 
         // See send() for the full rationale on reconnect handling and
         // cross-SID response classification below.
-        let mut pending_message: Option<Message> = None;
+        let mut pending_message: Option<OwnedMessage> = None;
         let reconnect_timeout = self.config.reconnect_timeout;
         let max_pending = self.config.max_response_pending_count;
         // Matches the keepalive-spawn predicate; see send().
@@ -919,13 +919,13 @@ where
     /// Note: simple_doip's reconnect() has an internal 5-second wait for in-flight messages,
     /// so each attempt may take up to ~15 seconds (with connection setup overhead).
     ///
-    /// Returns Ok(Option<Message>) if reconnection succeeds. The Option contains any
+    /// Returns Ok(Option<OwnedMessage>) if reconnection succeeds. The Option contains any
     /// in-flight message that was received during reconnection (e.g., a response that
     /// arrived while we were reconnecting).
     async fn attempt_reconnect(
         client: &mut Client<Conn>,
         reconnect_timeout: Duration,
-    ) -> Result<Option<Message>> {
+    ) -> Result<Option<OwnedMessage>> {
         /// Cap each individual `client.reconnect()` call — simple_doip's
         /// reconnect() does bind_socket + routing activation (~1-2s) followed
         /// by a 5-second wait for in-flight messages, which bounds a healthy
@@ -1046,7 +1046,7 @@ where
         last_activity: &std::sync::Mutex<Instant>,
         reconnect_timeout: Duration,
         send_tp_after_reconnect: bool,
-    ) -> Result<Option<Message>> {
+    ) -> Result<Option<OwnedMessage>> {
         let maybe_msg = Self::attempt_reconnect(client, reconnect_timeout).await?;
         if send_tp_after_reconnect {
             let _ = Self::send_tester_present_while_lock_held(client, last_activity).await;
@@ -1055,9 +1055,9 @@ where
     }
 
     /// Extract the diagnostic payload from a DoIP message.
-    fn extract_diagnostic_payload(message: &Message) -> Result<Vec<u8>> {
+    fn extract_diagnostic_payload(message: &OwnedMessage) -> Result<Vec<u8>> {
         match &message.payload {
-            Payload::DiagnosticMessage(diag) => Ok(diag.user_data.clone()),
+            OwnedPayload::DiagnosticMessage(diag) => Ok(diag.user_data.clone()),
             other => Err(Error::InvalidResponse(format!(
                 "Expected DiagnosticMessage, got {:?}",
                 other
