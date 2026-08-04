@@ -1,0 +1,25 @@
+[project]
+name = "uds-session-docs"
+version = "0"
+description = "Requirements and documentation build environment for the uds_session crate"
+# Upper bound is load-bearing, not caution. sphinx-needs 5.1.0 calls `ast.NameConstant`,
+# which was removed after Python 3.12, and Sphinx aborts on import rather than degrading.
+# Expressing it here makes the resolver refuse a broken interpreter instead of leaving a
+# fresh clone to fail at build time on whatever Python happens to be the default.
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "myst-parser==4.0.1",
+    "sphinx==8.2.3",
+    "sphinx-needs==5.1.0",
+]
+
+[tool.uv]
+# Dependency management only; there is no Python package here to build or install.
+package = false
+
+[dependency-groups]
+# Exact versions are pinned above and locked in uv.lock. These produce needs.json, which
+# the private qualification repository consumes as evidence, so the toolchain that
+# generated a given snapshot has to be recoverable. Bumping them is a change to an
+# evidence-producing tool, not a routine dependency update.
+dev = []

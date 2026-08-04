@@ -1,0 +1,13 @@
+# Rust build output
+/target
+
+# Python environment and documentation build output
+.venv/
+/docs/_build/
+
+# Superpowers working documents (specs, plans) are not version controlled.
+/docs/superpowers/
+
+# Local tooling and OS cruft
+.omniscient/
+.DS_Store

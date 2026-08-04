@@ -1,0 +1,68 @@
+default_language_version:
+  python: python3.12
+default_stages: [pre-commit]
+default_install_hook_types: [pre-commit, prepare-commit-msg, commit-msg]
+repos:
+  # The pr-lint workflow rejects a PR title that is not a conventional commit, and
+  # squash-merge uses the PR title as the commit message. Checking the same grammar
+  # locally means the failure shows up before the push rather than in CI.
+  - repo: https://github.com/compilerla/conventional-pre-commit
+    rev: v4.4.0
+    hooks:
+      - id: conventional-pre-commit
+        stages: [commit-msg]
+        args:
+          - --strict
+          - feat
+          - fix
+          - perf
+          - docs
+          - refactor
+          - revert
+          - style
+          - test
+          - chore
+          - ci
+          - build
+  - repo: meta
+    hooks:
+      - id: check-hooks-apply
+      - id: check-useless-excludes
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: trailing-whitespace
+        exclude_types:
+          - markdown
+      - id: end-of-file-fixer
+        exclude_types:
+          - rust
+      - id: check-yaml
+        args: [--allow-multiple-documents]
+      # `check-json` is deliberately absent: this crate has no tracked JSON, and
+      # check-hooks-apply fails on a hook that matches nothing. Add it back alongside the
+      # first JSON file.
+      - id: check-added-large-files
+        args: [--maxkb=1024]
+      - id: check-merge-conflict
+      - id: mixed-line-ending
+        args: [--fix=lf]
+        exclude_types:
+          - batch
+  - repo: https://github.com/executablebooks/mdformat
+    rev: 0.7.22
+    hooks:
+      - id: mdformat
+        language_version: python3
+        additional_dependencies:
+          - linkify-it-py==1.0.3
+          - mdformat-gfm==0.3.5
+  - repo: https://github.com/crate-ci/typos
+    rev: v1.39.1
+    hooks:
+      - id: typos
+        args: ["--config", ".typos.toml"]
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.29.0
+    hooks:
+      - id: gitleaks
