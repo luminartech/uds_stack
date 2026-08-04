@@ -70,8 +70,23 @@ repos:
     rev: v8.29.0
     hooks:
       - id: gitleaks
+  - repo: https://github.com/FeryET/pre-commit-rust
+    rev: v1.2.1
+    hooks:
+      - id: fmt
+      - id: cargo-check
   - repo: local
     hooks:
+      # This repo provides no clippy hook, so it is local. `-D warnings` promotes anything
+      # the Cargo.toml lint table leaves at warn level, and --all-targets means the lints
+      # are enforced in tests too, not just the library.
+      - id: clippy
+        name: clippy
+        entry: cargo clippy --all-targets --all-features -- -D warnings
+        language: system
+        types: [rust]
+        pass_filenames: false
+      # ---
       # Policy checks on the requirement set: the ID scheme and global uniqueness,
       # mandatory fields per type, permitted field values, the integrity-level ratchet,
       # the mandatory rationale on derived requirements, and the clause-locator ban.
