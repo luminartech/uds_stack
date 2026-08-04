@@ -7,6 +7,12 @@ This documentation set holds the crate's requirements. API documentation is gene
 rustdoc and published separately; the two are joined by requirement IDs, which appear in
 `Implements:` and `Verifies:` annotations in the source.
 
+```{toctree}
+:maxdepth: 2
+
+requirements/index
+```
+
 ## Building
 
 The documentation environment is managed by uv. The Python version is pinned, and the

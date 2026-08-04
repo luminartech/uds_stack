@@ -53,6 +53,10 @@ repos:
     rev: 0.7.22
     hooks:
       - id: mdformat
+        # Requirement documents are excluded because mdformat rewrites the contents of
+        # MyST directive blocks, and reflowing a requirement statement is an edit to a
+        # requirement. Their formatting is enforced by validate-needs instead.
+        exclude: ^docs/requirements/.*\.md$
         language_version: python3
         additional_dependencies:
           - linkify-it-py==1.0.3
@@ -66,3 +70,29 @@ repos:
     rev: v8.29.0
     hooks:
       - id: gitleaks
+  - repo: local
+    hooks:
+      # Policy checks on the requirement set: the ID scheme and global uniqueness,
+      # mandatory fields per type, permitted field values, the integrity-level ratchet,
+      # the mandatory rationale on derived requirements, and the clause-locator ban.
+      #
+      # Complementary to the Sphinx build below rather than a substitute for it. Sphinx
+      # validates directive syntax, link integrity and its own schema; this validates the
+      # parts of the process Sphinx has no concept of. Stdlib only, so it needs no
+      # environment and runs in milliseconds.
+      - id: validate-needs
+        name: validate requirement set
+        entry: python3 tools/validate_needs.py
+        language: system
+        pass_filenames: false
+        files: ^(docs/requirements/.*\.md|tools/validate_needs\.py)$
+      # The authoritative check that the requirement set is valid sphinx-needs: unknown
+      # directives, ids that fail needs_id_regex, statuses outside needs_statuses, and
+      # unresolved links are all errors here. Warnings are errors so that a requirement
+      # excluded from every toctree cannot go unnoticed.
+      - id: sphinx-needs
+        name: sphinx-needs build
+        entry: uv run --frozen sphinx-build -b needs -W -q docs docs/_build/needs
+        language: system
+        pass_filenames: false
+        files: ^docs/.*\.(md|py)$
