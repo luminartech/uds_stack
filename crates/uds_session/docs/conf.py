@@ -20,20 +20,18 @@ release = "0.1.0"
 version = "0.1.0"
 
 extensions = [
-    "myst_parser",
     "sphinx_needs",
 ]
 
 source_suffix = {
-    ".md": "markdown",
     ".rst": "restructuredtext",
 }
 
 exclude_patterns = [
     "_build",
-    # Working design documents, not part of the published requirement set. These are not
-    # version controlled and may cite clause locators freely, so they must never be
-    # included in a build that produces published output.
+    # Working design documents, not part of the published requirement set. They are not
+    # version controlled, they go stale, and rules written for a single work item leak
+    # into later ones if they are read as current. Never include them in published output.
     "superpowers",
     "sphinx-requirements.txt",
 ]

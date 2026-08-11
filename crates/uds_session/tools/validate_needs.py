@@ -11,6 +11,7 @@ nothing about the parts of our process that are ours:
   * the integrity-level ratchet: a requirement may not claim more than it targets
   * that a requirement we derived, rather than transcribed, carries a rationale
   * the clause-locator prohibition
+  * that a requirement document is reStructuredText, and that the set is not empty
 
 The two are complementary, and this one is fast enough to run on every commit.
 
@@ -21,6 +22,7 @@ from __future__ import annotations
 
 import re
 import sys
+import textwrap
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -66,9 +68,15 @@ LOCATOR_PATTERNS = [
 # A labelled rationale paragraph, at the start of a line.
 RATIONALE = re.compile(r"^\s*Rationale\b.*:", re.MULTILINE)
 
-DIRECTIVE_OPEN = re.compile(r"^```\{(?P<type>[a-z_]+)\}\s*(?P<title>.*?)\s*$")
-DIRECTIVE_CLOSE = re.compile(r"^```\s*$")
-OPTION = re.compile(r"^:(?P<key>[a-z_]+):\s*(?P<value>.*?)\s*$")
+# RST directives at column 0; the body runs to the next non-blank line at column 0.
+# Indentation-based extent means a directive cannot be "unterminated", and a nested
+# block cannot silently end its parent — the failure mode MyST fences had.
+DIRECTIVE_OPEN = re.compile(r"^\.\.\s+(?P<type>[a-z_]+)::\s*(?P<title>.*?)\s*$")
+OPTION = re.compile(r"^\s+:(?P<key>[a-z_]+):\s*(?P<value>.*?)\s*$")
+
+# A need directive nested inside another directive is invisible to `parse`, while Sphinx
+# still creates the need — so it would enter needs.json unvalidated. Reported, not skipped.
+INDENTED_NEED = re.compile(r"^\s+\.\.\s+(?P<type>[a-z_]+)::")
 
 
 @dataclass
@@ -91,20 +99,17 @@ class Problem:
         return f"{self.path}:{self.line}: {self.message}"
 
 
-def parse(path: Path) -> tuple[list[Need], list[Problem]]:
-    """Extract MyST directive blocks. Malformed blocks are reported, not raised."""
+def parse(path: Path) -> list[Need]:
+    """Extract need directives. Directive extent is set by indentation."""
     needs: list[Need] = []
-    problems: list[Problem] = []
     lines = path.read_text(encoding="utf-8").splitlines()
 
     index = 0
     while index < len(lines):
         opened = DIRECTIVE_OPEN.match(lines[index])
-        # Only need directives are of interest. Every other MyST directive in the tree —
-        # `toctree`, `needtable`, `needflow`, admonitions — is skipped: whether a
-        # directive exists and is well formed is Sphinx's job, and the CI build is where
-        # that is enforced. A misspelled need type is therefore caught by Sphinx as an
-        # unknown directive, not here.
+        # Only need directives are of interest. Every other directive in the tree —
+        # `toctree`, `needtable`, `needflow` — is skipped: whether a directive exists
+        # and is well formed is Sphinx's job, enforced by the CI build.
         if not opened or opened.group("type") not in NEED_TYPES:
             index += 1
             continue
@@ -125,23 +130,17 @@ def parse(path: Path) -> tuple[list[Need], list[Problem]]:
             index += 1
 
         body_lines: list[str] = []
-        closed = False
         while index < len(lines):
-            if DIRECTIVE_CLOSE.match(lines[index]):
-                closed = True
-                index += 1
+            line = lines[index]
+            if line.strip() and not line[:1].isspace():
                 break
-            body_lines.append(lines[index])
+            body_lines.append(line)
             index += 1
 
-        if not closed:
-            problems.append(Problem(path, need.line, f"unterminated `{need.type}` directive"))
-            continue
-
-        need.body = "\n".join(body_lines).strip()
+        need.body = textwrap.dedent("\n".join(body_lines)).strip()
         needs.append(need)
 
-    return needs, problems
+    return needs
 
 
 def check_need(need: Need) -> list[Problem]:
@@ -220,20 +219,50 @@ def check_locators(path: Path) -> list[Problem]:
     return problems
 
 
-def main() -> int:
-    if not REQUIREMENT_ROOT.is_dir():
-        print(f"{REQUIREMENT_ROOT} does not exist; nothing to validate")
-        return 0
+def check_indented_needs(path: Path) -> list[Problem]:
+    problems: list[Problem] = []
+    for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+        matched = INDENTED_NEED.match(line)
+        if matched and matched.group("type") in NEED_TYPES:
+            problems.append(
+                Problem(
+                    path,
+                    number,
+                    f"`{matched.group('type')}` directive is indented; a need nested inside "
+                    "another directive is not validated. Move it to column 0.",
+                )
+            )
+    return problems
 
+
+def main(root: Path = REQUIREMENT_ROOT) -> int:
     problems: list[Problem] = []
     seen: dict[str, Need] = {}
 
-    for path in sorted(REQUIREMENT_ROOT.rglob("*.md")):
-        needs, parse_problems = parse(path)
-        problems.extend(parse_problems)
-        problems.extend(check_locators(path))
+    if not root.is_dir():
+        print(f"{root} does not exist", file=sys.stderr)
+        return 1
 
-        for need in needs:
+    # A requirement document left as Markdown would simply not be globbed, and the set
+    # would validate clean while ignoring it. Report it instead.
+    for path in sorted(root.rglob("*.md")):
+        problems.append(
+            Problem(
+                path,
+                1,
+                "requirement documents are reStructuredText; convert this file to .rst",
+            )
+        )
+
+    for path in sorted(root.rglob("*.rst")):
+        # The locator prohibition stays live until it is deliberately replaced by the
+        # inverse rule. Dropping the call here would let it lapse silently for a commit,
+        # while the module docstring still advertises it — the exact defect this file's
+        # rewrite exists to remove.
+        problems.extend(check_locators(path))
+        problems.extend(check_indented_needs(path))
+
+        for need in parse(path):
             problems.extend(check_need(need))
 
             need_id = need.options.get("id")
@@ -250,6 +279,13 @@ def main() -> int:
                 )
             else:
                 seen[need_id] = need
+
+    # Reporting success over an empty set is the failure mode this whole file exists to
+    # avoid: a guard rail that silently stops guarding is worse than none.
+    if not seen:
+        problems.append(
+            Problem(root, 0, "no requirements found; refusing to report an empty set valid")
+        )
 
     if problems:
         for problem in sorted(problems, key=lambda p: (str(p.path), p.line)):
