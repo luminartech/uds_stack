@@ -59,24 +59,27 @@ Out of scope:
 
 The requirement set is published as Sphinx + sphinx-needs documentation.
 
-<!-- TODO: link the GitHub Pages URL once the docs workflow is in place. -->
+*GitHub Pages URL to be added once the docs workflow is in place.*
 
 Each requirement carries:
 
 - `origin` — whether it was transcribed from a standard or derived from a design decision.
-- `source` — where in that standard it comes from.
 - `integrity_level` and `target_level` — what is currently substantiated by evidence, and
   what it is expected to reach. The gap between them is the outstanding work, and is
   reportable rather than tacit.
-- `status` — requirement IDs are allocated, never renumbered and never reused. Once a
-  requirement is approved and linked externally, its ID is fixed for the life of the crate.
+- `status` — lifecycle stage of the requirement: `draft` (authored, not yet reviewed; IDs may
+  still move), `review` (under review), `approved` (reviewed and accepted; ID is permanent),
+  or `obsolete` (withdrawn; ID retained and never reused).
+
+Requirement IDs are allocated once and never renumbered or reused. Once a requirement is
+approved and linked externally, its ID is fixed for the life of the crate.
 
 The `needs` builder produces `needs.json`, consumed by a separate qualification repository
 that holds the safety argument.
 
 ## Usage
 
-<!-- TODO: write once there is an API. -->
+*API documentation to be written as the implementation takes shape.*
 
 ## Building
 
@@ -89,8 +92,8 @@ $ uv run sphinx-build -b needs -W docs docs/_build/needs
 
 ## Contributing
 
-<!-- TODO: link CONTRIBUTING.md once written. -->
+*Contribution guidelines are in development.*
 
 ## Licence
 
-<!-- TODO: decide. -->
+*Licence to be determined.*
