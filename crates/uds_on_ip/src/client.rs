@@ -886,6 +886,13 @@ where
     }
 
     /// Check if an error is a connection error that should trigger reconnection.
+    ///
+    /// A routing-activation denial
+    /// ([`simple_doip::Error::RoutingActivationDenied`]) is deliberately NOT a
+    /// connection error: it is terminal (another tester holds our source
+    /// address), so reconnecting would just re-trigger the denial. It falls
+    /// through to `false` here and is propagated as
+    /// [`Error::RoutingActivationDenied`] instead.
     fn is_connection_error(error: &simple_doip::Error) -> bool {
         matches!(
             error,
@@ -942,6 +949,15 @@ where
                         info!("Received in-flight message during reconnection");
                     }
                     return Ok(maybe_message);
+                }
+                Ok(Err(e @ simple_doip::Error::RoutingActivationDenied(_))) => {
+                    // A routing-activation denial is terminal: another tester
+                    // already holds our source address (or the entity otherwise
+                    // refused activation), and no amount of retrying will change
+                    // that. Propagate it as the dedicated, non-retryable error
+                    // instead of looping until the reconnect budget expires.
+                    warn!("Reconnection aborted — routing activation denied: {}", e);
+                    return Err(Error::from(e));
                 }
                 Ok(Err(e)) => {
                     warn!("Reconnection attempt {} failed: {}", attempts, e);
@@ -1229,6 +1245,58 @@ mod classify_response_tests {
         assert!(
             matches!(m_other_sid, ResponseMatch::Malformed(_)),
             "two-byte NACK whose inner byte is some other SID must be Malformed, got {m_other_sid:?}",
+        );
+    }
+
+    /// A routing-activation denial must NOT be treated as a connection error:
+    /// reconnecting would only re-trigger the denial. It has to propagate as
+    /// the dedicated non-retryable error instead of driving the reconnect loop.
+    #[test]
+    fn routing_activation_denial_is_not_a_connection_error() {
+        use simple_doip::messages::RoutingActivationResponseCode;
+
+        let denial = simple_doip::Error::RoutingActivationDenied(
+            RoutingActivationResponseCode::DeniedSourceAddressAlreadyRegistered,
+        );
+        assert!(
+            !TestClient::is_connection_error(&denial),
+            "routing activation denial must be non-retryable (is_connection_error == false)"
+        );
+
+        // Sanity check the positive side so the assertion above isn't vacuous:
+        // a genuine socket close still classifies as a connection error.
+        assert!(TestClient::is_connection_error(
+            &simple_doip::Error::ConnectionClosed
+        ));
+    }
+
+    /// The manual `From<simple_doip::Error>` impl must promote a routing
+    /// denial into the dedicated variant (not bury it in `Transport`), while
+    /// still wrapping every other error in `Transport` as before.
+    #[test]
+    fn from_simple_doip_promotes_routing_denial() {
+        use simple_doip::messages::RoutingActivationResponseCode;
+
+        let promoted = Error::from(simple_doip::Error::RoutingActivationDenied(
+            RoutingActivationResponseCode::DeniedSourceAddressAlreadyRegistered,
+        ));
+        assert!(
+            matches!(
+                promoted,
+                Error::RoutingActivationDenied(
+                    RoutingActivationResponseCode::DeniedSourceAddressAlreadyRegistered
+                )
+            ),
+            "routing denial must map to Error::RoutingActivationDenied, got {promoted:?}"
+        );
+
+        let wrapped = Error::from(simple_doip::Error::ConnectionClosed);
+        assert!(
+            matches!(
+                wrapped,
+                Error::Transport(simple_doip::Error::ConnectionClosed)
+            ),
+            "non-denial errors must still wrap in Error::Transport, got {wrapped:?}"
         );
     }
 }

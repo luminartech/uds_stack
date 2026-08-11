@@ -6,8 +6,26 @@ use thiserror::Error;
 #[derive(Debug, Error)]
 pub enum Error {
     /// DoIP transport error.
+    ///
+    /// Note: this variant is populated via the manual
+    /// [`From<simple_doip::Error>`] impl below rather than a `#[from]` derive,
+    /// so that a routing-activation denial can be lifted into the dedicated,
+    /// non-retryable [`Error::RoutingActivationDenied`] instead of being
+    /// buried here.
     #[error("DoIP transport error: {0}")]
-    Transport(#[from] simple_doip::Error),
+    Transport(simple_doip::Error),
+
+    /// The `DoIP` entity refused routing activation. This is distinct from
+    /// [`Error::Transport`] because it is *not* transient: retrying the
+    /// connection cannot resolve it (the most common cause is that another
+    /// tester — e.g. [PRODUCT_NAME_REDACTED] — already holds this tester's source address
+    /// `0x0E00`). The reconnect machinery must therefore propagate it rather
+    /// than loop, and the client's connection-error classifier returns `false`
+    /// for the underlying `simple_doip` error.
+    #[error(
+        "Routing activation denied by the DoIP entity: {0:?} (another tester may already hold source address 0x0E00)"
+    )]
+    RoutingActivationDenied(simple_doip::messages::RoutingActivationResponseCode),
 
     /// Session timeout - no response received within the expected time.
     #[error("Session timeout: no response within {0:?}")]
@@ -57,4 +75,22 @@ pub enum Error {
         /// The configured maximum that was exceeded.
         max: u32,
     },
+}
+
+impl From<simple_doip::Error> for Error {
+    /// Lift a `simple_doip` error into a `uds_on_ip` error.
+    ///
+    /// A routing-activation denial is promoted to the dedicated,
+    /// non-retryable [`Error::RoutingActivationDenied`] so callers can
+    /// distinguish "another tester owns this sensor" from an ordinary,
+    /// retryable transport fault. Every other error is wrapped in
+    /// [`Error::Transport`], matching the previous `#[from]` behavior.
+    fn from(error: simple_doip::Error) -> Self {
+        match error {
+            simple_doip::Error::RoutingActivationDenied(code) => {
+                Error::RoutingActivationDenied(code)
+            }
+            other => Error::Transport(other),
+        }
+    }
 }
