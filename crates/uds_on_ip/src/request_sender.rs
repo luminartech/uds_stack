@@ -3,7 +3,7 @@
 
 use async_trait::async_trait;
 use simple_doip::{client::AddressType, connection::Connector};
-use uds_protocol::{ProtocolRequest, ProtocolResponse, UdsSpec};
+use uds_protocol::Request;
 
 use crate::{Result, UdsClient};
 
@@ -13,7 +13,13 @@ use crate::{Result, UdsClient};
 /// the concrete connection type (`ConnectorSocket` vs `ListenerSocket`).
 #[async_trait]
 pub trait RequestSender: Send + Sync {
-    /// Send a typed UDS request and wait for the response.
+    /// Send a UDS request and wait for the raw response bytes.
+    ///
+    /// The borrowing [`Request`] is encoded into an owned buffer inside the
+    /// implementation; the borrow never escapes the call, so the trait stays
+    /// object-safe (no lifetime parameter) and the transport boundary trades
+    /// in owned bytes. Typed decoding of the response is done caller-side over
+    /// the returned owned bytes.
     ///
     /// `address_type` controls the DoIP target address:
     /// - `Physical` — targets a specific ECU (unicast)
@@ -22,9 +28,9 @@ pub trait RequestSender: Send + Sync {
     /// Returns `Ok(None)` when the request has the suppress-positive-response bit set.
     async fn send(
         &self,
-        request: ProtocolRequest,
+        request: Request<'_>,
         address_type: AddressType,
-    ) -> Result<Option<ProtocolResponse>>;
+    ) -> Result<Option<Vec<u8>>>;
 
     /// Send a raw UDS request (as bytes) and wait for the raw response bytes.
     async fn send_raw(&self, data: Vec<u8>) -> Result<Vec<u8>>;
@@ -40,10 +46,10 @@ where
 {
     async fn send(
         &self,
-        request: ProtocolRequest,
+        request: Request<'_>,
         address_type: AddressType,
-    ) -> Result<Option<ProtocolResponse>> {
-        self.send::<UdsSpec>(request, address_type).await
+    ) -> Result<Option<Vec<u8>>> {
+        UdsClient::send(self, request, address_type).await
     }
 
     async fn send_raw(&self, data: Vec<u8>) -> Result<Vec<u8>> {
