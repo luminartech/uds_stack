@@ -439,3 +439,95 @@ an implementation choice and is not constrained here.
    ISO 14229-2:2021 does not enumerate the error values. Clause 8.10 states only that an
    error value is issued when an error is detected by a lower layer. The session layer
    shall therefore carry an error value without interpreting it.
+
+Message classification
+----------------------
+
+Several requirements in this set condition on what a message is rather than on its
+addressing alone. The session layer does not determine that by parsing. These
+requirements are derived: ISO 14229-2 states the conditions in terms of message content
+and leaves the means of recognising it to the implementation.
+
+.. llr:: Message classification is supplied by the caller
+   :id: UDSS_LLR_0133
+   :status: draft
+   :integrity_level: QM
+   :target_level: D
+   :origin: derived
+   :tags: service-interface; classification
+
+   ``S_Data.req`` and ``T_Data.ind`` shall each carry a message classification supplied by
+   the caller. Where a requirement in this set depends on what a message is, the session
+   layer shall determine it from that classification.
+
+   Rationale: several requirements condition on message content, including whether a
+   response is final or response-pending, whether a message selects a diagnostic session,
+   and whether a response was solicited. Determining these by parsing ``S_Data`` would
+   bind this crate to the ISO 14229-1 application layer encodings and would require every
+   timing test to construct valid UDS frames. The caller already holds what is needed:
+   the application composes the message it asks to have transmitted, and the code that
+   supplies a ``T_Data.ind`` holds the bytes it received. The classification is carried on
+   ``T_Data.ind`` rather than on ``S_Data.ind`` because a client must recognise a
+   response-pending response at reception, before the application has seen it.
+
+.. llr:: Message classification values
+   :id: UDSS_LLR_0134
+   :status: draft
+   :integrity_level: QM
+   :target_level: D
+   :origin: derived
+   :tags: service-interface; classification
+
+   A message classification shall consist of a kind and, where the message selects a
+   diagnostic session, the identifier of the session it selects. The kind shall be one of:
+
+   * ``request``, a message sent by a client to a server;
+   * ``final response``, a positive response, or a negative response whose response code
+     is not ``requestCorrectlyReceived-ResponsePending``;
+   * ``response pending``, a negative response whose response code is
+     ``requestCorrectlyReceived-ResponsePending``;
+   * ``unsolicited``, a message transmitted by a server other than in response to a
+     request.
+
+   Rationale: kind and session selection are separate because a DiagnosticSessionControl
+   positive response is at once a final response and a session selection, and a single
+   flat enumeration would force every requirement conditioning on finality to enumerate
+   the session-selecting case as well. The session identifier accompanies requests as well
+   as responses, because ``UDSS_LLR_0103`` conditions on a session-selecting request for
+   which no response is transmitted.
+
+.. llr:: The session layer does not inspect message data
+   :id: UDSS_LLR_0135
+   :status: draft
+   :integrity_level: QM
+   :target_level: D
+   :origin: derived
+   :tags: service-interface; classification
+
+   The session layer shall not read the contents of ``S_Data``, and no behaviour of the
+   session layer shall depend on them.
+
+   Rationale: this is what makes ``UDSS_LLR_0133`` enforceable rather than aspirational.
+   Without it a classification could be supplied and then quietly second-guessed by
+   parsing, and the crate would acquire a dependency on the application layer encodings
+   that no requirement records.
+
+.. llr:: Completion of a request with no response is reported by the application
+   :id: UDSS_LLR_0136
+   :status: draft
+   :integrity_level: QM
+   :target_level: D
+   :origin: derived
+   :tags: service-interface; classification
+
+   The application shall report the completion of the handling of a received request for
+   which no response message is transmitted, by an input carrying the addressing
+   information of that request. The session layer shall accept that input from the caller.
+
+   Rationale: ISO 14229-2:2021 9.5 Table 6 gives completion of the requested action, where
+   no response is required or allowed, as a condition that restarts ``tS3_Server``. No
+   message is transmitted in that case, so there is no ``T_Data.conf`` to observe and no
+   message classification that could carry the fact. Without an explicit input the session
+   layer cannot detect it, and a server handling a suppressed-response request in a
+   non-default session would never restart its timer. The requirement that acts on this
+   input belongs to the server session timer document.
