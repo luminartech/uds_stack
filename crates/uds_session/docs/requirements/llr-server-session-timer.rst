@@ -80,13 +80,19 @@ address. Only that client's traffic affects the timer.
    :integrity_level: QM
    :target_level: D
    :origin: session-layer-standard
-   :source: ISO 14229-2:2021 9.5 Table 6
+   :source: ISO 14229-2:2021 9.5 Table 6; ISO 14229-5:2022 8.9.2
    :tags: server; s3_server
 
    While in a non-default session, on ``T_Data.conf`` indicating successful transmission
-   of a final response message to the controlling client, the server shall restart the
-   ``tS3_Server`` timer. A final response is a positive response, or a negative response
-   whose response code is not ``requestCorrectlyReceived-ResponsePending``.
+   of a solicited final response message to the controlling client, the server shall
+   restart the ``tS3_Server`` timer. A final response is a positive response, or a
+   negative response whose response code is not
+   ``requestCorrectlyReceived-ResponsePending``.
+
+   The response must be solicited, meaning transmitted as the direct result of processing
+   a request message, because a positive response may also be unsolicited: a periodic
+   transmission is both. Without the qualifier this requirement and ``UDSS_LLR_0108``
+   would both apply to such a message and would demand opposite outcomes.
 
 .. llr:: A response-pending negative response does not restart the session timer
    :id: UDSS_LLR_0107

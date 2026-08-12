@@ -16,6 +16,14 @@ instance and drives it, typically the integration layer that also owns the trans
 The **application** is the diagnostic application on whose behalf the session layer
 transmits and receives messages.
 
+Requirements transcribed from ISO 14229-2 speak of the application passing a primitive to
+the session layer, or the session layer passing one to the application, because that is
+how the standard describes a service interface. Read those statements as fixing where a
+primitive comes from and where it goes, not as describing a call: the caller supplies
+every input on the application's behalf and retrieves every output for it, as
+``UDSS_LLR_0115`` and ``UDSS_LLR_0116`` require. ISO 14229-2's *service user* is the
+application in this document's terms.
+
 Sans-io binding
 ---------------
 
@@ -57,13 +65,10 @@ interface.
    The session layer shall not read a clock. Every decision that depends on elapsed time
    shall be made from a timestamp supplied by the caller.
 
-   A timestamp shall be an unsigned count of milliseconds, at least 32 bits wide, taken
-   from an origin that the caller chooses and does not change for the lifetime of a
-   session layer instance.
+   A timestamp shall be a 32-bit unsigned count of milliseconds.
 
-   The session layer shall compute an elapsed interval as the difference between two
-   timestamps modulo the timestamp's range, which yields the true interval for any
-   interval shorter than half that range.
+   The session layer shall compute the interval between two timestamps as their difference
+   modulo 2\ :sup:`32`, and shall treat that result as the elapsed time between them.
 
    Rationale: reading a clock is I/O by another name, and it makes timer behaviour
    untestable except in real time. A caller-supplied timestamp lets a test advance time
@@ -71,11 +76,24 @@ interface.
 
    The unit is milliseconds because that is the unit ISO 14229-2:2021 9.5 Table 5 states
    its timing parameter values in; ``tS3_Server`` has a timeout of 5 000 ms and a
-   tolerance of 0 ms to 200 ms, so no finer resolution is required. Modular subtraction is
-   specified because the likely deployment is a free-running 32-bit millisecond counter,
-   which wraps after roughly 49 days. Every timeout in this set is shorter than half that
-   range by orders of magnitude, so modular subtraction is exact, whereas treating a
-   wrapped timestamp as a regression would silently stall every timer.
+   tolerance of 0 ms to 200 ms. A later requirement needing finer resolution — the minimum
+   spacing between consecutive response-pending messages is a fraction of a timing
+   parameter and need not fall on a whole millisecond — will have to be expressed against
+   this unit rather than alongside a second one.
+
+   The width is fixed rather than left as a minimum because the wraparound point would
+   otherwise be unknown, and an unknown modulus cannot be tested. A 32-bit millisecond
+   counter wraps after roughly 49 days, and modular subtraction returns the true interval
+   for any interval shorter than that, which every timeout in this set is by orders of
+   magnitude.
+
+   The subtraction is total: it yields a value for every pair of timestamps, so no input
+   can leave the session layer without a defined elapsed time. Whether the caller's
+   timestamps are non-decreasing is a property of the caller rather than of this crate,
+   and is recorded as an assumption of use in the qualification repository. A caller that
+   supplies a decreasing timestamp obtains an interval close to the full range, which will
+   expire timers early; the session layer cannot distinguish that from a legitimate wrap,
+   and no requirement here obliges it to try.
 
 .. llr:: Inbound primitives are caller-supplied inputs
    :id: UDSS_LLR_0115
@@ -88,12 +106,11 @@ interface.
    Every input to the session layer shall be supplied by the caller. The session layer
    shall obtain information about the application and the transport by no other means.
 
-   The inputs so supplied shall include the primitives that ``UDSS_LLR_0139`` requires the
-   session layer to accept from the application and from the transport layer, namely
-   ``S_Data.req``, ``T_Data.ind``, ``T_DataSOM.ind`` and ``T_Data.conf``; a timestamp, as
-   ``UDSS_LLR_0114`` defines it, supplied either alongside another input or on its own; the
-   protocol parameters of ``UDSS_LLR_0138``; and the completion report of
-   ``UDSS_LLR_0136``.
+   The inputs so supplied shall include ``S_Data.req``, as ``UDSS_LLR_0139`` defines it;
+   ``T_Data.ind``, ``T_DataSOM.ind`` and ``T_Data.conf``, as ``UDSS_LLR_0140`` defines
+   them; a timestamp, as ``UDSS_LLR_0114`` defines it, supplied either alongside another
+   input or on its own; the protocol parameters of ``UDSS_LLR_0138``; and the completion
+   report of ``UDSS_LLR_0136``.
 
    Rationale: the closed claim is the first paragraph, and it is what makes this crate
    sans-io: there is no second channel by which state can reach the session layer. The
@@ -114,9 +131,8 @@ interface.
    session layer shall not invoke a callback, handler, or caller-supplied trait
    implementation in order to deliver an output.
 
-   The outputs so produced shall include the primitives that ``UDSS_LLR_0139`` requires the
-   session layer to produce for the application and for the transport layer, namely
-   ``T_Data.req``, ``S_Data.ind`` and ``S_Data.conf``.
+   The outputs so produced shall include ``S_Data.ind`` and ``S_Data.conf``, as
+   ``UDSS_LLR_0139`` defines them, and ``T_Data.req``, as ``UDSS_LLR_0140`` defines it.
 
    Rationale: a session layer that calls outwards is one whose behaviour depends on what
    the caller does while the session layer is part-way through a decision. Producing
@@ -133,9 +149,12 @@ interface.
    :origin: derived
    :tags: service-interface; sans-io
 
-   The session layer shall not copy or retain the contents of ``S_Data`` beyond the
-   processing of the input that carried them. An output that refers to message data shall
-   refer to data owned by the caller.
+   The session layer shall not copy or retain the contents of ``S_Data`` or ``T_Data``
+   beyond the processing of the input that carried them. An output that refers to message
+   data shall refer to data owned by the caller.
+
+   ``UDSS_LLR_0124`` maps one onto the other, so the two names denote the same octets
+   travelling in opposite directions; this requirement binds both.
 
    Rationale: the crate is ``no_std`` and allocation-free, and cannot own a buffer whose
    size it does not know. Retaining a payload would also imply a retransmission buffer,
@@ -152,20 +171,47 @@ Service primitives
    :integrity_level: QM
    :target_level: D
    :origin: session-layer-standard
-   :source: ISO 14229-2:2021 6.1; ISO 14229-2:2021 7.3
+   :source: ISO 14229-2:2021 6.1
    :tags: service-interface; primitives
 
    The session layer shall provide three service primitives to the application:
 
-   * ``S_Data.req``, by which the application passes control information or data to be
-     transmitted to the session layer;
-   * ``S_Data.ind``, by which the session layer passes status information and received
-     data to the application;
-   * ``S_Data.conf``, by which the session layer passes to the application the status of
-     a preceding ``S_Data.req``.
+   * ``S_Data.req``, an input, by which the application passes control information or data
+     to be transmitted to the session layer;
+   * ``S_Data.ind``, an output, by which the session layer passes status information and
+     received data to the application;
+   * ``S_Data.conf``, an output, by which the session layer passes to the application the
+     status of a preceding ``S_Data.req``.
 
-   The session layer shall exchange with the transport layer the protocol data units
-   ``T_Data.req``, ``T_Data.ind``, ``T_DataSOM.ind`` and ``T_Data.conf``.
+.. llr:: The session layer exchanges four protocol data units with the transport layer
+   :id: UDSS_LLR_0140
+   :status: draft
+   :integrity_level: QM
+   :target_level: D
+   :origin: session-layer-standard
+   :source: ISO 14229-2:2021 6.3; ISO 14229-2:2021 7.3; ISO 14229-2:2021 9.2 Table 3
+   :tags: service-interface; primitives
+
+   The session layer shall exchange the following protocol data units with the transport
+   layer:
+
+   * ``T_Data.req``, an output, requesting transmission of a message;
+   * ``T_Data.ind``, an input, reporting the reception of a complete message;
+   * ``T_DataSOM.ind``, an input, reporting the start of reception of a multi-frame
+     message;
+   * ``T_Data.conf``, an input, reporting the outcome of a requested transmission.
+
+   The session layer shall treat a ``T_Data.ind`` preceded by a ``T_DataSOM.ind`` for the
+   same message as reporting a multi-frame message, and any other ``T_Data.ind`` as
+   reporting a single-frame message.
+
+   Each locator supplies a different part of this set. Clause 6.3 names ``T_Data.ind`` and
+   ``T_DataSOM.ind``; clause 7.3 names ``T_Data.conf`` and establishes that a transmission
+   request is passed to the transport layer; clause 9.2 Table 3 names that request
+   ``T_Data.req``, in defining ``tP4_Server`` as the time between a ``T_Data.ind`` and the
+   ``T_Data.req`` that starts the final response. The single-frame and multi-frame reading
+   is stated because ``UDSS_LLR_0104`` distinguishes them and nothing else in this set
+   would let the session layer tell them apart.
 
 .. llr:: S_Data.req requests transmission of a message
    :id: UDSS_LLR_0118
@@ -211,13 +257,15 @@ Service primitives
    :source: ISO 14229-2:2021 7.3; ISO 14229-2:2021 7.5
    :tags: service-interface; primitives
 
-   On ``T_Data.ind`` reporting the reception of a complete message, the session layer
-   shall produce an ``S_Data.ind`` whose parameters are those of the received T_PDU mapped
-   as ``UDSS_LLR_0124`` requires, except where another requirement in this set requires
-   that the indication be withheld.
+   On ``T_Data.ind``, whether it reports a successful or an unsuccessful reception, the
+   session layer shall produce an ``S_Data.ind`` whose parameters are those of the
+   received T_PDU mapped as ``UDSS_LLR_0124`` requires, except where another requirement
+   in this set requires that the indication be withheld.
 
-   ``UDSS_LLR_0109`` is the only such exception at present: it withholds the indication
-   for a reception reported unsuccessful.
+   Both outcomes produce an indication because ``S_Result`` exists to report them:
+   ``UDSS_LLR_0119`` makes ``S_Data`` and ``S_Length`` valid only where ``S_Result`` is
+   ``S_OK``, which presupposes indications where it is not, and a client cannot detect a
+   failed reception that is never indicated to it.
 
 .. llr:: S_Data.conf confirms a preceding S_Data.req
    :id: UDSS_LLR_0120
@@ -301,7 +349,12 @@ Parameter mapping
    The validity of each session layer parameter in each service primitive shall be as
    follows. The application layer column records the parameter each one corresponds to in
    ISO 14229-2:2021 Table 1; the correspondence is by name and imposes nothing further on
-   this crate, which the caller supplies ``S_`` parameters directly.
+   this crate, to which the caller supplies ``S_`` parameters directly.
+
+   Table 1's validity columns are headed with the application layer's ``A_Data`` primitive
+   names while the clause containing it is titled for the session layer's ``S_Data``
+   primitives. The two are read here as the same three primitives under two layers' names,
+   which is what the parameter correspondence in the same table implies.
 
    .. list-table::
       :header-rows: 1
@@ -412,6 +465,12 @@ The requirements below constrain each parameter's value set and width. ISO 14229
 ``Byte Array`` a sequence of 8-bit aligned data. Where a requirement below gives a width,
 that width is normative. Where it gives only a value set, as the enumerations do, the
 in-memory representation is an implementation choice.
+
+That is a deliberate departure from 8.2 for the three enumerated parameters,
+``UDSS_LLR_0125``, ``UDSS_LLR_0126`` and ``UDSS_LLR_0132``. The clause makes ``Enum`` an
+8-bit type; this crate neither encodes nor decodes those parameters on the wire, so their
+width constrains nothing observable, and fixing it would forbid a Rust representation that
+is safer and no larger. The value sets are transcribed exactly.
 
 .. llr:: S_Mtype identifies the message type and the address information present
    :id: UDSS_LLR_0125
@@ -524,11 +583,15 @@ in-memory representation is an implementation choice.
    value ``S_OK`` shall indicate that the service execution completed successfully. Every
    other value shall indicate an error detected by a lower layer, and the session layer
    shall carry such a value without interpreting it. ``S_Result`` shall be reported to the
-   service user on both the sending and the receiving side.
+   application on both the sending and the receiving side.
 
    ISO 14229-2:2021 does not enumerate the error values. Clause 8.10 states only that an
    error value is issued when an error is detected by a lower layer, which is why the
-   session layer carries one rather than acting on its meaning.
+   session layer carries one rather than acting on its meaning. That clause also requires
+   the application layer entity to set the appropriate error bit where two or more errors
+   are discovered at once; that obligation falls on the application layer and is not
+   transcribed here, and no requirement in this set depends on ``S_Result`` being a bit
+   field rather than an enumeration.
 
 Message classification
 ----------------------
@@ -549,6 +612,12 @@ and leaves the means of recognising it to the implementation.
    ``S_Data.req``, ``T_Data.ind`` and ``T_DataSOM.ind`` shall each carry a message
    classification supplied by the caller. Where a requirement in this set depends on what
    a message is, the session layer shall determine it from that classification.
+
+   Where a ``T_Data.ind`` reports an unsuccessful reception, its classification shall state
+   the kind the caller was able to determine, and shall state kind ``request`` where the
+   message was addressed to a server. ``UDSS_LLR_0109`` conditions on a failed reception
+   of a request, so a classification is required even where the message data is
+   incomplete.
 
    The session layer shall associate the classification carried by an ``S_Data.req`` with
    the ``T_Data.conf`` that reports the outcome of the transmission that ``S_Data.req``
@@ -581,8 +650,8 @@ and leaves the means of recognising it to the implementation.
    :origin: derived
    :tags: service-interface; classification
 
-   A message classification shall consist of a kind, and where the message selects a
-   diagnostic session, the identifier of the session it selects. The kind shall be one of:
+   A message classification shall consist of a kind and, where the message effects a
+   transition to a diagnostic session, a session selection. The kind shall be one of:
 
    * ``request``, a message sent by a client to a server;
    * ``final response``, a positive response, or a negative response whose response code
@@ -590,25 +659,34 @@ and leaves the means of recognising it to the implementation.
    * ``response pending``, a negative response whose response code is
      ``requestCorrectlyReceived-ResponsePending``.
 
-   A classification whose kind is ``final response`` or ``response pending`` shall further
-   state whether the message is ``solicited``, transmitted because of a request received
-   from a client, or ``unsolicited``, transmitted for any other reason.
+   A classification whose kind is ``final response`` shall further state whether the
+   message is ``solicited``, transmitted because of a request received from a client, or
+   ``unsolicited``, transmitted for any other reason.
+
+   A session selection shall state the identifier of the session being selected and
+   whether that session is the default session. It shall be present only where the message
+   effects the transition: a request or a positive response that selects a session carries
+   one, and a negative response to a session-change request does not.
 
    Rationale: kind and session selection are separate because a DiagnosticSessionControl
    positive response is at once a final response and a session selection, and a single
    flat enumeration would force every requirement conditioning on finality to enumerate
-   the session-selecting case as well. The session identifier accompanies requests as well
-   as responses, because ``UDSS_LLR_0103`` conditions on a session-selecting request for
+   the session-selecting case as well. A session selection accompanies requests as well as
+   responses, because ``UDSS_LLR_0103`` conditions on a session-selecting request for
    which no response is transmitted.
 
-   Solicitation is separate from kind for the same reason, and the separation is
-   load-bearing rather than tidy. A periodically transmitted positive response is at once a
-   final response and unsolicited. Were those two alternatives of one enumeration, a caller
-   could classify such a message either way, and the two answers command opposite
-   behaviour: ``UDSS_LLR_0106`` restarts ``tS3_Server`` on a confirmed final response while
-   ``UDSS_LLR_0108`` requires that an unsolicited response does not. The result would be
-   the very failure ``UDSS_LLR_0108`` exists to prevent, namely a periodic transmission
-   holding a non-default session open indefinitely.
+   The selection states whether the session is the default one rather than leaving the
+   session layer to decide from the identifier. ``UDSS_LLR_0102``, ``UDSS_LLR_0103`` and
+   ``UDSS_LLR_0112`` all condition on whether a session is the default, and the session
+   layer has no other way to tell: recognising the identifier would mean knowing the
+   ISO 14229-1 encoding, which ``UDSS_LLR_0135`` forbids. The identifier itself stays
+   opaque and is carried for the application's benefit.
+
+   Solicitation is separate from kind because a periodically transmitted positive response
+   is at once a final response and unsolicited. Were those alternatives of one
+   enumeration, a caller could classify such a message either way and get either
+   behaviour. It applies only to a final response because a response-pending message is by
+   construction a reply to a request, so asking whether it was solicited has no meaning.
 
 .. llr:: The session layer does not inspect message data
    :id: UDSS_LLR_0135
@@ -618,8 +696,8 @@ and leaves the means of recognising it to the implementation.
    :origin: derived
    :tags: service-interface; classification
 
-   The session layer shall not interpret the contents of ``S_Data``. For any two inputs
-   differing only in the contents of ``S_Data``, the session layer shall produce outputs
+   The session layer shall not interpret the contents of ``S_Data`` or ``T_Data``. For any
+   two inputs differing only in that message data, the session layer shall produce outputs
    that are identical except for the message data forwarded between the application and
    the transport layer.
 
@@ -657,8 +735,8 @@ and leaves the means of recognising it to the implementation.
    input belongs to the server session timer document.
 
    The classification is carried on the input rather than recovered by correlating it with
-   an earlier ``T_Data.ind``, because addressing information alone does not identify which
-   of several outstanding requests from one client has completed, and because Table 6's
-   other suppressed-response row, the transition from the default session to a non-default
-   one, needs the identifier of the session being selected. Carrying the classification
-   supplies both and obliges the session layer to retain nothing.
+   an earlier ``T_Data.ind``, because Table 6's other suppressed-response row, the
+   transition from the default session to a non-default one, needs the session selection,
+   and correlating would oblige the session layer to retain one. Which of several
+   outstanding requests completed is deliberately not identified: both Table 6 rows turn
+   on a request from the controlling client having completed, not on which one.
