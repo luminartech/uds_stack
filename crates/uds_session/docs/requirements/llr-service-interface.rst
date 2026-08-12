@@ -122,3 +122,88 @@ against.
    size it does not know. Retaining a payload would also imply a retransmission buffer,
    and ``UDSS_LLR_0110`` requires that a failed transmission is not retransmitted, so no
    such buffer is needed.
+
+Service primitives
+------------------
+
+.. llr:: S_Data.req requests transmission of a message
+   :id: UDSS_LLR_0118
+   :status: draft
+   :integrity_level: QM
+   :target_level: D
+   :origin: session-layer-standard
+   :source: ISO 14229-2:2021 7.4
+   :tags: service-interface; primitives
+
+   The application shall request transmission of a message by an ``S_Data.req`` carrying
+   ``S_Mtype``, ``S_AI[TAtype]``, ``S_AI[SA]``, ``S_AI[TA]``, ``S_AI[AE]`` where
+   ``S_Mtype`` requires it, ``S_Data``, and ``S_Length``.
+
+   On ``S_Data.req`` the session layer shall request transmission of ``S_Length`` bytes
+   of ``S_Data`` to the peer entity identified by the addressing parameters, and shall
+   subsequently report the completion or failure of that transmission by an
+   ``S_Data.conf``.
+
+.. llr:: S_Data.ind delivers a received message to the application
+   :id: UDSS_LLR_0119
+   :status: draft
+   :integrity_level: QM
+   :target_level: D
+   :origin: session-layer-standard
+   :source: ISO 14229-2:2021 7.5
+   :tags: service-interface; primitives
+
+   The session layer shall deliver a received message to the application by an
+   ``S_Data.ind`` carrying ``S_Mtype``, ``S_AI[TAtype]``, ``S_AI[SA]``, ``S_AI[TA]``,
+   ``S_AI[AE]`` where ``S_Mtype`` requires it, ``S_Data``, ``S_Length``, and
+   ``S_Result``. The addressing parameters shall identify the peer entity from which the
+   message was received.
+
+   ``S_Data`` and ``S_Length`` shall be valid only where ``S_Result`` is ``S_OK``.
+
+.. llr:: S_Data.conf confirms a preceding S_Data.req
+   :id: UDSS_LLR_0120
+   :status: draft
+   :integrity_level: QM
+   :target_level: D
+   :origin: session-layer-standard
+   :source: ISO 14229-2:2021 7.6
+   :tags: service-interface; primitives
+
+   The session layer shall confirm the completion of an ``S_Data.req`` by an
+   ``S_Data.conf`` carrying ``S_Mtype``, ``S_AI[TAtype]``, ``S_AI[SA]``, ``S_AI[TA]``,
+   ``S_AI[AE]`` where ``S_Mtype`` requires it, and ``S_Result``. The addressing
+   parameters shall identify the ``S_Data.req`` being confirmed, and ``S_Result`` shall
+   report its outcome.
+
+.. llr:: T_DataSOM.ind is not forwarded to the application
+   :id: UDSS_LLR_0121
+   :status: draft
+   :integrity_level: QM
+   :target_level: D
+   :origin: session-layer-standard
+   :source: ISO 14229-2:2021 7.3
+   :tags: service-interface; primitives
+
+   ``T_DataSOM.ind`` shall not be mapped onto any S_PDU. On ``T_DataSOM.ind`` the session
+   layer shall produce no output to the application.
+
+   The indication is used only within the session layer, to perform session layer timing.
+   ``UDSS_LLR_0104`` is the requirement that uses it.
+
+.. llr:: T_Data.conf is forwarded to the application
+   :id: UDSS_LLR_0122
+   :status: draft
+   :integrity_level: QM
+   :target_level: D
+   :origin: session-layer-standard
+   :source: ISO 14229-2:2021 7.3
+   :tags: service-interface; primitives
+
+   On ``T_Data.conf`` reporting the outcome of a transmission previously requested
+   through an ``S_Data.req``, the session layer shall produce an ``S_Data.conf``
+   reporting that outcome to the application.
+
+   The application needs the confirmation in order to start actions that are executed
+   immediately after transmission of a request or response message, such as an ECU reset
+   or a bit rate change.
