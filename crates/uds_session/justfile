@@ -1,0 +1,94 @@
+# Command runner for the uds_session crate and its requirement set.
+#
+# The Python toolchain is pinned in pyproject.toml and locked in uv.lock, and every recipe
+# below runs it through `uv run --frozen`. `--frozen` is deliberate: needs.json is evidence
+# consumed by the private qualification repository, so the toolchain that produced a given
+# snapshot has to be recoverable. A recipe that silently re-resolved dependencies would
+# break that.
+#
+# Each recipe carries a `[doc]` attribute rather than relying on the preceding comment,
+# because `just --list` shows only the final comment line and would otherwise present the
+# tail of an explanation as the summary.
+
+# Where Sphinx writes its output. Gitignored.
+build_dir := "docs/_build"
+
+[doc("Show the available recipes")]
+default:
+    @just --list
+
+# --- requirements ---------------------------------------------------------------------
+
+# Warnings are errors here, so a requirement excluded from every toctree, an unknown
+# directive, or an unresolved link fails the build rather than passing quietly.
+[doc("Build the requirement set and emit needs.json")]
+docs:
+    uv run --frozen sphinx-build -b needs -W -q docs {{ build_dir }}/needs
+
+# Not part of any check. This is for reading the set locally.
+[doc("Build browsable HTML documentation")]
+html:
+    uv run --frozen sphinx-build -b html -W -q docs {{ build_dir }}/html
+    @echo "open {{ build_dir }}/html/index.html"
+
+# The parts of the process Sphinx has no concept of: the ID scheme and global uniqueness,
+# mandatory fields per type, permitted field values, the integrity-level ratchet, and that
+# a transcribed requirement records its source while a derived one states a rationale.
+[doc("Run the requirement-set policy checks")]
+validate:
+    python3 tools/validate_needs.py
+
+# Run this after adding requirements. A count that did not move by the expected amount
+# means a directive was skipped rather than rejected, which is the failure mode this
+# repository has been bitten by before.
+[doc("Summarise the built set: counts, source coverage, ID gaps")]
+summary: docs
+    #!/usr/bin/env python3
+    import json
+    import pathlib
+    path = pathlib.Path("{{ build_dir }}") / "needs" / "needs.json"
+    data = json.loads(path.read_text())
+    needs = data["versions"][data["current_version"]]["needs"]
+    llr = sorted(k for k in needs if k.startswith("UDSS_LLR_"))
+    sourced = [k for k in llr if needs[k].get("source")]
+    print(f"requirements: {len(llr)}")
+    print(f"with source:  {len(sourced)}")
+    print(f"derived:      {len(llr) - len(sourced)}")
+    numbers = [int(k.rsplit('_', 1)[1]) for k in llr]
+    gaps = sorted(set(range(min(numbers), max(numbers) + 1)) - set(numbers))
+    print(f"range:        {min(numbers):04d}-{max(numbers):04d}")
+    print(f"gaps:         {gaps if gaps else 'none'}")
+
+# --- crate ----------------------------------------------------------------------------
+
+# Empty until the requirement set is complete and implementation cycles begin.
+[doc("Run the crate's test suite")]
+test:
+    cargo test
+
+# `-D warnings` promotes anything the Cargo.toml lint table leaves at warn level, and
+# `--all-targets` means the lints are enforced in tests too, not just the library.
+[doc("Lint the crate at the level pre-commit enforces")]
+clippy:
+    cargo clippy --all-targets --all-features -- -D warnings
+
+# A guard rail is only verified by watching it fail, so each check in validate_needs.py is
+# demonstrated stopping something.
+[doc("Run the self-tests for the policy checker")]
+test-tools:
+    python3 -m unittest discover --start-directory tools --pattern test_*.py
+
+# --- aggregate ------------------------------------------------------------------------
+
+# Every hook, over every file, in configured order. pre-commit is the only enforcement
+# this repository has: there is no CI.
+[doc("Run every pre-commit hook over every file (the gate before pushing)")]
+check:
+    pre-commit run --all-files
+
+[doc("The fast subset a requirement change needs; use `check` before pushing")]
+check-docs: test-tools validate docs
+
+[doc("Remove build output")]
+clean:
+    rm -rf {{ build_dir }}
