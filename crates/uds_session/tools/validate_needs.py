@@ -15,6 +15,11 @@ nothing about the parts of our process that are ours:
 
 The two are complementary, and this one is fast enough to run on every commit.
 
+Option values must be written on a single line. RST field lists allow a value to wrap
+onto a deeper-indented continuation line, and Sphinx would read the joined value, but
+this parser reads only the line the option starts on, so a wrapped value is read
+truncated rather than rejected.
+
 Stdlib only, so it works under `language: system` with no environment to build.
 """
 

@@ -100,9 +100,9 @@ class TempTree(unittest.TestCase):
 
     def run_main(self, root: Path | None = None) -> tuple[int, str]:
         """Run `main`, capturing stderr so a test can check *why* it failed,
-        not just that it did. Without this, a test can pass for the wrong
-        reason: if the empty-set guard misfired, the stray-.md test would
-        still be green.
+        not just that it did. An assertion on the exit code alone can pass
+        for the wrong reason: any other check that also fails the run would
+        make the test green without exercising the behaviour it names.
         """
         buffer = io.StringIO()
         with contextlib.redirect_stderr(buffer):
@@ -190,7 +190,10 @@ class MainTests(TempTree):
 
     def test_derived_without_a_rationale_fails(self) -> None:
         self.write("r.rst", REQUIREMENT.replace(
-            ":origin: session-layer-standard", ":origin: derived"))
+            ":origin: session-layer-standard", ":origin: derived",
+        ).replace(
+            "   :source: ISO 14229-2:2021 9.5 Table 6\n", "",
+        ))
         code, stderr = self.run_main()
         self.assertEqual(code, 1)
         self.assertIn("no `Rationale:` paragraph", stderr)
@@ -208,6 +211,31 @@ class MainTests(TempTree):
             "   :source: ISO 14229-2:2021 9.5 Table 6\n", "",
         ) + "\n   Rationale: the session layer's own state must stay consistent.\n")
         self.assertEqual(vn.main(self.root), 0)
+
+    def test_a_requirement_with_a_nested_block_validates_clean(self) -> None:
+        """The whole case for reStructuredText: a requirement carrying a nested
+        directive must still be validated, not merely parsed."""
+        self.write("r.rst", NESTED)
+        code, _ = self.run_main()
+        self.assertEqual(code, 0)
+
+    def test_an_aou_id_on_a_requirement_is_rejected(self) -> None:
+        self.write("r.rst", REQUIREMENT.replace("UDSS_LLR_0101", "UDSS_AOU_0001"))
+        code, stderr = self.run_main()
+        self.assertEqual(code, 1)
+        self.assertIn("does not match the registered scheme", stderr)
+
+    def test_a_missing_mandatory_field_is_reported(self) -> None:
+        self.write("r.rst", REQUIREMENT.replace("   :status: draft\n", ""))
+        code, stderr = self.run_main()
+        self.assertEqual(code, 1)
+        self.assertIn("missing mandatory field", stderr)
+
+    def test_an_unknown_status_is_rejected(self) -> None:
+        self.write("r.rst", REQUIREMENT.replace(":status: draft", ":status: provisional"))
+        code, stderr = self.run_main()
+        self.assertEqual(code, 1)
+        self.assertIn("status", stderr)
 
 
 TRANSCRIBED = """\
@@ -284,6 +312,20 @@ class SourceTests(TempTree):
         code, stderr = self.run_main()
         self.assertEqual(code, 1)
         self.assertIn("a `source` is present", stderr)
+
+    def test_a_trailing_semicolon_in_a_source_fails(self) -> None:
+        self.write("r.rst", TRANSCRIBED.format(source="ISO 14229-2:2021 9.5;"))
+        code, stderr = self.run_main()
+        self.assertEqual(code, 1)
+        self.assertIn("empty entry", stderr)
+
+    def test_an_unrecognised_origin_is_not_double_reported(self) -> None:
+        self.write("r.rst", REQUIREMENT.replace(
+            ":origin: session-layer-standard", ":origin: invented-standard"))
+        code, stderr = self.run_main()
+        self.assertEqual(code, 1)
+        self.assertIn("origin", stderr)
+        self.assertNotIn("no `source` is given", stderr)
 
 
 if __name__ == "__main__":
