@@ -33,11 +33,13 @@ Reading the requirements
 ------------------------
 
 Each requirement carries an ``origin``, recording whether it was transcribed from a
-standard or derived from a design decision, and a pair of integrity levels:
-``integrity_level`` is what is currently substantiated by evidence, ``target_level`` is
-what it is expected to reach.
+standard or derived from a design decision. Where it was transcribed, a ``source`` gives
+the clause, table or figure it came from. A derived requirement carries no ``source``; it
+states its reasoning in a ``Rationale:`` paragraph instead.
 
-Requirements are written to be verifiable without the standard in hand. Numbered clause
-locators do not appear here — a reader of this repository does not hold the document and
-could not check them. The mapping from these requirements to the numbered requirements
-they satisfy is maintained separately.
+Each also carries a pair of integrity levels: ``integrity_level`` is what is currently
+substantiated by evidence, ``target_level`` is what it is expected to reach.
+
+Requirements are written to be verifiable without the standard in hand. ``source`` records
+where a requirement came from, not what it means — a reader who does not hold the standard
+can still tell whether an implementation satisfies the requirement.

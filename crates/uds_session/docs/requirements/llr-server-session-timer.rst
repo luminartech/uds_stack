@@ -14,6 +14,7 @@ address. Only that client's traffic affects the timer.
    :integrity_level: QM
    :target_level: D
    :origin: session-layer-standard
+   :source: ISO 14229-2:2021 9.2; ISO 14229-2:2021 9.5 Table 6
    :tags: server; session-state; s3_server
 
    On initialisation, the server shall be in the default session, and the ``tS3_Server``
@@ -25,6 +26,7 @@ address. Only that client's traffic affects the timer.
    :integrity_level: QM
    :target_level: D
    :origin: session-layer-standard
+   :source: ISO 14229-2:2021 9.5 Table 6
    :tags: server; s3_server
 
    While in the default session, on ``T_Data.conf`` indicating successful transmission of
@@ -38,6 +40,7 @@ address. Only that client's traffic affects the timer.
    :integrity_level: QM
    :target_level: D
    :origin: session-layer-standard
+   :source: ISO 14229-2:2021 9.5 Table 6
    :tags: server; s3_server
 
    While in the default session, on completion of a DiagnosticSessionControl request that
@@ -51,6 +54,7 @@ address. Only that client's traffic affects the timer.
    :integrity_level: QM
    :target_level: D
    :origin: session-layer-standard
+   :source: ISO 14229-2:2021 9.5 Table 6
    :tags: server; s3_server
 
    While in a non-default session, on ``T_DataSOM.ind`` indicating the start of a
@@ -64,6 +68,7 @@ address. Only that client's traffic affects the timer.
    :integrity_level: QM
    :target_level: D
    :origin: session-layer-standard
+   :source: ISO 14229-2:2021 9.5
    :tags: server; s3_server; robustness
 
    While in a non-default session, a request message whose source address is not the
@@ -75,6 +80,7 @@ address. Only that client's traffic affects the timer.
    :integrity_level: QM
    :target_level: D
    :origin: session-layer-standard
+   :source: ISO 14229-2:2021 9.5 Table 6
    :tags: server; s3_server
 
    While in a non-default session, on ``T_Data.conf`` indicating successful transmission
@@ -88,6 +94,7 @@ address. Only that client's traffic affects the timer.
    :integrity_level: QM
    :target_level: D
    :origin: session-layer-standard
+   :source: ISO 14229-2:2021 9.5 Table 6
    :tags: server; s3_server; enhanced-response-timing
 
    While in a non-default session, on ``T_Data.conf`` indicating successful transmission
@@ -101,6 +108,7 @@ address. Only that client's traffic affects the timer.
    :integrity_level: QM
    :target_level: D
    :origin: ip-profile-standard
+   :source: ISO 14229-5:2022 8.9.2
    :tags: server; s3_server
 
    While in a non-default session, on ``T_Data.conf`` indicating successful transmission
@@ -118,6 +126,7 @@ address. Only that client's traffic affects the timer.
    :integrity_level: QM
    :target_level: D
    :origin: session-layer-standard
+   :source: ISO 14229-2:2021 9.7 Table 10
    :tags: server; s3_server; error-handling
 
    While in a non-default session, on ``T_Data.ind`` reporting an unsuccessful result for
@@ -130,6 +139,7 @@ address. Only that client's traffic affects the timer.
    :integrity_level: QM
    :target_level: D
    :origin: session-layer-standard
+   :source: ISO 14229-2:2021 9.7 Table 10
    :tags: server; s3_server; error-handling
 
    While in a non-default session, on ``T_Data.conf`` reporting an unsuccessful result
@@ -142,6 +152,7 @@ address. Only that client's traffic affects the timer.
    :integrity_level: QM
    :target_level: D
    :origin: session-layer-standard
+   :source: ISO 14229-2:2021 10.1.4.1
    :tags: server; s3_server; default-session
 
    While in the default session, reception of a TesterPresent request shall not start or

@@ -64,6 +64,9 @@ The requirement set is published as Sphinx + sphinx-needs documentation.
 Each requirement carries:
 
 - `origin` — whether it was transcribed from a standard or derived from a design decision.
+- `source` — where in that standard it comes from: clause, table or figure. A derived
+  requirement carries no `source`; it states its reasoning in a `Rationale:` paragraph
+  instead.
 - `integrity_level` and `target_level` — what is currently substantiated by evidence, and
   what it is expected to reach. The gap between them is the outstanding work, and is
   reportable rather than tacit.

@@ -10,7 +10,7 @@ nothing about the parts of our process that are ours:
   * the permitted values of those fields
   * the integrity-level ratchet: a requirement may not claim more than it targets
   * that a requirement we derived, rather than transcribed, carries a rationale
-  * the clause-locator prohibition
+  * that a transcribed requirement records its source, and a derived one does not
   * that a requirement document is reStructuredText, and that the set is not empty
 
 The two are complementary, and this one is fast enough to run on every commit.
@@ -51,19 +51,23 @@ ORIGINS = {
     "derived",
 }
 
+# Standards this crate transcribes from. A designation not listed here is a typo or an
+# unreviewed source; either way it should fail rather than enter the set silently.
+PERMITTED_STANDARDS = (
+    "ISO 13400-2:2019",
+    "ISO 14229-1:2020",
+    "ISO 14229-2:2021",
+    "ISO 14229-5:2022",
+)
+
+# `<designation> <locator>`; the locator is free text because clause, table and figure
+# references do not share a grammar across documents.
+SOURCE_ENTRY = re.compile(r"^(?P<standard>ISO \d{5}(?:-\d+)?:\d{4})\s+(?P<locator>\S.*)$")
+
 REQUIRED_FIELDS = {
     "llr": {"id", "status", "integrity_level", "target_level", "origin"},
     "aou": {"id", "status", "origin"},
 }
-
-# Locator shapes, not the word "ISO". Naming a standard is permitted and desirable;
-# citing a numbered position inside one is not, because a reader of this repository
-# does not hold the document and cannot check it.
-LOCATOR_PATTERNS = [
-    re.compile(r"\b(?:Table|Figure|Annex|Clause|Section)\s+[A-Z]?\.?\d", re.IGNORECASE),
-    re.compile(r"\bREQ\s+\d"),
-    re.compile(r"§\s*\d"),
-]
 
 # A labelled rationale paragraph, at the start of a line.
 RATIONALE = re.compile(r"^\s*Rationale\b.*:", re.MULTILINE)
@@ -198,24 +202,64 @@ def check_need(need: Need) -> list[Problem]:
             "this requirement exists"
         )
 
+    problems.extend(check_source(need))
+
     return problems
 
 
-def check_locators(path: Path) -> list[Problem]:
+def check_source(need: Need) -> list[Problem]:
+    """A transcribed requirement says where it came from; a derived one cannot.
+
+    This is the inverse of the rule this file used to enforce. Locators were once banned
+    outright, on the grounds that a reader here did not hold the standard. They are now
+    required, because the mapping is more useful attached to the requirement than held
+    separately, and a mapping that is not enforced is a mapping that rots.
+    """
     problems: list[Problem] = []
-    for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
-        for pattern in LOCATOR_PATTERNS:
-            match = pattern.search(line)
-            if match:
-                problems.append(
-                    Problem(
-                        path,
-                        number,
-                        f"clause locator {match.group(0).strip()!r} is not permitted in "
-                        "published material; name the standard without a locator and let "
-                        "the qualification repository hold the mapping",
-                    )
-                )
+
+    def fail(message: str) -> None:
+        problems.append(Problem(need.path, need.line, message))
+
+    origin = need.options.get("origin")
+    source = need.options.get("source")
+
+    if origin == "derived":
+        if source is not None:
+            fail(
+                "origin is `derived` but a `source` is present: a derived requirement has "
+                "no clause to cite, and states its reasoning in `Rationale:` instead"
+            )
+        return problems
+
+    if origin not in ORIGINS:
+        # An unrecognised origin is already reported by check_need; do not pile on.
+        return problems
+
+    if source is None:
+        fail(
+            "origin names a standard but no `source` is given; record where in that "
+            "standard this requirement comes from"
+        )
+        return problems
+
+    for entry in (part.strip() for part in source.split(";")):
+        if not entry:
+            fail("`source` has an empty entry; separate locators with `; `")
+            continue
+        matched = SOURCE_ENTRY.match(entry)
+        if not matched:
+            fail(
+                f"source entry {entry!r} is not of the form "
+                "`<standard designation> <locator>`, e.g. `ISO 14229-2:2021 9.5 Table 6`"
+            )
+            continue
+        standard = matched.group("standard")
+        if standard not in PERMITTED_STANDARDS:
+            fail(
+                f"source entry {entry!r} names {standard!r}, which is not one of "
+                f"{list(PERMITTED_STANDARDS)}"
+            )
+
     return problems
 
 
@@ -255,11 +299,6 @@ def main(root: Path = REQUIREMENT_ROOT) -> int:
         )
 
     for path in sorted(root.rglob("*.rst")):
-        # The locator prohibition stays live until it is deliberately replaced by the
-        # inverse rule. Dropping the call here would let it lapse silently for a commit,
-        # while the module docstring still advertises it — the exact defect this file's
-        # rewrite exists to remove.
-        problems.extend(check_locators(path))
         problems.extend(check_indented_needs(path))
 
         for need in parse(path):

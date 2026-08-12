@@ -23,6 +23,7 @@ REQUIREMENT = """\
    :integrity_level: QM
    :target_level: D
    :origin: session-layer-standard
+   :source: ISO 14229-2:2021 9.5 Table 6
 
    On initialisation, the server shall be in the default session.
 """
@@ -34,6 +35,7 @@ TWO_REQUIREMENTS = REQUIREMENT + """
    :integrity_level: QM
    :target_level: D
    :origin: session-layer-standard
+   :source: ISO 14229-2:2021 9.5 Table 6
 
    The server shall stop the timer.
 """
@@ -45,6 +47,7 @@ NESTED = """\
    :integrity_level: QM
    :target_level: D
    :origin: session-layer-standard
+   :source: ISO 14229-2:2021 9.5 Table 6
 
    The primitive shall be as follows.
 
@@ -95,6 +98,17 @@ class TempTree(unittest.TestCase):
         path.write_text(text, encoding="utf-8")
         return path
 
+    def run_main(self, root: Path | None = None) -> tuple[int, str]:
+        """Run `main`, capturing stderr so a test can check *why* it failed,
+        not just that it did. Without this, a test can pass for the wrong
+        reason: if the empty-set guard misfired, the stray-.md test would
+        still be green.
+        """
+        buffer = io.StringIO()
+        with contextlib.redirect_stderr(buffer):
+            code = vn.main(self.root if root is None else root)
+        return code, buffer.getvalue()
+
 
 class ParseTests(TempTree):
     def test_parses_a_requirement_with_options_and_body(self) -> None:
@@ -125,17 +139,6 @@ class ParseTests(TempTree):
 
 
 class MainTests(TempTree):
-    def run_main(self, root: Path | None = None) -> tuple[int, str]:
-        """Run `main`, capturing stderr so a test can check *why* it failed,
-        not just that it did. Without this, a test can pass for the wrong
-        reason: if the empty-set guard misfired, the stray-.md test would
-        still be green.
-        """
-        buffer = io.StringIO()
-        with contextlib.redirect_stderr(buffer):
-            code = vn.main(self.root if root is None else root)
-        return code, buffer.getvalue()
-
     def test_a_valid_set_passes(self) -> None:
         self.write("r.rst", REQUIREMENT)
         self.assertEqual(vn.main(self.root), 0)
@@ -178,14 +181,6 @@ class MainTests(TempTree):
         self.assertEqual(code, 1)
         self.assertIn("no `Rationale:` paragraph", stderr)
 
-    def test_a_clause_locator_in_a_requirement_fails(self) -> None:
-        self.write("r.rst", REQUIREMENT.replace(
-            "On initialisation, the server shall be in the default session.",
-            "As specified in Table 6, the server shall start in the default session."))
-        code, stderr = self.run_main()
-        self.assertEqual(code, 1)
-        self.assertIn("clause locator", stderr)
-
     def test_an_indented_need_fails(self) -> None:
         self.write("r.rst", INDENTED_NEED)
         code, stderr = self.run_main()
@@ -195,8 +190,86 @@ class MainTests(TempTree):
     def test_derived_with_a_rationale_passes(self) -> None:
         self.write("r.rst", REQUIREMENT.replace(
             ":origin: session-layer-standard", ":origin: derived",
+        ).replace(
+            "   :source: ISO 14229-2:2021 9.5 Table 6\n", "",
         ) + "\n   Rationale: the session layer's own state must stay consistent.\n")
         self.assertEqual(vn.main(self.root), 0)
+
+
+TRANSCRIBED = """\
+.. llr:: A transcribed requirement
+   :id: UDSS_LLR_0101
+   :status: draft
+   :integrity_level: QM
+   :target_level: D
+   :origin: session-layer-standard
+   :source: {source}
+
+   The server shall do the thing.
+"""
+
+TRANSCRIBED_NO_SOURCE = """\
+.. llr:: A transcribed requirement with no source
+   :id: UDSS_LLR_0103
+   :status: draft
+   :integrity_level: QM
+   :target_level: D
+   :origin: session-layer-standard
+
+   The server shall do the third thing.
+"""
+
+DERIVED = """\
+.. llr:: A derived requirement
+   :id: UDSS_LLR_0102
+   :status: draft
+   :integrity_level: QM
+   :target_level: D
+   :origin: derived
+{extra}
+   The server shall do the other thing.
+
+   Rationale: internal consistency demands it.
+"""
+
+
+class SourceTests(TempTree):
+    def test_a_well_formed_source_passes(self) -> None:
+        self.write("r.rst", TRANSCRIBED.format(source="ISO 14229-2:2021 9.5 Table 6"))
+        self.assertEqual(vn.main(self.root), 0)
+
+    def test_multiple_semicolon_separated_sources_pass(self) -> None:
+        self.write("r.rst", TRANSCRIBED.format(
+            source="ISO 14229-2:2021 9.5 Table 6; ISO 14229-2:2021 10.1.4.1"))
+        self.assertEqual(vn.main(self.root), 0)
+
+    def test_a_transcribed_requirement_without_a_source_fails(self) -> None:
+        self.write("r.rst", TRANSCRIBED_NO_SOURCE)
+        code, stderr = self.run_main()
+        self.assertEqual(code, 1)
+        self.assertIn("no `source` is given", stderr)
+
+    def test_an_unrecognised_standard_fails(self) -> None:
+        self.write("r.rst", TRANSCRIBED.format(source="ISO 26262-6:2018 8.4.4"))
+        code, stderr = self.run_main()
+        self.assertEqual(code, 1)
+        self.assertIn("which is not one of", stderr)
+
+    def test_a_source_without_a_locator_fails(self) -> None:
+        self.write("r.rst", TRANSCRIBED.format(source="ISO 14229-2:2021"))
+        code, stderr = self.run_main()
+        self.assertEqual(code, 1)
+        self.assertIn("is not of the form", stderr)
+
+    def test_a_derived_requirement_without_a_source_passes(self) -> None:
+        self.write("r.rst", DERIVED.format(extra=""))
+        self.assertEqual(vn.main(self.root), 0)
+
+    def test_a_derived_requirement_carrying_a_source_fails(self) -> None:
+        self.write("r.rst", DERIVED.format(extra="   :source: ISO 14229-2:2021 9.5\n"))
+        code, stderr = self.run_main()
+        self.assertEqual(code, 1)
+        self.assertIn("a `source` is present", stderr)
 
 
 if __name__ == "__main__":

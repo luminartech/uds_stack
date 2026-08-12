@@ -18,7 +18,7 @@ All requirements
 
 .. needtable::
    :types: llr; aou
-   :columns: id; title; status; integrity_level; target_level; origin
+   :columns: id; title; status; integrity_level; target_level; origin; source
    :style: table
 
 Outstanding integrity gap

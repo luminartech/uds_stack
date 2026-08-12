@@ -85,7 +85,8 @@ repos:
       # ---
       # Policy checks on the requirement set: the ID scheme and global uniqueness,
       # mandatory fields per type, permitted field values, the integrity-level ratchet,
-      # the mandatory rationale on derived requirements, and the clause-locator ban.
+      # the mandatory rationale on derived requirements, and that a transcribed
+      # requirement records its source while a derived one does not.
       #
       # Complementary to the Sphinx build below rather than a substitute for it. Sphinx
       # validates directive syntax, link integrity and its own schema; this validates the

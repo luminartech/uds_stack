@@ -86,10 +86,12 @@ needs_extra_options = [
     # What this requirement is expected to reach. The gap between the two is the
     # outstanding work, and is reportable rather than tacit.
     "target_level",
-    # Whether this requirement was transcribed from a standard or derived by us. The
-    # qualification repository supplies clause locators for the transcribed ones; a
-    # derived one carries its own justification instead.
+    # Whether this requirement was transcribed from a standard or derived by us.
     "origin",
+    # Where in that standard it came from: clause, table or figure. Required when
+    # `origin` names a standard, and absent when it is `derived`, which has no clause to
+    # cite. Enforced by tools/validate_needs.py.
+    "source",
 ]
 
 needs_extra_links = [
