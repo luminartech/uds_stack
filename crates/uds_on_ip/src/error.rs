@@ -18,12 +18,17 @@ pub enum Error {
     /// The `DoIP` entity refused routing activation. This is distinct from
     /// [`Error::Transport`] because it is *not* transient: retrying the
     /// connection cannot resolve it (the most common cause is that another
-    /// tester — e.g. [PRODUCT_NAME_REDACTED] — already holds this tester's source address
-    /// `0x0E00`). The reconnect machinery must therefore propagate it rather
-    /// than loop, and the client's connection-error classifier returns `false`
-    /// for the underlying `simple_doip` error.
+    /// tester — e.g. [PRODUCT_NAME_REDACTED] — already holds this tester's source address).
+    /// The reconnect machinery must therefore propagate it rather than loop,
+    /// and the client's connection-error classifier returns `false` for the
+    /// underlying `simple_doip` error.
+    ///
+    /// The cause text is derived per code by [`routing_denial_cause`] — ISO
+    /// 13400-2 defines eight denial codes with materially different meanings.
     #[error(
-        "Routing activation denied by the DoIP entity: {0:?} (another tester may already hold source address 0x0E00)"
+        "Routing activation denied by the DoIP entity ({:#04x}): {}",
+        u8::from(*.0),
+        routing_denial_cause(u8::from(*.0))
     )]
     RoutingActivationDenied(simple_doip::messages::RoutingActivationResponseCode),
 
@@ -77,6 +82,39 @@ pub enum Error {
     },
 }
 
+/// Explain a `DoIP` routing-activation denial in operator terms.
+///
+/// ISO 13400-2 defines eight denial codes whose causes are materially
+/// different — and only two of them (`0x00`, `0x03`) implicate the tester's
+/// own source address at all. Naming one cause for all eight sends an
+/// operator chasing a tester conflict when the entity actually wanted
+/// authentication or TLS, so every layer that renders a denial routes its
+/// text through here.
+///
+/// Takes the raw byte rather than
+/// [`RoutingActivationResponseCode`](simple_doip::messages::RoutingActivationResponseCode)
+/// so consumers that store the code as a `u8` — to avoid a production
+/// dependency on `simple_doip` — can share the same wording.
+///
+/// The returned phrase names the entity's reason only; it deliberately does
+/// not name a concrete tester address, since that is the caller's
+/// configuration (`UdsClientOptions::client_logical_address`), not this
+/// layer's to assume.
+#[must_use]
+pub fn routing_denial_cause(code: u8) -> &'static str {
+    match code {
+        0x00 => "the entity does not recognize this tester's source address",
+        0x01 => "the entity has no free diagnostic sockets",
+        0x02 => "a different source address is already activated on this socket",
+        0x03 => "another tester already holds this tester's source address",
+        0x04 => "the entity requires authentication before routing activation",
+        0x05 => "in-vehicle confirmation of the activation was rejected",
+        0x06 => "the entity does not support the requested routing activation type",
+        0x07 => "the entity requires a TLS-secured connection for this activation type",
+        _ => "the entity returned a reserved or manufacturer-specific denial code",
+    }
+}
+
 impl From<simple_doip::Error> for Error {
     /// Lift a `simple_doip` error into a `uds_on_ip` error.
     ///
@@ -92,5 +130,62 @@ impl From<simple_doip::Error> for Error {
             }
             other => Error::Transport(other),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use simple_doip::messages::RoutingActivationResponseCode;
+
+    /// The whole point of the per-code table is that an operator can tell the
+    /// eight denials apart, so assert they are genuinely distinct rather than
+    /// spot-checking one.
+    #[test]
+    fn every_denial_code_has_its_own_cause() {
+        let causes: Vec<&str> = (0x00..=0x07).map(routing_denial_cause).collect();
+        let mut unique = causes.clone();
+        unique.sort_unstable();
+        unique.dedup();
+        assert_eq!(
+            unique.len(),
+            causes.len(),
+            "denial codes 0x00-0x07 must not share wording: {causes:?}"
+        );
+    }
+
+    /// The regression this table exists to prevent: `0x00` is the *opposite*
+    /// diagnosis from `0x03`, and both used to render as "already registered".
+    #[test]
+    fn unknown_source_address_is_not_described_as_a_tester_conflict() {
+        assert_eq!(
+            routing_denial_cause(0x00),
+            "the entity does not recognize this tester's source address"
+        );
+        assert_eq!(
+            routing_denial_cause(0x03),
+            "another tester already holds this tester's source address"
+        );
+    }
+
+    #[test]
+    fn reserved_codes_fall_through_to_the_catch_all() {
+        assert_eq!(
+            routing_denial_cause(0x42),
+            "the entity returned a reserved or manufacturer-specific denial code"
+        );
+    }
+
+    #[test]
+    fn display_carries_both_the_raw_code_and_its_cause() {
+        let err = Error::RoutingActivationDenied(
+            RoutingActivationResponseCode::DeniedEncryptedConnectionViaTLSRequired,
+        );
+        let rendered = err.to_string();
+        assert!(rendered.contains("0x07"), "raw code missing: {rendered}");
+        assert!(
+            rendered.contains("TLS-secured connection"),
+            "per-code cause missing: {rendered}"
+        );
     }
 }

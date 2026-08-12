@@ -65,7 +65,7 @@ pub mod request_sender;
 pub mod session;
 
 pub use client::{UdsClient, UdsClientOptions};
-pub use error::Error;
+pub use error::{Error, routing_denial_cause};
 pub use request_sender::RequestSender;
 pub use session::SessionConfig;
 pub use simple_doip::client::AddressType;
