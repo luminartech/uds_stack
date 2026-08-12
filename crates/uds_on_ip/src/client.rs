@@ -76,7 +76,7 @@ fn lock_activity(activity: &std::sync::Mutex<Instant>) -> std::sync::MutexGuard<
 /// ## Generic Connection Type
 ///
 /// The client is generic over the connection type `Conn`, allowing it to work with
-/// different transport implementations (e.g., standard TCP sockets or VCC-specific listeners).
+/// different transport implementations (e.g. a standard TCP socket, or a test double).
 pub struct UdsClient<Conn = ConnectorSocket> {
     /// The underlying DoIP client, shared with the keepalive task.
     doip_client: Arc<Mutex<Client<Conn>>>,
@@ -277,7 +277,8 @@ where
 {
     /// Create a UDS client from an existing DoIP client.
     ///
-    /// This is useful when you have a pre-connected DoIP client (e.g., for VCC).
+    /// This is useful when the connection was established elsewhere, e.g. by a
+    /// TUI splash screen that reports progress while connecting.
     pub fn from_doip_client(client: Client<Conn>, config: SessionConfig) -> Self {
         let doip_client = Arc::new(Mutex::new(client));
         let last_activity = Arc::new(std::sync::Mutex::new(Instant::now()));
