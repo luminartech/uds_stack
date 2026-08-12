@@ -48,13 +48,6 @@ needs_types = [
         "color": "#BFD8D2",
         "style": "node",
     },
-    {
-        "directive": "aou",
-        "title": "Assumption of Use",
-        "prefix": "AOU_",
-        "color": "#FEDCD2",
-        "style": "node",
-    },
     # `impl` and `test` needs are generated from source annotations by the extractor and
     # imported, never hand-authored. They exist as types so the generated links resolve
     # and so traceability tables can be rendered against them.
@@ -78,7 +71,7 @@ needs_types = [
 # moment the qualification repository first links to one, so auto-generation is refused:
 # a generated ID changes when its surrounding content does.
 needs_id_required = True
-needs_id_regex = r"^UDSS_(LLR|AOU)_\d{4}$|^UDSS_(IMPL|TEST)_[A-Z0-9_]+$"
+needs_id_regex = r"^UDSS_LLR_\d{4}$|^UDSS_(IMPL|TEST)_[A-Z0-9_]+$"
 
 needs_extra_options = [
     # What is currently substantiated by evidence.

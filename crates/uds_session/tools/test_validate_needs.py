@@ -137,6 +137,20 @@ class ParseTests(TempTree):
         self.assertEqual(len(needs), 1)
         self.assertEqual(needs[0].options["id"], "UDSS_LLR_0101")
 
+    def test_an_aou_directive_is_no_longer_a_recognised_need(self) -> None:
+        self.write("r.rst", REQUIREMENT + """
+.. aou:: An assumption of use
+   :id: UDSS_AOU_0001
+   :status: draft
+   :origin: derived
+
+   The caller shall supply a monotonic timestamp.
+
+   Rationale: assumptions of use live in the qualification repository.
+""")
+        needs = vn.parse(self.root / "r.rst")
+        self.assertEqual([n.type for n in needs], ["llr"])
+
 
 class MainTests(TempTree):
     def test_a_valid_set_passes(self) -> None:

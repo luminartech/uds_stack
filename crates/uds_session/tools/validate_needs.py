@@ -28,8 +28,10 @@ from pathlib import Path
 
 REQUIREMENT_ROOT = Path("docs/requirements")
 
-# Directive types that carry requirements.
-AUTHORED_TYPES = {"llr", "aou"}
+# Directive types that carry requirements. Assumptions of use are authored in the private
+# qualification repository, where they are assessed from a safety perspective, so `aou` is
+# deliberately absent rather than unused.
+AUTHORED_TYPES = {"llr"}
 
 # Generated from source annotations by the extractor and imported, never hand-authored.
 # Recognised so that authoring one by hand is reported rather than silently accepted.
@@ -37,7 +39,7 @@ GENERATED_TYPES = {"impl", "test"}
 
 NEED_TYPES = AUTHORED_TYPES | GENERATED_TYPES
 
-ID_PATTERN = re.compile(r"^UDSS_(LLR|AOU)_\d{4}$")
+ID_PATTERN = re.compile(r"^UDSS_LLR_\d{4}$")
 
 STATUSES = {"draft", "review", "approved", "obsolete"}
 
@@ -66,7 +68,6 @@ SOURCE_ENTRY = re.compile(r"^(?P<standard>ISO \d{5}(?:-\d+)?:\d{4})\s+(?P<locato
 
 REQUIRED_FIELDS = {
     "llr": {"id", "status", "integrity_level", "target_level", "origin"},
-    "aou": {"id", "status", "origin"},
 }
 
 # A labelled rationale paragraph, at the start of a line.
@@ -169,7 +170,7 @@ def check_need(need: Need) -> list[Problem]:
 
     need_id = need.options.get("id", "")
     if need_id and not ID_PATTERN.match(need_id):
-        fail(f"id {need_id!r} does not match the registered scheme UDSS_(LLR|AOU)_####")
+        fail(f"id {need_id!r} does not match the registered scheme UDSS_LLR_####")
 
     status = need.options.get("status")
     if status is not None and status not in STATUSES:

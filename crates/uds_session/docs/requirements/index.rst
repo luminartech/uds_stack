@@ -17,7 +17,7 @@ All requirements
 ----------------
 
 .. needtable::
-   :types: llr; aou
+   :types: llr
    :columns: id; title; status; integrity_level; target_level; origin; source
    :style: table
 
@@ -27,7 +27,7 @@ Outstanding integrity gap
 Requirements whose substantiated level is below their target.
 
 .. needtable::
-   :types: llr; aou
+   :types: llr
    :columns: id; title; integrity_level; target_level
    :filter: integrity_level != target_level
    :style: table
