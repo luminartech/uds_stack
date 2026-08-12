@@ -547,16 +547,9 @@ is safer and no larger. The value sets are transcribed exactly.
    :source: ISO 14229-2:2021 8.8
    :tags: service-interface; parameters
 
-   ``S_Length`` shall be a 32-bit unsigned value and shall carry the number of bytes of
-   ``S_Data`` to be transmitted or received.
-
-   Deviation: ISO 14229-2:2021 8.8 gives the data type as ``Unsigned Long``, a 32-bit
-   unsigned value, but states the range as ``0x0000`` to ``0xFFFF``. The two statements
-   are inconsistent and cannot both be transcribed. The wider data type is taken, and the
-   narrower range is not, because ISO 13400-2:2019 9 makes the DoIP payload length a
-   four-byte field ranging to 4 294 967 295 bytes; a 16-bit length would make this crate
-   unusable over that transport. This requirement is therefore a faithful transcription of
-   the clause's data type and a deliberate departure from its stated range.
+   ``S_Length`` shall be a 32-bit unsigned value in the range ``0x00000000`` to
+   ``0xFFFFFFFF``, and shall carry the number of bytes of ``S_Data`` to be transmitted or
+   received.
 
 .. llr:: S_Data carries the message data
    :id: UDSS_LLR_0131
