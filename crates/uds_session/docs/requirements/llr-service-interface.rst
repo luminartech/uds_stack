@@ -207,3 +207,113 @@ Service primitives
    The application needs the confirmation in order to start actions that are executed
    immediately after transmission of a request or response message, such as an ECU reset
    or a bit rate change.
+
+Parameter mapping
+-----------------
+
+.. llr:: Application layer parameters map onto session layer parameters
+   :id: UDSS_LLR_0123
+   :status: draft
+   :integrity_level: QM
+   :target_level: D
+   :origin: session-layer-standard
+   :source: ISO 14229-2:2021 7.2 Table 1
+   :tags: service-interface; mapping
+
+   The session layer shall implement the parameter mapping between the application layer
+   and the session layer, and the validity of each parameter in each primitive, as
+   follows.
+
+   .. list-table::
+      :header-rows: 1
+      :widths: 24 24 17 17 18
+
+      * - Application layer
+        - Session layer
+        - ``.req``
+        - ``.ind``
+        - ``.conf``
+      * - ``A_Mtype``
+        - ``S_Mtype``
+        - valid
+        - valid
+        - valid
+      * - ``A_AI[TAtype]``
+        - ``S_AI[TAtype]``
+        - valid
+        - valid
+        - valid
+      * - ``A_AI[TA]``
+        - ``S_AI[TA]``
+        - valid
+        - valid
+        - valid
+      * - ``A_AI[SA]``
+        - ``S_AI[SA]``
+        - valid
+        - valid
+        - valid
+      * - ``A_AI[AE]``
+        - ``S_AI[AE]``
+        - valid
+        - valid
+        - valid
+      * - ``A_Length``
+        - ``S_Length``
+        - valid
+        - valid
+        - not applicable
+      * - ``A_Data``
+        - ``S_Data``
+        - valid
+        - valid
+        - not applicable
+      * - ``A_Result``
+        - ``S_Result``
+        - not applicable
+        - valid
+        - valid
+
+.. llr:: Session layer parameters map onto transport layer parameters
+   :id: UDSS_LLR_0124
+   :status: draft
+   :integrity_level: QM
+   :target_level: D
+   :origin: session-layer-standard
+   :source: ISO 14229-2:2021 7.3 Table 2
+   :tags: service-interface; mapping
+
+   The session layer shall map the parameters of its protocol data unit onto the
+   parameters of the transport layer protocol data unit, and the reverse, as follows.
+
+   .. list-table::
+      :header-rows: 1
+      :widths: 30 30 40
+
+      * - S_PDU parameter
+        - T_PDU parameter
+        - Description
+      * - ``S_Mtype``
+        - ``T_Ptype``
+        - Session layer message type, transport layer segment type
+      * - ``S_AI[TAtype]``
+        - ``T_AI[TAtype]``
+        - Target address type
+      * - ``S_AI[SA]``
+        - ``T_AI[SA]``
+        - Source address
+      * - ``S_AI[TA]``
+        - ``T_AI[TA]``
+        - Target address
+      * - ``S_AI[AE]``
+        - ``T_AI[AE]``
+        - Address extension
+      * - ``S_Data``
+        - ``T_Data``
+        - Message data
+      * - ``S_Length``
+        - ``T_Length``
+        - Length of the message data
+      * - ``S_Result``
+        - ``T_Result``
+        - Result of the service execution
