@@ -48,6 +48,27 @@ address. Only that client's traffic affects the timer.
    server shall enter that non-default session, record the requesting client's source
    address as the controlling client, and start the ``tS3_Server`` timer.
 
+.. llr:: Session timer is disabled on return to the default session
+   :id: UDSS_LLR_0141
+   :status: draft
+   :integrity_level: QM
+   :target_level: D
+   :origin: session-layer-standard
+   :source: ISO 14229-2:2021 9.5 Table 6
+   :tags: server; s3_server; session-state
+
+   While in a non-default session, on ``T_Data.conf`` indicating successful transmission of
+   a DiagnosticSessionControl positive response that selects the default session, or on
+   completion of a DiagnosticSessionControl request that selects the default session and
+   for which no response message is transmitted, the server shall enter the default
+   session, disable the ``tS3_Server`` timer, and discard the recorded controlling client.
+
+   Table 6 states that the ``tS3_Server`` timer is disabled while the default session is
+   active. Without this requirement ``UDSS_LLR_0106`` would restart the timer instead, a
+   positive response that selects the default session being a solicited final response like
+   any other, and the server would hold a session it has already left until the timer
+   expired.
+
 .. llr:: Session timer stops when a request from the controlling client begins
    :id: UDSS_LLR_0104
    :status: draft
@@ -85,8 +106,9 @@ address. Only that client's traffic affects the timer.
 
    While in a non-default session, on ``T_Data.conf`` indicating successful transmission
    of a solicited final response message to the controlling client, the server shall
-   restart the ``tS3_Server`` timer. A final response is a positive response, or a
-   negative response whose response code is not
+   restart the ``tS3_Server`` timer, except where that response selects the default
+   session, in which case ``UDSS_LLR_0141`` applies. A final response is a positive
+   response, or a negative response whose response code is not
    ``requestCorrectlyReceived-ResponsePending``.
 
    The response must be solicited, meaning transmitted as the direct result of processing
