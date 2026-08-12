@@ -8,6 +8,10 @@
 # Superpowers working documents (specs, plans) are not version controlled.
 /docs/superpowers/
 
+# Subagent-driven development scratch: ledger, task briefs, review packages.
+/.superpowers/
+
 # Local tooling and OS cruft
 .omniscient/
 .DS_Store
+tools/__pycache__/

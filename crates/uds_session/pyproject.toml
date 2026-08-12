@@ -8,7 +8,6 @@ description = "Requirements and documentation build environment for the uds_sess
 # fresh clone to fail at build time on whatever Python happens to be the default.
 requires-python = ">=3.12,<3.13"
 dependencies = [
-    "myst-parser==4.0.1",
     "sphinx==8.2.3",
     "sphinx-needs==5.1.0",
 ]
