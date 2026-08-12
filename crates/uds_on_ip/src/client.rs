@@ -9,13 +9,12 @@ use simple_doip::{
     LogicalAddress, TCP_PORT, TESTER_LOGICAL_ADDRESS,
     client::{AddressType, Client, ClientOptions, RoutingActivationOptions},
     connection::{Connector, ConnectorSocket},
-    messages::{ActivationTypeCode, Message, Payload, ProtocolVersion},
+    messages::{ActivationTypeCode, OwnedMessage, OwnedPayload, ProtocolVersion},
 };
 use tokio::sync::Mutex;
 use tracing::{debug, info, warn};
 use uds_protocol::{
-    DiagnosticDefinition, DiagnosticSessionType, ProtocolRequest, ProtocolResponse, Request,
-    Response, SingleValueWireFormat, UdsSpec, WireFormat,
+    DiagnosticSessionControlRequest, DiagnosticSessionType, Encode, Request, TesterPresentRequest,
 };
 
 use crate::{Error, Result, SessionConfig};
@@ -321,24 +320,28 @@ where
     /// # Errors
     ///
     /// Returns an error if the request fails or the response is invalid.
-    pub async fn send<D: DiagnosticDefinition>(
+    pub async fn send(
         &self,
-        request: Request<D>,
+        request: Request<'_>,
         address_type: AddressType,
-    ) -> Result<Option<Response<D>>>
-    where
-        D::DID: SingleValueWireFormat,
-        D::DiagnosticPayload: SingleValueWireFormat,
-        D::RID: SingleValueWireFormat,
-        D::RoutinePayload: SingleValueWireFormat,
-    {
-        let suppress_response = request.is_positive_response_suppressed();
+    ) -> Result<Option<Vec<u8>>> {
+        // `is_positive_response_suppressed` is `None` only for services whose
+        // SPRMIB is genuinely unanswerable (vendor-specific SIDs, absent
+        // sub-function byte). Treat that as "response expected" so we still
+        // wait for a reply rather than fire-and-forget.
+        let suppress_response = request.is_positive_response_suppressed().unwrap_or(false);
 
-        // Encode the request to bytes
-        let mut request_bytes = Vec::with_capacity(request.required_size());
-        request
-            .encode(&mut request_bytes)
+        // Encode the borrowing request into an owned buffer up front, before
+        // any send/await. The `Request<'_>` borrow never escapes this
+        // function — everything downstream operates on the owned bytes.
+        let request_size = request
+            .encoded_size()
+            .map_err(|e| Error::InvalidResponse(format!("Failed to size request: {e}")))?;
+        let mut request_bytes = vec![0u8; request_size];
+        let written = request
+            .encode_to_slice(&mut request_bytes)
             .map_err(|e| Error::InvalidResponse(format!("Failed to encode request: {e}")))?;
+        request_bytes.truncate(written);
 
         debug!("Sending UDS request: {:02X?}", request_bytes);
 
@@ -356,7 +359,7 @@ where
         // that a one-shot retry is safer than leaving the ECU without a
         // request in flight. See the `classify_response` path for the
         // matching defense against stray cross-SID responses.
-        let mut pending_message: Option<Message> = None;
+        let mut pending_message: Option<OwnedMessage> = None;
         let reconnect_timeout = self.config.reconnect_timeout;
         let max_pending = self.config.max_response_pending_count;
         // Matches the predicate used to decide whether to spawn the background
@@ -580,27 +583,10 @@ where
                 continue; // Wait for next response WITHOUT re-sending
             }
 
-            // Final response - decode and return.
-            // Log the raw bytes on decode failure so the caller (and the
-            // operator reading the trace) can see exactly what the ECU
-            // put on the wire — without this, the only signal is the
-            // typed-decoder error message, which strips the underlying
-            // byte stream. Useful for firmware-vs-spec drift debugging
-            // (e.g. when the ECU returns a positive response but the
-            // echoed DID doesn't match the requested one).
-            let response = match Response::<D>::decode(&mut response_bytes.as_slice()) {
-                Ok(r) => r,
-                Err(e) => {
-                    warn!(
-                        "Failed to decode UDS response: {e} · raw bytes: {:02X?}",
-                        response_bytes
-                    );
-                    return Err(Error::InvalidResponse(format!(
-                        "Failed to decode response: {e}"
-                    )));
-                }
-            };
-            return Ok(Some(response));
+            // Final response. Return the owned bytes; typed decoding of a
+            // borrowing `Response<'a>` happens caller-side over these owned
+            // bytes so no wire borrow escapes the transport boundary.
+            return Ok(Some(response_bytes));
         }
     }
 
@@ -624,7 +610,7 @@ where
 
         // See send() for the full rationale on reconnect handling and
         // cross-SID response classification below.
-        let mut pending_message: Option<Message> = None;
+        let mut pending_message: Option<OwnedMessage> = None;
         let reconnect_timeout = self.config.reconnect_timeout;
         let max_pending = self.config.max_response_pending_count;
         // Matches the keepalive-spawn predicate; see send().
@@ -824,14 +810,14 @@ where
     /// # Errors
     ///
     /// Returns an error if the session change fails.
-    pub async fn enter_extended_session(&self) -> Result<ProtocolResponse> {
+    pub async fn enter_extended_session(&self) -> Result<Vec<u8>> {
         info!("Requesting extended diagnostic session");
-        let request = ProtocolRequest::diagnostic_session_control(
+        let request = Request::DiagnosticSessionControl(DiagnosticSessionControlRequest::new(
             false,
             DiagnosticSessionType::ExtendedDiagnosticSession,
-        );
+        ));
         // Safe to unwrap: suppress_positive_response is false
-        self.send::<UdsSpec>(request, AddressType::Physical)
+        self.send(request, AddressType::Physical)
             .await
             .map(|opt| opt.expect("response expected for non-suppressed request"))
     }
@@ -841,13 +827,13 @@ where
     /// # Errors
     ///
     /// Returns an error if the session change fails.
-    pub async fn enter_default_session(&self) -> Result<ProtocolResponse> {
+    pub async fn enter_default_session(&self) -> Result<Vec<u8>> {
         info!("Requesting default diagnostic session");
-        let request = ProtocolRequest::diagnostic_session_control(
+        let request = Request::DiagnosticSessionControl(DiagnosticSessionControlRequest::new(
             false,
             DiagnosticSessionType::DefaultSession,
-        );
-        self.send::<UdsSpec>(request, AddressType::Physical)
+        ));
+        self.send(request, AddressType::Physical)
             .await
             .map(|opt| opt.expect("response expected for non-suppressed request"))
     }
@@ -857,13 +843,13 @@ where
     /// # Errors
     ///
     /// Returns an error if the session change fails.
-    pub async fn enter_programming_session(&self) -> Result<ProtocolResponse> {
+    pub async fn enter_programming_session(&self) -> Result<Vec<u8>> {
         info!("Requesting programming session");
-        let request = ProtocolRequest::diagnostic_session_control(
+        let request = Request::DiagnosticSessionControl(DiagnosticSessionControlRequest::new(
             false,
             DiagnosticSessionType::ProgrammingSession,
-        );
-        self.send::<UdsSpec>(request, AddressType::Physical)
+        ));
+        self.send(request, AddressType::Physical)
             .await
             .map(|opt| opt.expect("response expected for non-suppressed request"))
     }
@@ -873,15 +859,12 @@ where
     /// # Errors
     ///
     /// Returns an error if the message fails.
-    pub async fn tester_present(
-        &self,
-        suppress_response: bool,
-    ) -> Result<Option<ProtocolResponse>> {
+    pub async fn tester_present(&self, suppress_response: bool) -> Result<Option<Vec<u8>>> {
         debug!("Sending tester present");
         *lock_activity(&self.last_activity) = Instant::now();
-        let request = ProtocolRequest::tester_present(suppress_response);
+        let request = Request::TesterPresent(TesterPresentRequest::new(suppress_response));
 
-        self.send::<UdsSpec>(request, AddressType::Physical).await
+        self.send(request, AddressType::Physical).await
     }
 
     /// Shut down the client connection.
@@ -903,6 +886,13 @@ where
     }
 
     /// Check if an error is a connection error that should trigger reconnection.
+    ///
+    /// A routing-activation denial
+    /// ([`simple_doip::Error::RoutingActivationDenied`]) is deliberately NOT a
+    /// connection error: it is terminal (another tester holds our source
+    /// address), so reconnecting would just re-trigger the denial. It falls
+    /// through to `false` here and is propagated as
+    /// [`Error::RoutingActivationDenied`] instead.
     fn is_connection_error(error: &simple_doip::Error) -> bool {
         matches!(
             error,
@@ -919,13 +909,13 @@ where
     /// Note: simple_doip's reconnect() has an internal 5-second wait for in-flight messages,
     /// so each attempt may take up to ~15 seconds (with connection setup overhead).
     ///
-    /// Returns Ok(Option<Message>) if reconnection succeeds. The Option contains any
+    /// Returns Ok(Option<OwnedMessage>) if reconnection succeeds. The Option contains any
     /// in-flight message that was received during reconnection (e.g., a response that
     /// arrived while we were reconnecting).
     async fn attempt_reconnect(
         client: &mut Client<Conn>,
         reconnect_timeout: Duration,
-    ) -> Result<Option<Message>> {
+    ) -> Result<Option<OwnedMessage>> {
         /// Cap each individual `client.reconnect()` call — simple_doip's
         /// reconnect() does bind_socket + routing activation (~1-2s) followed
         /// by a 5-second wait for in-flight messages, which bounds a healthy
@@ -959,6 +949,15 @@ where
                         info!("Received in-flight message during reconnection");
                     }
                     return Ok(maybe_message);
+                }
+                Ok(Err(e @ simple_doip::Error::RoutingActivationDenied(_))) => {
+                    // A routing-activation denial is terminal: another tester
+                    // already holds our source address (or the entity otherwise
+                    // refused activation), and no amount of retrying will change
+                    // that. Propagate it as the dedicated, non-retryable error
+                    // instead of looping until the reconnect budget expires.
+                    warn!("Reconnection aborted — routing activation denied: {}", e);
+                    return Err(Error::from(e));
                 }
                 Ok(Err(e)) => {
                     warn!("Reconnection attempt {} failed: {}", attempts, e);
@@ -1046,7 +1045,7 @@ where
         last_activity: &std::sync::Mutex<Instant>,
         reconnect_timeout: Duration,
         send_tp_after_reconnect: bool,
-    ) -> Result<Option<Message>> {
+    ) -> Result<Option<OwnedMessage>> {
         let maybe_msg = Self::attempt_reconnect(client, reconnect_timeout).await?;
         if send_tp_after_reconnect {
             let _ = Self::send_tester_present_while_lock_held(client, last_activity).await;
@@ -1055,9 +1054,9 @@ where
     }
 
     /// Extract the diagnostic payload from a DoIP message.
-    fn extract_diagnostic_payload(message: &Message) -> Result<Vec<u8>> {
+    fn extract_diagnostic_payload(message: &OwnedMessage) -> Result<Vec<u8>> {
         match &message.payload {
-            Payload::DiagnosticMessage(diag) => Ok(diag.user_data.clone()),
+            OwnedPayload::DiagnosticMessage(diag) => Ok(diag.user_data.clone()),
             other => Err(Error::InvalidResponse(format!(
                 "Expected DiagnosticMessage, got {:?}",
                 other
@@ -1246,6 +1245,58 @@ mod classify_response_tests {
         assert!(
             matches!(m_other_sid, ResponseMatch::Malformed(_)),
             "two-byte NACK whose inner byte is some other SID must be Malformed, got {m_other_sid:?}",
+        );
+    }
+
+    /// A routing-activation denial must NOT be treated as a connection error:
+    /// reconnecting would only re-trigger the denial. It has to propagate as
+    /// the dedicated non-retryable error instead of driving the reconnect loop.
+    #[test]
+    fn routing_activation_denial_is_not_a_connection_error() {
+        use simple_doip::messages::RoutingActivationResponseCode;
+
+        let denial = simple_doip::Error::RoutingActivationDenied(
+            RoutingActivationResponseCode::DeniedSourceAddressAlreadyRegistered,
+        );
+        assert!(
+            !TestClient::is_connection_error(&denial),
+            "routing activation denial must be non-retryable (is_connection_error == false)"
+        );
+
+        // Sanity check the positive side so the assertion above isn't vacuous:
+        // a genuine socket close still classifies as a connection error.
+        assert!(TestClient::is_connection_error(
+            &simple_doip::Error::ConnectionClosed
+        ));
+    }
+
+    /// The manual `From<simple_doip::Error>` impl must promote a routing
+    /// denial into the dedicated variant (not bury it in `Transport`), while
+    /// still wrapping every other error in `Transport` as before.
+    #[test]
+    fn from_simple_doip_promotes_routing_denial() {
+        use simple_doip::messages::RoutingActivationResponseCode;
+
+        let promoted = Error::from(simple_doip::Error::RoutingActivationDenied(
+            RoutingActivationResponseCode::DeniedSourceAddressAlreadyRegistered,
+        ));
+        assert!(
+            matches!(
+                promoted,
+                Error::RoutingActivationDenied(
+                    RoutingActivationResponseCode::DeniedSourceAddressAlreadyRegistered
+                )
+            ),
+            "routing denial must map to Error::RoutingActivationDenied, got {promoted:?}"
+        );
+
+        let wrapped = Error::from(simple_doip::Error::ConnectionClosed);
+        assert!(
+            matches!(
+                wrapped,
+                Error::Transport(simple_doip::Error::ConnectionClosed)
+            ),
+            "non-denial errors must still wrap in Error::Transport, got {wrapped:?}"
         );
     }
 }

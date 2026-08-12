@@ -16,7 +16,7 @@
 use std::net::IpAddr;
 use tracing::{error, info};
 use uds_on_ip::{SessionConfig, UdsClient, UdsClientOptions};
-use uds_protocol::Response;
+use uds_protocol::{Decode, Response};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -65,18 +65,26 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Request extended diagnostic session
     info!("Requesting extended diagnostic session...");
     match client.enter_extended_session().await {
-        Ok(response) => {
+        Ok(response_bytes) => {
             info!("Successfully entered extended diagnostic session!");
 
-            // Extract session details from response
-            if let Response::DiagnosticSessionControl(session_response) = response {
-                info!("Session Details:");
-                info!("  Session Type: {:?}", session_response.session_type);
-                info!("  P2 Server Max: {} ms", session_response.p2_server_max);
-                info!(
-                    "  P2* Server Max: {} ms",
-                    session_response.p2_star_server_max * 10
-                );
+            // Decode the owned response bytes caller-side.
+            match Response::decode(&response_bytes) {
+                Ok((Response::DiagnosticSessionControl(session_response), _)) => {
+                    info!("Session Details:");
+                    info!("  Session Type: {:?}", session_response.session_type);
+                    info!("  P2 Server Max: {} ms", session_response.p2_server_max);
+                    info!(
+                        "  P2* Server Max: {} ms",
+                        session_response.p2_star_server_max * 10
+                    );
+                }
+                Ok((other, _)) => {
+                    info!("Unexpected response variant: {:?}", other);
+                }
+                Err(e) => {
+                    error!("Failed to decode session response: {}", e);
+                }
             }
         }
         Err(e) => {
