@@ -4,6 +4,7 @@ Requirements
 .. toctree::
    :maxdepth: 1
 
+   llr-service-interface
    llr-server-session-timer
 
 Status of this set
