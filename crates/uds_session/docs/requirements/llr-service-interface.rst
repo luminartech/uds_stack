@@ -317,3 +317,125 @@ Parameter mapping
       * - ``S_Result``
         - ``T_Result``
         - Result of the service execution
+
+Service primitive parameters
+----------------------------
+
+The requirements below constrain each parameter's value set and width. ISO 14229-2:2021
+8.2 defines the data types they are named in terms of: ``Enum`` is an 8-bit enumeration,
+``Unsigned Word`` a 16-bit unsigned value, ``Unsigned Long`` a 32-bit unsigned value, and
+``Byte Array`` a sequence of 8-bit aligned data. How a value is represented in memory is
+an implementation choice and is not constrained here.
+
+.. llr:: S_Mtype identifies the message type and the address information present
+   :id: UDSS_LLR_0125
+   :status: draft
+   :integrity_level: QM
+   :target_level: D
+   :origin: session-layer-standard
+   :source: ISO 14229-2:2021 8.3
+   :tags: service-interface; parameters
+
+   ``S_Mtype`` shall be an enumeration whose values are ``Diag``, ``RDiag``,
+   ``SecureDiag`` and ``SecureRDiag``.
+
+   Where ``S_Mtype`` is ``Diag`` or ``SecureDiag``, the address information shall consist
+   of ``S_SA``, ``S_TA`` and ``S_TAtype``. Where ``S_Mtype`` is ``RDiag`` or
+   ``SecureRDiag``, the address information shall additionally include ``S_AE``.
+
+.. llr:: S_TAtype selects the communication model
+   :id: UDSS_LLR_0126
+   :status: draft
+   :integrity_level: QM
+   :target_level: D
+   :origin: session-layer-standard
+   :source: ISO 14229-2:2021 8.4
+   :tags: service-interface; parameters
+
+   ``S_TAtype`` shall be an enumeration whose values are ``physical`` and ``functional``.
+   ``physical`` shall denote one-to-one communication with a single peer entity, and
+   ``functional`` shall denote one-to-many communication.
+
+.. llr:: S_TA carries the target address
+   :id: UDSS_LLR_0127
+   :status: draft
+   :integrity_level: QM
+   :target_level: D
+   :origin: session-layer-standard
+   :source: ISO 14229-2:2021 8.5
+   :tags: service-interface; parameters
+
+   ``S_TA`` shall be a 16-bit unsigned value in the range ``0x0000`` to ``0xFFFF``, and
+   shall encode the receiving session layer protocol entity.
+
+.. llr:: S_SA carries the source address
+   :id: UDSS_LLR_0128
+   :status: draft
+   :integrity_level: QM
+   :target_level: D
+   :origin: session-layer-standard
+   :source: ISO 14229-2:2021 8.6
+   :tags: service-interface; parameters
+
+   ``S_SA`` shall be a 16-bit unsigned value in the range ``0x0000`` to ``0xFFFF``, and
+   shall encode the sending session layer protocol entity.
+
+.. llr:: S_AE carries the address extension
+   :id: UDSS_LLR_0129
+   :status: draft
+   :integrity_level: QM
+   :target_level: D
+   :origin: session-layer-standard
+   :source: ISO 14229-2:2021 8.7; ISO 14229-2:2021 8.3
+   :tags: service-interface; parameters
+
+   ``S_AE`` shall be a 16-bit unsigned value in the range ``0x0000`` to ``0xFFFF``, and
+   shall carry the extended address of the node. It shall be present only where
+   ``S_Mtype`` is ``RDiag`` or ``SecureRDiag``.
+
+.. llr:: S_Length carries the length of S_Data
+   :id: UDSS_LLR_0130
+   :status: draft
+   :integrity_level: QM
+   :target_level: D
+   :origin: session-layer-standard
+   :source: ISO 14229-2:2021 8.8
+   :tags: service-interface; parameters
+
+   ``S_Length`` shall be a 32-bit unsigned value and shall carry the number of bytes of
+   ``S_Data`` to be transmitted or received.
+
+   ISO 14229-2:2021 8.8 gives the data type as ``Unsigned Long``, a 32-bit unsigned
+   value, but states the range as ``0x0000`` to ``0xFFFF``. The two statements are
+   inconsistent. The wider data type is taken here because ISO 13400-2:2019 permits
+   diagnostic messages longer than 65 535 bytes, and a 16-bit length would make this
+   crate unusable over that transport.
+
+.. llr:: S_Data carries the message data
+   :id: UDSS_LLR_0131
+   :status: draft
+   :integrity_level: QM
+   :target_level: D
+   :origin: session-layer-standard
+   :source: ISO 14229-2:2021 8.9
+   :tags: service-interface; parameters
+
+   ``S_Data`` shall be a sequence of 8-bit values and shall carry the message data
+   content of the request or response message to be transmitted or received.
+
+.. llr:: S_Result reports the outcome of a service execution
+   :id: UDSS_LLR_0132
+   :status: draft
+   :integrity_level: QM
+   :target_level: D
+   :origin: session-layer-standard
+   :source: ISO 14229-2:2021 8.10
+   :tags: service-interface; parameters
+
+   ``S_Result`` shall be an enumeration reporting the outcome of a service execution. The
+   value ``S_OK`` shall indicate that the service execution completed successfully. Every
+   other value shall indicate an error detected by a lower layer.
+
+   ISO 14229-2:2021 does not enumerate the error values. Clause 8.10 states only that an
+   error value is issued when an error is detected by a lower layer. The session layer
+   shall therefore carry an error value without interpreting it.
