@@ -21,6 +21,7 @@ version = "0.1.0"
 
 extensions = [
     "sphinx_needs",
+    "sphinx_hextra"
 ]
 
 source_suffix = {
@@ -36,7 +37,7 @@ exclude_patterns = [
     "sphinx-requirements.txt",
 ]
 
-html_theme = "alabaster"
+html_theme = "sphinx_hextra"
 
 # --- sphinx-needs schema ------------------------------------------------------------
 
