@@ -1,0 +1,76 @@
+# Publishes the requirement set to GitHub Pages.
+#
+# Main only. There are no per-pull-request previews: GitHub Pages serves one site per
+# repository, so a preview scheme means writing pull request builds into subdirectories of
+# a branch and pruning them on close, and stale previews outlive the branches that made
+# them. Reviewers build locally instead, which produces the same output this workflow
+# publishes.
+name: Documentation
+
+on:
+  push:
+    branches: [main]
+  # So the site can be republished without an empty commit, e.g. after changing a Pages
+  # setting or re-running a failed deployment.
+  workflow_dispatch:
+
+# The minimum the Pages deployment needs: `id-token` for the deployment's OIDC exchange,
+# `pages` to publish, and read-only source access.
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Pages has a single deployment target, so overlapping runs would race. Queue rather than
+# cancel: a superseded run has already been superseded by the time it matters, but
+# cancelling mid-deploy can leave the site half-written.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: astral-sh/setup-uv@v10
+        with:
+          enable-cache: true
+
+      # `--frozen` refuses to re-resolve. The interpreter is pinned by .python-version and
+      # bounded in pyproject.toml, and uv installs it here.
+      - run: uv sync --frozen
+
+      # Keep this in step with the `html` recipe in the justfile, which is what a reviewer
+      # runs locally. Warnings are errors, so an orphaned page, an unknown directive or an
+      # unresolved reference fails the build rather than publishing quietly. `-q` is
+      # omitted deliberately: a build log nobody watches is worth more than a quiet one.
+      - run: uv run --frozen sphinx-build -b html -W docs docs/_build/html
+
+      # The site is what a person reads, and nothing else.
+      #
+      # needs.json matters most. `needs_build_json` in conf.py makes the html builder emit
+      # it alongside the pages, so publishing the directory unpruned would put it at a
+      # stable public URL that is rebuilt on every push to main. The qualification
+      # repository consumes needs.json as evidence and pins to a committed snapshot for
+      # reproducibility; a live URL is exactly the thing it must not be able to point at.
+      #
+      # .doctrees is pickled build state, several hundred kilobytes of it, and it embeds
+      # absolute paths from the machine that built it.
+      - name: Prune non-published build output
+        run: rm -rf docs/_build/html/.doctrees docs/_build/html/.buildinfo* docs/_build/html/needs.json
+
+      - uses: actions/upload-pages-artifact@v5
+        with:
+          path: docs/_build/html
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v5
