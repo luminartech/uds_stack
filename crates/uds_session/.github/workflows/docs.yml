@@ -11,6 +11,15 @@
 # local check at exit 0 and fails only under the html builder. Without a pull request
 # build that failure lands on main, and because a push-event failure carries no required
 # status check, the site would simply stop updating without saying so.
+#
+# One prerequisite this workflow cannot satisfy for itself: Pages must be enabled on the
+# repository with Source set to "GitHub Actions". `deploy-pages` does not enable it, and
+# against an unconfigured repository it fails with "Get Pages site failed. Please verify
+# that the repository has Pages enabled and configured to build using GitHub Actions".
+# `actions/configure-pages` has an `enablement` input but its own documentation requires a
+# token other than GITHUB_TOKEN for it, so this cannot be moved into the workflow. If the
+# deploy job ever fails that way, check the setting before the YAML — and remember that on
+# a push it fails silently, for the reason in the paragraph above.
 name: Documentation
 
 on:
