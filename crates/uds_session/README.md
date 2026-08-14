@@ -143,10 +143,15 @@ Licensed under either of
 
 at your option.
 
-One licence covers the crate's source and the requirement set under `docs/` alike. The
-crate and its requirements are the open part; the qualification evidence that supports
-using it in a safety-related item is held separately and offered commercially, and neither
-licence grants any right in that material.
+One licence covers the crate's source and the requirement set under `docs/` alike,
+including each requirement's trace to the clause it came from. The whole of what this crate
+claims to implement, and where each claim comes from, is public and checkable.
 
-Neither grants any right in the ISO standards the requirements cite, either — those remain
-ISO's. See [Relationship to the standards](#relationship-to-the-standards).
+What is held separately and offered commercially is the qualification package: assumptions
+of use, failure analysis, integration guidance, and platform test evidence. Neither licence
+grants any right in that material. A safety programme cannot take an unqualified component
+as-is whatever its licence, so it is that package, rather than the licence here, that makes
+this crate usable in a certified item. Contact MicroVision if you need it.
+
+Neither licence grants any right in the ISO standards the requirements cite, either — those
+remain ISO's. See [Relationship to the standards](#relationship-to-the-standards).

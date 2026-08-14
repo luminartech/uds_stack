@@ -7,10 +7,12 @@ edition = "2024"
 # because a downstream that cannot take Apache-2.0 should still have a path. The same
 # licence covers the requirement set under docs/.
 #
-# The crate and its requirements are the open part. What is sold is the qualification
-# evidence in the private qualification repository, which is why a permissive licence here
-# costs nothing: neither licence grants any right in that material, or in the ISO standards
-# the requirements cite. See "Relationship to the standards" in README.md.
+# The crate, its requirements and their trace to the standards are all the open part. What
+# is sold is the qualification package — assumptions of use, failure analysis, integration
+# guidance, platform test evidence — which restates nothing from any standard and is held
+# in the private qualification repository. A permissive licence therefore costs nothing:
+# neither licence grants any right in that material, or in the ISO standards the
+# requirements cite. See "Relationship to the standards" in README.md.
 license = "MIT OR Apache-2.0"
 
 [dependencies]
