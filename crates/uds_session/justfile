@@ -80,8 +80,9 @@ test-tools:
 
 # --- aggregate ------------------------------------------------------------------------
 
-# Every hook, over every file, in configured order. pre-commit is the only enforcement
-# this repository has: there is no CI.
+# Every hook, over every file, in configured order. Run this before pushing: CI builds the
+# requirement set but runs none of these hooks, so a failure they would have caught reaches
+# the pull request instead.
 [doc("Run every pre-commit hook over every file (the gate before pushing)")]
 check:
     pre-commit run --all-files
