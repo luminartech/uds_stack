@@ -57,9 +57,12 @@ Out of scope:
 
 ## Requirements
 
-The requirement set is published as Sphinx + sphinx-needs documentation.
+The requirement set is published as Sphinx + sphinx-needs documentation at
+<https://luminartech.github.io/uds_session/>, rebuilt from `main` on every push.
 
-*GitHub Pages URL to be added once the docs workflow is in place.*
+The published site is HTML only. `needs.json` is deliberately not served from it: the
+private qualification repository consumes that file as evidence and pins to a committed
+snapshot, which a URL rebuilt on every push cannot be.
 
 Each requirement carries:
 

@@ -1,41 +1,53 @@
 # Publishes the requirement set to GitHub Pages.
 #
-# Main only. There are no per-pull-request previews: GitHub Pages serves one site per
-# repository, so a preview scheme means writing pull request builds into subdirectories of
-# a branch and pruning them on close, and stale previews outlive the branches that made
-# them. Reviewers build locally instead, which produces the same output this workflow
-# publishes.
+# Builds on every pull request and every push to main; deploys from main alone. A pull
+# request build is a gate, not a preview. There are no previews: GitHub Pages serves one
+# site per repository, so previewing means writing builds into subdirectories of a branch
+# and pruning them when a pull request closes, and stale previews outlive the branches
+# that made them. Reviewers read the rendered set locally instead.
+#
+# The gate earns its place. `sphinx-build -b needs`, which pre-commit runs, writes no
+# documents, so it never resolves references: a broken `:ref:` or `:doc:` passes every
+# local check at exit 0 and fails only under the html builder. Without a pull request
+# build that failure lands on main, and because a push-event failure carries no required
+# status check, the site would simply stop updating without saying so.
 name: Documentation
 
 on:
   push:
     branches: [main]
+  pull_request:
   # So the site can be republished without an empty commit, e.g. after changing a Pages
-  # setting or re-running a failed deployment.
+  # setting or re-running a failed deployment. A dispatch against any other ref builds and
+  # stops, because the deploy job below is guarded on the ref rather than on the event.
   workflow_dispatch:
 
-# The minimum the Pages deployment needs: `id-token` for the deployment's OIDC exchange,
-# `pages` to publish, and read-only source access.
+# Read-only by default. The build job runs third-party package code through `uv sync`, and
+# granting the deployment's capabilities workflow-wide would let that code mint the Pages
+# OIDC token and publish. They belong to the deploy job alone, which runs no checkout and
+# no third-party code beyond the deploy action itself.
 permissions:
   contents: read
-  pages: write
-  id-token: write
-
-# Pages has a single deployment target, so overlapping runs would race. Queue rather than
-# cancel: a superseded run has already been superseded by the time it matters, but
-# cancelling mid-deploy can leave the site half-written.
-concurrency:
-  group: pages
-  cancel-in-progress: false
 
 jobs:
   build:
     runs-on: ubuntu-latest
+    # Superseding a build of the same ref is always right: only the newest commit on a
+    # pull request is worth reporting on. Keyed by ref so concurrent pull requests do not
+    # queue behind one another.
+    concurrency:
+      group: docs-build-${{ github.ref }}
+      cancel-in-progress: true
     steps:
       - uses: actions/checkout@v7
 
+      # Pinned for the same reason everything else here is: uv.lock, .python-version,
+      # `--frozen` and the `==` pins in pyproject.toml all exist so a given needs.json can
+      # be reproduced. setup-uv otherwise floats to whatever uv shipped that day, and a
+      # breaking release would break the deploy with no change in the repository to blame.
       - uses: astral-sh/setup-uv@v10
         with:
+          version: "0.11.26"
           enable-cache: true
 
       # `--frozen` refuses to re-resolve. The interpreter is pinned by .python-version and
@@ -50,16 +62,24 @@ jobs:
 
       # The site is what a person reads, and nothing else.
       #
-      # needs.json matters most. `needs_build_json` in conf.py makes the html builder emit
-      # it alongside the pages, so publishing the directory unpruned would put it at a
-      # stable public URL that is rebuilt on every push to main. The qualification
+      # needs.json is the one that matters. `needs_build_json` in conf.py makes the *html*
+      # builder emit it alongside the pages, so publishing the directory unpruned would put
+      # it at a stable public URL rebuilt on every push to main. The qualification
       # repository consumes needs.json as evidence and pins to a committed snapshot for
-      # reproducibility; a live URL is exactly the thing it must not be able to point at.
+      # reproducibility; a live URL is exactly what it must not be able to point at.
       #
-      # .doctrees is pickled build state, several hundred kilobytes of it, and it embeds
-      # absolute paths from the machine that built it.
+      # permalink.html has to go with it. sphinx-needs emits it for every builder except
+      # `needs`, and it resolves `permalink.html?id=UDSS_LLR_0113` by fetching needs.json
+      # over XHR through a handler that fires only on HTTP 200, with no error branch. Left
+      # behind once needs.json is gone it sits on "Searching, Please Wait..." forever, and
+      # a dead by-ID entry point is worse than none. It cannot be switched off in conf.py:
+      # `needs_permalink_file = ""` leaves install_permalink_file writing to the output
+      # directory itself, which crashes the build rather than skipping the file.
+      #
+      # Dot-paths need no pruning. upload-pages-artifact passes `--exclude=.[^/]*` to tar
+      # unless `include-hidden-files` is set, so .doctrees and .buildinfo never ship.
       - name: Prune non-published build output
-        run: rm -rf docs/_build/html/.doctrees docs/_build/html/.buildinfo* docs/_build/html/needs.json
+        run: rm -f docs/_build/html/needs.json docs/_build/html/permalink.html
 
       - uses: actions/upload-pages-artifact@v5
         with:
@@ -67,7 +87,19 @@ jobs:
 
   deploy:
     needs: build
+    # Guarded on the ref, not the event: a pull request builds at refs/pull/N/merge and a
+    # dispatch can name any branch, so this covers both without enumerating events.
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    # Pages has a single deployment target, so overlapping deployments would race. Queue
+    # rather than cancel: cancelling mid-deploy can leave the site half-written, and a
+    # superseded deployment has already been superseded by the time it matters.
+    concurrency:
+      group: pages
+      cancel-in-progress: false
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}

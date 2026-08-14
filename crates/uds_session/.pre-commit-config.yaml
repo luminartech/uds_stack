@@ -113,8 +113,13 @@ repos:
         files: ^(docs/requirements/.*\.(rst|md)|tools/validate_needs\.py)$
       # The authoritative check that the requirement set is valid sphinx-needs: unknown
       # directives, ids that fail needs_id_regex, statuses outside needs_statuses, and
-      # unresolved links are all errors here. Warnings are errors so that a requirement
-      # excluded from every toctree cannot go unnoticed.
+      # need links pointing at ids that do not exist are all errors here. Warnings are
+      # errors so that a requirement excluded from every toctree cannot go unnoticed.
+      #
+      # "links" above means sphinx-needs links between requirements, not Sphinx cross
+      # references. The needs builder writes no documents, so `:ref:` and `:doc:` are
+      # never resolved and a broken one passes here at exit 0. Those are caught by the
+      # html build in .github/workflows/docs.yml, which runs on every pull request.
       - id: sphinx-needs
         name: sphinx-needs build
         entry: uv run --frozen sphinx-build -b needs -W -q docs docs/_build/needs
