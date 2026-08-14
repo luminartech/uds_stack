@@ -18,8 +18,8 @@ dependencies = [
 package = false
 
 [dependency-groups]
-# Exact versions are pinned above and locked in uv.lock. These produce needs.json, which
-# the private qualification repository consumes as evidence, so the toolchain that
-# generated a given snapshot has to be recoverable. Bumping them is a change to an
-# evidence-producing tool, not a routine dependency update.
+# Exact versions are pinned above and locked in uv.lock. These produce needs.json, which is
+# consumed as evidence against a committed snapshot, so the toolchain that generated a given
+# snapshot has to be recoverable. Bumping them is a change to an evidence-producing tool,
+# not a routine dependency update.
 dev = []

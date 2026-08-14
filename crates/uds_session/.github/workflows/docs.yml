@@ -69,9 +69,9 @@ jobs:
       #
       # needs.json is the one that matters. `needs_build_json` in conf.py makes the *html*
       # builder emit it alongside the pages, so publishing the directory unpruned would put
-      # it at a stable public URL rebuilt on every push to main. The qualification
-      # repository consumes needs.json as evidence and pins to a committed snapshot for
-      # reproducibility; a live URL is exactly what it must not be able to point at.
+      # it at a stable public URL rebuilt on every push to main. That export is consumed as
+      # evidence against a committed snapshot, for reproducibility; a live URL is exactly
+      # what must not be available to point at instead.
       #
       # permalink.html has to go with it. sphinx-needs emits it for every builder except
       # `needs`, and it resolves `permalink.html?id=UDSS_LLR_0113` by fetching needs.json

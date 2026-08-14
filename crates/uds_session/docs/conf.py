@@ -1,9 +1,8 @@
 """Sphinx configuration for the uds_session requirement set.
 
-The requirement schema lives here for now. It is a contract shared with the private
-qualification repository, which links to these requirement IDs, so it will move to the
-shared process repository once that exists and be consumed from there. Until then,
-changes here are changes to a cross-repository interface.
+The requirement schema lives here. It is a contract with anything that consumes this set
+through needs.json and links to these requirement IDs, so a change here is a change to a
+published interface rather than to local configuration.
 
 `tools/validate_needs.py` enforces the parts of the schema that sphinx-needs has no
 concept of. Keep the two in step: the permitted values below and the constants in that
@@ -14,9 +13,9 @@ project = "uds_session"
 author = "MicroVision"
 copyright = "2026, MicroVision"  # noqa: A001 - Sphinx requires this name
 release = "0.1.0"
-# sphinx-needs keys needs.json by `version`, and the qualification repository pins to that
-# key through needs_external_needs. Leaving it unset produces an empty key, which makes a
-# committed snapshot impossible to pin to. Keep this in step with the crate version.
+# sphinx-needs keys needs.json by `version`, and a consumer pins to that key through
+# needs_external_needs. Leaving it unset produces an empty key, which makes a committed
+# snapshot impossible to pin to. Keep this in step with the crate version.
 version = "0.1.0"
 
 extensions = [
@@ -39,10 +38,10 @@ exclude_patterns = [
 
 html_theme = "sphinx_hextra"
 
-# The published site is HTML only, for the same reason the workflow prunes needs.json:
-# the qualification repository consumes this set as evidence and pins to a committed
-# snapshot, so no machine-consumable form of the requirements may sit at a stable URL
-# rebuilt on every push. Sphinx otherwise copies every source document to
+# The published site is HTML only, for the same reason the workflow prunes needs.json: that
+# export is consumed as evidence against a committed snapshot, so no machine-consumable form
+# of the requirements may sit at a stable URL rebuilt on every push, where it could be
+# pointed at instead. Sphinx otherwise copies every source document to
 # `_sources/*.rst.txt` and links it from each page — the full requirement text, the same
 # content as needs.json in another format. Pruning needs.json alone does not close that.
 html_copy_source = False
@@ -78,8 +77,8 @@ needs_types = [
 ]
 
 # IDs are allocated, never renumbered, and never reused. They are permanent from the
-# moment the qualification repository first links to one, so auto-generation is refused:
-# a generated ID changes when its surrounding content does.
+# moment anything outside this repository first links to one, so auto-generation is
+# refused: a generated ID changes when its surrounding content does.
 needs_id_required = True
 needs_id_regex = r"^UDSS_LLR_\d{4}$|^UDSS_(IMPL|TEST)_[A-Z0-9_]+$"
 
@@ -119,6 +118,6 @@ needs_statuses = [
     {"name": "obsolete", "description": "Withdrawn. The ID is retained and never reused."},
 ]
 
-# Emit needs.json so the qualification repository can consume this set through
-# needs_external_needs against a committed snapshot.
+# Emit needs.json so this set can be consumed through needs_external_needs against a
+# committed snapshot.
 needs_build_json = True

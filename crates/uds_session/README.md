@@ -60,9 +60,9 @@ Out of scope:
 The requirement set is published as Sphinx + sphinx-needs documentation at
 <https://luminartech.github.io/uds_session/>, rebuilt from `main` on every push.
 
-The published site is HTML only. `needs.json` is deliberately not served from it: the
-private qualification repository consumes that file as evidence and pins to a committed
-snapshot, which a URL rebuilt on every push cannot be.
+The published site is HTML only. `needs.json` is deliberately not served from it: that
+export is consumed as evidence against a committed snapshot, which a URL rebuilt on every
+push cannot be.
 
 Each requirement carries:
 
@@ -79,9 +79,6 @@ Each requirement carries:
 
 Requirement IDs are allocated once and never renumbered or reused. Once a requirement is
 approved and linked externally, its ID is fixed for the life of the crate.
-
-The `needs` builder produces `needs.json`, consumed by a separate qualification repository
-that holds the safety argument.
 
 ## Relationship to the standards
 
@@ -147,11 +144,5 @@ One licence covers the crate's source and the requirement set under `docs/` alik
 including each requirement's trace to the clause it came from. The whole of what this crate
 claims to implement, and where each claim comes from, is public and checkable.
 
-What is held separately and offered commercially is the qualification package: assumptions
-of use, failure analysis, integration guidance, and platform test evidence. Neither licence
-grants any right in that material. A safety programme cannot take an unqualified component
-as-is whatever its licence, so it is that package, rather than the licence here, that makes
-this crate usable in a certified item. Contact MicroVision if you need it.
-
-Neither licence grants any right in the ISO standards the requirements cite, either — those
-remain ISO's. See [Relationship to the standards](#relationship-to-the-standards).
+Neither licence grants any right in the ISO standards the requirements cite — those remain
+ISO's. See [Relationship to the standards](#relationship-to-the-standards).

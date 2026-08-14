@@ -1,10 +1,9 @@
 # Command runner for the uds_session crate and its requirement set.
 #
 # The Python toolchain is pinned in pyproject.toml and locked in uv.lock, and every recipe
-# below runs it through `uv run --frozen`. `--frozen` is deliberate: needs.json is evidence
-# consumed by the private qualification repository, so the toolchain that produced a given
-# snapshot has to be recoverable. A recipe that silently re-resolved dependencies would
-# break that.
+# below runs it through `uv run --frozen`. `--frozen` is deliberate: needs.json is consumed
+# as evidence against a committed snapshot, so the toolchain that produced a given snapshot
+# has to be recoverable. A recipe that silently re-resolved dependencies would break that.
 #
 # Each recipe carries a `[doc]` attribute rather than relying on the preceding comment,
 # because `just --list` shows only the final comment line and would otherwise present the
