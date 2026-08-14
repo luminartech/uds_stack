@@ -21,7 +21,7 @@ version = "0.1.0"
 
 extensions = [
     "sphinx_needs",
-    "sphinx_hextra"
+    "sphinx_hextra",
 ]
 
 source_suffix = {
@@ -38,6 +38,15 @@ exclude_patterns = [
 ]
 
 html_theme = "sphinx_hextra"
+
+# The published site is HTML only, for the same reason the workflow prunes needs.json:
+# the qualification repository consumes this set as evidence and pins to a committed
+# snapshot, so no machine-consumable form of the requirements may sit at a stable URL
+# rebuilt on every push. Sphinx otherwise copies every source document to
+# `_sources/*.rst.txt` and links it from each page — the full requirement text, the same
+# content as needs.json in another format. Pruning needs.json alone does not close that.
+html_copy_source = False
+html_show_sourcelink = False
 
 # --- sphinx-needs schema ------------------------------------------------------------
 
