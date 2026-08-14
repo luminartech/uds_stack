@@ -83,6 +83,24 @@ approved and linked externally, its ID is fixed for the life of the crate.
 The `needs` builder produces `needs.json`, consumed by a separate qualification repository
 that holds the safety argument.
 
+## Relationship to the standards
+
+This crate is not a copy of any standard, and reading it is no substitute for holding one.
+The requirement set is an independent restatement: every requirement is written in this
+project's own words, and `source` records the clause, table or figure a requirement came
+from rather than reproducing what it says. No text, table or figure from any ISO standard
+is reproduced here.
+
+The standards' own vocabulary is kept deliberately — primitive and parameter names such as
+`T_Data.ind` and `tS3_Server` appear unchanged, because a requirement that renamed them
+would be untraceable and an implementation that renamed them would be harder to review
+against the standard.
+
+ISO holds copyright in the standards cited. Implementing or verifying against this crate
+requires your own licensed copies of ISO 14229-1, ISO 14229-2 and ISO 14229-5: the
+standards are cited by designation and clause so that a reader who holds them can check
+the trace, while the requirements themselves are written to be verifiable without them.
+
 ## Usage
 
 *API documentation to be written as the implementation takes shape.*
