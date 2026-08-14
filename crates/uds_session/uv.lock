@@ -424,7 +424,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "sphinx", specifier = "==8.2.3" },
-    { name = "sphinx-hextra", specifier = ">=0.1.1" },
+    { name = "sphinx-hextra", specifier = "==0.1.1" },
     { name = "sphinx-needs", specifier = "==5.1.0" },
 ]
 

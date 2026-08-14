@@ -9,7 +9,7 @@ description = "Requirements and documentation build environment for the uds_sess
 requires-python = ">=3.12,<3.13"
 dependencies = [
     "sphinx==8.2.3",
-    "sphinx-hextra>=0.1.1",
+    "sphinx-hextra==0.1.1",
     "sphinx-needs==5.1.0",
 ]
 
