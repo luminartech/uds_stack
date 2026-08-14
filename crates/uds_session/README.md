@@ -130,6 +130,23 @@ $ uv run --frozen sphinx-build -b needs -W docs docs/_build/needs
 
 *Contribution guidelines are in development.*
 
+Unless you state otherwise, any contribution you intentionally submit for inclusion in this
+work, as defined in the Apache-2.0 licence, is dual licensed as below, with no additional
+terms or conditions.
+
 ## Licence
 
-*Licence to be determined.*
+Licensed under either of
+
+- Apache License, Version 2.0 ([`LICENSE-APACHE`](LICENSE-APACHE))
+- MIT License ([`LICENSE-MIT`](LICENSE-MIT))
+
+at your option.
+
+One licence covers the crate's source and the requirement set under `docs/` alike. The
+crate and its requirements are the open part; the qualification evidence that supports
+using it in a safety-related item is held separately and offered commercially, and neither
+licence grants any right in that material.
+
+Neither grants any right in the ISO standards the requirements cite, either — those remain
+ISO's. See [Relationship to the standards](#relationship-to-the-standards).
