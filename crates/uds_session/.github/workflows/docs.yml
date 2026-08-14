@@ -45,7 +45,12 @@ jobs:
       # `--frozen` and the `==` pins in pyproject.toml all exist so a given needs.json can
       # be reproduced. setup-uv otherwise floats to whatever uv shipped that day, and a
       # breaking release would break the deploy with no change in the repository to blame.
-      - uses: astral-sh/setup-uv@v10
+      #
+      # The action reference is a full version because setup-uv publishes no moving major
+      # tag: it stopped at v7, and v8 onwards exist only as exact versions. `@v10` does not
+      # resolve. Do not "tidy" this to a major tag; the other actions here have one and
+      # this one does not.
+      - uses: astral-sh/setup-uv@v10.0.1
         with:
           version: "0.11.26"
           enable-cache: true
