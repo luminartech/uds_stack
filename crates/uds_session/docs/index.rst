@@ -18,12 +18,13 @@ Building
 
 The documentation environment is managed by uv. The Python version is pinned, and the
 resolver will refuse an incompatible interpreter rather than fail at build time.
+``--frozen`` refuses to re-resolve, so these are the same commands CI runs.
 
 .. code-block:: console
 
-   $ uv sync
-   $ uv run sphinx-build -b html -W docs docs/_build/html
-   $ uv run sphinx-build -b needs -W docs docs/_build/needs
+   $ uv sync --frozen
+   $ uv run --frozen sphinx-build -b html -W docs docs/_build/html
+   $ uv run --frozen sphinx-build -b needs -W docs docs/_build/needs
 
 The ``needs`` builder produces ``needs.json``, the export consumed by the private
 qualification repository to link its clause-traced requirements to the requirements

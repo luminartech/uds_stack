@@ -89,11 +89,23 @@ that holds the safety argument.
 
 ## Building
 
+Recipes live in the `justfile`; `just --list` shows them all. `--frozen` refuses to
+re-resolve, so the toolchain that produced a given `needs.json` stays recoverable.
+
+```console
+$ just check       # every pre-commit hook over every file — the gate before pushing
+$ just html        # build the requirement set for reading locally
+$ just summary     # counts, source coverage, ID gaps
+$ cargo test
+```
+
+Without `just`:
+
 ```console
 $ cargo test
-$ uv sync
-$ uv run sphinx-build -b html -W docs docs/_build/html
-$ uv run sphinx-build -b needs -W docs docs/_build/needs
+$ uv sync --frozen
+$ uv run --frozen sphinx-build -b html -W docs docs/_build/html
+$ uv run --frozen sphinx-build -b needs -W docs docs/_build/needs
 ```
 
 ## Contributing
