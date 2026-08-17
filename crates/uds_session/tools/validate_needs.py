@@ -33,9 +33,9 @@ from pathlib import Path
 
 REQUIREMENT_ROOT = Path("docs/requirements")
 
-# Directive types that carry requirements. Assumptions of use are authored in the private
-# qualification repository, where they are assessed from a safety perspective, so `aou` is
-# deliberately absent rather than unused.
+# Directive types that carry requirements. Assumptions of use are not authored here: they
+# constrain an integrator rather than this crate, and assessing them belongs to a safety
+# assessment this set does not perform. `aou` is deliberately absent rather than unused.
 AUTHORED_TYPES = {"llr"}
 
 # Generated from source annotations by the extractor and imported, never hand-authored.

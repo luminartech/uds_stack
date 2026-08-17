@@ -146,7 +146,7 @@ class ParseTests(TempTree):
 
    The caller shall supply a monotonic timestamp.
 
-   Rationale: assumptions of use live in the qualification repository.
+   Rationale: assumptions of use are not authored in this set.
 """)
         needs = vn.parse(self.root / "r.rst")
         self.assertEqual([n.type for n in needs], ["llr"])

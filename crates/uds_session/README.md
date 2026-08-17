@@ -57,9 +57,12 @@ Out of scope:
 
 ## Requirements
 
-The requirement set is published as Sphinx + sphinx-needs documentation.
+The requirement set is published as Sphinx + sphinx-needs documentation at
+<https://luminartech.github.io/uds_session/>, rebuilt from `main` on every push.
 
-*GitHub Pages URL to be added once the docs workflow is in place.*
+The published site is HTML only. `needs.json` is deliberately not served from it: that
+export is consumed as evidence against a committed snapshot, which a URL rebuilt on every
+push cannot be.
 
 Each requirement carries:
 
@@ -77,8 +80,23 @@ Each requirement carries:
 Requirement IDs are allocated once and never renumbered or reused. Once a requirement is
 approved and linked externally, its ID is fixed for the life of the crate.
 
-The `needs` builder produces `needs.json`, consumed by a separate qualification repository
-that holds the safety argument.
+## Relationship to the standards
+
+This crate is not a copy of any standard, and reading it is no substitute for holding one.
+The requirement set is an independent restatement: every requirement is written in this
+project's own words, and `source` records the clause, table or figure a requirement came
+from rather than reproducing what it says. No text, table or figure from any ISO standard
+is reproduced here.
+
+The standards' own vocabulary is kept deliberately — primitive and parameter names such as
+`T_Data.ind` and `tS3_Server` appear unchanged, because a requirement that renamed them
+would be untraceable and an implementation that renamed them would be harder to review
+against the standard.
+
+ISO holds copyright in the standards cited. Implementing or verifying against this crate
+requires your own licensed copies of ISO 14229-1, ISO 14229-2 and ISO 14229-5: the
+standards are cited by designation and clause so that a reader who holds them can check
+the trace, while the requirements themselves are written to be verifiable without them.
 
 ## Usage
 
@@ -86,17 +104,45 @@ that holds the safety argument.
 
 ## Building
 
+Recipes live in the `justfile`; `just --list` shows them all. `--frozen` refuses to
+re-resolve, so the toolchain that produced a given `needs.json` stays recoverable.
+
+```console
+$ just check       # every pre-commit hook over every file — the gate before pushing
+$ just html        # build the requirement set for reading locally
+$ just summary     # counts, source coverage, ID gaps
+$ cargo test
+```
+
+Without `just`:
+
 ```console
 $ cargo test
-$ uv sync
-$ uv run sphinx-build -b html -W docs docs/_build/html
-$ uv run sphinx-build -b needs -W docs docs/_build/needs
+$ uv sync --frozen
+$ uv run --frozen sphinx-build -b html -W docs docs/_build/html
+$ uv run --frozen sphinx-build -b needs -W docs docs/_build/needs
 ```
 
 ## Contributing
 
 *Contribution guidelines are in development.*
 
+Unless you state otherwise, any contribution you intentionally submit for inclusion in this
+work, as defined in the Apache-2.0 licence, is dual licensed as below, with no additional
+terms or conditions.
+
 ## Licence
 
-*Licence to be determined.*
+Licensed under either of
+
+- Apache License, Version 2.0 ([`LICENSE-APACHE`](LICENSE-APACHE))
+- MIT License ([`LICENSE-MIT`](LICENSE-MIT))
+
+at your option.
+
+One licence covers the crate's source and the requirement set under `docs/` alike,
+including each requirement's trace to the clause it came from. The whole of what this crate
+claims to implement, and where each claim comes from, is public and checkable.
+
+Neither licence grants any right in the ISO standards the requirements cite — those remain
+ISO's. See [Relationship to the standards](#relationship-to-the-standards).

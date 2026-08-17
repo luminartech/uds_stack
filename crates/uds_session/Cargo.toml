@@ -2,6 +2,14 @@
 name = "uds_session"
 version = "0.1.0"
 edition = "2024"
+# Dual licence at the consumer's option, the Rust ecosystem's convention. Apache-2.0
+# carries an express patent grant, which matters for an automotive protocol; MIT is here
+# because a downstream that cannot take Apache-2.0 should still have a path. The same
+# licence covers the requirement set under docs/.
+#
+# Neither licence grants any right in the ISO standards the requirements cite, which remain
+# ISO's. See "Relationship to the standards" in README.md.
+license = "MIT OR Apache-2.0"
 
 [dependencies]
 
