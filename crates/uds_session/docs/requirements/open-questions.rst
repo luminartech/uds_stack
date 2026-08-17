@@ -42,6 +42,36 @@ whose client rows raise the same question in the other direction: a client that 
 told of a failed reception cannot perform the repeat Table 9 requires of it. If the client
 has to see the failure, the case for withholding it from the server is hard to sustain.
 
+Who controls the session after one non-default session replaces another?
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+``UDSS_LLR_0102`` and ``UDSS_LLR_0103`` are gated "While in the default session" and
+``UDSS_LLR_0141`` covers only a return to the default session, so a transition from one
+non-default session to another is covered by neither. Server in extendedSession with
+client A controlling; a client sends ``DiagnosticSessionControl(programmingSession)`` and
+the server confirms a positive response. ``UDSS_LLR_0106`` restarts ``tS3_Server``, which
+is right, but no requirement updates the recorded session or the recorded controlling
+client.
+
+The standard does not settle it, which is why no requirement was written. ISO 14229-2:2021
+9.5 Table 6 scopes both of its ``tS3_Server`` initial-start rows to "a transition from the
+default session to a non-default session", and says nothing about this edge. Clause 9.5's
+prose identifies the controlling client as "the client which requested the transition to a
+non-default session", which reads either as the client that moved the server out of the
+default session — client A, unchanged by any later transition — or as the client that
+requested whichever non-default session is now active. The two readings disagree only when
+a *different* client makes the second transition, and then they disagree about whose
+keep-alive works. The set implements the first reading, because ``UDSS_LLR_0102`` and
+``UDSS_LLR_0103`` record the controlling client only on the way out of the default session
+and nothing changes it thereafter; the timer document's preamble now says so plainly rather
+than describing a rule the requirements do not carry.
+
+Nothing in the set reads the recorded session identifier, which ``UDSS_LLR_0134`` keeps
+opaque and carries for the application's benefit, so the stale identifier is inert for now.
+The controlling client is the part that matters, and it is a question about the server's
+session state as a whole rather than about any one requirement. Settled by the server
+session timer rework.
+
 Does anything but ``UDSS_LLR_0104`` need the frame distinction?
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
@@ -151,12 +181,19 @@ titles should follow it.
 Sequencing
 ----------
 
-``UDSS_LLR_0141`` was written from a review of the service interface but landed in the
-server session timer document, which is itself due a rework. It went in immediately
-because leaving it out made ``UDSS_LLR_0106`` wrong rather than merely incomplete: the
-server would have restarted a timer for a session it had already left.
+``UDSS_LLR_0141``, ``UDSS_LLR_0142`` and the amendments to ``UDSS_LLR_0105`` and
+``UDSS_LLR_0110`` were all written from reviews of the service interface but landed in the
+server session timer document, which is itself due a rework. Each went in immediately
+because leaving it out left a requirement wrong rather than merely incomplete: without
+``0141`` the server restarted a timer for a session it had already left; without ``0142``
+the ordinary suppressed-response keep-alive stopped the timer for good and pinned the
+server in the session; ``0105`` and ``0141`` demanded opposite outcomes for the same event;
+and ``0110`` let a non-controlling client's failed response extend a session it does not
+control.
 
 That is the bar for patching a document from an adjacent cycle. Findings that leave a
 requirement incomplete, or that are matters of traceability and wording, should collect
 here and be taken in the rework, where they can be weighed against the whole document at
-once.
+once. The entry above on control of the session after one non-default session replaces
+another is the current example: the standard does not cover the edge, so there is nothing
+to transcribe and nothing yet wrong to fix.
