@@ -607,10 +607,12 @@ and leaves the means of recognising it to the implementation.
    a message is, the session layer shall determine it from that classification.
 
    Where a ``T_Data.ind`` reports an unsuccessful reception, its classification shall state
-   the kind the caller was able to determine, and shall state kind ``request`` where the
-   message was addressed to a server. ``UDSS_LLR_0109`` conditions on a failed reception
-   of a request, so a classification is required even where the message data is
-   incomplete.
+   kind ``request`` where the message was addressed to a server, and may otherwise omit the
+   kind. ``UDSS_LLR_0109`` conditions on a failed reception of a request, so the kind is
+   required in that case even where the message data is incomplete. It is omissible
+   otherwise because a client whose transport reports a broken reception may be unable to
+   tell a final response from a response-pending one, and ``UDSS_LLR_0134`` offers no value
+   for a kind that was not determinable.
 
    The session layer shall associate the classification carried by an ``S_Data.req`` with
    the ``T_Data.conf`` that reports the outcome of the transmission that ``S_Data.req``
@@ -651,6 +653,12 @@ and leaves the means of recognising it to the implementation.
      is not ``requestCorrectlyReceived-ResponsePending``;
    * ``response pending``, a negative response whose response code is
      ``requestCorrectlyReceived-ResponsePending``.
+
+   The kind shall be absent only where ``UDSS_LLR_0133`` permits it: on a ``T_Data.ind``
+   reporting an unsuccessful reception of a message that was not addressed to a server. No
+   requirement in this set conditions on the kind of such a message. Stating the exception
+   this way keeps the three values above a closed set, which every requirement
+   conditioning on kind relies on.
 
    A classification whose kind is ``final response`` shall further state whether the
    message is ``solicited``, transmitted because of a request received from a client, or
@@ -724,8 +732,8 @@ and leaves the means of recognising it to the implementation.
    message is transmitted in that case, so there is no ``T_Data.conf`` to observe and no
    message classification that could carry the fact. Without an explicit input the session
    layer cannot detect it, and a server handling a suppressed-response request in a
-   non-default session would never restart its timer. The requirement that acts on this
-   input belongs to the server session timer document.
+   non-default session would never restart its timer. ``UDSS_LLR_0142`` is the requirement
+   that acts on this input.
 
    The classification is carried on the input rather than recovered by correlating it with
    an earlier ``T_Data.ind``, because Table 6's other suppressed-response row, the
