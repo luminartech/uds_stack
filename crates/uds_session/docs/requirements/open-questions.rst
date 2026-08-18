@@ -152,30 +152,51 @@ consistent after all, this is the only internal inconsistency found in Clause 8.
 discrepancy whose resolution changes no behaviour is worth recording is a decision about
 the set as a whole, not about this requirement. No cycle depends on it.
 
-Does a keep-alive TesterPresent reload the response window?
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+What does a keep-alive TesterPresent do to the response window?
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 ``UDSS_LLR_0144`` starts the ``tP2_Server`` timer on every successfully received request,
-without asking whether a response window is already open. The server response timing
-document writes its requirements against the one-request-at-a-time model of
-ISO 14229-1:2020 8.7.6, recorded as an assumption of use, and that model is what makes an
-unconditional start safe. But 8.7.6 excepts from the rule the one message most likely to
-arrive mid-request: the functionally-addressed TesterPresent with SPRMIB=true, which it
-defines as keep-alive logic to be handled by bypass logic, and which the client transmits
-every time ``tS3_Client`` expires.
+without asking whether a response window is already open, and ``UDSS_LLR_0146`` stops that
+timer on any completion report of ``UDSS_LLR_0136``, without asking which request
+completed. The server response timing document writes both against the
+one-request-at-a-time model of ISO 14229-1:2020 8.7.6, recorded as an assumption of use,
+and that model is what makes them safe unconditioned. But 8.7.6 excepts from the rule the
+one message most likely to arrive mid-request: the functionally-addressed TesterPresent
+with SPRMIB=true, which it defines as keep-alive logic to be handled by bypass logic, and
+which the client transmits every time ``tS3_Client`` expires.
 
-So a server working within the enhanced window opened by ``UDSS_LLR_0147`` has that window
-replaced by ``tP2_Server_Max`` when the next keep-alive arrives, and ``UDSS_LLR_0148`` then
-reports an overrun that did not occur. ISO 14229-2:2021 10.1.4.1 Figure 12 says such a
-message *can* be ignored by the server, which permits a fix without requiring one.
-``UDSS_LLR_0149`` is unaffected, being measured from the confirming ``T_Data.conf`` rather
-than from the timer.
+Such a keep-alive is a request for which no response message is transmitted, so it is
+exactly the input ``UDSS_LLR_0136`` carries, and ``UDSS_LLR_0142``'s rationale establishes
+that a conformant caller supplies the completion report for it: without one the ordinary
+keep-alive never restarts ``tS3_Server`` and the server is pinned in the session. The
+sequence for a keep-alive arriving while a request is in progress is therefore its
+``T_Data.ind``, on which ``UDSS_LLR_0144`` reloads the window with ``tP2_Server_Max``,
+followed by its completion report, on which ``UDSS_LLR_0146`` stops the timer outright.
 
-The candidates are to condition ``UDSS_LLR_0144`` on the timer being stopped, which writes
-a rule the standard permits rather than requires; or to widen the assumption of use to
-cover bypass traffic, which the crate then cannot check and which obliges the caller to
-recognise such traffic. Settled by the server session timer rework, where the same
-TesterPresent traffic is already in question for ``tS3_Server``.
+The likely outcome is a missed indication. A TesterPresent completes in microseconds, so
+the stop nearly always beats ``tP2_Server_Max``: the response window of the request
+actually in progress is silently discarded, ``UDSS_LLR_0148`` never fires, and a genuine
+overrun goes unreported. Only where the completion report is slow enough for the reloaded
+window to expire first does the other outcome occur, ``UDSS_LLR_0148`` reporting an
+overrun that did not happen — the less likely case, and the less serious one, a missed
+indication being worse than a spurious one. ``UDSS_LLR_0149`` is unaffected either way,
+being measured from the confirming ``T_Data.conf`` rather than from the timer.
+
+The standard puts this scenario in the very figures ``UDSS_LLR_0146`` cites.
+ISO 14229-2:2021 10.3 Figure 20 key d is a keep-alive received while a request requiring
+no response is being processed, and key e is the completion ``UDSS_LLR_0146`` transcribes.
+Key d and 10.1.4.1 Figure 12 key j carry the identical statement that such a message *can*
+be ignored by the server, which permits a fix without requiring one.
+
+The candidates recorded so far address ``UDSS_LLR_0144`` only. Conditioning it on the
+timer being stopped writes a rule the standard permits rather than requires, and does
+nothing for ``UDSS_LLR_0146``, which would need a filter of its own — on addressing, or on
+whether the completion belongs to the request in progress. ``UDSS_LLR_0142`` shows the
+shape such a filter takes, being scoped to a request from the controlling client. The
+remaining candidate is to widen the assumption of use to cover bypass traffic, which the
+crate then cannot check and which obliges the caller to recognise such traffic. Settled by
+the server session timer rework, where the same TesterPresent traffic is already in
+question for ``tS3_Server``.
 
 Where does ``UDSS_LLR_0150`` belong?
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -191,6 +212,25 @@ The service interface document is where this set's interface-wide statements liv
 nothing while the set is draft and IDs may still move. What holds the question open is that
 no rework of that document is scheduled, and relocating a requirement between documents for
 tidiness alone is not a bar this set has used before.
+
+What orders a timer expiry against an input on the same timestamp?
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+``UDSS_LLR_0115`` lets a timestamp be supplied either alongside another input or on its
+own, and nothing sequences the two where both have an effect. A timestamp accompanying a
+``T_Data.ind`` that also expires the response window satisfies ``UDSS_LLR_0148``, which
+stops the timer and indicates the overrun, and ``UDSS_LLR_0144``, which starts it for the
+request just received. Evaluate the start first and the overrun indication is swallowed.
+
+The collision is pre-existing rather than introduced by the server response timing
+document. ``UDSS_LLR_0112`` and ``UDSS_LLR_0104`` collide the same way: a timestamp
+arriving with the ``T_Data.ind`` that begins a request from the controlling client can
+expire ``tS3_Server`` and stop it in the same call. What the response timer adds is
+instances, ``tP2_Server`` being touched by nearly every input this set defines.
+
+The answer likely wants stating once, as an interface-wide ordering clause in the service
+interface document, rather than as a rule per timer. That document's rework is where it
+belongs.
 
 Deferred edits
 --------------
@@ -217,6 +257,14 @@ body says the caller supplies it. ``UDSS_LLR_0108`` has the same drift, saying a
 is marked unsolicited by the application where ``UDSS_LLR_0133`` puts the classification
 on the caller. The service interface document distinguishes the two deliberately, so both
 titles should follow it.
+
+``UDSS_LLR_0133`` associates the classification carried by an ``S_Data.req`` with the
+``T_Data.conf`` reporting the outcome of the transmission it requested, and says nothing
+about the ``T_Data.req`` in between. That association should be extended to cover the
+``T_Data.req`` produced from an ``S_Data.req``. ``UDSS_LLR_0145`` is what needs it, being
+the first requirement in the set to condition on what kind of message a ``T_Data.req``
+carries. It is a trace gap rather than a hole: ``UDSS_LLR_0118`` produces that
+``T_Data.req`` from the ``S_Data.req`` that carried the classification, in the same step.
 
 Sequencing
 ----------
