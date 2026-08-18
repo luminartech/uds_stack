@@ -152,6 +152,46 @@ consistent after all, this is the only internal inconsistency found in Clause 8.
 discrepancy whose resolution changes no behaviour is worth recording is a decision about
 the set as a whole, not about this requirement. No cycle depends on it.
 
+Does a keep-alive TesterPresent reload the response window?
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+``UDSS_LLR_0144`` starts the ``tP2_Server`` timer on every successfully received request,
+without asking whether a response window is already open. The server response timing
+document writes its requirements against the one-request-at-a-time model of
+ISO 14229-1:2020 8.7.6, recorded as an assumption of use, and that model is what makes an
+unconditional start safe. But 8.7.6 excepts from the rule the one message most likely to
+arrive mid-request: the functionally-addressed TesterPresent with SPRMIB=true, which it
+defines as keep-alive logic to be handled by bypass logic, and which the client transmits
+every time ``tS3_Client`` expires.
+
+So a server working within the enhanced window opened by ``UDSS_LLR_0147`` has that window
+replaced by ``tP2_Server_Max`` when the next keep-alive arrives, and ``UDSS_LLR_0148`` then
+reports an overrun that did not occur. ISO 14229-2:2021 10.1.4.1 Figure 12 says such a
+message *can* be ignored by the server, which permits a fix without requiring one.
+``UDSS_LLR_0149`` is unaffected, being measured from the confirming ``T_Data.conf`` rather
+than from the timer.
+
+The candidates are to condition ``UDSS_LLR_0144`` on the timer being stopped, which writes
+a rule the standard permits rather than requires; or to widen the assumption of use to
+cover bypass traffic, which the crate then cannot check and which obliges the caller to
+recognise such traffic. Settled by the server session timer rework, where the same
+TesterPresent traffic is already in question for ``tS3_Server``.
+
+Where does ``UDSS_LLR_0150`` belong?
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+``UDSS_LLR_0150`` states what it means for the session layer to reject a caller's input:
+the call fails, nothing is emitted, and no state changes. That is a statement about the
+service interface as a whole, and it sits in the server response timing document only
+because ``UDSS_LLR_0149`` is the first requirement to need it and would be incomplete
+without it.
+
+The service interface document is where this set's interface-wide statements live;
+``UDSS_LLR_0113`` to ``UDSS_LLR_0117`` are the existing group of them. Moving it costs
+nothing while the set is draft and IDs may still move. What holds the question open is that
+no rework of that document is scheduled, and relocating a requirement between documents for
+tidiness alone is not a bar this set has used before.
+
 Deferred edits
 --------------
 
