@@ -205,3 +205,70 @@ Enhanced response timing
    The timer is stopped so that one overrun yields one indication, rather than a further
    indication for every timestamp the caller supplies thereafter. Elapsed time is computed
    as ``UDSS_LLR_0114`` requires.
+
+.. llr:: Consecutive response-pending messages are spaced
+   :id: UDSS_LLR_0149
+   :status: draft
+   :integrity_level: QM
+   :target_level: D
+   :origin: session-layer-standard
+   :source: ISO 14229-2:2021 9.2 Table 4
+   :tags: server; p2_server; enhanced-response-timing
+
+   Where a response-pending message has been transmitted for the request in progress, the
+   session layer shall reject an ``S_Data.req`` for a further response-pending message
+   until the minimum spacing has elapsed since the ``T_Data.conf`` confirming the previous
+   one. The minimum spacing shall be 0.3 × ``tP2*_Server_Max``, rounded up to a whole
+   millisecond.
+
+   Table 4 footnote b requires a minimum time of 0,3 × ``tP2*_Server_Max`` between the
+   transmission of consecutive negative response messages carrying
+   ``requestCorrectlyReceived-ResponsePending``, to avoid flooding the data link with
+   unnecessary ones.
+
+   The footnote says "between the transmission of" without saying which end of a
+   transmission it means. This requirement measures from the completion, ``T_Data.conf``,
+   which is the reading consistent with 9.4 Figure 8 and 10.1.3 Figure 11, both of which
+   start the enhanced window at that point. It is also the conservative reading: measuring
+   from ``T_Data.req`` would permit an earlier transmission.
+
+   The spacing is rounded up because ``UDSS_LLR_0114`` fixes the unit at whole milliseconds
+   and three tenths of a parameter need not fall on one. Rounding down would permit a
+   transmission the footnote forbids, by up to a millisecond.
+
+   The interval is measured from the confirming ``T_Data.conf`` rather than from the state
+   of the ``tP2_Server`` timer, even though ``UDSS_LLR_0147`` loads that timer at the same
+   instant. The timer does not carry the enhanced value for the whole interval:
+   ``UDSS_LLR_0145`` stops it at the ``T_Data.req`` of the response-pending message, and
+   ``UDSS_LLR_0144`` reloads it with ``tP2_Server_Max`` on any request received meanwhile.
+   A condition phrased against the timer would fail to apply in both cases.
+
+   Where no response-pending message has been transmitted for the request in progress, this
+   requirement does not apply. Whether the first such message was admissible at all is
+   fixed by the service's ``tP4_Server_Max``, which this document does not cover.
+
+.. llr:: A rejected input is reported to the caller and changes nothing
+   :id: UDSS_LLR_0150
+   :status: draft
+   :integrity_level: QM
+   :target_level: D
+   :origin: derived
+   :tags: server; p2_server; service-interface
+
+   Where a requirement in this set requires the session layer to reject an input supplied
+   by the caller, the session layer shall report the rejection to the caller, shall produce
+   no output to the application and no output to the transport layer, and shall leave its
+   state unchanged.
+
+   Rationale: ``UDSS_LLR_0149`` is the first requirement in this set that refuses an input
+   rather than reacting to it, and without this requirement it would not say what refusal
+   means. A rejection cannot be reported as an ``S_Data.conf``: ``UDSS_LLR_0132`` reserves
+   every ``S_Result`` value other than ``S_OK`` for an error detected by a lower layer, and
+   no lower layer is involved, no message having been transmitted. Nor is it an output in
+   the sense of ``UDSS_LLR_0116``, which concerns primitives the caller retrieves on the
+   application's behalf; a rejection is addressed to the caller that made the erroneous
+   call.
+
+   Leaving the state unchanged is what makes the rejection recoverable: a caller that
+   retries once the spacing has elapsed obtains the result it would have obtained had the
+   premature call never been made.
