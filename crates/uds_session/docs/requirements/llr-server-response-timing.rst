@@ -155,3 +155,53 @@ The response window
    state. Without this requirement a suppressed-response request would leave the response
    window running until ``UDSS_LLR_0148`` reported an overrun, for a service the standard
    considers correctly concluded.
+
+Enhanced response timing
+------------------------
+
+.. llr:: A confirmed response-pending message opens the enhanced window
+   :id: UDSS_LLR_0147
+   :status: draft
+   :integrity_level: QM
+   :target_level: D
+   :origin: session-layer-standard
+   :source: ISO 14229-2:2021 9.2 Table 3; ISO 14229-2:2021 9.4 Figure 8; ISO 14229-2:2021 10.1.3 Figure 11
+   :tags: server; p2_server; enhanced-response-timing
+
+   On ``T_Data.conf`` indicating the successful transmission of a response-pending message,
+   the server shall start the ``tP2_Server`` timer loaded with the ``tP2*_Server_Max``
+   protocol parameter.
+
+   Table 3 defines ``tP2*_Server`` as the performance requirement for the server to start
+   its response message after the transmission of a response-pending message, indicated via
+   ``T_Data.conf``. Figure 8 and Figure 11 both start the timer at that confirmation with
+   the enhanced value, and both state that a further response-pending message may follow
+   within the window it opens.
+
+.. llr:: Response timer expiry is indicated to the application
+   :id: UDSS_LLR_0148
+   :status: draft
+   :integrity_level: QM
+   :target_level: D
+   :origin: derived
+   :tags: server; p2_server
+
+   When the elapsed time since the ``tP2_Server`` timer was last started reaches the value
+   it was loaded with, the server shall stop the timer and deliver a response-timing
+   indication to the application. The indication shall state which of ``tP2_Server_Max``
+   and ``tP2*_Server_Max`` the timer was carrying.
+
+   Rationale: ISO 14229-2:2021 specifies ``tP2_Server`` as a performance requirement on the
+   server's application and states no session layer action on its expiry. The session layer
+   can observe the overrun and cannot correct it, so it reports the overrun and the
+   application acts; ``UDSS_LLR_0112`` set this precedent for ``tS3_Server``. This
+   requirement must not be read as obliging the session layer to produce a response.
+
+   The indication names the parameter because the application's position differs between
+   the two. After ``tP2_Server_Max`` it has sent nothing and may still send a
+   response-pending message to obtain the enhanced window. After ``tP2*_Server_Max`` it has
+   overrun the enhanced window it already requested.
+
+   The timer is stopped so that one overrun yields one indication, rather than a further
+   indication for every timestamp the caller supplies thereafter. Elapsed time is computed
+   as ``UDSS_LLR_0114`` requires.
