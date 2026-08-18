@@ -6,6 +6,7 @@ Requirements
 
    llr-service-interface
    llr-server-session-timer
+   llr-server-response-timing
    open-questions
 
 Status of this set
