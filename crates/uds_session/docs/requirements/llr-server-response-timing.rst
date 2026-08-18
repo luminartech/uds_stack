@@ -32,6 +32,20 @@ Clause 8.7.6 excepts two cases from the rule, one of which is the functionally-a
 keep-alive TesterPresent. That exception is unresolved in this document; see
 :doc:`open-questions`.
 
+Throughout this document, the **request in progress** is the request whose handling the
+server has begun and not yet finished. ISO 14229-2:2021 10.1.4.1 fixes its extent: a
+diagnostic service is in progress at any time between the start of the reception of the
+request message, ``T_DataSOM.ind`` or ``T_Data.ind``, and the completion of the
+transmission of the final response message where a response message is required, or the
+completion of any action caused by the request where none is required. ``UDSS_LLR_0142``
+already cites that clause for the same definition. The model above is what guarantees
+there is at most one such request at a time.
+
+The term is load-bearing in ``UDSS_LLR_0149``: the end of the request in progress is what
+clears that requirement's anchor. A ``T_Data.conf`` confirming a response-pending message
+transmitted for one request therefore delays nothing once that request has ended, and in
+particular cannot reject the first response-pending message of the next request.
+
 What this document does not cover
 ---------------------------------
 
@@ -61,9 +75,9 @@ The response window
    :source: ISO 14229-2:2021 9.1.1; ISO 14229-2:2021 9.6 Table 7
    :tags: server; p2_server
 
-   The server shall maintain a single ``tP2_Server`` timer. Its state shall be changed only
-   as ``UDSS_LLR_0144``, ``UDSS_LLR_0145``, ``UDSS_LLR_0146``, ``UDSS_LLR_0147`` and
-   ``UDSS_LLR_0148`` require.
+   The server shall maintain a single ``tP2_Server`` timer. On initialisation that timer
+   shall not be running. Thereafter its state shall be changed only as ``UDSS_LLR_0144``,
+   ``UDSS_LLR_0145``, ``UDSS_LLR_0146``, ``UDSS_LLR_0147`` and ``UDSS_LLR_0148`` require.
 
    Clause 9.1.1 requires a single timer implementation and names ``T_Data.req``,
    ``T_Data.conf``, ``T_DataSOM.ind`` and ``T_Data.ind`` as the interface that triggers it.
@@ -73,6 +87,11 @@ The response window
    either ``tS3_Server`` or ``tP_Client``. This requirement therefore enumerates the
    conditions the standard gives rather than the primitives it names, a trigger with no
    condition attached being untestable.
+
+   The initial state is stated here because none of those five conditions is an
+   initialisation condition, so without it the state of the timer before the first input
+   would be undefined. ``UDSS_LLR_0101`` states the initial state of ``tS3_Server`` for
+   the same reason.
 
    Table 7 gives the reason one timer suffices: it is required for the enhanced response
    timing, to ensure a subsequent response-pending message is transmitted before
@@ -156,6 +175,12 @@ The response window
    window running until ``UDSS_LLR_0148`` reported an overrun, for a service the standard
    considers correctly concluded.
 
+   This requirement is not conditioned on which request completed, unlike
+   ``UDSS_LLR_0142``, which is scoped to a request from the controlling client; the
+   preamble's assumption of use is that one request is handled at a time. That assumption
+   does not cover ISO 14229-1:2020 8.7.6's keep-alive exception, and :doc:`open-questions`
+   records the consequence.
+
 Enhanced response timing
 ------------------------
 
@@ -217,9 +242,9 @@ Enhanced response timing
 
    Where a response-pending message has been transmitted for the request in progress, the
    session layer shall reject an ``S_Data.req`` for a further response-pending message
-   until the minimum spacing has elapsed since the ``T_Data.conf`` confirming the previous
-   one. The minimum spacing shall be 0.3 × ``tP2*_Server_Max``, rounded up to a whole
-   millisecond.
+   until the minimum spacing has elapsed since the ``T_Data.conf`` confirming the
+   successful transmission of the previous one. The minimum spacing shall be
+   0.3 × ``tP2*_Server_Max``, rounded up to a whole millisecond.
 
    Table 4 footnote b requires a minimum time of 0,3 × ``tP2*_Server_Max`` between the
    transmission of consecutive negative response messages carrying
