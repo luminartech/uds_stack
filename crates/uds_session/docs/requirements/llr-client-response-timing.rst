@@ -160,3 +160,40 @@ The response window
    that it does not need to know. The distinction survives in the values the caller
    supplies, and in the minimum values Table 4 derives for them, which differ by whether
    the window covers the start of the response or its complete reception.
+
+.. llr:: The response timer starts on confirmation of a request expecting a response
+   :id: UDSS_LLR_0153
+   :status: draft
+   :integrity_level: QM
+   :target_level: D
+   :origin: session-layer-standard
+   :source: ISO 14229-2:2021 9.2 Table 3; ISO 14229-2:2021 10.1.2 Figure 10; ISO 14229-2:2021 10.3 Figure 20
+   :tags: client; p_client
+
+   On ``T_Data.conf`` reporting the successful transmission of a request whose expected
+   response count is other than ``none``, the client shall start that channel's
+   ``tP_Client`` timer loaded with the default reload parameter.
+
+   Table 3 defines ``tP2_Client`` and ``tP6_Client`` alike as the timeout for the client to
+   wait, after the successful transmission of a request message indicated via
+   ``T_Data.conf``, for the response; Figure 10 starts the timer at that confirmation with
+   the default value.
+
+   The condition on the expected response count comes from Figure 20, whose keys b and g
+   each state that there is no response required to be transmitted and therefore the client
+   does not need to start its ``tP_Client`` timer. Figure 12 agrees by omission, its
+   keep-alive keys restarting only ``tS3_Client``.
+
+   Clause 9.1.2 disagrees, starting the timer whenever a ``T_Data.conf`` is received,
+   without qualification. This requirement follows the figures. Read literally the clause
+   is not merely broader but wrong: a physically-addressed request for which the server
+   sends no response would open a window nothing can close, and 9.7 Table 9 answers the
+   resulting timeout by repeating a request that succeeded.
+
+   The transmission must be successful because a ``T_Data.conf`` reporting failure means no
+   request reached the server and no response is coming. Table 9 gives that event its own
+   handling, which the client error handling document covers.
+
+   ``UDSS_LLR_0133`` is what makes the count available here, associating the classification
+   carried by an ``S_Data.req`` with the ``T_Data.conf`` reporting the outcome of the
+   transmission it requested.
