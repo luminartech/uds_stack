@@ -36,15 +36,22 @@ The request in progress
 Throughout this document, the **request in progress** on a channel is the request whose
 response the client is waiting for: from the ``T_Data.conf`` confirming its successful
 transmission until that wait ends. The wait ends when ``UDSS_LLR_0154`` stops the timer on an
-indication that is not part of a response-pending message, when ``UDSS_LLR_0156`` stops the
-timer, or when the response window expires under ``UDSS_LLR_0159``.
+indication whose classification does not state kind ``response pending``, when
+``UDSS_LLR_0156`` stops the timer, or when the response window expires under
+``UDSS_LLR_0159``.
 
 A stopped timer does not by itself mean that no request is in progress. ``UDSS_LLR_0154``
 also stops the timer at the start-of-message of a response-pending message, which
 ISO 14229-2:2021 9.4 Figure 8 key c requires, and the request is still in progress across the
 gap that follows: the enhanced window opens at the completion of that message under
-``UDSS_LLR_0157``. An implementation therefore cannot treat the timer's running state as
-standing for the request in progress; the two are separate.
+``UDSS_LLR_0157``. The endpoint is stated in terms of the classification rather than of the
+message the indication belongs to, because ``UDSS_LLR_0133`` permits a reception the transport
+reports as failed to carry no kind, and whether such an indication belonged to a
+response-pending message can be unknowable. An absent kind is not ``response pending``, so the
+wait ends, which is what 9.7 Table 9 requires of a failed reception.
+
+An implementation therefore cannot treat the timer's running state as standing for the request
+in progress; the two are separate.
 
 The definition is stated here rather than borrowed. The server response timing document
 defines the same term from ISO 14229-2:2021 10.1.4.1, but both of that definition's
