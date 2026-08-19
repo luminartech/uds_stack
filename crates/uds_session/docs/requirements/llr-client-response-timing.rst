@@ -37,10 +37,15 @@ Throughout this document, the **request in progress** on a channel is the reques
 response the client is waiting for: from the ``T_Data.conf`` confirming its successful
 transmission until that wait ends.
 
-The wait ends where ``S_TAtype`` selects physical addressing, on the first indication for that
-request whose classification does not state kind ``response pending``; where ``S_TAtype``
+The wait ends where ``S_TAtype`` selects physical addressing, with the first indication for
+that request whose classification does not state kind ``response pending``; where ``S_TAtype``
 selects functional addressing, when ``UDSS_LLR_0156`` stops the timer; and under either
 addressing mode, when the response window expires under ``UDSS_LLR_0159``.
+
+An input that ends the wait is itself processed while the request is still in progress, so a
+requirement conditioned on the request in progress acts on it and the wait ends as a
+consequence. Were it otherwise, ``UDSS_LLR_0154`` could never stop the timer on the response it
+is there to stop it on.
 
 A stopped timer does not by itself mean that no request is in progress. ``UDSS_LLR_0154``
 also stops the timer at the start-of-message of a response-pending message, which
@@ -66,8 +71,9 @@ defines the same term from ISO 14229-2:2021 10.1.4.1, but both of that definitio
 endpoints — the start of reception of the request and the completion of transmission of the
 final response — are events at the server, and neither occurs at the client.
 
-A request expecting no response is never in progress in this sense. ``UDSS_LLR_0153`` starts
-no timer for one, so it opens no window for any later input to fall inside.
+A request expecting no response is never in progress in this sense, there being no response
+for the client to wait for. ``UDSS_LLR_0153`` accordingly starts no timer for one, so no later
+input falls inside a window on its account.
 
 What the client declares and the server does not
 ------------------------------------------------
@@ -251,13 +257,18 @@ The response window
    opens the enhanced window at the completion, so the two indications of one such message
    have different effects.
 
-   A reception the transport reports as failed therefore closes the window too.
-   ``UDSS_LLR_0133`` permits such an indication to carry no kind at a client, which is
-   deliberate — a client whose transport reports a broken reception may be unable to tell a
-   final response from a response-pending one. An absent kind is not ``response pending``,
-   so this requirement applies. ISO 14229-2:2021 9.7 Table 9 agrees that the wait is over,
-   giving that event a handling of its own; the handling belongs to the client error
-   handling document.
+   A reception the transport reports as failed therefore closes the window too, where it is
+   the first indication of its message. ``UDSS_LLR_0133`` permits such an indication to carry
+   no kind at a client, which is deliberate — a client whose transport reports a broken
+   reception may be unable to tell a final response from a response-pending one. An absent
+   kind is not ``response pending``, so the exception does not hold this requirement off.
+   ISO 14229-2:2021 9.7 Table 9 agrees that the wait is over, giving that event a handling of
+   its own; the handling belongs to the client error handling document.
+
+   Where such a reception instead completes a message whose start-of-message already stopped
+   the timer, this requirement does not act, being scoped to a message's first indication. The
+   preamble's definition ends the wait there, the timer already being stopped, so no
+   requirement need act at all.
 
 .. llr:: A functionally-addressed response extends the response window
    :id: UDSS_LLR_0155

@@ -789,7 +789,7 @@ and leaves the means of recognising it to the implementation.
    requirement in this set requires the kind of such a message to be determinable:
    ``UDSS_LLR_0154``, ``UDSS_LLR_0155`` and ``UDSS_LLR_0157`` read it to decide whether the
    response-pending exception applies, and an absent kind is not ``response pending``, so
-   the ordinary limb applies and the behaviour is defined. Stating the exception this way
+   the behaviour is defined without it. Stating the exception this way
    keeps the three values above a closed set, which every requirement conditioning on kind
    relies on.
 
