@@ -323,3 +323,80 @@ The response window
    where the client does not know the number of servers responding the timeout indicates
    that no further responses are expected and no retry is required, and where it does know,
    the timeout indicates that not all expected servers responded.
+
+Enhanced response timing
+------------------------
+
+.. llr:: A response-pending response opens the enhanced window
+   :id: UDSS_LLR_0157
+   :status: draft
+   :integrity_level: QM
+   :target_level: D
+   :origin: session-layer-standard
+   :source: ISO 14229-2:2021 9.2 Table 3; ISO 14229-2:2021 9.4 Figure 8; ISO 14229-2:2021 10.1.3 Figure 11; ISO 14229-2:2021 10.2.3 Figure 16
+   :tags: client; p_client; enhanced-response-timing
+
+   On the first of ``T_DataSOM.ind`` or ``T_Data.ind`` reporting a response for the request
+   in progress on a channel whose classification states kind ``response pending``, the
+   client shall restart that channel's ``tP_Client`` timer loaded with the enhanced reload
+   parameter. This applies under either addressing mode.
+
+   Table 3 defines ``tP2*_Client`` and ``tP6*_Client`` as the enhanced timeout for the
+   client to wait, after the reception of a negative response message with response code
+   ``requestCorrectlyReceived-ResponsePending``, for the response. Figure 11 key e states it
+   for physical addressing, stopping the timer and reloading it with the enhanced value in
+   one step; Figure 16 key d states it for functional addressing; Figure 8 key d states that
+   a further response-pending message within the window restarts it again.
+
+   The requirement is conditioned on a request being in progress so that a late or duplicate
+   response cannot restart a timer that has already stopped, which would open a response
+   window for an exchange that has ended and produce an expiry indication for it.
+   ``UDSS_LLR_0154`` and ``UDSS_LLR_0155`` carry the same condition; ``UDSS_LLR_0145`` is
+   the server's equivalent, excluding an unsolicited response from a rule about the request
+   being handled.
+
+   Every cited source places the reload at the ``T_Data.ind``, a response-pending message
+   being a single frame that produces no start-of-message on any transport the standard
+   illustrates. The requirement is phrased on the first of the two indications for
+   consistency with ``UDSS_LLR_0154`` and ``UDSS_LLR_0155``, and because
+   ``UDSS_LLR_0133`` carries the classification on both.
+
+.. llr:: The enhanced window stays in force for the rest of the request
+   :id: UDSS_LLR_0158
+   :status: draft
+   :integrity_level: QM
+   :target_level: D
+   :origin: derived
+   :tags: client; p_client; enhanced-response-timing
+
+   Where a response-pending response has been received for the request in progress on a
+   channel, **the reload value in force** for that channel shall be the enhanced reload
+   parameter, until that request ends. Otherwise it shall be the default reload parameter.
+
+   Rationale: ISO 14229-2:2021 10.2.3 Figure 16 requires the client to keep a list of the
+   addresses of servers that have sent a response-pending message — keys d and i add and
+   remove entries — and to reload with the enhanced value while that list is non-empty and
+   with the default value once it empties. The size of such a list is fixed by how many
+   servers a functional address reaches, which is a property of the deployment and not of
+   the protocol, and ``UDSS_LLR_0113`` makes this crate allocation-free. This requirement
+   keeps one bit per channel instead.
+
+   The consequence is a deliberate deviation, stated here rather than left to be discovered.
+   Figure 16 key i reverts to the default reload value when the last pending server answers,
+   and 10.2.4 Figure 17 key t states the same rule; this requirement reverts later, when the
+   request ends. Between those two points the timer is reloaded with the enhanced parameter
+   where the standard would reload it with the default one.
+
+   The cost is not only that the client waits longer. Under functional addressing with an
+   unknown expected response count the expiry of ``UDSS_LLR_0159`` is the ordinary end of
+   the exchange, so holding the enhanced value delays that end by up to the difference
+   between the two parameters. Under physical addressing, and under functional addressing
+   with a known count, the window is closed by a response instead and the deviation is
+   invisible.
+
+   The requirement is derived rather than transcribed because it does not do what Figure 16
+   requires. Naming that figure as its source would describe a trace the requirement does
+   not honour.
+
+   See :doc:`open-questions`, which records the deviation for review against the other
+   constraints of its kind.
