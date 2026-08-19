@@ -35,20 +35,28 @@ The request in progress
 
 Throughout this document, the **request in progress** on a channel is the request whose
 response the client is waiting for: from the ``T_Data.conf`` confirming its successful
-transmission until that wait ends. The wait ends when ``UDSS_LLR_0154`` stops the timer on an
-indication whose classification does not state kind ``response pending``, when
-``UDSS_LLR_0156`` stops the timer, or when the response window expires under
-``UDSS_LLR_0159``.
+transmission until that wait ends.
+
+The wait ends where ``S_TAtype`` selects physical addressing, on the first indication for that
+request whose classification does not state kind ``response pending``; where ``S_TAtype``
+selects functional addressing, when ``UDSS_LLR_0156`` stops the timer; and under either
+addressing mode, when the response window expires under ``UDSS_LLR_0159``.
 
 A stopped timer does not by itself mean that no request is in progress. ``UDSS_LLR_0154``
 also stops the timer at the start-of-message of a response-pending message, which
 ISO 14229-2:2021 9.4 Figure 8 key c requires, and the request is still in progress across the
 gap that follows: the enhanced window opens at the completion of that message under
-``UDSS_LLR_0157``. The endpoint is stated in terms of the classification rather than of the
-message the indication belongs to, because ``UDSS_LLR_0133`` permits a reception the transport
-reports as failed to carry no kind, and whether such an indication belonged to a
-response-pending message can be unknowable. An absent kind is not ``response pending``, so the
-wait ends, which is what 9.7 Table 9 requires of a failed reception.
+``UDSS_LLR_0157``. The endpoint under physical addressing is stated on the indication itself
+rather than on a requirement acting, because ``UDSS_LLR_0154`` is scoped to the first
+indication of a message and so does not reach the completion of one whose start-of-message it
+already stopped the timer on. A response-pending message whose reception then fails carries no
+kind at that completion, which ``UDSS_LLR_0133`` permits, and an absent kind is not
+``response pending``, so the wait ends there — which is what 9.7 Table 9 requires of a failed
+reception, the client being obliged to repeat the request.
+
+Under functional addressing no single response ends the wait, ``UDSS_LLR_0155`` restarting the
+timer on each and ``UDSS_LLR_0156`` ending the exchange only once the expected number have
+arrived. Where that number is never reached the wait ends at expiry instead.
 
 An implementation therefore cannot treat the timer's running state as standing for the request
 in progress; the two are separate.
