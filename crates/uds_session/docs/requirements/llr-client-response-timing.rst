@@ -197,3 +197,108 @@ The response window
    ``UDSS_LLR_0133`` is what makes the count available here, associating the classification
    carried by an ``S_Data.req`` with the ``T_Data.conf`` reporting the outcome of the
    transmission it requested.
+
+.. llr:: A physically-addressed response closes the response window
+   :id: UDSS_LLR_0154
+   :status: draft
+   :integrity_level: QM
+   :target_level: D
+   :origin: session-layer-standard
+   :source: ISO 14229-2:2021 9.1.2; ISO 14229-2:2021 10.1.1 Figure 9; ISO 14229-2:2021 10.1.2 Figure 10; ISO 14229-2:2021 10.1.3 Figure 11
+   :tags: client; p_client
+
+   Where ``S_TAtype`` selects physical addressing, on the first of ``T_DataSOM.ind`` or
+   ``T_Data.ind`` reporting a response for the request in progress on a channel, the client
+   shall stop that channel's ``tP_Client`` timer, unless the classification of that
+   indication states kind ``response pending``.
+
+   Clause 9.1.2 states the stop without qualification, at either the ``T_DataSOM.ind`` or
+   the ``T_Data.ind``, and Figures 9, 10 and 11 show it in both forms: Figure 11 key g stops
+   at the start-of-message where the transport supports one, and key h stops at the
+   indication where it does not.
+
+   The requirement is phrased on the arriving primitive rather than on what the message
+   turned out to be, which is what the clause does, and it takes exactly one exception. A
+   response-pending message does not close the window: ``UDSS_LLR_0157`` reloads the timer
+   for it, because the response the client is waiting for has not arrived.
+
+   A reception the transport reports as failed therefore closes the window too.
+   ``UDSS_LLR_0133`` permits such an indication to carry no kind at a client, which is
+   deliberate — a client whose transport reports a broken reception may be unable to tell a
+   final response from a response-pending one. An absent kind is not ``response pending``,
+   so this requirement applies. ISO 14229-2:2021 9.7 Table 9 agrees that the wait is over,
+   giving that event a handling of its own; the handling belongs to the client error
+   handling document.
+
+.. llr:: A functionally-addressed response extends the response window
+   :id: UDSS_LLR_0155
+   :status: draft
+   :integrity_level: QM
+   :target_level: D
+   :origin: session-layer-standard
+   :source: ISO 14229-2:2021 10.2.1 Figure 14; ISO 14229-2:2021 10.2.2 Figure 15; ISO 14229-2:2021 10.2.3 Figure 16
+   :tags: client; p_client
+
+   Where ``S_TAtype`` selects functional addressing, on the first of ``T_DataSOM.ind`` or
+   ``T_Data.ind`` reporting a response for the request in progress on a channel, the client
+   shall restart that channel's ``tP_Client`` timer loaded with the reload value in force,
+   unless the classification of that indication states kind ``response pending`` or
+   ``UDSS_LLR_0156`` requires the timer to be stopped.
+
+   Figure 14 keys e and f and Figure 15 keys d and f each restart the timer on the reception
+   of a response, and Figure 16 keys f and i do the same within an enhanced window.
+
+   The timer therefore carries opposite meanings under the two addressing modes, selected by
+   the ``S_TAtype`` of ``UDSS_LLR_0126``. Physically a response ends the wait and expiry is
+   a failure; functionally a response extends the wait, because a functionally-addressed
+   request reaches many servers and each may answer. These are two requirements rather than
+   one conditioned requirement because the conditions are disjoint and the effects are
+   unrelated.
+
+   The exception for ``UDSS_LLR_0156`` prevents an overlap: the response that completes an
+   expected count arrives as an ordinary response and would otherwise satisfy both
+   requirements, one restarting the timer and the other stopping it. The last expected
+   response stops it; every earlier one restarts it.
+
+   The exception for a response-pending message is the same one ``UDSS_LLR_0154`` takes, and
+   an indication carrying no kind falls to this requirement for the same reason given there.
+   Such a response does not count toward ``UDSS_LLR_0156``.
+
+   "The first of" is per message, matched by address, not per channel. Two multi-frame
+   responses from different servers may interleave on one functional channel, and the
+   start-of-message of the second is the first indication of that message even though an
+   indication for the first has already been seen. Figure 15 key h confirms the reading in
+   the simple case, taking no timer action at a ``T_Data.ind`` whose ``T_DataSOM.ind``
+   already restarted the timer.
+
+.. llr:: Receiving every expected response closes the window
+   :id: UDSS_LLR_0156
+   :status: draft
+   :integrity_level: QM
+   :target_level: D
+   :origin: session-layer-standard
+   :source: ISO 14229-2:2021 9.7 Table 9; ISO 14229-2:2021 10.3 Figure 19
+   :tags: client; p_client
+
+   Where ``S_TAtype`` selects functional addressing and the request in progress on a channel
+   declared an exact expected response count, on the client having received that many
+   responses for it whose kind is not ``response pending``, the client shall stop that
+   channel's ``tP_Client`` timer.
+
+   Figure 19 keys d and j both state it: the client only expected a response message from
+   server #1, therefore it stops its ``tP_Client`` timer.
+
+   Only responses that are not response-pending count. A server that has requested an
+   enhanced response window has not yet answered, and counting its response-pending message
+   would end the exchange before its response arrived.
+
+   A response whose reception failed does not count either, that server's response not
+   having arrived. The exchange then runs to expiry, which is what Table 9 describes for a
+   client that knows how many servers should respond: the timeout is the indication that not
+   all of them did.
+
+   Where the request declared an ``unknown`` expected response count this requirement does
+   not apply, and expiry is the ordinary end of the exchange. Table 9 states both halves:
+   where the client does not know the number of servers responding the timeout indicates
+   that no further responses are expected and no retry is required, and where it does know,
+   the timeout indicates that not all expected servers responded.
