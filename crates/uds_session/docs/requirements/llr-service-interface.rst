@@ -767,17 +767,31 @@ and leaves the means of recognising it to the implementation.
    A message classification shall consist of a kind and, where the message effects a
    transition to a diagnostic session, a session selection. The kind shall be one of:
 
-   * ``request``, a message sent by a client to a server;
+   * ``request``, a message sent by a client to a server, which shall further state the
+     number of responses expected: ``none``, an exact number, or ``unknown``;
    * ``final response``, a positive response, or a negative response whose response code
      is not ``requestCorrectlyReceived-ResponsePending``;
    * ``response pending``, a negative response whose response code is
      ``requestCorrectlyReceived-ResponsePending``.
 
+   The expected response count is stated by the client and has no server-side counterpart,
+   a server answering the one request in front of it. ``UDSS_LLR_0153`` conditions on the
+   count being other than ``none``, because ISO 14229-2:2021 10.3 Figure 20 requires a
+   client not to start its response timer for a request needing no response, and
+   ``UDSS_LLR_0156`` conditions on the exact number, because ISO 14229-2:2021 9.7 Table 9
+   makes the client's handling of a response timeout depend on whether it knew how many
+   servers would respond. Neither can be determined by the session layer: the count is a
+   property of the request the application composed, and ``UDSS_LLR_0135`` forbids reading
+   it out of the message.
+
    The kind shall be absent only where ``UDSS_LLR_0133`` permits it: on a ``T_Data.ind``
    reporting an unsuccessful reception of a message that was not addressed to a server. No
-   requirement in this set conditions on the kind of such a message. Stating the exception
-   this way keeps the three values above a closed set, which every requirement
-   conditioning on kind relies on.
+   requirement in this set requires the kind of such a message to be determinable:
+   ``UDSS_LLR_0154``, ``UDSS_LLR_0155`` and ``UDSS_LLR_0157`` read it to decide whether the
+   response-pending exception applies, and an absent kind is not ``response pending``, so
+   the ordinary limb applies and the behaviour is defined. Stating the exception this way
+   keeps the three values above a closed set, which every requirement conditioning on kind
+   relies on.
 
    A classification whose kind is ``final response`` shall further state whether the
    message is ``solicited``, transmitted because of a request received from a client, or
