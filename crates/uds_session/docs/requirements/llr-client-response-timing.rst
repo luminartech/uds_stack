@@ -209,8 +209,8 @@ The response window
 
    Where ``S_TAtype`` selects physical addressing, on the first of ``T_DataSOM.ind`` or
    ``T_Data.ind`` reporting a response for the request in progress on a channel, the client
-   shall stop that channel's ``tP_Client`` timer, unless the classification of that
-   indication states kind ``response pending``.
+   shall stop that channel's ``tP_Client`` timer, unless that indication is a ``T_Data.ind``
+   whose classification states kind ``response pending``.
 
    Clause 9.1.2 states the stop without qualification, at either the ``T_DataSOM.ind`` or
    the ``T_Data.ind``, and Figures 9, 10 and 11 show it in both forms: Figure 11 key g stops
@@ -218,9 +218,15 @@ The response window
    indication where it does not.
 
    The requirement is phrased on the arriving primitive rather than on what the message
-   turned out to be, which is what the clause does, and it takes exactly one exception. A
-   response-pending message does not close the window: ``UDSS_LLR_0157`` reloads the timer
-   for it, because the response the client is waiting for has not arrived.
+   turned out to be, which is what the clause does, and it takes exactly one exception. The
+   completion of a response-pending message does not close the window: ``UDSS_LLR_0157``
+   reloads the timer at that point, because the response the client is waiting for has not
+   arrived.
+
+   The exception is scoped to the ``T_Data.ind`` because the start-of-message of a
+   response-pending message does stop the timer. Figure 8 key c stops it there and key d
+   opens the enhanced window at the completion, so the two indications of one such message
+   have different effects.
 
    A reception the transport reports as failed therefore closes the window too.
    ``UDSS_LLR_0133`` permits such an indication to carry no kind at a client, which is
@@ -242,8 +248,8 @@ The response window
    Where ``S_TAtype`` selects functional addressing, on the first of ``T_DataSOM.ind`` or
    ``T_Data.ind`` reporting a response for the request in progress on a channel, the client
    shall restart that channel's ``tP_Client`` timer loaded with the reload value in force,
-   unless the classification of that indication states kind ``response pending`` or
-   ``UDSS_LLR_0156`` requires the timer to be stopped.
+   unless that indication is a ``T_Data.ind`` whose classification states kind
+   ``response pending``, or ``UDSS_LLR_0156`` requires the timer to be stopped.
 
    Figure 14 keys e and f and Figure 15 keys d and f each restart the timer on the reception
    of a response; Figure 16 key f does the same within an enhanced window, and key i on its
@@ -261,8 +267,11 @@ The response window
    requirements, one restarting the timer and the other stopping it. The last expected
    response stops it; every earlier one restarts it.
 
-   The exception for a response-pending message is the same one ``UDSS_LLR_0154`` takes, and
-   an indication carrying no kind falls to this requirement for the same reason given there.
+   The exception for the completion of a response-pending message is the same one
+   ``UDSS_LLR_0154`` takes, and is scoped to the ``T_Data.ind`` for the same reason: the
+   start-of-message of such a message restarts the timer under this requirement, and only
+   its completion hands control to ``UDSS_LLR_0157``. An indication carrying no kind falls
+   to this requirement, as it does to ``UDSS_LLR_0154``.
    Such a response does not count toward ``UDSS_LLR_0156``.
 
    "The first of" is per message, matched by address, not per channel. Two multi-frame
@@ -336,10 +345,10 @@ Enhanced response timing
    :source: ISO 14229-2:2021 9.2 Table 3; ISO 14229-2:2021 9.4 Figure 8; ISO 14229-2:2021 10.1.3 Figure 11; ISO 14229-2:2021 10.2.3 Figure 16
    :tags: client; p_client; enhanced-response-timing
 
-   On the first of ``T_DataSOM.ind`` or ``T_Data.ind`` reporting a response for the request
-   in progress on a channel whose classification states kind ``response pending``, the
-   client shall restart that channel's ``tP_Client`` timer loaded with the enhanced reload
-   parameter. This applies under either addressing mode.
+   On the ``T_Data.ind`` reporting a response for the request in progress on a channel whose
+   classification states kind ``response pending``, the client shall restart that channel's
+   ``tP_Client`` timer loaded with the enhanced reload parameter. This applies under either
+   addressing mode.
 
    Table 3 defines ``tP2*_Client`` and ``tP6*_Client`` as the enhanced timeout for the
    client to wait, after the reception of a negative response message with response code
@@ -355,11 +364,16 @@ Enhanced response timing
    the server's equivalent, excluding an unsolicited response from a rule about the request
    being handled.
 
-   Every cited source places the reload at the ``T_Data.ind``, a response-pending message
-   being a single frame that produces no start-of-message on any transport the standard
-   illustrates. The requirement is phrased on the first of the two indications for
-   consistency with ``UDSS_LLR_0154`` and ``UDSS_LLR_0155``, and because
-   ``UDSS_LLR_0133`` carries the classification on both.
+   The enhanced window opens at the completion of the response-pending message, not at its
+   start. Every cited source places the reload there: Table 3 defines the enhanced timeout
+   from the reception indicated via ``T_Data.ind``, and Figure 8 key d, Figure 11 key e and
+   Figure 16 key d all reload at that point.
+
+   Where such a message arrives in more than one frame, the standard stops the timer at its
+   start-of-message rather than reloading: Figure 8 key c does exactly that. The exception
+   ``UDSS_LLR_0154`` and ``UDSS_LLR_0155`` carry is scoped to the ``T_Data.ind`` for that
+   reason, so under physical addressing the timer is stopped between the two indications, as
+   Figure 8 shows, and the enhanced window opens when the message completes.
 
 .. llr:: The enhanced window stays in force for the rest of the request
    :id: UDSS_LLR_0158
@@ -369,8 +383,8 @@ Enhanced response timing
    :origin: derived
    :tags: client; p_client; enhanced-response-timing
 
-   Where a response-pending response has been received for the request in progress on a
-   channel, **the reload value in force** for that channel shall be the enhanced reload
+   Where the ``T_Data.ind`` of a response-pending response has been received for the request
+   in progress on a channel, **the reload value in force** for that channel shall be the enhanced reload
    parameter, until that request ends. Otherwise it shall be the default reload parameter.
 
    Rationale: ISO 14229-2:2021 10.2.3 Figure 16 requires the client to keep a list of the
@@ -387,12 +401,20 @@ Enhanced response timing
    request ends. Between those two points the timer is reloaded with the enhanced parameter
    where the standard would reload it with the default one.
 
-   The cost is not only that the client waits longer. Under functional addressing with an
-   unknown expected response count the expiry of ``UDSS_LLR_0159`` is the ordinary end of
-   the exchange, so holding the enhanced value delays that end by up to the difference
-   between the two parameters. Under physical addressing, and under functional addressing
-   with a known count, the window is closed by a response instead and the deviation is
-   invisible.
+   The cost is not only that the client waits longer. Under physical addressing the
+   deviation is invisible: ``UDSS_LLR_0154`` stops the timer on the first indication of any
+   response other than the completion of a response-pending one, so the value in force is
+   never read.
+
+   Under functional addressing it is observable whenever the timer is reloaded after the
+   last server that went response-pending has answered but before the exchange has ended.
+   With an unknown expected response count, holding the enhanced value delays the expiry of
+   ``UDSS_LLR_0159``, which is the ordinary end of the exchange, by up to the difference
+   between the two parameters. With a known count the effect is sharper: a server still
+   outstanding is waited for under the enhanced window rather than the default one, so a
+   response arriving between the two parameters is accepted where the standard would have
+   timed out. That is a different outcome and not merely a later one, and it is the strongest
+   argument against this trade.
 
    The requirement is derived rather than transcribed because it does not do what Figure 16
    requires. Naming that figure as its source would describe a trace the requirement does
