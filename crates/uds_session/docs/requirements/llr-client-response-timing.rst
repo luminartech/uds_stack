@@ -101,3 +101,62 @@ must do about it — repeat the request, at most twice, restarting ``tS3_Client`
 request was a sequentially-transmitted TesterPresent. This document states the meaning,
 because the timer cannot be specified without it. The consequences belong to the client
 error handling document, which transcribes Table 9 whole.
+
+The response window
+-------------------
+
+.. llr:: The client uses one response timer per communication channel
+   :id: UDSS_LLR_0151
+   :status: draft
+   :integrity_level: QM
+   :target_level: D
+   :origin: session-layer-standard
+   :source: ISO 14229-2:2021 9.1.2; ISO 14229-2:2021 9.6 Table 7
+   :tags: client; p_client
+
+   The client shall maintain a single ``tP_Client`` timer for each logical communication
+   channel, in storage supplied by the caller. On initialisation no such timer shall be
+   running. Thereafter the state of a channel's timer shall be changed only as
+   ``UDSS_LLR_0153``, ``UDSS_LLR_0154``, ``UDSS_LLR_0155``, ``UDSS_LLR_0156``,
+   ``UDSS_LLR_0157`` and ``UDSS_LLR_0159`` require.
+
+   Table 7 requires a single timer for each logical communication channel, physical and
+   functional alike, and clause 9.1.2 requires a single application timer implementation
+   triggered by the ``T_Data`` service primitive interface.
+
+   The initial state is stated here because none of the six conditions above is an
+   initialisation condition, so without it the state of a timer before the first input
+   would be undefined. ``UDSS_LLR_0101`` and ``UDSS_LLR_0143`` state the initial state of
+   the server's two timers for the same reason.
+
+   The storage is the caller's because the number of channels is a property of the
+   deployment rather than of the protocol, and ``UDSS_LLR_0113`` makes this crate
+   allocation-free. Neither cited clause requires it; the standard states what timers are
+   needed, not where they live.
+
+.. llr:: The response timer has two reload parameters
+   :id: UDSS_LLR_0152
+   :status: draft
+   :integrity_level: QM
+   :target_level: D
+   :origin: session-layer-standard
+   :source: ISO 14229-2:2021 9.1.2; ISO 14229-2:2021 9.2 Table 3
+   :tags: client; p_client
+
+   Each channel shall have a **default reload parameter** and an **enhanced reload
+   parameter**, supplied as protocol parameters under ``UDSS_LLR_0138``.
+
+   Where the transport supports ``T_DataSOM.ind`` these are ``tP2_Client_Max`` and
+   ``tP2*_Client_Max``; where it does not, they are ``tP6_Client_Max`` and
+   ``tP6*_Client_Max``. The session layer shall not distinguish the two cases.
+
+   Clause 9.1.2 makes that correspondence, loading the timer with the ``tP2`` pair for
+   protocols which support a ``T_DataSOM.ind`` service primitive and with the ``tP6`` pair
+   for those which do not. Table 3 defines all four and types each of them a timer reload
+   value, in contrast to ``tP2_Server``, which it types a performance requirement.
+
+   The session layer does not distinguish the two cases for the reason the preamble gives:
+   nothing tells it which transport it is on, and the stop conditions below are phrased so
+   that it does not need to know. The distinction survives in the values the caller
+   supplies, and in the minimum values Table 4 derives for them, which differ by whether
+   the window covers the start of the response or its complete reception.
