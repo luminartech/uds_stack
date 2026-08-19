@@ -457,3 +457,61 @@ Enhanced response timing
 
    See :doc:`open-questions`, which records the deviation for review against the other
    constraints of its kind.
+
+.. llr:: Response timer expiry is indicated to the application
+   :id: UDSS_LLR_0159
+   :status: draft
+   :integrity_level: QM
+   :target_level: D
+   :origin: session-layer-standard
+   :source: ISO 14229-2:2021 9.1.2; ISO 14229-2:2021 9.7 Table 9
+   :tags: client; p_client
+
+   When a channel's ``tP_Client`` timer is running and the elapsed time since it was last
+   started exceeds the value it was loaded with, the client shall stop that timer and deliver
+   a response-timing indication to the application. The indication shall carry the addressing
+   parameters of the request whose response window expired, and shall state which of the
+   default and enhanced reload parameters the timer was carrying.
+
+   Clause 9.1.2 requires an error condition to be detected where no indication is received
+   within the timer's value, and requires that condition to be flagged to the application
+   layer with the parameters included in the ``T_DataSOM.ind`` or ``T_Data.ind`` service
+   primitive.
+
+   The window is exceeded rather than reached. Clause 9.1.2 states that an indication
+   received while ``tP_Client`` is smaller than or equal to the parameter fulfils the timing
+   requirements, and detects the error only where no indication was received while that
+   held. An expiry at equality would reject a response the standard calls conformant.
+   ``UDSS_LLR_0148`` says "reaches" for ``tP2_Server``, which is safe there because that
+   parameter bounds the server's own conduct and the earlier of two readings is the
+   conservative one; here the same wording would fault a conformant peer.
+   ``UDSS_LLR_0114`` fixes elapsed time in whole milliseconds, so the difference is
+   reachable rather than theoretical.
+
+   The indication carries the addressing of the request rather than of the response.
+   Clause 9.1.2 asks for the parameters of an indication that did not arrive, which would
+   have to be constructed; and under functional addressing there is no single absent
+   responder whose address could be named. The request's addressing is what the session
+   layer holds and what identifies the channel to a client operating several.
+
+   The indication states the parameter in force because the two describe different
+   situations, one of them ordinary. ``S_TAtype`` travels in the addressing parameters, so
+   the application can distinguish Table 9's cases without a further field: under physical
+   addressing an expiry is a failure, under functional addressing with an unknown expected
+   response count it is the ordinary end of the exchange, and with a known count it means
+   not every server answered.
+
+   This requirement does not state what the client does next. Table 9's handling — repeat
+   the request, at most twice — belongs to the client error handling document. The session
+   layer reports the expiry and the application acts, as ``UDSS_LLR_0112`` and
+   ``UDSS_LLR_0148`` do for the server's two timers.
+
+   The condition on the timer running is load-bearing. ``UDSS_LLR_0154`` stops the timer at
+   the start-of-message of a response-pending message while the request is still in progress,
+   as ISO 14229-2:2021 9.4 Figure 8 key c requires, so a channel can hold a stopped timer and
+   an unfinished request at once. Without the condition the elapsed time of that stopped timer
+   would keep growing and this requirement would report an overrun that did not occur.
+
+   The timer is stopped so that one overrun yields one indication rather than a further
+   indication for every timestamp the caller supplies thereafter. Elapsed time is computed
+   as ``UDSS_LLR_0114`` requires.
