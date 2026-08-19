@@ -87,57 +87,38 @@ response message in its client rows. If the client requirements need that distin
 deleting the sentence trades an over-reach for a gap, and the distinction wants stating
 once rather than twice.
 
+The client response timing document has now answered its half. ``UDSS_LLR_0154``,
+``UDSS_LLR_0155`` and ``UDSS_LLR_0157`` are phrased on which primitive arrived first for a
+message, not on a standing property of the message, so none of them needs the distinction.
+What remains is 9.7 Table 9, which distinguishes an error during the reception of a
+multi-frame response in its client rows, and that is the client error handling cycle's to
+weigh.
+
 Whatever survives has to be sound on a transport with no ``T_DataSOM.ind``. There a
 multi-frame message arrives as a single ``T_Data.ind`` and the session layer cannot
 observe its framing at all, so any rule phrased as a fact about the message will be false
 in that case, however it is worded.
 
-How is a confirmation matched to the request it confirms?
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Should the enhanced window track which servers went response-pending?
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-``UDSS_LLR_0120`` identifies the ``S_Data.req`` being confirmed by its addressing
-parameters. ``UDSS_LLR_0133`` requires the classification carried by an ``S_Data.req`` to
-be associated with the ``T_Data.conf`` that reports the outcome of the transmission it
-requested. Neither says what happens when two requests sharing the same addressing are
-outstanding at once, and ``UDSS_LLR_0117`` forbids retaining the payload that would
-otherwise tell them apart.
+``UDSS_LLR_0158`` keeps one bit per channel where ISO 14229-2:2021 10.2.3 Figure 16 keeps a
+list of the addresses of servers that have sent a response-pending message, and so reverts
+to the default reload value at the end of the request rather than when the last of those
+servers answers. 10.2.4 Figure 17 key t states the same rule the requirement declines to
+follow, so the deviation is against two figures rather than one.
 
-This is most likely resolved by an assumption rather than by a matching rule.
-ISO 14229-2:2021 9.6 Table 7 requires a ``tP_Client`` timer per logical communication
-channel, and the client error handling in Table 9 is written as though one request is in
-flight per channel. If a single outstanding request per channel is an assumption of use,
-it belongs in the qualification repository and should be stated there rather than left
-implicit here. The client response timing cycle is where that becomes visible.
+The bound is settled and is not what remains open: the requirement costs one bit, and no
+state in this set is sized by the deployment. What is open is whether the deviation is worth
+its cost. Under functional addressing with an unknown expected response count, the expiry of
+``UDSS_LLR_0159`` is the ordinary end of the exchange, and holding the enhanced value delays
+it by up to the difference between the two reload parameters.
 
-One ``tP_Client`` requirement, or two?
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-``tP_Client`` inverts under functional addressing. Under physical addressing a response
-stops the timer and expiry is an error. Under functional addressing each response reloads
-it and expiry is the expected terminator: ISO 14229-2:2021 9.7 Table 9 says that where the
-client does not know how many servers will respond, the timeout is the indication that no
-further responses are coming and no retry is required. The same timer carries opposite
-meanings, selected by ``S_TAtype``.
-
-Whether that is one requirement conditioned on ``S_TAtype`` or two requirements with
-disjoint conditions is an authoring question, not a behavioural one, but it decides how
-much of ``UDSS_LLR_0126`` the client documents lean on — that requirement is the only
-thing giving the session layer the distinction. Settled by the client response timing
-cycle.
-
-How is the client's response-pending tracking bounded?
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-Under functional addressing a client reloads ``tP_Client`` with the enhanced value for
-servers that have sent a response-pending message and the default value otherwise, so it
-has to remember which target addresses did. That is the first state in this crate whose
-size depends on the deployment rather than on the protocol.
-
-``UDSS_LLR_0113`` and ``UDSS_LLR_0117`` forbid I/O and payload retention but say nothing
-about bounded state of this kind. Open: whether the bound is caller-supplied storage, a
-compile-time capacity, or something else, and which requirement states what happens when
-it is exhausted — a client that silently forgets a server went response-pending will time
-out early against that server. Settled by the client response timing cycle.
+This is a member of the class of constraints the standard makes checkable while allocating
+no resource for it, alongside the ``0,3 × tP2*_Server_Max`` floor of ``UDSS_LLR_0149`` and
+the at-most-two-repeats limit of 9.7 Table 9. The class wants deciding together — whether
+these live behind one build-time switch — rather than one requirement at a time. Nothing
+here prevents that: requirements state behaviour, so a check may be compiled out.
 
 Should ISO 14229-2:2021 8.3's inconsistency be recorded?
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -231,6 +212,42 @@ instances, ``tP2_Server`` being touched by nearly every input this set defines.
 The answer likely wants stating once, as an interface-wide ordering clause in the service
 interface document, rather than as a rule per timer. That document's rework is where it
 belongs.
+
+What does a failed reception do to ``tP_Client`` under functional addressing?
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+``UDSS_LLR_0154`` stops the response window on a reception the transport reports as failed,
+which ISO 14229-2:2021 9.1.2 supports directly, its stop condition naming the arriving
+primitive and no property of the message. Under functional addressing ``UDSS_LLR_0155``
+restarts the timer instead and ``UDSS_LLR_0156`` does not count the failed reception toward
+the expected number, so the exchange runs to expiry.
+
+That is coherent, and it agrees with 9.7 Table 9 on the consequence: the client repeats the
+request once it has completely received any response message in progress. But no clause
+states a ``tP_Client`` effect for a failed reception under functional addressing, so the
+behaviour above is a consequence of how ``UDSS_LLR_0155`` is phrased rather than something
+transcribed. The client error handling cycle transcribes Table 9 and should confirm it, or
+state the effect directly.
+
+What bounds a message whose start was indicated but whose completion never comes?
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+``UDSS_LLR_0154`` stops the response timer at the start-of-message of a response-pending
+message, which ISO 14229-2:2021 9.4 Figure 8 key c requires, and ``UDSS_LLR_0157`` opens the
+enhanced window at that message's completion. Where the completion never arrives at all —
+not reported as failed, simply absent — the timer stays stopped, the request stays in
+progress, and ``UDSS_LLR_0159`` cannot fire.
+
+The standard has the same property. Once the start-of-message stops ``tP_Client``, no session
+layer timer covers the remainder of that message; the transport's own reception timers do.
+The requirements are faithful to that division of responsibility, so this is not a defect in
+the transcription.
+
+What is unrecorded is the obligation the division places on the caller: that a transport which
+indicates the start of a message eventually reports either its completion or its failure.
+That is an assumption of use and belongs in the qualification repository, alongside the
+assumption of one request outstanding per logical communication channel. Whether it is stated
+there, or whether the set instead writes a requirement the standard does not have, is open.
 
 Deferred edits
 --------------
