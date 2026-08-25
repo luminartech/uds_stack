@@ -108,6 +108,20 @@ pub struct UdsClientOptions {
     pub routing_activation: bool,
     /// Session configuration.
     pub session_config: SessionConfig,
+    /// `A_DoIP_Diagnostic_Message` — how long the DoIP layer waits for a
+    /// diagnostic message to be answered before treating it as lost.
+    ///
+    /// Defaults to `simple_doip::TIMEOUT_DIAGNOSTIC_MESSAGE_RESPONSE` (2 s).
+    /// Configurable because it is a deployment parameter: a conformance tester
+    /// drives it from the diagnostic database under test.
+    ///
+    /// **Placement is provisional.** This is a DoIP-layer timer sitting beside
+    /// the UDS timers in [`SessionConfig`] rather than inside them, deliberately
+    /// — the two sets interact (a DoIP timeout preempts the UDS response wait,
+    /// which is how the 50 ms ack bug hid) and unifying them is a design
+    /// question in its own right rather than something to settle by where a
+    /// field was dropped.
+    pub doip_diagnostic_message_timeout: Duration,
 }
 
 impl Default for UdsClientOptions {
@@ -121,6 +135,7 @@ impl Default for UdsClientOptions {
             protocol_version: ProtocolVersion::V2012,
             routing_activation: true,
             session_config: SessionConfig::default(),
+            doip_diagnostic_message_timeout: simple_doip::TIMEOUT_DIAGNOSTIC_MESSAGE_RESPONSE,
         }
     }
 }
@@ -164,6 +179,14 @@ impl UdsClientOptions {
         self
     }
 
+    /// Set `A_DoIP_Diagnostic_Message` — see
+    /// [`Self::doip_diagnostic_message_timeout`].
+    #[must_use]
+    pub const fn with_doip_diagnostic_message_timeout(mut self, timeout: Duration) -> Self {
+        self.doip_diagnostic_message_timeout = timeout;
+        self
+    }
+
     /// Convert to DoIP ClientOptions.
     pub fn to_doip_options(&self) -> ClientOptions {
         ClientOptions {
@@ -181,6 +204,7 @@ impl UdsClientOptions {
             } else {
                 None
             },
+            diagnostic_message_timeout: self.doip_diagnostic_message_timeout,
         }
     }
 }

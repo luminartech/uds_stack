@@ -259,6 +259,7 @@ async fn connect_client(port: u16, session_config: SessionConfig) -> UdsClient<L
             activation_type: ActivationTypeCode::Default,
             oem_specific: None,
         }),
+        diagnostic_message_timeout: simple_doip::TIMEOUT_DIAGNOSTIC_MESSAGE_RESPONSE,
     };
     let doip_client = DoipClient::<LoopbackConnector>::connect(options)
         .await
