@@ -37,6 +37,25 @@ pub trait RequestSender: Send + Sync {
 
     /// Shut down the underlying connection.
     async fn shutdown(self: Box<Self>);
+
+    /// How many times this sender has transparently reconnected its
+    /// transport.
+    ///
+    /// Callers driving a **stateful** UDS sequence — a programming
+    /// session, SecurityAccess, a `RequestDownload`/`TransferData`
+    /// transfer — must sample this before the sequence and compare
+    /// after. A reconnect gives the ECU a new DoIP session, so
+    /// everything that sequence established is gone; continuing sends
+    /// requests the ECU has no context for, and the resulting failure
+    /// surfaces far from its cause.
+    ///
+    /// Defaults to `0`, i.e. "never reconnects". Correct for senders
+    /// with no reconnect behavior (test doubles, single-shot
+    /// transports): a constant value never compares unequal, so those
+    /// callers see no spurious aborts.
+    fn reconnect_epoch(&self) -> u64 {
+        0
+    }
 }
 
 #[async_trait]
@@ -44,6 +63,10 @@ impl<Conn> RequestSender for UdsClient<Conn>
 where
     Conn: Connector + Send + Sync + 'static,
 {
+    fn reconnect_epoch(&self) -> u64 {
+        UdsClient::reconnect_epoch(self)
+    }
+
     async fn send(
         &self,
         request: Request<'_>,

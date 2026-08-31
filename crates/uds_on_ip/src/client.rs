@@ -86,6 +86,9 @@ pub struct UdsClient<Conn = ConnectorSocket> {
     last_activity: Arc<std::sync::Mutex<Instant>>,
     /// Handle for the background keepalive task, if auto_tester_present is enabled.
     keepalive_handle: Option<tokio::task::JoinHandle<()>>,
+    /// Count of successful transport reconnects — see
+    /// [`UdsClient::reconnect_epoch`].
+    reconnects: Arc<std::sync::atomic::AtomicU64>,
     _phantom: PhantomData<Conn>,
 }
 
@@ -289,6 +292,7 @@ impl UdsClient<ConnectorSocket> {
             config: options.session_config,
             last_activity,
             keepalive_handle,
+            reconnects: Arc::new(std::sync::atomic::AtomicU64::new(0)),
             _phantom: PhantomData,
         })
     }
@@ -320,6 +324,7 @@ where
             config,
             last_activity,
             keepalive_handle,
+            reconnects: Arc::new(std::sync::atomic::AtomicU64::new(0)),
             _phantom: PhantomData,
         }
     }
@@ -409,6 +414,7 @@ where
                     &self.last_activity,
                     reconnect_timeout,
                     keepalive_active,
+                    &self.reconnects,
                 )
                 .await?
                 {
@@ -483,6 +489,7 @@ where
                                 &self.last_activity,
                                 reconnect_timeout,
                                 keepalive_active,
+                                &self.reconnects,
                             )
                             .await?
                             {
@@ -534,6 +541,7 @@ where
                             &self.last_activity,
                             reconnect_timeout,
                             keepalive_active,
+                            &self.reconnects,
                         )
                         .await?
                         {
@@ -655,6 +663,7 @@ where
                     &self.last_activity,
                     reconnect_timeout,
                     keepalive_active,
+                    &self.reconnects,
                 )
                 .await?
                 {
@@ -713,6 +722,7 @@ where
                                 &self.last_activity,
                                 reconnect_timeout,
                                 keepalive_active,
+                                &self.reconnects,
                             )
                             .await?
                             {
@@ -755,6 +765,7 @@ where
                             &self.last_activity,
                             reconnect_timeout,
                             keepalive_active,
+                            &self.reconnects,
                         )
                         .await?
                         {
@@ -1069,12 +1080,40 @@ where
         last_activity: &std::sync::Mutex<Instant>,
         reconnect_timeout: Duration,
         send_tp_after_reconnect: bool,
+        reconnects: &std::sync::atomic::AtomicU64,
     ) -> Result<Option<OwnedMessage>> {
         let maybe_msg = Self::attempt_reconnect(client, reconnect_timeout).await?;
+        // Every `auto_reconnect` path in this file funnels through here,
+        // so this is the one place the epoch has to move. Bumped only on
+        // success: a failed reconnect propagates an error and leaves the
+        // caller's sequence dead anyway.
+        reconnects.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         if send_tp_after_reconnect {
             let _ = Self::send_tester_present_while_lock_held(client, last_activity).await;
         }
         Ok(maybe_msg)
+    }
+
+    /// How many times this client has transparently reconnected its
+    /// transport.
+    ///
+    /// `auto_reconnect` re-establishes a dropped DoIP connection and
+    /// retries, which is right for a stateless request but silently
+    /// destructive for a stateful sequence: a reconnect gives the ECU a
+    /// **new** DoIP session, so its diagnostic session, SecurityAccess
+    /// level and any in-progress `RequestDownload` transfer context are
+    /// all gone. Subsequent requests in that sequence then fail in
+    /// confusing ways — a firmware download reports a response timeout
+    /// on its first data block, tens of seconds after the actual event.
+    ///
+    /// A caller driving such a sequence samples this before the
+    /// sequence and compares after: any change means the sequence must
+    /// be abandoned, not continued. Monotonic and never reset, so a
+    /// comparison is always valid; wrapping is not a practical concern
+    /// at `u64`.
+    #[must_use]
+    pub fn reconnect_epoch(&self) -> u64 {
+        self.reconnects.load(std::sync::atomic::Ordering::SeqCst)
     }
 
     /// Extract the diagnostic payload from a DoIP message.
