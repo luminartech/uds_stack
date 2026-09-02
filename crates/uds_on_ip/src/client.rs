@@ -86,6 +86,13 @@ pub struct UdsClient<Conn = ConnectorSocket> {
     last_activity: Arc<std::sync::Mutex<Instant>>,
     /// Handle for the background keepalive task, if auto_tester_present is enabled.
     keepalive_handle: Option<tokio::task::JoinHandle<()>>,
+    /// Count of successful transport reconnects — see
+    /// [`UdsClient::reconnect_epoch`].
+    reconnects: Arc<std::sync::atomic::AtomicU64>,
+    /// Requests currently awaiting a response. The keepalive loop must
+    /// not inject a TesterPresent while this is non-zero — see
+    /// [`InFlightGuard`].
+    in_flight: Arc<std::sync::atomic::AtomicUsize>,
     _phantom: PhantomData<Conn>,
 }
 
@@ -209,6 +216,28 @@ impl UdsClientOptions {
     }
 }
 
+/// Marks a request as awaiting a response for as long as it is alive.
+///
+/// The keepalive loop reads the count and stays quiet while it is
+/// non-zero. A guard rather than manual increments because a request
+/// can leave by many paths — a negative response, a transport error, a
+/// timeout, a cancelled future — and a leaked count would silence the
+/// keepalive for the rest of the session.
+struct InFlightGuard(Arc<std::sync::atomic::AtomicUsize>);
+
+impl InFlightGuard {
+    fn new(counter: &Arc<std::sync::atomic::AtomicUsize>) -> Self {
+        counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        Self(Arc::clone(counter))
+    }
+}
+
+impl Drop for InFlightGuard {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+    }
+}
+
 /// Background task that sends TesterPresent (0x3E 0x80) when the session is idle.
 ///
 /// Runs in a loop, sleeping for `interval` and then checking if enough time has
@@ -218,11 +247,32 @@ async fn keepalive_loop<Conn>(
     doip_client: Arc<Mutex<Client<Conn>>>,
     last_activity: Arc<std::sync::Mutex<Instant>>,
     interval: Duration,
+    in_flight: Arc<std::sync::atomic::AtomicUsize>,
 ) where
     Conn: Connector + 'static + Send + Sync,
 {
     loop {
         tokio::time::sleep(interval).await;
+
+        // Never interleave a keepalive with a request that is still
+        // waiting for its answer. The request path releases the client
+        // lock while awaiting, so the lock alone does not prevent this:
+        // a TesterPresent sent into that gap lands between the request
+        // and its response, and the reply is then lost to the caller.
+        //
+        // Observed on a real sensor: the first TransferData after
+        // erasing a 7 MB region took 2.04 s to answer, just past the
+        // archive's 2 s interval. The keepalive fired at 2.02 s, the
+        // ECU's `76 01` arrived at 2.04 s, and the flash reported "no
+        // response within 5s" — having erased the application.
+        //
+        // Skipping is safe: an in-flight request is itself session
+        // activity, so the ECU's S3 timer is not at risk while it is
+        // busy answering us.
+        if in_flight.load(std::sync::atomic::Ordering::SeqCst) > 0 {
+            debug!("Keepalive skipped — a request is awaiting its response");
+            continue;
+        }
 
         let elapsed = lock_activity(&last_activity).elapsed();
         if elapsed < interval {
@@ -274,11 +324,13 @@ impl UdsClient<ConnectorSocket> {
 
         let doip_client = Arc::new(Mutex::new(client));
         let last_activity = Arc::new(std::sync::Mutex::new(Instant::now()));
+        let in_flight = Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let keepalive_handle = if should_run_keepalive(&options.session_config) {
             Some(tokio::spawn(keepalive_loop(
                 Arc::clone(&doip_client),
                 Arc::clone(&last_activity),
                 options.session_config.tester_present_interval,
+                Arc::clone(&in_flight),
             )))
         } else {
             None
@@ -289,6 +341,8 @@ impl UdsClient<ConnectorSocket> {
             config: options.session_config,
             last_activity,
             keepalive_handle,
+            reconnects: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            in_flight: Arc::clone(&in_flight),
             _phantom: PhantomData,
         })
     }
@@ -305,11 +359,13 @@ where
     pub fn from_doip_client(client: Client<Conn>, config: SessionConfig) -> Self {
         let doip_client = Arc::new(Mutex::new(client));
         let last_activity = Arc::new(std::sync::Mutex::new(Instant::now()));
+        let in_flight = Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let keepalive_handle = if should_run_keepalive(&config) {
             Some(tokio::spawn(keepalive_loop(
                 Arc::clone(&doip_client),
                 Arc::clone(&last_activity),
                 config.tester_present_interval,
+                Arc::clone(&in_flight),
             )))
         } else {
             None
@@ -320,6 +376,8 @@ where
             config,
             last_activity,
             keepalive_handle,
+            reconnects: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            in_flight: Arc::clone(&in_flight),
             _phantom: PhantomData,
         }
     }
@@ -369,6 +427,9 @@ where
 
         debug!("Sending UDS request: {:02X?}", request_bytes);
 
+        // Held for the whole request/response cycle so the keepalive
+        // cannot inject a TesterPresent between them.
+        let _in_flight = InFlightGuard::new(&self.in_flight);
         *lock_activity(&self.last_activity) = Instant::now();
         let mut client = self.doip_client.lock().await;
 
@@ -409,6 +470,7 @@ where
                     &self.last_activity,
                     reconnect_timeout,
                     keepalive_active,
+                    &self.reconnects,
                 )
                 .await?
                 {
@@ -467,43 +529,29 @@ where
                 // NRC 0x78 messages it is demonstrably alive and keeping the S3
                 // session timer alive itself; injecting TP during a long operation
                 // (e.g. flash erase) can disrupt the ECU's response-pending cadence.
-                if self.config.auto_tester_present && pending_count == 0 {
-                    match Self::maybe_send_tester_present_while_lock_held(
-                        &mut client,
-                        &self.last_activity,
-                        self.config.tester_present_interval,
-                    )
-                    .await
-                    {
-                        Ok(()) => {}
-                        Err(e) if self.config.auto_reconnect && Self::is_connection_error(&e) => {
-                            warn!("TP send detected dead connection, reconnecting: {}", e);
-                            match Self::reconnect_and_maybe_keepalive(
-                                &mut client,
-                                &self.last_activity,
-                                reconnect_timeout,
-                                keepalive_active,
-                            )
-                            .await?
-                            {
-                                Some(msg) => {
-                                    info!("Using message received during reconnection");
-                                    pending_message = Some(msg);
-                                }
-                                None => {
-                                    info!("Reconnected — will re-send after P2 wait");
-                                    reconnected_without_resend = true;
-                                }
-                            }
-                            response_start = Instant::now();
-                            continue;
-                        }
-                        Err(_) => {
-                            // Non-connection error already logged at DEBUG inside the
-                            // helper; the subsequent receive will surface it if fatal.
-                        }
-                    }
-                }
+                // No TesterPresent here. This loop runs *between* a
+                // request and its response, and a TP sent into that gap
+                // lands on the wire between the two: the reply is then
+                // lost to the caller, which reports a response timeout
+                // for an answer the ECU actually sent.
+                //
+                // Observed on a real sensor: the first TransferData
+                // after erasing a 7 MB region answered in 2.04 s. The
+                // archive's interval is 2 s, so a TP went out at
+                // 2.02 s; the ECU's `76 01` arrived at 2.04 s and never
+                // reached the caller. The flash reported "no response
+                // within 5s" having already erased the application.
+                //
+                // The previous guard only suppressed this during an NRC
+                // 0x78 cycle, which assumes a slow ECU always announces
+                // itself as pending. This one did not — it was simply
+                // slow, and silence is a legal way to be slow.
+                //
+                // Nothing is lost by staying quiet: an outstanding
+                // request is itself session activity, and the
+                // background keepalive still covers genuinely idle
+                // periods. A connection that dies mid-wait surfaces as
+                // the response timeout instead of as a TP send error.
 
                 // Cap the receive timeout so we wake at least once per keepalive
                 // interval; otherwise a long interval could delay response-timeout
@@ -534,6 +582,7 @@ where
                             &self.last_activity,
                             reconnect_timeout,
                             keepalive_active,
+                            &self.reconnects,
                         )
                         .await?
                         {
@@ -629,6 +678,9 @@ where
     pub async fn send_raw(&self, request_bytes: Vec<u8>) -> Result<Vec<u8>> {
         debug!("Sending raw UDS request: {:02X?}", request_bytes);
 
+        // See `send()`: held for the whole request/response cycle so the
+        // keepalive cannot interleave a TesterPresent with the reply.
+        let _in_flight = InFlightGuard::new(&self.in_flight);
         *lock_activity(&self.last_activity) = Instant::now();
         let mut client = self.doip_client.lock().await;
 
@@ -655,6 +707,7 @@ where
                     &self.last_activity,
                     reconnect_timeout,
                     keepalive_active,
+                    &self.reconnects,
                 )
                 .await?
                 {
@@ -697,40 +750,29 @@ where
                 // See send() for rationale: suppress in-loop TP while the ECU is
                 // in an active NRC 0x78 pending cycle — it is keeping the session
                 // alive itself and injecting TP can disrupt long operations.
-                if self.config.auto_tester_present && pending_count == 0 {
-                    match Self::maybe_send_tester_present_while_lock_held(
-                        &mut client,
-                        &self.last_activity,
-                        self.config.tester_present_interval,
-                    )
-                    .await
-                    {
-                        Ok(()) => {}
-                        Err(e) if self.config.auto_reconnect && Self::is_connection_error(&e) => {
-                            warn!("TP send detected dead connection, reconnecting: {}", e);
-                            match Self::reconnect_and_maybe_keepalive(
-                                &mut client,
-                                &self.last_activity,
-                                reconnect_timeout,
-                                keepalive_active,
-                            )
-                            .await?
-                            {
-                                Some(msg) => {
-                                    info!("Using message received during reconnection");
-                                    pending_message = Some(msg);
-                                }
-                                None => {
-                                    info!("Reconnected — will re-send after P2 wait");
-                                    reconnected_without_resend = true;
-                                }
-                            }
-                            response_start = Instant::now();
-                            continue;
-                        }
-                        Err(_) => {}
-                    }
-                }
+                // No TesterPresent here. This loop runs *between* a
+                // request and its response, and a TP sent into that gap
+                // lands on the wire between the two: the reply is then
+                // lost to the caller, which reports a response timeout
+                // for an answer the ECU actually sent.
+                //
+                // Observed on a real sensor: the first TransferData
+                // after erasing a 7 MB region answered in 2.04 s. The
+                // archive's interval is 2 s, so a TP went out at
+                // 2.02 s; the ECU's `76 01` arrived at 2.04 s and never
+                // reached the caller. The flash reported "no response
+                // within 5s" having already erased the application.
+                //
+                // The previous guard only suppressed this during an NRC
+                // 0x78 cycle, which assumes a slow ECU always announces
+                // itself as pending. This one did not — it was simply
+                // slow, and silence is a legal way to be slow.
+                //
+                // Nothing is lost by staying quiet: an outstanding
+                // request is itself session activity, and the
+                // background keepalive still covers genuinely idle
+                // periods. A connection that dies mid-wait surfaces as
+                // the response timeout instead of as a TP send error.
 
                 // Same gating as send(): only cap receive_timeout by the keepalive
                 // interval when keepalives are on and the interval is non-zero.
@@ -755,6 +797,7 @@ where
                             &self.last_activity,
                             reconnect_timeout,
                             keepalive_active,
+                            &self.reconnects,
                         )
                         .await?
                         {
@@ -1031,29 +1074,6 @@ where
         }
     }
 
-    /// Emit a TesterPresent if the configured interval has elapsed since the
-    /// last outgoing message. Intended for callers that already hold the
-    /// `doip_client` lock across a long wait (e.g. NRC 0x78 response-pending
-    /// loops), during which the background keepalive task is blocked.
-    ///
-    /// A zero interval is treated as "disabled" to avoid turning the receive
-    /// loop into a busy-spin. On a connection error the underlying error is
-    /// returned so callers can escalate to reconnect; otherwise `Ok(())`.
-    async fn maybe_send_tester_present_while_lock_held(
-        client: &mut Client<Conn>,
-        last_activity: &std::sync::Mutex<Instant>,
-        interval: Duration,
-    ) -> std::result::Result<(), simple_doip::Error> {
-        if interval.is_zero() {
-            return Ok(());
-        }
-        let elapsed = lock_activity(last_activity).elapsed();
-        if elapsed < interval {
-            return Ok(());
-        }
-        Self::send_tester_present_while_lock_held(client, last_activity).await
-    }
-
     /// Drive a reconnection and, when keepalives are enabled, immediately
     /// emit a TP on the new connection. Returns any in-flight message
     /// surfaced by the reconnect. `send_tp_after_reconnect` must match the
@@ -1069,12 +1089,40 @@ where
         last_activity: &std::sync::Mutex<Instant>,
         reconnect_timeout: Duration,
         send_tp_after_reconnect: bool,
+        reconnects: &std::sync::atomic::AtomicU64,
     ) -> Result<Option<OwnedMessage>> {
         let maybe_msg = Self::attempt_reconnect(client, reconnect_timeout).await?;
+        // Every `auto_reconnect` path in this file funnels through here,
+        // so this is the one place the epoch has to move. Bumped only on
+        // success: a failed reconnect propagates an error and leaves the
+        // caller's sequence dead anyway.
+        reconnects.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         if send_tp_after_reconnect {
             let _ = Self::send_tester_present_while_lock_held(client, last_activity).await;
         }
         Ok(maybe_msg)
+    }
+
+    /// How many times this client has transparently reconnected its
+    /// transport.
+    ///
+    /// `auto_reconnect` re-establishes a dropped DoIP connection and
+    /// retries, which is right for a stateless request but silently
+    /// destructive for a stateful sequence: a reconnect gives the ECU a
+    /// **new** DoIP session, so its diagnostic session, SecurityAccess
+    /// level and any in-progress `RequestDownload` transfer context are
+    /// all gone. Subsequent requests in that sequence then fail in
+    /// confusing ways — a firmware download reports a response timeout
+    /// on its first data block, tens of seconds after the actual event.
+    ///
+    /// A caller driving such a sequence samples this before the
+    /// sequence and compares after: any change means the sequence must
+    /// be abandoned, not continued. Monotonic and never reset, so a
+    /// comparison is always valid; wrapping is not a practical concern
+    /// at `u64`.
+    #[must_use]
+    pub fn reconnect_epoch(&self) -> u64 {
+        self.reconnects.load(std::sync::atomic::Ordering::SeqCst)
     }
 
     /// Extract the diagnostic payload from a DoIP message.

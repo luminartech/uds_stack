@@ -746,3 +746,148 @@ async fn stray_tp_nack_during_pending_wait_is_ignored() {
     server_task.abort();
     let _ = server_task.await;
 }
+
+/// Fake ECU that acks a request, stays silent past the TesterPresent
+/// interval, then answers — with **no** NRC 0x78 in between.
+///
+/// This is the real-sensor shape that the pending-based suppression
+/// misses: an Iris erasing a 7 MB region answered its first
+/// `TransferData` after 2.04 s having sent no pending frames at all.
+async fn run_slow_silent_server(
+    listener: TcpListener,
+    tp_counter: Arc<AtomicUsize>,
+    answer_after: Duration,
+) {
+    let (mut stream, _) = listener
+        .accept()
+        .await
+        .expect("fake server failed to accept");
+
+    let (pt, payload) = read_frame(&mut stream)
+        .await
+        .expect("client closed before routing activation");
+    assert_eq!(pt, PT_ROUTING_ACTIVATION_REQ);
+    let tester_addr = LogicalAddress(u16::from_be_bytes([payload[0], payload[1]]));
+    stream
+        .write_all(&build_routing_activation_rsp(tester_addr, SERVER_PHYSICAL))
+        .await
+        .expect("failed to send activation response");
+
+    loop {
+        let Some((pt, payload)) = read_frame(&mut stream).await else {
+            return;
+        };
+        if pt != PT_DIAG_MESSAGE || payload.len() < 4 {
+            continue;
+        }
+        let client_addr = LogicalAddress(u16::from_be_bytes([payload[0], payload[1]]));
+        let user_data = payload[4..].to_vec();
+        stream
+            .write_all(&build_diag_ack(SERVER_PHYSICAL, client_addr, &user_data))
+            .await
+            .expect("failed to send diag ack");
+
+        if user_data == UDS_TESTER_PRESENT {
+            tp_counter.fetch_add(1, COUNTER_ORDER);
+            continue;
+        }
+
+        if user_data == UDS_SLOW_REQ {
+            // Silence for `answer_after`, still acking anything that
+            // arrives (a TesterPresent would be acked and counted).
+            let deadline = tokio::time::Instant::now() + answer_after;
+            loop {
+                let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+                if remaining.is_zero() {
+                    break;
+                }
+                match timeout(remaining, read_frame(&mut stream)).await {
+                    Ok(Some((PT_DIAG_MESSAGE, pl))) if pl.len() >= 4 => {
+                        let a = LogicalAddress(u16::from_be_bytes([pl[0], pl[1]]));
+                        let u = pl[4..].to_vec();
+                        stream
+                            .write_all(&build_diag_ack(SERVER_PHYSICAL, a, &u))
+                            .await
+                            .expect("failed to ack during wait");
+                        if u == UDS_TESTER_PRESENT {
+                            tp_counter.fetch_add(1, COUNTER_ORDER);
+                        }
+                    }
+                    Ok(Some(_)) => {}
+                    Ok(None) => return,
+                    Err(_) => break,
+                }
+            }
+            stream
+                .write_all(&build_diag_msg(
+                    SERVER_PHYSICAL,
+                    CLIENT_LA,
+                    UDS_SLOW_FINAL_RSP,
+                ))
+                .await
+                .expect("failed to send final response");
+        }
+    }
+}
+
+/// A request that is merely *slow* — no NRC 0x78 — must still suppress
+/// the keepalive, and its response must reach the caller.
+///
+/// The bug this pins: the keepalive fired 2.02 s into a 2.04 s
+/// `TransferData` on a real sensor, landing between the request and its
+/// reply. The reply was lost to the caller, the flash reported "no
+/// response within 5s", and the sensor was left erased. The existing
+/// suppression only covered the NRC 0x78 path, which this ECU never
+/// used.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn tester_present_suppressed_during_a_slow_silent_response() {
+    let _ = tracing_subscriber::fmt().with_test_writer().try_init();
+
+    let listener = TcpListener::bind(("127.0.0.1", 0))
+        .await
+        .expect("failed to bind listener");
+    let port = listener.local_addr().unwrap().port();
+
+    let tp_counter = Arc::new(AtomicUsize::new(0));
+    let server_tp = Arc::clone(&tp_counter);
+    // Answer after 600 ms against a 200 ms interval: without
+    // suppression the keepalive would fire ~2 times inside the wait.
+    let server_task = tokio::spawn(async move {
+        run_slow_silent_server(listener, server_tp, Duration::from_millis(600)).await;
+    });
+
+    let client = connect_client(
+        port,
+        SessionConfig {
+            tester_present_interval: Duration::from_millis(200),
+            auto_tester_present: true,
+            auto_reconnect: false,
+            response_timeout: Duration::from_secs(30),
+            ..SessionConfig::default()
+        },
+    )
+    .await;
+
+    let tp_before = tp_counter.load(COUNTER_ORDER);
+
+    let response = timeout(
+        Duration::from_secs(30),
+        client.send_raw(UDS_SLOW_REQ.to_vec()),
+    )
+    .await
+    .expect("send_raw timed out — the slow response was lost")
+    .expect("send_raw failed");
+
+    // The response reaching the caller at all is half the regression:
+    // on the sensor it arrived on the wire and never got delivered.
+    assert_eq!(response, UDS_SLOW_FINAL_RSP);
+
+    let during = tp_counter.load(COUNTER_ORDER) - tp_before;
+    drop(client);
+    let _ = server_task.await;
+
+    assert_eq!(
+        during, 0,
+        "TesterPresent must be suppressed while a request awaits its response, got {during}",
+    );
+}
