@@ -988,7 +988,7 @@ where
         /// by a 5-second wait for in-flight messages, which bounds a healthy
         /// attempt at roughly this value. Any single attempt taking longer is
         /// almost certainly never returning.
-        const MAX_PER_ATTEMPT: Duration = Duration::from_secs(15);
+        const MAX_PER_ATTEMPT: Duration = Duration::from_secs(20);
 
         let start = Instant::now();
         let mut attempts = 0u32;
