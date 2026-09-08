@@ -183,8 +183,10 @@ The response window
    :tags: client; p_client
 
    The client shall maintain a single ``tP_Client`` timer for each logical communication
-   channel, in storage supplied by the caller. On initialisation no such timer shall be
-   running. Thereafter the state of a channel's timer shall be changed only as
+   channel, in storage supplied by the caller. The same storage shall hold whether a
+   start-of-message is open on that channel, as ``UDSS_LLR_0140`` requires of a physical
+   channel. On initialisation no such timer shall be running and no start-of-message shall
+   be open. Thereafter the state of a channel's timer shall be changed only as
    ``UDSS_LLR_0153``, ``UDSS_LLR_0154``, ``UDSS_LLR_0155``, ``UDSS_LLR_0156``,
    ``UDSS_LLR_0157`` and ``UDSS_LLR_0159`` require.
 
@@ -198,9 +200,11 @@ The response window
    the server's two timers for the same reason.
 
    The storage is the caller's because the number of channels is a property of the
-   deployment rather than of the protocol, and ``UDSS_LLR_0113`` makes this crate
-   allocation-free. Neither cited clause requires it; the standard states what timers are
-   needed, not where they live.
+   deployment rather than of the protocol, and the crate does not allocate. Neither cited
+   clause requires it; the standard states what timers are needed, not where they live.
+   The open start-of-message is kept here rather than in a table because a physical channel
+   has one peer and one outstanding request, so one fact suffices; ``UDSS_LLR_0160`` keeps
+   the same fact per responder on a functional channel.
 
 .. llr:: The response timer has two reload parameters
    :id: UDSS_LLR_0152
@@ -425,11 +429,11 @@ The response window
    :source: ISO 14229-2:2021 9.7 Table 9; ISO 14229-2:2021 10.3 Figure 19
    :tags: client; p_client
 
-   Where ``S_TAtype`` selects functional addressing and the request in progress on a channel
-   declared an exact expected response count, on the ``T_Data.ind`` that brings to that
-   number the responses received on that channel since that request was confirmed whose
-   reception succeeded and whose classification states kind ``final response`` and
-   ``solicited``, the client shall stop that channel's ``tP_Client`` timer.
+   On a functional channel where the request in progress declared an exact expected response
+   count, on the ``T_Data.ind`` that brings to that number the responses received on that
+   channel since that request was confirmed whose reception succeeded and whose
+   classification states kind ``final response`` and ``solicited``, the client shall stop
+   that channel's ``tP_Client`` timer.
 
    Figure 19 keys d and j both state it: the client only expected a response message from
    server #1, therefore it stops its ``tP_Client`` timer.
@@ -449,7 +453,12 @@ The response window
    rather than those received *for* the request. No requirement in this set associates an
    inbound indication with the request it answers, so the count is stated over what the
    session layer can observe: ``UDSS_LLR_0153`` fixes the start of the interval, and the
-   classification decides which messages within it count.
+   classification decides which messages within it count. A response whose start-of-message
+   arrived before this request was confirmed and whose completion arrives after it is
+   counted, being indistinguishable from one to this request. ISO 14229-2:2021 10.3 requires
+   a client to transmit its next request only once the previous one is completely handled,
+   which the qualification repository records as an assumption of use alongside one request
+   outstanding per channel; under it the case does not arise.
 
    The count advances on the ``T_Data.ind`` rather than on the first indication of a
    message, unlike ``UDSS_LLR_0154`` and ``UDSS_LLR_0155``. Figure 19 keys d and j both stop
@@ -579,10 +588,10 @@ Enhanced response timing
    :source: ISO 14229-2:2021 9.2 Table 3; ISO 14229-2:2021 9.4 Figure 8; ISO 14229-2:2021 10.1.3 Figure 11; ISO 14229-2:2021 10.2.3 Figure 16
    :tags: client; p_client; enhanced-response-timing
 
-   On the ``T_Data.ind`` reporting a response for the request in progress on a channel whose
-   reception succeeded and whose classification states kind ``response pending``, the client
+   On a ``T_Data.ind`` received on a channel with a request in progress, whose reception
+   succeeded and whose classification states kind ``response pending``, the client
    shall restart that channel's ``tP_Client`` timer loaded with the enhanced reload parameter.
-   This applies under either addressing mode.
+   This applies on either kind of channel.
 
    Table 3 defines ``tP2*_Client`` and ``tP6*_Client`` as the enhanced timeout for the
    client to wait, after the reception of a negative response message with response code
@@ -591,12 +600,15 @@ Enhanced response timing
    one step; Figure 16 key d states it for functional addressing; Figure 8 key d states that
    a further response-pending message within the window restarts it again.
 
-   The requirement is conditioned on a request being in progress so that a late or duplicate
-   response cannot restart a timer that has already stopped, which would open a response
-   window for an exchange that has ended and produce an expiry indication for it.
-   ``UDSS_LLR_0154`` and ``UDSS_LLR_0155`` carry the same condition; ``UDSS_LLR_0145`` is
-   the server's equivalent, excluding an unsolicited response from a rule about the request
-   being handled.
+   The requirement is conditioned on a request being in progress, as ``UDSS_LLR_0154`` and
+   ``UDSS_LLR_0155`` are, and phrased on the channel rather than on a response *for* the
+   request for the reason ``UDSS_LLR_0154`` gives. What the condition buys is exact: a
+   response arriving after the wait has ended acts on nothing, because no request is in
+   progress. One arriving during a later request on the same channel is indistinguishable
+   from a response to that request and is treated as one; the assumption of use that
+   ``UDSS_LLR_0156`` records, that a request is completely handled before the next is sent,
+   is what makes that acceptable. ``UDSS_LLR_0145`` is the server's equivalent, excluding an
+   unsolicited response from a rule about the request being handled.
 
    The enhanced window opens at the completion of the response-pending message, not at its
    start. Every cited source places the reload there: Table 3 defines the enhanced timeout
@@ -606,7 +618,7 @@ Enhanced response timing
    Where such a message arrives in more than one frame, the standard stops the timer at its
    start-of-message rather than reloading: Figure 8 key c does exactly that. ``UDSS_LLR_0154``
    and ``UDSS_LLR_0155`` act on a response-pending message only at its ``T_DataSOM.ind`` for
-   that reason, so under physical addressing the timer is stopped between the two
+   that reason, so on a physical channel the timer is stopped between the two
    indications, as Figure 8 shows, and the enhanced window opens when the message completes.
 
    The reception must have succeeded, as it must for ``UDSS_LLR_0156``'s count.
@@ -729,6 +741,6 @@ Enhanced response timing
    an unfinished request at once. Without the condition the elapsed time of that stopped timer
    would keep growing and this requirement would report an overrun that did not occur.
 
-   The timer is stopped so that one overrun yields one indication rather than a further
-   indication for every timestamp the caller supplies thereafter. Elapsed time is computed
-   as ``UDSS_LLR_0114`` requires.
+   The timer is stopped for the reason ``UDSS_LLR_0148`` gives, and elapsed time is computed
+   as ``UDSS_LLR_0114`` requires. Expiry ends the request in progress, so on a functional
+   channel it is also what empties the responder table under ``UDSS_LLR_0160``.
