@@ -515,6 +515,45 @@ Responders on a functional channel
    outstanding, so the only fact to hold is whether that peer's start-of-message is open,
    which ``UDSS_LLR_0151`` keeps with the channel's timer.
 
+.. llr:: A responder beyond the table's capacity is reported and not tracked
+   :id: UDSS_LLR_0161
+   :status: draft
+   :integrity_level: QM
+   :target_level: D
+   :origin: derived
+   :tags: client; p_client; responders
+
+   Where a ``T_DataSOM.ind``, or a ``T_Data.ind`` that ``UDSS_LLR_0158`` would record as an
+   outstanding response-pending message, arrives on a functional channel with a request in
+   progress from a responder with no entry and the responder table has no free entry, the
+   client shall record nothing for that responder, shall treat that indication and every
+   later indication from that responder as the first indication of a single-frame message
+   for as long as it has no entry, and shall deliver a **capacity indication** to the
+   application carrying the channel and the responder's ``S_AI[SA]`` and, where present,
+   ``S_AI[AE]``.
+
+   Rationale: an inbound indication cannot be refused the way ``UDSS_LLR_0150`` refuses a
+   caller's request, so the set has to say what the timer does with it. The choice here
+   confines the loss to the untracked responder. Its indications still act on the timer
+   under ``UDSS_LLR_0155``, each as a first indication. What is lost is that a
+   response-pending message from it does not put the enhanced value in force under
+   ``UDSS_LLR_0158``, and a completion from it is indistinguishable from a single-frame
+   message, so a multi-frame final response from it restarts the timer twice. That is a
+   deviation from ISO 14229-2:2021 10.2.3 Figure 16 for that responder alone, in a
+   deployment whose capacity was set below the number of servers a functional address
+   reaches at once.
+
+   The indication is how the application learns it. The session layer can observe the
+   shortfall and cannot correct it, so it reports and the application acts, as
+   ``UDSS_LLR_0112``, ``UDSS_LLR_0148`` and ``UDSS_LLR_0159`` do for the timers. Degrading
+   silently would hide the one configuration fault the integrator most needs to see, and
+   degrading the whole channel would discard tracking that was working because of one server
+   too many. The indication is delivered each time an entry cannot be created, so an
+   untracked responder that sends several messages may be reported several times; the
+   repetition is bounded by its messages and is itself the evidence of the shortfall. A
+   capacity of zero is a legal size for the caller's storage and reports every fact the
+   table would otherwise have kept.
+
 Enhanced response timing
 ------------------------
 
@@ -578,8 +617,9 @@ Enhanced response timing
    parameter while any entry in the channel's responder table records an outstanding
    response-pending message, and the default reload parameter otherwise.
 
-   A responder's response-pending message shall be recorded outstanding on a ``T_Data.ind``
-   from that responder whose reception succeeded and whose classification states kind
+   A responder's response-pending message shall be recorded outstanding, where
+   ``UDSS_LLR_0160`` provides an entry for that responder, on a ``T_Data.ind`` from that
+   responder whose reception succeeded and whose classification states kind
    ``response pending``, and shall cease to be outstanding on the first indication of any
    later message from that responder. Where one indication both ends an outstanding
    response-pending message and restarts the timer under ``UDSS_LLR_0155``, the reload
