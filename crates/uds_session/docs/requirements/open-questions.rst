@@ -5,9 +5,10 @@ Questions raised while authoring this set that are not yet settled, and agreed c
 not yet made. Each entry records what is at stake, which requirements it touches, and
 what would settle it.
 
-Most of these are held open deliberately. The set covers the server's session timer and
-the service interface; the client documents are unwritten, and several questions turn on
-what those documents need. Answering them now would mean guessing at requirements that
+Most of these are held open deliberately. The set covers the server's session timer,
+the service interface, and both roles' response timing; the client's session timer, request
+spacing and error handling documents are unwritten, and several questions turn on what those
+documents need. Answering them now would mean guessing at requirements that
 have not been read out of the standard yet.
 
 A question closes by being answered in a requirement, not here. When that happens the
@@ -72,53 +73,25 @@ The controlling client is the part that matters, and it is a question about the 
 session state as a whole rather than about any one requirement. Settled by the server
 session timer rework.
 
-Does anything but ``UDSS_LLR_0104`` need the frame distinction?
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Which constraints does the standard make checkable but allocate nothing for?
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-``UDSS_LLR_0140``'s closing paragraph classifies every ``T_Data.ind`` as single-frame or
-multi-frame according to whether a ``T_DataSOM.ind`` preceded it. That asserts more than
-the standard does. ISO 14229-2:2021 9.5 Table 6 gives a stop condition in terms of which
-primitive arrived, not in terms of a standing property of the message, and
-``UDSS_LLR_0104`` could name the two primitives directly and let the sentence go. The
-direction is agreed; what holds it open is scope.
+ISO 14229-2:2021 9.6 Tables 7 and 8 state the timer resources a conformant client and
+server need, and nothing else. Several rules elsewhere in the standard cost state those
+tables do not budget. Known members:
 
-ISO 14229-2:2021 9.7 Table 9 distinguishes an error during the reception of a *multi-frame*
-response message in its client rows. If the client requirements need that distinction,
-deleting the sentence trades an over-reach for a gap, and the distinction wants stating
-once rather than twice.
+- the minimum spacing between consecutive response-pending messages, a fraction of
+  ``tP2*_Server_Max`` that ``UDSS_LLR_0149`` enforces;
+- the at-most-two-repeats limit of 9.7 Table 9, which the client error handling cycle
+  will meet;
+- the pending list of 10.2.3 Figure 16 and 10.2.4 Figure 17, and the open start-of-message
+  per responder that the pairing rule in ``UDSS_LLR_0140`` needs, both of which
+  ``UDSS_LLR_0160`` keeps in caller-supplied storage.
 
-The client response timing document has now answered its half. ``UDSS_LLR_0154``,
-``UDSS_LLR_0155`` and ``UDSS_LLR_0157`` are phrased on which primitive arrived first for a
-message, not on a standing property of the message, so none of them needs the distinction.
-What remains is 9.7 Table 9, which distinguishes an error during the reception of a
-multi-frame response in its client rows, and that is the client error handling cycle's to
-weigh.
-
-Whatever survives has to be sound on a transport with no ``T_DataSOM.ind``. There a
-multi-frame message arrives as a single ``T_Data.ind`` and the session layer cannot
-observe its framing at all, so any rule phrased as a fact about the message will be false
-in that case, however it is worded.
-
-Should the enhanced window track which servers went response-pending?
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-``UDSS_LLR_0158`` keeps one bit per channel where ISO 14229-2:2021 10.2.3 Figure 16 keeps a
-list of the addresses of servers that have sent a response-pending message, and so reverts
-to the default reload value at the end of the request rather than when the last of those
-servers answers. 10.2.4 Figure 17 key t states the same rule the requirement declines to
-follow, so the deviation is against two figures rather than one.
-
-The bound is settled and is not what remains open: the requirement costs one bit, and no
-state in this set is sized by the deployment. What is open is whether the deviation is worth
-its cost. Under functional addressing with an unknown expected response count, the expiry of
-``UDSS_LLR_0159`` is the ordinary end of the exchange, and holding the enhanced value delays
-it by up to the difference between the two reload parameters.
-
-This is a member of the class of constraints the standard makes checkable while allocating
-no resource for it, alongside the ``0,3 × tP2*_Server_Max`` floor of ``UDSS_LLR_0149`` and
-the at-most-two-repeats limit of 9.7 Table 9. The class wants deciding together — whether
-these live behind one build-time switch — rather than one requirement at a time. Nothing
-here prevents that: requirements state behaviour, so a check may be compiled out.
+The set follows the behaviour in each case. What is open is whether the class as a whole
+sits behind one build-time switch, which wants deciding once the inventory is complete
+rather than one requirement at a time. Requirements state behaviour, so nothing prevents a
+check being compiled out.
 
 Should ISO 14229-2:2021 8.3's inconsistency be recorded?
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -212,22 +185,6 @@ instances, ``tP2_Server`` being touched by nearly every input this set defines.
 The answer likely wants stating once, as an interface-wide ordering clause in the service
 interface document, rather than as a rule per timer. That document's rework is where it
 belongs.
-
-What does a failed reception do to ``tP_Client`` under functional addressing?
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-``UDSS_LLR_0154`` stops the response window on a reception the transport reports as failed,
-which ISO 14229-2:2021 9.1.2 supports directly, its stop condition naming the arriving
-primitive and no property of the message. Under functional addressing ``UDSS_LLR_0155``
-restarts the timer instead and ``UDSS_LLR_0156`` does not count the failed reception toward
-the expected number, so the exchange runs to expiry.
-
-That is coherent, and it agrees with 9.7 Table 9 on the consequence: the client repeats the
-request once it has completely received any response message in progress. But no clause
-states a ``tP_Client`` effect for a failed reception under functional addressing, so the
-behaviour above is a consequence of how ``UDSS_LLR_0155`` is phrased rather than something
-transcribed. The client error handling cycle transcribes Table 9 and should confirm it, or
-state the effect directly.
 
 What bounds a message whose start was indicated but whose completion never comes?
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
