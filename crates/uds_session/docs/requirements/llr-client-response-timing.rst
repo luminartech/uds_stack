@@ -565,54 +565,56 @@ Enhanced response timing
    9.7 Table 9 answers with no retry, where the row the event actually falls under requires
    the client to repeat the request.
 
-.. llr:: The enhanced window stays in force for the rest of the request
+.. llr:: The enhanced window is in force while a responder is pending
    :id: UDSS_LLR_0158
    :status: draft
    :integrity_level: QM
    :target_level: D
-   :origin: derived
-   :tags: client; p_client; enhanced-response-timing
+   :origin: session-layer-standard
+   :source: ISO 14229-2:2021 10.2.3 Figure 16; ISO 14229-2:2021 10.2.4 Figure 17
+   :tags: client; p_client; enhanced-response-timing; responders
 
-   Where the ``T_Data.ind`` of a response-pending response has been received for the request
-   in progress on a channel, **the reload value in force** for that channel shall be the
-   enhanced reload parameter, until that request is no longer in progress. Otherwise it
-   shall be the default reload parameter.
+   On a functional channel, **the reload value in force** shall be the enhanced reload
+   parameter while any entry in the channel's responder table records an outstanding
+   response-pending message, and the default reload parameter otherwise.
 
-   Rationale: ISO 14229-2:2021 10.2.3 Figure 16 requires the client to keep a list of the
-   addresses of servers that have sent a response-pending message — keys d and i add and
-   remove entries — and to reload with the enhanced value while that list is non-empty and
-   with the default value once it empties. The size of such a list is fixed by how many
-   servers a functional address reaches, which is a property of the deployment and not of
-   the protocol, and ``UDSS_LLR_0113`` makes this crate allocation-free. This requirement
-   keeps one bit per channel instead.
+   A responder's response-pending message shall be recorded outstanding on a ``T_Data.ind``
+   from that responder whose reception succeeded and whose classification states kind
+   ``response pending``, and shall cease to be outstanding on the first indication of any
+   later message from that responder. Where one indication both ends an outstanding
+   response-pending message and restarts the timer under ``UDSS_LLR_0155``, the reload
+   value in force shall be determined after the former.
 
-   The consequence is a deliberate deviation, stated here rather than left to be discovered.
-   Figure 16 key i reverts to the default reload value when the last pending server answers,
-   and 10.2.4 Figure 17 key t states the same rule; this requirement reverts later, when the
-   request is no longer in progress. Between those two points the timer is reloaded with the
-   enhanced parameter where the standard would reload it with the default one.
+   Figure 16 key d adds an entry for the responding server's address when its
+   response-pending message completes and reloads the timer with the enhanced value; key i
+   removes the entry at the start-of-message of that server's next message, finds the list
+   empty, and reloads with the default value. Figure 17 keys m and t state the same in a
+   non-default session. Figure 16 key f shows the value being read between the two: another
+   server's start-of-message restarts the timer with the enhanced value while the list is
+   non-empty. ``UDSS_LLR_0155`` is where this value is read and ``UDSS_LLR_0160`` is where
+   the entries live.
 
-   The cost is not only that the client waits longer. Under physical addressing the
-   deviation is invisible: ``UDSS_LLR_0154`` stops the timer on the first indication of any
-   response other than the completion of a response-pending one, so the value in force is
-   never read.
+   The ordering sentence is what key i shows. The start-of-message that empties the list is
+   the same indication that restarts the timer, and the figure reloads it with the default
+   value, so the entry is removed before the value is read. Without the sentence the same
+   indication could be read either way.
 
-   Under functional addressing it is observable whenever the timer is reloaded after the
-   last server that went response-pending has answered but before the exchange has ended.
-   With an unknown expected response count, holding the enhanced value delays the expiry of
-   ``UDSS_LLR_0159``, which is the ordinary end of the exchange, by up to the difference
-   between the two parameters. With a known count the effect is sharper: a server still
-   outstanding is waited for under the enhanced window rather than the default one, so a
-   response arriving between the two parameters is accepted where the standard would have
-   timed out. That is a different outcome and not merely a later one, and it is the strongest
-   argument against this trade.
+   The entry is cleared by any later message from that responder, response-pending or not,
+   because key i clears at the start-of-message without qualifying what the message is.
+   Where a server's next message is a further response-pending one, the default value is in
+   force during its transfer and the enhanced value returns at its completion under the
+   first paragraph. That is the figures' rule applied as written; the set does not soften
+   it.
 
-   The requirement is derived rather than transcribed because it does not do what Figure 16
-   requires. Naming that figure as its source would describe a trace the requirement does
-   not honour.
+   The value in force is never read on a physical channel. ``UDSS_LLR_0157`` loads the
+   enhanced parameter directly, and ``UDSS_LLR_0154`` stops the timer on every other
+   indication that acts, so no restart on a physical channel consults it.
 
-   See :doc:`open-questions`, which records the deviation for review against the other
-   constraints of its kind.
+   The reception must have succeeded, as it must for ``UDSS_LLR_0157``. A failed reception
+   the caller labels ``response pending`` is a message that did not arrive, and putting the
+   enhanced value in force for it would lengthen the window for a response that was never
+   promised. A failed reception ends the request under ``UDSS_LLR_0155`` in any case, and
+   with it the table.
 
 .. llr:: Response timer expiry is indicated to the application
    :id: UDSS_LLR_0159
