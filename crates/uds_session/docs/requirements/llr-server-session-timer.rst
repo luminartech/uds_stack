@@ -80,10 +80,15 @@ whichever client sent it, because the timer does not run in that session at all.
    :source: ISO 14229-2:2021 9.5 Table 6
    :tags: server; s3_server
 
-   While in a non-default session, on ``T_DataSOM.ind`` indicating the start of a
-   multi-frame request message, or ``T_Data.ind`` indicating reception of a single-frame
-   request message, where the message's source address is the controlling client, the
-   server shall stop the ``tS3_Server`` timer.
+   While in a non-default session, on a ``T_DataSOM.ind`` or a ``T_Data.ind`` of a request
+   message whose source address is the controlling client, the server shall stop the
+   ``tS3_Server`` timer.
+
+   Both primitives are named without asking which kind of message a ``T_Data.ind`` reports.
+   Where a ``T_DataSOM.ind`` for the same request already stopped the timer, the
+   ``T_Data.ind`` completing it finds the timer stopped and changes nothing, so the server
+   needs no rule pairing the two indications; ``UDSS_LLR_0140`` states such a rule for the
+   client alone.
 
 .. llr:: Requests from other clients do not affect the session timer
    :id: UDSS_LLR_0105

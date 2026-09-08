@@ -233,9 +233,23 @@ Service primitives
      message;
    * ``T_Data.conf``, an input, reporting the outcome of a requested transmission.
 
-   The session layer shall treat a ``T_Data.ind`` preceded by a ``T_DataSOM.ind`` for the
-   same message as reporting a multi-frame message, and any other ``T_Data.ind`` as
-   reporting a single-frame message.
+   ``T_DataSOM.ind`` shall carry ``S_Mtype``, ``S_AI[TAtype]``, ``S_AI[SA]``, ``S_AI[TA]``
+   and, where ``S_Mtype`` requires it, ``S_AI[AE]``. It shall carry no data, length or
+   result.
+
+   At a client, every ``T_DataSOM.ind`` and ``T_Data.ind`` shall identify the logical
+   communication channel it belongs to, supplied by the caller. The client response timing
+   document defines the channel. Identifying a channel the client does not have shall be
+   rejected as ``UDSS_LLR_0150`` rejects an invalid request.
+
+   A ``T_DataSOM.ind`` shall open a start-of-message on its channel for the **responder**
+   identified by its ``S_AI[SA]`` and, where present, its ``S_AI[AE]``. A ``T_Data.ind``
+   shall **complete** the open start-of-message on the same channel from the same responder
+   where one exists, closing it, and shall otherwise report a **single-frame** message.
+   Throughout this set, the **first indication** of a message is its ``T_DataSOM.ind``, or
+   a ``T_Data.ind`` that completes no start-of-message; a **completion** is a ``T_Data.ind``
+   that completes one. A ``T_Data.ind`` from a responder for which no start-of-message is
+   open is therefore always a first indication.
 
    ``T_Data.req`` shall carry every parameter of the ``S_Data.req`` it is produced from,
    mapped as ``UDSS_LLR_0124`` requires. ``T_Data.conf`` shall carry ``T_Ptype``,
@@ -247,9 +261,35 @@ Service primitives
    ``T_DataSOM.ind``; clause 7.3 names ``T_Data.conf`` and establishes that a transmission
    request is passed to the transport layer; clause 9.2 Table 3 names that request
    ``T_Data.req``, in defining ``tP4_Server`` as the time between a ``T_Data.ind`` and the
-   ``T_Data.req`` that starts the final response. The single-frame and multi-frame reading
-   is stated because ``UDSS_LLR_0104`` distinguishes them and nothing else in this set
-   would let the session layer tell them apart.
+   ``T_Data.req`` that starts the final response.
+
+   Which parameters ``T_DataSOM.ind`` carries is stated here because the standard does not
+   say. Clause 7.3 keeps the indication inside the session layer and defines no mapping for
+   it onto an S_PDU; its Table 2 lists the transport parameters a message carries without
+   saying which of them the start-of-message reports. The addressing is what the pairing
+   below needs. A result is excluded because a start-of-message reports a reception that
+   has neither succeeded nor failed; the outcome is reported by the completion, and every
+   requirement in this set that acts on a failed reception acts on a ``T_Data.ind``.
+
+   The caller identifies the channel because the session layer cannot. Every response a
+   server sends is physically addressed to the client, whether the request that provoked it
+   was physical or functional, so a response from one server may belong to the physical
+   channel to that server or to a functional channel it was reached through, and nothing in
+   the indication says which. The caller that issued the request knows. Naming a channel
+   that does not exist is a caller error, not an input, and is treated as ``UDSS_LLR_0150``
+   treats one.
+
+   The pairing rule replaces an earlier sentence that classified a ``T_Data.ind`` as
+   multi-frame where a ``T_DataSOM.ind`` preceded it, without saying how the two were
+   matched. Table 3 makes single-frame against multi-frame the transport's distinction, and
+   on a functional channel the multi-frame responses of several servers may interleave, so
+   matching has to name the responder. The state this costs is stated with the client's
+   requirements: an entry per responder under ``UDSS_LLR_0160`` on a functional channel,
+   and one fact per channel under ``UDSS_LLR_0151`` on a physical one, where one peer
+   answers one outstanding request. The server needs none of it: its only start-of-message
+   effect, ``UDSS_LLR_0104``, stops a timer, which a second stop leaves stopped, so that
+   requirement names the two primitives directly and never asks which kind of message a
+   ``T_Data.ind`` completes.
 
    ``T_Data.conf``'s parameters are stated because the standard states them only by
    mapping: clause 7.6 has the ``S_Data.conf`` identify the ``S_Data.req`` it confirms by
