@@ -460,6 +460,61 @@ The response window
    that no further responses are expected and no retry is required, and where it does know,
    the timeout indicates that not all expected servers responded.
 
+Responders on a functional channel
+----------------------------------
+
+.. llr:: A functional channel keeps a table of its responders
+   :id: UDSS_LLR_0160
+   :status: draft
+   :integrity_level: QM
+   :target_level: D
+   :origin: derived
+   :tags: client; p_client; responders
+
+   Each functional channel shall have a **responder table** in storage supplied by the
+   caller, whose **capacity** is the number of entries that storage holds. An entry shall be
+   keyed by the ``S_AI[SA]`` and, where ``S_Mtype`` carries one, the ``S_AI[AE]`` of a
+   responder's indications, and shall record for that responder whether a start-of-message
+   is open under ``UDSS_LLR_0140`` and whether a response-pending message is outstanding
+   under ``UDSS_LLR_0158``.
+
+   An entry shall be created, where the table has a free entry, by the indication that
+   makes one of those facts true for a responder with no entry: a ``T_DataSOM.ind``, or a
+   ``T_Data.ind`` that ``UDSS_LLR_0158`` records as an outstanding response-pending
+   message. An entry shall be released when neither fact holds. The table shall be emptied
+   when the request on that channel is no longer in progress. A physical channel shall keep
+   no responder table.
+
+   Rationale: ISO 14229-2:2021 10.2.3 Figure 16 keys d and i, and 10.2.4 Figure 17 keys m
+   and t, require the client to add an entry for a server's address when its
+   response-pending message completes, to remove it at the start of that server's next
+   message, and to select the reload value by whether any entry remains. That is state per
+   responder, stated as client behaviour in both sessions. The open start-of-message is the
+   other fact ``UDSS_LLR_0140``'s pairing rule needs where the multi-frame responses of
+   several servers interleave on one channel; 10.2.2 Figure 15 key h is where the difference
+   shows, a completion taking no timer action where a first indication restarts the timer.
+
+   ISO 14229-2:2021 9.6 Table 7 allocates the client one ``tP_Client`` timer per channel and
+   no storage for either fact, so this requirement is derived: the set follows the behaviour
+   the figures state and records that the resource table omits it. It joins the class of
+   constraints the standard makes checkable while allocating nothing for them, which
+   :doc:`open-questions` inventories.
+
+   The storage is the caller's for the reason ``UDSS_LLR_0151`` gives for the timers: how
+   many servers answer behind a functional address is a property of the deployment, and the
+   crate does not allocate. The capacity is the storage's size rather than a protocol
+   parameter, there being nothing for the session layer to do with a number that differs
+   from what it was given.
+
+   An entry lives only while one of its facts holds, so the capacity bounds the responders
+   tracked at once rather than the responders that answer a request. A single-frame final
+   response opens nothing and leaves nothing outstanding, so it never occupies an entry and
+   can never be turned away. ``UDSS_LLR_0161`` states what happens when the table is full.
+
+   A physical channel needs no table. One peer answers on it and one request is
+   outstanding, so the only fact to hold is whether that peer's start-of-message is open,
+   which ``UDSS_LLR_0151`` keeps with the channel's timer.
+
 Enhanced response timing
 ------------------------
 
