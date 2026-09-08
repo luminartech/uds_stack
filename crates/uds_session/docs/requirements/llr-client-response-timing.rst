@@ -15,7 +15,7 @@ One request per channel
 
 ISO 14229-2:2021 9.6 Table 7 allocates a single ``tP_Client`` timer per logical
 communication channel, 9.7 Table 9 states the client's error handling in terms of repeating
-"the last request", and 10.3's note defines a request as completely handled — the condition
+the last request, and 10.3's note defines a request as completely handled — the condition
 on transmitting the next one — in terms of the responses to a single outstanding request.
 One request outstanding per channel is what those resources can express.
 
@@ -30,6 +30,33 @@ i, l and n transmit a functionally-addressed TesterPresent each time ``tS3_Clien
 and keys j, m and o restart only ``tS3_Client`` on its confirmation; no response is required
 of it, so no response window opens.
 
+The logical communication channel
+---------------------------------
+
+Throughout this document, a **logical communication channel** is identified by the
+addressing of the requests the client sends on it: ``S_Mtype``, ``S_AI[TAtype]``,
+``S_AI[TA]`` and, where ``S_Mtype`` carries one, ``S_AI[AE]``. A channel is a **physical
+channel** or a **functional channel** according to its ``S_AI[TAtype]``, taking the two
+values ``UDSS_LLR_0126`` defines. ISO 14229-2:2021 9.6 Table 7 speaks of each logical
+communication channel as physical or functional communication, a property of the channel
+rather than of any one request on it. The requirements below condition on the channel's
+kind, not on the ``S_TAtype`` of the indication in hand: every response a server sends is
+physically addressed, whatever the request was.
+
+The session layer cannot place an inbound indication on a channel by itself. A physically
+addressed response answers either the physical channel to that server or a functional
+channel the server was reached through, and nothing in the indication says which.
+``UDSS_LLR_0140`` therefore requires the caller to identify the channel each
+``T_DataSOM.ind`` and ``T_Data.ind`` belongs to. That requirement also settles which
+indication is the start of a message and which its completion, and this document uses its
+terms **first indication** and **completion** without restating them. An indication on a
+channel with no request in progress takes no timer action under any requirement below; it
+is forwarded to the application as ``UDSS_LLR_0137`` requires.
+
+On a functional channel many servers answer one request. Each is a **responder**, identified
+by the ``S_AI[SA]`` and, where ``S_Mtype`` carries one, the ``S_AI[AE]`` of its indications.
+``UDSS_LLR_0160`` keeps what the client must remember about each of them.
+
 The request in progress
 -----------------------
 
@@ -37,11 +64,11 @@ Throughout this document, the **request in progress** on a channel is the reques
 response the client is waiting for: from the ``T_Data.conf`` confirming its successful
 transmission until that wait ends.
 
-The wait ends where ``S_TAtype`` selects physical addressing, with the first indication for a
-message on that channel whose classification states kind ``final response`` and ``solicited``
-or states no kind; where ``S_TAtype`` selects functional addressing, when ``UDSS_LLR_0156``
-stops the timer; and under either addressing mode, when the response window expires under
-``UDSS_LLR_0159``.
+The wait ends on a physical channel with the first indication of a message whose
+classification states kind ``final response`` and ``solicited``; on a functional channel,
+when ``UDSS_LLR_0156`` stops the timer; and on either kind of channel, with any
+``T_Data.ind`` reporting a failed reception, whether first indication or completion, and
+when the response window expires under ``UDSS_LLR_0159``.
 
 An input that ends the wait is itself processed while the request is still in progress, so a
 requirement conditioned on the request in progress is eligible to act on it and the wait ends
@@ -52,17 +79,18 @@ A stopped timer does not by itself mean that no request is in progress. ``UDSS_L
 also stops the timer at the start-of-message of a response-pending message, which
 ISO 14229-2:2021 9.4 Figure 8 key c requires, and the request is still in progress across the
 gap that follows: the enhanced window opens at the completion of that message under
-``UDSS_LLR_0157``. The endpoint under physical addressing is stated on the indication itself
-rather than on a requirement acting, because ``UDSS_LLR_0154`` is scoped to the first
-indication of a message and so does not reach the completion of one whose start-of-message it
-already stopped the timer on. A response-pending message whose reception then fails carries no
-kind at that completion, which ``UDSS_LLR_0133`` permits, and an absent kind is one the
-condition above names, so the wait ends there — which is what 9.7 Table 9 requires of a
-failed reception, the client being obliged to repeat the request.
+``UDSS_LLR_0157``. The endpoint for a failed reception is stated on the indication itself
+rather than on a requirement acting, because ``UDSS_LLR_0154`` is scoped to a message's
+first indication and so does not reach the completion of one whose start-of-message it
+already stopped the timer on. Where that completion reports a failed reception the wait ends
+there, the timer already stopped and no requirement acting, which is what 9.7 Table 9
+requires of a failed reception, the client being obliged to repeat the request.
 
-Under functional addressing no single response ends the wait, ``UDSS_LLR_0155`` restarting the
-timer on each and ``UDSS_LLR_0156`` ending the exchange only once the expected number have
-arrived. Where that number is never reached the wait ends at expiry instead.
+On a functional channel no single response ends the wait, ``UDSS_LLR_0155`` restarting the
+timer on each first indication and ``UDSS_LLR_0156`` ending the exchange only once the
+expected number have arrived; where that number is never reached the wait ends at expiry
+instead. A failed reception ends it on either kind of channel, 9.7 Table 9 making the failure
+an event with its own handling rather than one the exchange waits through.
 
 An implementation therefore cannot treat the timer's running state as standing for the request
 in progress; the two are separate.
@@ -106,14 +134,12 @@ It does not need to. ``UDSS_LLR_0152`` takes one pair of reload parameters, defa
 enhanced, and the stop conditions below are phrased on the *first* of ``T_DataSOM.ind`` or
 ``T_Data.ind`` for a message. Where no ``T_DataSOM.ind`` ever arrives the rule degenerates
 to the ``T_Data.ind`` case exactly. This is the standard's own construction rather than an
-inference: 10.1.3 Figure 11 key g stops the timer at the start-of-message "if the transport
-layer supports the ``T_DataSOM.ind`` interfaces", and key h stops it at the indication "if
-the transport protocol does not support a ``T_DataSOM.ind`` interface".
+inference: 10.1.3 Figure 11 key g stops the timer at the start-of-message on a transport
+that provides one, and key h stops it at the completion indication on a transport that does
+not.
 
-``UDSS_LLR_0140`` supplies the pairing this rule depends on, treating a ``T_Data.ind``
-preceded by a ``T_DataSOM.ind`` for the same message as that message's completion. A
-``T_Data.ind`` with no such start-of-message is therefore its message's first indication by
-construction, not by assumption.
+``UDSS_LLR_0140`` supplies the pairing this rule depends on. A ``T_Data.ind`` that completes
+no open start-of-message is its message's first indication by that rule, not by assumption.
 
 What this document does not cover
 ---------------------------------
@@ -133,9 +159,9 @@ separate timers with their own documents.
 
 ISO 14229-2:2021 9.7 Table 9 states both what a response timeout means and what the client
 must do about it — repeat the request, at most twice, restarting ``tS3_Client`` where the
-request was a sequentially-transmitted TesterPresent. This document states the meaning,
-because the timer cannot be specified without it. The consequences belong to the client
-error handling document, which transcribes Table 9 whole.
+request was a physically addressed, sequentially transmitted TesterPresent. This document
+states the meaning, because the timer cannot be specified without it. The consequences
+belong to the client error handling document, which transcribes Table 9 whole.
 
 ISO 14229-2:2021 10.1.4 and 10.2.4 each state that the client's reload values may differ in a
 non-default session, the applicable ``tP_Client`` parameters being reported to the client by
