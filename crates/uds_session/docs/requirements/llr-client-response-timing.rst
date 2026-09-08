@@ -285,8 +285,8 @@ The response window
    On the first indication of a message on a physical channel with a request in progress,
    the client shall stop that channel's ``tP_Client`` timer where:
 
-   * the classification of that indication states kind ``final response`` and
-     ``solicited``;
+   * the indication reports a successful reception and its classification states kind
+     ``final response`` and ``solicited``;
    * the indication is a ``T_DataSOM.ind`` whose classification states kind
      ``response pending``; or
    * the indication is a ``T_Data.ind`` reporting a failed reception.
@@ -302,10 +302,11 @@ The response window
    message does not close the window: ``UDSS_LLR_0157`` reloads the timer at that point,
    because the response the client is waiting for has not arrived.
 
-   The condition is in two parts because the session layer decides them from different
-   inputs. A request in progress is a property of the channel; which messages act on the
-   timer is settled by the classification and the reception result. The requirement is not
-   phrased on a response *for* the request in progress, which names the right message but
+   The condition separates the channel from the indication because the session layer
+   decides them from different inputs. A request in progress is a property of the
+   channel; which messages act on the timer is settled by the classification and the
+   reception result. The requirement is not phrased on a response *for* the request in
+   progress, which names the right message but
    gives the session layer no way to recognise it: ``UDSS_LLR_0135`` forbids reading the
    message, no requirement in this set associates an inbound indication with the request it
    answers, and the channel is already this requirement's scope, so the phrase would reduce
@@ -333,6 +334,9 @@ The response window
    caller state or omit the kind on a failed reception, and the timer must behave the same
    either way. Only a ``T_Data.ind`` can report a failure, ``UDSS_LLR_0140`` giving the
    start-of-message no result. The handling belongs to the client error handling document.
+   The first condition asks for a successful reception so that a failed ``T_Data.ind`` the
+   caller has also classified falls under the third alone; a ``T_DataSOM.ind``, carrying
+   no result, satisfies the first.
 
    Where a failed reception instead completes a message whose start-of-message already
    stopped the timer, this requirement does not act, being scoped to a message's first
@@ -352,8 +356,8 @@ The response window
    the client shall restart that channel's ``tP_Client`` timer loaded with the reload value
    in force where:
 
-   * the classification of that indication states kind ``final response`` and
-     ``solicited``; or
+   * the indication reports a successful reception and its classification states kind
+     ``final response`` and ``solicited``; or
    * the indication is a ``T_DataSOM.ind`` whose classification states kind
      ``response pending``.
 
