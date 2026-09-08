@@ -273,27 +273,29 @@ The response window
    carried by an ``S_Data.req`` with the ``T_Data.conf`` reporting the outcome of the
    transmission it requested.
 
-.. llr:: A physically-addressed response closes the response window
+.. llr:: A response on a physical channel closes the response window
    :id: UDSS_LLR_0154
    :status: draft
    :integrity_level: QM
    :target_level: D
    :origin: session-layer-standard
-   :source: ISO 14229-2:2021 9.1.2; ISO 14229-2:2021 10.1.1 Figure 9; ISO 14229-2:2021 10.1.2 Figure 10; ISO 14229-2:2021 10.1.3 Figure 11
+   :source: ISO 14229-2:2021 9.1.2; ISO 14229-2:2021 9.7 Table 9; ISO 14229-2:2021 10.1.1 Figure 9; ISO 14229-2:2021 10.1.2 Figure 10; ISO 14229-2:2021 10.1.3 Figure 11
    :tags: client; p_client
 
-   Where ``S_TAtype`` selects physical addressing, on the first of ``T_DataSOM.ind`` or
-   ``T_Data.ind`` for a message received on a channel with a request in progress, the client
-   shall stop that channel's ``tP_Client`` timer where the classification of that indication:
+   On the first indication of a message on a physical channel with a request in progress,
+   the client shall stop that channel's ``tP_Client`` timer where:
 
-   * states kind ``final response`` and ``solicited``;
-   * states no kind; or
-   * states kind ``response pending`` and the indication is a ``T_DataSOM.ind``.
+   * the classification of that indication states kind ``final response`` and
+     ``solicited``;
+   * the indication is a ``T_DataSOM.ind`` whose classification states kind
+     ``response pending``; or
+   * the indication is a ``T_Data.ind`` reporting a failed reception.
 
-   Clause 9.1.2 states the stop without qualification, at either the ``T_DataSOM.ind`` or
-   the ``T_Data.ind``, and Figures 9, 10 and 11 show it in both forms: Figure 11 key g stops
-   at the start-of-message where the transport supports one, and key h stops at the
-   indication where it does not.
+   Clause 9.1.2 states the stop without qualification, at either the start-of-message or
+   the completion indication according to what the transport provides, and Figures 9, 10
+   and 11 show it in both forms: Figure 9 key d and Figure 11 key h stop at the completion
+   where there is no start-of-message, Figure 10 key e and Figure 11 key g stop at the
+   start-of-message where there is one.
 
    The requirement is phrased on the arriving primitive rather than on what the message
    turned out to be, which is what the clause does. The completion of a response-pending
@@ -302,12 +304,12 @@ The response window
 
    The condition is in two parts because the session layer decides them from different
    inputs. A request in progress is a property of the channel; which messages act on the
-   timer is settled by the classification. The requirement is not phrased on a response
-   *for* the request in progress, which names the right message but gives the session layer
-   no way to recognise it: ``UDSS_LLR_0135`` forbids reading the message, no requirement in
-   this set associates an inbound indication with the request it answers, and the channel is
-   already this requirement's scope, so the phrase would reduce to "any response on this
-   channel".
+   timer is settled by the classification and the reception result. The requirement is not
+   phrased on a response *for* the request in progress, which names the right message but
+   gives the session layer no way to recognise it: ``UDSS_LLR_0135`` forbids reading the
+   message, no requirement in this set associates an inbound indication with the request it
+   answers, and the channel is already this requirement's scope, so the phrase would reduce
+   to any response on this channel.
 
    The final response must therefore be solicited. ``UDSS_LLR_0134`` marks a periodically
    transmitted positive response both a final response and unsolicited, and such a message
@@ -316,56 +318,65 @@ The response window
    error condition ISO 14229-2:2021 9.1.2 requires to be detected would go unreported.
    ``UDSS_LLR_0145`` takes the same qualifier against the same hazard on the server's timer.
    It attaches to the final response alone: ``UDSS_LLR_0134`` states solicitation only for
-   that kind, a response-pending message being by construction a reply to a request, and a
-   classification with no kind carries none either.
+   that kind, a response-pending message being by construction a reply to a request.
 
-   The third condition admits only the ``T_DataSOM.ind`` because the start-of-message of a
+   The second condition admits only the ``T_DataSOM.ind`` because the start-of-message of a
    response-pending message does stop the timer. Figure 8 key c stops it there and key d
    opens the enhanced window at the completion, so the two indications of one such message
    have different effects.
 
-   A reception the transport reports as failed closes the window too, under the second
-   condition, where it is the first indication of its message. ``UDSS_LLR_0133`` permits such
-   an indication to carry no kind at a client, which is deliberate — a client whose transport
-   reports a broken reception may be unable to tell a final response from a response-pending
-   one. ISO 14229-2:2021 9.7 Table 9 agrees that the wait is over, giving that event a
-   handling of its own; the handling belongs to the client error handling document.
+   The third condition is stated on the strength of two locators rather than transcribed
+   from either. Clause 9.1.2 stops the timer on the indication and says nothing about its
+   result, and 9.7 Table 9 gives a failed reception its own row, requiring the client to
+   repeat the request; between them the wait is over, and this requirement says so. It is
+   conditioned on the result rather than on the kind because ``UDSS_LLR_0133`` lets the
+   caller state or omit the kind on a failed reception, and the timer must behave the same
+   either way. Only a ``T_Data.ind`` can report a failure, ``UDSS_LLR_0140`` giving the
+   start-of-message no result. The handling belongs to the client error handling document.
 
-   Where such a reception instead completes a message whose start-of-message already stopped
-   the timer, this requirement does not act, being scoped to a message's first indication. The
-   preamble's definition ends the wait there, the timer already being stopped, so no
-   requirement need act at all.
+   Where a failed reception instead completes a message whose start-of-message already
+   stopped the timer, this requirement does not act, being scoped to a message's first
+   indication. The preamble's definition ends the wait there, the timer already being
+   stopped, so no requirement need act at all.
 
-.. llr:: A functionally-addressed response extends the response window
+.. llr:: A response on a functional channel extends the response window
    :id: UDSS_LLR_0155
    :status: draft
    :integrity_level: QM
    :target_level: D
    :origin: session-layer-standard
-   :source: ISO 14229-2:2021 10.2.1 Figure 14; ISO 14229-2:2021 10.2.2 Figure 15; ISO 14229-2:2021 10.2.3 Figure 16
+   :source: ISO 14229-2:2021 9.7 Table 9; ISO 14229-2:2021 10.2.1 Figure 14; ISO 14229-2:2021 10.2.2 Figure 15; ISO 14229-2:2021 10.2.3 Figure 16
    :tags: client; p_client
 
-   Where ``S_TAtype`` selects functional addressing, on the first of ``T_DataSOM.ind`` or
-   ``T_Data.ind`` for a message received on a channel with a request in progress, the client
-   shall restart that channel's ``tP_Client`` timer loaded with the reload value in force
-   where the classification of that indication:
+   On the first indication of a message on a functional channel with a request in progress,
+   the client shall restart that channel's ``tP_Client`` timer loaded with the reload value
+   in force where:
 
-   * states kind ``final response`` and ``solicited``;
-   * states no kind; or
-   * states kind ``response pending`` and the indication is a ``T_DataSOM.ind``.
+   * the classification of that indication states kind ``final response`` and
+     ``solicited``; or
+   * the indication is a ``T_DataSOM.ind`` whose classification states kind
+     ``response pending``.
 
-   Where ``UDSS_LLR_0156`` requires the timer to be stopped, the client shall not restart it.
+   Where ``UDSS_LLR_0156`` requires the timer to be stopped, the client shall not restart
+   it.
 
-   Figure 14 keys e and f and Figure 15 keys d and f each restart the timer on the reception
-   of a response; Figure 16 key f does the same within an enhanced window, and key i on its
-   exit.
+   On a ``T_Data.ind`` reporting a failed reception on a functional channel with a request
+   in progress, whether first indication or completion, the client shall stop that channel's
+   ``tP_Client`` timer.
 
-   The timer therefore carries opposite meanings under the two addressing modes, selected by
-   the ``S_TAtype`` of ``UDSS_LLR_0126``. Physically a response ends the wait and expiry is
-   a failure; functionally a response extends the wait, because a functionally-addressed
-   request reaches many servers and each may answer. These are two requirements rather than
-   one conditioned requirement because the conditions are disjoint and the effects are
-   unrelated.
+   Figure 14 keys e and f and Figure 15 keys d and f each restart the timer on the first
+   indication of a response; Figure 16 key f does the same within an enhanced window, and
+   key i on its exit. Figure 15 key h takes no timer action at a completion whose
+   start-of-message already restarted the timer, which is why the restart is stated on the
+   first indication alone. Figures 14 and 15 show an exchange whose expected count is
+   unknown, ending by timeout at keys g and i; Figure 19 shows the known count that
+   ``UDSS_LLR_0156`` stops on, and the two do not conflict.
+
+   The timer therefore carries opposite meanings on the two kinds of channel. On a physical
+   channel a response ends the wait and expiry is a failure; on a functional channel a
+   response extends the wait, because a functionally-addressed request reaches many servers
+   and each may answer. These are two requirements rather than one conditioned requirement
+   because the conditions are disjoint and the effects are unrelated.
 
    The exception for ``UDSS_LLR_0156`` prevents an overlap: the response that completes an
    expected count arrives as an ordinary response and would otherwise satisfy both
@@ -375,7 +386,8 @@ The response window
    The treatment of a response-pending message is the one ``UDSS_LLR_0154`` gives, admitting
    only the ``T_DataSOM.ind`` for the same reason: the start-of-message of such a message
    restarts the timer under this requirement, and only its completion hands control to
-   ``UDSS_LLR_0157``. Such a response does not count toward ``UDSS_LLR_0156``.
+   ``UDSS_LLR_0157`` and ``UDSS_LLR_0158``. Such a response does not count toward
+   ``UDSS_LLR_0156``.
 
    The solicitation qualifier is likewise the one ``UDSS_LLR_0154`` carries, for the reason
    given there. Its consequence here is milder in one direction and sharper in the other: an
@@ -384,24 +396,21 @@ The response window
    exchange before every addressed server has answered. An unsolicited response accordingly
    takes no timer action at all under either requirement.
 
-   "The first of" is per message, matched by address, not per channel. Two multi-frame
-   responses from different servers may interleave on one functional channel, and the
-   start-of-message of the second is the first indication of that message even though an
-   indication for the first has already been seen. Figure 15 key h confirms the reading in
-   the simple case, taking no timer action at a ``T_Data.ind`` whose ``T_DataSOM.ind``
-   already restarted the timer.
+   A failed reception stops the timer on a functional channel as on a physical one, and for
+   the same two locators. 9.7 Table 9's functional response-reception row requires the client
+   to repeat the request once it has completely received any response in progress at the
+   moment of the error, which makes the failure the event that ends this exchange rather
+   than one the exchange waits through. Letting the timer run on to expiry instead would
+   surface one event to the application twice, once as the failed reception and once as a
+   timeout, under two rows of a table that caps the client's repeats at two. The stop is
+   stated on the ``T_Data.ind`` whether first indication or completion, and on the result
+   rather than the kind, for the reasons ``UDSS_LLR_0154`` gives. What the client does next
+   belongs to the client error handling document.
 
-   An address's message is closed by its ``T_Data.ind``, so the next indication from that
-   address begins a new message. ``UDSS_LLR_0140`` supplies the pairing, treating a
-   ``T_Data.ind`` preceded by a ``T_DataSOM.ind`` for the same message as that message's
-   completion. Without the closing rule a server that sends a response-pending message and
-   later its final response, as in Figure 16 keys d and i, would have the second message's
-   start-of-message read as a continuation of the first.
-
-   Clause 9.1.2 states the stop without qualification, as ``UDSS_LLR_0154`` records. This
-   requirement departs from it: under functional addressing the figures restart the timer
-   instead, because such a request reaches many servers and a stop on the first response would
-   end a wait the remaining servers have not yet had their chance to satisfy.
+   Clause 9.1.2 states a stop for every indication, as ``UDSS_LLR_0154`` records. The
+   restart in this requirement departs from it: on a functional channel the figures restart
+   the timer instead, because a stop on the first response would end a wait the remaining
+   servers have not yet had their chance to satisfy.
 
 .. llr:: Receiving every expected response closes the window
    :id: UDSS_LLR_0156

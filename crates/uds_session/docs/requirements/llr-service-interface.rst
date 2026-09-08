@@ -829,10 +829,10 @@ and leaves the means of recognising it to the implementation.
 
    The kind shall be absent only where ``UDSS_LLR_0133`` permits it: on a ``T_Data.ind``
    reporting an unsuccessful reception of a message that was not addressed to a server. No
-   requirement in this set requires the kind of such a message to be determinable:
-   ``UDSS_LLR_0154``, ``UDSS_LLR_0155`` and ``UDSS_LLR_0156`` name an absent kind in their
-   own conditions, and ``UDSS_LLR_0157`` acts only on a kind that is present, so the
-   behaviour is defined without it. Stating the exception this way
+   requirement in this set conditions on the kind of such a message: ``UDSS_LLR_0154`` and
+   ``UDSS_LLR_0155`` act on a failed reception by its result, and ``UDSS_LLR_0156``,
+   ``UDSS_LLR_0157`` and ``UDSS_LLR_0158`` act only on a reception that succeeded, so the
+   behaviour is defined whether the kind is stated or not. Stating the exception this way
    keeps the three values above a closed set, which every requirement conditioning on kind
    relies on.
 
