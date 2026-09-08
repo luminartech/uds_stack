@@ -183,10 +183,11 @@ The response window
    :tags: client; p_client
 
    The client shall maintain a single ``tP_Client`` timer for each logical communication
-   channel, in storage supplied by the caller. The same storage shall hold whether a
-   start-of-message is open on that channel, as ``UDSS_LLR_0140`` requires of a physical
-   channel. On initialisation no such timer shall be running and no start-of-message shall
-   be open. Thereafter the state of a channel's timer shall be changed only as
+   channel, in storage supplied by the caller. On a physical channel the same storage shall
+   hold whether a start-of-message is open on that channel, as ``UDSS_LLR_0140`` requires;
+   on a functional channel ``UDSS_LLR_0160`` holds that fact per responder instead. On
+   initialisation no such timer shall be running and no start-of-message shall be open.
+   Thereafter the state of a channel's timer shall be changed only as
    ``UDSS_LLR_0153``, ``UDSS_LLR_0154``, ``UDSS_LLR_0155``, ``UDSS_LLR_0156``,
    ``UDSS_LLR_0157`` and ``UDSS_LLR_0159`` require.
 
