@@ -186,6 +186,28 @@ The answer likely wants stating once, as an interface-wide ordering clause in th
 interface document, rather than as a rule per timer. That document's rework is where it
 belongs.
 
+How does the client finish receiving responses in progress before it repeats a request?
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+ISO 14229-2:2021 9.7 Table 9 requires a client, on a functional channel, to completely
+receive any response message in progress before it repeats the request, both after a
+response timeout and after a failed reception. Whether a response is in progress is what an
+open start-of-message records, and only the session layer sees start-of-message indications,
+clause 7.3 keeping them from the application.
+
+The set discards that record at exactly the two events Table 9 attaches the obligation to.
+``UDSS_LLR_0155`` stops the timer on a failed reception and ends the request, and
+``UDSS_LLR_0159`` ends it at expiry; ``UDSS_LLR_0160`` then holds no entries, and neither the
+response-timing indication nor the forwarded failed reception says how many responses were
+still arriving. The application is left to repeat without the information the standard says
+it must wait on.
+
+Two shapes of answer are visible. The responder table could keep its open start-of-message
+entries past the end of the request until each completes or fails, with the timer stopped;
+or the two indications could carry the count of responses in progress at that moment and
+leave the waiting to the application. The client error handling cycle transcribes Table 9
+and should choose.
+
 What bounds a message whose start was indicated but whose completion never comes?
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 

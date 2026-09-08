@@ -40,8 +40,10 @@ channel** or a **functional channel** according to its ``S_AI[TAtype]``, taking 
 values ``UDSS_LLR_0126`` defines. ISO 14229-2:2021 9.6 Table 7 speaks of each logical
 communication channel as physical or functional communication, a property of the channel
 rather than of any one request on it. The requirements below condition on the channel's
-kind, not on the ``S_TAtype`` of the indication in hand: every response a server sends is
-physically addressed, whatever the request was.
+kind, not on the ``S_TAtype`` of the indication in hand: a server answers the one client
+that asked, so every response arrives physically addressed whatever the request was. That is
+an observation about how servers answer, which this set relies on; ISO 14229-2:2021 states
+the client's timing on that footing without saying so.
 
 The session layer cannot place an inbound indication on a channel by itself. A physically
 addressed response answers either the physical channel to that server or a functional
@@ -186,7 +188,8 @@ The response window
    channel, in storage supplied by the caller. On a physical channel the same storage shall
    hold whether a start-of-message is open on that channel, as ``UDSS_LLR_0140`` requires;
    on a functional channel ``UDSS_LLR_0160`` holds that fact per responder instead. On
-   initialisation no such timer shall be running and no start-of-message shall be open.
+   initialisation no such timer shall be running and no start-of-message shall be open, and
+   no start-of-message shall be held open on a channel while no request is in progress on it.
    Thereafter the state of a channel's timer shall be changed only as
    ``UDSS_LLR_0153``, ``UDSS_LLR_0154``, ``UDSS_LLR_0155``, ``UDSS_LLR_0156``,
    ``UDSS_LLR_0157`` and ``UDSS_LLR_0159`` require.
@@ -290,8 +293,8 @@ The response window
    On the first indication of a message on a physical channel with a request in progress,
    the client shall stop that channel's ``tP_Client`` timer where:
 
-   * the indication reports a successful reception and its classification states kind
-     ``final response`` and ``solicited``;
+   * the indication is a ``T_DataSOM.ind``, or a ``T_Data.ind`` reporting a successful
+     reception, and its classification states kind ``final response`` and ``solicited``;
    * the indication is a ``T_DataSOM.ind`` whose classification states kind
      ``response pending``; or
    * the indication is a ``T_Data.ind`` reporting a failed reception.
@@ -339,9 +342,9 @@ The response window
    caller state or omit the kind on a failed reception, and the timer must behave the same
    either way. Only a ``T_Data.ind`` can report a failure, ``UDSS_LLR_0140`` giving the
    start-of-message no result. The handling belongs to the client error handling document.
-   The first condition asks for a successful reception so that a failed ``T_Data.ind`` the
-   caller has also classified falls under the third alone; a ``T_DataSOM.ind``, carrying
-   no result, satisfies the first.
+   The first condition names the primitives so that a failed ``T_Data.ind`` the caller has
+   also classified falls under the third alone. A ``T_DataSOM.ind`` carries no result under
+   ``UDSS_LLR_0140`` and is admitted as such.
 
    Where a failed reception instead completes a message whose start-of-message already
    stopped the timer, this requirement does not act, being scoped to a message's first
@@ -361,8 +364,8 @@ The response window
    the client shall restart that channel's ``tP_Client`` timer loaded with the reload value
    in force where:
 
-   * the indication reports a successful reception and its classification states kind
-     ``final response`` and ``solicited``; or
+   * the indication is a ``T_DataSOM.ind``, or a ``T_Data.ind`` reporting a successful
+     reception, and its classification states kind ``final response`` and ``solicited``; or
    * the indication is a ``T_DataSOM.ind`` whose classification states kind
      ``response pending``.
 
@@ -501,12 +504,13 @@ Responders on a functional channel
    is open under ``UDSS_LLR_0140`` and whether a response-pending message is outstanding
    under ``UDSS_LLR_0158``.
 
-   An entry shall be created, where the table has a free entry, by the indication that
-   makes one of those facts true for a responder with no entry: a ``T_DataSOM.ind``, or a
-   ``T_Data.ind`` that ``UDSS_LLR_0158`` records as an outstanding response-pending
-   message. An entry shall be released when neither fact holds. The table shall be emptied
-   when the request on that channel is no longer in progress. A physical channel shall keep
-   no responder table.
+   An entry shall be created, on a channel with a request in progress and where the table
+   has a free entry, by the indication that makes one of those facts true for a responder
+   with no entry: a ``T_DataSOM.ind``, or a ``T_Data.ind`` that ``UDSS_LLR_0158`` records
+   as an outstanding response-pending message. Where one indication changes both facts of
+   an entry, the changes shall be applied together. An entry shall be released when neither
+   fact holds. The table shall hold no entries while no request is in progress on that
+   channel. A physical channel shall keep no responder table.
 
    Rationale: ISO 14229-2:2021 10.2.3 Figure 16 keys d and i, and 10.2.4 Figure 17 keys m
    and t, require the client to add an entry for a server's address when its
@@ -549,11 +553,11 @@ Responders on a functional channel
    Where a ``T_DataSOM.ind``, or a ``T_Data.ind`` that ``UDSS_LLR_0158`` would record as an
    outstanding response-pending message, arrives on a functional channel with a request in
    progress from a responder with no entry and the responder table has no free entry, the
-   client shall record nothing for that responder, shall treat that indication and every
-   later indication from that responder as the first indication of a single-frame message
-   for as long as it has no entry, and shall deliver a **capacity indication** to the
-   application carrying the channel and the responder's ``S_AI[SA]`` and, where present,
-   ``S_AI[AE]``.
+   client shall record nothing for that responder, shall treat that indication as a first
+   indication and every later ``T_Data.ind`` from that responder as the first indication of
+   a single-frame message for as long as it has no entry, and shall deliver a **capacity
+   indication** to the application carrying the channel and the responder's ``S_AI[SA]``
+   and, where present, ``S_AI[AE]``.
 
    Rationale: an inbound indication cannot be refused the way ``UDSS_LLR_0150`` refuses a
    caller's request, so the set has to say what the timer does with it. The choice here
@@ -643,13 +647,13 @@ Enhanced response timing
    parameter while any entry in the channel's responder table records an outstanding
    response-pending message, and the default reload parameter otherwise.
 
-   A responder's response-pending message shall be recorded outstanding, where
-   ``UDSS_LLR_0160`` provides an entry for that responder, on a ``T_Data.ind`` from that
-   responder whose reception succeeded and whose classification states kind
-   ``response pending``, and shall cease to be outstanding on the first indication of any
-   later message from that responder. Where one indication both ends an outstanding
-   response-pending message and restarts the timer under ``UDSS_LLR_0155``, the reload
-   value in force shall be determined after the former.
+   A responder's response-pending message shall be recorded outstanding, on a channel with
+   a request in progress and where ``UDSS_LLR_0160`` provides an entry for that responder,
+   on a ``T_Data.ind`` from that responder whose reception succeeded and whose
+   classification states kind ``response pending``, and shall cease to be outstanding on
+   the first indication of any later message from that responder. Where one indication both
+   ends an outstanding response-pending message and restarts the timer under
+   ``UDSS_LLR_0155``, the reload value in force shall be determined after the former.
 
    Figure 16 key d adds an entry for the responding server's address when its
    response-pending message completes and reloads the timer with the enhanced value; key i

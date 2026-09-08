@@ -271,13 +271,14 @@ Service primitives
    has neither succeeded nor failed; the outcome is reported by the completion, and every
    requirement in this set that acts on a failed reception acts on a ``T_Data.ind``.
 
-   The caller identifies the channel because the session layer cannot. Every response a
-   server sends is physically addressed to the client, whether the request that provoked it
-   was physical or functional, so a response from one server may belong to the physical
-   channel to that server or to a functional channel it was reached through, and nothing in
-   the indication says which. The caller that issued the request knows. Naming a channel
-   that does not exist is a caller error, not an input, and is treated as ``UDSS_LLR_0150``
-   treats one.
+   The caller identifies the channel because the session layer cannot. A server answers the
+   one client that asked, so every response it sends is physically addressed to the client
+   whether the request that provoked it was physical or functional, an observation this set
+   relies on rather than one the standard states; a response from one server may belong to
+   the physical channel to that server or to a functional channel it was reached through,
+   and nothing in the indication says which. The caller that issued the request knows.
+   Naming a channel that does not exist is a caller error, not an input, and is treated as
+   ``UDSS_LLR_0150`` treats one.
 
    The pairing rule replaces an earlier sentence that classified a ``T_Data.ind`` as
    multi-frame where a ``T_DataSOM.ind`` preceded it, without saying how the two were
