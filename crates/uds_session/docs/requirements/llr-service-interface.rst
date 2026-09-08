@@ -807,8 +807,11 @@ and leaves the means of recognising it to the implementation.
    A message classification shall consist of a kind and, where the message effects a
    transition to a diagnostic session, a session selection. The kind shall be one of:
 
-   * ``request``, a message sent by a client to a server, which shall further state the
-     number of responses expected: ``none``, an exact number, or ``unknown``;
+   * ``request``, a message sent by a client to a server. On ``S_Data.req``, and on the
+     ``T_Data.conf`` that ``UDSS_LLR_0133`` associates with it, a request classification
+     shall further state the number of responses expected: ``none``, an exact number, or
+     ``unknown``. A request classification supplied at a server, on ``T_DataSOM.ind`` or
+     ``T_Data.ind``, states no count;
    * ``final response``, a positive response, or a negative response whose response code
      is not ``requestCorrectlyReceived-ResponsePending``;
    * ``response pending``, a negative response whose response code is
@@ -816,7 +819,7 @@ and leaves the means of recognising it to the implementation.
 
    The expected response count is stated by the client and has no server-side counterpart,
    a server answering the one request in front of it. ``UDSS_LLR_0153`` conditions on the
-   count being other than ``none``, because ISO 14229-2:2021 10.3 Figure 20 requires a
+   count being other than ``none``, because ISO 14229-2:2021 10.3 Figure 20 permits a
    client not to start its response timer for a request needing no response, and
    ``UDSS_LLR_0156`` conditions on the exact number, because ISO 14229-2:2021 9.7 Table 9
    makes the client's handling of a response timeout depend on whether it knew how many
