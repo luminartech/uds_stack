@@ -235,3 +235,73 @@ Starting the timer
 
 The next request
 ----------------
+
+.. llr:: A request on a channel whose spacing timer is active is rejected
+   :id: UDSS_LLR_0176
+   :status: draft
+   :integrity_level: QM
+   :target_level: D
+   :origin: session-layer-standard
+   :source: ISO 14229-2:2021 9.2 Table 3; ISO 14229-2:2021 9.7 Table 9; ISO 14229-2:2021 10.3; ISO 14229-2:2021 10.3 Figure 19; ISO 14229-2:2021 10.3 Figure 20
+   :tags: client; p3_client; service-interface
+
+   On an ``S_Data.req`` for a request on a channel whose spacing timer is active, the
+   session layer shall reject the ``S_Data.req`` as ``UDSS_LLR_0150`` defines.
+
+   Clause 10.3 a) and b) allow the next request on a channel only where the spacing timer is
+   no longer active, and otherwise require the transmission to be postponed until the timer
+   has timed out; Figure 19 key f has the client wait for ``tP3_Client_Func`` even after
+   every expected response has arrived, key k postpones the keep-alive, and Figure 20 key f
+   releases the next physical request when ``tP3_Client_Phys`` times out. Rejection is the
+   postponement for the reason the preamble gives: the session layer can neither queue the
+   request nor transmit it later, and ``UDSS_LLR_0150`` makes a rejection recoverable. The
+   channel is the one the request's own addressing names. A rejected ``S_Data.req``
+   produces no ``T_Data.req``, so ``UDSS_LLR_0169`` does not act and ``tS3_Client`` is not
+   stopped by a request that never went out, ``UDSS_LLR_0150`` leaving state unchanged.
+
+   Clause 10.3 conditions the postponement on the new request following a previous one
+   that was completely handled, and that condition is not stated here. After a start under
+   ``UDSS_LLR_0174`` or ``UDSS_LLR_0175`` on a failed confirmation the timer can be active
+   when the previous request was not completely handled, and the rejection then is Table
+   9's, which has the repeat wait for the spacing time. Under the one-request-per-channel
+   assumption of use the omission removes no restriction the set relies on. This requirement
+   adds a rejection condition and grants no permission: on a physical channel whose request
+   required a response no spacing timer starts, and whether a second request may follow
+   while the first is outstanding is the assumption's business, not this requirement's.
+
+   The rejection is per channel, where 10.3 and Table 3 speak of the next request without
+   naming a channel. That narrows the text, on the warrant of Table 7, which allots the
+   timers per channel, of 10.3 a), which values the physical parameter for the addressed
+   server, and of Figure 20 key c, which transmits a functionally addressed TesterPresent
+   while a physical channel's ``tP3_Client_Phys`` is running. A request on one channel is
+   therefore never postponed by another channel's timer.
+
+   The keep-alive TesterPresent, functionally or physically addressed, is rejected like any
+   other request and is retried after the time ``UDSS_LLR_0177`` reports, which is the
+   postponement Figure 19 keys k to m show. The assumption of use recorded in the preamble
+   places the retry on the application.
+
+.. llr:: The rejection states the time remaining
+   :id: UDSS_LLR_0177
+   :status: draft
+   :integrity_level: QM
+   :target_level: D
+   :origin: derived
+   :tags: client; p3_client; service-interface
+
+   A rejection under ``UDSS_LLR_0176`` shall state the time remaining until the channel's
+   spacing timer becomes inactive, being the value the timer was loaded with less the
+   elapsed time since it was started, in the unit ``UDSS_LLR_0114`` gives for a timestamp.
+
+   Rationale: 10.3 postpones the request until the timer has timed out but gives the
+   application no way to learn when that is, and Figure 19 key p names the delay that
+   results. Without the value the application would have to run a copy of the timer from
+   the confirmation it received, duplicating state Table 7 already allots to this layer,
+   and the keep-alive case of Figure 19 key k needs the application to know when to retry.
+   ``UDSS_LLR_0150`` requires a rejection to be reported to the caller and says nothing about
+   what the report carries; this requirement constrains that content, and adds no output
+   under ``UDSS_LLR_0116``. Because ``UDSS_LLR_0176`` rejects only while the timer is active,
+   the value is always positive, and a caller that retries after it finds the timer
+   inactive, ``UDSS_LLR_0114`` supplying the same elapsed time to both. An indication when
+   the timer becomes inactive was considered and rejected: it would cost an output on every
+   channel at every expiry, or a per-channel fact to send it only after a rejection.
