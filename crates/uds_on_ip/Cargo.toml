@@ -4,21 +4,21 @@ version = "0.1.1"
 edition = "2024"
 description = "UDS session management over DoIP transport"
 license = "MIT OR Apache-2.0"
-repository = "https://github.com/luminartech/[INTERNAL_PROJECT_REDACTED]"
+repository = "https://github.com/luminartech/uds_on_ip"
 authors = [
     "Zachary Heylmun <zachary_heylmun@microvision.com>",
     "Justin Kovacich <justin_kovacich@microvision.com>",
 ]
 
 [dependencies]
-simple_doip = { workspace = true, features = ["client"] }
-uds_protocol.workspace = true
+simple_doip = { git = "https://github.com/luminartech/simple_doip", rev = "304d01483ffa5ad702f30f8cd7b1c8c74f399b26", features = ["client"] }
+uds_protocol = { git = "https://github.com/luminartech/uds_protocol", rev = "e7bc9908d69c2bf9efd0a8caa8fa390047a5195e" }
 
-async-trait.workspace = true
-thiserror.workspace = true
-tokio = { workspace = true, features = ["rt", "time", "sync"] }
-tracing.workspace = true
+async-trait = "0.1"
+thiserror = "2"
+tokio = { version = "1", features = ["rt", "time", "sync"] }
+tracing = "0.1"
 
 [dev-dependencies]
-tokio = { workspace = true, features = ["io-util", "net", "time", "sync", "macros", "rt-multi-thread"] }
-tracing-subscriber = { workspace = true, features = ["fmt"] }
+tokio = { version = "1", features = ["io-util", "net", "time", "sync", "macros", "rt-multi-thread"] }
+tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }

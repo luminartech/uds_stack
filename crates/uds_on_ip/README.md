@@ -140,10 +140,10 @@ A complete example is provided that demonstrates connecting to a server and ente
 
 ```bash
 # Run against localhost (requires a DoIP server running)
-cargo run -p uds_on_ip --example extended_session
+cargo run --example extended_session
 
 # Run against a specific IP
-cargo run -p uds_on_ip --example extended_session -- 192.168.1.100
+cargo run --example extended_session -- 192.168.1.100
 ```
 
 ## Configuration
