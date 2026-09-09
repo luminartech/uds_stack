@@ -9,6 +9,7 @@ Requirements
    llr-server-response-timing
    llr-client-response-timing
    llr-client-session-timer
+   llr-client-request-spacing
    open-questions
 
 Status of this set
