@@ -390,18 +390,23 @@ Service primitives
    :integrity_level: QM
    :target_level: D
    :origin: session-layer-standard
-   :source: ISO 14229-2:2021 7.3; ISO 14229-2:2021 7.5
+   :source: ISO 14229-2:2021 7.3; ISO 14229-2:2021 7.5; ISO 14229-2:2021 8.10
    :tags: service-interface; primitives
 
    On ``T_Data.ind``, whether it reports a successful or an unsuccessful reception, the
    session layer shall produce an ``S_Data.ind`` whose parameters are those of the
-   received T_PDU mapped as ``UDSS_LLR_0124`` requires, except where another requirement
-   in this set requires that the indication be withheld.
+   received T_PDU mapped as ``UDSS_LLR_0124`` requires.
 
    Both outcomes produce an indication because ``S_Result`` exists to report them:
    ``UDSS_LLR_0119`` makes ``S_Data`` and ``S_Length`` valid only where ``S_Result`` is
    ``S_OK``, which presupposes indications where it is not, and a client cannot detect a
-   failed reception that is never indicated to it.
+   failed reception that is never indicated to it. Clause 8.10 requires the error result to
+   be issued to the service user on the receiver side as on the sender side, and
+   ISO 14229-2:2021 9.7 Table 9 obliges the client to repeat a request whose reception
+   failed, which it cannot do unshown. Table 10 obliges the server only to ignore such a
+   request, which ``UDSS_LLR_0109`` reads as acting on nothing rather than as withholding
+   the indication. An earlier form of this requirement admitted an exception for that
+   reading; no requirement in the set now withholds an indication.
 
 .. llr:: S_Data.conf confirms a preceding S_Data.req
    :id: UDSS_LLR_0120

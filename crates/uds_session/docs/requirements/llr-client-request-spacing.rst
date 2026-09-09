@@ -92,7 +92,7 @@ handled, and its note defining completely handled. That is the one-request-per-c
 assumption of use the client response timing document records. ``UDSS_LLR_0176`` adds a
 rejection condition and grants no permission.
 
-ISO 14229-2:2021 9.7 Table 9's repeat obligations. The client error handling document. This
+ISO 14229-2:2021 9.7 Table 9's repeat obligations. :doc:`llr-client-error-handling`. This
 document supplies the wait Table 9's request transmission row names, by starting the spacing
 timer on the failed confirmation and rejecting the repeat until the timer is inactive.
 

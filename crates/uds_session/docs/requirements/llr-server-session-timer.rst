@@ -191,7 +191,7 @@ whichever client sent it, because the timer does not run in that session at all.
    transmission with an interval shorter than the session timeout would hold a
    non-default session open indefinitely.
 
-.. llr:: Reception errors restart the session timer and discard the request
+.. llr:: Reception errors restart the session timer
    :id: UDSS_LLR_0109
    :status: draft
    :integrity_level: QM
@@ -202,7 +202,18 @@ whichever client sent it, because the timer does not run in that session at all.
 
    While in a non-default session, on ``T_Data.ind`` reporting an unsuccessful result for
    a request from the controlling client, the server shall restart the ``tS3_Server``
-   timer and shall not deliver an ``S_Data.ind`` for that request.
+   timer.
+
+   Table 10 says the server shall ignore the request. That is read as the request having
+   no effect on the session or its timer beyond the restart Table 10 itself requires, and
+   as there being nothing for the application to act on: ``UDSS_LLR_0119`` makes ``S_Data``
+   and ``S_Length`` invalid where ``S_Result`` is not ``S_OK``, and ``UDSS_LLR_0137``
+   delivers the indication for both roles alike, clause 8.10 requiring the error result on
+   the receiver side. An earlier form of this requirement withheld the indication instead.
+   The client's side of the same question decided it: ISO 14229-2:2021 9.7 Table 9 obliges
+   the client to repeat a request whose reception failed, so the client must be shown the
+   failure, and a rule that shows it to one role and hides it from the other could not be
+   stated once in ``UDSS_LLR_0137``.
 
 .. llr:: Transmission errors restart the session timer without retransmission
    :id: UDSS_LLR_0110

@@ -5,11 +5,11 @@ Questions raised while authoring this set that are not yet settled, and agreed c
 not yet made. Each entry records what is at stake, which requirements it touches, and
 what would settle it.
 
-Most of these are held open deliberately. The set covers the server's session timer, the
-service interface, both roles' response timing, and the client's session timer and request
-spacing; the client's error handling document is unwritten, and several questions turn on
-what it needs. Answering them now would mean guessing at requirements that have not been
-read out of the standard yet.
+Most of these are held open deliberately. Every document the set planned is now written:
+the service interface, both roles' session timers, both roles' response timing, and the
+client's request spacing and error handling. What remains is the rework of the server
+session timer document, the oldest in the set, and several questions turn on what it
+decides. Answering them now would mean guessing at a rework that has not been done.
 
 A question closes by being answered in a requirement, not here. When that happens the
 entry is deleted and the requirement carries the reasoning, as a ``Rationale:`` paragraph
@@ -18,30 +18,6 @@ deleted when the last entry goes.
 
 Questions
 ---------
-
-Failed receptions: indicated, or withheld?
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-``UDSS_LLR_0137`` produces an ``S_Data.ind`` for every ``T_Data.ind``, successful or not,
-and admits an exception for any requirement that withholds one. ``UDSS_LLR_0109`` is the
-only requirement that takes that exception, and it is scoped twice over: to a non-default
-session, and to the controlling client. One event — the transport reporting a broken
-reception — therefore reaches the application in the default session, reaches it in a
-non-default session when some other client sent the request, and is dropped in a
-non-default session when the controlling client sent it.
-
-The standard pulls in both directions. ISO 14229-2:2021 9.7 Table 10 says the server
-shall ignore a request whose reception failed, and qualifies that by neither session nor
-sender. Clauses 7.5 and 8.10 give ``S_Result`` its error values and require them to be
-issued to the service user on the receiving side as well as the sending one. Something
-has to give; what is unsettled is whether the current split along session state and sender
-identity was a decision or a side effect of ``UDSS_LLR_0109`` having been written as a
-timer requirement.
-
-The client error handling cycle should settle it. That cycle transcribes 9.7 Table 9,
-whose client rows raise the same question in the other direction: a client that is never
-told of a failed reception cannot perform the repeat Table 9 requires of it. If the client
-has to see the failure, the case for withholding it from the server is hard to sustain.
 
 Who controls the session after one non-default session replaces another?
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -82,8 +58,8 @@ tables do not budget. Known members:
 
 - the minimum spacing between consecutive response-pending messages, a fraction of
   ``tP2*_Server_Max`` that ``UDSS_LLR_0149`` enforces;
-- the at-most-two-repeats limit of 9.7 Table 9, which the client error handling cycle
-  will meet;
+- the at-most-two-repeats limit of 9.7 Table 9, for which ``UDSS_LLR_0178`` keeps a repeat
+  count per channel;
 - the pending list of 10.2.3 Figure 16 and 10.2.4 Figure 17, and the open start-of-message
   per responder that the pairing rule in ``UDSS_LLR_0140`` needs, both of which
   ``UDSS_LLR_0160`` keeps in caller-supplied storage.
@@ -205,6 +181,11 @@ statement about the whole interface now serves both roles from a server document
 ``UDSS_LLR_0177`` is the first to constrain what the rejection's report carries, giving the
 report a content the definition will have to accommodate wherever it lives.
 
+The client error handling document adds ``UDSS_LLR_0180``, ``UDSS_LLR_0181``,
+``UDSS_LLR_0183`` and ``UDSS_LLR_0184`` as further client-side uses, and ``UDSS_LLR_0182``
+as a second constraint on the report's content, which now has to carry a cause as well as a
+time.
+
 What orders a timer expiry against an input on the same timestamp?
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
@@ -223,28 +204,6 @@ instances, ``tP2_Server`` being touched by nearly every input this set defines.
 The answer likely wants stating once, as an interface-wide ordering clause in the service
 interface document, rather than as a rule per timer. That document's rework is where it
 belongs.
-
-How does the client finish receiving responses in progress before it repeats a request?
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-ISO 14229-2:2021 9.7 Table 9 requires a client, on a functional channel, to completely
-receive any response message in progress before it repeats the request, both after a
-response timeout and after a failed reception. Whether a response is in progress is what an
-open start-of-message records, and only the session layer sees start-of-message indications,
-clause 7.3 keeping them from the application.
-
-The set discards that record at exactly the two events Table 9 attaches the obligation to.
-``UDSS_LLR_0155`` stops the timer on a failed reception and ends the request, and
-``UDSS_LLR_0159`` ends it at expiry; ``UDSS_LLR_0160`` then holds no entries, and neither the
-response-timing indication nor the forwarded failed reception says how many responses were
-still arriving. The application is left to repeat without the information the standard says
-it must wait on.
-
-Two shapes of answer are visible. The responder table could keep its open start-of-message
-entries past the end of the request until each completes or fails, with the timer stopped;
-or the two indications could carry the count of responses in progress at that moment and
-leave the waiting to the application. The client error handling cycle transcribes Table 9
-and should choose.
 
 What bounds a message whose start was indicated but whose completion never comes?
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -266,28 +225,10 @@ That is an assumption of use and belongs in the qualification repository, alongs
 assumption of one request outstanding per logical communication channel. Whether it is stated
 there, or whether the set instead writes a requirement the standard does not have, is open.
 
-What ends a functional keep-alive whose servers were returned physically?
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-``UDSS_LLR_0167`` disengages the functional keep-alive only on a functionally addressed
-return to the default session, because ISO 14229-2:2021 9.6 Table 8 makes the timer
-client-wide, ``UDSS_LLR_0163`` accordingly holds one keeping-alive fact for the client, and
-the client cannot tell how many servers a physically addressed return leaves in their
-session. The residual is a client that moved a single server into a non-default session
-physically and returns it physically: the keeping-alive fact still holds, so
-``UDSS_LLR_0165`` keeps delivering a keep-alive indication every reload period and, under
-the assumption of use the client session timer document records, the application keeps
-transmitting a TesterPresent that the servers ignore (``UDSS_LLR_0111``). Nothing in the set
-ends it: no requirement clears the fact on the caller's say-so and none tears a client down.
-
-The candidates are a caller-invoked disable through the service interface, which would be
-the set's first input that is neither a primitive nor a parameter; per-server bookkeeping,
-which Table 8 explicitly declines to require and which would join the class inventoried
-under "Which constraints does the standard make checkable but allocate nothing for?"; or
-accepting the residual as the price of Table 8's single timer and recording as an assumption
-of use that a client which establishes sessions both ways ends them functionally. Touches
-``UDSS_LLR_0163``, ``UDSS_LLR_0165`` and ``UDSS_LLR_0167``. Settled by whichever cycle first
-needs a notion of teardown, or by the client error handling cycle.
+The channel reset of ``UDSS_LLR_0183`` has since given the application an exit: a
+start-of-message the transport never completes is closed by resetting its channel. That
+bounds the harm of a transport that breaks the assumption without settling where the
+assumption is stated.
 
 Deferred edits
 --------------

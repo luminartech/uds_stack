@@ -168,7 +168,8 @@ ISO 14229-2:2021 9.7 Table 9 states both what a response timeout means and what 
 must do about it — repeat the request, at most twice, restarting ``tS3_Client`` where the
 request was a physically addressed, sequentially transmitted TesterPresent. This document
 states the meaning, because the timer cannot be specified without it. The consequences
-belong to the client error handling document, which transcribes Table 9 whole.
+belong to :doc:`llr-client-error-handling`, which transcribes Table 9 as far as this layer
+can, and to :doc:`llr-client-session-timer` for the restarts.
 
 ISO 14229-2:2021 10.1.4 and 10.2.4 each state that the client's reload values may differ in a
 non-default session, the applicable ``tP_Client`` parameters being reported to the client by
@@ -831,9 +832,9 @@ Enhanced response timing
    reason.
 
    This requirement does not state what the client does next. Table 9's handling — repeat
-   the request, at most twice — belongs to the client error handling document. The session
-   layer reports the expiry and the application acts, as ``UDSS_LLR_0112`` and
-   ``UDSS_LLR_0148`` do for the server's two timers.
+   the request, at most twice — belongs to :doc:`llr-client-error-handling`, which caps the
+   repeats in ``UDSS_LLR_0180``. The session layer reports the expiry and the application
+   acts, as ``UDSS_LLR_0112`` and ``UDSS_LLR_0148`` do for the server's two timers.
 
    The condition on the timer running restates ``UDSS_LLR_0114``, under which only a running
    timer expires; it is repeated here because the case is easy to miss. ``UDSS_LLR_0154``

@@ -89,19 +89,19 @@ changes, the timer being stopped between the indication and the confirmation eit
 
 ISO 14229-2:2021 9.7 Table 9 states what the client does after a failed transmission, a
 failed reception or a response timeout: repeat the request, at most twice. Those obligations
-belong to the client error handling document. Table 9 also restarts ``tS3_Client`` on each of
+belong to :doc:`llr-client-error-handling`. Table 9 also restarts ``tS3_Client`` on each of
 those events where the request was a physically addressed, sequentially transmitted
 TesterPresent. Two of those restarts coincide with rows of Table 6 and the third does not;
 ``UDSS_LLR_0170`` transcribes all three.
 
 What the client concludes about a channel's session once Table 9's repeats are exhausted is
-also the error handling document's. A lost response to an ordinary request leaves the
+also :doc:`llr-client-error-handling`'s. A lost response to an ordinary request leaves the
 channel's timer stopped and its session fact holding. While the application repeats the
 request, each repeat restarts the cadence through ``UDSS_LLR_0169`` and ``UDSS_LLR_0170``;
 where every repeat fails the client stops sending and the server's ``tS3_Server`` ends the
-session, which is the outcome the standard intends. Whether the client then clears its fact
-turns on the repeat count, which Table 9 makes checkable but allocates nothing for; the
-:doc:`open-questions` page inventories that class.
+session, which is the outcome the standard intends. The client's fact is then cleared by the
+keep-alive release of ``UDSS_LLR_0184``, on the application's say-so; nothing in this
+document clears it, and the repeat count that bounds the repeats is ``UDSS_LLR_0178``'s.
 
 Table 5 requires the ``tS3_Client`` reload value to be smaller than ``tS3_Server``. That is a
 value the caller chooses under ``UDSS_LLR_0138``, a performance obligation of the same class
