@@ -767,7 +767,8 @@ Enhanced response timing
    the caller labels ``response pending`` is a message that did not arrive, and putting the
    enhanced value in force for it would lengthen the window for a response that was never
    promised. A failed reception ends the request under ``UDSS_LLR_0155`` in any case, and
-   with it the table.
+   with it every response-pending fact in the table, ``UDSS_LLR_0160`` retaining only the
+   entries whose start-of-message is open.
 
 .. llr:: Response timer expiry is indicated to the application
    :id: UDSS_LLR_0159
