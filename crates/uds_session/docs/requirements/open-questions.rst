@@ -6,10 +6,10 @@ not yet made. Each entry records what is at stake, which requirements it touches
 what would settle it.
 
 Most of these are held open deliberately. The set covers the server's session timer, the
-service interface, both roles' response timing and the client's session timer; the client's
-request spacing and error handling documents are unwritten, and several questions turn on
-what those documents need. Answering them now would mean guessing at requirements that have
-not been read out of the standard yet.
+service interface, both roles' response timing, and the client's session timer and request
+spacing; the client's error handling document is unwritten, and several questions turn on
+what it needs. Answering them now would mean guessing at requirements that have not been
+read out of the standard yet.
 
 A question closes by being answered in a requirement, not here. When that happens the
 entry is deleted and the requirement carries the reasoning, as a ``Rationale:`` paragraph
@@ -116,6 +116,14 @@ names a ``tS3_Client_Func`` that the standard defines nowhere, read in ``UDSS_LL
 ``tP3_Client_Func``. None changes what the set does; whether they deserve a record of their
 own is the same question of convention.
 
+The client request spacing cycle met three more. ISO 14229-2:2021 9.2 Table 3 conditions
+the functional spacing wait on no response being required or on only some servers supporting
+the data, where 10.3 b) applies it to every functionally addressed request, followed in
+``UDSS_LLR_0175``; 10.3 a) says ``tP3_Client_Phys`` is identical to ``tP2_Server_Max`` where
+Table 4 gives a minimum that adds the network delay, Table 4 governing; and Figure 19's title
+names ``tP3_Client_Phys`` above a figure of the functional timer. None changes what the set
+does.
+
 What does a keep-alive TesterPresent do to the response window?
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
@@ -182,6 +190,12 @@ The service interface document is where this set's interface-wide statements liv
 nothing while the set is draft and IDs may still move. What holds the question open is that
 no rework of that document is scheduled, and relocating a requirement between documents for
 tidiness alone is not a bar this set has used before.
+
+The client request spacing document has since given the question two more reasons.
+``UDSS_LLR_0176`` is the first client-side requirement to invoke ``UDSS_LLR_0150``, so a
+statement about the whole interface now serves both roles from a server document; and
+``UDSS_LLR_0177`` is the first to constrain what the rejection's report carries, giving the
+report a content the definition will have to accommodate wherever it lives.
 
 What orders a timer expiry against an input on the same timestamp?
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

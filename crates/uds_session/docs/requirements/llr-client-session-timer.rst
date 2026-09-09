@@ -82,9 +82,10 @@ What this document does not cover
 ---------------------------------
 
 ISO 14229-2:2021 10.3 Figure 19 key k postpones the keep-alive while ``tP3_Client_Func`` is
-running. That belongs to the client request spacing document. Between a keep-alive indication
-and the confirmation of the marked TesterPresent the timer is not running, so a postponement
-has nothing in this document to attach to; that document may need to amend ``UDSS_LLR_0165``.
+running, and the same applies to a physically addressed TesterPresent while
+``tP3_Client_Phys`` is. That is :doc:`llr-client-request-spacing`'s, which postpones by
+rejecting the ``S_Data.req`` and reporting the time remaining; nothing in this document
+changes, the timer being stopped between the indication and the confirmation either way.
 
 ISO 14229-2:2021 9.7 Table 9 states what the client does after a failed transmission, a
 failed reception or a response timeout: repeat the request, at most twice. Those obligations
@@ -268,7 +269,9 @@ Functional keep-alive
    TesterPresent, nothing restarts the timer until ``UDSS_LLR_0164`` acts on the next
    confirmed session change; the standard makes the keep-alive the application's
    obligation, as it makes Table 9's repeat. Postponing the TesterPresent while
-   ``tP3_Client_Func`` runs, Figure 19 key k, is the client request spacing document's.
+   ``tP3_Client_Func`` runs, Figure 19 key k, is :doc:`llr-client-request-spacing`'s:
+   ``UDSS_LLR_0176`` rejects the TesterPresent while that timer is active and
+   ``UDSS_LLR_0177`` tells the application when to retry.
 
 .. llr:: Functional keep-alive restarts on the confirmed TesterPresent
    :id: UDSS_LLR_0166
@@ -529,11 +532,14 @@ session fact, and the requests and indications on it.
    of use record that the application transmits it on the indicated channel; whether it
    requires a response is the application's choice, and ``UDSS_LLR_0170`` restarts the timer
    either way: on the response, key n; on the confirmation where none is required, the
-   alternative key n states; or on the lost response its fifth bullet covers. Between this
-   indication and the input ``UDSS_LLR_0170`` acts on, the timer is not running and the fact
-   holds. Where the application sends some other request instead, ``UDSS_LLR_0170`` restarts
-   the timer at the completion of that exchange; where it sends nothing, nothing restarts
-   the timer and the channel's server leaves the session when ``tS3_Server`` expires.
+   alternative key n states; or on the lost response its fifth bullet covers. Where the
+   channel's spacing timer is active, ``UDSS_LLR_0176`` rejects the TesterPresent and
+   ``UDSS_LLR_0177`` tells the application when to retry; the timer here stays stopped until
+   the TesterPresent's exchange completes under ``UDSS_LLR_0170``. Between this indication
+   and the input ``UDSS_LLR_0170`` acts on, the timer is not running and the fact holds.
+   Where the application sends some other request instead, ``UDSS_LLR_0170`` restarts the
+   timer at the completion of that exchange; where it sends nothing, nothing restarts the
+   timer and the channel's server leaves the session when ``tS3_Server`` expires.
 
    The indication carries the channel and not a source address: a channel is identified by
    the client's own outbound addressing, as the client response timing document defines it,
