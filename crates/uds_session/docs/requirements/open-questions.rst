@@ -5,11 +5,11 @@ Questions raised while authoring this set that are not yet settled, and agreed c
 not yet made. Each entry records what is at stake, which requirements it touches, and
 what would settle it.
 
-Most of these are held open deliberately. The set covers the server's session timer,
-the service interface, and both roles' response timing; the client's session timer, request
-spacing and error handling documents are unwritten, and several questions turn on what those
-documents need. Answering them now would mean guessing at requirements that
-have not been read out of the standard yet.
+Most of these are held open deliberately. The set covers the server's session timer, the
+service interface, both roles' response timing and the client's session timer; the client's
+request spacing and error handling documents are unwritten, and several questions turn on
+what those documents need. Answering them now would mean guessing at requirements that have
+not been read out of the standard yet.
 
 A question closes by being answered in a requirement, not here. When that happens the
 entry is deleted and the requirement carries the reasoning, as a ``Rationale:`` paragraph
@@ -106,6 +106,14 @@ consistent after all, this is the only internal inconsistency found in Clause 8.
 discrepancy whose resolution changes no behaviour is worth recording is a decision about
 the set as a whole, not about this requirement. No cycle depends on it.
 
+The client session timer cycle found two more of the same kind, each recorded in the
+requirement that met it. ISO 14229-2:2021 10.1.4.2 Figure 13 key b starts ``tS3_Client`` at
+the request's confirmation where 9.5 Table 6's physical column starts it at the response's
+``T_Data.ind``, resolved in ``UDSS_LLR_0168``; and 9.7 Table 9's functional column names a
+``tS3_Client_Func`` that the standard defines nowhere, read in ``UDSS_LLR_0166`` as
+``tP3_Client_Func``. Neither changes what the set does; whether they deserve a record of
+their own is the same question of convention.
+
 What does a keep-alive TesterPresent do to the response window?
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
@@ -151,6 +159,12 @@ remaining candidate is to widen the assumption of use to cover bypass traffic, w
 crate then cannot check and which obliges the caller to recognise such traffic. Settled by
 the server session timer rework, where the same TesterPresent traffic is already in
 question for ``tS3_Server``.
+
+The client session timer document has since given the client's keep-alive a classification
+of its own, ``keep-alive`` in ``UDSS_LLR_0134``, stated by the client on its ``S_Data.req``.
+A server-side counterpart, supplied by the server's caller on the ``T_Data.ind``, would give
+``UDSS_LLR_0144`` and ``UDSS_LLR_0146`` the filter this entry asks for; the rework should
+weigh it against the other candidates.
 
 Where does ``UDSS_LLR_0150`` belong?
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -227,6 +241,28 @@ indicates the start of a message eventually reports either its completion or its
 That is an assumption of use and belongs in the qualification repository, alongside the
 assumption of one request outstanding per logical communication channel. Whether it is stated
 there, or whether the set instead writes a requirement the standard does not have, is open.
+
+What ends a functional keep-alive whose servers were returned physically?
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+``UDSS_LLR_0167`` disengages the functional keep-alive only on a functionally addressed
+return to the default session, because ISO 14229-2:2021 9.6 Table 8 makes the timer and its
+fact client-wide and the client cannot tell how many servers a physically addressed return
+leaves in their session. The residual is a client that moved a single server into a
+non-default session physically and returns it physically: the keeping-alive fact still holds,
+so ``UDSS_LLR_0165`` keeps delivering a keep-alive indication every reload period and, under
+the assumption of use the client session timer document records, the application keeps
+transmitting a TesterPresent that the servers ignore (``UDSS_LLR_0111``). Nothing in the set
+ends it: no requirement clears the fact on the caller's say-so and none tears a client down.
+
+The candidates are a caller-invoked disable through the service interface, which would be
+the set's first input that is neither a primitive nor a parameter; per-server bookkeeping,
+which Table 8 explicitly declines to require and which would join the class inventoried
+under "Which constraints does the standard make checkable but allocate nothing for?"; or
+accepting the residual as the price of Table 8's single timer and recording as an assumption
+of use that a client which establishes sessions both ways ends them functionally. Touches
+``UDSS_LLR_0163``, ``UDSS_LLR_0165`` and ``UDSS_LLR_0167``. Settled by whichever cycle first
+needs a notion of teardown, or by the client error handling cycle.
 
 Deferred edits
 --------------

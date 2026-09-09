@@ -161,8 +161,8 @@ comparing the live timer against the parameter. That is an obligation on the lay
 this one, discharged by the application rather than by the session layer.
 
 ``tP3_Client_Phys`` and ``tP3_Client_Func``, which bound how soon the client may transmit
-its next request, and ``tS3_Client``, which keeps the servers in a non-default session, are
-separate timers with their own documents.
+its next request, are separate timers with their own document. ``tS3_Client``, which keeps
+the servers in a non-default session, is specified in :doc:`llr-client-session-timer`.
 
 ISO 14229-2:2021 9.7 Table 9 states both what a response timeout means and what the client
 must do about it — repeat the request, at most twice, restarting ``tS3_Client`` where the
