@@ -322,3 +322,201 @@ Physical keep-alive
 
 Every requirement in this section is scoped to one physical channel: its timer, its channel
 session fact, and the requests and indications on it.
+
+.. llr:: Physical keep-alive engages on a confirmed session change
+   :id: UDSS_LLR_0168
+   :status: draft
+   :integrity_level: QM
+   :target_level: D
+   :origin: session-layer-standard
+   :source: ISO 14229-2:2021 9.5 Table 6; ISO 14229-2:2021 10.1.4.2 Figure 13
+   :tags: client; s3_client; session-state
+
+   In physical keep-alive, while a physical channel's session fact does not hold, on either
+   of the following on that channel the client shall set the fact and start the channel's
+   ``tS3_Client`` timer loaded with the reload parameter:
+
+   * ``T_Data.conf`` reporting the successful transmission of a request whose
+     classification carries a session selection that is not the default session and whose
+     expected response count is ``none``;
+   * ``T_Data.ind`` reporting the successful reception of a message whose classification
+     states kind ``final response`` and ``solicited`` and carries a session selection that
+     is not the default session.
+
+   Table 6's physical column has two initial-start rows: the confirmation of the
+   DiagnosticSessionControl request where no response is required, and the reception of its
+   response where one is. Figure 13 key j is the second, and key g states the rule for the
+   first. The expected response count of ``none`` stands for no response required, as it
+   does in ``UDSS_LLR_0153``.
+
+   Table 6 names the request and the response without qualification; both bullets act only
+   on a message carrying a session selection. That narrows the text. Under
+   ``UDSS_LLR_0134`` a negative response to a session change carries no selection, and a
+   refused change moved no server into a non-default session, so nothing is there to keep
+   alive.
+
+   Figure 13 key b also starts ``tS3_Client`` at the request's confirmation, in the very
+   scenario, key c, where a response is required and Table 6 starts it at the response's
+   ``T_Data.ind`` instead. The two conflict, and Table 6 is followed: it is the normative
+   statement, and a timer started at the confirmation could expire during the wait for the
+   response and demand a TesterPresent while the request is in progress. Figures 12 and 17
+   key b agree with Table 6's functional column, so the conflict is confined to this mode.
+
+   The guard on the fact is what separates this requirement from ``UDSS_LLR_0170``: once the
+   fact holds, the same two events are completions of an exchange and ``UDSS_LLR_0170``
+   restarts the timer on them.
+
+.. llr:: Physical keep-alive stops when a request is sent
+   :id: UDSS_LLR_0169
+   :status: draft
+   :integrity_level: QM
+   :target_level: D
+   :origin: session-layer-standard
+   :source: ISO 14229-2:2021 10.1.4.2 Figure 13
+   :tags: client; s3_client
+
+   In physical keep-alive, while a physical channel's session fact holds, on producing a
+   ``T_Data.req`` for a request on that channel, the client shall stop the channel's
+   ``tS3_Client`` timer.
+
+   Figure 13 key e: whenever the client transmits a request to the server, the physically
+   addressed TesterPresent included, it stops its ``tS3_Client`` timer. Table 6 has no stop
+   row for the client's timer; the key is the standard's only statement of it, and 9.5's
+   description of the physically addressed TesterPresent as transmitted only in the absence
+   of any other request depends on it.
+
+   The ``T_Data.req`` is the output ``UDSS_LLR_0140`` names and ``UDSS_LLR_0116`` has the
+   caller retrieve. It is produced when the ``S_Data.req`` is processed, so the stop precedes
+   the transmission as key e shows. A rejected ``S_Data.req`` produces no ``T_Data.req`` and
+   so no stop, ``UDSS_LLR_0150`` leaving state unchanged.
+
+.. llr:: Physical keep-alive restarts when an exchange completes
+   :id: UDSS_LLR_0170
+   :status: draft
+   :integrity_level: QM
+   :target_level: D
+   :origin: session-layer-standard
+   :source: ISO 14229-2:2021 9.5 Table 6; ISO 14229-2:2021 9.7 Table 9; ISO 14229-2:2021 10.1.4.2 Figure 13
+   :tags: client; s3_client
+
+   In physical keep-alive, while a physical channel's session fact holds, on any of the
+   following on that channel, except where ``UDSS_LLR_0172`` applies to the same input, the
+   client shall start the channel's ``tS3_Client`` timer loaded with the reload parameter:
+
+   * ``T_Data.conf`` reporting the successful transmission of a request whose expected
+     response count is ``none``;
+   * ``T_Data.conf`` reporting a failed transmission;
+   * while a request is in progress on the channel, ``T_Data.ind`` reporting the successful
+     reception of a message whose classification states kind ``final response`` and
+     ``solicited``;
+   * while a request is in progress on the channel, ``T_Data.ind`` reporting a failed
+     reception;
+   * the expiry under ``UDSS_LLR_0159`` of the response window of a request whose
+     classification states ``keep-alive``.
+
+   The first four are Table 6's subsequent-start rows in the physical column. Figure 13 key g
+   shows the first and keys j, n and r the third; the second and fourth rest on Table 6
+   alone. The fifth is Table 9's response timeout row, which restarts ``tS3_Client`` where
+   the request was a physically addressed, sequentially transmitted TesterPresent, because
+   the timer was stopped when that request went out. That TesterPresent is the request the
+   application transmits in answer to ``UDSS_LLR_0171`` and marks ``keep-alive`` under the
+   assumptions of use; it was the only traffic due, so if its response is lost the timer
+   must resume or no further keep-alive is ever requested. For any other request a lost
+   response restarts nothing here: Table 9 has the application repeat it, each repeat
+   restarting the cadence through ``UDSS_LLR_0169`` and the first four bullets, and where
+   every repeat fails the client stops sending and the server's ``tS3_Server`` ends the
+   session, as the preamble says.
+
+   Table 9 also restricts its transmission-error and reception-error restarts to the
+   TesterPresent case, where Table 6's rows for the same events are unrestricted. The second
+   and fourth bullets follow Table 6.
+
+   Table 6's third and fourth rows apply "in case a response is required". That is read as
+   tying the restart to the exchange the client is waiting for, hence the condition that a
+   request is in progress on the channel; the client response timing document's rule that an
+   input ending the wait is processed while the request is still in progress makes the final
+   response and the failed reception eligible. A response arriving after the window has
+   expired, or a broken reception unrelated to any request, restarts nothing, matching that
+   document's rule that an indication on a channel with no request in progress takes no
+   timer action; an unsolicited response is excluded for the same reason. The fourth row
+   says a multi-frame response; the session layer cannot see framing, so any failed
+   reception is taken, the reading ``UDSS_LLR_0154`` takes.
+
+   Table 6's third row says any response message, and the third bullet takes a final
+   response only. That narrows the text, and deliberately: a response-pending negative
+   response does not restart the timer. Clause 9.5 describes the physically addressed
+   TesterPresent as transmitted only in the absence of any other request, and the enhanced
+   response window that a response-pending message opens, ``tP2*_Client`` of 9.2 Tables 3
+   and 4, is of the same order as ``tS3_Server`` and longer than the recommended
+   ``tS3_Client`` reload, so a timer restarted there would expire inside the window and
+   demand a TesterPresent while the request is in progress, a second outstanding request on
+   the channel for which ISO 14229-1:2020 8.7.6 gives the server no bypass. Nothing is lost
+   by waiting: the server's ``tS3_Server`` is stopped from the request's first indication
+   (``UDSS_LLR_0104``), is not restarted by the pending message (``UDSS_LLR_0107``), and
+   resumes at the final response (``UDSS_LLR_0106``), on which the third bullet resumes the
+   client's cadence too.
+
+   The exception for ``UDSS_LLR_0172`` is placed here as ``UDSS_LLR_0106`` places its
+   exception for ``UDSS_LLR_0141``: the first and third bullets both match the events that
+   return the channel to the default session, and there the disengage wins.
+
+.. llr:: Physical keep-alive expiry requests a TesterPresent
+   :id: UDSS_LLR_0171
+   :status: draft
+   :integrity_level: QM
+   :target_level: D
+   :origin: session-layer-standard
+   :source: ISO 14229-2:2021 9.5 Table 5; ISO 14229-2:2021 10.1.4.2 Figure 13
+   :tags: client; s3_client
+
+   In physical keep-alive, while a physical channel's session fact holds and its
+   ``tS3_Client`` timer is running, when the elapsed time since the timer was last started
+   reaches the reload parameter, the client shall stop the timer and deliver a keep-alive
+   indication to the application carrying the channel's identity: ``S_Mtype``,
+   ``S_AI[TAtype]``, ``S_AI[TA]`` and, where ``S_Mtype`` carries one, ``S_AI[AE]``.
+
+   Table 5 defines ``tS3_Client`` for physical communication as the maximum time between
+   physically transmitted requests to a single server, and Figure 13 keys k and o have its
+   timeout cause the transmission of a physically addressed TesterPresent. The assumptions
+   of use record that the application transmits it on the indicated channel; whether it
+   requires a response is the application's choice, and ``UDSS_LLR_0170`` restarts the timer
+   either way: on the response, key n; on the confirmation where none is required, the
+   alternative key n states; or on the lost response its fifth bullet covers.
+
+   The indication carries the channel and not a source address: a channel is identified by
+   the client's own outbound addressing, as the client response timing document defines it,
+   and the source is the client. ``UDSS_LLR_0159`` carries a request's full addressing
+   because there the application must identify a request; here it must identify a channel.
+   Table 8 makes this timer one per point-to-point communication, which is why the channel
+   is named where ``UDSS_LLR_0165`` names none.
+
+   The timer cannot expire while a request is outstanding on the channel, because
+   ``UDSS_LLR_0169`` stopped it. Expiry is at reaching the parameter for the reason
+   ``UDSS_LLR_0165`` gives.
+
+.. llr:: Physical keep-alive disengages on return to the default session
+   :id: UDSS_LLR_0172
+   :status: draft
+   :integrity_level: QM
+   :target_level: D
+   :origin: derived
+   :tags: client; s3_client; session-state
+
+   In physical keep-alive, while a physical channel's session fact holds, on either of the
+   following on that channel the client shall clear the fact and stop the channel's
+   ``tS3_Client`` timer:
+
+   * ``T_Data.conf`` reporting the successful transmission of a request whose
+     classification carries a session selection that is the default session and whose
+     expected response count is ``none``;
+   * ``T_Data.ind`` reporting the successful reception of a message whose classification
+     states kind ``final response`` and ``solicited`` and carries a session selection that
+     is the default session.
+
+   Rationale: as for ``UDSS_LLR_0167``, the standard states no end condition for the client's
+   timer, and the mirror of the events ``UDSS_LLR_0168`` engages on ends the purpose the
+   timer serves. Both events are also completions of an exchange under ``UDSS_LLR_0170``,
+   which carries the exception that lets this requirement win; otherwise the timer would
+   restart in a session it no longer keeps. Both bullets act only on a message carrying a
+   session selection, as ``UDSS_LLR_0168``'s do: a refused return keeps the server in its
+   session, and the timer keeps running.
