@@ -771,11 +771,12 @@ and leaves the means of recognising it to the implementation.
 
    Rationale: several requirements condition on message content, including whether a
    response is final or response-pending, whether a message selects a diagnostic session,
-   and whether a response was solicited. Determining these by parsing ``S_Data`` would
-   bind this crate to the ISO 14229-1 application layer encodings and would require every
-   timing test to construct valid UDS frames. The caller already holds what is needed:
-   the application composes the message it asks to have transmitted, and the code that
-   supplies a ``T_Data.ind`` holds the bytes it received.
+   whether a response was solicited, and whether a request is the client's keep-alive.
+   Determining these by parsing ``S_Data`` would bind this crate to the ISO 14229-1
+   application layer encodings and would require every timing test to construct valid UDS
+   frames. The caller already holds what is needed: the application composes the message it
+   asks to have transmitted, and the code that supplies a ``T_Data.ind`` holds the bytes it
+   received.
 
    The association is matched on addressing because that is the standard's own rule:
    ISO 14229-2:2021 7.6 has the ``S_Data.conf`` confirm "the completion of an S_Data.req
@@ -818,9 +819,11 @@ and leaves the means of recognising it to the implementation.
    * ``request``, a message sent by a client to a server. On ``S_Data.req``, and on the
      ``T_Data.conf`` that ``UDSS_LLR_0133`` associates with it, a request classification
      shall further state the number of responses expected: ``none``, an exact number of at
-     least one, or ``unknown``; a request classification stating an exact number of zero
-     shall be rejected as ``UDSS_LLR_0150`` defines. A request classification supplied at a
-     server, on ``T_DataSOM.ind`` or ``T_Data.ind``, states no count;
+     least one, or ``unknown``, and may further state ``keep-alive``, that the message is the
+     TesterPresent the application transmits because ``tS3_Client`` expired; a request
+     classification stating an exact number of zero shall be rejected as ``UDSS_LLR_0150``
+     defines. A request classification supplied at a server, on ``T_DataSOM.ind`` or
+     ``T_Data.ind``, states neither;
    * ``final response``, a positive response, or a negative response whose response code
      is not ``requestCorrectlyReceived-ResponsePending``;
    * ``response pending``, a negative response whose response code is
@@ -842,6 +845,17 @@ and leaves the means of recognising it to the implementation.
    servers would respond. Neither can be determined by the session layer: the count is a
    property of the request the application composed, and ``UDSS_LLR_0135`` forbids reading
    it out of the message.
+
+   The ``keep-alive`` marker is likewise stated by the client and has no server-side
+   counterpart. ``UDSS_LLR_0166`` conditions on it because ISO 14229-2:2021 9.5 Table 6
+   restarts the client's session timer on the functionally addressed TesterPresent alone,
+   and ``UDSS_LLR_0170`` because ISO 14229-2:2021 9.7 Table 9 restarts it on the lost
+   response to the physically addressed one; ``UDSS_LLR_0135`` forbids recognising either
+   from the data. It is separate from the expected response count because in physical
+   keep-alive the TesterPresent may or may not require a response. The client session timer
+   document records as an assumption of use that the request the application transmits in
+   answer to a keep-alive indication carries the marker, in either keep-alive mode. No
+   requirement conditions on it at a server.
 
    The kind shall be absent only where ``UDSS_LLR_0133`` permits it: on a ``T_Data.ind``
    reporting an unsuccessful reception of a message that was not addressed to a server. No
