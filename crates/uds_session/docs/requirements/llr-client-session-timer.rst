@@ -177,6 +177,146 @@ The timer's state
 Functional keep-alive
 ---------------------
 
+.. llr:: Functional keep-alive engages on a confirmed session change
+   :id: UDSS_LLR_0164
+   :status: draft
+   :integrity_level: QM
+   :target_level: D
+   :origin: session-layer-standard
+   :source: ISO 14229-2:2021 9.5 Table 6; ISO 14229-2:2021 9.6 Table 8; ISO 14229-2:2021 10.1.4.1 Figure 12; ISO 14229-2:2021 10.2.4 Figure 17
+   :tags: client; s3_client
+
+   In functional keep-alive, while the ``tS3_Client`` timer is not running, on ``T_Data.conf``
+   reporting the successful transmission of a request whose classification carries a
+   session selection that is not the default session, the client shall set the
+   keeping-alive fact and start the timer loaded with the ``tS3_Client`` reload parameter.
+   While the timer is running, such a confirmation shall change neither the fact nor the
+   timer.
+
+   Table 6's functional column starts the timer on the ``T_Data.conf`` that completes the
+   DiagnosticSessionControl request, only where the session selected is a non-default one.
+   Figure 12 key b starts it from a physically addressed session change and Figure 17 key b
+   from a functionally addressed one, so the channel the request went out on does not
+   matter, as the column heading, physical and functional communication, says.
+
+   The second sentence is Table 8: a single timer suffices and no further timer is needed
+   per activated session. A restart would stretch the interval for the servers already
+   being kept alive, and the running timer already serves the newly activated session.
+
+   The guard is on the timer rather than on the fact so that a keep-alive left stopped by an
+   unanswered indication, as ``UDSS_LLR_0165`` describes, is re-armed by the next confirmed
+   session change. The transmission must be successful because a failed one moved no server.
+
+.. llr:: Functional keep-alive expiry requests a TesterPresent
+   :id: UDSS_LLR_0165
+   :status: draft
+   :integrity_level: QM
+   :target_level: D
+   :origin: session-layer-standard
+   :source: ISO 14229-2:2021 9.5 Table 5; ISO 14229-2:2021 9.5 Table 6; ISO 14229-2:2021 10.1.4.1 Figure 12; ISO 14229-2:2021 10.2.4 Figure 17
+   :tags: client; s3_client
+
+   In functional keep-alive, while the keeping-alive fact holds and the ``tS3_Client`` timer
+   is running, when the elapsed time since it was last started reaches the reload
+   parameter, the client shall stop the timer and deliver a keep-alive indication to the
+   application. The indication shall state that the client-wide keep-alive is due and shall
+   carry no addressing.
+
+   Table 5 defines ``tS3_Client`` as the time between the functionally addressed
+   TesterPresent messages the client transmits to keep a non-default session active in
+   multiple servers, and Table 6 has that message transmitted each time the timer times out.
+   Figure 12 keys i, l and n and Figure 17 keys g, p, v and x are those transmissions.
+
+   The session layer signals and the application acts, as ``UDSS_LLR_0159`` has it act on a
+   response timeout: ``UDSS_LLR_0135`` forbids this layer to compose the message. The
+   assumptions of use above record what the application sends. The standard names no
+   functional address for the keep-alive, so the indication carries none and
+   ``UDSS_LLR_0166`` accepts the confirmation on any functional channel. Table 8 makes the
+   timer one per client rather than per channel, so there is no channel to name.
+
+   The timer expires when the elapsed time reaches the parameter, as ``UDSS_LLR_0148``
+   reads ``tP2_Server``, not when it exceeds it as ``UDSS_LLR_0159`` reads ``tP_Client``.
+   ``tS3_Client`` bounds the client's own conduct and Table 5 requires it to stay below
+   ``tS3_Server``, so the earlier of the two readings is the conservative one;
+   ``UDSS_LLR_0159``'s reason for the later one, that a peer's conformant response would
+   otherwise be faulted, has no counterpart here.
+
+   Between this indication and the confirmation ``UDSS_LLR_0166`` acts on, the timer is not
+   running and the fact holds. Where the application sends anything other than the marked
+   TesterPresent, nothing restarts the timer until ``UDSS_LLR_0164`` acts on the next
+   confirmed session change; the standard makes the keep-alive the application's
+   obligation, as it makes Table 9's repeat. Postponing the TesterPresent while
+   ``tP3_Client_Func`` runs, Figure 19 key k, is the client request spacing document's.
+
+.. llr:: Functional keep-alive restarts on the confirmed TesterPresent
+   :id: UDSS_LLR_0166
+   :status: draft
+   :integrity_level: QM
+   :target_level: D
+   :origin: session-layer-standard
+   :source: ISO 14229-2:2021 9.5 Table 6; ISO 14229-2:2021 10.1.4.1 Figure 12; ISO 14229-2:2021 10.2.4 Figure 17
+   :tags: client; s3_client
+
+   In functional keep-alive, while the keeping-alive fact holds, on ``T_Data.conf`` reporting
+   the successful transmission on a functional channel of a request whose classification
+   states ``keep-alive``, the client shall start the ``tS3_Client`` timer loaded with the
+   reload parameter.
+
+   Table 6's functional column restarts the timer on the ``T_Data.conf`` completing the
+   functionally addressed TesterPresent transmitted at the timer's expiry, and on nothing
+   else; Figure 12 keys j, m and o and Figure 17 keys h, q, w and y are those confirmations.
+   ``UDSS_LLR_0134`` carries the ``keep-alive`` classification because Table 6 names that one
+   request and ``UDSS_LLR_0135`` forbids recognising it from the data; a functionally
+   addressed request without it changes nothing.
+
+   The channel must be functional for Table 6's wording and for the reason
+   ``UDSS_LLR_0167`` gives: the timer serves every server the functional TesterPresent
+   reaches, and a physically addressed message reaches one. The fact must hold so that a
+   marked request sent in the default session starts nothing.
+
+   A ``T_Data.conf`` reporting a failed transmission leaves the timer stopped. Table 9's
+   functional column has the client repeat the request after "the time ``tS3_Client_Func``",
+   a parameter defined nowhere in the standard; this set reads it as ``tP3_Client_Func``,
+   the only functional spacing parameter 10.3 defines, and treats the text as a
+   typographical error. The repeat is the client error handling document's; its confirmation
+   restarts the timer here.
+
+.. llr:: Functional keep-alive disengages on return to the default session
+   :id: UDSS_LLR_0167
+   :status: draft
+   :integrity_level: QM
+   :target_level: D
+   :origin: derived
+   :tags: client; s3_client; session-state
+
+   In functional keep-alive, while the keeping-alive fact holds, on ``T_Data.conf`` reporting
+   the successful transmission on a functional channel of a request whose classification
+   carries a session selection that is the default session, the client shall clear the fact
+   and stop the ``tS3_Client`` timer.
+
+   Rationale: the standard states no end condition for the client's timer. Table 5 defines
+   ``tS3_Client`` as the time between the TesterPresent messages that keep a session other
+   than the default active, and Table 6's initial start applies only where the session
+   selected is a non-default one, so the mirror of the event ``UDSS_LLR_0164`` acts on ends
+   the purpose the timer serves. Acting on the request's confirmation, as ``UDSS_LLR_0164``
+   does, keeps the two symmetric and needs no response. Without this requirement a client
+   that had returned every server to the default session would transmit TesterPresent
+   indefinitely, which ``UDSS_LLR_0111`` shows the servers ignoring.
+
+   The channel must be functional, though ``UDSS_LLR_0164`` engages from either kind. Table 8
+   makes the timer and the fact client-wide, so the client cannot know how many servers the
+   keep-alive still serves. A physically addressed return to the default session moves one
+   server, and disengaging on it would let every other server's ``tS3_Server`` expire; a
+   functionally addressed one reaches every server the functional TesterPresent reaches.
+   What is left open is a client that moved a single server physically and returns it
+   physically: it keeps receiving keep-alive indications and, under the assumptions of use,
+   transmitting TesterPresent the servers ignore, with no terminating condition in this set.
+   The :doc:`open-questions` page records that.
+
+   After a functionally addressed session change for which responses are required, some
+   server may have refused the change. Reading the responses is the application's job under
+   ``UDSS_LLR_0135``.
+
 Physical keep-alive
 -------------------
 
