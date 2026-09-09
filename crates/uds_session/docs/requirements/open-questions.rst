@@ -246,11 +246,12 @@ What ends a functional keep-alive whose servers were returned physically?
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 ``UDSS_LLR_0167`` disengages the functional keep-alive only on a functionally addressed
-return to the default session, because ISO 14229-2:2021 9.6 Table 8 makes the timer and its
-fact client-wide and the client cannot tell how many servers a physically addressed return
-leaves in their session. The residual is a client that moved a single server into a
-non-default session physically and returns it physically: the keeping-alive fact still holds,
-so ``UDSS_LLR_0165`` keeps delivering a keep-alive indication every reload period and, under
+return to the default session, because ISO 14229-2:2021 9.6 Table 8 makes the timer
+client-wide, ``UDSS_LLR_0163`` accordingly holds one keeping-alive fact for the client, and
+the client cannot tell how many servers a physically addressed return leaves in their
+session. The residual is a client that moved a single server into a non-default session
+physically and returns it physically: the keeping-alive fact still holds, so
+``UDSS_LLR_0165`` keeps delivering a keep-alive indication every reload period and, under
 the assumption of use the client session timer document records, the application keeps
 transmitting a TesterPresent that the servers ignore (``UDSS_LLR_0111``). Nothing in the set
 ends it: no requirement clears the fact on the caller's say-so and none tears a client down.

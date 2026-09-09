@@ -32,9 +32,9 @@ addressing; in physical keep-alive it carries the channel's identity. The sessio
 cannot compose the TesterPresent itself, ``UDSS_LLR_0135`` forbidding it; the application
 does, as it does the repeat that ``UDSS_LLR_0159`` leaves to it.
 
-This document uses **physical channel**, **functional channel**, **request in progress**,
-**first indication**, **completion** and **solicited** as the client response timing document
-and ``UDSS_LLR_0134`` define them.
+This document uses **physical channel**, **functional channel** and **request in progress**
+as the client response timing document defines them, **first indication** and **completion**
+as ``UDSS_LLR_0140`` defines them, and **solicited** as ``UDSS_LLR_0134`` defines it.
 
 What ordinary traffic does to the timer
 ---------------------------------------
@@ -45,8 +45,8 @@ TesterPresent, so a functionally addressed request that is not the keep-alive ch
 nothing, and the client needs the ``keep-alive`` classification of ``UDSS_LLR_0134`` to tell
 the two apart. The functional keep-alive expects no response, so under the client response
 timing document it is never a request in progress and never collides with that document's
-one-request-per-channel model; ISO 14229-1:2020 8.7.6 exempts it from the server's
-one-request-at-a-time rule for the same reason.
+one-request-per-channel model; ISO 14229-1:2020 8.7.6 likewise excepts it from the server's
+one-request-at-a-time rule.
 
 In physical keep-alive, everything. Every request stops the timer and every completed
 exchange restarts it, and the physically addressed TesterPresent is one request among
@@ -126,7 +126,8 @@ The timer's state
    and physical keep-alive, in which a physically addressed TesterPresent is transmitted on
    a physical channel when that channel's ``tS3_Client`` expires with no other request sent
    on it. The mode shall be a protocol parameter set as ``UDSS_LLR_0138`` provides, and
-   shall select which of ``UDSS_LLR_0163`` to ``UDSS_LLR_0172`` act.
+   shall select which state ``UDSS_LLR_0163`` requires and which of ``UDSS_LLR_0164`` to
+   ``UDSS_LLR_0172`` act.
 
    Clause 9.5 requires a periodically transmitted, functionally addressed TesterPresent to
    be distinguished from a sequentially transmitted, physically addressed one, which is only
@@ -169,10 +170,14 @@ The timer's state
    what timers are needed, not where they live.
 
    The rule on evaluation order is what lets several requirements match one input and
-   exactly one act. ``UDSS_LLR_0164`` and ``UDSS_LLR_0166`` both act on a confirmation, and
-   ``UDSS_LLR_0168``, ``UDSS_LLR_0170`` and ``UDSS_LLR_0172`` all act on a completed
-   exchange; each is guarded on the fact or on the timer, and the guard reads the state
-   before any of them has changed it.
+   exactly one act. In physical keep-alive ``UDSS_LLR_0168``, ``UDSS_LLR_0170`` and
+   ``UDSS_LLR_0172`` all act on a completed exchange; the first is guarded on the fact not
+   holding and the other two on its holding, and the guard reads the state before any of
+   them has changed it. In functional keep-alive the requirements are separated by the
+   classification instead: ``UDSS_LLR_0164`` and ``UDSS_LLR_0167`` act on a session
+   selection and ``UDSS_LLR_0166`` on the ``keep-alive`` marker, which ``UDSS_LLR_0134``
+   places only on a request that effects no transition, so no well-formed input matches
+   more than one.
 
 Functional keep-alive
 ---------------------
@@ -231,8 +236,7 @@ Functional keep-alive
    response timeout: ``UDSS_LLR_0135`` forbids this layer to compose the message. The
    assumptions of use above record what the application sends. The standard names no
    functional address for the keep-alive, so the indication carries none and
-   ``UDSS_LLR_0166`` accepts the confirmation on any functional channel. Table 8 makes the
-   timer one per client rather than per channel, so there is no channel to name.
+   ``UDSS_LLR_0166`` accepts the confirmation on any functional channel.
 
    The timer expires when the elapsed time reaches the parameter, as ``UDSS_LLR_0148``
    reads ``tP2_Server``, not when it exceeds it as ``UDSS_LLR_0159`` reads ``tP_Client``.
@@ -303,8 +307,9 @@ Functional keep-alive
    that had returned every server to the default session would transmit TesterPresent
    indefinitely, which ``UDSS_LLR_0111`` shows the servers ignoring.
 
-   The channel must be functional, though ``UDSS_LLR_0164`` engages from either kind. Table 8
-   makes the timer and the fact client-wide, so the client cannot know how many servers the
+   The channel must be functional, though ``UDSS_LLR_0164`` engages from either kind.
+   Table 8 makes the timer client-wide, and ``UDSS_LLR_0163`` accordingly holds one
+   keeping-alive fact for the client, so the client cannot know how many servers the
    keep-alive still serves. A physically addressed return to the default session moves one
    server, and disengaging on it would let every other server's ``tS3_Server`` expire; a
    functionally addressed one reaches every server the functional TesterPresent reaches.
@@ -315,7 +320,11 @@ Functional keep-alive
 
    After a functionally addressed session change for which responses are required, some
    server may have refused the change. Reading the responses is the application's job under
-   ``UDSS_LLR_0135``.
+   ``UDSS_LLR_0135``. The physical mirror, ``UDSS_LLR_0172``, acts on the response and so
+   does not disengage on a refused return; this requirement acts on the request's
+   confirmation because ``UDSS_LLR_0164`` does, Table 6's functional column naming that
+   event, and a client keeping many servers alive cannot make the disengage turn on how each
+   of them answered.
 
 Physical keep-alive
 -------------------
@@ -379,11 +388,11 @@ session fact, and the requests and indications on it.
    ``T_Data.req`` for a request on that channel, the client shall stop the channel's
    ``tS3_Client`` timer.
 
-   Figure 13 key e: whenever the client transmits a request to the server, the physically
-   addressed TesterPresent included, it stops its ``tS3_Client`` timer. Table 6 has no stop
-   row for the client's timer; the key is the standard's only statement of it, and 9.5's
-   description of the physically addressed TesterPresent as transmitted only in the absence
-   of any other request depends on it.
+   Figure 13 key e states the stop on the client's transmission of any request message,
+   naming the physically addressed TesterPresent as included. Table 6 has no stop row for
+   the client's timer; the key is the standard's only statement of it, and 9.5's description
+   of the physically addressed TesterPresent as transmitted only in the absence of any other
+   request depends on it.
 
    The ``T_Data.req`` is the output ``UDSS_LLR_0140`` names and ``UDSS_LLR_0116`` has the
    caller retrieve. It is produced when the ``S_Data.req`` is processed, so the stop precedes
@@ -405,53 +414,59 @@ session fact, and the requests and indications on it.
 
    * ``T_Data.conf`` reporting the successful transmission of a request whose expected
      response count is ``none``;
-   * ``T_Data.conf`` reporting a failed transmission;
-   * while a request is in progress on the channel, ``T_Data.ind`` reporting the successful
-     reception of a message whose classification states kind ``final response`` and
-     ``solicited``;
-   * while a request is in progress on the channel, ``T_Data.ind`` reporting a failed
-     reception;
+   * ``T_Data.conf`` reporting a failed transmission of a request;
+   * ``T_Data.ind`` reporting the successful reception of a message whose classification
+     states kind ``final response`` and ``solicited``;
+   * ``T_Data.ind`` reporting a failed reception of a message on the channel;
    * the expiry under ``UDSS_LLR_0159`` of the response window of a request whose
      classification states ``keep-alive``.
 
-   The first four are Table 6's subsequent-start rows in the physical column. Figure 13 key g
-   shows the first and keys j, n and r the third; the second and fourth rest on Table 6
-   alone. The fifth is Table 9's response timeout row, which restarts ``tS3_Client`` where
-   the request was a physically addressed, sequentially transmitted TesterPresent, because
-   the timer was stopped when that request went out. That TesterPresent is the request the
-   application transmits in answer to ``UDSS_LLR_0171`` and marks ``keep-alive`` under the
-   assumptions of use; it was the only traffic due, so if its response is lost the timer
-   must resume or no further keep-alive is ever requested. For any other request a lost
-   response restarts nothing here: Table 9 has the application repeat it, each repeat
-   restarting the cadence through ``UDSS_LLR_0169`` and the first four bullets, and where
-   every repeat fails the client stops sending and the server's ``tS3_Server`` ends the
-   session, as the preamble says.
+   The first four are Table 6's subsequent-start rows in the physical column. Figure 13
+   key g shows the first and keys j, n and r the third; the second and fourth rest on
+   Table 6 alone. The fifth is Table 9's response timeout row, which restarts ``tS3_Client``
+   where the request was a physically addressed, sequentially transmitted TesterPresent,
+   because the timer was stopped when that request went out. That TesterPresent is the
+   request the application transmits in answer to ``UDSS_LLR_0171`` and marks ``keep-alive``
+   under the assumptions of use; it was the only traffic due, so if its response is lost the
+   timer must resume or no further keep-alive is ever requested. The marker stands for
+   Table 9's "sequentially transmitted", which 9.5 defines as a TesterPresent transmitted
+   only in the absence of any other request; an unmarked TesterPresent is not one, and the
+   restart does not reach it. For any other request a lost response restarts nothing here:
+   Table 9 has the application repeat it, each repeat restarting the cadence through
+   ``UDSS_LLR_0169`` and the first four bullets, and where every repeat fails the client
+   stops sending and the server's ``tS3_Server`` ends the session, as the preamble says.
 
    Table 9 also restricts its transmission-error and reception-error restarts to the
    TesterPresent case, where Table 6's rows for the same events are unrestricted. The second
    and fourth bullets follow Table 6.
 
-   Table 6's third and fourth rows apply "in case a response is required". That is read as
-   tying the restart to the exchange the client is waiting for, hence the condition that a
-   request is in progress on the channel; the client response timing document's rule that an
-   input ending the wait is processed while the request is still in progress makes the final
-   response and the failed reception eligible. A response arriving after the window has
-   expired, or a broken reception unrelated to any request, restarts nothing, matching that
-   document's rule that an indication on a channel with no request in progress takes no
-   timer action; an unsolicited response is excluded for the same reason. The fourth row
-   says a multi-frame response; the session layer cannot see framing, so any failed
-   reception is taken, the reading ``UDSS_LLR_0154`` takes.
+   Table 6's third row applies "in case a response is required", which is read as naming a
+   response to a request the client sent: the ``solicited`` classification of
+   ``UDSS_LLR_0134`` carries that, and an unsolicited response restarts nothing. Neither the
+   third row nor the fourth conditions the restart on the state of the wait, and nor does
+   this requirement. A wait ends at a message's first indication under ``UDSS_LLR_0140``,
+   while Table 6 states the restart on the message's completion, so a guard on a request
+   being in progress would leave the completing ``T_Data.ind`` of every multi-frame
+   response outside it on a transport that supplies ``T_DataSOM.ind``. A solicited final
+   response that arrives after the response window has expired restarts the timer as any
+   other does: its server completed the exchange and restarted its own ``tS3_Server`` at
+   that response's confirmation (``UDSS_LLR_0106``), so the restart keeps the two cadences
+   aligned. The fourth row names an error during the reception of a multi-frame response
+   message; the session layer cannot see framing, so any failed reception on the channel is
+   taken, the reading ``UDSS_LLR_0154`` takes, and one that answers no request the client
+   remembers restarts the timer as the row states.
 
    Table 6's third row says any response message, and the third bullet takes a final
    response only. That narrows the text, and deliberately: a response-pending negative
    response does not restart the timer. Clause 9.5 describes the physically addressed
    TesterPresent as transmitted only in the absence of any other request, and the enhanced
    response window that a response-pending message opens, ``tP2*_Client`` of 9.2 Tables 3
-   and 4, is of the same order as ``tS3_Server`` and longer than the recommended
-   ``tS3_Client`` reload, so a timer restarted there would expire inside the window and
-   demand a TesterPresent while the request is in progress, a second outstanding request on
-   the channel for which ISO 14229-1:2020 8.7.6 gives the server no bypass. Nothing is lost
-   by waiting: the server's ``tS3_Server`` is stopped from the request's first indication
+   and 4, is, on the recommended values of 9.2 Table 4 and 9.5 Table 5, of the same order as
+   ``tS3_Server`` and longer than the recommended ``tS3_Client`` reload, so a timer
+   restarted there would expire inside the window and demand a TesterPresent while the
+   request is in progress, a second outstanding request on the channel for which
+   ISO 14229-1:2020 8.7.6 gives the server no bypass. Nothing is lost by waiting: the
+   server's ``tS3_Server`` is stopped from the start of the request's reception
    (``UDSS_LLR_0104``), is not restarted by the pending message (``UDSS_LLR_0107``), and
    resumes at the final response (``UDSS_LLR_0106``), on which the third bullet resumes the
    client's cadence too.
@@ -481,7 +496,11 @@ session fact, and the requests and indications on it.
    of use record that the application transmits it on the indicated channel; whether it
    requires a response is the application's choice, and ``UDSS_LLR_0170`` restarts the timer
    either way: on the response, key n; on the confirmation where none is required, the
-   alternative key n states; or on the lost response its fifth bullet covers.
+   alternative key n states; or on the lost response its fifth bullet covers. Between this
+   indication and the input ``UDSS_LLR_0170`` acts on, the timer is not running and the fact
+   holds. Where the application sends some other request instead, ``UDSS_LLR_0170`` restarts
+   the timer at the completion of that exchange; where it sends nothing, nothing restarts
+   the timer and the channel's server leaves the session when ``tS3_Server`` expires.
 
    The indication carries the channel and not a source address: a channel is identified by
    the client's own outbound addressing, as the client response timing document defines it,
