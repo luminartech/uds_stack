@@ -8,6 +8,7 @@ Requirements
    llr-server-session-timer
    llr-server-response-timing
    llr-client-response-timing
+   llr-client-session-timer
    open-questions
 
 Status of this set
