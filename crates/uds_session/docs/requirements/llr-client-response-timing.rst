@@ -213,12 +213,15 @@ The response window
    that any ``T_Data.ind`` on the channel completes it. On a functional channel
    ``UDSS_LLR_0160`` holds the start-of-message fact per responder instead. On
    initialisation no such timer shall be running, no request shall be in progress and no
-   start-of-message shall be open, and no start-of-message shall be held open on a channel
-   while no request is in progress on it. A request shall become in progress as
-   ``UDSS_LLR_0153`` starts the timer and shall cease to be in progress as the preamble
-   states. Thereafter the state of a channel's timer shall be changed only as
+   start-of-message shall be open. A request shall become in progress as ``UDSS_LLR_0153``
+   starts the timer and shall cease to be in progress as the preamble states or as
+   ``UDSS_LLR_0183`` requires. A physical channel's open start-of-message shall be retained
+   past the end of the request in progress until a ``T_Data.ind`` on that channel completes
+   it, whether the reception succeeded or failed, or until a channel reset under
+   ``UDSS_LLR_0183`` closes it. Thereafter the state of a channel's timer shall be changed
+   only as
    ``UDSS_LLR_0153``, ``UDSS_LLR_0154``, ``UDSS_LLR_0155``, ``UDSS_LLR_0156``,
-   ``UDSS_LLR_0157`` and ``UDSS_LLR_0159`` require.
+   ``UDSS_LLR_0157``, ``UDSS_LLR_0159`` and ``UDSS_LLR_0183`` require.
 
    Table 7 requires a single timer for each logical communication channel, physical and
    functional alike, and clause 9.1.2 requires a single application timer implementation
@@ -259,6 +262,14 @@ The response window
    The open start-of-message is kept here rather than in a table because a physical channel
    has one peer and one outstanding request, so one fact suffices; ``UDSS_LLR_0160`` keeps
    the same fact per responder on a functional channel.
+
+   The start-of-message outlives the request because the wait on a physical channel ends at
+   the first indication of the final response while ``UDSS_LLR_0140``'s pairing needs the
+   start-of-message open until that message's completion; a rule closing it at the end of
+   the request would have the completion of every multi-frame final response misread as a
+   new single-frame message. An earlier form of this requirement stated such a rule.
+   ``UDSS_LLR_0160`` says the same of a functional channel's entries, and the channel reset
+   of ``UDSS_LLR_0183`` is what closes a start-of-message whose completion never comes.
 
 .. llr:: The response timer has two reload parameters
    :id: UDSS_LLR_0152

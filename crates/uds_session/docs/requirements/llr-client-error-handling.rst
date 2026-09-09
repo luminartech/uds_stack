@@ -291,3 +291,118 @@ Responses still arriving
    application must act on both. Where ``UDSS_LLR_0176`` also holds, the time remaining
    ``UDSS_LLR_0177`` requires is reported as well; nothing here displaces it. This
    constrains the report's content and adds no output under ``UDSS_LLR_0116``.
+
+Giving a server up
+------------------
+
+.. llr:: The caller may reset a channel
+   :id: UDSS_LLR_0183
+   :status: draft
+   :integrity_level: QM
+   :target_level: D
+   :origin: derived
+   :tags: client; error-handling; service-interface
+
+   The session layer shall accept a **channel reset** from the caller identifying one
+   logical communication channel. On a channel reset the client shall:
+
+   * end any request in progress on the channel and stop its ``tP_Client`` timer,
+     delivering no indication for it;
+   * discard the association ``UDSS_LLR_0133`` holds between an ``S_Data.req`` on the
+     channel and a ``T_Data.conf`` not yet received for it;
+   * where the channel is physical, close its open start-of-message, and where functional,
+     release every entry of its responder table;
+   * set the channel's repeat count to zero.
+
+   A ``T_Data.conf`` arriving for a discarded association shall be confirmed to the
+   application under ``UDSS_LLR_0120`` and shall take no other action. The reset shall
+   produce no output to the application and none to the transport layer. A reset
+   identifying a channel the client does not have shall be rejected as ``UDSS_LLR_0150``
+   rejects an invalid request.
+
+   Rationale: ISO 14229-2:2021 9.7 Table 9 ends at the third transmission and the standard
+   says nothing of what the client concludes, while the state this set keeps per channel
+   persists on its own: a request in progress whose completion never comes, an entry
+   ``UDSS_LLR_0160`` retains for a response that never completes, a repeat count at two.
+   Something the caller invokes has to clear it, and the standard supplies no input that
+   does.
+
+   The effects are the state a reset clears, and the list is closed so that a document
+   adding state per channel must amend this requirement to say whether the reset clears
+   it. What it deliberately leaves: the protocol parameters of ``UDSS_LLR_0152`` and
+   ``UDSS_LLR_0173``, which are the caller's; the spacing timer, which ``UDSS_LLR_0173``
+   defines with no stopped state and which protects a server that knows nothing of the
+   reset, so that 10.3's wait is still owed; the count ``UDSS_LLR_0156`` keeps, defined
+   relative to the last confirmation and so reset by the next; and the keep-alive state,
+   which ``UDSS_LLR_0184`` covers as a separate act. In physical keep-alive a reset
+   therefore leaves the channel's session fact and ``tS3_Client`` timer as they were; a
+   timer ``UDSS_LLR_0169`` stopped for the request the reset ended is restarted by the next
+   completed exchange under ``UDSS_LLR_0170`` or cleared with the fact under
+   ``UDSS_LLR_0184``, and until one of those the server's ``tS3_Server`` runs unattended,
+   which is the outcome the client session timer document records for a lost response.
+
+   Without the second effect the confirmation of a request transmitted before the reset
+   and confirmed after it would start a new response window under ``UDSS_LLR_0153``, a
+   spacing interval under ``UDSS_LLR_0174`` or ``UDSS_LLR_0175``, or the functional
+   keep-alive under ``UDSS_LLR_0164``, on a channel the application had just given up. The
+   confirmation is still delivered because the transport's report of the outcome is real
+   and ``UDSS_LLR_0120`` promises it. Indications arriving after the reset are first
+   indications of single-frame messages under ``UDSS_LLR_0140``, reach the application
+   through ``UDSS_LLR_0137`` with the caller's classification, and take no timer action, no
+   request being in progress; the preamble records that the application expects this.
+
+   The physical start-of-message the third effect closes is the one ``UDSS_LLR_0151``
+   retains past the end of the request. Naming a channel that does not exist is a caller
+   error rather than an input, as ``UDSS_LLR_0140`` treats one. The reset is neither a
+   primitive nor a parameter but an act of the caller, as the completion report of
+   ``UDSS_LLR_0136`` is; the service interface document's preamble names both.
+
+.. llr:: The caller may release a keep-alive
+   :id: UDSS_LLR_0184
+   :status: draft
+   :integrity_level: QM
+   :target_level: D
+   :origin: derived
+   :tags: client; error-handling; s3_client; session-state
+
+   The session layer shall accept a **keep-alive release** from the caller identifying one
+   logical communication channel. On a keep-alive release:
+
+   * in physical keep-alive, where the channel is physical and its session fact holds, the
+     client shall clear the fact and stop the channel's ``tS3_Client`` timer;
+   * in functional keep-alive, where the channel is functional and the keeping-alive fact
+     holds, the client shall clear the fact and stop the client's ``tS3_Client`` timer.
+
+   In every other case the release shall change nothing. The release shall produce no
+   output to the application and none to the transport layer. A release identifying a
+   channel the client does not have shall be rejected as ``UDSS_LLR_0150`` rejects an
+   invalid request.
+
+   Rationale: the standard names no end for the client's keep-alive other than the return
+   to the default session that ``UDSS_LLR_0167`` and ``UDSS_LLR_0172`` transcribe, and a
+   server that has failed to answer three times cannot be returned. Without a release the
+   physical fact would keep ``UDSS_LLR_0170`` and ``UDSS_LLR_0171`` restarting a keep-alive
+   for a server the application has given up, and the functional fact would keep
+   ``UDSS_LLR_0165`` delivering indications after the last server was returned physically,
+   a residual the :doc:`open-questions` page held open until this document.
+
+   It is a separate act from the channel reset of ``UDSS_LLR_0183`` because the two answer
+   different situations. A reset unwedges a channel whose responses never completed, and
+   must not cost the application its sessions with every other server; in functional
+   keep-alive it would, ``UDSS_LLR_0163`` holding one keeping-alive fact for the client.
+
+   The functional condition reads a release on a functional channel as the application
+   abandoning functional keep-alive as a whole. ISO 14229-2:2021 9.6 Table 8's single
+   timer cannot be scoped to the servers behind one functional address, so nothing narrower
+   can be stated, exactly as ``UDSS_LLR_0167`` reads a functionally addressed return to the
+   default session. A deployment with several functional channels releases only when no
+   server still relies on the keep-alive, recorded in the preamble as an assumption of use.
+   A client in functional keep-alive has the functional channel its TesterPresent goes out
+   on, ``UDSS_LLR_0166`` requiring that message's confirmation to arrive on one, so the
+   release always has a channel to name.
+
+   A release leaves every other state alone. A physical keep-alive released while a
+   request is in progress on the channel leaves the request and its ``tP_Client`` timer
+   untouched; only ``UDSS_LLR_0183`` ends a request. A release in the other mode, or on a
+   channel whose fact does not hold, changes nothing and is not an error, the fact the
+   caller wished cleared being already clear.
