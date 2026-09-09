@@ -151,5 +151,87 @@ The spacing timer
 Starting the timer
 ------------------
 
+.. llr:: Physical spacing starts on a confirmed request needing no response
+   :id: UDSS_LLR_0174
+   :status: draft
+   :integrity_level: QM
+   :target_level: D
+   :origin: session-layer-standard
+   :source: ISO 14229-2:2021 9.7 Table 9; ISO 14229-2:2021 10.3; ISO 14229-2:2021 10.3 Figure 20
+   :tags: client; p3_client
+
+   On a physical channel, on either a ``T_Data.conf`` reporting the successful transmission
+   of a request on the channel whose expected response count is ``none``, or a
+   ``T_Data.conf`` reporting a failed transmission of a request on the channel, the client
+   shall start the channel's spacing timer loaded with its spacing parameter.
+
+   Clause 10.3 a) starts ``tP3_Client_Phys`` each time a physically addressed request with no
+   response required is successfully transmitted, as indicated by ``T_Data.conf``; Figure 20
+   keys b and g show it. The expected response count of ``none`` stands for no response
+   required, as it does in ``UDSS_LLR_0153``. A request that required a response and was
+   transmitted starts nothing: 10.3 lets the next request follow immediately after the
+   complete reception of the response, the server having shown that it finished.
+
+   The second condition widens 10.3's "successfully transmitted". It comes from 9.7 Table
+   9's request transmission row, which has the client repeat a request whose transmission
+   failed after ``tP3_Client_Phys`` following the error indication; that indication is the
+   ``T_Data.conf`` with a negative result, so starting the timer there measures from the
+   point Table 9 names. It applies whatever the failed request's expected response count,
+   because a fragment of the request may have reached the server, which must consume or
+   discard it on its own schedule before the repeat arrives, the hazard 10.3 describes. It
+   has a consequence beyond Table 9: because ``UDSS_LLR_0176`` rejects every request on the
+   channel while the timer is active, a failed transmission also postpones a request that
+   requires a response for one spacing interval, which neither 10.3 a) nor Table 9 forbids.
+   That is taken because the session layer retains no payload (``UDSS_LLR_0117``) and so
+   cannot tell the repeat Table 9 gates from a new request; the cost is one spacing interval
+   after a failure.
+
+   A confirmation arriving while the timer is already active restarts it, 10.3 stating the
+   start without condition. For an ordinary request the case cannot arise, ``UDSS_LLR_0176``
+   refusing one while the timer is active. There is no exception for a confirmation that
+   returns the channel to the default session: 10.3 a) applies in any diagnostic session, so
+   that confirmation starts the spacing timer while ``UDSS_LLR_0170``, excepted by
+   ``UDSS_LLR_0172``, does not restart ``tS3_Client``. The physically addressed TesterPresent
+   that requests no response starts this timer like any other such request.
+
+.. llr:: Functional spacing starts on any confirmed request
+   :id: UDSS_LLR_0175
+   :status: draft
+   :integrity_level: QM
+   :target_level: D
+   :origin: session-layer-standard
+   :source: ISO 14229-2:2021 9.2 Table 3; ISO 14229-2:2021 9.7 Table 9; ISO 14229-2:2021 10.3; ISO 14229-2:2021 10.3 Figure 19
+   :tags: client; p3_client
+
+   On a functional channel, on any ``T_Data.conf`` for a request on the channel, whether it
+   reports a successful or a failed transmission and whatever the request's expected
+   response count, the client shall start the channel's spacing timer loaded with its
+   spacing parameter.
+
+   Clause 10.3 b) starts ``tP3_Client_Func`` each time a functionally addressed request,
+   with response required or with no response required, is successfully transmitted;
+   Figure 19 keys b, h and n show it. Table 3 states the functional wait more narrowly,
+   for the case where no response is required or the requested data are supported by only
+   some of the addressed servers. Clause 10.3 b) is followed: the session layer cannot know
+   which servers support a request (``UDSS_LLR_0135``), and the unconditional reading is
+   the conservative one.
+
+   The failed confirmation widens 10.3's "successfully transmitted", from Table 9's request
+   transmission row as ``UDSS_LLR_0174`` explains. Table 9's functional cell has the client
+   repeat after "the time ``tS3_Client_Func``", a name the standard defines nowhere. It is
+   read as ``tP3_Client_Func``, as ``UDSS_LLR_0166`` reads it, on substance: the physical
+   cell beside it names the spacing timer; the row's purpose, giving the server time to
+   consume the failed fragment before the repeat, is a retransmission delay and not a
+   keep-alive cadence; a repeat delayed by ``tS3_Client`` would spend the whole margin Table 5
+   keeps under ``tS3_Server``; and the subclause's parameter names are demonstrably
+   unreliable, Figure 19's own title naming the functional figure ``tP3_Client_Phys``.
+
+   A confirmation arriving while the timer is already active restarts it, 10.3 stating the
+   start without condition; for an ordinary request the case cannot arise. The functional
+   keep-alive's confirmation starts this timer, Figure 19 key n, while ``UDSS_LLR_0166``
+   restarts ``tS3_Client`` on it, and neither disturbs the other. Where that transmission
+   fails, this timer starts and ``UDSS_LLR_0166`` restarts nothing; the repeat's confirmation
+   does.
+
 The next request
 ----------------
