@@ -18,7 +18,7 @@ required, because without a response the client cannot observe that the server h
 finished. ``tP3_Client_Func`` applies to any functionally addressed request, because a server
 that does not support the request may never answer it. Where a physically addressed request
 required a response, the response itself shows that the server has finished, and 10.3 lets
-the next request follow at once.
+the next request follow immediately after that response has been completely received.
 
 The spacing timer and its parameter
 -----------------------------------
@@ -27,10 +27,10 @@ Throughout this document, a channel's **spacing timer** is the single timer ISO 
 9.6 Table 7 allots to it for this purpose, and its **spacing parameter** is the protocol
 parameter the timer is loaded with: ``tP3_Client_Phys`` on a physical channel,
 ``tP3_Client_Func`` on a functional one. A spacing timer is **active** from a start under
-``UDSS_LLR_0174`` or ``UDSS_LLR_0175`` until the elapsed time since that start reaches the
-value it was loaded with; a timer that has not been started is not active. Nothing stops a
-spacing timer and nothing acts when it becomes inactive: its whole effect is a condition on
-the next transmission.
+``UDSS_LLR_0174`` or ``UDSS_LLR_0175`` until the elapsed time since the most recent such
+start reaches the value it was loaded with; a timer that has not been started is not active.
+Nothing stops a spacing timer and nothing acts when it becomes inactive: its whole effect is
+a condition on the next transmission.
 
 A ``T_Data.conf`` belongs to the channel named by the addressing of the ``S_Data.req`` that
 ``UDSS_LLR_0133`` associates with it, the route ``UDSS_LLR_0153`` uses, and an ``S_Data.req``
@@ -58,23 +58,26 @@ The keep-alive is one such request. In functional keep-alive the TesterPresent t
 ``UDSS_LLR_0165``'s indication is rejected while the functional channel's spacing timer is
 active and goes out after the reported time, which is the postponement 10.3 Figure 19 keys k
 to m show and the delay key p names; in physical keep-alive the TesterPresent that answers
-``UDSS_LLR_0171``'s indication is rejected while the physical channel's timer is active, which
-it is where the previous request on that channel needed no response or failed. In both cases
-``tS3_Client`` is stopped meanwhile and restarts only when the TesterPresent's exchange
-completes, under ``UDSS_LLR_0166`` or ``UDSS_LLR_0170``. Where the TesterPresent's own
-transmission fails, ``UDSS_LLR_0175`` starts the spacing timer and ``UDSS_LLR_0166`` restarts
-nothing; the repeat's confirmation does. The delay this adds is bounded by an obligation the
-next section records.
+``UDSS_LLR_0171``'s indication is rejected while the physical channel's timer is active,
+which it can be where the previous request on that channel needed no response or failed and
+the channel's spacing parameter is not shorter than the ``tS3_Client`` reload; on 9.5 Table
+5's recommended values it is not, the spacing timer and ``tS3_Client`` being started by the
+same confirmation. In both cases ``tS3_Client`` is stopped meanwhile and restarts only when
+the TesterPresent's exchange completes, under ``UDSS_LLR_0166`` or ``UDSS_LLR_0170``. Where
+the TesterPresent's own transmission fails, ``UDSS_LLR_0175`` starts the spacing timer and
+``UDSS_LLR_0166`` restarts nothing; the repeat's confirmation does. The delay this adds is
+bounded by an obligation the next section records.
 
 What this document does not cover
 ---------------------------------
 
-The parameter values. ISO 14229-2:2021 9.2 Table 4 sets the floor of both parameters at the
-server's ``tP2_Server_Max`` plus the network delay, per physically addressed server for
-``tP3_Client_Phys`` and, per 10.3 b), the worst case over the addressed servers for
-``tP3_Client_Func``. Clause 10.3 a) says the physical value is identical to
-``tP2_Server_Max``, omitting the delay Table 4 adds; Table 4's minimum governs. The caller
-chooses the values under ``UDSS_LLR_0138``, as it chooses every other timing parameter.
+The parameter values. ISO 14229-2:2021 9.2 Table 4 sets the floor of both parameters at
+``tP2_Server_Max`` plus the network delay, in two pairs differing by ``ΔtP2_Max`` and
+``ΔtP6_Max``. Clause 10.3 a) and b) instead state each value as a ``tP2_Server_Max`` — the
+addressed server's for ``tP3_Client_Phys``, the worst case over the functionally addressed
+servers for ``tP3_Client_Func`` — omitting the delay Table 4 adds; Table 4's minimum
+governs. The caller chooses the values under ``UDSS_LLR_0138``, as it chooses every other
+timing parameter.
 
 Table 4's footnote on the maximum. The maximum time the client waits before its next request
 is at its discretion, provided that in a non-default session ``tS3_Server`` is kept active in
@@ -118,11 +121,11 @@ The spacing timer
    channel and ``tP3_Client_Func`` for a functional channel, and the session layer shall not
    distinguish whether the value was derived with ``ΔtP2`` or with ``ΔtP6``. A channel's
    spacing timer shall be active from a start under ``UDSS_LLR_0174`` or ``UDSS_LLR_0175``
-   until the elapsed time since that start reaches the value it was loaded with, and a timer
-   that has not been started shall not be active. On initialisation no channel's spacing
-   timer shall be active. Thereafter a channel's spacing timer shall be changed only as
-   ``UDSS_LLR_0174`` and ``UDSS_LLR_0175`` require, each evaluated against the state as it
-   was before the input in hand.
+   until the elapsed time since the most recent such start reaches the value it was loaded
+   with, and a timer that has not been started shall not be active. On initialisation no
+   channel's spacing timer shall be active. Thereafter a channel's spacing timer shall be
+   changed only as ``UDSS_LLR_0174`` and ``UDSS_LLR_0175`` require, each evaluated against
+   the state as it was before the input in hand.
 
    Table 7 requires a single timer per logical physical communication channel for
    ``tP3_Client_Phys`` and a single timer per logical functional communication channel for
@@ -135,11 +138,15 @@ The spacing timer
    it which transport it is on, and the distinction survives in the values the caller
    supplies.
 
-   The timer becomes inactive when the elapsed time reaches the parameter rather than when it
-   exceeds it. Table 3 states the parameter as a minimum time to wait, which a request at
-   exactly that time satisfies, and 10.3 postpones only until the timer has timed out;
-   ``UDSS_LLR_0148`` reads ``tP2_Server`` the same way, the bound being on this side's own
-   conduct.
+   The timer becomes inactive when the elapsed time reaches the value it was loaded with
+   rather than when it exceeds it. Table 3 states the parameter as a minimum time to
+   wait, which a request at exactly that time satisfies, and 10.3 postpones only until
+   the timer has timed out; ``UDSS_LLR_0148`` reads ``tP2_Server`` the same way, the
+   bound being on this side's own conduct. A change to the spacing parameter does not
+   move a boundary already fixed; it takes effect at the next start, as ``UDSS_LLR_0152``
+   states for the response reload pair. Table 9's "after the time ``tP3_Client_Phys``" is
+   read the same way, the repeat being released at that time rather than after it, as the
+   parameter is stated as a minimum.
 
    No requirement stops a spacing timer and none acts when it becomes inactive. Clause 10.3
    states the timer's whole effect as a condition on the next transmission, so an inactive
@@ -157,7 +164,7 @@ Starting the timer
    :integrity_level: QM
    :target_level: D
    :origin: session-layer-standard
-   :source: ISO 14229-2:2021 9.7 Table 9; ISO 14229-2:2021 10.3; ISO 14229-2:2021 10.3 Figure 20
+   :source: ISO 14229-2:2021 9.2 Table 3; ISO 14229-2:2021 9.7 Table 9; ISO 14229-2:2021 10.3; ISO 14229-2:2021 10.3 Figure 20
    :tags: client; p3_client
 
    On a physical channel, on either a ``T_Data.conf`` reporting the successful transmission
@@ -177,8 +184,8 @@ Starting the timer
    failed after ``tP3_Client_Phys`` following the error indication; that indication is the
    ``T_Data.conf`` with a negative result, so starting the timer there measures from the
    point Table 9 names. It applies whatever the failed request's expected response count,
-   because a fragment of the request may have reached the server, which must consume or
-   discard it on its own schedule before the repeat arrives, the hazard 10.3 describes. It
+   because a fragment of the request may have reached the server, and Table 9 states the
+   wait for the repeat without regard to the failed request's response requirement. It
    has a consequence beyond Table 9: because ``UDSS_LLR_0176`` rejects every request on the
    channel while the timer is active, a failed transmission also postpones a request that
    requires a response for one spacing interval, which neither 10.3 a) nor Table 9 forbids.
@@ -186,13 +193,15 @@ Starting the timer
    cannot tell the repeat Table 9 gates from a new request; the cost is one spacing interval
    after a failure.
 
-   A confirmation arriving while the timer is already active restarts it, 10.3 stating the
-   start without condition. For an ordinary request the case cannot arise, ``UDSS_LLR_0176``
-   refusing one while the timer is active. There is no exception for a confirmation that
-   returns the channel to the default session: 10.3 a) applies in any diagnostic session, so
-   that confirmation starts the spacing timer while ``UDSS_LLR_0170``, excepted by
-   ``UDSS_LLR_0172``, does not restart ``tS3_Client``. The physically addressed TesterPresent
-   that requests no response starts this timer like any other such request.
+   A confirmation arriving while the timer is already active restarts it, 10.3 stating
+   the start without condition. For an ordinary request the case cannot arise under the
+   one-request-per-channel assumption of use, ``UDSS_LLR_0176`` refusing a request while
+   the timer is active and no second request being outstanding to confirm. There is no
+   exception for a confirmation that returns the channel to the default session: 10.3 a)
+   applies in any diagnostic session, so that confirmation starts the spacing timer while
+   ``UDSS_LLR_0170``, excepted by ``UDSS_LLR_0172``, does not restart ``tS3_Client``. The
+   physically addressed TesterPresent that requests no response starts this timer like
+   any other such request.
 
 .. llr:: Functional spacing starts on any confirmed request
    :id: UDSS_LLR_0175
@@ -222,12 +231,15 @@ Starting the timer
    read as ``tP3_Client_Func``, as ``UDSS_LLR_0166`` reads it, on substance: the physical
    cell beside it names the spacing timer; the row's purpose, giving the server time to
    consume the failed fragment before the repeat, is a retransmission delay and not a
-   keep-alive cadence; a repeat delayed by ``tS3_Client`` would spend the whole margin Table 5
-   keeps under ``tS3_Server``; and the subclause's parameter names are demonstrably
-   unreliable, Figure 19's own title naming the functional figure ``tP3_Client_Phys``.
+   keep-alive cadence; a repeat delayed by ``tS3_Client`` could exhaust the margin Table
+   5 keeps under ``tS3_Server``, Table 5 requiring only that ``tS3_Client`` be smaller;
+   and the subclause's parameter names are demonstrably unreliable, Figure 19's own title
+   naming the functional figure ``tP3_Client_Phys``.
 
-   A confirmation arriving while the timer is already active restarts it, 10.3 stating the
-   start without condition; for an ordinary request the case cannot arise. The functional
+   A confirmation arriving while the timer is already active restarts it, 10.3 stating
+   the start without condition. For an ordinary request the case cannot arise under the
+   one-request-per-channel assumption of use, ``UDSS_LLR_0176`` refusing a request while
+   the timer is active and no second request being outstanding to confirm. The functional
    keep-alive's confirmation starts this timer, Figure 19 key n, while ``UDSS_LLR_0166``
    restarts ``tS3_Client`` on it, and neither disturbs the other. Where that transmission
    fails, this timer starts and ``UDSS_LLR_0166`` restarts nothing; the repeat's confirmation
@@ -246,7 +258,7 @@ The next request
    :tags: client; p3_client; service-interface
 
    On an ``S_Data.req`` for a request on a channel whose spacing timer is active, the
-   session layer shall reject the ``S_Data.req`` as ``UDSS_LLR_0150`` defines.
+   client shall reject the ``S_Data.req`` as ``UDSS_LLR_0150`` defines.
 
    Clause 10.3 a) and b) allow the next request on a channel only where the spacing timer is
    no longer active, and otherwise require the transmission to be postponed until the timer
@@ -291,7 +303,8 @@ The next request
 
    A rejection under ``UDSS_LLR_0176`` shall state the time remaining until the channel's
    spacing timer becomes inactive, being the value the timer was loaded with less the
-   elapsed time since it was started, in the unit ``UDSS_LLR_0114`` gives for a timestamp.
+   elapsed time since the timer was last started, in the unit ``UDSS_LLR_0114`` gives for a
+   timestamp.
 
    Rationale: 10.3 postpones the request until the timer has timed out but gives the
    application no way to learn when that is, and Figure 19 key p names the delay that
