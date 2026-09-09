@@ -124,6 +124,14 @@ the data, where 10.3 b) applies it to every functionally addressed request, foll
 governing; and Figure 19's title names ``tP3_Client_Phys`` above a figure of the functional
 timer. None changes what the set does.
 
+The client request spacing cycle met three more. ISO 14229-2:2021 9.2 Table 3 conditions
+the functional spacing wait on no response being required or on only some servers supporting
+the data, where 10.3 b) applies it to every functionally addressed request, followed in
+``UDSS_LLR_0175``; 10.3 a) says ``tP3_Client_Phys`` is identical to ``tP2_Server_Max`` where
+Table 4 gives a minimum that adds the network delay, Table 4 governing; and Figure 19's title
+names ``tP3_Client_Phys`` above a figure of the functional timer. None changes what the set
+does.
+
 What does a keep-alive TesterPresent do to the response window?
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
