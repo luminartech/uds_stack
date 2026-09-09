@@ -230,3 +230,64 @@ The repeat count
    reason the preamble gives; ``UDSS_LLR_0182`` states what the report carries. An unmarked
    request on the same channel is not rejected here and, under ``UDSS_LLR_0179``, begins a
    new count.
+
+Responses still arriving
+------------------------
+
+.. llr:: A functional channel finishes receiving before it carries another request
+   :id: UDSS_LLR_0181
+   :status: draft
+   :integrity_level: QM
+   :target_level: D
+   :origin: session-layer-standard
+   :source: ISO 14229-2:2021 9.7 Table 9
+   :tags: client; error-handling; responders; service-interface
+
+   On an ``S_Data.req`` for a request on a functional channel while any entry in that
+   channel's responder table records an open start-of-message, the client shall reject the
+   ``S_Data.req`` as ``UDSS_LLR_0150`` defines.
+
+   Table 9's two functional timeout cells and its functional reception cell each oblige the
+   client to completely receive the response messages in progress before it continues.
+   ``UDSS_LLR_0160`` retains the entries that evidence a response in progress past the end
+   of the request for this requirement's sake, and the timer stays stopped meanwhile,
+   ``UDSS_LLR_0155`` acting only with a request in progress.
+
+   Declared widening. Only the cell for a timeout with an unknown number of responding
+   servers attaches the wait to further requests of any kind; the known-count cell and the
+   reception cell attach it to the repeat alone, at the point in time of the timeout or of
+   the error. This requirement applies the wider reading to all three, because the set
+   keeps no record of which of the three events ended the exchange, and a fact per channel
+   to record it would buy only the right to send a different request into responses still
+   arriving. The requirement is accordingly conditioned on neither the ``repeat`` marker
+   nor a request being in progress. The condition overlaps the one-request-per-channel
+   assumption of use the client response timing document records, and enforces a fragment
+   of it; the overlap is harmless.
+
+   The application retries on the ``S_Data.ind`` that ``UDSS_LLR_0137`` delivers for the
+   completion it was waiting for, so no indication is added. A responder ``UDSS_LLR_0161``
+   could not track has no entry and is not waited for; that is the residual of a capacity
+   set below the number of servers a functional address reaches, as ``UDSS_LLR_0161``
+   records.
+
+.. llr:: A rejection under this document states its cause
+   :id: UDSS_LLR_0182
+   :status: draft
+   :integrity_level: QM
+   :target_level: D
+   :origin: derived
+   :tags: client; error-handling; service-interface
+
+   Where the client rejects an ``S_Data.req`` under ``UDSS_LLR_0180`` or ``UDSS_LLR_0181``,
+   the report ``UDSS_LLR_0150`` requires shall state which of those two conditions held,
+   and shall state both where both held.
+
+   Rationale: ``UDSS_LLR_0150`` requires a rejection to be reported and says nothing of
+   what the report carries; ``UDSS_LLR_0177`` is the first constraint on it, for the
+   spacing timer. The two causes here call for opposite actions from the application,
+   waiting for the next completion under ``UDSS_LLR_0181`` and ceasing to repeat under
+   ``UDSS_LLR_0180``, and a report that did not distinguish them would leave the
+   application unable to follow Table 9. Both are stated where both hold because the
+   application must act on both. Where ``UDSS_LLR_0176`` also holds, the time remaining
+   ``UDSS_LLR_0177`` requires is reported as well; nothing here displaces it. This
+   constrains the report's content and adds no output under ``UDSS_LLR_0116``.

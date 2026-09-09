@@ -568,8 +568,13 @@ Responders on a functional channel
    with no entry: a ``T_DataSOM.ind``, or a ``T_Data.ind`` that ``UDSS_LLR_0158`` records
    as an outstanding response-pending message. Where one indication changes both facts of
    an entry, the changes shall be applied together. An entry shall be released when neither
-   fact holds. The table shall hold no entries while no request is in progress on that
-   channel. A physical channel shall keep no responder table.
+   fact holds. When the request in progress on the channel ends, the outstanding
+   response-pending fact of every entry shall be cleared, and an entry whose
+   start-of-message is open shall be retained until a ``T_Data.ind`` from that responder
+   completes it, whether the reception succeeded or failed, or until a channel reset under
+   ``UDSS_LLR_0183`` releases it; while no request is in progress on the channel an entry
+   shall record an open start-of-message and nothing else. A physical channel shall keep no
+   responder table.
 
    Rationale: ISO 14229-2:2021 10.2.3 Figure 16 keys d and i, and 10.2.4 Figure 17 keys m
    and t, require the client to add an entry for a server's address when its
@@ -596,6 +601,19 @@ Responders on a functional channel
    tracked at once rather than the responders that answer a request. A single-frame final
    response opens nothing and leaves nothing outstanding, so it never occupies an entry and
    can never be turned away. ``UDSS_LLR_0161`` states what happens when the table is full.
+
+   An entry outlives the request only for its open start-of-message. ISO 14229-2:2021 9.7
+   Table 9 obliges the client to completely receive the response messages in progress at a
+   timeout or a failure before it continues, and ``UDSS_LLR_0181`` enforces that from these
+   entries, which is why they are kept. The response-pending fact is cleared at the end of
+   the request because it records a promise: the server said a response would follow, and
+   at expiry it had not, so nothing is in transit for the client to finish receiving. Only
+   an open start-of-message evidences a message actually arriving. A completion in the gap
+   takes no timer action, ``UDSS_LLR_0155`` and ``UDSS_LLR_0157`` acting only with a request
+   in progress, and ``UDSS_LLR_0140``'s pairing is scoped to the channel rather than to the
+   request, so the completion closes the entry it belongs to. ``UDSS_LLR_0153`` cannot
+   start a new window while an entry remains, ``UDSS_LLR_0181`` refusing the request that
+   would.
 
    A physical channel needs no table. One peer answers on it and one request is
    outstanding, so the only fact to hold is whether that peer's start-of-message is open,
@@ -815,4 +833,6 @@ Enhanced response timing
 
    The timer is stopped for the reason ``UDSS_LLR_0148`` gives, and elapsed time is computed
    as ``UDSS_LLR_0114`` requires. Expiry ends the request in progress, so on a functional
-   channel it is also what empties the responder table under ``UDSS_LLR_0160``.
+   channel it is also what clears the response-pending facts of the responder table under
+   ``UDSS_LLR_0160``, leaving only the entries whose start-of-message is open, which
+   ``UDSS_LLR_0181`` waits on.
