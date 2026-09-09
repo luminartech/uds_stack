@@ -10,6 +10,7 @@ Requirements
    llr-client-response-timing
    llr-client-session-timer
    llr-client-request-spacing
+   llr-client-error-handling
    open-questions
 
 Status of this set

@@ -771,7 +771,8 @@ and leaves the means of recognising it to the implementation.
 
    Rationale: several requirements condition on message content, including whether a
    response is final or response-pending, whether a message selects a diagnostic session,
-   whether a response was solicited, and whether a request is the client's keep-alive.
+   whether a response was solicited, whether a request is the client's keep-alive, and
+   whether a request is a repeat.
    Determining these by parsing ``S_Data`` would bind this crate to the ISO 14229-1
    application layer encodings and would require every timing test to construct valid UDS
    frames. The caller already holds what is needed: the application composes the message it
@@ -819,12 +820,14 @@ and leaves the means of recognising it to the implementation.
    * ``request``, a message sent by a client to a server. On ``S_Data.req``, and on the
      ``T_Data.conf`` that ``UDSS_LLR_0133`` associates with it, a request classification
      shall further state the number of responses expected: ``none``, an exact number of at
-     least one, or ``unknown``, and may further state ``keep-alive``, that the message is the
-     TesterPresent the application transmits because ``tS3_Client`` expired; a request
-     classification stating an exact number of zero, or stating ``keep-alive`` together
-     with a session selection, shall be rejected as ``UDSS_LLR_0150`` defines. A request
-     classification supplied at a server, on ``T_DataSOM.ind`` or ``T_Data.ind``, states
-     neither;
+     least one, or ``unknown``, and may further state either ``keep-alive``, that the message
+     is the TesterPresent the application transmits because ``tS3_Client`` expired, or
+     ``repeat``, that the message repeats a request whose transmission, reception or response
+     window failed, as ISO 14229-2:2021 9.7 Table 9 requires. A request classification shall
+     not state both ``keep-alive`` and ``repeat``. A request classification stating an exact
+     number of zero, or stating ``keep-alive`` together with a session selection, shall be
+     rejected as ``UDSS_LLR_0150`` defines. A request classification supplied at a server, on
+     ``T_DataSOM.ind`` or ``T_Data.ind``, states none of these;
    * ``final response``, a positive response, or a negative response whose response code
      is not ``requestCorrectlyReceived-ResponsePending``;
    * ``response pending``, a negative response whose response code is
@@ -861,6 +864,16 @@ and leaves the means of recognising it to the implementation.
    and ``UDSS_LLR_0166`` on the marker with different effects on a running timer; a
    classification carrying both would match two requirements ``UDSS_LLR_0163`` keeps apart
    by the classification alone.
+
+   The ``repeat`` marker is stated by the client for the same reason and likewise has no
+   server-side counterpart. ``UDSS_LLR_0179`` and ``UDSS_LLR_0180`` condition on it because
+   ISO 14229-2:2021 9.7 Table 9 caps the client's repeats at two and ``UDSS_LLR_0135``
+   forbids recognising a repeat from the data; it is a declaration the caller makes and the
+   session layer does not verify. It is exclusive with ``keep-alive`` because
+   ``UDSS_LLR_0179`` keeps the keep-alive outside the repeat count, for the reason given
+   there, and a request that was both would have to be counted and not counted at once.
+   The client error handling document records as an assumption of use that the application
+   marks each repeat and marks no other request so.
 
    The kind shall be absent only where ``UDSS_LLR_0133`` permits it: on a ``T_Data.ind``
    reporting an unsuccessful reception of a message that was not addressed to a server. No
