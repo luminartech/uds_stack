@@ -1,6 +1,6 @@
 # UDS on IP
 
-This crate provides UDS (Unified Diagnostic Services) session management over DoIP (Diagnostics over IP) transport. It serves as the bridge layer between the protocol definition crate [`uds_protocol`](../uds_protocol/README.md) and the transport layer crate [`simple_doip`](../simple_doip/README.md).
+This crate provides UDS (Unified Diagnostic Services) session management over DoIP (Diagnostics over IP) transport. It serves as the bridge layer between the protocol definition crate [`uds_protocol`](https://github.com/luminartech/uds_protocol) and the transport layer crate [`simple_doip`](https://github.com/luminartech/simple_doip).
 
 ## Motivation
 
@@ -186,8 +186,8 @@ the behavior changes worth knowing about:
 
 ## Dependencies
 
-- [`uds_protocol`](../uds_protocol/README.md) - UDS message types and encoding
-- [`simple_doip`](../simple_doip/README.md) - DoIP transport layer
+- [`uds_protocol`](https://github.com/luminartech/uds_protocol) - UDS message types and encoding
+- [`simple_doip`](https://github.com/luminartech/simple_doip) - DoIP transport layer
 
 ## Standards References
 
