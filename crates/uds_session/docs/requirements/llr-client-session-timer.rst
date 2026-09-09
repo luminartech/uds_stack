@@ -172,8 +172,9 @@ The timer's state
    further timers per activated session, and a single timer for each point-to-point
    communication otherwise. The initial state follows Table 6, whose functional column
    starts the timer only for a non-default session: in the default session nothing is kept
-   alive. It is stated because none of the nine requirements below is an initialisation
-   condition; ``UDSS_LLR_0101`` and ``UDSS_LLR_0151`` state initial state for the same reason.
+   alive. It is stated because none of the ten requirements that change them is an
+   initialisation condition; ``UDSS_LLR_0101`` and ``UDSS_LLR_0151`` state initial state for
+   the same reason.
 
    The storage is the caller's for the reason ``UDSS_LLR_0151`` gives: the number of
    channels is a property of the deployment, the crate does not allocate, and Table 8 states
@@ -345,10 +346,12 @@ Functional keep-alive
    keep-alive still serves. A physically addressed return to the default session moves one
    server, and disengaging on it would let every other server's ``tS3_Server`` expire; a
    functionally addressed one reaches every server the functional TesterPresent reaches.
-   What is left open is a client that moved a single server physically and returns it
-   physically: it keeps receiving keep-alive indications and, under the assumptions of use,
-   transmitting TesterPresent the servers ignore, with no terminating condition in this set.
-   The :doc:`open-questions` page records that.
+   What ``UDSS_LLR_0164`` engages from a physical channel and this requirement will not
+   disengage from one is a client that moved a single server into a non-default session
+   physically and returns it physically: the keeping-alive fact still holds and
+   ``UDSS_LLR_0165`` keeps delivering indications. The keep-alive release of
+   ``UDSS_LLR_0184`` is the exit, taken on a functional channel and on the application's
+   say-so; nothing this requirement can observe distinguishes the case.
 
    After a functionally addressed session change for which responses are required, some
    server may have refused the change. Reading the responses is the application's job under

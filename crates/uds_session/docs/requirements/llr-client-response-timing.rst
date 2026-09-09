@@ -77,6 +77,9 @@ when ``UDSS_LLR_0156`` stops the timer; and on either kind of channel, with any
 ``T_Data.ind`` reporting a failed reception, whether first indication or completion, and
 when the response window expires under ``UDSS_LLR_0159``.
 
+A channel reset under ``UDSS_LLR_0183`` also ends the wait, on the caller's act rather than
+on an input from the peer; that is the only ending that delivers no indication.
+
 An input that ends the wait is itself processed while the request is still in progress, so a
 requirement conditioned on the request in progress is eligible to act on it and the wait ends
 as a consequence. Were it otherwise, ``UDSS_LLR_0154`` could never stop the timer on the
@@ -228,7 +231,7 @@ The response window
    functional alike, and clause 9.1.2 requires a single application timer implementation
    triggered by the ``T_Data`` service primitive interface.
 
-   The initial state is stated here because none of the six conditions above is an
+   The initial state is stated here because none of the seven conditions above is an
    initialisation condition, so without it the state of a timer before the first input
    would be undefined. ``UDSS_LLR_0101`` and ``UDSS_LLR_0143`` state the initial state of
    the server's two timers for the same reason.
@@ -778,9 +781,9 @@ Enhanced response timing
    The reception must have succeeded, as it must for ``UDSS_LLR_0157``. A failed reception
    the caller labels ``response pending`` is a message that did not arrive, and putting the
    enhanced value in force for it would lengthen the window for a response that was never
-   promised. A failed reception ends the request under ``UDSS_LLR_0155`` in any case, and
-   with it every response-pending fact in the table, ``UDSS_LLR_0160`` retaining only the
-   entries whose start-of-message is open.
+   promised. A failed reception ends the request in any case, as the preamble's
+   definition states, and with it every response-pending fact in the table,
+   ``UDSS_LLR_0160`` retaining only the entries whose start-of-message is open.
 
 .. llr:: Response timer expiry is indicated to the application
    :id: UDSS_LLR_0159

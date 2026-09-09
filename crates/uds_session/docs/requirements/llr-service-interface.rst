@@ -37,9 +37,10 @@ in the operating-system sense, of reading and writing a device. ``UDSS_LLR_0115`
 and retrieved from the session layer. The first is forbidden; the second is the whole
 interface.
 
-Three of the inputs ``UDSS_LLR_0115`` enumerates are acts of the caller rather than
-primitives, parameters or timestamps: the completion report of ``UDSS_LLR_0136``, and the
-channel reset and keep-alive release that :doc:`llr-client-error-handling` defines in
+Three inputs to the session layer are acts of the caller rather than primitives, parameters
+or timestamps: the completion report of ``UDSS_LLR_0136``, which ``UDSS_LLR_0115``
+enumerates, and the channel reset and keep-alive release that
+:doc:`llr-client-error-handling` defines in
 ``UDSS_LLR_0183`` and ``UDSS_LLR_0184``, by which the caller clears state the client keeps.
 Each produces no output, so ``UDSS_LLR_0116`` is not engaged by them. The enumeration in
 ``UDSS_LLR_0115`` is open and does not change.
