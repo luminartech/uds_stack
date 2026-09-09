@@ -60,9 +60,9 @@ active and goes out after the reported time, which is the postponement 10.3 Figu
 to m show and the delay key p names; in physical keep-alive the TesterPresent that answers
 ``UDSS_LLR_0171``'s indication is rejected while the physical channel's timer is active,
 which it can be where the previous request on that channel needed no response or failed and
-the channel's spacing parameter is not shorter than the ``tS3_Client`` reload; on 9.5 Table
-5's recommended values it is not, the spacing timer and ``tS3_Client`` being started by the
-same confirmation. In both cases ``tS3_Client`` is stopped meanwhile and restarts only when
+the channel's spacing parameter is longer than the ``tS3_Client`` reload; on 9.2 Table 4's
+recommended ``tP2_Server_Max`` against 9.5 Table 5's ``tS3_Client`` reload it is shorter, the
+spacing timer and ``tS3_Client`` being started by the same confirmation. In both cases ``tS3_Client`` is stopped meanwhile and restarts only when
 the TesterPresent's exchange completes, under ``UDSS_LLR_0166`` or ``UDSS_LLR_0170``. Where
 the TesterPresent's own transmission fails, ``UDSS_LLR_0175`` starts the spacing timer and
 ``UDSS_LLR_0166`` restarts nothing; the repeat's confirmation does. The delay this adds is
