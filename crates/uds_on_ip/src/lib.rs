@@ -1,84 +1,85 @@
-//! # UDS on IP
+//! # UDS on Internet Protocol
 //!
-//! This crate provides session management for UDS (Unified Diagnostic Services) communication
-//! over DoIP (Diagnostics over IP) transport. It serves as the bridge layer between the
-//! protocol-agnostic [`uds_protocol`] crate and the transport-layer [`simple_doip`] crate.
+//! An implementation of **ISO 14229-5:2022 (`UDSonIP`)** — the application
+//! profile that binds Unified Diagnostic Services to a `DoIP` transport.
 //!
-//! ## Purpose
+//! ## What this crate is
 //!
-//! The UDS protocol (ISO 14229) defines diagnostic services but is transport-agnostic.
-//! The DoIP protocol (ISO 13400) provides IP-based transport but has no knowledge of UDS semantics.
-//! This crate bridges the gap by:
+//! ISO 14229-5 clause 7 enumerates its own content as a table of requirements
+//! grouped by OSI layer, and that table is this crate's scope. It owns two
+//! layers of the stack:
 //!
-//! - Managing UDS diagnostic sessions over DoIP connections
-//! - Handling tester present keepalive to maintain sessions
-//! - Routing responses to the appropriate pending requests
-//! - Managing connection lifecycle (activation, deactivation, reconnection)
+//! - **Clause 8, the application profile** (`REQ 7.1`–`7.20`) — the `A_PDU`
+//!   format, TCP connection handling around `DiagnosticSessionControl` and
+//!   `ECUReset`, periodic responses, and which timing parameters apply.
+//! - **Clause 11, the transport mapping** (`REQ 4.3`, `REQ 4.4`) — mapping the
+//!   `T_PDU` service primitives and parameters onto `DoIP`'s.
 //!
-//! ## Architecture
+//! Everything between those two layers is the session layer, which this crate
+//! *drives* but does not implement (see [`session`]).
+//!
+//! ## The shape this produces
 //!
 //! ```text
-//! ┌─────────────────────────────────────┐
-//! │         Application Code            │
-//! │   (sends UDS requests/responses)    │
-//! └──────────────┬──────────────────────┘
-//!                │
-//!                ▼
-//! ┌─────────────────────────────────────┐
-//! │           uds_on_ip                 │
-//! │   - Session management              │
-//! │   - Tester present keepalive        │
-//! │   - Request/response correlation    │
-//! │   - Connection lifecycle            │
-//! └──────────────┬──────────────────────┘
-//!                │
-//!                ▼
-//! ┌─────────────────────────────────────┐
-//! │          simple_doip                │
-//! │   - DoIP message framing            │
-//! │   - TCP/UDP transport               │
-//! │   - Routing activation              │
-//! └─────────────────────────────────────┘
+//!   application
+//!        │ A_Data
+//!   ┌────▼─────────────────────┐
+//!   │ uds_on_ip · clause 8     │  application profile
+//!   └────┬─────────────────────┘
+//!        │ S_Data
+//!   ┌────▼─────────────────────┐
+//!   │ uds_session              │  ISO 14229-2
+//!   └────┬─────────────────────┘
+//!        │ T_Data
+//!   ┌────▼─────────────────────┐
+//!   │ uds_on_ip · clause 11    │  transport mapping
+//!   └────┬─────────────────────┘
+//!        │ `DoIP_Data`
+//!   ┌────▼─────────────────────┐
+//!   │ simple_doip              │  ISO 13400-2
+//!   └──────────────────────────┘
 //! ```
 //!
-//! ## Example
+//! This crate appears twice. It **wraps** the session layer rather than
+//! stacking on top of it, which is why [`session::SessionLayer`] is driven from
+//! both directions. A full discussion is in `ARCHITECTURE.md`.
 //!
-//! ```rust,ignore
-//! use uds_on_ip::UdsClient;
-//! use uds_protocol::DiagnosticSessionControl;
+//! ## `no_std` and alloc-freedom
 //!
-//! #[tokio::main]
-//! async fn main() -> Result<(), Box<dyn std::error::Error>> {
-//!     // Connect to sensor
-//!     let client = UdsClient::connect("192.168.1.100:13400").await?;
+//! The core — [`addressing`], [`session`], [`mapping`], [`profile`],
+//! [`handler`] — is `no_std` and allocates nothing. No public type contains a
+//! `Vec` or a `String`: responses borrow from a caller-supplied receive buffer,
+//! and a handler writes its response into a caller-supplied sink.
 //!
-//!     // Send UDS request - session management handled automatically
-//!     let response = client.send(DiagnosticSessionControl::extended_session()).await?;
+//! Only the async drivers need `std`, and only because the first of them sits
+//! on `tokio` and std sockets. That is a property of the driver, not of the
+//! API: a bare-metal driver presents the same shape, so gaining one later is
+//! additive rather than a breaking redesign. Designing for that from the start
+//! is the point — alloc-freedom cannot be retrofitted into a published API.
 //!
-//!     Ok(())
-//! }
-//! ```
+//! ## Status
+//!
+//! **Prototype.** Every crate in this stack flows through a requirements-then-
+//! architecture process, with a prototype preceding both to retire technical
+//! risk; this is that prototype. The public API is unstable, most bodies are
+//! unimplemented, and nothing here should be read as evidence of what the
+//! standard requires — only of what is buildable.
+//!
+//! Known gaps, and the distance from this design to the pre-prototype code, are
+//! recorded in `ARCHITECTURE.md` §9.
+//!
+//! ## What this crate deliberately does not do
+//!
+//! It does not decode UDS messages — that is `uds_protocol` — and it does not
+//! dispatch services, choose negative response codes, or know what a data
+//! identifier is. Those are ISO 14229-1 clause 8.7 concerns and belong to
+//! `uds_services`, which reaches this crate through [`handler::RequestHandler`].
+//!
+//! The one exception is narrow and forced by the standard: clause 8 keys TCP
+//! connection handling on two specific service identifiers. See
+//! [`profile::service_ids`].
 
-pub mod client;
-pub mod error;
-pub mod request_sender;
-pub mod session;
+#![cfg_attr(not(feature = "std"), no_std)]
+#![forbid(unsafe_code)]
 
-pub use client::{UdsClient, UdsClientOptions};
-pub use error::{Error, routing_denial_cause};
-pub use request_sender::RequestSender;
-pub use session::SessionConfig;
-pub use simple_doip::client::AddressType;
-// Re-exported so a downstream crate's *production* code can name
-// `Connector`/`ConnectorSocket` — e.g. to declare its own client type generic
-// over the connector, defaulted to `ConnectorSocket`, the way `UdsClient<Conn
-// = ConnectorSocket>` itself is — without needing `simple_doip` in its own
-// `[dependencies]`. (A downstream crate's *tests* may still reach for
-// `simple_doip` directly as a dev-dependency, e.g. to build a custom
-// `Connector` without `ConnectorSocket`'s hardcoded port-13400 check, mirroring
-// `uds_on_ip/tests/tester_present_during_pending.rs`; that's a test-only
-// concern this re-export doesn't need to solve.)
-pub use simple_doip::connection::{Connector, ConnectorSocket};
 
-/// Result type for UDS on IP operations.
-pub type Result<T> = std::result::Result<T, Error>;

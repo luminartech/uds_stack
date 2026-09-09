@@ -1,24 +1,47 @@
 [package]
 name = "uds_on_ip"
-version = "0.1.1"
+version = "0.2.0-alpha.1"
 edition = "2024"
-description = "UDS session management over DoIP transport"
+rust-version = "1.88"
+description = "UDS on Internet Protocol (ISO 14229-5): the UDSonIP application profile and the transport mapping onto DoIP"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/luminartech/uds_on_ip"
+readme = "README.md"
+keywords = ["uds", "doip", "iso14229", "automotive", "diagnostics"]
+categories = ["network-programming", "encoding"]
 authors = [
     "Zachary Heylmun <zachary_heylmun@microvision.com>",
     "Justin Kovacich <justin_kovacich@microvision.com>",
 ]
+exclude = ["legacy/", "docs/", ".github/"]
 
 [dependencies]
-simple_doip = { git = "https://github.com/luminartech/simple_doip", rev = "304d01483ffa5ad702f30f8cd7b1c8c74f399b26", features = ["client"] }
-uds_protocol = { git = "https://github.com/luminartech/uds_protocol", rev = "e7bc9908d69c2bf9efd0a8caa8fa390047a5195e" }
+# Path deps during the prototype. Swap to registry versions once simple_doip
+# 0.5.x and uds_protocol 0.1.x are published; see ARCHITECTURE.md 8.4.
+simple_doip = { path = "../simple_doip", default-features = false }
+uds_protocol = { path = "../uds_protocol", default-features = false }
 
-async-trait = "0.1"
-thiserror = "2"
-tokio = { version = "1", features = ["rt", "time", "sync"] }
-tracing = "0.1"
+thiserror = { version = "2", default-features = false }
+embedded-io = { version = "0.7", default-features = false }
+tokio = { version = "1", features = ["rt", "time", "sync"], optional = true }
+tracing = { version = "0.1", optional = true }
 
 [dev-dependencies]
-tokio = { version = "1", features = ["io-util", "net", "time", "sync", "macros", "rt-multi-thread"] }
-tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "net", "io-util", "time"] }
+
+[features]
+# The core (addressing, session seam, transport mapping, profile, handler seam)
+# is no_std and alloc-free. Only the async drivers need std.
+default = ["client"]
+alloc = ["embedded-io/alloc", "simple_doip/alloc", "uds_protocol/alloc"]
+std = ["alloc", "embedded-io/std", "thiserror/std", "simple_doip/std", "uds_protocol/std"]
+client = ["std", "simple_doip/client", "dep:tokio", "dep:tracing"]
+server = ["std", "simple_doip/server", "dep:tokio", "dep:tracing"]
+
+[lints.rust]
+unsafe_code = "forbid"
+missing_docs = "deny"
+missing_debug_implementations = "deny"
+
+[lints.clippy]
+pedantic = { level = "deny", priority = -1 }
