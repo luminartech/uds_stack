@@ -295,7 +295,8 @@ Service primitives
    layer shall produce no output to the application.
 
    The indication is used only within the session layer, to perform session layer timing.
-   ``UDSS_LLR_0104`` is the requirement that uses it.
+   The requirements that act on it are the timer requirements of the server and client
+   documents, which condition on it without forwarding it.
 
 .. llr:: T_Data.conf is forwarded to the application
    :id: UDSS_LLR_0122
