@@ -158,7 +158,9 @@ The timer's state
    In functional keep-alive the client shall maintain a single ``tS3_Client`` timer and a
    single keeping-alive fact for the client instance. In physical keep-alive it shall
    maintain a single ``tS3_Client`` timer and a channel session fact for each physical
-   channel. Both shall be held in storage supplied by the caller. In functional keep-alive
+   channel. The functional timer and fact shall be held in storage supplied with the
+   instance at its creation, and each physical channel's timer and fact in that channel's
+   storage under ``UDSS_LLR_0151``. In functional keep-alive
    the client shall have one ``tS3_Client`` reload parameter; in physical keep-alive each
    physical channel shall have its own, each supplied under ``UDSS_LLR_0138``. On
    initialisation no such timer shall be running and no such fact shall hold. Thereafter the timers and facts shall
