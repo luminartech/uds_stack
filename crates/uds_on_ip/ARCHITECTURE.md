@@ -686,27 +686,58 @@ the same shape, which makes gaining one additive.
 
 Two constraints that change what "publication order" in
 [§8.4](#84-publication-order) means. Both bind before any of the design above
-can ship.
+can ship. Verified 2026-09-10 against fetched `origin/main` refs, not local
+checkouts.
 
-**`uds_session` is a private repository.** Verified 2026-09-10. A
-customer-facing crate cannot take an unconditional dependency on a private,
-unpublished crate — hence the feature gate on the adapter in
-[§4.1](#41-session-seam--uds_on_ip--uds_session). Either `uds_session` is
-published before `uds_on_ip` depends on it by default, or the default build
-keeps the interim in-crate session implementation indefinitely.
+### 12.1 This crate ships to customers as source
 
-**`uds_on_ip` is SDK-bundled and ships to customers as source.** Reported as
-`[INTERNAL_PATH_REDACTED]/sdk.toml` listing it under `[component.diagnostics]`. *This one I have
-not verified — the SDK repository was not reachable from this checkout, and it
-should be confirmed before being relied on.* If it holds, three things follow:
+`[INTERNAL_PROJECT_REDACTED]`'s `[INTERNAL_PATH_REDACTED]/sdk.toml` lists `crates/uds_on_ip` under
+`[component.diagnostics]`, alongside `uds_protocol` and `simple_doip`. The
+manifest's own comment gives the reason: all three are workspace path deps of
+`[INTERNAL_COMPONENT_REDACTED]`, so the bundle must carry them or the copied
+manifests dangle. The SDK is built from source by consumers.
 
-- The redesign in this document is a **breaking change to a shipped crate**, and
-  no migration path is stated anywhere. One is owed.
+Three things follow:
+
+- The redesign in this document is a **breaking change to shipped code**, and
+  no migration path is stated anywhere. One is owed before it lands.
 - [§9](#9-gap-analysis) is a public defect list on a customer-facing crate.
-  That may still be the right call — the defects are real and hiding them serves
-  nobody — but it is a decision to make deliberately rather than by omission.
-- This document ships with the crate, which is the reason the citation note at
-  the top is one line rather than an argument.
+  That may still be right — the defects are real and concealing them serves
+  nobody — but it should be a decision, not an accident.
+- This document ships with the crate. That is why the citation note at the top
+  is one line rather than an argument about policy.
+
+### 12.2 There are two copies of this crate, and only one is a submodule
+
+`crates/uds_protocol` and `crates/simple_doip` are git submodules of `[INTERNAL_PROJECT_REDACTED]`,
+pointing at the standalone repositories. **`crates/uds_on_ip` is not** — it is a
+plain directory in `[INTERNAL_PROJECT_REDACTED]`'s tree. This standalone repository is a second copy.
+
+The two are currently identical in `src/`, so nothing is broken yet. But the
+prototype will diverge them, and there is no mechanism to notice: a submodule
+pins a revision, an in-tree copy silently drifts.
+
+This has to be settled before the prototype goes anywhere:
+
+- If the standalone repository becomes canonical, `[INTERNAL_PROJECT_REDACTED]` should convert
+  `crates/uds_on_ip` to a submodule the way it already has for the other two,
+  and that conversion should happen *before* the copies diverge rather than
+  after.
+- If `[INTERNAL_PROJECT_REDACTED]`'s copy stays canonical, then this repository is a publication mirror
+  and the prototype is being developed in the wrong place.
+
+Publishing to crates.io eventually removes the question — `[INTERNAL_PROJECT_REDACTED]` would take a
+registry dependency like any other consumer — but that is downstream of
+[§8.4](#84-publication-order), and the divergence starts now.
+
+### 12.3 `uds_session` is private
+
+Verified via the GitHub API: `luminartech/uds_session` is a private repository.
+A customer-facing crate cannot take an unconditional dependency on a private,
+unpublished crate, which is why the adapter in
+[§4.1](#41-session-seam--uds_on_ip--uds_session) is behind an optional feature.
+Either `uds_session` is published before `uds_on_ip` depends on it by default,
+or the default build keeps the interim in-crate session implementation.
 
 ## 13. Invariants to preserve
 
