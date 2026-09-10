@@ -268,8 +268,12 @@ Service primitives
    :tags: service-interface; role
 
    An instance of the session layer shall be created as a client or as a server, and its
-   role shall not change thereafter. An input whose form this set defines for the other role
-   alone shall be rejected as ``UDSS_LLR_0150`` defines.
+   role shall not change thereafter. A server shall reject, as ``UDSS_LLR_0150`` defines, an
+   ``S_Data.req`` whose classification states kind ``request``. A client shall reject, as
+   ``UDSS_LLR_0150`` defines, an ``S_Data.req`` whose classification states kind ``final
+   response`` or ``response pending``, and the completion report of ``UDSS_LLR_0136``. Where
+   a later document defines an input for one role alone, it shall say that the other role
+   rejects it.
 
    Rationale: every requirement in this set is stated for the client or for the server, and
    ISO 14229-2:2021 describes the two as distinct peer entities throughout clauses 6 to 10,
@@ -278,7 +282,12 @@ Service primitives
    roles and another that must be told, with the requirements silent on inputs that belong
    to the other role. A node that is both, a gateway or a tester under test, is two
    instances. The role is fixed at creation because no requirement gives a role change a
-   meaning, and state held for one role has none in the other.
+   meaning, and state held for one role has none in the other. The rejected inputs are listed
+   rather than described, because "an input whose form belongs to the other role" is not
+   decidable for an ``S_Data.req`` or a completion report, whose forms ``UDSS_LLR_0134`` and
+   ``UDSS_LLR_0136`` define without a role: a server asked to transmit a request, or a client
+   told a request it never received is complete, would otherwise be accepted by one
+   implementation and refused by another.
 
 .. llr:: S_Data.req requests transmission of a message
    :id: UDSS_LLR_0118
@@ -703,7 +712,9 @@ and leaves the means of recognising it to the implementation.
    shall be outstanding for any one such addressing. An ``S_Data.req`` whose addressing
    equals that of an outstanding association, or for which the storage has no free
    association, and a ``T_Data.conf`` matching no outstanding association, shall each be
-   rejected as ``UDSS_LLR_0150`` defines.
+   rejected as ``UDSS_LLR_0150`` defines. On initialisation no association shall be
+   outstanding. A server's association storage shall be supplied when the instance is
+   created; a client's is part of the storage the client documents define.
 
    Rationale: several requirements condition on message content, including whether a
    response is final or response-pending, whether a message selects a diagnostic session,

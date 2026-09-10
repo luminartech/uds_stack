@@ -69,6 +69,12 @@ ISO 14229-2:2021 9.3 Figure 7 confirms the reading, applying the equality "for a
 ``T_Data.ind``". ``UDSS_LLR_0149`` spaces consecutive response-pending messages; whether
 the first was admissible binds the application.
 
+A caller's exit from a request in progress that never ends. The client has the channel reset
+of its error handling document; the server has nothing, deliberately: the assumption of use
+that the caller supplies a completion report for every request it does not answer is what
+ends such a request, and a server whose application neither answers nor reports has broken
+that assumption, not exhausted the standard.
+
 The response window
 -------------------
 
@@ -314,8 +320,10 @@ Enhanced response timing
    While a request is in progress under ``UDSS_LLR_0189``, the session layer shall reject
    an ``S_Data.req`` for a response-pending message where a response-pending message is
    unconfirmed, or where the response-pending anchor holds a timestamp and the elapsed time
-   since it is less than the minimum spacing. The minimum spacing shall be
-   0.3 × ``tP2*_Server_Max``, rounded up to a whole millisecond.
+   since it is less than the minimum spacing. The minimum spacing shall be the least whole
+   number of milliseconds not less than three tenths of ``tP2*_Server_Max`` as that parameter
+   stands when the ``S_Data.req`` is supplied, computed in integer arithmetic as
+   ⌈3 × ``tP2*_Server_Max`` / 10⌉.
 
    Table 4 footnote b requires a minimum time of 0,3 × ``tP2*_Server_Max`` between the
    transmission of consecutive negative response messages carrying
@@ -330,7 +338,11 @@ Enhanced response timing
 
    The spacing is rounded up because ``UDSS_LLR_0114`` fixes the unit at whole milliseconds
    and three tenths of a parameter need not fall on one. Rounding down would permit a
-   transmission the footnote forbids, by up to a millisecond.
+   transmission the footnote forbids, by up to a millisecond. The arithmetic is stated as
+   integer because a binary floating representation of three tenths rounds either way, and
+   two implementations computing ⌈0.3 × 5 000⌉ in single and double precision obtain 1 501
+   and 1 500. The spacing is not a timer, so ``UDSS_LLR_0114``'s loaded value does not reach
+   it; the parameter is read when the ``S_Data.req`` is judged.
 
    The interval is measured from the confirming ``T_Data.conf`` rather than from the state
    of the ``tP2_Server`` timer, even though ``UDSS_LLR_0147`` loads that timer at the same
