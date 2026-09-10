@@ -565,8 +565,28 @@ numbers are cited for them — see the note on citations at the top.)*
 
 ### 8.4 Publication order
 
-Publication follows the dependency graph; crates.io rejects git dependencies.
-Current state:
+There are **two tracks**, with different constraints, and conflating them
+overstates what is blocking.
+
+**Internal — [INTERNAL_REGISTRY_REDACTED].** An internal registry
+(`CARGO_REGISTRY_DEFAULT: "[INTERNAL_REGISTRY_REDACTED]"`) already exists and is what lets the crates
+leave `[INTERNAL_PROJECT_REDACTED]`. It has no ordering constraint worth naming: a crate can be
+published there as soon as it builds, and `[INTERNAL_PROJECT_REDACTED]` consumes it as a registry
+dependency rather than a submodule or a path. This is the track that unblocks
+retiring the monorepo, and it is not waiting on anything in the table below.
+
+**Public — crates.io.** This one is strictly ordered, because crates.io accepts
+neither git dependencies nor dependencies hosted in another registry: every
+dependency must already be on crates.io. So the whole chain must publish
+bottom-up, and a crate that is fine internally can still be unpublishable
+publicly.
+
+Publishing publicly is not cosmetic. Customers build the SDK from source and
+cannot reach an internal registry, which is why the bundle vendors these crates
+today ([§12.1](#121-this-crate-ships-to-customers-as-source)). crates.io
+publication is what would let it stop.
+
+Current state of the public track:
 
 | Crate | crates.io | Blocker |
 | --- | --- | --- |
@@ -575,7 +595,7 @@ Current state:
 | `simple_doip` | unpublished | Publication tooling in flight |
 | `uds_on_ip` | unpublished | Both of the above |
 | `uds_session` | unpublished | Pre-implementation |
-| `uds_services` | does not exist | — |
+| `uds_services` | pre-implementation | — |
 
 ## 9. Gap analysis
 
@@ -707,28 +727,23 @@ Three things follow:
 - This document ships with the crate. That is why the citation note at the top
   is one line rather than an argument about policy.
 
-### 12.2 There are two copies of this crate, and only one is a submodule
+### 12.2 Two copies exist, and the split-out is in progress
 
-`crates/uds_protocol` and `crates/simple_doip` are git submodules of `[INTERNAL_PROJECT_REDACTED]`,
-pointing at the standalone repositories. **`crates/uds_on_ip` is not** — it is a
-plain directory in `[INTERNAL_PROJECT_REDACTED]`'s tree. This standalone repository is a second copy.
+`crates/uds_protocol` and `crates/simple_doip` are git submodules of `[INTERNAL_PROJECT_REDACTED]`
+pointing at their standalone repositories. `crates/uds_on_ip` is not — it is a
+plain directory in `[INTERNAL_PROJECT_REDACTED]`'s tree, so this repository is a second copy of it.
 
-The two are currently identical in `src/`, so nothing is broken yet. But the
-prototype will diverge them, and there is no mechanism to notice: a submodule
-pins a revision, an in-tree copy silently drifts.
+**This is transitional.** The crates are being removed from `[INTERNAL_PROJECT_REDACTED]` and consumed
+from an internal [INTERNAL_REGISTRY_REDACTED] registry instead, retiring the monorepo. **This
+repository is canonical**; `[INTERNAL_PROJECT_REDACTED]`'s in-tree copy is the one going away.
 
-This has to be settled before the prototype goes anywhere:
-
-- If the standalone repository becomes canonical, `[INTERNAL_PROJECT_REDACTED]` should convert
-  `crates/uds_on_ip` to a submodule the way it already has for the other two,
-  and that conversion should happen *before* the copies diverge rather than
-  after.
-- If `[INTERNAL_PROJECT_REDACTED]`'s copy stays canonical, then this repository is a publication mirror
-  and the prototype is being developed in the wrong place.
-
-Publishing to crates.io eventually removes the question — `[INTERNAL_PROJECT_REDACTED]` would take a
-registry dependency like any other consumer — but that is downstream of
-[§8.4](#84-publication-order), and the divergence starts now.
+Until that removal lands there is no mechanism to notice divergence — a
+submodule pins a revision, an in-tree copy drifts silently — and the two are
+byte-identical today only because nobody has changed one without the other.
+`[INTERNAL_PROJECT_REDACTED]`'s CI builds its copy (`-p uds_on_ip`) and filters on
+`crates/uds_on_ip/**`; nothing fetches or mirrors. So the ordering matters:
+the prototype is what first diverges them, and reconciling two histories
+afterwards costs more than removing the copy first.
 
 ### 12.3 `uds_session` is private
 
