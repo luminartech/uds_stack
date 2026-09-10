@@ -174,7 +174,7 @@ The timer's state
    communication otherwise. The initial state follows Table 6, whose functional column
    starts the timer only for a non-default session: in the default session nothing is kept
    alive. It is stated because none of the ten requirements that change them is an
-   initialisation condition; ``UDSS_LLR_0101`` and ``UDSS_LLR_0151`` state initial state for
+   initialisation condition; ``UDSS_LLR_0185`` and ``UDSS_LLR_0151`` state initial state for
    the same reason.
 
    The storage is the caller's for the reason ``UDSS_LLR_0151`` gives: the number of

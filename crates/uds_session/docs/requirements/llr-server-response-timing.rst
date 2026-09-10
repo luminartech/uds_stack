@@ -28,9 +28,16 @@ ISO 14229-2 does not impose on the session layer, and this set does not write re
 the standard does not directly require; it is recorded instead as an assumption of use in
 the qualification repository, where it is assessed from a safety perspective.
 
-Clause 8.7.6 excepts two cases from the rule, one of which is the functionally-addressed
-keep-alive TesterPresent. That exception is unresolved in this document; see
-:doc:`open-questions`.
+Clause 8.7.6 excepts two cases. The first is the functionally addressed keep-alive
+TesterPresent, which the caller marks ``keep-alive`` under ``UDSS_LLR_0134``. A marked
+request is never the request in progress: ``UDSS_LLR_0186`` in
+:doc:`llr-server-session-timer` handles it at its indication, its completion report is
+inert, and ``UDSS_LLR_0144`` and ``UDSS_LLR_0146`` exclude it, so the term keeps the
+uniqueness ``UDSS_LLR_0149`` relies on. The second is a request in the OBD service range
+that, for a server supporting that range and not in the programming session, aborts the
+active service and starts the default session. That is an application-layer action: the
+abort ends the request in progress as any completion does, and the session change is
+classified on the response as :doc:`llr-server-session-timer`'s assumptions of use state.
 
 Throughout this document, the **request in progress** is the request whose handling the
 server has begun and not yet finished. ISO 14229-2:2021 10.1.4.1 fixes its extent: a
@@ -107,8 +114,10 @@ The response window
 
    The initial state is stated here because none of those five conditions is an
    initialisation condition, so without it the state of the timer before the first input
-   would be undefined. ``UDSS_LLR_0101`` states the initial state of ``tS3_Server`` for
-   the same reason.
+   would be undefined. ``UDSS_LLR_0185`` states the initial state of ``tS3_Server`` for
+   the same reason. ``UDSS_LLR_0186`` in :doc:`llr-server-session-timer` states no
+   ``tP2_Server`` effect; the marked keep-alive's exclusion from this timer is
+   ``UDSS_LLR_0144``'s and ``UDSS_LLR_0146``'s.
 
    Table 7 gives the reason one timer suffices: it is required for the enhanced response
    timing, to ensure a subsequent response-pending message is transmitted before
@@ -198,8 +207,9 @@ The response window
    :source: ISO 14229-2:2021 9.2 Table 3; ISO 14229-2:2021 10.1.2 Figure 10
    :tags: server; p2_server
 
-   On ``T_Data.ind`` reporting the successful reception of a request, the server shall
-   start the ``tP2_Server`` timer loaded with the ``tP2_Server_Max`` protocol parameter.
+   On ``T_Data.ind`` reporting the successful reception of a request not marked
+   ``keep-alive``, the server shall start the ``tP2_Server`` timer loaded with the
+   ``tP2_Server_Max`` protocol parameter.
 
    Table 3 defines ``tP2_Server`` as the performance requirement for the server to start
    its response message after the reception of a request indicated via ``T_Data.ind``, and
@@ -209,13 +219,13 @@ The response window
    request whose reception failed; ``UDSS_LLR_0109`` carries the ``tS3_Server`` consequence
    of that same event.
 
-   This requirement is not conditioned on whether a response window is already open, the
-   preamble's assumption of use being that one request is handled at a time. A request
-   received while one is in progress reloads the timer and, under ``UDSS_LLR_0189``, replaces
-   the request in progress; that requirement declares the reading and its consequence for a
-   server that instead ignores the second request as 10.3 Figure 18 key f shows. The
-   assumption does not cover ISO 14229-1:2020 8.7.6's keep-alive exception, and
-   :doc:`open-questions` records the consequence.
+   The marker is the filter for ISO 14229-1:2020 8.7.6's exception, the one conformant
+   request that arrives while a response window is open; ``UDSS_LLR_0186`` in
+   :doc:`llr-server-session-timer` states the marked message's effect. Any other request
+   arriving while a window is open is outside the preamble's assumption of use. Such a
+   request nonetheless reloads the timer and, under ``UDSS_LLR_0189``, replaces the request
+   in progress; that requirement declares the reading and its consequence for a server that
+   instead ignores the second request as 10.3 Figure 18 key f shows.
 
 .. llr:: The response timer stops when a response is passed to the transport
    :id: UDSS_LLR_0145
@@ -262,8 +272,8 @@ The response window
    :source: ISO 14229-2:2021 10.3 Figure 19; ISO 14229-2:2021 10.3 Figure 20
    :tags: server; p2_server
 
-   On the completion report of ``UDSS_LLR_0136``, the server shall stop the ``tP2_Server``
-   timer.
+   On the completion report of ``UDSS_LLR_0136`` for a request not marked ``keep-alive``,
+   the server shall stop the ``tP2_Server`` timer.
 
    Figure 19 has a server that determines it need not answer a functionally-addressed
    request stop the ``tP2_Server`` timer and start ``tS3_Server``. Figure 20 states the
@@ -278,11 +288,11 @@ The response window
    window running until ``UDSS_LLR_0148`` reported an overrun, for a service the standard
    considers correctly concluded.
 
-   This requirement is not conditioned on which request completed, unlike
-   ``UDSS_LLR_0142``, which is scoped to a request from the controlling client; the
-   preamble's assumption of use is that one request is handled at a time. That assumption
-   does not cover ISO 14229-1:2020 8.7.6's keep-alive exception, and :doc:`open-questions`
-   records the consequence.
+   The marker is the filter that ``UDSS_LLR_0142``'s scope to the controlling client is
+   not: a marked keep-alive's report, which a caller may supply, is inert under
+   ``UDSS_LLR_0186`` and would otherwise end the window of the request actually in
+   progress. Any other completion while a request is in progress is outside the preamble's
+   assumption of use.
 
 Enhanced response timing
 ------------------------

@@ -236,7 +236,7 @@ The response window
 
    The initial state is stated here because none of the seven conditions above is an
    initialisation condition, so without it the state of a timer before the first input
-   would be undefined. ``UDSS_LLR_0101`` and ``UDSS_LLR_0143`` state the initial state of
+   would be undefined. ``UDSS_LLR_0185`` and ``UDSS_LLR_0143`` state the initial state of
    the server's two timers for the same reason.
 
    The storage is the caller's because the number of channels is a property of the
