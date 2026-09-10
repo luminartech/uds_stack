@@ -44,8 +44,8 @@ applies; unmarked, ``UDSS_LLR_0104`` does.
 ISO 14229-2:2021 9.5 says the server has no need to distinguish the two kinds of
 TesterPresent handling, and that holds for the restart both readings end in. The difference
 the marker carries is that the marked message never becomes the request in progress and
-never touches ``tP2_Server``, which :doc:`llr-server-response-timing` states in
-``UDSS_LLR_0144`` and ``UDSS_LLR_0146``.
+never touches ``tP2_Server``, which :doc:`llr-server-response-timing` states in its
+preamble and in ``UDSS_LLR_0144`` and ``UDSS_LLR_0146`` respectively.
 
 Assumptions of use
 ------------------
@@ -63,8 +63,8 @@ assumptions of use in the qualification repository.
 
 * Whether to answer a session-selecting request from a client other than the controlling
   one positively is the application's decision. ISO 14229-1:2020 Annex J (informative)
-  Table J.2 shows a server answering NRC 0x21 instead while it is in a non-default session
-  a different client requested.
+  J.4 Table J.2 shows a server answering NRC 0x21 instead while it is in a non-default
+  session a different client requested.
 
 * The caller supplies a session selection under ``UDSS_LLR_0134`` on every message by which
   the server changes session, whichever service carries it: DiagnosticSessionControl,
@@ -120,10 +120,10 @@ The timer's state
    Clause 9.2 has the server start the default session when powered up. That is the initial
    state ``UDSS_LLR_0101`` stated until it was retired into this requirement. Table 8
    allocates a single ``tS3_Server`` because a server has one active session at any time,
-   which ISO 14229-1:2020 Annex J (informative) NOTE 2 states as one diagnostic session
-   state per ECU, shared over all active protocols. Clause 9.5's prose and Table 6's stop
-   row scope the timer's stop to the client which requested the transition, which is why
-   that client's address is state.
+   which ISO 14229-1:2020 Annex J (informative) J.5.1 NOTE 2 states as one diagnostic
+   session state per ECU, shared over all active protocols. Clause 9.5's prose and Table
+   6's stop row scope the timer's stop to the client which requested the transition, which
+   is why that client's address is state.
 
    The state is held in the instance rather than in caller-supplied storage because it is
    fixed in size: one bit, one address and one timer. The client's state grows with the
@@ -168,7 +168,7 @@ The timer's state
    now active. The sentence read against is 9.5's last, that no other client can affect the
    timer and take over the session: a hand-over is not a take-over. The session layer cannot
    refuse a positive response the application chose to send, and ISO 14229-1:2020 Annex J
-   (informative) Table J.2 shows the application answering NRC 0x21 while in a session
+   (informative) J.4 Table J.2 shows the application answering NRC 0x21 while in a session
    another client requested, so a positive response is its consent. The other reading,
    control recorded only on leaving the default session, would drop the server to the
    default session mid-programming unless the displaced client kept alive a session it no
@@ -218,8 +218,8 @@ The timer's state
    timer, the ``T_Data.ind`` completing it finds the timer stopped and changes nothing, so
    the server needs no rule pairing the two indications; ``UDSS_LLR_0140`` states such a
    rule for the client alone. A ``T_Data.ind`` reporting an unsuccessful reception is
-   ``UDSS_LLR_0109``'s instead, which restarts the timer the start-of-message stopped, as
-   ISO 14229-2:2021 9.7 Table 10 requires.
+   ``UDSS_LLR_0109``'s instead: ISO 14229-2:2021 9.7 Table 10 restarts the timer, which a
+   start-of-message of the same request had stopped where one was indicated.
 
    The marked message is ``UDSS_LLR_0186``'s on either primitive: it reloads a running timer
    rather than stopping it.
@@ -379,8 +379,9 @@ The timer's state
    whose source address is the controlling client, while ``tS3_Server`` is running, the
    server shall restart ``tS3_Server``. Where ``tS3_Server`` is not running, or where the
    source address is not the controlling client, that indication shall change nothing. A
-   ``T_DataSOM.ind`` marked ``keep-alive``, and a completion report of ``UDSS_LLR_0136``
-   whose classification states ``keep-alive``, shall change nothing.
+   ``T_DataSOM.ind`` marked ``keep-alive``, a ``T_Data.ind`` reporting an unsuccessful
+   reception of a request marked ``keep-alive``, and a completion report of
+   ``UDSS_LLR_0136`` whose classification states ``keep-alive``, shall change nothing.
 
    ISO 14229-1:2020 8.7.6 is cited because it defines the message: the functionally
    addressed TesterPresent with its positive response suppressed, which the clause names
@@ -415,8 +416,11 @@ The timer's state
    No completion report is needed for the marked message, it being handled at its
    indication. One that is supplied is inert rather than rejected because ``UDSS_LLR_0136``
    accepts the input and a caller need not distinguish. A marked ``T_DataSOM.ind`` is named
-   so that its inertness does not rest on ``UDSS_LLR_0185``'s closed list alone. The marked
-   request is never the request in progress, as :doc:`llr-server-response-timing` states.
+   so that its inertness does not rest on ``UDSS_LLR_0185``'s closed list alone. The failed
+   reception is named for the same reason; ``UDSS_LLR_0109``'s exclusion of the marked
+   message says why no restart is due, Table 10's restart presupposing a stop this message
+   never caused. The marked request is never the request in progress, as
+   :doc:`llr-server-response-timing` states.
 
 .. llr:: Requests from other clients do not affect the session timer
    :id: UDSS_LLR_0105
@@ -478,7 +482,7 @@ The timer's state
    ``tS3_Server`` under ``UDSS_LLR_0106`` and the server sits in a session it has left until
    ``UDSS_LLR_0112`` reports a timeout that did not happen.
 
-.. llr:: TesterPresent has no timer effect in the default session
+.. llr:: No request starts the session timer in the default session
    :id: UDSS_LLR_0111
    :status: draft
    :integrity_level: QM

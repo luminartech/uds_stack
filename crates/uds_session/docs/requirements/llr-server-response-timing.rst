@@ -45,8 +45,14 @@ diagnostic service is in progress at any time between the start of the reception
 request message, ``T_DataSOM.ind`` or ``T_Data.ind``, and the completion of the
 transmission of the final response message where a response message is required, or the
 completion of any action caused by the request where none is required. ``UDSS_LLR_0142``
-already cites that clause for the same definition. The model above is what guarantees
-there is at most one such request at a time.
+already cites that clause for the same definition.
+
+A request marked ``keep-alive`` is excluded from the term, as the paragraph above states:
+8.7.6 puts it outside the one-request-at-a-time model, and no requirement in this set
+treats it as the request in progress, so 10.1.4.1's extent is read here as bounding the
+requests the model admits.
+
+The model above is what guarantees there is at most one such request at a time.
 
 ``UDSS_LLR_0189`` keeps the request in progress as state, and narrows 10.1.4.1's extent at
 both ends as that requirement declares: the request begins at the ``T_Data.ind`` rather than
@@ -220,13 +226,16 @@ The response window
    request whose reception failed; ``UDSS_LLR_0109`` carries the ``tS3_Server`` consequence
    of that same event.
 
-   The marker is the filter for ISO 14229-1:2020 8.7.6's exception, the one conformant
-   request that arrives while a response window is open; ``UDSS_LLR_0186`` in
-   :doc:`llr-server-session-timer` states the marked message's effect. Any other request
-   arriving while a window is open is outside the preamble's assumption of use. Such a
-   request nonetheless reloads the timer and, under ``UDSS_LLR_0189``, replaces the request
-   in progress; that requirement declares the reading and its consequence for a server that
-   instead ignores the second request as 10.3 Figure 18 key f shows.
+   The marker is the filter for the first of ISO 14229-1:2020 8.7.6's two exceptions, the
+   only conformant request that arrives while a response window is open and leaves the
+   request in progress running; ``UDSS_LLR_0186`` in :doc:`llr-server-session-timer`
+   states the marked message's effect. The second exception, the OBD-range request, ends
+   the request in progress as the preamble states, so the window this requirement opens is
+   the new request's. Any other request arriving while a window is open is outside the
+   preamble's assumption of use. Such a request nonetheless reloads the timer and, under
+   ``UDSS_LLR_0189``, replaces the request in progress; that requirement declares the
+   reading and its consequence for a server that instead ignores the second request as
+   10.3 Figure 18 key f shows.
 
 .. llr:: The response timer stops when a response is passed to the transport
    :id: UDSS_LLR_0145
@@ -293,7 +302,8 @@ The response window
    not: a marked keep-alive's report, which a caller may supply, is inert under
    ``UDSS_LLR_0186`` and would otherwise end the window of the request actually in
    progress. Any other completion while a request is in progress is outside the preamble's
-   assumption of use.
+   assumption of use. A completion arriving because 8.7.6's second exception aborted the
+   service is the completion of the request the abort ended, not of the one in progress.
 
 Enhanced response timing
 ------------------------

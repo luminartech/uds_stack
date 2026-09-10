@@ -194,9 +194,9 @@ output in ``UDSS_LLR_0116``'s sense.
    parameter to spend, and a client conformant to Table 5's ordering of ``tS3_Client`` below
    ``tS3_Server`` never sends at the boundary. And a ``T_Data.conf`` of a session-selecting
    response accompanied by a timestamp that expires ``tS3_Server`` yields, in one call,
-   ``UDSS_LLR_0112``'s timeout indication and ``UDSS_LLR_0102``'s entry into the new session,
-   which is correct: the old session did end at that instant, and the new one is the
-   application's own transition.
+   ``UDSS_LLR_0112``'s timeout indication and ``UDSS_LLR_0102``'s entry into the new
+   session, which is correct: the old session did end at that instant, and the new one is
+   the application's own transition.
 
    Several expiries on one timestamp need no order. On the server ``UDSS_LLR_0112`` and
    ``UDSS_LLR_0148`` touch disjoint timers and neither reads the other's. On the client the

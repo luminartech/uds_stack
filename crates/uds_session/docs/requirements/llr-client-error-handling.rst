@@ -432,7 +432,7 @@ Giving a server up
    physical fact would keep ``UDSS_LLR_0170`` and ``UDSS_LLR_0171`` restarting a keep-alive
    for a server the application has given up, and the functional fact would keep
    ``UDSS_LLR_0165`` delivering indications after the last server was returned physically,
-   a residual the :doc:`open-questions` page held open until this document.
+   a residual the open questions page held open until this document.
 
    It is a separate act from the channel reset of ``UDSS_LLR_0183`` because the two answer
    different situations. A reset unwedges a channel whose responses never completed, and
