@@ -4,6 +4,16 @@ The state a design conversation reached before any code existed. It is a
 **starting point for iteration**, not a specification: it records what was
 decided, why, and — most usefully — what was left open.
 
+> **Superseded in part.** The architecture is now authored as a sphinx-needs set
+> under `docs/architecture/`, which is where the current structure and the open
+> questions live. This document is kept for the reasoning it records and for the
+> decisions it shows being made; where the two disagree, the architecture set is
+> current. Two substantive gaps, beyond the settled open questions: the negative
+> response code table in §3.2 is incomplete — Figures 5 and 6 add 0x21, 0x24,
+> 0x34, 0x38 and 0x39, one of them on the mandatory path — and this document
+> describes only the *server* role. The crate is also a client application's
+> typed request surface, which nothing here covers.
+>
 > **Status.** Pre-implementation. This crate flows through the same process as
 > the rest of the stack: a prototype to retire technical risk, then requirements
 > and architecture authored in sequence, then development closing the gap
@@ -19,7 +29,7 @@ decided, why, and — most usefully — what was left open.
 > against a copy of the standard. Every one below was verified on 2026-09-10.
 > If you cannot check a citation, delete it rather than soften it.
 
----
+______________________________________________________________________
 
 ## 1. What this crate is
 
@@ -32,14 +42,14 @@ wrong — when the correct answer is silence rather than a negative response.
 
 Its subclauses are the crate's scope:
 
-| Clause | Content |
-| --- | --- |
-| 8.7.1 | General definitions and legend (`suppressPosRspMsgIndicationBit`, PosRsp, NegRsp, NoRsp, ALL / At least 1 / None) |
-| 8.7.2 | General server response behaviour — the mandatory validation sequence (Figure 5) |
-| 8.7.3 | Requests **with** a SubFunction: general, physically addressed, functionally addressed |
-| 8.7.4 | Requests **without** a SubFunction: the same three |
-| 8.7.5 | Pseudo-code example of server response behaviour |
-| 8.7.6 | Multiple concurrent requests with physical and functional addressing |
+| Clause | Content                                                                                                           |
+| ------ | ----------------------------------------------------------------------------------------------------------------- |
+| 8.7.1  | General definitions and legend (`suppressPosRspMsgIndicationBit`, PosRsp, NegRsp, NoRsp, ALL / At least 1 / None) |
+| 8.7.2  | General server response behaviour — the mandatory validation sequence (Figure 5)                                  |
+| 8.7.3  | Requests **with** a SubFunction: general, physically addressed, functionally addressed                            |
+| 8.7.4  | Requests **without** a SubFunction: the same three                                                                |
+| 8.7.5  | Pseudo-code example of server response behaviour                                                                  |
+| 8.7.6  | Multiple concurrent requests with physical and functional addressing                                              |
 
 Clause 8.7.2 classifies validation steps as *mandatory*, *optional*, or
 *manufacturer/supplier specific*, which is the seam where a caller's own checks
@@ -126,16 +136,16 @@ cooperative client.
 
 Codes this crate selects, all verified against Annex A:
 
-| NRC | Name | Raised when |
-| --- | --- | --- |
-| `0x11` | `serviceNotSupported` | the service trait is not implemented |
-| `0x12` | `SubFunctionNotSupported` | sub-function outside the implemented set |
-| `0x13` | `incorrectMessageLengthOrInvalidFormat` | length/format check fails |
-| `0x22` | `conditionsNotCorrect` | precondition not met |
-| `0x31` | `requestOutOfRange` | identifier outside the supported set |
-| `0x33` | `securityAccessDenied` | security precondition not met |
-| `0x7E` | `SubFunctionNotSupportedInActiveSession` | supported, wrong session |
-| `0x7F` | `serviceNotSupportedInActiveSession` | supported, wrong session |
+| NRC    | Name                                     | Raised when                              |
+| ------ | ---------------------------------------- | ---------------------------------------- |
+| `0x11` | `serviceNotSupported`                    | the service trait is not implemented     |
+| `0x12` | `SubFunctionNotSupported`                | sub-function outside the implemented set |
+| `0x13` | `incorrectMessageLengthOrInvalidFormat`  | length/format check fails                |
+| `0x22` | `conditionsNotCorrect`                   | precondition not met                     |
+| `0x31` | `requestOutOfRange`                      | identifier outside the supported set     |
+| `0x33` | `securityAccessDenied`                   | security precondition not met            |
+| `0x7E` | `SubFunctionNotSupportedInActiveSession` | supported, wrong session                 |
+| `0x7F` | `serviceNotSupportedInActiveSession`     | supported, wrong session                 |
 
 ### 3.3 Silence is a response, and addressing decides it
 
@@ -244,15 +254,15 @@ failures are the binding's concern and never reach a handler.
 Explicit because these were argued and settled, and the boundaries are the
 easiest thing to erode.
 
-| Concern | Owner | Why not here |
-| --- | --- | --- |
-| Message encode/decode | `uds_protocol` | It is a codec; this is policy over it |
-| `tP_Client`, `tS3`, session state | `uds_session` | ISO 14229-2 |
-| **Deciding to send NRC `0x78`** | `uds_session` | See below |
-| `tP2_Server` / `tP2*_Server` | `uds_session` | ISO 14229-2 timers |
-| `tP4_Server` | *this crate*, but not as a timer | ISO 14229-2 types it a **performance requirement** on the application, not something to run |
-| The byte seam | the binding | Transport-shaped ([§4](#4-transport-integration)) |
-| A_PDU framing, TCP handling, `0x8004` | `uds_on_ip` | ISO 14229-5 |
+| Concern                               | Owner                            | Why not here                                                                                |
+| ------------------------------------- | -------------------------------- | ------------------------------------------------------------------------------------------- |
+| Message encode/decode                 | `uds_protocol`                   | It is a codec; this is policy over it                                                       |
+| `tP_Client`, `tS3`, session state     | `uds_session`                    | ISO 14229-2                                                                                 |
+| **Deciding to send NRC `0x78`**       | `uds_session`                    | See below                                                                                   |
+| `tP2_Server` / `tP2*_Server`          | `uds_session`                    | ISO 14229-2 timers                                                                          |
+| `tP4_Server`                          | *this crate*, but not as a timer | ISO 14229-2 types it a **performance requirement** on the application, not something to run |
+| The byte seam                         | the binding                      | Transport-shaped ([§4](#4-transport-integration))                                           |
+| A_PDU framing, TCP handling, `0x8004` | `uds_on_ip`                      | ISO 14229-5                                                                                 |
 
 **Response-pending is the subtle one.** Emitting `0x78` before `tP2_Server`
 expires cannot be this crate's job: a handler that is still working is by
@@ -302,7 +312,7 @@ Two consequences:
 
 1. This crate needs its own ID prefix. `uds_session` pins
    `^UDSS_LLR_\d{4}$|^UDSS_(IMPL|TEST)_[A-Z0-9_]+$`.
-2. **This crate has the highest derived fraction in the stack**, and that is the
+1. **This crate has the highest derived fraction in the stack**, and that is the
    thing to watch. Clause 8.7 gives the NRC rules and the validation order, but
    says nothing about trait design, associated types, or macros. Most of
    `uds_on_ip`'s requirements are *transcribed* from ISO 14229-5 and carry
@@ -314,24 +324,24 @@ Two consequences:
 
 1. **Per-service traits plus a macro, or one trait with default methods?**
    ([§3.4](#34-open-per-service-traits-plus-a-macro-or-one-trait-with-defaults))
-2. **Is `Ctx` sufficient?** It carries addressing, session, and security. If
+1. **Is `Ctx` sufficient?** It carries addressing, session, and security. If
    clause 8.7 gating turns out to need richer state, the seam widens and both
    this crate and every binding change. Worth settling early.
-3. **Who validates message length?** `incorrectMessageLengthOrInvalidFormat`
+1. **Who validates message length?** `incorrectMessageLengthOrInvalidFormat`
    (`0x13`) is a clause 8.7 outcome, but length is a property of the encoding,
    which is `uds_protocol`'s. Probably: `uds_protocol` detects, this crate maps
    the failure to the NRC. Needs confirming against the decode error taxonomy.
-4. **Two server seams already exist.** `simple_doip`'s bare-metal entity
+1. **Two server seams already exist.** `simple_doip`'s bare-metal entity
    exports `on_uds_request: fn(&[u8], &mut [u8]) -> i32` in production code —
    the same byte seam `uds_on_ip` declares, one layer further down. Either that
    callback is the canonical seam for `no_std` targets and this crate should
    target it too, or it is a bare-metal convenience that does not compose with
    this path. Unresolved, and it blocks the server story rather than decorating
    it.
-5. **How much of 8.7.6 belongs here?** Multiple concurrent requests with mixed
+1. **How much of 8.7.6 belongs here?** Multiple concurrent requests with mixed
    physical and functional addressing is a clause 8.7 subclause, but
    concurrency is the binding's. The split is not obvious.
-6. **Does the dispatcher own the `suppressPosRspMsgIndicationBit` decision, or
+1. **Does the dispatcher own the `suppressPosRspMsgIndicationBit` decision, or
    the caller?** It interacts with the functional-addressing silence rules and
    with `0x78`, so centralising it is attractive — but it is a per-request
    client instruction, not a server policy.
