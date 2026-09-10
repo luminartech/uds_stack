@@ -178,8 +178,7 @@ The repeat count
    :status: draft
    :integrity_level: QM
    :target_level: D
-   :origin: session-layer-standard
-   :source: ISO 14229-2:2021 9.7 Table 9
+   :origin: derived
    :tags: client; error-handling; repeat
 
    On an ``S_Data.req`` for a request on a channel, where no requirement in this set
@@ -192,9 +191,13 @@ The repeat count
    * where the classification states ``keep-alive``, the client shall leave the channel's
      repeat count unchanged.
 
-   Table 9 counts service request transmissions from the request whose handling first
-   failed, three in the worst case, so the request without the marker is the one that
-   starts a count and each repeat advances it. The count is taken at the ``S_Data.req``
+   Rationale: ISO 14229-2:2021 9.7 Table 9 states only the cap, a maximum of two repeats
+   and three transmissions in the worst case, which ``UDSS_LLR_0180`` transcribes. It names
+   no count, no event that starts one and no marker, so the mechanism by which a layer that
+   cannot read the message tracks the repeats is the set's own, as the count of
+   ``UDSS_LLR_0178`` is. Table 9 counts service request transmissions from the request
+   whose handling first failed, so the request without the marker is the one that starts a
+   count and each repeat advances it. The count is taken at the ``S_Data.req``
    rather than at the ``T_Data.conf`` because ``UDSS_LLR_0118`` produces the ``T_Data.req``
    from it in the same step, so a request that nothing rejects is the transmission Table 9
    counts; and because a rejection under ``UDSS_LLR_0150`` leaves state unchanged, so a
@@ -263,7 +266,13 @@ Responses still arriving
    arriving. The requirement is accordingly conditioned on neither the ``repeat`` marker
    nor a request being in progress. The condition overlaps the one-request-per-channel
    assumption of use the client response timing document records, and enforces a fragment
-   of it; the overlap is harmless.
+   of it; the overlap is harmless. The absence of the in-progress guard also reaches a
+   request sent during a live exchange while a multi-frame response is still arriving,
+   which Table 9's cells, attached to a timeout or an error, do not describe. For an
+   ordinary request that is the one-request-per-channel assumption enforced a little
+   further; for the keep-alive TesterPresent of ``UDSS_LLR_0165``, which 10.2.4 Figure 17
+   keys g and h send inside the response window, it is a delay bounded by the message in
+   progress, well inside the margin 9.5 Table 5 gives ``tS3_Server`` over ``tS3_Client``.
 
    The application retries on the ``S_Data.ind`` that ``UDSS_LLR_0137`` delivers for the
    completion it was waiting for, so no indication is added. A responder ``UDSS_LLR_0161``
