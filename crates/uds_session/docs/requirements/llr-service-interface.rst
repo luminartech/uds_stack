@@ -37,11 +37,12 @@ in the operating-system sense, of reading and writing a device. ``UDSS_LLR_0115`
 and retrieved from the session layer. The first is forbidden; the second is the whole
 interface.
 
-Three inputs to the session layer are acts of the caller rather than primitives, parameters
-or timestamps: the completion report of ``UDSS_LLR_0136``, which ``UDSS_LLR_0115``
-enumerates, and the channel reset and keep-alive release that
-:doc:`llr-client-error-handling` defines in
-``UDSS_LLR_0183`` and ``UDSS_LLR_0184``, by which the caller clears state the client keeps.
+Several inputs to the session layer are acts of the caller rather than primitives,
+parameters or timestamps: the completion report of ``UDSS_LLR_0136``, which ``UDSS_LLR_0115``
+enumerates; the channel reset and keep-alive release that :doc:`llr-client-error-handling`
+defines in ``UDSS_LLR_0183`` and ``UDSS_LLR_0184``, by which the caller clears state the
+client keeps; and the supply and withdrawal of the storage ``UDSS_LLR_0133`` and
+``UDSS_LLR_0151`` name, in which every fact the set keeps per peer or per channel lives.
 Each produces no output, so ``UDSS_LLR_0116`` is not engaged by them. The enumeration in
 ``UDSS_LLR_0115`` is open and does not change.
 
@@ -330,8 +331,9 @@ Service primitives
    classification states kind ``request``. Where a later document defines an input for one
    role alone, it shall say that the other role rejects it. A server shall reject, as
    ``UDSS_LLR_0150`` defines, a ``T_DataSOM.ind`` or ``T_Data.ind`` identifying a logical
-   communication channel, and the supply or withdrawal of channel storage under
-   ``UDSS_LLR_0151``.
+   communication channel, the supply or withdrawal of channel storage under
+   ``UDSS_LLR_0151``, and the channel reset and keep-alive release of ``UDSS_LLR_0183`` and
+   ``UDSS_LLR_0184``.
 
    Rationale: every requirement in this set is stated for the client or for the server, and
    ISO 14229-2:2021 describes the two as distinct peer entities throughout clauses 6 to 10,
@@ -407,7 +409,9 @@ Service primitives
    failed, which it cannot do unshown. Table 10 obliges the server only to ignore such a
    request, which ``UDSS_LLR_0109`` reads as acting on nothing rather than as withholding
    the indication. An earlier form of this requirement admitted an exception for that
-   reading; no requirement in the set now withholds an indication.
+   reading; no requirement in the set now withholds an indication. A ``T_Data.ind`` rejected
+   under ``UDSS_LLR_0140`` for identifying a channel the client does not have is not
+   withheld but refused: ``UDSS_LLR_0150`` governs it and this requirement does not reach it.
 
 .. llr:: S_Data.conf confirms a preceding S_Data.req
    :id: UDSS_LLR_0120

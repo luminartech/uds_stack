@@ -157,7 +157,7 @@ The repeat count
    :tags: client; error-handling; repeat
 
    Each logical communication channel, physical or functional, shall have a **repeat
-   count** in storage supplied by the caller. On initialisation the count shall be zero.
+   count** in the channel's storage under ``UDSS_LLR_0151``. On initialisation the count shall be zero.
    Thereafter it shall be changed only as ``UDSS_LLR_0179`` and ``UDSS_LLR_0183`` require,
    each evaluated against the state as it was before the input in hand.
 
@@ -364,8 +364,11 @@ Giving a server up
    ``UDSS_LLR_0173``, which are the caller's; the spacing timer, which ``UDSS_LLR_0173``
    defines with no stopped state and which protects a server that knows nothing of the
    reset, so that 10.3's wait is still owed; the count ``UDSS_LLR_0156`` keeps, defined
-   relative to the last confirmation and so reset by the next; and the keep-alive state,
-   which ``UDSS_LLR_0184`` covers as a separate act. In physical keep-alive a reset
+   relative to the last confirmation and so reset by the next; the abandoned association,
+   which remains outstanding under ``UDSS_LLR_0133`` until its ``T_Data.conf`` arrives, so
+   that an ``S_Data.req`` on the channel is rejected meanwhile and, where the confirmation
+   never comes, withdrawing the channel's storage under ``UDSS_LLR_0151`` is the exit; and
+   the keep-alive state, which ``UDSS_LLR_0184`` covers as a separate act. In physical keep-alive a reset
    therefore leaves the channel's session fact and ``tS3_Client`` timer as they were; a
    timer ``UDSS_LLR_0169`` stopped for the request the reset ended is restarted by the next
    completed exchange under ``UDSS_LLR_0170`` or cleared with the fact under
