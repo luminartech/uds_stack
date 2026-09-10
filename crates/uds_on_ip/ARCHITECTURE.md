@@ -565,28 +565,31 @@ numbers are cited for them — see the note on citations at the top.)*
 
 ### 8.4 Publication order
 
-There are **two tracks**, with different constraints, and conflating them
-overstates what is blocking.
+**These crates publish to crates.io, publicly.** Every pure protocol crate in
+the stack — the codec, the message definitions, the session layer, the
+bindings, the service dispatch — is intended to be a genuinely public crate,
+not an internal artifact.
 
-**Internal — [INTERNAL_REGISTRY_REDACTED].** An internal registry
-(`CARGO_REGISTRY_DEFAULT: "[INTERNAL_REGISTRY_REDACTED]"`) already exists and is what lets the crates
-leave `[INTERNAL_PROJECT_REDACTED]`. It has no ordering constraint worth naming: a crate can be
-published there as soon as it builds, and `[INTERNAL_PROJECT_REDACTED]` consumes it as a registry
-dependency rather than a submodule or a path. This is the track that unblocks
-retiring the monorepo, and it is not waiting on anything in the table below.
+The internal [INTERNAL_REGISTRY_REDACTED] registry does not change that. It **proxies crates.io** as
+a source replacement, so internal builds resolve public dependencies through
+it. That is build infrastructure, not a publication target, and it relaxes
+nothing about ordering: a crate proxied from crates.io must first *be* on
+crates.io.
 
-**Public — crates.io.** This one is strictly ordered, because crates.io accepts
-neither git dependencies nor dependencies hosted in another registry: every
-dependency must already be on crates.io. So the whole chain must publish
-bottom-up, and a crate that is fine internally can still be unpublishable
-publicly.
+So the ordering is strict and bottom-up, because crates.io accepts neither git
+dependencies nor dependencies hosted in another registry — every dependency
+must already be there. A crate that builds and resolves perfectly inside the
+internal environment can still be unpublishable, and nothing surfaces that
+until publication is attempted. `cargo publish --dry-run` on every pull request
+is what catches it early; the shared workflow already has that stage.
 
-Publishing publicly is not cosmetic. Customers build the SDK from source and
-cannot reach an internal registry, which is why the bundle vendors these crates
-today ([§12.1](#121-this-crate-ships-to-customers-as-source)). crates.io
-publication is what would let it stop.
+This also settles the SDK question in
+[§12.1](#121-this-crate-ships-to-customers-as-source): the bundle vendors these
+crates today because customers cannot reach an internal registry. Once they are
+public, the bundle can take ordinary registry dependencies instead.
 
-Current state of the public track:
+The consequence for this crate is unwelcome but real: `uds_on_ip` cannot
+publish until both of its dependencies do, and neither is there yet.
 
 | Crate | crates.io | Blocker |
 | --- | --- | --- |
@@ -716,6 +719,11 @@ checkouts.
 manifest's own comment gives the reason: all three are workspace path deps of
 `[INTERNAL_COMPONENT_REDACTED]`, so the bundle must carry them or the copied
 manifests dangle. The SDK is built from source by consumers.
+
+This is transitional. Once these crates are on crates.io the bundle can take
+ordinary registry dependencies instead of vendoring sources
+([§8.4](#84-publication-order)) — which is one of the reasons the public
+publication matters.
 
 Three things follow:
 
