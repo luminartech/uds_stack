@@ -273,6 +273,16 @@ Functional keep-alive
    request and ``UDSS_LLR_0135`` forbids recognising it from the data; a functionally
    addressed request without it changes nothing.
 
+   Table 6 describes that confirmation as of the TesterPresent "transmitted each time the
+   ``tS3_Client`` timer times out". This requirement is not guarded on the timer having
+   expired, so a marked TesterPresent the application sends while the timer is still running
+   restarts it as well, stretching the next interval by the time that remained. That widens
+   the wording, and deliberately. Every server the message reached has just reloaded its own
+   ``tS3_Server``, as Figure 12 key m states, so restarting the client's timer from the same
+   instant keeps the two cadences aligned, and Figure 12 keys j, m and o restart the timer at
+   each confirmation without asking what started the transmission. A guard on expiry would
+   instead leave the set to say what an early marked TesterPresent does, for no gain.
+
    The channel must be functional for Table 6's wording and for the reason
    ``UDSS_LLR_0167`` gives: the timer serves every server the functional TesterPresent
    reaches, and a physically addressed message reaches one. The fact must hold so that a
@@ -354,9 +364,11 @@ session fact, and the requests and indications on it.
 
    Table 6's physical column has two initial-start rows: the confirmation of the
    DiagnosticSessionControl request where no response is required, and the reception of its
-   response where one is. Figure 13 key j is the second, and key g states the rule for the
-   first. The expected response count of ``none`` stands for no response required, as it
-   does in ``UDSS_LLR_0153``.
+   response where one is. Figure 13 shows the initial start only at key b, the conflicting
+   key recorded below; its keys g and j show the same two events as subsequent starts under
+   ``UDSS_LLR_0170``, which is the rule transcribed here for the first exchange. The
+   expected response count of ``none`` stands for no response required, as it does in
+   ``UDSS_LLR_0153``.
 
    Table 6 names the request and the response without qualification; both bullets act only
    on a message carrying a session selection. That narrows the text. Under
@@ -405,7 +417,7 @@ session fact, and the requests and indications on it.
    :integrity_level: QM
    :target_level: D
    :origin: session-layer-standard
-   :source: ISO 14229-2:2021 9.5 Table 6; ISO 14229-2:2021 9.7 Table 9; ISO 14229-2:2021 10.1.4.2 Figure 13
+   :source: ISO 14229-2:2021 9.5; ISO 14229-2:2021 9.5 Table 6; ISO 14229-2:2021 9.7 Table 9; ISO 14229-2:2021 10.1.4.2 Figure 13
    :tags: client; s3_client
 
    In physical keep-alive, while a physical channel's session fact holds, on any of the

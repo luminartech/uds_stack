@@ -106,13 +106,15 @@ consistent after all, this is the only internal inconsistency found in Clause 8.
 discrepancy whose resolution changes no behaviour is worth recording is a decision about
 the set as a whole, not about this requirement. No cycle depends on it.
 
-The client session timer cycle found two more of the same kind, each recorded in the
-requirement that met it. ISO 14229-2:2021 10.1.4.2 Figure 13 key b starts ``tS3_Client`` at
-the request's confirmation where 9.5 Table 6's physical column starts it at the response's
-``T_Data.ind``, resolved in ``UDSS_LLR_0168``; and 9.7 Table 9's functional column names a
-``tS3_Client_Func`` that the standard defines nowhere, read in ``UDSS_LLR_0166`` as
-``tP3_Client_Func``. Neither changes what the set does; whether they deserve a record of
-their own is the same question of convention.
+The client cycles found three more of the same kind, each recorded in the requirement
+that met it. ISO 14229-2:2021 10.1.4.2 Figure 13 key b starts ``tS3_Client`` at the
+request's confirmation where 9.5 Table 6's physical column starts it at the response's
+``T_Data.ind``, resolved in ``UDSS_LLR_0168``; Figure 13 key k starts ``tP_Client`` at the
+``T_Data.req`` of the TesterPresent where 9.2 Table 3, 9.1.2 and its own key p start it at
+the ``T_Data.conf``, resolved in ``UDSS_LLR_0153``; and 9.7 Table 9's functional column
+names a ``tS3_Client_Func`` that the standard defines nowhere, read in ``UDSS_LLR_0166`` as
+``tP3_Client_Func``. None changes what the set does; whether they deserve a record of their
+own is the same question of convention.
 
 What does a keep-alive TesterPresent do to the response window?
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
