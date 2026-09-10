@@ -24,6 +24,15 @@
 
 use crate::addressing::{Ai, ChannelId};
 
+/// # A note on the clock
+///
+/// Timestamps are `u32` milliseconds, the unit ISO 14229-2 states its timing
+/// parameters in. A `u32` count of milliseconds wraps after roughly 49.7 days,
+/// so every comparison against one must use wrapping-difference arithmetic
+/// rather than ordering: `now.wrapping_sub(started) >= timeout`, never
+/// `now >= deadline`. The width is this seam's choice rather than the
+/// standard's, taken so a bare-metal target need not carry a 64-bit clock.
+
 /// The reload parameters a transport supplies for a channel's `tP_Client`.
 ///
 /// ISO 14229-2:2021 clause 9.1.2 splits `tP_Client`'s reload values four ways
@@ -167,6 +176,13 @@ pub trait SessionLayer {
 
     /// Advance time without delivering anything, so timers can expire.
     fn tick(&mut self, now_ms: u32);
+
+    /// When this layer next needs waking, so a driver can sleep until then
+    /// rather than spinning. `None` means no timer is armed.
+    ///
+    /// Without this a sans-io layer gives its caller no way to know when to
+    /// wake, leaving busy-polling as the only correct option.
+    fn next_deadline_ms(&self) -> Option<u32>;
 
     /// Retrieve the next action, or `None` when there is no more work.
     fn poll(&mut self, now_ms: u32) -> Option<SessionAction<'_>>;

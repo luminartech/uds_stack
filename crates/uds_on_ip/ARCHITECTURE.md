@@ -1,6 +1,6 @@
 # Architecture
 
-This document describes the **proposed** layout of the Luminar automotive
+This document describes the **proposed** layout of the MicroVision automotive
 diagnostics stack, and `uds_on_ip`'s place in it. It is a design document, not a
 description of the code as it stands: `uds_on_ip` today predates most of what is
 written here, and [§9](#9-gap-analysis-uds_on_ip-as-it-stands-today) records the
@@ -23,18 +23,14 @@ in parallel against one agreed set of boundaries.
 > mode this ordering exists to prevent. Read what follows as evidence about what
 > is *buildable*, never as evidence about what is *required*.
 
-> **A note on spec citations.** This repository contains no copy of any ISO
-> standard, and the standards remain ISO's — nothing here reproduces their text
-> at length. Clause and table numbers below were read against copies held
-> outside this repository and are safe to check.
+> **Spec citations.** A numbered locator appears here only if it was checked
+> against a copy of the standard. Every one in this document was verified on
+> 2026-09-10; two needed non-obvious lookups, because the PDF-to-markdown
+> conversion splits `REQ 4.4` across a table cell and line-breaks `REQ 5.9`'s
+> heading. If you cannot check a citation, delete it rather than soften it.
 >
-> These citations are the **informal tier**. The formal tier is the sphinx-needs
-> requirement set described in [§10](#10-traceability); prose in this document
-> is not a traceable artifact and must not be cited as one. `simple_doip`'s
-> ARCHITECTURE.md bans numbered locators outright, after a review found
-> fabricated ones there — read that as a snapshot of an earlier position rather
-> than as settled policy. The operative rule is *verified* locators, not *no*
-> locators: if you cannot check a citation, remove it.
+> This repository contains no copy of any ISO standard, and the standards
+> remain ISO's; nothing here reproduces their text at length.
 
 ---
 
@@ -75,15 +71,34 @@ Each subsection states what a crate owns and — more usefully — what it must
 Owns DoIP framing, the TCP/UDP sockets, routing activation, alive-check, vehicle
 identification, and the `DoIP_Data.req/.ind/.conf` primitives.
 
-**Must not know what a UDS message means.** Its `DiagnosticMessage` treats the
-payload as an opaque byte string, and that is the property that keeps it
-reusable. This holds today: the only UDS-shaped bytes in the crate are inside
-its own test module.
+**Should not know what a UDS message means.** Its `DiagnosticMessage` treats
+the payload as an opaque byte string, and that is the property that keeps it
+reusable.
+
+**This does not hold today.** `src/bare_metal_entity.rs` is production code and
+exports `UDS_RESP_CAP`, `uds_resp_buf`, and
+`on_uds_request: fn(&[u8], &mut [u8]) -> i32` — a byte-level UDS request
+callback. That is the same server seam [§4.2](#42-handler-seam--uds_services--uds_on_ip)
+assigns to `uds_on_ip`, already shipping one layer down.
+
+Two server seams a layer apart is a real collision, not a cosmetic one, and this
+document does not resolve it. Either the bare-metal entity's callback is the
+canonical server seam and `uds_on_ip`'s is redundant for `no_std` targets, or it
+is a bare-metal-only convenience that should be documented as not composing with
+the `uds_services` path. Deciding that is a prerequisite for the server role,
+not a detail of it.
 
 A consequence worth stating plainly: ISO 13400-2:2019 defines payload types
 `0x8001`–`0x8003` only. The periodic-response payload type `0x8004` is
-introduced by ISO 14229-5, so it is **not** `simple_doip`'s to name. It reaches
-`uds_on_ip` through the `PayloadType::Reserved(u16)` passthrough.
+introduced by ISO 14229-5, so it is **not** `simple_doip`'s to name.
+
+It also does not currently reach `uds_on_ip`. `PayloadType::Reserved(u16)`
+names the type but `Payload::decode` rejects it with `UnsupportedPayloadType`,
+and the client's public surface is `send_diagnostic_message` /
+`receive_diagnostic_response`, so a reserved payload type never reaches a
+caller. Surfacing `0x8004` requires a `simple_doip` API change and is a
+**prerequisite**, recorded in [§9](#9-gap-analysis). It needs no UDS semantics
+upstream — only a way to deliver an unmodelled payload type's bytes.
 
 ### 3.2 `uds_protocol` — ISO 14229-1 messages
 
@@ -124,8 +139,10 @@ Owns four things:
    its caller; `uds_on_ip` is that caller and owns the allocation.
 4. **The UDSonIP profile.** REQ 7.8–7.11 (TCP close and re-activation around
    DiagnosticSessionControl and ECUReset), REQ 7.16 (`0x8004` periodic
-   responses), REQ 7.17 (periodic record length limit), REQ 7.20 (unsolicited
-   responses do not reset `tS3_Server`).
+   responses) and REQ 7.17 (periodic record length limit). REQ 7.20 — that
+   unsolicited responses must not reset `tS3_Server` — is a constraint this
+   crate must *honour* by routing `0x8004` outside the request/response path,
+   but the timer it protects belongs to `uds_session` ([§6](#6-timing-ownership)).
 
 **Must not learn what a service is.** No data identifier, routine identifier, or
 service-specific policy belongs here. Its server-side interface is a byte seam.
@@ -154,9 +171,21 @@ Bidirectional, because of the sandwich in [§8.1](#81-protocol-layering):
 belong to `uds_on_ip`, which is what a sans-io session layer requires of its
 caller.
 
-It drives the session layer through a trait rather than a direct dependency, so
-it can ship an interim in-crate implementation while `uds_session` is still
-being specified, and swap without a public API change.
+**Where the trait lives, precisely.** `SessionLayer` is declared *in
+`uds_on_ip`*. `uds_session` does not implement it and does not depend on this
+crate — a session layer that knew its transport binding would defeat its own
+reason for existing. Instead `uds_on_ip` ships an adapter type that implements
+`SessionLayer` over `uds_session`'s concrete API, behind an optional feature.
+
+That keeps the Cargo graph acyclic and preserves "swap without a public API
+change", but it does **not** mean the two crates are independent: shipping the
+adapter is a real dependency on `uds_session`, and until then `uds_on_ip` runs
+its own interim implementation of this trait. Only the *development* of the two
+is independent.
+
+The feature gate is load-bearing rather than stylistic. `uds_session` is a
+private repository (see [§12](#12-distribution-constraints)), so a
+customer-facing `uds_on_ip` cannot depend on it unconditionally.
 
 ```rust
 pub trait SessionLayer {
@@ -165,8 +194,25 @@ pub trait SessionLayer {
     fn t_data_conf(&mut self, now_ms: u32, ch: ChannelId, result: TResult);
     fn t_data_ind(&mut self, now_ms: u32, ch: ChannelId, data: &[u8]);
     fn poll(&mut self, now_ms: u32) -> Option<SessionAction<'_>>;
+
+    /// When this layer next needs waking, so the driver can sleep instead of
+    /// spinning. `None` means no timer is armed.
+    fn next_deadline_ms(&self) -> Option<u32>;
 }
 ```
+
+Three properties of this signature that are easy to get wrong:
+
+- **`now_ms` wraps.** A `u32` millisecond count rolls over at ~49.7 days, so
+  every comparison must be wrapping-difference arithmetic, never `<`. ISO
+  14229-2 fixes the unit; the width is this seam's choice, and the wrap is the
+  price of not requiring a 64-bit clock on a bare-metal target.
+- **`poll` borrows `&mut self`**, so an action cannot be held while feeding the
+  layer more input. A driver must fully consume each action before polling
+  again — actions are drained one at a time, never collected.
+- **`next_deadline_ms` is not optional.** Without it a sans-io layer gives the
+  caller no way to know when to wake, and the driver has no choice but to
+  busy-poll.
 
 `Ai` carries the ISO 14229-2 addressing triple — source address, target address,
 and target address type (physical or functional). A `ChannelId` names one
@@ -187,10 +233,25 @@ pub trait RequestHandler {
 `Ctx` carries the active session and security level — state `uds_on_ip` learns
 from the session layer and passes through without interpreting.
 
+`out` is a generic parameter, not `dyn`, so a response needs no allocation to
+return. That costs object safety: there is no `Box<dyn RequestHandler>`, and a
+server driver is generic over `H: RequestHandler` instead. For a crate that must
+build without `alloc`, where boxing is unavailable anyway, that is the right
+trade — but it is a deliberate one.
+
+**This trait belongs to `uds_on_ip`, not to `uds_services`.** A byte seam is
+necessarily transport-shaped: it is where a binding hands off. Each binding
+declares its own, and `uds_services` implements whichever one its enabled
+feature selects. [§4.3](#43-transport-integration) says what `uds_services`
+owns instead.
+
 ### 4.3 Transport integration
 
-`uds_services` owns the traits; the binding to a transport is an optional
-feature, which keeps the dependency edge pointing one way and leaves
+`uds_services` owns the **typed service traits** — the per-service handlers, the
+identifier associated types, the clause 8.7 dispatch. It does not own the byte
+seam, which is per-binding ([§4.2](#42-handler-seam--uds_services--uds_on_ip)).
+What it provides per transport is the adapter between the two, behind an
+optional feature, which keeps the dependency edge pointing one way and leaves
 `uds_on_ip` ignorant of services.
 
 ```toml
@@ -241,9 +302,32 @@ ownership is stated explicitly.
 | `tP_Client` | `uds_session` | One per logical communication channel, physical and functional alike (ISO 14229-2:2021 REQ 5.26, Table 7). Starts on `T_Data.conf`, stops on `T_Data.ind` (REQ 5.9, REQ 5.10). |
 | default / enhanced reload values | `uds_on_ip` | `tP6_Client_Max` / `tP6*_Client_Max`, because DoIP has no `T_DataSOM.ind` (REQ 5.11). |
 | `tP3_Client_Phys`, `tP3_Client_Func` | `uds_session` | One per physical and per functional channel respectively (ISO 14229-2:2021 REQ 5.26, Table 7). Minimum spacing before the next request when none is required. |
-| `tS3_Client`, `tS3_Server` | `uds_session` | Periodic and unsolicited responses must not reset `tS3_Server` (ISO 14229-5:2022 REQ 7.20). |
-| `tP2_Server`, `tP4_Server` | `uds_services` | Server-side performance requirements, bound to service execution. |
+| `tS3_Client`, `tS3_Server` | `uds_session` | One `tS3_Server` per server; a client needs one per point-to-point communication (ISO 14229-2:2021 REQ 5.26, Table 8). |
+| `tP2_Server`, `tP2*_Server` | `uds_session` | ISO 14229-2 timers, so they belong with the other session timers, not with the service that happens to be slow. See the response-pending note below. |
+| `tP4_Server` | `uds_services` | Not a timer to run: ISO 14229-2 types it a performance requirement on the application. |
 | TCP connect / routing-activation timeouts | `simple_doip` | Transport-level, no UDS meaning. |
+
+### 6.1 Who emits response-pending
+
+Server-side NRC `0x78` had no owner in the first draft of this document, and it
+is the one server-side timing rule that cannot be got wrong: if the server will
+not answer within `tP2_Server`, it must emit response-pending *before* that
+timer expires, which then grants it `tP2*_Server`.
+
+The decision cannot sit with `uds_services`. A handler that is still working is
+by definition not returning, so it cannot also be watching a clock, and the
+clock in question is an ISO 14229-2 timer.
+
+So: **`uds_session` owns the timer and decides**, emitting a send-response-pending
+action; `uds_on_ip` transmits it. `uds_services` is not consulted and does not
+need to be — it is simply still running.
+
+Two consequences for the driver. Dispatch to a handler must not block the loop
+that drains session actions, or the timer cannot fire while a handler is
+executing. And [§4.2](#42-handler-seam--uds_services--uds_on_ip)'s
+`RequestHandler` is synchronous, so a slow handler must run somewhere the driver
+can continue past — which is a constraint on the server driver that this
+prototype has not yet designed.
 
 ## 7. Data flow
 
@@ -276,10 +360,26 @@ sequenceDiagram
     P-->>App: response bytes
 ```
 
-The step worth dwelling on is 5→6. `tP_Client` starts on the **acknowledgement**,
-not on the send. Getting that wrong shortens every timeout in the stack by one
-network round trip, and it is the divergence recorded in
-[§9](#9-gap-analysis-uds_on_ip-as-it-stands-today).
+The step worth dwelling on is 5→6: `tP_Client` starts on the
+**acknowledgement**, not on the send. Getting that wrong would shorten every
+timeout in the stack by one network round trip.
+
+**The shipping implementation already gets this right**, and an earlier draft of
+this document claimed otherwise. `simple_doip`'s `send_diagnostic_message` parks
+an await that resolves only when the acknowledgement arrives, and `uds_on_ip`
+takes its response timestamp after that await returns. The timing is correct.
+
+What is missing is the *primitive*, and that is the real gap. Send and confirm
+are fused into a single future, so there is no `T_Data.conf` to name, no
+separate timestamp to attach to it, and a negative acknowledgement surfaces as a
+send **error** rather than as `T_Data.conf(negative)`. A session layer that
+wants to distinguish "the peer refused the message" from "the socket broke"
+cannot, and the drawing above cannot be implemented as drawn until it can.
+
+Also undocumented in the shipping code: the response timestamp is reset on every
+reconnect, so a request that survives a reconnect gets a fresh `tP_Client`
+rather than the remainder of its original one. That is a deliberate deviation
+and should be a requirement with a rationale, not an implementation detail.
 
 An NRC `0x78` arriving at step 8 reloads the timer with the enhanced parameter
 rather than completing the request.
@@ -375,7 +475,7 @@ flowchart LR
     UP --> UOI
     UP --> USVC
     SD --> UOI
-    US --> UOI
+    US -.->|"optional · the §4.1 adapter"| UOI
     UOI -.->|"optional · feature = doip"| USVC
 
     classDef onip fill:#1f6feb,color:#ffffff,stroke:#1f6feb
@@ -390,9 +490,11 @@ flowchart LR
     class AWC,UP plain
 ```
 
-This one is acyclic and linear because `uds_on_ip` depends on both neighbours
-even though it surrounds one of them — the sandwich in §8.1 costs nothing here,
-since `uds_session` never depends back.
+Acyclic because `uds_session` never depends back, even though `uds_on_ip`
+surrounds it: the `SessionLayer` trait is declared in `uds_on_ip` and the
+adapter onto `uds_session` lives there too ([§4.1](#41-session-seam--uds_on_ip--uds_session)).
+Both dotted edges are optional features, which is what lets this crate ship
+without a private dependency ([§12](#12-distribution-constraints)).
 
 ### 8.3 What a transport swap replaces
 
@@ -475,32 +577,64 @@ Current state:
 | `uds_session` | unpublished | Pre-implementation |
 | `uds_services` | does not exist | — |
 
-## 9. Gap analysis: `uds_on_ip` as it stands today
+## 9. Gap analysis
 
-The crate predates this design. Recorded so the distance is explicit.
+Verified against `origin/main` on 2026-09-10, not recalled. Each entry names
+where it was checked.
 
-**Dependencies are current.** The crate tracks the heads of both upstreams and
-builds against them; the migration to their borrowed, zero-copy types — which
-removed the owned generic abstraction (`ProtocolRequest`, `ProtocolResponse`,
-`UdsSpec`, `DiagnosticDefinition`) the original public API was built on — has
-already been done. The gaps below are design gaps, not staleness.
+### 9.1 Prerequisites — blocking, and not in this crate
+
+- **`0x8004` cannot be received.** `Payload::decode` rejects
+  `PayloadType::Reserved(_)` with `UnsupportedPayloadType`
+  (`simple_doip/src/messages/payload.rs`), and the async client's public surface
+  exposes only diagnostic messages and their acknowledgements. REQ 7.16 and
+  REQ 7.20 are unimplementable until `simple_doip` can deliver an unmodelled
+  payload type's bytes. No UDS semantics are needed upstream to fix it.
+- **The acknowledgement is not a distinct primitive.** Send and confirm are one
+  future, so `T_Data.conf` cannot be named or timestamped, and a negative
+  acknowledgement arrives as a send error rather than a negative confirm
+  ([§7.1](#71-client-physically-addressed)).
+- **`0x8003` is never emitted by our own entity.**
+  `Message::diagnostic_message_ack` stamps `0x8002` regardless of `ack_code`, a
+  known open issue recorded in `simple_doip/src/messages/mod.rs`. Any loop
+  involving our entity cannot exercise the acknowledgement discrimination
+  §3.4(2) depends on.
+- **Two server seams.** `simple_doip`'s bare-metal entity already exposes a UDS
+  request callback ([§3.1](#31-simple_doip--iso-13400-2)).
+
+### 9.2 Design gaps in this crate
 
 - **Session logic lives here rather than in `uds_session`** — tester-present
-  keepalive, response timing, and NRC `0x78` handling are implemented in
-  `src/client.rs` and are interim by construction.
-- **`tP_Client` starts on send, not on the DoIP acknowledgement**, so its origin
-  differs from ISO 14229-2:2021 REQ 5.9.
-- **Timing configuration carries P2-flavoured names** — `response_timeout` and
-  `response_pending_timeout` are really `tP6_Client_Max` and `tP6*_Client_Max`
-  on DoIP.
+  keepalive, response timing, and NRC `0x78` handling are in `src/client.rs`,
+  interim by construction.
 - **Functional addressing collapses to a single response**, so the multi-server
-  fan-out of ISO 14229-5:2022 Figure 8 cannot be expressed.
-- **Periodic responses (`0x8004`) are unhandled.**
+  fan-out of ISO 14229-5:2022 Figure 8 cannot be expressed. This is a shape
+  change to the public API, not a fix.
+- **Timing configuration carries P2-flavoured names** — `response_timeout` and
+  `response_pending_timeout` are `tP6_Client_Max` and `tP6*_Client_Max` on DoIP
+  (ISO 14229-2:2021 REQ 5.11).
 - **`tP3_Client_Phys` / `tP3_Client_Func` are absent** — the minimum spacing
-  before a subsequent request when no response is required.
-- **Reconnection is framed as resilience** rather than as REQ 7.8/7.10
-  conformance.
-- **No server role.**
+  before a subsequent request when none is required.
+- **Reconnection is framed as resilience** rather than as REQ 7.8 / REQ 7.10
+  conformance, and the response timer is silently restarted by it
+  ([§7.1](#71-client-physically-addressed)).
+- **No server role**, and therefore no owner for response-pending
+  ([§6.1](#61-who-emits-response-pending)).
+
+### 9.3 Corrected since the first draft
+
+Recorded because this section is the one a reader is most likely to trust, and
+it was wrong twice.
+
+- **Dependencies are current.** An earlier draft claimed the crate was ~101
+  commits behind `simple_doip` and ~242 behind `uds_protocol`, and did not
+  compile. Both are false: `origin/main` pins the current head of each, builds
+  clean, and the migration away from the owned generic abstraction
+  (`ProtocolRequest`, `ProtocolResponse`, `UdsSpec`, `DiagnosticDefinition`) has
+  already happened. Those counts came from a stale local checkout.
+- **`tP_Client` already starts on the acknowledgement.** An earlier draft
+  claimed it started on the send and built a note in §7.1 on top of that. The
+  real gap is the missing primitive, above.
 
 ## 10. Traceability
 
@@ -531,14 +665,61 @@ Two consequences for this crate specifically:
    requirement is a requirement that can drift. Consuming `uds_session`'s
    `needs.json` is what makes the seam checkable rather than aspirational.
 
-## 11. Invariants to preserve
+## 11. `no_std` scope
+
+`simple_doip` names a bare-metal diagnostic ECU as its forcing function and
+`uds_protocol` is `no_std`; the shipping `uds_on_ip` is `tokio` plus
+`async-trait`, so the question does not answer itself.
+
+The position taken here: **the core is `no_std` and alloc-free; only the drivers
+need `std`.** Addressing, the session seam, the transport mapping, the profile
+and the handler seam allocate nothing and build for a `*-none` target. Responses
+borrow a caller-supplied receive buffer and a handler writes into a
+caller-supplied sink, so no public type carries a `Vec` or a `String`.
+
+This is designed in rather than deferred because it cannot be retrofitted: the
+signatures that make an API alloc-free are the same signatures callers depend
+on. The first driver happens to sit on `tokio`, but a bare-metal driver presents
+the same shape, which makes gaining one additive.
+
+## 12. Distribution constraints
+
+Two constraints that change what "publication order" in
+[§8.4](#84-publication-order) means. Both bind before any of the design above
+can ship.
+
+**`uds_session` is a private repository.** Verified 2026-09-10. A
+customer-facing crate cannot take an unconditional dependency on a private,
+unpublished crate — hence the feature gate on the adapter in
+[§4.1](#41-session-seam--uds_on_ip--uds_session). Either `uds_session` is
+published before `uds_on_ip` depends on it by default, or the default build
+keeps the interim in-crate session implementation indefinitely.
+
+**`uds_on_ip` is SDK-bundled and ships to customers as source.** Reported as
+`[INTERNAL_PATH_REDACTED]/sdk.toml` listing it under `[component.diagnostics]`. *This one I have
+not verified — the SDK repository was not reachable from this checkout, and it
+should be confirmed before being relied on.* If it holds, three things follow:
+
+- The redesign in this document is a **breaking change to a shipped crate**, and
+  no migration path is stated anywhere. One is owed.
+- [§9](#9-gap-analysis) is a public defect list on a customer-facing crate.
+  That may still be the right call — the defects are real and hiding them serves
+  nobody — but it is a decision to make deliberately rather than by omission.
+- This document ships with the crate, which is the reason the citation note at
+  the top is one line rather than an argument.
+
+## 13. Invariants to preserve
 
 1. A crate's scope is decided by which standard specifies the behaviour, not by
    convenience.
-2. `simple_doip` never learns what a UDS message means.
+2. `simple_doip` never learns what a UDS message means. **Currently violated**
+   by the bare-metal entity's UDS callback ([§3.1](#31-simple_doip--iso-13400-2));
+   listed as an invariant to restore, not one that holds.
 3. `uds_protocol` stays a codec — no dispatch, no policy, no session state.
 4. `uds_session` never learns its transport, and never reads a clock.
 5. `uds_on_ip` never learns what a service is.
 6. `uds_services` never names a transport outside a feature gate.
-7. Every timer has exactly one owner (§6).
-8. Spec locators are verified or absent.
+7. Every timer has exactly one owner ([§6](#6-timing-ownership)), and every
+   timing rule has exactly one decider ([§6.1](#61-who-emits-response-pending)).
+8. Spec locators are verified or absent — no third option, and no argument
+   about the policy in place of checking.
