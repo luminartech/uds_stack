@@ -115,9 +115,10 @@ The response window
    The initial state is stated here because none of those five conditions is an
    initialisation condition, so without it the state of the timer before the first input
    would be undefined. ``UDSS_LLR_0185`` states the initial state of ``tS3_Server`` for
-   the same reason. ``UDSS_LLR_0186`` in :doc:`llr-server-session-timer` states no
-   ``tP2_Server`` effect; the marked keep-alive's exclusion from this timer is
-   ``UDSS_LLR_0144``'s and ``UDSS_LLR_0146``'s.
+   the same reason. ``UDSS_LLR_0186`` in :doc:`llr-server-session-timer` handles the
+   request marked ``keep-alive`` and is silent on ``tP2_Server``; that message's exclusion
+   from this timer is ``UDSS_LLR_0144``'s and ``UDSS_LLR_0146``'s alone, so the five
+   changers above remain the whole list.
 
    Table 7 gives the reason one timer suffices: it is required for the enhanced response
    timing, to ensure a subsequent response-pending message is transmitted before
