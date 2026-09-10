@@ -125,9 +125,10 @@ The timer's state
    a functionally addressed TesterPresent is transmitted each time ``tS3_Client`` expires,
    and physical keep-alive, in which a physically addressed TesterPresent is transmitted on
    a physical channel when that channel's ``tS3_Client`` expires with no other request sent
-   on it. The mode shall be a protocol parameter set as ``UDSS_LLR_0138`` provides, and
-   shall select which state ``UDSS_LLR_0163`` requires and which of ``UDSS_LLR_0164`` to
-   ``UDSS_LLR_0172`` act.
+   on it. The mode shall be fixed when the client instance is created and shall not change
+   thereafter; an input attempting to change it shall be rejected as ``UDSS_LLR_0150``
+   defines. The mode shall select which state ``UDSS_LLR_0163`` requires and which of
+   ``UDSS_LLR_0164`` to ``UDSS_LLR_0172`` act.
 
    Clause 9.5 requires a periodically transmitted, functionally addressed TesterPresent to
    be distinguished from a sequentially transmitted, physically addressed one, which is only
@@ -137,8 +138,13 @@ The timer's state
    The mode is set for the client instance rather than per channel. Table 6's functional
    column is headed physical and functional communication, so the functional keep-alive
    already serves the client's physical channels; a client mixing the two would need two
-   timers on one channel for nothing. The mode is not a timing parameter, so it is stated
-   here rather than left to ``UDSS_LLR_0138``'s sentence about those.
+   timers on one channel for nothing. The mode is fixed at creation because the standard
+   treats the handling as a property of the deployment, Table 8 allotting timers "when
+   using" one TesterPresent or the other, and gives a change no meaning; it is not one of
+   the protocol parameters ``UDSS_LLR_0138`` provides for, which are clause 6.1's timing
+   parameters. A change at run time would have to say what becomes of a keeping-alive fact
+   and a running timer that the new mode's requirements never touch, ``UDSS_LLR_0163``
+   closing the list of what changes them, and no clause says.
 
 .. llr:: Session timer state lives in caller-supplied storage
    :id: UDSS_LLR_0163
@@ -152,8 +158,10 @@ The timer's state
    In functional keep-alive the client shall maintain a single ``tS3_Client`` timer and a
    single keeping-alive fact for the client instance. In physical keep-alive it shall
    maintain a single ``tS3_Client`` timer and a channel session fact for each physical
-   channel. Both shall be held in storage supplied by the caller. On initialisation no such
-   timer shall be running and no such fact shall hold. Thereafter the timers and facts shall
+   channel. Both shall be held in storage supplied by the caller. In functional keep-alive
+   the client shall have one ``tS3_Client`` reload parameter; in physical keep-alive each
+   physical channel shall have its own, each supplied under ``UDSS_LLR_0138``. On
+   initialisation no such timer shall be running and no such fact shall hold. Thereafter the timers and facts shall
    be changed only as ``UDSS_LLR_0164`` to ``UDSS_LLR_0172`` require, and the condition of
    each of those requirements shall be evaluated against the state as it was before the
    input in hand.
@@ -169,6 +177,14 @@ The timer's state
    channels is a property of the deployment, the crate does not allocate, and Table 8 states
    what timers are needed, not where they live.
 
+   The reload parameter follows the timer. Table 5 requires ``tS3_Client`` to be below the
+   ``tS3_Server`` of the server it keeps alive, and in physical keep-alive each channel's
+   timer serves one server whose ``tS3_Server`` may differ from the next, so a single value
+   for the client could be right for one server and late for another; Table 8's timer per
+   point-to-point communication gets a value per point-to-point communication. In functional
+   keep-alive one timer serves every server the functional address reaches, and one value
+   must be below all of their timeouts.
+
    The rule on evaluation order is what lets several requirements match one input and
    exactly one act. In physical keep-alive ``UDSS_LLR_0168``, ``UDSS_LLR_0170`` and
    ``UDSS_LLR_0172`` all act on a completed exchange; the first is guarded on the fact not
@@ -176,8 +192,7 @@ The timer's state
    them has changed it. In functional keep-alive the requirements are separated by the
    classification instead: ``UDSS_LLR_0164`` and ``UDSS_LLR_0167`` act on a session
    selection and ``UDSS_LLR_0166`` on the ``keep-alive`` marker, which ``UDSS_LLR_0134``
-   places only on a request that effects no transition, so no well-formed input matches
-   more than one.
+   forbids to accompany a session selection, so no input matches more than one.
 
 Functional keep-alive
 ---------------------
@@ -222,8 +237,8 @@ Functional keep-alive
    :tags: client; s3_client
 
    In functional keep-alive, while the keeping-alive fact holds and the ``tS3_Client`` timer
-   is running, when the elapsed time since it was last started reaches the reload
-   parameter, the client shall stop the timer and deliver a keep-alive indication to the
+   is running, when the elapsed time since it was last started reaches the value it was
+   loaded with, the client shall stop the timer and deliver a keep-alive indication to the
    application. The indication shall state that the client-wide keep-alive is due and shall
    carry no addressing.
 
@@ -498,8 +513,8 @@ session fact, and the requests and indications on it.
 
    In physical keep-alive, while a physical channel's session fact holds and its
    ``tS3_Client`` timer is running, when the elapsed time since the timer was last started
-   reaches the reload parameter, the client shall stop the timer and deliver a keep-alive
-   indication to the application carrying the channel's identity: ``S_Mtype``,
+   reaches the value it was loaded with, the client shall stop the timer and deliver a
+   keep-alive indication to the application carrying the channel's identity: ``S_Mtype``,
    ``S_AI[TAtype]``, ``S_AI[TA]`` and, where ``S_Mtype`` carries one, ``S_AI[AE]``.
 
    Table 5 defines ``tS3_Client`` for physical communication as the maximum time between

@@ -821,9 +821,10 @@ and leaves the means of recognising it to the implementation.
      shall further state the number of responses expected: ``none``, an exact number of at
      least one, or ``unknown``, and may further state ``keep-alive``, that the message is the
      TesterPresent the application transmits because ``tS3_Client`` expired; a request
-     classification stating an exact number of zero shall be rejected as ``UDSS_LLR_0150``
-     defines. A request classification supplied at a server, on ``T_DataSOM.ind`` or
-     ``T_Data.ind``, states neither;
+     classification stating an exact number of zero, or stating ``keep-alive`` together
+     with a session selection, shall be rejected as ``UDSS_LLR_0150`` defines. A request
+     classification supplied at a server, on ``T_DataSOM.ind`` or ``T_Data.ind``, states
+     neither;
    * ``final response``, a positive response, or a negative response whose response code
      is not ``requestCorrectlyReceived-ResponsePending``;
    * ``response pending``, a negative response whose response code is
@@ -855,7 +856,11 @@ and leaves the means of recognising it to the implementation.
    keep-alive the TesterPresent may or may not require a response. The client session timer
    document records as an assumption of use that the request the application transmits in
    answer to a keep-alive indication carries the marker, in either keep-alive mode. No
-   requirement conditions on it at a server.
+   requirement conditions on it at a server. The marker excludes a session selection because
+   a TesterPresent changes no session, and because ``UDSS_LLR_0164`` acts on the selection
+   and ``UDSS_LLR_0166`` on the marker with different effects on a running timer; a
+   classification carrying both would match two requirements ``UDSS_LLR_0163`` keeps apart
+   by the classification alone.
 
    The kind shall be absent only where ``UDSS_LLR_0133`` permits it: on a ``T_Data.ind``
    reporting an unsuccessful reception of a message that was not addressed to a server. No
