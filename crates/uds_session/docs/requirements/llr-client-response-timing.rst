@@ -250,7 +250,7 @@ The response window
    :integrity_level: QM
    :target_level: D
    :origin: session-layer-standard
-   :source: ISO 14229-2:2021 9.2 Table 3; ISO 14229-2:2021 10.1.2 Figure 10; ISO 14229-2:2021 10.3 Figure 20
+   :source: ISO 14229-2:2021 9.1.2; ISO 14229-2:2021 9.2 Table 3; ISO 14229-2:2021 10.1.2 Figure 10; ISO 14229-2:2021 10.3 Figure 20
    :tags: client; p_client
 
    On ``T_Data.conf`` reporting the successful transmission of a request whose expected
@@ -273,6 +273,11 @@ The response window
    sends no response would open a window nothing can close, and 9.7 Table 9 answers the
    resulting timeout by repeating a request that succeeded.
 
+   One figure key disagrees with all of the above about the starting primitive. 10.1.4.2
+   Figure 13 key k has the client start ``tP_Client`` at the ``T_Data.req`` of the
+   TesterPresent it sends on ``tS3_Client`` expiry, where Table 3, 9.1.2 and the parallel
+   key p start it at the ``T_Data.conf``. The normative text is followed.
+
    The transmission must be successful because a ``T_Data.conf`` reporting failure means no
    request reached the server and no response is coming. Table 9 gives that event its own
    handling, which the client error handling document covers.
@@ -287,7 +292,7 @@ The response window
    :integrity_level: QM
    :target_level: D
    :origin: session-layer-standard
-   :source: ISO 14229-2:2021 9.1.2; ISO 14229-2:2021 9.7 Table 9; ISO 14229-2:2021 10.1.1 Figure 9; ISO 14229-2:2021 10.1.2 Figure 10; ISO 14229-2:2021 10.1.3 Figure 11
+   :source: ISO 14229-2:2021 9.1.2; ISO 14229-2:2021 9.4 Figure 8; ISO 14229-2:2021 9.7 Table 9; ISO 14229-2:2021 10.1.1 Figure 9; ISO 14229-2:2021 10.1.2 Figure 10; ISO 14229-2:2021 10.1.3 Figure 11
    :tags: client; p_client
 
    On the first indication of a message on a physical channel with a request in progress,
@@ -653,7 +658,9 @@ Enhanced response timing
    classification states kind ``response pending``, and shall cease to be outstanding on
    the first indication of any later message from that responder. Where one indication both
    ends an outstanding response-pending message and restarts the timer under
-   ``UDSS_LLR_0155``, the reload value in force shall be determined after the former.
+   ``UDSS_LLR_0155``, the reload value in force shall be determined after the former. Where
+   one indication both ends an outstanding response-pending message and records one, the
+   record shall stand.
 
    Figure 16 key d adds an entry for the responding server's address when its
    response-pending message completes and reloads the timer with the enhanced value; key i
@@ -674,7 +681,11 @@ Enhanced response timing
    Where a server's next message is a further response-pending one, the default value is in
    force during its transfer and the enhanced value returns at its completion under the
    first paragraph. That is the figures' rule applied as written; the set does not soften
-   it.
+   it. A single-frame response-pending message, the usual form, has no transfer: its one
+   ``T_Data.ind`` is both the first indication of a later message and the recording
+   indication, and the second ordering sentence makes the net result outstanding, which is
+   what 9.4 Figure 8 key d shows when a further such message reloads the timer with the
+   enhanced value.
 
    The value in force is never read on a physical channel. ``UDSS_LLR_0157`` loads the
    enhanced parameter directly, and ``UDSS_LLR_0154`` stops the timer on every other
