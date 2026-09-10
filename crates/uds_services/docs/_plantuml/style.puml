@@ -1,0 +1,121 @@
+' Shared PlantUML style, applied to every diagram in this set.
+'
+' Passed to the renderer with `-config` from docs/conf.py rather than repeated in each
+' diagram: a skinparam block copied into eighteen diagrams is eighteen places for them to
+' drift apart, and the first thing to drift is always the background.
+'
+' The background is set explicitly and is not negotiable. PlantUML's default SVG has a
+' transparent background, which renders as dark text on a dark page under the theme's dark
+' mode — legible in review, invisible to a reader. An opaque light card on either theme is
+' the trade taken here.
+
+skinparam backgroundColor #FFFFFF
+skinparam shadowing false
+skinparam defaultFontName Helvetica
+skinparam defaultFontSize 12
+skinparam roundCorner 4
+skinparam ArrowColor #4A6E8A
+skinparam ArrowFontSize 11
+skinparam ArrowFontColor #33475B
+
+' Components and packages. The fill matches the `arch` need colour in conf.py, so a
+' hand-drawn component and a generated one read as the same kind of thing.
+skinparam component {
+  BackgroundColor #9FB8D0
+  BorderColor #4A6E8A
+  FontColor #10202E
+  BorderThickness 1
+}
+skinparam package {
+  BackgroundColor #F4F7FA
+  BorderColor #93A7B8
+  FontColor #33475B
+  FontSize 11
+  BorderThickness 1
+}
+skinparam rectangle {
+  BackgroundColor #F4F7FA
+  BorderColor #93A7B8
+  FontColor #33475B
+}
+skinparam interface {
+  BackgroundColor #FFFFFF
+  BorderColor #4A6E8A
+}
+
+' Class diagrams, used for the trait structure. Rust traits are drawn as UML interfaces
+' with a <<trait>> stereotype: neither language's vocabulary maps exactly, and a trait is
+' closer to an interface than to anything else UML offers.
+skinparam class {
+  BackgroundColor #F4F7FA
+  BorderColor #93A7B8
+  FontColor #10202E
+  AttributeFontColor #33475B
+  AttributeFontSize 11
+  StereotypeFontSize 10
+}
+skinparam note {
+  BackgroundColor #FFF8E1
+  BorderColor #C9A227
+  FontColor #4A3B00
+  FontSize 11
+}
+
+' Sequence diagrams.
+skinparam sequence {
+  ArrowColor #4A6E8A
+  LifeLineBorderColor #93A7B8
+  LifeLineBackgroundColor #E8EEF4
+  ParticipantBackgroundColor #9FB8D0
+  ParticipantBorderColor #4A6E8A
+  ParticipantFontColor #10202E
+  BoxBackgroundColor #F4F7FA
+  BoxBorderColor #93A7B8
+  DividerBackgroundColor #E8EEF4
+  DividerBorderColor #93A7B8
+  GroupBackgroundColor #E8EEF4
+  GroupBorderColor #93A7B8
+}
+
+' Activity diagrams.
+skinparam activity {
+  BackgroundColor #9FB8D0
+  BorderColor #4A6E8A
+  FontColor #10202E
+  DiamondBackgroundColor #F4F7FA
+  DiamondBorderColor #93A7B8
+  DiamondFontColor #33475B
+  DiamondFontSize 11
+  StartColor #4A6E8A
+  EndColor #4A6E8A
+  BarColor #4A6E8A
+}
+
+' Outcome classes for activity diagrams, applied as `:text; <<negative>>`.
+'
+' A named class rather than a colour at the point of use. The `#colour:activity;` form
+' documented for PlantUML activity diagrams is rejected outright by 1.2026.8 — it fails to
+' parse, it does not merely render plainly — so a stereotype defined here is the only route
+' to a coloured step. It is the better one anyway: "this exit is a negative response" is a
+' fact about the step, and naming it means every diagram in the set agrees on what a
+' negative outcome looks like.
+'
+' Note the placement: `:text; <<class>>` styles the step, while `:text <<class>>;` prints
+' the class name into the label and styles nothing.
+<style>
+.negative {
+  BackGroundColor #FADBD8
+  LineColor #C0392B
+  FontColor #7B1F13
+}
+.positive {
+  BackGroundColor #D5F5E3
+  LineColor #1E8449
+  FontColor #0B3D22
+}
+.silent {
+  BackGroundColor #E8EAED
+  LineColor #6B7280
+  FontColor #2F3437
+}
+</style>
