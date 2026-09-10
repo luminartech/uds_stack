@@ -714,8 +714,8 @@ and leaves the means of recognising it to the implementation.
    supplies a ``T_Data.ind`` holds the bytes it received.
 
    The association is matched on addressing because that is the standard's own rule:
-   ISO 14229-2:2021 7.3 has the ``S_Data.conf`` confirm "the completion of an S_Data.req
-   service identified by the address information", and Table 2 maps the transport's
+   ISO 14229-2:2021 7.6 has the ``S_Data.conf`` confirm "the completion of an S_Data.req
+   service identified by the address information", and 7.3 Table 2 maps the transport's
    confirmation onto the same parameters, so nothing else travels on a confirmation that
    could identify the request it answers. That rule can only work while one transmission to
    a given addressing is outstanding, which the standard's models guarantee at the client,
