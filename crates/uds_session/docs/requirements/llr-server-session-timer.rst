@@ -36,10 +36,12 @@ which the clause defines as keep-alive logic to be handled by bypass logic so th
 cannot block the server's application layer. The server's caller marks that message
 ``keep-alive`` under ``UDSS_LLR_0134``.
 
-The standard handles TesterPresent two ways. ISO 14229-2:2021 10.1.4.1 Figure 12 key m has
-it reload a running ``tS3_Server``, and 10.1.4.2 Figure 13 keys l and p have it stop the
-timer as any request does. The marker picks between them: marked, ``UDSS_LLR_0186``
-applies; unmarked, ``UDSS_LLR_0104`` does.
+The standard shows TesterPresent in two figures, one per message. ISO 14229-2:2021
+10.1.4.1 Figure 12 is the functionally addressed one without a response: key m has it reload
+a running ``tS3_Server``, and key j lets the server ignore one received while another request
+is in progress. 10.1.4.2 Figure 13 is the physically addressed one with a response, which
+keys l and p have stop the timer as any request does. The marker picks between them: marked,
+``UDSS_LLR_0186`` applies; unmarked, ``UDSS_LLR_0104`` does.
 
 ISO 14229-2:2021 9.5 says the server has no need to distinguish the two kinds of
 TesterPresent handling, and that holds for the restart both readings end in. The difference
@@ -102,7 +104,7 @@ The timer's state
    :integrity_level: QM
    :target_level: D
    :origin: session-layer-standard
-   :source: ISO 14229-2:2021 9.2; ISO 14229-2:2021 9.5; ISO 14229-2:2021 9.5 Table 6; ISO 14229-2:2021 9.6 Table 8
+   :source: ISO 14229-2:2021 9.2; ISO 14229-2:2021 9.5; ISO 14229-2:2021 9.5 Table 6; ISO 14229-2:2021 9.6 Table 8; ISO 14229-1:2020 Annex J J.5.1
    :tags: server; session-state; s3_server
 
    The server shall keep, in the instance, whether the active session is the default
@@ -140,7 +142,7 @@ The timer's state
    :integrity_level: QM
    :target_level: D
    :origin: session-layer-standard
-   :source: ISO 14229-2:2021 9.5; ISO 14229-2:2021 9.5 Table 6
+   :source: ISO 14229-2:2021 9.5; ISO 14229-2:2021 9.5 Table 6; ISO 14229-1:2020 10.2.1 Figure 7; ISO 14229-1:2020 Annex J J.4 Table J.2
    :tags: server; s3_server
 
    On ``T_Data.conf`` indicating successful transmission of a solicited positive response
@@ -168,8 +170,12 @@ The timer's state
    now active. The sentence read against is 9.5's last, that no other client can affect the
    timer and take over the session: a hand-over is not a take-over. The session layer cannot
    refuse a positive response the application chose to send, and ISO 14229-1:2020 Annex J
-   (informative) J.4 Table J.2 shows the application answering NRC 0x21 while in a session
-   another client requested, so a positive response is its consent. The other reading,
+   (informative) J.4 Table J.2 shows the client informed by NRC 0x21 when the server is
+   "being in non-default session requested by a different client", so a positive response
+   is its consent. That is the second half of the table's disjunction; the first, a server
+   busy processing a different request, is the concurrent-request case that
+   ISO 14229-1:2020 8.7.6's one-request-at-a-time rule places outside this set's assumption
+   of use, and nothing here rests on it. The other reading,
    control recorded only on leaving the default session, would drop the server to the
    default session mid-programming unless the displaced client kept alive a session it no
    longer uses.
@@ -218,8 +224,8 @@ The timer's state
    timer, the ``T_Data.ind`` completing it finds the timer stopped and changes nothing, so
    the server needs no rule pairing the two indications; ``UDSS_LLR_0140`` states such a
    rule for the client alone. A ``T_Data.ind`` reporting an unsuccessful reception is
-   ``UDSS_LLR_0109``'s instead: ISO 14229-2:2021 9.7 Table 10 restarts the timer, which a
-   start-of-message of the same request had stopped where one was indicated.
+   ``UDSS_LLR_0109``'s instead: ISO 14229-2:2021 9.7 Table 10 restarts the timer where a
+   start-of-message of the same request had stopped it, and leaves a running timer alone.
 
    The marked message is ``UDSS_LLR_0186``'s on either primitive: it reloads a running timer
    rather than stopping it.
@@ -307,14 +313,21 @@ The timer's state
    :source: ISO 14229-5:2022 8.9.2
    :tags: server; s3_server
 
-   While in a non-default session, on ``T_Data.conf`` indicating successful transmission
-   of a response message marked by the caller as unsolicited, the server shall not
-   restart the ``tS3_Server`` timer.
+   While in a non-default session, on ``T_Data.conf`` reporting the outcome, successful or
+   not, of the transmission of a response message marked by the caller as unsolicited, the
+   server shall not restart the ``tS3_Server`` timer.
 
    Rationale: a transmission triggered by a periodic scheduler or an internal event,
    rather than by a client request, must not keep a session alive. Otherwise a periodic
    transmission with an interval shorter than the session timeout would hold a
    non-default session open indefinitely.
+
+   Clause 8.9.2 states the rule for any unsolicited transmitted response message without
+   asking whether the transmission succeeded, and the failed case is named here so that a
+   periodic transmission that keeps failing cannot hold the session open through
+   ``UDSS_LLR_0110`` instead. That requirement's restart rests on ISO 14229-2:2021 9.7
+   Table 10's reason, that the timer was stopped by the request the failed response answers,
+   and an unsolicited message answers none; ``UDSS_LLR_0110`` excludes it accordingly.
 
 .. llr:: Reception errors restart the session timer
    :id: UDSS_LLR_0109
@@ -325,9 +338,20 @@ The timer's state
    :source: ISO 14229-2:2021 9.7 Table 10
    :tags: server; s3_server; error-handling
 
-   While in a non-default session, on ``T_Data.ind`` reporting an unsuccessful result for
-   a request not marked ``keep-alive`` from the controlling client, the server shall
-   restart the ``tS3_Server`` timer.
+   While in a non-default session and while ``tS3_Server`` is stopped, on ``T_Data.ind``
+   reporting an unsuccessful result for a request not marked ``keep-alive`` from the
+   controlling client, the server shall restart the ``tS3_Server`` timer.
+
+   The guard on the timer is Table 10's own precondition. Its restart is stated "because it
+   has been stopped based on the previously received StartOfMessage indication", and the
+   corresponding row of 9.5 Table 6 names an error during the reception of a multi-frame
+   request message, the case in which a ``T_DataSOM.ind`` has already stopped the timer
+   under ``UDSS_LLR_0104`` and the restart undoes that stop. A failed single-frame
+   reception, for which no start-of-message was indicated, finds the timer running and
+   leaves it running: a corrupt frame carrying the controlling client's address is not a
+   request and does not keep the session alive. The server keeps no pairing state between
+   the two indications (``UDSS_LLR_0140`` states such a rule for the client alone), so the
+   timer's own state stands in for it.
 
    Table 10 says the server shall ignore the request. That is read as the request having
    no effect on the session or its timer beyond the restart Table 10 itself requires, and
@@ -352,12 +376,13 @@ The timer's state
    :integrity_level: QM
    :target_level: D
    :origin: session-layer-standard
-   :source: ISO 14229-2:2021 9.7 Table 10
+   :source: ISO 14229-2:2021 9.7 Table 10; ISO 14229-5:2022 8.9.2
    :tags: server; s3_server; error-handling
 
    While in a non-default session, on ``T_Data.conf`` reporting an unsuccessful result
-   for a response message to the controlling client, the server shall restart the
-   ``tS3_Server`` timer and shall not retransmit the response.
+   for a response message to the controlling client not marked by the caller as
+   unsolicited, the server shall restart the ``tS3_Server`` timer and shall not retransmit
+   the response.
 
    Table 10 gives the reason for the restart: the timer was stopped by the request that
    the failed response answers. Where that request came from any other client the timer
@@ -365,6 +390,14 @@ The timer's state
    to the controlling client, so restarting it here would let another client's traffic
    extend a session it does not control. ``UDSS_LLR_0109`` carries the same qualifier for
    the reception side of the same table.
+
+   An unsolicited response is excluded because Table 10's reason never holds for it: no
+   request stopped the timer on its behalf, and ISO 14229-5:2022 8.9.2 forbids any
+   unsolicited transmitted response message to reset ``tS3_Server``, a rule
+   ``UDSS_LLR_0108`` transcribes for the successful and the failed confirmation alike.
+   Without the exclusion a periodic transmission that kept failing at an interval shorter
+   than the session timeout would hold the session open, the very latch-up 8.9.2 exists to
+   prevent.
 
 .. llr:: The bypass keep-alive reloads a running session timer
    :id: UDSS_LLR_0186
@@ -405,13 +438,20 @@ The timer's state
    response-pending, ``UDSS_LLR_0107`` not restarting the timer for such a response.
    ``UDSS_LLR_0109`` excludes the marked message for the same reason.
 
-   The marker is what picks between Figure 12 key m and Figure 13 keys l and p, the same
-   event handled oppositely. Clause 9.5's statement that the server has no need to
-   distinguish the kinds of TesterPresent handling survives, because both readings end with
-   the timer restarted once the message is dealt with, and the genuine difference is
-   ``tP2_Server``, which 9.5 does not discuss and which ``UDSS_LLR_0144`` and
-   ``UDSS_LLR_0146`` handle by excluding the marked message. That inconsistency is recorded
-   on :doc:`open-questions`.
+   The marker is what picks between the bypass handling of Figure 12 keys j and m and
+   Figure 20 key d, transcribed here, and the ordinary request handling of Table 6 under
+   ``UDSS_LLR_0104``, of which Figure 13 keys l and n are the with-response instance. The two
+   figures show two different messages, the functionally addressed TesterPresent without a
+   response and the physically addressed one with, not one event handled two ways: for the
+   first, Table 6's stop at the reception and restart at the completion fall on one instant,
+   which is what key m's "reload" describes. The one point at which the figures depart from a
+   literal reading of Table 6 is the permission of keys j and d to ignore the message while
+   another request is in progress, and that permission is what this requirement takes.
+   Clause 9.5's statement that the server has no need to distinguish the kinds of
+   TesterPresent handling therefore survives, both handlings ending with the timer restarted
+   once the message is dealt with, and the genuine difference is ``tP2_Server``, which 9.5
+   does not discuss and which ``UDSS_LLR_0144`` and ``UDSS_LLR_0146`` handle by excluding
+   the marked message.
 
    No completion report is needed for the marked message, it being handled at its
    indication. One that is supplied is inert rather than rejected because ``UDSS_LLR_0136``
@@ -455,7 +495,7 @@ The timer's state
    :integrity_level: QM
    :target_level: D
    :origin: session-layer-standard
-   :source: ISO 14229-2:2021 9.5 Table 6
+   :source: ISO 14229-2:2021 9.5 Table 6; ISO 14229-1:2020 10.2.2.2 Table 25; ISO 14229-1:2020 8.7.6
    :tags: server; s3_server; session-state
 
    While in a non-default session, on ``T_Data.conf`` indicating successful transmission of
@@ -517,7 +557,10 @@ The timer's state
 
    Rationale: the session layer standard specifies only that this timer keeps a
    non-default session active while no request is received; it does not specify the
-   resulting transition, which belongs to the application layer. Returning the session
+   resulting transition, which belongs to the application layer. ISO 14229-1:2020 10.2.2.2
+   Table 25 is where that layer states it, naming a session layer timeout in the server as
+   one of the ways the programming session is left, and this requirement declines to
+   implement it as ``UDSS_LLR_0141`` declines the same table's ECUReset. Returning the session
    layer's own state to default is required for internal consistency, since every other
    requirement in this set is conditioned on which session is active. The indication
    exists so the application can apply the application-layer consequences. This

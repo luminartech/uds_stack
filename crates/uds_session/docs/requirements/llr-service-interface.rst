@@ -1087,5 +1087,6 @@ and leaves the means of recognising it to the implementation.
    an earlier ``T_Data.ind``, because Table 6's other suppressed-response row, the
    transition from the default session to a non-default one, needs the session selection,
    and correlating would oblige the session layer to retain one. Which of several
-   outstanding requests completed is deliberately not identified: both Table 6 rows turn
-   on a request from the controlling client having completed, not on which one.
+   outstanding requests completed is deliberately not identified: ``UDSS_LLR_0142`` turns
+   on a request from the controlling client having completed and ``UDSS_LLR_0103`` on a
+   session-selecting request from any client having completed, and neither asks which one.

@@ -70,13 +70,6 @@ the data, where 10.3 b) applies it to every functionally addressed request, foll
 governing; and Figure 19's title names ``tP3_Client_Phys`` above a figure of the functional
 timer. None changes what the set does.
 
-The server session timer rework met one more. ISO 14229-2:2021 10.1.4.1 Figure 12 key m
-has a TesterPresent received during an activated ``tS3_Server`` reload the timer, where
-10.1.4.2 Figure 13 keys l and p have its reception stop the timer as any request does.
-``UDSS_LLR_0186`` and ``UDSS_LLR_0104`` take one reading each, selected by the
-``keep-alive`` marker, and record why 9.5's statement that the server need not distinguish
-them survives.
-
 What bounds a message whose start was indicated but whose completion never comes?
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
