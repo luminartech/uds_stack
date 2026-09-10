@@ -5,11 +5,11 @@ Questions raised while authoring this set that are not yet settled, and agreed c
 not yet made. Each entry records what is at stake, which requirements it touches, and
 what would settle it.
 
-Most of these are held open deliberately. Every document the set planned is now written:
-the service interface, both roles' session timers, both roles' response timing, and the
-client's request spacing and error handling. What remains is the rework of the server
-session timer document, the oldest in the set, and several questions turn on what it
-decides. Answering them now would mean guessing at a rework that has not been done.
+Every document the set planned is now written, and the server session timer document, the
+oldest, has been reworked against the rest. The three entries that remain are not waiting
+on a document: one is a question of convention, one a decision about a build-time switch
+that wants the full inventory first, and one a statement that belongs in the qualification
+repository.
 
 A question closes by being answered in a requirement, not here. When that happens the
 entry is deleted and the requirement carries the reasoning, as a ``Rationale:`` paragraph
@@ -18,36 +18,6 @@ deleted when the last entry goes.
 
 Questions
 ---------
-
-Who controls the session after one non-default session replaces another?
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-``UDSS_LLR_0102`` and ``UDSS_LLR_0103`` are gated "While in the default session" and
-``UDSS_LLR_0141`` covers only a return to the default session, so a transition from one
-non-default session to another is covered by neither. Server in extendedSession with
-client A controlling; a client sends ``DiagnosticSessionControl(programmingSession)`` and
-the server confirms a positive response. ``UDSS_LLR_0106`` restarts ``tS3_Server``, which
-is right, but no requirement updates the recorded session or the recorded controlling
-client.
-
-The standard does not settle it, which is why no requirement was written. ISO 14229-2:2021
-9.5 Table 6 scopes both of its ``tS3_Server`` initial-start rows to "a transition from the
-default session to a non-default session", and says nothing about this edge. Clause 9.5's
-prose identifies the controlling client as "the client which requested the transition to a
-non-default session", which reads either as the client that moved the server out of the
-default session — client A, unchanged by any later transition — or as the client that
-requested whichever non-default session is now active. The two readings disagree only when
-a *different* client makes the second transition, and then they disagree about whose
-keep-alive works. The set implements the first reading, because ``UDSS_LLR_0102`` and
-``UDSS_LLR_0103`` record the controlling client only on the way out of the default session
-and nothing changes it thereafter; the timer document's preamble now says so plainly rather
-than describing a rule the requirements do not carry.
-
-Nothing in the set reads the recorded session identifier, which ``UDSS_LLR_0134`` keeps
-opaque and carries for the application's benefit, so the stale identifier is inert for now.
-The controlling client is the part that matters, and it is a question about the server's
-session state as a whole rather than about any one requirement. Settled by the server
-session timer rework.
 
 Which constraints does the standard make checkable but allocate nothing for?
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -100,110 +70,12 @@ the data, where 10.3 b) applies it to every functionally addressed request, foll
 governing; and Figure 19's title names ``tP3_Client_Phys`` above a figure of the functional
 timer. None changes what the set does.
 
-The client request spacing cycle met three more. ISO 14229-2:2021 9.2 Table 3 conditions
-the functional spacing wait on no response being required or on only some servers supporting
-the data, where 10.3 b) applies it to every functionally addressed request, followed in
-``UDSS_LLR_0175``; 10.3 a) says ``tP3_Client_Phys`` is identical to ``tP2_Server_Max`` where
-Table 4 gives a minimum that adds the network delay, Table 4 governing; and Figure 19's title
-names ``tP3_Client_Phys`` above a figure of the functional timer. None changes what the set
-does.
-
-What does a keep-alive TesterPresent do to the response window?
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-``UDSS_LLR_0144`` starts the ``tP2_Server`` timer on every successfully received request,
-without asking whether a response window is already open, and ``UDSS_LLR_0146`` stops that
-timer on any completion report of ``UDSS_LLR_0136``, without asking which request
-completed. The server response timing document writes both against the
-one-request-at-a-time model of ISO 14229-1:2020 8.7.6, recorded as an assumption of use,
-and that model is what makes them safe unconditioned. But 8.7.6 excepts from the rule the
-one message most likely to arrive mid-request: the functionally-addressed TesterPresent
-with SPRMIB=true, which it defines as keep-alive logic to be handled by bypass logic, and
-which the client transmits every time ``tS3_Client`` expires.
-
-Such a keep-alive is a request for which no response message is transmitted, so it is
-exactly the input ``UDSS_LLR_0136`` carries, and ``UDSS_LLR_0142``'s rationale establishes
-that a conformant caller supplies the completion report for it: without one the ordinary
-keep-alive never restarts ``tS3_Server`` and the server is pinned in the session. The
-sequence for a keep-alive arriving while a request is in progress is therefore its
-``T_Data.ind``, on which ``UDSS_LLR_0144`` reloads the window with ``tP2_Server_Max``,
-followed by its completion report, on which ``UDSS_LLR_0146`` stops the timer outright.
-
-The likely outcome is a missed indication. A TesterPresent completes in microseconds, so
-the stop nearly always beats ``tP2_Server_Max``: the response window of the request
-actually in progress is silently discarded, ``UDSS_LLR_0148`` never fires, and a genuine
-overrun goes unreported. Only where the completion report is slow enough for the reloaded
-window to expire first does the other outcome occur, ``UDSS_LLR_0148`` reporting an
-overrun that did not happen — the less likely case, and the less serious one, a missed
-indication being worse than a spurious one. ``UDSS_LLR_0149`` is unaffected either way,
-being measured from the confirming ``T_Data.conf`` rather than from the timer.
-
-The standard puts this scenario in the very figures ``UDSS_LLR_0146`` cites.
-ISO 14229-2:2021 10.3 Figure 20 key d is a keep-alive received while a request requiring
-no response is being processed, and key e is the completion ``UDSS_LLR_0146`` transcribes.
-Key d and 10.1.4.1 Figure 12 key j carry the identical statement that such a message *can*
-be ignored by the server, which permits a fix without requiring one.
-
-The candidates recorded so far address ``UDSS_LLR_0144`` only. Conditioning it on the
-timer being stopped writes a rule the standard permits rather than requires, and does
-nothing for ``UDSS_LLR_0146``, which would need a filter of its own — on addressing, or on
-whether the completion belongs to the request in progress. ``UDSS_LLR_0142`` shows the
-shape such a filter takes, being scoped to a request from the controlling client. The
-remaining candidate is to widen the assumption of use to cover bypass traffic, which the
-crate then cannot check and which obliges the caller to recognise such traffic. Settled by
-the server session timer rework, where the same TesterPresent traffic is already in
-question for ``tS3_Server``.
-
-The client session timer document has since given the client's keep-alive a classification
-of its own, ``keep-alive`` in ``UDSS_LLR_0134``, stated by the client on its ``S_Data.req``.
-A server-side counterpart, supplied by the server's caller on the ``T_Data.ind``, would give
-``UDSS_LLR_0144`` and ``UDSS_LLR_0146`` the filter this entry asks for; the rework should
-weigh it against the other candidates.
-
-Where does ``UDSS_LLR_0150`` belong?
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-``UDSS_LLR_0150`` states what it means for the session layer to reject a caller's input:
-the call fails, nothing is emitted, and no state changes. That is a statement about the
-service interface as a whole, and it sits in the server response timing document only
-because ``UDSS_LLR_0149`` is the first requirement to need it and would be incomplete
-without it.
-
-The service interface document is where this set's interface-wide statements live;
-``UDSS_LLR_0113`` to ``UDSS_LLR_0117`` are the existing group of them. Moving it costs
-nothing while the set is draft and IDs may still move. What holds the question open is that
-no rework of that document is scheduled, and relocating a requirement between documents for
-tidiness alone is not a bar this set has used before.
-
-The client request spacing document has since given the question two more reasons.
-``UDSS_LLR_0176`` is the first client-side requirement to invoke ``UDSS_LLR_0150``, so a
-statement about the whole interface now serves both roles from a server document; and
-``UDSS_LLR_0177`` is the first to constrain what the rejection's report carries, giving the
-report a content the definition will have to accommodate wherever it lives.
-
-The client error handling document adds ``UDSS_LLR_0180``, ``UDSS_LLR_0181``,
-``UDSS_LLR_0183`` and ``UDSS_LLR_0184`` as further client-side uses, and ``UDSS_LLR_0182``
-as a second constraint on the report's content, which now has to carry a cause as well as a
-time.
-
-What orders a timer expiry against an input on the same timestamp?
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-``UDSS_LLR_0115`` lets a timestamp be supplied either alongside another input or on its
-own, and nothing sequences the two where both have an effect. A timestamp accompanying a
-``T_Data.ind`` that also expires the response window satisfies ``UDSS_LLR_0148``, which
-stops the timer and indicates the overrun, and ``UDSS_LLR_0144``, which starts it for the
-request just received. Evaluate the start first and the overrun indication is swallowed.
-
-The collision is pre-existing rather than introduced by the server response timing
-document. ``UDSS_LLR_0112`` and ``UDSS_LLR_0104`` collide the same way: a timestamp
-arriving with the ``T_Data.ind`` that begins a request from the controlling client can
-expire ``tS3_Server`` and stop it in the same call. What the response timer adds is
-instances, ``tP2_Server`` being touched by nearly every input this set defines.
-
-The answer likely wants stating once, as an interface-wide ordering clause in the service
-interface document, rather than as a rule per timer. That document's rework is where it
-belongs.
+The server session timer rework met one more. ISO 14229-2:2021 10.1.4.1 Figure 12 key m
+has a TesterPresent received during an activated ``tS3_Server`` reload the timer, where
+10.1.4.2 Figure 13 keys l and p have its reception stop the timer as any request does.
+``UDSS_LLR_0186`` and ``UDSS_LLR_0104`` take one reading each, selected by the
+``keep-alive`` marker, and record why 9.5's statement that the server need not distinguish
+them survives.
 
 What bounds a message whose start was indicated but whose completion never comes?
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -230,56 +102,15 @@ start-of-message the transport never completes is closed by resetting its channe
 bounds the harm of a transport that breaks the assumption without settling where the
 assumption is stated.
 
-Deferred edits
---------------
-
-Changes that are agreed and unwritten, kept here so they are not lost between cycles.
-
-``UDSS_LLR_0134``'s definition of a final response — a positive response, or a negative
-response whose code is not ``requestCorrectlyReceived-ResponsePending`` — is transcribed
-almost verbatim from ISO 14229-2:2021 9.1.1, but the requirement is ``derived`` and carries
-no ``source``. Either the transcribed definition splits from the derived structure around
-it, or the requirement cites the clause. That clause also settles a case the requirement's
-solicited and unsolicited split exists to handle: where a request schedules periodic
-responses, the initial response accepting or refusing the schedule is the final response,
-and the periodic transmissions that follow are not.
-
-``UDSS_LLR_0136`` cites 9.5 Table 6 in its rationale. ISO 14229-2:2021 10.1.4.1 gives the
-sharper statement, defining a service as in progress until the completion of any action
-caused by the request where no response is required — the point that would otherwise have
-started the response. That bounds when the caller has to report completion, which Table 6
-alone does not.
-
-``UDSS_LLR_0136``'s title says the completion is reported by the application while its
-body says the caller supplies it. ``UDSS_LLR_0108`` has the same drift, saying a response
-is marked unsolicited by the application where ``UDSS_LLR_0133`` puts the classification
-on the caller. The service interface document distinguishes the two deliberately, so both
-titles should follow it.
-
-``UDSS_LLR_0133`` associates the classification carried by an ``S_Data.req`` with the
-``T_Data.conf`` reporting the outcome of the transmission it requested, and says nothing
-about the ``T_Data.req`` in between. That association should be extended to cover the
-``T_Data.req`` produced from an ``S_Data.req``. ``UDSS_LLR_0145`` is what needs it, being
-the first requirement in the set to condition on what kind of message a ``T_Data.req``
-carries. It is a trace gap rather than a hole: ``UDSS_LLR_0118`` produces that
-``T_Data.req`` from the ``S_Data.req`` that carried the classification, in the same step.
-
 Sequencing
 ----------
 
 ``UDSS_LLR_0141``, ``UDSS_LLR_0142`` and the amendments to ``UDSS_LLR_0105`` and
-``UDSS_LLR_0110`` were all written from reviews of the service interface but landed in the
-server session timer document, which is itself due a rework. Each went in immediately
-because leaving it out left a requirement wrong rather than merely incomplete: without
-``0141`` the server restarted a timer for a session it had already left; without ``0142``
-the ordinary suppressed-response keep-alive stopped the timer for good and pinned the
-server in the session; ``0105`` and ``0141`` demanded opposite outcomes for the same event;
-and ``0110`` let a non-controlling client's failed response extend a session it does not
-control.
+``UDSS_LLR_0110`` were written from reviews of the service interface and landed in the
+server session timer document ahead of its rework, because leaving each out left a
+requirement wrong rather than merely incomplete. The rework has since weighed them against
+the whole document.
 
-That is the bar for patching a document from an adjacent cycle. Findings that leave a
-requirement incomplete, or that are matters of traceability and wording, should collect
-here and be taken in the rework, where they can be weighed against the whole document at
-once. The entry above on control of the session after one non-default session replaces
-another is the current example: the standard does not cover the edge, so there is nothing
-to transcribe and nothing yet wrong to fix.
+That remains the bar for patching a document from an adjacent cycle: a finding that leaves
+a requirement wrong goes in at once; one that leaves it incomplete, or concerns
+traceability or wording, is recorded here and taken with the document's next rework.
