@@ -82,4 +82,23 @@
 #![cfg_attr(not(feature = "std"), no_std)]
 #![forbid(unsafe_code)]
 
+pub mod addressing;
+pub mod error;
+pub mod handler;
+pub mod mapping;
+pub mod primitives;
+pub mod profile;
+pub mod session;
 
+#[cfg(feature = "client")]
+pub mod client;
+
+pub use addressing::{Address, Ai, ChannelId, Mtype, TaType};
+pub use error::{Error, Result};
+pub use handler::{Ctx, Outcome, RequestHandler};
+pub use primitives::{Completion, Confirm, Indication, Request, SResult};
+pub use profile::Timing;
+pub use session::{ChannelTiming, SessionAction, SessionLayer};
+
+#[cfg(feature = "client")]
+pub use client::{Client, ClientOptions, Responses};

@@ -21,17 +21,18 @@
 //!
 //! A sans-io session layer supports this naturally, because a single caller
 //! owns both edges by construction.
+//!
+//! # A note on the clock
+//!
+//! Timestamps are `u32` milliseconds, the unit ISO 14229-2 states its timing
+//! parameters in. A `u32` count of milliseconds wraps after roughly 49.7 days,
+//! so every comparison against one must use wrapping-difference arithmetic
+//! rather than ordering: `now.wrapping_sub(started) >= timeout`, never
+//! `now >= deadline`. The width is this seam's choice rather than the
+//! standard's, taken so a bare-metal target need not carry a 64-bit clock.
 
 use crate::addressing::{Ai, ChannelId};
-
-/// # A note on the clock
-///
-/// Timestamps are `u32` milliseconds, the unit ISO 14229-2 states its timing
-/// parameters in. A `u32` count of milliseconds wraps after roughly 49.7 days,
-/// so every comparison against one must use wrapping-difference arithmetic
-/// rather than ordering: `now.wrapping_sub(started) >= timeout`, never
-/// `now >= deadline`. The width is this seam's choice rather than the
-/// standard's, taken so a bare-metal target need not carry a 64-bit clock.
+use crate::primitives::SResult;
 
 /// The reload parameters a transport supplies for a channel's `tP_Client`.
 ///
@@ -53,31 +54,21 @@ pub struct ChannelTiming {
 
 /// The outcome of a transport-layer transmission, `T_Result`.
 ///
+/// ISO 14229-2:2021 clause 7 Table 2 maps `T_Result` onto `S_Result`
+/// one-for-one, so this is an alias rather than a parallel enum.
+///
 /// Delivered to the session layer through [`SessionLayer::t_data_conf`], which
 /// is what starts `tP_Client` (ISO 14229-2:2021 REQ 5.9). On `DoIP` this is
 /// derived from the diagnostic message acknowledgement, not from the act of
 /// writing to the socket — see [`crate::mapping`].
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum TResult {
-    /// The peer acknowledged the message positively (`DoIP` payload `0x8002`).
-    Ok,
-    /// The peer rejected the message (`DoIP` payload `0x8003`).
-    Nack,
-    /// The transport failed before an acknowledgement was seen.
-    TransportError,
-}
+pub type TResult = SResult;
 
 /// The outcome reported to the application, `A_Result`.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum AResult {
-    /// The exchange completed and a response was indicated.
-    Ok,
-    /// `tP_Client` expired without a complete response
-    /// (ISO 14229-2:2021 REQ 5.16).
-    Timeout,
-    /// The transport rejected or lost the request.
-    TransportError,
-}
+///
+/// Clause 7 Table 1 maps `A_Result` onto `S_Result`, so this is also an alias.
+/// Three names for one enum is what the standard specifies; collapsing them
+/// would hide the layer each belongs to at a call site.
+pub type AResult = SResult;
 
 /// Work the session layer wants its caller to perform.
 ///
@@ -108,7 +99,7 @@ pub enum SessionAction<'a> {
         channel: ChannelId,
         /// The responding server, which for a functional request differs per
         /// response.
-        source: crate::addressing::LogicalAddress,
+        source: crate::addressing::Address,
         /// The response bytes.
         data: &'a [u8],
     },

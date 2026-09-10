@@ -31,33 +31,18 @@
 //! response, exactly what this API is shaped to avoid. [`Responses`] is
 //! therefore an inherent-method sequence rather than a `Stream`.
 
-use crate::addressing::{Ai, ChannelId, LogicalAddress};
+use crate::addressing::{Address, Ai, ChannelId};
+use crate::primitives::{Completion, Indication};
 use crate::error::Result;
 use crate::profile::Timing;
 use crate::session::SessionLayer;
-
-/// One response, borrowed from the client's receive buffer.
-///
-/// Valid until the next call that reuses the buffer.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct Response<'a> {
-    /// The responding entity. For a functional request this differs between
-    /// responses and is the only way to tell them apart.
-    pub source: LogicalAddress,
-    /// The UDS response bytes, undecoded.
-    ///
-    /// This crate does not decode UDS messages — that is `uds_protocol`'s job,
-    /// and interpreting them is `uds_services`'. Handing back bytes is what
-    /// keeps the layering honest, and what keeps this type alloc-free.
-    pub data: &'a [u8],
-}
 
 /// One periodic response (`DoIP` payload `0x8004`), borrowed from the receive
 /// buffer.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct PeriodicResponse<'a> {
     /// The responding entity.
-    pub source: LogicalAddress,
+    pub source: Address,
     /// The periodic data identifier.
     pub pdid: u8,
     /// The periodic data record.
@@ -112,9 +97,9 @@ impl<'buf, S: SessionLayer> Client<'buf, S> {
     #[allow(unused_variables, clippy::unused_async)]
     pub async fn send(
         &mut self,
-        ta: LogicalAddress,
+        ta: Address,
         request: &[u8],
-    ) -> Result<Response<'_>, S::Error> {
+    ) -> Result<Completion<'_>, S::Error> {
         todo!("S_Data.req, await T_Data.conf from the ACK, then T_Data.ind")
     }
 
@@ -125,7 +110,7 @@ impl<'buf, S: SessionLayer> Client<'buf, S> {
     #[allow(unused_variables, clippy::unused_async)]
     pub async fn send_functional(
         &mut self,
-        ta: LogicalAddress,
+        ta: Address,
         request: &[u8],
     ) -> Result<Responses<'_, 'buf, S>, S::Error> {
         todo!("S_Data.req on the functional channel; reload tP_Client per response")
@@ -174,8 +159,12 @@ impl<S: SessionLayer> Responses<'_, '_, S> {
     /// Expiry ends the sequence normally rather than producing an error: it is
     /// the defined end-of-responses signal for a functionally addressed request
     /// (ISO 14229-5:2022 Figure 8).
+    ///
+    /// Yields [`Indication`] rather than [`Completion`]: every element of the
+    /// sequence is a response that arrived, so the confirm-only case that
+    /// [`Completion`] exists to express cannot occur here.
     #[allow(clippy::unused_async)]
-    pub async fn next(&mut self) -> Option<Result<Response<'_>, S::Error>> {
+    pub async fn next(&mut self) -> Option<Result<Indication<'_>, S::Error>> {
         todo!("yield each T_Data.ind; end on tP_Client expiry")
     }
 }

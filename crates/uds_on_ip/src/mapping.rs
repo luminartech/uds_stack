@@ -11,7 +11,7 @@
 //! `T_Data.conf`, because that is what starts `tP_Client`
 //! (ISO 14229-2:2021 REQ 5.9).
 
-use crate::addressing::{ChannelId, LogicalAddress};
+use crate::addressing::{Address, ChannelId};
 use crate::session::TResult;
 
 /// Why a connection closed.
@@ -45,7 +45,7 @@ pub enum TransportEvent<'a> {
         channel: ChannelId,
         /// The responding entity. For a functionally addressed request this
         /// differs between responses.
-        source: LogicalAddress,
+        source: Address,
         /// The UDS payload, opaque at this layer.
         data: &'a [u8],
     },
@@ -56,7 +56,7 @@ pub enum TransportEvent<'a> {
     /// the session layer's request/response path entirely.
     Periodic {
         /// The responding entity.
-        source: LogicalAddress,
+        source: Address,
         /// The periodic data identifier.
         pdid: u8,
         /// The periodic data record.
