@@ -199,7 +199,8 @@ output in ``UDSS_LLR_0116``'s sense.
    session, which is correct: the old session did end at that instant, and the new one is
    the application's own transition.
 
-   Several expiries on one timestamp need no order. On the server ``UDSS_LLR_0112`` and
+   Where one timestamp produces several indications, their order is not specified. Several
+   expiries on one timestamp need no order for the state they leave. On the server ``UDSS_LLR_0112`` and
    ``UDSS_LLR_0148`` touch disjoint timers and neither reads the other's. On the client the
    only expiry action that touches another timer is ``UDSS_LLR_0170``'s, a ``tP_Client``
    expiry starting ``tS3_Client``, and a channel whose ``tP_Client`` is running has its

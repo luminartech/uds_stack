@@ -17,8 +17,9 @@ active. The third is the
 client's session state, which grows with the channels the client has.
 
 Which client a given input came from is read from a different parameter in each case. On a
-``T_Data.conf`` it is the confirmation's own ``S_AI[TA]``, which ``UDSS_LLR_0123`` marks
-valid on a confirmation and which ``UDSS_LLR_0106`` and ``UDSS_LLR_0110`` already rely on.
+``T_Data.conf`` it is the confirmation's own ``S_AI[TA]`` and, where ``S_Mtype`` carries one,
+its ``S_AI[AE]``, which ``UDSS_LLR_0123`` marks valid on a confirmation and which
+``UDSS_LLR_0106`` and ``UDSS_LLR_0110`` already rely on.
 On a completion report it is the addressing ``UDSS_LLR_0136`` carries. On a
 ``T_DataSOM.ind`` or a ``T_Data.ind`` it is ``S_AI[SA]``.
 
@@ -445,7 +446,7 @@ The timer's state
    On ``T_Data.ind`` reporting the successful reception of a request marked ``keep-alive``
    from the controlling client, while ``tS3_Server`` is running, the
    server shall restart ``tS3_Server``. Where ``tS3_Server`` is not running, or where the
-   source address is not the controlling client, that indication shall change nothing. A
+   it is not from the controlling client, that indication shall change nothing. A
    ``T_DataSOM.ind`` marked ``keep-alive``, a ``T_Data.ind`` reporting an unsuccessful
    reception of a request marked ``keep-alive``, and a completion report of
    ``UDSS_LLR_0136`` whose classification states ``keep-alive``, shall change nothing.
@@ -506,8 +507,8 @@ The timer's state
    :source: ISO 14229-2:2021 9.5
    :tags: server; s3_server; robustness
 
-   While in a non-default session, a request message whose source address is not the
-   controlling client shall not start, stop, or reload the ``tS3_Server`` timer, except
+   While in a non-default session, a request message not from the controlling client
+   shall not start, stop, or reload the ``tS3_Server`` timer, except
    where handling that request returns the server to the default session, in which case
    ``UDSS_LLR_0141`` applies, or moves it to a non-default session, in which case
    ``UDSS_LLR_0102`` or ``UDSS_LLR_0103`` applies.
