@@ -318,7 +318,10 @@ Service primitives
    server shall likewise reject a ``T_Data.ind`` or ``T_DataSOM.ind`` whose classification
    states kind ``final response`` or ``response pending``, and a client one whose
    classification states kind ``request``. Where a later document defines an input for one
-   role alone, it shall say that the other role rejects it.
+   role alone, it shall say that the other role rejects it. A server shall reject, as
+   ``UDSS_LLR_0150`` defines, a ``T_DataSOM.ind`` or ``T_Data.ind`` identifying a logical
+   communication channel, and the supply or withdrawal of channel storage under
+   ``UDSS_LLR_0151``.
 
    Rationale: every requirement in this set is stated for the client or for the server, and
    ISO 14229-2:2021 describes the two as distinct peer entities throughout clauses 6 to 10,

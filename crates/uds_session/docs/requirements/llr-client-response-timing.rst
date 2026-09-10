@@ -192,13 +192,19 @@ The response window
    The client shall maintain a single ``tP_Client`` timer for each logical communication
    channel, in storage supplied by the caller. A channel shall exist from the moment the
    caller supplies its storage, identified by the addressing the caller states for that
-   storage, until the caller withdraws it; an ``S_Data.req`` whose addressing names no
-   existing channel shall be rejected as ``UDSS_LLR_0150`` defines. The same storage shall
-   hold whether a request is in progress on the channel and, while one is, the addressing
-   and classification of that request and, where that classification states an exact
-   expected response count, the number of responses ``UDSS_LLR_0156`` counts since the
-   request's confirmation; the one association ``UDSS_LLR_0133`` holds for a transmission
-   outstanding on the channel; and, on a physical channel, whether a start-of-message is
+   storage, until the caller withdraws it. Supplying storage whose addressing equals that of
+   an existing channel, and an ``S_Data.req`` whose addressing names no existing channel,
+   shall be rejected as ``UDSS_LLR_0150`` defines. Withdrawal shall be permitted at any time
+   and shall discard, without output, every fact this set holds for the channel, an
+   association outstanding on it included; a ``T_Data.conf`` arriving for that association
+   thereafter matches none and is rejected under ``UDSS_LLR_0133``. Every fact a document of
+   this set keeps per channel lives in the channel's storage. The same storage shall hold
+   whether a request is in progress on the channel and, while one is, the addressing and
+   classification of that request and, where that classification states an exact expected
+   response count, the number of responses ``UDSS_LLR_0156`` counts since the request's
+   confirmation, zero when the request becomes in progress; the one association
+   ``UDSS_LLR_0133`` holds for a transmission outstanding on the channel; and, on a
+   physical channel, whether a start-of-message is
    open on that channel, as ``UDSS_LLR_0140`` requires, without recording the responder, so
    that any ``T_Data.ind`` on the channel completes it. On a functional channel
    ``UDSS_LLR_0160`` holds the start-of-message fact per responder instead. On
@@ -227,7 +233,14 @@ The response window
    and nothing otherwise said how a channel came to exist: an implementer could create one
    on the first ``S_Data.req`` to a new addressing or demand a registration the set never
    named. Supplying and withdrawing the storage are acts of the caller, as the completion
-   report of ``UDSS_LLR_0136`` is an input that is neither a primitive nor a parameter.
+   report of ``UDSS_LLR_0136`` is an input that is neither a primitive nor a parameter. A
+   duplicate addressing is rejected because two channels one ``S_Data.req`` names would
+   leave which timer starts and which channel a later indication reports undetermined.
+   Withdrawal discards everything and is permitted at any time because it is the caller's
+   last exit: a transmission whose confirmation never comes leaves its association
+   outstanding, ``UDSS_LLR_0133`` refusing the channel further requests meanwhile, and only
+   withdrawal clears it; the ``S_Data.conf`` ``UDSS_LLR_0120`` promises for that transmission
+   is forgone with the channel, by the caller's own act.
 
    The request record is held because requirements read it: ``UDSS_LLR_0159`` reports the
    addressing of the request whose window expired, ``UDSS_LLR_0156`` reads the expected
