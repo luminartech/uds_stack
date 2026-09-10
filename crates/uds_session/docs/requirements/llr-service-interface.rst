@@ -44,7 +44,10 @@ defines in ``UDSS_LLR_0183`` and ``UDSS_LLR_0184``, by which the caller clears s
 client keeps; and the supply and withdrawal of the storage ``UDSS_LLR_0133`` and
 ``UDSS_LLR_0151`` name, in which every fact the set keeps per peer or per channel lives.
 Each produces no output, so ``UDSS_LLR_0116`` is not engaged by them. The enumeration in
-``UDSS_LLR_0115`` is open and does not change.
+``UDSS_LLR_0115`` is open and does not change. One output is likewise addressed to the
+caller rather than retrieved on the application's behalf: the rejection report of
+``UDSS_LLR_0150``, which is neither an ``S_Data.conf`` under ``UDSS_LLR_0132`` nor an
+output in ``UDSS_LLR_0116``'s sense.
 
 .. llr:: The session layer performs no I/O
    :id: UDSS_LLR_0113
@@ -158,7 +161,49 @@ Each produces no output, so ``UDSS_LLR_0116`` is not engaged by them. The enumer
    enumeration is open because later requirement documents will define further inputs, and
    a list stated as exhaustive would then be wrong rather than merely incomplete. A
    timestamp may be supplied on its own because a timer can expire while no message is
-   exchanged, and ``UDSS_LLR_0112`` requires the server to act on that expiry.
+   exchanged, and ``UDSS_LLR_0112`` requires the server to act on that expiry. Where it
+   accompanies another input, ``UDSS_LLR_0187`` orders the expiries it causes before that
+   input.
+
+.. llr:: Timer expiries precede the input they accompany
+   :id: UDSS_LLR_0187
+   :status: draft
+   :integrity_level: QM
+   :target_level: D
+   :origin: derived
+   :tags: service-interface; sans-io; timing
+
+   Where a timestamp is supplied alongside another input, the session layer shall act on
+   every timer expiry that timestamp causes before it processes that input, and shall
+   process the input against the state those expiries leave. Where a requirement in this
+   set evaluates a condition against the state as it was before the input in hand, that
+   state is the state after every expiry the input's timestamp caused.
+
+   Rationale: ``UDSS_LLR_0115`` lets a timestamp accompany an input and nothing else orders
+   the two. The elapsed time preceded the input's arrival, so a timer that reaches its value
+   at that timestamp expired before the input was seen, which is also what a caller that
+   samples its clock before delivering the input observes. The other order lets the input
+   swallow the expiry: ``UDSS_LLR_0144`` would restart ``tP2_Server`` before
+   ``UDSS_LLR_0148`` reported the overrun, and ``UDSS_LLR_0104`` would stop ``tS3_Server``
+   before ``UDSS_LLR_0112`` ended the session.
+
+   Two consequences are accepted. A request marked ``keep-alive`` delivered with a timestamp
+   exactly at ``tS3_Server``'s timeout is discarded, the timer having expired at "reaches"
+   under ``UDSS_LLR_0112``: ISO 14229-2:2021 9.5 Table 5 states the timeout as the time the
+   server keeps the session while not receiving a request, its tolerance is the caller's
+   parameter to spend, and a client conformant to Table 5's ordering of ``tS3_Client`` below
+   ``tS3_Server`` never sends at the boundary. And a ``T_Data.conf`` of a session-selecting
+   response accompanied by a timestamp that expires ``tS3_Server`` yields, in one call,
+   ``UDSS_LLR_0112``'s timeout indication and ``UDSS_LLR_0102``'s entry into the new session,
+   which is correct: the old session did end at that instant, and the new one is the
+   application's own transition.
+
+   Several expiries on one timestamp need no order. On the server ``UDSS_LLR_0112`` and
+   ``UDSS_LLR_0148`` touch disjoint timers and neither reads the other's. On the client the
+   only expiry action that touches another timer is ``UDSS_LLR_0170``'s, a ``tP_Client``
+   expiry starting ``tS3_Client``, and a channel whose ``tP_Client`` is running has its
+   ``tS3_Client`` stopped under ``UDSS_LLR_0169``, so under the one-request-per-channel
+   assumption of use the two never expire together.
 
 .. llr:: Outbound primitives are outputs the caller retrieves
    :id: UDSS_LLR_0116
@@ -202,6 +247,36 @@ Each produces no output, so ``UDSS_LLR_0116`` is not engaged by them. The enumer
    and no requirement in this set obliges the session layer to retransmit anything;
    ``UDSS_LLR_0110`` states the point explicitly for a server's response in a non-default
    session.
+
+.. llr:: A rejected input is reported to the caller and changes nothing
+   :id: UDSS_LLR_0150
+   :status: draft
+   :integrity_level: QM
+   :target_level: D
+   :origin: derived
+   :tags: service-interface
+
+   Where a requirement in this set requires the session layer to reject an input supplied
+   by the caller, the session layer shall report the rejection to the caller, shall produce
+   no output to the application and no output to the transport layer, and shall leave its
+   state unchanged. The report shall state the cause of the rejection and, where the
+   rejecting requirement states content for the report, that content.
+
+   Rationale: ``UDSS_LLR_0140``, ``UDSS_LLR_0149``, ``UDSS_LLR_0176``, ``UDSS_LLR_0180``,
+   ``UDSS_LLR_0181``, ``UDSS_LLR_0183`` and ``UDSS_LLR_0184`` each refuse an input rather
+   than react to it, and without this requirement none would say what refusal means. A
+   rejection cannot be reported as an ``S_Data.conf``: ``UDSS_LLR_0132`` reserves every
+   ``S_Result`` value other than ``S_OK`` for an error detected by a lower layer, and no
+   lower layer is involved, no message having been transmitted. Nor is it an output in the
+   sense of ``UDSS_LLR_0116``, which concerns primitives the caller retrieves on the
+   application's behalf; a rejection is addressed to the caller that made the erroneous
+   call. The report carries content because ``UDSS_LLR_0177`` has it state the time
+   remaining before a postponed request may be sent and ``UDSS_LLR_0182`` the cause or
+   causes of a refused repeat.
+
+   Leaving the state unchanged is what makes the rejection recoverable: a caller that
+   retries once the cause has cleared obtains the result it would have obtained had the
+   erroneous call never been made.
 
 Service primitives
 ------------------

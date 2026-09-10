@@ -368,16 +368,16 @@ Enhanced response timing
    :source: ISO 14229-2:2021 9.2 Table 4
    :tags: server; p2_server; enhanced-response-timing
 
-   While a request is in progress under ``UDSS_LLR_0189``, the session layer shall reject
-   an ``S_Data.req`` for a response-pending message answering that request where a
-   response-pending message answering it is unconfirmed, or where the response-pending
-   anchor holds a timestamp and the elapsed time since it is less than the minimum
-   spacing. The minimum spacing shall be the least whole
-   number of milliseconds not less than three tenths of ``tP2*_Server_Max`` as that parameter
-   stands when the ``S_Data.req`` is supplied, computed in integer arithmetic as
-   ⌈3 × ``tP2*_Server_Max`` / 10⌉ without overflow for any value ``UDSS_LLR_0138`` admits:
-   with ``q`` and ``r`` the quotient and remainder of ``tP2*_Server_Max`` divided by 10,
-   the spacing is 3 × ``q`` + ⌈3 × ``r`` / 10⌉.
+   While a request is in progress under ``UDSS_LLR_0189``, the session layer shall reject,
+   as ``UDSS_LLR_0150`` in :doc:`llr-service-interface` defines, an ``S_Data.req`` for a
+   response-pending message answering that request where a response-pending message
+   answering it is unconfirmed, or where the response-pending anchor holds a timestamp and
+   the elapsed time since it is less than the minimum spacing. The minimum spacing shall be
+   the least whole number of milliseconds not less than three tenths of ``tP2*_Server_Max``
+   as that parameter stands when the ``S_Data.req`` is supplied, computed in integer
+   arithmetic as ⌈3 × ``tP2*_Server_Max`` / 10⌉ without overflow for any value
+   ``UDSS_LLR_0138`` admits: with ``q`` and ``r`` the quotient and remainder of
+   ``tP2*_Server_Max`` divided by 10, the spacing is 3 × ``q`` + ⌈3 × ``r`` / 10⌉.
 
    Table 4 footnote b requires a minimum time of 0,3 × ``tP2*_Server_Max`` between the
    transmission of consecutive negative response messages carrying
@@ -424,30 +424,3 @@ Enhanced response timing
    request in progress, or the only one that was failed and, as ``UDSS_LLR_0189`` records,
    set no anchor. Whether the first such message was admissible at all is fixed by the
    service's ``tP4_Server_Max``, which this document does not cover.
-
-.. llr:: A rejected input is reported to the caller and changes nothing
-   :id: UDSS_LLR_0150
-   :status: draft
-   :integrity_level: QM
-   :target_level: D
-   :origin: derived
-   :tags: server; p2_server; service-interface
-
-   Where a requirement in this set requires the session layer to reject an input supplied
-   by the caller, the session layer shall report the rejection to the caller, shall produce
-   no output to the application and no output to the transport layer, and shall leave its
-   state unchanged. Where several requirements reject the same input, the one report shall
-   state every cause and carry the content each of them requires.
-
-   Rationale: ``UDSS_LLR_0149`` is the first requirement in this set that refuses an input
-   rather than reacting to it, and without this requirement it would not say what refusal
-   means. A rejection cannot be reported as an ``S_Data.conf``: ``UDSS_LLR_0132`` reserves
-   every ``S_Result`` value other than ``S_OK`` for an error detected by a lower layer, and
-   no lower layer is involved, no message having been transmitted. Nor is it an output in
-   the sense of ``UDSS_LLR_0116``, which concerns primitives the caller retrieves on the
-   application's behalf; a rejection is addressed to the caller that made the erroneous
-   call.
-
-   Leaving the state unchanged is what makes the rejection recoverable: a caller that
-   retries once the spacing has elapsed obtains the result it would have obtained had the
-   premature call never been made.

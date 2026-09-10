@@ -166,7 +166,8 @@ The timer's state
    initialisation no such timer shall be running and no such fact shall hold. Thereafter the
    timers and facts shall be changed only as ``UDSS_LLR_0164`` to ``UDSS_LLR_0172`` and
    ``UDSS_LLR_0184`` require, and the condition of each of those requirements shall be
-   evaluated against the state as it was before the input in hand.
+   evaluated against the state as it was before the input in hand, that state being the one
+   ``UDSS_LLR_0187`` fixes.
 
    Table 8 allots a single timer where the functional TesterPresent is used, with no
    further timers per activated session, and a single timer for each point-to-point

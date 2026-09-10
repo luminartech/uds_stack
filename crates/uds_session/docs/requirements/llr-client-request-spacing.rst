@@ -125,7 +125,8 @@ The spacing timer
    with, and a timer that has not been started shall not be active. On initialisation no
    channel's spacing timer shall be active. Thereafter a channel's spacing timer shall be
    changed only as ``UDSS_LLR_0174`` and ``UDSS_LLR_0175`` require, each evaluated against
-   the state as it was before the input in hand.
+   the state as it was before the input in hand, that state being the one ``UDSS_LLR_0187``
+   fixes.
 
    Table 7 requires a single timer per logical physical communication channel for
    ``tP3_Client_Phys`` and a single timer per logical functional communication channel for

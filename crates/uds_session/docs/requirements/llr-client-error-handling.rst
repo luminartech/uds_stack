@@ -159,7 +159,8 @@ The repeat count
    Each logical communication channel, physical or functional, shall have a **repeat
    count** in the channel's storage under ``UDSS_LLR_0151``. On initialisation the count shall be zero.
    Thereafter it shall be changed only as ``UDSS_LLR_0179`` and ``UDSS_LLR_0183`` require,
-   each evaluated against the state as it was before the input in hand.
+   each evaluated against the state as it was before the input in hand, that state being the
+   one ``UDSS_LLR_0187`` fixes.
 
    Rationale: ISO 14229-2:2021 9.7 Table 9's last row bounds the client's error handling to
    two repeats, three transmissions in the worst case, and a layer that sees every request
