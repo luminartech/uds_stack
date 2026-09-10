@@ -80,7 +80,10 @@ interface.
    or not it was. A timer is loaded, when set running, with the value of the parameter the
    requirement names as it stands at that instant, and it expires when the elapsed time since
    it was set running reaches that loaded value, or exceeds it where the requirement says so.
-   A requirement that leaves a running timer alone says so.
+   Expiry shall be evaluated only when a timestamp is supplied, before the input it
+   accompanies, so a timer set running by an input expires no earlier than the next timestamp
+   supplied; a timer loaded with zero therefore expires on that next timestamp. A requirement
+   that leaves a running timer alone says so.
 
    Rationale: reading a clock is I/O by another name, and it makes timer behaviour
    untestable except in real time. A caller-supplied timestamp lets a test advance time
@@ -114,7 +117,11 @@ interface.
    document use "start", "restart", "reload", "stop" and "disable" and a reader should not
    have to ask whether a start of a running timer is a restart: it is. Loading the value at
    the start rather than reading the parameter live is what lets a parameter change while a
-   timer runs without moving a window already open.
+   timer runs without moving a window already open. Evaluating expiry only at a timestamp
+   settles when a timer whose loaded value the elapsed time already reaches, zero included,
+   first expires: not in the call that set it running, whose timestamp preceded the input,
+   but at the next, which is also the order the expiry-before-input rule of the timing
+   documents presupposes.
 
 .. llr:: Inbound primitives are caller-supplied inputs
    :id: UDSS_LLR_0115
@@ -126,6 +133,7 @@ interface.
 
    Every input to the session layer shall be supplied by the caller. The session layer
    shall obtain information about the application and the transport by no other means.
+   Creation of the instance precedes every input and is not one.
 
    The inputs so supplied shall include ``S_Data.req``, as ``UDSS_LLR_0139`` defines it;
    ``T_Data.ind``, ``T_DataSOM.ind`` and ``T_Data.conf``, as ``UDSS_LLR_0140`` defines
@@ -226,9 +234,11 @@ Service primitives
    same message as reporting a multi-frame message, and any other ``T_Data.ind`` as
    reporting a single-frame message.
 
-   ``T_Data.conf`` shall carry ``T_Ptype``, ``T_AI[TAtype]``, ``T_AI[SA]``, ``T_AI[TA]``,
-   ``T_AI[AE]`` where ``T_Ptype`` requires it, and ``T_Result``, mapped onto the session
-   layer's parameters as ``UDSS_LLR_0124`` requires; it shall carry no data and no length.
+   ``T_Data.req`` shall carry every parameter of the ``S_Data.req`` it is produced from,
+   mapped as ``UDSS_LLR_0124`` requires. ``T_Data.conf`` shall carry ``T_Ptype``,
+   ``T_AI[TAtype]``, ``T_AI[SA]``, ``T_AI[TA]``, ``T_AI[AE]`` where ``T_Ptype`` requires it,
+   and ``T_Result``, mapped onto the session layer's parameters as ``UDSS_LLR_0124``
+   requires; it shall carry no data and no length.
 
    Each locator supplies a different part of this set. Clause 6.3 names ``T_Data.ind`` and
    ``T_DataSOM.ind``; clause 7.3 names ``T_Data.conf`` and establishes that a transmission
@@ -364,14 +374,20 @@ Service primitives
    caller. Every timing parameter that a requirement in this set conditions on, including
    the ``tS3_Server`` timeout that ``UDSS_LLR_0112`` compares elapsed time against, shall
    be supplied as such a parameter and shall be expressed in the unit ``UDSS_LLR_0114``
-   gives for a timestamp. A protocol parameter may be set at any time; a change shall
-   affect only a timer set running after it, a timer already running keeping the value it
-   was loaded with under ``UDSS_LLR_0114``.
+   gives for a timestamp, as a 32-bit unsigned value. Every parameter a requirement loads a
+   timer with shall be supplied with the instance, or with the caller-supplied storage, it
+   belongs to when that is created, and shall have no default; a protocol parameter may be
+   set again at any time, and a change shall affect only a timer set running after it, a
+   timer already running keeping the value it was loaded with under ``UDSS_LLR_0114``.
 
    Clause 6.1 places the setting of protocol parameters in the service interface alongside
    transmission and reception. No requirement in this set fixes a value for any timing
    parameter: the recommended and default values in ISO 14229-2:2021 9 are properties of a
-   vehicle network and a deployment, not of this crate.
+   vehicle network and a deployment, not of this crate. That is also why a parameter has no
+   default and is supplied at creation: a timer started before its parameter existed would
+   have to be loaded with a value the set declines to choose. The width matches the
+   timestamp's because an interval is a modular difference of timestamps and a value beyond
+   that range could never be reached.
 
 Parameter mapping
 -----------------
