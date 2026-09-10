@@ -58,7 +58,9 @@ its storage, as ``UDSS_LLR_0151`` states. That requirement also settles which
 indication is the start of a message and which its completion, and this document uses its
 terms **first indication** and **completion** without restating them. An indication on a
 channel with no request in progress takes no timer action under any requirement below; it
-is forwarded to the application as ``UDSS_LLR_0137`` requires.
+is forwarded to the application as ``UDSS_LLR_0137`` requires. It does open or complete a
+start-of-message under ``UDSS_LLR_0140``, and on a functional channel may create or release
+an entry under ``UDSS_LLR_0160``.
 
 On a functional channel many servers answer one request. Each is a **responder**, identified
 by the ``S_AI[SA]`` and, where ``S_Mtype`` carries one, the ``S_AI[AE]`` of its indications.
@@ -578,10 +580,11 @@ Responders on a functional channel
    is open under ``UDSS_LLR_0140`` and whether a response-pending message is outstanding
    under ``UDSS_LLR_0158``.
 
-   An entry shall be created, on a channel with a request in progress and where the table
-   has a free entry, by the indication that makes one of those facts true for a responder
-   with no entry: a ``T_DataSOM.ind``, or a ``T_Data.ind`` that ``UDSS_LLR_0158`` records
-   as an outstanding response-pending message. Where one indication changes both facts of
+   An entry shall be created, where the table has a free entry, by the indication that makes
+   one of those facts true for a responder with no entry: a ``T_DataSOM.ind``, whether or
+   not a request is in progress on the channel, or, on a channel with a request in progress,
+   a ``T_Data.ind`` that ``UDSS_LLR_0158`` records as an outstanding response-pending
+   message. Where one indication changes both facts of
    an entry, the changes shall be applied together. An entry shall be released when neither
    fact holds. When the request in progress on the channel ends, the outstanding
    response-pending fact of every entry shall be cleared, and an entry whose
@@ -605,6 +608,15 @@ Responders on a functional channel
    the figures state and records that the resource table omits it. It joins the class of
    constraints the standard makes checkable while allocating nothing for them, which
    :doc:`open-questions` inventories.
+
+   The start-of-message creates an entry whether or not a request is in progress because
+   ``UDSS_LLR_0140`` opens one on every ``T_DataSOM.ind`` and the retention rule above keeps
+   it until its completion. A slow server's multi-frame response that begins after the
+   response window has expired would otherwise be recorded nowhere: ``UDSS_LLR_0181`` would
+   find no entry and admit the repeat while that response was still arriving, the case its
+   wait exists to prevent, and the completing ``T_Data.ind`` would be read as a single-frame
+   message. The response-pending fact stays scoped to a request in progress because
+   ``UDSS_LLR_0158`` reads it for the window of that request alone.
 
    The storage is the caller's for the reason ``UDSS_LLR_0151`` gives for the timers: how
    many servers answer behind a functional address is a property of the deployment, and the
@@ -642,9 +654,10 @@ Responders on a functional channel
    :origin: derived
    :tags: client; p_client; responders
 
-   Where a ``T_DataSOM.ind``, or a ``T_Data.ind`` that ``UDSS_LLR_0158`` would record as an
-   outstanding response-pending message, arrives on a functional channel with a request in
-   progress from a responder with no entry and the responder table has no free entry, the
+   Where a ``T_DataSOM.ind``, or, on a channel with a request in progress, a ``T_Data.ind``
+   that ``UDSS_LLR_0158`` would record as an outstanding response-pending message, arrives
+   on a functional channel from a responder with no entry and the responder table has no
+   free entry, the
    client shall record nothing for that responder, shall treat that indication as a first
    indication and every later ``T_Data.ind`` from that responder as the first indication of
    a single-frame message for as long as it has no entry, and shall deliver a **capacity

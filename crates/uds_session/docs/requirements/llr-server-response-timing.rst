@@ -436,7 +436,8 @@ Enhanced response timing
    Where a requirement in this set requires the session layer to reject an input supplied
    by the caller, the session layer shall report the rejection to the caller, shall produce
    no output to the application and no output to the transport layer, and shall leave its
-   state unchanged.
+   state unchanged. Where several requirements reject the same input, the one report shall
+   state every cause and carry the content each of them requires.
 
    Rationale: ``UDSS_LLR_0149`` is the first requirement in this set that refuses an input
    rather than reacting to it, and without this requirement it would not say what refusal

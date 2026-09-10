@@ -305,8 +305,8 @@ Responses still arriving
    waiting for the next completion under ``UDSS_LLR_0181`` and ceasing to repeat under
    ``UDSS_LLR_0180``, and a report that did not distinguish them would leave the
    application unable to follow Table 9. Both are stated where both hold because the
-   application must act on both. Where ``UDSS_LLR_0176`` also holds, the time remaining
-   ``UDSS_LLR_0177`` requires is reported as well; nothing here displaces it. This
+   application must act on both. Where ``UDSS_LLR_0176`` also holds, ``UDSS_LLR_0150`` has
+   the one report carry the time remaining ``UDSS_LLR_0177`` requires as well. This
    constrains the report's content and adds no output under ``UDSS_LLR_0116``.
 
 Giving a server up
@@ -374,9 +374,12 @@ Giving a server up
    promises it. A ``T_Data.ind`` arriving after the reset for the message whose
    start-of-message the reset closed is the first indication of a single-frame message
    under ``UDSS_LLR_0140``, the pairing having nothing left to match; a later
-   ``T_DataSOM.ind`` opens a start-of-message as it always does. Both reach the application
-   through ``UDSS_LLR_0137`` with the caller's classification and take no timer action, no
-   request being in progress; the preamble records that the application expects this.
+   ``T_DataSOM.ind`` opens a start-of-message as it always does, and on a functional channel
+   creates an entry under ``UDSS_LLR_0160``. Both reach the application through
+   ``UDSS_LLR_0137`` with the caller's classification and take no ``tP_Client`` action, no
+   request being in progress; in physical keep-alive ``UDSS_LLR_0170`` restarts
+   ``tS3_Client`` on a completion among them as on any other. The preamble records that the
+   application expects this.
 
    The physical start-of-message the third effect closes is the one ``UDSS_LLR_0151``
    retains past the end of the request. Naming a channel that does not exist is a caller
