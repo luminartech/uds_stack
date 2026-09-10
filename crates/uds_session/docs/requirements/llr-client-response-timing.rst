@@ -35,7 +35,11 @@ The logical communication channel
 
 Throughout this document, a **logical communication channel** is identified by the
 addressing of the requests the client sends on it: ``S_Mtype``, ``S_AI[TAtype]``,
-``S_AI[TA]`` and, where ``S_Mtype`` carries one, ``S_AI[AE]``. A channel is a **physical
+``S_AI[SA]``, ``S_AI[TA]`` and, where ``S_Mtype`` carries one, ``S_AI[AE]``. That is the
+addressing ``UDSS_LLR_0133`` matches a confirmation on, so the one transmission that
+requirement allows outstanding per addressing is the channel's one outstanding
+transmission; ISO 14229-2:2021 9.6 Table 7's point-to-point communication is a pair of
+addresses. A channel is a **physical
 channel** or a **functional channel** according to its ``S_AI[TAtype]``, taking the two
 values ``UDSS_LLR_0126`` defines. ISO 14229-2:2021 9.6 Table 7 speaks of each logical
 communication channel as physical or functional communication, a property of the channel

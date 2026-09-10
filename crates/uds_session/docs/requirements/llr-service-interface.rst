@@ -245,7 +245,9 @@ Service primitives
    A ``T_DataSOM.ind`` shall open a start-of-message on its channel for the **responder**
    identified by its ``S_AI[SA]`` and, where present, its ``S_AI[AE]``. A ``T_Data.ind``
    shall **complete** the open start-of-message on the same channel from the same responder
-   where one exists, closing it, and shall otherwise report a **single-frame** message.
+   where one exists, closing it, and shall otherwise report a **single-frame** message; on a
+   physical channel the responder is the channel's peer, so any ``T_Data.ind`` on that channel
+   completes its open start-of-message, as ``UDSS_LLR_0151`` states.
    Throughout this set, the **first indication** of a message is its ``T_DataSOM.ind``, or
    a ``T_Data.ind`` that completes no start-of-message; a **completion** is a ``T_Data.ind``
    that completes one. A ``T_Data.ind`` from a responder for which no start-of-message is
