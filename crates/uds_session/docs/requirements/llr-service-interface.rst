@@ -210,7 +210,7 @@ Service primitives
    :integrity_level: QM
    :target_level: D
    :origin: session-layer-standard
-   :source: ISO 14229-2:2021 6.3; ISO 14229-2:2021 7.3; ISO 14229-2:2021 9.2 Table 3
+   :source: ISO 14229-2:2021 6.3; ISO 14229-2:2021 7.3; ISO 14229-2:2021 9.2 Table 3; ISO 14229-2:2021 7.6
    :tags: service-interface; primitives
 
    The session layer shall exchange the following protocol data units with the transport
@@ -239,8 +239,8 @@ Service primitives
    would let the session layer tell them apart.
 
    ``T_Data.conf``'s parameters are stated because the standard states them only by
-   mapping: clause 7.3 has the ``S_Data.conf`` identify the ``S_Data.req`` it confirms by
-   the address information and report ``S_Result``, and Table 2 maps each of those onto the
+   mapping: clause 7.6 has the ``S_Data.conf`` identify the ``S_Data.req`` it confirms by
+   the address information and report ``S_Result``, and 7.3 Table 2 maps each of those onto the
    transport parameter of the same name, so the confirmation the transport delivers carries
    the addressing and the result and nothing else. The server session timer requirements
    read the confirmation's ``S_AI[TA]``, and the association ``UDSS_LLR_0133`` states is
