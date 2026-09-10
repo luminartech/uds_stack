@@ -116,7 +116,7 @@ The spacing timer
    :tags: client; p3_client
 
    The client shall maintain a single spacing timer for each logical communication channel,
-   in storage supplied by the caller. Each channel shall have a spacing parameter supplied
+   in the channel's storage under ``UDSS_LLR_0151``. Each channel shall have a spacing parameter supplied
    as a protocol parameter under ``UDSS_LLR_0138``, ``tP3_Client_Phys`` for a physical
    channel and ``tP3_Client_Func`` for a functional channel, and the session layer shall not
    distinguish whether the value was derived with ``ΔtP2`` or with ``ΔtP6``. A channel's
