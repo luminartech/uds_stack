@@ -32,8 +32,9 @@ Clause 8.7.6 excepts two cases. The first is the functionally addressed keep-ali
 TesterPresent, which the caller marks ``keep-alive`` under ``UDSS_LLR_0134``. A marked
 request is never the request in progress: ``UDSS_LLR_0186`` in
 :doc:`llr-server-session-timer` handles it at its indication, its completion report is
-inert, and ``UDSS_LLR_0144`` and ``UDSS_LLR_0146`` exclude it, so the term keeps the
-uniqueness ``UDSS_LLR_0149`` relies on. The second is a request in the OBD service range
+inert, ``UDSS_LLR_0144`` and ``UDSS_LLR_0146`` exclude it, and ``UDSS_LLR_0189`` neither
+begins nor ends the request in progress on it, so the term keeps the uniqueness
+``UDSS_LLR_0149`` relies on. The second is a request in the OBD service range
 that, for a server supporting that range and not in the programming session, aborts the
 active service and starts the default session. That is an application-layer action: the
 abort ends the request in progress as any completion does, and the session change is
@@ -148,11 +149,12 @@ The response window
    addressing information a completion report of ``UDSS_LLR_0136`` carries.
 
    A request shall become in progress on ``T_Data.ind`` reporting the successful reception
-   of a request; where a request is already in progress, that request shall cease to be in
-   progress and the anchor shall be cleared before the new one begins. A request shall also
-   cease to be in progress on ``T_Data.conf`` answering it and reporting the outcome,
-   successful or not, of the transmission of a solicited final response, and on a completion
-   report of ``UDSS_LLR_0136`` answering it; when it ceases, the anchor shall be cleared.
+   of a request not marked ``keep-alive``; where a request is already in progress, that
+   request shall cease to be in progress and the anchor shall be cleared before the new one
+   begins. A request shall also cease to be in progress on ``T_Data.conf`` answering it and
+   reporting the outcome, successful or not, of the transmission of a solicited final
+   response, and on a completion report of ``UDSS_LLR_0136`` answering it for a request not
+   marked ``keep-alive``; when it ceases, the anchor shall be cleared.
    While a request is in progress, the anchor shall be set to the timestamp of a
    ``T_Data.conf`` answering it and reporting the successful transmission of a
    response-pending message. Nothing else shall change any of these facts; in particular a
@@ -203,7 +205,9 @@ The response window
    no anchor: 9.2 Table 4 footnote b counts transmissions, and one that failed did not reach
    the data link the footnote protects. The state is instance-resident because it is fixed in
    size, one fact, two addresses and one timestamp, as ``UDSS_LLR_0185`` holds the session
-   facts.
+   facts. A request marked ``keep-alive`` neither begins nor ends one: ISO 14229-1:2020
+   8.7.6 puts it outside the one-request-at-a-time model, and ``UDSS_LLR_0186`` handles it
+   at its indication, as the preamble states.
 
 .. llr:: The response timer starts on reception of a request
    :id: UDSS_LLR_0144

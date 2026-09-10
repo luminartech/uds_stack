@@ -188,8 +188,9 @@ output in ``UDSS_LLR_0116``'s sense.
    before ``UDSS_LLR_0112`` ended the session.
 
    Two consequences are accepted. A request marked ``keep-alive`` delivered with a timestamp
-   exactly at ``tS3_Server``'s timeout is discarded, the timer having expired at "reaches"
-   under ``UDSS_LLR_0112``: ISO 14229-2:2021 9.5 Table 5 states the timeout as the time the
+   exactly at ``tS3_Server``'s timeout changes no timer, ``UDSS_LLR_0112`` having already
+   ended the session it would have kept alive while ``UDSS_LLR_0137`` still delivers it, the
+   timer having expired at "reaches": ISO 14229-2:2021 9.5 Table 5 states the timeout as the time the
    server keeps the session while not receiving a request, its tolerance is the caller's
    parameter to spend, and a client conformant to Table 5's ordering of ``tS3_Client`` below
    ``tS3_Server`` never sends at the boundary. And a ``T_Data.conf`` of a session-selecting
@@ -259,8 +260,11 @@ output in ``UDSS_LLR_0116``'s sense.
    Where a requirement in this set requires the session layer to reject an input supplied
    by the caller, the session layer shall report the rejection to the caller, shall produce
    no output to the application and no output to the transport layer, and shall leave its
-   state unchanged. The report shall state the cause of the rejection and, where the
-   rejecting requirement states content for the report, that content.
+   state as the expiries of the accompanying timestamp left it under ``UDSS_LLR_0187`` and
+   otherwise unchanged. The report shall state the cause of the rejection and, where the
+   rejecting requirement states content for the report, that content; where several
+   requirements reject the same input, the one report shall state every cause and carry the
+   content each of them requires.
 
    Rationale: ``UDSS_LLR_0140``, ``UDSS_LLR_0149``, ``UDSS_LLR_0176``, ``UDSS_LLR_0180``,
    ``UDSS_LLR_0181``, ``UDSS_LLR_0183`` and ``UDSS_LLR_0184`` each refuse an input rather

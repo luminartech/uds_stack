@@ -10,8 +10,9 @@ The server's session state
 The server holds three facts. The first is whether the active session is the default
 session, one bit. The identifier of the active session is not state: ``UDSS_LLR_0134``
 keeps it opaque and nothing in this set reads it. The second is the **controlling client**,
-the session layer source address of the client whose request produced the active
-non-default session, held only while a non-default session is active. The third is the
+the ``S_AI[SA]`` and, where ``S_Mtype`` carries one, the ``S_AI[AE]`` of the client whose
+request produced the active non-default session, held only while a non-default session is
+active. The third is the
 ``tS3_Server`` timer. All three live in the instance and are fixed in size, unlike the
 client's session state, which grows with the channels the client has.
 
@@ -128,9 +129,14 @@ The timer's state
    is why that client's address is state.
 
    The state is held in the instance rather than in caller-supplied storage because it is
-   fixed in size: one bit, one address and one timer. The client's state grows with the
+   fixed in size: one bit, one addressing and one timer. The client's state grows with the
    number of channels it has, which is why ``UDSS_LLR_0163`` puts that state in storage the
-   caller supplies.
+   caller supplies; the associations ``UDSS_LLR_0133`` holds for the server's outstanding
+   transmissions grow with its peers and are that requirement's caller-supplied storage, not
+   this state. Throughout this document a message is *from the controlling client* where its
+   ``S_AI[SA]`` and, where ``S_Mtype`` carries one, its ``S_AI[AE]`` equal the recorded
+   ones; the extension is part of the identity because ``UDSS_LLR_0140`` identifies a
+   responder by the same pair, and two clients behind one remote address can differ in it.
 
    ``UDSS_LLR_0105``, ``UDSS_LLR_0107``, ``UDSS_LLR_0108`` and ``UDSS_LLR_0111`` state
    non-effects and are not changers. A closed list is what makes a "changes nothing" claim
@@ -148,8 +154,8 @@ The timer's state
    On ``T_Data.conf`` indicating successful transmission of a solicited positive response
    whose classification selects a non-default session, the server shall be in a non-default
    session, shall record as the controlling client the client identified by the
-   confirmation's ``S_AI[TA]``, and shall start ``tS3_Server``, restarting it where it was
-   running or stopped.
+   confirmation's ``S_AI[TA]`` and, where ``S_Mtype`` carries one, its ``S_AI[AE]``, and
+   shall start ``tS3_Server``, restarting it where it was running or stopped.
 
    The solicitation qualifier is ``UDSS_LLR_0106``'s and is here for that requirement's
    reason: an unsolicited positive response carrying a session selection would otherwise put
@@ -399,6 +405,15 @@ The timer's state
    than the session timeout would hold the session open, the very latch-up 8.9.2 exists to
    prevent.
 
+   The exclusion stops there: a failed transmission of a response-pending message restarts
+   the timer as Table 10 states. Table 6's sentence that a negative response with code 78
+   does not restart the timer is written for a completed transmission, and Table 10's row
+   names any response with a negative result. The reading is coherent with the client's
+   side: a pending message that never arrived leaves the client's default window to expire,
+   and 9.7 Table 9 has the client repeat the request, so from the peer's side the exchange is
+   over. The request in progress of ``UDSS_LLR_0189`` is unaffected, ending at the final
+   response as 10.1.4.1 states; only the timer restarts.
+
 .. llr:: The bypass keep-alive reloads a running session timer
    :id: UDSS_LLR_0186
    :status: draft
@@ -550,10 +565,11 @@ The timer's state
    :tags: server; s3_server; session-state
 
    While in a non-default session, when the elapsed time since the ``tS3_Server`` timer
-   was last started or restarted reaches the configured ``tS3_Server`` timeout, the
-   server shall enter the default session, disable the ``tS3_Server`` timer, discard the
-   recorded controlling client, and deliver a session-timeout indication to the
-   application.
+   was last started or restarted reaches the value it was loaded with, the ``tS3_Server``
+   parameter as it stood at that start or restart, the server shall enter the default
+   session, disable the ``tS3_Server`` timer, discard the recorded controlling client, and
+   deliver a session-timeout indication to the application carrying the controlling client
+   whose session ended.
 
    Rationale: the session layer standard specifies only that this timer keeps a
    non-default session active while no request is received; it does not specify the
