@@ -773,23 +773,24 @@ and leaves the means of recognising it to the implementation.
    for a kind that was not determinable.
 
    The session layer shall associate the classification carried by an ``S_Data.req`` with
-   the ``T_Data.conf`` that reports the outcome of the transmission that ``S_Data.req``
-   requested. It shall hold that association, from the ``S_Data.req`` until the
-   ``T_Data.conf``, in storage supplied by the caller, together with the addressing
-   parameters of the ``S_Data.req``, and shall match a ``T_Data.conf`` to the outstanding
-   association whose ``S_Mtype``, ``S_AI[TAtype]``, ``S_AI[SA]``, ``S_AI[TA]`` and, where
-   ``S_Mtype`` carries one, ``S_AI[AE]`` equal the confirmation's. At most one association
-   shall be outstanding for any one such addressing. An ``S_Data.req`` whose addressing
-   equals that of an outstanding association, or for which the storage has no free
-   association, and a ``T_Data.conf`` matching no outstanding association, shall each be
-   rejected as ``UDSS_LLR_0150`` defines. On initialisation no association shall be
+   the ``T_Data.req`` produced from it and with the ``T_Data.conf`` that reports the
+   outcome of that transmission. It shall hold that association, from the ``S_Data.req``
+   until the ``T_Data.conf``, in storage supplied by the caller, together with the
+   addressing parameters of the ``S_Data.req``, and shall match a ``T_Data.conf`` to the
+   outstanding association whose ``S_Mtype``, ``S_AI[TAtype]``, ``S_AI[SA]``, ``S_AI[TA]``
+   and, where ``S_Mtype`` carries one, ``S_AI[AE]`` equal the confirmation's. At most one
+   association shall be outstanding for any one such addressing. An ``S_Data.req`` whose
+   addressing equals that of an outstanding association, or for which the storage has no
+   free association, and a ``T_Data.conf`` matching no outstanding association, shall each
+   be rejected as ``UDSS_LLR_0150`` defines. On initialisation no association shall be
    outstanding. A server's association storage shall be supplied when the instance is
    created; a client's is part of the storage the client documents define.
 
    Rationale: several requirements condition on message content, including whether a
    response is final or response-pending, whether a message selects a diagnostic session,
-   whether a response was solicited, whether a request is the client's keep-alive, and
-   whether a request is a repeat.
+   whether a response was solicited, whether a request is the client's keep-alive, whether
+   a request received by a server is the bypass keep-alive, and whether a request is a
+   repeat.
    Determining these by parsing ``S_Data`` would bind this crate to the ISO 14229-1
    application layer encodings and would require every timing test to construct valid UDS
    frames. The caller already holds what is needed: the application composes the message it
@@ -821,7 +822,10 @@ and leaves the means of recognising it to the implementation.
    available there. The association with ``T_Data.conf`` is stated because
    ``UDSS_LLR_0102``, ``UDSS_LLR_0106``, ``UDSS_LLR_0107``, ``UDSS_LLR_0108`` and
    ``UDSS_LLR_0110`` all condition on what kind of message a confirmation confirms, and no
-   classification travels on the confirmation itself.
+   classification travels on the confirmation itself. The association with ``T_Data.req``
+   is stated because ``UDSS_LLR_0145`` conditions on what kind of message a transmission
+   request carries; ``UDSS_LLR_0118`` produces that ``T_Data.req`` from the ``S_Data.req``
+   in the same step, so the association costs nothing.
 
 .. llr:: Message classification values
    :id: UDSS_LLR_0134
@@ -844,12 +848,22 @@ and leaves the means of recognising it to the implementation.
      requires; a repeated keep-alive TesterPresent states ``keep-alive`` again. A request
      classification shall not state both ``keep-alive`` and ``repeat``. A request classification stating an exact
      number of zero, or stating ``keep-alive`` together with a session selection, shall be
-     rejected as ``UDSS_LLR_0150`` defines. A request classification supplied at a server, on
-     ``T_DataSOM.ind`` or ``T_Data.ind``, states none of these;
+     rejected as ``UDSS_LLR_0150`` defines. At a server, on ``T_DataSOM.ind`` and
+     ``T_Data.ind`` and, through ``UDSS_LLR_0136``, on the completion report, a request
+     classification states no expected response count and no ``repeat``, and may state
+     ``keep-alive``, that the message is the functionally addressed TesterPresent whose
+     positive response is suppressed, which ISO 14229-1:2020 8.7.6 defines as keep-alive
+     logic to be handled by bypass logic;
    * ``final response``, a positive response, or a negative response whose response code
      is not ``requestCorrectlyReceived-ResponsePending``;
    * ``response pending``, a negative response whose response code is
      ``requestCorrectlyReceived-ResponsePending``.
+
+   The definition of a final response is ISO 14229-2:2021 9.1.1's; the requirement is
+   derived because the classification, not the definition, is this set's invention. The
+   same clause settles a case the solicited and unsolicited split exists to carry: where a
+   request schedules periodic responses, the initial response accepting or refusing the
+   schedule is the final response, and the periodic transmissions that follow are not.
 
    An exact number of zero is rejected rather than read as ``none`` because the two would
    otherwise be two spellings of one value with different behaviour: ``UDSS_LLR_0153`` would
@@ -868,23 +882,31 @@ and leaves the means of recognising it to the implementation.
    property of the request the application composed, and ``UDSS_LLR_0135`` forbids reading
    it out of the message.
 
-   The ``keep-alive`` marker is likewise stated by the client and has no server-side
-   counterpart. ``UDSS_LLR_0166`` conditions on it because ISO 14229-2:2021 9.5 Table 6
-   restarts the client's session timer on the functionally addressed TesterPresent alone,
-   and ``UDSS_LLR_0170`` because ISO 14229-2:2021 9.7 Table 9 restarts it on the lost
-   response to the physically addressed one; ``UDSS_LLR_0135`` forbids recognising either
-   from the data. It is separate from the expected response count because in physical
-   keep-alive the TesterPresent may or may not require a response. The client session timer
-   document records as an assumption of use that the request the application transmits in
-   answer to a keep-alive indication carries the marker, in either keep-alive mode. No
-   requirement conditions on it at a server. The marker excludes a session selection because
-   a TesterPresent changes no session, and because ``UDSS_LLR_0164`` acts on the selection
-   and ``UDSS_LLR_0166`` on the marker with different effects on a running timer; a
-   classification carrying both would match two requirements ``UDSS_LLR_0163`` keeps apart
-   by the classification alone.
+   The ``keep-alive`` marker is stated by both roles. The client states it because
+   ``UDSS_LLR_0166`` conditions on it, ISO 14229-2:2021 9.5 Table 6 restarting the client's
+   session timer on the functionally addressed TesterPresent alone, and ``UDSS_LLR_0170``
+   because ISO 14229-2:2021 9.7 Table 9 restarts it on the lost response to the physically
+   addressed one; ``UDSS_LLR_0135`` forbids recognising either from the data. It is
+   separate from the expected response count because in physical keep-alive the
+   TesterPresent may or may not require a response. The client session timer document
+   records as an assumption of use that the request the application transmits in answer to
+   a keep-alive indication carries the marker, in either keep-alive mode. The marker
+   excludes a session selection because a TesterPresent changes no session, and because
+   ``UDSS_LLR_0164`` acts on the selection and ``UDSS_LLR_0166`` on the marker with
+   different effects on a running timer; a classification carrying both would match two
+   requirements ``UDSS_LLR_0163`` keeps apart by the classification alone. The server's
+   caller states it because ISO 14229-1:2020 8.7.6 exempts that one message from
+   one-request-at-a-time, so it arrives while another request is in progress as conformant
+   traffic: ``UDSS_LLR_0186`` conditions on it, and ``UDSS_LLR_0104``, ``UDSS_LLR_0109``,
+   ``UDSS_LLR_0142``, ``UDSS_LLR_0144`` and ``UDSS_LLR_0146`` on its absence. The session
+   layer does not verify the marker against ``S_AI[TAtype]``, the same trust
+   ``UDSS_LLR_0179`` extends to ``repeat``: a physically addressed TesterPresent,
+   ISO 14229-2:2021 10.1.4.2 Figure 13's, is an ordinary request, and a caller that marks
+   one has erred in a way an addressing check would catch only by coincidence. The server
+   session timer document records the assumption of use.
 
-   The ``repeat`` marker is stated by the client for the same reason and likewise has no
-   server-side counterpart. ``UDSS_LLR_0179`` and ``UDSS_LLR_0180`` condition on it because
+   The ``repeat`` marker is stated by the client alone and has no server-side counterpart.
+   ``UDSS_LLR_0179`` and ``UDSS_LLR_0180`` condition on it because
    ISO 14229-2:2021 9.7 Table 9 caps the client's repeats at two and ``UDSS_LLR_0135``
    forbids recognising a repeat from the data; it is a declaration the caller makes and the
    session layer does not verify. It is exclusive with ``keep-alive`` because
@@ -910,21 +932,26 @@ and leaves the means of recognising it to the implementation.
    A session selection shall state the identifier of the session being selected and
    whether that session is the default session. It shall be present only where the message
    effects the transition: a request or a positive response that selects a session carries
-   one, and a negative response to a session-change request does not.
+   one, and a negative response to a session-change request does not. Which service
+   carries the message is immaterial: a DiagnosticSessionControl request or positive
+   response is the usual carrier, and an ECUReset positive response or the response to an
+   OBD-range request that ISO 14229-1:2020 8.7.6 has abort the active service and start the
+   default session carries one for the same reason, the session layer being unable to tell
+   the services apart under ``UDSS_LLR_0135``.
 
-   Rationale: kind and session selection are separate because a DiagnosticSessionControl
-   positive response is at once a final response and a session selection, and a single
+   Rationale: kind and session selection are separate because a positive response that
+   selects a session is at once a final response and a session selection, and a single
    flat enumeration would force every requirement conditioning on finality to enumerate
    the session-selecting case as well. A session selection accompanies requests as well as
-   responses, because ``UDSS_LLR_0103`` conditions on a session-selecting request for
-   which no response is transmitted.
+   responses, because ``UDSS_LLR_0103`` and ``UDSS_LLR_0141`` condition on a
+   session-selecting request for which no response is transmitted.
 
    The selection states whether the session is the default one rather than leaving the
-   session layer to decide from the identifier. ``UDSS_LLR_0102``, ``UDSS_LLR_0103`` and
-   ``UDSS_LLR_0112`` all condition on whether a session is the default, and the session
-   layer has no other way to tell: recognising the identifier would mean knowing the
-   ISO 14229-1 encoding, which ``UDSS_LLR_0135`` forbids. The identifier itself stays
-   opaque and is carried for the application's benefit.
+   session layer to decide from the identifier. ``UDSS_LLR_0102``, ``UDSS_LLR_0103``,
+   ``UDSS_LLR_0141`` and ``UDSS_LLR_0112`` all condition on whether a session is the
+   default, and the session layer has no other way to tell: recognising the identifier
+   would mean knowing the ISO 14229-1 encoding, which ``UDSS_LLR_0135`` forbids. The
+   identifier itself stays opaque and is carried for the application's benefit.
 
    Solicitation is separate from kind because a periodically transmitted positive response
    is at once a final response and unsolicited. Were those alternatives of one
@@ -957,7 +984,7 @@ and leaves the means of recognising it to the implementation.
    reading would contradict both, and would be unfalsifiable besides. The equivalence
    admits a direct test: vary the payload, hold everything else, and compare the outputs.
 
-.. llr:: Completion of a request with no response is reported by the application
+.. llr:: Completion of a request with no response is reported by the caller
    :id: UDSS_LLR_0136
    :status: draft
    :integrity_level: QM
@@ -976,7 +1003,10 @@ and leaves the means of recognising it to the implementation.
    message classification that could carry the fact. Without an explicit input the session
    layer cannot detect it, and a server handling a suppressed-response request in a
    non-default session would never restart its timer. ``UDSS_LLR_0142`` is the requirement
-   that acts on this input.
+   that acts on this input. ISO 14229-2:2021 10.1.4.1 bounds when that completion occurs,
+   a service being in progress until the completion of any action caused by the request
+   where no response is required, the point that would otherwise have started the
+   response; ``UDSS_LLR_0142`` cites the same clause.
 
    The classification is carried on the input rather than recovered by correlating it with
    an earlier ``T_Data.ind``, because Table 6's other suppressed-response row, the
