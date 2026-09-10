@@ -1,0 +1,36 @@
+[package]
+name = "uds_services"
+version = "0.0.0"
+edition = "2024"
+rust-version = "1.88"
+description = "ISO 14229-1 clause 8.7 server response implementation rules: typed UDS service dispatch over caller-defined identifiers"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/luminartech/uds_services"
+readme = "README.md"
+keywords = ["uds", "iso14229", "automotive", "diagnostics", "no-std"]
+categories = ["no-std", "embedded", "network-programming"]
+publish = false                                  # pre-implementation
+
+[dependencies]
+# L1 message codec. The only mandatory dependency: this crate dispatches
+# over uds_protocol's message types and never re-encodes them itself.
+uds_protocol = { path = "../uds_protocol", default-features = false }
+embedded-io = { version = "0.7", default-features = false }
+
+[features]
+default = []
+alloc = ["uds_protocol/alloc", "embedded-io/alloc"]
+std = ["alloc", "uds_protocol/std", "embedded-io/std"]
+# Transport bindings are optional and additive. Each one adapts this crate's
+# typed dispatch onto that binding's byte seam; none of them is a dependency
+# of the dispatch itself. See docs/design.md section 4.
+# doip  = ["dep:uds_on_ip"]
+# docan = ["dep:uds_on_can"]
+
+[lints.rust]
+unsafe_code = "forbid"
+missing_docs = "deny"
+missing_debug_implementations = "deny"
+
+[lints.clippy]
+pedantic = { level = "deny", priority = -1 }
