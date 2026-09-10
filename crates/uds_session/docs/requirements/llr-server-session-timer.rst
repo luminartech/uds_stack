@@ -212,12 +212,13 @@ The timer's state
    reporting the successful reception of such a request, the server shall stop the
    ``tS3_Server`` timer.
 
-   Both primitives are named without asking which kind of message a ``T_Data.ind`` reports.
-   Where a ``T_DataSOM.ind`` for the same request already stopped the timer, the
-   ``T_Data.ind`` completing it finds the timer stopped and changes nothing, so the server
-   needs no rule pairing the two indications; ``UDSS_LLR_0140`` states such a rule for the
-   client alone. A ``T_Data.ind`` reporting an unsuccessful reception is
-   ``UDSS_LLR_0109``'s, which restarts the timer the start-of-message stopped, as
+   Both primitives are named without asking whether a ``T_Data.ind`` completes an open
+   start-of-message or reports a single-frame message; the result it reports is asked, as
+   the body states. Where a ``T_DataSOM.ind`` for the same request already stopped the
+   timer, the ``T_Data.ind`` completing it finds the timer stopped and changes nothing, so
+   the server needs no rule pairing the two indications; ``UDSS_LLR_0140`` states such a
+   rule for the client alone. A ``T_Data.ind`` reporting an unsuccessful reception is
+   ``UDSS_LLR_0109``'s instead, which restarts the timer the start-of-message stopped, as
    ISO 14229-2:2021 9.7 Table 10 requires.
 
    The marked message is ``UDSS_LLR_0186``'s on either primitive: it reloads a running timer
