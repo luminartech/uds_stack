@@ -32,7 +32,11 @@ tables do not budget. Known members:
   count per channel;
 - the pending list of 10.2.3 Figure 16 and 10.2.4 Figure 17, and the open start-of-message
   per responder that the pairing rule in ``UDSS_LLR_0140`` needs, both of which
-  ``UDSS_LLR_0160`` keeps in caller-supplied storage.
+  ``UDSS_LLR_0160`` keeps in caller-supplied storage;
+- the server's request in progress and response-pending anchor of ``UDSS_LLR_0189``, one
+  fact and one timestamp in the instance;
+- the associations of ``UDSS_LLR_0133`` between a transmission and its confirmation, in
+  caller-supplied storage, which make 7.6's identification by address checkable.
 
 The set follows the behaviour in each case. What is open is whether the class as a whole
 sits behind one build-time switch, which wants deciding once the inventory is complete

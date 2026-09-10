@@ -36,8 +36,10 @@ inert, ``UDSS_LLR_0144`` and ``UDSS_LLR_0146`` exclude it, and ``UDSS_LLR_0189``
 begins nor ends the request in progress on it, so the term keeps the uniqueness
 ``UDSS_LLR_0149`` relies on. The second is a request in the OBD service range
 that, for a server supporting that range and not in the programming session, aborts the
-active service and starts the default session. That is an application-layer action: the
-abort ends the request in progress as any completion does, and the session change is
+active service and starts the default session. That is an application-layer action. The
+reception of the OBD request ends the request in progress under ``UDSS_LLR_0189``, the new
+request replacing the old, and the caller supplies no completion report for the aborted
+request, an assumption of use the qualification repository records; the session change is
 classified on the response as :doc:`llr-server-session-timer`'s assumptions of use state.
 
 Throughout this document, the **request in progress** is the request whose handling the
@@ -234,11 +236,11 @@ The response window
    only conformant request that arrives while a response window is open and leaves the
    request in progress running; ``UDSS_LLR_0186`` in :doc:`llr-server-session-timer`
    states the marked message's effect. The second exception, the OBD-range request, ends
-   the request in progress as the preamble states, so the window this requirement opens is
-   the new request's. Any other request arriving while a window is open is outside the
-   preamble's assumption of use. Such a request nonetheless reloads the timer and, under
-   ``UDSS_LLR_0189``, replaces the request in progress; that requirement declares the
-   reading and its consequence for a server that instead ignores the second request as
+   the request in progress on its own reception under ``UDSS_LLR_0189``, so the window this
+   requirement opens is the new request's. Any other request arriving while a window is open
+   is outside the preamble's assumption of use. Such a request nonetheless reloads the timer
+   and, under ``UDSS_LLR_0189``, replaces the request in progress; that requirement declares
+   the reading and its consequence for a server that instead ignores the second request as
    10.3 Figure 18 key f shows.
 
 .. llr:: The response timer stops when a response is passed to the transport
@@ -306,8 +308,10 @@ The response window
    not: a marked keep-alive's report, which a caller may supply, is inert under
    ``UDSS_LLR_0186`` and would otherwise end the window of the request actually in
    progress. Any other completion while a request is in progress is outside the preamble's
-   assumption of use. A completion arriving because 8.7.6's second exception aborted the
-   service is the completion of the request the abort ended, not of the one in progress.
+   assumption of use. No completion report is supplied for a request that 8.7.6's second
+   exception aborted, as the preamble records: its ending is ``UDSS_LLR_0189``'s, on the
+   reception of the OBD request, and this requirement acts on the OBD request's own
+   completion.
 
 Enhanced response timing
 ------------------------

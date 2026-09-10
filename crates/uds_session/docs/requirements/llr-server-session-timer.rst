@@ -61,8 +61,10 @@ assumptions of use in the qualification repository.
   that the session layer does not verify the marker against the addressing.
 
 * The caller supplies the completion report of ``UDSS_LLR_0136`` for every request, from
-  any client, for which no response message is transmitted. A marked keep-alive is
-  excepted: its report is optional, and ``UDSS_LLR_0186`` makes one that is supplied inert.
+  any client, for which no response message is transmitted. Two are excepted: a marked
+  keep-alive, whose report is optional and which ``UDSS_LLR_0186`` makes inert if supplied,
+  and a request aborted under ISO 14229-1:2020 8.7.6's OBD-range exception, for which no
+  report is supplied, ``UDSS_LLR_0189`` ending it on the OBD request's reception.
 
 * Whether to answer a session-selecting request from a client other than the controlling
   one positively is the application's decision. ISO 14229-1:2020 Annex J (informative)
@@ -137,6 +139,13 @@ The timer's state
    ``S_AI[SA]`` and, where ``S_Mtype`` carries one, its ``S_AI[AE]`` equal the recorded
    ones; the extension is part of the identity because ``UDSS_LLR_0140`` identifies a
    responder by the same pair, and two clients behind one remote address can differ in it.
+   Matching a confirmation's ``S_AI[TA]`` and ``S_AI[AE]`` against a recorded ``S_AI[SA]``
+   and ``S_AI[AE]`` reads the extension as the same value on a response as on the request it
+   answers; ISO 14229-2:2021 8.7 says only that ``S_AE`` carries the node's extended address,
+   the symmetry being the network layer's, and the reading is recorded here as ``UDSS_LLR_0140``
+   records that every response a server sends is physically addressed. ``tS3_Server``, when
+   set running under any requirement of this document, is loaded with the ``tS3_Server``
+   protocol parameter of ``UDSS_LLR_0138``, the value ``UDSS_LLR_0112`` compares against.
 
    ``UDSS_LLR_0105``, ``UDSS_LLR_0107``, ``UDSS_LLR_0108`` and ``UDSS_LLR_0111`` state
    non-effects and are not changers. A closed list is what makes a "changes nothing" claim
@@ -201,9 +210,9 @@ The timer's state
 
    On the completion report of ``UDSS_LLR_0136`` for a request whose classification selects
    a non-default session and for which no response message is transmitted, the server shall
-   be in a non-default session, shall record as the controlling client the source address
-   the report carries, and shall start ``tS3_Server``, restarting it where it was running or
-   stopped.
+   be in a non-default session, shall record as the controlling client the ``S_AI[SA]`` and,
+   where ``S_Mtype`` carries one, the ``S_AI[AE]`` the report carries, and shall start
+   ``tS3_Server``, restarting it where it was running or stopped.
 
    This is Table 6's second initial-start row: successful completion of the requested action
    for a transition to a non-default session, where no response message is required or
@@ -220,7 +229,7 @@ The timer's state
    :tags: server; s3_server
 
    While in a non-default session, on a ``T_DataSOM.ind`` of a request message not marked
-   ``keep-alive`` whose source address is the controlling client, or on a ``T_Data.ind``
+   ``keep-alive`` from the controlling client, or on a ``T_Data.ind``
    reporting the successful reception of such a request, the server shall stop the
    ``tS3_Server`` timer.
 
@@ -231,7 +240,8 @@ The timer's state
    the server needs no rule pairing the two indications; ``UDSS_LLR_0140`` states such a
    rule for the client alone. A ``T_Data.ind`` reporting an unsuccessful reception is
    ``UDSS_LLR_0109``'s instead: ISO 14229-2:2021 9.7 Table 10 restarts the timer where a
-   start-of-message of the same request had stopped it, and leaves a running timer alone.
+   start-of-message of the same request had stopped it, and ``UDSS_LLR_0109`` reads it as
+   leaving a running timer, or one another request stopped, alone.
 
    The marked message is ``UDSS_LLR_0186``'s on either primitive: it reloads a running timer
    rather than stopping it.
@@ -344,9 +354,10 @@ The timer's state
    :source: ISO 14229-2:2021 9.7 Table 10
    :tags: server; s3_server; error-handling
 
-   While in a non-default session and while ``tS3_Server`` is stopped, on ``T_Data.ind``
-   reporting an unsuccessful result for a request not marked ``keep-alive`` from the
-   controlling client, the server shall restart the ``tS3_Server`` timer.
+   While in a non-default session, while ``tS3_Server`` is stopped and while no request is
+   in progress under ``UDSS_LLR_0189``, on ``T_Data.ind`` reporting an unsuccessful result
+   for a request not marked ``keep-alive`` from the controlling client, the server shall
+   restart the ``tS3_Server`` timer.
 
    The guard on the timer is Table 10's own precondition. Its restart is stated "because it
    has been stopped based on the previously received StartOfMessage indication", and the
@@ -355,9 +366,16 @@ The timer's state
    under ``UDSS_LLR_0104`` and the restart undoes that stop. A failed single-frame
    reception, for which no start-of-message was indicated, finds the timer running and
    leaves it running: a corrupt frame carrying the controlling client's address is not a
-   request and does not keep the session alive. The server keeps no pairing state between
-   the two indications (``UDSS_LLR_0140`` states such a rule for the client alone), so the
-   timer's own state stands in for it.
+   request and does not keep the session alive. The timer is also stopped while another
+   request from the controlling client is in progress, ``UDSS_LLR_0104`` having stopped it
+   for that request, and there Table 10's reason does not hold either: a corrupt frame
+   arriving during a long service would otherwise restart the timer mid-request, which
+   Table 6 never does and 10.1.4.1 Figure 12 key f contradicts, and ``UDSS_LLR_0107`` would
+   not restart it again for the service's response-pending messages. The two guards together
+   leave exactly Table 10's case, a start-of-message of this message having stopped the
+   timer with nothing else in progress. The server keeps no pairing state between the two
+   indications (``UDSS_LLR_0140`` states such a rule for the client alone); the timer's state
+   and ``UDSS_LLR_0189``'s fact, both instance state it already holds, stand in for it.
 
    Table 10 says the server shall ignore the request. That is read as the request having
    no effect on the session or its timer beyond the restart Table 10 itself requires, and
@@ -373,8 +391,9 @@ The timer's state
    The marked message is excluded because a failed reception of it while another request is
    in progress would otherwise restart the timer mid-request, the harm ``UDSS_LLR_0186``
    avoids. Where the caller cannot determine the marker on a failed reception,
-   ``UDSS_LLR_0133`` lets it state kind ``request`` alone, and Table 10's restart then
-   applies as written.
+   ``UDSS_LLR_0133`` lets it state kind ``request`` alone; the guard on the request in
+   progress then keeps the restart away from the mid-request case the marker would have
+   excluded, and Table 10's restart applies only where its reason holds.
 
 .. llr:: Transmission errors restart the session timer without retransmission
    :id: UDSS_LLR_0110
@@ -424,7 +443,7 @@ The timer's state
    :tags: server; s3_server; keep-alive
 
    On ``T_Data.ind`` reporting the successful reception of a request marked ``keep-alive``
-   whose source address is the controlling client, while ``tS3_Server`` is running, the
+   from the controlling client, while ``tS3_Server`` is running, the
    server shall restart ``tS3_Server``. Where ``tS3_Server`` is not running, or where the
    source address is not the controlling client, that indication shall change nothing. A
    ``T_DataSOM.ind`` marked ``keep-alive``, a ``T_Data.ind`` reporting an unsuccessful
@@ -436,13 +455,14 @@ The timer's state
    keep-alive logic to be processed by bypass logic so that it cannot block the server's
    application layer. The timer behaviour itself is ISO 14229-2's.
 
-   The figures give the timer three states. A running timer is reloaded, which is Figure 12
+   The figures distinguish three situations. A running timer is reloaded, which is Figure 12
    keys m and o; "reload" is read here as a restart of a running timer only, a declared
    reading, key m stating the effect for a message received during an activated timer. A
    stopped timer, the request in progress having stopped it, is left alone, which is
    Figure 12 key j and Figure 20 key d, both saying such a message "can be ignored" because
    the request in progress restarts the timer on its own completion under ``UDSS_LLR_0106``
-   or ``UDSS_LLR_0142``. A disabled timer is ignored, Figure 12 key p saying such a message
+   or ``UDSS_LLR_0142``. A timer disabled by the default session, not running under
+   ``UDSS_LLR_0114``'s vocabulary with no request to restart it, is ignored, Figure 12 key p saying such a message
    "is ignored" and Figure 20 key j that it "can be ignored", a difference of modality the
    set records here. Table 6's stop row says the timer is disabled while the default session
    is active, and that case is unreachable in this requirement, ``UDSS_LLR_0185`` holding no
