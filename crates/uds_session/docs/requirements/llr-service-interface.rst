@@ -70,6 +70,18 @@ interface.
    The session layer shall compute the interval between two timestamps as their difference
    modulo 2\ :sup:`32`, and shall treat that result as the elapsed time between them.
 
+   Every input shall be accompanied by a timestamp, which is the time at which the session
+   layer treats that input as having occurred. A timestamp may also be supplied with no
+   other input.
+
+   Throughout this set a **timer** is either running or not running. To **start**,
+   **restart** or **reload** a timer is to set it running with zero elapsed time, whether or
+   not it was running; to **stop** or **disable** a timer is to make it not running, whether
+   or not it was. A timer is loaded, when set running, with the value of the parameter the
+   requirement names as it stands at that instant, and it expires when the elapsed time since
+   it was set running reaches that loaded value, or exceeds it where the requirement says so.
+   A requirement that leaves a running timer alone says so.
+
    Rationale: reading a clock is I/O by another name, and it makes timer behaviour
    untestable except in real time. A caller-supplied timestamp lets a test advance time
    arbitrarily, and lets each deployment choose the time source its platform provides.
@@ -95,6 +107,15 @@ interface.
    expire timers early; the session layer cannot distinguish that from a legitimate wrap,
    and no requirement here obliges it to try.
 
+   The timestamp accompanies every input because every timer requirement in this set starts,
+   stops or expires a timer on an input, and an input with no time attached would have to be
+   placed at the time of the last one, an interval the caller controls and the set does not
+   state. The vocabulary is fixed here, once, because the timer requirements of every
+   document use "start", "restart", "reload", "stop" and "disable" and a reader should not
+   have to ask whether a start of a running timer is a restart: it is. Loading the value at
+   the start rather than reading the parameter live is what lets a parameter change while a
+   timer runs without moving a window already open.
+
 .. llr:: Inbound primitives are caller-supplied inputs
    :id: UDSS_LLR_0115
    :status: draft
@@ -108,9 +129,9 @@ interface.
 
    The inputs so supplied shall include ``S_Data.req``, as ``UDSS_LLR_0139`` defines it;
    ``T_Data.ind``, ``T_DataSOM.ind`` and ``T_Data.conf``, as ``UDSS_LLR_0140`` defines
-   them; a timestamp, as ``UDSS_LLR_0114`` defines it, supplied either alongside another
-   input or on its own; the protocol parameters of ``UDSS_LLR_0138``; and the completion
-   report of ``UDSS_LLR_0136``.
+   them; a timestamp, as ``UDSS_LLR_0114`` defines it, accompanying every other input and
+   also supplied on its own; the protocol parameters of ``UDSS_LLR_0138``; and the
+   completion report of ``UDSS_LLR_0136``.
 
    Rationale: the closed claim is the first paragraph, and it is what makes this crate
    sans-io: there is no second channel by which state can reach the session layer. The
@@ -205,6 +226,10 @@ Service primitives
    same message as reporting a multi-frame message, and any other ``T_Data.ind`` as
    reporting a single-frame message.
 
+   ``T_Data.conf`` shall carry ``T_Ptype``, ``T_AI[TAtype]``, ``T_AI[SA]``, ``T_AI[TA]``,
+   ``T_AI[AE]`` where ``T_Ptype`` requires it, and ``T_Result``, mapped onto the session
+   layer's parameters as ``UDSS_LLR_0124`` requires; it shall carry no data and no length.
+
    Each locator supplies a different part of this set. Clause 6.3 names ``T_Data.ind`` and
    ``T_DataSOM.ind``; clause 7.3 names ``T_Data.conf`` and establishes that a transmission
    request is passed to the transport layer; clause 9.2 Table 3 names that request
@@ -212,6 +237,14 @@ Service primitives
    ``T_Data.req`` that starts the final response. The single-frame and multi-frame reading
    is stated because ``UDSS_LLR_0104`` distinguishes them and nothing else in this set
    would let the session layer tell them apart.
+
+   ``T_Data.conf``'s parameters are stated because the standard states them only by
+   mapping: clause 7.3 has the ``S_Data.conf`` identify the ``S_Data.req`` it confirms by
+   the address information and report ``S_Result``, and Table 2 maps each of those onto the
+   transport parameter of the same name, so the confirmation the transport delivers carries
+   the addressing and the result and nothing else. The server session timer requirements
+   read the confirmation's ``S_AI[TA]``, and the association ``UDSS_LLR_0133`` states is
+   matched on that addressing.
 
 .. llr:: S_Data.req requests transmission of a message
    :id: UDSS_LLR_0118
@@ -292,11 +325,14 @@ Service primitives
    :tags: service-interface; primitives
 
    ``T_DataSOM.ind`` shall not be mapped onto any S_PDU. On ``T_DataSOM.ind`` the session
-   layer shall produce no output to the application.
+   layer shall produce no ``S_Data.ind``.
 
    The indication is used only within the session layer, to perform session layer timing.
    The requirements that act on it are the timer requirements of the server and client
-   documents, which condition on it without forwarding it.
+   documents, which condition on it without forwarding it. The prohibition is on the
+   ``S_Data.ind``, not on every output: a timer requirement that conditions on the
+   indication may deliver an indication of its own, as the expiry indications do on any
+   input.
 
 .. llr:: T_Data.conf is forwarded to the application
    :id: UDSS_LLR_0122
@@ -328,7 +364,9 @@ Service primitives
    caller. Every timing parameter that a requirement in this set conditions on, including
    the ``tS3_Server`` timeout that ``UDSS_LLR_0112`` compares elapsed time against, shall
    be supplied as such a parameter and shall be expressed in the unit ``UDSS_LLR_0114``
-   gives for a timestamp.
+   gives for a timestamp. A protocol parameter may be set at any time; a change shall
+   affect only a timer set running after it, a timer already running keeping the value it
+   was loaded with under ``UDSS_LLR_0114``.
 
    Clause 6.1 places the setting of protocol parameters in the service interface alongside
    transmission and reception. No requirement in this set fixes a value for any timing
