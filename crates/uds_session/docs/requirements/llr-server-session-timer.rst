@@ -69,7 +69,7 @@ assumptions of use in the qualification repository.
 * The caller supplies a session selection under ``UDSS_LLR_0134`` on every message by which
   the server changes session, whichever service carries it: DiagnosticSessionControl,
   ECUReset, or the response to a request in the OBD range that ISO 14229-1:2020 8.7.6 has
-  abort the active service and start the default session.
+  abort the active service and start the default session outside the programming session.
 
 * ISO 14229-2:2021 9.5 Table 5's tolerance on ``tS3_Server``, and the application-layer
   session transition itself, are the application's.
@@ -119,11 +119,11 @@ The timer's state
 
    Clause 9.2 has the server start the default session when powered up. That is the initial
    state ``UDSS_LLR_0101`` stated until it was retired into this requirement. Table 8
-   allocates a single ``tS3_Server`` because only a single diagnostic session can be active
-   at a time in a server, which ISO 14229-1:2020 Annex J (informative) NOTE 2 states as one
-   diagnostic session state per ECU, shared over all active protocols. Clause 9.5's prose
-   and Table 6's stop row scope the timer's stop to the client which requested the
-   transition, which is why that client's address is state.
+   allocates a single ``tS3_Server`` because a server has one active session at any time,
+   which ISO 14229-1:2020 Annex J (informative) NOTE 2 states as one diagnostic session
+   state per ECU, shared over all active protocols. Clause 9.5's prose and Table 6's stop
+   row scope the timer's stop to the client which requested the transition, which is why
+   that client's address is state.
 
    The state is held in the instance rather than in caller-supplied storage because it is
    fixed in size: one bit, one address and one timer. The client's state grows with the
@@ -134,7 +134,7 @@ The timer's state
    non-effects and are not changers. A closed list is what makes a "changes nothing" claim
    elsewhere in the set checkable.
 
-.. llr:: A confirmed solicited response that selects a non-default session starts the session timer and sets the controlling client
+.. llr:: A confirmed response selecting a non-default session starts the session timer
    :id: UDSS_LLR_0102
    :status: draft
    :integrity_level: QM
@@ -178,7 +178,7 @@ The timer's state
    service a message carries (``UDSS_LLR_0135``), and ``UDSS_LLR_0134``'s selection attaches
    to whichever message effects the transition.
 
-.. llr:: Completion of a session-selecting request with no response starts the session timer and sets the controlling client
+.. llr:: A completed session-selecting request without response starts the session timer
    :id: UDSS_LLR_0103
    :status: draft
    :integrity_level: QM
@@ -207,15 +207,18 @@ The timer's state
    :source: ISO 14229-2:2021 9.5 Table 6
    :tags: server; s3_server
 
-   While in a non-default session, on a ``T_DataSOM.ind`` or a ``T_Data.ind`` of a request
-   message not marked ``keep-alive`` whose source address is the controlling client, the
-   server shall stop the ``tS3_Server`` timer.
+   While in a non-default session, on a ``T_DataSOM.ind`` of a request message not marked
+   ``keep-alive`` whose source address is the controlling client, or on a ``T_Data.ind``
+   reporting the successful reception of such a request, the server shall stop the
+   ``tS3_Server`` timer.
 
    Both primitives are named without asking which kind of message a ``T_Data.ind`` reports.
    Where a ``T_DataSOM.ind`` for the same request already stopped the timer, the
    ``T_Data.ind`` completing it finds the timer stopped and changes nothing, so the server
    needs no rule pairing the two indications; ``UDSS_LLR_0140`` states such a rule for the
-   client alone.
+   client alone. A ``T_Data.ind`` reporting an unsuccessful reception is
+   ``UDSS_LLR_0109``'s, which restarts the timer the start-of-message stopped, as
+   ISO 14229-2:2021 9.7 Table 10 requires.
 
    The marked message is ``UDSS_LLR_0186``'s on either primitive: it reloads a running timer
    rather than stopping it.
@@ -245,7 +248,9 @@ The timer's state
    ``UDSS_LLR_0102`` performs that restart itself and records the requester as controlling
    client, and the requester need not yet be the controlling client this requirement is
    scoped to; left to this requirement alone, a hand-over to another client would restart
-   nothing.
+   nothing. A negative final response carries no session selection under
+   ``UDSS_LLR_0134``, so the exception can only ever route a positive response to
+   ``UDSS_LLR_0102`` or ``UDSS_LLR_0141``.
 
 .. llr:: Session timer restarts on completion of a request with no response
    :id: UDSS_LLR_0142
@@ -467,9 +472,10 @@ The timer's state
    DiagnosticSessionControl and the session layer timeout as the ways a programming session
    run in boot software is left, for the case where the reset does not re-initialise this
    instance; and the response to an OBD-range request that ISO 14229-1:2020 8.7.6 has abort
-   the active service and start the default session. Without this, an ECUReset positive
-   response restarts ``tS3_Server`` under ``UDSS_LLR_0106`` and the server sits in a session
-   it has left until ``UDSS_LLR_0112`` reports a timeout that did not happen.
+   the active service and start the default session, a rule the same clause suspends while
+   the programming session is active. Without this, an ECUReset positive response restarts
+   ``tS3_Server`` under ``UDSS_LLR_0106`` and the server sits in a session it has left until
+   ``UDSS_LLR_0112`` reports a timeout that did not happen.
 
 .. llr:: TesterPresent has no timer effect in the default session
    :id: UDSS_LLR_0111
@@ -480,12 +486,15 @@ The timer's state
    :source: ISO 14229-2:2021 10.1.4.1; ISO 14229-2:2021 10.1.4.1 Figure 12; ISO 14229-2:2021 10.3 Figure 20
    :tags: server; s3_server; default-session
 
-   While in the default session, reception of a TesterPresent request shall not start or
-   reload the ``tS3_Server`` timer.
+   While in the default session, reception of a request, marked ``keep-alive`` or not, shall
+   not start or reload the ``tS3_Server`` timer.
 
-   Figure 12 key p and Figure 20 key j state the case. In a non-default session a request
-   marked ``keep-alive`` is ``UDSS_LLR_0186``'s and an unmarked TesterPresent an ordinary
-   request under ``UDSS_LLR_0104``.
+   Figure 12 key p and Figure 20 key j state the TesterPresent case. The requirement is
+   stated for any request because the session layer cannot recognise a TesterPresent
+   (``UDSS_LLR_0135``) and Table 6's stop row disables the timer while the default session
+   is active without naming a service. In a non-default session a request marked
+   ``keep-alive`` is ``UDSS_LLR_0186``'s and an unmarked TesterPresent an ordinary request
+   under ``UDSS_LLR_0104``.
 
 .. llr:: Session timer expiry returns the server to the default session
    :id: UDSS_LLR_0112
