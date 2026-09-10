@@ -41,10 +41,16 @@ completion of any action caused by the request where none is required. ``UDSS_LL
 already cites that clause for the same definition. The model above is what guarantees
 there is at most one such request at a time.
 
+``UDSS_LLR_0189`` keeps the request in progress as state, and narrows 10.1.4.1's extent at
+both ends as that requirement declares: the request begins at the ``T_Data.ind`` rather than
+at the ``T_DataSOM.ind``, so a reception that fails never begins one, and a failed
+transmission of the final response ends it as a successful one does.
+
 The term is load-bearing in ``UDSS_LLR_0149``: the end of the request in progress is what
-clears that requirement's anchor. A ``T_Data.conf`` confirming a response-pending message
-transmitted for one request therefore delays nothing once that request has ended, and in
-particular cannot reject the first response-pending message of the next request.
+clears the response-pending anchor ``UDSS_LLR_0189`` keeps. A ``T_Data.conf`` confirming a
+response-pending message transmitted for one request therefore delays nothing once that
+request has ended, and in particular cannot reject the first response-pending message of
+the next request.
 
 What this document does not cover
 ---------------------------------
@@ -96,6 +102,50 @@ The response window
    Table 7 gives the reason one timer suffices: it is required for the enhanced response
    timing, to ensure a subsequent response-pending message is transmitted before
    ``tP2*_Server`` expires.
+
+.. llr:: The server keeps one request in progress and one response-pending anchor
+   :id: UDSS_LLR_0189
+   :status: draft
+   :integrity_level: QM
+   :target_level: D
+   :origin: derived
+   :tags: server; p2_server; request-in-progress
+
+   The server shall keep, in the instance, whether a request is in progress and, while one
+   is, a **response-pending anchor** that is either clear or holds a timestamp. On
+   initialisation no request shall be in progress and the anchor shall be clear.
+
+   A request shall become in progress on ``T_Data.ind`` reporting the successful reception
+   of a request. It shall cease to be in progress on ``T_Data.conf`` reporting the outcome,
+   successful or not, of the transmission of a solicited final response, and on the
+   completion report of ``UDSS_LLR_0136``; when it ceases, the anchor shall be cleared.
+   While a request is in progress, the anchor shall be set to the timestamp of a
+   ``T_Data.conf`` reporting the successful transmission of a response-pending message.
+   Nothing else shall change either fact. A response-pending message or a solicited final
+   response is **unconfirmed** while the association ``UDSS_LLR_0133`` holds for its
+   ``S_Data.req`` has received no ``T_Data.conf``.
+
+   Rationale: ``UDSS_LLR_0147`` and ``UDSS_LLR_0149`` read the request in progress and the
+   time of the last response-pending confirmation, and ``UDSS_LLR_0143``'s closed list
+   covers the ``tP2_Server`` timer alone, so without this requirement the two were state
+   nothing introduced, initialised or bounded, and two implementations could disagree about
+   when a request ended. The boundaries transcribe what the standard gives. ISO 14229-2:2021
+   10.1.4.1 Figure 12 key k places the start at the reception of the request and the end at
+   the completion of the transmission of the final response, or of the action where no
+   response is required. 9.7 Table 10 has a failed transmission of the response restart
+   ``tS3_Server``, the timer that runs between requests, and forbids retransmission, so the
+   standard treats the failed transmission as concluding the service; this requirement ends
+   the request there. The same table has the server ignore a request whose reception failed,
+   so such a reception begins nothing, which is why the start is the successful
+   ``T_Data.ind`` rather than 10.1.4.1's "start of the reception": a start-of-message whose
+   completion fails would otherwise leave a request in progress that nothing ends, and
+   ``UDSS_LLR_0143`` records that the start-of-message has no ``tP2_Server`` effect in any
+   case. The anchor is the confirmation because ``UDSS_LLR_0149`` measures the spacing from
+   there; it lives only while a request is in progress because the footnote it serves spaces
+   the response-pending messages of one service. A failed response-pending transmission sets
+   no anchor: 9.2 Table 4 footnote b counts transmissions, and one that failed did not reach
+   the data link the footnote protects. The state is instance-resident because it is fixed in
+   size, one fact and one timestamp, as ``UDSS_LLR_0185`` holds the session facts.
 
 .. llr:: The response timer starts on reception of a request
    :id: UDSS_LLR_0144
@@ -194,14 +244,24 @@ Enhanced response timing
    :tags: server; p2_server; enhanced-response-timing
 
    On ``T_Data.conf`` indicating the successful transmission of a response-pending message,
-   the server shall start the ``tP2_Server`` timer loaded with the ``tP2*_Server_Max``
-   protocol parameter.
+   while a request is in progress under ``UDSS_LLR_0189`` and no solicited final response is
+   unconfirmed, the server shall start the ``tP2_Server`` timer loaded with the
+   ``tP2*_Server_Max`` protocol parameter.
 
    Table 3 defines ``tP2*_Server`` as the performance requirement for the server to start
    its response message after the transmission of a response-pending message, indicated via
    ``T_Data.conf``. Figure 8 and Figure 11 both start the timer at that confirmation with
    the enhanced value, and both state that a further response-pending message may follow
    within the window it opens.
+
+   The two guards keep a late confirmation from re-arming the timer for a request that has
+   ended or is ending. Without them, an application that passed the final response to the
+   transport before the response-pending message's confirmation arrived would have
+   ``UDSS_LLR_0145`` stop the timer at the final response's ``T_Data.req`` and this
+   requirement restart it at the pending message's ``T_Data.conf`` a moment later, and
+   ``UDSS_LLR_0148`` would report an overrun of a request that finished at the final
+   response's confirmation. The preamble states that a confirmation for a request that has
+   ended delays nothing; the guards are what make that true of this timer.
 
 .. llr:: Response timer expiry is indicated to the application
    :id: UDSS_LLR_0148
@@ -240,10 +300,10 @@ Enhanced response timing
    :source: ISO 14229-2:2021 9.2 Table 4
    :tags: server; p2_server; enhanced-response-timing
 
-   Where a response-pending message has been transmitted for the request in progress, the
-   session layer shall reject an ``S_Data.req`` for a further response-pending message
-   until the minimum spacing has elapsed since the ``T_Data.conf`` confirming the
-   successful transmission of the previous one. The minimum spacing shall be
+   While a request is in progress under ``UDSS_LLR_0189``, the session layer shall reject
+   an ``S_Data.req`` for a response-pending message where a response-pending message is
+   unconfirmed, or where the response-pending anchor holds a timestamp and the elapsed time
+   since it is less than the minimum spacing. The minimum spacing shall be
    0.3 × ``tP2*_Server_Max``, rounded up to a whole millisecond.
 
    Table 4 footnote b requires a minimum time of 0,3 × ``tP2*_Server_Max`` between the
@@ -268,9 +328,17 @@ Enhanced response timing
    ``UDSS_LLR_0144`` reloads it with ``tP2_Server_Max`` on any request received meanwhile.
    A condition phrased against the timer would fail to apply in both cases.
 
-   Where no response-pending message has been transmitted for the request in progress, this
-   requirement does not apply. Whether the first such message was admissible at all is
-   fixed by the service's ``tP4_Server_Max``, which this document does not cover.
+   The unconfirmed case fills a gap in the footnote, which speaks of the time "between the
+   transmission of" consecutive messages and says nothing of the interval between a
+   ``T_Data.req`` and its ``T_Data.conf``. A second response-pending message admitted in that
+   interval would go out with no spacing at all, the flood the footnote exists to prevent, and
+   there would be no confirmation to measure from; rejecting it until the first is confirmed
+   is the reading that serves the footnote's purpose, and ``UDSS_LLR_0189`` defines the term.
+   Where the anchor is clear and no response-pending message is unconfirmed, this
+   requirement does not apply: no response-pending message has been transmitted for the
+   request in progress, or the only one that was failed and, as ``UDSS_LLR_0189`` records,
+   set no anchor. Whether the first such message was admissible at all is fixed by the
+   service's ``tP4_Server_Max``, which this document does not cover.
 
 .. llr:: A rejected input is reported to the caller and changes nothing
    :id: UDSS_LLR_0150

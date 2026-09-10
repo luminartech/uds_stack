@@ -259,6 +259,27 @@ Service primitives
    read the confirmation's ``S_AI[TA]``, and the association ``UDSS_LLR_0133`` states is
    matched on that addressing.
 
+.. llr:: An instance has one role
+   :id: UDSS_LLR_0188
+   :status: draft
+   :integrity_level: QM
+   :target_level: D
+   :origin: derived
+   :tags: service-interface; role
+
+   An instance of the session layer shall be created as a client or as a server, and its
+   role shall not change thereafter. An input whose form this set defines for the other role
+   alone shall be rejected as ``UDSS_LLR_0150`` defines.
+
+   Rationale: every requirement in this set is stated for the client or for the server, and
+   ISO 14229-2:2021 describes the two as distinct peer entities throughout clauses 6 to 10,
+   each with its own timers in 9.6 Tables 7 and 8. Nothing in the set said how an instance
+   came to be one or the other, so an implementer could build one instance that plays both
+   roles and another that must be told, with the requirements silent on inputs that belong
+   to the other role. A node that is both, a gateway or a tester under test, is two
+   instances. The role is fixed at creation because no requirement gives a role change a
+   meaning, and state held for one role has none in the other.
+
 .. llr:: S_Data.req requests transmission of a message
    :id: UDSS_LLR_0118
    :status: draft
@@ -674,7 +695,15 @@ and leaves the means of recognising it to the implementation.
 
    The session layer shall associate the classification carried by an ``S_Data.req`` with
    the ``T_Data.conf`` that reports the outcome of the transmission that ``S_Data.req``
-   requested.
+   requested. It shall hold that association, from the ``S_Data.req`` until the
+   ``T_Data.conf``, in storage supplied by the caller, together with the addressing
+   parameters of the ``S_Data.req``, and shall match a ``T_Data.conf`` to the outstanding
+   association whose ``S_Mtype``, ``S_AI[TAtype]``, ``S_AI[SA]``, ``S_AI[TA]`` and, where
+   ``S_Mtype`` carries one, ``S_AI[AE]`` equal the confirmation's. At most one association
+   shall be outstanding for any one such addressing. An ``S_Data.req`` whose addressing
+   equals that of an outstanding association, or for which the storage has no free
+   association, and a ``T_Data.conf`` matching no outstanding association, shall each be
+   rejected as ``UDSS_LLR_0150`` defines.
 
    Rationale: several requirements condition on message content, including whether a
    response is final or response-pending, whether a message selects a diagnostic session,
@@ -683,6 +712,22 @@ and leaves the means of recognising it to the implementation.
    timing test to construct valid UDS frames. The caller already holds what is needed:
    the application composes the message it asks to have transmitted, and the code that
    supplies a ``T_Data.ind`` holds the bytes it received.
+
+   The association is matched on addressing because that is the standard's own rule:
+   ISO 14229-2:2021 7.3 has the ``S_Data.conf`` confirm "the completion of an S_Data.req
+   service identified by the address information", and Table 2 maps the transport's
+   confirmation onto the same parameters, so nothing else travels on a confirmation that
+   could identify the request it answers. That rule can only work while one transmission to
+   a given addressing is outstanding, which the standard's models guarantee at the client,
+   one request per logical communication channel, and assume without saying at the server.
+   Stating the limit and rejecting what exceeds it makes the rule checkable where the
+   standard is silent: a server whose application asks to transmit a second response to a
+   client while the first is unconfirmed, a periodic transmission alongside a solicited one,
+   for instance, would otherwise leave the session layer unable to tell which confirmation
+   carried the session selection or the solicitation the timer requirements read. The
+   storage is the caller's because the number of peers an instance addresses is a property
+   of the deployment and the crate does not allocate; how the client's storage is organised
+   per channel is the client response timing document's.
 
    The classification is carried on ``T_Data.ind`` rather than on ``S_Data.ind`` because a
    client must recognise a response-pending response at reception, before the application
