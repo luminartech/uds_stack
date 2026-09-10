@@ -141,8 +141,8 @@ The timer's state
    timers on one channel for nothing. The mode is fixed at creation because the standard
    treats the handling as a property of the deployment, Table 8 allotting timers "when
    using" one TesterPresent or the other, and gives a change no meaning; it is not one of
-   the protocol parameters ``UDSS_LLR_0138`` provides for, which are clause 6.1's timing
-   parameters. A change at run time would have to say what becomes of a keeping-alive fact
+   the protocol parameters ``UDSS_LLR_0138`` provides for, which that requirement confines
+   to timing parameters. A change at run time would have to say what becomes of a keeping-alive fact
    and a running timer that the new mode's requirements never touch, ``UDSS_LLR_0163``
    closing the list of what changes them, and no clause says.
 
@@ -177,13 +177,15 @@ The timer's state
    channels is a property of the deployment, the crate does not allocate, and Table 8 states
    what timers are needed, not where they live.
 
-   The reload parameter follows the timer. Table 5 requires ``tS3_Client`` to be below the
-   ``tS3_Server`` of the server it keeps alive, and in physical keep-alive each channel's
-   timer serves one server whose ``tS3_Server`` may differ from the next, so a single value
-   for the client could be right for one server and late for another; Table 8's timer per
-   point-to-point communication gets a value per point-to-point communication. In functional
-   keep-alive one timer serves every server the functional address reaches, and one value
-   must be below all of their timeouts.
+   The reload parameter follows the timer. Table 5 states that the ``tS3_Client`` timeout
+   value includes the travel time of the message on the network, gateway delays among them,
+   and in physical keep-alive each channel's timer serves one point-to-point path whose
+   travel time differs from the next, so a single value for the client could be right for one
+   server and late for another; Table 8's timer per point-to-point communication gets a value
+   per point-to-point communication. ``tS3_Server`` itself is one timeout for every server,
+   Table 5 fixing it at 5 000 ms with no recommended reload and 9.5 letting a server vary only
+   ``tP2_Server`` and ``tP2*_Server``. In functional keep-alive one timer serves every server
+   the functional address reaches, and one value must cover the longest path among them.
 
    The rule on evaluation order is what lets several requirements match one input and
    exactly one act. In physical keep-alive ``UDSS_LLR_0168``, ``UDSS_LLR_0170`` and
@@ -307,8 +309,9 @@ Functional keep-alive
    functional column has the client repeat the request after "the time ``tS3_Client_Func``",
    a parameter defined nowhere in the standard; this set reads it as ``tP3_Client_Func``,
    the only functional spacing parameter 10.3 defines, and treats the text as a
-   typographical error. The repeat is the client error handling document's; its confirmation
-   restarts the timer here.
+   typographical error. The repeat is the client error handling document's; carrying the
+   ``keep-alive`` marker again, as that document's assumptions of use record, its
+   confirmation restarts the timer here.
 
 .. llr:: Functional keep-alive disengages on return to the default session
    :id: UDSS_LLR_0167
@@ -488,7 +491,8 @@ session fact, and the requests and indications on it.
    response does not restart the timer. Clause 9.5 describes the physically addressed
    TesterPresent as transmitted only in the absence of any other request, and the enhanced
    response window that a response-pending message opens, ``tP2*_Client`` of 9.2 Tables 3
-   and 4, is, on the recommended values of 9.2 Table 4 and 9.5 Table 5, of the same order as
+   and 4, is, on the recommended values of 9.2 Table 4 and the ``tS3_Client`` reload and
+   ``tS3_Server`` timeout of 9.5 Table 5, of the same order as
    ``tS3_Server`` and longer than the recommended ``tS3_Client`` reload, so a timer
    restarted there would expire inside the window and demand a TesterPresent while the
    request is in progress, a second outstanding request on the channel for which
@@ -508,14 +512,15 @@ session fact, and the requests and indications on it.
    :integrity_level: QM
    :target_level: D
    :origin: session-layer-standard
-   :source: ISO 14229-2:2021 9.5 Table 5; ISO 14229-2:2021 10.1.4.2 Figure 13
+   :source: ISO 14229-2:2021 9.5 Table 5; ISO 14229-2:2021 10.1.4.2 Figure 13; ISO 14229-2:2021 9.6 Table 8
    :tags: client; s3_client
 
    In physical keep-alive, while a physical channel's session fact holds and its
    ``tS3_Client`` timer is running, when the elapsed time since the timer was last started
    reaches the value it was loaded with, the client shall stop the timer and deliver a
    keep-alive indication to the application carrying the channel's identity: ``S_Mtype``,
-   ``S_AI[TAtype]``, ``S_AI[TA]`` and, where ``S_Mtype`` carries one, ``S_AI[AE]``.
+   ``S_AI[TAtype]``, ``S_AI[SA]``, ``S_AI[TA]`` and, where ``S_Mtype`` carries one,
+   ``S_AI[AE]``.
 
    Table 5 defines ``tS3_Client`` for physical communication as the maximum time between
    physically transmitted requests to a single server, and Figure 13 keys k and o have its
