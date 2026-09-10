@@ -835,9 +835,10 @@ and leaves the means of recognising it to the implementation.
      shall further state the number of responses expected: ``none``, an exact number of at
      least one, or ``unknown``, and may further state either ``keep-alive``, that the message
      is the TesterPresent the application transmits because ``tS3_Client`` expired, or
-     ``repeat``, that the message repeats a request whose transmission, reception or response
-     window failed, as ISO 14229-2:2021 9.7 Table 9 requires. A request classification shall
-     not state both ``keep-alive`` and ``repeat``. A request classification stating an exact
+     ``repeat``, that the message repeats a request, other than the keep-alive TesterPresent,
+     whose transmission, reception or response window failed, as ISO 14229-2:2021 9.7 Table 9
+     requires; a repeated keep-alive TesterPresent states ``keep-alive`` again. A request
+     classification shall not state both ``keep-alive`` and ``repeat``. A request classification stating an exact
      number of zero, or stating ``keep-alive`` together with a session selection, shall be
      rejected as ``UDSS_LLR_0150`` defines. A request classification supplied at a server, on
      ``T_DataSOM.ind`` or ``T_Data.ind``, states none of these;

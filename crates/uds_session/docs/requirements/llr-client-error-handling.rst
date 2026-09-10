@@ -106,7 +106,11 @@ Assumptions of use
 Obligations Table 9 places on the application, recorded here and assessed in the
 qualification repository rather than written as requirements:
 
-* the application marks each repeat ``repeat`` and marks no other request so;
+* the application marks each repeat of a request other than the keep-alive TesterPresent
+  ``repeat`` and marks no other request so, and marks a repeated keep-alive TesterPresent
+  ``keep-alive`` again, so that ``UDSS_LLR_0166`` and ``UDSS_LLR_0170`` restart
+  ``tS3_Client`` on it as ISO 14229-2:2021 9.5 Table 6 and 9.7 Table 9 require of the
+  repeated TesterPresent;
 * it repeats only after a failed ``S_Data.conf``, a failed ``S_Data.ind`` or a
   response-timing indication, and not after a timeout on a functional channel whose expected
   response count was ``unknown``, which Table 9 makes the ordinary end of the exchange;
@@ -201,8 +205,10 @@ The repeat count
    rather than at the ``T_Data.conf`` because ``UDSS_LLR_0118`` produces the ``T_Data.req``
    from it in the same step, so a request that nothing rejects is the transmission Table 9
    counts; and because a rejection under ``UDSS_LLR_0150`` leaves state unchanged, so a
-   rejected repeat is never counted. The requirements that may reject an ``S_Data.req`` for
-   a request are ``UDSS_LLR_0176``, ``UDSS_LLR_0180`` and ``UDSS_LLR_0181``, and
+   rejected repeat is never counted. The requirements of this document that may reject an
+   ``S_Data.req`` for a request are ``UDSS_LLR_0176``, ``UDSS_LLR_0180`` and
+   ``UDSS_LLR_0181``, and ``UDSS_LLR_0133``, ``UDSS_LLR_0134``, ``UDSS_LLR_0151`` and
+   ``UDSS_LLR_0188`` reject one on its addressing, classification, channel or role;
    ``UDSS_LLR_0180`` reads the count as it was before the input under ``UDSS_LLR_0178``'s
    rule, so the increase here never feeds the rejection there.
 
@@ -271,8 +277,13 @@ Responses still arriving
    which Table 9's cells, attached to a timeout or an error, do not describe. For an
    ordinary request that is the one-request-per-channel assumption enforced a little
    further; for the keep-alive TesterPresent of ``UDSS_LLR_0165``, which 10.2.4 Figure 17
-   keys g and h send inside the response window, it is a delay bounded by the message in
-   progress, well inside the margin 9.5 Table 5 gives ``tS3_Server`` over ``tS3_Client``.
+   keys g and h send inside the response window, it is a delay bounded by the transport's
+   transfer of that message, which 9.2 Table 4 footnotes d and e already oblige the client to
+   keep inside ``tS3_Server``. The wait also covers a response whose start-of-message arrives
+   after the timeout or the error, which ``UDSS_LLR_0160`` records whether or not a request
+   is in progress; the known-count and reception cells, phrased at the point in time of the
+   event, do not require that, so it too is a widening, in the safe direction, ending on the
+   same completion.
 
    The application retries on the ``S_Data.ind`` that ``UDSS_LLR_0137`` delivers for the
    completion it was waiting for, so no indication is added. A responder ``UDSS_LLR_0161``
