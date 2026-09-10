@@ -49,7 +49,8 @@ The session layer cannot place an inbound indication on a channel by itself. A p
 addressed response answers either the physical channel to that server or a functional
 channel the server was reached through, and nothing in the indication says which.
 ``UDSS_LLR_0140`` therefore requires the caller to identify the channel each
-``T_DataSOM.ind`` and ``T_Data.ind`` belongs to. That requirement also settles which
+``T_DataSOM.ind`` and ``T_Data.ind`` belongs to. A channel exists while the caller supplies
+its storage, as ``UDSS_LLR_0151`` states. That requirement also settles which
 indication is the start of a message and which its completion, and this document uses its
 terms **first indication** and **completion** without restating them. An indication on a
 channel with no request in progress takes no timer action under any requirement below; it
@@ -185,12 +186,23 @@ The response window
    :tags: client; p_client
 
    The client shall maintain a single ``tP_Client`` timer for each logical communication
-   channel, in storage supplied by the caller. On a physical channel the same storage shall
-   hold whether a start-of-message is open on that channel, as ``UDSS_LLR_0140`` requires;
-   on a functional channel ``UDSS_LLR_0160`` holds that fact per responder instead. On
-   initialisation no such timer shall be running and no start-of-message shall be open, and
-   no start-of-message shall be held open on a channel while no request is in progress on it.
-   Thereafter the state of a channel's timer shall be changed only as
+   channel, in storage supplied by the caller. A channel shall exist from the moment the
+   caller supplies its storage, identified by the addressing the caller states for that
+   storage, until the caller withdraws it; an ``S_Data.req`` whose addressing names no
+   existing channel shall be rejected as ``UDSS_LLR_0150`` defines. The same storage shall
+   hold whether a request is in progress on the channel and, while one is, the addressing
+   and classification of that request and, where that classification states an exact
+   expected response count, the number of responses ``UDSS_LLR_0156`` counts since the
+   request's confirmation; the one association ``UDSS_LLR_0133`` holds for a transmission
+   outstanding on the channel; and, on a physical channel, whether a start-of-message is
+   open on that channel, as ``UDSS_LLR_0140`` requires, without recording the responder, so
+   that any ``T_Data.ind`` on the channel completes it. On a functional channel
+   ``UDSS_LLR_0160`` holds the start-of-message fact per responder instead. On
+   initialisation no such timer shall be running, no request shall be in progress and no
+   start-of-message shall be open, and no start-of-message shall be held open on a channel
+   while no request is in progress on it. A request shall become in progress as
+   ``UDSS_LLR_0153`` starts the timer and shall cease to be in progress as the preamble
+   states. Thereafter the state of a channel's timer shall be changed only as
    ``UDSS_LLR_0153``, ``UDSS_LLR_0154``, ``UDSS_LLR_0155``, ``UDSS_LLR_0156``,
    ``UDSS_LLR_0157`` and ``UDSS_LLR_0159`` require.
 
@@ -206,6 +218,23 @@ The response window
    The storage is the caller's because the number of channels is a property of the
    deployment rather than of the protocol, and the crate does not allocate. Neither cited
    clause requires it; the standard states what timers are needed, not where they live.
+   Supplying the storage is what brings a channel into being, and is stated so because
+   ``UDSS_LLR_0140`` rejects an indication that names a channel the client does not have
+   and nothing otherwise said how a channel came to exist: an implementer could create one
+   on the first ``S_Data.req`` to a new addressing or demand a registration the set never
+   named. Supplying and withdrawing the storage are acts of the caller, as the completion
+   report of ``UDSS_LLR_0136`` is an input that is neither a primitive nor a parameter.
+
+   The request record is held because requirements read it: ``UDSS_LLR_0159`` reports the
+   addressing of the request whose window expired, ``UDSS_LLR_0156`` reads the expected
+   count and the number received so far, and the preamble's definition of the request in
+   progress is a fact the timer's running state cannot stand for. The count is kept here
+   with the request because it is defined relative to the request's confirmation and so
+   begins again with the next. The responder of a physical channel's start-of-message is
+   not recorded because a physical channel has one peer: a ``T_Data.ind`` the caller places
+   on it from another address is the caller's misrouting, which no record here could
+   correct, so ``UDSS_LLR_0140``'s "same responder" is, on a physical channel, the channel
+   itself.
    The open start-of-message is kept here rather than in a table because a physical channel
    has one peer and one outstanding request, so one fact suffices; ``UDSS_LLR_0160`` keeps
    the same fact per responder on a functional channel.

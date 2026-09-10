@@ -810,13 +810,21 @@ and leaves the means of recognising it to the implementation.
 
    * ``request``, a message sent by a client to a server. On ``S_Data.req``, and on the
      ``T_Data.conf`` that ``UDSS_LLR_0133`` associates with it, a request classification
-     shall further state the number of responses expected: ``none``, an exact number, or
-     ``unknown``. A request classification supplied at a server, on ``T_DataSOM.ind`` or
-     ``T_Data.ind``, states no count;
+     shall further state the number of responses expected: ``none``, an exact number of at
+     least one, or ``unknown``; a request classification stating an exact number of zero
+     shall be rejected as ``UDSS_LLR_0150`` defines. A request classification supplied at a
+     server, on ``T_DataSOM.ind`` or ``T_Data.ind``, states no count;
    * ``final response``, a positive response, or a negative response whose response code
      is not ``requestCorrectlyReceived-ResponsePending``;
    * ``response pending``, a negative response whose response code is
      ``requestCorrectlyReceived-ResponsePending``.
+
+   An exact number of zero is rejected rather than read as ``none`` because the two would
+   otherwise be two spellings of one value with different behaviour: ``UDSS_LLR_0153`` would
+   open a window for it and ``UDSS_LLR_0156`` could never close one, no ``T_Data.ind``
+   bringing the count to zero, so the window would end at expiry reporting that not all
+   expected servers responded to a request that expected none. ``none`` is the value for
+   that case.
 
    The expected response count is stated by the client and has no server-side counterpart,
    a server answering the one request in front of it. ``UDSS_LLR_0153`` conditions on the
