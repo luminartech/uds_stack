@@ -308,10 +308,10 @@ The response window
    not: a marked keep-alive's report, which a caller may supply, is inert under
    ``UDSS_LLR_0186`` and would otherwise end the window of the request actually in
    progress. Any other completion while a request is in progress is outside the preamble's
-   assumption of use. No completion report is supplied for a request that 8.7.6's second
-   exception aborted, as the preamble records: its ending is ``UDSS_LLR_0189``'s, on the
-   reception of the OBD request, and this requirement acts on the OBD request's own
-   completion.
+   assumption of use. A completion report for a request that 8.7.6's second exception
+   aborted answers no request in progress, the OBD request coming from another client, so
+   ``UDSS_LLR_0189`` leaves it inert here: the aborted request's ending was the OBD
+   request's reception, and this requirement acts on the OBD request's own completion.
 
 Enhanced response timing
 ------------------------

@@ -64,8 +64,9 @@ assumptions of use in the qualification repository.
 * The caller supplies the completion report of ``UDSS_LLR_0136`` for every request, from
   any client, for which no response message is transmitted. Two are excepted: a marked
   keep-alive, whose report is optional and which ``UDSS_LLR_0186`` makes inert if supplied,
-  and a request aborted under ISO 14229-1:2020 8.7.6's OBD-range exception, for which no
-  report is supplied, ``UDSS_LLR_0189`` ending it on the OBD request's reception.
+  and a request aborted under ISO 14229-1:2020 8.7.6's OBD-range exception, whose report is
+  optional because ``UDSS_LLR_0189`` ended it on the OBD request's reception and matches
+  what ends the OBD request to that request by addressing.
 
 * Whether to answer a session-selecting request from a client other than the controlling
   one positively is the application's decision. ISO 14229-1:2020 Annex J (informative)
@@ -74,8 +75,9 @@ assumptions of use in the qualification repository.
 
 * The caller supplies a session selection under ``UDSS_LLR_0134`` on every message by which
   the server changes session, whichever service carries it: DiagnosticSessionControl,
-  ECUReset, or the response to a request in the OBD range that ISO 14229-1:2020 8.7.6 has
-  abort the active service and start the default session outside the programming session.
+  ECUReset, or the OBD-range request that ISO 14229-1:2020 8.7.6 has abort the active
+  service and start the default session outside the programming session, on its response
+  where one is sent and on the request otherwise.
 
 * ISO 14229-2:2021 9.5 Table 5's tolerance on ``tS3_Server``, and the application-layer
   session transition itself, are the application's.
@@ -352,7 +354,7 @@ The timer's state
    :integrity_level: QM
    :target_level: D
    :origin: session-layer-standard
-   :source: ISO 14229-2:2021 9.7 Table 10
+   :source: ISO 14229-2:2021 9.5 Table 6; ISO 14229-2:2021 9.7 Table 10
    :tags: server; s3_server; error-handling
 
    While in a non-default session, while ``tS3_Server`` is stopped and while no request is
@@ -445,8 +447,8 @@ The timer's state
 
    On ``T_Data.ind`` reporting the successful reception of a request marked ``keep-alive``
    from the controlling client, while ``tS3_Server`` is running, the
-   server shall restart ``tS3_Server``. Where ``tS3_Server`` is not running, or where the
-   it is not from the controlling client, that indication shall change nothing. A
+   server shall restart ``tS3_Server``. Where ``tS3_Server`` is not running, or where it
+   is not from the controlling client, that indication shall change nothing. A
    ``T_DataSOM.ind`` marked ``keep-alive``, a ``T_Data.ind`` reporting an unsuccessful
    reception of a request marked ``keep-alive``, and a completion report of
    ``UDSS_LLR_0136`` whose classification states ``keep-alive``, shall change nothing.
