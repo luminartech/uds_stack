@@ -342,7 +342,10 @@ Giving a server up
      release every entry of its responder table;
    * set the channel's repeat count to zero.
 
-   A ``T_Data.conf`` arriving for an abandoned association shall be confirmed to the
+   The abandoned association shall remain outstanding under ``UDSS_LLR_0133``, rejecting a
+   further ``S_Data.req`` to its addressing, until its ``T_Data.conf`` arrives or the
+   channel's storage is withdrawn under ``UDSS_LLR_0151``. A ``T_Data.conf`` arriving for an
+   abandoned association shall be confirmed to the
    application under ``UDSS_LLR_0120``, shall start no response window under
    ``UDSS_LLR_0153``, and shall otherwise act as it would had the channel not been reset;
    in particular ``UDSS_LLR_0174`` and ``UDSS_LLR_0175`` start the channel's spacing timer
