@@ -63,6 +63,30 @@ table: the stack's codec already splits a value off the front of a buffer and re
 remainder, and ``Encode::encoded_size`` is derived by construction precisely because
 hand-maintained sizes were "the bug class every migrated consumer had".
 
+**Is the client surface asynchronous, and what does that cost?** Settled: a sans-io
+synchronous core with an asynchronous client layered over it, generic over a transport
+trait this crate declares (``UDSSVC_ARCH_0028``, ``UDSSVC_ARCH_0029``).
+
+The question was framed wrongly at first. It was posed as async-or-not, weighed against
+``no_std``; but ``async`` is a language feature needing no runtime in a library, and what
+would break an embedded build is a tokio dependency, which a transport-trait-generic
+client does not have. ``UDSSVC_ARCH_0030`` states the assumption plainly: an executor
+exists everywhere, ``embassy`` included, and this crate depends on none.
+
+What decided the *shape* was the direction of control. Everything below is asynchronous
+already — ``simple_doip``'s and ``uds_on_ip``'s client and server features each imply
+``std`` and tokio — so a client that did not await would hand the application a buffer,
+make it call the binding, and take the bytes back. A server needs no equivalent because it
+is called rather than calling.
+
+**It also settled a server-side question nobody had asked.** Once a runtime is assumed the
+handler seam can be asynchronous too (``UDSSVC_ARCH_0016``), which removes one of the two
+constraints this design placed on the binding's driver: a slow handler yields, rather than
+having to be run somewhere the driver can continue past. That was machinery every
+integrator would otherwise have built. The seam it changes, ``uds_on_ip``'s
+``RequestHandler``, is declared and unimplemented, so it costs a signature now and a
+migration later.
+
 **Is the negative-response code set complete?** No, and this is worth recording as a
 correction rather than a settlement. The starting design listed eight codes. Figures 5 and
 6 add 0x21, 0x24, 0x34, 0x38 and 0x39 — one of them, 0x34, on the *mandatory* path, ahead
@@ -73,28 +97,14 @@ missing and its ordering wrong.
 Still open
 ----------
 
-**1. Is the client surface asynchronous?** ``uds_on_ip``'s client is ``async``, and its
-functional-response sequence is an inherent-method lending sequence precisely because
-``Stream`` would force an allocation. A typed client over it either becomes ``async`` too
-— in a crate that must build on bare metal without ``alloc`` — or is a sans-io request
-builder and response interpreter that leaves the awaiting to the caller.
-
-``UDSSVC_ARCH_0027`` has narrowed this substantially. The server role compiles into
-embedded firmware from the same crate, so whatever shape the client takes must not pull
-``std`` or an async runtime into that build. Feature-gating could contain it, but the
-sans-io answer needs no containing. What remains genuinely open is ergonomic rather than
-structural: whether a sans-io client is acceptable to a host tool author, or whether an
-``async`` convenience layer should sit above it — and if so, in this crate behind a
-feature, or in the binding.
-
-**2. Two server seams already exist.** ``simple_doip``'s bare-metal entity exports a
+**1. Two server seams already exist.** ``simple_doip``'s bare-metal entity exports a
 ``fn(&[u8], &mut [u8]) -> i32`` request callback in production code — the same byte seam
 ``uds_on_ip`` declares, one layer further down. Either that callback is the canonical seam
 for ``no_std`` targets and this crate should target it too, or it is a bare-metal
 convenience that does not compose with this path. It blocks the server story rather than
 decorating it.
 
-**3. How much of clause 8.7.6 belongs here?** Multiple concurrent requests with mixed
+**2. How much of clause 8.7.6 belongs here?** Multiple concurrent requests with mixed
 addressing is a clause 8.7 subclause, but occupancy of the diagnostic protocol instance is
 the driver's. The two exceptions are the hard part: a functionally addressed
 ``TesterPresent`` with the suppress bit set must bypass the occupied resource, and a
@@ -103,7 +113,7 @@ the default session unless a programming session is active. Classifying a reques
 of those exceptions is arguably this crate's; acting on the classification is certainly
 not. Proposed split, not yet agreed: this crate classifies, the driver acts.
 
-**4. Does ``Ctx`` owe clause 7.4.1 more than it carries?** ISO 14229-1 clause 7.4.1 makes
+**3. Does ``Ctx`` owe clause 7.4.1 more than it carries?** ISO 14229-1 clause 7.4.1 makes
 ``A_SA``, ``A_TA`` and ``A_TA_Type`` mandatory parameters of every application layer
 service primitive; ``UDSSVC_ARCH_0015`` carries only the third. The defence is that clause
 8.7 reads only the third and ``UDSSVC_ARCH_0001`` bounds the crate to clause 8.7. The
@@ -111,26 +121,26 @@ tension is that ``UDSSVC_ARCH_0019`` makes this crate the application's service 
 point, and an access point that drops two of three mandatory parameters is a lossy one.
 Note the client side already answers the opposite way (``UDSSVC_ARCH_0022``).
 
-**5. What does ``A_Mtype`` mean for this crate?** Clause 7.2 defines four formats —
+**4. What does ``A_Mtype`` mean for this crate?** Clause 7.2 defines four formats —
 diagnostics, remote, secure, and secure remote — and Figure 5's optional 0x38 and 0x39
 checks exist to enforce the secure ones. Those are filed as caller-supplied checks in
 ``UDSSVC_ARCH_0011`` without an ``A_Mtype`` input to check against, which is at best
 incomplete. Whether this crate carries ``A_Mtype`` or leaves secure diagnostics out of
 scope entirely has not been decided.
 
-**6. What does a mid-response sink failure mean?** ``UDSSVC_ARCH_0017``'s sink can fail
+**5. What does a mid-response sink failure mean?** ``UDSSVC_ARCH_0017``'s sink can fail
 after some bytes are written. Whether the binding must discard a partial response, and
 whether this crate must therefore avoid writing until it can complete — which would
 reintroduce a buffer, and with it the allocation question — is unsettled. It interacts
-with question 7.
+with question 6.
 
-**7. Who produces ``responseTooLong`` (0x14)?** It appears in ``uds_protocol``'s permitted
+**6. Who produces ``responseTooLong`` (0x14)?** It appears in ``uds_protocol``'s permitted
 codes for ``ReadDataByIdentifier`` but in neither Figure 5 nor Figure 6. The natural
 producer is whoever discovers the response will not fit, which is the sink — but a sink
 that is merely full is not obviously distinguishable from one that failed, and the maximum
 response length is a transport property the binding knows and this crate does not.
 
-**8. How does a server that does not implement Authentication answer the 0x34 check?**
+**7. How does a server that does not implement Authentication answer the 0x34 check?**
 Figure 5 and Figure 6 both place an authentication check on the mandatory path.
 ``uds_protocol`` does not model the Authentication service (0x29), and most servers in
 scope will not implement it. Presumably such a server passes the check unconditionally and
@@ -138,7 +148,7 @@ scope will not implement it. Presumably such a server passes the check unconditi
 "mandatory check that is always true" deserves to be stated deliberately rather than
 arrived at.
 
-**9. Does ``RoutineControl`` need a distinct trait shape?** ``UDSSVC_ARCH_0007`` records
+**8. Does ``RoutineControl`` need a distinct trait shape?** ``UDSSVC_ARCH_0007`` records
 that Figure 5 excludes service identifier 0x31 from the sub-function stage, because its
 sub-function is only meaningful together with the routine identifier. That means its
 handler receives both parameters and decides 0x12 itself — a different contract from every
@@ -151,25 +161,25 @@ Open across the stack
 These cannot be settled in this repository alone. They are the substance of the brief
 carried to the others.
 
-**10. ``uds_on_ip``'s request context is missing two fields.** It carries an addressing
+**9. ``uds_on_ip``'s request context is missing two fields.** It carries an addressing
 triple, the active session and the security level. ``UDSSVC_ARCH_0015`` also requires the
 authentication state and whether a response-pending has been sent. Without the second,
 clause 8.7.5's override cannot be applied and a functionally addressed request that took
 too long is answered with silence where the standard requires a final negative response.
 
-**11. ``uds_session`` must expose that a 0x78 has been sent.** It owns the timer and the
+**10. ``uds_session`` must expose that a 0x78 has been sent.** It owns the timer and the
 decision, so it is the only crate that knows. Today that state is internal.
 
-**12. ``uds_on_ip``'s client is entirely unimplemented.** Every method on it is
+**11. ``uds_on_ip``'s client is entirely unimplemented.** Every method on it is
 ``todo!()``. The client surface of :doc:`client-surface` sits directly on it, so the client
 half of this crate cannot be exercised end to end until that is real. Its *shape* is
 settled enough to design against, which is why the elements are written; its behaviour is
 not.
 
-**13. Is a shared addressing vocabulary wanted?** This crate needs only physical versus
+**12. Is a shared addressing vocabulary wanted?** This crate needs only physical versus
 functional (``UDSSVC_ARCH_0015``), and defines its own two-variant type to avoid depending
 on a transport. ``uds_on_ip`` has a full ISO 14229-2 addressing triple, whose target
 address type is the same distinction under a different name. Two types for one concept,
 with a conversion in the adapter, is the current answer; whether the triple belongs in a
-crate both can depend on is worth asking once rather than repeatedly — and question 4
+crate both can depend on is worth asking once rather than repeatedly — and question 3
 raises the stakes on it.
