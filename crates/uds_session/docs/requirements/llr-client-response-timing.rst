@@ -80,7 +80,8 @@ when ``UDSS_LLR_0156`` stops the timer; and on either kind of channel, with any
 when the response window expires under ``UDSS_LLR_0159``.
 
 A channel reset under ``UDSS_LLR_0183`` also ends the wait, on the caller's act rather than
-on an input from the peer; that is the only ending that delivers no indication.
+on an input from the peer; short of withdrawing the channel under ``UDSS_LLR_0151``, that is
+the only ending that delivers no indication.
 
 An input that ends the wait is itself processed while the request is still in progress, so a
 requirement conditioned on the request in progress is eligible to act on it and the wait ends
@@ -325,7 +326,9 @@ The response window
 
    On ``T_Data.conf`` reporting the successful transmission of a request whose expected
    response count is other than ``none``, the client shall start that channel's
-   ``tP_Client`` timer loaded with the default reload parameter.
+   ``tP_Client`` timer loaded with the default reload parameter, except for a
+   ``T_Data.conf`` matching an association ``UDSS_LLR_0183`` has marked abandoned, which
+   starts no window.
 
    Table 3 defines ``tP2_Client`` and ``tP6_Client`` alike as the timeout for the client to
    wait, after the successful transmission of a request message indicated via

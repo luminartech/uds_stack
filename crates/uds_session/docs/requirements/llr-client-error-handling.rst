@@ -205,8 +205,8 @@ The repeat count
    rather than at the ``T_Data.conf`` because ``UDSS_LLR_0118`` produces the ``T_Data.req``
    from it in the same step, so a request that nothing rejects is the transmission Table 9
    counts; and because a rejection under ``UDSS_LLR_0150`` leaves state unchanged, so a
-   rejected repeat is never counted. The requirements of this document that may reject an
-   ``S_Data.req`` for a request are ``UDSS_LLR_0176``, ``UDSS_LLR_0180`` and
+   rejected repeat is never counted. The requirements of the client documents that may
+   reject an ``S_Data.req`` for a request are ``UDSS_LLR_0176``, ``UDSS_LLR_0180`` and
    ``UDSS_LLR_0181``, and ``UDSS_LLR_0133``, ``UDSS_LLR_0134``, ``UDSS_LLR_0151`` and
    ``UDSS_LLR_0188`` reject one on its addressing, classification, channel or role;
    ``UDSS_LLR_0180`` reads the count as it was before the input under ``UDSS_LLR_0178``'s
@@ -250,7 +250,7 @@ Responses still arriving
    :integrity_level: QM
    :target_level: D
    :origin: session-layer-standard
-   :source: ISO 14229-2:2021 9.7 Table 9
+   :source: ISO 14229-2:2021 9.2 Table 4; ISO 14229-2:2021 9.7 Table 9; ISO 14229-2:2021 10.2.4 Figure 17
    :tags: client; error-handling; responders; service-interface
 
    On an ``S_Data.req`` for a request on a functional channel while any entry in that

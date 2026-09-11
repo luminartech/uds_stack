@@ -891,7 +891,8 @@ and leaves the means of recognising it to the implementation.
    ``UDSS_LLR_0179`` keeps the keep-alive outside the repeat count, for the reason given
    there, and a request that was both would have to be counted and not counted at once.
    The client error handling document records as an assumption of use that the application
-   marks each repeat and marks no other request so.
+   marks each repeat other than of the keep-alive TesterPresent ``repeat``, marks a repeated
+   keep-alive TesterPresent ``keep-alive`` again, and marks no other request so.
 
    The kind shall be absent only where ``UDSS_LLR_0133`` permits it: on a ``T_Data.ind``
    reporting an unsuccessful reception of a message that was not addressed to a server. No
