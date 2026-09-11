@@ -82,15 +82,13 @@ The traits
           ) -> Result<(), Nrc> { /* ... */ }
       }
 
-   Rationale: the alternative considered was a single ``UdsServer`` trait with one default
-   method per service, each defaulting to ``Err(ServiceNotSupported)``. That is simpler and
-   needs no assembly step, but it forces every associated type onto one trait: a server
-   with no routines would still have to name a routine-identifier type, and a server
-   supporting one service would carry the vocabulary of all of them.
-
-   Per-service traits keep each service's vocabulary local, make each independently
-   testable, and make the surface discoverable — "implement ``ReadDataByIdentifier``" is a
-   thing a reader can look up, where "override method 9 of 16" is not.
+   Rationale: a server's vocabulary must stay local to the services it actually supports: a server
+   with no routines must not have to name a routine-identifier type, and a server
+   supporting one service must not carry the vocabulary of all of them. Per-service traits
+   deliver this directly, because each trait's associated types exist only where that
+   trait is implemented. They also keep each service independently testable and make the
+   surface discoverable — "implement ``ReadDataByIdentifier``" is a thing a reader can look
+   up, where "override method 9 of 16" is not.
 
 .. arch:: Assembly is explicit, through a declarative macro
    :id: UDSSVC_ARCH_0013
@@ -109,24 +107,18 @@ The traits
    A service absent from the list is not supported, and a request naming it settles with
    ``serviceNotSupported`` (0x11) by the path in ``UDSSVC_ARCH_0006``.
 
-   Rationale: an assembly step is *required* rather than merely tidy. Rust cannot ask
-   whether a type implements a trait, so a generic dispatcher over ``S: UdsServer`` has no
-   way to discover which per-service traits ``S`` implements. Either the application writes
-   the service-identifier match itself — which is precisely the clause 8.7 machinery this
-   crate exists to own — or the list is declared and the match is generated from it.
+   Rationale: Rust cannot ask whether a type implements a trait, so a generic dispatcher over
+   ``S: UdsServer`` has no way to discover which per-service traits ``S`` implements. An
+   assembly step resolves this directly: the list is declared once, and the dispatch match
+   is generated from it — rather than the application writing that service-identifier match
+   itself, which is precisely the clause 8.7 machinery this crate exists to own.
 
-   The macro is ``macro_rules!``, not a procedural macro. A declarative macro can match the
+   The macro is ``macro_rules!``, not a procedural macro: a declarative macro can match the
    service names as literal identifiers and expand one arm per service, which is all this
-   needs. The stack has no procedural macro today, and this is not a good reason to add the
-   first: a proc-macro brings a build-time dependency, a compile-time cost, and a second
-   language to debug in.
+   needs, at no build-time dependency and no compile-time cost.
 
-   The list also gives service-level visibility that the one-trait alternative cannot: the
-   set of supported services is written down in the application, so a reviewer can read it
-   without inferring it from which methods were overridden. This is a weaker benefit than
-   it first appears — the set of UDS services is fixed by the standard and does not grow
-   when an application changes, unlike the identifier sets below — and it is recorded here
-   as a secondary reason rather than the deciding one.
+   The list also makes the set of supported services readable directly in the application,
+   without inferring it from which methods were overridden.
 
 .. needflow::
    :filter: id in ["UDSSVC_ARCH_0012", "UDSSVC_ARCH_0013", "UDSSVC_ARCH_0014"]
@@ -224,10 +216,10 @@ whole point of them, and it is the thing a list of signatures does not show:
       // client: implements no service trait, and names no vocabulary type
       let records = client.read_data_by_identifier(&[MyDid::VehicleSpeed])?;
 
-   Rationale: ISO 14229-1 fixes identifier *ranges* and a small set of standardised values,
-   not the catalogue. Data and routine identifiers are vehicle-manufacturer or
-   system-supplier specific, so the library cannot own those enumerations without either
-   being wrong or being a ``u16``.
+   Rationale: ISO 14229-1 fixes identifier *ranges* and a small set of standardised values, not the
+   catalogue: data and routine identifiers are vehicle-manufacturer or system-supplier
+   specific, so the library cannot own those enumerations without either being wrong or
+   being a ``u16``.
 
    Making ``from_u16`` fallible is what wires the identifier set into clause 8.7. A
    requested identifier the application's type cannot represent is an unsupported data
@@ -243,16 +235,16 @@ whole point of them, and it is the thing a list of signatures does not show:
    ``split_record`` is specified by ``UDSSVC_ARCH_0026``, which is also where the reason it
    carries no length appears.
 
-   **Why the traits are free-standing rather than tied to a role.** An earlier draft
-   declared these types only as associated types of *server* traits, which cannot work:
-   client code implements no server trait and must still name them
-   (``UDSSVC_ARCH_0024``). A role-neutral trait, bound by whichever role is using it, is
-   what makes one vocabulary serve both.
+   **Why the traits are free-standing rather than tied to a role.** Client code implements
+   no server trait and must still be able to name an identifier type (``UDSSVC_ARCH_0024``).
+   A role-neutral trait, bound by whichever role is using it, is what makes one vocabulary
+   serve both — an identifier type declared as an associated type of a *server* trait alone
+   could not be named by the client.
 
-   A grouping trait holding all three kinds at once was considered and rejected. It would
-   force a server with no routines to name a routine identifier type, which is the exact
-   cost ``UDSSVC_ARCH_0012`` rejected for the single-trait design, and it buys only the
-   ergonomics that type inference already provides at the call site.
+   The traits are also kept separate rather than grouped into one covering all three kinds,
+   for the same reason ``UDSSVC_ARCH_0012`` keeps services separate: a grouping trait would
+   force a server with no routines to name a routine identifier type. Type inference at the
+   call site already gives a caller the ergonomics a grouping trait would otherwise buy.
 
    This is the completeness check the design is aiming for, and it is worth being precise
    about what it does and does not give. Adding a variant to the application's identifier

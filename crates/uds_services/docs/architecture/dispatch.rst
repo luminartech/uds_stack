@@ -141,15 +141,13 @@ Decode
    :origin: derived
    :tags: dispatch; uds_protocol
 
-   The first stage decodes the request bytes with ``uds_protocol``. A decode failure
-   settles the request with ``incorrectMessageLengthOrInvalidFormat`` (0x13). A request
-   that decodes to ``uds_protocol``'s unmodelled-service variant settles with
-   ``serviceNotSupported`` (0x11), not with 0x13.
-
-   Rationale: 0x13 is a clause 8.7 outcome, but message length and format are properties
-   of the encoding, which is ``uds_protocol``'s. So ``uds_protocol`` *detects* and this
-   crate *maps*: neither re-derives the other's work, and there is exactly one place that
-   knows the wire format.
+   Rationale: 0x13 is a clause 8.7 outcome, but message length and format are properties of the
+   encoding, which is ``uds_protocol``'s. So ``uds_protocol`` *detects* and this crate
+   *maps*: neither re-derives the other's work, and there is exactly one place that knows
+   the wire format. The first stage decodes the request bytes with ``uds_protocol``. A
+   decode failure settles the request with ``incorrectMessageLengthOrInvalidFormat``
+   (0x13). A request that decodes to ``uds_protocol``'s unmodelled-service variant settles
+   with ``serviceNotSupported`` (0x11), not with 0x13.
 
    The unmodelled-service carve-out is the part that is easy to get wrong. ``uds_protocol``
    represents a service identifier it does not model as a variant carrying the raw service

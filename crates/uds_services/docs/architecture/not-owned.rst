@@ -104,16 +104,13 @@ the gate silences a response the standard requires.
 One consequence constrains the **binding's** server driver rather than this crate, and is
 recorded here so it is not rediscovered later: dispatch must not block the loop that
 drains session actions, or the 0x78 that ``uds_session`` decided to send cannot be
-transmitted while the handler it covers is still running.
+transmitted while the handler it covers is still running. ``UDSSVC_ARCH_0016``'s
+asynchronous handler seam is what keeps a slow handler from having to run somewhere the
+driver can continue past: the handler yields at its await points, and the driver simply
+continues.
 
-A second constraint used to sit beside it — *because the handler interface is synchronous,
-a slow handler has to run somewhere the driver can continue past* — and it is gone.
-``UDSSVC_ARCH_0016`` makes the handler seam asynchronous, so a slow handler yields and the
-driver simply continues. That was previously machinery every integrator had to build for
-themselves, and it existed only because the seam could not express yielding.
-
-The remaining constraint is load-bearing for conformance and is not satisfiable by
-anything this crate does.
+This constraint is load-bearing for conformance and is not satisfiable by anything this
+crate does.
 
 What the layer below declines
 -----------------------------

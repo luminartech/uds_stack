@@ -118,15 +118,13 @@ The elements
    :origin: derived
    :tags: client; addressing
 
-   A functionally addressed request is typed as a sequence of zero or more responses, each
-   carrying the source address of the server that produced it. It is not typed as a single
-   result, and the sequence is *lending*: a response borrows the receive buffer and is
-   valid only until the next is taken.
-
-   Rationale: a functional request reaches every server on the bus, so zero or more may
-   answer — and by ``UDSSVC_ARCH_0009``, the servers that do not support it answer with
-   silence. There is no single response to return, and typing it as one would force the
-   API to lie about the common case.
+   Rationale: a functional request reaches every server on the bus, so zero or more may answer — and
+   by ``UDSSVC_ARCH_0009``, the servers that do not support it answer with silence. There
+   is no single response to return, so typing one would force the API to lie about the
+   common case. A functionally addressed request is instead typed as a sequence of zero or
+   more responses, each carrying the source address of the server that produced it, and the
+   sequence is *lending*: a response borrows the receive buffer and is valid only until the
+   next is taken.
 
    The source address is what makes the sequence usable. ``uds_on_ip``'s indication
    records that for a functionally addressed request each responding server sets its own
@@ -171,16 +169,12 @@ The elements
    :origin: derived
    :tags: client; identifiers
 
-   The identifier types an application defines are the same types used to implement its
-   server handlers and to issue its client requests. There is not a server-side identifier
-   type and a client-side one.
-
-   Rationale: this is the strongest argument for the application owning its identifier
-   enumerations, and it was missing from ``UDSSVC_ARCH_0014``, which justified them on
-   completeness-checking alone. A vehicle programme writes one identifier catalogue and
-   builds both an ECU and a tester against it. Two types for one catalogue means two
-   places to add an identifier and no way for the compiler to notice when only one of them
-   was updated.
+   Rationale: a vehicle programme writes one identifier catalogue and builds both an ECU and a tester
+   against it. Two types for one catalogue means two places to add an identifier and no way
+   for the compiler to notice when only one of them was updated. The identifier types an
+   application defines are therefore the same types used to implement its server handlers
+   and to issue its client requests: there is not a server-side identifier type and a
+   client-side one.
 
    The consequence for the API is a real constraint rather than a nicety: an identifier
    type cannot be an associated type of a *server* trait alone, because client code that
@@ -211,39 +205,29 @@ Two layers
       // layer: one call, over any transport
       let value = client.read(&[MyDid::VehicleSpeed]).await?;
 
-   Rationale: everything below this crate is asynchronous. ``simple_doip``'s ``client`` and
-   ``server`` features both require its ``codec`` feature, which requires ``std`` and
-   tokio; ``uds_on_ip``'s ``client`` and ``server`` features each imply ``std`` and tokio
-   in turn. Its ``no_std`` core is the seams — addressing, session, transport mapping,
-   profile, handler — not a driver. A typed client that did not await would therefore hand
-   the application a buffer, make it call the binding, and hand back the bytes, which is
-   precisely what ``UDSSVC_ARCH_0020`` says a client application never does.
+   Rationale: everything below this crate is asynchronous. ``simple_doip``'s ``client`` and ``server``
+   features both require its ``codec`` feature, which requires ``std`` and tokio;
+   ``uds_on_ip``'s ``client`` and ``server`` features each imply ``std`` and tokio in turn.
+   A typed client that did not await would therefore hand the application a buffer, make it
+   call the binding, and hand back the bytes, which is precisely what ``UDSSVC_ARCH_0020``
+   says a client application never does.
 
    **Why the server needs no equivalent and the client does.** A server is *called*: the
    binding's asynchronous driver invokes a synchronous handler, and the inversion costs
    nothing. A client *initiates*, so something must await, and if it is not this crate it
    is the application. The asymmetry is in the direction of control, not in the design.
 
-   **Why the lower layer exists at all**, rather than an asynchronous client alone. Two
-   reasons survive, and it is worth being clear that a third does not.
-
-   It is what a test binds to: no transport, no executor, no timing. Every clause 8.7 rule
-   the client implements — interpreting a negative response, classifying a suppressed one,
+   **Why the lower layer exists at all**, rather than an asynchronous client alone. It is
+   what a test binds to: no transport, no executor, no timing. Every clause 8.7 rule the
+   client implements — interpreting a negative response, classifying a suppressed one,
    attributing functional replies — is then checkable as a pure function of bytes in and a
    typed value out. And it keeps the crate's core uniformly sans-io across both roles, so
    the property that makes the server testable holds for the client too, rather than
    holding for half the crate.
 
-   What does *not* justify it is runtime-avoidance. ``UDSSVC_ARCH_0030`` assumes an
-   executor everywhere, including on embedded targets, so "the layer a driver with no
-   runtime binds to" describes no real caller. An earlier draft of this element leaned on
-   that argument; it is recorded as withdrawn rather than quietly dropped, because the
-   two-layer split survives without it and a reader is entitled to know which reasons are
-   load-bearing.
-
-   Related: ``async`` implies neither a runtime nor ``std``. Asynchronous functions in
-   traits are stable and the executor is the caller's, so the upper layer costs this crate
-   no dependency — see ``UDSSVC_ARCH_0029``.
+   ``async`` implies neither a runtime nor ``std``. Asynchronous functions in traits are
+   stable and the executor is the caller's, so the upper layer costs this crate no
+   dependency — see ``UDSSVC_ARCH_0029``.
 
 .. uml::
    :align: center

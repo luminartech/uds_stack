@@ -99,10 +99,10 @@ Request context
         - Suppression, ``UDSSVC_ARCH_0009`` rule 3
         - ``uds_session``, which decides to emit 0x78
 
-   Rationale: taking these as parameters rather than through a dependency is what makes the
-   crate usable under any binding, and it avoids depending on ``uds_session``, which is
-   private. The pipeline becomes a function of the request and this context, so every
-   clause 8.7 rule is testable without a network, a clock or a session layer.
+   Rationale: taking these as parameters rather than through a dependency is what makes the crate
+   usable under any binding, and avoids depending on ``uds_session``, which is private. The
+   pipeline becomes a function of the request and this context, so every clause 8.7 rule is
+   testable without a network, a clock or a session layer.
 
    **Session and security are raw sub-function values, passed through uninterpreted.**
    Naming the sessions here would mean this crate deciding what
@@ -151,14 +151,12 @@ Outcome
    :origin: derived
    :tags: seam; outcome; async
 
-   Dispatch reports whether a response was written and should be transmitted, or whether
-   nothing is to be sent. A negative response is the first of those, not an error. The
-   error type is the sink's own.
-
-   Rationale: a negative response is a normal, specified outcome of clause 8.7 expressed in
-   the written bytes — a server answering 0x11 has succeeded at its job. Typing it as an
-   error would put the most common non-trivial path through the crate into the ``Err``
-   branch, and callers would learn to ignore errors.
+   Rationale: a negative response is a normal, specified outcome of clause 8.7 expressed in the
+   written bytes — a server answering 0x11 has succeeded at its job. Typing it as an error
+   would put the most common non-trivial path through the crate into the ``Err`` branch,
+   and callers would learn to ignore errors. Dispatch instead reports whether a response
+   was written and should be transmitted, or whether nothing is to be sent. A negative
+   response is the first of those, not an error. The error type is the sink's own.
 
    Silence must be a distinguishable outcome rather than "wrote nothing", because the
    caller has to tell "clause 8.7 requires no response" apart from "the handler produced an
@@ -192,13 +190,12 @@ Response sink
    :origin: derived
    :tags: seam; no_std
 
-   A handler writes its response into an ``embedded_io::Write`` sink supplied by the
-   caller, rather than returning an owned response. No public type carries a ``Vec`` or a
-   ``String``, and the crate builds under ``no_std`` without ``alloc``.
-
-   Rationale: allocation-freedom cannot be retrofitted, because the signatures that make an
-   API alloc-free are the ones callers depend on. Designing it in from the start costs
-   little; adding it later is a breaking change to every handler in every application.
+   Rationale: allocation-freedom cannot be retrofitted, because the signatures that make an API
+   alloc-free are the ones callers depend on: adding it later is a breaking change to every
+   handler in every application. A handler therefore writes its response into an
+   ``embedded_io::Write`` sink supplied by the caller, rather than returning an owned
+   response. No public type carries a ``Vec`` or a ``String``, and the crate builds under
+   ``no_std`` without ``alloc``.
 
    The sink is a **generic parameter, not ``dyn``**. That costs object safety — there is no
    ``Box<dyn UdsServer>``, and a driver is generic over the handler type instead. For a
@@ -231,10 +228,10 @@ Binding adapter
    ``uds_on_ip``'s request-handler trait for any assembled typed server, converting that
    crate's context into the context of ``UDSSVC_ARCH_0015``.
 
-   Rationale: this keeps the dependency edge pointing outward from this crate
-   (``UDSSVC_ARCH_0002``) and keeps the binding ignorant of what a service is. The adapter
-   is small by construction: if it ever needs to make a decision, that decision belongs on
-   one side of the seam or the other, not in the conversion.
+   Rationale: this keeps the dependency edge pointing outward from this crate (``UDSSVC_ARCH_0002``)
+   and keeps the binding ignorant of what a service is. The adapter is small by
+   construction: if it ever needs to make a decision, that decision belongs on one side of
+   the seam or the other, not in the conversion.
 
    The conversion is where a mismatch between this crate's context and a binding's becomes
    visible, which is its second purpose. Three mismatches stand today, and all three are
@@ -280,8 +277,8 @@ Client transport seam
               -> Result<Replies<'_, Self>, Self::Error>;
       }
 
-   Rationale: this is the exact inverse of ``UDSSVC_ARCH_0018``, and the asymmetry is
-   deliberate rather than an inconsistency. The **byte seam is declared by the binding**,
+   Rationale: this is the exact inverse of ``UDSSVC_ARCH_0018``, and the asymmetry is deliberate
+   rather than an inconsistency. The **byte seam is declared by the binding**,
    because the binding calls into a server and the shape of that call is transport-shaped.
    The **transport seam is declared here**, because this crate calls out to a transport and
    the shape of *that* call is service-shaped: it must distinguish a physically addressed

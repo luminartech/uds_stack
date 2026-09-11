@@ -12,14 +12,13 @@ together is the only way to find out whether the set is complete.
    :origin: derived
    :tags: messages; roles
 
-   Client and server are built over the same ``uds_protocol`` request and response types.
-   This crate defines no message type of its own, for either role: it constructs, encodes,
-   decodes and inspects ``uds_protocol``'s types and nothing else.
-
-   Rationale: two definition sets for one protocol is two places for the wire format to
-   live, and they diverge silently — a tester built against one and an ECU built against
-   the other disagree only on the bench. One set means the client's encoder and the
-   server's decoder are inverses by construction rather than by test.
+   Rationale: two definition sets for one protocol is two places for the wire format to live, and
+   they diverge silently — a tester built against one and an ECU built against the other
+   disagree only on the bench. Client and server therefore are built over the same
+   ``uds_protocol`` request and response types: this crate defines no message type of its
+   own, for either role, and only constructs, encodes, decodes and inspects
+   ``uds_protocol``'s types. One set means the client's encoder and the server's decoder
+   are inverses by construction rather than by test.
 
    Four paths are exercised, and each message definition needs all four:
 
@@ -88,17 +87,16 @@ together is the only way to find out whether the set is complete.
    :origin: derived
    :tags: messages; roles; no_std
 
+   Rationale: a vehicle programme implements diagnostics on the ECU and interacts with that ECU from a
+   host tool, and the two agreeing is the whole requirement. If the shared types cannot
+   compile into both environments, the sharing is nominal and the host tool ends up with
+   its own transcription of the wire format — the exact divergence ``UDSSVC_ARCH_0025``
+   exists to prevent, reached by a different route.
+
    The two roles are not merely two APIs; they are two build environments. The server role
    is compiled into embedded firmware for a bare-metal target, without ``std`` and without
    ``alloc``. The client role is compiled into host tooling, where both are available. One
-   set of message definitions and one identifier vocabulary must serve both.
-
-   Rationale: this is the point of sharing the definitions at all. A vehicle programme
-   implements diagnostics on the ECU and interacts with that ECU from a host tool, and the
-   two agreeing is the whole requirement. If the shared types cannot be compiled into both,
-   the sharing is nominal and the host tool ends up with its own transcription of the wire
-   format — which is the divergence ``UDSSVC_ARCH_0025`` exists to prevent, arrived at by a
-   different route.
+   set of message definitions and one identifier vocabulary serves both.
 
    Three consequences, each a constraint on something outside this crate:
 
@@ -117,13 +115,11 @@ together is the only way to find out whether the set is complete.
      evidenced by a ``*-none`` target — see ``UDSSVC_ARCH_0017``. With two roles in two
      environments, the matrix is the artefact, not an afterthought.
 
-   What this element does **not** forbid is asynchrony. An earlier draft read it as ruling
-   out an asynchronous client, on the grounds that one would drag a runtime into a firmware
-   build. That conflates two things: ``async`` is a language feature and needs no runtime
-   in a library, while a *tokio dependency* is what would break the embedded build.
-   ``UDSSVC_ARCH_0030`` assumes an executor on both targets and depends on neither, which
-   is what lets the seams of ``UDSSVC_ARCH_0016`` and ``UDSSVC_ARCH_0029`` be asynchronous
-   at no cost to this element.
+   What this element does **not** forbid is asynchrony. ``async`` is a language feature and
+   needs no runtime in a library; a *tokio dependency* is what would break the embedded
+   build, and this crate carries none. ``UDSSVC_ARCH_0030`` assumes an executor on both
+   targets and depends on neither, which is what lets the seams of ``UDSSVC_ARCH_0016`` and
+   ``UDSSVC_ARCH_0029`` be asynchronous at no cost to this element.
 
 .. arch:: The application supplies each identifier's record structure
    :id: UDSSVC_ARCH_0026

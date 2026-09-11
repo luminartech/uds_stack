@@ -75,26 +75,18 @@ Scope
    :origin: derived
    :tags: scope
 
-   The standard behaviour this crate implements is the server response implementation
-   rules of ISO 14229-1:2020 clause 8.7: the validation order, the negative response code
-   selection, and the decision between responding and staying silent. It implements no
-   message encoding, no timers, no session state, and no transport.
+   Rationale: the stack is organised one crate per ISO document, so "does this belong here?" must be
+   answerable by checking which document specifies the behaviour. This crate answers it by
+   scope: it implements the server response implementation rules of ISO 14229-1:2020 clause
+   8.7 — the validation order, the negative response code selection, and the decision
+   between responding and staying silent — and nothing else. No message encoding, no
+   timers, no session state, no transport.
 
-   Rationale: the stack is organised one crate per ISO document, so that "does this belong
-   here?" is answered by asking which document specifies the behaviour rather than by
-   taste. Clause 8.7 is a natural unit within ISO 14229-1 because it is the only part of
-   that document describing *policy over* messages rather than the messages themselves —
-   which is exactly the part ``uds_protocol`` deliberately does not implement.
+   **This bounds what the crate implements, not what it is.** ``UDSSVC_ARCH_0019`` states
+   the crate's architectural role separately, because a scope statement that also carried
+   that claim would stop being checkable.
 
-   **This element bounds what the crate implements, not what it is.** The crate is also
-   the stack's integration surface, which ``UDSSVC_ARCH_0019`` states separately and
-   which is not a clause 8.7 concern. Keeping the two claims apart is deliberate: a scope
-   statement that quietly grew to cover the client surface would stop being checkable, and
-   "does this belong here?" would go back to being a matter of taste.
-
-   The boundary is worth stating as an architecture element because it is the easiest
-   thing in the crate to erode. Every concern listed in :doc:`not-owned` has a plausible
-   argument for living here, and each was argued and settled against this element.
+   Every concern in :doc:`not-owned` is argued against this boundary.
 
 .. arch:: The crate is the stack's integration surface, in both directions
    :id: UDSSVC_ARCH_0019
@@ -103,16 +95,12 @@ Scope
    :origin: derived
    :tags: scope; roles
 
-   Beyond implementing clause 8.7, this crate is where an application meets the diagnostic
-   stack. It defines the interface by which a server integrates a stack — the handler
-   traits, the assembly, and the dispatch of :doc:`service-traits` — and the set of
+   Rationale: left unwritten, this is the property most likely to be designed against by
+   accident. Beyond implementing clause 8.7, this crate is where an application meets the
+   diagnostic stack. It defines the interface by which a server integrates a stack — the
+   handler traits, the assembly, and the dispatch of :doc:`service-traits` — and the set of
    requests available to a client application (:doc:`client-surface`). No other crate in
    the stack offers either.
-
-   Rationale: this is an architectural fact about the crate's position, not a behaviour
-   any clause requires, which is why it is stated separately from ``UDSSVC_ARCH_0001``
-   rather than folded into it. It is nonetheless the property that most constrains the
-   design, and leaving it unwritten is how it gets designed against by accident.
 
    Three consequences follow, and each is visible elsewhere in this document:
 
@@ -141,15 +129,13 @@ Dependencies
    :origin: derived
    :tags: scope; dependencies
 
-   This crate depends on ``uds_protocol`` for the request and response message types it
-   dispatches over, and on ``embedded-io`` for the response sink. It shall not depend on
-   ``uds_session``, ``uds_on_ip``, ``uds_on_can`` or ``simple_doip`` other than through an
-   optional, additive feature.
-
-   Rationale: session state and security level reach this crate as *parameters*, not
-   through a dependency — see ``UDSSVC_ARCH_0015``. That is what keeps the crate usable
-   under any binding, and it avoids a hard dependency on ``uds_session``, which is
-   currently private and so would make this crate unpublishable.
+   Rationale: this crate must stay usable under any binding, and must not carry a hard dependency on
+   ``uds_session`` — which is currently private and would make this crate unpublishable.
+   It meets both by taking session state and security level as *parameters* rather than
+   through a dependency (``UDSSVC_ARCH_0015``): this crate depends on ``uds_protocol`` for
+   the request and response message types it dispatches over, and on ``embedded-io`` for
+   the response sink, and shall not depend on ``uds_session``, ``uds_on_ip``,
+   ``uds_on_can`` or ``simple_doip`` other than through an optional, additive feature.
 
    The dependency edge on a binding points one way and outward: ``uds_services →
    uds_on_ip``, optional. The binding stays ignorant of what a service is. This is the
@@ -163,21 +149,18 @@ Dependencies
    :origin: derived
    :tags: scope; transport
 
-   Each transport binding is selected by a Cargo feature that pulls in that binding and
-   implements its byte seam. Enabling none leaves a typed server that dispatches over
-   ``uds_protocol`` messages; enabling one adds the adapter described by
-   ``UDSSVC_ARCH_0018``.
+   Rationale: a ``ReadDataByIdentifier`` handler that knows how to fetch an identifier has nothing to
+   say about IP, so the ergonomic layer — the part application authors actually touch —
+   must be free to follow a server to CAN unchanged. Each transport binding is therefore
+   selected by a Cargo feature that pulls in that binding and implements its byte seam.
+   Enabling none leaves a typed server that dispatches over ``uds_protocol`` messages;
+   enabling one adds the adapter described by ``UDSSVC_ARCH_0018``.
 
    .. code-block:: toml
 
       [features]
       doip  = ["dep:uds_on_ip"]
       docan = ["dep:uds_on_can"]
-
-   Rationale: a ``ReadDataByIdentifier`` handler that knows how to fetch an identifier has
-   nothing to say about IP. Folding a transport into this crate would make the ergonomic
-   layer — the part application authors actually touch — the one piece of the stack that
-   cannot follow to CAN.
 
    **What is not portable, stated so nobody is surprised.** The diagnostic *conversation*
    moves between transports; *connection setup* does not. DoIP has TCP connections,
@@ -249,23 +232,19 @@ reveal.
    :origin: derived
    :tags: scope; dependencies; async
 
+   Rationale: the layers below are already asynchronous and not optionally so: ``simple_doip``'s
+   ``client`` and ``server`` features each require its ``codec`` feature, which requires
+   ``std`` and tokio; ``uds_on_ip``'s ``client`` and ``server`` each imply ``std`` and
+   tokio in turn. A configuration with no executor cannot reach a transport, so this crate
+   is not designed around one.
+
    Every deployment of this stack is assumed to have an async executor available — tokio
-   on a host, ``embassy`` or equivalent on an embedded target. This crate therefore
-   exposes asynchronous interfaces where the direction of control requires them, and
-   depends on no runtime crate.
-
-   Rationale: the layers below are already asynchronous and are not optionally so.
-   ``simple_doip``'s ``client`` and ``server`` features each require its ``codec`` feature,
-   which requires ``std`` and tokio; ``uds_on_ip``'s ``client`` and ``server`` each imply
-   ``std`` and tokio in turn. Designing this crate around the possibility that no executor
-   exists would contort its interfaces to serve a configuration that cannot reach a
-   transport anyway.
-
-   The distinction that makes this safe is that ``async`` is not a runtime.
-   Asynchronous functions in traits are stable, and the executor is the caller's. This
-   crate can therefore be asynchronous at its seams and still carry no ``std`` requirement
-   and no executor dependency of its own — which is what keeps ``UDSSVC_ARCH_0027``'s
-   embedded build possible.
+   on a host, ``embassy`` or equivalent on an embedded target. This crate exposes
+   asynchronous interfaces where the direction of control requires them, and depends on no
+   runtime crate: ``async`` is not a runtime, asynchronous functions in traits are stable,
+   and the executor is the caller's. This crate can therefore be asynchronous at its seams
+   and still carry no ``std`` requirement and no executor dependency of its own — which is
+   what keeps ``UDSSVC_ARCH_0027``'s embedded build possible.
 
    What this assumption *buys* is recorded where it is spent:
    ``UDSSVC_ARCH_0016`` on the server side, where an asynchronous handler removes the need
