@@ -243,7 +243,9 @@ Service primitives
    rejected as ``UDSS_LLR_0150`` rejects an invalid request.
 
    A ``T_DataSOM.ind`` shall open a start-of-message on its channel for the **responder**
-   identified by its ``S_AI[SA]`` and, where present, its ``S_AI[AE]``. A ``T_Data.ind``
+   identified by its ``S_AI[SA]`` and, where ``S_Mtype`` carries one, its ``S_AI[AE]``; two
+   such identities are equal only where both carry an ``S_AI[AE]`` and the addresses and
+   extensions are equal, or neither carries one and the addresses are equal. A ``T_Data.ind``
    shall **complete** the open start-of-message on the same channel from the same responder
    where one exists, closing it, and shall otherwise report a **single-frame** message; on a
    physical channel the responder is the channel's peer, so any ``T_Data.ind`` on that channel

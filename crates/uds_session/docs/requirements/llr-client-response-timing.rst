@@ -194,10 +194,14 @@ The response window
    caller supplies its storage, identified by the addressing the caller states for that
    storage, until the caller withdraws it. Supplying storage whose addressing equals that of
    an existing channel, and an ``S_Data.req`` whose addressing names no existing channel,
-   shall be rejected as ``UDSS_LLR_0150`` defines. Withdrawal shall be permitted at any time
-   and shall discard, without output, every fact this set holds for the channel, an
-   association outstanding on it included; a ``T_Data.conf`` arriving for that association
-   thereafter matches none and is rejected under ``UDSS_LLR_0133``. Every fact a document of
+   shall be rejected as ``UDSS_LLR_0150`` defines, as shall a withdrawal identifying a
+   channel the client does not have. Withdrawal shall be permitted at any time and shall
+   discard, without output, every fact this set holds for the channel, an association
+   outstanding on it included; a ``T_Data.conf`` arriving for that association thereafter
+   matches none while no channel of that addressing exists and is rejected under
+   ``UDSS_LLR_0133``. A caller that supplies the same addressing again before that
+   confirmation arrives has it matched to the new channel's association, ``UDSS_LLR_0133``
+   matching by addressing alone; not doing so is an assumption of use. Every fact a document of
    this set keeps per channel lives in the channel's storage. The same storage shall hold
    whether a request is in progress on the channel and, while one is, the addressing and
    classification of that request and, where that classification states an exact expected
@@ -266,7 +270,10 @@ The response window
    :tags: client; p_client
 
    Each channel shall have a **default reload parameter** and an **enhanced reload
-   parameter**, supplied as protocol parameters under ``UDSS_LLR_0138``.
+   parameter**, supplied as protocol parameters under ``UDSS_LLR_0138``. A setting of a
+   per-channel parameter shall identify its channel, and one identifying a channel the client
+   does not have shall be rejected as ``UDSS_LLR_0150`` defines; this holds for every
+   per-channel parameter the client documents define.
 
    Where the transport supports ``T_DataSOM.ind`` these are ``tP2_Client_Max`` and
    ``tP2*_Client_Max``; where it does not, they are ``tP6_Client_Max`` and
@@ -551,7 +558,8 @@ Responders on a functional channel
    Each functional channel shall have a **responder table** in the channel's storage under
    ``UDSS_LLR_0151``, whose **capacity** is the number of entries that storage holds. An entry shall be
    keyed by the ``S_AI[SA]`` and, where ``S_Mtype`` carries one, the ``S_AI[AE]`` of a
-   responder's indications, and shall record for that responder whether a start-of-message
+   responder's indications, two keys being equal as ``UDSS_LLR_0140`` defines responder
+   identity, and shall record for that responder whether a start-of-message
    is open under ``UDSS_LLR_0140`` and whether a response-pending message is outstanding
    under ``UDSS_LLR_0158``.
 
@@ -797,11 +805,13 @@ Enhanced response timing
    layer reports the expiry and the application acts, as ``UDSS_LLR_0112`` and
    ``UDSS_LLR_0148`` do for the server's two timers.
 
-   The condition on the timer running is load-bearing. ``UDSS_LLR_0154`` stops the timer at
-   the start-of-message of a response-pending message while the request is still in progress,
-   as ISO 14229-2:2021 9.4 Figure 8 key c requires, so a channel can hold a stopped timer and
-   an unfinished request at once. Without the condition the elapsed time of that stopped timer
-   would keep growing and this requirement would report an overrun that did not occur.
+   The condition on the timer running restates ``UDSS_LLR_0114``, under which only a running
+   timer expires; it is repeated here because the case is easy to miss. ``UDSS_LLR_0154``
+   stops the timer at the start-of-message of a response-pending message while the request
+   is still in progress, as ISO 14229-2:2021 9.4 Figure 8 key c requires, so a channel can
+   hold a stopped timer and an unfinished request at once, and that stopped timer does not
+   expire while the request runs on. Requirements that omit the condition, ``UDSS_LLR_0148``
+   among them, rely on the same rule.
 
    The timer is stopped for the reason ``UDSS_LLR_0148`` gives, and elapsed time is computed
    as ``UDSS_LLR_0114`` requires. Expiry ends the request in progress, so on a functional
