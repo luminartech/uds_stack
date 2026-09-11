@@ -50,6 +50,15 @@ caller rather than retrieved on the application's behalf: the rejection report o
 ``UDSS_LLR_0150``, which is neither an ``S_Data.conf`` under ``UDSS_LLR_0132`` nor an
 output in ``UDSS_LLR_0116``'s sense.
 
+One assumption of use falls on the order in which the caller supplies inputs, and is
+recorded in the qualification repository: a ``T_Data.conf`` is supplied before any
+``T_DataSOM.ind`` or ``T_Data.ind`` the transport received after the confirmed transmission
+completed. ``UDSS_LLR_0189`` at the server and ``UDSS_LLR_0153`` at the client both read a
+confirmation as preceding the peer's reply to it; a caller that delivered the reply first
+would have the server end the wrong request and the client open a window for a response it
+had already delivered. A transport reports the two in that order, and a caller draining one
+queue before the other is what the assumption forbids.
+
 .. llr:: The session layer performs no I/O
    :id: UDSS_LLR_0113
    :status: draft
@@ -938,7 +947,11 @@ and leaves the means of recognising it to the implementation.
    carried the session selection or the solicitation the timer requirements read. The
    storage is the caller's because the number of peers an instance addresses is a property
    of the deployment and the crate does not allocate; how the client's storage is organised
-   per channel is ``UDSS_LLR_0151``'s.
+   per channel is ``UDSS_LLR_0151``'s. An association whose ``T_Data.conf`` never arrives
+   stays outstanding: the client's exit is the withdrawal of the channel's storage under
+   ``UDSS_LLR_0151``, and the server has none, resting instead on the assumption of use that
+   the transport reports a ``T_Data.conf`` for every ``T_Data.req``, which
+   :doc:`open-questions` records beside the start-of-message assumption.
 
    The classification is carried on ``T_Data.ind`` rather than on ``S_Data.ind`` because a
    client must recognise a response-pending response at reception, before the application
@@ -1074,8 +1087,8 @@ and leaves the means of recognising it to the implementation.
    message is ``solicited``, transmitted because of a request received from a client, or
    ``unsolicited``, transmitted for any other reason.
 
-   A session selection shall state the identifier of the session being selected and
-   whether that session is the default session. It shall be present only where the message
+   A session selection shall state whether the session being selected is the default
+   session. It shall be present only where the message
    effects the transition: a request or a positive response that selects a session carries
    one, and a negative response to a session-change request does not. Which service
    carries the message is immaterial: a DiagnosticSessionControl request or positive
@@ -1091,12 +1104,13 @@ and leaves the means of recognising it to the implementation.
    responses, because ``UDSS_LLR_0103`` and ``UDSS_LLR_0141`` condition on a
    session-selecting request for which no response is transmitted.
 
-   The selection states whether the session is the default one rather than leaving the
-   session layer to decide from the identifier. ``UDSS_LLR_0102``, ``UDSS_LLR_0103``,
-   ``UDSS_LLR_0141`` and ``UDSS_LLR_0112`` all condition on whether a session is the
-   default, and the session layer has no other way to tell: recognising the identifier
-   would mean knowing the ISO 14229-1 encoding, which ``UDSS_LLR_0135`` forbids. The
-   identifier itself stays opaque and is carried for the application's benefit.
+   The selection states whether the session is the default one rather than naming the
+   session. ``UDSS_LLR_0102``, ``UDSS_LLR_0103``, ``UDSS_LLR_0141`` and ``UDSS_LLR_0112``
+   all condition on whether a session is the default, and the session layer has no other
+   way to tell: recognising an identifier would mean knowing the ISO 14229-1 encoding, which
+   ``UDSS_LLR_0135`` forbids. The identifier is not carried at all: no requirement reads it
+   and no output would report it, so a field for it would be untestable. An earlier form of
+   this requirement carried it opaquely.
 
    Solicitation is separate from kind because a periodically transmitted positive response
    is at once a final response and unsolicited. Were those alternatives of one

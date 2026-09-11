@@ -70,10 +70,13 @@ response-pending message transmitted for one request therefore delays nothing on
 request has ended, and in particular cannot reject the first response-pending message of
 the next request, provided the confirmation does not answer the next request under
 ``UDSS_LLR_0189``'s addressing match. It does answer it where the next request comes from
-the same client while the earlier one's response-pending message is still unconfirmed, which
-only a completion report supplied while a response was on the wire can bring about; the
-report promises that no response will be transmitted, so that sequence is a caller
-inconsistency the set does not define behaviour for beyond what the match yields.
+the same client while the earlier one's response-pending message is still unconfirmed. That
+arises where a completion report was supplied while a response was on the wire, a caller
+inconsistency since the report promises that no response will be transmitted, and where the
+same client sends the OBD-range request of 8.7.6 during the earlier request's enhanced
+window, which the standard permits. In the second case the confirmation sets the OBD
+request's anchor and opens its enhanced window under ``UDSS_LLR_0147``; ``UDSS_LLR_0189``
+declares that limitation of matching by addressing.
 
 What this document does not cover
 ---------------------------------
@@ -96,7 +99,10 @@ A caller's exit from a request in progress that never ends. The client has the c
 of its error handling document; the server has nothing, deliberately: the assumption of use
 that the caller supplies a completion report for every request it does not answer is what
 ends such a request, and a server whose application neither answers nor reports has broken
-that assumption, not exhausted the standard.
+that assumption, not exhausted the standard. An association of ``UDSS_LLR_0133`` whose
+``T_Data.conf`` never arrives likewise has no server exit; the assumption of use that the
+transport reports a ``T_Data.conf`` for every ``T_Data.req``, recorded on
+:doc:`open-questions` beside the start-of-message assumption, is what bounds it.
 
 The response window
 -------------------
@@ -204,15 +210,26 @@ The response window
    ``UDSS_LLR_0142`` being scoped to that client, and the server stays in the session
    meanwhile, which is the outcome ISO 14229-2:2021 9.5's last sentence intends for another
    client's traffic. The
-   aborting request comes from another client, 8.7.6's OBD tool, while the aborted one may
-   have a response-pending or final response on the wire, so what ends the request in
-   progress, sets its anchor or completes it is matched to it by addressing: a response
-   answers the request whose source it targets, with the same address extension, the
-   reading ``UDSS_LLR_0185`` records, and a completion report carries the request's own
-   addressing under ``UDSS_LLR_0136``. Without the match the aborted request's confirmation
-   would end the new request or widen its window. Two requests from one client, whose
-   answers cannot be told apart this way, are outside the assumption of use of one request
-   at a time. The anchor is the confirmation because ``UDSS_LLR_0149`` measures the spacing
+   aborted request may have a response-pending or final response on the wire when the
+   aborting request arrives, so what ends the request in progress, sets its anchor or
+   completes it is matched to it by addressing: a response answers the request whose source
+   it targets, with the same address extension, the reading ``UDSS_LLR_0185`` records, and a
+   completion report carries the request's own addressing under ``UDSS_LLR_0136``. Without
+   the match the aborted request's confirmation would end the new request or widen its
+   window. 8.7.6 does not say which client sends the OBD-range request. Where it is another
+   client the match is exact. Where it is the same client and a response of the aborted
+   request is unconfirmed, that confirmation is read as the new request's, setting its anchor
+   here and opening its enhanced window under ``UDSS_LLR_0147``; that is a declared
+   limitation of matching by addressing, accepted because the alternative, a mark on every
+   association outstanding at a replacement, costs state and a rule in ``UDSS_LLR_0133`` for
+   a case in which the client has itself abandoned the earlier request. Two ordinary
+   requests from one client are outside the assumption of use of one request at a time. The
+   match also presumes the caller supplies a ``T_Data.conf`` before any ``T_Data.ind`` the
+   transport received after that transmission completed, an assumption of use the service
+   interface document records: ISO 14229-2:2021 10.3 lets the client send its next request
+   on complete reception of the response, before the server's confirmation need have
+   arrived, and a caller that delivered the indication first would have the earlier
+   request's confirmation end the later request. The anchor is the confirmation because ``UDSS_LLR_0149`` measures the spacing
    from there; it lives only while a request is in progress because the footnote it serves
    spaces the response-pending messages of one service. A failed response-pending transmission sets
    no anchor: 9.2 Table 4 footnote b counts transmissions, and one that failed did not reach
@@ -363,8 +380,8 @@ Enhanced response timing
    would restart the timer for a request that is over and ``UDSS_LLR_0148`` would report an
    overrun that never happened. The guard is exact for a next request from another client,
    whose confirmations ``UDSS_LLR_0189`` tells apart by addressing; for a next request from
-   the same client it holds only because the completion report promised no response, as the
-   preamble records. The other way a request could end before the confirmation,
+   the same client it does not hold, and the confirmation opens the enhanced window for the
+   new request, the limitation ``UDSS_LLR_0189`` declares. The other way a request could end before the confirmation,
    a final response passed to the transport first, cannot arise: ``UDSS_LLR_0133`` rejects an
    ``S_Data.req`` to an addressing with a transmission outstanding, and the final response
    and the pending message of one request share their addressing. The preamble states that a

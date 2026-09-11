@@ -109,7 +109,9 @@ The requirements are faithful to that division of responsibility, so this is not
 the transcription.
 
 What is unrecorded is the obligation the division places on the caller: that a transport which
-indicates the start of a message eventually reports either its completion or its failure.
+indicates the start of a message eventually reports either its completion or its failure, and
+that it reports a ``T_Data.conf`` for every ``T_Data.req``, without which an association of
+``UDSS_LLR_0133`` stays outstanding with no server exit, as that requirement records.
 That is an assumption of use and belongs in the qualification repository, alongside the
 assumption of one request outstanding per logical communication channel. Whether it is stated
 there, or whether the set instead writes a requirement the standard does not have, is open.

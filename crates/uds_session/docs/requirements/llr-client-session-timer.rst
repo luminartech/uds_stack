@@ -178,9 +178,14 @@ The timer's state
    initialisation condition; ``UDSS_LLR_0185`` and ``UDSS_LLR_0151`` state initial state for
    the same reason.
 
-   The storage is the caller's for the reason ``UDSS_LLR_0151`` gives: the number of
-   channels is a property of the deployment, the crate does not allocate, and Table 8 states
-   what timers are needed, not where they live.
+   The per-channel timers and facts live in the channel's storage for the reason
+   ``UDSS_LLR_0151`` gives: the number of channels is a property of the deployment, the
+   crate does not allocate, and Table 8 states what timers are needed, not where they live.
+   The functional timer and fact are fixed in size, as the server's state ``UDSS_LLR_0185``
+   holds in the instance is, and are nonetheless supplied by the caller: the client's state
+   is uniformly caller-owned, so one storage shape serves both modes, and the mode is fixed
+   at creation under ``UDSS_LLR_0162``, so the caller can size the storage then. That is a
+   declared asymmetry with the server, and it costs nothing observable.
 
    The reload parameter follows the timer. Table 5 states that the ``tS3_Client`` timeout
    value includes the travel time of the message on the network, gateway delays among them,

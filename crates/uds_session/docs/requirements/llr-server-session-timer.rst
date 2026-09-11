@@ -8,8 +8,8 @@ The server's session state
 --------------------------
 
 The server holds three facts. The first is whether the active session is the default
-session, one bit. The identifier of the active session is not state: ``UDSS_LLR_0134``
-keeps it opaque and nothing in this set reads it. The second is the **controlling client**,
+session, one bit. The identifier of the active session is not state: ``UDSS_LLR_0134``'s
+selection does not carry it and nothing in this set reads it. The second is the **controlling client**,
 the ``S_AI[SA]`` and, where ``S_Mtype`` carries one, the ``S_AI[AE]`` of the client whose
 request produced the active non-default session, held only while a non-default session is
 active. The third is the
