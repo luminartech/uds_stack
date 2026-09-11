@@ -187,6 +187,90 @@ The elements
    implements no server trait must still be able to name it. Where it is declared instead
    is unsettled — see :doc:`open-questions`.
 
+Two layers
+----------
+
+.. arch:: The client core is sans-io; awaiting is a layer above it
+   :id: UDSSVC_ARCH_0028
+   :depends_on: UDSSVC_ARCH_0020; UDSSVC_ARCH_0029
+   :status: draft
+   :origin: derived
+   :tags: client; api; no_std
+
+   The client is two layers. The lower one is sans-io and synchronous: it encodes a typed
+   request into a caller-supplied buffer, and interprets response bytes into a typed
+   result. The upper one is a feature-gated asynchronous client that joins the two halves
+   across a transport, so an application writes one call and awaits it.
+
+   .. code-block:: rust
+
+      // core: no async, no transport, no_std
+      let n = uds::encode_read(&[MyDid::VehicleSpeed], &mut buf)?;
+      let value = uds::interpret_read::<MyDid>(&response_bytes)?;
+
+      // layer: one call, over any transport
+      let value = client.read(&[MyDid::VehicleSpeed]).await?;
+
+   Rationale: everything below this crate is asynchronous. ``simple_doip``'s ``client`` and
+   ``server`` features both require its ``codec`` feature, which requires ``std`` and
+   tokio; ``uds_on_ip``'s ``client`` and ``server`` features each imply ``std`` and tokio
+   in turn. Its ``no_std`` core is the seams — addressing, session, transport mapping,
+   profile, handler — not a driver. A typed client that did not await would therefore hand
+   the application a buffer, make it call the binding, and hand back the bytes, which is
+   precisely what ``UDSSVC_ARCH_0020`` says a client application never does.
+
+   **Why the server needs no equivalent and the client does.** A server is *called*: the
+   binding's asynchronous driver invokes a synchronous handler, and the inversion costs
+   nothing. A client *initiates*, so something must await, and if it is not this crate it
+   is the application. The asymmetry is in the direction of control, not in the design.
+
+   **Why the lower layer exists at all**, rather than an asynchronous client alone. Two
+   reasons survive, and it is worth being clear that a third does not.
+
+   It is what a test binds to: no transport, no executor, no timing. Every clause 8.7 rule
+   the client implements — interpreting a negative response, classifying a suppressed one,
+   attributing functional replies — is then checkable as a pure function of bytes in and a
+   typed value out. And it keeps the crate's core uniformly sans-io across both roles, so
+   the property that makes the server testable holds for the client too, rather than
+   holding for half the crate.
+
+   What does *not* justify it is runtime-avoidance. ``UDSSVC_ARCH_0030`` assumes an
+   executor everywhere, including on embedded targets, so "the layer a driver with no
+   runtime binds to" describes no real caller. An earlier draft of this element leaned on
+   that argument; it is recorded as withdrawn rather than quietly dropped, because the
+   two-layer split survives without it and a reader is entitled to know which reasons are
+   load-bearing.
+
+   Related: ``async`` implies neither a runtime nor ``std``. Asynchronous functions in
+   traits are stable and the executor is the caller's, so the upper layer costs this crate
+   no dependency — see ``UDSSVC_ARCH_0029``.
+
+.. uml::
+   :align: center
+   :caption: The two layers. Everything below the dashed line is asynchronous already;
+             the core above it is not, and does not need to be.
+
+   @startuml
+   allowmixing
+
+   rectangle "client application" as APP
+
+   package "uds_services" {
+     rectangle "async client\n(feature-gated)" as ASYNC
+     rectangle "sans-io core\nencode request / interpret response" as CORE
+     interface "UdsTransport" as TR
+   }
+
+   package "binding" {
+     rectangle "uds_on_ip::Client\nstd + tokio" as BIND
+   }
+
+   APP -down-> ASYNC : read(..).await
+   ASYNC -down-> CORE : encode / interpret
+   ASYNC -down-> TR : send(..).await
+   BIND .up.|> TR : implements
+   @enduml
+
 .. needflow::
    :filter: "client" in tags
    :link_types: depends_on
