@@ -208,11 +208,32 @@ responses, and it is the only way to tell them apart.
 Note also that every method on that client is currently `todo!()`. The typed surface can
 be designed against its shape but cannot be exercised until it is real.
 
+`uds_services` reaches it through a transport trait *it* declares, rather than binding to
+`uds_on_ip::Client` directly — the mirror of the handler seam, which that crate declares.
+The rule behind both: **whoever is called declares the interface.** A binding calls into a
+server, so the binding declares the byte seam; this crate calls out to a transport, so this
+crate declares the transport seam. Nothing is needed from `uds_on_ip` for that beyond the
+signatures it already has.
+
 **Its documentation already delegates upward, in two places.** `Client::send` says a
 negative response "is a response, and interpreting it belongs to a higher layer", and the
 handler seam says it does not know what a service or a negative response code is. Both are
 correct and both are now discharged by `uds_services`. Worth a cross-reference in that
 crate's architecture so the delegation is visible from the declining side too.
+
+**Its handler seam must become asynchronous, and now is when that is cheap.**
+`RequestHandler::handle` is synchronous today. `UDSSVC_ARCH_0016` requires an asynchronous
+one, and the gain is concrete: a handler that outruns `tP2_Server` yields at its await
+points, so the driver keeps draining session actions and transmits the `0x78` that
+`uds_session` decided to send. Without it, that crate's own architecture is left carrying
+the constraint that "a slow handler has to run somewhere the driver can continue past" —
+machinery every integrator has to build. The trait is declared and has no implementations,
+so this costs a signature now and a migration once servers exist.
+
+The premise is `UDSSVC_ARCH_0030`: an async executor is assumed everywhere, `embassy`
+included, and no crate here depends on one. Note that `async` implies neither a runtime
+nor `std` — the executor is the caller's — so this does not compromise a `no_std` build.
+A tokio *dependency* would; an `async fn` does not.
 
 **Its request context is missing two fields.** `Ctx` today carries an addressing triple,
 the active session and the security level. Clause 8.7's mandatory validation sequence also
