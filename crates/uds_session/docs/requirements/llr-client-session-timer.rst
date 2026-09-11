@@ -141,8 +141,8 @@ The timer's state
    timers on one channel for nothing. The mode is fixed at creation because the standard
    treats the handling as a property of the deployment, Table 8 allotting timers "when
    using" one TesterPresent or the other, and gives a change no meaning; it is not one of
-   the protocol parameters ``UDSS_LLR_0138`` provides for, which that requirement confines
-   to timing parameters. A change at run time would have to say what becomes of a keeping-alive fact
+   the protocol parameters ``UDSS_LLR_0138`` provides for, which are values a timer is
+   loaded with, and a mode is not one. A change at run time would have to say what becomes of a keeping-alive fact
    and a running timer that the new mode's requirements never touch, ``UDSS_LLR_0163``
    closing the list of what changes them, and no clause says.
 
@@ -152,7 +152,7 @@ The timer's state
    :integrity_level: QM
    :target_level: D
    :origin: session-layer-standard
-   :source: ISO 14229-2:2021 9.5 Table 6; ISO 14229-2:2021 9.6 Table 8
+   :source: ISO 14229-2:2021 9.4 Table 5; ISO 14229-2:2021 9.5 Table 6; ISO 14229-2:2021 9.6 Table 8
    :tags: client; s3_client; session-state
 
    In functional keep-alive the client shall maintain a single ``tS3_Client`` timer and a
@@ -277,7 +277,7 @@ Functional keep-alive
    :integrity_level: QM
    :target_level: D
    :origin: session-layer-standard
-   :source: ISO 14229-2:2021 9.5 Table 6; ISO 14229-2:2021 10.1.4.1 Figure 12; ISO 14229-2:2021 10.2.4 Figure 17
+   :source: ISO 14229-2:2021 9.5 Table 6; ISO 14229-2:2021 9.7 Table 9; ISO 14229-2:2021 10.1.4.1 Figure 12; ISO 14229-2:2021 10.2.4 Figure 17
    :tags: client; s3_client
 
    In functional keep-alive, while the keeping-alive fact holds, on ``T_Data.conf`` reporting
@@ -413,7 +413,7 @@ session fact, and the requests and indications on it.
    :integrity_level: QM
    :target_level: D
    :origin: session-layer-standard
-   :source: ISO 14229-2:2021 10.1.4.2 Figure 13
+   :source: ISO 14229-2:2021 9.5; ISO 14229-2:2021 9.5 Table 6; ISO 14229-2:2021 10.1.4.2 Figure 13
    :tags: client; s3_client
 
    In physical keep-alive, while a physical channel's session fact holds, on producing a
@@ -437,7 +437,7 @@ session fact, and the requests and indications on it.
    :integrity_level: QM
    :target_level: D
    :origin: session-layer-standard
-   :source: ISO 14229-2:2021 9.5; ISO 14229-2:2021 9.5 Table 6; ISO 14229-2:2021 9.7 Table 9; ISO 14229-2:2021 10.1.4.2 Figure 13
+   :source: ISO 14229-2:2021 9.2 Table 3; ISO 14229-2:2021 9.2 Table 4; ISO 14229-2:2021 9.5; ISO 14229-2:2021 9.5 Table 6; ISO 14229-2:2021 9.7 Table 9; ISO 14229-2:2021 10.1.4.2 Figure 13; ISO 14229-1:2020 8.7.6
    :tags: client; s3_client
 
    In physical keep-alive, while a physical channel's session fact holds, on any of the
