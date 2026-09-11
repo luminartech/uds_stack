@@ -254,7 +254,7 @@ The next request
    :integrity_level: QM
    :target_level: D
    :origin: session-layer-standard
-   :source: ISO 14229-2:2021 9.2 Table 3; ISO 14229-2:2021 9.7 Table 9; ISO 14229-2:2021 10.3; ISO 14229-2:2021 10.3 Figure 19; ISO 14229-2:2021 10.3 Figure 20
+   :source: ISO 14229-2:2021 9.2 Table 3; ISO 14229-2:2021 9.6 Table 7; ISO 14229-2:2021 9.7 Table 9; ISO 14229-2:2021 10.3; ISO 14229-2:2021 10.3 Figure 19; ISO 14229-2:2021 10.3 Figure 20
    :tags: client; p3_client; service-interface
 
    On an ``S_Data.req`` for a request on a channel whose spacing timer is active, the
