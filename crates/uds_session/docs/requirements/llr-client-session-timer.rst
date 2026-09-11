@@ -241,7 +241,7 @@ Functional keep-alive
    :target_level: D
    :origin: session-layer-standard
    :source: ISO 14229-2:2021 9.5 Table 5; ISO 14229-2:2021 9.5 Table 6; ISO 14229-2:2021 10.1.4.1 Figure 12; ISO 14229-2:2021 10.2.4 Figure 17
-   :tags: client; s3_client
+   :tags: client; s3_client; keep-alive
 
    In functional keep-alive, while the keeping-alive fact holds and the ``tS3_Client`` timer
    is running, when the elapsed time since it was last started reaches the value it was
@@ -283,7 +283,7 @@ Functional keep-alive
    :target_level: D
    :origin: session-layer-standard
    :source: ISO 14229-2:2021 9.5 Table 6; ISO 14229-2:2021 9.7 Table 9; ISO 14229-2:2021 10.1.4.1 Figure 12; ISO 14229-2:2021 10.2.4 Figure 17
-   :tags: client; s3_client
+   :tags: client; s3_client; keep-alive
 
    In functional keep-alive, while the keeping-alive fact holds, on ``T_Data.conf`` reporting
    the successful transmission on a functional channel of a request whose classification
@@ -522,7 +522,7 @@ session fact, and the requests and indications on it.
    :target_level: D
    :origin: session-layer-standard
    :source: ISO 14229-2:2021 9.5 Table 5; ISO 14229-2:2021 9.6 Table 8; ISO 14229-2:2021 10.1.4.2 Figure 13
-   :tags: client; s3_client
+   :tags: client; s3_client; keep-alive
 
    In physical keep-alive, while a physical channel's session fact holds and its
    ``tS3_Client`` timer is running, when the elapsed time since the timer was last started

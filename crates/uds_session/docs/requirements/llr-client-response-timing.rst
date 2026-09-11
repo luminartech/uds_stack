@@ -192,7 +192,7 @@ The response window
    :target_level: D
    :origin: session-layer-standard
    :source: ISO 14229-2:2021 9.1.2; ISO 14229-2:2021 9.6 Table 7
-   :tags: client; p_client
+   :tags: client; p_client; request-in-progress; service-interface
 
    The client shall maintain a single ``tP_Client`` timer for each logical communication
    channel, in storage supplied by the caller. A channel shall exist from the moment the
@@ -290,7 +290,7 @@ The response window
    :target_level: D
    :origin: session-layer-standard
    :source: ISO 14229-2:2021 9.1.2; ISO 14229-2:2021 9.2 Table 3; ISO 14229-2:2021 10.1.4; ISO 14229-2:2021 10.2.4
-   :tags: client; p_client
+   :tags: client; p_client; service-interface
 
    Each channel shall have a **default reload parameter** and an **enhanced reload
    parameter**, supplied as protocol parameters under ``UDSS_LLR_0138``. A setting of a

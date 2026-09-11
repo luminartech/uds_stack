@@ -426,7 +426,7 @@ Enhanced response timing
    :target_level: D
    :origin: session-layer-standard
    :source: ISO 14229-2:2021 9.2 Table 4
-   :tags: server; p2_server; enhanced-response-timing
+   :tags: server; p2_server; enhanced-response-timing; service-interface
 
    While a request is in progress under ``UDSS_LLR_0189``, the session layer shall reject,
    as ``UDSS_LLR_0150`` in :doc:`llr-service-interface` defines, an ``S_Data.req`` for a

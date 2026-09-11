@@ -1147,8 +1147,10 @@ and leaves the means of recognising it to the implementation.
    message is transmitted in that case, so there is no ``T_Data.conf`` to observe and no
    message classification that could carry the fact. Without an explicit input the session
    layer cannot detect it, and a server handling a suppressed-response request in a
-   non-default session would never restart its timer. ``UDSS_LLR_0142`` is the requirement
-   that acts on this input. ISO 14229-2:2021 10.1.4.1 bounds when that completion occurs,
+   non-default session would never restart its timer. ``UDSS_LLR_0142``, ``UDSS_LLR_0146``
+   and ``UDSS_LLR_0189`` are the requirements that act on this input, with ``UDSS_LLR_0103``
+   and ``UDSS_LLR_0141`` where it selects a session and ``UDSS_LLR_0186`` where it is marked
+   ``keep-alive``. ISO 14229-2:2021 10.1.4.1 bounds when that completion occurs,
    a service being in progress until the completion of any action caused by the request
    where no response is required, the point that would otherwise have started the
    response; ``UDSS_LLR_0142`` cites the same clause.
@@ -1156,7 +1158,7 @@ and leaves the means of recognising it to the implementation.
    The classification is carried on the input rather than recovered by correlating it with
    an earlier ``T_Data.ind``, because Table 6's other suppressed-response row, the
    transition from the default session to a non-default one, needs the session selection,
-   and correlating would oblige the session layer to retain one. Which of several
-   outstanding requests completed is deliberately not identified: ``UDSS_LLR_0142`` turns
-   on a request from the controlling client having completed and ``UDSS_LLR_0103`` on a
-   session-selecting request from any client having completed, and neither asks which one.
+   and correlating would oblige the session layer to retain one. The report identifies its
+   request by addressing alone: ``UDSS_LLR_0189`` matches it to the request in progress that
+   way, and ``UDSS_LLR_0142`` and ``UDSS_LLR_0103`` ask no more than whose request
+   completed.

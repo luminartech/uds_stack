@@ -34,9 +34,19 @@ tables do not budget. Known members:
   per responder that the pairing rule in ``UDSS_LLR_0140`` needs, both of which
   ``UDSS_LLR_0160`` keeps in caller-supplied storage;
 - the server's request in progress and response-pending anchor of ``UDSS_LLR_0189``, one
-  fact and one timestamp in the instance;
+  fact, two addresses and one timestamp in the instance;
 - the associations of ``UDSS_LLR_0133`` between a transmission and its confirmation, in
-  caller-supplied storage, which make 7.6's identification by address checkable.
+  caller-supplied storage, which make 7.6's identification by address checkable;
+- the controlling client of ``UDSS_LLR_0185``, which Table 6's "client which requested the
+  transition" needs and Table 8 budgets nothing for;
+- the request record and response count of ``UDSS_LLR_0151``, which Table 9's known-count
+  cell needs;
+- the keeping-alive fact and the channel session facts of ``UDSS_LLR_0163``, without which
+  a timer stopped between a keep-alive indication and its confirmation cannot be told from
+  one in the default session.
+
+The inventory admits every fact the set keeps that is not a timer of Tables 7 and 8, and
+is now complete as the set stands.
 
 The set follows the behaviour in each case. What is open is whether the class as a whole
 sits behind one build-time switch, which wants deciding once the inventory is complete
@@ -63,8 +73,15 @@ request's confirmation where 9.5 Table 6's physical column starts it at the resp
 ``T_Data.req`` of the TesterPresent where 9.2 Table 3, 9.1.2 and its own key p start it at
 the ``T_Data.conf``, resolved in ``UDSS_LLR_0153``; and 9.7 Table 9's functional column
 names a ``tS3_Client_Func`` that the standard defines nowhere, read in ``UDSS_LLR_0166`` as
-``tP3_Client_Func``. None changes what the set does; whether they deserve a record of their
-own is the same question of convention.
+``tP3_Client_Func``. Four more of the same kind are recorded in the bodies: 9.1.2 starts
+``tP_Client`` on every confirmation where Figure 20 keys b and g start none for a request
+needing no response, followed in ``UDSS_LLR_0153``; 9.1.2 stops ``tP_Client`` on every
+indication where the functional figures restart it, followed in ``UDSS_LLR_0155``; Figure 12
+key p says a TesterPresent in the default session "is ignored" where Figure 20 key j says it
+"can be ignored", recorded in ``UDSS_LLR_0186``; and Table 6's transmission-error and
+reception-error restarts are unrestricted where Table 9 confines them to the TesterPresent,
+followed in ``UDSS_LLR_0170``. None changes what the set does; whether they deserve a record
+of their own is the same question of convention.
 
 The client request spacing cycle met three more. ISO 14229-2:2021 9.2 Table 3 conditions
 the functional spacing wait on no response being required or on only some servers supporting
