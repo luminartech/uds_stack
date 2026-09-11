@@ -117,12 +117,13 @@ together is the only way to find out whether the set is complete.
      evidenced by a ``*-none`` target — see ``UDSSVC_ARCH_0017``. With two roles in two
      environments, the matrix is the artefact, not an afterthought.
 
-   This also narrows the open question of whether the client surface is asynchronous
-   (:doc:`open-questions`, question 2). Whatever shape it takes must not drag ``std`` or an
-   async runtime into a crate the embedded server compiles into firmware. Feature-gating
-   could contain that, but the simpler answer — a sans-io request builder and response
-   interpreter, with awaiting left to the binding — is the one consistent with this
-   element.
+   What this element does **not** forbid is asynchrony. An earlier draft read it as ruling
+   out an asynchronous client, on the grounds that one would drag a runtime into a firmware
+   build. That conflates two things: ``async`` is a language feature and needs no runtime
+   in a library, while a *tokio dependency* is what would break the embedded build.
+   ``UDSSVC_ARCH_0030`` assumes an executor on both targets and depends on neither, which
+   is what lets the seams of ``UDSSVC_ARCH_0016`` and ``UDSSVC_ARCH_0029`` be asynchronous
+   at no cost to this element.
 
 .. arch:: The application supplies each identifier's record structure
    :id: UDSSVC_ARCH_0026

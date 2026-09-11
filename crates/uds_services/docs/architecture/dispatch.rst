@@ -55,6 +55,9 @@ Overview
    * A stage may only settle the request; it may not revisit an earlier decision. The
      first stage to fail determines the code, which is what makes the *order* observable
      from outside.
+   * The pipeline is asynchronous, and the only stage that actually awaits is the handler
+     (``UDSSVC_ARCH_0016``). Every validation stage is a pure function of the request and
+     the context; none of them can block, and none of them needs to.
    * Suppression is applied last, to the settled code, and never earlier. A stage does not
      know whether its own negative response will be transmitted — see
      ``UDSSVC_ARCH_0009``.

@@ -54,8 +54,8 @@ simply still running.
 
 .. uml::
    :align: center
-   :caption: A handler that outruns ``tP2_Server``. Note what ``uds_services`` does
-             during step 4: nothing it is aware of.
+   :caption: A handler that outruns ``tP2_Server``. The handler yielding is what lets
+             the driver reach step 3 at all.
 
    @startuml
    autonumber "<b>[0]"
@@ -79,7 +79,8 @@ simply still running.
    note over V
      uds_services is mid-dispatch and
      unaware. It reads no clock and
-     is not asked.
+     is not asked. The handler has
+     yielded, so the driver runs.
    end note
 
    H --> V : Ok, or a negative response code
@@ -100,17 +101,19 @@ changes the suppression rules, which is why it is an input to ``UDSSVC_ARCH_0015
 rule in ``UDSSVC_ARCH_0009``. Step 6 is the whole reason that field exists — without it,
 the gate silences a response the standard requires.
 
-Two consequences constrain the **binding's** server driver rather than this crate, and are
-recorded here so they are not rediscovered later:
+One consequence constrains the **binding's** server driver rather than this crate, and is
+recorded here so it is not rediscovered later: dispatch must not block the loop that
+drains session actions, or the 0x78 that ``uds_session`` decided to send cannot be
+transmitted while the handler it covers is still running.
 
-* Dispatch must not block the loop that drains session actions, or the 0x78 that
-  ``uds_session`` decided to send cannot be transmitted while the handler it covers is
-  still running.
-* Because the handler interface is synchronous, a slow handler has to run somewhere the
-  driver can continue past.
+A second constraint used to sit beside it — *because the handler interface is synchronous,
+a slow handler has to run somewhere the driver can continue past* — and it is gone.
+``UDSSVC_ARCH_0016`` makes the handler seam asynchronous, so a slow handler yields and the
+driver simply continues. That was previously machinery every integrator had to build for
+themselves, and it existed only because the seam could not express yielding.
 
-Neither is satisfiable by anything this crate does, and both are load-bearing for
-conformance.
+The remaining constraint is load-bearing for conformance and is not satisfiable by
+anything this crate does.
 
 What the layer below declines
 -----------------------------
