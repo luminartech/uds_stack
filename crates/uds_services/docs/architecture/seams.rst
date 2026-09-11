@@ -3,12 +3,20 @@ The seams
 
 What crosses each boundary of this crate, and who owns what on either side.
 
-Four seams: the context supplied with a request, the outcome reported back, the sink a
-response is written into, and the adapter onto a binding's byte interface.
+Five seams. Four are server-side — the context supplied with a request, the outcome
+reported back, the sink a response is written into, and the adapter onto a binding's byte
+interface — and they exist because a server is *called* and must be told the state its
+decisions depend on. The fifth is the client's transport seam, and it points the other
+way: a client *initiates*, so its seam is something this crate calls rather than something
+that calls this crate.
+
+That inversion is the most important thing on this page. **Whoever is called declares the
+interface.** That single rule produces both seams and explains why they point in opposite
+directions.
 
 .. uml::
    :align: center
-   :caption: The four seams. Everything crossing the crate boundary crosses one of them.
+   :caption: The four server-side seams. The client's transport seam is below.
 
    @startuml
    package "binding (uds_on_ip, uds_on_can)" {
@@ -120,15 +128,28 @@ Request context
    security-access attempt counter, say — holds that state in its own server type, where it
    already holds everything else.
 
+   The client side answers this question the other way, and both answers are right.
+   ``UDSSVC_ARCH_0022`` requires a client's functional responses to carry each responder's
+   source address, because a client with several answers to one question cannot use them
+   without knowing who sent each. A server has one request in front of it and no clause
+   8.7 decision that reads an address.
+
+   One challenge to this element is worth recording rather than settling here. ISO
+   14229-1 clause 7.4.1 makes ``A_SA``, ``A_TA`` and ``A_TA_Type`` *mandatory* parameters
+   of every application layer service primitive; this element carries only the third. The
+   defence is that clause 8.7 reads only the third and ``UDSSVC_ARCH_0001`` bounds the
+   crate to clause 8.7 — but it is a defence, not an absence of tension. See
+   :doc:`open-questions`.
+
 Outcome
 -------
 
-.. arch:: Dispatch reports an outcome; only sink failures are errors
+.. arch:: Dispatch is asynchronous and reports an outcome; only sink failures are errors
    :id: UDSSVC_ARCH_0016
-   :depends_on: UDSSVC_ARCH_0009
+   :depends_on: UDSSVC_ARCH_0009; UDSSVC_ARCH_0030
    :status: draft
    :origin: derived
-   :tags: seam; outcome
+   :tags: seam; outcome; async
 
    Dispatch reports whether a response was written and should be transmitted, or whether
    nothing is to be sent. A negative response is the first of those, not an error. The
@@ -145,6 +166,21 @@ Outcome
    transmit.
 
    Genuine transport failures are the binding's concern and never reach a handler.
+
+   **Dispatch and the handlers it calls are asynchronous**, which is what
+   ``UDSSVC_ARCH_0030``'s assumption is spent on here. The gain is specific: a handler
+   that takes longer than ``tP2_Server`` yields at its await points, so the binding's
+   driver keeps draining session actions and transmits the ``0x78`` that ``uds_session``
+   decided to send while the handler it covers is still running.
+
+   Without this, that is machinery every integrator has to build — the driver must arrange
+   for a slow handler to run somewhere it can continue past, and nothing in this crate or
+   the binding does it for them. See :doc:`not-owned`.
+
+   The honest limit: an asynchronous seam does not make blocking work non-blocking. A
+   handler that busy-waits on a flash erase stalls the executor exactly as a synchronous
+   one would, and the gain is real only for handlers written to yield. What changes is that
+   yielding is now *possible* at the seam, where before it was not expressible at all.
 
 Response sink
 -------------
@@ -201,9 +237,63 @@ Binding adapter
    one side of the seam or the other, not in the conversion.
 
    The conversion is where a mismatch between this crate's context and a binding's becomes
-   visible, which is its second purpose. ``uds_on_ip``'s context today carries an
-   addressing triple, the active session and the security level; it carries neither the
-   authentication state nor the response-pending flag that ``UDSSVC_ARCH_0015`` requires.
-   Those fields have to be added there, and ``uds_session`` has to expose the second of
-   them, before the adapter can be written. This is the reason the stack is being iterated
-   as a whole rather than crate by crate.
+   visible, which is its second purpose. Three mismatches stand today, and all three are
+   changes to ``uds_on_ip`` rather than to this crate:
+
+   * its context carries an addressing triple, the active session and the security level,
+     but neither the authentication state nor the response-pending flag that
+     ``UDSSVC_ARCH_0015`` requires;
+   * ``uds_session`` has to expose the second of those, since it owns the decision;
+   * its handler seam is synchronous, and ``UDSSVC_ARCH_0016`` requires an asynchronous
+     one.
+
+   The third is cheap now and expensive later: that trait is declared and has no
+   implementations, so changing it costs a signature today and a migration once servers
+   exist. This is the reason the stack is being iterated as a whole rather than crate by
+   crate.
+
+Client transport seam
+---------------------
+
+.. arch:: This crate declares the client transport seam; the binding implements it
+   :id: UDSSVC_ARCH_0029
+   :depends_on: UDSSVC_ARCH_0003; UDSSVC_ARCH_0030
+   :status: draft
+   :origin: derived
+   :tags: seam; transport; client
+
+   The asynchronous client of ``UDSSVC_ARCH_0028`` is generic over a transport trait
+   declared by this crate. A binding implements it; behind that binding's feature this
+   crate supplies the implementation for the binding's own client.
+
+   .. code-block:: rust
+
+      pub trait UdsTransport {
+          type Error;
+
+          /// Send a physically addressed request and await its reply.
+          async fn send(&mut self, request: &[u8])
+              -> Result<Reply<'_>, Self::Error>;
+
+          /// Send a functionally addressed request and iterate the replies.
+          async fn send_functional(&mut self, request: &[u8])
+              -> Result<Replies<'_, Self>, Self::Error>;
+      }
+
+   Rationale: this is the exact inverse of ``UDSSVC_ARCH_0018``, and the asymmetry is
+   deliberate rather than an inconsistency. The **byte seam is declared by the binding**,
+   because the binding calls into a server and the shape of that call is transport-shaped.
+   The **transport seam is declared here**, because this crate calls out to a transport and
+   the shape of *that* call is service-shaped: it must distinguish a physically addressed
+   request answered once from a functionally addressed request answered zero or more
+   times, which is a clause 8.7 distinction and not a DoIP one.
+
+   Two consequences. The trait's reply types are **this crate's own**, not the binding's —
+   the adapter converts, exactly as it does for ``Ctx`` under ``UDSSVC_ARCH_0018`` — so the
+   typed client follows to CAN unchanged. And this crate depends on no executor: the trait
+   is asynchronous, and the runtime is the caller's (``UDSSVC_ARCH_0030``).
+
+   The functional case is why the trait carries two methods rather than one with a flag. A
+   functionally addressed request yields a lending sequence whose length is not known until
+   a timer expires (``UDSSVC_ARCH_0022``); typing it as the same operation as a
+   single-response exchange would force one of the two to lie.
