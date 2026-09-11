@@ -60,8 +60,9 @@ assumptions of use in the qualification repository.
 * The caller marks ``keep-alive`` exactly the functionally addressed TesterPresent whose
   positive response is suppressed, marks nothing else so, and never marks a message that
   carries a session selection. ``UDSS_LLR_0134`` states that the session layer does not
-  verify the marker against the addressing, and rejects the marker with a selection only on
-  ``S_Data.req``; an indication so classified is forwarded under ``UDSS_LLR_0137``.
+  verify the marker against the addressing, and rejects the marker with a selection on
+  ``S_Data.req`` and on the completion report of ``UDSS_LLR_0136``, the two inputs the
+  caller composes; an indication so classified is forwarded under ``UDSS_LLR_0137``.
 
 * The caller supplies the completion report of ``UDSS_LLR_0136`` for every request, from
   any client, for which no response message is transmitted. Two are excepted: a marked
@@ -140,8 +141,9 @@ The timer's state
    number of channels it has, which is why ``UDSS_LLR_0163`` puts that state in storage the
    caller supplies; the associations ``UDSS_LLR_0133`` holds for the server's outstanding
    transmissions grow with its peers and are that requirement's caller-supplied storage, not
-   this state. Throughout this document a message is *from the controlling client* where its
-   ``S_AI[SA]`` and, where ``S_Mtype`` carries one, its ``S_AI[AE]`` equal the recorded
+   this state. Throughout this document a message is *from the controlling client*, and a
+   response is *to the controlling client*, where its ``S_AI[SA]``, or on a ``T_Data.conf``
+   its ``S_AI[TA]``, and, where ``S_Mtype`` carries one, its ``S_AI[AE]`` equal the recorded
    ones, two identities being equal only where both carry an extension and addresses and
    extensions are equal, or neither carries one and the addresses are equal, so that a
    message whose ``S_Mtype`` carries no extension is never from a controlling client recorded
@@ -173,7 +175,7 @@ The timer's state
    whose classification selects a non-default session, the server shall be in a non-default
    session, shall record as the controlling client the client identified by the
    confirmation's ``S_AI[TA]`` and, where ``S_Mtype`` carries one, its ``S_AI[AE]``, and
-   shall start ``tS3_Server``, restarting it where it was running or stopped.
+   shall start ``tS3_Server``.
 
    The solicitation qualifier is ``UDSS_LLR_0106``'s and is here for that requirement's
    reason: an unsolicited positive response carrying a session selection would otherwise put
@@ -221,7 +223,7 @@ The timer's state
    a non-default session and for which no response message is transmitted, the server shall
    be in a non-default session, shall record as the controlling client the ``S_AI[SA]`` and,
    where ``S_Mtype`` carries one, the ``S_AI[AE]`` the report carries, and shall start
-   ``tS3_Server``, restarting it where it was running or stopped.
+   ``tS3_Server``.
 
    This is Table 6's second initial-start row: successful completion of the requested action
    for a transition to a non-default session, where no response message is required or
@@ -252,8 +254,8 @@ The timer's state
    start-of-message of the same request had stopped it, and ``UDSS_LLR_0109`` reads it as
    leaving a running timer, or one another request stopped, alone.
 
-   The marked message is ``UDSS_LLR_0186``'s on either primitive: it reloads a running timer
-   rather than stopping it.
+   The marked message is ``UDSS_LLR_0186``'s on either primitive: its ``T_Data.ind`` reloads
+   a running timer rather than stopping it, and its ``T_DataSOM.ind`` changes nothing.
 
 .. llr:: Session timer restarts on a confirmed final response
    :id: UDSS_LLR_0106
@@ -267,9 +269,8 @@ The timer's state
    While in a non-default session, on ``T_Data.conf`` indicating successful transmission
    of a solicited final response message to the controlling client, the server shall
    restart the ``tS3_Server`` timer, except where that response selects a session, in
-   which case ``UDSS_LLR_0102`` or ``UDSS_LLR_0141`` applies. A final response is a
-   positive response, or a negative response whose response code is not
-   ``requestCorrectlyReceived-ResponsePending``.
+   which case ``UDSS_LLR_0102`` or ``UDSS_LLR_0141`` applies. A final response is a message
+   whose classification states kind ``final response`` under ``UDSS_LLR_0134``.
 
    The response must be solicited, meaning transmitted as the direct result of processing
    a request message, because a positive response may also be unsolicited: a periodic
@@ -325,9 +326,8 @@ The timer's state
    :tags: server; s3_server; enhanced-response-timing
 
    While in a non-default session, on ``T_Data.conf`` indicating successful transmission
-   of a negative response whose response code is
-   ``requestCorrectlyReceived-ResponsePending``, the server shall not restart the
-   ``tS3_Server`` timer.
+   of a message whose classification states kind ``response pending``, the server shall not
+   restart the ``tS3_Server`` timer.
 
 .. llr:: Unsolicited responses do not restart the session timer
    :id: UDSS_LLR_0108
@@ -484,7 +484,8 @@ The timer's state
 
    The marker is what picks between the bypass handling of Figure 12 keys j and m and
    Figure 20 key d, transcribed here, and the ordinary request handling of Table 6 under
-   ``UDSS_LLR_0104``, of which Figure 13 keys l and n are the with-response instance. The two
+   ``UDSS_LLR_0104``, of which Figure 13 keys l and p are the with-response instance, keys n
+   and r restarting the timer under ``UDSS_LLR_0106``. The two
    figures show two different messages, the functionally addressed TesterPresent without a
    response and the physically addressed one with, not one event handled two ways: for the
    first, Table 6's stop at the reception and restart at the completion fall on one instant,
@@ -503,8 +504,8 @@ The timer's state
    so that its inertness does not rest on ``UDSS_LLR_0185``'s closed list alone. The failed
    reception is named for the same reason; ``UDSS_LLR_0109``'s exclusion of the marked
    message says why no restart is due, Table 10's restart presupposing a stop this message
-   never caused. The marked request is never the request in progress, as
-   :doc:`llr-server-response-timing` states.
+   never caused. The marked request is never the request in progress, as ``UDSS_LLR_0189``
+   states.
 
 .. llr:: Requests from other clients do not affect the session timer
    :id: UDSS_LLR_0105
@@ -594,8 +595,8 @@ The timer's state
    :tags: server; s3_server; session-state
 
    While in a non-default session, when the elapsed time since the ``tS3_Server`` timer
-   was last started or restarted reaches the value it was loaded with, the ``tS3_Server``
-   parameter as it stood at that start or restart, the server shall enter the default
+   was last started or restarted reaches the value it was loaded with, the server shall enter
+   the default
    session, disable the ``tS3_Server`` timer, discard the recorded controlling client, and
    deliver a session-timeout indication to the application carrying the controlling client
    whose session ended.

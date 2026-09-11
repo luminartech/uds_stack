@@ -38,9 +38,11 @@ begins nor ends the request in progress on it, so the term keeps the uniqueness
 that, for a server supporting that range and not in the programming session, aborts the
 active service and starts the default session. That is an application-layer action. The
 reception of the OBD request ends the request in progress under ``UDSS_LLR_0189``, the new
-request replacing the old, and the caller supplies no completion report for the aborted
-request, an assumption of use the qualification repository records; the session change is
-classified on the response as :doc:`llr-server-session-timer`'s assumptions of use state.
+request replacing the old; a completion report for the aborted request is optional, since
+``UDSS_LLR_0189`` matches by addressing what ends the OBD request and ``UDSS_LLR_0146`` acts
+only on a report answering it; and the session change is classified on the OBD request's
+response where one is sent and on the request otherwise, as
+:doc:`llr-server-session-timer`'s assumptions of use state.
 
 Throughout this document, the **request in progress** is the request whose handling the
 server has begun and not yet finished. ISO 14229-2:2021 10.1.4.1 fixes its extent: a
@@ -108,8 +110,9 @@ The response window
    :source: ISO 14229-2:2021 9.1.1; ISO 14229-2:2021 9.6 Table 7
    :tags: server; p2_server
 
-   The server shall maintain a single ``tP2_Server`` timer. On initialisation that timer
-   shall not be running. Thereafter its state shall be changed only as ``UDSS_LLR_0144``,
+   The server shall maintain a single ``tP2_Server`` timer and, while it is running, which of
+   ``tP2_Server_Max`` and ``tP2*_Server_Max`` it was loaded with, the fact ``UDSS_LLR_0148``
+   reports. On initialisation that timer shall not be running. Thereafter its state shall be changed only as ``UDSS_LLR_0144``,
    ``UDSS_LLR_0145``, ``UDSS_LLR_0146``, ``UDSS_LLR_0147`` and ``UDSS_LLR_0148`` require.
 
    Clause 9.1.1 requires a single timer implementation and names ``T_Data.req``,
@@ -142,13 +145,15 @@ The response window
    :tags: server; p2_server; request-in-progress
 
    The server shall keep, in the instance, whether a request is in progress and, while one
-   is, the ``S_AI[SA]`` and ``S_AI[AE]`` of that request's ``T_Data.ind`` and a
-   **response-pending anchor** that is either clear or holds a timestamp. On initialisation
-   no request shall be in progress and the anchor shall be clear. An input **answers** the
-   request in progress where its address extension equals the recorded ``S_AI[AE]`` and its
-   target address equals the recorded ``S_AI[SA]``, the target being ``S_AI[TA]`` of an
-   ``S_Data.req``, ``T_AI[TA]`` of a ``T_Data.conf``, and the source address of the
-   addressing information a completion report of ``UDSS_LLR_0136`` carries.
+   is, the ``S_AI[SA]`` and, where ``S_Mtype`` carries one, the ``S_AI[AE]`` of that
+   request's ``T_Data.ind`` and a **response-pending anchor** that is either clear or holds a
+   timestamp. On initialisation no request shall be in progress and the anchor shall be
+   clear. An input **answers** the request in progress where the identity formed by its
+   target address and, where its ``S_Mtype`` carries one, its ``S_AI[AE]`` equals the
+   recorded identity, two identities being equal as ``UDSS_LLR_0140`` defines, the target
+   being ``S_AI[TA]`` of an ``S_Data.req``, of the ``T_Data.req`` ``UDSS_LLR_0118`` produces
+   from it and of a ``T_Data.conf`` as ``UDSS_LLR_0124`` maps it, and the ``S_AI[SA]`` of
+   the addressing information a completion report of ``UDSS_LLR_0136`` carries.
 
    A request shall become in progress on ``T_Data.ind`` reporting the successful reception
    of a request not marked ``keep-alive``; where a request is already in progress, that
@@ -162,9 +167,9 @@ The response window
    response-pending message. Nothing else shall change any of these facts; in particular a
    ``T_Data.conf`` or completion report that answers no request in progress is forwarded
    under ``UDSS_LLR_0122`` or accepted under ``UDSS_LLR_0136`` and changes nothing here. A
-   response-pending message or a solicited final response answering the request in progress
-   is **unconfirmed** while the association ``UDSS_LLR_0133`` holds for its ``S_Data.req``
-   has received no ``T_Data.conf``.
+   response-pending message answering the request in progress is **unconfirmed** while the
+   association ``UDSS_LLR_0133`` holds for its ``S_Data.req`` has received no
+   ``T_Data.conf``.
 
    Rationale: ``UDSS_LLR_0147`` and ``UDSS_LLR_0149`` read the request in progress and the
    time of the last response-pending confirmation, and ``UDSS_LLR_0143``'s closed list
@@ -192,7 +197,13 @@ The response window
    unable to single out the OBD-range one. That is a declared choice: ISO 14229-2:2021 10.3
    Figure 18 key f shows a server ignoring a request received while it is still handling the
    previous one, and a caller that ignores it as the figure does loses the first request's
-   window measurement under ``UDSS_LLR_0148`` and must answer or report the second. The
+   window measurement under ``UDSS_LLR_0148`` and must answer or report the second. Where
+   the replacing request comes from a client other than the controlling one and the replaced
+   request had stopped ``tS3_Server`` under ``UDSS_LLR_0104``, the timer stays stopped until
+   the controlling client's next request or completion, ``UDSS_LLR_0106`` and
+   ``UDSS_LLR_0142`` being scoped to that client, and the server stays in the session
+   meanwhile, which is the outcome ISO 14229-2:2021 9.5's last sentence intends for another
+   client's traffic. The
    aborting request comes from another client, 8.7.6's OBD tool, while the aborted one may
    have a response-pending or final response on the wire, so what ends the request in
    progress, sets its anchor or completes it is matched to it by addressing: a response
@@ -253,8 +264,8 @@ The response window
    :source: ISO 14229-2:2021 10.1.2 Figure 10; ISO 14229-2:2021 10.1.3 Figure 11
    :tags: server; p2_server
 
-   On ``T_Data.req`` requesting transmission of a response-pending message, or of a
-   solicited final response, answering the request in progress under ``UDSS_LLR_0189``, the
+   On ``T_Data.req`` requesting transmission of a response-pending message or of a solicited
+   final response, either answering the request in progress under ``UDSS_LLR_0189``, the
    server shall stop the ``tP2_Server`` timer.
 
    Figure 11 stops the timer for both kinds: where the application does not have the
@@ -278,7 +289,12 @@ The response window
    replacement the application may still pass the aborted request's response to the
    transport, and stopping the timer for it would end the window of the request actually in
    progress, exactly as an unsolicited response would. Such a response is transmitted and
-   confirmed under ``UDSS_LLR_0122`` and changes no timer of this document.
+   confirmed under ``UDSS_LLR_0122`` and changes no timer of this document. The match governs
+   ``tP2_Server`` and the anchor alone, and that asymmetry is declared here: the
+   ``tS3_Server`` requirements of :doc:`llr-server-session-timer` act on a confirmation or a
+   completion report by its addressing and classification, so the aborted request's late
+   final response, where it goes to the controlling client, still restarts ``tS3_Server``
+   under ``UDSS_LLR_0106`` as Table 6 states, its server having answered that client.
 
 .. llr:: The response timer stops on completion of a request with no response
    :id: UDSS_LLR_0146
@@ -289,8 +305,10 @@ The response window
    :source: ISO 14229-2:2021 10.3 Figure 19; ISO 14229-2:2021 10.3 Figure 20
    :tags: server; p2_server
 
-   On the completion report of ``UDSS_LLR_0136`` for a request not marked ``keep-alive``,
-   the server shall stop the ``tP2_Server`` timer.
+   On the completion report of ``UDSS_LLR_0136`` for a request not marked ``keep-alive`` and
+   answering the request in progress under ``UDSS_LLR_0189``, the server shall stop the
+   ``tP2_Server`` timer. A report answering no request in progress changes no timer of this
+   document.
 
    Figure 19 has a server that determines it need not answer a functionally-addressed
    request stop the ``tP2_Server`` timer and start ``tS3_Server``. Figure 20 states the
@@ -310,9 +328,12 @@ The response window
    ``UDSS_LLR_0186`` and would otherwise end the window of the request actually in
    progress. Any other completion while a request is in progress is outside the preamble's
    assumption of use. A completion report for a request that 8.7.6's second exception
-   aborted answers no request in progress, the OBD request coming from another client, so
-   ``UDSS_LLR_0189`` leaves it inert here: the aborted request's ending was the OBD
-   request's reception, and this requirement acts on the OBD request's own completion.
+   aborted answers no request in progress where the OBD request came from another client,
+   so this requirement does not act on it: the aborted request's ending was the OBD
+   request's reception, and this requirement acts on the OBD request's own completion. The
+   guard is what lets :doc:`llr-server-session-timer`'s assumptions of use make that report
+   optional; ``UDSS_LLR_0189`` guards only its own facts, and without the guard here the
+   report would stop the window ``UDSS_LLR_0144`` opened for the OBD request.
 
 Enhanced response timing
 ------------------------
@@ -372,7 +393,9 @@ Enhanced response timing
    When the elapsed time since the ``tP2_Server`` timer was last started reaches the value
    it was loaded with, the server shall stop the timer and deliver a response-timing
    indication to the application. The indication shall state which of ``tP2_Server_Max``
-   and ``tP2*_Server_Max`` the timer was carrying.
+   and ``tP2*_Server_Max`` the timer was carrying, and the ``S_AI[SA]`` and, where
+   ``S_Mtype`` carries one, the ``S_AI[AE]`` of the request in progress under
+   ``UDSS_LLR_0189``.
 
    Rationale: ISO 14229-2:2021 specifies ``tP2_Server`` as a performance requirement on the
    server's application and states no session layer action on its expiry. The session layer
@@ -384,6 +407,13 @@ Enhanced response timing
    the two. After ``tP2_Server_Max`` it has sent nothing and may still send a
    response-pending message to obtain the enhanced window. After ``tP2*_Server_Max`` it has
    overrun the enhanced window it already requested.
+
+   The indication names the request because after a replacement under ``UDSS_LLR_0189`` the
+   application may have two requests in hand and must know whose window overran;
+   ``UDSS_LLR_0159`` names the request for the client for the same reason. The timer runs
+   only while a request is in progress, every start of it under ``UDSS_LLR_0144`` or
+   ``UDSS_LLR_0147`` falling inside one and every ending of the request stopping it or
+   starting the next request's timer, so the addressing is always there to report.
 
    The timer is stopped so that one overrun yields one indication, rather than a further
    indication for every timestamp the caller supplies thereafter. Elapsed time is computed
