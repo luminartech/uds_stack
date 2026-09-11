@@ -50,7 +50,12 @@ The term is load-bearing in ``UDSS_LLR_0149``: the end of the request in progres
 clears the response-pending anchor ``UDSS_LLR_0189`` keeps. A ``T_Data.conf`` confirming a
 response-pending message transmitted for one request therefore delays nothing once that
 request has ended, and in particular cannot reject the first response-pending message of
-the next request.
+the next request, provided the confirmation does not answer the next request under
+``UDSS_LLR_0189``'s addressing match. It does answer it where the next request comes from
+the same client while the earlier one's response-pending message is still unconfirmed, which
+only a completion report supplied while a response was on the wire can bring about; the
+report promises that no response will be transmitted, so that sequence is a caller
+inconsistency the set does not define behaviour for beyond what the match yields.
 
 What this document does not cover
 ---------------------------------
@@ -206,7 +211,7 @@ The response window
 
    This requirement is not conditioned on whether a response window is already open, the
    preamble's assumption of use being that one request is handled at a time. A request
-   received while a window is open reloads the timer and, under ``UDSS_LLR_0189``, replaces
+   received while one is in progress reloads the timer and, under ``UDSS_LLR_0189``, replaces
    the request in progress; that requirement declares the reading and its consequence for a
    server that instead ignores the second request as 10.3 Figure 18 key f shows. The
    assumption does not cover ISO 14229-1:2020 8.7.6's keep-alive exception, and
@@ -222,7 +227,8 @@ The response window
    :tags: server; p2_server
 
    On ``T_Data.req`` requesting transmission of a response-pending message, or of a
-   solicited final response, the server shall stop the ``tP2_Server`` timer.
+   solicited final response, answering the request in progress under ``UDSS_LLR_0189``, the
+   server shall stop the ``tP2_Server`` timer.
 
    Figure 11 stops the timer for both kinds: where the application does not have the
    positive response ready and issues a response-pending message, and where it issues the
@@ -239,6 +245,13 @@ The response window
    solicitation applies only to that kind, a response-pending message being by
    construction a reply to a request, so a condition on a solicited response-pending
    message would condition on an attribute no input carries.
+
+   The response must answer the request in progress, as ``UDSS_LLR_0189`` defines, for the
+   same reason that requirement matches what ends a request by addressing: after a
+   replacement the application may still pass the aborted request's response to the
+   transport, and stopping the timer for it would end the window of the request actually in
+   progress, exactly as an unsolicited response would. Such a response is transmitted and
+   confirmed under ``UDSS_LLR_0122`` and changes no timer of this document.
 
 .. llr:: The response timer stops on completion of a request with no response
    :id: UDSS_LLR_0146
@@ -297,7 +310,10 @@ Enhanced response timing
    ended: a completion report under ``UDSS_LLR_0136`` can end the request while its
    response-pending message is still unconfirmed, and without the guard the confirmation
    would restart the timer for a request that is over and ``UDSS_LLR_0148`` would report an
-   overrun that never happened. The other way a request could end before the confirmation,
+   overrun that never happened. The guard is exact for a next request from another client,
+   whose confirmations ``UDSS_LLR_0189`` tells apart by addressing; for a next request from
+   the same client it holds only because the completion report promised no response, as the
+   preamble records. The other way a request could end before the confirmation,
    a final response passed to the transport first, cannot arise: ``UDSS_LLR_0133`` rejects an
    ``S_Data.req`` to an addressing with a transmission outstanding, and the final response
    and the pending message of one request share their addressing. The preamble states that a
@@ -359,7 +375,9 @@ Enhanced response timing
    spacing. The minimum spacing shall be the least whole
    number of milliseconds not less than three tenths of ``tP2*_Server_Max`` as that parameter
    stands when the ``S_Data.req`` is supplied, computed in integer arithmetic as
-   ⌈3 × ``tP2*_Server_Max`` / 10⌉.
+   ⌈3 × ``tP2*_Server_Max`` / 10⌉ without overflow for any value ``UDSS_LLR_0138`` admits:
+   with ``q`` and ``r`` the quotient and remainder of ``tP2*_Server_Max`` divided by 10,
+   the spacing is 3 × ``q`` + ⌈3 × ``r`` / 10⌉.
 
    Table 4 footnote b requires a minimum time of 0,3 × ``tP2*_Server_Max`` between the
    transmission of consecutive negative response messages carrying
@@ -377,8 +395,12 @@ Enhanced response timing
    transmission the footnote forbids, by up to a millisecond. The arithmetic is stated as
    integer because a binary floating representation of three tenths rounds either way, and
    two implementations computing ⌈0.3 × 5 000⌉ in single and double precision obtain 1 501
-   and 1 500. The spacing is not a timer, so ``UDSS_LLR_0114``'s loaded value does not reach
-   it; the parameter is read when the ``S_Data.req`` is judged.
+   and 1 500. The product 3 × ``tP2*_Server_Max`` exceeds 32 bits for parameter values above
+   a third of the range ``UDSS_LLR_0138`` admits, and a wrapping, a widening and a checked
+   implementation would then obtain three different spacings; the quotient-and-remainder
+   form is the same value computed within the parameter's own width. The spacing is not a
+   timer, so ``UDSS_LLR_0114``'s loaded value does not reach it; the parameter is read when
+   the ``S_Data.req`` is judged.
 
    The interval is measured from the confirming ``T_Data.conf`` rather than from the state
    of the ``tP2_Server`` timer, even though ``UDSS_LLR_0147`` loads that timer at the same
