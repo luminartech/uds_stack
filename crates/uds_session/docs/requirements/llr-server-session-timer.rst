@@ -58,8 +58,10 @@ Five obligations fall on the caller rather than on the session layer, and are re
 assumptions of use in the qualification repository.
 
 * The caller marks ``keep-alive`` exactly the functionally addressed TesterPresent whose
-  positive response is suppressed, and marks nothing else so. ``UDSS_LLR_0134`` states
-  that the session layer does not verify the marker against the addressing.
+  positive response is suppressed, marks nothing else so, and never marks a message that
+  carries a session selection. ``UDSS_LLR_0134`` states that the session layer does not
+  verify the marker against the addressing, and rejects the marker with a selection only on
+  ``S_Data.req``; an indication so classified is forwarded under ``UDSS_LLR_0137``.
 
 * The caller supplies the completion report of ``UDSS_LLR_0136`` for every request, from
   any client, for which no response message is transmitted. Two are excepted: a marked
@@ -140,8 +142,12 @@ The timer's state
    transmissions grow with its peers and are that requirement's caller-supplied storage, not
    this state. Throughout this document a message is *from the controlling client* where its
    ``S_AI[SA]`` and, where ``S_Mtype`` carries one, its ``S_AI[AE]`` equal the recorded
-   ones; the extension is part of the identity because ``UDSS_LLR_0140`` identifies a
-   responder by the same pair, and two clients behind one remote address can differ in it.
+   ones, two identities being equal only where both carry an extension and addresses and
+   extensions are equal, or neither carries one and the addresses are equal, so that a
+   message whose ``S_Mtype`` carries no extension is never from a controlling client recorded
+   with one; the extension is part of the identity because ``UDSS_LLR_0140`` identifies a
+   responder by the same pair and equates identities the same way, and two clients behind
+   one remote address can differ in it.
    Matching a confirmation's ``S_AI[TA]`` and ``S_AI[AE]`` against a recorded ``S_AI[SA]``
    and ``S_AI[AE]`` reads the extension as the same value on a response as on the request it
    answers; ISO 14229-2:2021 8.7 says only that ``S_AE`` carries the node's extended address,
@@ -333,8 +339,8 @@ The timer's state
    :tags: server; s3_server
 
    While in a non-default session, on ``T_Data.conf`` reporting the outcome, successful or
-   not, of the transmission of a response message marked by the caller as unsolicited, the
-   server shall not restart the ``tS3_Server`` timer.
+   not, of the transmission of a response message whose classification states
+   ``unsolicited``, the server shall not restart the ``tS3_Server`` timer.
 
    Rationale: a transmission triggered by a periodic scheduler or an internal event,
    rather than by a client request, must not keep a session alive. Otherwise a periodic
@@ -408,8 +414,8 @@ The timer's state
    :tags: server; s3_server; error-handling
 
    While in a non-default session, on ``T_Data.conf`` reporting an unsuccessful result
-   for a response message to the controlling client not marked by the caller as
-   unsolicited, the server shall restart the ``tS3_Server`` timer and shall not retransmit
+   for a response message to the controlling client whose classification does not state
+   ``unsolicited``, the server shall restart the ``tS3_Server`` timer and shall not retransmit
    the response.
 
    Table 10 gives the reason for the restart: the timer was stopped by the request that

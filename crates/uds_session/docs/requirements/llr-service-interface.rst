@@ -199,8 +199,9 @@ output in ``UDSS_LLR_0116``'s sense.
    session, which is correct: the old session did end at that instant, and the new one is
    the application's own transition.
 
-   Where one timestamp produces several indications, their order is not specified. Several
-   expiries on one timestamp need no order for the state they leave. On the server ``UDSS_LLR_0112`` and
+   Where one timestamp causes several expiries, the order of the indications they produce
+   is not specified; every such indication precedes any output of the input the timestamp
+   accompanies. Several expiries on one timestamp need no order for the state they leave. On the server ``UDSS_LLR_0112`` and
    ``UDSS_LLR_0148`` touch disjoint timers and neither reads the other's. On the client the
    only expiry action that touches another timer is ``UDSS_LLR_0170``'s, a ``tP_Client``
    expiry starting ``tS3_Client``, and a channel whose ``tP_Client`` is running has its
@@ -926,9 +927,10 @@ and leaves the means of recognising it to the implementation.
      ``repeat``, that the message repeats a request, other than the keep-alive TesterPresent,
      whose transmission, reception or response window failed, as ISO 14229-2:2021 9.7 Table 9
      requires; a repeated keep-alive TesterPresent states ``keep-alive`` again. A request
-     classification shall not state both ``keep-alive`` and ``repeat``. A request classification stating an exact
-     number of zero, or stating ``keep-alive`` together with a session selection, shall be
-     rejected as ``UDSS_LLR_0150`` defines. At a server, on ``T_DataSOM.ind`` and
+     classification shall not state both ``keep-alive`` and ``repeat``. On ``S_Data.req``, a request classification
+     stating an exact number of zero, or stating ``keep-alive`` together with a session
+     selection, shall be rejected as ``UDSS_LLR_0150`` defines; ``UDSS_LLR_0137`` forwards an
+     indication however classified. At a server, on ``T_DataSOM.ind`` and
      ``T_Data.ind`` and, through ``UDSS_LLR_0136``, on the completion report, a request
      classification states no expected response count and no ``repeat``, and may state
      ``keep-alive``, that the message is the functionally addressed TesterPresent whose

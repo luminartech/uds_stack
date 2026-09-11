@@ -81,7 +81,10 @@ What bounds a message whose start was indicated but whose completion never comes
 message, which ISO 14229-2:2021 9.4 Figure 8 key c requires, and ``UDSS_LLR_0157`` opens the
 enhanced window at that message's completion. Where the completion never arrives at all —
 not reported as failed, simply absent — the timer stays stopped, the request stays in
-progress, and ``UDSS_LLR_0159`` cannot fire.
+progress, and ``UDSS_LLR_0159`` cannot fire. The server has the same exposure through
+``UDSS_LLR_0104``, which stops ``tS3_Server`` at the start-of-message of the controlling
+client's request: the session stays pinned, and the server, deliberately, has no caller
+exit.
 
 The standard has the same property. Once the start-of-message stops ``tP_Client``, no session
 layer timer covers the remainder of that message; the transport's own reception timers do.

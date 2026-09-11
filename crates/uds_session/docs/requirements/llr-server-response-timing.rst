@@ -237,8 +237,9 @@ The response window
    request in progress running; ``UDSS_LLR_0186`` in :doc:`llr-server-session-timer`
    states the marked message's effect. The second exception, the OBD-range request, ends
    the request in progress on its own reception under ``UDSS_LLR_0189``, so the window this
-   requirement opens is the new request's. Any other request arriving while a window is open
-   is outside the preamble's assumption of use. Such a request nonetheless reloads the timer
+   requirement opens is the new request's. Any other request arriving while a request is in
+   progress is outside the preamble's assumption of use. Such a request nonetheless reloads
+   the timer
    and, under ``UDSS_LLR_0189``, replaces the request in progress; that requirement declares
    the reading and its consequence for a server that instead ignores the second request as
    10.3 Figure 18 key f shows.
