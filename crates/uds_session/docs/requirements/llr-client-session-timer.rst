@@ -17,10 +17,10 @@ restarts it, a physically addressed TesterPresent being transmitted only where t
 expires with nothing else sent; Table 8 allots one timer per point-to-point communication.
 
 Throughout this document the first is **functional keep-alive** and the second **physical
-keep-alive**. The mode is a protocol parameter of the client (``UDSS_LLR_0162``). Beside each
-timer the client holds one fact: in functional keep-alive the **keeping-alive fact**, that the
-client is keeping some session alive; in physical keep-alive a **channel session fact** per
-physical channel, that the channel's server is in a non-default session. The fact is needed
+keep-alive**. The mode is fixed when the client instance is created (``UDSS_LLR_0162``).
+Beside each timer the client holds one fact: in functional keep-alive the **keeping-alive
+fact**, that the client is keeping some session alive; in physical keep-alive a **session
+fact** per physical channel, that the channel's server is in a non-default session. The fact is needed
 because a timer that has expired and awaits the confirmation of the TesterPresent is stopped
 while the session is still being kept alive; without it, a request marked as the keep-alive
 and sent in the default session would start the timer.
@@ -33,7 +33,7 @@ cannot compose the TesterPresent itself, ``UDSS_LLR_0135`` forbidding it; the ap
 does, as it does the repeat that ``UDSS_LLR_0159`` leaves to it.
 
 This document uses **physical channel**, **functional channel** and **request in progress**
-as the client response timing document defines them, **first indication** and **completion**
+as ``UDSS_LLR_0151`` and the client response timing document's preamble define them, **first indication** and **completion**
 as ``UDSS_LLR_0140`` defines them, and **solicited** as ``UDSS_LLR_0134`` defines it.
 
 What ordinary traffic does to the timer
@@ -50,8 +50,8 @@ one-request-at-a-time rule.
 
 In physical keep-alive, everything. Every request stops the timer and every completed
 exchange restarts it, and the physically addressed TesterPresent is one request among
-others: it may require a response, in which case it occupies the channel's one
-outstanding-request slot like any other. ISO 14229-2:2021 10.1.4.2 Figure 13 keys k to n show
+others: it may require a response, in which case it is the channel's one request in
+progress like any other. ISO 14229-2:2021 10.1.4.2 Figure 13 keys k to n show
 exactly that.
 
 Assumptions of use
@@ -128,7 +128,7 @@ The timer's state
    a physical channel when that channel's ``tS3_Client`` expires with no other request sent
    on it. The mode shall be fixed when the client instance is created and shall not change
    thereafter; no input of this set changes it. The mode shall select which state ``UDSS_LLR_0163`` requires and which of
-   ``UDSS_LLR_0164`` to ``UDSS_LLR_0172`` act.
+   ``UDSS_LLR_0164`` to ``UDSS_LLR_0172`` and ``UDSS_LLR_0184`` act.
 
    Clause 9.5 requires a periodically transmitted, functionally addressed TesterPresent to
    be distinguished from a sequentially transmitted, physically addressed one, which is only
@@ -152,7 +152,7 @@ The timer's state
    :integrity_level: QM
    :target_level: D
    :origin: session-layer-standard
-   :source: ISO 14229-2:2021 9.4 Table 5; ISO 14229-2:2021 9.5 Table 6; ISO 14229-2:2021 9.6 Table 8
+   :source: ISO 14229-2:2021 9.5 Table 5; ISO 14229-2:2021 9.5 Table 6; ISO 14229-2:2021 9.6 Table 8
    :tags: client; s3_client; session-state
 
    In functional keep-alive the client shall maintain a single ``tS3_Client`` timer and a
@@ -162,8 +162,9 @@ The timer's state
    instance at its creation, and each physical channel's timer and fact in that channel's
    storage under ``UDSS_LLR_0151``. In functional keep-alive
    the client shall have one ``tS3_Client`` reload parameter; in physical keep-alive each
-   physical channel shall have its own, each supplied under ``UDSS_LLR_0138``. On
-   initialisation no such timer shall be running and no such fact shall hold. Thereafter the
+   physical channel shall have its own, each supplied under ``UDSS_LLR_0138``. On creation
+   of the instance, and for a physical channel when its storage is supplied, no such timer
+   shall be running and no such fact shall hold. Thereafter the
    timers and facts shall be changed only as ``UDSS_LLR_0164`` to ``UDSS_LLR_0172`` and
    ``UDSS_LLR_0184`` require, and the condition of each of those requirements shall be
    evaluated against the state as it was before the input in hand, that state being the one
@@ -520,15 +521,14 @@ session fact, and the requests and indications on it.
    :integrity_level: QM
    :target_level: D
    :origin: session-layer-standard
-   :source: ISO 14229-2:2021 9.5 Table 5; ISO 14229-2:2021 10.1.4.2 Figure 13; ISO 14229-2:2021 9.6 Table 8
+   :source: ISO 14229-2:2021 9.5 Table 5; ISO 14229-2:2021 9.6 Table 8; ISO 14229-2:2021 10.1.4.2 Figure 13
    :tags: client; s3_client
 
    In physical keep-alive, while a physical channel's session fact holds and its
    ``tS3_Client`` timer is running, when the elapsed time since the timer was last started
    reaches the value it was loaded with, the client shall stop the timer and deliver a
-   keep-alive indication to the application carrying the channel's identity: ``S_Mtype``,
-   ``S_AI[TAtype]``, ``S_AI[SA]``, ``S_AI[TA]`` and, where ``S_Mtype`` carries one,
-   ``S_AI[AE]``.
+   keep-alive indication to the application carrying the channel's identity as
+   ``UDSS_LLR_0151`` defines it.
 
    Table 5 defines ``tS3_Client`` for physical communication as the maximum time between
    physically transmitted requests to a single server, and Figure 13 keys k and o have its
@@ -546,13 +546,13 @@ session fact, and the requests and indications on it.
    timer and the channel's server leaves the session when ``tS3_Server`` expires.
 
    The indication carries the channel and not a source address: a channel is identified by
-   the client's own outbound addressing, as the client response timing document defines it,
-   and the source is the client. ``UDSS_LLR_0159`` carries a request's full addressing
+   the client's own outbound addressing, as ``UDSS_LLR_0151`` defines it, and the source is
+   the client. ``UDSS_LLR_0159`` carries a request's full addressing
    because there the application must identify a request; here it must identify a channel.
    Table 8 makes this timer one per point-to-point communication, which is why the channel
    is named where ``UDSS_LLR_0165`` names none.
 
-   The timer cannot expire while a request is outstanding on the channel, because
+   The timer cannot expire while a request is in progress on the channel, because
    ``UDSS_LLR_0169`` stopped it. Expiry is at reaching the parameter for the reason
    ``UDSS_LLR_0165`` gives.
 

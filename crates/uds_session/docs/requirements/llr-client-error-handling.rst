@@ -9,7 +9,7 @@ What the client can do about an error
 
 ISO 14229-2:2021 9.7 Table 9 names three error events for the client and states a handling
 for each. The session layer already signals all three. A failed transmission reaches the
-application as the ``S_Data.conf`` that ``UDSS_LLR_0120`` produces, its ``S_Result``
+application as the ``S_Data.conf`` that ``UDSS_LLR_0122`` produces, its ``S_Result``
 carrying the error value ``UDSS_LLR_0132`` reserves for a lower layer's report. A failed
 reception reaches it as the ``S_Data.ind`` that ``UDSS_LLR_0137`` produces for every
 ``T_Data.ind``, successful or not; clause 8.10 requires the error result to be issued to the
@@ -95,8 +95,8 @@ never completed must not cost the application its sessions with every other serv
 in functional keep-alive a single release does.
 
 Both are acts of the caller, as the completion report of ``UDSS_LLR_0136`` is, and neither
-a primitive nor a protocol parameter; the service interface document's preamble names them
-among the inputs ``UDSS_LLR_0115`` enumerates. A client in functional keep-alive necessarily
+a primitive nor a protocol parameter; ``UDSS_LLR_0115`` enumerates them among its inputs
+and has each carry a timestamp. A client in functional keep-alive necessarily
 has the functional channel its TesterPresent goes out on, ``UDSS_LLR_0166`` requiring that
 message's confirmation to arrive on one.
 
@@ -157,7 +157,8 @@ The repeat count
    :tags: client; error-handling; repeat
 
    Each logical communication channel, physical or functional, shall have a **repeat
-   count** in the channel's storage under ``UDSS_LLR_0151``. On initialisation the count shall be zero.
+   count** in the channel's storage under ``UDSS_LLR_0151``. When the channel's storage is
+   supplied the count shall be zero.
    Thereafter it shall be changed only as ``UDSS_LLR_0179`` and ``UDSS_LLR_0183`` require,
    each evaluated against the state as it was before the input in hand, that state being the
    one ``UDSS_LLR_0187`` fixes.
@@ -347,13 +348,13 @@ Giving a server up
    further ``S_Data.req`` to its addressing, until its ``T_Data.conf`` arrives or the
    channel's storage is withdrawn under ``UDSS_LLR_0151``. A ``T_Data.conf`` arriving for an
    abandoned association shall be confirmed to the
-   application under ``UDSS_LLR_0120``, shall start no response window under
+   application under ``UDSS_LLR_0122``, shall start no response window under
    ``UDSS_LLR_0153``, and shall otherwise act as it would had the channel not been reset;
    in particular ``UDSS_LLR_0174`` and ``UDSS_LLR_0175`` start the channel's spacing timer
-   on it, and ``UDSS_LLR_0164``, ``UDSS_LLR_0168``, ``UDSS_LLR_0170`` and ``UDSS_LLR_0172``
-   act on it. The reset shall produce no output to the application and none to the
-   transport layer. A reset identifying a channel the client does not have shall be
-   rejected as ``UDSS_LLR_0150`` rejects an invalid request.
+   on it, and ``UDSS_LLR_0164``, ``UDSS_LLR_0166``, ``UDSS_LLR_0167``, ``UDSS_LLR_0168``,
+   ``UDSS_LLR_0170`` and ``UDSS_LLR_0172`` act on it. The reset shall produce no output to
+   the application and none to the transport layer. A reset identifying a channel the
+   client does not have shall be rejected as ``UDSS_LLR_0150`` defines.
 
    Rationale: ISO 14229-2:2021 9.7 Table 9 ends at the third transmission and the standard
    says nothing of what the client concludes, while the state this set keeps per channel
@@ -423,8 +424,7 @@ Giving a server up
 
    In every other case the release shall change nothing. The release shall produce no
    output to the application and none to the transport layer. A release identifying a
-   channel the client does not have shall be rejected as ``UDSS_LLR_0150`` rejects an
-   invalid request.
+   channel the client does not have shall be rejected as ``UDSS_LLR_0150`` defines.
 
    Rationale: the standard names no end for the client's keep-alive other than the return
    to the default session that ``UDSS_LLR_0167`` and ``UDSS_LLR_0172`` transcribe, and a

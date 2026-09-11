@@ -36,8 +36,8 @@ A ``T_Data.conf`` belongs to the channel named by the addressing of the ``S_Data
 ``UDSS_LLR_0133`` associates with it, the route ``UDSS_LLR_0153`` uses, and an ``S_Data.req``
 belongs to the channel its own addressing names. On the outbound side, therefore, no caller
 identification of the channel is needed. This document uses **physical channel**,
-**functional channel** and the identity of a channel as the client response timing document
-defines them, and **expected response count** and ``none`` as ``UDSS_LLR_0134`` defines them.
+**functional channel** and the identity of a channel as ``UDSS_LLR_0151`` and the client
+response timing document's preamble define them, and **expected response count** and ``none`` as ``UDSS_LLR_0134`` defines them.
 
 Postponement is rejection
 -------------------------
@@ -122,8 +122,8 @@ The spacing timer
    distinguish whether the value was derived with ``ΔtP2`` or with ``ΔtP6``. A channel's
    spacing timer shall be active from a start under ``UDSS_LLR_0174`` or ``UDSS_LLR_0175``
    until the elapsed time since the most recent such start reaches the value it was loaded
-   with, and a timer that has not been started shall not be active. On initialisation no
-   channel's spacing timer shall be active. Thereafter a channel's spacing timer shall be
+   with, and a timer that has not been started shall not be active. When a channel's
+   storage is supplied its spacing timer shall not be active. Thereafter a channel's spacing timer shall be
    changed only as ``UDSS_LLR_0174`` and ``UDSS_LLR_0175`` require, each evaluated against
    the state as it was before the input in hand, that state being the one ``UDSS_LLR_0187``
    fixes.
