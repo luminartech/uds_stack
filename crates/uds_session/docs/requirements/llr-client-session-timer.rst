@@ -126,8 +126,7 @@ The timer's state
    and physical keep-alive, in which a physically addressed TesterPresent is transmitted on
    a physical channel when that channel's ``tS3_Client`` expires with no other request sent
    on it. The mode shall be fixed when the client instance is created and shall not change
-   thereafter; an input attempting to change it shall be rejected as ``UDSS_LLR_0150``
-   defines. The mode shall select which state ``UDSS_LLR_0163`` requires and which of
+   thereafter; no input of this set changes it. The mode shall select which state ``UDSS_LLR_0163`` requires and which of
    ``UDSS_LLR_0164`` to ``UDSS_LLR_0172`` act.
 
    Clause 9.5 requires a periodically transmitted, functionally addressed TesterPresent to
