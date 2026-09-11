@@ -262,7 +262,7 @@ The response window
    :integrity_level: QM
    :target_level: D
    :origin: session-layer-standard
-   :source: ISO 14229-2:2021 9.1.2; ISO 14229-2:2021 9.2 Table 3
+   :source: ISO 14229-2:2021 9.1.2; ISO 14229-2:2021 9.2 Table 3; ISO 14229-2:2021 10.1.4; ISO 14229-2:2021 10.2.4
    :tags: client; p_client
 
    Each channel shall have a **default reload parameter** and an **enhanced reload
@@ -548,8 +548,8 @@ Responders on a functional channel
    :origin: derived
    :tags: client; p_client; responders
 
-   Each functional channel shall have a **responder table** in storage supplied by the
-   caller, whose **capacity** is the number of entries that storage holds. An entry shall be
+   Each functional channel shall have a **responder table** in the channel's storage under
+   ``UDSS_LLR_0151``, whose **capacity** is the number of entries that storage holds. An entry shall be
    keyed by the ``S_AI[SA]`` and, where ``S_Mtype`` carries one, the ``S_AI[AE]`` of a
    responder's indications, and shall record for that responder whether a start-of-message
    is open under ``UDSS_LLR_0140`` and whether a response-pending message is outstanding
