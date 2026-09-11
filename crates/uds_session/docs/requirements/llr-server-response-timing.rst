@@ -118,20 +118,28 @@ The response window
    :tags: server; p2_server; request-in-progress
 
    The server shall keep, in the instance, whether a request is in progress and, while one
-   is, a **response-pending anchor** that is either clear or holds a timestamp. On
-   initialisation no request shall be in progress and the anchor shall be clear.
+   is, the ``S_AI[SA]`` and ``S_AI[AE]`` of that request's ``T_Data.ind`` and a
+   **response-pending anchor** that is either clear or holds a timestamp. On initialisation
+   no request shall be in progress and the anchor shall be clear. An input **answers** the
+   request in progress where its address extension equals the recorded ``S_AI[AE]`` and its
+   target address equals the recorded ``S_AI[SA]``, the target being ``S_AI[TA]`` of an
+   ``S_Data.req``, ``T_AI[TA]`` of a ``T_Data.conf``, and the source address of the
+   addressing information a completion report of ``UDSS_LLR_0136`` carries.
 
    A request shall become in progress on ``T_Data.ind`` reporting the successful reception
    of a request; where a request is already in progress, that request shall cease to be in
    progress and the anchor shall be cleared before the new one begins. A request shall also
-   cease to be in progress on ``T_Data.conf`` reporting the outcome, successful or not, of
-   the transmission of a solicited final response, and on the completion report of
-   ``UDSS_LLR_0136``; when it ceases, the anchor shall be cleared.
+   cease to be in progress on ``T_Data.conf`` answering it and reporting the outcome,
+   successful or not, of the transmission of a solicited final response, and on a completion
+   report of ``UDSS_LLR_0136`` answering it; when it ceases, the anchor shall be cleared.
    While a request is in progress, the anchor shall be set to the timestamp of a
-   ``T_Data.conf`` reporting the successful transmission of a response-pending message.
-   Nothing else shall change either fact. A response-pending message or a solicited final
-   response is **unconfirmed** while the association ``UDSS_LLR_0133`` holds for its
-   ``S_Data.req`` has received no ``T_Data.conf``.
+   ``T_Data.conf`` answering it and reporting the successful transmission of a
+   response-pending message. Nothing else shall change any of these facts; in particular a
+   ``T_Data.conf`` or completion report that answers no request in progress is forwarded
+   under ``UDSS_LLR_0122`` or accepted under ``UDSS_LLR_0136`` and changes nothing here. A
+   response-pending message or a solicited final response answering the request in progress
+   is **unconfirmed** while the association ``UDSS_LLR_0133`` holds for its ``S_Data.req``
+   has received no ``T_Data.conf``.
 
    Rationale: ``UDSS_LLR_0147`` and ``UDSS_LLR_0149`` read the request in progress and the
    time of the last response-pending confirmation, and ``UDSS_LLR_0143``'s closed list
@@ -154,14 +162,27 @@ The response window
    included. A new request replaces one in progress because ISO 14229-1:2020 8.7.6 has one
    request abort another, its OBD-range exception, and the reception of the new request
    necessarily precedes the abort it causes; were the fact merely left true, the aborted
-   request's ending would be read as the new one's. The caller supplies no completion report
-   for a request ended this way, an assumption of use the qualification repository records
-   alongside one request at a time. The anchor is the confirmation because ``UDSS_LLR_0149`` measures the spacing from
-   there; it lives only while a request is in progress because the footnote it serves spaces
-   the response-pending messages of one service. A failed response-pending transmission sets
+   request's ending would be read as the new one's. The replacement applies to every request
+   received while one is in progress, because ``UDSS_LLR_0135`` leaves the session layer
+   unable to single out the OBD-range one. That is a declared choice: ISO 14229-2:2021 10.3
+   Figure 18 key f shows a server ignoring a request received while it is still handling the
+   previous one, and a caller that ignores it as the figure does loses the first request's
+   window measurement under ``UDSS_LLR_0148`` and must answer or report the second. The
+   aborting request comes from another client, 8.7.6's OBD tool, while the aborted one may
+   have a response-pending or final response on the wire, so what ends the request in
+   progress, sets its anchor or completes it is matched to it by addressing: a response
+   answers the request whose source it targets, with the same address extension, the
+   reading ``UDSS_LLR_0185`` records, and a completion report carries the request's own
+   addressing under ``UDSS_LLR_0136``. Without the match the aborted request's confirmation
+   would end the new request or widen its window. Two requests from one client, whose
+   answers cannot be told apart this way, are outside the assumption of use of one request
+   at a time. The anchor is the confirmation because ``UDSS_LLR_0149`` measures the spacing
+   from there; it lives only while a request is in progress because the footnote it serves
+   spaces the response-pending messages of one service. A failed response-pending transmission sets
    no anchor: 9.2 Table 4 footnote b counts transmissions, and one that failed did not reach
    the data link the footnote protects. The state is instance-resident because it is fixed in
-   size, one fact and one timestamp, as ``UDSS_LLR_0185`` holds the session facts.
+   size, one fact, two addresses and one timestamp, as ``UDSS_LLR_0185`` holds the session
+   facts.
 
 .. llr:: The response timer starts on reception of a request
    :id: UDSS_LLR_0144
@@ -184,7 +205,10 @@ The response window
    of that same event.
 
    This requirement is not conditioned on whether a response window is already open, the
-   preamble's assumption of use being that one request is handled at a time. That
+   preamble's assumption of use being that one request is handled at a time. A request
+   received while a window is open reloads the timer and, under ``UDSS_LLR_0189``, replaces
+   the request in progress; that requirement declares the reading and its consequence for a
+   server that instead ignores the second request as 10.3 Figure 18 key f shows. The
    assumption does not cover ISO 14229-1:2020 8.7.6's keep-alive exception, and
    :doc:`open-questions` records the consequence.
 
@@ -259,8 +283,8 @@ Enhanced response timing
    :source: ISO 14229-2:2021 9.2 Table 3; ISO 14229-2:2021 9.4 Figure 8; ISO 14229-2:2021 10.1.3 Figure 11
    :tags: server; p2_server; enhanced-response-timing
 
-   On ``T_Data.conf`` indicating the successful transmission of a response-pending message,
-   while a request is in progress under ``UDSS_LLR_0189``, the server shall start the
+   On ``T_Data.conf`` indicating the successful transmission of a response-pending message
+   and answering the request in progress under ``UDSS_LLR_0189``, the server shall start the
    ``tP2_Server`` timer loaded with the ``tP2*_Server_Max`` protocol parameter.
 
    Table 3 defines ``tP2*_Server`` as the performance requirement for the server to start
@@ -278,7 +302,18 @@ Enhanced response timing
    ``S_Data.req`` to an addressing with a transmission outstanding, and the final response
    and the pending message of one request share their addressing. The preamble states that a
    confirmation for a request that has ended delays nothing; the guard is what makes that
-   true of this timer.
+   true of this timer. The confirmation must answer the request in progress for the reason
+   ``UDSS_LLR_0189`` gives: after a replacement, the aborted request's response-pending
+   confirmation would otherwise open the enhanced window for a request it never served.
+
+   A failed response-pending transmission opens no window. Table 3's "transmission of a
+   negative response message (indicated via ``T_Data.conf``)" is read as the transmission
+   that completed, as ``UDSS_LLR_0189`` reads Table 4 footnote b for the anchor; a message
+   that did not reach the data link gave the client nothing to wait ``tP2*_Server`` from.
+   ``UDSS_LLR_0145`` has already stopped the timer at the ``T_Data.req``, so after such a
+   failure the request stays in progress with no window running and ``UDSS_LLR_0148``
+   reports nothing for it; ``UDSS_LLR_0110`` has the transmission not retried, and the
+   application owes the next ``T_Data.req`` with no session layer bound on it.
 
 .. llr:: Response timer expiry is indicated to the application
    :id: UDSS_LLR_0148
@@ -318,9 +353,10 @@ Enhanced response timing
    :tags: server; p2_server; enhanced-response-timing
 
    While a request is in progress under ``UDSS_LLR_0189``, the session layer shall reject
-   an ``S_Data.req`` for a response-pending message where a response-pending message is
-   unconfirmed, or where the response-pending anchor holds a timestamp and the elapsed time
-   since it is less than the minimum spacing. The minimum spacing shall be the least whole
+   an ``S_Data.req`` for a response-pending message answering that request where a
+   response-pending message answering it is unconfirmed, or where the response-pending
+   anchor holds a timestamp and the elapsed time since it is less than the minimum
+   spacing. The minimum spacing shall be the least whole
    number of milliseconds not less than three tenths of ``tP2*_Server_Max`` as that parameter
    stands when the ``S_Data.req`` is supplied, computed in integer arithmetic as
    ⌈3 × ``tP2*_Server_Max`` / 10⌉.
@@ -358,7 +394,9 @@ Enhanced response timing
    from. ``UDSS_LLR_0133`` already rejects such an ``S_Data.req``, the two messages sharing
    their addressing; the clause is restated here so that footnote b's purpose is met on the
    face of the spacing requirement, and under ``UDSS_LLR_0150`` the one report carries both
-   causes. ``UDSS_LLR_0189`` defines the term.
+   causes. ``UDSS_LLR_0189`` defines the term, and defines what answers the request in
+   progress; a response-pending message to any other addressing is spaced by nothing here,
+   because footnote b spaces the messages of one service.
    Where the anchor is clear and no response-pending message is unconfirmed, this
    requirement does not apply: no response-pending message has been transmitted for the
    request in progress, or the only one that was failed and, as ``UDSS_LLR_0189`` records,

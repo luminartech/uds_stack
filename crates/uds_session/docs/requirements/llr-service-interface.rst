@@ -271,9 +271,11 @@ Service primitives
    role shall not change thereafter. A server shall reject, as ``UDSS_LLR_0150`` defines, an
    ``S_Data.req`` whose classification states kind ``request``. A client shall reject, as
    ``UDSS_LLR_0150`` defines, an ``S_Data.req`` whose classification states kind ``final
-   response`` or ``response pending``, and the completion report of ``UDSS_LLR_0136``. Where
-   a later document defines an input for one role alone, it shall say that the other role
-   rejects it.
+   response`` or ``response pending``, and the completion report of ``UDSS_LLR_0136``. A
+   server shall likewise reject a ``T_Data.ind`` or ``T_DataSOM.ind`` whose classification
+   states kind ``final response`` or ``response pending``, and a client one whose
+   classification states kind ``request``. Where a later document defines an input for one
+   role alone, it shall say that the other role rejects it.
 
    Rationale: every requirement in this set is stated for the client or for the server, and
    ISO 14229-2:2021 describes the two as distinct peer entities throughout clauses 6 to 10,
@@ -287,7 +289,10 @@ Service primitives
    decidable for an ``S_Data.req`` or a completion report, whose forms ``UDSS_LLR_0134`` and
    ``UDSS_LLR_0136`` define without a role: a server asked to transmit a request, or a client
    told a request it never received is complete, would otherwise be accepted by one
-   implementation and refused by another.
+   implementation and refused by another. The reception primitives are listed for the same
+   reason: no server requirement conditions on receiving a response and no client
+   requirement on receiving a request, so one implementation would forward such an
+   indication under ``UDSS_LLR_0137`` and another refuse it.
 
 .. llr:: S_Data.req requests transmission of a message
    :id: UDSS_LLR_0118
