@@ -43,8 +43,9 @@ enumerates; the channel reset and keep-alive release that :doc:`llr-client-error
 defines in ``UDSS_LLR_0183`` and ``UDSS_LLR_0184``, by which the caller clears state the
 client keeps; and the supply and withdrawal of the storage ``UDSS_LLR_0133`` and
 ``UDSS_LLR_0151`` name, in which every fact the set keeps per peer or per channel lives.
-Each produces no output, so ``UDSS_LLR_0116`` is not engaged by them. The enumeration in
-``UDSS_LLR_0115`` is open and does not change. One output is likewise addressed to the
+Each produces no output of its own, so ``UDSS_LLR_0116`` is not engaged by them;
+``UDSS_LLR_0115`` enumerates them among its inputs and has each carry a timestamp, so that
+``UDSS_LLR_0187`` orders the expiries before the act. One output is likewise addressed to the
 caller rather than retrieved on the application's behalf: the rejection report of
 ``UDSS_LLR_0150``, which is neither an ``S_Data.conf`` under ``UDSS_LLR_0132`` nor an
 output in ``UDSS_LLR_0116``'s sense.
@@ -65,6 +66,10 @@ output in ``UDSS_LLR_0116``'s sense.
    to the caller, which makes the session layer's behaviour a pure function of the
    inputs supplied to it. Each requirement in this set is then testable without a
    network, and one implementation serves CAN, DoIP, K-line and simulation alike.
+
+   This requirement is verified by inspection of the crate's dependencies and build
+   configuration rather than by a runtime test; no black-box test can show that no I/O is
+   performed.
 
 .. llr:: Elapsed time is supplied by the caller
    :id: UDSS_LLR_0114
@@ -97,7 +102,8 @@ output in ``UDSS_LLR_0116``'s sense.
    Expiry shall be evaluated only when a timestamp is supplied, before the input it
    accompanies, so a timer set running by an input, or by the action a requirement takes on
    another timer's expiry, expires no earlier than the next timestamp supplied; a timer loaded
-   with zero therefore expires on that next timestamp. A requirement that leaves a running
+   with zero therefore expires on that next timestamp, or, where the requirement says
+   "exceeds", on the first later one. A requirement that leaves a running
    timer alone says so.
 
    Rationale: reading a clock is I/O by another name, and it makes timer behaviour
@@ -106,10 +112,10 @@ output in ``UDSS_LLR_0116``'s sense.
 
    The unit is milliseconds because that is the unit ISO 14229-2:2021 9.5 Table 5 states
    its timing parameter values in; ``tS3_Server`` has a timeout of 5 000 ms and a
-   tolerance of 0 ms to 200 ms. A later requirement needing finer resolution — the minimum
-   spacing between consecutive response-pending messages is a fraction of a timing
-   parameter and need not fall on a whole millisecond — will have to be expressed against
-   this unit rather than alongside a second one.
+   tolerance of 0 ms to 200 ms. ``UDSS_LLR_0149``, whose minimum spacing between
+   consecutive response-pending messages is a fraction of a timing parameter and need not
+   fall on a whole millisecond, is expressed against this unit rather than alongside a
+   second one.
 
    The width is fixed rather than left as a minimum because the wraparound point would
    otherwise be unknown, and an unknown modulus cannot be tested. A 32-bit millisecond
@@ -153,13 +159,22 @@ output in ``UDSS_LLR_0116``'s sense.
    The inputs so supplied shall include ``S_Data.req``, as ``UDSS_LLR_0139`` defines it;
    ``T_Data.ind``, ``T_DataSOM.ind`` and ``T_Data.conf``, as ``UDSS_LLR_0140`` defines
    them; a timestamp, as ``UDSS_LLR_0114`` defines it, accompanying every other input and
-   also supplied on its own; the protocol parameters of ``UDSS_LLR_0138``; and the
-   completion report of ``UDSS_LLR_0136``.
+   also supplied on its own; the protocol parameters of ``UDSS_LLR_0138``; the completion
+   report of ``UDSS_LLR_0136``; the supply and withdrawal of channel storage under
+   ``UDSS_LLR_0151``; and the channel reset and keep-alive release of ``UDSS_LLR_0183`` and
+   ``UDSS_LLR_0184``. The last four, and the setting of a protocol parameter, are acts of the
+   caller rather than primitives; each shall be accompanied by a timestamp as
+   ``UDSS_LLR_0114`` requires, and ``UDSS_LLR_0187`` shall order the expiries that timestamp
+   causes, with their indications, before the act. Where a requirement says such an act
+   produces no output, that is said of the act alone.
 
    Rationale: the closed claim is the first paragraph, and it is what makes this crate
    sans-io: there is no second channel by which state can reach the session layer. The
-   enumeration is open because later requirement documents will define further inputs, and
-   a list stated as exhaustive would then be wrong rather than merely incomplete. A
+   enumeration is open because a list stated as exhaustive would be wrong rather than merely
+   incomplete should a document add an input; the acts are named in it so that whether an
+   act carries a timestamp is not left to inference, a reset delivered at the instant a
+   timer expires otherwise being read by one implementation as swallowing the expiry's
+   indication and by another as following it. A
    timestamp may be supplied on its own because a timer can expire while no message is
    exchanged, and ``UDSS_LLR_0112`` requires the server to act on that expiry. Where it
    accompanies another input, ``UDSS_LLR_0187`` orders the expiries it causes before that
@@ -177,7 +192,8 @@ output in ``UDSS_LLR_0116``'s sense.
    every timer expiry that timestamp causes before it processes that input, and shall
    process the input against the state those expiries leave. Where a requirement in this
    set evaluates a condition against the state as it was before the input in hand, that
-   state is the state after every expiry the input's timestamp caused.
+   state is the state after every expiry the input's timestamp caused; every requirement in
+   this set that conditions on state reads it so, whether or not it says so.
 
    Rationale: ``UDSS_LLR_0115`` lets a timestamp accompany an input and nothing else orders
    the two. The elapsed time preceded the input's arrival, so a timer that reaches its value
@@ -201,7 +217,7 @@ output in ``UDSS_LLR_0116``'s sense.
 
    Where one timestamp causes several expiries, the order of the indications they produce
    is not specified; every such indication precedes any output of the input the timestamp
-   accompanies. Several expiries on one timestamp need no order for the state they leave. On the server ``UDSS_LLR_0112`` and
+   accompanies and any rejection report for it under ``UDSS_LLR_0150``. Several expiries on one timestamp need no order for the state they leave. On the server ``UDSS_LLR_0112`` and
    ``UDSS_LLR_0148`` touch disjoint timers and neither reads the other's. On the client the
    only expiry action that touches another timer is ``UDSS_LLR_0170``'s, a ``tP_Client``
    expiry starting ``tS3_Client``, and a channel whose ``tP_Client`` is running has its
@@ -228,7 +244,9 @@ output in ``UDSS_LLR_0116``'s sense.
    outputs for retrieval keeps their ordering explicit and makes reentrancy impossible.
    It also lets outputs that the standard does not define, such as the session-timeout
    indication required by ``UDSS_LLR_0112``, be delivered by the same mechanism as the
-   standard's own primitives.
+   standard's own primitives. The prohibition on callbacks is verified by inspection of the
+   crate's public types, which take no caller-supplied trait object or function, rather than
+   by a runtime test.
 
 .. llr:: The session layer retains no message payload
    :id: UDSS_LLR_0117
@@ -249,7 +267,9 @@ output in ``UDSS_LLR_0116``'s sense.
    size it does not know. Retaining a payload would also imply a retransmission buffer,
    and no requirement in this set obliges the session layer to retransmit anything;
    ``UDSS_LLR_0110`` states the point explicitly for a server's response in a non-default
-   session.
+   session. The requirement is verified by inspection of the crate's types, which hold no
+   buffer and borrow the caller's data for the duration of one input, rather than by a
+   runtime test.
 
 .. llr:: A rejected input is reported to the caller and changes nothing
    :id: UDSS_LLR_0150
@@ -268,8 +288,10 @@ output in ``UDSS_LLR_0116``'s sense.
    requirements reject the same input, the one report shall state every cause and carry the
    content each of them requires.
 
-   Rationale: ``UDSS_LLR_0140``, ``UDSS_LLR_0149``, ``UDSS_LLR_0176``, ``UDSS_LLR_0180``,
-   ``UDSS_LLR_0181``, ``UDSS_LLR_0183`` and ``UDSS_LLR_0184`` each refuse an input rather
+   Rationale: ``UDSS_LLR_0133``, ``UDSS_LLR_0134``, ``UDSS_LLR_0140``, ``UDSS_LLR_0149``,
+   ``UDSS_LLR_0151``, ``UDSS_LLR_0152``, ``UDSS_LLR_0176``, ``UDSS_LLR_0180``,
+   ``UDSS_LLR_0181``, ``UDSS_LLR_0183``, ``UDSS_LLR_0184`` and ``UDSS_LLR_0188`` each refuse
+   an input rather
    than react to it, and without this requirement none would say what refusal means. A
    rejection cannot be reported as an ``S_Data.conf``: ``UDSS_LLR_0132`` reserves every
    ``S_Result`` value other than ``S_OK`` for an error detected by a lower layer, and no
@@ -328,12 +350,14 @@ Service primitives
    result.
 
    At a client, every ``T_DataSOM.ind`` and ``T_Data.ind`` shall identify the logical
-   communication channel it belongs to, supplied by the caller. The client response timing
-   document defines the channel. Identifying a channel the client does not have shall be
-   rejected as ``UDSS_LLR_0150`` rejects an invalid request.
+   communication channel it belongs to, supplied by the caller; ``UDSS_LLR_0151`` defines
+   the channel. Identifying a channel the client does not have shall be rejected as
+   ``UDSS_LLR_0150`` defines. The session layer shall not verify the identified channel
+   against the indication's addressing.
 
    A ``T_DataSOM.ind`` shall open a start-of-message on its channel for the **responder**
-   identified by its ``S_AI[SA]`` and, where ``S_Mtype`` carries one, its ``S_AI[AE]``; two
+   identified by its ``S_AI[SA]`` and, where ``S_Mtype`` carries one, its ``S_AI[AE]``,
+   leaving one already open for that responder as it is; two
    such identities are equal only where both carry an ``S_AI[AE]`` and the addresses and
    extensions are equal, or neither carries one and the addresses are equal. A ``T_Data.ind``
    shall **complete** the open start-of-message on the same channel from the same responder
@@ -372,7 +396,10 @@ Service primitives
    the physical channel to that server or to a functional channel it was reached through,
    and nothing in the indication says which. The caller that issued the request knows.
    Naming a channel that does not exist is a caller error, not an input, and is treated as
-   ``UDSS_LLR_0150`` treats one.
+   ``UDSS_LLR_0150`` treats one. The channel named is trusted rather than checked against
+   the indication's addressing: on a functional channel the response's addressing does not
+   name the channel, and a check on a physical channel alone would catch a misrouting only
+   by coincidence; ``UDSS_LLR_0151`` records the residual.
 
    The pairing rule replaces an earlier sentence that classified a ``T_Data.ind`` as
    multi-frame where a ``T_DataSOM.ind`` preceded it, without saying how the two were
@@ -409,12 +436,18 @@ Service primitives
    response`` or ``response pending``, and the completion report of ``UDSS_LLR_0136``. A
    server shall likewise reject a ``T_Data.ind`` or ``T_DataSOM.ind`` whose classification
    states kind ``final response`` or ``response pending``, and a client one whose
-   classification states kind ``request``. Where a later document defines an input for one
-   role alone, it shall say that the other role rejects it. A server shall reject, as
-   ``UDSS_LLR_0150`` defines, a ``T_DataSOM.ind`` or ``T_Data.ind`` identifying a logical
-   communication channel, the supply or withdrawal of channel storage under
-   ``UDSS_LLR_0151``, and the channel reset and keep-alive release of ``UDSS_LLR_0183`` and
-   ``UDSS_LLR_0184``.
+   classification states kind ``request``. A server shall reject, as ``UDSS_LLR_0150``
+   defines, a ``T_DataSOM.ind`` or ``T_Data.ind`` identifying a logical communication
+   channel, the supply or withdrawal of channel storage under ``UDSS_LLR_0151``, and the
+   channel reset and keep-alive release of ``UDSS_LLR_0183`` and ``UDSS_LLR_0184``.
+
+   Creation of a server shall supply the association storage of ``UDSS_LLR_0133`` and the
+   ``tS3_Server``, ``tP2_Server_Max`` and ``tP2*_Server_Max`` parameters of
+   ``UDSS_LLR_0138``. Creation of a client shall supply the keep-alive mode of
+   ``UDSS_LLR_0162`` and, in functional keep-alive, the storage and reload parameter of
+   ``UDSS_LLR_0163``; a client's channel storage, with the association it holds and the
+   parameters of ``UDSS_LLR_0152``, ``UDSS_LLR_0163`` and ``UDSS_LLR_0173``, is supplied
+   later under ``UDSS_LLR_0151``.
 
    Rationale: every requirement in this set is stated for the client or for the server, and
    ISO 14229-2:2021 describes the two as distinct peer entities throughout clauses 6 to 10,
@@ -431,7 +464,11 @@ Service primitives
    implementation and refused by another. The reception primitives are listed for the same
    reason: no server requirement conditions on receiving a response and no client
    requirement on receiving a request, so one implementation would forward such an
-   indication under ``UDSS_LLR_0137`` and another refuse it.
+   indication under ``UDSS_LLR_0137`` and another refuse it. The one-role inputs are listed
+   here rather than left to each owning document because a rule split between the two
+   places was honoured by neither. What creation supplies is gathered here for the same
+   reason: it was stated in four places and enumerated in none, and a tester building the
+   first test must collect it.
 
 .. llr:: S_Data.req requests transmission of a message
    :id: UDSS_LLR_0118
@@ -491,8 +528,10 @@ Service primitives
    request, which ``UDSS_LLR_0109`` reads as acting on nothing rather than as withholding
    the indication. An earlier form of this requirement admitted an exception for that
    reading; no requirement in the set now withholds an indication. A ``T_Data.ind`` rejected
-   under ``UDSS_LLR_0140`` for identifying a channel the client does not have is not
-   withheld but refused: ``UDSS_LLR_0150`` governs it and this requirement does not reach it.
+   under ``UDSS_LLR_0140`` for identifying a channel the client does not have, under
+   ``UDSS_LLR_0188`` for a classification kind of the other role, or under ``UDSS_LLR_0134``
+   for a classification not of the stated form, is not withheld but refused:
+   ``UDSS_LLR_0150`` governs it and this requirement does not reach it.
 
 .. llr:: S_Data.conf confirms a preceding S_Data.req
    :id: UDSS_LLR_0120
@@ -523,7 +562,8 @@ Service primitives
 
    The indication is used only within the session layer, to perform session layer timing.
    The requirements that act on it are the timer requirements of the server and client
-   documents, which condition on it without forwarding it. The prohibition is on the
+   documents and the pairing and responder requirements ``UDSS_LLR_0140``, ``UDSS_LLR_0160``
+   and ``UDSS_LLR_0161``, none of which forwards it. The prohibition is on the
    ``S_Data.ind``, not on every output: a timer requirement that conditions on the
    indication may deliver an indication of its own, as the expiry indications do on any
    input.
@@ -788,7 +828,13 @@ is safer and no larger. The value sets are transcribed exactly.
 
    ``S_Length`` shall be a 32-bit unsigned value in the range ``0x00000000`` to
    ``0xFFFFFFFF``, and shall carry the number of bytes of ``S_Data`` to be transmitted or
-   received.
+   received. On ``S_Data.req``, an ``S_Length`` differing from the number of bytes of
+   ``S_Data`` supplied shall be rejected as ``UDSS_LLR_0150`` defines; an interface that
+   carries the two as one value satisfies this without a check.
+
+   The rejection is the set's own, not clause 8.8's, which defines the parameter and says
+   nothing of a mismatch. Without it ``UDSS_LLR_0118``'s "``S_Length`` bytes of ``S_Data``"
+   would be satisfiable two ways by a caller that supplied them separately.
 
 .. llr:: S_Data carries the message data
    :id: UDSS_LLR_0131
@@ -865,7 +911,7 @@ and leaves the means of recognising it to the implementation.
    free association, and a ``T_Data.conf`` matching no outstanding association, shall each
    be rejected as ``UDSS_LLR_0150`` defines. On initialisation no association shall be
    outstanding. A server's association storage shall be supplied when the instance is
-   created; a client's is part of the storage the client documents define.
+   created; a client's is part of the channel's storage ``UDSS_LLR_0151`` defines.
 
    Rationale: several requirements condition on message content, including whether a
    response is final or response-pending, whether a message selects a diagnostic session,
@@ -892,7 +938,7 @@ and leaves the means of recognising it to the implementation.
    carried the session selection or the solicitation the timer requirements read. The
    storage is the caller's because the number of peers an instance addresses is a property
    of the deployment and the crate does not allocate; how the client's storage is organised
-   per channel is the client response timing document's.
+   per channel is ``UDSS_LLR_0151``'s.
 
    The classification is carried on ``T_Data.ind`` rather than on ``S_Data.ind`` because a
    client must recognise a response-pending response at reception, before the application
@@ -927,10 +973,12 @@ and leaves the means of recognising it to the implementation.
      ``repeat``, that the message repeats a request, other than the keep-alive TesterPresent,
      whose transmission, reception or response window failed, as ISO 14229-2:2021 9.7 Table 9
      requires; a repeated keep-alive TesterPresent states ``keep-alive`` again. A request
-     classification shall not state both ``keep-alive`` and ``repeat``. On ``S_Data.req``, a request classification
-     stating an exact number of zero, or stating ``keep-alive`` together with a session
-     selection, shall be rejected as ``UDSS_LLR_0150`` defines; ``UDSS_LLR_0137`` forwards an
-     indication however classified. At a server, on ``T_DataSOM.ind`` and
+     classification shall not state both ``keep-alive`` and ``repeat``. On ``S_Data.req``, a
+     request classification stating an exact number of zero shall be rejected as
+     ``UDSS_LLR_0150`` defines; on ``S_Data.req`` and on the completion report of
+     ``UDSS_LLR_0136``, one stating ``keep-alive`` together with a session selection shall
+     be rejected the same way; ``UDSS_LLR_0137`` forwards an indication so classified. At a
+     server, on ``T_DataSOM.ind`` and
      ``T_Data.ind`` and, through ``UDSS_LLR_0136``, on the completion report, a request
      classification states no expected response count and no ``repeat``, and may state
      ``keep-alive``, that the message is the functionally addressed TesterPresent whose
@@ -976,7 +1024,11 @@ and leaves the means of recognising it to the implementation.
    excludes a session selection because a TesterPresent changes no session, and because
    ``UDSS_LLR_0164`` acts on the selection and ``UDSS_LLR_0166`` on the marker with
    different effects on a running timer; a classification carrying both would match two
-   requirements ``UDSS_LLR_0163`` keeps apart by the classification alone. The server's
+   requirements ``UDSS_LLR_0163`` keeps apart by the classification alone. The rejection
+   reaches the two inputs the caller composes, the ``S_Data.req`` and the completion report,
+   and not an indication, which reports a message already received: at a server
+   ``UDSS_LLR_0186`` and ``UDSS_LLR_0103`` would otherwise both claim a completion report so
+   classified, with opposite outcomes. The server's
    caller states it because ISO 14229-1:2020 8.7.6 exempts that one message from
    one-request-at-a-time, so it arrives while another request is in progress as conformant
    traffic: ``UDSS_LLR_0186`` conditions on it, and ``UDSS_LLR_0104``, ``UDSS_LLR_0109``,
@@ -1006,6 +1058,17 @@ and leaves the means of recognising it to the implementation.
    behaviour is defined whether the kind is stated or not. Stating the exception this way
    keeps the three values above a closed set, which every requirement conditioning on kind
    relies on.
+
+   A ``T_Data.ind`` reporting a successful reception, or a ``T_DataSOM.ind``, whose
+   classification states no kind; an ``S_Data.req`` at a client whose request
+   classification states no expected response count; a classification whose kind is
+   ``final response`` stating neither ``solicited`` nor ``unsolicited``; and any other
+   classification or addressing not of the form this requirement, ``UDSS_LLR_0133`` and
+   ``UDSS_LLR_0129`` state for the primitive and the role it arrives on, shall be rejected
+   as ``UDSS_LLR_0150`` defines. An interface in which such a form cannot be expressed
+   satisfies this without a check. The sentences above that state a form are otherwise
+   obligations on the caller with no stated outcome, and an absent count would let
+   ``UDSS_LLR_0153`` open a window that ``UDSS_LLR_0156`` could never close.
 
    A classification whose kind is ``final response`` shall further state whether the
    message is ``solicited``, transmitted because of a request received from a client, or
