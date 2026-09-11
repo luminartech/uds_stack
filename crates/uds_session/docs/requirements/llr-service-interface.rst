@@ -80,10 +80,13 @@ interface.
    or not it was. A timer is loaded, when set running, with the value of the parameter the
    requirement names as it stands at that instant, and it expires when the elapsed time since
    it was set running reaches that loaded value, or exceeds it where the requirement says so.
+   Only a running timer expires: a timer that is not running has no elapsed time and is not
+   evaluated, whether or not the requirement that acts on its expiry repeats the condition.
    Expiry shall be evaluated only when a timestamp is supplied, before the input it
-   accompanies, so a timer set running by an input expires no earlier than the next timestamp
-   supplied; a timer loaded with zero therefore expires on that next timestamp. A requirement
-   that leaves a running timer alone says so.
+   accompanies, so a timer set running by an input, or by the action a requirement takes on
+   another timer's expiry, expires no earlier than the next timestamp supplied; a timer loaded
+   with zero therefore expires on that next timestamp. A requirement that leaves a running
+   timer alone says so.
 
    Rationale: reading a clock is I/O by another name, and it makes timer behaviour
    untestable except in real time. A caller-supplied timestamp lets a test advance time
