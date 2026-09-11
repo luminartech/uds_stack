@@ -217,7 +217,7 @@ seams earn their keep.
    activate V
 
    V -> V : decode, preconditions,\nsub-function, data parameters
-   V -> H : typed handler call
+   V -> H : typed handler call (awaited)
    activate H
    H --> V : Ok, or a negative response code
    deactivate H
@@ -241,6 +241,37 @@ The final ``alt`` is not error handling. Both branches are specified outcomes of
 8.7, and which one applies depends on state — the addressing mode and whether a
 response-pending has gone out — that no amount of inspecting the request bytes would
 reveal.
+
+.. arch:: An async runtime is assumed; none is depended on
+   :id: UDSSVC_ARCH_0030
+   :depends_on: UDSSVC_ARCH_0002
+   :status: draft
+   :origin: derived
+   :tags: scope; dependencies; async
+
+   Every deployment of this stack is assumed to have an async executor available — tokio
+   on a host, ``embassy`` or equivalent on an embedded target. This crate therefore
+   exposes asynchronous interfaces where the direction of control requires them, and
+   depends on no runtime crate.
+
+   Rationale: the layers below are already asynchronous and are not optionally so.
+   ``simple_doip``'s ``client`` and ``server`` features each require its ``codec`` feature,
+   which requires ``std`` and tokio; ``uds_on_ip``'s ``client`` and ``server`` each imply
+   ``std`` and tokio in turn. Designing this crate around the possibility that no executor
+   exists would contort its interfaces to serve a configuration that cannot reach a
+   transport anyway.
+
+   The distinction that makes this safe is that ``async`` is not a runtime.
+   Asynchronous functions in traits are stable, and the executor is the caller's. This
+   crate can therefore be asynchronous at its seams and still carry no ``std`` requirement
+   and no executor dependency of its own — which is what keeps ``UDSSVC_ARCH_0027``'s
+   embedded build possible.
+
+   What this assumption *buys* is recorded where it is spent:
+   ``UDSSVC_ARCH_0016`` on the server side, where an asynchronous handler removes the need
+   for the binding's driver to run slow handlers somewhere it can continue past, and
+   ``UDSSVC_ARCH_0028`` on the client side, where awaiting is what makes one typed call
+   possible instead of three.
 
 Two different graphs
 --------------------
