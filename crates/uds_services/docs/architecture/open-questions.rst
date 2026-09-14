@@ -71,22 +71,17 @@ Open across the stack
 These cannot be settled in this repository alone. They are the substance of the brief
 carried to the others.
 
-**9. ``uds_on_ip``'s request context is missing two fields.** It carries an addressing
-triple, the active session and the security level. ``UDSSVC_ARCH_0015`` also requires the
-authentication state and whether a response-pending has been sent. Without the second,
-clause 8.7.5's override cannot be applied and a functionally addressed request that took
-too long is answered with silence where the standard requires a final negative response.
+**9. ``uds_on_ip``'s request context is missing a field.** It carries an addressing
+triple, the active session and the security level; ``UDSSVC_ARCH_0015`` also requires the
+authentication state, which Figure 5 places on the mandatory path above the session check.
 
-**10. ``uds_session`` must expose that a 0x78 has been sent.** It owns the timer and the
-decision, so it is the only crate that knows. Today that state is internal.
-
-**11. ``uds_on_ip``'s client is entirely unimplemented.** Every method on it is
+**10. ``uds_on_ip``'s client is entirely unimplemented.** Every method on it is
 ``todo!()``. The client surface of :doc:`client-surface` sits directly on it, so the client
 half of this crate cannot be exercised end to end until that is real. Its *shape* is
 settled enough to design against, which is why the elements are written; its behaviour is
 not.
 
-**12. Is a shared addressing vocabulary wanted?** This crate needs only physical versus
+**11. Is a shared addressing vocabulary wanted?** This crate needs only physical versus
 functional (``UDSSVC_ARCH_0015``), and defines its own two-variant type to avoid depending
 on a transport. ``uds_on_ip`` has a full ISO 14229-2 addressing triple, whose target
 address type is the same distinction under a different name. Two types for one concept,
