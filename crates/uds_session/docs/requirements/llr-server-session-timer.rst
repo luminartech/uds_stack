@@ -68,8 +68,8 @@ assumptions of use in the qualification repository.
   any client, for which no response message is transmitted. Two are excepted: a marked
   keep-alive, whose report is optional and which ``UDSS_LLR_0186`` makes inert if supplied,
   and a request aborted under ISO 14229-1:2020 8.7.6's OBD-range exception, whose report is
-  optional because ``UDSS_LLR_0189`` ended it on the OBD request's reception and matches
-  what ends the OBD request to that request by addressing.
+  optional because ``UDSS_LLR_0216`` ended it on the OBD request's reception and
+  ``UDSS_LLR_0214`` matches what ends the OBD request to that request by addressing.
 
 * Whether to answer a session-selecting request from a client other than the controlling
   one positively is the application's decision. ISO 14229-1:2020 Annex J (informative)
@@ -354,7 +354,7 @@ The timer's state
    :tags: server; s3_server; error-handling
 
    While in a non-default session, while ``tS3_Server`` is stopped and while no request is
-   in progress under ``UDSS_LLR_0189``, on ``T_Data.ind`` reporting an unsuccessful result
+   in progress under ``UDSS_LLR_0212``, on ``T_Data.ind`` reporting an unsuccessful result
    for a request not marked ``keep-alive`` from the controlling client, the server shall
    restart the ``tS3_Server`` timer.
 
@@ -374,7 +374,7 @@ The timer's state
    leave exactly Table 10's case, a start-of-message of this message having stopped the
    timer with nothing else in progress. The server keeps no pairing state between the two
    indications (``UDSS_LLR_0199`` states such a rule for the client alone); the timer's state
-   and ``UDSS_LLR_0189``'s fact, both instance state it already holds, stand in for it.
+   and ``UDSS_LLR_0212``'s fact, both instance state it already holds, stand in for it.
 
    Table 10 says the server shall ignore the request. That is read as the request having
    no effect on the session or its timer beyond the restart Table 10 itself requires, and
@@ -429,7 +429,7 @@ The timer's state
    names any response with a negative result. The reading is coherent with the client's
    side: a pending message that never arrived leaves the client's default window to expire,
    and 9.7 Table 9 has the client repeat the request, so from the peer's side the exchange is
-   over. The request in progress of ``UDSS_LLR_0189`` is unaffected, ending at the final
+   over. The request in progress is unaffected, ``UDSS_LLR_0217`` ending it at the final
    response as 10.1.4.1 states; only the timer restarts.
 
 .. llr:: The bypass keep-alive reloads a running session timer
@@ -494,8 +494,8 @@ The timer's state
    so that its inertness does not rest on ``UDSS_LLR_0185``'s closed list alone. The failed
    reception is named for the same reason; ``UDSS_LLR_0109``'s exclusion of the marked
    message says why no restart is due, Table 10's restart presupposing a stop this message
-   never caused. The marked request is never the request in progress, as ``UDSS_LLR_0189``
-   states.
+   never caused. The marked request is never the request in progress, ``UDSS_LLR_0215``
+   barring it from beginning one.
 
 .. llr:: Requests from other clients do not affect the session timer
    :id: UDSS_LLR_0105

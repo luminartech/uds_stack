@@ -53,7 +53,7 @@ output in ``UDSS_LLR_0116``'s sense.
 One assumption of use falls on the order in which the caller supplies inputs, and is
 recorded in the qualification repository: a ``T_Data.conf`` is supplied before any
 ``T_DataSOM.ind`` or ``T_Data.ind`` the transport received after the confirmed transmission
-completed. ``UDSS_LLR_0189`` at the server and ``UDSS_LLR_0153`` at the client both read a
+completed. ``UDSS_LLR_0214`` at the server and ``UDSS_LLR_0153`` at the client both read a
 confirmation as preceding the peer's reply to it; a caller that delivered the reply first
 would have the server end the wrong request and the client open a window for a response it
 had already delivered. A transport reports the two in that order, and a caller draining one
@@ -576,7 +576,7 @@ peer, and how a multi-frame message's start is matched to its completion.
    does not.
 
    Rationale: ``UDSS_LLR_0199`` identifies a responder by this pair, ``UDSS_LLR_0185``
-   records the controlling client as one, ``UDSS_LLR_0189`` records the request in
+   records the controlling client as one, ``UDSS_LLR_0212`` records the request in
    progress as one, and ``UDSS_LLR_0160`` keys the responder table on one. Stated once,
    the four cannot drift apart. The extension is part of the identity because two clients
    behind one remote address can differ in it. Matching a confirmation's ``S_AI[TA]`` and
@@ -1154,7 +1154,7 @@ and leaves the means of recognising it to the implementation.
    message classification that could carry the fact. Without an explicit input the session
    layer cannot detect it, and a server handling a suppressed-response request in a
    non-default session would never restart its timer. ``UDSS_LLR_0142``, ``UDSS_LLR_0146``
-   and ``UDSS_LLR_0189`` are the requirements that act on this input, with ``UDSS_LLR_0103``
+   and ``UDSS_LLR_0217`` are the requirements that act on this input, with ``UDSS_LLR_0103``
    and ``UDSS_LLR_0141`` where it selects a session and ``UDSS_LLR_0186`` where it is marked
    ``keep-alive``. ISO 14229-2:2021 10.1.4.1 bounds when that completion occurs,
    a service being in progress until the completion of any action caused by the request
@@ -1165,6 +1165,6 @@ and leaves the means of recognising it to the implementation.
    an earlier ``T_Data.ind``, because Table 6's other suppressed-response row, the
    transition from the default session to a non-default one, needs the session selection,
    and correlating would oblige the session layer to retain one. The report identifies its
-   request by addressing alone: ``UDSS_LLR_0189`` matches it to the request in progress that
+   request by addressing alone: ``UDSS_LLR_0214`` matches it to the request in progress that
    way, and ``UDSS_LLR_0142`` and ``UDSS_LLR_0103`` ask no more than whose request
    completed.
