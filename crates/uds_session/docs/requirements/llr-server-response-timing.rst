@@ -29,7 +29,7 @@ the standard does not directly require; it is recorded instead as an assumption 
 the qualification repository, where it is assessed from a safety perspective.
 
 Clause 8.7.6 excepts two cases. The first is the functionally addressed keep-alive
-TesterPresent, which the caller marks ``keep-alive`` under ``UDSS_LLR_0134``. A marked
+TesterPresent, which the caller marks ``keep-alive`` under ``UDSS_LLR_0251``. A marked
 request is never the request in progress: ``UDSS_LLR_0186`` in
 :doc:`llr-server-session-timer` handles it at its indication, its completion report is
 inert, ``UDSS_LLR_0144`` and ``UDSS_LLR_0146`` exclude it, and under ``UDSS_LLR_0215`` a
@@ -470,7 +470,7 @@ The response window
    window of the request actually in progress. ``UDSS_LLR_0108`` handles the same hazard
    for ``tS3_Server``.
 
-   The qualifier attaches to the final response alone. ``UDSS_LLR_0134`` states that
+   The qualifier attaches to the final response alone. ``UDSS_LLR_0251`` states that
    solicitation applies only to that kind, a response-pending message being by
    construction a reply to a request, so a condition on a solicited response-pending
    message would condition on an attribute no input carries.

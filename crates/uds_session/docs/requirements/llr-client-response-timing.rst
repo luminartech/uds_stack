@@ -119,7 +119,7 @@ What the client declares and the server does not
 ------------------------------------------------
 
 A client's request states how many responses it expects; a server's states no such thing,
-because a server answers the one request in front of it. ``UDSS_LLR_0134`` carries the
+because a server answers the one request in front of it. ``UDSS_LLR_0251`` carries the
 declaration, and the client's behaviour on every later input on that channel turns on it:
 whether a response window opens at all, and whether the exchange ends when the responses
 arrive or when the timer expires.
@@ -550,13 +550,13 @@ The response window
    answers, and the channel is already this requirement's scope, so the phrase would reduce
    to any response on this channel.
 
-   The final response must therefore be solicited. ``UDSS_LLR_0134`` marks a periodically
+   The final response must therefore be solicited. ``UDSS_LLR_0251`` marks a periodically
    transmitted positive response both a final response and unsolicited, and such a message
    arrives on the same physical channel as the response the client is waiting for. Stopping
    the timer for one would close the window of the request actually in progress, and the
    error condition ISO 14229-2:2021 9.1.2 requires to be detected would go unreported.
    ``UDSS_LLR_0145`` takes the same qualifier against the same hazard on the server's timer.
-   It attaches to the final response alone: ``UDSS_LLR_0134`` states solicitation only for
+   It attaches to the final response alone: ``UDSS_LLR_0251`` states solicitation only for
    that kind, a response-pending message being by construction a reply to a request.
 
    The second condition admits only the ``T_DataSOM.ind`` because the start-of-message of a
@@ -681,7 +681,7 @@ The response window
    exchange before its response arrived. An absent kind does not count either:
    ``UDSS_LLR_0133`` permits a reception the transport reports as failed to carry no kind,
    and a condition phrased as *not* response-pending would admit it. Nor does an unsolicited
-   one: ``UDSS_LLR_0134`` marks a periodically transmitted positive response both a final
+   one: ``UDSS_LLR_0251`` marks a periodically transmitted positive response both a final
    response and unsolicited, and counting one would reach the expected number before every
    addressed server had answered — where 10.3 Figure 19 keys d and j stop the timer precisely
    because the client has heard from every server it expected. ``UDSS_LLR_0145`` and

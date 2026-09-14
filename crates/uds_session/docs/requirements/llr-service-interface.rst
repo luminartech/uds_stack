@@ -465,7 +465,7 @@ Service primitives
    instances. The role is fixed at creation because no requirement gives a role change a
    meaning, and state held for one role has none in the other. The rejected inputs are listed
    rather than described, because "an input whose form belongs to the other role" is not
-   decidable for an ``S_Data.req`` or a completion report, whose forms ``UDSS_LLR_0134`` and
+   decidable for an ``S_Data.req`` or a completion report, whose forms ``UDSS_LLR_0251`` and
    ``UDSS_LLR_0136`` define without a role: a server asked to transmit a request, or a client
    told a request it never received is complete, would otherwise be accepted by one
    implementation and refused by another. The reception primitives are listed for the same
@@ -536,8 +536,10 @@ Service primitives
    the indication. An earlier form of this requirement admitted an exception for that
    reading; no requirement in the set now withholds an indication. A ``T_Data.ind`` rejected
    under ``UDSS_LLR_0249`` for identifying a channel the client does not have, under
-   ``UDSS_LLR_0188`` for a classification kind of the other role, or under ``UDSS_LLR_0134``
-   for a classification not of the stated form, is not withheld but refused:
+   ``UDSS_LLR_0188`` for a classification kind of the other role, or under
+   ``UDSS_LLR_0255`` for stating no kind, ``UDSS_LLR_0257`` for a final response stating
+   neither ``solicited`` nor ``unsolicited``, or ``UDSS_LLR_0258``
+   for a classification otherwise not of the stated form, is not withheld but refused:
    ``UDSS_LLR_0267`` governs it and this requirement does not reach it.
 
 .. llr:: S_Data.conf confirms a preceding S_Data.req
@@ -962,7 +964,7 @@ and leaves the means of recognising it to the implementation.
    kind. ``UDSS_LLR_0109`` conditions on a failed reception of a request, so the kind is
    required in that case even where the message data is incomplete. It is omissible
    otherwise because a client whose transport reports a broken reception may be unable to
-   tell a final response from a response-pending one, and ``UDSS_LLR_0134`` offers no value
+   tell a final response from a response-pending one, and ``UDSS_LLR_0251`` offers no value
    for a kind that was not determinable.
 
    The session layer shall associate the classification carried by an ``S_Data.req`` with
@@ -1025,7 +1027,7 @@ and leaves the means of recognising it to the implementation.
    in the same step, so the association costs nothing.
 
 .. llr:: Message classification values
-   :id: UDSS_LLR_0134
+   :id: UDSS_LLR_0251
    :status: draft
    :integrity_level: QM
    :target_level: D
@@ -1043,12 +1045,8 @@ and leaves the means of recognising it to the implementation.
      ``repeat``, that the message repeats a request, other than the keep-alive TesterPresent,
      whose transmission, reception or response window failed, as ISO 14229-2:2021 9.7 Table 9
      requires; a repeated keep-alive TesterPresent states ``keep-alive`` again. A request
-     classification shall not state both ``keep-alive`` and ``repeat``. On ``S_Data.req``, a
-     request classification stating an exact number of zero shall be rejected as
-     ``UDSS_LLR_0267`` defines; on ``S_Data.req`` and on the completion report of
-     ``UDSS_LLR_0136``, one stating ``keep-alive`` together with a session selection shall
-     be rejected the same way; ``UDSS_LLR_0137`` forwards an indication so classified. At a
-     server, on ``T_DataSOM.ind`` and
+     classification shall not state both ``keep-alive`` and ``repeat``. At a server, on
+     ``T_DataSOM.ind`` and
      ``T_Data.ind`` and, through ``UDSS_LLR_0136``, on the completion report, a request
      classification states no expected response count and no ``repeat``, and may state
      ``keep-alive``, that the message is the functionally addressed TesterPresent whose
@@ -1059,18 +1057,26 @@ and leaves the means of recognising it to the implementation.
    * ``response pending``, a negative response whose response code is
      ``requestCorrectlyReceived-ResponsePending``.
 
-   The definition of a final response is ISO 14229-2:2021 9.1.1's; the requirement is
-   derived because the classification, not the definition, is this set's invention. The
-   same clause settles a case the solicited and unsolicited split exists to carry: where a
-   request schedules periodic responses, the initial response accepting or refusing the
-   schedule is the final response, and the periodic transmissions that follow are not.
+   A classification whose kind is ``final response`` shall further state whether the
+   message is ``solicited``, transmitted because of a request received from a client, or
+   ``unsolicited``, transmitted for any other reason.
 
-   An exact number of zero is rejected rather than read as ``none`` because the two would
-   otherwise be two spellings of one value with different behaviour: ``UDSS_LLR_0153`` would
-   open a window for it and ``UDSS_LLR_0156`` could never close one, no ``T_Data.ind``
-   bringing the count to zero, so the window would end at expiry reporting that not all
-   expected servers responded to a request that expected none. ``none`` is the value for
-   that case.
+   A session selection shall state whether the session being selected is the default
+   session. It shall be present only where the message
+   effects the transition: a request or a positive response that selects a session carries
+   one, and a negative response to a session-change request does not. Which service
+   carries the message is immaterial: a DiagnosticSessionControl request or positive
+   response is the usual carrier, and an ECUReset positive response or the response to an
+   OBD-range request that ISO 14229-1:2020 8.7.6 has abort the active service and start the
+   default session carries one for the same reason, the session layer being unable to tell
+   the services apart under ``UDSS_LLR_0135``.
+
+   Rationale: the definition of a final response is ISO 14229-2:2021 9.1.1's; the
+   requirement is derived because the classification, not the definition, is this set's
+   invention. The same clause settles a case the solicited and unsolicited split exists to
+   carry: where a request schedules periodic responses, the initial response accepting or
+   refusing the schedule is the final response, and the periodic transmissions that follow
+   are not.
 
    The expected response count is stated by the client and has no server-side counterpart,
    a server answering the one request in front of it. ``UDSS_LLR_0153`` conditions on the
@@ -1090,16 +1096,8 @@ and leaves the means of recognising it to the implementation.
    separate from the expected response count because in physical keep-alive the
    TesterPresent may or may not require a response. The client session timer document
    records as an assumption of use that the request the application transmits in answer to
-   a keep-alive indication carries the marker, in either keep-alive mode. The marker
-   excludes a session selection because a TesterPresent changes no session, and because
-   ``UDSS_LLR_0164`` acts on the selection and ``UDSS_LLR_0166`` on the marker with
-   different effects on a running timer; a classification carrying both would match two
-   requirements ``UDSS_LLR_0231`` keeps apart by the classification alone. The rejection
-   reaches the two inputs the caller composes, the ``S_Data.req`` and the completion report,
-   and not an indication, which reports a message already received: at a server
-   ``UDSS_LLR_0186`` and ``UDSS_LLR_0103`` would otherwise both claim a completion report so
-   classified, with opposite outcomes. The server's
-   caller states it because ISO 14229-1:2020 8.7.6 exempts that one message from
+   a keep-alive indication carries the marker, in either keep-alive mode. The server's
+   caller states the marker because ISO 14229-1:2020 8.7.6 exempts that one message from
    one-request-at-a-time, so it arrives while another request is in progress as conformant
    traffic: ``UDSS_LLR_0186`` conditions on it, and ``UDSS_LLR_0104``, ``UDSS_LLR_0109``,
    ``UDSS_LLR_0142``, ``UDSS_LLR_0144`` and ``UDSS_LLR_0146`` on its absence. The session
@@ -1107,7 +1105,9 @@ and leaves the means of recognising it to the implementation.
    ``UDSS_LLR_0179`` extends to ``repeat``: a physically addressed TesterPresent,
    ISO 14229-2:2021 10.1.4.2 Figure 13's, is an ordinary request, and a caller that marks
    one has erred in a way an addressing check would catch only by coincidence. The server
-   session timer document records the assumption of use.
+   session timer document records the assumption of use. A ``keep-alive`` marker carried
+   together with a session selection is rejected under ``UDSS_LLR_0253`` and
+   ``UDSS_LLR_0254``.
 
    The ``repeat`` marker is stated by the client alone and has no server-side counterpart.
    ``UDSS_LLR_0179`` and ``UDSS_LLR_0180`` condition on it because
@@ -1120,41 +1120,7 @@ and leaves the means of recognising it to the implementation.
    marks each repeat other than of the keep-alive TesterPresent ``repeat``, marks a repeated
    keep-alive TesterPresent ``keep-alive`` again, and marks no other request so.
 
-   The kind shall be absent only where ``UDSS_LLR_0133`` permits it: on a ``T_Data.ind``
-   reporting an unsuccessful reception of a message that was not addressed to a server. No
-   requirement in this set conditions on the kind of such a message: ``UDSS_LLR_0154`` and
-   ``UDSS_LLR_0155`` act on a failed reception by its result, and ``UDSS_LLR_0156``,
-   ``UDSS_LLR_0157`` and ``UDSS_LLR_0158`` act only on a reception that succeeded, so the
-   behaviour is defined whether the kind is stated or not. Stating the exception this way
-   keeps the three values above a closed set, which every requirement conditioning on kind
-   relies on.
-
-   A ``T_Data.ind`` reporting a successful reception, or a ``T_DataSOM.ind``, whose
-   classification states no kind; an ``S_Data.req`` at a client whose request
-   classification states no expected response count; a classification whose kind is
-   ``final response`` stating neither ``solicited`` nor ``unsolicited``; and any other
-   classification or addressing not of the form this requirement, ``UDSS_LLR_0133`` and
-   ``UDSS_LLR_0129`` state for the primitive and the role it arrives on, shall be rejected
-   as ``UDSS_LLR_0267`` defines. An interface in which such a form cannot be expressed
-   satisfies this without a check. The sentences above that state a form are otherwise
-   obligations on the caller with no stated outcome, and an absent count would let
-   ``UDSS_LLR_0153`` open a window that ``UDSS_LLR_0156`` could never close.
-
-   A classification whose kind is ``final response`` shall further state whether the
-   message is ``solicited``, transmitted because of a request received from a client, or
-   ``unsolicited``, transmitted for any other reason.
-
-   A session selection shall state whether the session being selected is the default
-   session. It shall be present only where the message
-   effects the transition: a request or a positive response that selects a session carries
-   one, and a negative response to a session-change request does not. Which service
-   carries the message is immaterial: a DiagnosticSessionControl request or positive
-   response is the usual carrier, and an ECUReset positive response or the response to an
-   OBD-range request that ISO 14229-1:2020 8.7.6 has abort the active service and start the
-   default session carries one for the same reason, the session layer being unable to tell
-   the services apart under ``UDSS_LLR_0135``.
-
-   Rationale: kind and session selection are separate because a positive response that
+   Kind and session selection are separate because a positive response that
    selects a session is at once a final response and a session selection, and a single
    flat enumeration would force every requirement conditioning on finality to enumerate
    the session-selecting case as well. A session selection accompanies requests as well as
@@ -1174,6 +1140,145 @@ and leaves the means of recognising it to the implementation.
    enumeration, a caller could classify such a message either way and get either
    behaviour. It applies only to a final response because a response-pending message is by
    construction a reply to a request, so asking whether it was solicited has no meaning.
+
+.. llr:: An expected response count of zero is rejected
+   :id: UDSS_LLR_0252
+   :status: draft
+   :integrity_level: QM
+   :target_level: D
+   :origin: derived
+   :tags: service-interface; classification
+
+   On ``S_Data.req``, a request classification stating as its expected response count an
+   exact number of zero shall be rejected as ``UDSS_LLR_0267`` defines.
+
+   Rationale: an exact number of zero is rejected rather than read as ``none``, the value
+   ``UDSS_LLR_0251`` provides for a request expecting no response, because the two would
+   otherwise be two spellings of one value with different behaviour: ``UDSS_LLR_0153`` would
+   open a window for it and ``UDSS_LLR_0156`` could never close one, no ``T_Data.ind``
+   bringing the count to zero, so the window would end at expiry reporting that not all
+   expected servers responded to a request that expected none.
+
+.. llr:: A keep-alive with a session selection on a request is rejected
+   :id: UDSS_LLR_0253
+   :status: draft
+   :integrity_level: QM
+   :target_level: D
+   :origin: derived
+   :tags: service-interface; classification
+
+   On ``S_Data.req``, a request classification stating ``keep-alive`` together with a
+   session selection shall be rejected as ``UDSS_LLR_0267`` defines.
+
+   Rationale: the ``keep-alive`` marker ``UDSS_LLR_0251`` defines excludes a session
+   selection because a TesterPresent changes no session, and because ``UDSS_LLR_0164`` acts
+   on the selection and ``UDSS_LLR_0166`` on the marker with different effects on a running
+   ``tS3_Client`` timer; a classification carrying both would match two requirements
+   ``UDSS_LLR_0231`` keeps apart by the classification alone. The rejection reaches the
+   ``S_Data.req`` because the caller composes it, and not an indication, which reports a
+   message already received and which ``UDSS_LLR_0137`` forwards; the other input the
+   caller composes is the completion report, which ``UDSS_LLR_0254`` covers.
+
+.. llr:: A keep-alive with a session selection on a completion report is rejected
+   :id: UDSS_LLR_0254
+   :status: draft
+   :integrity_level: QM
+   :target_level: D
+   :origin: derived
+   :tags: service-interface; classification
+
+   On the completion report of ``UDSS_LLR_0136``, a classification stating ``keep-alive``
+   together with a session selection shall be rejected as ``UDSS_LLR_0267`` defines.
+
+   Rationale: the ``keep-alive`` marker ``UDSS_LLR_0251`` defines excludes a session
+   selection because a TesterPresent changes no session. The rejection reaches the
+   completion report because the caller composes it, and not an indication, which reports a
+   message already received and which ``UDSS_LLR_0137`` forwards. Without it, at a server
+   ``UDSS_LLR_0186`` and ``UDSS_LLR_0103`` would both claim a completion report so
+   classified, with opposite outcomes: ``UDSS_LLR_0186`` has a completion report whose
+   classification states ``keep-alive`` change nothing, and ``UDSS_LLR_0103`` starts
+   ``tS3_Server`` on the completion report of a request whose classification selects a
+   non-default session.
+
+.. llr:: A classification stating no kind where one is required is rejected
+   :id: UDSS_LLR_0255
+   :status: draft
+   :integrity_level: QM
+   :target_level: D
+   :origin: derived
+   :tags: service-interface; classification
+
+   A ``T_Data.ind`` reporting a successful reception, or a ``T_DataSOM.ind``, whose
+   classification states no kind shall be rejected as ``UDSS_LLR_0267`` defines. A
+   classification's kind
+   shall be absent only where ``UDSS_LLR_0133`` permits it: on a ``T_Data.ind`` reporting
+   an unsuccessful reception of a message that was not addressed to a server.
+
+   Rationale: no requirement in this set conditions on the kind of a message whose
+   reception failed and which was not addressed to a server: ``UDSS_LLR_0154`` and
+   ``UDSS_LLR_0155`` act on a failed reception by its result, and ``UDSS_LLR_0156``,
+   ``UDSS_LLR_0157`` and ``UDSS_LLR_0158`` act only on a reception that succeeded, so the
+   behaviour is defined whether the kind is stated or not. Stating the exception this way
+   keeps the three kind values ``UDSS_LLR_0251`` states a closed set, which every
+   requirement conditioning on kind relies on. Every other indication must therefore state
+   a kind, and a stated outcome is what makes that checkable.
+
+.. llr:: A request at a client stating no expected response count is rejected
+   :id: UDSS_LLR_0256
+   :status: draft
+   :integrity_level: QM
+   :target_level: D
+   :origin: derived
+   :tags: service-interface; classification
+
+   At a client, on ``S_Data.req``, a request classification stating no expected response
+   count shall be rejected as ``UDSS_LLR_0267`` defines.
+
+   Rationale: ``UDSS_LLR_0251`` requires a request classification on an ``S_Data.req`` to
+   state the expected response count, which without a stated outcome would be an obligation
+   on the caller that no test could check. An absent count would let ``UDSS_LLR_0153`` open
+   a window that ``UDSS_LLR_0156`` could never close.
+
+.. llr:: A final response stating neither solicited nor unsolicited is rejected
+   :id: UDSS_LLR_0257
+   :status: draft
+   :integrity_level: QM
+   :target_level: D
+   :origin: derived
+   :tags: service-interface; classification
+
+   A classification whose kind is ``final response`` stating neither ``solicited`` nor
+   ``unsolicited`` shall be rejected as ``UDSS_LLR_0267`` defines.
+
+   Rationale: ``UDSS_LLR_0251`` requires such a classification to state one of the two, and
+   without a stated outcome for one that states neither, that obligation on the caller is
+   untestable. The rejection introduces no value and no condition beyond the form
+   ``UDSS_LLR_0251`` states.
+
+.. llr:: A classification or addressing not of the stated form is rejected
+   :id: UDSS_LLR_0258
+   :status: draft
+   :integrity_level: QM
+   :target_level: D
+   :origin: derived
+   :tags: service-interface; classification
+
+   A classification or addressing not of the form ``UDSS_LLR_0251``, ``UDSS_LLR_0133`` and
+   ``UDSS_LLR_0129`` state for the primitive and the role it arrives on, other than a
+   departure ``UDSS_LLR_0252``, ``UDSS_LLR_0255``, ``UDSS_LLR_0256`` or ``UDSS_LLR_0257``
+   names, shall be rejected as ``UDSS_LLR_0267`` defines. An interface in which such a form
+   cannot be expressed satisfies this without a check.
+
+   Rationale: the sentences of ``UDSS_LLR_0251``, ``UDSS_LLR_0133`` and ``UDSS_LLR_0129``
+   that state a form are otherwise obligations on the caller with no stated outcome.
+   ``UDSS_LLR_0252``, ``UDSS_LLR_0255``, ``UDSS_LLR_0256`` and ``UDSS_LLR_0257`` state the
+   outcome for the particular departures they name, each for the reason given there, and
+   are excluded here so that every departure from the stated form is named by exactly one
+   requirement: a reader citing one of those cases has one requirement to cite, and
+   narrowing or changing the outcome of any of them cannot leave this requirement
+   contradicting it. ``UDSS_LLR_0253`` and ``UDSS_LLR_0254`` need no exclusion, because a
+   classification stating ``keep-alive`` together with a session selection is of the form
+   ``UDSS_LLR_0251`` states and so is not a departure this requirement reaches.
 
 .. llr:: The session layer does not inspect message data
    :id: UDSS_LLR_0135

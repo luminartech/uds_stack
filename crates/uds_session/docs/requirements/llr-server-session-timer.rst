@@ -8,7 +8,7 @@ The server's session state
 --------------------------
 
 The server holds three facts. The first is whether the active session is the default
-session, one bit. The identifier of the active session is not state: ``UDSS_LLR_0134``'s
+session, one bit. The identifier of the active session is not state: ``UDSS_LLR_0251``'s
 selection does not carry it and nothing in this set reads it. The second is the **controlling client**,
 the ``S_AI[SA]`` and, where ``S_Mtype`` carries one, the ``S_AI[AE]`` of the client whose
 request produced the active non-default session, held only while a non-default session is
@@ -36,7 +36,7 @@ ISO 14229-1:2020 8.7.6 exempts one message from the rule that a server handles o
 at a time: the functionally addressed TesterPresent whose positive response is suppressed,
 which the clause defines as keep-alive logic to be handled by bypass logic so that it
 cannot block the server's application layer. The server's caller marks that message
-``keep-alive`` under ``UDSS_LLR_0134``.
+``keep-alive`` under ``UDSS_LLR_0251``.
 
 The standard shows TesterPresent in two figures, one per message. ISO 14229-2:2021
 10.1.4.1 Figure 12 is the functionally addressed one without a response: key m has it reload
@@ -59,9 +59,10 @@ assumptions of use in the qualification repository.
 
 * The caller marks ``keep-alive`` exactly the functionally addressed TesterPresent whose
   positive response is suppressed, marks nothing else so, and never marks a message that
-  carries a session selection. ``UDSS_LLR_0134`` states that the session layer does not
-  verify the marker against the addressing, and rejects the marker with a selection on
-  ``S_Data.req`` and on the completion report of ``UDSS_LLR_0136``, the two inputs the
+  carries a session selection. ``UDSS_LLR_0251`` states that the session layer does not
+  verify the marker against the addressing; ``UDSS_LLR_0253`` rejects the marker with a
+  selection on ``S_Data.req`` and ``UDSS_LLR_0254`` on the completion report of
+  ``UDSS_LLR_0136``, the two inputs the
   caller composes; an indication so classified is forwarded under ``UDSS_LLR_0137``.
 
 * The caller supplies the completion report of ``UDSS_LLR_0136`` for every request, from
@@ -76,7 +77,7 @@ assumptions of use in the qualification repository.
   J.4 Table J.2 shows a server answering NRC 0x21 instead while it is in a non-default
   session a different client requested.
 
-* The caller supplies a session selection under ``UDSS_LLR_0134`` on every message by which
+* The caller supplies a session selection under ``UDSS_LLR_0251`` on every message by which
   the server changes session, whichever service carries it: DiagnosticSessionControl,
   ECUReset, or the OBD-range request that ISO 14229-1:2020 8.7.6 has abort the active
   service and start the default session outside the programming session, on its response
@@ -219,7 +220,7 @@ The timer's state
    longer uses.
 
    The condition is a session selection, not a service. The session layer cannot know which
-   service a message carries (``UDSS_LLR_0135``), and ``UDSS_LLR_0134``'s selection attaches
+   service a message carries (``UDSS_LLR_0135``), and ``UDSS_LLR_0251``'s selection attaches
    to whichever message effects the transition.
 
 .. llr:: A completed session-selecting request without response starts the session timer
@@ -282,7 +283,7 @@ The timer's state
    of a solicited final response message to the controlling client, the server shall
    restart the ``tS3_Server`` timer, except where that response selects a session, in
    which case ``UDSS_LLR_0102`` or ``UDSS_LLR_0141`` applies. A final response is a message
-   whose classification states kind ``final response`` under ``UDSS_LLR_0134``.
+   whose classification states kind ``final response`` under ``UDSS_LLR_0251``.
 
    The response must be solicited, meaning transmitted as the direct result of processing
    a request message, because a positive response may also be unsolicited: a periodic
@@ -294,7 +295,7 @@ The timer's state
    client, and the requester need not yet be the controlling client this requirement is
    scoped to; left to this requirement alone, a hand-over to another client would restart
    nothing. A negative final response carries no session selection under
-   ``UDSS_LLR_0134``, so the exception can only ever route a positive response to
+   ``UDSS_LLR_0251``, so the exception can only ever route a positive response to
    ``UDSS_LLR_0102`` or ``UDSS_LLR_0141``.
 
 .. llr:: Session timer restarts on completion of a request with no response

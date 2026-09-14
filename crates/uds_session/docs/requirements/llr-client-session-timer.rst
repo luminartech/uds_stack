@@ -36,7 +36,7 @@ This document uses **physical channel**, **functional channel** and **request in
 as ``UDSS_LLR_0201``, ``UDSS_LLR_0208`` and the client response timing document's
 preamble define them,
 **first indication** and **completion** as ``UDSS_LLR_0199`` defines them, and
-**solicited** as ``UDSS_LLR_0134`` defines it.
+**solicited** as ``UDSS_LLR_0251`` defines it.
 
 What ordinary traffic does to the timer
 ---------------------------------------
@@ -44,7 +44,7 @@ What ordinary traffic does to the timer
 In functional keep-alive, nothing. Table 6's functional column names two events only, the
 confirmation of the session change and the confirmation of the functionally addressed
 TesterPresent, so a functionally addressed request that is not the keep-alive changes
-nothing, and the client needs the ``keep-alive`` classification of ``UDSS_LLR_0134`` to tell
+nothing, and the client needs the ``keep-alive`` classification of ``UDSS_LLR_0251`` to tell
 the two apart. The functional keep-alive expects no response, so under the client response
 timing document it is never a request in progress and never collides with that document's
 one-request-per-channel model; ISO 14229-1:2020 8.7.6 likewise excepts it from the server's
@@ -254,7 +254,8 @@ The timer's state
    state before any of them has changed it. In functional keep-alive the requirements are
    separated by the classification instead: ``UDSS_LLR_0164`` and ``UDSS_LLR_0167`` act on a
    session selection and ``UDSS_LLR_0166`` on the ``keep-alive`` marker, which
-   ``UDSS_LLR_0134`` forbids to accompany a session selection, so no input matches more than
+   ``UDSS_LLR_0253`` forbids to accompany a session selection on the ``S_Data.req`` that
+   produced the confirmation, so no input matches more than
    one.
 
 Functional keep-alive
@@ -349,7 +350,7 @@ Functional keep-alive
    Table 6's functional column restarts the timer on the ``T_Data.conf`` completing the
    functionally addressed TesterPresent transmitted at the timer's expiry, and on nothing
    else; Figure 12 keys j, m and o and Figure 17 keys h, q, w and y are those confirmations.
-   ``UDSS_LLR_0134`` carries the ``keep-alive`` classification because Table 6 names that one
+   ``UDSS_LLR_0251`` carries the ``keep-alive`` classification because Table 6 names that one
    request and ``UDSS_LLR_0135`` forbids recognising it from the data; a functionally
    addressed request without it changes nothing.
 
@@ -455,7 +456,7 @@ session fact, and the requests and indications on it.
 
    Table 6 names the request and the response without qualification; both bullets act only
    on a message carrying a session selection. That narrows the text. Under
-   ``UDSS_LLR_0134`` a negative response to a session change carries no selection, and a
+   ``UDSS_LLR_0251`` a negative response to a session change carries no selection, and a
    refused change moved no server into a non-default session, so nothing is there to keep
    alive.
 
@@ -537,7 +538,7 @@ session fact, and the requests and indications on it.
 
    Table 6's third row applies "in case a response is required", which is read as naming a
    response to a request the client sent: the ``solicited`` classification of
-   ``UDSS_LLR_0134`` carries that, and an unsolicited response restarts nothing. Neither the
+   ``UDSS_LLR_0251`` carries that, and an unsolicited response restarts nothing. Neither the
    third row nor the fourth conditions the restart on the state of the wait, and nor does
    this requirement. A wait ends at a message's first indication under ``UDSS_LLR_0199``,
    while Table 6 states the restart on the message's completion, so a guard on a request

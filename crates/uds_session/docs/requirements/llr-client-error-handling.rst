@@ -37,7 +37,7 @@ The repeat and its marker
 -------------------------
 
 The session layer cannot recognise a repeat from the data, ``UDSS_LLR_0135`` forbidding it,
-so the application declares one with the ``repeat`` marker ``UDSS_LLR_0134`` defines, as it
+so the application declares one with the ``repeat`` marker ``UDSS_LLR_0251`` defines, as it
 declares its keep-alive. Table 9 counts service request transmissions from the request whose
 handling first failed, three in the worst case, so a request without the marker begins a new
 count and each ``repeat`` advances it (``UDSS_LLR_0179``).
@@ -45,7 +45,7 @@ count and each ``repeat`` advances it (``UDSS_LLR_0179``).
 The keep-alive is outside the count. In physical keep-alive a TesterPresent can go out
 between a failure and its repeat, ``UDSS_LLR_0170`` restarting ``tS3_Client`` on the failed
 confirmation, and were it an unmarked request it would reset the count and leave the repeats
-unbounded. ``UDSS_LLR_0134`` therefore makes ``keep-alive`` and ``repeat`` exclusive, and a
+unbounded. ``UDSS_LLR_0251`` therefore makes ``keep-alive`` and ``repeat`` exclusive, and a
 keep-alive request touches the count neither way. Table 9 does not exempt the keep-alive, so
 its own repeats are bounded by the application, an obligation recorded below.
 
@@ -230,7 +230,8 @@ The repeat count
    counts; and because a rejection under ``UDSS_LLR_0267`` leaves state unchanged, so a
    rejected repeat is never counted. The requirements of the client documents that may
    reject an ``S_Data.req`` for a request are ``UDSS_LLR_0176``, ``UDSS_LLR_0180`` and
-   ``UDSS_LLR_0181``, and ``UDSS_LLR_0133``, ``UDSS_LLR_0134``, ``UDSS_LLR_0203`` and
+   ``UDSS_LLR_0181``, and ``UDSS_LLR_0133``, ``UDSS_LLR_0252``, ``UDSS_LLR_0253``,
+   ``UDSS_LLR_0256``, ``UDSS_LLR_0258``, ``UDSS_LLR_0203`` and
    ``UDSS_LLR_0188`` reject one on its addressing, classification, channel or role;
    ``UDSS_LLR_0180`` reads the count as it was before the input under ``UDSS_LLR_0187``, so
    the increase here never feeds the rejection there.
@@ -240,7 +241,7 @@ The repeat count
    and its repeat, ``UDSS_LLR_0170`` having restarted ``tS3_Client`` on the failed
    confirmation, and as an unmarked request it would reset the count and leave the repeats
    unbounded. The application's obligation to bound the repeats of its keep-alive is
-   recorded in the preamble as an assumption of use. ``UDSS_LLR_0134`` makes the two
+   recorded in the preamble as an assumption of use. ``UDSS_LLR_0251`` makes the two
    markers exclusive, so the three conditions above are disjoint and exhaustive.
 
 .. llr:: A third repeat is rejected

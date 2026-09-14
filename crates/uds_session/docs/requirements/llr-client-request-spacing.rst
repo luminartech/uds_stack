@@ -37,7 +37,7 @@ A ``T_Data.conf`` belongs to the channel named by the addressing of the ``S_Data
 belongs to the channel its own addressing names. On the outbound side, therefore, no caller
 identification of the channel is needed. This document uses **physical channel**,
 **functional channel** and the identity of a channel as ``UDSS_LLR_0201`` and the client
-response timing document's preamble define them, and **expected response count** and ``none`` as ``UDSS_LLR_0134`` defines them.
+response timing document's preamble define them, and **expected response count** and ``none`` as ``UDSS_LLR_0251`` defines them.
 
 Postponement is rejection
 -------------------------
