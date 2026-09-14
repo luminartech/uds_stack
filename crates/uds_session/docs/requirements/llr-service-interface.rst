@@ -386,10 +386,10 @@ Service primitives
    Creation of a server shall supply the association storage of ``UDSS_LLR_0133`` and the
    ``tS3_Server``, ``tP2_Server_Max`` and ``tP2*_Server_Max`` parameters of
    ``UDSS_LLR_0138``. Creation of a client shall supply the keep-alive mode of
-   ``UDSS_LLR_0162`` and, in functional keep-alive, the storage and reload parameter of
-   ``UDSS_LLR_0163``; a client's channel storage, with the association it holds and the
-   parameters of ``UDSS_LLR_0152``, ``UDSS_LLR_0163`` and ``UDSS_LLR_0173``, is supplied
-   later under ``UDSS_LLR_0201``.
+   ``UDSS_LLR_0162`` and, in functional keep-alive, the storage of ``UDSS_LLR_0227`` and
+   reload parameter of ``UDSS_LLR_0229``; a client's channel storage, with the association
+   it holds and the parameters of ``UDSS_LLR_0152``, ``UDSS_LLR_0229`` and ``UDSS_LLR_0240``,
+   is supplied later under ``UDSS_LLR_0201``.
 
    Rationale: every requirement in this set is stated for the client or for the server, and
    ISO 14229-2:2021 describes the two as distinct peer entities throughout clauses 6 to 10,
@@ -1029,7 +1029,7 @@ and leaves the means of recognising it to the implementation.
    excludes a session selection because a TesterPresent changes no session, and because
    ``UDSS_LLR_0164`` acts on the selection and ``UDSS_LLR_0166`` on the marker with
    different effects on a running timer; a classification carrying both would match two
-   requirements ``UDSS_LLR_0163`` keeps apart by the classification alone. The rejection
+   requirements ``UDSS_LLR_0231`` keeps apart by the classification alone. The rejection
    reaches the two inputs the caller composes, the ``S_Data.req`` and the completion report,
    and not an indication, which reports a message already received: at a server
    ``UDSS_LLR_0186`` and ``UDSS_LLR_0103`` would otherwise both claim a completion report so

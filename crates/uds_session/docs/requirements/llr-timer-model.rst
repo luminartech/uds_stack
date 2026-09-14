@@ -58,7 +58,7 @@ A requirement that leaves a running timer alone says so.
    it running says so.
 
    Rationale: the set states both readings because the two bound different things.
-   ``UDSS_LLR_0148`` and ``UDSS_LLR_0173``'s spacing timer bound this side's own conduct,
+   ``UDSS_LLR_0148`` and ``UDSS_LLR_0241``'s spacing timer bound this side's own conduct,
    so the conservative reading is the earlier one and both expire at "reaches".
    ``UDSS_LLR_0159`` instead protects a conformant peer from being faulted for a response
    that arrives exactly at the window's edge, so it expires only once the elapsed time

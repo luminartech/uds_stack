@@ -129,7 +129,8 @@ The timer's state
    and physical keep-alive, in which a physically addressed TesterPresent is transmitted on
    a physical channel when that channel's ``tS3_Client`` expires with no other request sent
    on it. The mode shall be fixed when the client instance is created and shall not change
-   thereafter; no input of this set changes it. The mode shall select which state ``UDSS_LLR_0163`` requires and which of
+   thereafter; no input of this set changes it. The mode shall select which state
+   ``UDSS_LLR_0227`` or ``UDSS_LLR_0228`` requires and which of
    ``UDSS_LLR_0164`` to ``UDSS_LLR_0172`` and ``UDSS_LLR_0184`` act.
 
    Clause 9.5 requires a periodically transmitted, functionally addressed TesterPresent to
@@ -145,49 +146,63 @@ The timer's state
    using" one TesterPresent or the other, and gives a change no meaning; it is not one of
    the protocol parameters ``UDSS_LLR_0138`` provides for, which are values a timer is
    loaded with, and a mode is not one. A change at run time would have to say what becomes of a keeping-alive fact
-   and a running timer that the new mode's requirements never touch, ``UDSS_LLR_0163``
+   and a running timer that the new mode's requirements never touch, ``UDSS_LLR_0231``
    closing the list of what changes them, and no clause says.
 
-.. llr:: Session timer state lives in caller-supplied storage
-   :id: UDSS_LLR_0163
+.. llr:: Functional keep-alive state and where it lives
+   :id: UDSS_LLR_0227
    :status: draft
    :integrity_level: QM
    :target_level: D
    :origin: session-layer-standard
-   :source: ISO 14229-2:2021 9.5 Table 5; ISO 14229-2:2021 9.5 Table 6; ISO 14229-2:2021 9.6 Table 8
+   :source: ISO 14229-2:2021 9.5 Table 6; ISO 14229-2:2021 9.6 Table 8
    :tags: client; s3_client; session-state
 
    In functional keep-alive the client shall maintain a single ``tS3_Client`` timer and a
-   single keeping-alive fact for the client instance. In physical keep-alive it shall
-   maintain a single ``tS3_Client`` timer and a channel session fact for each physical
-   channel. The functional timer and fact shall be held in storage supplied with the
-   instance at its creation, and each physical channel's timer and fact in that channel's
-   storage under ``UDSS_LLR_0206``. In functional keep-alive
-   the client shall have one ``tS3_Client`` reload parameter; in physical keep-alive each
-   physical channel shall have its own, each supplied under ``UDSS_LLR_0138``. On creation
-   of the instance, and for a physical channel when its storage is supplied, no such timer
-   shall be running and no such fact shall hold. Thereafter the
-   timers and facts shall be changed only as ``UDSS_LLR_0164`` to ``UDSS_LLR_0172`` and
-   ``UDSS_LLR_0184`` require, and the condition of each of those requirements shall be
-   evaluated against the state as it was before the input in hand, that state being the one
-   ``UDSS_LLR_0187`` fixes.
+   single keeping-alive fact for the client instance, held in storage supplied with the
+   instance at its creation.
 
    Table 8 allots a single timer where the functional TesterPresent is used, with no
-   further timers per activated session, and a single timer for each point-to-point
-   communication otherwise. The initial state follows Table 6, whose functional column
-   starts the timer only for a non-default session: in the default session nothing is kept
-   alive. It is stated because none of the ten requirements that change them is an
-   initialisation condition; ``UDSS_LLR_0222`` and ``UDSS_LLR_0207`` state initial state for
-   the same reason.
+   further timers per activated session.
 
-   The per-channel timers and facts live in the channel's storage for the reason
-   ``UDSS_LLR_0200`` gives: the number of channels is a property of the deployment, the
-   crate does not allocate, and Table 8 states what timers are needed, not where they live.
    The functional timer and fact are fixed in size, as the server's state ``UDSS_LLR_0221``
    holds in the instance is, and are nonetheless supplied by the caller: the client's state
    is uniformly caller-owned, so one storage shape serves both modes, and the mode is fixed
    at creation under ``UDSS_LLR_0162``, so the caller can size the storage then. That is a
    declared asymmetry with the server, and it costs nothing observable.
+
+.. llr:: Physical keep-alive state and where it lives
+   :id: UDSS_LLR_0228
+   :status: draft
+   :integrity_level: QM
+   :target_level: D
+   :origin: session-layer-standard
+   :source: ISO 14229-2:2021 9.5 Table 6; ISO 14229-2:2021 9.6 Table 8
+   :tags: client; s3_client; session-state
+
+   In physical keep-alive the client shall maintain a single ``tS3_Client`` timer and a
+   channel session fact for each physical channel, in that channel's storage under
+   ``UDSS_LLR_0206``.
+
+   Table 8 allots a single timer for each point-to-point communication, in contrast to
+   the single, client-wide timer functional keep-alive allots under ``UDSS_LLR_0227``.
+
+   The per-channel timers and facts live in the channel's storage for the reason
+   ``UDSS_LLR_0200`` gives: the number of channels is a property of the deployment, the
+   crate does not allocate, and Table 8 states what timers are needed, not where they live.
+
+.. llr:: The session timer's reload parameter in each mode
+   :id: UDSS_LLR_0229
+   :status: draft
+   :integrity_level: QM
+   :target_level: D
+   :origin: session-layer-standard
+   :source: ISO 14229-2:2021 9.5 Table 5; ISO 14229-2:2021 9.6 Table 8
+   :tags: client; s3_client; session-state
+
+   In functional keep-alive the client shall have one ``tS3_Client`` reload parameter; in
+   physical keep-alive each physical channel shall have its own, each supplied under
+   ``UDSS_LLR_0138``.
 
    The reload parameter follows the timer. Table 5 states that the ``tS3_Client`` timeout
    value includes the travel time of the message on the network, gateway delays among them,
@@ -199,14 +214,48 @@ The timer's state
    ``tP2_Server`` and ``tP2*_Server``. In functional keep-alive one timer serves every server
    the functional address reaches, and one value must cover the longest path among them.
 
-   The rule on evaluation order is what lets several requirements match one input and
-   exactly one act. In physical keep-alive ``UDSS_LLR_0168``, ``UDSS_LLR_0170`` and
-   ``UDSS_LLR_0172`` all act on a completed exchange; the first is guarded on the fact not
-   holding and the other two on its holding, and the guard reads the state before any of
-   them has changed it. In functional keep-alive the requirements are separated by the
-   classification instead: ``UDSS_LLR_0164`` and ``UDSS_LLR_0167`` act on a session
-   selection and ``UDSS_LLR_0166`` on the ``keep-alive`` marker, which ``UDSS_LLR_0134``
-   forbids to accompany a session selection, so no input matches more than one.
+.. llr:: The client's initial session timer state
+   :id: UDSS_LLR_0230
+   :status: draft
+   :integrity_level: QM
+   :target_level: D
+   :origin: derived
+   :tags: client; s3_client; session-state
+
+   On creation of the instance, no ``tS3_Client`` timer shall be running for the client
+   instance and no keeping-alive fact shall hold. For a physical channel, when its storage
+   is supplied, its ``tS3_Client`` timer shall not be running and its session fact shall
+   not hold.
+
+   Rationale: the initial state follows Table 6, whose functional column starts the timer
+   only for a non-default session: in the default session nothing is kept alive. It is
+   stated because none of the requirements ``UDSS_LLR_0231`` lists is an initialisation
+   condition, so without it the state of the timers and facts before the first input would
+   be undefined; ``UDSS_LLR_0222`` and ``UDSS_LLR_0207`` state initial state for the same
+   reason.
+
+.. llr:: What changes the client's session timers and facts
+   :id: UDSS_LLR_0231
+   :status: draft
+   :integrity_level: QM
+   :target_level: D
+   :origin: derived
+   :tags: client; s3_client; session-state
+
+   After the client instance is created, and after a physical channel's storage is
+   supplied, the state of the client's ``tS3_Client`` timers and its keeping-alive and
+   session facts shall be changed only as ``UDSS_LLR_0164`` to ``UDSS_LLR_0172`` and
+   ``UDSS_LLR_0184`` require.
+
+   Rationale: the requirements this list closes are kept from conflicting by the evaluation
+   order ``UDSS_LLR_0187`` fixes. In physical keep-alive ``UDSS_LLR_0168``,
+   ``UDSS_LLR_0170`` and ``UDSS_LLR_0172`` all act on a completed exchange; the first is
+   guarded on the fact not holding and the other two on its holding, and the guard reads the
+   state before any of them has changed it. In functional keep-alive the requirements are
+   separated by the classification instead: ``UDSS_LLR_0164`` and ``UDSS_LLR_0167`` act on a
+   session selection and ``UDSS_LLR_0166`` on the ``keep-alive`` marker, which
+   ``UDSS_LLR_0134`` forbids to accompany a session selection, so no input matches more than
+   one.
 
 Functional keep-alive
 ---------------------
@@ -350,7 +399,7 @@ Functional keep-alive
    indefinitely, which ``UDSS_LLR_0111`` shows the servers ignoring.
 
    The channel must be functional, though ``UDSS_LLR_0164`` engages from either kind.
-   Table 8 makes the timer client-wide, and ``UDSS_LLR_0163`` accordingly holds one
+   Table 8 makes the timer client-wide, and ``UDSS_LLR_0227`` accordingly holds one
    keeping-alive fact for the client, so the client cannot know how many servers the
    keep-alive still serves. A physically addressed return to the default session moves one
    server, and disengaging on it would let every other server's ``tS3_Server`` expire; a

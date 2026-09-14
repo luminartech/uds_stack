@@ -128,7 +128,7 @@ The timer's state
 
    The state is held in the instance rather than in caller-supplied storage because it is
    fixed in size: one bit, one addressing and one timer. The client's state grows with the
-   number of channels it has, which is why ``UDSS_LLR_0163`` puts that state in storage the
+   number of channels it has, which is why ``UDSS_LLR_0228`` puts that state in storage the
    caller supplies; the associations ``UDSS_LLR_0133`` holds for the server's outstanding
    transmissions grow with its peers and are that requirement's caller-supplied storage, not
    this state. Throughout this document a message is *from the controlling client*, and a
@@ -163,11 +163,12 @@ The timer's state
    :origin: derived
    :tags: server; session-state; s3_server
 
-   Thereafter the session fact and the controlling client shall change only as
-   ``UDSS_LLR_0102``, ``UDSS_LLR_0103``, ``UDSS_LLR_0112`` and ``UDSS_LLR_0141`` require, and
-   the timer only as ``UDSS_LLR_0102``, ``UDSS_LLR_0103``, ``UDSS_LLR_0104``,
-   ``UDSS_LLR_0106``, ``UDSS_LLR_0109``, ``UDSS_LLR_0110``, ``UDSS_LLR_0112``,
-   ``UDSS_LLR_0141``, ``UDSS_LLR_0142`` and ``UDSS_LLR_0186`` require.
+   After the server is initialised, the session fact and the controlling client shall
+   change only as ``UDSS_LLR_0102``, ``UDSS_LLR_0103``, ``UDSS_LLR_0112`` and
+   ``UDSS_LLR_0141`` require, and the ``tS3_Server`` timer only as ``UDSS_LLR_0102``,
+   ``UDSS_LLR_0103``, ``UDSS_LLR_0104``, ``UDSS_LLR_0106``, ``UDSS_LLR_0109``,
+   ``UDSS_LLR_0110``, ``UDSS_LLR_0112``, ``UDSS_LLR_0141``, ``UDSS_LLR_0142`` and
+   ``UDSS_LLR_0186`` require.
 
    Rationale: ``UDSS_LLR_0105``, ``UDSS_LLR_0107``, ``UDSS_LLR_0108`` and ``UDSS_LLR_0111``
    state non-effects and are not changers. A closed list is what makes a "changes nothing"

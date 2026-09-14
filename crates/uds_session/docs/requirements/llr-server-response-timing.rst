@@ -137,7 +137,7 @@ The response window
    :origin: derived
    :tags: server; p2_server
 
-   On initialisation that timer shall not be running.
+   On initialisation the ``tP2_Server`` timer shall not be running.
 
    Rationale: none of ``UDSS_LLR_0226``'s five conditions is an initialisation condition,
    so without it the state of the timer before the first input would be undefined.
@@ -151,8 +151,9 @@ The response window
    :origin: derived
    :tags: server; p2_server
 
-   Thereafter its state shall be changed only as ``UDSS_LLR_0144``, ``UDSS_LLR_0145``,
-   ``UDSS_LLR_0146``, ``UDSS_LLR_0147`` and ``UDSS_LLR_0148`` require.
+   After the server is initialised, the ``tP2_Server`` timer's state shall be changed only
+   as ``UDSS_LLR_0144``, ``UDSS_LLR_0145``, ``UDSS_LLR_0146``, ``UDSS_LLR_0147`` and
+   ``UDSS_LLR_0148`` require.
 
    Rationale: ``T_DataSOM.ind`` is named in clause 9.1.1's interface but is nowhere given a
    ``tP2_Server`` effect: 10.1.2 Figure 10 starts the timer on ``T_Data.ind`` even where a

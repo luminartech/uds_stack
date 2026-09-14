@@ -193,7 +193,8 @@ The repeat count
    :origin: derived
    :tags: client; error-handling; repeat
 
-   Thereafter it shall be changed only as ``UDSS_LLR_0179`` and ``UDSS_LLR_0183`` require.
+   After a channel's storage is supplied, its repeat count shall be changed only as
+   ``UDSS_LLR_0179`` and ``UDSS_LLR_0183`` require.
 
    Rationale: the rule ``UDSS_LLR_0187`` fixes is what lets ``UDSS_LLR_0179`` and
    ``UDSS_LLR_0180`` act on the same ``S_Data.req``, the one reading the count the other
@@ -386,7 +387,7 @@ Giving a server up
    The effects are the state a reset clears, and the list is closed so that a document
    adding state per channel must amend this requirement to say whether the reset clears
    it. What it deliberately leaves: the protocol parameters of ``UDSS_LLR_0152`` and
-   ``UDSS_LLR_0173``, which are the caller's; the spacing timer, which ``UDSS_LLR_0173``
+   ``UDSS_LLR_0240``, which are the caller's; the spacing timer, which ``UDSS_LLR_0243``
    defines with no stopped state and which protects a server that knows nothing of the
    reset, so that 10.3's wait is still owed; the count ``UDSS_LLR_0156`` keeps, defined
    relative to the last confirmation and so reset by the next; the abandoned association,
@@ -457,7 +458,7 @@ Giving a server up
    It is a separate act from the channel reset of ``UDSS_LLR_0183`` because the two answer
    different situations. A reset unwedges a channel whose responses never completed, and
    must not cost the application its sessions with every other server; in functional
-   keep-alive it would, ``UDSS_LLR_0163`` holding one keeping-alive fact for the client.
+   keep-alive it would, ``UDSS_LLR_0227`` holding one keeping-alive fact for the client.
 
    The functional condition reads a release on a functional channel as the application
    abandoning functional keep-alive as a whole. ISO 14229-2:2021 9.6 Table 8's single

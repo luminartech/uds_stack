@@ -422,7 +422,7 @@ The response window
 
    Rationale: a closed list of the requirements that may change the timer is what makes a
    "changes nothing" claim elsewhere in the set checkable, and what lets ``UDSS_LLR_0207``
-   state an initial state that nothing else may disturb. ``UDSS_LLR_0163`` states the same
+   state an initial state that nothing else may disturb. ``UDSS_LLR_0231`` states the same
    closure for the client's ``tS3_Client`` timers.
 
 .. llr:: The response timer has two reload parameters
@@ -438,8 +438,8 @@ The response window
    parameter**, supplied as protocol parameters under ``UDSS_LLR_0138``. A setting of a
    per-channel parameter shall identify its channel, and one identifying a channel the client
    does not have shall be rejected as ``UDSS_LLR_0150`` defines; this holds for a physical
-   channel's ``tS3_Client`` reload parameter under ``UDSS_LLR_0163`` and the spacing
-   parameter of ``UDSS_LLR_0173`` alike.
+   channel's ``tS3_Client`` reload parameter under ``UDSS_LLR_0229`` and the spacing
+   parameter of ``UDSS_LLR_0240`` alike.
 
    Where the transport supports ``T_DataSOM.ind`` these are ``tP2_Client_Max`` and
    ``tP2*_Client_Max``; where it does not, they are ``tP6_Client_Max`` and

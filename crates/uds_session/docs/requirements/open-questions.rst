@@ -41,7 +41,8 @@ tables do not budget. Known members:
   transition" needs and Table 8 budgets nothing for;
 - the request record and response count of ``UDSS_LLR_0206``, which Table 9's known-count
   cell needs;
-- the keeping-alive fact and the channel session facts of ``UDSS_LLR_0163``, without which
+- the keeping-alive fact and the channel session facts of ``UDSS_LLR_0227`` and
+  ``UDSS_LLR_0228``, without which
   a timer stopped between a keep-alive indication and its confirmation cannot be told from
   one in the default session.
 

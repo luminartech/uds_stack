@@ -107,37 +107,57 @@ The spacing timer
 -----------------
 
 .. llr:: The client keeps one spacing timer per channel
-   :id: UDSS_LLR_0173
+   :id: UDSS_LLR_0239
    :status: draft
    :integrity_level: QM
    :target_level: D
    :origin: session-layer-standard
-   :source: ISO 14229-2:2021 9.2 Table 3; ISO 14229-2:2021 9.2 Table 4; ISO 14229-2:2021 9.6 Table 7; ISO 14229-2:2021 10.3
+   :source: ISO 14229-2:2021 9.6 Table 7
    :tags: client; p3_client
 
    The client shall maintain a single spacing timer for each logical communication channel,
-   in the channel's storage under ``UDSS_LLR_0206``. Each channel shall have a spacing parameter supplied
-   as a protocol parameter under ``UDSS_LLR_0138``, ``tP3_Client_Phys`` for a physical
-   channel and ``tP3_Client_Func`` for a functional channel, and the session layer shall not
-   distinguish whether the value was derived with ``ΔtP2`` or with ``ΔtP6``. A channel's
-   spacing timer shall be active from a start under ``UDSS_LLR_0174`` or ``UDSS_LLR_0175``
-   until the elapsed time since the most recent such start reaches the value it was loaded
-   with, and a timer that has not been started shall not be active. When a channel's
-   storage is supplied its spacing timer shall not be active. Thereafter a channel's spacing timer shall be
-   changed only as ``UDSS_LLR_0174`` and ``UDSS_LLR_0175`` require, each evaluated against
-   the state as it was before the input in hand, that state being the one ``UDSS_LLR_0187``
-   fixes.
+   in the channel's storage under ``UDSS_LLR_0206``.
 
    Table 7 requires a single timer per logical physical communication channel for
    ``tP3_Client_Phys`` and a single timer per logical functional communication channel for
-   ``tP3_Client_Func``. Table 3 defines both parameters as a minimum time for the client to
-   wait and types each a timer reload value, the typing ``UDSS_LLR_0152`` cites for the
-   response reload pair. Table 4 gives their minima per server, in two pairs that differ by
-   ``ΔtP2`` or ``ΔtP6``, and 10.3 a) and b) say whose ``tP2_Server_Max`` each is built from,
-   so the value is a property of the channel and the caller's to choose. The session layer
-   does not distinguish the two pairs for the reason ``UDSS_LLR_0152`` gives: nothing tells
-   it which transport it is on, and the distinction survives in the values the caller
-   supplies.
+   ``tP3_Client_Func``.
+
+   The storage is the caller's for the reason ``UDSS_LLR_0200`` gives.
+
+.. llr:: Each channel has a spacing parameter
+   :id: UDSS_LLR_0240
+   :status: draft
+   :integrity_level: QM
+   :target_level: D
+   :origin: session-layer-standard
+   :source: ISO 14229-2:2021 9.2 Table 3; ISO 14229-2:2021 9.2 Table 4; ISO 14229-2:2021 10.3
+   :tags: client; p3_client
+
+   Each channel shall have a spacing parameter supplied as a protocol parameter under
+   ``UDSS_LLR_0138``, ``tP3_Client_Phys`` for a physical channel and ``tP3_Client_Func`` for
+   a functional channel, and the session layer shall not distinguish whether the value was
+   derived with ``ΔtP2`` or with ``ΔtP6``.
+
+   Table 3 defines both parameters as a minimum time for the client to wait and types each a
+   timer reload value, the typing ``UDSS_LLR_0152`` cites for the response reload pair.
+   Table 4 gives their minima per server, in two pairs that differ by ``ΔtP2`` or ``ΔtP6``,
+   and 10.3 a) and b) say whose ``tP2_Server_Max`` each is built from, so the value is a
+   property of the channel and the caller's to choose. The session layer does not
+   distinguish the two pairs for the reason ``UDSS_LLR_0152`` gives: nothing tells it which
+   transport it is on, and the distinction survives in the values the caller supplies.
+
+.. llr:: When a spacing timer is active
+   :id: UDSS_LLR_0241
+   :status: draft
+   :integrity_level: QM
+   :target_level: D
+   :origin: session-layer-standard
+   :source: ISO 14229-2:2021 9.2 Table 3; ISO 14229-2:2021 10.3
+   :tags: client; p3_client
+
+   A channel's spacing timer shall be active from a start under ``UDSS_LLR_0174`` or
+   ``UDSS_LLR_0175`` until the elapsed time since the most recent such start reaches the
+   value it was loaded with, and a timer that has not been started shall not be active.
 
    The timer becomes inactive when the elapsed time reaches the value it was loaded with
    rather than when it exceeds it. Table 3 states the parameter as a minimum time to
@@ -149,12 +169,35 @@ The spacing timer
    read the same way, the repeat being released at that time rather than after it, as the
    parameter is stated as a minimum.
 
-   No requirement stops a spacing timer and none acts when it becomes inactive. Clause 10.3
-   states the timer's whole effect as a condition on the next transmission, so an inactive
-   timer is one that no longer forbids anything, and ``UDSS_LLR_0177`` gives the application
-   the time remaining instead of an indication. The storage is the caller's for the reason
-   ``UDSS_LLR_0200`` gives, and the initial state and the rule on evaluation order are stated
-   for the reasons ``UDSS_LLR_0207`` and ``UDSS_LLR_0163`` give.
+.. llr:: A channel's spacing timer is initially inactive
+   :id: UDSS_LLR_0242
+   :status: draft
+   :integrity_level: QM
+   :target_level: D
+   :origin: derived
+   :tags: client; p3_client
+
+   When a channel's storage is supplied its spacing timer shall not be active.
+
+   Rationale: the initial state is stated for the reason ``UDSS_LLR_0207`` gives: none of
+   ``UDSS_LLR_0243``'s conditions is an initialisation condition, so without it the state of
+   a channel's spacing timer before the first input would be undefined.
+
+.. llr:: What changes a channel's spacing timer
+   :id: UDSS_LLR_0243
+   :status: draft
+   :integrity_level: QM
+   :target_level: D
+   :origin: derived
+   :tags: client; p3_client
+
+   After a channel's storage is supplied, the state of that channel's spacing timer shall
+   be changed only as ``UDSS_LLR_0174`` and ``UDSS_LLR_0175`` require.
+
+   Rationale: no requirement stops a spacing timer and none acts when it becomes inactive.
+   Clause 10.3 states the timer's whole effect as a condition on the next transmission, so
+   an inactive timer is one that no longer forbids anything, and ``UDSS_LLR_0177`` gives the
+   application the time remaining instead of an indication.
 
 Starting the timer
 ------------------
