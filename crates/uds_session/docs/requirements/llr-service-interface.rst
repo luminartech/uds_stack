@@ -575,7 +575,7 @@ peer, and how a multi-frame message's start is matched to its completion.
    addresses are equal; an identity that carries an extension is never equal to one that
    does not.
 
-   Rationale: ``UDSS_LLR_0199`` identifies a responder by this pair, ``UDSS_LLR_0185``
+   Rationale: ``UDSS_LLR_0199`` identifies a responder by this pair, ``UDSS_LLR_0221``
    records the controlling client as one, ``UDSS_LLR_0212`` records the request in
    progress as one, and ``UDSS_LLR_0160`` keys the responder table on one. Stated once,
    the four cannot drift apart. The extension is part of the identity because two clients

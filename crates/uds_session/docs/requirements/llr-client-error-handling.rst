@@ -149,7 +149,7 @@ The repeat count
 ----------------
 
 .. llr:: Each channel keeps a repeat count
-   :id: UDSS_LLR_0178
+   :id: UDSS_LLR_0236
    :status: draft
    :integrity_level: QM
    :target_level: D
@@ -157,11 +157,7 @@ The repeat count
    :tags: client; error-handling; repeat
 
    Each logical communication channel, physical or functional, shall have a **repeat
-   count** in the channel's storage under ``UDSS_LLR_0206``. When the channel's storage is
-   supplied the count shall be zero.
-   Thereafter it shall be changed only as ``UDSS_LLR_0179`` and ``UDSS_LLR_0183`` require,
-   each evaluated against the state as it was before the input in hand, that state being the
-   one ``UDSS_LLR_0187`` fixes.
+   count** in the channel's storage under ``UDSS_LLR_0206``.
 
    Rationale: ISO 14229-2:2021 9.7 Table 9's last row bounds the client's error handling to
    two repeats, three transmissions in the worst case, and a layer that sees every request
@@ -173,9 +169,33 @@ The repeat count
    reason.
 
    The storage is the caller's for the reason ``UDSS_LLR_0200`` gives: the number of
-   channels is a property of the deployment and the crate does not allocate. The initial
-   state and the rule on evaluation order are stated for the reasons ``UDSS_LLR_0207`` and
-   ``UDSS_LLR_0163`` give; here the rule is what lets ``UDSS_LLR_0179`` and
+   channels is a property of the deployment and the crate does not allocate.
+
+.. llr:: A channel's repeat count is initially zero
+   :id: UDSS_LLR_0237
+   :status: draft
+   :integrity_level: QM
+   :target_level: D
+   :origin: derived
+   :tags: client; error-handling; repeat
+
+   When the channel's storage is supplied the count shall be zero.
+
+   Rationale: the initial state is stated for the reason ``UDSS_LLR_0207`` gives: none of
+   ``UDSS_LLR_0238``'s conditions is an initialisation condition, so without it the count
+   would be undefined before the channel's storage is supplied.
+
+.. llr:: What changes a channel's repeat count
+   :id: UDSS_LLR_0238
+   :status: draft
+   :integrity_level: QM
+   :target_level: D
+   :origin: derived
+   :tags: client; error-handling; repeat
+
+   Thereafter it shall be changed only as ``UDSS_LLR_0179`` and ``UDSS_LLR_0183`` require.
+
+   Rationale: the rule ``UDSS_LLR_0187`` fixes is what lets ``UDSS_LLR_0179`` and
    ``UDSS_LLR_0180`` act on the same ``S_Data.req``, the one reading the count the other
    writes.
 
@@ -201,7 +221,7 @@ The repeat count
    and three transmissions in the worst case, which ``UDSS_LLR_0180`` transcribes. It names
    no count, no event that starts one and no marker, so the mechanism by which a layer that
    cannot read the message tracks the repeats is the set's own, as the count of
-   ``UDSS_LLR_0178`` is. Table 9 counts service request transmissions from the request
+   ``UDSS_LLR_0236`` is. Table 9 counts service request transmissions from the request
    whose handling first failed, so the request without the marker is the one that starts a
    count and each repeat advances it. The count is taken at the ``S_Data.req``
    rather than at the ``T_Data.conf`` because ``UDSS_LLR_0118`` produces the ``T_Data.req``
@@ -211,8 +231,8 @@ The repeat count
    reject an ``S_Data.req`` for a request are ``UDSS_LLR_0176``, ``UDSS_LLR_0180`` and
    ``UDSS_LLR_0181``, and ``UDSS_LLR_0133``, ``UDSS_LLR_0134``, ``UDSS_LLR_0203`` and
    ``UDSS_LLR_0188`` reject one on its addressing, classification, channel or role;
-   ``UDSS_LLR_0180`` reads the count as it was before the input under ``UDSS_LLR_0178``'s
-   rule, so the increase here never feeds the rejection there.
+   ``UDSS_LLR_0180`` reads the count as it was before the input under ``UDSS_LLR_0187``, so
+   the increase here never feeds the rejection there.
 
    The keep-alive is outside the count, and that is a declared reading: Table 9 does not
    exempt it. In physical keep-alive a TesterPresent can be transmitted between a failure

@@ -103,7 +103,7 @@ request, each repeat restarts the cadence through ``UDSS_LLR_0169`` and ``UDSS_L
 where every repeat fails the client stops sending and the server's ``tS3_Server`` ends the
 session, which is the outcome the standard intends. The client's fact is then cleared by the
 keep-alive release of ``UDSS_LLR_0184``, on the application's say-so; nothing in this
-document clears it, and the repeat count that bounds the repeats is ``UDSS_LLR_0178``'s.
+document clears it, and the repeat count that bounds the repeats is ``UDSS_LLR_0236``'s.
 
 Table 5 requires the ``tS3_Client`` reload value to be smaller than ``tS3_Server``. That is a
 value the caller chooses under ``UDSS_LLR_0138``, a performance obligation of the same class
@@ -177,13 +177,13 @@ The timer's state
    communication otherwise. The initial state follows Table 6, whose functional column
    starts the timer only for a non-default session: in the default session nothing is kept
    alive. It is stated because none of the ten requirements that change them is an
-   initialisation condition; ``UDSS_LLR_0185`` and ``UDSS_LLR_0207`` state initial state for
+   initialisation condition; ``UDSS_LLR_0222`` and ``UDSS_LLR_0207`` state initial state for
    the same reason.
 
    The per-channel timers and facts live in the channel's storage for the reason
    ``UDSS_LLR_0200`` gives: the number of channels is a property of the deployment, the
    crate does not allocate, and Table 8 states what timers are needed, not where they live.
-   The functional timer and fact are fixed in size, as the server's state ``UDSS_LLR_0185``
+   The functional timer and fact are fixed in size, as the server's state ``UDSS_LLR_0221``
    holds in the instance is, and are nonetheless supplied by the caller: the client's state
    is uniformly caller-owned, so one storage shape serves both modes, and the mode is fixed
    at creation under ``UDSS_LLR_0162``, so the caller can size the storage then. That is a

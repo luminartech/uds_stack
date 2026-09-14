@@ -345,7 +345,7 @@ The response window
    Rationale: the initial state is stated because none of the conditions ``UDSS_LLR_0211``
    admits is an initialisation condition, so without it the state of a timer before the
    first input would be undefined, and the same holds of the request in progress and the
-   start-of-message. ``UDSS_LLR_0185`` and ``UDSS_LLR_0143`` state the initial state of the
+   start-of-message. ``UDSS_LLR_0222`` and ``UDSS_LLR_0225`` state the initial state of the
    server's two timers for the same reason.
 
 .. llr:: A request becomes and ceases to be in progress

@@ -109,7 +109,7 @@ The response window
 -------------------
 
 .. llr:: The server uses a single response timer
-   :id: UDSS_LLR_0143
+   :id: UDSS_LLR_0224
    :status: draft
    :integrity_level: QM
    :target_level: D
@@ -119,29 +119,52 @@ The response window
 
    The server shall maintain a single ``tP2_Server`` timer and, while it is running, which of
    ``tP2_Server_Max`` and ``tP2*_Server_Max`` it was loaded with, the fact ``UDSS_LLR_0148``
-   reports. On initialisation that timer shall not be running. Thereafter its state shall be changed only as ``UDSS_LLR_0144``,
-   ``UDSS_LLR_0145``, ``UDSS_LLR_0146``, ``UDSS_LLR_0147`` and ``UDSS_LLR_0148`` require.
+   reports.
 
    Clause 9.1.1 requires a single timer implementation and names ``T_Data.req``,
    ``T_Data.conf``, ``T_DataSOM.ind`` and ``T_Data.ind`` as the interface that triggers it.
-   ``T_DataSOM.ind`` is named there but is nowhere given a ``tP2_Server`` effect: 10.1.2
-   Figure 10 starts the timer on ``T_Data.ind`` even where a ``T_DataSOM.ind`` preceded it
-   for the same message, and every ``T_DataSOM.ind`` timer effect the standard states is
-   either ``tS3_Server`` or ``tP_Client``. This requirement therefore enumerates the
-   conditions the standard gives rather than the primitives it names, a trigger with no
-   condition attached being untestable.
-
-   The initial state is stated here because none of those five conditions is an
-   initialisation condition, so without it the state of the timer before the first input
-   would be undefined. ``UDSS_LLR_0185`` states the initial state of ``tS3_Server`` for
-   the same reason. ``UDSS_LLR_0186`` in :doc:`llr-server-session-timer` handles the
-   request marked ``keep-alive`` and is silent on ``tP2_Server``; that message's exclusion
-   from this timer is ``UDSS_LLR_0144``'s and ``UDSS_LLR_0146``'s alone, so the five
-   changers above remain the whole list.
+   ``UDSS_LLR_0226`` settles which of those primitives actually change the timer.
 
    Table 7 gives the reason one timer suffices: it is required for the enhanced response
    timing, to ensure a subsequent response-pending message is transmitted before
    ``tP2*_Server`` expires.
+
+.. llr:: The server's response timer is initially not running
+   :id: UDSS_LLR_0225
+   :status: draft
+   :integrity_level: QM
+   :target_level: D
+   :origin: derived
+   :tags: server; p2_server
+
+   On initialisation that timer shall not be running.
+
+   Rationale: none of ``UDSS_LLR_0226``'s five conditions is an initialisation condition,
+   so without it the state of the timer before the first input would be undefined.
+   ``UDSS_LLR_0222`` states the initial state of ``tS3_Server`` for the same reason.
+
+.. llr:: What changes the server's response timer
+   :id: UDSS_LLR_0226
+   :status: draft
+   :integrity_level: QM
+   :target_level: D
+   :origin: derived
+   :tags: server; p2_server
+
+   Thereafter its state shall be changed only as ``UDSS_LLR_0144``, ``UDSS_LLR_0145``,
+   ``UDSS_LLR_0146``, ``UDSS_LLR_0147`` and ``UDSS_LLR_0148`` require.
+
+   Rationale: ``T_DataSOM.ind`` is named in clause 9.1.1's interface but is nowhere given a
+   ``tP2_Server`` effect: 10.1.2 Figure 10 starts the timer on ``T_Data.ind`` even where a
+   ``T_DataSOM.ind`` preceded it for the same message, and every ``T_DataSOM.ind`` timer
+   effect the standard states is either ``tS3_Server`` or ``tP_Client``. This requirement
+   therefore enumerates the conditions the standard gives rather than the primitives it
+   names, a trigger with no condition attached being untestable.
+
+   ``UDSS_LLR_0186`` in :doc:`llr-server-session-timer` handles the request marked
+   ``keep-alive`` and is silent on ``tP2_Server``; that message's exclusion from this timer
+   is ``UDSS_LLR_0144``'s and ``UDSS_LLR_0146``'s alone, so the five changers above remain
+   the whole list.
 
 .. llr:: The server keeps a request in progress and a response-pending anchor
    :id: UDSS_LLR_0212
@@ -157,7 +180,7 @@ The response window
    a timestamp.
 
    Rationale: ``UDSS_LLR_0147`` and ``UDSS_LLR_0149`` read the request in progress and the
-   time of the last response-pending confirmation, and ``UDSS_LLR_0143``'s closed list
+   time of the last response-pending confirmation, and ``UDSS_LLR_0226``'s closed list
    covers the ``tP2_Server`` timer alone, so without this requirement the two were state
    nothing introduced, initialised or bounded, and two implementations could disagree about
    when a request ended.
@@ -168,7 +191,7 @@ The response window
    response-pending messages of one service.
 
    The state is instance-resident because it is fixed in size, one fact, two addresses and
-   one timestamp, as ``UDSS_LLR_0185`` holds the session facts. The two addresses form a
+   one timestamp, as ``UDSS_LLR_0221`` holds the session facts. The two addresses form a
    peer identity in the sense of ``UDSS_LLR_0198``, which is what ``UDSS_LLR_0214``
    compares an input against.
 
@@ -185,7 +208,7 @@ The response window
    Rationale: the initial state is stated because none of the conditions ``UDSS_LLR_0215``,
    ``UDSS_LLR_0216``, ``UDSS_LLR_0217`` and ``UDSS_LLR_0218`` give is an initialisation
    condition, so without it the facts ``UDSS_LLR_0212`` keeps would be undefined before the
-   first input. ``UDSS_LLR_0143`` and ``UDSS_LLR_0185`` state the initial state of the
+   first input. ``UDSS_LLR_0225`` and ``UDSS_LLR_0222`` state the initial state of the
    server's two timers for the same reason, and ``UDSS_LLR_0207`` that of a client channel.
 
 .. llr:: What it means to answer the request in progress
@@ -208,7 +231,7 @@ The response window
    final response on the wire when the aborting request arrives, so what ends the request
    in progress, sets its anchor or completes it is matched to it by addressing: a response
    answers the request whose source it targets, with the same address extension, the
-   reading ``UDSS_LLR_0185`` records, and a completion report carries the request's own
+   reading ``UDSS_LLR_0221`` records, and a completion report carries the request's own
    addressing under ``UDSS_LLR_0136``. Without the match the aborted request's confirmation
    would end the new request or widen its window.
 
@@ -249,7 +272,7 @@ The response window
    reception" because ISO 14229-2:2021 9.7 Table 10 has the server ignore a request whose
    reception failed, so such a reception begins nothing: a start-of-message whose
    completion fails would otherwise leave a request in progress that nothing ends, and
-   ``UDSS_LLR_0143`` records that the start-of-message has no ``tP2_Server`` effect in any
+   ``UDSS_LLR_0226`` records that the start-of-message has no ``tP2_Server`` effect in any
    case.
 
 .. llr:: A new request replaces one in progress
@@ -359,7 +382,7 @@ The response window
 
    Rationale: a closed list of the requirements that may change these facts is what makes a
    "changes nothing" claim elsewhere in the set checkable, and what lets ``UDSS_LLR_0213``
-   state an initial state that nothing else may disturb. ``UDSS_LLR_0143`` states the same
+   state an initial state that nothing else may disturb. ``UDSS_LLR_0226`` states the same
    closure for ``tP2_Server`` and ``UDSS_LLR_0211`` for a client channel's response timer.
 
    The list also settles the marked ``keep-alive``, and no clause is needed here for it.

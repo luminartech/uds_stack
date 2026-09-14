@@ -28,7 +28,7 @@ tables do not budget. Known members:
 
 - the minimum spacing between consecutive response-pending messages, a fraction of
   ``tP2*_Server_Max`` that ``UDSS_LLR_0149`` enforces;
-- the at-most-two-repeats limit of 9.7 Table 9, for which ``UDSS_LLR_0178`` keeps a repeat
+- the at-most-two-repeats limit of 9.7 Table 9, for which ``UDSS_LLR_0236`` keeps a repeat
   count per channel;
 - the pending list of 10.2.3 Figure 16 and 10.2.4 Figure 17, and the open start-of-message
   per responder that the pairing rule in ``UDSS_LLR_0199`` needs, both of which
@@ -37,7 +37,7 @@ tables do not budget. Known members:
   fact, two addresses and one timestamp in the instance;
 - the associations of ``UDSS_LLR_0133`` between a transmission and its confirmation, in
   caller-supplied storage, which make 7.6's identification by address checkable;
-- the controlling client of ``UDSS_LLR_0185``, which Table 6's "client which requested the
+- the controlling client of ``UDSS_LLR_0221``, which Table 6's "client which requested the
   transition" needs and Table 8 budgets nothing for;
 - the request record and response count of ``UDSS_LLR_0206``, which Table 9's known-count
   cell needs;

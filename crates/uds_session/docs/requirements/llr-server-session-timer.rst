@@ -100,7 +100,7 @@ responses to the data link specific documents of the ISO 14229 series. Nothing b
 ``UDSS_LLR_0108`` transcribes from ISO 14229-5:2022 is stated here.
 
 A session change the server makes with neither a message nor a completion to classify. A
-real ECU reset re-initialises the instance, which ``UDSS_LLR_0185`` covers; a reset that
+real ECU reset re-initialises the instance, which ``UDSS_LLR_0222`` covers; a reset that
 leaves the instance running is covered by the session selection on the ECUReset positive
 response, which ``UDSS_LLR_0141`` acts on.
 
@@ -108,7 +108,7 @@ The timer's state
 -----------------
 
 .. llr:: The server keeps one session fact, one controlling client and one session timer
-   :id: UDSS_LLR_0185
+   :id: UDSS_LLR_0221
    :status: draft
    :integrity_level: QM
    :target_level: D
@@ -118,20 +118,10 @@ The timer's state
 
    The server shall keep, in the instance, whether the active session is the default
    session, the controlling client while a non-default session is active, and one
-   ``tS3_Server`` timer. On initialisation the server shall be in the default session, shall
-   hold no controlling client, and ``tS3_Server`` shall be disabled. Thereafter the session
-   fact and the controlling client shall change only as ``UDSS_LLR_0102``, ``UDSS_LLR_0103``,
-   ``UDSS_LLR_0112`` and ``UDSS_LLR_0141`` require, and the timer only as ``UDSS_LLR_0102``,
-   ``UDSS_LLR_0103``, ``UDSS_LLR_0104``, ``UDSS_LLR_0106``, ``UDSS_LLR_0109``,
-   ``UDSS_LLR_0110``, ``UDSS_LLR_0112``, ``UDSS_LLR_0141``, ``UDSS_LLR_0142`` and
-   ``UDSS_LLR_0186`` require. Where several of those ten requirements match one input, the
-   condition of each shall be evaluated against the state as it was before the input in
-   hand, that state being the one ``UDSS_LLR_0187`` fixes.
+   ``tS3_Server`` timer.
 
-   Clause 9.2 has the server start the default session when powered up. That is the initial
-   state ``UDSS_LLR_0101`` stated until it was retired into this requirement. Table 8
-   allocates a single ``tS3_Server`` because a server has one active session at any time,
-   which ISO 14229-1:2020 Annex J (informative) J.5.1 NOTE 2 states as one diagnostic
+   Table 8 allocates a single ``tS3_Server`` because a server has one active session at any
+   time, which ISO 14229-1:2020 Annex J (informative) J.5.1 NOTE 2 states as one diagnostic
    session state per ECU, shared over all active protocols. Clause 9.5's prose and Table
    6's stop row scope the timer's stop to the client which requested the transition, which
    is why that client's address is state.
@@ -148,9 +138,40 @@ The timer's state
    running under any requirement of this document, is loaded with the ``tS3_Server``
    protocol parameter of ``UDSS_LLR_0138``, the value ``UDSS_LLR_0112`` compares against.
 
-   ``UDSS_LLR_0105``, ``UDSS_LLR_0107``, ``UDSS_LLR_0108`` and ``UDSS_LLR_0111`` state
-   non-effects and are not changers. A closed list is what makes a "changes nothing" claim
-   elsewhere in the set checkable.
+.. llr:: The server's initial session state
+   :id: UDSS_LLR_0222
+   :status: draft
+   :integrity_level: QM
+   :target_level: D
+   :origin: derived
+   :tags: server; session-state; s3_server
+
+   On initialisation the server shall be in the default session, shall hold no controlling
+   client, and ``tS3_Server`` shall be disabled.
+
+   Rationale: clause 9.2 has the server start the default session when powered up, which is
+   the one fact the standard states; that is the initial state ``UDSS_LLR_0101`` stated
+   until it was retired into this requirement. None of the requirements permitted to change
+   the controlling client or ``tS3_Server`` is an initialisation condition, so without this
+   requirement the state of those two facts before the first input would be undefined.
+
+.. llr:: What changes the session fact, the controlling client and the session timer
+   :id: UDSS_LLR_0223
+   :status: draft
+   :integrity_level: QM
+   :target_level: D
+   :origin: derived
+   :tags: server; session-state; s3_server
+
+   Thereafter the session fact and the controlling client shall change only as
+   ``UDSS_LLR_0102``, ``UDSS_LLR_0103``, ``UDSS_LLR_0112`` and ``UDSS_LLR_0141`` require, and
+   the timer only as ``UDSS_LLR_0102``, ``UDSS_LLR_0103``, ``UDSS_LLR_0104``,
+   ``UDSS_LLR_0106``, ``UDSS_LLR_0109``, ``UDSS_LLR_0110``, ``UDSS_LLR_0112``,
+   ``UDSS_LLR_0141``, ``UDSS_LLR_0142`` and ``UDSS_LLR_0186`` require.
+
+   Rationale: ``UDSS_LLR_0105``, ``UDSS_LLR_0107``, ``UDSS_LLR_0108`` and ``UDSS_LLR_0111``
+   state non-effects and are not changers. A closed list is what makes a "changes nothing"
+   claim elsewhere in the set checkable.
 
 .. llr:: A confirmed response selecting a non-default session starts the session timer
    :id: UDSS_LLR_0102
@@ -464,7 +485,7 @@ The timer's state
    ``UDSS_LLR_0194``'s vocabulary with no request to restart it, is ignored, Figure 12 key p saying such a message
    "is ignored" and Figure 20 key j that it "can be ignored", a difference of modality the
    set records here. Table 6's stop row says the timer is disabled while the default session
-   is active, and that case is unreachable in this requirement, ``UDSS_LLR_0185`` holding no
+   is active, and that case is unreachable in this requirement, ``UDSS_LLR_0221`` holding no
    controlling client in the default session, so ``UDSS_LLR_0111`` covers it.
 
    The permission to ignore is taken rather than declined because an early restart would let
@@ -491,7 +512,7 @@ The timer's state
    No completion report is needed for the marked message, it being handled at its
    indication. One that is supplied is inert rather than rejected because ``UDSS_LLR_0136``
    accepts the input and a caller need not distinguish. A marked ``T_DataSOM.ind`` is named
-   so that its inertness does not rest on ``UDSS_LLR_0185``'s closed list alone. The failed
+   so that its inertness does not rest on ``UDSS_LLR_0223``'s closed list alone. The failed
    reception is named for the same reason; ``UDSS_LLR_0109``'s exclusion of the marked
    message says why no restart is due, Table 10's restart presupposing a stop this message
    never caused. The marked request is never the request in progress, ``UDSS_LLR_0215``
