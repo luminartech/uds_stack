@@ -425,7 +425,7 @@ Giving a server up
 
    The physical start-of-message the third effect closes is the one ``UDSS_LLR_0210``
    retains past the end of the request. Naming a channel that does not exist is a caller
-   error rather than an input, as ``UDSS_LLR_0140`` treats one. The reset is neither a
+   error rather than an input, as ``UDSS_LLR_0249`` treats one. The reset is neither a
    primitive nor a parameter but an act of the caller, as the completion report of
    ``UDSS_LLR_0136`` is; the service interface document's preamble names both.
 

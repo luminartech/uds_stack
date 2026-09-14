@@ -93,7 +93,7 @@ queue before the other is what the assumption forbids.
    Creation of the instance precedes every input and is not one.
 
    The inputs so supplied shall include ``S_Data.req``, as ``UDSS_LLR_0139`` defines it;
-   ``T_Data.ind``, ``T_DataSOM.ind`` and ``T_Data.conf``, as ``UDSS_LLR_0140`` defines
+   ``T_Data.ind``, ``T_DataSOM.ind`` and ``T_Data.conf``, as ``UDSS_LLR_0244`` defines
    them; a timestamp, as ``UDSS_LLR_0193`` defines it, accompanying every other input and
    also supplied on its own; the protocol parameters of ``UDSS_LLR_0138``; the completion
    report of ``UDSS_LLR_0136``; the supply and withdrawal of channel storage under
@@ -129,7 +129,7 @@ queue before the other is what the assumption forbids.
    implementation in order to deliver an output.
 
    The outputs so produced shall include ``S_Data.ind`` and ``S_Data.conf``, as
-   ``UDSS_LLR_0139`` defines them, and ``T_Data.req``, as ``UDSS_LLR_0140`` defines it.
+   ``UDSS_LLR_0139`` defines them, and ``T_Data.req``, as ``UDSS_LLR_0244`` defines it.
 
    Rationale: a session layer that calls outwards is one whose behaviour depends on what
    the caller does while the session layer is part-way through a decision. Producing
@@ -302,12 +302,12 @@ Service primitives
      status of a preceding ``S_Data.req``.
 
 .. llr:: The session layer exchanges four protocol data units with the transport layer
-   :id: UDSS_LLR_0140
+   :id: UDSS_LLR_0244
    :status: draft
    :integrity_level: QM
    :target_level: D
    :origin: session-layer-standard
-   :source: ISO 14229-2:2021 6.3; ISO 14229-2:2021 7.3; ISO 14229-2:2021 9.2 Table 3; ISO 14229-2:2021 7.6
+   :source: ISO 14229-2:2021 6.3; ISO 14229-2:2021 7.3; ISO 14229-2:2021 9.2 Table 3
    :tags: service-interface; primitives
 
    The session layer shall exchange the following protocol data units with the transport
@@ -319,48 +319,57 @@ Service primitives
      message;
    * ``T_Data.conf``, an input, reporting the outcome of a requested transmission.
 
-   ``T_DataSOM.ind`` shall carry ``S_Mtype``, ``S_AI[TAtype]``, ``S_AI[SA]``, ``S_AI[TA]``
-   and, where ``S_Mtype`` requires it, ``S_AI[AE]``. It shall carry no data, length or
-   result.
-
-   At a client, every ``T_DataSOM.ind`` and ``T_Data.ind`` shall identify the logical
-   communication channel it belongs to, supplied by the caller; ``UDSS_LLR_0201`` defines
-   the channel. Identifying a channel the client does not have shall be rejected as
-   ``UDSS_LLR_0267`` defines. The session layer shall not verify the identified channel
-   against the indication's addressing.
-
-   ``T_Data.req`` shall carry every parameter of the ``S_Data.req`` it is produced from,
-   mapped as ``UDSS_LLR_0124`` requires. ``T_Data.conf`` shall carry ``T_Ptype``,
-   ``T_AI[TAtype]``, ``T_AI[SA]``, ``T_AI[TA]``, ``T_AI[AE]`` where ``T_Ptype`` requires it,
-   and ``T_Result``, mapped onto the session layer's parameters as ``UDSS_LLR_0124``
-   requires; it shall carry no data and no length.
-
    Each locator supplies a different part of this set. Clause 6.3 names ``T_Data.ind`` and
    ``T_DataSOM.ind``; clause 7.3 names ``T_Data.conf`` and establishes that a transmission
    request is passed to the transport layer; clause 9.2 Table 3 names that request
    ``T_Data.req``, in defining ``tP4_Server`` as the time between a ``T_Data.ind`` and the
    ``T_Data.req`` that starts the final response.
 
-   Which parameters ``T_DataSOM.ind`` carries is stated here because the standard does not
-   say. Clause 7.3 keeps the indication inside the session layer and defines no mapping for
-   it onto an S_PDU; its Table 2 lists the transport parameters a message carries without
-   saying which of them the start-of-message reports. The addressing is what
-   ``UDSS_LLR_0199``'s pairing needs. A result is excluded because a start-of-message
-   reports a reception that has neither succeeded nor failed; the outcome is reported by
-   the completion, and every requirement in this set that acts on a failed reception acts
-   on a ``T_Data.ind``.
+.. llr:: T_DataSOM.ind carries addressing and no result
+   :id: UDSS_LLR_0245
+   :status: draft
+   :integrity_level: QM
+   :target_level: D
+   :origin: derived
+   :tags: service-interface; primitives
 
-   The caller identifies the channel because the session layer cannot. A server answers the
-   one client that asked, so every response it sends is physically addressed to the client
-   whether the request that provoked it was physical or functional, an observation this set
-   relies on rather than one the standard states; a response from one server may belong to
-   the physical channel to that server or to a functional channel it was reached through,
-   and nothing in the indication says which. The caller that issued the request knows.
-   Naming a channel that does not exist is a caller error, not an input, and is treated as
-   ``UDSS_LLR_0267`` treats one. The channel named is trusted rather than checked against
-   the indication's addressing: on a functional channel the response's addressing does not
-   name the channel, and a check on a physical channel alone would catch a misrouting only
-   by coincidence; ``UDSS_LLR_0206`` records the residual.
+   ``T_DataSOM.ind`` shall carry ``S_Mtype``, ``S_AI[TAtype]``, ``S_AI[SA]``, ``S_AI[TA]``
+   and, where ``S_Mtype`` requires it, ``S_AI[AE]``. It shall carry no data, length or
+   result.
+
+   Rationale: which parameters ``T_DataSOM.ind`` carries is stated here because the
+   standard does not say. Clause 7.3 keeps the indication inside the session layer and
+   defines no mapping for it onto an S_PDU; its Table 2 lists the transport parameters a
+   message carries without saying which of them the start-of-message reports. The
+   addressing is what ``UDSS_LLR_0199``'s pairing needs. A result is excluded because a
+   start-of-message reports a reception that has neither succeeded nor failed; the outcome
+   is reported by the completion, and every requirement in this set that acts on a failed
+   reception acts on a ``T_Data.ind``.
+
+.. llr:: T_Data.req carries the request's parameters
+   :id: UDSS_LLR_0246
+   :status: draft
+   :integrity_level: QM
+   :target_level: D
+   :origin: session-layer-standard
+   :source: ISO 14229-2:2021 7.3; ISO 14229-2:2021 9.2 Table 3
+   :tags: service-interface; primitives
+
+   ``T_Data.req`` shall carry every parameter of the ``S_Data.req`` it is produced from,
+   mapped as ``UDSS_LLR_0124`` requires.
+
+.. llr:: T_Data.conf carries addressing and a result
+   :id: UDSS_LLR_0247
+   :status: draft
+   :integrity_level: QM
+   :target_level: D
+   :origin: session-layer-standard
+   :source: ISO 14229-2:2021 7.6; ISO 14229-2:2021 7.3
+   :tags: service-interface; primitives
+
+   ``T_Data.conf`` shall carry ``T_Ptype``, ``T_AI[TAtype]``, ``T_AI[SA]``, ``T_AI[TA]``,
+   ``T_AI[AE]`` where ``T_Ptype`` requires it, and ``T_Result``, mapped onto the session
+   layer's parameters as ``UDSS_LLR_0124`` requires; it shall carry no data and no length.
 
    ``T_Data.conf``'s parameters are stated because the standard states them only by
    mapping: clause 7.6 has the ``S_Data.conf`` identify the ``S_Data.req`` it confirms by
@@ -369,6 +378,55 @@ Service primitives
    the addressing and the result and nothing else. The server session timer requirements
    read the confirmation's ``S_AI[TA]``, and the association ``UDSS_LLR_0133`` states is
    matched on that addressing.
+
+.. llr:: The caller identifies the channel of every inbound indication at a client
+   :id: UDSS_LLR_0248
+   :status: draft
+   :integrity_level: QM
+   :target_level: D
+   :origin: derived
+   :tags: service-interface; channel
+
+   At a client, every ``T_DataSOM.ind`` and ``T_Data.ind`` shall identify the logical
+   communication channel it belongs to, supplied by the caller; ``UDSS_LLR_0201`` defines
+   the channel.
+
+   Rationale: the caller identifies the channel because the session layer cannot. A server
+   answers the one client that asked, so every response it sends is physically addressed
+   to the client whether the request that provoked it was physical or functional, an
+   observation this set relies on rather than one the standard states; a response from one
+   server may belong to the physical channel to that server or to a functional channel it
+   was reached through, and nothing in the indication says which. The caller that issued
+   the request knows.
+
+.. llr:: An indication naming no existing channel is rejected
+   :id: UDSS_LLR_0249
+   :status: draft
+   :integrity_level: QM
+   :target_level: D
+   :origin: derived
+   :tags: service-interface; channel
+
+   An indication identifying a channel the client does not have shall be rejected as
+   ``UDSS_LLR_0267`` defines.
+
+   Rationale: naming a channel that does not exist is a caller error, not an input.
+
+.. llr:: The identified channel is not checked against the indication's addressing
+   :id: UDSS_LLR_0250
+   :status: draft
+   :integrity_level: QM
+   :target_level: D
+   :origin: derived
+   :tags: service-interface; channel
+
+   The session layer shall not verify the channel identified under ``UDSS_LLR_0248``
+   against the indication's addressing.
+
+   Rationale: the channel named is trusted rather than checked because on a functional
+   channel the response's addressing does not name the channel, and a check on a physical
+   channel alone would catch a misrouting only by coincidence; ``UDSS_LLR_0206`` records
+   the residual.
 
 .. llr:: An instance has one role
    :id: UDSS_LLR_0188
@@ -477,7 +535,7 @@ Service primitives
    request, which ``UDSS_LLR_0109`` reads as acting on nothing rather than as withholding
    the indication. An earlier form of this requirement admitted an exception for that
    reading; no requirement in the set now withholds an indication. A ``T_Data.ind`` rejected
-   under ``UDSS_LLR_0140`` for identifying a channel the client does not have, under
+   under ``UDSS_LLR_0249`` for identifying a channel the client does not have, under
    ``UDSS_LLR_0188`` for a classification kind of the other role, or under ``UDSS_LLR_0134``
    for a classification not of the stated form, is not withheld but refused:
    ``UDSS_LLR_0267`` governs it and this requirement does not reach it.

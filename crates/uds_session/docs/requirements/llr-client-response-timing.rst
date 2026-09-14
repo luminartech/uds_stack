@@ -52,7 +52,7 @@ the client's timing on that footing without saying so.
 The session layer cannot place an inbound indication on a channel by itself. A physically
 addressed response answers either the physical channel to that server or a functional
 channel the server was reached through, and nothing in the indication says which.
-``UDSS_LLR_0140`` therefore requires the caller to identify the channel each
+``UDSS_LLR_0248`` therefore requires the caller to identify the channel each
 ``T_DataSOM.ind`` and ``T_Data.ind`` belongs to. A channel exists while the caller supplies
 its storage, as ``UDSS_LLR_0201`` states. ``UDSS_LLR_0199`` settles which
 indication is the start of a message and which its completion, and this document uses its
@@ -222,7 +222,7 @@ The response window
    Rationale: neither clause the timer requirement ``UDSS_LLR_0200`` cites says where a
    channel's timer lives; the standard states what timers are needed, not where they live.
    Supplying the storage is therefore what brings a channel into being, and is stated so
-   because ``UDSS_LLR_0140`` rejects an indication that names a channel the client does not
+   because ``UDSS_LLR_0249`` rejects an indication that names a channel the client does not
    have and nothing otherwise said how a channel came to exist: an implementer could create
    one on the first ``S_Data.req`` to a new addressing or demand a registration the set
    never named. Supplying and withdrawing the storage are acts of the caller, as the
@@ -255,7 +255,7 @@ The response window
    ``UDSS_LLR_0267`` defines.
 
    Rationale: naming a channel that does not exist is a caller error, not an input, and is
-   treated as ``UDSS_LLR_0140`` treats the same error on an indication.
+   treated as ``UDSS_LLR_0249`` treats the same error on an indication.
 
 .. llr:: A withdrawal naming no existing channel is rejected
    :id: UDSS_LLR_0204
@@ -570,11 +570,11 @@ The response window
    repeat the request; between them the wait is over, and this requirement says so. It is
    conditioned on the result rather than on the kind because ``UDSS_LLR_0133`` lets the
    caller state or omit the kind on a failed reception, and the timer must behave the same
-   either way. Only a ``T_Data.ind`` can report a failure, ``UDSS_LLR_0140`` giving the
+   either way. Only a ``T_Data.ind`` can report a failure, ``UDSS_LLR_0245`` giving the
    start-of-message no result. The handling is ``UDSS_LLR_0180``'s cap and
    ``UDSS_LLR_0181``'s wait. The first condition names the primitives so that a failed
    ``T_Data.ind`` the caller has also classified falls under the failed-reception sentence
-   alone. A ``T_DataSOM.ind`` carries no result under ``UDSS_LLR_0140`` and is admitted as
+   alone. A ``T_DataSOM.ind`` carries no result under ``UDSS_LLR_0245`` and is admitted as
    such.
 
    The failed-reception stop reaches a completion as well as a first indication, unlike the
@@ -860,8 +860,9 @@ Responders on a functional channel
    it.
 
    Rationale: an inbound indication from a responder the client has is not a caller error
-   ``UDSS_LLR_0267`` can refuse, as ``UDSS_LLR_0140`` and ``UDSS_LLR_0188`` refuse a
-   misrouted or misclassified one, so the set has to say what the timer does with it. The
+   ``UDSS_LLR_0267`` can refuse, as ``UDSS_LLR_0249`` refuses one naming a channel the
+   client does not have and ``UDSS_LLR_0188`` refuses a misclassified one, so the set has
+   to say what the timer does with it. The
    capacity indication precedes the ``S_Data.ind`` so that the application reads the
    message knowing the responder is untracked; it is the set's one input that yields two
    outputs of its own, and ``UDSS_LLR_0187`` orders only expiries. The choice here

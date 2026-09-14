@@ -489,7 +489,7 @@ session fact, and the requests and indications on it.
    of the physically addressed TesterPresent as transmitted only in the absence of any other
    request depends on it.
 
-   The ``T_Data.req`` is the output ``UDSS_LLR_0140`` names and ``UDSS_LLR_0116`` has the
+   The ``T_Data.req`` is the output ``UDSS_LLR_0244`` names and ``UDSS_LLR_0116`` has the
    caller retrieve. It is produced when the ``S_Data.req`` is processed, so the stop precedes
    the transmission as key e shows. A rejected ``S_Data.req`` produces no ``T_Data.req`` and
    so no stop, ``UDSS_LLR_0267`` leaving state unchanged.
