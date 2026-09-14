@@ -550,7 +550,7 @@ Service primitives
    ``UDSS_LLR_0261``. Creation of a client shall supply the keep-alive mode of
    ``UDSS_LLR_0162`` and, in functional keep-alive, the storage of ``UDSS_LLR_0227`` and
    reload parameter of ``UDSS_LLR_0229``; a client's channel storage, holding the
-   association and the parameters of ``UDSS_LLR_0152``, ``UDSS_LLR_0229`` and
+   association and the parameters of ``UDSS_LLR_0300``, ``UDSS_LLR_0229`` and
    ``UDSS_LLR_0240`` as ``UDSS_LLR_0206`` states, is supplied later under
    ``UDSS_LLR_0201``.
 
@@ -576,7 +576,7 @@ Service primitives
    ``S_Data.conf``.
 
 .. llr:: S_Data.ind delivers a received message to the application
-   :id: UDSS_LLR_0119
+   :id: UDSS_LLR_0296
    :status: draft
    :integrity_level: QM
    :target_level: D
@@ -590,7 +590,17 @@ Service primitives
    ``S_Result``. The addressing parameters shall identify the peer entity from which the
    message was received.
 
-   ``S_Data`` and ``S_Length`` shall be valid only where ``S_Result`` is ``S_OK``.
+.. llr:: S_Data and S_Length are valid only on a successful reception
+   :id: UDSS_LLR_0297
+   :status: draft
+   :integrity_level: QM
+   :target_level: D
+   :origin: session-layer-standard
+   :source: ISO 14229-2:2021 7.5
+   :tags: service-interface; primitives
+
+   On ``S_Data.ind``, ``S_Data`` and ``S_Length`` shall be valid only where ``S_Result``
+   is ``S_OK``.
 
 .. llr:: A received message is indicated to the application
    :id: UDSS_LLR_0137
@@ -606,7 +616,7 @@ Service primitives
    received T_PDU mapped as ``UDSS_LLR_0124`` requires.
 
    Both outcomes produce an indication because ``S_Result`` exists to report them:
-   ``UDSS_LLR_0119`` makes ``S_Data`` and ``S_Length`` valid only where ``S_Result`` is
+   ``UDSS_LLR_0297`` makes ``S_Data`` and ``S_Length`` valid only where ``S_Result`` is
    ``S_OK``, which presupposes indications where it is not, and a client cannot detect a
    failed reception that is never indicated to it. Clause 8.10 requires the error result to
    be issued to the service user on the receiver side as on the sender side, and
@@ -1005,7 +1015,7 @@ is safer and no larger. The value sets are transcribed exactly.
    ``S_Mtype`` is ``RDiag`` or ``SecureRDiag``.
 
 .. llr:: S_Length carries the length of S_Data
-   :id: UDSS_LLR_0130
+   :id: UDSS_LLR_0298
    :status: draft
    :integrity_level: QM
    :target_level: D
@@ -1015,13 +1025,24 @@ is safer and no larger. The value sets are transcribed exactly.
 
    ``S_Length`` shall be a 32-bit unsigned value in the range ``0x00000000`` to
    ``0xFFFFFFFF``, and shall carry the number of bytes of ``S_Data`` to be transmitted or
-   received. On ``S_Data.req``, an ``S_Length`` differing from the number of bytes of
-   ``S_Data`` supplied shall be rejected as ``UDSS_LLR_0267`` defines; an interface that
-   carries the two as one value satisfies this without a check.
+   received.
 
-   The rejection is the set's own, not clause 8.8's, which defines the parameter and says
-   nothing of a mismatch. Without it ``UDSS_LLR_0118``'s "``S_Length`` bytes of ``S_Data``"
-   would be satisfiable two ways by a caller that supplied them separately.
+.. llr:: A length differing from the data supplied is rejected
+   :id: UDSS_LLR_0299
+   :status: draft
+   :integrity_level: QM
+   :target_level: D
+   :origin: derived
+   :tags: service-interface; parameters
+
+   On ``S_Data.req``, an ``S_Length`` differing from the number of bytes of ``S_Data``
+   supplied shall be rejected as ``UDSS_LLR_0267`` defines; an interface that carries the
+   two as one value satisfies this without a check.
+
+   Rationale: the rejection is the set's own, not clause 8.8's, which defines the
+   parameter and says nothing of a mismatch. Without it ``UDSS_LLR_0118``'s "``S_Length``
+   bytes of ``S_Data``" would be satisfiable two ways by a caller that supplied them
+   separately.
 
 .. llr:: S_Data carries the message data
    :id: UDSS_LLR_0131

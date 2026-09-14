@@ -141,7 +141,7 @@ The session layer cannot make that distinction. No input tells it what transport
 and on a transport without ``T_DataSOM.ind`` it cannot observe a message's framing at all,
 a multi-frame message arriving as a single ``T_Data.ind``.
 
-It does not need to. ``UDSS_LLR_0152`` takes one pair of reload parameters, default and
+It does not need to. ``UDSS_LLR_0300`` takes one pair of reload parameters, default and
 enhanced, and the stop conditions below are phrased on the *first* of ``T_DataSOM.ind`` or
 ``T_Data.ind`` for a message. Where no ``T_DataSOM.ind`` ever arrives the rule degenerates
 to the ``T_Data.ind`` case exactly. This is the standard's own construction rather than an
@@ -432,20 +432,16 @@ The response window
    closure for the client's ``tS3_Client`` timers.
 
 .. llr:: The response timer has two reload parameters
-   :id: UDSS_LLR_0152
+   :id: UDSS_LLR_0300
    :status: draft
    :integrity_level: QM
    :target_level: D
    :origin: session-layer-standard
-   :source: ISO 14229-2:2021 9.1.2; ISO 14229-2:2021 9.2 Table 3; ISO 14229-2:2021 10.1.4; ISO 14229-2:2021 10.2.4
+   :source: ISO 14229-2:2021 9.1.2; ISO 14229-2:2021 9.2 Table 3; ISO 14229-2:2021 10.1.4.1; ISO 14229-2:2021 10.2.4
    :tags: client; p_client; service-interface
 
    Each channel shall have a **default reload parameter** and an **enhanced reload
-   parameter**, supplied as protocol parameters under ``UDSS_LLR_0259``. A setting of a
-   per-channel parameter shall identify its channel, and one identifying a channel the client
-   does not have shall be rejected as ``UDSS_LLR_0267`` defines; this holds for a physical
-   channel's ``tS3_Client`` reload parameter under ``UDSS_LLR_0229`` and the spacing
-   parameter of ``UDSS_LLR_0240`` alike.
+   parameter**, supplied as protocol parameters under ``UDSS_LLR_0259``.
 
    Where the transport supports ``T_DataSOM.ind`` these are ``tP2_Client_Max`` and
    ``tP2*_Client_Max``; where it does not, they are ``tP6_Client_Max`` and
@@ -462,12 +458,47 @@ The response window
    supplies, and in the minimum values Table 4 derives for them, which differ by whether
    the window covers the start of the response or its complete reception.
 
-   The parameters may change during the life of a channel. ISO 14229-2:2021 10.1.4 and 10.2.4
+   The parameters may change during the life of a channel. ISO 14229-2:2021 10.1.4.1 and 10.2.4
    permit different values in a non-default session, and ``UDSS_LLR_0262`` lets the caller set
-   them at any time. A change does not disturb a window already open: ``UDSS_LLR_0159``
-   compares the elapsed time against the value the timer was loaded with rather than against
-   the parameter as it currently stands, so a new value takes effect at the next start or
-   restart.
+   them at any time. A change does not disturb a window already open: ``UDSS_LLR_0195``
+   loads a timer, when it is set running, with the value the parameter holds at that
+   instant rather than reading it live, so a new value takes effect only at the next start
+   or restart.
+
+.. llr:: A per-channel parameter setting identifies its channel
+   :id: UDSS_LLR_0301
+   :status: draft
+   :integrity_level: QM
+   :target_level: D
+   :origin: derived
+   :tags: client; p_client; service-interface
+
+   A setting of a per-channel parameter shall identify its channel — the response timer's
+   default and enhanced reload parameters of ``UDSS_LLR_0300`` included — and this holds
+   for a physical channel's ``tS3_Client`` reload parameter under ``UDSS_LLR_0229`` and the
+   spacing parameter of ``UDSS_LLR_0240`` alike.
+
+   Rationale: a per-channel parameter has no meaning apart from the channel it governs,
+   and a caller managing several channels must be able to say which one a setting is for;
+   ``UDSS_LLR_0229``'s reload parameter and ``UDSS_LLR_0240``'s spacing parameter are
+   per-channel for the same reason, so the rule is stated once rather than separately in
+   each of the three places it applies.
+
+.. llr:: A parameter setting naming no existing channel is rejected
+   :id: UDSS_LLR_0302
+   :status: draft
+   :integrity_level: QM
+   :target_level: D
+   :origin: derived
+   :tags: client; p_client; service-interface
+
+   A setting of a per-channel parameter that identifies a channel the client does not have
+   shall be rejected as ``UDSS_LLR_0267`` defines.
+
+   Rationale: a parameter attached to a channel that does not exist has no storage to
+   carry it, so the setting cannot be honoured; ``UDSS_LLR_0267`` is what a rejection means
+   throughout this set, and without a requirement naming it here an implementation could
+   as easily discard such a setting silently as report it.
 
 .. llr:: The response timer starts on confirmation of a request expecting a response
    :id: UDSS_LLR_0153

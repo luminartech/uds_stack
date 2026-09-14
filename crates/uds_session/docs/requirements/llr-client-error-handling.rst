@@ -381,7 +381,7 @@ Giving a server up
 
    The four effects above are the state a reset clears, and the list is closed so that a
    document adding state per channel must amend this requirement to say whether the reset
-   clears it. What it deliberately leaves: the protocol parameters of ``UDSS_LLR_0152`` and
+   clears it. What it deliberately leaves: the protocol parameters of ``UDSS_LLR_0300`` and
    ``UDSS_LLR_0240``, which are the caller's; the spacing timer, which ``UDSS_LLR_0243``
    defines with no stopped state and which protects a server that knows nothing of the
    reset, so that 10.3's wait is still owed; the count ``UDSS_LLR_0156`` keeps, defined

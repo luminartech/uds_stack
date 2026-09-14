@@ -139,11 +139,11 @@ The spacing timer
    derived with ``ΔtP2`` or with ``ΔtP6``.
 
    Table 3 defines both parameters as a minimum time for the client to wait and types each a
-   timer reload value, the typing ``UDSS_LLR_0152`` cites for the response reload pair.
+   timer reload value, the typing ``UDSS_LLR_0300`` cites for the response reload pair.
    Table 4 gives their minima per server, in two pairs that differ by ``ΔtP2`` or ``ΔtP6``,
    and 10.3 a) and b) say whose ``tP2_Server_Max`` each is built from, so the value is a
    property of the channel and the caller's to choose. The session layer does not
-   distinguish the two pairs for the reason ``UDSS_LLR_0152`` gives: nothing tells it which
+   distinguish the two pairs for the reason ``UDSS_LLR_0300`` gives: nothing tells it which
    transport it is on, and the distinction survives in the values the caller supplies.
 
 .. llr:: When a spacing timer is active
@@ -164,7 +164,7 @@ The spacing timer
    wait, which a request at exactly that time satisfies, and 10.3 postpones only until
    the timer has timed out; ``UDSS_LLR_0148`` reads ``tP2_Server`` the same way, the
    bound being on this side's own conduct. A change to the spacing parameter does not
-   move a boundary already fixed; it takes effect at the next start, as ``UDSS_LLR_0152``
+   move a boundary already fixed; it takes effect at the next start, as ``UDSS_LLR_0300``
    states for the response reload pair. Table 9's "after the time ``tP3_Client_Phys``" is
    read the same way, the repeat being released at that time rather than after it, as the
    parameter is stated as a minimum.

@@ -402,7 +402,7 @@ The timer's state
 
    Table 10 says the server shall ignore the request. That is read as the request having
    no effect on the session or its timer beyond the restart Table 10 itself requires, and
-   as there being nothing for the application to act on: ``UDSS_LLR_0119`` makes ``S_Data``
+   as there being nothing for the application to act on: ``UDSS_LLR_0297`` makes ``S_Data``
    and ``S_Length`` invalid where ``S_Result`` is not ``S_OK``, and ``UDSS_LLR_0137``
    delivers the indication for both roles alike, clause 8.10 requiring the error result on
    the receiver side. An earlier form of this requirement withheld the indication instead.
