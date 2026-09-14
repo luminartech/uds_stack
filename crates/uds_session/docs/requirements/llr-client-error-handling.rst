@@ -170,7 +170,8 @@ The repeat count
    reason.
 
    The storage is the caller's for the reason ``UDSS_LLR_0200`` gives: the number of
-   channels is a property of the deployment and the crate does not allocate.
+   channels is a property of the deployment and the crate does not allocate, as
+   ``UDSS_LLR_0307`` requires.
 
 .. llr:: A channel's repeat count is initially zero
    :id: UDSS_LLR_0237

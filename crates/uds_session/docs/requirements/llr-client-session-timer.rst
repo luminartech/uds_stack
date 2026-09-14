@@ -189,7 +189,8 @@ The timer's state
 
    The per-channel timers and facts live in the channel's storage for the reason
    ``UDSS_LLR_0200`` gives: the number of channels is a property of the deployment, the
-   crate does not allocate, and Table 8 states what timers are needed, not where they live.
+   crate does not allocate, as ``UDSS_LLR_0307`` requires, and Table 8 states what timers
+   are needed, not where they live.
 
 .. llr:: The session timer's reload parameter in each mode
    :id: UDSS_LLR_0229

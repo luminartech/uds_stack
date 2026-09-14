@@ -143,9 +143,9 @@ A requirement that leaves a running timer alone says so.
    the alternative directly and without argument: it forbids reading a clock and requires every
    decision that depends on elapsed time to be made from a timestamp the caller supplies, and a
    reading pulled from a trait the session layer calls is not a supplied timestamp.
-   ``UDSS_LLR_0113``'s rationale claims in consequence that behaviour is
-   a pure function of the inputs supplied — a property no requirement yet states normatively,
-   which is why it is argued here rather than cited; awaiting a timer would make behaviour a
+   ``UDSS_LLR_0310`` requires in consequence that the same sequence of inputs
+   supplied from creation yield the same state and the same outputs;
+   awaiting a timer would make behaviour a
    function of those inputs and of executor scheduling, an expensive property to spend at
    ``target_level: D``, where the timebase requirements buy timing tests that advance time by
    passing a larger number. And it buys nothing: something must feed the state machine its inputs and drain
@@ -169,6 +169,11 @@ A requirement that leaves a running timer alone says so.
    state is the state after every expiry the input's timestamp caused; every requirement in
    this set that conditions on state reads it so, whether or not it says so.
 
+   Every indication an expiry produces shall precede any output of the input the timestamp
+   accompanies and any rejection report for that input under ``UDSS_LLR_0267``. Where one
+   timestamp causes several expiries, the order of the indications those expiries produce is
+   not specified.
+
    Rationale: ``UDSS_LLR_0193`` lets a timestamp accompany an input and nothing else orders
    the two. The elapsed time preceded the input's arrival, so a timer that reaches its value
    at that timestamp expired before the input was seen, which is also what a caller that
@@ -189,9 +194,13 @@ A requirement that leaves a running timer alone says so.
    session, which is correct: the old session did end at that instant, and the new one is
    the application's own transition.
 
-   Where one timestamp causes several expiries, the order of the indications they produce
-   is not specified; every such indication precedes any output of the input the timestamp
-   accompanies and any rejection report for it under ``UDSS_LLR_0267``. Several expiries on one timestamp need no order for the state they leave. On the server ``UDSS_LLR_0112`` and
+   Indications precede the input's own outputs for the same reason the expiries precede the
+   input: the elapsed time preceded its arrival. The case is stated because the first
+   paragraph reaches it only by reading "processes" as covering output emission, and for a
+   rejected input does not reach it at all — the input is not processed, and ``UDSS_LLR_0267``
+   borrows this requirement for state alone. The order among those indications is left open
+   because several expiries on one timestamp need no order for the state they leave. On the
+   server ``UDSS_LLR_0112`` and
    ``UDSS_LLR_0148`` touch disjoint timers and neither reads the other's. On the client the
    only expiry action that touches another timer is ``UDSS_LLR_0170``'s, a ``tP_Client``
    expiry starting ``tS3_Client``, and a channel whose ``tP_Client`` is running has its

@@ -202,7 +202,8 @@ The response window
    triggered by the ``T_Data`` service primitive interface.
 
    The storage is the caller's because the number of channels is a property of the
-   deployment rather than of the protocol, and the crate does not allocate. Neither cited
+   deployment rather than of the protocol, and the crate does not allocate, as
+   ``UDSS_LLR_0307`` requires. Neither cited
    clause requires it; the standard states what timers are needed, not where they live.
    ``UDSS_LLR_0206`` is where the rest of a channel's state joins the timer in that
    storage.
@@ -793,9 +794,9 @@ Responders on a functional channel
 
    The storage is the caller's for the reason ``UDSS_LLR_0200`` gives for the timers: how
    many servers answer behind a functional address is a property of the deployment, and the
-   crate does not allocate. The capacity is the storage's size rather than a protocol
-   parameter, there being nothing for the session layer to do with a number that differs
-   from what it was given.
+   crate does not allocate, as ``UDSS_LLR_0307`` requires. The capacity is the storage's
+   size rather than a protocol parameter, there being nothing for the session layer to do
+   with a number that differs from what it was given.
 
    An entry lives only while one of the two facts this requirement records holds, so the
    capacity bounds the responders tracked at once rather than the responders that answer a

@@ -71,17 +71,167 @@ queue before the other is what the assumption forbids.
    :tags: service-interface; sans-io
 
    The session layer shall not open, read, or write a transport, socket, file, device, or
-   operating system service. The crate shall compile under ``no_std`` and shall declare no
-   dependency that performs I/O.
+   operating system service.
 
    Rationale: the crate is sans-io. Every interaction with the vehicle network belongs
-   to the caller, which makes the session layer's behaviour a pure function of the
-   inputs supplied to it. Each requirement in this set is then testable without a
-   network, and one implementation serves CAN, DoIP, K-line and simulation alike.
+   to the caller, which is what leaves the session layer's behaviour determined by the
+   inputs supplied to it, as ``UDSS_LLR_0310`` requires. Each requirement in this set is
+   then testable without a network, and one implementation serves CAN, DoIP, K-line and
+   simulation alike.
 
-   This requirement is verified by inspection of the crate's dependencies and build
-   configuration rather than by a runtime test; no black-box test can show that no I/O is
-   performed.
+   This requirement is verified by inspection of the crate's own sources rather than by a
+   runtime test; no black-box test can show that no I/O is performed. Two further
+   conditions of being sans-io are stated separately because each answers to a different
+   check: ``UDSS_LLR_0305`` to a build, ``UDSS_LLR_0306`` to a review of the dependency
+   graph.
+
+.. llr:: The crate compiles under no_std
+   :id: UDSS_LLR_0305
+   :status: draft
+   :integrity_level: QM
+   :target_level: D
+   :origin: derived
+   :tags: service-interface; sans-io
+
+   The crate shall compile under ``no_std``.
+
+   Rationale: a crate can perform no I/O of its own, as ``UDSS_LLR_0113`` requires, and
+   still be unusable on the targets this set is written for, because it names a type that
+   only ``std`` provides. The two are independent, and this one is verified by a build for
+   a target without ``std`` rather than by inspection: the compiler answers it exactly, and
+   a regression shows up as a failed build rather than as a reviewer's omission.
+
+.. llr:: The crate declares no dependency that performs I/O
+   :id: UDSS_LLR_0306
+   :status: draft
+   :integrity_level: QM
+   :target_level: D
+   :origin: derived
+   :tags: service-interface; sans-io
+
+   The crate shall declare no dependency that performs I/O.
+
+   Rationale: ``UDSS_LLR_0113`` binds what the crate's own sources do, and a dependency's
+   sources are not the crate's; without this requirement the prohibition could be kept to
+   the letter by a dependency that opened a socket. It is verified by review of the
+   dependency graph rather than by a build, no build failing over a dependency that works.
+   ``Cargo.toml`` declares an empty ``[dependencies]``, so the requirement is satisfied
+   today by there being nothing to review — which is the argument for stating it rather
+   than against, a first dependency otherwise arriving with no requirement to weigh it
+   against.
+
+.. llr:: The session layer allocates no memory
+   :id: UDSS_LLR_0307
+   :status: draft
+   :integrity_level: QM
+   :target_level: D
+   :origin: derived
+   :tags: service-interface; sans-io
+
+   The session layer shall allocate no memory.
+
+   Rationale: the quantities this set keeps state for are properties of the deployment
+   rather than of the protocol — the number of a client's channels, which ``UDSS_LLR_0201``
+   makes the caller's to create and withdraw, the number of peers an instance addresses,
+   which ``UDSS_LLR_0271``'s associations are held per, and the number of responders
+   answering behind one functional address, which ``UDSS_LLR_0232``'s table is sized for —
+   so the crate cannot know them and the caller sizes them. Each of those requirements
+   places its state in caller-supplied storage and gives this property as the reason; until
+   it was stated, the reason was given in rationale alone, and an implementation could have
+   satisfied ``UDSS_LLR_0206`` with a heap-backed map without contradicting any requirement.
+   Where a fact may be kept instead is ``UDSS_LLR_0311``'s, which this requirement leaves
+   with only two places to name.
+   ``UDSS_LLR_0233``'s capacity indication, which exists because a responder table can fill,
+   would then describe a case that never arises. This requirement is verified alongside
+   ``UDSS_LLR_0305`` and ``UDSS_LLR_0306``, by the build configuration and the dependency
+   graph, rather than by a runtime test.
+
+.. llr:: The crate contains no unsafe code
+   :id: UDSS_LLR_0308
+   :status: draft
+   :integrity_level: QM
+   :target_level: D
+   :origin: derived
+   :tags: service-interface; sans-io
+
+   The crate shall contain no ``unsafe`` code.
+
+   Rationale: every claim this set makes about the session layer's behaviour is a claim
+   about what safe Rust guarantees of the compiled crate, and one ``unsafe`` block puts all
+   of them beyond the compiler's reach at once. ``Cargo.toml`` answers this requirement with
+   ``unsafe_code = "forbid"``, which a local attribute cannot switch off; the requirement is
+   what that setting is accountable to, so that removing the setting is a defect against a
+   stated property rather than an unreviewed change to a build file.
+
+.. llr:: Every input is processed or rejected, and none aborts
+   :id: UDSS_LLR_0309
+   :status: draft
+   :integrity_level: QM
+   :target_level: D
+   :origin: derived
+   :tags: service-interface; sans-io
+
+   For every input the caller supplies, the session layer shall either process it or reject
+   it under ``UDSS_LLR_0267``. No input shall cause the session layer to abort or to fail to
+   return.
+
+   Rationale: this is the global form of the argument ``UDSS_LLR_0192`` makes locally for
+   one operation, that the subtraction is total so no input can leave the session layer
+   without a defined elapsed time. Without it the set is silent on what happens to an input
+   no requirement's conditions select, and silence there is indistinguishable from a
+   panic — which in a diagnostic server is an unhandled failure of a safety-related
+   component, and in a caller that cannot unwind is a halt. Stating it as totality also
+   makes it testable: an input either yields outputs or yields a rejection report, and both
+   are observable. ``Cargo.toml`` denies ``unwrap_used``, ``panic``, ``indexing_slicing`` and
+   ``arithmetic_side_effects``, which remove the common ways of breaking this property; they
+   are the means, and the requirement is the claim they serve.
+
+.. llr:: The session layer is deterministic
+   :id: UDSS_LLR_0310
+   :status: draft
+   :integrity_level: QM
+   :target_level: D
+   :origin: derived
+   :tags: service-interface; sans-io
+
+   The same sequence of inputs supplied from creation shall yield the same state and the
+   same outputs, in the same order, except where a requirement in this set leaves an order
+   unspecified. ``UDSS_LLR_0187`` leaves one such order open: where one timestamp causes
+   several expiries, the order of the indications they produce is not specified.
+
+   Rationale: this is what makes every requirement in the set testable without a network, a
+   clock or a scheduler — the property ``UDSS_LLR_0113``'s rationale relies on when it says
+   that every interaction with the vehicle network belongs to the caller, and the one
+   ``UDSS_LLR_0294`` secures by admitting no source of state but an input. The exception is
+   needed because a flat claim would contradict ``UDSS_LLR_0187``, which argues that several
+   expiries on one timestamp need no order for the state they leave; an implementation is
+   free there, and a test must be written to accept either order rather than to fix the one
+   it happened to observe. ``UDSS_LLR_0135`` states the slice of this claim that concerns
+   the message payload, as an equivalence over pairs of inputs differing only in that
+   payload; that is a statement about which inputs may differ, this one about repeating the
+   same inputs, and neither implies the other.
+
+.. llr:: All state lives in the instance or in caller-supplied storage
+   :id: UDSS_LLR_0311
+   :status: draft
+   :integrity_level: QM
+   :target_level: D
+   :origin: derived
+   :tags: service-interface; sans-io
+
+   All state the session layer keeps shall live in the instance or in storage the caller
+   supplies. The session layer shall retain nothing else between inputs.
+
+   Rationale: ``UDSS_LLR_0307`` forbids the session layer to allocate; this fixes where what
+   it keeps lives instead, and adds that it retains nothing else — the part a static or a
+   process-wide table would break without allocating. Together they close the inventory, so
+   that a reader looking for
+   where a fact is kept has two places to look and no third: the instance, as
+   ``UDSS_LLR_0212`` and ``UDSS_LLR_0221`` hold the server's state, or caller-supplied
+   storage, as ``UDSS_LLR_0206``, ``UDSS_LLR_0271``, ``UDSS_LLR_0227`` and ``UDSS_LLR_0228``
+   hold the rest. That the inventory is complete is at present recorded only in
+   :doc:`open-questions`, a page written to be deleted when its last entry closes, which
+   would take the only statement of closure with it.
 
 .. llr:: Every input is supplied by the caller
    :id: UDSS_LLR_0294
@@ -174,9 +324,10 @@ queue before the other is what the assumption forbids.
    The session layer shall not copy or retain the contents of ``S_Data`` or ``T_Data``
    beyond the processing of the input that carried them.
 
-   Rationale: the crate is ``no_std`` and allocation-free, and cannot own a buffer whose
-   size it does not know. Retaining a payload would also imply a retransmission buffer,
-   and no requirement in this set obliges the session layer to retransmit anything;
+   Rationale: the crate is ``no_std`` and, as ``UDSS_LLR_0307`` requires, allocation-free,
+   so it cannot own a buffer whose size it does not know. Retaining a payload would also
+   imply a retransmission buffer, and no requirement in this set obliges the session layer
+   to retransmit anything;
    ``UDSS_LLR_0289`` states the point explicitly for a server's response in a non-default
    session. The requirement is verified by inspection of the crate's types, which hold no
    buffer in which a payload could be retained, rather than by a runtime test.
@@ -1173,8 +1324,8 @@ and leaves the means of recognising it to the implementation.
    identity carrying an extension never equalling one that does not.
 
    The storage is the caller's because the number of peers an instance addresses is a
-   property of the deployment and the crate does not allocate; how the client's storage is
-   organised per channel is ``UDSS_LLR_0206``'s.
+   property of the deployment and the crate does not allocate, as ``UDSS_LLR_0307``
+   requires; how the client's storage is organised per channel is ``UDSS_LLR_0206``'s.
 
    The association with ``T_Data.conf`` is stated because ``UDSS_LLR_0102``,
    ``UDSS_LLR_0106``, ``UDSS_LLR_0107``, ``UDSS_LLR_0108``, ``UDSS_LLR_0288`` and
