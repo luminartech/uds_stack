@@ -34,15 +34,15 @@ request is never the request in progress: ``UDSS_LLR_0186`` in
 :doc:`llr-server-session-timer` handles it at its indication, its completion report is
 inert, ``UDSS_LLR_0144`` and ``UDSS_LLR_0146`` exclude it, and under ``UDSS_LLR_0215`` a
 marked request never begins one, so the term keeps the uniqueness
-``UDSS_LLR_0149`` relies on. The second is a request in the OBD service range
-that, for a server supporting that range and not in the programming session, aborts the
-active service and starts the default session. That is an application-layer action. The
-reception of the OBD request ends the request in progress under ``UDSS_LLR_0216``, the new
-request replacing the old; a completion report for the aborted request is optional, since
-``UDSS_LLR_0214`` matches by addressing what ends the OBD request and ``UDSS_LLR_0146`` acts
-only on a report answering it; and the session change is classified on the OBD request's
-response where one is sent and on the request otherwise, as
-:doc:`llr-server-session-timer`'s assumptions of use state.
+``UDSS_LLR_0284`` and ``UDSS_LLR_0285`` rely on. The second is a request in the OBD
+service range that, for a server supporting that range and not in the programming
+session, aborts the active service and starts the default session. That is an
+application-layer action. The reception of the OBD request ends the request in progress
+under ``UDSS_LLR_0216``, the new request replacing the old; a completion report for the
+aborted request is optional, since ``UDSS_LLR_0214`` matches by addressing what ends the
+OBD request and ``UDSS_LLR_0146`` acts only on a report answering it; and the session
+change is classified on the OBD request's response where one is sent and on the request
+otherwise, as :doc:`llr-server-session-timer`'s assumptions of use state.
 
 Throughout this document, the **request in progress** is the request whose handling the
 server has begun and not yet finished. ISO 14229-2:2021 10.1.4.1 fixes its extent: a
@@ -65,13 +65,14 @@ request begins at the ``T_Data.ind`` rather than at the ``T_DataSOM.ind``, so a 
 that fails never begins one, and a failed transmission of the final response ends it as a
 successful one does.
 
-The term is load-bearing in ``UDSS_LLR_0149``: the end of the request in progress is what
+The term is load-bearing in ``UDSS_LLR_0285``: the end of the request in progress is what
 clears the response-pending anchor ``UDSS_LLR_0212`` keeps. A ``T_Data.conf`` confirming a
 response-pending message transmitted for one request therefore delays nothing once that
 request has ended, and in particular cannot reject the first response-pending message of
 the next request, provided the confirmation does not answer the next request under
 ``UDSS_LLR_0214``'s addressing match. It does answer it where the next request comes from
-the same client while the earlier one's response-pending message is still unconfirmed. That
+the same client while the earlier one's response-pending message is still unconfirmed, the
+state ``UDSS_LLR_0220`` defines and ``UDSS_LLR_0284`` rejects a further message in. That
 arises where a completion report was supplied while a response was on the wire, a caller
 inconsistency since the report promises that no response will be transmitted, and where the
 same client sends the OBD-range request of 8.7.6 during the earlier request's enhanced
@@ -94,7 +95,7 @@ neither holds nor can derive: ``UDSS_LLR_0135`` forbids inspecting message data,
 ``UDSS_LLR_0261`` supplies every parameter a timer loads with the instance or with the
 caller-supplied storage it belongs to, never with a service.
 ISO 14229-2:2021 9.3 Figure 7 confirms the reading, applying the equality "for a certain
-``T_Data.ind``". ``UDSS_LLR_0149`` spaces consecutive response-pending messages; whether
+``T_Data.ind``". ``UDSS_LLR_0285`` spaces consecutive response-pending messages; whether
 the first was admissible binds the application.
 
 A caller's exit from a request in progress that never ends. The client has the channel reset
@@ -182,13 +183,13 @@ The response window
    request's ``T_Data.ind`` and a **response-pending anchor** that is either clear or holds
    a timestamp.
 
-   Rationale: ``UDSS_LLR_0147`` and ``UDSS_LLR_0149`` read the request in progress and the
-   time of the last response-pending confirmation, and ``UDSS_LLR_0226``'s closed list
-   covers the ``tP2_Server`` timer alone, so without this requirement the two were state
-   nothing introduced, initialised or bounded, and two implementations could disagree about
-   when a request ended.
+   Rationale: ``UDSS_LLR_0147``, ``UDSS_LLR_0284`` and ``UDSS_LLR_0285`` read the request in
+   progress and ``UDSS_LLR_0285`` the time of the last response-pending confirmation, and
+   ``UDSS_LLR_0226``'s closed list covers the ``tP2_Server`` timer alone, so without this
+   requirement the two facts above were state nothing introduced, initialised or bounded,
+   and two implementations could disagree about when a request ended.
 
-   The anchor holds the time of the confirmation because ``UDSS_LLR_0149`` measures the
+   The anchor holds the time of the confirmation because ``UDSS_LLR_0285`` measures the
    spacing from there; it lives only while a request is in progress because
    ISO 14229-2:2021 9.2 Table 4 footnote b, the footnote it serves, spaces the
    response-pending messages of one service.
@@ -361,7 +362,7 @@ The response window
    ``T_Data.conf`` answering it and reporting the successful transmission of a
    response-pending message.
 
-   Rationale: ``UDSS_LLR_0149`` measures the minimum spacing between consecutive
+   Rationale: ``UDSS_LLR_0285`` measures the minimum spacing between consecutive
    response-pending messages from the confirmation of the preceding one, so that
    confirmation is where the anchor has to be set.
 
@@ -391,10 +392,10 @@ The response window
    The list also settles the marked ``keep-alive``, and no clause is needed here for it.
    ``UDSS_LLR_0215`` bars a marked request from beginning one, so a marked request is never
    the request in progress and ``UDSS_LLR_0217``'s "answering it" can never match one
-   either; the uniqueness of the term that ``UDSS_LLR_0149`` relies on follows from the two
-   without being restated. ISO 14229-1:2020 8.7.6 puts the marked message outside the
-   one-request-at-a-time model and ``UDSS_LLR_0186`` handles it at its indication, as the
-   preamble states.
+   either; the uniqueness of the term that ``UDSS_LLR_0284`` and ``UDSS_LLR_0285`` rely on
+   follows from the two without being restated. ISO 14229-1:2020 8.7.6 puts the marked
+   message outside the one-request-at-a-time model and ``UDSS_LLR_0186`` handles it at its
+   indication, as the preamble states.
 
 .. llr:: An unconfirmed response-pending message
    :id: UDSS_LLR_0220
@@ -408,12 +409,12 @@ The response window
    the association ``UDSS_LLR_0271`` holds for its ``S_Data.req`` has received no
    ``T_Data.conf``.
 
-   Rationale: ``UDSS_LLR_0149`` rejects a second response-pending message while the first
-   is unconfirmed, there being no confirmation yet to measure the spacing from, and
-   ``UDSS_LLR_0147`` and ``UDSS_LLR_0214`` reason about the same state; the term is defined
-   once so the three cannot drift apart. It is defined against the association of
-   ``UDSS_LLR_0271`` because that association is the only record this set keeps of a
-   transmission between its ``T_Data.req`` and its ``T_Data.conf``.
+   Rationale: ``UDSS_LLR_0284`` rejects a second response-pending message while the first
+   is unconfirmed, there being no confirmation yet for ``UDSS_LLR_0285`` to measure the
+   spacing from, and ``UDSS_LLR_0147`` and ``UDSS_LLR_0214`` reason about the same state;
+   the term is defined once so the four cannot drift apart. It is defined against the
+   association of ``UDSS_LLR_0271`` because that association is the only record this set
+   keeps of a transmission between its ``T_Data.req`` and its ``T_Data.conf``.
 
 .. llr:: The response timer starts on reception of a request
    :id: UDSS_LLR_0144
@@ -613,8 +614,44 @@ Enhanced response timing
    indication for every timestamp the caller supplies thereafter. Elapsed time is computed
    as ``UDSS_LLR_0192`` requires.
 
+.. llr:: A response-pending message is rejected while one is unconfirmed
+   :id: UDSS_LLR_0284
+   :status: draft
+   :integrity_level: QM
+   :target_level: D
+   :origin: derived
+   :tags: server; p2_server; enhanced-response-timing; service-interface
+
+   While a request is in progress under ``UDSS_LLR_0212``, the session layer shall reject,
+   as ``UDSS_LLR_0267`` in :doc:`llr-service-interface` defines, an ``S_Data.req`` supplied
+   by the caller for a response-pending message answering that request, answering being as
+   ``UDSS_LLR_0214`` defines it, where a response-pending message answering that request is
+   unconfirmed under ``UDSS_LLR_0220``.
+
+   Rationale: the unconfirmed case fills a gap in ISO 14229-2:2021 9.2 Table 4 footnote b,
+   the footnote ``UDSS_LLR_0285`` transcribes, which speaks of the time "between the
+   transmission of" consecutive messages and says nothing of the interval between a
+   ``T_Data.req`` and its ``T_Data.conf``. A second response-pending message admitted in
+   that interval would go out with no spacing at all, and there would be no confirmation for
+   ``UDSS_LLR_0285`` to measure from, its anchor being set by ``UDSS_LLR_0218`` only on a
+   confirmation.
+
+   ``UDSS_LLR_0273`` already rejects such an ``S_Data.req``, the two messages sharing their
+   addressing; the clause is restated here so that footnote b's purpose is met on the face
+   of the requirement, and under ``UDSS_LLR_0268`` the one report carries both causes.
+
+   This requirement refuses a transmission the caller has asked for. It obliges no server to
+   send a response-pending message, and states no time at which one is owed: the session
+   layer is the gatekeeper of a transmission the application originates. Whether a
+   response-pending message may be sent for the service in progress at all is fixed by that
+   service's ``tP4_Server_Max``, which this document does not cover, as the preamble states.
+
+   An ``S_Data.req`` answering no request in progress, or answering a request other than the
+   one in progress, is not rejected here, because footnote b spaces the response-pending
+   messages of one service.
+
 .. llr:: Consecutive response-pending messages are spaced
-   :id: UDSS_LLR_0149
+   :id: UDSS_LLR_0285
    :status: draft
    :integrity_level: QM
    :target_level: D
@@ -623,15 +660,16 @@ Enhanced response timing
    :tags: server; p2_server; enhanced-response-timing; service-interface
 
    While a request is in progress under ``UDSS_LLR_0212``, the session layer shall reject,
-   as ``UDSS_LLR_0267`` in :doc:`llr-service-interface` defines, an ``S_Data.req`` for a
-   response-pending message answering that request where a response-pending message
-   answering it is unconfirmed, or where the response-pending anchor holds a timestamp and
-   the elapsed time since it is less than the minimum spacing. The minimum spacing shall be
-   the least whole number of milliseconds not less than three tenths of ``tP2*_Server_Max``
-   as that parameter stands when the ``S_Data.req`` is supplied, computed in integer
-   arithmetic as ⌈3 × ``tP2*_Server_Max`` / 10⌉ without overflow for any value
-   ``UDSS_LLR_0260`` admits: with ``q`` and ``r`` the quotient and remainder of
-   ``tP2*_Server_Max`` divided by 10, the spacing is 3 × ``q`` + ⌈3 × ``r`` / 10⌉.
+   as ``UDSS_LLR_0267`` in :doc:`llr-service-interface` defines, an ``S_Data.req`` supplied
+   by the caller for a response-pending message answering that request, answering being as
+   ``UDSS_LLR_0214`` defines it, where the response-pending anchor ``UDSS_LLR_0212`` keeps
+   holds a timestamp and the elapsed time since it is less than the minimum spacing. The
+   minimum spacing shall be the least whole number of milliseconds not less than three
+   tenths of ``tP2*_Server_Max`` as that parameter stands when the ``S_Data.req`` is
+   supplied, computed in integer arithmetic as ⌈3 × ``tP2*_Server_Max`` / 10⌉ without
+   overflow for any value ``UDSS_LLR_0260`` admits: with ``q`` and ``r`` the quotient and
+   remainder of ``tP2*_Server_Max`` divided by 10, the spacing is
+   3 × ``q`` + ⌈3 × ``r`` / 10⌉.
 
    Table 4 footnote b requires a minimum time of 0,3 × ``tP2*_Server_Max`` between the
    transmission of consecutive negative response messages carrying
@@ -663,19 +701,15 @@ Enhanced response timing
    ``UDSS_LLR_0144`` reloads it with ``tP2_Server_Max`` on any request received meanwhile.
    A condition phrased against the timer would fail to apply in both cases.
 
-   The unconfirmed case fills a gap in the footnote, which speaks of the time "between the
-   transmission of" consecutive messages and says nothing of the interval between a
-   ``T_Data.req`` and its ``T_Data.conf``. A second response-pending message admitted in that
-   interval would go out with no spacing at all and there would be no confirmation to measure
-   from. ``UDSS_LLR_0273`` already rejects such an ``S_Data.req``, the two messages sharing
-   their addressing; the clause is restated here so that footnote b's purpose is met on the
-   face of the spacing requirement, and under ``UDSS_LLR_0268`` the one report carries both
-   causes. ``UDSS_LLR_0212`` defines the term, ``UDSS_LLR_0220`` the unconfirmed message and
-   ``UDSS_LLR_0214`` what answers the request in progress; a response-pending message to any
-   other addressing is spaced by nothing here, because footnote b spaces the messages of one
-   service.
-   Where the anchor is clear and no response-pending message is unconfirmed, this
-   requirement does not apply: no response-pending message has been transmitted for the
-   request in progress, or the only one that was failed and, as ``UDSS_LLR_0218`` records,
-   set no anchor. Whether the first such message was admissible at all is fixed by the
-   service's ``tP4_Server_Max``, which this document does not cover.
+   Where the anchor is clear this requirement does not apply: no response-pending message
+   has been transmitted for the request in progress, or the only one that was failed and, as
+   ``UDSS_LLR_0218`` records, set no anchor. The interval between a ``T_Data.req`` and its
+   ``T_Data.conf``, during which no anchor has yet been set, is ``UDSS_LLR_0284``'s.
+
+   This requirement refuses a transmission the caller has asked for. It obliges no server to
+   send a response-pending message, and states no time at which one is owed: the session
+   layer is the gatekeeper of a transmission the application originates. Whether the first
+   such message was admissible at all is fixed by the service's ``tP4_Server_Max``, which
+   this document does not cover, as the preamble states. An ``S_Data.req`` answering any
+   other request is spaced by nothing here, because footnote b spaces the response-pending
+   messages of one service.

@@ -27,7 +27,7 @@ server need, and nothing else. Several rules elsewhere in the standard cost stat
 tables do not budget. Known members:
 
 - the minimum spacing between consecutive response-pending messages, a fraction of
-  ``tP2*_Server_Max`` that ``UDSS_LLR_0149`` enforces;
+  ``tP2*_Server_Max`` that ``UDSS_LLR_0285`` enforces;
 - the at-most-two-repeats limit of 9.7 Table 9, for which ``UDSS_LLR_0236`` keeps a repeat
   count per channel;
 - the pending list of 10.2.3 Figure 16 and 10.2.4 Figure 17, and the open start-of-message
