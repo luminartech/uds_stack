@@ -306,15 +306,15 @@ Suppression
 .. arch:: Suppression is decided last, from the code and the addressing mode
    :id: UDSSVC_ARCH_0009
    :part_of: UDSSVC_ARCH_0004
-   :depends_on: UDSSVC_ARCH_0015
+   :depends_on: UDSSVC_ARCH_0015; UDSSVC_ARCH_0032
    :status: draft
    :origin: application-layer-standard
    :source: ISO 14229-1:2020 8.7.3.3 Table 5; ISO 14229-1:2020 8.7.4.3 Table 7; ISO 14229-1:2020 8.7.5
    :tags: dispatch; suppression
 
    The final stage takes the settled response code, the addressing mode, the
-   ``suppressPosRspMsgIndicationBit`` and whether a response-pending negative response has
-   already been sent, and decides between transmitting and silence.
+   ``suppressPosRspMsgIndicationBit`` and whether this dispatch offered a response-pending,
+   and decides between transmitting and silence.
 
    Three rules, all from clause 8.7.5's pseudo-code and Tables 5 and 7:
 
@@ -341,9 +341,9 @@ Suppression
       @startuml
       start
       :settled code, addressing mode,
-      suppress bit, response-pending state;
+      suppress bit, response-pending offered;
 
-      if (response-pending already sent?) then (yes)
+      if (response-pending offered for this request?) then (yes)
         :transmit; <<positive>>
         note right
           Clause 8.7.5: a final response
@@ -385,9 +385,26 @@ Suppression
    least one data parameter were all supported is still answered negatively, because that
    answer is specific to this server rather than a report of non-participation.
 
-   Rule 3 is why the pipeline cannot be a pure function of the request and the server
-   alone. Whether 0x78 has gone out is session-layer state that this crate does not own
-   and cannot observe, so it is an input: ``UDSSVC_ARCH_0015``.
+   Rule 3 reads a fact the pipeline owns rather than an input it is given.
+   ``UDSSVC_ARCH_0032`` makes this crate the originator of a response-pending, so the gate
+   consults whether *this dispatch* offered one across ``UDSSVC_ARCH_0031``'s seam.
+
+   **The gate reads "offered", where clause 8.7.5 writes "sent", and the divergence is
+   deliberate.** The two differ only when an offer reached no client, and the argument that
+   this is safe comes from ISO 14229-2:2021. ``UDSS_LLR_0285`` refuses an offer only where a
+   response-pending answering the request is unconfirmed or the spacing has not elapsed, and
+   states that where neither holds the requirement does not apply — so the first offer for a
+   request is never refused, and any refusal implies a predecessor already reached the
+   transport. The remaining case is a failed transmission, which ``UDSS_LLR_0218`` says
+   never reached the data link at all, leaving a client still waiting out ``tP2`` for which
+   an unsuppressed final response is harmless.
+
+   The asymmetry is what settles it. Treating an offer as sent can cost one message a
+   waiting client accepts; treating a sent response-pending as unsent produces silence where
+   the standard requires a final response — the failure that needs both a slow handler and
+   functional addressing to appear, and so will not show up in ordinary testing. Tracking
+   the fact internally also removes any need for the driver to report it, and with it any
+   way for the driver to report it wrongly.
 
    Rule 2 has a corollary for services without a SubFunction parameter: they have no
    ``suppressPosRspMsgIndicationBit`` at all, so a positive response to one is never
@@ -411,6 +428,57 @@ Suppression
    service byte rather than discarding it once it has decided on 0x11. A negative response
    naming a different service than the client asked about cannot be matched to the request
    that caused it.
+
+.. arch:: This crate decides and composes the response-pending
+   :id: UDSSVC_ARCH_0032
+   :part_of: UDSSVC_ARCH_0004
+   :depends_on: UDSSVC_ARCH_0010; UDSSVC_ARCH_0013; UDSSVC_ARCH_0033
+   :status: draft
+   :origin: application-layer-standard
+   :source: ISO 14229-2:2021 9.1.1 REQ 5.4; ISO 14229-2:2021 9.1.1 REQ 5.6; ISO 14229-1:2020 A.1
+   :tags: dispatch; nrc; response-pending
+
+   When a handler has not settled the request and a response-pending becomes due, this
+   crate decides whether one is admissible and, if it is, composes it. The driver
+   transmits; it does not decide, and it does not assemble the bytes.
+
+   Admissibility is the conjunction of two facts, both resolved before the handler runs:
+   the service is implemented by this server (``UDSSVC_ARCH_0013``), and the service's own
+   ``MAY_RESPOND_PENDING`` is true (``UDSSVC_ARCH_0033``).
+
+   Rationale: ISO 14229-2 states the prohibition and states it in terms only this layer can
+   evaluate. REQ 5.6 requires that services the server does not support use a
+   ``tP4_Server_Max`` equal to ``tP2_Server_Max`` and that a response-pending "shall not be
+   allowed" for them; REQ 5.4 gives that equality the same meaning "for the service in
+   progress". *Does this server support this service* is the predicate, and it is the same
+   fact, already computed, that produces ``serviceNotSupported`` (0x11) in
+   ``UDSSVC_ARCH_0006``. A session layer cannot evaluate it — ``uds_session`` is forbidden
+   to inspect message data and holds its protocol parameters per instance rather than per
+   service — and a byte-level driver has no notion of which services a server implements.
+
+   **This is the first element that reaches outside clause 8.7, and the reach is narrower
+   than it looks.** ``UDSSVC_ARCH_0001`` bounds the crate to clause 8.7 under an organising
+   rule of one crate per ISO document, and REQ 5.4 and REQ 5.6 belong to ISO 14229-2. What
+   this crate implements is not those requirements but their predicate: it holds no
+   ``tP4_Server_Max``, runs no timer, and knows no timing parameter. ``tP4_Server_Max`` is
+   how ISO 14229-2 *expresses* a per-service permission; ``UDSSVC_ARCH_0033`` is where that
+   permission is declared, by the application, for the cases the predicate cannot settle.
+
+   The bytes are this crate's for the reason ``UDSSVC_ARCH_0010`` already gives: a
+   response-pending is a negative response — ``0x7F``, the echoed service identifier,
+   ``0x78`` — and ISO 14229-1:2020 A.1 gives it no payload. Composing it below this layer
+   would put a negative response in a crate that "does not know what a service does", and
+   would need the echoed service identifier that only the decoded pipeline holds.
+
+   What this element does **not** claim is the timing. When a response-pending becomes due,
+   how often it may repeat, and whether one was accepted are ISO 14229-2's and reach this
+   crate only as ``UDSSVC_ARCH_0031``'s ``due``. This crate answers *whether* and *what*;
+   the session layer and the driver answer *when*.
+
+   Two consequences recorded elsewhere. The suppression override of ``UDSSVC_ARCH_0009``
+   rule 3 becomes a fact this crate owns rather than an input, which is why
+   ``UDSSVC_ARCH_0015`` carries no response-pending field. And ``uds_session`` needs no new
+   output reporting that a 0x78 has been sent; an earlier draft asked for one.
 
 Extension points
 ----------------
