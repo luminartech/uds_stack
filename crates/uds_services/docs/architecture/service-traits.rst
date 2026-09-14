@@ -120,6 +120,51 @@ The traits
    The list also makes the set of supported services readable directly in the application,
    without inferring it from which methods were overridden.
 
+.. arch:: Each service declares whether it may answer response-pending
+   :id: UDSSVC_ARCH_0033
+   :depends_on: UDSSVC_ARCH_0012
+   :status: draft
+   :origin: application-layer-standard
+   :source: ISO 14229-2:2021 9.1.1 REQ 5.4; ISO 14229-1:2020 A.1
+   :tags: api; traits; response-pending
+
+   Each service trait carries an associated constant, with **no default**, stating whether
+   that service may answer ``requestCorrectlyReceivedResponsePending`` (0x78):
+
+   .. code-block:: rust
+
+      impl ReadDataByIdentifier for Ecu {
+          /// Annex A: only where the server cannot receive further requests
+          /// from the client while completing this service.
+          const MAY_RESPOND_PENDING: bool = false;
+
+          type Did = MyDid;
+          fn read<W: Write>(&mut self, did: MyDid, out: &mut W) -> Result<(), Nrc> { .. }
+      }
+
+   ``UDSSVC_ARCH_0032`` settles half of admissibility from what this server implements. The
+   other half cannot be derived here. ISO 14229-2:2021 REQ 5.4 makes a response-pending
+   inadmissible for a service whose ``tP4_Server_Max`` equals ``tP2_Server_Max``, a
+   per-service value this crate does not hold; ISO 14229-1:2020 A.1 permits the code only
+   where the server "will not be able to receive further request messages from the client
+   while completing the requested diagnostic service", which is a property of the handler's
+   implementation. Both are the application's to declare, and this is where it declares
+   them.
+
+   Rationale: the constant has no default because both defaults are traps, and choosing
+   between them is choosing which failure to ship. A default of ``true`` sends 0x78 where
+   REQ 5.4 and REQ 5.6 forbid it. A default of ``false`` leaves slow handlers silently
+   never answering response-pending, which is invisible until a handler overruns
+   ``tP2_Server`` in the field. Requiring the value makes omission a compile error and
+   neither failure reachable — the same completeness argument ``UDSSVC_ARCH_0013`` makes
+   for the assembly list and ``UDSSVC_ARCH_0014`` for a fallible ``from_u16``. A defaulted
+   method would be the "override method 9 of 16" shape ``UDSSVC_ARCH_0012`` rejects.
+
+   It is a constant rather than a method because the value is a property of the service as
+   implemented, not of the request or the server's current state: admissibility folds at
+   compile time, and REQ 5.6's unsupported-service case needs no runtime check at all,
+   since a service that is not implemented has no impl to read the constant from.
+
 .. needflow::
    :filter: id in ["UDSSVC_ARCH_0012", "UDSSVC_ARCH_0013", "UDSSVC_ARCH_0014"]
    :link_types: depends_on
