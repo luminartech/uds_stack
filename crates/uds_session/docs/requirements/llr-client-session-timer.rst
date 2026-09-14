@@ -33,8 +33,9 @@ cannot compose the TesterPresent itself, ``UDSS_LLR_0135`` forbidding it; the ap
 does, as it does the repeat that ``UDSS_LLR_0159`` leaves to it.
 
 This document uses **physical channel**, **functional channel** and **request in progress**
-as ``UDSS_LLR_0151`` and the client response timing document's preamble define them, **first indication** and **completion**
-as ``UDSS_LLR_0140`` defines them, and **solicited** as ``UDSS_LLR_0134`` defines it.
+as ``UDSS_LLR_0151`` and the client response timing document's preamble define them,
+**first indication** and **completion** as ``UDSS_LLR_0199`` defines them, and
+**solicited** as ``UDSS_LLR_0134`` defines it.
 
 What ordinary traffic does to the timer
 ---------------------------------------
@@ -488,7 +489,7 @@ session fact, and the requests and indications on it.
    response to a request the client sent: the ``solicited`` classification of
    ``UDSS_LLR_0134`` carries that, and an unsolicited response restarts nothing. Neither the
    third row nor the fourth conditions the restart on the state of the wait, and nor does
-   this requirement. A wait ends at a message's first indication under ``UDSS_LLR_0140``,
+   this requirement. A wait ends at a message's first indication under ``UDSS_LLR_0199``,
    while Table 6 states the restart on the message's completion, so a guard on a request
    being in progress would leave the completing ``T_Data.ind`` of every multi-frame
    response outside it on a transport that supplies ``T_DataSOM.ind``. A solicited final

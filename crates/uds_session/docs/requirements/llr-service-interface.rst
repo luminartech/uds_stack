@@ -321,20 +321,6 @@ Service primitives
    ``UDSS_LLR_0150`` defines. The session layer shall not verify the identified channel
    against the indication's addressing.
 
-   A ``T_DataSOM.ind`` shall open a start-of-message on its channel for the **responder**
-   identified by its ``S_AI[SA]`` and, where ``S_Mtype`` carries one, its ``S_AI[AE]``,
-   leaving one already open for that responder as it is; two
-   such identities are equal only where both carry an ``S_AI[AE]`` and the addresses and
-   extensions are equal, or neither carries one and the addresses are equal. A ``T_Data.ind``
-   shall **complete** the open start-of-message on the same channel from the same responder
-   where one exists, closing it, and shall otherwise report a **single-frame** message; on a
-   physical channel the responder is the channel's peer, so any ``T_Data.ind`` on that channel
-   completes its open start-of-message, as ``UDSS_LLR_0151`` states.
-   Throughout this set, the **first indication** of a message is its ``T_DataSOM.ind``, or
-   a ``T_Data.ind`` that completes no start-of-message; a **completion** is a ``T_Data.ind``
-   that completes one. A ``T_Data.ind`` from a responder for which no start-of-message is
-   open is therefore always a first indication.
-
    ``T_Data.req`` shall carry every parameter of the ``S_Data.req`` it is produced from,
    mapped as ``UDSS_LLR_0124`` requires. ``T_Data.conf`` shall carry ``T_Ptype``,
    ``T_AI[TAtype]``, ``T_AI[SA]``, ``T_AI[TA]``, ``T_AI[AE]`` where ``T_Ptype`` requires it,
@@ -350,10 +336,11 @@ Service primitives
    Which parameters ``T_DataSOM.ind`` carries is stated here because the standard does not
    say. Clause 7.3 keeps the indication inside the session layer and defines no mapping for
    it onto an S_PDU; its Table 2 lists the transport parameters a message carries without
-   saying which of them the start-of-message reports. The addressing is what the pairing
-   below needs. A result is excluded because a start-of-message reports a reception that
-   has neither succeeded nor failed; the outcome is reported by the completion, and every
-   requirement in this set that acts on a failed reception acts on a ``T_Data.ind``.
+   saying which of them the start-of-message reports. The addressing is what
+   ``UDSS_LLR_0199``'s pairing needs. A result is excluded because a start-of-message
+   reports a reception that has neither succeeded nor failed; the outcome is reported by
+   the completion, and every requirement in this set that acts on a failed reception acts
+   on a ``T_Data.ind``.
 
    The caller identifies the channel because the session layer cannot. A server answers the
    one client that asked, so every response it sends is physically addressed to the client
@@ -366,18 +353,6 @@ Service primitives
    the indication's addressing: on a functional channel the response's addressing does not
    name the channel, and a check on a physical channel alone would catch a misrouting only
    by coincidence; ``UDSS_LLR_0151`` records the residual.
-
-   The pairing rule replaces an earlier sentence that classified a ``T_Data.ind`` as
-   multi-frame where a ``T_DataSOM.ind`` preceded it, without saying how the two were
-   matched. Table 3 makes single-frame against multi-frame the transport's distinction, and
-   on a functional channel the multi-frame responses of several servers may interleave, so
-   matching has to name the responder. The state this costs is stated with the client's
-   requirements: an entry per responder under ``UDSS_LLR_0160`` on a functional channel,
-   and one fact per channel under ``UDSS_LLR_0151`` on a physical one, where one peer
-   answers one outstanding request. The server needs none of it: its only start-of-message
-   effect, ``UDSS_LLR_0104``, stops a timer, which a second stop leaves stopped, so that
-   requirement names the two primitives directly and never asks which kind of message a
-   ``T_Data.ind`` completes.
 
    ``T_Data.conf``'s parameters are stated because the standard states them only by
    mapping: clause 7.6 has the ``S_Data.conf`` identify the ``S_Data.req`` it confirms by
@@ -528,7 +503,7 @@ Service primitives
 
    The indication is used only within the session layer, to perform session layer timing.
    The requirements that act on it are the timer requirements of the server and client
-   documents and the pairing and responder requirements ``UDSS_LLR_0140``, ``UDSS_LLR_0160``
+   documents and the pairing and responder requirements ``UDSS_LLR_0199``, ``UDSS_LLR_0160``
    and ``UDSS_LLR_0161``, none of which forwards it. The prohibition is on the
    ``S_Data.ind``, not on every output: a timer requirement that conditions on the
    indication may deliver an indication of its own, as the expiry indications do on any
@@ -578,6 +553,65 @@ Service primitives
    have to be loaded with a value the set declines to choose. The width matches the
    timestamp's because an interval is a modular difference of timestamps and a value beyond
    that range could never be reached.
+
+Message and peer identity
+--------------------------
+
+Two definitions the whole set depends on: which two addressing identities are the same
+peer, and how a multi-frame message's start is matched to its completion.
+
+.. llr:: Peer identity and its equality
+   :id: UDSS_LLR_0198
+   :status: draft
+   :integrity_level: QM
+   :target_level: D
+   :origin: derived
+   :tags: service-interface; identity
+
+   A **peer identity** shall be formed by an address and, where ``S_Mtype`` carries one,
+   an address extension. Two peer identities shall be equal only where both carry an
+   extension and the addresses and the extensions are equal, or neither carries one and the
+   addresses are equal; an identity that carries an extension is never equal to one that
+   does not.
+
+   Rationale: ``UDSS_LLR_0199`` identifies a responder by this pair, ``UDSS_LLR_0185``
+   records the controlling client as one, ``UDSS_LLR_0189`` records the request in
+   progress as one, and ``UDSS_LLR_0160`` keys the responder table on one. Stated once,
+   the four cannot drift apart. The extension is part of the identity because two clients
+   behind one remote address can differ in it. Matching a confirmation's ``S_AI[TA]`` and
+   ``S_AI[AE]`` against a recorded ``S_AI[SA]`` and ``S_AI[AE]`` reads the extension as the
+   same value on a response as on the request it answers; ISO 14229-2:2021 8.7 says only
+   that ``S_AE`` carries the node's extended address, the symmetry being the network
+   layer's, and the reading is recorded here.
+
+.. llr:: First indication, completion and the start-of-message pairing
+   :id: UDSS_LLR_0199
+   :status: draft
+   :integrity_level: QM
+   :target_level: D
+   :origin: session-layer-standard
+   :source: ISO 14229-2:2021 6.3; ISO 14229-2:2021 7.3; ISO 14229-2:2021 9.2 Table 3
+   :tags: service-interface; primitives; identity
+
+   A ``T_DataSOM.ind`` shall open a start-of-message on its channel for the **responder**
+   identified by its ``S_AI[SA]`` and, where ``S_Mtype`` carries one, its ``S_AI[AE]``,
+   as ``UDSS_LLR_0198`` forms and equates an identity, leaving one already open for that
+   responder as it is. A ``T_Data.ind`` shall **complete** the open start-of-message on the
+   same channel from the same responder where one exists, closing it, and shall otherwise
+   report a **single-frame** message.
+
+   Throughout this set, the **first indication** of a message is its ``T_DataSOM.ind``, or
+   a ``T_Data.ind`` that completes no start-of-message; a **completion** is a
+   ``T_Data.ind`` that completes one. A ``T_Data.ind`` from a responder for which no
+   start-of-message is open is therefore always a first indication.
+
+   Table 3 makes single-frame against multi-frame the transport's distinction, and on a
+   functional channel the multi-frame responses of several servers may interleave, so
+   matching has to name the responder. The state this costs is stated with the client's
+   requirements: an entry per responder under ``UDSS_LLR_0160`` on a functional channel,
+   and one fact per channel under ``UDSS_LLR_0151`` on a physical one, where one peer
+   answers one outstanding request. The server needs none of it: its only start-of-message
+   effect, ``UDSS_LLR_0104``, stops a timer, which a second stop leaves stopped.
 
 Parameter mapping
 -----------------

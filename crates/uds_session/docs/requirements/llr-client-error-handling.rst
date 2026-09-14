@@ -392,7 +392,7 @@ Giving a server up
    delivered because the transport's report of the outcome is real and ``UDSS_LLR_0120``
    promises it. A ``T_Data.ind`` arriving after the reset for the message whose
    start-of-message the reset closed is the first indication of a single-frame message
-   under ``UDSS_LLR_0140``, the pairing having nothing left to match; a later
+   under ``UDSS_LLR_0199``, the pairing having nothing left to match; a later
    ``T_DataSOM.ind`` opens a start-of-message as it always does, and on a functional channel
    creates an entry under ``UDSS_LLR_0160``. Both reach the application through
    ``UDSS_LLR_0137`` with the caller's classification and take no ``tP_Client`` action, no

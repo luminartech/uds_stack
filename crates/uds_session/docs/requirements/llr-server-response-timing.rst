@@ -156,7 +156,7 @@ The response window
    timestamp. On initialisation no request shall be in progress and the anchor shall be
    clear. An input **answers** the request in progress where the identity formed by its
    target address and, where its ``S_Mtype`` carries one, its ``S_AI[AE]`` equals the
-   recorded identity, two identities being equal as ``UDSS_LLR_0140`` defines, the target
+   recorded identity, two identities being equal as ``UDSS_LLR_0198`` defines, the target
    being ``S_AI[TA]`` of an ``S_Data.req``, of the ``T_Data.req`` ``UDSS_LLR_0118`` produces
    from it and of a ``T_Data.conf`` as ``UDSS_LLR_0124`` maps it, and the ``S_AI[SA]`` of
    the addressing information a completion report of ``UDSS_LLR_0136`` carries.

@@ -59,7 +59,7 @@ indication is the start of a message and which its completion, and this document
 terms **first indication** and **completion** without restating them. An indication on a
 channel with no request in progress takes no timer action under any requirement below; it
 is forwarded to the application as ``UDSS_LLR_0137`` requires. It does open or complete a
-start-of-message under ``UDSS_LLR_0140``, and on a functional channel may create or release
+start-of-message under ``UDSS_LLR_0199``, and on a functional channel may create or release
 an entry under ``UDSS_LLR_0160``.
 
 On a functional channel many servers answer one request. Each is a **responder**, identified
@@ -149,7 +149,7 @@ inference: 10.1.3 Figure 11 key g stops the timer at the start-of-message on a t
 that provides one, and key h stops it at the completion indication on a transport that does
 not.
 
-``UDSS_LLR_0140`` supplies the pairing this rule depends on. A ``T_Data.ind`` that completes
+``UDSS_LLR_0199`` supplies the pairing this rule depends on. A ``T_Data.ind`` that completes
 no open start-of-message is its message's first indication by that rule, not by assumption.
 
 What this document does not cover
@@ -215,7 +215,7 @@ The response window
    confirmation, zero when the request becomes in progress; the one association
    ``UDSS_LLR_0133`` holds for a transmission outstanding on the channel; and, on a
    physical channel, whether a start-of-message is
-   open on that channel, as ``UDSS_LLR_0140`` requires, without recording the responder, so
+   open on that channel, as ``UDSS_LLR_0199`` requires, without recording the responder, so
    that any ``T_Data.ind`` on the channel completes it. On a functional channel
    ``UDSS_LLR_0160`` holds the start-of-message fact per responder instead. When a
    channel's storage is supplied no such timer shall be running, no request shall be in
@@ -269,14 +269,14 @@ The response window
    begins again with the next. The responder of a physical channel's start-of-message is
    not recorded because a physical channel has one peer: a ``T_Data.ind`` the caller places
    on it from another address is the caller's misrouting, which no record here could
-   correct, so ``UDSS_LLR_0140``'s "same responder" is, on a physical channel, the channel
+   correct, so ``UDSS_LLR_0199``'s "same responder" is, on a physical channel, the channel
    itself.
    The open start-of-message is kept here rather than in a table because a physical channel
    has one peer and one outstanding request, so one fact suffices; ``UDSS_LLR_0160`` keeps
    the same fact per responder on a functional channel.
 
    The start-of-message outlives the request because the wait on a physical channel ends at
-   the first indication of the final response while ``UDSS_LLR_0140``'s pairing needs the
+   the first indication of the final response while ``UDSS_LLR_0199``'s pairing needs the
    start-of-message open until that message's completion; a rule closing it at the end of
    the request would have the completion of every multi-frame final response misread as a
    new single-frame message. An earlier form of this requirement stated such a rule.
@@ -592,9 +592,9 @@ Responders on a functional channel
    Each functional channel shall have a **responder table** in the channel's storage under
    ``UDSS_LLR_0151``, whose **capacity** is the number of entries that storage holds. An entry shall be
    keyed by the ``S_AI[SA]`` and, where ``S_Mtype`` carries one, the ``S_AI[AE]`` of a
-   responder's indications, two keys being equal as ``UDSS_LLR_0140`` defines responder
+   responder's indications, two keys being equal as ``UDSS_LLR_0198`` defines responder
    identity, and shall record for that responder whether a start-of-message
-   is open under ``UDSS_LLR_0140`` and whether a response-pending message is outstanding
+   is open under ``UDSS_LLR_0199`` and whether a response-pending message is outstanding
    under ``UDSS_LLR_0158``.
 
    An entry shall be created, where the table has a free entry, by the indication that makes
@@ -616,7 +616,7 @@ Responders on a functional channel
    response-pending message completes, to remove it at the start of that server's next
    message, and to select the reload value by whether any entry remains. That is state per
    responder, stated as client behaviour in both sessions. The open start-of-message is the
-   other fact ``UDSS_LLR_0140``'s pairing rule needs where the multi-frame responses of
+   other fact ``UDSS_LLR_0199``'s pairing rule needs where the multi-frame responses of
    several servers interleave on one channel; 10.2.2 Figure 15 key h is where the difference
    shows, a completion taking no timer action where a first indication restarts the timer.
 
@@ -627,7 +627,7 @@ Responders on a functional channel
    :doc:`open-questions` inventories.
 
    The start-of-message creates an entry whether or not a request is in progress because
-   ``UDSS_LLR_0140`` opens one on every ``T_DataSOM.ind`` and the retention rule above keeps
+   ``UDSS_LLR_0199`` opens one on every ``T_DataSOM.ind`` and the retention rule above keeps
    it until its completion. A slow server's multi-frame response that begins after the
    response window has expired would otherwise be recorded nowhere: ``UDSS_LLR_0181`` would
    find no entry and admit the repeat while that response was still arriving, the case its
@@ -654,7 +654,7 @@ Responders on a functional channel
    at expiry it had not, so nothing is in transit for the client to finish receiving. Only
    an open start-of-message evidences a message actually arriving. A completion in the gap
    takes no timer action, ``UDSS_LLR_0155`` and ``UDSS_LLR_0157`` acting only with a request
-   in progress, and ``UDSS_LLR_0140``'s pairing is scoped to the channel rather than to the
+   in progress, and ``UDSS_LLR_0199``'s pairing is scoped to the channel rather than to the
    request, so the completion closes the entry it belongs to. ``UDSS_LLR_0153`` cannot
    start a new window while an entry remains, ``UDSS_LLR_0181`` refusing the request that
    would.

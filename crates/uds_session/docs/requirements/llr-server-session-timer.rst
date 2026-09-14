@@ -143,19 +143,9 @@ The timer's state
    transmissions grow with its peers and are that requirement's caller-supplied storage, not
    this state. Throughout this document a message is *from the controlling client*, and a
    response is *to the controlling client*, where its ``S_AI[SA]``, or on a ``T_Data.conf``
-   its ``S_AI[TA]``, and, where ``S_Mtype`` carries one, its ``S_AI[AE]`` equal the recorded
-   ones, two identities being equal only where both carry an extension and addresses and
-   extensions are equal, or neither carries one and the addresses are equal, so that a
-   message whose ``S_Mtype`` carries no extension is never from a controlling client recorded
-   with one; the extension is part of the identity because ``UDSS_LLR_0140`` identifies a
-   responder by the same pair and equates identities the same way, and two clients behind
-   one remote address can differ in it.
-   Matching a confirmation's ``S_AI[TA]`` and ``S_AI[AE]`` against a recorded ``S_AI[SA]``
-   and ``S_AI[AE]`` reads the extension as the same value on a response as on the request it
-   answers; ISO 14229-2:2021 8.7 says only that ``S_AE`` carries the node's extended address,
-   the symmetry being the network layer's, and the reading is recorded here as ``UDSS_LLR_0140``
-   records that every response a server sends is physically addressed. ``tS3_Server``, when
-   set running under any requirement of this document, is loaded with the ``tS3_Server``
+   its ``S_AI[TA]``, and, where ``S_Mtype`` carries one, its ``S_AI[AE]`` form a peer
+   identity equal to the recorded one under ``UDSS_LLR_0198``. ``tS3_Server``, when set
+   running under any requirement of this document, is loaded with the ``tS3_Server``
    protocol parameter of ``UDSS_LLR_0138``, the value ``UDSS_LLR_0112`` compares against.
 
    ``UDSS_LLR_0105``, ``UDSS_LLR_0107``, ``UDSS_LLR_0108`` and ``UDSS_LLR_0111`` state
@@ -248,7 +238,7 @@ The timer's state
    start-of-message or reports a single-frame message; the result it reports is asked, as
    the body states. Where a ``T_DataSOM.ind`` for the same request already stopped the
    timer, the ``T_Data.ind`` completing it finds the timer stopped and changes nothing, so
-   the server needs no rule pairing the two indications; ``UDSS_LLR_0140`` states such a
+   the server needs no rule pairing the two indications; ``UDSS_LLR_0199`` states such a
    rule for the client alone. A ``T_Data.ind`` reporting an unsuccessful reception is
    ``UDSS_LLR_0109``'s instead: ISO 14229-2:2021 9.7 Table 10 restarts the timer where a
    start-of-message of the same request had stopped it, and ``UDSS_LLR_0109`` reads it as
@@ -383,7 +373,7 @@ The timer's state
    not restart it again for the service's response-pending messages. The two guards together
    leave exactly Table 10's case, a start-of-message of this message having stopped the
    timer with nothing else in progress. The server keeps no pairing state between the two
-   indications (``UDSS_LLR_0140`` states such a rule for the client alone); the timer's state
+   indications (``UDSS_LLR_0199`` states such a rule for the client alone); the timer's state
    and ``UDSS_LLR_0189``'s fact, both instance state it already holds, stand in for it.
 
    Table 10 says the server shall ignore the request. That is read as the request having

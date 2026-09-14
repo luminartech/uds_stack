@@ -31,7 +31,7 @@ tables do not budget. Known members:
 - the at-most-two-repeats limit of 9.7 Table 9, for which ``UDSS_LLR_0178`` keeps a repeat
   count per channel;
 - the pending list of 10.2.3 Figure 16 and 10.2.4 Figure 17, and the open start-of-message
-  per responder that the pairing rule in ``UDSS_LLR_0140`` needs, both of which
+  per responder that the pairing rule in ``UDSS_LLR_0199`` needs, both of which
   ``UDSS_LLR_0160`` keeps in caller-supplied storage;
 - the server's request in progress and response-pending anchor of ``UDSS_LLR_0189``, one
   fact, two addresses and one timestamp in the instance;
