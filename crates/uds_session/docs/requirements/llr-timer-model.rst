@@ -97,6 +97,63 @@ A requirement that leaves a running timer alone says so.
    reaches, zero included, first expires: not in the call that set it running, whose
    timestamp preceded the input, but at the next. Zero stays a legal parameter value.
 
+.. llr:: The session layer reports when a timer could next expire
+   :id: UDSS_LLR_0304
+   :status: draft
+   :integrity_level: QM
+   :target_level: D
+   :origin: derived
+   :tags: timer-model; timing
+
+   The session layer shall report the earliest timestamp at which a supplied timestamp could
+   cause a timer to expire, or shall report that no timer is running.
+
+   Reading the report changes nothing, and producing it evaluates no expiry: expiry is
+   evaluated only when a timestamp is supplied, as ``UDSS_LLR_0197`` requires, and this
+   report only tells the caller when to supply one. Nor is the report an output in the sense
+   of ``UDSS_LLR_0292``: an output is produced for the caller to retrieve on the
+   application's behalf, and this report is a query the caller reads for itself, at a moment
+   of its choosing. ``UDSS_LLR_0293``'s enumeration of outputs is open, so it settles nothing
+   either way; what excludes the report is its kind.
+
+   Rationale: ``UDSS_LLR_0197`` makes a timer expire not when it elapses but when the caller
+   next supplies a timestamp, and nothing else in this set tells the caller when that should
+   be. A caller left to guess can only poll, which rounds every timing decision in the set to
+   its tick period — ``UDSS_LLR_0285``'s spacing of consecutive response-pending messages
+   among them — and obliges it to call in on every tick on a target where each call costs
+   power. The session layer can state the instant exactly: ``UDSS_LLR_0195`` loads each
+   running timer with a value, ``UDSS_LLR_0303`` fixes the elapsed time at which that value
+   expires it, and ``UDSS_LLR_0192`` gives the arithmetic, so the earliest such timestamp is
+   already determined by state the session layer holds. ``UDSS_LLR_0196`` gives the other
+   case its meaning: where no timer is running there is nothing to expire and nothing to wake
+   for. The report obeys ``UDSS_LLR_0190`` because it reads no clock; it states a timestamp
+   in the sense of ``UDSS_LLR_0191``, computed from the timestamps the caller has already
+   supplied under ``UDSS_LLR_0193``.
+
+   A caller-supplied timer trait was considered and rejected. ``UDSS_LLR_0292`` bars invoking
+   a callback, handler or caller-supplied trait implementation *in order to deliver an
+   output*, so a trait invoked to obtain time is not what it prohibits; but the hazard that
+   requirement exists to prevent reaches the timer trait with more force, not less. Its
+   rationale is that a session layer which calls outwards has its behaviour depend on what the
+   caller does while it is part-way through a decision, and ``async`` sharpens exactly that: a
+   synchronous callback cannot be re-entered by a single-threaded caller, whereas an ``await``
+   inside the state machine genuinely suspends it mid-decision and lets the driver feed it
+   another input in that window. That is an argument from ``UDSS_LLR_0292``'s reasoning rather
+   than an application of its text, and it is the decisive one here. ``UDSS_LLR_0190`` reaches
+   the alternative directly and without argument: it forbids reading a clock and requires every
+   decision that depends on elapsed time to be made from a timestamp the caller supplies, and a
+   reading pulled from a trait the session layer calls is not a supplied timestamp.
+   ``UDSS_LLR_0113``'s rationale claims in consequence that behaviour is
+   a pure function of the inputs supplied — a property no requirement yet states normatively,
+   which is why it is argued here rather than cited; awaiting a timer would make behaviour a
+   function of those inputs and of executor scheduling, an expensive property to spend at
+   ``target_level: D``, where the timebase requirements buy timing tests that advance time by
+   passing a larger number. And it buys nothing: something must feed the state machine its inputs and drain
+   its outputs either way, so an internal await only moves one arm of the driver's selection
+   inside the crate. The objection is not that ``async`` implies a runtime dependency, which
+   it does not: ``async`` is a language feature, async functions in traits are stable, and
+   the executor is the caller's.
+
 .. llr:: Timer expiries precede the input they accompany
    :id: UDSS_LLR_0187
    :status: draft

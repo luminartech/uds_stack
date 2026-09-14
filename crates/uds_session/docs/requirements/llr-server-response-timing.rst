@@ -98,6 +98,15 @@ ISO 14229-2:2021 9.3 Figure 7 confirms the reading, applying the equality "for a
 ``T_Data.ind``". ``UDSS_LLR_0285`` spaces consecutive response-pending messages; whether
 the first was admissible binds the application.
 
+The origination of a response-pending message is excluded on the same ground as its
+admissibility. Every response-pending message
+reaches this layer as an ``S_Data.req`` the caller supplies on the application's behalf:
+the session layer permits or refuses it and keeps the bookkeeping the window and the
+spacing need, and never composes one of its own. Whether a response-pending message is the
+right answer to a given request, and the octets that carry it, belong to the ISO 14229-1
+clause 8.7 layer, which is also the layer that knows whether the service is supported —
+the predicate ISO 14229-2:2021 9.1.1 makes the admissibility turn on.
+
 A caller's exit from a request in progress that never ends. The client has the channel reset
 of its error handling document; the server has nothing, deliberately: the assumption of use
 that the caller supplies a completion report for every request it does not answer is what
