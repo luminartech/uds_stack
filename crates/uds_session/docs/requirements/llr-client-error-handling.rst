@@ -62,7 +62,7 @@ progress at a timeout or a failure before it repeats, and the cell for a timeout
 unknown number of responding servers before further requests of any kind. Whether a response
 is in progress is what an open start-of-message records, and only the session layer sees
 start-of-message indications, clause 7.3 keeping them from the application.
-``UDSS_LLR_0160`` accordingly retains an entry whose start-of-message is open past the end
+``UDSS_LLR_0234`` accordingly retains an entry whose start-of-message is open past the end
 of the request, with the timer stopped, and releases every other fact; ``UDSS_LLR_0181``
 rejects a request on the channel while any such entry remains.
 
@@ -165,7 +165,7 @@ The repeat count
    storage for the count, so this requirement is derived: the set follows the behaviour the
    table states and records that the resource table omits it. It joins the class of
    constraints the standard makes checkable while allocating nothing for them, which
-   :doc:`open-questions` inventories and which ``UDSS_LLR_0160`` joined for the same
+   :doc:`open-questions` inventories and which ``UDSS_LLR_0232`` joined for the same
    reason.
 
    The storage is the caller's for the reason ``UDSS_LLR_0200`` gives: the number of
@@ -282,7 +282,7 @@ Responses still arriving
 
    Table 9's two functional timeout cells and its functional reception cell each oblige the
    client to completely receive the response messages in progress before it continues.
-   ``UDSS_LLR_0160`` retains the entries that evidence a response in progress past the end
+   ``UDSS_LLR_0234`` retains the entries that evidence a response in progress past the end
    of the request for this requirement's sake, and the timer stays stopped meanwhile,
    ``UDSS_LLR_0155`` acting only with a request in progress.
 
@@ -303,7 +303,7 @@ Responses still arriving
    keys g and h send inside the response window, it is a delay bounded by the transport's
    transfer of that message, which 9.2 Table 4 footnotes d and e already oblige the client to
    keep inside ``tS3_Server``. The wait also covers a response whose start-of-message arrives
-   after the timeout or the error, which ``UDSS_LLR_0160`` records whether or not a request
+   after the timeout or the error, which ``UDSS_LLR_0233`` records whether or not a request
    is in progress; the known-count and reception cells, phrased at the point in time of the
    event, do not require that, so it too is a widening, in the safe direction, ending on the
    same completion.
@@ -380,7 +380,7 @@ Giving a server up
    Rationale: ISO 14229-2:2021 9.7 Table 9 ends at the third transmission and the standard
    says nothing of what the client concludes, while the state this set keeps per channel
    persists on its own: a request in progress whose completion never comes, an entry
-   ``UDSS_LLR_0160`` retains for a response that never completes, a repeat count at two.
+   ``UDSS_LLR_0234`` retains for a response that never completes, a repeat count at two.
    Something the caller invokes has to clear it, and the standard supplies no input that
    does.
 
@@ -415,7 +415,7 @@ Giving a server up
    start-of-message the reset closed is the first indication of a single-frame message
    under ``UDSS_LLR_0199``, the pairing having nothing left to match; a later
    ``T_DataSOM.ind`` opens a start-of-message as it always does, and on a functional channel
-   creates an entry under ``UDSS_LLR_0160``. Both reach the application through
+   creates an entry under ``UDSS_LLR_0233``. Both reach the application through
    ``UDSS_LLR_0137`` with the caller's classification and take no ``tP_Client`` action, no
    request being in progress; in physical keep-alive ``UDSS_LLR_0170`` restarts
    ``tS3_Client`` on a completion among them as on any other. The preamble records that the

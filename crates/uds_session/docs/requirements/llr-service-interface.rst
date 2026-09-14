@@ -504,7 +504,7 @@ Service primitives
 
    The indication is used only within the session layer, to perform session layer timing.
    The requirements that act on it are the timer requirements of the server and client
-   documents and the pairing and responder requirements ``UDSS_LLR_0199``, ``UDSS_LLR_0160``
+   documents and the pairing and responder requirements ``UDSS_LLR_0199``, ``UDSS_LLR_0233``
    and ``UDSS_LLR_0161``, none of which forwards it. The prohibition is on the
    ``S_Data.ind``, not on every output: a timer requirement that conditions on the
    indication may deliver an indication of its own, as the expiry indications do on any
@@ -577,7 +577,7 @@ peer, and how a multi-frame message's start is matched to its completion.
 
    Rationale: ``UDSS_LLR_0199`` identifies a responder by this pair, ``UDSS_LLR_0221``
    records the controlling client as one, ``UDSS_LLR_0212`` records the request in
-   progress as one, and ``UDSS_LLR_0160`` keys the responder table on one. Stated once,
+   progress as one, and ``UDSS_LLR_0232`` keys the responder table on one. Stated once,
    the four cannot drift apart. The extension is part of the identity because two clients
    behind one remote address can differ in it. Matching a confirmation's ``S_AI[TA]`` and
    ``S_AI[AE]`` against a recorded ``S_AI[SA]`` and ``S_AI[AE]`` reads the extension as the
@@ -609,7 +609,7 @@ peer, and how a multi-frame message's start is matched to its completion.
    Table 3 makes single-frame against multi-frame the transport's distinction, and on a
    functional channel the multi-frame responses of several servers may interleave, so
    matching has to name the responder. The state this costs is stated with the client's
-   requirements: an entry per responder under ``UDSS_LLR_0160`` on a functional channel,
+   requirements: an entry per responder under ``UDSS_LLR_0232`` on a functional channel,
    and one fact per channel under ``UDSS_LLR_0206`` on a physical one, where one peer
    answers one outstanding request. The server needs none of it: its only start-of-message
    effect, ``UDSS_LLR_0104``, stops a timer, which a second stop leaves stopped.
