@@ -3,20 +3,25 @@ The seams
 
 What crosses each boundary of this crate, and who owns what on either side.
 
-Five seams. Four are server-side — the context supplied with a request, the outcome
-reported back, the sink a response is written into, and the adapter onto a binding's byte
-interface — and they exist because a server is *called* and must be told the state its
-decisions depend on. The fifth is the client's transport seam, and it points the other
-way: a client *initiates*, so its seam is something this crate calls rather than something
-that calls this crate.
+Six seams, in two groups.
 
-That inversion is the most important thing on this page. **Whoever is called declares the
-interface.** That single rule produces both seams and explains why they point in opposite
-directions.
+Four are declared elsewhere and implemented here, because this crate is *called* across
+them: the context supplied with a request, the outcome reported back, the sink a response
+is written into, and the adapter onto a binding's byte interface. A server must be told
+the state its decisions depend on, and the caller's shape is what it is told in.
+
+Two are declared here and implemented elsewhere, because this crate *calls* across them:
+the client's transport seam, since a client initiates rather than waits, and the
+response-pending seam, since a server that has decided to say "still working" must reach a
+transport it does not own.
+
+**Whoever is called declares the interface.** That single rule produces all six and
+explains why they point in opposite directions.
 
 .. uml::
    :align: center
-   :caption: The four server-side seams. The client's transport seam is below.
+   :caption: The four seams declared elsewhere and implemented here. The two this
+             crate declares are below.
 
    @startuml
    package "binding (uds_on_ip, uds_on_can)" {
@@ -41,7 +46,7 @@ directions.
    DRV -down-> BYTES
    BYTES -down-> AD
    DRV -down-> CTX
-   SESS -up-> DRV : session, security,\nresponse-pending
+   SESS -up-> DRV : session, security
    CTX -down-> AD
    AD -down-> PIPE
    PIPE -up-> OUT
@@ -95,9 +100,6 @@ Request context
       * - authenticated
         - Figure 5 and Figure 6 → 0x34
         - The application, forwarded by the binding
-      * - response-pending sent
-        - Suppression, ``UDSSVC_ARCH_0009`` rule 3
-        - ``uds_session``, which decides to emit 0x78
 
    Rationale: taking these as parameters rather than through a dependency is what makes the crate
    usable under any binding, and avoids depending on ``uds_session``, which is private. The
@@ -116,13 +118,14 @@ Request context
    transport a mandatory dependency of the typed layer and contradict
    ``UDSSVC_ARCH_0003``.
 
-   **Response-pending sent is the field most easily left out, and the pipeline is
-   incorrect without it.** Clause 8.7.5 guards both suppression rules on whether a 0x78 has
-   already gone out, and states that after one has, the final response shall be sent even
-   for a functionally addressed request that would otherwise be silenced. A dispatcher
-   without this input answers a functionally addressed request with silence where the
-   standard requires a final negative response — and because the failure needs a slow
-   handler *and* functional addressing to appear, it will not show up in ordinary testing.
+   **Whether a response-pending has been sent is deliberately not a field here, and an
+   earlier draft had it wrong in a way worth recording.** Clause 8.7.5 guards both
+   suppression rules on it, so the pipeline is incorrect without the fact — but it is not an
+   *input*. ``UDSSVC_ARCH_0032`` makes this crate the originator of a 0x78, so the pipeline
+   knows by construction. Carrying it on ``Ctx`` would have been wrong even had the
+   originator been elsewhere: ``Ctx`` is snapshotted when a request arrives, and a
+   response-pending is emitted *after* that snapshot and before the suppression gate reads
+   it, so a by-value field would be stale at the only instant it is consulted.
 
    Peer identity is deliberately absent. An application that keys state per tester — a
    security-access attempt counter, say — holds that state in its own server type, where it
@@ -167,9 +170,9 @@ Outcome
 
    **Dispatch and the handlers it calls are asynchronous**, which is what
    ``UDSSVC_ARCH_0030``'s assumption is spent on here. The gain is specific: a handler
-   that takes longer than ``tP2_Server`` yields at its await points, so the binding's
-   driver keeps draining session actions and transmits the ``0x78`` that ``uds_session``
-   decided to send while the handler it covers is still running.
+   that takes longer than ``tP2_Server`` yields at its await points, so dispatch can offer
+   a ``0x78`` across ``UDSSVC_ARCH_0031``'s seam while the handler it covers is still
+   running, and the binding's driver keeps draining session actions throughout.
 
    Without this, that is machinery every integrator has to build — the driver must arrange
    for a slow handler to run somewhere it can continue past, and nothing in this crate or
@@ -238,13 +241,13 @@ Binding adapter
    changes to ``uds_on_ip`` rather than to this crate:
 
    * its context carries an addressing triple, the active session and the security level,
-     but neither the authentication state nor the response-pending flag that
-     ``UDSSVC_ARCH_0015`` requires;
-   * ``uds_session`` has to expose the second of those, since it owns the decision;
+     but not the authentication state that ``UDSSVC_ARCH_0015`` requires;
    * its handler seam is synchronous, and ``UDSSVC_ARCH_0016`` requires an asynchronous
-     one.
+     one;
+   * ``RequestHandler::handle`` must take ``UDSSVC_ARCH_0031``'s responder as a further
+     parameter, since ``Ctx`` is ``Copy`` and cannot carry a ``&mut``.
 
-   The third is cheap now and expensive later: that trait is declared and has no
+   The last two are cheap now and expensive later: that trait is declared and has no
    implementations, so changing it costs a signature today and a migration once servers
    exist. This is the reason the stack is being iterated as a whole rather than crate by
    crate.
@@ -294,3 +297,86 @@ Client transport seam
    functionally addressed request yields a lending sequence whose length is not known until
    a timer expires (``UDSSVC_ARCH_0022``); typing it as the same operation as a
    single-response exchange would force one of the two to lie.
+
+Response-pending seam
+---------------------
+
+.. arch:: This crate declares the response-pending seam; the driver implements it
+   :id: UDSSVC_ARCH_0031
+   :depends_on: UDSSVC_ARCH_0016; UDSSVC_ARCH_0030; UDSSVC_ARCH_0032
+   :status: draft
+   :origin: derived
+   :tags: seam; transport; async; response-pending
+
+   A server that has decided to answer ``requestCorrectlyReceivedResponsePending`` (0x78)
+   while a handler is still running must reach a transport it does not own, and must be
+   told when the moment to do so has arrived. Both cross one seam, declared here and
+   implemented by the binding's server driver:
+
+   .. code-block:: rust
+
+      pub trait PendingResponder {
+          /// Resolves when a response-pending should next be considered.
+          ///
+          /// Cancel-safe: dispatch drops and recreates this future every time
+          /// the handler makes progress.
+          async fn due(&mut self);
+
+          /// Submit a response-pending for transmission. Returns immediately.
+          fn offer(&mut self, message: [u8; 3]);
+      }
+
+   Rationale: ``UDSSVC_ARCH_0032`` puts the decision here, and a decision that cannot be
+   acted on is not a decision. The seam is declared here rather than by the binding
+   because this crate calls across it, which is the same rule that places
+   ``UDSSVC_ARCH_0029``'s transport seam here and ``UDSSVC_ARCH_0018``'s byte seam on the
+   other side.
+
+   Dispatch races the handler against ``due`` and offers while it waits:
+
+   .. code-block:: rust
+
+      let mut handler = pin!(self.handle(..));
+      let settled = loop {
+          select! {
+              settled = &mut handler => break settled,
+              () = pending.due() => if MAY_RESPOND_PENDING {
+                  pending.offer([0x7F, sid, 0x78]);
+              }
+          }
+      };
+
+   Four properties, each of which was arrived at rather than assumed.
+
+   **The message is passed by value, in three bytes.** ISO 14229-1:2020 Annex A gives
+   ``requestCorrectlyReceivedResponsePending`` no payload, so a response-pending is always
+   ``0x7F``, the echoed service identifier, and ``0x78``. Passing it by value removes the
+   second sink, the borrow against the one ``UDSSVC_ARCH_0017`` already holds, and any
+   allocation question. Composing it here rather than in the driver is what keeps
+   ``UDSSVC_ARCH_0019`` true: the driver transmits bytes it need not understand.
+
+   **``offer`` returns immediately and reports nothing.** Submission and confirmation are
+   two moments in ISO 14229-2:2021, not one — ``UDSS_LLR_0145`` stops ``tP2_Server`` at the
+   ``T_Data.req`` and ``UDSS_LLR_0218`` anchors the spacing at the ``T_Data.conf`` — and
+   awaiting the second inside dispatch would stall the handler for the duration of a
+   transmission, which is the opposite of what ``UDSSVC_ARCH_0016``'s asynchronous seam
+   exists to buy.
+
+   **There is no error path, and that follows from an element already here.**
+   ``UDSSVC_ARCH_0016`` states that genuine transport failures are the binding's concern
+   and never reach a handler. A refusal under ``UDSS_LLR_0285``'s spacing rule and a failed
+   transmission are both the driver's to absorb. This crate offers; the driver disposes.
+
+   **``due`` must be cancel-safe, and that is a contract rather than a note.** The future
+   is dropped and rebuilt on every handler wakeup. A driver that implemented it by starting
+   a fresh interval on each call would never become due under a handler that yields often,
+   and the failure would appear only under load.
+
+   A server whose services all decline response-pending under ``UDSSVC_ARCH_0033`` still
+   names a responder. This crate supplies an implementation whose ``due`` never resolves,
+   which costs nothing at runtime; making the parameter optional would double the dispatch
+   signature to avoid a type that is already free.
+
+   The seam adds a fourth item to the changes ``UDSSVC_ARCH_0018`` requires of
+   ``uds_on_ip``: ``RequestHandler::handle`` gains the responder as a parameter, since
+   ``Ctx`` is ``Copy`` and cannot carry a ``&mut``.

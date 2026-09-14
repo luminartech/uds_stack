@@ -195,7 +195,7 @@ seams earn their keep.
    T -> D : DoIP diagnostic message
    D -> I : payload bytes + addressing
    I -> S : indicate request received
-   S --> I : active session, security level,\nresponse-pending state
+   S --> I : active session, security level
    I -> V : handle(ctx, request bytes, sink)
    activate V
 
@@ -221,9 +221,9 @@ binding, having been read from ``uds_session``. There is no edge from ``uds_serv
 ``uds_session`` on any diagram in this document, and ``UDSSVC_ARCH_0002`` is why.
 
 The final ``alt`` is not error handling. Both branches are specified outcomes of clause
-8.7, and which one applies depends on state — the addressing mode and whether a
-response-pending has gone out — that no amount of inspecting the request bytes would
-reveal.
+8.7. Which one applies depends on the addressing mode, which arrives on ``Ctx``, and on
+whether this dispatch offered a response-pending (``UDSSVC_ARCH_0032``) — neither of which
+inspecting the request bytes would reveal.
 
 .. arch:: An async runtime is assumed; none is depended on
    :id: UDSSVC_ARCH_0030

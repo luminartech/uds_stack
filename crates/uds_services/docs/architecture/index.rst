@@ -118,7 +118,7 @@ disagree with the pages that follow.
 Two roots and a deliberate gap are visible in it. ``UDSSVC_ARCH_0001``, the scope
 boundary, and ``UDSSVC_ARCH_0012``, the trait shape, are depended on and depend on nothing
 — everything else is downstream of what the crate is for and how an application talks to
-it. The four seams carry no containment edge, because they are not part of any component:
+it. The six seams carry no containment edge, because they are not part of any component:
 giving them a synthetic parent would tidy the diagram by inventing something that is not
 there.
 
