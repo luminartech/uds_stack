@@ -130,7 +130,7 @@ The timer's state
    The state is held in the instance rather than in caller-supplied storage because it is
    fixed in size: one bit, one addressing and one timer. The client's state grows with the
    number of channels it has, which is why ``UDSS_LLR_0228`` puts that state in storage the
-   caller supplies; the associations ``UDSS_LLR_0133`` holds for the server's outstanding
+   caller supplies; the associations ``UDSS_LLR_0271`` holds for the server's outstanding
    transmissions grow with its peers and are that requirement's caller-supplied storage, not
    this state. Throughout this document a message is *from the controlling client*, and a
    response is *to the controlling client*, where its ``S_AI[SA]``, or on a ``T_Data.conf``
@@ -413,7 +413,7 @@ The timer's state
    The marked message is excluded because a failed reception of it while another request is
    in progress would otherwise restart the timer mid-request, the harm ``UDSS_LLR_0186``
    avoids. Where the caller cannot determine the marker on a failed reception,
-   ``UDSS_LLR_0133`` lets it state kind ``request`` alone; the guard on the request in
+   ``UDSS_LLR_0270`` lets it state kind ``request`` alone; the guard on the request in
    progress then keeps the restart away from the mid-request case the marker would have
    excluded, and Table 10's restart applies only where its reason holds.
 

@@ -33,7 +33,7 @@ Nothing stops a spacing timer and nothing acts when it becomes inactive: its who
 a condition on the next transmission.
 
 A ``T_Data.conf`` belongs to the channel named by the addressing of the ``S_Data.req`` that
-``UDSS_LLR_0133`` associates with it, the route ``UDSS_LLR_0153`` uses, and an ``S_Data.req``
+``UDSS_LLR_0271`` associates with it, the route ``UDSS_LLR_0153`` uses, and an ``S_Data.req``
 belongs to the channel its own addressing names. On the outbound side, therefore, no caller
 identification of the channel is needed. This document uses **physical channel**,
 **functional channel** and the identity of a channel as ``UDSS_LLR_0201`` and the client

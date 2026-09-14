@@ -36,8 +36,8 @@ The logical communication channel
 Throughout this document, a **logical communication channel** is identified by the
 addressing of the requests the client sends on it: ``S_Mtype``, ``S_AI[TAtype]``,
 ``S_AI[SA]``, ``S_AI[TA]`` and, where ``S_Mtype`` carries one, ``S_AI[AE]``. That is the
-addressing ``UDSS_LLR_0133`` matches a confirmation on, so the one transmission that
-requirement allows outstanding per addressing is the channel's one outstanding
+addressing ``UDSS_LLR_0271`` matches a confirmation on, so the one transmission
+``UDSS_LLR_0272`` allows outstanding per addressing is the channel's one outstanding
 transmission; ISO 14229-2:2021 9.6 Table 7's point-to-point communication is a pair of
 addresses. A channel is a **physical
 channel** or a **functional channel** according to its ``S_AI[TAtype]``, taking the two
@@ -282,15 +282,15 @@ The response window
    Withdrawal of a channel's storage shall be permitted at any time and shall discard,
    without output, every fact this set holds for the channel, an association outstanding on
    it included; a ``T_Data.conf`` arriving for that association thereafter matches none
-   while no channel of that addressing exists and is rejected under ``UDSS_LLR_0133``. A
+   while no channel of that addressing exists and is rejected under ``UDSS_LLR_0275``. A
    caller that supplies the same addressing again before that confirmation arrives has it
-   matched to whatever association the new channel then holds, ``UDSS_LLR_0133`` matching by
-   addressing alone, or rejected under that requirement where it holds none; not doing so is
+   matched to whatever association the new channel then holds, ``UDSS_LLR_0271`` matching by
+   addressing alone, or rejected under ``UDSS_LLR_0275`` where it holds none; not doing so is
    an assumption of use.
 
    Rationale: withdrawal discards everything and is permitted at any time because it is the
    caller's last exit: a transmission whose confirmation never comes leaves its association
-   outstanding, ``UDSS_LLR_0133`` refusing the channel further requests meanwhile, and only
+   outstanding, ``UDSS_LLR_0273`` refusing the channel further requests meanwhile, and only
    withdrawal clears it; the ``S_Data.conf`` ``UDSS_LLR_0120`` promises for that
    transmission is forgone with the channel, by the caller's own act.
 
@@ -307,7 +307,8 @@ The response window
    is, the addressing and classification of that request and, where that classification
    states an exact expected response count, the number of responses ``UDSS_LLR_0156``
    counts since the request's confirmation, zero when the request becomes in progress; the
-   one association ``UDSS_LLR_0133`` holds for a transmission outstanding on the channel;
+   one association ``UDSS_LLR_0271`` holds for a transmission outstanding on the channel,
+   ``UDSS_LLR_0272`` permitting no second;
    and, on a physical channel, whether a start-of-message is open on that channel, as
    ``UDSS_LLR_0199`` requires, without recording the responder, so that any ``T_Data.ind``
    on the channel completes it. On a functional channel ``UDSS_LLR_0232`` holds the
@@ -504,7 +505,7 @@ The response window
    handling: ``UDSS_LLR_0174`` and ``UDSS_LLR_0175`` space the repeat and ``UDSS_LLR_0180``
    caps it.
 
-   ``UDSS_LLR_0133`` is what makes the count available here, associating the classification
+   ``UDSS_LLR_0271`` is what makes the count available here, associating the classification
    carried by an ``S_Data.req`` with the ``T_Data.conf`` reporting the outcome of the
    transmission it requested.
 
@@ -568,7 +569,7 @@ The response window
    transcribed from either. Clause 9.1.2 stops the timer on the indication and says nothing about its
    result, and 9.7 Table 9 gives a failed reception its own row, requiring the client to
    repeat the request; between them the wait is over, and this requirement says so. It is
-   conditioned on the result rather than on the kind because ``UDSS_LLR_0133`` lets the
+   conditioned on the result rather than on the kind because ``UDSS_LLR_0270`` lets the
    caller state or omit the kind on a failed reception, and the timer must behave the same
    either way. Only a ``T_Data.ind`` can report a failure, ``UDSS_LLR_0245`` giving the
    start-of-message no result. The handling is ``UDSS_LLR_0180``'s cap and
@@ -679,7 +680,7 @@ The response window
    Only a solicited final response counts. A server that has requested an enhanced response
    window has not yet answered, and counting its response-pending message would end the
    exchange before its response arrived. An absent kind does not count either:
-   ``UDSS_LLR_0133`` permits a reception the transport reports as failed to carry no kind,
+   ``UDSS_LLR_0270`` permits a reception the transport reports as failed to carry no kind,
    and a condition phrased as *not* response-pending would admit it. Nor does an unsolicited
    one: ``UDSS_LLR_0251`` marks a periodically transmitted positive response both a final
    response and unsolicited, and counting one would reach the expected number before every
@@ -932,7 +933,7 @@ Enhanced response timing
    indications, as Figure 8 shows, and the enhanced window opens when the message completes.
 
    The reception must have succeeded, as it must for ``UDSS_LLR_0156``'s count.
-   ``UDSS_LLR_0133`` does not forbid a caller from classifying a reception the transport
+   ``UDSS_LLR_0270`` does not forbid a caller from classifying a reception the transport
    reported as failed, and such a reception labelled ``response pending`` would otherwise
    open a fresh enhanced window for a message that never arrived. Under functional addressing
    with an unknown expected response count that would carry the exchange to an expiry, which

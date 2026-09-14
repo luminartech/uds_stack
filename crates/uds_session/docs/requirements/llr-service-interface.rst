@@ -41,8 +41,11 @@ Several inputs to the session layer are acts of the caller rather than primitive
 parameters or timestamps: the completion report of ``UDSS_LLR_0136``, which ``UDSS_LLR_0115``
 enumerates; the channel reset and keep-alive release that :doc:`llr-client-error-handling`
 defines in ``UDSS_LLR_0183`` and ``UDSS_LLR_0184``, by which the caller clears state the
-client keeps; and the supply and withdrawal of the storage ``UDSS_LLR_0133`` and
-``UDSS_LLR_0206`` name, in which every fact the set keeps per peer or per channel lives.
+client keeps; and the supply, and at a client the withdrawal, of the storage in which
+every fact the set keeps per peer or per channel lives: a client's channel storage, which
+``UDSS_LLR_0206`` names, supplied under ``UDSS_LLR_0201`` and withdrawn under
+``UDSS_LLR_0205``, and a server's association storage, which ``UDSS_LLR_0271`` names and
+``UDSS_LLR_0266`` has supplied at creation and which is not withdrawn.
 Each produces no output of its own, so ``UDSS_LLR_0116`` is not engaged by them;
 ``UDSS_LLR_0115`` enumerates them among its inputs and has each carry a timestamp, so that
 ``UDSS_LLR_0187`` orders the expiries before the act. One output is likewise addressed to the
@@ -376,7 +379,7 @@ Service primitives
    the address information and report ``S_Result``, and 7.3 Table 2 maps each of those onto the
    transport parameter of the same name, so the confirmation the transport delivers carries
    the addressing and the result and nothing else. The server session timer requirements
-   read the confirmation's ``S_AI[TA]``, and the association ``UDSS_LLR_0133`` states is
+   read the confirmation's ``S_AI[TA]``, and the association ``UDSS_LLR_0271`` states is
    matched on that addressing.
 
 .. llr:: The caller identifies the channel of every inbound indication at a client
@@ -511,7 +514,7 @@ Service primitives
    :origin: derived
    :tags: service-interface; role
 
-   Creation of a server shall supply the association storage of ``UDSS_LLR_0133`` and the
+   Creation of a server shall supply the association storage of ``UDSS_LLR_0271`` and the
    ``tS3_Server``, ``tP2_Server_Max`` and ``tP2*_Server_Max`` parameters of
    ``UDSS_LLR_0261``. Creation of a client shall supply the keep-alive mode of
    ``UDSS_LLR_0162`` and, in functional keep-alive, the storage of ``UDSS_LLR_0227`` and
@@ -1033,7 +1036,7 @@ requirements are derived: ISO 14229-2 states the conditions in terms of message 
 and leaves the means of recognising it to the implementation.
 
 .. llr:: Message classification is supplied by the caller
-   :id: UDSS_LLR_0133
+   :id: UDSS_LLR_0269
    :status: draft
    :integrity_level: QM
    :target_level: D
@@ -1043,28 +1046,6 @@ and leaves the means of recognising it to the implementation.
    ``S_Data.req``, ``T_Data.ind`` and ``T_DataSOM.ind`` shall each carry a message
    classification supplied by the caller. Where a requirement in this set depends on what
    a message is, the session layer shall determine it from that classification.
-
-   Where a ``T_Data.ind`` reports an unsuccessful reception, its classification shall state
-   kind ``request`` where the message was addressed to a server, and may otherwise omit the
-   kind. ``UDSS_LLR_0109`` conditions on a failed reception of a request, so the kind is
-   required in that case even where the message data is incomplete. It is omissible
-   otherwise because a client whose transport reports a broken reception may be unable to
-   tell a final response from a response-pending one, and ``UDSS_LLR_0251`` offers no value
-   for a kind that was not determinable.
-
-   The session layer shall associate the classification carried by an ``S_Data.req`` with
-   the ``T_Data.req`` produced from it and with the ``T_Data.conf`` that reports the
-   outcome of that transmission. It shall hold that association, from the ``S_Data.req``
-   until the ``T_Data.conf``, in storage supplied by the caller, together with the
-   addressing parameters of the ``S_Data.req``, and shall match a ``T_Data.conf`` to the
-   outstanding association whose ``S_Mtype``, ``S_AI[TAtype]``, ``S_AI[SA]``, ``S_AI[TA]``
-   and, where ``S_Mtype`` carries one, ``S_AI[AE]`` equal the confirmation's. At most one
-   association shall be outstanding for any one such addressing. An ``S_Data.req`` whose
-   addressing equals that of an outstanding association, or for which the storage has no
-   free association, and a ``T_Data.conf`` matching no outstanding association, shall each
-   be rejected as ``UDSS_LLR_0267`` defines. On initialisation no association shall be
-   outstanding. A server's association storage shall be supplied when the instance is
-   created; a client's is part of the channel's storage ``UDSS_LLR_0206`` defines.
 
    Rationale: several requirements condition on message content, including whether a
    response is final or response-pending, whether a message selects a diagnostic session,
@@ -1077,39 +1058,179 @@ and leaves the means of recognising it to the implementation.
    asks to have transmitted, and the code that supplies a ``T_Data.ind`` holds the bytes it
    received.
 
-   The association is matched on addressing because that is the standard's own rule:
-   ISO 14229-2:2021 7.6 has the ``S_Data.conf`` confirm "the completion of an S_Data.req
-   service identified by the address information", and 7.3 Table 2 maps the transport's
-   confirmation onto the same parameters, so nothing else travels on a confirmation that
-   could identify the request it answers. That rule can only work while one transmission to
-   a given addressing is outstanding, which the standard's models guarantee at the client,
-   one request per logical communication channel, and assume without saying at the server.
-   Stating the limit and rejecting what exceeds it makes the rule checkable where the
-   standard is silent: a server whose application asks to transmit a second response to a
-   client while the first is unconfirmed, a periodic transmission alongside a solicited one,
-   for instance, would otherwise leave the session layer unable to tell which confirmation
-   carried the session selection or the solicitation the timer requirements read. The
-   storage is the caller's because the number of peers an instance addresses is a property
-   of the deployment and the crate does not allocate; how the client's storage is organised
-   per channel is ``UDSS_LLR_0206``'s. An association whose ``T_Data.conf`` never arrives
-   stays outstanding: the client's exit is the withdrawal of the channel's storage under
-   ``UDSS_LLR_0205``, and the server has none, resting instead on the assumption of use that
-   the transport reports a ``T_Data.conf`` for every ``T_Data.req``, which
-   :doc:`open-questions` records beside the start-of-message assumption.
-
    The classification is carried on ``T_Data.ind`` rather than on ``S_Data.ind`` because a
    client must recognise a response-pending response at reception, before the application
    has seen it. It is carried on ``T_DataSOM.ind`` for the same reason in the other
    direction: ``UDSS_LLR_0104`` conditions on a start-of-message that begins a request, and
    the start of a message is the only point at which that requirement acts. A caller
    supplying a start-of-message indication holds its first frame, so the classification is
-   available there. The association with ``T_Data.conf`` is stated because
-   ``UDSS_LLR_0102``, ``UDSS_LLR_0106``, ``UDSS_LLR_0107``, ``UDSS_LLR_0108`` and
-   ``UDSS_LLR_0110`` all condition on what kind of message a confirmation confirms, and no
-   classification travels on the confirmation itself. The association with ``T_Data.req``
-   is stated because ``UDSS_LLR_0145`` conditions on what kind of message a transmission
-   request carries; ``UDSS_LLR_0118`` produces that ``T_Data.req`` from the ``S_Data.req``
-   in the same step, so the association costs nothing.
+   available there.
+
+.. llr:: The kind required on a failed reception addressed to a server
+   :id: UDSS_LLR_0270
+   :status: draft
+   :integrity_level: QM
+   :target_level: D
+   :origin: derived
+   :tags: service-interface; classification
+
+   Where a ``T_Data.ind`` reports an unsuccessful reception, the message classification it
+   carries under ``UDSS_LLR_0269`` shall state kind ``request`` where the message was
+   addressed to a server, and may otherwise omit the kind.
+
+   Rationale: ``UDSS_LLR_0109`` conditions on a failed reception of a request, so the kind
+   is required in that case even where the message data is incomplete. It is omissible
+   otherwise because a client whose transport reports a broken reception may be unable to
+   tell a final response from a response-pending one, and ``UDSS_LLR_0251`` offers no value
+   for a kind that was not determinable.
+
+.. llr:: The classification is associated with the transmission it describes
+   :id: UDSS_LLR_0271
+   :status: draft
+   :integrity_level: QM
+   :target_level: D
+   :origin: derived
+   :tags: service-interface; classification
+
+   The session layer shall associate the classification carried by an ``S_Data.req`` with
+   the ``T_Data.req`` produced from it and with the ``T_Data.conf`` that reports the
+   outcome of that transmission. It shall hold that association, from the ``S_Data.req``
+   until the ``T_Data.conf``, in storage supplied by the caller, together with the
+   addressing parameters of the ``S_Data.req``, and shall match a ``T_Data.conf`` to the
+   outstanding association whose ``S_Mtype``, ``S_AI[TAtype]``, ``S_AI[SA]``, ``S_AI[TA]``
+   and, where ``S_Mtype`` carries one, ``S_AI[AE]`` equal the confirmation's.
+
+   Rationale: the association is matched on addressing because that is the standard's own
+   rule: ISO 14229-2:2021 7.6 has the ``S_Data.conf`` confirm "the completion of an
+   S_Data.req service identified by the address information", and 7.3 Table 2 maps the
+   transport's confirmation onto the same parameters, so nothing else travels on a
+   confirmation that could identify the request it answers.
+
+   The match is a declared widening of that list in one parameter: 7.6 identifies the
+   ``S_Data.req`` by ``S_AI[TAtype]``, ``S_AI[SA]``, ``S_AI[TA]`` and ``S_AI[AE]`` alone,
+   and this requirement matches on ``S_Mtype`` as well. It is deliberate, and it is
+   available: 7.3 Table 2 maps ``S_Mtype`` onto the transport's ``T_Ptype``, so the
+   confirmation carries it. Two transmissions to one peer differing only in ``S_Mtype``,
+   a ``Diag`` and a ``SecureDiag`` message, differ in addressing under ``UDSS_LLR_0272``
+   and so may be outstanding together; matching on 7.6's list alone
+   would let each confirmation match the other's association, and the classification read
+   from it would then describe the wrong message. ``S_Mtype`` also decides whether an
+   address extension is present at all, under ``UDSS_LLR_0125`` and ``UDSS_LLR_0129``, so
+   the condition this rule places on ``S_AI[AE]`` is well defined only where the two
+   ``S_Mtype`` agree; ``UDSS_LLR_0198`` takes the same position for a peer identity, an
+   identity carrying an extension never equalling one that does not.
+
+   The storage is the caller's because the number of peers an instance addresses is a
+   property of the deployment and the crate does not allocate; how the client's storage is
+   organised per channel is ``UDSS_LLR_0206``'s.
+
+   The association with ``T_Data.conf`` is stated because ``UDSS_LLR_0102``,
+   ``UDSS_LLR_0106``, ``UDSS_LLR_0107``, ``UDSS_LLR_0108`` and ``UDSS_LLR_0110`` all
+   condition on what kind of message a confirmation confirms, and no classification travels
+   on the confirmation itself. The association with ``T_Data.req`` is stated because
+   ``UDSS_LLR_0145`` conditions on what kind of message a transmission request carries;
+   ``UDSS_LLR_0118`` produces that ``T_Data.req`` from the ``S_Data.req`` in the same step,
+   so the association costs nothing.
+
+.. llr:: At most one association is outstanding per addressing
+   :id: UDSS_LLR_0272
+   :status: draft
+   :integrity_level: QM
+   :target_level: D
+   :origin: derived
+   :tags: service-interface; classification
+
+   At most one association of ``UDSS_LLR_0271`` between an ``S_Data.req`` and its
+   ``T_Data.conf`` shall be outstanding for any one addressing, an addressing being the
+   ``S_Mtype``, ``S_AI[TAtype]``, ``S_AI[SA]``, ``S_AI[TA]`` and, where ``S_Mtype`` carries
+   one, ``S_AI[AE]`` that requirement matches a confirmation on.
+
+   Rationale: matching a confirmation on addressing alone, as ``UDSS_LLR_0271`` requires,
+   can only work while one transmission to a given addressing is outstanding, which the
+   standard's models guarantee at the client, one request per logical communication
+   channel, and assume without saying at the server. Stating the limit, and rejecting under
+   ``UDSS_LLR_0273`` and ``UDSS_LLR_0275`` what exceeds it, makes the rule checkable where
+   the standard is silent: a server whose application asks to transmit a second response to
+   a client while the first is unconfirmed, a periodic transmission alongside a solicited
+   one, for instance, would otherwise leave the session layer unable to tell which
+   confirmation carried the session selection or the solicitation the timer requirements
+   read.
+
+   The limit is survivable because each role has an exit, or an assumption in place of one.
+   An association whose ``T_Data.conf`` never arrives stays outstanding: the client's exit
+   is the withdrawal of the channel's storage under ``UDSS_LLR_0205``, and the server has
+   none, resting instead on the assumption of use that the transport reports a
+   ``T_Data.conf`` for every ``T_Data.req``, which :doc:`open-questions` records beside the
+   start-of-message assumption.
+
+.. llr:: A request duplicating an outstanding association is rejected
+   :id: UDSS_LLR_0273
+   :status: draft
+   :integrity_level: QM
+   :target_level: D
+   :origin: derived
+   :tags: service-interface; classification
+
+   An ``S_Data.req`` whose addressing equals that of an association outstanding under
+   ``UDSS_LLR_0271`` shall be rejected as ``UDSS_LLR_0267`` defines.
+
+   Rationale: this is what makes the limit of ``UDSS_LLR_0272`` checkable rather than an
+   obligation on the caller with no stated outcome. Accepting such a request would leave
+   two transmissions to one addressing outstanding, and ``UDSS_LLR_0271`` matches a
+   confirmation on that addressing alone, so neither confirmation could be told from the
+   other.
+
+.. llr:: A request for which no association is free is rejected
+   :id: UDSS_LLR_0274
+   :status: draft
+   :integrity_level: QM
+   :target_level: D
+   :origin: derived
+   :tags: service-interface; classification
+
+   An ``S_Data.req`` for which the caller-supplied storage of ``UDSS_LLR_0271`` has no free
+   association shall be rejected as ``UDSS_LLR_0267`` defines.
+
+   Rationale: that storage is the caller's and is sized by the deployment, so it can be
+   exhausted by a caller addressing more peers than it provided for. Transmitting without
+   recording the association would leave the ``T_Data.conf`` unmatchable and so rejected
+   under ``UDSS_LLR_0275``, losing the classification every requirement that reads a
+   confirmation depends on; refusing the request instead tells the caller which of its two
+   errors it made.
+
+.. llr:: A confirmation matching no outstanding association is rejected
+   :id: UDSS_LLR_0275
+   :status: draft
+   :integrity_level: QM
+   :target_level: D
+   :origin: derived
+   :tags: service-interface; classification
+
+   A ``T_Data.conf`` matching no association outstanding under ``UDSS_LLR_0271`` shall be
+   rejected as ``UDSS_LLR_0267`` defines.
+
+   Rationale: no classification travels on a confirmation itself; it travels with the
+   association ``UDSS_LLR_0271`` holds. A confirmation that matches none is therefore a
+   confirmation of a transmission this set has no record of, and nothing in the set can
+   tell what it confirms. Rejecting it is the only handling that does not guess.
+
+.. llr:: No association is outstanding on initialisation
+   :id: UDSS_LLR_0276
+   :status: draft
+   :integrity_level: QM
+   :target_level: D
+   :origin: derived
+   :tags: service-interface; classification
+
+   On initialisation no association of ``UDSS_LLR_0271`` shall be outstanding.
+
+   Rationale: an instance that began with an association outstanding would reject the first
+   ``S_Data.req`` to that addressing under ``UDSS_LLR_0273``, or match the first
+   ``T_Data.conf`` to a transmission that was never made. Where the caller-supplied storage
+   of ``UDSS_LLR_0271`` comes from is not restated here: a server's arrives with the
+   instance under ``UDSS_LLR_0266``, and a client's is part of the channel's storage
+   ``UDSS_LLR_0206`` defines, supplied under ``UDSS_LLR_0201`` and withdrawn under
+   ``UDSS_LLR_0205``.
 
 .. llr:: Message classification values
    :id: UDSS_LLR_0251
@@ -1123,7 +1244,7 @@ and leaves the means of recognising it to the implementation.
    transition to a diagnostic session, a session selection. The kind shall be one of:
 
    * ``request``, a message sent by a client to a server. On ``S_Data.req``, and on the
-     ``T_Data.conf`` that ``UDSS_LLR_0133`` associates with it, a request classification
+     ``T_Data.conf`` that ``UDSS_LLR_0271`` associates with it, a request classification
      shall further state the number of responses expected: ``none``, an exact number of at
      least one, or ``unknown``, and may further state either ``keep-alive``, that the message
      is the TesterPresent the application transmits because ``tS3_Client`` expired, or
@@ -1296,7 +1417,7 @@ and leaves the means of recognising it to the implementation.
    A ``T_Data.ind`` reporting a successful reception, or a ``T_DataSOM.ind``, whose
    classification states no kind shall be rejected as ``UDSS_LLR_0267`` defines. A
    classification's kind
-   shall be absent only where ``UDSS_LLR_0133`` permits it: on a ``T_Data.ind`` reporting
+   shall be absent only where ``UDSS_LLR_0270`` permits it: on a ``T_Data.ind`` reporting
    an unsuccessful reception of a message that was not addressed to a server.
 
    Rationale: no requirement in this set conditions on the kind of a message whose
@@ -1348,14 +1469,15 @@ and leaves the means of recognising it to the implementation.
    :origin: derived
    :tags: service-interface; classification
 
-   A classification or addressing not of the form ``UDSS_LLR_0251``, ``UDSS_LLR_0133`` and
-   ``UDSS_LLR_0129`` state for the primitive and the role it arrives on, other than a
-   departure ``UDSS_LLR_0252``, ``UDSS_LLR_0255``, ``UDSS_LLR_0256`` or ``UDSS_LLR_0257``
-   names, shall be rejected as ``UDSS_LLR_0267`` defines. An interface in which such a form
-   cannot be expressed satisfies this without a check.
+   A classification or addressing not of the form ``UDSS_LLR_0251``, ``UDSS_LLR_0269``,
+   ``UDSS_LLR_0270`` and ``UDSS_LLR_0129`` state for the primitive and the role it arrives
+   on, other than a departure ``UDSS_LLR_0252``, ``UDSS_LLR_0255``, ``UDSS_LLR_0256`` or
+   ``UDSS_LLR_0257`` names, shall be rejected as ``UDSS_LLR_0267`` defines. An interface in
+   which such a form cannot be expressed satisfies this without a check.
 
-   Rationale: the sentences of ``UDSS_LLR_0251``, ``UDSS_LLR_0133`` and ``UDSS_LLR_0129``
-   that state a form are otherwise obligations on the caller with no stated outcome.
+   Rationale: the sentences of ``UDSS_LLR_0251``, ``UDSS_LLR_0269``, ``UDSS_LLR_0270`` and
+   ``UDSS_LLR_0129`` that state a form are otherwise obligations on the caller with no
+   stated outcome.
    ``UDSS_LLR_0252``, ``UDSS_LLR_0255``, ``UDSS_LLR_0256`` and ``UDSS_LLR_0257`` state the
    outcome for the particular departures they name, each for the reason given there, and
    are excluded here so that every departure from the stated form is named by exactly one
@@ -1378,7 +1500,7 @@ and leaves the means of recognising it to the implementation.
    that are identical except for the message data forwarded between the application and
    the transport layer.
 
-   Rationale: this is what makes ``UDSS_LLR_0133`` enforceable rather than aspirational.
+   Rationale: this is what makes ``UDSS_LLR_0269`` enforceable rather than aspirational.
    Without it a classification could be supplied and then quietly second-guessed by
    parsing, and the crate would acquire a dependency on the application layer encodings
    that no requirement records.

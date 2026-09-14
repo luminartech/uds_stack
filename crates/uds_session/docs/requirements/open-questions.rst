@@ -35,7 +35,7 @@ tables do not budget. Known members:
   ``UDSS_LLR_0232`` keeps in caller-supplied storage;
 - the server's request in progress and response-pending anchor of ``UDSS_LLR_0212``, one
   fact, two addresses and one timestamp in the instance;
-- the associations of ``UDSS_LLR_0133`` between a transmission and its confirmation, in
+- the associations of ``UDSS_LLR_0271`` between a transmission and its confirmation, in
   caller-supplied storage, which make 7.6's identification by address checkable;
 - the controlling client of ``UDSS_LLR_0221``, which Table 6's "client which requested the
   transition" needs and Table 8 budgets nothing for;
@@ -112,7 +112,7 @@ the transcription.
 What is unrecorded is the obligation the division places on the caller: that a transport which
 indicates the start of a message eventually reports either its completion or its failure, and
 that it reports a ``T_Data.conf`` for every ``T_Data.req``, without which an association of
-``UDSS_LLR_0133`` stays outstanding with no server exit, as that requirement records.
+``UDSS_LLR_0271`` stays outstanding with no server exit, as ``UDSS_LLR_0272`` records.
 That is an assumption of use and belongs in the qualification repository, alongside the
 assumption of one request outstanding per logical communication channel. Whether it is stated
 there, or whether the set instead writes a requirement the standard does not have, is open.

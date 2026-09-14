@@ -230,9 +230,9 @@ The repeat count
    counts; and because a rejection under ``UDSS_LLR_0267`` leaves state unchanged, so a
    rejected repeat is never counted. The requirements of the client documents that may
    reject an ``S_Data.req`` for a request are ``UDSS_LLR_0176``, ``UDSS_LLR_0180`` and
-   ``UDSS_LLR_0181``, and ``UDSS_LLR_0133``, ``UDSS_LLR_0252``, ``UDSS_LLR_0253``,
-   ``UDSS_LLR_0256``, ``UDSS_LLR_0258`` and ``UDSS_LLR_0203`` reject one on its
-   addressing, classification or channel;
+   ``UDSS_LLR_0181``, and ``UDSS_LLR_0273``, ``UDSS_LLR_0274``, ``UDSS_LLR_0252``,
+   ``UDSS_LLR_0253``, ``UDSS_LLR_0256``, ``UDSS_LLR_0258`` and ``UDSS_LLR_0203`` reject one
+   on its addressing, classification, channel or the exhaustion of association storage;
    ``UDSS_LLR_0180`` reads the count as it was before the input under ``UDSS_LLR_0187``, so
    the increase here never feeds the rejection there.
 
@@ -362,16 +362,16 @@ Giving a server up
 
    * end any request in progress on the channel and stop its ``tP_Client`` timer,
      delivering no indication for it;
-   * mark as **abandoned** the association ``UDSS_LLR_0133`` holds between an ``S_Data.req``
+   * mark as **abandoned** the association ``UDSS_LLR_0271`` holds between an ``S_Data.req``
      on the channel and a ``T_Data.conf`` not yet received for it;
    * where the channel is physical, close its open start-of-message, and where functional,
      release every entry of its responder table;
    * set the channel's repeat count to zero.
 
-   The abandoned association shall remain outstanding under ``UDSS_LLR_0133``, rejecting a
-   further ``S_Data.req`` to its addressing, until its ``T_Data.conf`` arrives or the
-   channel's storage is withdrawn under ``UDSS_LLR_0205``. A ``T_Data.conf`` arriving for an
-   abandoned association shall be confirmed to the
+   The abandoned association shall remain outstanding under ``UDSS_LLR_0271``,
+   ``UDSS_LLR_0273`` rejecting a further ``S_Data.req`` to its addressing, until its
+   ``T_Data.conf`` arrives or the channel's storage is withdrawn under ``UDSS_LLR_0205``. A
+   ``T_Data.conf`` arriving for an abandoned association shall be confirmed to the
    application under ``UDSS_LLR_0122``, shall start no response window under
    ``UDSS_LLR_0153``, and shall otherwise act as it would had the channel not been reset;
    in particular ``UDSS_LLR_0174`` and ``UDSS_LLR_0175`` start the channel's spacing timer
@@ -394,9 +394,10 @@ Giving a server up
    defines with no stopped state and which protects a server that knows nothing of the
    reset, so that 10.3's wait is still owed; the count ``UDSS_LLR_0156`` keeps, defined
    relative to the last confirmation and so reset by the next; the abandoned association,
-   which remains outstanding under ``UDSS_LLR_0133`` until its ``T_Data.conf`` arrives, so
-   that an ``S_Data.req`` on the channel is rejected meanwhile and, where the confirmation
-   never comes, withdrawing the channel's storage under ``UDSS_LLR_0205`` is the exit; and
+   which remains outstanding under ``UDSS_LLR_0271`` until its ``T_Data.conf`` arrives, so
+   that an ``S_Data.req`` on the channel is rejected under ``UDSS_LLR_0273`` meanwhile and,
+   where the confirmation never comes, withdrawing the channel's storage under
+   ``UDSS_LLR_0205`` is the exit; and
    the keep-alive state, which ``UDSS_LLR_0184`` covers as a separate act. In physical keep-alive a reset
    therefore leaves the channel's session fact and ``tS3_Client`` timer as they were; a
    timer ``UDSS_LLR_0169`` stopped for the request the reset ended is restarted by the next

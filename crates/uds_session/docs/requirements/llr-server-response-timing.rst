@@ -101,10 +101,11 @@ A caller's exit from a request in progress that never ends. The client has the c
 of its error handling document; the server has nothing, deliberately: the assumption of use
 that the caller supplies a completion report for every request it does not answer is what
 ends such a request, and a server whose application neither answers nor reports has broken
-that assumption, not exhausted the standard. An association of ``UDSS_LLR_0133`` whose
-``T_Data.conf`` never arrives likewise has no server exit; the assumption of use that the
-transport reports a ``T_Data.conf`` for every ``T_Data.req``, recorded on
-:doc:`open-questions` beside the start-of-message assumption, is what bounds it.
+that assumption, not exhausted the standard. An association of ``UDSS_LLR_0271`` whose
+``T_Data.conf`` never arrives likewise has no server exit, as ``UDSS_LLR_0272`` records;
+the assumption of use that the transport reports a ``T_Data.conf`` for every
+``T_Data.req``, recorded on :doc:`open-questions` beside the start-of-message assumption,
+is what bounds it.
 
 The response window
 -------------------
@@ -243,7 +244,7 @@ The response window
    new request's, setting its anchor under ``UDSS_LLR_0218`` and opening its enhanced
    window under ``UDSS_LLR_0147``; that is a declared limitation of matching by addressing,
    accepted because the alternative, a mark on every association outstanding at a
-   replacement, costs state and a rule in ``UDSS_LLR_0133`` for a case in which the client
+   replacement, costs state and a rule in ``UDSS_LLR_0271`` for a case in which the client
    has itself abandoned the earlier request. Two ordinary requests from one client are
    outside the assumption of use of one request at a time.
 
@@ -404,14 +405,14 @@ The response window
    :tags: server; p2_server; enhanced-response-timing; request-in-progress
 
    A response-pending message answering the request in progress is **unconfirmed** while
-   the association ``UDSS_LLR_0133`` holds for its ``S_Data.req`` has received no
+   the association ``UDSS_LLR_0271`` holds for its ``S_Data.req`` has received no
    ``T_Data.conf``.
 
    Rationale: ``UDSS_LLR_0149`` rejects a second response-pending message while the first
    is unconfirmed, there being no confirmation yet to measure the spacing from, and
    ``UDSS_LLR_0147`` and ``UDSS_LLR_0214`` reason about the same state; the term is defined
    once so the three cannot drift apart. It is defined against the association of
-   ``UDSS_LLR_0133`` because that association is the only record this set keeps of a
+   ``UDSS_LLR_0271`` because that association is the only record this set keeps of a
    transmission between its ``T_Data.req`` and its ``T_Data.conf``.
 
 .. llr:: The response timer starts on reception of a request
@@ -558,7 +559,7 @@ Enhanced response timing
    whose confirmations ``UDSS_LLR_0214`` tells apart by addressing; for a next request from
    the same client it does not hold, and the confirmation opens the enhanced window for the
    new request, the limitation ``UDSS_LLR_0214`` declares. The other way a request could end before the confirmation,
-   a final response passed to the transport first, cannot arise: ``UDSS_LLR_0133`` rejects an
+   a final response passed to the transport first, cannot arise: ``UDSS_LLR_0273`` rejects an
    ``S_Data.req`` to an addressing with a transmission outstanding, and the final response
    and the pending message of one request share their addressing. The preamble states that a
    confirmation for a request that has ended delays nothing; the guard is what makes that
@@ -666,7 +667,7 @@ Enhanced response timing
    transmission of" consecutive messages and says nothing of the interval between a
    ``T_Data.req`` and its ``T_Data.conf``. A second response-pending message admitted in that
    interval would go out with no spacing at all and there would be no confirmation to measure
-   from. ``UDSS_LLR_0133`` already rejects such an ``S_Data.req``, the two messages sharing
+   from. ``UDSS_LLR_0273`` already rejects such an ``S_Data.req``, the two messages sharing
    their addressing; the clause is restated here so that footnote b's purpose is met on the
    face of the spacing requirement, and under ``UDSS_LLR_0268`` the one report carries both
    causes. ``UDSS_LLR_0212`` defines the term, ``UDSS_LLR_0220`` the unconfirmed message and
