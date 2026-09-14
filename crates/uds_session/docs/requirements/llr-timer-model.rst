@@ -135,7 +135,7 @@ A requirement that leaves a running timer alone says so.
 
    Where one timestamp causes several expiries, the order of the indications they produce
    is not specified; every such indication precedes any output of the input the timestamp
-   accompanies and any rejection report for it under ``UDSS_LLR_0150``. Several expiries on one timestamp need no order for the state they leave. On the server ``UDSS_LLR_0112`` and
+   accompanies and any rejection report for it under ``UDSS_LLR_0267``. Several expiries on one timestamp need no order for the state they leave. On the server ``UDSS_LLR_0112`` and
    ``UDSS_LLR_0148`` touch disjoint timers and neither reads the other's. On the client the
    only expiry action that touches another timer is ``UDSS_LLR_0170``'s, a ``tP_Client``
    expiry starting ``tS3_Client``, and a channel whose ``tP_Client`` is running has its

@@ -47,7 +47,7 @@ until the timer has timed out. This layer postpones by rejecting the ``S_Data.re
 (``UDSS_LLR_0176``) and reporting how long the timer has left (``UDSS_LLR_0177``). It can do
 nothing else: ``UDSS_LLR_0117`` forbids retaining the payload, so the request cannot be queued,
 and ``UDSS_LLR_0113`` forbids acting on its own, so it cannot be transmitted later.
-``UDSS_LLR_0150`` makes the rejection recoverable, a caller that retries after the reported
+``UDSS_LLR_0267`` makes the rejection recoverable, a caller that retries after the reported
 time obtaining what a well-timed call would have. Transmitting after that time is the
 application's, on the model ``UDSS_LLR_0165`` states for the keep-alive; it is recorded as an
 assumption of use in the qualification repository that the application transmits, after the
@@ -302,7 +302,7 @@ The next request
    :tags: client; p3_client; service-interface
 
    On an ``S_Data.req`` for a request on a channel whose spacing timer is active, the
-   client shall reject the ``S_Data.req`` as ``UDSS_LLR_0150`` defines.
+   client shall reject the ``S_Data.req`` as ``UDSS_LLR_0267`` defines.
 
    Clause 10.3 a) and b) allow the next request on a channel only where the spacing timer is
    no longer active, and otherwise require the transmission to be postponed until the timer
@@ -310,10 +310,10 @@ The next request
    every expected response has arrived, key k postpones the keep-alive, and Figure 20 key f
    releases the next physical request when ``tP3_Client_Phys`` times out. Rejection is the
    postponement for the reason the preamble gives: the session layer can neither queue the
-   request nor transmit it later, and ``UDSS_LLR_0150`` makes a rejection recoverable. The
+   request nor transmit it later, and ``UDSS_LLR_0267`` makes a rejection recoverable. The
    channel is the one the request's own addressing names. A rejected ``S_Data.req``
    produces no ``T_Data.req``, so ``UDSS_LLR_0169`` does not act and ``tS3_Client`` is not
-   stopped by a request that never went out, ``UDSS_LLR_0150`` leaving state unchanged.
+   stopped by a request that never went out, ``UDSS_LLR_0267`` leaving state unchanged.
 
    Clause 10.3 conditions the postponement on the new request following a previous one
    that was completely handled, and that condition is not stated here. After a start under
@@ -355,10 +355,12 @@ The next request
    results. Without the value the application would have to run a copy of the timer from
    the confirmation it received, duplicating state Table 7 already allots to this layer,
    and the keep-alive case of Figure 19 key k needs the application to know when to retry.
-   ``UDSS_LLR_0150`` requires a rejection to be reported to the caller and says nothing about
-   what the report carries; this requirement constrains that content, and adds no output
-   under ``UDSS_LLR_0116``. Because ``UDSS_LLR_0176`` rejects only while the timer is active,
-   the value is always positive, and a caller that retries after it finds the timer
-   inactive, ``UDSS_LLR_0192`` supplying the same elapsed time to both. An indication when
-   the timer becomes inactive was considered and rejected: it would cost an output on every
-   channel at every expiry, or a per-channel fact to send it only after a rejection.
+   ``UDSS_LLR_0267`` requires a rejection to be reported to the caller; ``UDSS_LLR_0268``
+   requires the report to state a cause and to carry whatever content the rejecting
+   requirement itself states, and this requirement is that content for the spacing timer,
+   adding no output under ``UDSS_LLR_0116``. Because ``UDSS_LLR_0176`` rejects only while
+   the timer is active, the value is always positive, and a caller that retries after it
+   finds the timer inactive, ``UDSS_LLR_0192`` supplying the same elapsed time to both. An
+   indication when the timer becomes inactive was considered and rejected: it would cost
+   an output on every channel at every expiry, or a per-channel fact to send it only after
+   a rejection.

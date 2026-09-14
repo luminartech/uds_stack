@@ -30,7 +30,7 @@ repeat of a failed transmission, and only there, is :doc:`llr-client-request-spa
 ``UDSS_LLR_0176`` rejecting until it is inactive; this document cites it and does not
 restate it. The cap of two repeats is ``UDSS_LLR_0180``'s. Finishing the responses still
 arriving on a functional channel is ``UDSS_LLR_0181``'s. Each is a rejection under
-``UDSS_LLR_0150``, the only means a layer with no I/O has of postponing or forbidding a
+``UDSS_LLR_0267``, the only means a layer with no I/O has of postponing or forbidding a
 transmission, and ``UDSS_LLR_0182`` makes the report say which constraint blocked the request.
 
 The repeat and its marker
@@ -227,7 +227,7 @@ The repeat count
    count and each repeat advances it. The count is taken at the ``S_Data.req``
    rather than at the ``T_Data.conf`` because ``UDSS_LLR_0118`` produces the ``T_Data.req``
    from it in the same step, so a request that nothing rejects is the transmission Table 9
-   counts; and because a rejection under ``UDSS_LLR_0150`` leaves state unchanged, so a
+   counts; and because a rejection under ``UDSS_LLR_0267`` leaves state unchanged, so a
    rejected repeat is never counted. The requirements of the client documents that may
    reject an ``S_Data.req`` for a request are ``UDSS_LLR_0176``, ``UDSS_LLR_0180`` and
    ``UDSS_LLR_0181``, and ``UDSS_LLR_0133``, ``UDSS_LLR_0134``, ``UDSS_LLR_0203`` and
@@ -254,7 +254,7 @@ The repeat count
 
    On an ``S_Data.req`` for a request whose classification states ``repeat``, on a channel
    whose repeat count is two, the client shall reject the ``S_Data.req`` as
-   ``UDSS_LLR_0150`` defines.
+   ``UDSS_LLR_0267`` defines.
 
    Table 9's last row has the client's error handling performed at most two times, so that
    the worst case is three transmissions of the request. The ``repeat`` marker is carried by
@@ -278,7 +278,7 @@ Responses still arriving
 
    On an ``S_Data.req`` for a request on a functional channel while any entry in that
    channel's responder table records an open start-of-message, the client shall reject the
-   ``S_Data.req`` as ``UDSS_LLR_0150`` defines.
+   ``S_Data.req`` as ``UDSS_LLR_0267`` defines.
 
    Table 9's two functional timeout cells and its functional reception cell each oblige the
    client to completely receive the response messages in progress before it continues.
@@ -330,18 +330,20 @@ Responses still arriving
    :tags: client; error-handling; service-interface
 
    Where the client rejects an ``S_Data.req`` under ``UDSS_LLR_0180`` or ``UDSS_LLR_0181``,
-   the report ``UDSS_LLR_0150`` requires shall state which of those two conditions held,
+   the report ``UDSS_LLR_0267`` requires shall state which of those two conditions held,
    and shall state both where both held.
 
-   Rationale: ``UDSS_LLR_0150`` requires a rejection to be reported and says nothing of
-   what the report carries; ``UDSS_LLR_0177`` is the first constraint on it, for the
-   spacing timer. The two causes here call for opposite actions from the application,
-   waiting for the next completion under ``UDSS_LLR_0181`` and ceasing to repeat under
-   ``UDSS_LLR_0180``, and a report that did not distinguish them would leave the
-   application unable to follow Table 9. Both are stated where both hold because the
-   application must act on both. Where ``UDSS_LLR_0176`` also holds, ``UDSS_LLR_0150`` has
-   the one report carry the time remaining ``UDSS_LLR_0177`` requires as well. This
-   constrains the report's content and adds no output under ``UDSS_LLR_0116``.
+   Rationale: ``UDSS_LLR_0267`` requires a rejection to be reported; ``UDSS_LLR_0268``
+   requires the report to state a cause and to carry whatever content the rejecting
+   requirement itself states, and ``UDSS_LLR_0177`` is the first requirement to state such
+   content, for the spacing timer. The two causes here call for opposite actions
+   from the application, waiting for the next completion under ``UDSS_LLR_0181`` and
+   ceasing to repeat under ``UDSS_LLR_0180``, and a report that did not distinguish them
+   would leave the application unable to follow Table 9. Both are stated where both hold
+   because the application must act on both. Where ``UDSS_LLR_0176`` also holds,
+   ``UDSS_LLR_0268`` has the one report carry the time remaining ``UDSS_LLR_0177``
+   requires as well. This constrains the report's content and adds no output under
+   ``UDSS_LLR_0116``.
 
 Giving a server up
 ------------------
@@ -375,7 +377,7 @@ Giving a server up
    on it, and ``UDSS_LLR_0164``, ``UDSS_LLR_0166``, ``UDSS_LLR_0167``, ``UDSS_LLR_0168``,
    ``UDSS_LLR_0170`` and ``UDSS_LLR_0172`` act on it. The reset shall produce no output to
    the application and none to the transport layer. A reset identifying a channel the
-   client does not have shall be rejected as ``UDSS_LLR_0150`` defines.
+   client does not have shall be rejected as ``UDSS_LLR_0267`` defines.
 
    Rationale: ISO 14229-2:2021 9.7 Table 9 ends at the third transmission and the standard
    says nothing of what the client concludes, while the state this set keeps per channel
@@ -445,7 +447,7 @@ Giving a server up
 
    In every other case the release shall change nothing. The release shall produce no
    output to the application and none to the transport layer. A release identifying a
-   channel the client does not have shall be rejected as ``UDSS_LLR_0150`` defines.
+   channel the client does not have shall be rejected as ``UDSS_LLR_0267`` defines.
 
    Rationale: the standard names no end for the client's keep-alive other than the return
    to the default session that ``UDSS_LLR_0167`` and ``UDSS_LLR_0172`` transcribe, and a

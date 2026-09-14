@@ -47,7 +47,7 @@ Each produces no output of its own, so ``UDSS_LLR_0116`` is not engaged by them;
 ``UDSS_LLR_0115`` enumerates them among its inputs and has each carry a timestamp, so that
 ``UDSS_LLR_0187`` orders the expiries before the act. One output is likewise addressed to the
 caller rather than retrieved on the application's behalf: the rejection report of
-``UDSS_LLR_0150``, which is neither an ``S_Data.conf`` under ``UDSS_LLR_0132`` nor an
+``UDSS_LLR_0267``, which is neither an ``S_Data.conf`` under ``UDSS_LLR_0132`` nor an
 output in ``UDSS_LLR_0116``'s sense.
 
 One assumption of use falls on the order in which the caller supplies inputs, and is
@@ -163,8 +163,8 @@ queue before the other is what the assumption forbids.
    buffer and borrow the caller's data for the duration of one input, rather than by a
    runtime test.
 
-.. llr:: A rejected input is reported to the caller and changes nothing
-   :id: UDSS_LLR_0150
+.. llr:: A rejected input produces no output and changes nothing
+   :id: UDSS_LLR_0267
    :status: draft
    :integrity_level: QM
    :target_level: D
@@ -175,29 +175,36 @@ queue before the other is what the assumption forbids.
    by the caller, the session layer shall report the rejection to the caller, shall produce
    no output to the application and no output to the transport layer, and shall leave its
    state as the expiries of the accompanying timestamp left it under ``UDSS_LLR_0187`` and
-   otherwise unchanged. The report shall state the cause of the rejection and, where the
-   rejecting requirement states content for the report, that content; where several
-   requirements reject the same input, the one report shall state every cause and carry the
-   content each of them requires.
+   otherwise unchanged.
 
-   Rationale: ``UDSS_LLR_0133``, ``UDSS_LLR_0134``, ``UDSS_LLR_0140``, ``UDSS_LLR_0149``,
-   ``UDSS_LLR_0152``, ``UDSS_LLR_0176``, ``UDSS_LLR_0180``, ``UDSS_LLR_0202``,
-   ``UDSS_LLR_0203``, ``UDSS_LLR_0204``,
-   ``UDSS_LLR_0181``, ``UDSS_LLR_0183``, ``UDSS_LLR_0184`` and ``UDSS_LLR_0188`` each refuse
-   an input rather
-   than react to it, and without this requirement none would say what refusal means. A
-   rejection cannot be reported as an ``S_Data.conf``: ``UDSS_LLR_0132`` reserves every
-   ``S_Result`` value other than ``S_OK`` for an error detected by a lower layer, and no
-   lower layer is involved, no message having been transmitted. Nor is it an output in the
-   sense of ``UDSS_LLR_0116``, which concerns primitives the caller retrieves on the
-   application's behalf; a rejection is addressed to the caller that made the erroneous
-   call. The report carries content because ``UDSS_LLR_0177`` has it state the time
-   remaining before a postponed request may be sent and ``UDSS_LLR_0182`` the cause or
-   causes of a refused repeat.
+   Rationale: requirements throughout this set refuse an input rather than react to it, and
+   without this requirement none would say what refusal means. A rejection cannot be
+   reported as an ``S_Data.conf``: ``UDSS_LLR_0132`` reserves every ``S_Result`` value
+   other than ``S_OK`` for an error detected by a lower layer, and no lower layer is
+   involved, no message having been transmitted. Nor is it an output in the sense of
+   ``UDSS_LLR_0116``, which concerns primitives the caller retrieves on the application's
+   behalf; a rejection is addressed to the caller that made the erroneous call.
 
    Leaving the state unchanged is what makes the rejection recoverable: a caller that
    retries once the cause has cleared obtains the result it would have obtained had the
    erroneous call never been made.
+
+.. llr:: What a rejection report carries
+   :id: UDSS_LLR_0268
+   :status: draft
+   :integrity_level: QM
+   :target_level: D
+   :origin: derived
+   :tags: service-interface
+
+   A rejection report shall state the cause of the rejection and, where the rejecting
+   requirement states content for the report, that content; where several requirements
+   reject the same input, the one report shall state every cause and carry the content
+   each of them requires.
+
+   Rationale: the report carries content because ``UDSS_LLR_0177`` has it state the time
+   remaining before a postponed request may be sent and ``UDSS_LLR_0182`` the cause or
+   causes of a refused repeat.
 
 Timebase
 --------
@@ -319,7 +326,7 @@ Service primitives
    At a client, every ``T_DataSOM.ind`` and ``T_Data.ind`` shall identify the logical
    communication channel it belongs to, supplied by the caller; ``UDSS_LLR_0201`` defines
    the channel. Identifying a channel the client does not have shall be rejected as
-   ``UDSS_LLR_0150`` defines. The session layer shall not verify the identified channel
+   ``UDSS_LLR_0267`` defines. The session layer shall not verify the identified channel
    against the indication's addressing.
 
    ``T_Data.req`` shall carry every parameter of the ``S_Data.req`` it is produced from,
@@ -350,7 +357,7 @@ Service primitives
    the physical channel to that server or to a functional channel it was reached through,
    and nothing in the indication says which. The caller that issued the request knows.
    Naming a channel that does not exist is a caller error, not an input, and is treated as
-   ``UDSS_LLR_0150`` treats one. The channel named is trusted rather than checked against
+   ``UDSS_LLR_0267`` treats one. The channel named is trusted rather than checked against
    the indication's addressing: on a functional channel the response's addressing does not
    name the channel, and a check on a physical channel alone would catch a misrouting only
    by coincidence; ``UDSS_LLR_0206`` records the residual.
@@ -372,13 +379,13 @@ Service primitives
    :tags: service-interface; role
 
    An instance of the session layer shall be created as a client or as a server, and its
-   role shall not change thereafter. A server shall reject, as ``UDSS_LLR_0150`` defines, an
+   role shall not change thereafter. A server shall reject, as ``UDSS_LLR_0267`` defines, an
    ``S_Data.req`` whose classification states kind ``request``. A client shall reject, as
-   ``UDSS_LLR_0150`` defines, an ``S_Data.req`` whose classification states kind ``final
+   ``UDSS_LLR_0267`` defines, an ``S_Data.req`` whose classification states kind ``final
    response`` or ``response pending``, and the completion report of ``UDSS_LLR_0136``. A
    server shall likewise reject a ``T_Data.ind`` or ``T_DataSOM.ind`` whose classification
    states kind ``final response`` or ``response pending``, and a client one whose
-   classification states kind ``request``. A server shall reject, as ``UDSS_LLR_0150``
+   classification states kind ``request``. A server shall reject, as ``UDSS_LLR_0267``
    defines, a ``T_DataSOM.ind`` or ``T_Data.ind`` identifying a logical communication
    channel, the supply or withdrawal of channel storage under ``UDSS_LLR_0201``, and the
    channel reset and keep-alive release of ``UDSS_LLR_0183`` and ``UDSS_LLR_0184``.
@@ -473,7 +480,7 @@ Service primitives
    under ``UDSS_LLR_0140`` for identifying a channel the client does not have, under
    ``UDSS_LLR_0188`` for a classification kind of the other role, or under ``UDSS_LLR_0134``
    for a classification not of the stated form, is not withheld but refused:
-   ``UDSS_LLR_0150`` governs it and this requirement does not reach it.
+   ``UDSS_LLR_0267`` governs it and this requirement does not reach it.
 
 .. llr:: S_Data.conf confirms a preceding S_Data.req
    :id: UDSS_LLR_0120
@@ -830,7 +837,7 @@ is safer and no larger. The value sets are transcribed exactly.
    ``S_Length`` shall be a 32-bit unsigned value in the range ``0x00000000`` to
    ``0xFFFFFFFF``, and shall carry the number of bytes of ``S_Data`` to be transmitted or
    received. On ``S_Data.req``, an ``S_Length`` differing from the number of bytes of
-   ``S_Data`` supplied shall be rejected as ``UDSS_LLR_0150`` defines; an interface that
+   ``S_Data`` supplied shall be rejected as ``UDSS_LLR_0267`` defines; an interface that
    carries the two as one value satisfies this without a check.
 
    The rejection is the set's own, not clause 8.8's, which defines the parameter and says
@@ -910,7 +917,7 @@ and leaves the means of recognising it to the implementation.
    association shall be outstanding for any one such addressing. An ``S_Data.req`` whose
    addressing equals that of an outstanding association, or for which the storage has no
    free association, and a ``T_Data.conf`` matching no outstanding association, shall each
-   be rejected as ``UDSS_LLR_0150`` defines. On initialisation no association shall be
+   be rejected as ``UDSS_LLR_0267`` defines. On initialisation no association shall be
    outstanding. A server's association storage shall be supplied when the instance is
    created; a client's is part of the channel's storage ``UDSS_LLR_0206`` defines.
 
@@ -980,7 +987,7 @@ and leaves the means of recognising it to the implementation.
      requires; a repeated keep-alive TesterPresent states ``keep-alive`` again. A request
      classification shall not state both ``keep-alive`` and ``repeat``. On ``S_Data.req``, a
      request classification stating an exact number of zero shall be rejected as
-     ``UDSS_LLR_0150`` defines; on ``S_Data.req`` and on the completion report of
+     ``UDSS_LLR_0267`` defines; on ``S_Data.req`` and on the completion report of
      ``UDSS_LLR_0136``, one stating ``keep-alive`` together with a session selection shall
      be rejected the same way; ``UDSS_LLR_0137`` forwards an indication so classified. At a
      server, on ``T_DataSOM.ind`` and
@@ -1070,7 +1077,7 @@ and leaves the means of recognising it to the implementation.
    ``final response`` stating neither ``solicited`` nor ``unsolicited``; and any other
    classification or addressing not of the form this requirement, ``UDSS_LLR_0133`` and
    ``UDSS_LLR_0129`` state for the primitive and the role it arrives on, shall be rejected
-   as ``UDSS_LLR_0150`` defines. An interface in which such a form cannot be expressed
+   as ``UDSS_LLR_0267`` defines. An interface in which such a form cannot be expressed
    satisfies this without a check. The sentences above that state a form are otherwise
    obligations on the caller with no stated outcome, and an absent count would let
    ``UDSS_LLR_0153`` open a window that ``UDSS_LLR_0156`` could never close.

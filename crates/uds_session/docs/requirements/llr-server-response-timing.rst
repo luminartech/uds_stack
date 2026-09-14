@@ -621,7 +621,7 @@ Enhanced response timing
    :tags: server; p2_server; enhanced-response-timing; service-interface
 
    While a request is in progress under ``UDSS_LLR_0212``, the session layer shall reject,
-   as ``UDSS_LLR_0150`` in :doc:`llr-service-interface` defines, an ``S_Data.req`` for a
+   as ``UDSS_LLR_0267`` in :doc:`llr-service-interface` defines, an ``S_Data.req`` for a
    response-pending message answering that request where a response-pending message
    answering it is unconfirmed, or where the response-pending anchor holds a timestamp and
    the elapsed time since it is less than the minimum spacing. The minimum spacing shall be
@@ -667,7 +667,7 @@ Enhanced response timing
    interval would go out with no spacing at all and there would be no confirmation to measure
    from. ``UDSS_LLR_0133`` already rejects such an ``S_Data.req``, the two messages sharing
    their addressing; the clause is restated here so that footnote b's purpose is met on the
-   face of the spacing requirement, and under ``UDSS_LLR_0150`` the one report carries both
+   face of the spacing requirement, and under ``UDSS_LLR_0268`` the one report carries both
    causes. ``UDSS_LLR_0212`` defines the term, ``UDSS_LLR_0220`` the unconfirmed message and
    ``UDSS_LLR_0214`` what answers the request in progress; a response-pending message to any
    other addressing is spaced by nothing here, because footnote b spaces the messages of one

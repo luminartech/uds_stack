@@ -238,7 +238,7 @@ The response window
    :tags: client; p_client; service-interface
 
    Supplying storage whose addressing equals that of an existing channel shall be rejected
-   as ``UDSS_LLR_0150`` defines.
+   as ``UDSS_LLR_0267`` defines.
 
    Rationale: two channels one ``S_Data.req`` names would leave which timer starts and
    which channel a later indication reports undetermined.
@@ -252,7 +252,7 @@ The response window
    :tags: client; p_client; service-interface
 
    An ``S_Data.req`` whose addressing names no existing channel shall be rejected as
-   ``UDSS_LLR_0150`` defines.
+   ``UDSS_LLR_0267`` defines.
 
    Rationale: naming a channel that does not exist is a caller error, not an input, and is
    treated as ``UDSS_LLR_0140`` treats the same error on an indication.
@@ -266,7 +266,7 @@ The response window
    :tags: client; p_client; service-interface
 
    A withdrawal identifying a channel the client does not have shall be rejected as
-   ``UDSS_LLR_0150`` defines.
+   ``UDSS_LLR_0267`` defines.
 
    Rationale: naming a channel that does not exist is a caller error, not an input, for the
    reason ``UDSS_LLR_0203`` gives.
@@ -437,7 +437,7 @@ The response window
    Each channel shall have a **default reload parameter** and an **enhanced reload
    parameter**, supplied as protocol parameters under ``UDSS_LLR_0138``. A setting of a
    per-channel parameter shall identify its channel, and one identifying a channel the client
-   does not have shall be rejected as ``UDSS_LLR_0150`` defines; this holds for a physical
+   does not have shall be rejected as ``UDSS_LLR_0267`` defines; this holds for a physical
    channel's ``tS3_Client`` reload parameter under ``UDSS_LLR_0229`` and the spacing
    parameter of ``UDSS_LLR_0240`` alike.
 
@@ -860,7 +860,7 @@ Responders on a functional channel
    it.
 
    Rationale: an inbound indication from a responder the client has is not a caller error
-   ``UDSS_LLR_0150`` can refuse, as ``UDSS_LLR_0140`` and ``UDSS_LLR_0188`` refuse a
+   ``UDSS_LLR_0267`` can refuse, as ``UDSS_LLR_0140`` and ``UDSS_LLR_0188`` refuse a
    misrouted or misclassified one, so the set has to say what the timer does with it. The
    capacity indication precedes the ``S_Data.ind`` so that the application reads the
    message knowing the responder is untracked; it is the set's one input that yields two
