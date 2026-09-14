@@ -8,11 +8,15 @@ decided, why, and — most usefully — what was left open.
 > under `docs/architecture/`, which is where the current structure and the open
 > questions live. This document is kept for the reasoning it records and for the
 > decisions it shows being made; where the two disagree, the architecture set is
-> current. Two substantive gaps, beyond the settled open questions: the negative
-> response code table in §3.2 is incomplete — Figures 5 and 6 add 0x21, 0x24,
-> 0x34, 0x38 and 0x39, one of them on the mandatory path — and this document
-> describes only the *server* role. The crate is also a client application's
-> typed request surface, which nothing here covers.
+> current. Three substantive gaps, beyond the settled open questions: the
+> negative response code table in §3.2 is incomplete — Figures 5 and 6 add 0x21,
+> 0x24, 0x34, 0x38 and 0x39, one of them on the mandatory path; this document
+> describes only the *server* role, where the crate is also a client
+> application's typed request surface; and **§6 assigns the decision to send NRC
+> 0x78 to `uds_session`, which is wrong.** That assignment propagated into four
+> statements in the architecture set before it was caught — see
+> `UDSSVC_ARCH_0032` and the "Response-pending" section of
+> `architecture/not-owned.rst`.
 >
 > **Status.** Pre-implementation. This crate flows through the same process as
 > the rest of the stack: a prototype to retire technical risk, then requirements
@@ -59,8 +63,9 @@ attach.
 
 - **Not a codec.** Message encode/decode is `uds_protocol`. This crate
   dispatches over those types and never re-derives the wire format.
-- **Not a session layer.** Timers, `tS3`, and response-pending belong to
-  `uds_session`. See [§6](#6-what-this-crate-does-not-own).
+- **Not a session layer.** Timers and `tS3` belong to `uds_session`. Deciding
+  to send a response-pending does not — see the correction in
+  [§6](#6-what-this-crate-does-not-own).
 - **Not transport-aware.** See [§4](#4-transport-integration). A
   `ReadDataByIdentifier` handler that knows how to fetch an identifier has
   nothing to say about IP, and folding a transport in would make the ergonomic
@@ -258,17 +263,28 @@ easiest thing to erode.
 | ------------------------------------- | -------------------------------- | ------------------------------------------------------------------------------------------- |
 | Message encode/decode                 | `uds_protocol`                   | It is a codec; this is policy over it                                                       |
 | `tP_Client`, `tS3`, session state     | `uds_session`                    | ISO 14229-2                                                                                 |
-| **Deciding to send NRC `0x78`**       | `uds_session`                    | See below                                                                                   |
+| ~~**Deciding to send NRC `0x78`**~~   | ~~`uds_session`~~                | **Wrong — see the note at the top. `UDSSVC_ARCH_0032` places it in this crate.**            |
 | `tP2_Server` / `tP2*_Server`          | `uds_session`                    | ISO 14229-2 timers                                                                          |
 | `tP4_Server`                          | *this crate*, but not as a timer | ISO 14229-2 types it a **performance requirement** on the application, not something to run |
 | The byte seam                         | the binding                      | Transport-shaped ([§4](#4-transport-integration))                                           |
 | A_PDU framing, TCP handling, `0x8004` | `uds_on_ip`                      | ISO 14229-5                                                                                 |
 
-**Response-pending is the subtle one.** Emitting `0x78` before `tP2_Server`
-expires cannot be this crate's job: a handler that is still working is by
-definition not returning, so it cannot also be watching a clock — and the clock
-is an ISO 14229-2 timer. So `uds_session` owns the timer and decides, the
-binding transmits, and this crate is simply still running.
+**Response-pending is the subtle one** — and this document got it wrong. The
+argument below was sound *for a synchronous handler*: one that is still working
+is not returning, so it cannot also be watching a clock. The architecture set
+later made the handler seam asynchronous (`UDSSVC_ARCH_0016`), which removed the
+premise, but the conclusion survived. `uds_session` was never willing to take
+the job either — its `UDSS_LLR_0148` reports the `tP2_Server` overrun and states
+it "must not be read as obliging the session layer to produce a response".
+`UDSSVC_ARCH_0032` now places the decision and the bytes here, on ISO 14229-2
+REQ 5.4 and REQ 5.6, which make admissibility turn on whether the server
+supports the service. Retained as written:
+
+> Emitting `0x78` before `tP2_Server`
+> expires cannot be this crate's job: a handler that is still working is by
+> definition not returning, so it cannot also be watching a clock — and the clock
+> is an ISO 14229-2 timer. So `uds_session` owns the timer and decides, the
+> binding transmits, and this crate is simply still running.
 
 Two consequences that constrain the *binding's* server driver, not this crate:
 dispatch must not block the loop draining session actions, and because

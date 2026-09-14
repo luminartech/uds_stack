@@ -67,7 +67,9 @@ was updated, rather than a mismatch found on a bench.
 ## What this is not
 
 Not a codec — messages are [`uds_protocol`](https://github.com/luminartech/uds_protocol).
-Not a session layer — timers and response-pending are `uds_session`. Not a
+Not a session layer — session timing is `uds_session`, though deciding to send
+a response-pending is this crate's (ISO 14229-2 makes it turn on whether the
+server supports the service). Not a
 connection manager: the diagnostic conversation is portable across transports,
 connection setup is not, and no API here pretends otherwise. Not
 transport-aware: a handler that knows how to fetch a data identifier has nothing

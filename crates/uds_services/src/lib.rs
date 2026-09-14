@@ -30,11 +30,15 @@
 //! # Scope
 //!
 //! Clause 8.7 is what is implemented; being the stack's integration surface is
-//! what the crate is. Message encode/decode is `uds_protocol`;
-//! timers and response-pending are `uds_session`; framing and transport are
-//! the binding's. A handler that knows how to fetch a data identifier has
-//! nothing to say about IP, so the transport binding is an optional feature
-//! and the same typed server works over `DoIP` or CAN.
+//! what the crate is. Message encode/decode is `uds_protocol`; session timing
+//! is `uds_session`; framing and transport are the binding's. Deciding to
+//! answer `requestCorrectlyReceivedResponsePending` (0x78) is this crate's,
+//! because ISO 14229-2 makes that decision turn on whether the server supports
+//! the service; *when* one is due remains the session layer's.
+//!
+//! A handler that knows how to fetch a data identifier has nothing to say
+//! about IP, so the transport binding is an optional feature and the same
+//! typed server works over `DoIP` or CAN.
 //!
 //! # Design constraints
 //!
