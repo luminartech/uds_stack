@@ -30,10 +30,10 @@ the qualification repository, where it is assessed from a safety perspective.
 
 Clause 8.7.6 excepts two cases. The first is the functionally addressed keep-alive
 TesterPresent, which the caller marks ``keep-alive`` under ``UDSS_LLR_0251``. A marked
-request is never the request in progress: ``UDSS_LLR_0186`` in
-:doc:`llr-server-session-timer` handles it at its indication, its completion report is
-inert, ``UDSS_LLR_0144`` and ``UDSS_LLR_0146`` exclude it, and under ``UDSS_LLR_0215`` a
-marked request never begins one, so the term keeps the uniqueness
+request is never the request in progress: ``UDSS_LLR_0286`` in
+:doc:`llr-server-session-timer` handles it at its indication, ``UDSS_LLR_0287`` leaves its
+completion report inert, ``UDSS_LLR_0144`` and ``UDSS_LLR_0146`` exclude it, and under
+``UDSS_LLR_0215`` a marked request never begins one, so the term keeps the uniqueness
 ``UDSS_LLR_0284`` and ``UDSS_LLR_0285`` rely on. The second is a request in the OBD
 service range that, for a server supporting that range and not in the programming
 session, aborts the active service and starts the default session. That is an
@@ -165,10 +165,10 @@ The response window
    therefore enumerates the conditions the standard gives rather than the primitives it
    names, a trigger with no condition attached being untestable.
 
-   ``UDSS_LLR_0186`` in :doc:`llr-server-session-timer` handles the request marked
-   ``keep-alive`` and is silent on ``tP2_Server``; that message's exclusion from this timer
-   is ``UDSS_LLR_0144``'s and ``UDSS_LLR_0146``'s alone, so the five changers above remain
-   the whole list.
+   ``UDSS_LLR_0286`` and ``UDSS_LLR_0287`` in :doc:`llr-server-session-timer` handle the
+   request marked ``keep-alive`` and are silent on ``tP2_Server``; that message's exclusion
+   from this timer is ``UDSS_LLR_0144``'s and ``UDSS_LLR_0146``'s alone, so the five
+   changers above remain the whole list.
 
 .. llr:: The server keeps a request in progress and a response-pending anchor
    :id: UDSS_LLR_0212
@@ -394,8 +394,8 @@ The response window
    the request in progress and ``UDSS_LLR_0217``'s "answering it" can never match one
    either; the uniqueness of the term that ``UDSS_LLR_0284`` and ``UDSS_LLR_0285`` rely on
    follows from the two without being restated. ISO 14229-1:2020 8.7.6 puts the marked
-   message outside the one-request-at-a-time model and ``UDSS_LLR_0186`` handles it at its
-   indication, as the preamble states.
+   message outside the one-request-at-a-time model and ``UDSS_LLR_0286`` and
+   ``UDSS_LLR_0287`` together handle it at its indication, as the preamble states.
 
 .. llr:: An unconfirmed response-pending message
    :id: UDSS_LLR_0220
@@ -439,7 +439,7 @@ The response window
 
    The marker is the filter for the first of ISO 14229-1:2020 8.7.6's two exceptions, the
    only conformant request that arrives while a response window is open and leaves the
-   request in progress running; ``UDSS_LLR_0186`` in :doc:`llr-server-session-timer`
+   request in progress running; ``UDSS_LLR_0286`` in :doc:`llr-server-session-timer`
    states the marked message's effect. The second exception, the OBD-range request, ends
    the request in progress on its own reception under ``UDSS_LLR_0216``, so the window this
    requirement opens is the new request's. Any other request arriving while a request is in
@@ -519,7 +519,7 @@ The response window
 
    The marker is the filter that ``UDSS_LLR_0142``'s scope to the controlling client is
    not: a marked keep-alive's report, which a caller may supply, is inert under
-   ``UDSS_LLR_0186`` and would otherwise end the window of the request actually in
+   ``UDSS_LLR_0287`` and would otherwise end the window of the request actually in
    progress. Any other completion while a request is in progress is outside the preamble's
    assumption of use. A completion report for a request that 8.7.6's second exception
    aborted answers no request in progress where the OBD request came from another client,
@@ -574,7 +574,7 @@ Enhanced response timing
    that did not reach the data link gave the client nothing to wait ``tP2*_Server`` from.
    ``UDSS_LLR_0145`` has already stopped the timer at the ``T_Data.req``, so after such a
    failure the request stays in progress with no window running and ``UDSS_LLR_0148``
-   reports nothing for it; ``UDSS_LLR_0110`` has the transmission not retried, and the
+   reports nothing for it; ``UDSS_LLR_0289`` has the transmission not retried, and the
    application owes the next ``T_Data.req`` with no session layer bound on it.
 
 .. llr:: Response timer expiry is indicated to the application

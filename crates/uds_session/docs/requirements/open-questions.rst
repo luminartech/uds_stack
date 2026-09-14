@@ -79,7 +79,7 @@ names a ``tS3_Client_Func`` that the standard defines nowhere, read in ``UDSS_LL
 needing no response, followed in ``UDSS_LLR_0153``; 9.1.2 stops ``tP_Client`` on every
 indication where the functional figures restart it, followed in ``UDSS_LLR_0155``; Figure 12
 key p says a TesterPresent in the default session "is ignored" where Figure 20 key j says it
-"can be ignored", recorded in ``UDSS_LLR_0186``; and Table 6's transmission-error and
+"can be ignored", recorded in ``UDSS_LLR_0286``; and Table 6's transmission-error and
 reception-error restarts are unrestricted where Table 9 confines them to the TesterPresent,
 followed in ``UDSS_LLR_0170``. None changes what the set does; whether they deserve a record
 of their own is the same question of convention.
@@ -125,8 +125,9 @@ assumption is stated.
 Sequencing
 ----------
 
-``UDSS_LLR_0141``, ``UDSS_LLR_0142`` and the amendments to ``UDSS_LLR_0105`` and
-``UDSS_LLR_0110`` were written from reviews of the service interface and landed in the
+``UDSS_LLR_0141``, ``UDSS_LLR_0142`` and the amendments to ``UDSS_LLR_0105``,
+``UDSS_LLR_0288`` and ``UDSS_LLR_0289`` were written from reviews of the service interface
+and landed in the
 server session timer document ahead of its rework, because leaving each out left a
 requirement wrong rather than merely incomplete. The rework has since weighed them against
 the whole document.

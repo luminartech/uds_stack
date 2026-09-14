@@ -134,7 +134,8 @@ all three.
 The wait Table 9's request transmission row places before the repeat of a failed
 transmission. ``UDSS_LLR_0174`` to ``UDSS_LLR_0176``, as the first section says.
 
-Table 10, the server's error handling. ``UDSS_LLR_0109`` and ``UDSS_LLR_0110``.
+Table 10, the server's error handling. ``UDSS_LLR_0109``, ``UDSS_LLR_0288`` and
+``UDSS_LLR_0289``.
 
 What the application concludes after the third failure. The standard says nothing, and the
 set gives the application the reset and the release and no rule for when to use them.

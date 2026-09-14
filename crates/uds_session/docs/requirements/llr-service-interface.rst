@@ -161,7 +161,7 @@ queue before the other is what the assumption forbids.
    Rationale: the crate is ``no_std`` and allocation-free, and cannot own a buffer whose
    size it does not know. Retaining a payload would also imply a retransmission buffer,
    and no requirement in this set obliges the session layer to retransmit anything;
-   ``UDSS_LLR_0110`` states the point explicitly for a server's response in a non-default
+   ``UDSS_LLR_0289`` states the point explicitly for a server's response in a non-default
    session. The requirement is verified by inspection of the crate's types, which hold no
    buffer and borrow the caller's data for the duration of one input, rather than by a
    runtime test.
@@ -1125,12 +1125,12 @@ and leaves the means of recognising it to the implementation.
    organised per channel is ``UDSS_LLR_0206``'s.
 
    The association with ``T_Data.conf`` is stated because ``UDSS_LLR_0102``,
-   ``UDSS_LLR_0106``, ``UDSS_LLR_0107``, ``UDSS_LLR_0108`` and ``UDSS_LLR_0110`` all
-   condition on what kind of message a confirmation confirms, and no classification travels
-   on the confirmation itself. The association with ``T_Data.req`` is stated because
-   ``UDSS_LLR_0145`` conditions on what kind of message a transmission request carries;
-   ``UDSS_LLR_0118`` produces that ``T_Data.req`` from the ``S_Data.req`` in the same step,
-   so the association costs nothing.
+   ``UDSS_LLR_0106``, ``UDSS_LLR_0107``, ``UDSS_LLR_0108``, ``UDSS_LLR_0288`` and
+   ``UDSS_LLR_0289`` all condition on what kind of message a confirmation confirms, and no
+   classification travels on the confirmation itself. The association with ``T_Data.req``
+   is stated because ``UDSS_LLR_0145`` conditions on what kind of message a transmission
+   request carries; ``UDSS_LLR_0118`` produces that ``T_Data.req`` from the ``S_Data.req``
+   in the same step, so the association costs nothing.
 
 .. llr:: At most one association is outstanding per addressing
    :id: UDSS_LLR_0272
@@ -1305,8 +1305,9 @@ and leaves the means of recognising it to the implementation.
    a keep-alive indication carries the marker, in either keep-alive mode. The server's
    caller states the marker because ISO 14229-1:2020 8.7.6 exempts that one message from
    one-request-at-a-time, so it arrives while another request is in progress as conformant
-   traffic: ``UDSS_LLR_0186`` conditions on it, and ``UDSS_LLR_0104``, ``UDSS_LLR_0109``,
-   ``UDSS_LLR_0142``, ``UDSS_LLR_0144`` and ``UDSS_LLR_0146`` on its absence. The session
+   traffic: ``UDSS_LLR_0286`` and ``UDSS_LLR_0287`` condition on it, and ``UDSS_LLR_0104``,
+   ``UDSS_LLR_0109``, ``UDSS_LLR_0142``, ``UDSS_LLR_0144`` and ``UDSS_LLR_0146`` on its
+   absence. The session
    layer does not verify the marker against ``S_AI[TAtype]``, the same trust
    ``UDSS_LLR_0179`` extends to ``repeat``: a physically addressed TesterPresent,
    ISO 14229-2:2021 10.1.4.2 Figure 13's, is an ordinary request, and a caller that marks
@@ -1400,8 +1401,8 @@ and leaves the means of recognising it to the implementation.
    selection because a TesterPresent changes no session. The rejection reaches the
    completion report because the caller composes it, and not an indication, which reports a
    message already received and which ``UDSS_LLR_0137`` forwards. Without it, at a server
-   ``UDSS_LLR_0186`` and ``UDSS_LLR_0103`` would both claim a completion report so
-   classified, with opposite outcomes: ``UDSS_LLR_0186`` has a completion report whose
+   ``UDSS_LLR_0287`` and ``UDSS_LLR_0103`` would both claim a completion report so
+   classified, with opposite outcomes: ``UDSS_LLR_0287`` has a completion report whose
    classification states ``keep-alive`` change nothing, and ``UDSS_LLR_0103`` starts
    ``tS3_Server`` on the completion report of a request whose classification selects a
    non-default session.
@@ -1532,7 +1533,7 @@ and leaves the means of recognising it to the implementation.
    layer cannot detect it, and a server handling a suppressed-response request in a
    non-default session would never restart its timer. ``UDSS_LLR_0142``, ``UDSS_LLR_0146``
    and ``UDSS_LLR_0217`` are the requirements that act on this input, with ``UDSS_LLR_0103``
-   and ``UDSS_LLR_0141`` where it selects a session and ``UDSS_LLR_0186`` where it is marked
+   and ``UDSS_LLR_0141`` where it selects a session and ``UDSS_LLR_0287`` where it is marked
    ``keep-alive``. ISO 14229-2:2021 10.1.4.1 bounds when that completion occurs,
    a service being in progress until the completion of any action caused by the request
    where no response is required, the point that would otherwise have started the

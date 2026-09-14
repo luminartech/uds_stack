@@ -25,7 +25,7 @@ A requirement that leaves a running timer alone says so.
    A timer shall at any instant be either running or not running.
 
    Rationale: every timer requirement in this set starts, stops or reads a timer, and
-   several condition on whether one is running — ``UDSS_LLR_0186`` reloads ``tS3_Server``
+   several condition on whether one is running — ``UDSS_LLR_0286`` reloads ``tS3_Server``
    only while it runs, and ``UDSS_LLR_0196`` expires only a running one. Without a stated
    two-state model those conditions have no subject.
 
