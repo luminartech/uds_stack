@@ -106,10 +106,11 @@ an event with its own handling rather than one the exchange waits through.
 An implementation therefore cannot treat the timer's running state as standing for the request
 in progress; the two are separate.
 
-The definition is stated here rather than borrowed. The server response timing document
-defines the same term from ISO 14229-2:2021 10.1.4.1, but both of that definition's
-endpoints — the start of reception of the request and the completion of transmission of the
-final response — are events at the server, and neither occurs at the client.
+The definition is stated here rather than borrowed from the server's. The server response
+timing document's own state, **service in progress**, is defined from ISO 14229-2:2021
+10.1.4.1, but both of that definition's endpoints — the start of reception of the request
+and the completion of transmission of the final response — are events at the server, and
+neither occurs at the client.
 
 A request expecting no response is never in progress in this sense, there being no response
 for the client to wait for. ``UDSS_LLR_0153`` accordingly starts no timer for one, so no later

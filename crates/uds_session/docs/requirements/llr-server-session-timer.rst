@@ -40,14 +40,14 @@ cannot block the server's application layer. The server's caller marks that mess
 
 The standard shows TesterPresent in two figures, one per message. ISO 14229-2:2021
 10.1.4.1 Figure 12 is the functionally addressed one without a response: key m has it reload
-a running ``tS3_Server``, and key j lets the server ignore one received while another request
+a running ``tS3_Server``, and key j lets the server ignore one received while another service
 is in progress. 10.1.4.2 Figure 13 is the physically addressed one with a response, which
 keys l and p have stop the timer as any request does. The marker picks between them: marked,
 ``UDSS_LLR_0286`` and ``UDSS_LLR_0287`` apply; unmarked, ``UDSS_LLR_0104`` does.
 
 ISO 14229-2:2021 9.5 says the server has no need to distinguish the two kinds of
 TesterPresent handling, and that holds for the restart both readings end in. The difference
-the marker carries is that the marked message never becomes the request in progress and
+the marker carries is that the marked message never becomes the service in progress and
 never touches ``tP2_Server``, which :doc:`llr-server-response-timing` states in its
 preamble and in ``UDSS_LLR_0144`` and ``UDSS_LLR_0146`` respectively.
 
@@ -377,7 +377,7 @@ The timer's state
    :source: ISO 14229-2:2021 9.5 Table 6; ISO 14229-2:2021 9.7 Table 10
    :tags: server; s3_server; error-handling
 
-   While in a non-default session, while ``tS3_Server`` is stopped and while no request is
+   While in a non-default session, while ``tS3_Server`` is stopped and while no service is
    in progress under ``UDSS_LLR_0212``, on ``T_Data.ind`` reporting an unsuccessful result
    for a request not marked ``keep-alive`` from the controlling client, the server shall
    restart the ``tS3_Server`` timer.
@@ -389,10 +389,11 @@ The timer's state
    under ``UDSS_LLR_0104`` and the restart undoes that stop. A failed single-frame
    reception, for which no start-of-message was indicated, finds the timer running and
    leaves it running: a corrupt frame carrying the controlling client's address is not a
-   request and does not keep the session alive. The timer is also stopped while another
-   request from the controlling client is in progress, ``UDSS_LLR_0104`` having stopped it
-   for that request, and there Table 10's reason does not hold either: a corrupt frame
-   arriving during a long service would otherwise restart the timer mid-request, which
+   request and does not keep the session alive. The timer is also stopped while a service
+   is in progress for another request from the controlling client, ``UDSS_LLR_0104`` having
+   stopped it for that request, and there Table 10's reason does not hold either: a
+   corrupt frame arriving during a long service would otherwise restart the timer
+   mid-request, which
    Table 6 never does and 10.1.4.1 Figure 12 key f contradicts, and ``UDSS_LLR_0107`` would
    not restart it again for the service's response-pending messages. The two guards together
    leave exactly Table 10's case, a start-of-message of this message having stopped the
@@ -411,10 +412,10 @@ The timer's state
    failure, and a rule that shows it to one role and hides it from the other could not be
    stated once in ``UDSS_LLR_0137``.
 
-   The marked message is excluded because a failed reception of it while another request is
+   The marked message is excluded because a failed reception of it while another service is
    in progress would otherwise restart the timer mid-request, the harm ``UDSS_LLR_0286``
    avoids. Where the caller cannot determine the marker on a failed reception,
-   ``UDSS_LLR_0270`` lets it state kind ``request`` alone; the guard on the request in
+   ``UDSS_LLR_0270`` lets it state kind ``request`` alone; the guard on the service in
    progress then keeps the restart away from the mid-request case the marker would have
    excluded, and Table 10's restart applies only where its reason holds.
 
@@ -467,7 +468,7 @@ The timer's state
    for a response message to the controlling client whose classification does not state
    ``unsolicited``, the server shall not retransmit the response.
 
-   The request in progress is unaffected, ``UDSS_LLR_0217`` ending it at the final
+   The service in progress is unaffected, ``UDSS_LLR_0217`` ending it at the final
    response as 10.1.4.1 states; only ``UDSS_LLR_0288`` restarts ``tS3_Server``.
 
 .. llr:: The bypass keep-alive reloads a running session timer
@@ -491,9 +492,9 @@ The timer's state
    The figures distinguish three situations. A running timer is reloaded, which is Figure 12
    keys m and o; "reload" is read here as a restart of a running timer only, a declared
    reading, key m stating the effect for a message received during an activated timer. A
-   stopped timer, the request in progress having stopped it, is left alone, which is
+   stopped timer, the service in progress having stopped it, is left alone, which is
    Figure 12 key j and Figure 20 key d, both saying such a message "can be ignored" because
-   the request in progress restarts the timer on its own completion under ``UDSS_LLR_0106``
+   the service in progress restarts the timer on its own completion under ``UDSS_LLR_0106``
    or ``UDSS_LLR_0142``. A timer disabled by the default session, not running under
    ``UDSS_LLR_0194``'s vocabulary with no request to restart it, is ignored, Figure 12 key p saying such a message
    "is ignored" and Figure 20 key j that it "can be ignored", a difference of modality the
@@ -515,7 +516,7 @@ The timer's state
    first, Table 6's stop at the reception and restart at the completion fall on one instant,
    which is what key m's "reload" describes. The one point at which the figures depart from a
    literal reading of Table 6 is the permission of keys j and d to ignore the message while
-   another request is in progress, and that permission is what this requirement takes.
+   another service is in progress, and that permission is what this requirement takes.
    Clause 9.5's statement that the server has no need to distinguish the kinds of
    TesterPresent handling therefore survives, both handlings ending with the timer restarted
    once the message is dealt with, and the genuine difference is ``tP2_Server``, which 9.5
@@ -538,7 +539,7 @@ The timer's state
    shall change nothing.
 
    Rationale: where ``tS3_Server`` is not running, the message meets either a timer the
-   request in progress has already stopped, which restarts on that request's own
+   service in progress has already stopped, which restarts on that service's own
    completion under ``UDSS_LLR_0106`` or ``UDSS_LLR_0142``, or a timer disabled in the
    default session, which ``UDSS_LLR_0111`` covers; ``UDSS_LLR_0286`` gives the figure
    analysis for both cases, ISO 14229-2:2021 10.1.4.1 Figure 12 keys j and p and 10.3
@@ -559,7 +560,7 @@ The timer's state
    closed list alone. The failed reception is named for the same reason;
    ``UDSS_LLR_0109``'s exclusion of the marked message says why no restart is due, Table
    10's restart presupposing a stop this message never caused. The marked request is never
-   the request in progress, ``UDSS_LLR_0215`` barring it from beginning one.
+   the service in progress, ``UDSS_LLR_0215`` barring it from beginning one.
 
 .. llr:: Requests from other clients do not affect the session timer
    :id: UDSS_LLR_0105

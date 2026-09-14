@@ -1507,7 +1507,7 @@ and leaves the means of recognising it to the implementation.
    records as an assumption of use that the request the application transmits in answer to
    a keep-alive indication carries the marker, in either keep-alive mode. The server's
    caller states the marker because ISO 14229-1:2020 8.7.6 exempts that one message from
-   one-request-at-a-time, so it arrives while another request is in progress as conformant
+   one-request-at-a-time, so it arrives while another service is in progress as conformant
    traffic: ``UDSS_LLR_0286`` and ``UDSS_LLR_0287`` condition on it, and ``UDSS_LLR_0104``,
    ``UDSS_LLR_0109``, ``UDSS_LLR_0142``, ``UDSS_LLR_0144`` and ``UDSS_LLR_0146`` on its
    absence. The session
@@ -1746,6 +1746,6 @@ and leaves the means of recognising it to the implementation.
    an earlier ``T_Data.ind``, because Table 6's other suppressed-response row, the
    transition from the default session to a non-default one, needs the session selection,
    and correlating would oblige the session layer to retain one. The report identifies its
-   request by addressing alone: ``UDSS_LLR_0214`` matches it to the request in progress that
+   request by addressing alone: ``UDSS_LLR_0214`` matches it to the service in progress that
    way, and ``UDSS_LLR_0142`` and ``UDSS_LLR_0103`` ask no more than whose request
    completed.
