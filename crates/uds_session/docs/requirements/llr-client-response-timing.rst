@@ -79,7 +79,7 @@ indication of a message whose classification states kind ``final response`` and
 kind of channel, with any ``T_Data.ind`` reporting a failed reception, whether first
 indication or completion, and when the response window expires under ``UDSS_LLR_0159``.
 
-A channel reset under ``UDSS_LLR_0183`` also ends the wait, on the caller's act rather than
+A channel reset under ``UDSS_LLR_0277`` also ends the wait, on the caller's act rather than
 on an input from the peer; short of withdrawing the channel under ``UDSS_LLR_0205``, that is
 the only ending after which no indication for the message follows.
 
@@ -308,7 +308,8 @@ The response window
    states an exact expected response count, the number of responses ``UDSS_LLR_0156``
    counts since the request's confirmation, zero when the request becomes in progress; the
    one association ``UDSS_LLR_0271`` holds for a transmission outstanding on the channel,
-   ``UDSS_LLR_0272`` permitting no second;
+   ``UDSS_LLR_0272`` permitting no second, and whether that association has been marked
+   **abandoned** under ``UDSS_LLR_0277``;
    and, on a physical channel, whether a start-of-message is open on that channel, as
    ``UDSS_LLR_0199`` requires, without recording the responder, so that any ``T_Data.ind``
    on the channel completes it. On a functional channel ``UDSS_LLR_0232`` holds the
@@ -323,7 +324,10 @@ The response window
    count and the number received so far, and the preamble's definition of the request in
    progress is a fact the timer's running state cannot stand for. The count is kept here
    with the request because it is defined relative to the request's confirmation and so
-   begins again with the next. The responder of a physical channel's start-of-message is
+   begins again with the next. The abandoned mark is kept with the association because
+   ``UDSS_LLR_0277`` sets it and ``UDSS_LLR_0278`` and ``UDSS_LLR_0279`` read it: the client
+   must know, when a ``T_Data.conf`` matching that association arrives, whether the channel
+   it names was reset in the meantime. The responder of a physical channel's start-of-message is
    not recorded because a physical channel has one peer: a ``T_Data.ind`` the caller places
    on it from another address is the caller's misrouting, which no record here could
    correct, so ``UDSS_LLR_0199``'s "same responder" is, on a physical channel, the channel
@@ -363,7 +367,7 @@ The response window
    ``solicited``; on a functional channel, on the ``T_Data.ind`` on which ``UDSS_LLR_0156``
    stops the timer; and on either kind of channel, on any ``T_Data.ind`` reporting a failed
    reception, whether first indication or completion, on the expiry under
-   ``UDSS_LLR_0159``, and on a channel reset under ``UDSS_LLR_0183``.
+   ``UDSS_LLR_0159``, and on a channel reset under ``UDSS_LLR_0277``.
 
    Rationale: the request in progress is the condition ``UDSS_LLR_0154`` to
    ``UDSS_LLR_0158`` act on, and the timer's running state cannot stand for it, because
@@ -398,7 +402,7 @@ The response window
 
    A physical channel's open start-of-message shall be retained past the end of the request
    in progress until a ``T_Data.ind`` on that channel completes it, whether the reception
-   succeeded or failed, or until a channel reset under ``UDSS_LLR_0183`` closes it.
+   succeeded or failed, or until a channel reset under ``UDSS_LLR_0277`` closes it.
 
    Rationale: the start-of-message outlives the request because the wait on a physical
    channel ends at the first indication of the final response while ``UDSS_LLR_0199``'s
@@ -406,7 +410,7 @@ The response window
    it at the end of the request would have the completion of every multi-frame final
    response misread as a new single-frame message. An earlier form of this requirement
    stated such a rule. ``UDSS_LLR_0234`` says the same of a functional channel's entries,
-   and the channel reset of ``UDSS_LLR_0183`` is what closes a start-of-message whose
+   and the channel reset of ``UDSS_LLR_0277`` is what closes a start-of-message whose
    completion never comes.
 
 .. llr:: What changes a channel's response timer
@@ -419,7 +423,7 @@ The response window
 
    After a channel's storage is supplied, the state of that channel's ``tP_Client`` timer
    shall be changed only as ``UDSS_LLR_0153``, ``UDSS_LLR_0154``, ``UDSS_LLR_0155``,
-   ``UDSS_LLR_0156``, ``UDSS_LLR_0157``, ``UDSS_LLR_0159`` and ``UDSS_LLR_0183`` require.
+   ``UDSS_LLR_0156``, ``UDSS_LLR_0157``, ``UDSS_LLR_0159`` and ``UDSS_LLR_0277`` require.
 
    Rationale: a closed list of the requirements that may change the timer is what makes a
    "changes nothing" claim elsewhere in the set checkable, and what lets ``UDSS_LLR_0207``
@@ -476,7 +480,7 @@ The response window
    On ``T_Data.conf`` reporting the successful transmission of a request whose expected
    response count is other than ``none``, the client shall start that channel's
    ``tP_Client`` timer loaded with the default reload parameter, except for a
-   ``T_Data.conf`` matching an association ``UDSS_LLR_0183`` has marked abandoned, which
+   ``T_Data.conf`` matching an association ``UDSS_LLR_0277`` has marked abandoned, which
    starts no window.
 
    Table 3 defines ``tP2_Client`` and ``tP6_Client`` alike as the timeout for the client to
@@ -809,7 +813,7 @@ Responders on a functional channel
    response-pending fact of every entry in that channel's responder table shall be cleared,
    and an entry whose start-of-message is open shall be retained until a ``T_Data.ind``
    from that entry's responder completes it, whether the reception succeeded or failed, or until a
-   channel reset under ``UDSS_LLR_0183`` releases it; while no request is in progress on
+   channel reset under ``UDSS_LLR_0277`` releases it; while no request is in progress on
    the channel an entry shall record an open start-of-message and nothing else.
 
    Rationale: ISO 14229-2:2021 9.7 Table 9 obliges the client to completely receive the

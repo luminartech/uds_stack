@@ -40,7 +40,7 @@ interface.
 Several inputs to the session layer are acts of the caller rather than primitives,
 parameters or timestamps: the completion report of ``UDSS_LLR_0136``, which ``UDSS_LLR_0115``
 enumerates; the channel reset and keep-alive release that :doc:`llr-client-error-handling`
-defines in ``UDSS_LLR_0183`` and ``UDSS_LLR_0184``, by which the caller clears state the
+defines in ``UDSS_LLR_0277`` and ``UDSS_LLR_0184``, by which the caller clears state the
 client keeps; and the supply, and at a client the withdrawal, of the storage in which
 every fact the set keeps per peer or per channel lives: a client's channel storage, which
 ``UDSS_LLR_0206`` names, supplied under ``UDSS_LLR_0201`` and withdrawn under
@@ -100,7 +100,7 @@ queue before the other is what the assumption forbids.
    them; a timestamp, as ``UDSS_LLR_0193`` defines it, accompanying every other input and
    also supplied on its own; the protocol parameters of ``UDSS_LLR_0259``; the completion
    report of ``UDSS_LLR_0136``; the supply and withdrawal of channel storage under
-   ``UDSS_LLR_0201``; and the channel reset and keep-alive release of ``UDSS_LLR_0183`` and
+   ``UDSS_LLR_0201``; and the channel reset and keep-alive release of ``UDSS_LLR_0277`` and
    ``UDSS_LLR_0184``. The last four, and the setting of a protocol parameter, are acts of the
    caller rather than primitives; each shall be accompanied by a timestamp as
    ``UDSS_LLR_0193`` requires, and ``UDSS_LLR_0187`` shall order the expiries that timestamp
@@ -466,7 +466,7 @@ Service primitives
      response`` or ``response pending``;
    * a ``T_DataSOM.ind`` or ``T_Data.ind`` identifying a logical communication channel;
    * the supply or withdrawal of channel storage under ``UDSS_LLR_0201``;
-   * the channel reset of ``UDSS_LLR_0183``;
+   * the channel reset of ``UDSS_LLR_0277``;
    * the keep-alive release of ``UDSS_LLR_0184``.
 
    Rationale: the rejected inputs are listed rather than described, because "an input

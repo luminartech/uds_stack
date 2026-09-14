@@ -87,7 +87,7 @@ Table 9 stops at the third transmission and says nothing of what the client conc
 while the state this set keeps persists on its own: a request in progress whose completion
 never comes, a repeat count at two, a physical channel's session fact keeping ``tS3_Client``
 restarting for a server that stopped answering, a functional keep-alive running after the
-last server was returned physically. The channel reset of ``UDSS_LLR_0183`` is the caller's
+last server was returned physically. The channel reset of ``UDSS_LLR_0277`` is the caller's
 exit from what a channel keeps, and the keep-alive release of ``UDSS_LLR_0184`` is its exit
 from the keep-alive state, which in functional keep-alive is not per channel. They are
 separate acts because they answer different situations: unwedging a channel whose responses
@@ -194,7 +194,7 @@ The repeat count
    :tags: client; error-handling; repeat
 
    After a channel's storage is supplied, its repeat count shall be changed only as
-   ``UDSS_LLR_0179`` and ``UDSS_LLR_0183`` require.
+   ``UDSS_LLR_0179`` and ``UDSS_LLR_0277`` require.
 
    Rationale: the rule ``UDSS_LLR_0187`` fixes is what lets ``UDSS_LLR_0179`` and
    ``UDSS_LLR_0180`` act on the same ``S_Data.req``, the one reading the count the other
@@ -318,7 +318,7 @@ Responses still arriving
    The keep-alive TesterPresent of ``UDSS_LLR_0165`` is rejected like any other request on
    the channel, and unlike ``UDSS_LLR_0176``'s rejection this one carries no time to retry,
    the wait ending on an indication rather than on a timer. Where the completion never
-   arrives the channel stays closed to every request until the reset of ``UDSS_LLR_0183``
+   arrives the channel stays closed to every request until the reset of ``UDSS_LLR_0277``
    releases the entry, which is the exit the preamble's assumption of use puts on the
    application.
 
@@ -350,7 +350,7 @@ Giving a server up
 ------------------
 
 .. llr:: The caller may reset a channel
-   :id: UDSS_LLR_0183
+   :id: UDSS_LLR_0277
    :status: draft
    :integrity_level: QM
    :target_level: D
@@ -368,17 +368,7 @@ Giving a server up
      release every entry of its responder table;
    * set the channel's repeat count to zero.
 
-   The abandoned association shall remain outstanding under ``UDSS_LLR_0271``,
-   ``UDSS_LLR_0273`` rejecting a further ``S_Data.req`` to its addressing, until its
-   ``T_Data.conf`` arrives or the channel's storage is withdrawn under ``UDSS_LLR_0205``. A
-   ``T_Data.conf`` arriving for an abandoned association shall be confirmed to the
-   application under ``UDSS_LLR_0122``, shall start no response window under
-   ``UDSS_LLR_0153``, and shall otherwise act as it would had the channel not been reset;
-   in particular ``UDSS_LLR_0174`` and ``UDSS_LLR_0175`` start the channel's spacing timer
-   on it, and ``UDSS_LLR_0164``, ``UDSS_LLR_0166``, ``UDSS_LLR_0167``, ``UDSS_LLR_0168``,
-   ``UDSS_LLR_0170`` and ``UDSS_LLR_0172`` act on it. The reset shall produce no output to
-   the application and none to the transport layer. A reset identifying a channel the
-   client does not have shall be rejected as ``UDSS_LLR_0267`` defines.
+   The reset shall produce no output to the application and none to the transport layer.
 
    Rationale: ISO 14229-2:2021 9.7 Table 9 ends at the third transmission and the standard
    says nothing of what the client concludes, while the state this set keeps per channel
@@ -387,49 +377,106 @@ Giving a server up
    Something the caller invokes has to clear it, and the standard supplies no input that
    does.
 
-   The effects are the state a reset clears, and the list is closed so that a document
-   adding state per channel must amend this requirement to say whether the reset clears
-   it. What it deliberately leaves: the protocol parameters of ``UDSS_LLR_0152`` and
+   The four effects above are the state a reset clears, and the list is closed so that a
+   document adding state per channel must amend this requirement to say whether the reset
+   clears it. What it deliberately leaves: the protocol parameters of ``UDSS_LLR_0152`` and
    ``UDSS_LLR_0240``, which are the caller's; the spacing timer, which ``UDSS_LLR_0243``
    defines with no stopped state and which protects a server that knows nothing of the
    reset, so that 10.3's wait is still owed; the count ``UDSS_LLR_0156`` keeps, defined
-   relative to the last confirmation and so reset by the next; the abandoned association,
-   which remains outstanding under ``UDSS_LLR_0271`` until its ``T_Data.conf`` arrives, so
-   that an ``S_Data.req`` on the channel is rejected under ``UDSS_LLR_0273`` meanwhile and,
-   where the confirmation never comes, withdrawing the channel's storage under
-   ``UDSS_LLR_0205`` is the exit; and
-   the keep-alive state, which ``UDSS_LLR_0184`` covers as a separate act. In physical keep-alive a reset
-   therefore leaves the channel's session fact and ``tS3_Client`` timer as they were; a
-   timer ``UDSS_LLR_0169`` stopped for the request the reset ended is restarted by the next
-   completed exchange under ``UDSS_LLR_0170`` or cleared with the fact under
-   ``UDSS_LLR_0184``, and until one of those the server's ``tS3_Server`` runs unattended,
-   which is the outcome the client session timer document records for a lost response.
+   relative to the last confirmation and so reset by the next; the association, which
+   ``UDSS_LLR_0278`` keeps outstanding rather than discarding; and the keep-alive state,
+   which ``UDSS_LLR_0184`` covers as a separate act.
 
-   Without the second effect the confirmation of a request transmitted before the reset and
-   confirmed after it would start a response window under ``UDSS_LLR_0153`` for a request
-   the application has given up, and ``UDSS_LLR_0159`` would later report its expiry.
-   Everything else the confirmation does is left to happen, because the message went out:
-   the server may still be consuming it, so 10.3's spacing wait is owed and
-   ``UDSS_LLR_0174`` or ``UDSS_LLR_0175`` starts the timer; and it may enter or leave a
-   session on it, so the keep-alive requirements follow the message rather than the reset.
-   Discarding the association instead was considered and rejected: the requirements that
-   must still act read the classification the association carries. The confirmation is
-   delivered because the transport's report of the outcome is real and ``UDSS_LLR_0120``
-   promises it. A ``T_Data.ind`` arriving after the reset for the message whose
-   start-of-message the reset closed is the first indication of a single-frame message
-   under ``UDSS_LLR_0199``, the pairing having nothing left to match; a later
-   ``T_DataSOM.ind`` opens a start-of-message as it always does, and on a functional channel
-   creates an entry under ``UDSS_LLR_0233``. Both reach the application through
-   ``UDSS_LLR_0137`` with the caller's classification and take no ``tP_Client`` action, no
-   request being in progress; in physical keep-alive ``UDSS_LLR_0170`` restarts
-   ``tS3_Client`` on a completion among them as on any other. The preamble records that the
-   application expects this.
+   In physical keep-alive a reset therefore leaves the channel's session fact and
+   ``tS3_Client`` timer as they were; a timer ``UDSS_LLR_0169`` stopped for the request the
+   reset ended is restarted by the next completed exchange under ``UDSS_LLR_0170`` or
+   cleared with the fact under ``UDSS_LLR_0184``, and until one of those the server's
+   ``tS3_Server`` runs unattended, which is the outcome the client session timer document
+   records for a lost response.
 
    The physical start-of-message the third effect closes is the one ``UDSS_LLR_0210``
-   retains past the end of the request. Naming a channel that does not exist is a caller
-   error rather than an input, as ``UDSS_LLR_0249`` treats one. The reset is neither a
-   primitive nor a parameter but an act of the caller, as the completion report of
-   ``UDSS_LLR_0136`` is; the service interface document's preamble names both.
+   retains past the end of the request.
+
+   Producing no output does not mean the channel goes silent: a ``T_Data.ind`` arriving
+   after the reset for the message whose start-of-message the reset closed is the first
+   indication of a single-frame message under ``UDSS_LLR_0199``, the pairing having nothing
+   left to match; a later ``T_DataSOM.ind`` opens a start-of-message as it always does, and
+   on a functional channel creates an entry under ``UDSS_LLR_0233``. Both reach the
+   application through ``UDSS_LLR_0137`` with the caller's classification and take no
+   ``tP_Client`` action, no request being in progress on a channel just reset; in physical
+   keep-alive ``UDSS_LLR_0170`` restarts ``tS3_Client`` on a completion among them as on any
+   other. The preamble records that the application expects this.
+
+   The reset is neither a primitive nor a parameter but an act of the caller, as the
+   completion report of ``UDSS_LLR_0136`` is; the service interface document's preamble
+   names both.
+
+.. llr:: An abandoned association stays outstanding
+   :id: UDSS_LLR_0278
+   :status: draft
+   :integrity_level: QM
+   :target_level: D
+   :origin: derived
+   :tags: client; error-handling; service-interface
+
+   On a channel reset under ``UDSS_LLR_0277`` marking an association **abandoned**, that
+   association shall remain outstanding under ``UDSS_LLR_0271``, ``UDSS_LLR_0273``
+   rejecting a further ``S_Data.req`` to its addressing, until its ``T_Data.conf`` arrives
+   or the channel's storage is withdrawn under ``UDSS_LLR_0205``.
+
+   Rationale: the association's only exits are the ones ``UDSS_LLR_0272`` already gives it
+   — its ``T_Data.conf`` arriving, or the caller withdrawing the channel's storage under
+   ``UDSS_LLR_0205`` — and the reset manufactures neither, so the association stands until
+   one of them. Discarding the association instead was considered and rejected: the
+   requirements that must still act read the classification the association carries.
+
+.. llr:: What a confirmation for an abandoned association does
+   :id: UDSS_LLR_0279
+   :status: draft
+   :integrity_level: QM
+   :target_level: D
+   :origin: derived
+   :tags: client; error-handling; service-interface
+
+   A ``T_Data.conf`` arriving for an association abandoned under ``UDSS_LLR_0277`` shall be
+   confirmed to the application under ``UDSS_LLR_0122``, shall start no response window
+   under ``UDSS_LLR_0153``, and shall otherwise act as it would had its channel not been
+   reset; in particular, on a functional channel ``UDSS_LLR_0175`` starts the channel's
+   spacing timer on it, on a physical channel ``UDSS_LLR_0174`` starts it where the
+   confirmation reports a failed transmission, and ``UDSS_LLR_0164``, ``UDSS_LLR_0166``,
+   ``UDSS_LLR_0167``, ``UDSS_LLR_0168``, ``UDSS_LLR_0170`` and ``UDSS_LLR_0172`` act on it.
+
+   Rationale: the confirmation is delivered because the transport's report of the outcome
+   is real and ``UDSS_LLR_0120`` promises it, regardless of the reset.
+
+   Starting no response window matters because, without it, the confirmation of a request
+   transmitted before the reset and confirmed after it would start a response window under
+   ``UDSS_LLR_0153`` for a request the application has given up, and ``UDSS_LLR_0159``
+   would later report its expiry.
+
+   Everything else the confirmation does is left to happen, because the message went out:
+   the server may still be consuming it, so 10.3's spacing wait is owed where it applies —
+   always on a functional channel under ``UDSS_LLR_0175``, and on a physical channel under
+   ``UDSS_LLR_0174`` only where the confirmation reports failure, its success branch being
+   conditioned on an expected response count of ``none`` that an abandoned request awaiting
+   a response does not have; and it may enter or leave a session on it, so the keep-alive
+   requirements follow the message rather than the reset. ``UDSS_LLR_0278`` keeps the
+   association available for these to read its classification from, rather than discarding
+   it.
+
+.. llr:: A reset naming no existing channel is rejected
+   :id: UDSS_LLR_0280
+   :status: draft
+   :integrity_level: QM
+   :target_level: D
+   :origin: derived
+   :tags: client; error-handling; service-interface
+
+   A reset identifying a channel the client does not have shall be rejected as
+   ``UDSS_LLR_0267`` defines.
+
+   Rationale: naming a channel that does not exist is a caller error, not an input, for the
+   reason ``UDSS_LLR_0249`` gives.
 
 .. llr:: The caller may release a keep-alive
    :id: UDSS_LLR_0184
@@ -459,7 +506,7 @@ Giving a server up
    ``UDSS_LLR_0165`` delivering indications after the last server was returned physically,
    a residual the open questions page held open until this document.
 
-   It is a separate act from the channel reset of ``UDSS_LLR_0183`` because the two answer
+   It is a separate act from the channel reset of ``UDSS_LLR_0277`` because the two answer
    different situations. A reset unwedges a channel whose responses never completed, and
    must not cost the application its sessions with every other server; in functional
    keep-alive it would, ``UDSS_LLR_0227`` holding one keeping-alive fact for the client.
@@ -476,6 +523,6 @@ Giving a server up
 
    A release leaves every other state alone. A physical keep-alive released while a
    request is in progress on the channel leaves the request and its ``tP_Client`` timer
-   untouched; only ``UDSS_LLR_0183`` ends a request. A release in the other mode, or on a
+   untouched; only ``UDSS_LLR_0277`` ends a request. A release in the other mode, or on a
    channel whose fact does not hold, changes nothing and is not an error, the fact the
    caller wished cleared being already clear.

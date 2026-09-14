@@ -117,7 +117,7 @@ That is an assumption of use and belongs in the qualification repository, alongs
 assumption of one request outstanding per logical communication channel. Whether it is stated
 there, or whether the set instead writes a requirement the standard does not have, is open.
 
-The channel reset of ``UDSS_LLR_0183`` has since given the application an exit: a
+The channel reset of ``UDSS_LLR_0277`` has since given the application an exit: a
 start-of-message the transport never completes is closed by resetting its channel. That
 bounds the harm of a transport that breaks the assumption without settling where the
 assumption is stated.
