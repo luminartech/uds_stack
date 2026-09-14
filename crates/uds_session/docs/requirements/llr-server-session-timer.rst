@@ -137,7 +137,7 @@ The timer's state
    its ``S_AI[TA]``, and, where ``S_Mtype`` carries one, its ``S_AI[AE]`` form a peer
    identity equal to the recorded one under ``UDSS_LLR_0198``. ``tS3_Server``, when set
    running under any requirement of this document, is loaded with the ``tS3_Server``
-   protocol parameter of ``UDSS_LLR_0138``, the value ``UDSS_LLR_0112`` compares against.
+   protocol parameter of ``UDSS_LLR_0261``, the value ``UDSS_LLR_0112`` compares against.
 
 .. llr:: The server's initial session state
    :id: UDSS_LLR_0222

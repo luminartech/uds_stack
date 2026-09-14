@@ -178,7 +178,7 @@ can, and to :doc:`llr-client-session-timer` for the restarts.
 ISO 14229-2:2021 10.1.4 and 10.2.4 each state that the client's reload values may differ in a
 non-default session, the applicable ``tP_Client`` parameters being reported to the client by
 the DiagnosticSessionControl service of ISO 14229-1. No requirement here transcribes that. The
-reload values are protocol parameters the caller sets under ``UDSS_LLR_0138``, and which values
+reload values are protocol parameters the caller sets under ``UDSS_LLR_0259``, and which values
 apply in which session is settled by the application, which reads them out of the response;
 ``UDSS_LLR_0135`` forbids this layer from reading them for itself.
 
@@ -435,7 +435,7 @@ The response window
    :tags: client; p_client; service-interface
 
    Each channel shall have a **default reload parameter** and an **enhanced reload
-   parameter**, supplied as protocol parameters under ``UDSS_LLR_0138``. A setting of a
+   parameter**, supplied as protocol parameters under ``UDSS_LLR_0259``. A setting of a
    per-channel parameter shall identify its channel, and one identifying a channel the client
    does not have shall be rejected as ``UDSS_LLR_0267`` defines; this holds for a physical
    channel's ``tS3_Client`` reload parameter under ``UDSS_LLR_0229`` and the spacing
@@ -457,7 +457,7 @@ The response window
    the window covers the start of the response or its complete reception.
 
    The parameters may change during the life of a channel. ISO 14229-2:2021 10.1.4 and 10.2.4
-   permit different values in a non-default session, and ``UDSS_LLR_0138`` lets the caller set
+   permit different values in a non-default session, and ``UDSS_LLR_0262`` lets the caller set
    them at any time. A change does not disturb a window already open: ``UDSS_LLR_0159``
    compares the elapsed time against the value the timer was loaded with rather than against
    the parameter as it currently stands, so a new value takes effect at the next start or
@@ -861,7 +861,7 @@ Responders on a functional channel
 
    Rationale: an inbound indication from a responder the client has is not a caller error
    ``UDSS_LLR_0267`` can refuse, as ``UDSS_LLR_0249`` refuses one naming a channel the
-   client does not have and ``UDSS_LLR_0188`` refuses a misclassified one, so the set has
+   client does not have and ``UDSS_LLR_0265`` refuses a misclassified one, so the set has
    to say what the timer does with it. The
    capacity indication precedes the ``S_Data.ind`` so that the application reads the
    message knowing the responder is untracked; it is the set's one input that yields two

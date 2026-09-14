@@ -231,8 +231,8 @@ The repeat count
    rejected repeat is never counted. The requirements of the client documents that may
    reject an ``S_Data.req`` for a request are ``UDSS_LLR_0176``, ``UDSS_LLR_0180`` and
    ``UDSS_LLR_0181``, and ``UDSS_LLR_0133``, ``UDSS_LLR_0252``, ``UDSS_LLR_0253``,
-   ``UDSS_LLR_0256``, ``UDSS_LLR_0258``, ``UDSS_LLR_0203`` and
-   ``UDSS_LLR_0188`` reject one on its addressing, classification, channel or role;
+   ``UDSS_LLR_0256``, ``UDSS_LLR_0258`` and ``UDSS_LLR_0203`` reject one on its
+   addressing, classification or channel;
    ``UDSS_LLR_0180`` reads the count as it was before the input under ``UDSS_LLR_0187``, so
    the increase here never feeds the rejection there.
 

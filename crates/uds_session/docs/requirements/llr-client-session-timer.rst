@@ -106,7 +106,7 @@ keep-alive release of ``UDSS_LLR_0184``, on the application's say-so; nothing in
 document clears it, and the repeat count that bounds the repeats is ``UDSS_LLR_0236``'s.
 
 Table 5 requires the ``tS3_Client`` reload value to be smaller than ``tS3_Server``. That is a
-value the caller chooses under ``UDSS_LLR_0138``, a performance obligation of the same class
+value the caller chooses under ``UDSS_LLR_0259``, a performance obligation of the same class
 the response timing documents exclude.
 
 Which session's timing parameters apply is settled by the application, as the client response
@@ -144,8 +144,8 @@ The timer's state
    timers on one channel for nothing. The mode is fixed at creation because the standard
    treats the handling as a property of the deployment, Table 8 allotting timers "when
    using" one TesterPresent or the other, and gives a change no meaning; it is not one of
-   the protocol parameters ``UDSS_LLR_0138`` provides for, which are values a timer is
-   loaded with, and a mode is not one. A change at run time would have to say what becomes of a keeping-alive fact
+   the protocol parameters ``UDSS_LLR_0259`` provides for; ``UDSS_LLR_0261`` scopes that
+   provision to values a timer loads, and a mode is not one. A change at run time would have to say what becomes of a keeping-alive fact
    and a running timer that the new mode's requirements never touch, ``UDSS_LLR_0231``
    closing the list of what changes them, and no clause says.
 
@@ -202,7 +202,7 @@ The timer's state
 
    In functional keep-alive the client shall have one ``tS3_Client`` reload parameter; in
    physical keep-alive each physical channel shall have its own, each supplied under
-   ``UDSS_LLR_0138``.
+   ``UDSS_LLR_0261``.
 
    The reload parameter follows the timer. Table 5 states that the ``tS3_Client`` timeout
    value includes the travel time of the message on the network, gateway delays among them,

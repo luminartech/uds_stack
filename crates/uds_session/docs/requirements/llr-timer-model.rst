@@ -42,7 +42,7 @@ A requirement that leaves a running timer alone says so.
 
    Rationale: loading the value at the start rather than reading the parameter live is
    what lets a parameter change while a timer runs without moving a window already open,
-   which ``UDSS_LLR_0138`` requires of every parameter change and ``UDSS_LLR_0152``
+   which ``UDSS_LLR_0262`` requires of every parameter change and ``UDSS_LLR_0152``
    states for the client's reload pair.
 
 .. llr:: A timer expires when its loaded value is reached

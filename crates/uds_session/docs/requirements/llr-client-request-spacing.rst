@@ -76,7 +76,7 @@ The parameter values. ISO 14229-2:2021 9.2 Table 4 sets the floor of both parame
 ``ΔtP6_Max``. Clause 10.3 a) and b) instead state each value as a ``tP2_Server_Max`` — the
 addressed server's for ``tP3_Client_Phys``, the worst case over the functionally addressed
 servers for ``tP3_Client_Func`` — omitting the delay Table 4 adds; Table 4's minimum
-governs. The caller chooses the values under ``UDSS_LLR_0138``, as it chooses every other
+governs. The caller chooses the values under ``UDSS_LLR_0259``, as it chooses every other
 timing parameter.
 
 Table 4's footnote on the maximum. The maximum time the client waits before its next request
@@ -134,7 +134,7 @@ The spacing timer
    :tags: client; p3_client
 
    Each channel shall have a spacing parameter supplied as a protocol parameter under
-   ``UDSS_LLR_0138``, ``tP3_Client_Phys`` for a physical channel and ``tP3_Client_Func`` for
+   ``UDSS_LLR_0259``, ``tP3_Client_Phys`` for a physical channel and ``tP3_Client_Func`` for
    a functional channel, and the session layer shall not distinguish whether the value was
    derived with ``ΔtP2`` or with ``ΔtP6``.
 

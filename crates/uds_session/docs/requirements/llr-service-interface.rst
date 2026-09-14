@@ -95,7 +95,7 @@ queue before the other is what the assumption forbids.
    The inputs so supplied shall include ``S_Data.req``, as ``UDSS_LLR_0139`` defines it;
    ``T_Data.ind``, ``T_DataSOM.ind`` and ``T_Data.conf``, as ``UDSS_LLR_0244`` defines
    them; a timestamp, as ``UDSS_LLR_0193`` defines it, accompanying every other input and
-   also supplied on its own; the protocol parameters of ``UDSS_LLR_0138``; the completion
+   also supplied on its own; the protocol parameters of ``UDSS_LLR_0259``; the completion
    report of ``UDSS_LLR_0136``; the supply and withdrawal of channel storage under
    ``UDSS_LLR_0201``; and the channel reset and keep-alive release of ``UDSS_LLR_0183`` and
    ``UDSS_LLR_0184``. The last four, and the setting of a protocol parameter, are acts of the
@@ -428,8 +428,8 @@ Service primitives
    channel alone would catch a misrouting only by coincidence; ``UDSS_LLR_0206`` records
    the residual.
 
-.. llr:: An instance has one role
-   :id: UDSS_LLR_0188
+.. llr:: An instance has one role, fixed at creation
+   :id: UDSS_LLR_0263
    :status: draft
    :integrity_level: QM
    :target_level: D
@@ -437,24 +437,7 @@ Service primitives
    :tags: service-interface; role
 
    An instance of the session layer shall be created as a client or as a server, and its
-   role shall not change thereafter. A server shall reject, as ``UDSS_LLR_0267`` defines, an
-   ``S_Data.req`` whose classification states kind ``request``. A client shall reject, as
-   ``UDSS_LLR_0267`` defines, an ``S_Data.req`` whose classification states kind ``final
-   response`` or ``response pending``, and the completion report of ``UDSS_LLR_0136``. A
-   server shall likewise reject a ``T_Data.ind`` or ``T_DataSOM.ind`` whose classification
-   states kind ``final response`` or ``response pending``, and a client one whose
-   classification states kind ``request``. A server shall reject, as ``UDSS_LLR_0267``
-   defines, a ``T_DataSOM.ind`` or ``T_Data.ind`` identifying a logical communication
-   channel, the supply or withdrawal of channel storage under ``UDSS_LLR_0201``, and the
-   channel reset and keep-alive release of ``UDSS_LLR_0183`` and ``UDSS_LLR_0184``.
-
-   Creation of a server shall supply the association storage of ``UDSS_LLR_0133`` and the
-   ``tS3_Server``, ``tP2_Server_Max`` and ``tP2*_Server_Max`` parameters of
-   ``UDSS_LLR_0138``. Creation of a client shall supply the keep-alive mode of
-   ``UDSS_LLR_0162`` and, in functional keep-alive, the storage of ``UDSS_LLR_0227`` and
-   reload parameter of ``UDSS_LLR_0229``; a client's channel storage, with the association
-   it holds and the parameters of ``UDSS_LLR_0152``, ``UDSS_LLR_0229`` and ``UDSS_LLR_0240``,
-   is supplied later under ``UDSS_LLR_0201``.
+   role shall not change thereafter.
 
    Rationale: every requirement in this set is stated for the client or for the server, and
    ISO 14229-2:2021 describes the two as distinct peer entities throughout clauses 6 to 10,
@@ -463,19 +446,82 @@ Service primitives
    roles and another that must be told, with the requirements silent on inputs that belong
    to the other role. A node that is both, a gateway or a tester under test, is two
    instances. The role is fixed at creation because no requirement gives a role change a
-   meaning, and state held for one role has none in the other. The rejected inputs are listed
-   rather than described, because "an input whose form belongs to the other role" is not
-   decidable for an ``S_Data.req`` or a completion report, whose forms ``UDSS_LLR_0251`` and
-   ``UDSS_LLR_0136`` define without a role: a server asked to transmit a request, or a client
-   told a request it never received is complete, would otherwise be accepted by one
-   implementation and refused by another. The reception primitives are listed for the same
-   reason: no server requirement conditions on receiving a response and no client
-   requirement on receiving a request, so one implementation would forward such an
-   indication under ``UDSS_LLR_0137`` and another refuse it. The one-role inputs are listed
-   here rather than left to each owning document because a rule split between the two
-   places was honoured by neither. What creation supplies is gathered here for the same
-   reason: it was stated in four places and enumerated in none, and a tester building the
-   first test must collect it.
+   meaning, and state held for one role has none in the other.
+
+.. llr:: The inputs a server rejects
+   :id: UDSS_LLR_0264
+   :status: draft
+   :integrity_level: QM
+   :target_level: D
+   :origin: derived
+   :tags: service-interface; role
+
+   A server shall reject, as ``UDSS_LLR_0267`` defines:
+
+   * an ``S_Data.req`` whose classification states kind ``request``;
+   * a ``T_Data.ind`` or ``T_DataSOM.ind`` whose classification states kind ``final
+     response`` or ``response pending``;
+   * a ``T_DataSOM.ind`` or ``T_Data.ind`` identifying a logical communication channel;
+   * the supply or withdrawal of channel storage under ``UDSS_LLR_0201``;
+   * the channel reset of ``UDSS_LLR_0183``;
+   * the keep-alive release of ``UDSS_LLR_0184``.
+
+   Rationale: the rejected inputs are listed rather than described, because "an input
+   whose form belongs to the other role" is not decidable for an ``S_Data.req``, whose
+   form ``UDSS_LLR_0251`` defines without a role: a server asked to transmit a request
+   would otherwise be accepted by one implementation and refused by another. The
+   reception primitives are listed for the same reason: no server requirement conditions on
+   receiving a response, so one implementation would forward such an indication under
+   ``UDSS_LLR_0137`` and another refuse it. The remaining inputs — an indication
+   identifying a channel, and the supply or withdrawal of channel storage, the channel
+   reset and the keep-alive release that only a client performs — belong to the client
+   alone; they are listed here rather than left to each owning document because a rule
+   split between the two places was honoured by neither.
+
+.. llr:: The inputs a client rejects
+   :id: UDSS_LLR_0265
+   :status: draft
+   :integrity_level: QM
+   :target_level: D
+   :origin: derived
+   :tags: service-interface; role
+
+   A client shall reject, as ``UDSS_LLR_0267`` defines:
+
+   * an ``S_Data.req`` whose classification states kind ``final response`` or ``response
+     pending``;
+   * the completion report of ``UDSS_LLR_0136``;
+   * a ``T_Data.ind`` or ``T_DataSOM.ind`` whose classification states kind ``request``.
+
+   Rationale: the rejected inputs are listed rather than described, because "an input
+   whose form belongs to the other role" is not decidable for an ``S_Data.req`` or the
+   completion report, whose forms ``UDSS_LLR_0251`` and ``UDSS_LLR_0136`` define without a
+   role: a client told a request it never received is complete would otherwise be
+   accepted by one implementation and refused by another. The reception primitives are
+   listed for the same reason: no client requirement conditions on receiving a request,
+   so one implementation would forward such an indication under ``UDSS_LLR_0137`` and
+   another refuse it. These inputs are listed here rather than left to each owning
+   document because a rule split between the two places was honoured by neither.
+
+.. llr:: What creation supplies
+   :id: UDSS_LLR_0266
+   :status: draft
+   :integrity_level: QM
+   :target_level: D
+   :origin: derived
+   :tags: service-interface; role
+
+   Creation of a server shall supply the association storage of ``UDSS_LLR_0133`` and the
+   ``tS3_Server``, ``tP2_Server_Max`` and ``tP2*_Server_Max`` parameters of
+   ``UDSS_LLR_0261``. Creation of a client shall supply the keep-alive mode of
+   ``UDSS_LLR_0162`` and, in functional keep-alive, the storage of ``UDSS_LLR_0227`` and
+   reload parameter of ``UDSS_LLR_0229``; a client's channel storage, holding the
+   association and the parameters of ``UDSS_LLR_0152``, ``UDSS_LLR_0229`` and
+   ``UDSS_LLR_0240`` as ``UDSS_LLR_0206`` states, is supplied later under
+   ``UDSS_LLR_0201``.
+
+   Rationale: what creation supplies is gathered here because it was stated in four
+   places and enumerated in none, and a tester building the first test must collect it.
 
 .. llr:: S_Data.req requests transmission of a message
    :id: UDSS_LLR_0118
@@ -536,8 +582,8 @@ Service primitives
    the indication. An earlier form of this requirement admitted an exception for that
    reading; no requirement in the set now withholds an indication. A ``T_Data.ind`` rejected
    under ``UDSS_LLR_0249`` for identifying a channel the client does not have, under
-   ``UDSS_LLR_0188`` for a classification kind of the other role, or under
-   ``UDSS_LLR_0255`` for stating no kind, ``UDSS_LLR_0257`` for a final response stating
+   ``UDSS_LLR_0264`` or ``UDSS_LLR_0265`` for a classification kind of the other role, or
+   under ``UDSS_LLR_0255`` for stating no kind, ``UDSS_LLR_0257`` for a final response stating
    neither ``solicited`` nor ``unsolicited``, or ``UDSS_LLR_0258``
    for a classification otherwise not of the stated form, is not withheld but refused:
    ``UDSS_LLR_0267`` governs it and this requirement does not reach it.
@@ -595,7 +641,7 @@ Service primitives
    or a bit rate change.
 
 .. llr:: Protocol parameters are set through the service interface
-   :id: UDSS_LLR_0138
+   :id: UDSS_LLR_0259
    :status: draft
    :integrity_level: QM
    :target_level: D
@@ -604,23 +650,62 @@ Service primitives
    :tags: service-interface; primitives
 
    The session layer shall provide for the setting of its protocol parameters by the
-   caller. Every timing parameter that a requirement in this set conditions on, including
-   the ``tS3_Server`` timeout that ``UDSS_LLR_0112`` compares elapsed time against, shall
-   be supplied as such a parameter and shall be expressed in the unit ``UDSS_LLR_0191``
-   gives for a timestamp, as a 32-bit unsigned value. Every parameter a requirement loads a
-   timer with shall be supplied with the instance, or with the caller-supplied storage, it
-   belongs to when that is created, and shall have no default; a protocol parameter may be
-   set again at any time, and a change shall affect only a timer set running after it, a
-   timer already running keeping the value it was loaded with under ``UDSS_LLR_0195``.
+   caller.
 
    Clause 6.1 places the setting of protocol parameters in the service interface alongside
-   transmission and reception. No requirement in this set fixes a value for any timing
-   parameter: the recommended and default values in ISO 14229-2:2021 9 are properties of a
-   vehicle network and a deployment, not of this crate. That is also why a parameter has no
-   default and is supplied at creation: a timer started before its parameter existed would
-   have to be loaded with a value the set declines to choose. The width matches the
-   timestamp's because an interval is a modular difference of timestamps and a value beyond
-   that range could never be reached.
+   transmission and reception.
+
+.. llr:: Every timing parameter is a 32-bit value in the timestamp's unit
+   :id: UDSS_LLR_0260
+   :status: draft
+   :integrity_level: QM
+   :target_level: D
+   :origin: derived
+   :tags: service-interface; timing
+
+   Every timing parameter that a requirement in this set conditions on, including the
+   ``tS3_Server`` timeout that ``UDSS_LLR_0112`` compares elapsed time against, shall be
+   supplied as a protocol parameter and shall be expressed in the unit ``UDSS_LLR_0191``
+   gives for a timestamp, as a 32-bit unsigned value.
+
+   Rationale: the width matches the timestamp's because an interval is a modular
+   difference of timestamps and a value beyond that range could never be reached.
+
+.. llr:: A parameter a timer loads is supplied at creation with no default
+   :id: UDSS_LLR_0261
+   :status: draft
+   :integrity_level: QM
+   :target_level: D
+   :origin: derived
+   :tags: service-interface; timing
+
+   Every protocol parameter that a requirement loads a timer with shall be supplied with
+   the instance, or with the caller-supplied storage, it belongs to when that is created,
+   and shall have no default.
+
+   Rationale: no requirement in this set fixes a value for any timing parameter: the
+   recommended and default values in ISO 14229-2:2021 9 are properties of a vehicle
+   network and a deployment, not of this crate. That is also why a parameter has no
+   default and is supplied at creation: a timer started before its parameter existed
+   would have to be loaded with a value the set declines to choose.
+
+.. llr:: A parameter may be set again at any time
+   :id: UDSS_LLR_0262
+   :status: draft
+   :integrity_level: QM
+   :target_level: D
+   :origin: derived
+   :tags: service-interface; timing
+
+   A protocol parameter may be set again at any time, and a change shall affect only a
+   timer set running after it; a timer already running keeps the value it was loaded
+   with, under ``UDSS_LLR_0195``.
+
+   Rationale: a caller correcting a parameter must not disturb a window a timer already
+   running holds a peer to. ``UDSS_LLR_0195`` is what leaves that value alone, loading a
+   timer with the parameter's value at the instant it starts rather than reading it live;
+   this requirement states the outcome that mechanism is for, that a change take effect
+   only on a timer started after it.
 
 Message and peer identity
 --------------------------

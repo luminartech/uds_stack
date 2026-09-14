@@ -10,7 +10,7 @@ This is the second of the server's two timers. ``tS3_Server``, in
 ``tS3_Server`` the response timer runs in every session. ISO 14229-2:2021 9.5 states that
 the timing parameter definitions of Tables 3 and 4 hold for a non-default session too, and
 permits the server to change ``tP2_Server`` and ``tP2*_Server`` on transitioning into one.
-Under ``UDSS_LLR_0138`` both are caller-supplied protocol parameters, read each time the
+Under ``UDSS_LLR_0259`` both are caller-supplied protocol parameters, read each time the
 timer is loaded.
 
 One request at a time
@@ -91,7 +91,8 @@ message inadmissible for a service whose ``tP4_Server_Max`` equals ``tP2_Server_
 requires that equality for services the server does not support. Whether a given service
 may go response-pending at all is therefore fixed by a per-service value the session layer
 neither holds nor can derive: ``UDSS_LLR_0135`` forbids inspecting message data, and
-``UDSS_LLR_0138``'s protocol parameters are per-instance rather than per-service.
+``UDSS_LLR_0261`` supplies every parameter a timer loads with the instance or with the
+caller-supplied storage it belongs to, never with a service.
 ISO 14229-2:2021 9.3 Figure 7 confirms the reading, applying the equality "for a certain
 ``T_Data.ind``". ``UDSS_LLR_0149`` spaces consecutive response-pending messages; whether
 the first was admissible binds the application.
@@ -628,7 +629,7 @@ Enhanced response timing
    the least whole number of milliseconds not less than three tenths of ``tP2*_Server_Max``
    as that parameter stands when the ``S_Data.req`` is supplied, computed in integer
    arithmetic as ⌈3 × ``tP2*_Server_Max`` / 10⌉ without overflow for any value
-   ``UDSS_LLR_0138`` admits: with ``q`` and ``r`` the quotient and remainder of
+   ``UDSS_LLR_0260`` admits: with ``q`` and ``r`` the quotient and remainder of
    ``tP2*_Server_Max`` divided by 10, the spacing is 3 × ``q`` + ⌈3 × ``r`` / 10⌉.
 
    Table 4 footnote b requires a minimum time of 0,3 × ``tP2*_Server_Max`` between the
@@ -648,7 +649,7 @@ Enhanced response timing
    integer because a binary floating representation of three tenths rounds either way, and
    two implementations computing ⌈0.3 × 5 000⌉ in single and double precision obtain 1 501
    and 1 500. The product 3 × ``tP2*_Server_Max`` exceeds 32 bits for parameter values above
-   a third of the range ``UDSS_LLR_0138`` admits, and a wrapping, a widening and a checked
+   a third of the range ``UDSS_LLR_0260`` admits, and a wrapping, a widening and a checked
    implementation would then obtain three different spacings; the quotient-and-remainder
    form is the same value computed within the parameter's own width. The spacing is not a
    timer, so ``UDSS_LLR_0303``'s loaded value does not reach it; the parameter is read when
