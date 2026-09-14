@@ -18,9 +18,9 @@ against ``UDSSVC_ARCH_0001``.
    * - ``tP_Client``, ``tS3``, session state
      - ``uds_session``
      - ISO 14229-2
-   * - **Deciding to send 0x78**
-     - ``uds_session``
-     - See below
+   * - **When a response-pending is due, and how often it may repeat**
+     - ``uds_session`` and the driver
+     - ISO 14229-2 timing; see below
    * - ``tP2_Server`` / ``tP2*_Server``
      - ``uds_session``
      - ISO 14229-2 timers
@@ -41,16 +41,41 @@ against ``UDSSVC_ARCH_0001``.
      - the binding
      - Not portable across transports; ``UDSSVC_ARCH_0003``
 
-Response-pending is the subtle one
-----------------------------------
+Response-pending: what moved, and what did not
+----------------------------------------------
 
-Emitting ``requestCorrectlyReceivedResponsePending`` (0x78) before ``tP2_Server`` expires
-cannot be this crate's job, and the reason is structural rather than a matter of taste: a
-handler that is still working is by definition not returning, so it cannot also be
-watching a clock — and the clock is an ISO 14229-2 timer, which belongs to ``uds_session``.
+This entry was decided the other way in an earlier draft, and the correction is recorded
+rather than quietly applied, because the reasoning that produced it was sound and is worth
+knowing was superseded.
 
-So ``uds_session`` owns the timer and decides, the binding transmits, and this crate is
-simply still running.
+The original argument was that emitting a 0x78 cannot be this crate's job because "a
+handler that is still working is by definition not returning, so it cannot also be watching
+a clock". That was correct **for a synchronous handler**. ``UDSSVC_ARCH_0016`` made the
+handler seam asynchronous, which removed the premise: dispatch is suspended at an await
+while the handler works, and ``UDSSVC_ARCH_0031``'s seam is what lets it act in that window.
+The conclusion outlived the premise by several drafts, having been re-homed onto
+``uds_session`` where it looked settled.
+
+It was not settled there. ``uds_session`` declines the job in its own requirement set:
+``UDSS_LLR_0148`` reports the ``tP2_Server`` overrun and states that it "must not be read
+as obliging the session layer to produce a response", and ``UDSS_LLR_0285`` expects the
+request for a response-pending to *arrive from its caller*, which it may then refuse.
+
+``UDSSVC_ARCH_0032`` now places the decision and the bytes here, on the standard's own
+grounds rather than on convenience: ISO 14229-2:2021 REQ 5.4 and REQ 5.6 make
+admissibility a per-service question turning on whether the server supports the service,
+which is a clause 8.7 fact this crate already computes.
+
+**What remains not owned here is the timing**, and the division is clean:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 34 66
+
+   * - This crate answers
+     - The session layer and driver answer
+   * - *Whether* a response-pending is admissible, and *what* bytes it is
+     - *When* one is due, how often it may repeat, and whether one was accepted
 
 .. uml::
    :align: center
@@ -67,25 +92,27 @@ simply still running.
    participant "uds_services" as V
    participant "slow handler" as H
 
-   I -> V : handle(ctx, bytes, sink)
+   I -> V : handle(ctx, bytes, sink, pending)
    activate V
    V -> H : typed handler call
    activate H
 
    == tP2_Server expires while the handler runs ==
 
-   S -> I : send response-pending
+   S -> I : response-timing indication
+   I -> V : due()
+   V -> V : admissible?\n(service implemented and\nMAY_RESPOND_PENDING)
+   V -> I : offer([7F, sid, 78])
    I -> T : 0x78
    note over V
-     uds_services is mid-dispatch and
-     unaware. It reads no clock and
-     is not asked. The handler has
-     yielded, so the driver runs.
+     uds_services reads no clock.
+     It is told the moment, and
+     decides the answer.
    end note
 
    H --> V : Ok, or a negative response code
    deactivate H
-   V -> V : suppression gate,\nwith response-pending seen
+   V -> V : suppression gate,\nresponse-pending offered
    V --> I : Responded
    deactivate V
    I -> T : final response
@@ -96,21 +123,12 @@ simply still running.
    end note
    @enduml
 
-What this crate needs is not the decision but its *consequence*: that a 0x78 has been sent
-changes the suppression rules, which is why it is an input to ``UDSSVC_ARCH_0015`` and a
-rule in ``UDSSVC_ARCH_0009``. Step 6 is the whole reason that field exists — without it,
-the gate silences a response the standard requires.
-
-One consequence constrains the **binding's** server driver rather than this crate, and is
-recorded here so it is not rediscovered later: dispatch must not block the loop that
-drains session actions, or the 0x78 that ``uds_session`` decided to send cannot be
-transmitted while the handler it covers is still running. ``UDSSVC_ARCH_0016``'s
-asynchronous handler seam is what keeps a slow handler from having to run somewhere the
-driver can continue past: the handler yields at its await points, and the driver simply
-continues.
-
-This constraint is load-bearing for conformance and is not satisfiable by anything this
-crate does.
+The consequence that still constrains the **binding's** server driver rather than this
+crate: dispatch must not block the loop that drains session actions, or ``due`` never
+fires and the response-pending it would have prompted is never offered.
+``UDSSVC_ARCH_0016``'s asynchronous handler seam is what keeps a slow handler from having
+to run somewhere the driver can continue past — the handler yields at its await points,
+and the driver simply continues.
 
 What the layer below declines
 -----------------------------
