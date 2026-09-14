@@ -848,7 +848,7 @@ Enhanced response timing
    ``UDSS_LLR_0148`` says "reaches" for ``tP2_Server``, which is safe there because that
    parameter bounds the server's own conduct and the earlier of two readings is the
    conservative one; here the same wording would fault a conformant peer.
-   ``UDSS_LLR_0114`` fixes elapsed time in whole milliseconds, so the difference is
+   ``UDSS_LLR_0191`` fixes elapsed time in whole milliseconds, so the difference is
    reachable rather than theoretical.
 
    The indication carries the addressing of the request rather than of the response.
@@ -875,7 +875,7 @@ Enhanced response timing
    repeats in ``UDSS_LLR_0180``. The session layer reports the expiry and the application
    acts, as ``UDSS_LLR_0112`` and ``UDSS_LLR_0148`` do for the server's two timers.
 
-   The condition on the timer running restates ``UDSS_LLR_0114``, under which only a running
+   The condition on the timer running restates ``UDSS_LLR_0196``, under which only a running
    timer expires; it is repeated here because the case is easy to miss. ``UDSS_LLR_0154``
    stops the timer at the start-of-message of a response-pending message while the request
    is still in progress, as ISO 14229-2:2021 9.4 Figure 8 key c requires, so a channel can
@@ -884,7 +884,7 @@ Enhanced response timing
    among them, rely on the same rule.
 
    The timer is stopped for the reason ``UDSS_LLR_0148`` gives, and elapsed time is computed
-   as ``UDSS_LLR_0114`` requires. Expiry ends the request in progress, so on a functional
+   as ``UDSS_LLR_0192`` requires. Expiry ends the request in progress, so on a functional
    channel it is also what clears the response-pending facts of the responder table under
    ``UDSS_LLR_0160``, leaving only the entries whose start-of-message is open, which
    ``UDSS_LLR_0181`` waits on.

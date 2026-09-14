@@ -471,7 +471,7 @@ The timer's state
    Figure 12 key j and Figure 20 key d, both saying such a message "can be ignored" because
    the request in progress restarts the timer on its own completion under ``UDSS_LLR_0106``
    or ``UDSS_LLR_0142``. A timer disabled by the default session, not running under
-   ``UDSS_LLR_0114``'s vocabulary with no request to restart it, is ignored, Figure 12 key p saying such a message
+   ``UDSS_LLR_0194``'s vocabulary with no request to restart it, is ignored, Figure 12 key p saying such a message
    "is ignored" and Figure 20 key j that it "can be ignored", a difference of modality the
    set records here. Table 6's stop row says the timer is disabled while the default session
    is active, and that case is unreachable in this requirement, ``UDSS_LLR_0185`` holding no

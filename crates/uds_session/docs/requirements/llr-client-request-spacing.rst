@@ -304,7 +304,7 @@ The next request
 
    A rejection under ``UDSS_LLR_0176`` shall state the time remaining until the channel's
    spacing timer becomes inactive, being the value the timer was loaded with less the
-   elapsed time since the timer was last started, in the unit ``UDSS_LLR_0114`` gives for a
+   elapsed time since the timer was last started, in the unit ``UDSS_LLR_0191`` gives for a
    timestamp.
 
    Rationale: 10.3 postpones the request until the timer has timed out but gives the
@@ -316,6 +316,6 @@ The next request
    what the report carries; this requirement constrains that content, and adds no output
    under ``UDSS_LLR_0116``. Because ``UDSS_LLR_0176`` rejects only while the timer is active,
    the value is always positive, and a caller that retries after it finds the timer
-   inactive, ``UDSS_LLR_0114`` supplying the same elapsed time to both. An indication when
+   inactive, ``UDSS_LLR_0192`` supplying the same elapsed time to both. An indication when
    the timer becomes inactive was considered and rejected: it would cost an output on every
    channel at every expiry, or a per-channel fact to send it only after a rejection.

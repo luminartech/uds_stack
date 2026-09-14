@@ -434,7 +434,7 @@ Enhanced response timing
 
    The timer is stopped so that one overrun yields one indication, rather than a further
    indication for every timestamp the caller supplies thereafter. Elapsed time is computed
-   as ``UDSS_LLR_0114`` requires.
+   as ``UDSS_LLR_0192`` requires.
 
 .. llr:: Consecutive response-pending messages are spaced
    :id: UDSS_LLR_0149
@@ -467,7 +467,7 @@ Enhanced response timing
    start the enhanced window at that point. It is also the conservative reading: measuring
    from ``T_Data.req`` would permit an earlier transmission.
 
-   The spacing is rounded up because ``UDSS_LLR_0114`` fixes the unit at whole milliseconds
+   The spacing is rounded up because ``UDSS_LLR_0191`` fixes the unit at whole milliseconds
    and three tenths of a parameter need not fall on one. Rounding down would permit a
    transmission the footnote forbids, by up to a millisecond. The arithmetic is stated as
    integer because a binary floating representation of three tenths rounds either way, and
@@ -476,7 +476,7 @@ Enhanced response timing
    a third of the range ``UDSS_LLR_0138`` admits, and a wrapping, a widening and a checked
    implementation would then obtain three different spacings; the quotient-and-remainder
    form is the same value computed within the parameter's own width. The spacing is not a
-   timer, so ``UDSS_LLR_0114``'s loaded value does not reach it; the parameter is read when
+   timer, so ``UDSS_LLR_0303``'s loaded value does not reach it; the parameter is read when
    the ``S_Data.req`` is judged.
 
    The interval is measured from the confirming ``T_Data.conf`` rather than from the state

@@ -80,79 +80,6 @@ queue before the other is what the assumption forbids.
    configuration rather than by a runtime test; no black-box test can show that no I/O is
    performed.
 
-.. llr:: Elapsed time is supplied by the caller
-   :id: UDSS_LLR_0114
-   :status: draft
-   :integrity_level: QM
-   :target_level: D
-   :origin: derived
-   :tags: service-interface; sans-io
-
-   The session layer shall not read a clock. Every decision that depends on elapsed time
-   shall be made from a timestamp supplied by the caller.
-
-   A timestamp shall be a 32-bit unsigned count of milliseconds.
-
-   The session layer shall compute the interval between two timestamps as their difference
-   modulo 2\ :sup:`32`, and shall treat that result as the elapsed time between them.
-
-   Every input shall be accompanied by a timestamp, which is the time at which the session
-   layer treats that input as having occurred. A timestamp may also be supplied with no
-   other input.
-
-   Throughout this set a **timer** is either running or not running. To **start**,
-   **restart** or **reload** a timer is to set it running with zero elapsed time, whether or
-   not it was running; to **stop** or **disable** a timer is to make it not running, whether
-   or not it was. A timer is loaded, when set running, with the value of the parameter the
-   requirement names as it stands at that instant, and it expires when the elapsed time since
-   it was set running reaches that loaded value, or exceeds it where the requirement says so.
-   Only a running timer expires: a timer that is not running has no elapsed time and is not
-   evaluated, whether or not the requirement that acts on its expiry repeats the condition.
-   Expiry shall be evaluated only when a timestamp is supplied, before the input it
-   accompanies, so a timer set running by an input, or by the action a requirement takes on
-   another timer's expiry, expires no earlier than the next timestamp supplied; a timer loaded
-   with zero therefore expires on that next timestamp, or, where the requirement says
-   "exceeds", on the first later one. A requirement that leaves a running
-   timer alone says so.
-
-   Rationale: reading a clock is I/O by another name, and it makes timer behaviour
-   untestable except in real time. A caller-supplied timestamp lets a test advance time
-   arbitrarily, and lets each deployment choose the time source its platform provides.
-
-   The unit is milliseconds because that is the unit ISO 14229-2:2021 9.5 Table 5 states
-   its timing parameter values in; ``tS3_Server`` has a timeout of 5 000 ms and a
-   tolerance of 0 ms to 200 ms. ``UDSS_LLR_0149``, whose minimum spacing between
-   consecutive response-pending messages is a fraction of a timing parameter and need not
-   fall on a whole millisecond, is expressed against this unit rather than alongside a
-   second one.
-
-   The width is fixed rather than left as a minimum because the wraparound point would
-   otherwise be unknown, and an unknown modulus cannot be tested. A 32-bit millisecond
-   counter wraps after roughly 49 days, and modular subtraction returns the true interval
-   for any interval shorter than that, which every timeout in this set is by orders of
-   magnitude.
-
-   The subtraction is total: it yields a value for every pair of timestamps, so no input
-   can leave the session layer without a defined elapsed time. Whether the caller's
-   timestamps are non-decreasing is a property of the caller rather than of this crate,
-   and is recorded as an assumption of use in the qualification repository. A caller that
-   supplies a decreasing timestamp obtains an interval close to the full range, which will
-   expire timers early; the session layer cannot distinguish that from a legitimate wrap,
-   and no requirement here obliges it to try.
-
-   The timestamp accompanies every input because every timer requirement in this set starts,
-   stops or expires a timer on an input, and an input with no time attached would have to be
-   placed at the time of the last one, an interval the caller controls and the set does not
-   state. The vocabulary is fixed here, once, because the timer requirements of every
-   document use "start", "restart", "reload", "stop" and "disable" and a reader should not
-   have to ask whether a start of a running timer is a restart: it is. Loading the value at
-   the start rather than reading the parameter live is what lets a parameter change while a
-   timer runs without moving a window already open. Evaluating expiry only at a timestamp
-   settles when a timer whose loaded value the elapsed time already reaches, zero included,
-   first expires: not in the call that set it running, whose timestamp preceded the input,
-   but at the next, which is also the order the expiry-before-input rule of the timing
-   documents presupposes.
-
 .. llr:: Inbound primitives are caller-supplied inputs
    :id: UDSS_LLR_0115
    :status: draft
@@ -167,13 +94,13 @@ queue before the other is what the assumption forbids.
 
    The inputs so supplied shall include ``S_Data.req``, as ``UDSS_LLR_0139`` defines it;
    ``T_Data.ind``, ``T_DataSOM.ind`` and ``T_Data.conf``, as ``UDSS_LLR_0140`` defines
-   them; a timestamp, as ``UDSS_LLR_0114`` defines it, accompanying every other input and
+   them; a timestamp, as ``UDSS_LLR_0193`` defines it, accompanying every other input and
    also supplied on its own; the protocol parameters of ``UDSS_LLR_0138``; the completion
    report of ``UDSS_LLR_0136``; the supply and withdrawal of channel storage under
    ``UDSS_LLR_0151``; and the channel reset and keep-alive release of ``UDSS_LLR_0183`` and
    ``UDSS_LLR_0184``. The last four, and the setting of a protocol parameter, are acts of the
    caller rather than primitives; each shall be accompanied by a timestamp as
-   ``UDSS_LLR_0114`` requires, and ``UDSS_LLR_0187`` shall order the expiries that timestamp
+   ``UDSS_LLR_0193`` requires, and ``UDSS_LLR_0187`` shall order the expiries that timestamp
    causes, with their indications, before the act. Where a requirement says such an act
    produces no output, that is said of the act alone.
 
@@ -188,50 +115,6 @@ queue before the other is what the assumption forbids.
    exchanged, and ``UDSS_LLR_0112`` requires the server to act on that expiry. Where it
    accompanies another input, ``UDSS_LLR_0187`` orders the expiries it causes before that
    input.
-
-.. llr:: Timer expiries precede the input they accompany
-   :id: UDSS_LLR_0187
-   :status: draft
-   :integrity_level: QM
-   :target_level: D
-   :origin: derived
-   :tags: service-interface; sans-io; timing
-
-   Where a timestamp is supplied alongside another input, the session layer shall act on
-   every timer expiry that timestamp causes before it processes that input, and shall
-   process the input against the state those expiries leave. Where a requirement in this
-   set evaluates a condition against the state as it was before the input in hand, that
-   state is the state after every expiry the input's timestamp caused; every requirement in
-   this set that conditions on state reads it so, whether or not it says so.
-
-   Rationale: ``UDSS_LLR_0115`` lets a timestamp accompany an input and nothing else orders
-   the two. The elapsed time preceded the input's arrival, so a timer that reaches its value
-   at that timestamp expired before the input was seen, which is also what a caller that
-   samples its clock before delivering the input observes. The other order lets the input
-   swallow the expiry: ``UDSS_LLR_0144`` would restart ``tP2_Server`` before
-   ``UDSS_LLR_0148`` reported the overrun, and ``UDSS_LLR_0104`` would stop ``tS3_Server``
-   before ``UDSS_LLR_0112`` ended the session.
-
-   Two consequences are accepted. A request marked ``keep-alive`` delivered with a timestamp
-   exactly at ``tS3_Server``'s timeout changes no timer, ``UDSS_LLR_0112`` having already
-   ended the session it would have kept alive while ``UDSS_LLR_0137`` still delivers it, the
-   timer having expired at "reaches": ISO 14229-2:2021 9.5 Table 5 states the timeout as the time the
-   server keeps the session while not receiving a request, its tolerance is the caller's
-   parameter to spend, and a client conformant to Table 5's ordering of ``tS3_Client`` below
-   ``tS3_Server`` never sends at the boundary. And a ``T_Data.conf`` of a session-selecting
-   response accompanied by a timestamp that expires ``tS3_Server`` yields, in one call,
-   ``UDSS_LLR_0112``'s timeout indication and ``UDSS_LLR_0102``'s entry into the new
-   session, which is correct: the old session did end at that instant, and the new one is
-   the application's own transition.
-
-   Where one timestamp causes several expiries, the order of the indications they produce
-   is not specified; every such indication precedes any output of the input the timestamp
-   accompanies and any rejection report for it under ``UDSS_LLR_0150``. Several expiries on one timestamp need no order for the state they leave. On the server ``UDSS_LLR_0112`` and
-   ``UDSS_LLR_0148`` touch disjoint timers and neither reads the other's. On the client the
-   only expiry action that touches another timer is ``UDSS_LLR_0170``'s, a ``tP_Client``
-   expiry starting ``tS3_Client``, and a channel whose ``tP_Client`` is running has its
-   ``tS3_Client`` stopped under ``UDSS_LLR_0169``, so under the one-request-per-channel
-   assumption of use the two never expire together.
 
 .. llr:: Outbound primitives are outputs the caller retrieves
    :id: UDSS_LLR_0116
@@ -314,6 +197,80 @@ queue before the other is what the assumption forbids.
    Leaving the state unchanged is what makes the rejection recoverable: a caller that
    retries once the cause has cleared obtains the result it would have obtained had the
    erroneous call never been made.
+
+Timebase
+--------
+
+The session layer's whole notion of time is the caller's. These requirements fix what a
+timestamp is and where it comes from; :doc:`llr-timer-model` fixes what a timer does with
+one.
+
+.. llr:: The session layer reads no clock
+   :id: UDSS_LLR_0190
+   :status: draft
+   :integrity_level: QM
+   :target_level: D
+   :origin: derived
+   :tags: service-interface; sans-io; timing
+
+   The session layer shall not read a clock. Every decision that depends on elapsed time
+   shall be made from a timestamp supplied by the caller.
+
+   Rationale: reading a clock is I/O by another name, and it makes timer behaviour
+   untestable except in real time. A caller-supplied timestamp lets a test advance time
+   arbitrarily, and lets each deployment choose the time source its platform provides.
+
+.. llr:: A timestamp is a 32-bit unsigned count of milliseconds
+   :id: UDSS_LLR_0191
+   :status: draft
+   :integrity_level: QM
+   :target_level: D
+   :origin: derived
+   :tags: service-interface; timing
+
+   A timestamp shall be a 32-bit unsigned count of milliseconds.
+
+   Rationale: the unit is milliseconds because that is the unit ISO 14229-2:2021 9.5
+   Table 5 states its timing parameter values in; ``tS3_Server`` has a timeout of 5 000 ms
+   and a tolerance of 0 ms to 200 ms. The width is fixed rather than left as a minimum
+   because the wraparound point would otherwise be unknown, and an unknown modulus cannot
+   be tested. A 32-bit millisecond counter wraps after roughly 49 days.
+
+.. llr:: An interval is the modular difference of two timestamps
+   :id: UDSS_LLR_0192
+   :status: draft
+   :integrity_level: QM
+   :target_level: D
+   :origin: derived
+   :tags: service-interface; timing
+
+   The session layer shall compute the interval between two timestamps as their difference
+   modulo 2\ :sup:`32`, and shall treat that result as the elapsed time between them.
+
+   Rationale: the subtraction is total, so no input can leave the session layer without a
+   defined elapsed time, and modular subtraction returns the true interval for any interval
+   shorter than the wrap, which every timeout in this set is by orders of magnitude.
+   Whether the caller's timestamps are non-decreasing is a property of the caller, recorded
+   as an assumption of use in the qualification repository; a caller that supplies a
+   decreasing timestamp obtains an interval close to the full range, which will expire
+   timers early, and the session layer cannot distinguish that from a legitimate wrap.
+
+.. llr:: Every input is accompanied by a timestamp
+   :id: UDSS_LLR_0193
+   :status: draft
+   :integrity_level: QM
+   :target_level: D
+   :origin: derived
+   :tags: service-interface; timing
+
+   Every input shall be accompanied by a timestamp, which is the time at which the session
+   layer treats that input as having occurred. A timestamp may also be supplied with no
+   other input.
+
+   Rationale: every timer requirement in this set starts, stops or expires a timer on an
+   input, and an input with no time attached would have to be placed at the time of the
+   last one, an interval the caller controls and the set does not state. A timestamp may be
+   supplied on its own because a timer can expire while no message is exchanged.
 
 Service primitives
 ------------------
@@ -606,12 +563,12 @@ Service primitives
    The session layer shall provide for the setting of its protocol parameters by the
    caller. Every timing parameter that a requirement in this set conditions on, including
    the ``tS3_Server`` timeout that ``UDSS_LLR_0112`` compares elapsed time against, shall
-   be supplied as such a parameter and shall be expressed in the unit ``UDSS_LLR_0114``
+   be supplied as such a parameter and shall be expressed in the unit ``UDSS_LLR_0191``
    gives for a timestamp, as a 32-bit unsigned value. Every parameter a requirement loads a
    timer with shall be supplied with the instance, or with the caller-supplied storage, it
    belongs to when that is created, and shall have no default; a protocol parameter may be
    set again at any time, and a change shall affect only a timer set running after it, a
-   timer already running keeping the value it was loaded with under ``UDSS_LLR_0114``.
+   timer already running keeping the value it was loaded with under ``UDSS_LLR_0195``.
 
    Clause 6.1 places the setting of protocol parameters in the service interface alongside
    transmission and reception. No requirement in this set fixes a value for any timing

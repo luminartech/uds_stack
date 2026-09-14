@@ -5,6 +5,7 @@ Requirements
    :maxdepth: 1
 
    llr-service-interface
+   llr-timer-model
    llr-server-session-timer
    llr-server-response-timing
    llr-client-response-timing
