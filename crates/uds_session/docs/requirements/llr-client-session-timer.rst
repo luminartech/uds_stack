@@ -33,7 +33,8 @@ cannot compose the TesterPresent itself, ``UDSS_LLR_0135`` forbidding it; the ap
 does, as it does the repeat that ``UDSS_LLR_0159`` leaves to it.
 
 This document uses **physical channel**, **functional channel** and **request in progress**
-as ``UDSS_LLR_0151`` and the client response timing document's preamble define them,
+as ``UDSS_LLR_0201``, ``UDSS_LLR_0208`` and the client response timing document's
+preamble define them,
 **first indication** and **completion** as ``UDSS_LLR_0199`` defines them, and
 **solicited** as ``UDSS_LLR_0134`` defines it.
 
@@ -161,7 +162,7 @@ The timer's state
    maintain a single ``tS3_Client`` timer and a channel session fact for each physical
    channel. The functional timer and fact shall be held in storage supplied with the
    instance at its creation, and each physical channel's timer and fact in that channel's
-   storage under ``UDSS_LLR_0151``. In functional keep-alive
+   storage under ``UDSS_LLR_0206``. In functional keep-alive
    the client shall have one ``tS3_Client`` reload parameter; in physical keep-alive each
    physical channel shall have its own, each supplied under ``UDSS_LLR_0138``. On creation
    of the instance, and for a physical channel when its storage is supplied, no such timer
@@ -176,11 +177,11 @@ The timer's state
    communication otherwise. The initial state follows Table 6, whose functional column
    starts the timer only for a non-default session: in the default session nothing is kept
    alive. It is stated because none of the ten requirements that change them is an
-   initialisation condition; ``UDSS_LLR_0185`` and ``UDSS_LLR_0151`` state initial state for
+   initialisation condition; ``UDSS_LLR_0185`` and ``UDSS_LLR_0207`` state initial state for
    the same reason.
 
    The per-channel timers and facts live in the channel's storage for the reason
-   ``UDSS_LLR_0151`` gives: the number of channels is a property of the deployment, the
+   ``UDSS_LLR_0200`` gives: the number of channels is a property of the deployment, the
    crate does not allocate, and Table 8 states what timers are needed, not where they live.
    The functional timer and fact are fixed in size, as the server's state ``UDSS_LLR_0185``
    holds in the instance is, and are nonetheless supplied by the caller: the client's state
@@ -534,7 +535,7 @@ session fact, and the requests and indications on it.
    ``tS3_Client`` timer is running, when the elapsed time since the timer was last started
    reaches the value it was loaded with, the client shall stop the timer and deliver a
    keep-alive indication to the application carrying the channel's identity as
-   ``UDSS_LLR_0151`` defines it.
+   ``UDSS_LLR_0201`` defines it.
 
    Table 5 defines ``tS3_Client`` for physical communication as the maximum time between
    physically transmitted requests to a single server, and Figure 13 keys k and o have its
@@ -552,7 +553,7 @@ session fact, and the requests and indications on it.
    timer and the channel's server leaves the session when ``tS3_Server`` expires.
 
    The indication carries the channel and not a source address: a channel is identified by
-   the client's own outbound addressing, as ``UDSS_LLR_0151`` defines it, and the source is
+   the client's own outbound addressing, as ``UDSS_LLR_0201`` defines it, and the source is
    the client. ``UDSS_LLR_0159`` carries a request's full addressing
    because there the application must identify a request; here it must identify a channel.
    Table 8 makes this timer one per point-to-point communication, which is why the channel

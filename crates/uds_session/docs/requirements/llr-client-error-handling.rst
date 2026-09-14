@@ -157,7 +157,7 @@ The repeat count
    :tags: client; error-handling; repeat
 
    Each logical communication channel, physical or functional, shall have a **repeat
-   count** in the channel's storage under ``UDSS_LLR_0151``. When the channel's storage is
+   count** in the channel's storage under ``UDSS_LLR_0206``. When the channel's storage is
    supplied the count shall be zero.
    Thereafter it shall be changed only as ``UDSS_LLR_0179`` and ``UDSS_LLR_0183`` require,
    each evaluated against the state as it was before the input in hand, that state being the
@@ -172,9 +172,9 @@ The repeat count
    :doc:`open-questions` inventories and which ``UDSS_LLR_0160`` joined for the same
    reason.
 
-   The storage is the caller's for the reason ``UDSS_LLR_0151`` gives: the number of
+   The storage is the caller's for the reason ``UDSS_LLR_0200`` gives: the number of
    channels is a property of the deployment and the crate does not allocate. The initial
-   state and the rule on evaluation order are stated for the reasons ``UDSS_LLR_0151`` and
+   state and the rule on evaluation order are stated for the reasons ``UDSS_LLR_0207`` and
    ``UDSS_LLR_0163`` give; here the rule is what lets ``UDSS_LLR_0179`` and
    ``UDSS_LLR_0180`` act on the same ``S_Data.req``, the one reading the count the other
    writes.
@@ -209,7 +209,7 @@ The repeat count
    counts; and because a rejection under ``UDSS_LLR_0150`` leaves state unchanged, so a
    rejected repeat is never counted. The requirements of the client documents that may
    reject an ``S_Data.req`` for a request are ``UDSS_LLR_0176``, ``UDSS_LLR_0180`` and
-   ``UDSS_LLR_0181``, and ``UDSS_LLR_0133``, ``UDSS_LLR_0134``, ``UDSS_LLR_0151`` and
+   ``UDSS_LLR_0181``, and ``UDSS_LLR_0133``, ``UDSS_LLR_0134``, ``UDSS_LLR_0203`` and
    ``UDSS_LLR_0188`` reject one on its addressing, classification, channel or role;
    ``UDSS_LLR_0180`` reads the count as it was before the input under ``UDSS_LLR_0178``'s
    rule, so the increase here never feeds the rejection there.
@@ -346,7 +346,7 @@ Giving a server up
 
    The abandoned association shall remain outstanding under ``UDSS_LLR_0133``, rejecting a
    further ``S_Data.req`` to its addressing, until its ``T_Data.conf`` arrives or the
-   channel's storage is withdrawn under ``UDSS_LLR_0151``. A ``T_Data.conf`` arriving for an
+   channel's storage is withdrawn under ``UDSS_LLR_0205``. A ``T_Data.conf`` arriving for an
    abandoned association shall be confirmed to the
    application under ``UDSS_LLR_0122``, shall start no response window under
    ``UDSS_LLR_0153``, and shall otherwise act as it would had the channel not been reset;
@@ -372,7 +372,7 @@ Giving a server up
    relative to the last confirmation and so reset by the next; the abandoned association,
    which remains outstanding under ``UDSS_LLR_0133`` until its ``T_Data.conf`` arrives, so
    that an ``S_Data.req`` on the channel is rejected meanwhile and, where the confirmation
-   never comes, withdrawing the channel's storage under ``UDSS_LLR_0151`` is the exit; and
+   never comes, withdrawing the channel's storage under ``UDSS_LLR_0205`` is the exit; and
    the keep-alive state, which ``UDSS_LLR_0184`` covers as a separate act. In physical keep-alive a reset
    therefore leaves the channel's session fact and ``tS3_Client`` timer as they were; a
    timer ``UDSS_LLR_0169`` stopped for the request the reset ended is restarted by the next
@@ -400,7 +400,7 @@ Giving a server up
    ``tS3_Client`` on a completion among them as on any other. The preamble records that the
    application expects this.
 
-   The physical start-of-message the third effect closes is the one ``UDSS_LLR_0151``
+   The physical start-of-message the third effect closes is the one ``UDSS_LLR_0210``
    retains past the end of the request. Naming a channel that does not exist is a caller
    error rather than an input, as ``UDSS_LLR_0140`` treats one. The reset is neither a
    primitive nor a parameter but an act of the caller, as the completion report of

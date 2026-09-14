@@ -39,7 +39,7 @@ tables do not budget. Known members:
   caller-supplied storage, which make 7.6's identification by address checkable;
 - the controlling client of ``UDSS_LLR_0185``, which Table 6's "client which requested the
   transition" needs and Table 8 budgets nothing for;
-- the request record and response count of ``UDSS_LLR_0151``, which Table 9's known-count
+- the request record and response count of ``UDSS_LLR_0206``, which Table 9's known-count
   cell needs;
 - the keeping-alive fact and the channel session facts of ``UDSS_LLR_0163``, without which
   a timer stopped between a keep-alive indication and its confirmation cannot be told from

@@ -42,7 +42,7 @@ parameters or timestamps: the completion report of ``UDSS_LLR_0136``, which ``UD
 enumerates; the channel reset and keep-alive release that :doc:`llr-client-error-handling`
 defines in ``UDSS_LLR_0183`` and ``UDSS_LLR_0184``, by which the caller clears state the
 client keeps; and the supply and withdrawal of the storage ``UDSS_LLR_0133`` and
-``UDSS_LLR_0151`` name, in which every fact the set keeps per peer or per channel lives.
+``UDSS_LLR_0206`` name, in which every fact the set keeps per peer or per channel lives.
 Each produces no output of its own, so ``UDSS_LLR_0116`` is not engaged by them;
 ``UDSS_LLR_0115`` enumerates them among its inputs and has each carry a timestamp, so that
 ``UDSS_LLR_0187`` orders the expiries before the act. One output is likewise addressed to the
@@ -97,7 +97,7 @@ queue before the other is what the assumption forbids.
    them; a timestamp, as ``UDSS_LLR_0193`` defines it, accompanying every other input and
    also supplied on its own; the protocol parameters of ``UDSS_LLR_0138``; the completion
    report of ``UDSS_LLR_0136``; the supply and withdrawal of channel storage under
-   ``UDSS_LLR_0151``; and the channel reset and keep-alive release of ``UDSS_LLR_0183`` and
+   ``UDSS_LLR_0201``; and the channel reset and keep-alive release of ``UDSS_LLR_0183`` and
    ``UDSS_LLR_0184``. The last four, and the setting of a protocol parameter, are acts of the
    caller rather than primitives; each shall be accompanied by a timestamp as
    ``UDSS_LLR_0193`` requires, and ``UDSS_LLR_0187`` shall order the expiries that timestamp
@@ -181,7 +181,8 @@ queue before the other is what the assumption forbids.
    content each of them requires.
 
    Rationale: ``UDSS_LLR_0133``, ``UDSS_LLR_0134``, ``UDSS_LLR_0140``, ``UDSS_LLR_0149``,
-   ``UDSS_LLR_0151``, ``UDSS_LLR_0152``, ``UDSS_LLR_0176``, ``UDSS_LLR_0180``,
+   ``UDSS_LLR_0152``, ``UDSS_LLR_0176``, ``UDSS_LLR_0180``, ``UDSS_LLR_0202``,
+   ``UDSS_LLR_0203``, ``UDSS_LLR_0204``,
    ``UDSS_LLR_0181``, ``UDSS_LLR_0183``, ``UDSS_LLR_0184`` and ``UDSS_LLR_0188`` each refuse
    an input rather
    than react to it, and without this requirement none would say what refusal means. A
@@ -316,7 +317,7 @@ Service primitives
    result.
 
    At a client, every ``T_DataSOM.ind`` and ``T_Data.ind`` shall identify the logical
-   communication channel it belongs to, supplied by the caller; ``UDSS_LLR_0151`` defines
+   communication channel it belongs to, supplied by the caller; ``UDSS_LLR_0201`` defines
    the channel. Identifying a channel the client does not have shall be rejected as
    ``UDSS_LLR_0150`` defines. The session layer shall not verify the identified channel
    against the indication's addressing.
@@ -352,7 +353,7 @@ Service primitives
    ``UDSS_LLR_0150`` treats one. The channel named is trusted rather than checked against
    the indication's addressing: on a functional channel the response's addressing does not
    name the channel, and a check on a physical channel alone would catch a misrouting only
-   by coincidence; ``UDSS_LLR_0151`` records the residual.
+   by coincidence; ``UDSS_LLR_0206`` records the residual.
 
    ``T_Data.conf``'s parameters are stated because the standard states them only by
    mapping: clause 7.6 has the ``S_Data.conf`` identify the ``S_Data.req`` it confirms by
@@ -379,7 +380,7 @@ Service primitives
    states kind ``final response`` or ``response pending``, and a client one whose
    classification states kind ``request``. A server shall reject, as ``UDSS_LLR_0150``
    defines, a ``T_DataSOM.ind`` or ``T_Data.ind`` identifying a logical communication
-   channel, the supply or withdrawal of channel storage under ``UDSS_LLR_0151``, and the
+   channel, the supply or withdrawal of channel storage under ``UDSS_LLR_0201``, and the
    channel reset and keep-alive release of ``UDSS_LLR_0183`` and ``UDSS_LLR_0184``.
 
    Creation of a server shall supply the association storage of ``UDSS_LLR_0133`` and the
@@ -388,7 +389,7 @@ Service primitives
    ``UDSS_LLR_0162`` and, in functional keep-alive, the storage and reload parameter of
    ``UDSS_LLR_0163``; a client's channel storage, with the association it holds and the
    parameters of ``UDSS_LLR_0152``, ``UDSS_LLR_0163`` and ``UDSS_LLR_0173``, is supplied
-   later under ``UDSS_LLR_0151``.
+   later under ``UDSS_LLR_0201``.
 
    Rationale: every requirement in this set is stated for the client or for the server, and
    ISO 14229-2:2021 describes the two as distinct peer entities throughout clauses 6 to 10,
@@ -609,7 +610,7 @@ peer, and how a multi-frame message's start is matched to its completion.
    functional channel the multi-frame responses of several servers may interleave, so
    matching has to name the responder. The state this costs is stated with the client's
    requirements: an entry per responder under ``UDSS_LLR_0160`` on a functional channel,
-   and one fact per channel under ``UDSS_LLR_0151`` on a physical one, where one peer
+   and one fact per channel under ``UDSS_LLR_0206`` on a physical one, where one peer
    answers one outstanding request. The server needs none of it: its only start-of-message
    effect, ``UDSS_LLR_0104``, stops a timer, which a second stop leaves stopped.
 
@@ -911,7 +912,7 @@ and leaves the means of recognising it to the implementation.
    free association, and a ``T_Data.conf`` matching no outstanding association, shall each
    be rejected as ``UDSS_LLR_0150`` defines. On initialisation no association shall be
    outstanding. A server's association storage shall be supplied when the instance is
-   created; a client's is part of the channel's storage ``UDSS_LLR_0151`` defines.
+   created; a client's is part of the channel's storage ``UDSS_LLR_0206`` defines.
 
    Rationale: several requirements condition on message content, including whether a
    response is final or response-pending, whether a message selects a diagnostic session,
@@ -938,9 +939,9 @@ and leaves the means of recognising it to the implementation.
    carried the session selection or the solicitation the timer requirements read. The
    storage is the caller's because the number of peers an instance addresses is a property
    of the deployment and the crate does not allocate; how the client's storage is organised
-   per channel is ``UDSS_LLR_0151``'s. An association whose ``T_Data.conf`` never arrives
+   per channel is ``UDSS_LLR_0206``'s. An association whose ``T_Data.conf`` never arrives
    stays outstanding: the client's exit is the withdrawal of the channel's storage under
-   ``UDSS_LLR_0151``, and the server has none, resting instead on the assumption of use that
+   ``UDSS_LLR_0205``, and the server has none, resting instead on the assumption of use that
    the transport reports a ``T_Data.conf`` for every ``T_Data.req``, which
    :doc:`open-questions` records beside the start-of-message assumption.
 

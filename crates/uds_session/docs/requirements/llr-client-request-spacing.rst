@@ -36,7 +36,7 @@ A ``T_Data.conf`` belongs to the channel named by the addressing of the ``S_Data
 ``UDSS_LLR_0133`` associates with it, the route ``UDSS_LLR_0153`` uses, and an ``S_Data.req``
 belongs to the channel its own addressing names. On the outbound side, therefore, no caller
 identification of the channel is needed. This document uses **physical channel**,
-**functional channel** and the identity of a channel as ``UDSS_LLR_0151`` and the client
+**functional channel** and the identity of a channel as ``UDSS_LLR_0201`` and the client
 response timing document's preamble define them, and **expected response count** and ``none`` as ``UDSS_LLR_0134`` defines them.
 
 Postponement is rejection
@@ -116,7 +116,7 @@ The spacing timer
    :tags: client; p3_client
 
    The client shall maintain a single spacing timer for each logical communication channel,
-   in the channel's storage under ``UDSS_LLR_0151``. Each channel shall have a spacing parameter supplied
+   in the channel's storage under ``UDSS_LLR_0206``. Each channel shall have a spacing parameter supplied
    as a protocol parameter under ``UDSS_LLR_0138``, ``tP3_Client_Phys`` for a physical
    channel and ``tP3_Client_Func`` for a functional channel, and the session layer shall not
    distinguish whether the value was derived with ``ΔtP2`` or with ``ΔtP6``. A channel's
@@ -153,8 +153,8 @@ The spacing timer
    states the timer's whole effect as a condition on the next transmission, so an inactive
    timer is one that no longer forbids anything, and ``UDSS_LLR_0177`` gives the application
    the time remaining instead of an indication. The storage is the caller's for the reason
-   ``UDSS_LLR_0151`` gives, and the initial state and the rule on evaluation order are stated
-   for the reasons ``UDSS_LLR_0151`` and ``UDSS_LLR_0163`` give.
+   ``UDSS_LLR_0200`` gives, and the initial state and the rule on evaluation order are stated
+   for the reasons ``UDSS_LLR_0207`` and ``UDSS_LLR_0163`` give.
 
 Starting the timer
 ------------------

@@ -54,7 +54,7 @@ addressed response answers either the physical channel to that server or a funct
 channel the server was reached through, and nothing in the indication says which.
 ``UDSS_LLR_0140`` therefore requires the caller to identify the channel each
 ``T_DataSOM.ind`` and ``T_Data.ind`` belongs to. A channel exists while the caller supplies
-its storage, as ``UDSS_LLR_0151`` states. That requirement also settles which
+its storage, as ``UDSS_LLR_0201`` states. ``UDSS_LLR_0199`` settles which
 indication is the start of a message and which its completion, and this document uses its
 terms **first indication** and **completion** without restating them. An indication on a
 channel with no request in progress takes no timer action under any requirement below; it
@@ -73,18 +73,18 @@ Throughout this document, the **request in progress** on a channel is the reques
 response the client is waiting for: from the ``T_Data.conf`` confirming its successful
 transmission until that wait ends.
 
-``UDSS_LLR_0151`` fixes both ends. The wait ends on a physical channel with the first
+``UDSS_LLR_0208`` fixes both ends. The wait ends on a physical channel with the first
 indication of a message whose classification states kind ``final response`` and
 ``solicited``; on a functional channel, when ``UDSS_LLR_0156`` stops the timer; and on either
 kind of channel, with any ``T_Data.ind`` reporting a failed reception, whether first
 indication or completion, and when the response window expires under ``UDSS_LLR_0159``.
 
 A channel reset under ``UDSS_LLR_0183`` also ends the wait, on the caller's act rather than
-on an input from the peer; short of withdrawing the channel under ``UDSS_LLR_0151``, that is
+on an input from the peer; short of withdrawing the channel under ``UDSS_LLR_0205``, that is
 the only ending after which no indication for the message follows.
 
 An input that ends the wait is itself processed while the request is still in progress, as
-``UDSS_LLR_0151`` states, so a requirement conditioned on the request in progress is eligible
+``UDSS_LLR_0209`` states, so a requirement conditioned on the request in progress is eligible
 to act on it and the wait ends as a consequence. Were it otherwise, ``UDSS_LLR_0154`` could
 never stop the timer on the response it is there to stop it on.
 
@@ -186,80 +186,136 @@ The response window
 -------------------
 
 .. llr:: The client uses one response timer per communication channel
-   :id: UDSS_LLR_0151
+   :id: UDSS_LLR_0200
    :status: draft
    :integrity_level: QM
    :target_level: D
    :origin: session-layer-standard
    :source: ISO 14229-2:2021 9.1.2; ISO 14229-2:2021 9.6 Table 7
-   :tags: client; p_client; request-in-progress; service-interface
+   :tags: client; p_client; service-interface
 
    The client shall maintain a single ``tP_Client`` timer for each logical communication
-   channel, in storage supplied by the caller. A channel shall exist from the moment the
-   caller supplies its storage, identified by the addressing the caller states for that
-   storage, until the caller withdraws it. Supplying storage whose addressing equals that of
-   an existing channel, and an ``S_Data.req`` whose addressing names no existing channel,
-   shall be rejected as ``UDSS_LLR_0150`` defines, as shall a withdrawal identifying a
-   channel the client does not have. Withdrawal shall be permitted at any time and shall
-   discard, without output, every fact this set holds for the channel, an association
-   outstanding on it included; a ``T_Data.conf`` arriving for that association thereafter
-   matches none while no channel of that addressing exists and is rejected under
-   ``UDSS_LLR_0133``. A caller that supplies the same addressing again before that
-   confirmation arrives has it matched to whatever association the new channel then holds,
-   ``UDSS_LLR_0133`` matching by addressing alone, or rejected under that requirement where
-   it holds none; not doing so is an assumption of use. Every fact a document of
-   this set keeps per channel lives in the channel's storage. The same storage shall hold
-   whether a request is in progress on the channel and, while one is, the addressing and
-   classification of that request and, where that classification states an exact expected
-   response count, the number of responses ``UDSS_LLR_0156`` counts since the request's
-   confirmation, zero when the request becomes in progress; the one association
-   ``UDSS_LLR_0133`` holds for a transmission outstanding on the channel; and, on a
-   physical channel, whether a start-of-message is
-   open on that channel, as ``UDSS_LLR_0199`` requires, without recording the responder, so
-   that any ``T_Data.ind`` on the channel completes it. On a functional channel
-   ``UDSS_LLR_0160`` holds the start-of-message fact per responder instead. When a
-   channel's storage is supplied no such timer shall be running, no request shall be in
-   progress and no start-of-message shall be open. A request shall become in progress on the
-   ``T_Data.conf`` on which ``UDSS_LLR_0153`` starts the timer, and shall cease to be in
-   progress: on a physical channel, on the first indication of a message whose
-   classification states kind ``final response`` and ``solicited``; on a functional channel,
-   on the ``T_Data.ind`` on which ``UDSS_LLR_0156`` stops the timer; and on either kind of
-   channel, on any ``T_Data.ind`` reporting a failed reception, whether first indication or
-   completion, on the expiry under ``UDSS_LLR_0159``, and on a channel reset under
-   ``UDSS_LLR_0183``. An input that ends the request shall be processed while the request is
-   still in progress. A physical channel's open start-of-message shall be retained
-   past the end of the request in progress until a ``T_Data.ind`` on that channel completes
-   it, whether the reception succeeded or failed, or until a channel reset under
-   ``UDSS_LLR_0183`` closes it. Thereafter the state of a channel's timer shall be changed
-   only as
-   ``UDSS_LLR_0153``, ``UDSS_LLR_0154``, ``UDSS_LLR_0155``, ``UDSS_LLR_0156``,
-   ``UDSS_LLR_0157``, ``UDSS_LLR_0159`` and ``UDSS_LLR_0183`` require.
+   channel, in storage supplied by the caller.
 
    Table 7 requires a single timer for each logical communication channel, physical and
    functional alike, and clause 9.1.2 requires a single application timer implementation
    triggered by the ``T_Data`` service primitive interface.
 
-   The initial state is stated here because none of the seven conditions above is an
-   initialisation condition, so without it the state of a timer before the first input
-   would be undefined. ``UDSS_LLR_0185`` and ``UDSS_LLR_0143`` state the initial state of
-   the server's two timers for the same reason.
-
    The storage is the caller's because the number of channels is a property of the
    deployment rather than of the protocol, and the crate does not allocate. Neither cited
    clause requires it; the standard states what timers are needed, not where they live.
-   Supplying the storage is what brings a channel into being, and is stated so because
-   ``UDSS_LLR_0140`` rejects an indication that names a channel the client does not have
-   and nothing otherwise said how a channel came to exist: an implementer could create one
-   on the first ``S_Data.req`` to a new addressing or demand a registration the set never
-   named. Supplying and withdrawing the storage are acts of the caller, as the completion
-   report of ``UDSS_LLR_0136`` is an input that is neither a primitive nor a parameter. A
-   duplicate addressing is rejected because two channels one ``S_Data.req`` names would
-   leave which timer starts and which channel a later indication reports undetermined.
-   Withdrawal discards everything and is permitted at any time because it is the caller's
-   last exit: a transmission whose confirmation never comes leaves its association
+   ``UDSS_LLR_0206`` is where the rest of a channel's state joins the timer in that
+   storage.
+
+.. llr:: A channel exists while its storage is supplied
+   :id: UDSS_LLR_0201
+   :status: draft
+   :integrity_level: QM
+   :target_level: D
+   :origin: derived
+   :tags: client; p_client; service-interface
+
+   A logical communication channel shall exist from the moment the caller supplies its
+   storage, identified by the addressing the caller states for that storage, until the
+   caller withdraws it.
+
+   Rationale: neither clause the timer requirement ``UDSS_LLR_0200`` cites says where a
+   channel's timer lives; the standard states what timers are needed, not where they live.
+   Supplying the storage is therefore what brings a channel into being, and is stated so
+   because ``UDSS_LLR_0140`` rejects an indication that names a channel the client does not
+   have and nothing otherwise said how a channel came to exist: an implementer could create
+   one on the first ``S_Data.req`` to a new addressing or demand a registration the set
+   never named. Supplying and withdrawing the storage are acts of the caller, as the
+   completion report of ``UDSS_LLR_0136`` is an input that is neither a primitive nor a
+   parameter.
+
+.. llr:: Duplicate channel addressing is rejected
+   :id: UDSS_LLR_0202
+   :status: draft
+   :integrity_level: QM
+   :target_level: D
+   :origin: derived
+   :tags: client; p_client; service-interface
+
+   Supplying storage whose addressing equals that of an existing channel shall be rejected
+   as ``UDSS_LLR_0150`` defines.
+
+   Rationale: two channels one ``S_Data.req`` names would leave which timer starts and
+   which channel a later indication reports undetermined.
+
+.. llr:: A request naming no existing channel is rejected
+   :id: UDSS_LLR_0203
+   :status: draft
+   :integrity_level: QM
+   :target_level: D
+   :origin: derived
+   :tags: client; p_client; service-interface
+
+   An ``S_Data.req`` whose addressing names no existing channel shall be rejected as
+   ``UDSS_LLR_0150`` defines.
+
+   Rationale: naming a channel that does not exist is a caller error, not an input, and is
+   treated as ``UDSS_LLR_0140`` treats the same error on an indication.
+
+.. llr:: A withdrawal naming no existing channel is rejected
+   :id: UDSS_LLR_0204
+   :status: draft
+   :integrity_level: QM
+   :target_level: D
+   :origin: derived
+   :tags: client; p_client; service-interface
+
+   A withdrawal identifying a channel the client does not have shall be rejected as
+   ``UDSS_LLR_0150`` defines.
+
+   Rationale: naming a channel that does not exist is a caller error, not an input, for the
+   reason ``UDSS_LLR_0203`` gives.
+
+.. llr:: Withdrawal is permitted at any time and discards the channel
+   :id: UDSS_LLR_0205
+   :status: draft
+   :integrity_level: QM
+   :target_level: D
+   :origin: derived
+   :tags: client; p_client; service-interface
+
+   Withdrawal of a channel's storage shall be permitted at any time and shall discard,
+   without output, every fact this set holds for the channel, an association outstanding on
+   it included; a ``T_Data.conf`` arriving for that association thereafter matches none
+   while no channel of that addressing exists and is rejected under ``UDSS_LLR_0133``. A
+   caller that supplies the same addressing again before that confirmation arrives has it
+   matched to whatever association the new channel then holds, ``UDSS_LLR_0133`` matching by
+   addressing alone, or rejected under that requirement where it holds none; not doing so is
+   an assumption of use.
+
+   Rationale: withdrawal discards everything and is permitted at any time because it is the
+   caller's last exit: a transmission whose confirmation never comes leaves its association
    outstanding, ``UDSS_LLR_0133`` refusing the channel further requests meanwhile, and only
-   withdrawal clears it; the ``S_Data.conf`` ``UDSS_LLR_0120`` promises for that transmission
-   is forgone with the channel, by the caller's own act.
+   withdrawal clears it; the ``S_Data.conf`` ``UDSS_LLR_0120`` promises for that
+   transmission is forgone with the channel, by the caller's own act.
+
+.. llr:: What a channel's storage holds
+   :id: UDSS_LLR_0206
+   :status: draft
+   :integrity_level: QM
+   :target_level: D
+   :origin: derived
+   :tags: client; p_client; request-in-progress; service-interface
+
+   Every fact a document of this set keeps per channel lives in the channel's storage. The
+   same storage shall hold whether a request is in progress on the channel and, while one
+   is, the addressing and classification of that request and, where that classification
+   states an exact expected response count, the number of responses ``UDSS_LLR_0156``
+   counts since the request's confirmation, zero when the request becomes in progress; the
+   one association ``UDSS_LLR_0133`` holds for a transmission outstanding on the channel;
+   and, on a physical channel, whether a start-of-message is open on that channel, as
+   ``UDSS_LLR_0199`` requires, without recording the responder, so that any ``T_Data.ind``
+   on the channel completes it. On a functional channel ``UDSS_LLR_0160`` holds the
+   start-of-message fact per responder instead.
+
+   Rationale: the storage is the caller's for the reason ``UDSS_LLR_0200`` gives for the
+   timer it holds, and the rest of a channel's state is put in the same place so that one
+   act of the caller supplies and withdraws all of it.
 
    The request record is held because requirements read it: ``UDSS_LLR_0159`` reports the
    addressing of the request whose window expired, ``UDSS_LLR_0156`` reads the expected
@@ -275,13 +331,99 @@ The response window
    has one peer and one outstanding request, so one fact suffices; ``UDSS_LLR_0160`` keeps
    the same fact per responder on a functional channel.
 
-   The start-of-message outlives the request because the wait on a physical channel ends at
-   the first indication of the final response while ``UDSS_LLR_0199``'s pairing needs the
-   start-of-message open until that message's completion; a rule closing it at the end of
-   the request would have the completion of every multi-frame final response misread as a
-   new single-frame message. An earlier form of this requirement stated such a rule.
-   ``UDSS_LLR_0160`` says the same of a functional channel's entries, and the channel reset
-   of ``UDSS_LLR_0183`` is what closes a start-of-message whose completion never comes.
+.. llr:: A channel's initial state
+   :id: UDSS_LLR_0207
+   :status: draft
+   :integrity_level: QM
+   :target_level: D
+   :origin: derived
+   :tags: client; p_client; request-in-progress
+
+   When a channel's storage is supplied its ``tP_Client`` timer shall not be running, no
+   request shall be in progress and no start-of-message shall be open.
+
+   Rationale: the initial state is stated because none of the conditions ``UDSS_LLR_0211``
+   admits is an initialisation condition, so without it the state of a timer before the
+   first input would be undefined, and the same holds of the request in progress and the
+   start-of-message. ``UDSS_LLR_0185`` and ``UDSS_LLR_0143`` state the initial state of the
+   server's two timers for the same reason.
+
+.. llr:: A request becomes and ceases to be in progress
+   :id: UDSS_LLR_0208
+   :status: draft
+   :integrity_level: QM
+   :target_level: D
+   :origin: derived
+   :tags: client; p_client; request-in-progress
+
+   A request shall become in progress on the ``T_Data.conf`` on which ``UDSS_LLR_0153``
+   starts the timer, and shall cease to be in progress: on a physical channel, on the first
+   indication of a message whose classification states kind ``final response`` and
+   ``solicited``; on a functional channel, on the ``T_Data.ind`` on which ``UDSS_LLR_0156``
+   stops the timer; and on either kind of channel, on any ``T_Data.ind`` reporting a failed
+   reception, whether first indication or completion, on the expiry under
+   ``UDSS_LLR_0159``, and on a channel reset under ``UDSS_LLR_0183``.
+
+   Rationale: the request in progress is the condition ``UDSS_LLR_0154`` to
+   ``UDSS_LLR_0158`` act on, and the timer's running state cannot stand for it, because
+   ``UDSS_LLR_0154`` stops the timer at the start-of-message of a response-pending message
+   while the request runs on. Both ends have therefore to be fixed by a requirement of
+   their own. The endings are enumerated rather than generalised because each is a distinct
+   input and no property they share is observable to this layer; the preamble sets out why
+   each of them ends the wait.
+
+.. llr:: An input that ends the request is processed while it is in progress
+   :id: UDSS_LLR_0209
+   :status: draft
+   :integrity_level: QM
+   :target_level: D
+   :origin: derived
+   :tags: client; p_client; request-in-progress
+
+   An input that ends the request in progress shall be processed while the request is still
+   in progress.
+
+   Rationale: a requirement conditioned on the request in progress must be eligible to act
+   on the very input that ends it. Were it otherwise, ``UDSS_LLR_0154`` could never stop the
+   timer on the response it is there to stop it on.
+
+.. llr:: A physical channel's start-of-message outlives the request
+   :id: UDSS_LLR_0210
+   :status: draft
+   :integrity_level: QM
+   :target_level: D
+   :origin: derived
+   :tags: client; p_client; request-in-progress
+
+   A physical channel's open start-of-message shall be retained past the end of the request
+   in progress until a ``T_Data.ind`` on that channel completes it, whether the reception
+   succeeded or failed, or until a channel reset under ``UDSS_LLR_0183`` closes it.
+
+   Rationale: the start-of-message outlives the request because the wait on a physical
+   channel ends at the first indication of the final response while ``UDSS_LLR_0199``'s
+   pairing needs the start-of-message open until that message's completion; a rule closing
+   it at the end of the request would have the completion of every multi-frame final
+   response misread as a new single-frame message. An earlier form of this requirement
+   stated such a rule. ``UDSS_LLR_0160`` says the same of a functional channel's entries,
+   and the channel reset of ``UDSS_LLR_0183`` is what closes a start-of-message whose
+   completion never comes.
+
+.. llr:: What changes a channel's response timer
+   :id: UDSS_LLR_0211
+   :status: draft
+   :integrity_level: QM
+   :target_level: D
+   :origin: derived
+   :tags: client; p_client
+
+   After a channel's storage is supplied, the state of that channel's ``tP_Client`` timer
+   shall be changed only as ``UDSS_LLR_0153``, ``UDSS_LLR_0154``, ``UDSS_LLR_0155``,
+   ``UDSS_LLR_0156``, ``UDSS_LLR_0157``, ``UDSS_LLR_0159`` and ``UDSS_LLR_0183`` require.
+
+   Rationale: a closed list of the requirements that may change the timer is what makes a
+   "changes nothing" claim elsewhere in the set checkable, and what lets ``UDSS_LLR_0207``
+   state an initial state that nothing else may disturb. ``UDSS_LLR_0163`` states the same
+   closure for the client's ``tS3_Client`` timers.
 
 .. llr:: The response timer has two reload parameters
    :id: UDSS_LLR_0152
@@ -438,7 +580,7 @@ The response window
    The failed-reception stop reaches a completion as well as a first indication, unlike the
    two conditions above, because a failed completion of a message whose start-of-message
    stopped nothing, an unsolicited multi-frame response for instance, would otherwise leave
-   the timer running after ``UDSS_LLR_0151`` had ended the wait, and ``UDSS_LLR_0159`` would
+   the timer running after ``UDSS_LLR_0208`` had ended the wait, and ``UDSS_LLR_0159`` would
    report an expiry for a request the failure had already ended. Where the start-of-message
    did stop the timer the second stop leaves it stopped. ``UDSS_LLR_0155`` states the same
    for a functional channel.
@@ -590,7 +732,7 @@ Responders on a functional channel
    :tags: client; p_client; responders
 
    Each functional channel shall have a **responder table** in the channel's storage under
-   ``UDSS_LLR_0151``, whose **capacity** is the number of entries that storage holds. An entry shall be
+   ``UDSS_LLR_0206``, whose **capacity** is the number of entries that storage holds. An entry shall be
    keyed by the ``S_AI[SA]`` and, where ``S_Mtype`` carries one, the ``S_AI[AE]`` of a
    responder's indications, two keys being equal as ``UDSS_LLR_0198`` defines responder
    identity, and shall record for that responder whether a start-of-message
@@ -635,7 +777,7 @@ Responders on a functional channel
    message. The response-pending fact stays scoped to a request in progress because
    ``UDSS_LLR_0158`` reads it for the window of that request alone.
 
-   The storage is the caller's for the reason ``UDSS_LLR_0151`` gives for the timers: how
+   The storage is the caller's for the reason ``UDSS_LLR_0200`` gives for the timers: how
    many servers answer behind a functional address is a property of the deployment, and the
    crate does not allocate. The capacity is the storage's size rather than a protocol
    parameter, there being nothing for the session layer to do with a number that differs
@@ -661,7 +803,7 @@ Responders on a functional channel
 
    A physical channel needs no table. One peer answers on it and one request is in
    progress, so the only fact to hold is whether that peer's start-of-message is open,
-   which ``UDSS_LLR_0151`` keeps with the channel's timer.
+   which ``UDSS_LLR_0206`` keeps with the channel's timer.
 
 .. llr:: A responder beyond the table's capacity is reported and not tracked
    :id: UDSS_LLR_0161
