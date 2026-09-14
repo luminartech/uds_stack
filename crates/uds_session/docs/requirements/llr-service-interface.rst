@@ -1423,7 +1423,7 @@ and leaves the means of recognising it to the implementation.
    Rationale: no requirement in this set conditions on the kind of a message whose
    reception failed and which was not addressed to a server: ``UDSS_LLR_0154`` and
    ``UDSS_LLR_0155`` act on a failed reception by its result, and ``UDSS_LLR_0156``,
-   ``UDSS_LLR_0157`` and ``UDSS_LLR_0158`` act only on a reception that succeeded, so the
+   ``UDSS_LLR_0157`` and ``UDSS_LLR_0282`` act only on a reception that succeeded, so the
    behaviour is defined whether the kind is stated or not. Stating the exception this way
    keeps the three kind values ``UDSS_LLR_0251`` states a closed set, which every
    requirement conditioning on kind relies on. Every other indication must therefore state

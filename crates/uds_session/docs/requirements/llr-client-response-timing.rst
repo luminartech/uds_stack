@@ -369,8 +369,9 @@ The response window
    reception, whether first indication or completion, on the expiry under
    ``UDSS_LLR_0159``, and on a channel reset under ``UDSS_LLR_0277``.
 
-   Rationale: the request in progress is the condition ``UDSS_LLR_0154`` to
-   ``UDSS_LLR_0158`` act on, and the timer's running state cannot stand for it, because
+   Rationale: the request in progress is the condition ``UDSS_LLR_0154``, ``UDSS_LLR_0155``,
+   ``UDSS_LLR_0156``, ``UDSS_LLR_0157`` and ``UDSS_LLR_0282`` act on, and the timer's
+   running state cannot stand for it, because
    ``UDSS_LLR_0154`` stops the timer at the start-of-message of a response-pending message
    while the request runs on. Both ends have therefore to be fixed by a requirement of
    their own. The endings are enumerated rather than generalised because each is a distinct
@@ -637,7 +638,7 @@ The response window
    The treatment of a response-pending message is the one ``UDSS_LLR_0154`` gives, admitting
    only the ``T_DataSOM.ind`` for the same reason: the start-of-message of such a message
    restarts the timer under this requirement, and only its completion hands control to
-   ``UDSS_LLR_0157`` and ``UDSS_LLR_0158``. Such a response does not count toward
+   ``UDSS_LLR_0157`` and ``UDSS_LLR_0282``. Such a response does not count toward
    ``UDSS_LLR_0156``.
 
    The solicitation qualifier is likewise the one ``UDSS_LLR_0154`` carries, for the reason
@@ -742,7 +743,7 @@ Responders on a functional channel
    responder's indications, two keys being equal as ``UDSS_LLR_0198`` defines responder
    identity, and shall record for that responder whether a start-of-message
    is open under ``UDSS_LLR_0199`` and whether a response-pending message is outstanding
-   under ``UDSS_LLR_0158``. A physical channel shall keep no responder table.
+   under ``UDSS_LLR_0282``. A physical channel shall keep no responder table.
 
    Rationale: ISO 14229-2:2021 10.2.3 Figure 16 keys d and i, and 10.2.4 Figure 17 keys m
    and t, require the client to add an entry for a server's address when its
@@ -787,7 +788,7 @@ Responders on a functional channel
    has a free entry, by the indication that makes one of the two entry facts
    ``UDSS_LLR_0232`` defines true for a responder with no entry: a ``T_DataSOM.ind``,
    whether or not a request is in progress on the channel, or, on a channel with a request
-   in progress, a ``T_Data.ind`` that ``UDSS_LLR_0158`` records as an outstanding
+   in progress, a ``T_Data.ind`` that ``UDSS_LLR_0282`` records as an outstanding
    response-pending message. Where one indication changes both facts of an entry, the
    changes shall be applied together. An entry shall be released when neither fact holds.
 
@@ -798,8 +799,9 @@ Responders on a functional channel
    otherwise be recorded nowhere: ``UDSS_LLR_0181`` would find no entry and admit the repeat
    while that response was still arriving, the case its wait exists to prevent, and the
    completing ``T_Data.ind`` would be read as a single-frame message. The response-pending
-   fact stays scoped to a request in progress because ``UDSS_LLR_0158`` reads it for the
-   window of that request alone.
+   fact stays scoped to a request in progress because ``UDSS_LLR_0282`` records it only on
+   a channel with a request in progress and ``UDSS_LLR_0234`` clears it when that request
+   ends.
 
 .. llr:: An entry outlives the request only for its start-of-message
    :id: UDSS_LLR_0234
@@ -853,7 +855,7 @@ Responders on a functional channel
    :tags: client; p_client; responders
 
    Where a ``T_DataSOM.ind``, or, on a channel with a request in progress, a ``T_Data.ind``
-   that ``UDSS_LLR_0158`` would record as an outstanding response-pending message, arrives
+   that ``UDSS_LLR_0282`` would record as an outstanding response-pending message, arrives
    on a functional channel from a responder with no entry and the responder table has no
    free entry, the
    client shall record nothing for that responder, shall treat that indication as a first
@@ -874,7 +876,7 @@ Responders on a functional channel
    confines the loss to the untracked responder. Its indications still act on the timer
    under ``UDSS_LLR_0155``, each as a first indication. What is lost is that a
    response-pending message from it does not put the enhanced value in force under
-   ``UDSS_LLR_0158``, and a completion from it is indistinguishable from a single-frame
+   ``UDSS_LLR_0281``, and a completion from it is indistinguishable from a single-frame
    message, so a multi-frame final response from it restarts the timer twice. That is a
    deviation from ISO 14229-2:2021 10.2.3 Figure 16 for that responder alone, in a
    deployment whose capacity was set below the number of servers a functional address
@@ -944,8 +946,8 @@ Enhanced response timing
    9.7 Table 9 answers with no retry, where the row the event actually falls under requires
    the client to repeat the request.
 
-.. llr:: The enhanced window is in force while a responder is pending
-   :id: UDSS_LLR_0158
+.. llr:: The reload value in force on a functional channel
+   :id: UDSS_LLR_0281
    :status: draft
    :integrity_level: QM
    :target_level: D
@@ -955,46 +957,49 @@ Enhanced response timing
 
    On a functional channel, **the reload value in force** shall be the enhanced reload
    parameter while any entry in the channel's responder table records an outstanding
-   response-pending message, and the default reload parameter otherwise.
+   response-pending message under ``UDSS_LLR_0282``, and the default reload parameter
+   otherwise.
+
+   The value in force is never read on a physical channel. ``UDSS_LLR_0157`` loads the
+   enhanced parameter directly, and ``UDSS_LLR_0154`` stops the timer on every other
+   indication that acts, so no restart on a physical channel consults it.
+
+   Rationale: Figure 16 key d adds an entry for the responding server's address when its
+   response-pending message completes and reloads the timer with the enhanced value; key f
+   shows the value being read while that entry stands, another server's start-of-message
+   restarting the timer with the enhanced value while the list is non-empty; key i removes
+   the entry at the start-of-message of that server's next message, finds the list empty,
+   and reloads with the default value. Figure 17 keys m, o and t state the same in a
+   non-default session. ``UDSS_LLR_0155`` is where this value is read on a restart, and
+   ``UDSS_LLR_0232`` is where the responder table's entries live.
+
+.. llr:: A responder's response-pending message is recorded outstanding
+   :id: UDSS_LLR_0282
+   :status: draft
+   :integrity_level: QM
+   :target_level: D
+   :origin: session-layer-standard
+   :source: ISO 14229-2:2021 10.2.3 Figure 16; ISO 14229-2:2021 10.2.4 Figure 17
+   :tags: client; p_client; enhanced-response-timing; responders
 
    A responder's response-pending message shall be recorded outstanding, on a channel with
    a request in progress and where ``UDSS_LLR_0232`` provides an entry for that responder,
    on a ``T_Data.ind`` from that responder whose reception succeeded and whose
    classification states kind ``response pending``, and shall cease to be outstanding on
-   the first indication of any later message from that responder. Where one indication both
-   ends an outstanding response-pending message and restarts the timer under
-   ``UDSS_LLR_0155``, the reload value in force shall be determined after the former. Where
-   one indication both ends an outstanding response-pending message and records one, the
-   record shall stand.
+   the first indication of any later message from that responder, response-pending or not.
 
-   Figure 16 key d adds an entry for the responding server's address when its
-   response-pending message completes and reloads the timer with the enhanced value; key i
-   removes the entry at the start-of-message of that server's next message, finds the list
-   empty, and reloads with the default value. Figure 17 keys m and t state the same in a
-   non-default session. Figure 16 key f shows the value being read between the two: another
-   server's start-of-message restarts the timer with the enhanced value while the list is
-   non-empty. ``UDSS_LLR_0155`` is where this value is read and ``UDSS_LLR_0232`` is where
-   the entries live.
+   Rationale: Figure 16 key d adds an entry for the responding server's address when its
+   response-pending message completes; key i removes the entry at the start-of-message of
+   that server's next message, finding the list empty. Figure 17 keys m and t state the
+   same in a non-default session. The entry is cleared by any later message from that
+   responder, response-pending or not, because key i clears at the start-of-message without
+   qualifying what the message is.
 
-   The ordering sentence is what key i shows. The start-of-message that empties the list is
-   the same indication that restarts the timer, and the figure reloads it with the default
-   value, so the entry is removed before the value is read. Without the sentence the same
-   indication could be read either way.
-
-   The entry is cleared by any later message from that responder, response-pending or not,
-   because key i clears at the start-of-message without qualifying what the message is.
    Where a server's next message is a further response-pending one, the default value is in
-   force during its transfer and the enhanced value returns at its completion under the
-   first paragraph. That is the figures' rule applied as written; the set does not soften
-   it. A single-frame response-pending message, the usual form, has no transfer: its one
-   ``T_Data.ind`` is both the first indication of a later message and the recording
-   indication, and the second ordering sentence makes the net result outstanding, which is
-   what 9.4 Figure 8 key d shows when a further such message reloads the timer with the
-   enhanced value.
-
-   The value in force is never read on a physical channel. ``UDSS_LLR_0157`` loads the
-   enhanced parameter directly, and ``UDSS_LLR_0154`` stops the timer on every other
-   indication that acts, so no restart on a physical channel consults it.
+   force under ``UDSS_LLR_0281`` during its transfer and the enhanced value returns at its
+   completion under this requirement. That is the figures' rule applied as written; the set
+   does not soften it. ``UDSS_LLR_0283`` states how a single-frame response-pending
+   message, which has no separate transfer, nets to outstanding instead.
 
    The reception must have succeeded, as it must for ``UDSS_LLR_0157``. A failed reception
    the caller labels ``response pending`` is a message that did not arrive, and putting the
@@ -1002,6 +1007,40 @@ Enhanced response timing
    promised. A failed reception ends the request in any case, as the preamble's
    definition states, and with it every response-pending fact in the table,
    ``UDSS_LLR_0234`` retaining only the entries whose start-of-message is open.
+
+.. llr:: How one indication's effects on the value in force compose
+   :id: UDSS_LLR_0283
+   :status: draft
+   :integrity_level: QM
+   :target_level: D
+   :origin: derived
+   :tags: client; p_client; enhanced-response-timing; responders
+
+   On a functional channel, where one indication both ends an outstanding
+   response-pending message under ``UDSS_LLR_0282`` and restarts that channel's
+   ``tP_Client`` timer under ``UDSS_LLR_0155``, the reload value in force under
+   ``UDSS_LLR_0281`` shall be determined after the former. Where one indication both ends
+   an outstanding response-pending message and records one under ``UDSS_LLR_0282``, the
+   record shall stand.
+
+   Rationale: the first sentence is what ISO 14229-2:2021 10.2.3 Figure 16 key i shows. The
+   start-of-message that empties the responder table's list is the same indication that
+   restarts the timer, and the figure reloads it with the default value, so the entry is
+   removed before the value is read. Without the sentence the same indication could be read
+   either way.
+
+   The second sentence covers a single-frame response-pending message, the usual form,
+   which has no separate transfer: its one ``T_Data.ind`` is both the first indication of a
+   later message, which under ``UDSS_LLR_0282`` would end any response-pending message
+   already outstanding from that responder, and the recording indication, which under the
+   same requirement records this message as outstanding. The sentence makes the net result
+   outstanding rather than cleared, which ISO 14229-2:2021 9.4 Figure 8 key d shows by
+   analogy: a further response-pending message from a server there reloads the timer with
+   the enhanced value rather than falling back to the default.
+
+   Neither figure is cited as a source by this requirement: each shows one example, and
+   reading either as a general ordering rule for every case of one indication with two
+   effects is this requirement's own resolution, not a fact the figures state outright.
 
 .. llr:: Response timer expiry is indicated to the application
    :id: UDSS_LLR_0159
