@@ -113,7 +113,7 @@ A requirement that leaves a running timer alone says so.
    state is the state after every expiry the input's timestamp caused; every requirement in
    this set that conditions on state reads it so, whether or not it says so.
 
-   Rationale: ``UDSS_LLR_0115`` lets a timestamp accompany an input and nothing else orders
+   Rationale: ``UDSS_LLR_0193`` lets a timestamp accompany an input and nothing else orders
    the two. The elapsed time preceded the input's arrival, so a timer that reaches its value
    at that timestamp expired before the input was seen, which is also what a caller that
    samples its clock before delivering the input observes. The other order lets the input

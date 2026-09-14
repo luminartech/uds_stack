@@ -45,7 +45,7 @@ Postponement is rejection
 Clause 10.3 requires a request that arrives while the spacing timer is active to be postponed
 until the timer has timed out. This layer postpones by rejecting the ``S_Data.req``
 (``UDSS_LLR_0176``) and reporting how long the timer has left (``UDSS_LLR_0177``). It can do
-nothing else: ``UDSS_LLR_0117`` forbids retaining the payload, so the request cannot be queued,
+nothing else: ``UDSS_LLR_0290`` forbids retaining the payload, so the request cannot be queued,
 and ``UDSS_LLR_0113`` forbids acting on its own, so it cannot be transmitted later.
 ``UDSS_LLR_0267`` makes the rejection recoverable, a caller that retries after the reported
 time obtaining what a well-timed call would have. Transmitting after that time is the
@@ -233,7 +233,7 @@ Starting the timer
    has a consequence beyond Table 9: because ``UDSS_LLR_0176`` rejects every request on the
    channel while the timer is active, a failed transmission also postpones a request that
    requires a response for one spacing interval, which neither 10.3 a) nor Table 9 forbids.
-   That is taken because the session layer retains no payload (``UDSS_LLR_0117``) and so
+   That is taken because the session layer retains no payload (``UDSS_LLR_0290``) and so
    cannot tell the repeat Table 9 gates from a new request; the cost is one spacing interval
    after a failure.
 
@@ -357,10 +357,12 @@ The next request
    and the keep-alive case of Figure 19 key k needs the application to know when to retry.
    ``UDSS_LLR_0267`` requires a rejection to be reported to the caller; ``UDSS_LLR_0268``
    requires the report to state a cause and to carry whatever content the rejecting
-   requirement itself states, and this requirement is that content for the spacing timer,
-   adding no output under ``UDSS_LLR_0116``. Because ``UDSS_LLR_0176`` rejects only while
-   the timer is active, the value is always positive, and a caller that retries after it
-   finds the timer inactive, ``UDSS_LLR_0192`` supplying the same elapsed time to both. An
+   requirement itself states, and this requirement is that content for the spacing timer;
+   it is not itself produced for the caller to retrieve on the application's behalf, only
+   more content within a report already addressed to the caller. Because ``UDSS_LLR_0176``
+   rejects only while the timer is active, the value is always positive, and a caller that
+   retries after it finds the timer inactive, ``UDSS_LLR_0192`` supplying the same elapsed
+   time to both. An
    indication when the timer becomes inactive was considered and rejected: it would cost
    an output on every channel at every expiry, or a per-channel fact to send it only after
    a rejection.

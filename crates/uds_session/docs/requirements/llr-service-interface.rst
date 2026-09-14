@@ -21,7 +21,7 @@ the session layer, or the session layer passing one to the application, because 
 how the standard describes a service interface. Read those statements as fixing where a
 primitive comes from and where it goes, not as describing a call: the caller supplies
 every input on the application's behalf and retrieves every output for it, as
-``UDSS_LLR_0115`` and ``UDSS_LLR_0116`` require. ISO 14229-2's *service user* is the
+``UDSS_LLR_0294`` and ``UDSS_LLR_0292`` require. ISO 14229-2's *service user* is the
 application in this document's terms.
 
 Sans-io binding
@@ -32,13 +32,13 @@ derived. They fix the boundary that every other requirement in this set is writt
 against. The primitives they refer to are defined in `Service primitives`_ below.
 
 Note the two senses of "input" and "output" in this document. ``UDSS_LLR_0113`` uses I/O
-in the operating-system sense, of reading and writing a device. ``UDSS_LLR_0115`` and
-``UDSS_LLR_0116`` use input and output in the state-machine sense, of values passed to
+in the operating-system sense, of reading and writing a device. ``UDSS_LLR_0294`` and
+``UDSS_LLR_0292`` use input and output in the state-machine sense, of values passed to
 and retrieved from the session layer. The first is forbidden; the second is the whole
 interface.
 
 Several inputs to the session layer are acts of the caller rather than primitives,
-parameters or timestamps: the completion report of ``UDSS_LLR_0136``, which ``UDSS_LLR_0115``
+parameters or timestamps: the completion report of ``UDSS_LLR_0136``, which ``UDSS_LLR_0295``
 enumerates; the channel reset and keep-alive release that :doc:`llr-client-error-handling`
 defines in ``UDSS_LLR_0277`` and ``UDSS_LLR_0184``, by which the caller clears state the
 client keeps; and the supply, and at a client the withdrawal, of the storage in which
@@ -46,12 +46,12 @@ every fact the set keeps per peer or per channel lives: a client's channel stora
 ``UDSS_LLR_0206`` names, supplied under ``UDSS_LLR_0201`` and withdrawn under
 ``UDSS_LLR_0205``, and a server's association storage, which ``UDSS_LLR_0271`` names and
 ``UDSS_LLR_0266`` has supplied at creation and which is not withdrawn.
-Each produces no output of its own, so ``UDSS_LLR_0116`` is not engaged by them;
-``UDSS_LLR_0115`` enumerates them among its inputs and has each carry a timestamp, so that
+Each produces no output of its own, so ``UDSS_LLR_0292`` is not engaged by them;
+``UDSS_LLR_0295`` enumerates them among its inputs and has each carry a timestamp, so that
 ``UDSS_LLR_0187`` orders the expiries before the act. One output is likewise addressed to the
-caller rather than retrieved on the application's behalf: the rejection report of
-``UDSS_LLR_0267``, which is neither an ``S_Data.conf`` under ``UDSS_LLR_0132`` nor an
-output in ``UDSS_LLR_0116``'s sense.
+caller that made a call rather than produced for it to retrieve on the application's
+behalf: the rejection report of ``UDSS_LLR_0267``, which is neither an ``S_Data.conf``
+under ``UDSS_LLR_0132`` nor an output in that sense.
 
 One assumption of use falls on the order in which the caller supplies inputs, and is
 recorded in the qualification repository: a ``T_Data.conf`` is supplied before any
@@ -83,8 +83,8 @@ queue before the other is what the assumption forbids.
    configuration rather than by a runtime test; no black-box test can show that no I/O is
    performed.
 
-.. llr:: Inbound primitives are caller-supplied inputs
-   :id: UDSS_LLR_0115
+.. llr:: Every input is supplied by the caller
+   :id: UDSS_LLR_0294
    :status: draft
    :integrity_level: QM
    :target_level: D
@@ -95,32 +95,42 @@ queue before the other is what the assumption forbids.
    shall obtain information about the application and the transport by no other means.
    Creation of the instance precedes every input and is not one.
 
-   The inputs so supplied shall include ``S_Data.req``, as ``UDSS_LLR_0139`` defines it;
-   ``T_Data.ind``, ``T_DataSOM.ind`` and ``T_Data.conf``, as ``UDSS_LLR_0244`` defines
-   them; a timestamp, as ``UDSS_LLR_0193`` defines it, accompanying every other input and
-   also supplied on its own; the protocol parameters of ``UDSS_LLR_0259``; the completion
-   report of ``UDSS_LLR_0136``; the supply and withdrawal of channel storage under
-   ``UDSS_LLR_0201``; and the channel reset and keep-alive release of ``UDSS_LLR_0277`` and
-   ``UDSS_LLR_0184``. The last four, and the setting of a protocol parameter, are acts of the
-   caller rather than primitives; each shall be accompanied by a timestamp as
-   ``UDSS_LLR_0193`` requires, and ``UDSS_LLR_0187`` shall order the expiries that timestamp
-   causes, with their indications, before the act. Where a requirement says such an act
-   produces no output, that is said of the act alone.
+   Rationale: this excludes every source of state but an input the caller supplies — the
+   session layer reading a clock itself, or consulting a global variable, would each be a
+   second channel — which is what makes this crate sans-io: there is no way for state to
+   reach the session layer except through the inputs the caller gives it.
 
-   Rationale: the closed claim is the first paragraph, and it is what makes this crate
-   sans-io: there is no second channel by which state can reach the session layer. The
-   enumeration is open because a list stated as exhaustive would be wrong rather than merely
-   incomplete should a document add an input; the acts are named in it so that whether an
-   act carries a timestamp is not left to inference, a reset delivered at the instant a
-   timer expires otherwise being read by one implementation as swallowing the expiry's
-   indication and by another as following it. A
-   timestamp may be supplied on its own because a timer can expire while no message is
-   exchanged, and ``UDSS_LLR_0112`` requires the server to act on that expiry. Where it
-   accompanies another input, ``UDSS_LLR_0187`` orders the expiries it causes before that
-   input.
+.. llr:: The inputs the caller supplies
+   :id: UDSS_LLR_0295
+   :status: draft
+   :integrity_level: QM
+   :target_level: D
+   :origin: derived
+   :tags: service-interface; sans-io
 
-.. llr:: Outbound primitives are outputs the caller retrieves
-   :id: UDSS_LLR_0116
+   The inputs the caller supplies shall include ``S_Data.req``, as ``UDSS_LLR_0139``
+   defines it; ``T_Data.ind``, ``T_DataSOM.ind`` and ``T_Data.conf``, as ``UDSS_LLR_0244``
+   defines them; a timestamp, as ``UDSS_LLR_0193`` defines it, accompanying every other
+   input and also supplied on its own; the protocol parameters of ``UDSS_LLR_0259``; the
+   completion report of ``UDSS_LLR_0136``; the supply of channel storage under
+   ``UDSS_LLR_0201`` and its withdrawal under ``UDSS_LLR_0205``; and the channel reset and
+   keep-alive release of ``UDSS_LLR_0277`` and ``UDSS_LLR_0184``. The last four, and the
+   setting of a protocol parameter, are acts of the caller rather than primitives; each
+   shall be accompanied by a timestamp as ``UDSS_LLR_0193`` requires, and ``UDSS_LLR_0187``
+   shall order the expiries that timestamp causes, with their indications, before the act.
+   Where a requirement says such an act produces no output, that is said of the act alone.
+
+   Rationale: the enumeration is open because a list stated as exhaustive would be wrong
+   rather than merely incomplete should a document add an input; the acts are named in it
+   so that whether an act carries a timestamp is not left to inference, a reset delivered
+   at the instant a timer expires otherwise being read by one implementation as swallowing
+   the expiry's indication and by another as following it. A timestamp may be supplied on
+   its own because a timer can expire while no message is exchanged, and ``UDSS_LLR_0112``
+   requires the server to act on that expiry. Where it accompanies another input,
+   ``UDSS_LLR_0187`` orders the expiries it causes before that input.
+
+.. llr:: Outputs are retrieved, not pushed
+   :id: UDSS_LLR_0292
    :status: draft
    :integrity_level: QM
    :target_level: D
@@ -131,20 +141,30 @@ queue before the other is what the assumption forbids.
    session layer shall not invoke a callback, handler, or caller-supplied trait
    implementation in order to deliver an output.
 
-   The outputs so produced shall include ``S_Data.ind`` and ``S_Data.conf``, as
-   ``UDSS_LLR_0139`` defines them, and ``T_Data.req``, as ``UDSS_LLR_0244`` defines it.
-
    Rationale: a session layer that calls outwards is one whose behaviour depends on what
    the caller does while the session layer is part-way through a decision. Producing
    outputs for retrieval keeps their ordering explicit and makes reentrancy impossible.
-   It also lets outputs that the standard does not define, such as the session-timeout
-   indication required by ``UDSS_LLR_0112``, be delivered by the same mechanism as the
-   standard's own primitives. The prohibition on callbacks is verified by inspection of the
-   crate's public types, which take no caller-supplied trait object or function, rather than
-   by a runtime test.
+   The prohibition on callbacks is verified by inspection of the crate's public types,
+   which take no caller-supplied trait object or function, rather than by a runtime test.
+
+.. llr:: The outputs the session layer produces
+   :id: UDSS_LLR_0293
+   :status: draft
+   :integrity_level: QM
+   :target_level: D
+   :origin: derived
+   :tags: service-interface; sans-io
+
+   The outputs the session layer produces for the caller to retrieve shall include
+   ``S_Data.ind`` and ``S_Data.conf``, as ``UDSS_LLR_0139`` defines them, and
+   ``T_Data.req``, as ``UDSS_LLR_0244`` defines it.
+
+   Rationale: the enumeration is open so that outputs the standard does not define, such
+   as the session-timeout indication required by ``UDSS_LLR_0112``, can be delivered by
+   the same mechanism as the standard's own primitives.
 
 .. llr:: The session layer retains no message payload
-   :id: UDSS_LLR_0117
+   :id: UDSS_LLR_0290
    :status: draft
    :integrity_level: QM
    :target_level: D
@@ -152,19 +172,30 @@ queue before the other is what the assumption forbids.
    :tags: service-interface; sans-io
 
    The session layer shall not copy or retain the contents of ``S_Data`` or ``T_Data``
-   beyond the processing of the input that carried them. An output that refers to message
-   data shall refer to data owned by the caller.
-
-   ``UDSS_LLR_0124`` maps one onto the other, so the two names denote the same octets
-   travelling in opposite directions; this requirement binds both.
+   beyond the processing of the input that carried them.
 
    Rationale: the crate is ``no_std`` and allocation-free, and cannot own a buffer whose
    size it does not know. Retaining a payload would also imply a retransmission buffer,
    and no requirement in this set obliges the session layer to retransmit anything;
    ``UDSS_LLR_0289`` states the point explicitly for a server's response in a non-default
    session. The requirement is verified by inspection of the crate's types, which hold no
-   buffer and borrow the caller's data for the duration of one input, rather than by a
-   runtime test.
+   buffer in which a payload could be retained, rather than by a runtime test.
+
+.. llr:: An output refers to caller-owned data
+   :id: UDSS_LLR_0291
+   :status: draft
+   :integrity_level: QM
+   :target_level: D
+   :origin: derived
+   :tags: service-interface; sans-io
+
+   An output that refers to message data shall refer to data owned by the caller.
+
+   Rationale: ``UDSS_LLR_0124`` maps ``S_Data`` onto ``T_Data``, so the two names denote
+   the same octets travelling in opposite directions; this requirement binds both. The
+   requirement is verified by inspection of the crate's types, which borrow the caller's
+   data for the duration of one input rather than copying it, so what an output refers to
+   is always the caller's own bytes, rather than by a runtime test.
 
 .. llr:: A rejected input produces no output and changes nothing
    :id: UDSS_LLR_0267
@@ -184,9 +215,9 @@ queue before the other is what the assumption forbids.
    without this requirement none would say what refusal means. A rejection cannot be
    reported as an ``S_Data.conf``: ``UDSS_LLR_0132`` reserves every ``S_Result`` value
    other than ``S_OK`` for an error detected by a lower layer, and no lower layer is
-   involved, no message having been transmitted. Nor is it an output in the sense of
-   ``UDSS_LLR_0116``, which concerns primitives the caller retrieves on the application's
-   behalf; a rejection is addressed to the caller that made the erroneous call.
+   involved, no message having been transmitted. Nor is it produced for the caller to
+   retrieve on the application's behalf, as an output is; a rejection is addressed to the
+   caller that made the erroneous call.
 
    Leaving the state unchanged is what makes the rejection recoverable: a caller that
    retries once the cause has cleared obtains the result it would have obtained had the

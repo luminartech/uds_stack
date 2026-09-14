@@ -26,7 +26,7 @@ while the session is still being kept alive; without it, a request marked as the
 and sent in the default session would start the timer.
 
 When the timer expires the client delivers a **keep-alive indication** to the application, an
-output the caller retrieves as ``UDSS_LLR_0116`` provides, on the same footing as the
+output the caller retrieves as ``UDSS_LLR_0292`` provides, on the same footing as the
 response-timing indication of ``UDSS_LLR_0159``. In functional keep-alive it carries no
 addressing; in physical keep-alive it carries the channel's identity. The session layer
 cannot compose the TesterPresent itself, ``UDSS_LLR_0135`` forbidding it; the application
@@ -490,7 +490,7 @@ session fact, and the requests and indications on it.
    of the physically addressed TesterPresent as transmitted only in the absence of any other
    request depends on it.
 
-   The ``T_Data.req`` is the output ``UDSS_LLR_0244`` names and ``UDSS_LLR_0116`` has the
+   The ``T_Data.req`` is the output ``UDSS_LLR_0244`` names and ``UDSS_LLR_0292`` has the
    caller retrieve. It is produced when the ``S_Data.req`` is processed, so the stop precedes
    the transmission as key e shows. A rejected ``S_Data.req`` produces no ``T_Data.req`` and
    so no stop, ``UDSS_LLR_0267`` leaving state unchanged.

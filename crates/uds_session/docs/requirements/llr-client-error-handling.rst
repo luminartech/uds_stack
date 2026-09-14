@@ -21,7 +21,7 @@ count the application declared on its own ``S_Data.req``, which the indication d
 carry, the three cells of Table 9's timeout row are distinguishable without a further field.
 
 The repeat itself is the application's. The session layer retains no payload
-(``UDSS_LLR_0117``) and performs no I/O (``UDSS_LLR_0113``), so it cannot retransmit a
+(``UDSS_LLR_0290``) and performs no I/O (``UDSS_LLR_0113``), so it cannot retransmit a
 request; it signals and the application acts, the division ``UDSS_LLR_0112``,
 ``UDSS_LLR_0148`` and ``UDSS_LLR_0159`` make for the timers. What the set enforces is the
 three constraints Table 9 places around the repeat. The spacing Table 9 requires before the
@@ -95,7 +95,7 @@ never completed must not cost the application its sessions with every other serv
 in functional keep-alive a single release does.
 
 Both are acts of the caller, as the completion report of ``UDSS_LLR_0136`` is, and neither
-a primitive nor a protocol parameter; ``UDSS_LLR_0115`` enumerates them among its inputs
+a primitive nor a protocol parameter; ``UDSS_LLR_0295`` enumerates them among its inputs
 and has each carry a timestamp. A client in functional keep-alive necessarily
 has the functional channel its TesterPresent goes out on, ``UDSS_LLR_0166`` requiring that
 message's confirmation to arrive on one.
@@ -344,8 +344,9 @@ Responses still arriving
    would leave the application unable to follow Table 9. Both are stated where both hold
    because the application must act on both. Where ``UDSS_LLR_0176`` also holds,
    ``UDSS_LLR_0268`` has the one report carry the time remaining ``UDSS_LLR_0177``
-   requires as well. This constrains the report's content and adds no output under
-   ``UDSS_LLR_0116``.
+   requires as well. This constrains the report's content; it is not itself produced for
+   the caller to retrieve on the application's behalf, only more content within a report
+   already addressed to the caller.
 
 Giving a server up
 ------------------
