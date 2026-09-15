@@ -144,8 +144,8 @@ The timer's state
    timers on one channel for nothing. The mode is fixed at creation because the standard
    treats the handling as a property of the deployment, Table 8 allotting timers "when
    using" one TesterPresent or the other, and gives a change no meaning; it is not one of
-   the protocol parameters ``UDSS_LLR_0259`` provides for; ``UDSS_LLR_0261`` scopes that
-   provision to values a timer loads, and a mode is not one. A change at run time would have to say what becomes of a keeping-alive fact
+   the protocol parameters ``UDSS_LLR_0259`` provides for. A change at run time would have
+   to say what becomes of a keeping-alive fact
    and a running timer that the new mode's requirements never touch, ``UDSS_LLR_0231``
    closing the list of what changes them, and no clause says.
 
@@ -184,8 +184,7 @@ The timer's state
    channel session fact for each physical channel, in that channel's storage under
    ``UDSS_LLR_0206``.
 
-   Table 8 allots a single timer for each point-to-point communication, in contrast to
-   the single, client-wide timer functional keep-alive allots under ``UDSS_LLR_0227``.
+   Table 8 allots a single timer for each point-to-point communication.
 
    The per-channel timers and facts live in the channel's storage for the reason
    ``UDSS_LLR_0200`` gives: the number of channels is a property of the deployment, the
@@ -232,8 +231,7 @@ The timer's state
    only for a non-default session: in the default session nothing is kept alive. It is
    stated because none of the requirements ``UDSS_LLR_0231`` lists is an initialisation
    condition, so without it the state of the timers and facts before the first input would
-   be undefined; ``UDSS_LLR_0222`` and ``UDSS_LLR_0207`` state initial state for the same
-   reason.
+   be undefined.
 
 .. llr:: What changes the client's session timers and facts
    :id: UDSS_LLR_0231
@@ -248,16 +246,11 @@ The timer's state
    session facts shall be changed only as ``UDSS_LLR_0164`` to ``UDSS_LLR_0172`` and
    ``UDSS_LLR_0184`` require.
 
-   Rationale: the requirements this list closes are kept from conflicting by the evaluation
-   order ``UDSS_LLR_0187`` fixes. In physical keep-alive ``UDSS_LLR_0168``,
-   ``UDSS_LLR_0170`` and ``UDSS_LLR_0172`` all act on a completed exchange; the first is
-   guarded on the fact not holding and the other two on its holding, and the guard reads the
-   state before any of them has changed it. In functional keep-alive the requirements are
-   separated by the classification instead: ``UDSS_LLR_0164`` and ``UDSS_LLR_0167`` act on a
-   session selection and ``UDSS_LLR_0166`` on the ``keep-alive`` marker, which
-   ``UDSS_LLR_0253`` forbids to accompany a session selection on the ``S_Data.req`` that
-   produced the confirmation, so no input matches more than
-   one.
+   Rationale: a closed list of the requirements that may change the timers and facts is what
+   makes a "changes nothing" claim elsewhere in the set checkable, and what lets
+   ``UDSS_LLR_0230`` state an initial state that nothing else may disturb. The listed
+   requirements are kept from conflicting by the evaluation order ``UDSS_LLR_0187`` fixes
+   and by the guards and exceptions they state themselves.
 
 Functional keep-alive
 ---------------------
@@ -312,8 +305,8 @@ Functional keep-alive
    multiple servers, and Table 6 has that message transmitted each time the timer times out.
    Figure 12 keys i, l and n and Figure 17 keys g, p, v and x are those transmissions.
 
-   The session layer signals and the application acts, as ``UDSS_LLR_0159`` has it act on a
-   response timeout: ``UDSS_LLR_0135`` forbids this layer to compose the message. The
+   The session layer signals and the application acts: ``UDSS_LLR_0135`` forbids this layer
+   to compose the message. The
    assumptions of use above record what the application sends. The standard names no
    functional address for the keep-alive, so the indication carries none and
    ``UDSS_LLR_0166`` accepts the confirmation on any functional channel.
@@ -330,9 +323,7 @@ Functional keep-alive
    TesterPresent, nothing restarts the timer until ``UDSS_LLR_0164`` acts on the next
    confirmed session change; the standard makes the keep-alive the application's
    obligation, as it makes Table 9's repeat. Postponing the TesterPresent while
-   ``tP3_Client_Func`` runs, Figure 19 key k, is :doc:`llr-client-request-spacing`'s:
-   ``UDSS_LLR_0176`` rejects the TesterPresent while that timer is active and
-   ``UDSS_LLR_0177`` tells the application when to retry.
+   ``tP3_Client_Func`` runs, Figure 19 key k, is :doc:`llr-client-request-spacing`'s.
 
 .. llr:: Functional keep-alive restarts on the confirmed TesterPresent
    :id: UDSS_LLR_0166
@@ -374,9 +365,7 @@ Functional keep-alive
    functional column has the client repeat the request after "the time ``tS3_Client_Func``",
    a parameter defined nowhere in the standard; this set reads it as ``tP3_Client_Func``,
    the only functional spacing parameter 10.3 defines, and treats the text as a
-   typographical error. The repeat is the client error handling document's; carrying the
-   ``keep-alive`` marker again, as that document's assumptions of use record, its
-   confirmation restarts the timer here.
+   typographical error. The repeat itself is :doc:`llr-client-error-handling`'s.
 
 .. llr:: Functional keep-alive disengages on return to the default session
    :id: UDSS_LLR_0167
@@ -491,10 +480,8 @@ session fact, and the requests and indications on it.
    of the physically addressed TesterPresent as transmitted only in the absence of any other
    request depends on it.
 
-   The ``T_Data.req`` is the output ``UDSS_LLR_0244`` names and ``UDSS_LLR_0292`` has the
-   caller retrieve. It is produced when the ``S_Data.req`` is processed, so the stop precedes
-   the transmission as key e shows. A rejected ``S_Data.req`` produces no ``T_Data.req`` and
-   so no stop, ``UDSS_LLR_0267`` leaving state unchanged.
+   The ``T_Data.req`` is produced when the ``S_Data.req`` is processed, so the stop precedes
+   the transmission as key e shows.
 
 .. llr:: Physical keep-alive restarts when an exchange completes
    :id: UDSS_LLR_0170
@@ -528,10 +515,8 @@ session fact, and the requests and indications on it.
    timer must resume or no further keep-alive is ever requested. The marker stands for
    Table 9's "sequentially transmitted", which 9.5 defines as a TesterPresent transmitted
    only in the absence of any other request; an unmarked TesterPresent is not one, and the
-   restart does not reach it. For any other request a lost response restarts nothing here:
-   Table 9 has the application repeat it, each repeat restarting the cadence through
-   ``UDSS_LLR_0169`` and the first four bullets, and where every repeat fails the client
-   stops sending and the server's ``tS3_Server`` ends the session, as the preamble says.
+   restart does not reach it. For any other request a lost response restarts nothing here,
+   Table 9 having the application repeat it.
 
    Table 9 also restricts its transmission-error and reception-error restarts to the
    TesterPresent case, where Table 6's rows for the same events are unrestricted. The second
@@ -563,11 +548,7 @@ session fact, and the requests and indications on it.
    ``tS3_Server`` and longer than the recommended ``tS3_Client`` reload, so a timer
    restarted there would expire inside the window and demand a TesterPresent while the
    request is in progress, a second outstanding request on the channel for which
-   ISO 14229-1:2020 8.7.6 gives the server no bypass. Nothing is lost by waiting: the
-   server's ``tS3_Server`` is stopped from the start of the request's reception
-   (``UDSS_LLR_0104``), is not restarted by the pending message (``UDSS_LLR_0107``), and
-   resumes at the final response (``UDSS_LLR_0106``), on which the third bullet resumes the
-   client's cadence too.
+   ISO 14229-1:2020 8.7.6 gives the server no bypass.
 
    The exception for ``UDSS_LLR_0172`` is placed here as ``UDSS_LLR_0106`` places its
    exception for ``UDSS_LLR_0141``: the first and third bullets both match the events that
@@ -593,11 +574,8 @@ session fact, and the requests and indications on it.
    timeout cause the transmission of a physically addressed TesterPresent. The assumptions
    of use record that the application transmits it on the indicated channel; whether it
    requires a response is the application's choice, and ``UDSS_LLR_0170`` restarts the timer
-   either way: on the response, key n; on the confirmation where none is required, the
-   alternative key n states; or on the lost response its fifth bullet covers. Where the
-   channel's spacing timer is active, ``UDSS_LLR_0176`` rejects the TesterPresent and
-   ``UDSS_LLR_0177`` tells the application when to retry; the timer here stays stopped until
-   the TesterPresent's exchange completes under ``UDSS_LLR_0170``. Between this indication
+   either way, Figure 13 key n showing both. Postponement while the channel's spacing timer
+   is active is :doc:`llr-client-request-spacing`'s. Between this indication
    and the input ``UDSS_LLR_0170`` acts on, the timer is not running and the fact holds.
    Where the application sends some other request instead, ``UDSS_LLR_0170`` restarts the
    timer at the completion of that exchange; where it sends nothing, nothing restarts the
@@ -610,9 +588,7 @@ session fact, and the requests and indications on it.
    Table 8 makes this timer one per point-to-point communication, which is why the channel
    is named where ``UDSS_LLR_0165`` names none.
 
-   The timer cannot expire while a request is in progress on the channel, because
-   ``UDSS_LLR_0169`` stopped it. Expiry is at reaching the parameter for the reason
-   ``UDSS_LLR_0165`` gives.
+   Expiry is at reaching the parameter for the reason ``UDSS_LLR_0165`` gives.
 
 .. llr:: Physical keep-alive disengages on return to the default session
    :id: UDSS_LLR_0172
