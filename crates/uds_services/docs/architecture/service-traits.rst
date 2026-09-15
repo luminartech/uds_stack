@@ -244,6 +244,75 @@ Protocol state
    activated session" — one obligation spanning five services' state. It is recorded here so
    it is not mistaken for an omission, and is designed with the state bodies it acts on.
 
+.. arch:: The transfer lifecycle is a state machine this crate owns
+   :id: UDSSVC_ARCH_0036
+   :depends_on: UDSSVC_ARCH_0034; UDSSVC_ARCH_0035
+   :status: draft
+   :origin: application-layer-standard
+   :source: ISO 14229-1:2020 15.2.4 Table 444; ISO 14229-1:2020 15.4.1; ISO 14229-1:2020 15.4.2.3; ISO 14229-1:2020 15.4.4; ISO 14229-1:2020 15.5.4
+   :tags: api; traits; state; nrc
+
+   ISO 14229-1 clause 15 specifies a transfer as a sequence with one live instance, a
+   counter, and four codes that report departures from it. All of that is bookkeeping, so
+   all of it is this crate's under ``UDSSVC_ARCH_0034``, held in the state of
+   ``UDSSVC_ARCH_0035``.
+
+   .. uml::
+      :align: center
+      :caption: The transfer state machine. Every transition labelled with a code is
+                settled by this crate; the handler is not called.
+
+      @startuml
+      hide empty description
+      [*] --> Idle
+      Idle --> Active : RequestDownload / RequestUpload /\nRequestFileTransfer accepted\nblockSequenceCounter := 0x01
+      Idle --> Idle : TransferData → 0x24\nRequestTransferExit → 0x24
+      Active --> Active : TransferData, expected counter\n→ handler
+      Active --> Active : TransferData, previous counter\n→ repeat (15.4.1)
+      Active --> Active : TransferData, any other counter → 0x73
+      Active --> Active : TransferData after memorySize reached → 0x24
+      Active --> Active : RequestDownload / RequestUpload /\nRequestFileTransfer → 0x22
+      Active --> Idle : RequestTransferExit accepted
+      @enduml
+
+   **The counter is arithmetic, and the wrap is the part to get right.** Clause 15.4.1
+   initialises it to one on ``RequestDownload`` (0x34), ``RequestUpload`` (0x35) or
+   ``RequestFileTransfer`` (0x38), so the first ``TransferData`` carries ``0x01``. Clause
+   15.4.2.3 increments it by one per request and, at ``0xFF``, **rolls it over to ``0x00``**
+   — not to ``0x01``. An implementation that wraps to one drifts by a block every 255 and
+   reports 0x73 forever after, which is precisely the class of error this crate exists to
+   remove from applications.
+
+   **A repeated block is not an error, and the two directions differ.** Clause 15.4.4
+   attaches the same sentence to both 0x24 and 0x73: "the repetition of a ``TransferData``
+   request message with a ``blockSequenceCounter`` equal to the one included in the previous
+   ``TransferData`` request message shall be accepted by the server." Clause 15.4.1 says what
+   accepting means, and it is not the same on each side. A repeated **download** block is
+   answered positively "without writing the data once again into its memory" — so the
+   handler is **not** called, and this crate replays the previous response. A repeated
+   **upload** block is answered by "accessing the previously provided data once again" — so
+   the handler **is** called again. A design that treats repetition uniformly is wrong in one
+   direction whichever uniform choice it makes.
+
+   **What the application supplies**, and nothing more: whether the ``dataFormatIdentifier``,
+   ``addressAndLengthFormatIdentifier`` and memory range are acceptable (0x31), whether a
+   fault condition blocks the transfer (0x70), the ``maxNumberOfBlockLength`` it will accept,
+   the bytes themselves, and any finalisation failure at exit (0x72). Each is a property of
+   one ECU. None of the sequencing is reachable from the handler, so no application can
+   answer 0x73 where 0x24 is required, or accept a second transfer while one is live.
+
+   This element is the first instance of ``UDSSVC_ARCH_0035`` and is what tests it: the
+   state is created at assembly, reached only by the dispatcher, and sized without
+   allocation — a transfer is one live instance per server, so it needs no per-channel table.
+
+   **One reading is flagged rather than assumed.** Clause 15.5.4 gives ``RequestTransferExit``
+   0x24 on two conditions, the second being "the programming process is not completed". Read
+   here as the transfer's own completion — fewer bytes transferred than the active
+   ``memorySize`` — which is knowable from this state. If it instead means clause 17's
+   programming process, the condition belongs to a layer this crate does not yet have, and
+   the element changes. It is worth settling against a reviewer who has run a programming
+   sequence in anger.
+
 Identifiers
 -----------
 
