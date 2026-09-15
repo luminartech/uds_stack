@@ -179,8 +179,9 @@ The repeat count
    :origin: derived
    :tags: client; error-handling; repeat
 
-   After a channel's storage is supplied, its repeat count shall be changed only as
-   ``UDSS_LLR_0176`` and ``UDSS_LLR_0180`` require.
+   While a channel's storage remains supplied, its repeat count shall be changed only as
+   ``UDSS_LLR_0176`` and ``UDSS_LLR_0180`` require. Withdrawal of that storage under
+   ``UDSS_LLR_0125`` ends the channel and discards the count with it.
 
    Rationale: the rule ``UDSS_LLR_0081`` fixes is what lets ``UDSS_LLR_0176`` and
    ``UDSS_LLR_0177`` act on the same ``S_Data.req``, the one reading the count the other

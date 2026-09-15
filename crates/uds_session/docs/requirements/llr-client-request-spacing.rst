@@ -176,8 +176,9 @@ The spacing timer
    :origin: derived
    :tags: client; p3_client
 
-   After a channel's storage is supplied, the state of that channel's spacing timer shall
-   be changed only as ``UDSS_LLR_0169`` and ``UDSS_LLR_0170`` require.
+   While a channel's storage remains supplied, the state of that channel's spacing timer
+   shall be changed only as ``UDSS_LLR_0169`` and ``UDSS_LLR_0170`` require. Withdrawal of
+   that storage under ``UDSS_LLR_0125`` ends the channel and discards the timer with it.
 
    Rationale: no requirement stops a spacing timer and none acts when it becomes inactive.
    Clause 10.3 states the timer's whole effect as a condition on the next transmission, so

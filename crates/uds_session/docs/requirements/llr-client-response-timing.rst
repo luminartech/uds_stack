@@ -384,9 +384,11 @@ The response window
    :origin: derived
    :tags: client; p_client
 
-   After a channel's storage is supplied, the state of that channel's ``tP_Client`` timer
-   shall be changed only as ``UDSS_LLR_0135``, ``UDSS_LLR_0136``, ``UDSS_LLR_0137``,
+   While a channel's storage remains supplied, the state of that channel's ``tP_Client``
+   timer shall be changed only as ``UDSS_LLR_0135``, ``UDSS_LLR_0136``, ``UDSS_LLR_0137``,
    ``UDSS_LLR_0138``, ``UDSS_LLR_0144``, ``UDSS_LLR_0148`` and ``UDSS_LLR_0180`` require.
+   Withdrawal of that storage under ``UDSS_LLR_0125`` ends the channel and discards the
+   timer with it, which is why the list is closed only for the storage's lifetime.
 
    Rationale: a closed list of the requirements that may change the timer is what makes a
    "changes nothing" claim elsewhere in the set checkable, and what lets ``UDSS_LLR_0127``
