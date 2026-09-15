@@ -169,6 +169,81 @@ The traits
    :link_types: depends_on
    :align: center
 
+Protocol state
+--------------
+
+.. arch:: Protocol state is owned by the crate and created at assembly
+   :id: UDSSVC_ARCH_0035
+   :depends_on: UDSSVC_ARCH_0013; UDSSVC_ARCH_0017; UDSSVC_ARCH_0034
+   :status: draft
+   :origin: derived
+   :tags: api; traits; state
+
+   Some of ISO 14229-1's behaviour cannot be decided from one request. A server cannot
+   produce ``wrongBlockSequenceCounter`` (0x73) without remembering the last block it
+   accepted, ``requestSequenceError`` (0x24) without remembering what preceded, or
+   ``exceedNumberOfAttempts`` (0x36) without counting. That state is **this crate's**, and
+   the application cannot reach it.
+
+   It is created by the assembly step of ``UDSSVC_ARCH_0013``, which already names every
+   service the server supports and so already knows which state is needed:
+
+   .. code-block:: rust
+
+      uds_server! {
+          Ecu: ReadDataByIdentifier, SecurityAccess, RequestDownload, TransferData;
+          channels = 4,
+      }
+
+   Rationale: ``UDSSVC_ARCH_0034`` puts protocol concerns in the stack, and a block sequence
+   counter is protocol bookkeeping by any reading — no application should reimplement it, and
+   an application that cannot name it cannot corrupt it. Putting the state behind the
+   assembly rather than in the application's own type is what makes that true: the generated
+   server composes the application type, and the protocol state is a private field of the
+   composition.
+
+   **Two scopes, and the standard draws the line, not convenience.**
+
+   .. list-table::
+      :header-rows: 1
+      :widths: 22 44 34
+
+      * - Scope
+        - Holds
+        - Fixed by
+      * - Server-global
+        - active security level, DTC setting, communication control, periodic schedules,
+          the transfer in progress
+        - "Only one security level shall be active at any instant of time" (10.4)
+      * - Per-channel
+        - authentication state
+        - "An authenticated state shall be linked to a certain diagnostic channel. Multiple
+          clients can be handled on multiple channels with different authentication
+          settings." (10.6.4)
+
+   Those two clauses rule in opposite directions on the same question, so a design that
+   collapses them is wrong whichever way it collapses.
+
+   **The per-channel scope is why ``Ctx`` gains ``A_SA``** (``UDSSVC_ARCH_0015``).
+   Authentication state cannot be keyed to a channel without something naming the channel,
+   and the source address is what ISO 14229-1 clause 7.4.1 already carries for the purpose.
+   Open question 3 closes on this ground rather than on clause 7.4.1's "mandatory", which
+   was the weaker argument.
+
+   **Sizing is declared, not allocated.** ``UDSSVC_ARCH_0017`` forbids allocation, so the
+   per-channel table is a const-generic array whose length the assembly states. A deployment
+   that supports one tester writes ``channels = 1`` and pays for one. The alternative —
+   caller-supplied storage, as ``uds_session`` takes — is available if a deployment ever
+   needs to size this at run time, and is deliberately not taken now: it costs every caller a
+   lifetime and a borrow to buy flexibility no known deployment wants.
+
+   What this element does **not** settle is what happens to this state on a session
+   transition. ISO 14229-1:2020 10.2 requires a return to ``defaultSession`` to relock
+   security, disable periodic schedulers and output controls, resume stored ResponseOnEvent
+   configurations, and "reset all activated/initiated/changed settings/controls during the
+   activated session" — one obligation spanning five services' state. It is recorded here so
+   it is not mistaken for an omission, and is designed with the state bodies it acts on.
+
 Identifiers
 -----------
 
