@@ -113,12 +113,13 @@ Scope
    these are not unsettled — they are simply absent, and a reader should not have to infer
    from silence that a clause was decided against:
 
-   * **Clause 17**, the non-volatile server memory programming process. Normative, and a
-     framework with vehicle-manufacturer-specific steps, so it fits the delegation above.
-     It spans many exchanges, sessions and resets, so it needs state between requests that
-     the dispatch of ``UDSSVC_ARCH_0004`` has nowhere to hold, and it coordinates
-     ISO 14229-2 explicitly, so it sits above ``uds_session`` rather than beside it. It is
-     the largest single thing this crate does not have.
+   * **Clause 17**, the non-volatile server memory programming process — on the *client*
+     side only. ``UDSSVC_ARCH_0039`` settles where it lands: the clause is a sequence the
+     client is required to follow, it binds the server directly three times in 625 lines,
+     and two of those three are ECU properties rather than protocol behaviour. The server
+     side is discharged by ``UDSSVC_ARCH_0036``, ``UDSSVC_ARCH_0037`` and
+     ``UDSSVC_ARCH_0038``. What is not built is the client orchestration, and only its
+     standardized steps are common enough across vehicle programmes to be worth building.
    * **Clause 16**, the security sub-layer. Its 16.1.4 general server response behaviour is
      this crate's by the same argument as clause 8.7; its 16.1.3 access flow spans
      exchanges as clause 17 does. ``UDSSVC_ARCH_0011`` files Figure 5's optional 0x38 and

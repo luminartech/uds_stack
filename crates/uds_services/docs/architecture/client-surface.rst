@@ -259,3 +259,53 @@ Two layers
    :filter: "client" in tags
    :link_types: depends_on
    :align: center
+
+The programming process
+-----------------------
+
+.. arch:: Clause 17 is a client sequence, not a server obligation
+   :id: UDSSVC_ARCH_0039
+   :depends_on: UDSSVC_ARCH_0028; UDSSVC_ARCH_0036; UDSSVC_ARCH_0037; UDSSVC_ARCH_0038
+   :status: draft
+   :origin: application-layer-standard
+   :source: ISO 14229-1:2020 17.1; ISO 14229-1:2020 17.2
+   :tags: client; scope; state
+
+   ISO 14229-1 clause 17 specifies the non-volatile server memory programming process. It
+   is written from the client's side — "the programming process **the client** is required
+   to follow" — and it is an orchestration of services, not a new protocol behaviour.
+
+   That placement is checkable rather than a matter of reading: across 625 lines, clause 17
+   binds the server directly three times. One is the step-type definition, that "the client
+   and the server shall behave as specified" for standardized steps, which defers to the
+   services those steps use. The other two are properties of an ECU rather than of a
+   protocol — that memory "shall be erased when required by the memory technology", and that
+   a server "shall be able to recover and be reprogrammed" after an interrupted programming
+   attempt.
+
+   **So the server side of clause 17 is already discharged.** Its steps are
+   ``DiagnosticSessionControl``, ``SecurityAccess``, ``RequestDownload``, ``TransferData``,
+   ``RequestTransferExit``, ``RoutineControl`` and ``ECUReset``, and a server that
+   implements those correctly has done what clause 17 asks of it. Correctly is the load
+   here, and it is where ``UDSSVC_ARCH_0036``, ``UDSSVC_ARCH_0037`` and
+   ``UDSSVC_ARCH_0038`` do the work: the transfer sequence, the security sequence and the
+   session-transition rules are exactly the parts of a programming sequence that go wrong.
+   No further server-side state is implied by this clause.
+
+   Rationale: recording where clause 17 lands costs nothing now and prevents the wrong
+   thing being built later. ``UDSSVC_ARCH_0001`` first listed it as in scope and not built,
+   described as spanning exchanges and needing server state the dispatch had nowhere to
+   hold. That was the wrong reading: the spanning is the client's.
+
+   **What remains is a client orchestration, and it is deferred deliberately.** Clause 17.1
+   classifies its own steps as standardized, optional/recommended, or vehicle-manufacturer
+   specific, and lets a programme choose a functionally or a physically oriented vehicle
+   approach for them. Only the standardized steps are common across programmes, so only
+   they are library-able; the rest is a vehicle programme's own sequence expressed over
+   ``UDSSVC_ARCH_0028``'s client. Building the orchestration before there is a client that
+   can execute one step of it would be designing against nothing.
+
+   The "master execute" coordination of 17.1, where steps are functionally addressed to
+   every node and their results reconciled, is the same problem ``UDSSVC_ARCH_0022`` already
+   solves for a functionally addressed request with several responders. That is the piece to
+   build on when this is taken up.
