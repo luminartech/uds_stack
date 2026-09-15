@@ -95,8 +95,7 @@ never completed must not cost the application its sessions with every other serv
 in functional keep-alive a single release does.
 
 Both are acts of the caller, as the completion report of ``UDSS_LLR_0136`` is, and neither
-a primitive nor a protocol parameter; ``UDSS_LLR_0295`` enumerates them among its inputs
-and has each carry a timestamp. A client in functional keep-alive necessarily
+a primitive nor a protocol parameter. A client in functional keep-alive necessarily
 has the functional channel its TesterPresent goes out on, ``UDSS_LLR_0166`` requiring that
 message's confirmation to arrive on one.
 
