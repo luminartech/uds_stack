@@ -1186,17 +1186,17 @@ is safer and no larger. The value sets are transcribed exactly.
 
    ``S_Result`` shall be an enumeration reporting the outcome of a service execution. The
    value ``S_OK`` shall indicate that the service execution completed successfully. Every
-   other value shall indicate an error detected by a lower layer, and the session layer
-   shall carry such a value without interpreting it. ``S_Result`` shall be reported to the
-   application on both the sending and the receiving side.
+   other value shall indicate an error detected by a lower layer. ``S_Result`` shall be
+   reported to the application on both the sending and the receiving side.
 
    ISO 14229-2:2021 does not enumerate the error values. Clause 8.10 states only that an
-   error value is issued when an error is detected by a lower layer, which is why the
-   session layer carries one rather than acting on its meaning. That clause also requires
-   the application layer entity to set the appropriate error bit where two or more errors
-   are discovered at once; that obligation falls on the application layer and is not
-   transcribed here, and no requirement in this set depends on ``S_Result`` being a bit
-   field rather than an enumeration.
+   error value is issued when an error is detected by a lower layer, which is why this set
+   has the session layer carry such a value without interpreting it rather than act on its
+   meaning; that carrying is this set's decision and is not stated by the clause. That
+   clause also requires the application layer entity to set the appropriate error bit where
+   two or more errors are discovered at once; that obligation falls on the application layer
+   and is not transcribed here, and no requirement in this set depends on ``S_Result`` being
+   a bit field rather than an enumeration.
 
 Message classification
 ----------------------

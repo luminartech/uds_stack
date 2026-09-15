@@ -14,6 +14,27 @@ Requirements
    llr-client-error-handling
    open-questions
 
+What each document governs, in the order above:
+
+- :doc:`llr-service-interface` — the primitives exchanged with the application and with
+  the transport, the parameters they carry, and the mapping between them.
+- :doc:`llr-timer-model` — what a timer is and when it expires, for every timer in the set.
+- :doc:`llr-server-session-timer` — the server's ``tS3_Server`` timer, which keeps a
+  non-default session active while the client that requested it continues to communicate.
+- :doc:`llr-server-response-timing` — the server's ``tP2_Server`` timer, which bounds the
+  time the server may take to begin its response to a request it has received.
+- :doc:`llr-client-response-timing` — the client's ``tP_Client`` timer, which bounds the
+  time the client waits for the response to a request it has transmitted.
+- :doc:`llr-client-session-timer` — the client's ``tS3_Client`` timer, which keeps the
+  servers a client has moved out of the default session in that session.
+- :doc:`llr-client-request-spacing` — the client's ``tP3_Client_Phys`` and
+  ``tP3_Client_Func`` timers, which bound how soon the next request may be transmitted on a
+  channel.
+- :doc:`llr-client-error-handling` — what the client does when a request's transmission
+  fails, its reception fails, or its response window expires.
+- :doc:`open-questions` — questions raised while authoring this set that are not yet
+  settled, and agreed changes not yet made.
+
 Status of this set
 ------------------
 

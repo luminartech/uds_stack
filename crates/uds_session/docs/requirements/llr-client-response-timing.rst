@@ -579,7 +579,7 @@ The response window
    report an expiry for a request the failure had already ended. Where the start-of-message
    did stop the timer the second stop leaves it stopped.
 
-.. llr:: A response on a functional channel extends the response window
+.. llr:: A response on a functional channel extends the window; a failed reception closes it
    :id: UDSS_LLR_0137
    :status: draft
    :integrity_level: QM

@@ -77,8 +77,9 @@ Each requirement carries:
   still move), `review` (under review), `approved` (reviewed and accepted; ID is permanent),
   or `obsolete` (withdrawn; ID retained and never reused).
 
-Requirement IDs are allocated once and never renumbered or reused. Once a requirement is
-approved and linked externally, its ID is fixed for the life of the crate.
+While the set is draft its IDs may still move: it is numbered in document order, so a
+restructuring renumbers it. Once a requirement is approved and linked externally, its ID
+is fixed for the life of the crate, and the ID of an obsolete requirement is never reused.
 
 ## Relationship to the standards
 
