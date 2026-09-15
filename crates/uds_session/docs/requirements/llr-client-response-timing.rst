@@ -56,11 +56,7 @@ channel the server was reached through, and nothing in the indication says which
 ``T_DataSOM.ind`` and ``T_Data.ind`` belongs to. A channel exists while the caller supplies
 its storage, as ``UDSS_LLR_0201`` states. ``UDSS_LLR_0199`` settles which
 indication is the start of a message and which its completion, and this document uses its
-terms **first indication** and **completion** without restating them. An indication on a
-channel with no request in progress takes no timer action under any requirement below; it
-is forwarded to the application as ``UDSS_LLR_0137`` requires. It does open or complete a
-start-of-message under ``UDSS_LLR_0199``, and on a functional channel may create or release
-an entry under ``UDSS_LLR_0233``.
+terms **first indication** and **completion** without restating them.
 
 On a functional channel many servers answer one request. Each is a **responder**, identified
 by the ``S_AI[SA]`` and, where ``S_Mtype`` carries one, the ``S_AI[AE]`` of its indications.
@@ -71,50 +67,24 @@ The request in progress
 
 Throughout this document, the **request in progress** on a channel is the request whose
 response the client is waiting for: from the ``T_Data.conf`` confirming its successful
-transmission until that wait ends.
-
-``UDSS_LLR_0208`` fixes both ends. The wait ends on a physical channel with the first
-indication of a message whose classification states kind ``final response`` and
-``solicited``; on a functional channel, when ``UDSS_LLR_0156`` stops the timer; and on either
-kind of channel, with any ``T_Data.ind`` reporting a failed reception, whether first
-indication or completion, and when the response window expires under ``UDSS_LLR_0159``.
-
-A channel reset under ``UDSS_LLR_0277`` also ends the wait, on the caller's act rather than
-on an input from the peer; short of withdrawing the channel under ``UDSS_LLR_0205``, that is
-the only ending after which no indication for the message follows.
-
-An input that ends the wait is itself processed while the request is still in progress, as
-``UDSS_LLR_0209`` states, so a requirement conditioned on the request in progress is eligible
-to act on it and the wait ends as a consequence. Were it otherwise, ``UDSS_LLR_0154`` could
-never stop the timer on the response it is there to stop it on.
+transmission until that wait ends. ``UDSS_LLR_0208`` enumerates the endings. Each is a
+point at which the client is no longer waiting: the response it waited for has arrived,
+the expected responses of a functional exchange are all in, the reception failed and
+ISO 14229-2:2021 9.7 Table 9 has the client repeat the request rather than wait on, the
+window expired, or the caller reset the channel. A request expecting no response is never
+in progress in this sense, there being no response for the client to wait for.
 
 A stopped timer does not by itself mean that no request is in progress. ``UDSS_LLR_0154``
 also stops the timer at the start-of-message of a response-pending message, which
-ISO 14229-2:2021 9.4 Figure 8 key c requires, and the request is still in progress across the
-gap that follows: the enhanced window opens at the completion of that message under
-``UDSS_LLR_0157``. A failed reception ends the wait whether it is a message's first
-indication or its completion, ``UDSS_LLR_0154`` and ``UDSS_LLR_0155`` stopping the timer on
-either, which is what 9.7 Table 9 requires of a failed reception, the client being obliged to
-repeat the request.
-
-On a functional channel no single response ends the wait, ``UDSS_LLR_0155`` restarting the
-timer on each first indication and ``UDSS_LLR_0156`` ending the exchange only once the
-expected number have arrived; where that number is never reached the wait ends at expiry
-instead. A failed reception ends it on either kind of channel, 9.7 Table 9 making the failure
-an event with its own handling rather than one the exchange waits through.
-
-An implementation therefore cannot treat the timer's running state as standing for the request
-in progress; the two are separate.
+ISO 14229-2:2021 9.4 Figure 8 key c requires, and the request is still in progress across
+the gap that follows. An implementation therefore cannot treat the timer's running state as
+standing for the request in progress; the two are separate.
 
 The definition is stated here rather than borrowed from the server's. The server response
 timing document's own state, **service in progress**, is defined from ISO 14229-2:2021
 10.1.4.1, but both of that definition's endpoints — the start of reception of the request
 and the completion of transmission of the final response — are events at the server, and
 neither occurs at the client.
-
-A request expecting no response is never in progress in this sense, there being no response
-for the client to wait for. ``UDSS_LLR_0153`` accordingly starts no timer for one, so no later
-input falls inside a window on its account.
 
 What the client declares and the server does not
 ------------------------------------------------
@@ -176,7 +146,7 @@ states the meaning, because the timer cannot be specified without it. The conseq
 belong to :doc:`llr-client-error-handling`, which transcribes Table 9 as far as this layer
 can, and to :doc:`llr-client-session-timer` for the restarts.
 
-ISO 14229-2:2021 10.1.4 and 10.2.4 each state that the client's reload values may differ in a
+ISO 14229-2:2021 10.1.4.1 and 10.2.4 each state that the client's reload values may differ in a
 non-default session, the applicable ``tP_Client`` parameters being reported to the client by
 the DiagnosticSessionControl service of ISO 14229-1. No requirement here transcribes that. The
 reload values are protocol parameters the caller sets under ``UDSS_LLR_0259``, and which values
