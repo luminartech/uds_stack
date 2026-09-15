@@ -20,10 +20,10 @@ Throughout this document the first is **functional keep-alive** and the second *
 keep-alive**. The mode is fixed when the client instance is created (``UDSS_LLR_0162``).
 Beside each timer the client holds one fact: in functional keep-alive the **keeping-alive
 fact**, that the client is keeping some session alive; in physical keep-alive a **session
-fact** per physical channel, that the channel's server is in a non-default session. The fact is needed
-because a timer that has expired and awaits the confirmation of the TesterPresent is stopped
-while the session is still being kept alive; without it, a request marked as the keep-alive
-and sent in the default session would start the timer.
+fact** per physical channel, that the channel's server is in a non-default session. The fact
+is needed because a timer that has expired and awaits the confirmation of the TesterPresent
+is stopped while the session is still being kept alive; without it, a request marked as the
+keep-alive and sent in the default session would start the timer.
 
 When the timer expires the client delivers a **keep-alive indication** to the application, an
 output the caller retrieves as ``UDSS_LLR_0292`` provides, on the same footing as the
@@ -97,13 +97,9 @@ TesterPresent. Two of those restarts coincide with rows of Table 6 and the third
 ``UDSS_LLR_0170`` transcribes all three.
 
 What the client concludes about a channel's session once Table 9's repeats are exhausted is
-also :doc:`llr-client-error-handling`'s. A lost response to an ordinary request leaves the
-channel's timer stopped and its session fact holding. While the application repeats the
-request, each repeat restarts the cadence through ``UDSS_LLR_0169`` and ``UDSS_LLR_0170``;
-where every repeat fails the client stops sending and the server's ``tS3_Server`` ends the
-session, which is the outcome the standard intends. The client's fact is then cleared by the
-keep-alive release of ``UDSS_LLR_0184``, on the application's say-so; nothing in this
-document clears it, and the repeat count that bounds the repeats is ``UDSS_LLR_0236``'s.
+also :doc:`llr-client-error-handling`'s. Nothing in this document clears a channel's session
+fact: the keep-alive release of ``UDSS_LLR_0184`` does, on the application's say-so, and the
+repeat count that bounds the repeats is ``UDSS_LLR_0236``'s.
 
 Table 5 requires the ``tS3_Client`` reload value to be smaller than ``tS3_Server``. That is a
 value the caller chooses under ``UDSS_LLR_0259``, a performance obligation of the same class
