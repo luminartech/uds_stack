@@ -160,6 +160,9 @@ A requirement that leaves a running timer alone says so.
    Indications precede the input's own outputs for the same reason the expiries precede the
    input: the elapsed time preceded its arrival. The case is stated because the first
    paragraph reaches it only by reading "processes" as covering output emission, and for a
-   rejected input does not reach it at all — the input is not processed, and ``UDSS_LLR_0015``
-   borrows this requirement for state alone. The order among those indications is left open
-   because several expiries on one timestamp need no order for the state they leave.
+   rejected input does not reach it at all — the input is not processed. It is stated for the
+   rejected input too because that input produces no outputs of its own to order the
+   indications against, only a rejection report; ``UDSS_LLR_0015`` accordingly excepts these
+   indications from the outputs it forbids and defers to this requirement for their order.
+   The order among those indications is left open because several expiries on one timestamp
+   need no order for the state they leave.

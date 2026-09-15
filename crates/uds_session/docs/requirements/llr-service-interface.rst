@@ -325,9 +325,11 @@ before the other is what the assumption forbids.
 
    Where a requirement in this set requires the session layer to reject an input supplied
    by the caller, the session layer shall report the rejection to the caller, shall produce
-   no output to the application and no output to the transport layer, and shall leave its
-   state as the expiries of the accompanying timestamp left it under ``UDSS_LLR_0081`` and
-   otherwise unchanged.
+   for the rejected input itself no output to the application and no output to the transport
+   layer, and shall leave its state as the expiries of the accompanying timestamp left it
+   under ``UDSS_LLR_0081`` and otherwise unchanged. The indications those expiries produce
+   are not outputs of the rejected input and shall be produced, ``UDSS_LLR_0081`` ordering
+   them before the rejection report.
 
    Rationale: requirements throughout this set refuse an input rather than react to it, and
    without this requirement none would say what refusal means. A rejection cannot be
@@ -336,6 +338,13 @@ before the other is what the assumption forbids.
    involved, no message having been transmitted. Nor is it produced for the caller to
    retrieve on the application's behalf, as an output is; a rejection is addressed to the
    caller that made the erroneous call.
+
+   The expiries are excepted for the reason ``UDSS_LLR_0081`` gives for ordering them ahead
+   of the report: the elapsed time preceded the input's arrival, so the timer expired before
+   the session layer saw what the caller supplied. Suppressing their indications would let a
+   malformed input swallow an expiry the timestamp had already caused — the session-timeout
+   indication of ``UDSS_LLR_0100`` among them — which is the failure ``UDSS_LLR_0081``
+   exists to prevent.
 
 .. llr:: What a rejection report carries
    :id: UDSS_LLR_0016
