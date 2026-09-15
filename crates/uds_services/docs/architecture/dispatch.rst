@@ -389,22 +389,27 @@ Suppression
    ``UDSSVC_ARCH_0032`` makes this crate the originator of a response-pending, so the gate
    consults whether *this dispatch* offered one across ``UDSSVC_ARCH_0031``'s seam.
 
-   **The gate reads "offered", where clause 8.7.5 writes "sent", and the divergence is
-   deliberate.** The two differ only when an offer reached no client, and the argument that
-   this is safe comes from ISO 14229-2:2021. ``UDSS_LLR_0285`` refuses an offer only where a
-   response-pending answering the request is unconfirmed or the spacing has not elapsed, and
-   states that where neither holds the requirement does not apply — so the first offer for a
-   request is never refused, and any refusal implies a predecessor already reached the
-   transport. The remaining case is a failed transmission, which ``UDSS_LLR_0218`` says
-   never reached the data link at all, leaving a client still waiting out ``tP2`` for which
-   an unsuppressed final response is harmless.
+   **The gate reads "offered and accepted", where clause 8.7.5 writes "sent", and the
+   divergence is deliberate.** A submission the session layer refuses is not a send, and the
+   refusal is reported synchronously, so ``UDSSVC_ARCH_0031``'s ``offer`` returns it and the
+   gate does not fire on it. This matters because refusal does **not** imply that an earlier
+   response-pending got out: the spacing and unconfirmed-predecessor limbs
+   (``UDSS_LLR_0285``, ``UDSS_LLR_0284``) do presuppose one, but ``UDSS_LLR_0273`` and
+   ``UDSS_LLR_0274`` refuse a submission for a duplicated or exhausted transmission
+   association, which can catch the *first* offer for a request with nothing yet sent.
 
-   The asymmetry is what settles it. Treating an offer as sent can cost one message a
+   What remains is the accepted submission whose transmission later fails.
+   ``UDSS_LLR_0218`` has such a transmission never reach the data link, so the client saw no
+   response-pending and is still waiting out ``tP2``, where an unsuppressed final response is
+   harmless.
+
+   The asymmetry settles the rest. Treating an accepted offer as sent can cost one message a
    waiting client accepts; treating a sent response-pending as unsent produces silence where
    the standard requires a final response — the failure that needs both a slow handler and
-   functional addressing to appear, and so will not show up in ordinary testing. Tracking
-   the fact internally also removes any need for the driver to report it, and with it any
-   way for the driver to report it wrongly.
+   functional addressing to appear, and so will not show up in ordinary testing. Closing the
+   gap the other way, by tracking the ``T_Data.conf``, would oblige the driver to report
+   confirmations on this crate's behalf, which is a correctness obligation it has no way to
+   discover it is failing.
 
    Rule 2 has a corollary for services without a SubFunction parameter: they have no
    ``suppressPosRspMsgIndicationBit`` at all, so a positive response to one is never
@@ -434,8 +439,7 @@ Suppression
    :part_of: UDSSVC_ARCH_0004
    :depends_on: UDSSVC_ARCH_0010; UDSSVC_ARCH_0013; UDSSVC_ARCH_0033
    :status: draft
-   :origin: application-layer-standard
-   :source: ISO 14229-2:2021 9.1.1 REQ 5.4; ISO 14229-2:2021 9.1.1 REQ 5.6; ISO 14229-1:2020 A.1
+   :origin: derived
    :tags: dispatch; nrc; response-pending
 
    When a handler has not settled the request and a response-pending becomes due, this
@@ -456,13 +460,16 @@ Suppression
    to inspect message data and holds its protocol parameters per instance rather than per
    service — and a byte-level driver has no notion of which services a server implements.
 
-   **This is the first element that reaches outside clause 8.7, and the reach is narrower
-   than it looks.** ``UDSSVC_ARCH_0001`` bounds the crate to clause 8.7 under an organising
-   rule of one crate per ISO document, and REQ 5.4 and REQ 5.6 belong to ISO 14229-2. What
-   this crate implements is not those requirements but their predicate: it holds no
-   ``tP4_Server_Max``, runs no timer, and knows no timing parameter. ``tP4_Server_Max`` is
-   how ISO 14229-2 *expresses* a per-service permission; ``UDSSVC_ARCH_0033`` is where that
-   permission is declared, by the application, for the cases the predicate cannot settle.
+   **What this crate implements is the predicate, not the requirement.** It holds no
+   ``tP4_Server_Max``, runs no timer, and knows no timing parameter; ``tP4_Server_Max`` is
+   how ISO 14229-2 *expresses* a per-service permission, and ``UDSSVC_ARCH_0033`` is where
+   that permission is declared, by the application.
+
+   REQ 5.6's own case is discharged without a check at all. Figure 5's first mandatory
+   condition settles an unsupported service at 0x11 in the precondition stage, so no handler
+   runs and ``UDSSVC_ARCH_0031``'s ``due`` never fires for one; and a service the server does
+   not implement has no trait impl from which ``MAY_RESPOND_PENDING`` could be read. Clause
+   8.7's own ordering satisfies it twice over.
 
    The bytes are this crate's for the reason ``UDSSVC_ARCH_0010`` already gives: a
    response-pending is a negative response — ``0x7F``, the echoed service identifier,

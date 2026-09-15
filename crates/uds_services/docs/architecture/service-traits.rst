@@ -124,8 +124,7 @@ The traits
    :id: UDSSVC_ARCH_0033
    :depends_on: UDSSVC_ARCH_0012
    :status: draft
-   :origin: application-layer-standard
-   :source: ISO 14229-2:2021 9.1.1 REQ 5.4; ISO 14229-1:2020 A.1
+   :origin: derived
    :tags: api; traits; response-pending
 
    Each service trait carries an associated constant, with **no default**, stating whether

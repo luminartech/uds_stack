@@ -323,7 +323,8 @@ Response-pending seam
           async fn due(&mut self);
 
           /// Submit a response-pending for transmission. Returns immediately.
-          fn offer(&mut self, message: [u8; 3]);
+          /// `false` means the session layer refused it and nothing was sent.
+          fn offer(&mut self, message: [u8; 3]) -> bool;
       }
 
    Rationale: ``UDSSVC_ARCH_0032`` puts the decision here, and a decision that cannot be
@@ -337,11 +338,12 @@ Response-pending seam
    .. code-block:: rust
 
       let mut handler = pin!(self.handle(..));
+      let mut sent = false;
       let settled = loop {
           select! {
               settled = &mut handler => break settled,
               () = pending.due() => if MAY_RESPOND_PENDING {
-                  pending.offer([0x7F, sid, 0x78]);
+                  sent |= pending.offer([0x7F, sid, 0x78]);
               }
           }
       };
@@ -362,10 +364,17 @@ Response-pending seam
    transmission, which is the opposite of what ``UDSSVC_ARCH_0016``'s asynchronous seam
    exists to buy.
 
-   **There is no error path, and that follows from an element already here.**
-   ``UDSSVC_ARCH_0016`` states that genuine transport failures are the binding's concern
-   and never reach a handler. A refusal under ``UDSS_LLR_0285``'s spacing rule and a failed
-   transmission are both the driver's to absorb. This crate offers; the driver disposes.
+   **``offer`` reports refusal but not failure, and the asymmetry is the point.** A
+   submission the session layer refuses — for spacing under ``UDSS_LLR_0285``, for an
+   unconfirmed predecessor under ``UDSS_LLR_0284``, or for an association that is duplicated
+   or exhausted under ``UDSS_LLR_0273`` and ``UDSS_LLR_0274`` — is rejected *synchronously*,
+   at the moment it is supplied, and the driver knows at once. That is a clause 8.7 fact:
+   nothing was sent, so ``UDSSVC_ARCH_0009``'s override must not fire. A transmission that
+   is accepted and later fails is a different thing, reported asynchronously as a
+   ``T_Data.conf``, and is the binding's to absorb under ``UDSSVC_ARCH_0016``. So the return
+   is a ``bool`` rather than a ``Result``: it answers "was this accepted for transmission",
+   which the driver can pass straight through, and never "did it arrive", which would oblige
+   the driver to track confirmations on this crate's behalf.
 
    **``due`` must be cancel-safe, and that is a contract rather than a note.** The future
    is dropped and rebuilt on every handler wakeup. A driver that implemented it by starting
