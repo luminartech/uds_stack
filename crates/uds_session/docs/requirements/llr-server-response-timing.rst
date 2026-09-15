@@ -57,9 +57,12 @@ The model above is what guarantees there is at most one such service at a time.
 What this document does not cover
 ---------------------------------
 
-``tP4_Server``, ``ΔtP2`` and ``ΔtP6`` are performance requirements on the server's
-application and on the vehicle network, not behaviour the session layer can discharge, so
-no requirement transcribes them.
+``tP4_Server``, ``ΔtP2`` and ``ΔtP6``. ISO 14229-2:2021 9.2 Table 3 types ``tP2_Server``
+a performance requirement too, so being one is not what excludes them: what excludes them is
+that no clause asks the session layer to time them. 9.1.1 REQ 5.1 requires a ``tP2_Server``
+timer implementation and 9.6 Table 7 allocates the resource for it, while neither does
+anything of the kind for these three, whose bounds fall on the server's application and on
+the vehicle network. No requirement transcribes them.
 
 Their consequence is excluded with them. ISO 14229-2:2021 9.1.1 makes a response-pending
 message inadmissible for a service whose ``tP4_Server_Max`` equals ``tP2_Server_Max``, and
@@ -172,9 +175,20 @@ The response window
    and two implementations could disagree about when the service ended.
 
    The anchor holds the time of the confirmation because ``UDSS_LLR_0119`` measures the
-   spacing from there; it lives only while a service is in progress because
-   ISO 14229-2:2021 9.2 Table 4 footnote b, the footnote it serves, spaces the
-   response-pending messages of one service.
+   spacing from there; it lives only while a service is in progress because the spacing it
+   serves is read as running between the response-pending messages of one service.
+
+   That is a declared reading rather than the footnote's words. ISO 14229-2:2021 9.2 Table 4
+   footnote b requires the minimum "between the transmission of consecutive negative messages
+   (each with negative response code 78)" during the enhanced response timing, in order to
+   avoid flooding the data link; it does not say whose service those messages answer. The
+   per-service reading is taken because the enhanced response timing the footnote is stated
+   within is opened per request under ``UDSS_LLR_0116``, and because the session layer holds
+   one anchor, which a replacement under ``UDSS_LLR_0108`` discards with the service it
+   belonged to. The cost of the reading is that a server replacing one service with another
+   may send the new service's first response-pending message without waiting: the footnote's
+   flooding concern is left to the caller there, as the preamble leaves the other bounds this
+   document does not time.
 
    The state is instance-resident because it is fixed in size, one fact, two addresses and
    one timestamp, as ``UDSS_LLR_0082`` holds the session facts. The two addresses form a
@@ -331,7 +345,8 @@ The response window
    would clear it while ``UDSS_LLR_0092``'s guard stayed shut.
 
    The anchor is cleared with the service because ``UDSS_LLR_0104`` keeps it only while a
-   service is in progress, footnote b spacing the response-pending messages of one service.
+   service is in progress, on the per-service reading of footnote b that ``UDSS_LLR_0104``
+   declares.
 
 .. llr:: The anchor is set on a confirmed response-pending transmission
    :id: UDSS_LLR_0110
@@ -649,7 +664,7 @@ Enhanced response timing
    a third of the range ``UDSS_LLR_0041`` admits, and a wrapping, a widening and a checked
    implementation would then obtain three different spacings; the quotient-and-remainder
    form is the same value computed within the parameter's own width. The spacing is not a
-   timer, so ``UDSS_LLR_0077``'s loaded value does not reach it; the parameter is read when
+   timer, so ``UDSS_LLR_0076``'s loaded value does not reach it; the parameter is read when
    the ``S_Data.req`` is judged.
 
    The interval between a ``T_Data.req`` and its ``T_Data.conf``, during which no anchor has
@@ -660,5 +675,5 @@ Enhanced response timing
    layer is the gatekeeper of a transmission the application originates. Whether the first
    such message was admissible at all is fixed by the service's ``tP4_Server_Max``, which
    this document does not cover, as the preamble states. An ``S_Data.req`` answering any
-   other request is spaced by nothing here, because footnote b spaces the response-pending
-   messages of one service.
+   other request is spaced by nothing here, on the per-service reading of footnote b that
+   ``UDSS_LLR_0104`` declares.
