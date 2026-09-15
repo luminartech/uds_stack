@@ -104,19 +104,18 @@ A requirement that leaves a running timer alone says so.
    The session layer shall report the earliest timestamp at which a supplied timestamp could
    cause a timer to expire, or shall report that no timer is running.
 
-   The report is not an output in the sense
-   of ``UDSS_LLR_0011``: an output is produced for the caller to retrieve on the
-   application's behalf, and this report is a query the caller reads for itself, at a moment
-   of its choosing. ``UDSS_LLR_0012``'s enumeration of outputs is open, so it settles nothing
-   either way; what excludes the report is its kind.
+   The report is not an output in the sense of ``UDSS_LLR_0011``: an output is produced for
+   the caller to retrieve on the application's behalf, and this report is a query the caller
+   reads for itself, at a moment of its choosing. ``UDSS_LLR_0012``'s enumeration of outputs
+   is open, so it settles nothing either way; what excludes the report is its kind.
 
    Rationale: ``UDSS_LLR_0079`` makes a timer expire not when it elapses but when the caller
    next supplies a timestamp, and nothing else in this set tells the caller when that should
-   be. A caller left to guess can only poll, which rounds every timing decision in the set to
-   its tick period — the release of a request ``UDSS_LLR_0171`` postponed among them — and
-   obliges it to call in on every tick on a target where each call costs power. The session
-   layer can instead state the instant exactly, from state it already holds and without
-   reading a clock.
+   be. A caller left to guess can only poll, which rounds every timing decision in the set
+   to its tick period — the release of a request ``UDSS_LLR_0171`` postponed among them —
+   and obliges it to call in on every tick on a target where each call costs power. The
+   session layer can instead state the instant exactly, from state it already holds and
+   without reading a clock.
 
    The report is how the caller learns the instant, rather than a timer trait the session
    layer calls: ``UDSS_LLR_0017`` forbids reading a clock and requires every decision that
@@ -152,16 +151,16 @@ A requirement that leaves a running timer alone says so.
    before ``UDSS_LLR_0100`` ended the session.
 
    A message arriving exactly at ``tS3_Server``'s timeout is therefore too late to keep the
-   session, and that is accepted: ISO 14229-2:2021 9.5 Table 5 states the timeout as the time
-   the server keeps the session while not receiving a request, its tolerance is the caller's
-   parameter to spend, and a client conformant to Table 5's ordering of ``tS3_Client`` below
-   ``tS3_Server`` never sends at the boundary.
+   session, and that is accepted: ISO 14229-2:2021 9.5 Table 5 states the timeout as the
+   time the server keeps the session while not receiving a request, its tolerance is the
+   caller's parameter to spend, and a client conformant to Table 5's ordering of
+   ``tS3_Client`` below ``tS3_Server`` never sends at the boundary.
 
    Indications precede the input's own outputs for the same reason the expiries precede the
    input: the elapsed time preceded its arrival. The case is stated because the first
    paragraph reaches it only by reading "processes" as covering output emission, and for a
-   rejected input does not reach it at all — the input is not processed. It is stated for the
-   rejected input too because that input produces no outputs of its own to order the
+   rejected input does not reach it at all — the input is not processed. It is stated for
+   the rejected input too because that input produces no outputs of its own to order the
    indications against, only a rejection report; ``UDSS_LLR_0015`` accordingly excepts these
    indications from the outputs it forbids and defers to this requirement for their order.
    The order among those indications is left open because several expiries on one timestamp

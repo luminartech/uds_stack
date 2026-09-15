@@ -104,18 +104,19 @@ progress, and ``UDSS_LLR_0148`` cannot fire. The server has the same exposure th
 client's request: the session stays pinned, and the server, deliberately, has no caller
 exit.
 
-The standard has the same property. Once the start-of-message stops ``tP_Client``, no session
-layer timer covers the remainder of that message; the transport's own reception timers do.
-The requirements are faithful to that division of responsibility, so this is not a defect in
-the transcription.
+The standard has the same property. Once the start-of-message stops ``tP_Client``, no
+session layer timer covers the remainder of that message; the transport's own reception
+timers do. The requirements are faithful to that division of responsibility, so this is not
+a defect in the transcription.
 
-What is unrecorded is the obligation the division places on the caller: that a transport which
-indicates the start of a message eventually reports either its completion or its failure, and
-that it reports a ``T_Data.conf`` for every ``T_Data.req``, without which an association of
-``UDSS_LLR_0059`` stays outstanding with no server exit, as ``UDSS_LLR_0060`` records.
-That is an assumption of use and belongs in the qualification repository, alongside the
-assumption of one request outstanding per logical communication channel. Whether it is stated
-there, or whether the set instead writes a requirement the standard does not have, is open.
+What is unrecorded is the obligation the division places on the caller: that a transport
+which indicates the start of a message eventually reports either its completion or its
+failure, and that it reports a ``T_Data.conf`` for every ``T_Data.req``, without which an
+association of ``UDSS_LLR_0059`` stays outstanding with no server exit, as ``UDSS_LLR_0060``
+records. That is an assumption of use and belongs in the qualification repository, alongside
+the assumption of one request outstanding per logical communication channel. Whether it is
+stated there, or whether the set instead writes a requirement the standard does not have, is
+open.
 
 The channel reset of ``UDSS_LLR_0180`` has since given the application an exit: a
 start-of-message the transport never completes is closed by resetting its channel. That
@@ -127,11 +128,10 @@ Sequencing
 
 ``UDSS_LLR_0098``, ``UDSS_LLR_0089`` and the amendments to ``UDSS_LLR_0097``,
 ``UDSS_LLR_0093`` and ``UDSS_LLR_0094`` were written from reviews of the service interface
-and landed in the
-server session timer document ahead of its rework, because leaving each out left a
-requirement wrong rather than merely incomplete. The rework has since weighed them against
-the whole document.
+and landed in the server session timer document ahead of its rework, because leaving each
+out left a requirement wrong rather than merely incomplete. The rework has since weighed
+them against the whole document.
 
-That remains the bar for patching a document from an adjacent cycle: a finding that leaves
-a requirement wrong goes in at once; one that leaves it incomplete, or concerns
-traceability or wording, is recorded here and taken with the document's next rework.
+That remains the bar for patching a document from an adjacent cycle: a finding that leaves a
+requirement wrong goes in at once; one that leaves it incomplete, or concerns traceability
+or wording, is recorded here and taken with the document's next rework.

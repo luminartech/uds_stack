@@ -14,9 +14,9 @@ exchange appears complete can therefore reach a server that is still consuming t
 request, which then drops the new one; Figure 18 shows the case. Clause 10.3 answers it with
 a minimum time between the end of one request and the start of the next, in two parameters.
 ``tP3_Client_Phys`` applies to a physically addressed request for which no response is
-required, because without a response the client cannot observe that the server has
-finished. ``tP3_Client_Func`` applies to any functionally addressed request, because a server
-that does not support the request may never answer it. Where a physically addressed request
+required, because without a response the client cannot observe that the server has finished.
+``tP3_Client_Func`` applies to any functionally addressed request, because a server that
+does not support the request may never answer it. Where a physically addressed request
 required a response, the response itself shows that the server has finished, and 10.3 lets
 the next request follow immediately after that response has been completely received.
 
@@ -35,27 +35,28 @@ spacing parameters "Timer reload value", as it types the parameters of ``tP_Clie
 else: the whole effect of a spacing timer is a condition on the next transmission.
 
 A ``T_Data.conf`` belongs to the channel named by the addressing of the ``S_Data.req`` that
-``UDSS_LLR_0059`` associates with it, the route ``UDSS_LLR_0135`` uses, and an ``S_Data.req``
-belongs to the channel its own addressing names. On the outbound side, therefore, no caller
-identification of the channel is needed. This document uses **physical channel**,
-**functional channel** and the identity of a channel as ``UDSS_LLR_0121`` and the client
-response timing document's preamble define them, and **expected response count** and
+``UDSS_LLR_0059`` associates with it, the route ``UDSS_LLR_0135`` uses, and an
+``S_Data.req`` belongs to the channel its own addressing names. On the outbound side,
+therefore, no caller identification of the channel is needed. This document uses **physical
+channel**, **functional channel** and the identity of a channel as ``UDSS_LLR_0121`` and the
+client response timing document's preamble define them, and **expected response count** and
 ``none`` as ``UDSS_LLR_0065`` defines them.
 
 Postponement is rejection
 -------------------------
 
-Clause 10.3 requires a request that arrives while the spacing timer is running to be postponed
-until the timer has timed out. This layer postpones by rejecting the ``S_Data.req``
-(``UDSS_LLR_0171``) and reporting how long the timer has left (``UDSS_LLR_0172``). It can do
-nothing else: ``UDSS_LLR_0013`` forbids retaining the payload, so the request cannot be queued,
-and ``UDSS_LLR_0001`` forbids acting on its own, so it cannot be transmitted later.
-``UDSS_LLR_0015`` makes the rejection recoverable, a caller that retries after the reported
-time obtaining what a well-timed call would have. Transmitting after that time is the
-application's, on the model ``UDSS_LLR_0156`` states for the keep-alive; it is recorded as an
-assumption of use in the qualification repository that the application transmits, after the
-reported time, the request the standard obliges it to send, the repeat that 9.7 Table 9
-requires or the TesterPresent that answers a keep-alive indication.
+Clause 10.3 requires a request that arrives while the spacing timer is running to be
+postponed until the timer has timed out. This layer postpones by rejecting the
+``S_Data.req`` (``UDSS_LLR_0171``) and reporting how long the timer has left
+(``UDSS_LLR_0172``). It can do nothing else: ``UDSS_LLR_0013`` forbids retaining the
+payload, so the request cannot be queued, and ``UDSS_LLR_0001`` forbids acting on its own,
+so it cannot be transmitted later. ``UDSS_LLR_0015`` makes the rejection recoverable, a
+caller that retries after the reported time obtaining what a well-timed call would have.
+Transmitting after that time is the application's, on the model ``UDSS_LLR_0156`` states for
+the keep-alive; it is recorded as an assumption of use in the qualification repository that
+the application transmits, after the reported time, the request the standard obliges it to
+send, the repeat that 9.7 Table 9 requires or the TesterPresent that answers a keep-alive
+indication.
 
 The keep-alive is one such request: rejected while the channel's spacing timer is running
 and transmitted after the reported time, which is the postponement 10.3 Figure 19 keys k to
@@ -73,8 +74,8 @@ governs. The caller chooses the values under ``UDSS_LLR_0040``, as it chooses ev
 timing parameter.
 
 Table 4's footnote on the maximum. The maximum time the client waits before its next request
-is at its discretion, provided that in a non-default session ``tS3_Server`` is kept active in
-the servers. That is an obligation on the caller of the same class as the ``tS3_Client``
+is at its discretion, provided that in a non-default session ``tS3_Server`` is kept active
+in the servers. That is an obligation on the caller of the same class as the ``tS3_Client``
 reload staying below ``tS3_Server``, which the client session timer document excludes.
 
 Clause 10.3's condition that the next request follows a previous one that was completely
@@ -149,12 +150,12 @@ The spacing timer
    ``UDSS_LLR_0170`` until the elapsed time since that start reaches the value it was loaded
    with, when it shall expire; the expiry shall stop it and do nothing else.
 
-   The timer expires when the elapsed time reaches the value it was loaded with
-   rather than when it exceeds it. Table 3 states the parameter as a minimum time to wait,
-   which a request at exactly that time satisfies, and 10.3 postpones only until the timer
-   has timed out; the bound is on this side's own conduct. Table 9's
-   "after the time ``tP3_Client_Phys``" is read the same way, the repeat being released at
-   that time rather than after it, as the parameter is stated as a minimum.
+   The timer expires when the elapsed time reaches the value it was loaded with rather than
+   when it exceeds it. Table 3 states the parameter as a minimum time to wait, which a
+   request at exactly that time satisfies, and 10.3 postpones only until the timer has timed
+   out; the bound is on this side's own conduct. Table 9's "after the time
+   ``tP3_Client_Phys``" is read the same way, the repeat being released at that time rather
+   than after it, as the parameter is stated as a minimum.
 
 .. llr:: A channel's spacing timer is initially not running
    :id: UDSS_LLR_0167
@@ -204,9 +205,9 @@ Starting the timer
    ``T_Data.conf`` reporting a failed transmission of a request on the channel, the client
    shall start the channel's spacing timer loaded with its spacing parameter.
 
-   Clause 10.3 a) starts ``tP3_Client_Phys`` each time a physically addressed request with no
-   response required is successfully transmitted, as indicated by ``T_Data.conf``; Figure 20
-   keys b and g show it. The expected response count of ``none`` stands for no response
+   Clause 10.3 a) starts ``tP3_Client_Phys`` each time a physically addressed request with
+   no response required is successfully transmitted, as indicated by ``T_Data.conf``; Figure
+   20 keys b and g show it. The expected response count of ``none`` stands for no response
    required, as it does in ``UDSS_LLR_0135``. A request that required a response and was
    transmitted starts nothing: 10.3 lets the next request follow immediately after the
    complete reception of the response, the server having shown that it finished.
@@ -225,11 +226,11 @@ Starting the timer
    cannot tell the repeat Table 9 gates from a new request; the cost is one spacing interval
    after a failure.
 
-   A confirmation arriving while the timer is already running restarts it, 10.3 stating
-   the start without condition. There is no exception for a confirmation that returns the
-   channel to the default session: 10.3 a)
-   applies in any diagnostic session, so that confirmation starts the spacing timer while
-   ``UDSS_LLR_0161``, excepted by ``UDSS_LLR_0163``, does not restart ``tS3_Client``.
+   A confirmation arriving while the timer is already running restarts it, 10.3 stating the
+   start without condition. There is no exception for a confirmation that returns the
+   channel to the default session: 10.3 a) applies in any diagnostic session, so that
+   confirmation starts the spacing timer while ``UDSS_LLR_0161``, excepted by
+   ``UDSS_LLR_0163``, does not restart ``tS3_Client``.
 
 .. llr:: Functional spacing starts on any confirmed request
    :id: UDSS_LLR_0170
@@ -303,10 +304,11 @@ The next request
    while the first is outstanding is the assumption's business, not this requirement's.
 
    The rejection is per channel, where 10.3 and Table 3 speak of the next physically- or
-   functionally-addressed request without naming a channel. That narrows the text, on the warrant of Table 7, which allots the
-   timers per channel, of 10.3 a), which values the physical parameter for the addressed
-   server, and of Figure 20 key c, which transmits a functionally addressed TesterPresent
-   while a physical channel's ``tP3_Client_Phys`` is running.
+   functionally-addressed request without naming a channel. That narrows the text, on the
+   warrant of Table 7, which allots the timers per channel, of 10.3 a), which values the
+   physical parameter for the addressed server, and of Figure 20 key c, which transmits a
+   functionally addressed TesterPresent while a physical channel's ``tP3_Client_Phys`` is
+   running.
 
    The keep-alive TesterPresent, functionally or physically addressed, is rejected like any
    other request, and Figure 19 keys k to m show that keep-alive is held back until
@@ -321,9 +323,8 @@ The next request
    :tags: client; p3_client; service-interface
 
    A rejection under ``UDSS_LLR_0171`` shall state the time remaining until the channel's
-   spacing timer expires, being the value the timer was loaded with less the
-   elapsed time since the timer was last started, in the unit ``UDSS_LLR_0018`` gives for a
-   timestamp.
+   spacing timer expires, being the value the timer was loaded with less the elapsed time
+   since the timer was last started, in the unit ``UDSS_LLR_0018`` gives for a timestamp.
 
    Rationale: 10.3 postpones the request until the timer has timed out but gives the
    application no way to learn when that is, and Figure 19 key p names the delay that
