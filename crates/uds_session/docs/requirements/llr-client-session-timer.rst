@@ -145,9 +145,9 @@ The timer's state
    treats the handling as a property of the deployment, Table 8 allotting timers "when
    using" one TesterPresent or the other, and gives a change no meaning; it is not one of
    the protocol parameters ``UDSS_LLR_0259`` provides for. A change at run time would have
-   to say what becomes of a keeping-alive fact
-   and a running timer that the new mode's requirements never touch, ``UDSS_LLR_0231``
-   closing the list of what changes them, and no clause says.
+   to say what becomes of a keeping-alive fact and a running timer that the new mode's
+   requirements never touch, ``UDSS_LLR_0231`` closing the list of what changes them, and
+   no clause says.
 
 .. llr:: Functional keep-alive state and where it lives
    :id: UDSS_LLR_0227
@@ -250,7 +250,12 @@ The timer's state
    makes a "changes nothing" claim elsewhere in the set checkable, and what lets
    ``UDSS_LLR_0230`` state an initial state that nothing else may disturb. The listed
    requirements are kept from conflicting by the evaluation order ``UDSS_LLR_0187`` fixes
-   and by the guards and exceptions they state themselves.
+   and, in physical keep-alive, by the guards they state on the channel's session fact and
+   by the exception ``UDSS_LLR_0170`` carries for ``UDSS_LLR_0172``. In functional
+   keep-alive the separation rests on a requirement outside this list:
+   ``UDSS_LLR_0253`` forbids a ``keep-alive`` marker and a session selection on one
+   ``S_Data.req``, so no confirmation reaches both ``UDSS_LLR_0166`` and the session-selection
+   requirements ``UDSS_LLR_0164`` and ``UDSS_LLR_0167``.
 
 Functional keep-alive
 ---------------------
@@ -306,10 +311,9 @@ Functional keep-alive
    Figure 12 keys i, l and n and Figure 17 keys g, p, v and x are those transmissions.
 
    The session layer signals and the application acts: ``UDSS_LLR_0135`` forbids this layer
-   to compose the message. The
-   assumptions of use above record what the application sends. The standard names no
-   functional address for the keep-alive, so the indication carries none and
-   ``UDSS_LLR_0166`` accepts the confirmation on any functional channel.
+   to compose the message. The assumptions of use above record what the application sends.
+   The standard names no functional address for the keep-alive, so the indication carries
+   none and ``UDSS_LLR_0166`` accepts the confirmation on any functional channel.
 
    The timer expires when the elapsed time reaches the parameter, as ``UDSS_LLR_0148``
    reads ``tP2_Server``, not when it exceeds it as ``UDSS_LLR_0159`` reads ``tP_Client``.

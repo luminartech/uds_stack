@@ -160,13 +160,12 @@ The spacing timer
    value it was loaded with, and a timer that has not been started shall not be active.
 
    The timer becomes inactive when the elapsed time reaches the value it was loaded with
-   rather than when it exceeds it. Table 3 states the parameter as a minimum time to
-   wait, which a request at exactly that time satisfies, and 10.3 postpones only until
-   the timer has timed out; the bound is on this side's own conduct. A change to the
-   spacing parameter does not move a boundary already fixed; it takes effect at the next
-   start. Table 9's "after the time ``tP3_Client_Phys``" is
-   read the same way, the repeat being released at that time rather than after it, as the
-   parameter is stated as a minimum.
+   rather than when it exceeds it. Table 3 states the parameter as a minimum time to wait,
+   which a request at exactly that time satisfies, and 10.3 postpones only until the timer
+   has timed out; the bound is on this side's own conduct. A change to the spacing parameter
+   does not move a boundary already fixed; it takes effect at the next start. Table 9's
+   "after the time ``tP3_Client_Phys``" is read the same way, the repeat being released at
+   that time rather than after it, as the parameter is stated as a minimum.
 
 .. llr:: A channel's spacing timer is initially inactive
    :id: UDSS_LLR_0242
@@ -323,7 +322,8 @@ The next request
    while a physical channel's ``tP3_Client_Phys`` is running.
 
    The keep-alive TesterPresent, functionally or physically addressed, is rejected like any
-   other request; that postponement is what Figure 19 keys k to m show.
+   other request, and Figure 19 keys k to m show that keep-alive being held back until
+   ``tP3_Client_Func`` has timed out.
 
 .. llr:: The rejection states the time remaining
    :id: UDSS_LLR_0177

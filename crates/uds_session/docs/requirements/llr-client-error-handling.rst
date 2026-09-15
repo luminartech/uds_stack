@@ -220,17 +220,16 @@ The repeat count
    * where the classification states ``keep-alive``, the client shall leave the channel's
      repeat count unchanged.
 
-   Rationale: ISO 14229-2:2021 9.7 Table 9 states only the cap, a maximum of two repeats
-   and three transmissions in the worst case. It names
-   no count, no event that starts one and no marker, so the mechanism by which a layer that
-   cannot read the message tracks the repeats is the set's own, as the count of
-   ``UDSS_LLR_0236`` is. Table 9 counts service request transmissions from the request
-   whose handling first failed, so the request without the marker is the one that starts a
-   count and each repeat advances it. The count is taken at the ``S_Data.req``
-   rather than at the ``T_Data.conf`` because ``UDSS_LLR_0118`` produces the ``T_Data.req``
-   from it in the same step, so a request that nothing rejects is the transmission Table 9
-   counts; and because a rejection under ``UDSS_LLR_0267`` leaves state unchanged, so a
-   rejected repeat is never counted.
+   Rationale: ISO 14229-2:2021 9.7 Table 9 states only the cap, a maximum of two repeats and
+   three transmissions in the worst case. It names no count, no event that starts one and no
+   marker, so the mechanism by which a layer that cannot read the message tracks the repeats
+   is the set's own, as the count of ``UDSS_LLR_0236`` is. Table 9 counts service request
+   transmissions from the request whose handling first failed, so the request without the
+   marker is the one that starts a count and each repeat advances it. The count is taken at
+   the ``S_Data.req`` rather than at the ``T_Data.conf`` because ``UDSS_LLR_0118`` produces
+   the ``T_Data.req`` from it in the same step, so a request that nothing rejects is the
+   transmission Table 9 counts; and because a rejection under ``UDSS_LLR_0267`` leaves state
+   unchanged, so a rejected repeat is never counted.
 
    The keep-alive is outside the count, and that is a declared reading: Table 9 does not
    exempt it. In physical keep-alive a TesterPresent can be transmitted between a failure
@@ -324,11 +323,11 @@ Responses still arriving
    the report ``UDSS_LLR_0267`` requires shall state which of those two conditions held,
    and shall state both where both held.
 
-   Rationale: the two causes here call for opposite actions
-   from the application, waiting for the next completion under ``UDSS_LLR_0181`` and
-   ceasing to repeat under ``UDSS_LLR_0180``, and a report that did not distinguish them
-   would leave the application unable to follow Table 9. Both are stated where both hold
-   because the application must act on both.
+   Rationale: the two causes here call for opposite actions from the application, waiting
+   for the next completion under ``UDSS_LLR_0181`` and ceasing to repeat under
+   ``UDSS_LLR_0180``, and a report that did not distinguish them would leave the
+   application unable to follow Table 9. Both are stated where both hold because the
+   application must act on both.
 
 Giving a server up
 ------------------

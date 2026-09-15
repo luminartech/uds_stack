@@ -942,12 +942,11 @@ Enhanced response timing
    indications, as Figure 8 shows, and the enhanced window opens when the message completes.
 
    The reception must have succeeded. ``UDSS_LLR_0270`` does not forbid a caller from
-   classifying a reception the transport
-   reported as failed, and such a reception labelled ``response pending`` would otherwise
-   open a fresh enhanced window for a message that never arrived. Under functional addressing
-   with an unknown expected response count that would carry the exchange to an expiry, which
-   9.7 Table 9 answers with no retry, where the row the event actually falls under requires
-   the client to repeat the request.
+   classifying a reception the transport reported as failed, and such a reception labelled
+   ``response pending`` would otherwise open a fresh enhanced window for a message that
+   never arrived. Under functional addressing with an unknown expected response count that
+   would carry the exchange to an expiry, which 9.7 Table 9 answers with no retry, where the
+   row the event actually falls under requires the client to repeat the request.
 
 .. llr:: The reload value in force on a functional channel
    :id: UDSS_LLR_0281
@@ -1002,10 +1001,9 @@ Enhanced response timing
    completion under this requirement. That is the figures' rule applied as written; the set
    does not soften it.
 
-   The reception must have succeeded. A failed reception
-   the caller labels ``response pending`` is a message that did not arrive, and putting the
-   enhanced value in force for it would lengthen the window for a response that was never
-   promised.
+   The reception must have succeeded. A failed reception the caller labels
+   ``response pending`` is a message that did not arrive, and putting the enhanced value in
+   force for it would lengthen the window for a response that was never promised.
 
 .. llr:: How one indication's effects on the value in force compose
    :id: UDSS_LLR_0283
