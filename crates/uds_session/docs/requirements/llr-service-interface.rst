@@ -74,16 +74,10 @@ queue before the other is what the assumption forbids.
    operating system service.
 
    Rationale: the crate is sans-io. Every interaction with the vehicle network belongs
-   to the caller, which is what leaves the session layer's behaviour determined by the
-   inputs supplied to it, as ``UDSS_LLR_0310`` requires. Each requirement in this set is
-   then testable without a network, and one implementation serves CAN, DoIP, K-line and
-   simulation alike.
+   to the caller, so one implementation serves CAN, DoIP, K-line and simulation alike.
 
    This requirement is verified by inspection of the crate's own sources rather than by a
-   runtime test; no black-box test can show that no I/O is performed. Two further
-   conditions of being sans-io are stated separately because each answers to a different
-   check: ``UDSS_LLR_0305`` to a build, ``UDSS_LLR_0306`` to a review of the dependency
-   graph.
+   runtime test; no black-box test can show that no I/O is performed.
 
 .. llr:: The crate compiles under no_std
    :id: UDSS_LLR_0305
@@ -139,12 +133,11 @@ queue before the other is what the assumption forbids.
    places its state in caller-supplied storage and gives this property as the reason; until
    it was stated, the reason was given in rationale alone, and an implementation could have
    satisfied ``UDSS_LLR_0206`` with a heap-backed map without contradicting any requirement.
-   Where a fact may be kept instead is ``UDSS_LLR_0311``'s, which this requirement leaves
-   with only two places to name.
    ``UDSS_LLR_0233``'s capacity indication, which exists because a responder table can fill,
    would then describe a case that never arises. This requirement is verified alongside
    ``UDSS_LLR_0305`` and ``UDSS_LLR_0306``, by the build configuration and the dependency
-   graph, rather than by a runtime test.
+   graph, rather than by a runtime test. Where a fact may be kept instead is
+   ``UDSS_LLR_0311``'s, which this requirement leaves with only two places to name.
 
 .. llr:: The crate contains no unsafe code
    :id: UDSS_LLR_0308
@@ -176,8 +169,7 @@ queue before the other is what the assumption forbids.
    return.
 
    Rationale: this is the global form of the argument ``UDSS_LLR_0192`` makes locally for
-   one operation, that the subtraction is total so no input can leave the session layer
-   without a defined elapsed time. Without it the set is silent on what happens to an input
+   one operation. Without it the set is silent on what happens to an input
    no requirement's conditions select, and silence there is indistinguishable from a
    panic — which in a diagnostic server is an unhandled failure of a safety-related
    component, and in a caller that cannot unwind is a halt. Stating it as totality also
@@ -276,8 +268,7 @@ queue before the other is what the assumption forbids.
    at the instant a timer expires otherwise being read by one implementation as swallowing
    the expiry's indication and by another as following it. A timestamp may be supplied on
    its own because a timer can expire while no message is exchanged, and ``UDSS_LLR_0112``
-   requires the server to act on that expiry. Where it accompanies another input,
-   ``UDSS_LLR_0187`` orders the expiries it causes before that input.
+   requires the server to act on that expiry.
 
 .. llr:: Outputs are retrieved, not pushed
    :id: UDSS_LLR_0292
@@ -327,9 +318,7 @@ queue before the other is what the assumption forbids.
    Rationale: the crate is ``no_std`` and, as ``UDSS_LLR_0307`` requires, allocation-free,
    so it cannot own a buffer whose size it does not know. Retaining a payload would also
    imply a retransmission buffer, and no requirement in this set obliges the session layer
-   to retransmit anything;
-   ``UDSS_LLR_0289`` states the point explicitly for a server's response in a non-default
-   session. The requirement is verified by inspection of the crate's types, which hold no
+   to retransmit anything. The requirement is verified by inspection of the crate's types, which hold no
    buffer in which a payload could be retained, rather than by a runtime test.
 
 .. llr:: An output refers to caller-owned data
@@ -370,9 +359,7 @@ queue before the other is what the assumption forbids.
    retrieve on the application's behalf, as an output is; a rejection is addressed to the
    caller that made the erroneous call.
 
-   Leaving the state unchanged is what makes the rejection recoverable: a caller that
-   retries once the cause has cleared obtains the result it would have obtained had the
-   erroneous call never been made.
+   Leaving the state unchanged is what makes the rejection recoverable.
 
 .. llr:: What a rejection report carries
    :id: UDSS_LLR_0268
@@ -560,9 +547,7 @@ Service primitives
    mapping: clause 7.6 has the ``S_Data.conf`` identify the ``S_Data.req`` it confirms by
    the address information and report ``S_Result``, and 7.3 Table 2 maps each of those onto the
    transport parameter of the same name, so the confirmation the transport delivers carries
-   the addressing and the result and nothing else. The server session timer requirements
-   read the confirmation's ``S_AI[TA]``, and the association ``UDSS_LLR_0271`` states is
-   matched on that addressing.
+   the addressing and the result and nothing else.
 
 .. llr:: The caller identifies the channel of every inbound indication at a client
    :id: UDSS_LLR_0248
@@ -774,14 +759,10 @@ Service primitives
    ISO 14229-2:2021 9.7 Table 9 obliges the client to repeat a request whose reception
    failed, which it cannot do unshown. Table 10 obliges the server only to ignore such a
    request, which ``UDSS_LLR_0109`` reads as acting on nothing rather than as withholding
-   the indication. An earlier form of this requirement admitted an exception for that
-   reading; no requirement in the set now withholds an indication. A ``T_Data.ind`` rejected
-   under ``UDSS_LLR_0249`` for identifying a channel the client does not have, under
-   ``UDSS_LLR_0264`` or ``UDSS_LLR_0265`` for a classification kind of the other role, or
-   under ``UDSS_LLR_0255`` for stating no kind, ``UDSS_LLR_0257`` for a final response stating
-   neither ``solicited`` nor ``unsolicited``, or ``UDSS_LLR_0258``
-   for a classification otherwise not of the stated form, is not withheld but refused:
-   ``UDSS_LLR_0267`` governs it and this requirement does not reach it.
+   the indication. No requirement in the set withholds an indication. A ``T_Data.ind``
+   rejected under ``UDSS_LLR_0249``, ``UDSS_LLR_0264``, ``UDSS_LLR_0265``, ``UDSS_LLR_0255``,
+   ``UDSS_LLR_0257`` or ``UDSS_LLR_0258`` is not withheld but refused: ``UDSS_LLR_0267``
+   governs it and this requirement does not reach it.
 
 .. llr:: S_Data.conf confirms a preceding S_Data.req
    :id: UDSS_LLR_0120
@@ -811,9 +792,7 @@ Service primitives
    layer shall produce no ``S_Data.ind``.
 
    The indication is used only within the session layer, to perform session layer timing.
-   The requirements that act on it are the timer requirements of the server and client
-   documents and the pairing and responder requirements ``UDSS_LLR_0199``, ``UDSS_LLR_0233``
-   and ``UDSS_LLR_0161``, none of which forwards it. The prohibition is on the
+   The prohibition is on the
    ``S_Data.ind``, not on every output: a timer requirement that conditions on the
    indication may deliver an indication of its own, as the expiry indications do on any
    input.
@@ -897,10 +876,8 @@ Service primitives
    with, under ``UDSS_LLR_0195``.
 
    Rationale: a caller correcting a parameter must not disturb a window a timer already
-   running holds a peer to. ``UDSS_LLR_0195`` is what leaves that value alone, loading a
-   timer with the parameter's value at the instant it starts rather than reading it live;
-   this requirement states the outcome that mechanism is for, that a change take effect
-   only on a timer started after it.
+   running holds a peer to. ``UDSS_LLR_0195`` is the mechanism that leaves that value
+   alone; this requirement states the outcome it serves.
 
 Message and peer identity
 --------------------------
@@ -956,10 +933,7 @@ peer, and how a multi-frame message's start is matched to its completion.
    Table 3 makes single-frame against multi-frame the transport's distinction, and on a
    functional channel the multi-frame responses of several servers may interleave, so
    matching has to name the responder. The state this costs is stated with the client's
-   requirements: an entry per responder under ``UDSS_LLR_0232`` on a functional channel,
-   and one fact per channel under ``UDSS_LLR_0206`` on a physical one, where one peer
-   answers one outstanding request. The server needs none of it: its only start-of-message
-   effect, ``UDSS_LLR_0104``, stops a timer, which a second stop leaves stopped.
+   requirements, in ``UDSS_LLR_0232`` and ``UDSS_LLR_0206``; the server needs none of it.
 
 Parameter mapping
 -----------------
@@ -1250,12 +1224,8 @@ and leaves the means of recognising it to the implementation.
    classification supplied by the caller. Where a requirement in this set depends on what
    a message is, the session layer shall determine it from that classification.
 
-   Rationale: several requirements condition on message content, including whether a
-   response is final or response-pending, whether a message selects a diagnostic session,
-   whether a response was solicited, whether a request is the client's keep-alive, whether
-   a request received by a server is the bypass keep-alive, and whether a request is a
-   repeat.
-   Determining these by parsing ``S_Data`` would bind this crate to the ISO 14229-1
+   Rationale: several requirements condition on message content rather than on addressing
+   alone. Determining these by parsing ``S_Data`` would bind this crate to the ISO 14229-1
    application layer encodings and would require every timing test to construct valid UDS
    frames. The caller already holds what is needed: the application composes the message it
    asks to have transmitted, and the code that supplies a ``T_Data.ind`` holds the bytes it
@@ -1264,8 +1234,7 @@ and leaves the means of recognising it to the implementation.
    The classification is carried on ``T_Data.ind`` rather than on ``S_Data.ind`` because a
    client must recognise a response-pending response at reception, before the application
    has seen it. It is carried on ``T_DataSOM.ind`` for the same reason in the other
-   direction: ``UDSS_LLR_0104`` conditions on a start-of-message that begins a request, and
-   the start of a message is the only point at which that requirement acts. A caller
+   direction: ``UDSS_LLR_0104`` conditions on a start-of-message that begins a request. A caller
    supplying a start-of-message indication holds its first frame, so the classification is
    available there.
 
@@ -1320,8 +1289,7 @@ and leaves the means of recognising it to the implementation.
    from it would then describe the wrong message. ``S_Mtype`` also decides whether an
    address extension is present at all, under ``UDSS_LLR_0125`` and ``UDSS_LLR_0129``, so
    the condition this rule places on ``S_AI[AE]`` is well defined only where the two
-   ``S_Mtype`` agree; ``UDSS_LLR_0198`` takes the same position for a peer identity, an
-   identity carrying an extension never equalling one that does not.
+   ``S_Mtype`` agree.
 
    The storage is the caller's because the number of peers an instance addresses is a
    property of the deployment and the crate does not allocate, as ``UDSS_LLR_0307``
@@ -1378,10 +1346,7 @@ and leaves the means of recognising it to the implementation.
    ``UDSS_LLR_0271`` shall be rejected as ``UDSS_LLR_0267`` defines.
 
    Rationale: this is what makes the limit of ``UDSS_LLR_0272`` checkable rather than an
-   obligation on the caller with no stated outcome. Accepting such a request would leave
-   two transmissions to one addressing outstanding, and ``UDSS_LLR_0271`` matches a
-   confirmation on that addressing alone, so neither confirmation could be told from the
-   other.
+   obligation on the caller with no stated outcome.
 
 .. llr:: A request for which no association is free is rejected
    :id: UDSS_LLR_0274
@@ -1429,11 +1394,7 @@ and leaves the means of recognising it to the implementation.
 
    Rationale: an instance that began with an association outstanding would reject the first
    ``S_Data.req`` to that addressing under ``UDSS_LLR_0273``, or match the first
-   ``T_Data.conf`` to a transmission that was never made. Where the caller-supplied storage
-   of ``UDSS_LLR_0271`` comes from is not restated here: a server's arrives with the
-   instance under ``UDSS_LLR_0266``, and a client's is part of the channel's storage
-   ``UDSS_LLR_0206`` defines, supplied under ``UDSS_LLR_0201`` and withdrawn under
-   ``UDSS_LLR_0205``.
+   ``T_Data.conf`` to a transmission that was never made.
 
 .. llr:: Message classification values
    :id: UDSS_LLR_0251
@@ -1508,16 +1469,12 @@ and leaves the means of recognising it to the implementation.
    a keep-alive indication carries the marker, in either keep-alive mode. The server's
    caller states the marker because ISO 14229-1:2020 8.7.6 exempts that one message from
    one-request-at-a-time, so it arrives while another service is in progress as conformant
-   traffic: ``UDSS_LLR_0286`` and ``UDSS_LLR_0287`` condition on it, and ``UDSS_LLR_0104``,
-   ``UDSS_LLR_0109``, ``UDSS_LLR_0142``, ``UDSS_LLR_0144`` and ``UDSS_LLR_0146`` on its
-   absence. The session
+   traffic, which the server's requirements condition on. The session
    layer does not verify the marker against ``S_AI[TAtype]``, the same trust
    ``UDSS_LLR_0179`` extends to ``repeat``: a physically addressed TesterPresent,
    ISO 14229-2:2021 10.1.4.2 Figure 13's, is an ordinary request, and a caller that marks
    one has erred in a way an addressing check would catch only by coincidence. The server
-   session timer document records the assumption of use. A ``keep-alive`` marker carried
-   together with a session selection is rejected under ``UDSS_LLR_0253`` and
-   ``UDSS_LLR_0254``.
+   session timer document records the assumption of use.
 
    The ``repeat`` marker is stated by the client alone and has no server-side counterpart.
    ``UDSS_LLR_0179`` and ``UDSS_LLR_0180`` condition on it because
@@ -1542,8 +1499,7 @@ and leaves the means of recognising it to the implementation.
    all condition on whether a session is the default, and the session layer has no other
    way to tell: recognising an identifier would mean knowing the ISO 14229-1 encoding, which
    ``UDSS_LLR_0135`` forbids. The identifier is not carried at all: no requirement reads it
-   and no output would report it, so a field for it would be untestable. An earlier form of
-   this requirement carried it opaquely.
+   and no output would report it, so a field for it would be untestable.
 
    Solicitation is separate from kind because a periodically transmitted positive response
    is at once a final response and unsolicited. Were those alternatives of one
@@ -1583,8 +1539,7 @@ and leaves the means of recognising it to the implementation.
    Rationale: the ``keep-alive`` marker ``UDSS_LLR_0251`` defines excludes a session
    selection because a TesterPresent changes no session, and because ``UDSS_LLR_0164`` acts
    on the selection and ``UDSS_LLR_0166`` on the marker with different effects on a running
-   ``tS3_Client`` timer; a classification carrying both would match two requirements
-   ``UDSS_LLR_0231`` keeps apart by the classification alone. The rejection reaches the
+   ``tS3_Client`` timer. The rejection reaches the
    ``S_Data.req`` because the caller composes it, and not an indication, which reports a
    message already received and which ``UDSS_LLR_0137`` forwards; the other input the
    caller composes is the completion report, which ``UDSS_LLR_0254`` covers.
@@ -1605,10 +1560,7 @@ and leaves the means of recognising it to the implementation.
    completion report because the caller composes it, and not an indication, which reports a
    message already received and which ``UDSS_LLR_0137`` forwards. Without it, at a server
    ``UDSS_LLR_0287`` and ``UDSS_LLR_0103`` would both claim a completion report so
-   classified, with opposite outcomes: ``UDSS_LLR_0287`` has a completion report whose
-   classification states ``keep-alive`` change nothing, and ``UDSS_LLR_0103`` starts
-   ``tS3_Server`` on the completion report of a request whose classification selects a
-   non-default session.
+   classified, with opposite outcomes.
 
 .. llr:: A classification stating no kind where one is required is rejected
    :id: UDSS_LLR_0255
@@ -1625,10 +1577,8 @@ and leaves the means of recognising it to the implementation.
    an unsuccessful reception of a message that was not addressed to a server.
 
    Rationale: no requirement in this set conditions on the kind of a message whose
-   reception failed and which was not addressed to a server: ``UDSS_LLR_0154`` and
-   ``UDSS_LLR_0155`` act on a failed reception by its result, and ``UDSS_LLR_0156``,
-   ``UDSS_LLR_0157`` and ``UDSS_LLR_0282`` act only on a reception that succeeded, so the
-   behaviour is defined whether the kind is stated or not. Stating the exception this way
+   reception failed and which was not addressed to a server, so the behaviour is defined
+   whether the kind is stated or not. Stating the exception this way
    keeps the three kind values ``UDSS_LLR_0251`` states a closed set, which every
    requirement conditioning on kind relies on. Every other indication must therefore state
    a kind, and a stated outcome is what makes that checkable.
@@ -1734,18 +1684,14 @@ and leaves the means of recognising it to the implementation.
    message is transmitted in that case, so there is no ``T_Data.conf`` to observe and no
    message classification that could carry the fact. Without an explicit input the session
    layer cannot detect it, and a server handling a suppressed-response request in a
-   non-default session would never restart its timer. ``UDSS_LLR_0142``, ``UDSS_LLR_0146``
-   and ``UDSS_LLR_0217`` are the requirements that act on this input, with ``UDSS_LLR_0103``
-   and ``UDSS_LLR_0141`` where it selects a session and ``UDSS_LLR_0287`` where it is marked
-   ``keep-alive``. ISO 14229-2:2021 10.1.4.1 bounds when that completion occurs,
-   a service being in progress until the completion of any action caused by the request
-   where no response is required, the point that would otherwise have started the
-   response; ``UDSS_LLR_0142`` cites the same clause.
+   non-default session would never restart its timer. ISO 14229-2:2021 10.1.4.1 bounds when
+   that completion occurs, a service being in progress until the completion of any action
+   caused by the request where no response is required, the point that would otherwise have
+   started the response.
 
    The classification is carried on the input rather than recovered by correlating it with
    an earlier ``T_Data.ind``, because Table 6's other suppressed-response row, the
    transition from the default session to a non-default one, needs the session selection,
    and correlating would oblige the session layer to retain one. The report identifies its
-   request by addressing alone: ``UDSS_LLR_0214`` matches it to the service in progress that
-   way, and ``UDSS_LLR_0142`` and ``UDSS_LLR_0103`` ask no more than whose request
+   request by addressing alone, no requirement acting on it asking more than whose request
    completed.
