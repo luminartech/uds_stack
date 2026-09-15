@@ -10,12 +10,9 @@ The server's session state
 The server holds three facts. The first is whether the active session is the default
 session, one bit. The identifier of the active session is not state: ``UDSS_LLR_0065``'s
 selection does not carry it and nothing in this set reads it. The second is the
-**controlling client**,
-the ``S_AI[SA]`` and, where ``S_Mtype`` carries one, the ``S_AI[AE]`` of the client whose
-request produced the active non-default session, held only while a non-default session is
-active. The third is the
-``tS3_Server`` timer. All three live in the instance and are fixed in size, unlike the
-client's session state, which grows with the channels the client has.
+**controlling client**, the ``S_AI[SA]`` and, where ``S_Mtype`` carries one, the
+``S_AI[AE]`` of the client whose request produced the active non-default session, held only
+while a non-default session is active. The third is the ``tS3_Server`` timer.
 
 Which client a given input came from is read from a different parameter in each case. On a
 ``T_Data.conf`` it is the confirmation's own ``S_AI[TA]`` and, where ``S_Mtype`` carries one,
@@ -23,12 +20,6 @@ its ``S_AI[AE]``, which ``UDSS_LLR_0046`` marks valid on a confirmation and whic
 ``UDSS_LLR_0088`` and ``UDSS_LLR_0093`` already rely on.
 On a completion report it is the addressing ``UDSS_LLR_0074`` carries. On a
 ``T_DataSOM.ind`` or a ``T_Data.ind`` it is ``S_AI[SA]``.
-
-Only the controlling client's traffic stops or restarts the timer. There are two
-exceptions, and both are the application's own decision expressed as a session selection: a
-solicited response or a completion that returns the server to the default session
-(``UDSS_LLR_0098``), and one that moves it to a non-default session, which hands control to
-the requester (``UDSS_LLR_0085``, ``UDSS_LLR_0086``).
 
 The keep-alive that bypasses the request
 ----------------------------------------
@@ -47,10 +38,7 @@ keys l and p have stop the timer as any request does. The marker picks between t
 ``UDSS_LLR_0095`` and ``UDSS_LLR_0096`` apply; unmarked, ``UDSS_LLR_0087`` does.
 
 ISO 14229-2:2021 9.5 says the server has no need to distinguish the two kinds of
-TesterPresent handling, and that holds for the restart both readings end in. The difference
-the marker carries is that the marked message never becomes the service in progress and
-never touches ``tP2_Server``, which :doc:`llr-server-response-timing` states in its
-preamble and in ``UDSS_LLR_0113`` and ``UDSS_LLR_0115`` respectively.
+TesterPresent handling, and that holds for the restart both readings end in.
 
 Assumptions of use
 ------------------
@@ -128,13 +116,9 @@ The timer's state
    6's stop row scope the timer's stop to the client which requested the transition, which
    is why that client's address is state.
 
-   The state is held in the instance rather than in caller-supplied storage because it is
-   fixed in size: one bit, one addressing and one timer. The client's state grows with the
-   number of channels it has, and the associations ``UDSS_LLR_0059`` holds grow with the
-   server's peers; neither is this state. Throughout this document a message is *from the
-   controlling client*, and a
-   response is *to the controlling client*, where its ``S_AI[SA]``, or on a ``T_Data.conf``
-   its ``S_AI[TA]``, and, where ``S_Mtype`` carries one, its ``S_AI[AE]`` form a peer
+   Throughout this document a message is *from the controlling client*, and a response is
+   *to the controlling client*, where its ``S_AI[SA]``, or on a ``T_Data.conf`` its
+   ``S_AI[TA]``, and, where ``S_Mtype`` carries one, its ``S_AI[AE]`` form a peer
    identity equal to the recorded one under ``UDSS_LLR_0044``. ``tS3_Server``, when set
    running under any requirement of this document, is loaded with the ``tS3_Server``
    protocol parameter of ``UDSS_LLR_0042``.
@@ -311,12 +295,7 @@ The timer's state
    occurs: a diagnostic service is in progress until the completion of any action caused by
    the request, the point in time that would otherwise have started the response. The same
    clause states that any diagnostic service, TesterPresent included, restarts the timer.
-
-   ``UDSS_LLR_0074`` supplies the report; this requirement is what acts on it. Without it
-   the ordinary keep-alive is broken: a controlling client sending TesterPresent with the
-   positive-response bit suppressed has the timer stopped, transmits no response and so
-   produces no confirmation to restart it, and the server is pinned in the non-default
-   session.
+   ``UDSS_LLR_0074`` supplies the report; this requirement is what acts on it.
 
    The exception widens with ``UDSS_LLR_0088``'s and for the same reason, ``UDSS_LLR_0086``
    now applying in any session.
@@ -470,15 +449,8 @@ The timer's state
    session the server is in, whichever client it was addressed to, and whether or not a
    request asked for it.
 
-   An unsolicited response is therefore inside this requirement, which costs nothing. What
-   the requirement forbids is the session layer sending the message again of its own motion,
-   which ``UDSS_LLR_0013`` already leaves it no means to do; a scheduler transmitting the
-   message again at its next period is the application issuing a fresh ``S_Data.req``, not
-   the session layer retransmitting this one. ISO 14229-5:2022 8.9.2, which ``UDSS_LLR_0093``
-   cites, says nothing of retransmission and so carves no exception here.
-
-   The service in progress is unaffected, ``UDSS_LLR_0109`` ending it at the final
-   response as 10.1.4.1 states.
+   ISO 14229-5:2022 8.9.2, which ``UDSS_LLR_0093`` cites, says nothing of retransmission and
+   so carves no exception here.
 
 .. llr:: The bypass keep-alive reloads a running session timer
    :id: UDSS_LLR_0095
