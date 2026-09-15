@@ -37,24 +37,11 @@ in the operating-system sense, of reading and writing a device. ``UDSS_LLR_0009`
 and retrieved from the session layer. The first is forbidden; the second is the whole
 interface.
 
-Several inputs are acts of the caller rather than primitives, parameters or timestamps:
-the completion report of ``UDSS_LLR_0074``, the channel reset and keep-alive release of
-``UDSS_LLR_0180`` and ``UDSS_LLR_0184``, and the supply and withdrawal of a channel's
-storage under ``UDSS_LLR_0121`` and ``UDSS_LLR_0125``. ``UDSS_LLR_0010`` enumerates them
-among its inputs.
-
-One output is addressed to the caller that made a call rather than produced for it to
-retrieve on the application's behalf: the rejection report of ``UDSS_LLR_0015``, which is
-neither an ``S_Data.conf`` under ``UDSS_LLR_0056`` nor an output in that sense.
-
 One assumption of use falls on the order in which the caller supplies inputs, and is
 recorded in the qualification repository: a ``T_Data.conf`` is supplied before any
 ``T_DataSOM.ind`` or ``T_Data.ind`` the transport received after the confirmed transmission
-completed. ``UDSS_LLR_0106`` at the server and ``UDSS_LLR_0135`` at the client both read a
-confirmation as preceding the peer's reply to it; a caller that delivered the reply first
-would have the server end the wrong request and the client open a window for a response it
-had already delivered. A transport reports the two in that order, and a caller draining one
-queue before the other is what the assumption forbids.
+completed. A transport reports the two in that order, and a caller draining one queue
+before the other is what the assumption forbids.
 
 .. llr:: The session layer performs no I/O
    :id: UDSS_LLR_0001
@@ -104,9 +91,7 @@ queue before the other is what the assumption forbids.
    the letter by a dependency that opened a socket. It is verified by review of the
    dependency graph rather than by a build, no build failing over a dependency that works.
    ``Cargo.toml`` declares an empty ``[dependencies]``, so the requirement is satisfied
-   today by there being nothing to review — which is the argument for stating it rather
-   than against, a first dependency otherwise arriving with no requirement to weigh it
-   against.
+   today by there being nothing to review.
 
 .. llr:: The session layer allocates no memory
    :id: UDSS_LLR_0004
@@ -127,8 +112,7 @@ queue before the other is what the assumption forbids.
    places its state in caller-supplied storage and gives this property as the reason; until
    it was stated, the reason was given in rationale alone, and an implementation could have
    satisfied ``UDSS_LLR_0126`` with a heap-backed map without contradicting any requirement.
-   ``UDSS_LLR_0140``'s capacity indication, which exists because a responder table can fill,
-   would then describe a case that never arises. This requirement is verified alongside
+   This requirement is verified alongside
    ``UDSS_LLR_0002`` and ``UDSS_LLR_0003``, by the build configuration and the dependency
    graph, rather than by a runtime test. Where a fact may be kept instead is
    ``UDSS_LLR_0008``'s, which this requirement leaves with only two places to name.
@@ -353,8 +337,6 @@ queue before the other is what the assumption forbids.
    retrieve on the application's behalf, as an output is; a rejection is addressed to the
    caller that made the erroneous call.
 
-   Leaving the state unchanged is what makes the rejection recoverable.
-
 .. llr:: What a rejection report carries
    :id: UDSS_LLR_0016
    :status: draft
@@ -408,7 +390,7 @@ one.
    Table 5 states its timing parameter values in; ``tS3_Server`` has a timeout of 5 000 ms
    and a tolerance of 0 ms to 200 ms. The width is fixed rather than left as a minimum
    because the wraparound point would otherwise be unknown, and an unknown modulus cannot
-   be tested. A 32-bit millisecond counter wraps after roughly 49 days.
+   be tested.
 
 .. llr:: An interval is the modular difference of two timestamps
    :id: UDSS_LLR_0019
@@ -921,8 +903,7 @@ peer, and how a multi-frame message's start is matched to its completion.
 
    Throughout this set, the **first indication** of a message is its ``T_DataSOM.ind``, or
    a ``T_Data.ind`` that completes no start-of-message; a **completion** is a
-   ``T_Data.ind`` that completes one. A ``T_Data.ind`` from a responder for which no
-   start-of-message is open is therefore always a first indication.
+   ``T_Data.ind`` that completes one.
 
    Table 3 makes single-frame against multi-frame the transport's distinction, and on a
    functional channel the multi-frame responses of several servers may interleave, so
@@ -1296,8 +1277,7 @@ and leaves the means of recognising it to the implementation.
    ``UDSS_LLR_0094`` all condition on what kind of message a confirmation confirms, and no
    classification travels on the confirmation itself. The association with ``T_Data.req``
    is stated because ``UDSS_LLR_0114`` conditions on what kind of message a transmission
-   request carries; ``UDSS_LLR_0033`` produces that ``T_Data.req`` from the ``S_Data.req``
-   in the same step, so the association costs nothing.
+   request carries.
 
 .. llr:: At most one association is outstanding per addressing
    :id: UDSS_LLR_0060
@@ -1356,11 +1336,7 @@ and leaves the means of recognising it to the implementation.
    association shall be rejected as ``UDSS_LLR_0015`` defines.
 
    Rationale: that storage is the caller's and is sized by the deployment, so it can be
-   exhausted by a caller addressing more peers than it provided for. Transmitting without
-   recording the association would leave the ``T_Data.conf`` unmatchable and so rejected
-   under ``UDSS_LLR_0063``, losing the classification every requirement that reads a
-   confirmation depends on; refusing the request instead tells the caller which of its two
-   errors it made.
+   exhausted by a caller addressing more peers than it provided for.
 
 .. llr:: A confirmation matching no outstanding association is rejected
    :id: UDSS_LLR_0063
@@ -1483,25 +1459,22 @@ and leaves the means of recognising it to the implementation.
    marks each repeat other than of the keep-alive TesterPresent ``repeat``, marks a repeated
    keep-alive TesterPresent ``keep-alive`` again, and marks no other request so.
 
-   Kind and session selection are separate because a positive response that
-   selects a session is at once a final response and a session selection, and a single
-   flat enumeration would force every requirement conditioning on finality to enumerate
-   the session-selecting case as well. A session selection accompanies requests as well as
-   responses, because ``UDSS_LLR_0086`` and ``UDSS_LLR_0098`` condition on a
-   session-selecting request for which no response is transmitted.
+   Kind and session selection are separate because a positive response that selects a
+   session is at once a final response and a session selection. A session selection
+   accompanies requests as well as responses, because ``UDSS_LLR_0086`` and
+   ``UDSS_LLR_0098`` condition on a session-selecting request for which no response is
+   transmitted.
 
    The selection states whether the session is the default one rather than naming the
    session. ``UDSS_LLR_0085``, ``UDSS_LLR_0086``, ``UDSS_LLR_0098`` and ``UDSS_LLR_0100``
    all condition on whether a session is the default, and the session layer has no other
    way to tell: recognising an identifier would mean knowing the ISO 14229-1 encoding, which
-   ``UDSS_LLR_0073`` forbids. The identifier is not carried at all: no requirement reads it
-   and no output would report it, so a field for it would be untestable.
+   ``UDSS_LLR_0073`` forbids.
 
    Solicitation is separate from kind because a periodically transmitted positive response
-   is at once a final response and unsolicited. Were those alternatives of one
-   enumeration, a caller could classify such a message either way and get either
-   behaviour. It applies only to a final response because a response-pending message is by
-   construction a reply to a request, so asking whether it was solicited has no meaning.
+   is at once a final response and unsolicited. It applies only to a final response because
+   a response-pending message is by construction a reply to a request, so asking whether it
+   was solicited has no meaning.
 
 .. llr:: An expected response count of zero is rejected
    :id: UDSS_LLR_0066
@@ -1516,10 +1489,7 @@ and leaves the means of recognising it to the implementation.
 
    Rationale: an exact number of zero is rejected rather than read as ``none``, the value
    ``UDSS_LLR_0065`` provides for a request expecting no response, because the two would
-   otherwise be two spellings of one value with different behaviour: ``UDSS_LLR_0135`` would
-   open a window for it and ``UDSS_LLR_0138`` could never close one, no ``T_Data.ind``
-   bringing the count to zero, so the window would end at expiry reporting that not all
-   expected servers responded to a request that expected none.
+   otherwise be two spellings of one value with different behaviour.
 
 .. llr:: A keep-alive with a session selection on a request is rejected
    :id: UDSS_LLR_0067
@@ -1660,8 +1630,7 @@ and leaves the means of recognising it to the implementation.
    The requirement is stated as an equivalence over pairs of inputs rather than as a
    prohibition on reading, because the session layer must necessarily handle those bytes
    in order to forward them: ``UDSS_LLR_0033`` requires it to transmit ``S_Length`` bytes
-   of ``S_Data``, and ``UDSS_LLR_0047`` maps ``S_Data`` onto ``T_Data``. A prohibition on
-   reading would contradict both, and would be unfalsifiable besides. The equivalence
+   of ``S_Data``, and ``UDSS_LLR_0047`` maps ``S_Data`` onto ``T_Data``. The equivalence
    admits a direct test: vary the payload, hold everything else, and compare the outputs.
 
 .. llr:: Completion of a request with no response is reported by the caller
