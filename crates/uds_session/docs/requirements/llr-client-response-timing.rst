@@ -92,9 +92,7 @@ What the client declares and the server does not
 
 A client's request states how many responses it expects; a server's states no such thing,
 because a server answers the one request in front of it. ``UDSS_LLR_0065`` carries the
-declaration, and the client's behaviour on every later input on that channel turns on it:
-whether a response window opens at all, and whether the exchange ends when the responses
-arrive or when the timer expires.
+declaration.
 
 This is the substantive asymmetry between the two roles in this set. It follows from
 functional addressing, which has no server-side equivalent: one request reaches many
@@ -303,8 +301,6 @@ The response window
    on it from another address is the caller's misrouting, which no record here could
    correct, so ``UDSS_LLR_0045``'s "same responder" is, on a physical channel, the channel
    itself.
-   The open start-of-message is kept here rather than in a table because a physical channel
-   has one peer and one outstanding request, so one fact suffices.
 
 .. llr:: A channel's initial state
    :id: UDSS_LLR_0127
@@ -378,8 +374,7 @@ The response window
    channel ends at the first indication of the final response while ``UDSS_LLR_0045``'s
    pairing needs the start-of-message open until that message's completion; a rule closing
    it at the end of the request would have the completion of every multi-frame final
-   response misread as a new single-frame message. An earlier form of this requirement
-   stated such a rule.
+   response misread as a new single-frame message.
 
 .. llr:: What changes a channel's response timer
    :id: UDSS_LLR_0131
@@ -426,10 +421,7 @@ The response window
 
    The parameters may change during the life of a channel. ISO 14229-2:2021 10.1.4.1 and 10.2.4
    permit different values in a non-default session, and ``UDSS_LLR_0043`` lets the caller set
-   them at any time. A change does not disturb a window already open: ``UDSS_LLR_0076``
-   loads a timer, when it is set running, with the value the parameter holds at that
-   instant rather than reading it live, so a new value takes effect only at the next start
-   or restart.
+   them at any time.
 
 .. llr:: A per-channel parameter setting identifies its channel
    :id: UDSS_LLR_0133
@@ -576,8 +568,7 @@ The response window
    two conditions above, because a failed completion of a message whose start-of-message
    stopped nothing, an unsolicited multi-frame response for instance, would otherwise leave
    the timer running after ``UDSS_LLR_0128`` had ended the wait, and ``UDSS_LLR_0148`` would
-   report an expiry for a request the failure had already ended. Where the start-of-message
-   did stop the timer the second stop leaves it stopped.
+   report an expiry for a request the failure had already ended.
 
 .. llr:: A response on a functional channel extends the window; a failed reception closes it
    :id: UDSS_LLR_0137
@@ -612,16 +603,12 @@ The response window
    unknown, ending by timeout at keys g and i; Figure 19 shows the known count that
    ``UDSS_LLR_0138`` stops on, and the two do not conflict.
 
-   The timer therefore carries opposite meanings on the two kinds of channel. On a physical
-   channel a response ends the wait and expiry is a failure; on a functional channel a
-   response extends the wait, because a functionally-addressed request reaches many servers
-   and each may answer. These are two requirements rather than one conditioned requirement
-   because the conditions are disjoint and the effects are unrelated.
+   This requirement and ``UDSS_LLR_0136`` are two requirements rather than one conditioned
+   requirement because the conditions are disjoint and the effects are unrelated.
 
    The exception for ``UDSS_LLR_0138`` prevents an overlap: the response that completes an
    expected count arrives as an ordinary response and would otherwise satisfy both
-   requirements, one restarting the timer and the other stopping it. The last expected
-   response stops it; every earlier one restarts it.
+   requirements, one restarting the timer and the other stopping it.
 
    The treatment of a response-pending message is the one ``UDSS_LLR_0136`` gives, admitting
    only the ``T_DataSOM.ind`` for the same reason.
@@ -693,10 +680,8 @@ The response window
    load-bearing only where no start-of-message arrives.
 
    A response whose reception failed does not count, that server's response not having
-   arrived, so the exchange runs on. Where it reaches expiry, ``UDSS_LLR_0148`` reports it
-   and Table 9's known-count row applies: the timeout is the indication that not all
-   expected servers responded. Table 9 gives a failed reception a handling of its own, and
-   this requirement does not route it through the timeout.
+   arrived, so the exchange runs on. Table 9 gives a failed reception a handling of its
+   own, and this requirement does not route it through the timeout.
 
    Where the request declared an ``unknown`` expected response count this requirement does
    not apply, and expiry is the ordinary end of the exchange. Table 9 states both halves:
@@ -743,11 +728,6 @@ Responders on a functional channel
    crate does not allocate, as ``UDSS_LLR_0004`` requires. The capacity is the storage's
    size rather than a protocol parameter, there being nothing for the session layer to do
    with a number that differs from what it was given.
-
-   An entry lives only while one of the two facts this requirement records holds, so the
-   capacity bounds the responders tracked at once rather than the responders that answer a
-   request. A single-frame final response opens nothing and leaves nothing outstanding, so
-   it never occupies an entry and can never be turned away.
 
    A physical channel needs no table. One peer answers on it and one request is in
    progress, so the only fact to hold is whether that peer's start-of-message is open,
@@ -859,14 +839,7 @@ Responders on a functional channel
    reaches at once.
 
    The indication is how the application learns it. The session layer can observe the
-   shortfall and cannot correct it, so it reports and the application acts. Degrading
-   silently would hide the one configuration fault the integrator most needs to see, and
-   degrading the whole channel would discard tracking that was working because of one server
-   too many. The indication is delivered each time an entry cannot be created, so an
-   untracked responder that sends several messages may be reported several times; the
-   repetition is bounded by its messages and is itself the evidence of the shortfall. A
-   capacity of zero is a legal size for the caller's storage and reports every fact the
-   table would otherwise have kept.
+   shortfall and cannot correct it, so it reports and the application acts.
 
 Enhanced response timing
 ------------------------
@@ -932,10 +905,6 @@ Enhanced response timing
    parameter while any entry in the channel's responder table records an outstanding
    response-pending message under ``UDSS_LLR_0146``, and the default reload parameter
    otherwise.
-
-   The value in force is never read on a physical channel. ``UDSS_LLR_0144`` loads the
-   enhanced parameter directly, and ``UDSS_LLR_0136`` stops the timer on every other
-   indication that acts, so no restart on a physical channel consults it.
 
    Rationale: Figure 16 key d adds an entry for the responding server's address when its
    response-pending message completes and reloads the timer with the enhanced value; key f
@@ -1047,9 +1016,7 @@ Enhanced response timing
    layer holds and what identifies the channel to a client operating several.
 
    The addressing parameters carry ``S_TAtype``, so the application can distinguish Table 9's
-   cases without a further field: under physical addressing an expiry is a failure, under
-   functional addressing with an unknown expected response count it is the ordinary end of the
-   exchange, and with a known count it means not every server answered.
+   cases without a further field.
 
    Neither cited clause requires the indication to name the reload parameter. Table 9 heads
    its timeout row ``tP_Client`` / ``tP*_Client`` and gives both the same handling, and clause
@@ -1060,13 +1027,6 @@ Enhanced response timing
 
    This requirement does not state what the client does next. Table 9's handling — repeat
    the request, at most twice — belongs to :doc:`llr-client-error-handling`.
-
-   The condition on the timer running restates ``UDSS_LLR_0078``, under which only a running
-   timer expires; it is repeated here because the case is easy to miss. ``UDSS_LLR_0136``
-   stops the timer at the start-of-message of a response-pending message while the request
-   is still in progress, as ISO 14229-2:2021 9.4 Figure 8 key c requires, so a channel can
-   hold a stopped timer and an unfinished request at once, and that stopped timer does not
-   expire while the request runs on.
 
    The timer is stopped for the reason ``UDSS_LLR_0117`` gives, and elapsed time is computed
    as ``UDSS_LLR_0019`` requires.
