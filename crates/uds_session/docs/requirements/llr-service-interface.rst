@@ -37,21 +37,15 @@ in the operating-system sense, of reading and writing a device. ``UDSS_LLR_0294`
 and retrieved from the session layer. The first is forbidden; the second is the whole
 interface.
 
-Several inputs to the session layer are acts of the caller rather than primitives,
-parameters or timestamps: the completion report of ``UDSS_LLR_0136``, which ``UDSS_LLR_0295``
-enumerates; the channel reset and keep-alive release that :doc:`llr-client-error-handling`
-defines in ``UDSS_LLR_0277`` and ``UDSS_LLR_0184``, by which the caller clears state the
-client keeps; and the supply, and at a client the withdrawal, of the storage in which
-every fact the set keeps per peer or per channel lives: a client's channel storage, which
-``UDSS_LLR_0206`` names, supplied under ``UDSS_LLR_0201`` and withdrawn under
-``UDSS_LLR_0205``, and a server's association storage, which ``UDSS_LLR_0271`` names and
-``UDSS_LLR_0266`` has supplied at creation and which is not withdrawn.
-Each produces no output of its own, so ``UDSS_LLR_0292`` is not engaged by them;
-``UDSS_LLR_0295`` enumerates them among its inputs and has each carry a timestamp, so that
-``UDSS_LLR_0187`` orders the expiries before the act. One output is likewise addressed to the
-caller that made a call rather than produced for it to retrieve on the application's
-behalf: the rejection report of ``UDSS_LLR_0267``, which is neither an ``S_Data.conf``
-under ``UDSS_LLR_0132`` nor an output in that sense.
+Several inputs are acts of the caller rather than primitives, parameters or timestamps:
+the completion report of ``UDSS_LLR_0136``, the channel reset and keep-alive release of
+``UDSS_LLR_0277`` and ``UDSS_LLR_0184``, and the supply and withdrawal of a channel's
+storage under ``UDSS_LLR_0201`` and ``UDSS_LLR_0205``. ``UDSS_LLR_0295`` enumerates them
+among its inputs.
+
+One output is addressed to the caller that made a call rather than produced for it to
+retrieve on the application's behalf: the rejection report of ``UDSS_LLR_0267``, which is
+neither an ``S_Data.conf`` under ``UDSS_LLR_0132`` nor an output in that sense.
 
 One assumption of use falls on the order in which the caller supplies inputs, and is
 recorded in the qualification repository: a ``T_Data.conf`` is supplied before any
