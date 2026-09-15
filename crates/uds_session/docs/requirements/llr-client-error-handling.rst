@@ -15,21 +15,17 @@ reception reaches it as the ``S_Data.ind`` that ``UDSS_LLR_0036`` produces for e
 ``T_Data.ind``, successful or not; clause 8.10 requires the error result to be issued to the
 service user on the receiving side as on the sending one, which is why that requirement
 admits no exception. A response timeout reaches it as the response-timing indication of
-``UDSS_LLR_0148``, which clause 9.1.2 requires flagged to the application layer. That
-indication carries the request's addressing and so ``S_TAtype``; with the expected response
-count the application declared on its own ``S_Data.req``, which the indication does not
-carry, the three cells of Table 9's timeout row are distinguishable without a further field.
+``UDSS_LLR_0148``, which clause 9.1.2 requires flagged to the application layer.
 
 The repeat itself is the application's. The session layer retains no payload
 (``UDSS_LLR_0013``) and performs no I/O (``UDSS_LLR_0001``), so it cannot retransmit a
 request; it signals and the application acts, the division ``UDSS_LLR_0100``,
 ``UDSS_LLR_0117`` and ``UDSS_LLR_0148`` make for the timers. What the set enforces is the
 three constraints Table 9 places around the repeat. The spacing Table 9 requires before the
-repeat of a failed transmission, and only there, is :doc:`llr-client-request-spacing`'s,
-``UDSS_LLR_0169`` and ``UDSS_LLR_0170`` starting the timer on the failed confirmation and
-``UDSS_LLR_0171`` rejecting until it is inactive; this document cites it and does not
-restate it. The cap of two repeats is ``UDSS_LLR_0177``'s. Finishing the responses still
-arriving on a functional channel is ``UDSS_LLR_0178``'s. Each is a rejection under
+repeat of a failed transmission, and only there, is :doc:`llr-client-request-spacing`'s;
+this document cites it and does not restate it. The cap of two repeats is
+``UDSS_LLR_0177``'s. Finishing the responses still arriving on a functional channel is
+``UDSS_LLR_0178``'s. Each is a rejection under
 ``UDSS_LLR_0015``, the only means a layer with no I/O has of postponing or forbidding a
 transmission, and ``UDSS_LLR_0179`` makes the report say which constraint blocked the request.
 
@@ -39,20 +35,16 @@ The repeat and its marker
 The session layer cannot recognise a repeat from the data, ``UDSS_LLR_0073`` forbidding it,
 so the application declares one with the ``repeat`` marker ``UDSS_LLR_0065`` defines, as it
 declares its keep-alive. Table 9 counts service request transmissions from the request whose
-handling first failed, three in the worst case, so a request without the marker begins a new
-count and each ``repeat`` advances it (``UDSS_LLR_0176``).
+handling first failed, three in the worst case.
 
 The keep-alive is outside the count. In physical keep-alive a TesterPresent can go out
 between a failure and its repeat, ``UDSS_LLR_0161`` restarting ``tS3_Client`` on the failed
 confirmation, and were it an unmarked request it would reset the count and leave the repeats
-unbounded. ``UDSS_LLR_0065`` therefore makes ``keep-alive`` and ``repeat`` exclusive, and a
-keep-alive request touches the count neither way. Table 9 does not exempt the keep-alive, so
-its own repeats are bounded by the application, an obligation recorded below.
+unbounded. ``UDSS_LLR_0065`` therefore makes ``keep-alive`` and ``repeat`` exclusive.
+Table 9 does not exempt the keep-alive, so its own repeats are bounded by the application,
+an obligation recorded below.
 
-What the count does not check is that a repeat follows a failure. Enforcing that would need
-a fact per channel recording that the last request failed; without it a request wrongly marked
-``repeat`` after a successful exchange is an ordinary request counted against a cap it will
-not reach.
+What the count does not check is that a repeat follows a failure.
 
 Responses still arriving
 ------------------------
@@ -72,13 +64,6 @@ timeout or the error. ``UDSS_LLR_0178`` applies the wide reading to all three an
 the widening: the set keeps no record of which event ended the exchange, and a fact per
 channel recording it would buy only the right to send a different request into responses
 still arriving.
-
-The application needs no new signal to know when to retry. Each retained entry closes on a
-``T_Data.ind`` that reaches the application as an ``S_Data.ind`` under ``UDSS_LLR_0036``,
-so the completion it was waiting for is its cue. Physical channels have no such wait: Table
-9's physical cells state none, and the first indication of the final response already ends
-the wait there. Untracked responders are the residual, a message from a responder
-``UDSS_LLR_0143`` could not track being one the client cannot wait for.
 
 Giving a server up
 ------------------
@@ -300,16 +285,6 @@ Responses still arriving
    event, do not require that, so it too is a widening, in the safe direction, ending on the
    same completion.
 
-   The application retries on the ``S_Data.ind`` that ``UDSS_LLR_0036`` delivers for the
-   completion it was waiting for, so no indication is added. A responder ``UDSS_LLR_0143``
-   could not track has no entry and is not waited for; that is the residual of a capacity
-   set below the number of servers a functional address reaches, as ``UDSS_LLR_0143``
-   records.
-
-   The keep-alive TesterPresent of ``UDSS_LLR_0156`` is rejected like any other request on
-   the channel, and unlike ``UDSS_LLR_0171``'s rejection this one carries no time to retry,
-   the wait ending on an indication rather than on a timer.
-
 .. llr:: A rejection under this document states its cause
    :id: UDSS_LLR_0179
    :status: draft
@@ -369,14 +344,6 @@ Giving a server up
    ``UDSS_LLR_0181`` keeps outstanding rather than discarding; and the keep-alive state,
    which ``UDSS_LLR_0184`` covers as a separate act.
 
-   The physical start-of-message the third effect closes is the one ``UDSS_LLR_0130``
-   retains past the end of the request.
-
-   Producing no output does not mean the channel goes silent: a ``T_Data.ind`` arriving
-   after the reset for the message whose start-of-message the reset closed is the first
-   indication of a single-frame message under ``UDSS_LLR_0045``, the pairing having nothing
-   left to match. The preamble records that the application expects this.
-
    The reset is neither a primitive nor a parameter but an act of the caller, as the
    completion report of ``UDSS_LLR_0074`` is; the service interface document's preamble
    names both.
@@ -397,8 +364,7 @@ Giving a server up
    Rationale: the association's only exits are the ones ``UDSS_LLR_0060`` already gives it
    — its ``T_Data.conf`` arriving, or the caller withdrawing the channel's storage under
    ``UDSS_LLR_0125`` — and the reset manufactures neither, so the association stands until
-   one of them. Discarding the association instead was considered and rejected: the
-   requirements that must still act read the classification the association carries.
+   one of them.
 
 .. llr:: What a confirmation for an abandoned association does
    :id: UDSS_LLR_0182
@@ -482,10 +448,3 @@ Giving a server up
    can be stated, exactly as ``UDSS_LLR_0158`` reads a functionally addressed return to the
    default session. A deployment with several functional channels releases only when no
    server still relies on the keep-alive, recorded in the preamble as an assumption of use.
-   A client in functional keep-alive has the functional channel its TesterPresent goes out
-   on, ``UDSS_LLR_0157`` requiring that message's confirmation to arrive on one, so the
-   release always has a channel to name.
-
-   A release leaves every other state alone. A release in the other mode, or on a
-   channel whose fact does not hold, changes nothing and is not an error, the fact the
-   caller wished cleared being already clear.
