@@ -24,10 +24,8 @@ A requirement that leaves a running timer alone says so.
 
    A timer shall at any instant be either running or not running.
 
-   Rationale: every timer requirement in this set starts, stops or reads a timer, and
-   several condition on whether one is running — ``UDSS_LLR_0286`` reloads ``tS3_Server``
-   only while it runs, and ``UDSS_LLR_0196`` expires only a running one. Without a stated
-   two-state model those conditions have no subject.
+   Rationale: several requirements in this set condition on whether a timer is running.
+   Without a stated two-state model those conditions have no subject.
 
 .. llr:: A timer carries the value the parameter had when it was started
    :id: UDSS_LLR_0195
@@ -121,14 +119,8 @@ A requirement that leaves a running timer alone says so.
    be. A caller left to guess can only poll, which rounds every timing decision in the set to
    its tick period — ``UDSS_LLR_0285``'s spacing of consecutive response-pending messages
    among them — and obliges it to call in on every tick on a target where each call costs
-   power. The session layer can state the instant exactly: ``UDSS_LLR_0195`` loads each
-   running timer with a value, ``UDSS_LLR_0303`` fixes the elapsed time at which that value
-   expires it, and ``UDSS_LLR_0192`` gives the arithmetic, so the earliest such timestamp is
-   already determined by state the session layer holds. ``UDSS_LLR_0196`` gives the other
-   case its meaning: where no timer is running there is nothing to expire and nothing to wake
-   for. The report obeys ``UDSS_LLR_0190`` because it reads no clock; it states a timestamp
-   in the sense of ``UDSS_LLR_0191``, computed from the timestamps the caller has already
-   supplied under ``UDSS_LLR_0193``.
+   power. The session layer can instead state the instant exactly, from state it already
+   holds and without reading a clock.
 
    A caller-supplied timer trait was considered and rejected. ``UDSS_LLR_0292`` bars invoking
    a callback, handler or caller-supplied trait implementation *in order to deliver an
