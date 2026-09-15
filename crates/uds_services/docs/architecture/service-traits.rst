@@ -418,6 +418,117 @@ Protocol state
       recorded above is what appears consistently across the duplicated rows, but the state
       chart itself has not been read.
 
+.. arch:: A session transition is classified here and applied to configuration state
+   :id: UDSSVC_ARCH_0038
+   :depends_on: UDSSVC_ARCH_0034; UDSSVC_ARCH_0035; UDSSVC_ARCH_0037
+   :status: draft
+   :origin: application-layer-standard
+   :source: ISO 14229-1:2020 10.2 Figure 6 Key
+   :tags: api; traits; state; session
+
+   Several services change server behaviour that outlives their own exchange — the
+   ``ControlDTCSetting`` state, the ``CommunicationControl`` state, a periodic schedule, an
+   event registration, an active output control. Clause 10.2 specifies what a diagnostic
+   session transition does to every one of them, and it does not do the same thing to each.
+
+   .. list-table:: Clause 10.2's four transition classes
+      :header-rows: 1
+      :widths: 22 19 19 19 21
+
+      * - Transition
+        - ResponseOnEvent
+        - Security
+        - Periodic / output control
+        - CommunicationControl, ControlDTCSetting
+      * - default → default
+        - reset with everything else
+        - —
+        - reset
+        - reset
+      * - default → non-default
+        - **pause**
+        - —
+        - maintained
+        - maintained
+      * - non-default → non-default *(including the same session)*
+        - **stop**
+        - **relock**
+        - maintained, unless security-dependent
+        - **not affected**
+      * - non-default → default
+        - **resume**, if the event window is still valid
+        - **lock**
+        - disabled
+        - **reset**
+
+   Three things in that table are worth stating in words, because each is a plausible wrong
+   guess. The event verb is different in all four rows — pause, stop and resume are distinct
+   operations, not synonyms. The two middle rows disagree about
+   ``CommunicationControl``: clause 10.2 says its state "shall not be affected" on a
+   non-default to non-default transition and reset on a return to default, so disabled
+   normal communication survives one and not the other. And a same-session re-entry is a
+   *transition*: rule 3 says "including the currently active diagnostic session", so
+   re-entering the session you are already in stops events and relocks security.
+
+   **Relocking cascades.** Clause 10.2 has the locking of security access "reset any active
+   diagnostic functionality that was dependent on security access to be unlocked (e.g.
+   active inputOutputControl of a DID)". So the relock of ``UDSSVC_ARCH_0037`` is not only a
+   state change here; it invalidates application-held functionality, and the application has
+   to be told.
+
+   Rationale: the classification is a pure function of the previous and next session values,
+   which this crate has, and misclassifying it is the whole failure mode. So this crate
+   classifies and hands down the *class*, never the raw session values:
+
+   .. code-block:: rust
+
+      pub enum SessionTransition {
+          DefaultToDefault,
+          DefaultToNonDefault,
+          NonDefaultToNonDefault,
+          NonDefaultToDefault,
+      }
+
+      /// Called after the positive response to DiagnosticSessionControl, and on
+      /// session timeout. Also called with `security_relocked` when a transition
+      /// relocked a level, so functionality gated on it can be dropped.
+      fn on_session_transition(&mut self, t: SessionTransition, security_relocked: bool);
+
+   An application receiving a classified transition cannot mistake a same-session re-entry
+   for a no-op, which is what it would do given two session bytes and clause 10.2 to read.
+   State this crate holds — the security level of ``UDSSVC_ARCH_0037``, the transfer of
+   ``UDSSVC_ARCH_0036`` — it resets itself, without asking.
+
+   **Timing.** Clause 10.2's rule 1 and clause 10.4's transition 6 both act on the session
+   *having been accepted*, and clause 10.2 states the server "shall stop the current
+   diagnostic session when it has sent the DiagnosticSessionControl positive response
+   message". So the transition is applied after the response is written, not before, and a
+   ``DiagnosticSessionControl`` settled negatively leaves the active session unchanged.
+   Session *timeout* reaches this crate as a transition to default from the binding, since
+   ``UDSSVC_ARCH_0002`` keeps ``uds_session``'s ``tS3_Server`` out of this crate.
+
+   **What is blocked, and on what.** The table names five bodies of state, and this crate
+   can hold only those whose services have message types to dispatch over.
+   ``uds_protocol`` enumerates ``ReadDataByPeriodicIdentifier`` (0x2A),
+   ``ResponseOnEvent`` (0x86), ``InputOutputControlByIdentifier`` (0x2F),
+   ``DynamicallyDefineDataIdentifier`` (0x2C), ``LinkControl`` (0x87),
+   ``AccessTimingParameter`` (0x83), ``Authentication`` (0x29) and
+   ``SecuredDataTransmission`` (0x84) in ``UdsServiceType`` with their request and response
+   identifiers, but provides a request or response *message type* for none of them.
+
+   The consequence is sharper than "not yet supported". Those requests decode to
+   ``uds_protocol``'s ``Request::Other``, documented there as "a known-but-unmodeled (or
+   unrecognized) service", so ``UDSSVC_ARCH_0005`` settles them at 0x11 — and a server that
+   *wants* to implement one cannot, because there is no typed message for a service trait to
+   be written against and so nothing to name in ``UDSSVC_ARCH_0013``'s assembly list. This
+   crate therefore cannot distinguish a service the server chose not to support from one the
+   stack cannot yet express, and answers both 0x11.
+
+   Until those message types exist, the periodic and event columns are rules with nothing to
+   apply them to, and ``on_session_transition`` is the only route by which an application
+   holding that functionality can comply. The classification is authored now because it is
+   the part that does not change when the message types arrive.
+
 Identifiers
 -----------
 
