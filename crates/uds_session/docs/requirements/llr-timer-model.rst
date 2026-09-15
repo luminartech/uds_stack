@@ -113,10 +113,10 @@ A requirement that leaves a running timer alone says so.
    Rationale: ``UDSS_LLR_0079`` makes a timer expire not when it elapses but when the caller
    next supplies a timestamp, and nothing else in this set tells the caller when that should
    be. A caller left to guess can only poll, which rounds every timing decision in the set to
-   its tick period — ``UDSS_LLR_0119``'s spacing of consecutive response-pending messages
-   among them — and obliges it to call in on every tick on a target where each call costs
-   power. The session layer can instead state the instant exactly, from state it already
-   holds and without reading a clock.
+   its tick period — the release of a request ``UDSS_LLR_0171`` postponed among them — and
+   obliges it to call in on every tick on a target where each call costs power. The session
+   layer can instead state the instant exactly, from state it already holds and without
+   reading a clock.
 
    The report is how the caller learns the instant, rather than a timer trait the session
    layer calls: ``UDSS_LLR_0017`` forbids reading a clock and requires every decision that

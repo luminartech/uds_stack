@@ -26,11 +26,13 @@ The spacing timer and its parameter
 Throughout this document, a channel's **spacing timer** is the single timer ISO 14229-2:2021
 9.6 Table 7 allots to it for this purpose, and its **spacing parameter** is the protocol
 parameter the timer is loaded with: ``tP3_Client_Phys`` on a physical channel,
-``tP3_Client_Func`` on a functional one. A spacing timer is **active** from a start under
-``UDSS_LLR_0169`` or ``UDSS_LLR_0170`` until the elapsed time since the most recent such
-start reaches the value it was loaded with; a timer that has not been started is not active.
-Nothing stops a spacing timer and nothing acts when it becomes inactive: its whole effect is
-a condition on the next transmission.
+``tP3_Client_Func`` on a functional one. It is a timer in the sense :doc:`llr-timer-model`
+gives, and this document uses that document's five words for it. Clause 10.3 calls a running
+spacing timer *active* and its expiry *timed out*; ISO 14229-2:2021 9.2 Table 3 types both
+spacing parameters "Timer reload value", as it types the parameters of ``tP_Client``, and
+9.6 Table 7 allots each channel a timer for them, so the standard's *active* is this set's
+*running* and nothing turns on the difference in words. Its expiry stops it and does nothing
+else: the whole effect of a spacing timer is a condition on the next transmission.
 
 A ``T_Data.conf`` belongs to the channel named by the addressing of the ``S_Data.req`` that
 ``UDSS_LLR_0059`` associates with it, the route ``UDSS_LLR_0135`` uses, and an ``S_Data.req``
@@ -43,7 +45,7 @@ response timing document's preamble define them, and **expected response count**
 Postponement is rejection
 -------------------------
 
-Clause 10.3 requires a request that arrives while the spacing timer is active to be postponed
+Clause 10.3 requires a request that arrives while the spacing timer is running to be postponed
 until the timer has timed out. This layer postpones by rejecting the ``S_Data.req``
 (``UDSS_LLR_0171``) and reporting how long the timer has left (``UDSS_LLR_0172``). It can do
 nothing else: ``UDSS_LLR_0013`` forbids retaining the payload, so the request cannot be queued,
@@ -55,7 +57,7 @@ assumption of use in the qualification repository that the application transmits
 reported time, the request the standard obliges it to send, the repeat that 9.7 Table 9
 requires or the TesterPresent that answers a keep-alive indication.
 
-The keep-alive is one such request: rejected while the channel's spacing timer is active
+The keep-alive is one such request: rejected while the channel's spacing timer is running
 and transmitted after the reported time, which is the postponement 10.3 Figure 19 keys k to
 m show of the functionally addressed TesterPresent, key p naming the delay.
 
@@ -82,7 +84,7 @@ rejection condition and grants no permission.
 
 ISO 14229-2:2021 9.7 Table 9's repeat obligations. :doc:`llr-client-error-handling`. This
 document supplies the wait Table 9's request transmission row names, by starting the spacing
-timer on the failed confirmation and rejecting the repeat until the timer is inactive.
+timer on the failed confirmation and rejecting the repeat until the timer has expired.
 
 Clause 10.3's permission for a physically addressed request that required a response to be
 followed immediately after the complete reception of its response. Honoured by
@@ -134,7 +136,7 @@ The spacing timer
    distinguish the two pairs for the reason ``UDSS_LLR_0132`` gives: nothing tells it which
    transport it is on, and the distinction survives in the values the caller supplies.
 
-.. llr:: When a spacing timer is active
+.. llr:: When a spacing timer runs
    :id: UDSS_LLR_0166
    :status: draft
    :integrity_level: QM
@@ -143,18 +145,18 @@ The spacing timer
    :source: ISO 14229-2:2021 9.2 Table 3; ISO 14229-2:2021 10.3
    :tags: client; p3_client
 
-   A channel's spacing timer shall be active from a start under ``UDSS_LLR_0169`` or
-   ``UDSS_LLR_0170`` until the elapsed time since the most recent such start reaches the
-   value it was loaded with, and a timer that has not been started shall not be active.
+   A channel's spacing timer shall run from a start under ``UDSS_LLR_0169`` or
+   ``UDSS_LLR_0170`` until the elapsed time since that start reaches the value it was loaded
+   with, when it shall expire; the expiry shall stop it and do nothing else.
 
-   The timer becomes inactive when the elapsed time reaches the value it was loaded with
+   The timer expires when the elapsed time reaches the value it was loaded with
    rather than when it exceeds it. Table 3 states the parameter as a minimum time to wait,
    which a request at exactly that time satisfies, and 10.3 postpones only until the timer
    has timed out; the bound is on this side's own conduct. Table 9's
    "after the time ``tP3_Client_Phys``" is read the same way, the repeat being released at
    that time rather than after it, as the parameter is stated as a minimum.
 
-.. llr:: A channel's spacing timer is initially inactive
+.. llr:: A channel's spacing timer is initially not running
    :id: UDSS_LLR_0167
    :status: draft
    :integrity_level: QM
@@ -162,7 +164,7 @@ The spacing timer
    :origin: derived
    :tags: client; p3_client
 
-   When a channel's storage is supplied its spacing timer shall not be active.
+   When a channel's storage is supplied its spacing timer shall not be running.
 
    Rationale: the initial state is stated for the reason ``UDSS_LLR_0127`` gives: none of
    ``UDSS_LLR_0168``'s conditions is an initialisation condition, so without it the state of
@@ -180,9 +182,10 @@ The spacing timer
    shall be changed only as ``UDSS_LLR_0169`` and ``UDSS_LLR_0170`` require. Withdrawal of
    that storage under ``UDSS_LLR_0125`` ends the channel and discards the timer with it.
 
-   Rationale: no requirement stops a spacing timer and none acts when it becomes inactive.
-   Clause 10.3 states the timer's whole effect as a condition on the next transmission, so
-   an inactive timer is one that no longer forbids anything.
+   Rationale: nothing beyond those two requirements and the timer's own expiry changes it.
+   Clause 10.3 states the timer's whole effect as a condition on the next transmission, so a
+   timer that has expired is one that no longer forbids anything, and ``UDSS_LLR_0166``
+   accordingly gives its expiry no effect but to stop it.
 
 Starting the timer
 ------------------
@@ -216,13 +219,13 @@ Starting the timer
    because a fragment of the request may have reached the server, and Table 9 states the
    wait for the repeat without regard to the failed request's response requirement. It
    has a consequence beyond Table 9: because ``UDSS_LLR_0171`` rejects every request on the
-   channel while the timer is active, a failed transmission also postpones a request that
+   channel while the timer is running, a failed transmission also postpones a request that
    requires a response for one spacing interval, which neither 10.3 a) nor Table 9 forbids.
    That is taken because the session layer retains no payload (``UDSS_LLR_0013``) and so
    cannot tell the repeat Table 9 gates from a new request; the cost is one spacing interval
    after a failure.
 
-   A confirmation arriving while the timer is already active restarts it, 10.3 stating
+   A confirmation arriving while the timer is already running restarts it, 10.3 stating
    the start without condition. There is no exception for a confirmation that returns the
    channel to the default session: 10.3 a)
    applies in any diagnostic session, so that confirmation starts the spacing timer while
@@ -261,14 +264,14 @@ Starting the timer
    and the subclause's parameter names are demonstrably unreliable, Figure 19's own title
    naming the functional figure ``tP3_Client_Phys``.
 
-   A confirmation arriving while the timer is already active restarts it, 10.3 stating
+   A confirmation arriving while the timer is already running restarts it, 10.3 stating
    the start without condition. The functional keep-alive's confirmation starts this timer,
    Figure 19 key n.
 
 The next request
 ----------------
 
-.. llr:: A request on a channel whose spacing timer is active is rejected
+.. llr:: A request on a channel whose spacing timer is running is rejected
    :id: UDSS_LLR_0171
    :status: draft
    :integrity_level: QM
@@ -277,11 +280,11 @@ The next request
    :source: ISO 14229-2:2021 9.2 Table 3; ISO 14229-2:2021 9.6 Table 7; ISO 14229-2:2021 9.7 Table 9; ISO 14229-2:2021 10.3; ISO 14229-2:2021 10.3 Figure 19; ISO 14229-2:2021 10.3 Figure 20
    :tags: client; p3_client; service-interface
 
-   On an ``S_Data.req`` for a request on a channel whose spacing timer is active, the
+   On an ``S_Data.req`` for a request on a channel whose spacing timer is running, the
    client shall reject the ``S_Data.req`` as ``UDSS_LLR_0015`` defines.
 
    Clause 10.3 a) and b) allow the next request on a channel only where the spacing timer is
-   no longer active, and otherwise require the transmission to be postponed until the timer
+   no longer running, and otherwise require the transmission to be postponed until the timer
    has timed out; Figure 19 key f has the client wait for ``tP3_Client_Func`` even after
    every expected response has arrived, key k postpones the keep-alive, and Figure 20 key f
    releases the next physical request when ``tP3_Client_Phys`` times out. Rejection is the
@@ -291,7 +294,7 @@ The next request
 
    Clause 10.3 conditions the postponement on the new request following a previous one
    that was completely handled, and that condition is not stated here. After a start under
-   ``UDSS_LLR_0169`` or ``UDSS_LLR_0170`` on a failed confirmation the timer can be active
+   ``UDSS_LLR_0169`` or ``UDSS_LLR_0170`` on a failed confirmation the timer can be running
    when the previous request was not completely handled, and the rejection then is Table
    9's, which has the repeat wait for the spacing time. Under the one-request-per-channel
    assumption of use the omission removes no restriction the set relies on. This requirement
@@ -318,7 +321,7 @@ The next request
    :tags: client; p3_client; service-interface
 
    A rejection under ``UDSS_LLR_0171`` shall state the time remaining until the channel's
-   spacing timer becomes inactive, being the value the timer was loaded with less the
+   spacing timer expires, being the value the timer was loaded with less the
    elapsed time since the timer was last started, in the unit ``UDSS_LLR_0018`` gives for a
    timestamp.
 
