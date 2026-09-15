@@ -162,10 +162,9 @@ The spacing timer
    The timer becomes inactive when the elapsed time reaches the value it was loaded with
    rather than when it exceeds it. Table 3 states the parameter as a minimum time to
    wait, which a request at exactly that time satisfies, and 10.3 postpones only until
-   the timer has timed out; ``UDSS_LLR_0148`` reads ``tP2_Server`` the same way, the
-   bound being on this side's own conduct. A change to the spacing parameter does not
-   move a boundary already fixed; it takes effect at the next start, as ``UDSS_LLR_0300``
-   states for the response reload pair. Table 9's "after the time ``tP3_Client_Phys``" is
+   the timer has timed out; the bound is on this side's own conduct. A change to the
+   spacing parameter does not move a boundary already fixed; it takes effect at the next
+   start. Table 9's "after the time ``tP3_Client_Phys``" is
    read the same way, the repeat being released at that time rather than after it, as the
    parameter is stated as a minimum.
 
@@ -196,8 +195,7 @@ The spacing timer
 
    Rationale: no requirement stops a spacing timer and none acts when it becomes inactive.
    Clause 10.3 states the timer's whole effect as a condition on the next transmission, so
-   an inactive timer is one that no longer forbids anything, and ``UDSS_LLR_0177`` gives the
-   application the time remaining instead of an indication.
+   an inactive timer is one that no longer forbids anything.
 
 Starting the timer
 ------------------
@@ -243,9 +241,7 @@ Starting the timer
    the timer is active and no second request being outstanding to confirm. There is no
    exception for a confirmation that returns the channel to the default session: 10.3 a)
    applies in any diagnostic session, so that confirmation starts the spacing timer while
-   ``UDSS_LLR_0170``, excepted by ``UDSS_LLR_0172``, does not restart ``tS3_Client``. The
-   physically addressed TesterPresent that requests no response starts this timer like
-   any other such request.
+   ``UDSS_LLR_0170``, excepted by ``UDSS_LLR_0172``, does not restart ``tS3_Client``.
 
 .. llr:: Functional spacing starts on any confirmed request
    :id: UDSS_LLR_0175
@@ -284,10 +280,7 @@ Starting the timer
    the start without condition. For an ordinary request the case cannot arise under the
    one-request-per-channel assumption of use, ``UDSS_LLR_0176`` refusing a request while
    the timer is active and no second request being outstanding to confirm. The functional
-   keep-alive's confirmation starts this timer, Figure 19 key n, while ``UDSS_LLR_0166``
-   restarts ``tS3_Client`` on it, and neither disturbs the other. Where that transmission
-   fails, this timer starts and ``UDSS_LLR_0166`` restarts nothing; the repeat's confirmation
-   does.
+   keep-alive's confirmation starts this timer, Figure 19 key n.
 
 The next request
 ----------------
@@ -311,9 +304,7 @@ The next request
    releases the next physical request when ``tP3_Client_Phys`` times out. Rejection is the
    postponement for the reason the preamble gives: the session layer can neither queue the
    request nor transmit it later, and ``UDSS_LLR_0267`` makes a rejection recoverable. The
-   channel is the one the request's own addressing names. A rejected ``S_Data.req``
-   produces no ``T_Data.req``, so ``UDSS_LLR_0169`` does not act and ``tS3_Client`` is not
-   stopped by a request that never went out, ``UDSS_LLR_0267`` leaving state unchanged.
+   channel is the one the request's own addressing names.
 
    Clause 10.3 conditions the postponement on the new request following a previous one
    that was completely handled, and that condition is not stated here. After a start under
@@ -329,13 +320,10 @@ The next request
    naming a channel. That narrows the text, on the warrant of Table 7, which allots the
    timers per channel, of 10.3 a), which values the physical parameter for the addressed
    server, and of Figure 20 key c, which transmits a functionally addressed TesterPresent
-   while a physical channel's ``tP3_Client_Phys`` is running. A request on one channel is
-   therefore never postponed by another channel's timer.
+   while a physical channel's ``tP3_Client_Phys`` is running.
 
    The keep-alive TesterPresent, functionally or physically addressed, is rejected like any
-   other request and is retried after the time ``UDSS_LLR_0177`` reports, which is the
-   postponement Figure 19 keys k to m show. The assumption of use recorded in the preamble
-   places the retry on the application.
+   other request; that postponement is what Figure 19 keys k to m show.
 
 .. llr:: The rejection states the time remaining
    :id: UDSS_LLR_0177
@@ -352,17 +340,4 @@ The next request
 
    Rationale: 10.3 postpones the request until the timer has timed out but gives the
    application no way to learn when that is, and Figure 19 key p names the delay that
-   results. Without the value the application would have to run a copy of the timer from
-   the confirmation it received, duplicating state Table 7 already allots to this layer,
-   and the keep-alive case of Figure 19 key k needs the application to know when to retry.
-   ``UDSS_LLR_0267`` requires a rejection to be reported to the caller; ``UDSS_LLR_0268``
-   requires the report to state a cause and to carry whatever content the rejecting
-   requirement itself states, and this requirement is that content for the spacing timer;
-   it is not itself produced for the caller to retrieve on the application's behalf, only
-   more content within a report already addressed to the caller. Because ``UDSS_LLR_0176``
-   rejects only while the timer is active, the value is always positive, and a caller that
-   retries after it finds the timer inactive, ``UDSS_LLR_0192`` supplying the same elapsed
-   time to both. An
-   indication when the timer becomes inactive was considered and rejected: it would cost
-   an output on every channel at every expiry, or a per-channel fact to send it only after
-   a rejection.
+   results.
