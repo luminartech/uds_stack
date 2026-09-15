@@ -916,7 +916,7 @@ Enhanced response timing
    response-pending message under ``UDSS_LLR_0146``, and the default reload parameter
    otherwise.
 
-   Rationale: Figure 16 key d adds an entry for the responding server's address when its
+   Figure 16 key d adds an entry for the responding server's address when its
    response-pending message completes and reloads the timer with the enhanced value; key f
    shows the value being read while that entry stands, another server's start-of-message
    restarting the timer with the enhanced value while the list is non-empty; key i removes
@@ -941,12 +941,12 @@ Enhanced response timing
    on that same indication and the two effects are applied together; where the table has no
    free entry, ``UDSS_LLR_0143`` applies instead and nothing is recorded for that responder.
 
-   Rationale: Figure 16 key d adds an entry for the responding server's address when its
+   Figure 16 key d adds an entry for the responding server's address when its
    response-pending message completes; key i removes the entry at the start-of-message of
-   that server's next message, finding the list empty. Figure 17 keys m and t state the
-   same in a non-default session. The entry is cleared by any later message from that
-   responder, response-pending or not, because key i clears at the start-of-message without
-   qualifying what the message is.
+   that server's next message, finding the list empty. Figure 17 keys m and t state the same
+   in a non-default session. The entry is cleared by any later message from that responder,
+   response-pending or not, because key i clears at the start-of-message without qualifying
+   what the message is.
 
    The record is not guarded on the responder already having an entry. In both figures the
    response-pending message is single-frame, so no ``T_DataSOM.ind`` precedes it and the

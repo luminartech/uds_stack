@@ -324,7 +324,7 @@ The timer's state
    not, of the transmission of a response message whose classification states
    ``unsolicited``, the server shall not restart the ``tS3_Server`` timer.
 
-   Rationale: a transmission triggered by a periodic scheduler or an internal event, rather
+   A transmission triggered by a periodic scheduler or an internal event, rather
    than by a client request, must not keep a session alive. Otherwise a periodic
    transmission with an interval shorter than the session timeout would hold a non-default
    session open indefinitely.
