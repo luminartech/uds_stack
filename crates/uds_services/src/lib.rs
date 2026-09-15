@@ -5,9 +5,11 @@
 //! set of requests available to a client application. Everything below deals
 //! in bytes; this is the last layer that understands UDS.
 //!
-//! The standard behaviour it implements is ISO 14229-1:2020 clause 8.7, server
-//! response implementation rules. That is a narrower claim than the paragraph
-//! above, and the architecture keeps the two apart.
+//! Its scope is ISO 14229-1:2020's *behaviour*: `uds_protocol` owns that
+//! document's format — the bits, the bytes, and which messages are valid — and
+//! this crate owns everything else in it. Clause 8.7, the server response
+//! implementation rules, is the densest part of that and the reason the crate
+//! exists, but it is not the boundary.
 //!
 //! A UDS server must do more than answer the requests it supports. Clause 8.7
 //! specifies the whole validation sequence: which checks run in which order,
@@ -29,9 +31,10 @@
 //!
 //! # Scope
 //!
-//! Clause 8.7 is what is implemented; being the stack's integration surface is
-//! what the crate is. Message encode/decode is `uds_protocol`; session timing
-//! is `uds_session`; framing and transport are the binding's. Deciding to
+//! ISO 14229-1's behaviour is what is implemented; being the stack's
+//! integration surface is what the crate is. Message encode/decode is
+//! `uds_protocol`; session timing is `uds_session`; framing and transport are
+//! the binding's. Deciding to
 //! answer `requestCorrectlyReceivedResponsePending` (0x78) is this crate's,
 //! because ISO 14229-2 makes that decision turn on whether the server supports
 //! the service; *when* one is due remains the session layer's.

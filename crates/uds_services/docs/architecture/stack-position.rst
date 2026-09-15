@@ -69,18 +69,61 @@ which is the one thing the diagram cannot show.
 Scope
 -----
 
-.. arch:: The crate implements clause 8.7 and nothing else
+.. arch:: The crate owns ISO 14229-1's behaviour; uds_protocol owns its format
    :id: UDSSVC_ARCH_0001
    :status: draft
    :origin: derived
    :tags: scope
 
-   Rationale: the stack is organised one crate per ISO document, so "does this belong here?" must be
-   answerable by checking which document specifies the behaviour. This crate answers it by
-   scope: it implements the server response implementation rules of ISO 14229-1:2020 clause
-   8.7 — the validation order, the negative response code selection, and the decision
-   between responding and staying silent — and nothing else. No message encoding, no
-   timers, no session state, no transport.
+   Rationale: the stack is organised one crate per ISO document, so "does this belong here?"
+   must be answerable by checking which document specifies the behaviour. ISO 14229-1 is the
+   one document too large for that rule to settle on its own, and it is split in two:
+
+   * **``uds_protocol`` owns the format** — bits, bytes, and which messages are valid.
+   * **``uds_services`` owns everything else in ISO 14229-1** — the behaviour.
+
+   That is the whole boundary, and it leaves no clause unassigned. It is the only exception
+   to the one-crate-per-ISO-document rule in the stack: ISO 14229-2 is ``uds_session``,
+   ISO 14229-5 is ``uds_on_ip``, ISO 13400-2 is ``simple_doip``, each whole.
+
+   **Owning a behaviour means implementing it or defining the seam where it attaches.** Much
+   of ISO 14229-1's behaviour is unownable by a library — what ``ECUReset`` resets is a
+   property of one ECU — so this crate implements what is common to every server and defines
+   the interface through which an application supplies what is specific to one. That is the
+   pattern in ``UDSSVC_ARCH_0012``'s service traits, ``UDSSVC_ARCH_0014``'s identifiers,
+   ``UDSSVC_ARCH_0026``'s ``split_record`` and ``UDSSVC_ARCH_0033``'s per-service
+   permission: the concern is owned here, the instance is delegated. A clause with no seam
+   and no implementation is unbuilt, not out of scope.
+
+   What is excluded is what another document specifies: message encoding, timers, session
+   state, and transport.
+
+   **Clause 8.7 is the densest part of the scope and the reason the crate exists**, not its
+   boundary. It is the dispatch-and-negative-response state machine of :doc:`dispatch`, it
+   is what most implementations get wrong, and it is what is worth centralising — but the
+   set already reaches clause 7 for the service access point (``UDSSVC_ARCH_0020``,
+   ``UDSSVC_ARCH_0021``), clauses 8.5 and 8.6 to construct a response
+   (``UDSSVC_ARCH_0010``), clause 11.2 for the extent of a data record
+   (``UDSSVC_ARCH_0008``, ``UDSSVC_ARCH_0026``) and Annex A for the usage rules of a
+   negative response code (``UDSSVC_ARCH_0032``). An earlier statement of this element read
+   "clause 8.7 and nothing else", which was false of the set that existed when it was
+   written.
+
+   **In scope and not built.** Recorded here rather than in :doc:`open-questions`, because
+   these are not unsettled — they are simply absent, and a reader should not have to infer
+   from silence that a clause was decided against:
+
+   * **Clause 17**, the non-volatile server memory programming process. Normative, and a
+     framework with vehicle-manufacturer-specific steps, so it fits the delegation above.
+     It spans many exchanges, sessions and resets, so it needs state between requests that
+     the dispatch of ``UDSSVC_ARCH_0004`` has nowhere to hold, and it coordinates
+     ISO 14229-2 explicitly, so it sits above ``uds_session`` rather than beside it. It is
+     the largest single thing this crate does not have.
+   * **Clause 16**, the security sub-layer. Its 16.1.4 general server response behaviour is
+     this crate's by the same argument as clause 8.7; its 16.1.3 access flow spans
+     exchanges as clause 17 does. ``UDSSVC_ARCH_0011`` files Figure 5's optional 0x38 and
+     0x39 checks as caller-supplied without an ``A_Mtype`` to check against, which is where
+     the gap surfaces today.
 
    **This bounds what the crate implements, not what it is.** ``UDSSVC_ARCH_0019`` states
    the crate's architectural role separately, because a scope statement that also carried

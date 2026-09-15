@@ -26,8 +26,11 @@ by which a server integrates the stack, and the set of requests available to a c
 application. Everything below it deals in bytes — this is the last layer that understands
 UDS.
 
-The standard behaviour it implements is ISO 14229-1 clause 8.7. That is a narrower claim
-than the paragraph above, deliberately so, and the two are kept apart in the architecture.
+Its scope is ISO 14229-1's *behaviour*. That document is split in two across the stack:
+[`uds_protocol`](https://github.com/luminartech/uds_protocol) owns the format — the bits,
+the bytes, and which messages are valid — and this crate owns everything else in it.
+Clause 8.7, the server response implementation rules, is the densest part of that scope
+and the reason the crate exists, but it is not the boundary.
 
 ### The server side
 

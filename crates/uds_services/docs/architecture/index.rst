@@ -22,14 +22,19 @@ set authored next can be written against the standard rather than against the co
 The organising rule
 -------------------
 
-**One crate per ISO document.** "Does this belong here?" is answered by asking which
-document specifies the behaviour. For this crate the answer is narrow and precise: ISO
-14229-1:2020 clause 8.7, and nothing else.
+**One crate per ISO document**, with one exception. "Does this belong here?" is answered by
+asking which document specifies the behaviour — and ISO 14229-1 is the one document in the
+stack too large for that to settle on its own. It is split along format and behaviour:
+``uds_protocol`` owns the bits, the bytes and which messages are valid; this crate owns
+everything else in ISO 14229-1. ``UDSSVC_ARCH_0001`` states the boundary and what follows
+from it, including that owning a behaviour may mean defining the seam where an application
+supplies it rather than implementing it here.
 
-Clause 8.7 is the dispatch-and-negative-response state machine a UDS server must
-implement — which validation steps run in which order, which negative response code each
-failure produces, and, the part most implementations get wrong, when the correct answer is
-silence rather than a negative response. Its subclauses are the crate's scope:
+**Clause 8.7 is the densest part of that scope and the reason the crate exists.** It is the
+dispatch-and-negative-response state machine a UDS server must implement — which validation
+steps run in which order, which negative response code each failure produces, and, the part
+most implementations get wrong, when the correct answer is silence rather than a negative
+response. Its subclauses:
 
 .. list-table::
    :header-rows: 1
