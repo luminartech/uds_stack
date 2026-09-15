@@ -313,6 +313,111 @@ Protocol state
    the element changes. It is worth settling against a reviewer who has run a programming
    sequence in anger.
 
+.. arch:: The security access sequence is a state machine this crate owns
+   :id: UDSSVC_ARCH_0037
+   :depends_on: UDSSVC_ARCH_0034; UDSSVC_ARCH_0035
+   :status: draft
+   :origin: application-layer-standard
+   :source: ISO 14229-1:2020 10.4.2; ISO 14229-1:2020 10.4.4; ISO 14229-1:2020 Annex I Table I.1; ISO 14229-1:2020 Annex I Table I.2
+   :tags: api; traits; state; nrc; security
+
+   Annex I is normative and specifies security access as a four-state chart. Every state and
+   every transition in it is sequencing, so all of it is this crate's under
+   ``UDSSVC_ARCH_0034``; what Annex I marks optional and vehicle-manufacturer specific is
+   the application's, and the boundary is drawn where the annex draws it.
+
+   .. uml::
+      :align: center
+      :caption: Annex I's four states. Labels name the code this crate settles with; the
+                application is consulted only for a seed and a verdict on a key.
+
+      @startuml
+      hide empty description
+      state "A — all locked, no seed" as A
+      state "B — all locked, seed sent" as B
+      state "C — one level unlocked, no seed" as C
+      state "D — one level unlocked, seed sent" as D
+
+      [*] --> A : start-up\nAtt_Cnt initialised
+      A --> B : requestSeed accepted
+      A --> A : sendKey → 0x24\ndelay running → 0x37
+      B --> C : sendKey, yy == xx+1, key OK
+      B --> B : key NOK, under limit → 0x35\nkey NOK, at limit → 0x36 + delay\nyy <> xx+1 → 0x24
+      C --> D : requestSeed for a locked level
+      C --> C : requestSeed for the unlocked level → zero seed
+      D --> C : sendKey, key OK\nprevious level locked first
+      C --> A : session change or timeout → lock
+      D --> A : session change or timeout → lock
+      @enduml
+
+   **Four rules this crate enforces that an application would have to rediscover.**
+
+   *The paired sub-function.* Clause 10.4.2 makes ``requestSeed`` the odd values and
+   ``sendKey`` the even, with a fixed relationship — level 0x01 pairs with 0x02, 0x03 with
+   0x04. Annex I checks ``yy == xx+1`` against the *stored* ``xx`` and answers ``0x24`` when
+   it fails, so a ``sendKey`` for a level whose seed was never requested is a sequence error
+   rather than a bad key.
+
+   *The zero seed.* A ``requestSeed`` for a level already unlocked is answered positively
+   with a seed of zero, and clause 10.4.2 adds that a server "shall never send an all zero
+   seed for a given security level that is currently locked". Clients use this to probe lock
+   state, so an application that returned a real seed would break a client that is reading
+   the standard correctly.
+
+   *Relock before unlock.* Transition 10 has a successful key at a level other than the
+   unlocked one "lock currently unlocked security level" before unlocking the new one. That
+   is how "only one security level shall be active at any instant of time" is implemented,
+   and it is invisible unless read.
+
+   *The attempt threshold.* A wrong key under the limit is ``0x35``; the one that reaches
+   the limit is ``0x36`` and starts the delay. Annex I expresses the boundary as
+   ``(Att_Cnt+1) >= Att_Cnt_Limit``, evaluated *before* the increment, which is off by one
+   from the obvious reading. A ``requestSeed`` while the delay runs is ``0x37``.
+
+   **What the application supplies, and why the split falls here rather than elsewhere.**
+   Annex I Table I.1 marks ``Delay_Timer``, ``Att_Cnt_Limit`` and ``Static_Seed`` as
+   optional and vehicle-manufacturer specific, and clause 10.4.2 says the manufacturer
+   selects whether the delay timer is supported at all. So the application supplies a seed,
+   a verdict on a key, the limit, the delay duration, and whether either is supported.
+
+   It also supplies the **storage**, and that one is forced rather than chosen. Annex I
+   requires ``Att_Cnt`` to be stored in non-volatile memory and the delay timer to survive a
+   power cycle — "it is vehicle manufacturer specific whether this delay timer will be
+   invoked upon every power on/start up". This crate has no non-volatile memory and no
+   clock, so it cannot hold either. It keeps the arithmetic and hands over the result:
+
+   .. code-block:: rust
+
+      /// Attempts for `level`, as last stored. Read at the start of an exchange.
+      fn attempts(&self, level: u8) -> u8;
+      /// Store the count this crate computed. The application never computes one.
+      fn store_attempts(&mut self, level: u8, count: u8);
+      /// Whether a delay is running for `level`.
+      fn delay_running(&self, level: u8) -> bool;
+      /// Begin the delay this crate decided is owed.
+      fn start_delay(&mut self, level: u8);
+
+   The application persists and times; it never decides. That keeps ``UDSSVC_ARCH_0034``'s
+   third question answered — an application cannot produce ``0x35`` where ``0x36`` is
+   required, because it is not asked which to send.
+
+   ``Att_Cnt`` is **per level**, not per server: Table I.1 states that "when implemented, a
+   separate counter is required for each individual security level". The unlocked level is
+   per server, by clause 10.4.2. Both live in the server-global scope of
+   ``UDSSVC_ARCH_0035``; neither is per channel, which is the distinction that element draws
+   against authentication.
+
+   .. warning::
+
+      **This element is drawn from a damaged source and must be checked against the PDF
+      before it leaves draft.** Annex I's normative content is a figure — Figure I.1 is an
+      image, not text — plus Table I.2 in disjunctive normal form. The markdown conversion
+      used here has visibly mangled that table: actions are duplicated across condition
+      rows, several transition numbers are lost, footnote markers are inlined into cell
+      text, and one action reads ``Att_Cnt = 0++``, which is not an operation. What is
+      recorded above is what appears consistently across the duplicated rows, but the state
+      chart itself has not been read.
+
 Identifiers
 -----------
 
