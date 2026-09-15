@@ -205,9 +205,18 @@ Response sink
    Rationale: allocation-freedom cannot be retrofitted, because the signatures that make an API
    alloc-free are the ones callers depend on: adding it later is a breaking change to every
    handler in every application. A handler therefore writes its response into an
-   ``embedded_io::Write`` sink supplied by the caller, rather than returning an owned
+   ``automotive_wire_codec::Sink`` supplied by the caller, rather than returning an owned
    response. No public type carries a ``Vec`` or a ``String``, and the crate builds under
    ``no_std`` without ``alloc``.
+
+   **The sink is ``awc``'s rather than ``embedded-io``'s, and the difference produces an
+   NRC.** ``Sink`` carries ``remaining()``. A binding bounds the sink at the transport's
+   advertised maximum response length, an over-long response fails at the write with the
+   needed and available counts intact, and this crate turns that counted failure into
+   ``responseTooLong`` (0x14). That settles a question the set had been carrying: the maximum
+   response length is a transport property this crate does not know, but the negative
+   response code is a clause 8.7 outcome that is nobody else's. ``embedded-io`` leaves this
+   crate's dependency list entirely.
 
    The sink is a **generic parameter, not ``dyn``**. That costs object safety — there is no
    ``Box<dyn UdsServer>``, and a driver is generic over the handler type instead. For a
@@ -217,8 +226,10 @@ Response sink
 
    One consequence to design against rather than discover: a sink can fail mid-response,
    after some bytes are already written. What a partially written response means at the
-   byte seam — whether the binding must discard it, and whether this crate must avoid
-   writing until it can complete — is not settled. See :doc:`open-questions`.
+   handler seam — whether the binding must discard it, and whether this crate must avoid
+   writing until it can complete — is not settled. ``awc``'s decision to expose ``write_all``
+   rather than ``write`` removes the *partial write* case, but not the *failed part-way
+   through* case. See :doc:`open-questions`.
 
    ``no_std`` freedom is verified on a bare-metal target, not by
    ``--no-default-features`` on a hosted one. Only a ``*-none`` target proves ``std`` has

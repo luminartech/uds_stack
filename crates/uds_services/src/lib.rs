@@ -46,7 +46,7 @@
 //! # Design constraints
 //!
 //! `no_std` and allocation-free. A handler writes its response into a
-//! caller-supplied [`embedded_io::Write`] sink rather than returning a `Vec`,
+//! caller-supplied `automotive_wire_codec::Sink` rather than returning a `Vec`,
 //! and no public type carries a `Vec` or a `String`. This is designed in
 //! rather than deferred: the signatures that make an API alloc-free are the
 //! ones callers depend on, so it cannot be retrofitted later.

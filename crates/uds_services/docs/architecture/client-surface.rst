@@ -212,10 +212,19 @@ Two layers
    call the binding, and hand back the bytes, which is precisely what ``UDSSVC_ARCH_0020``
    says a client application never does.
 
-   **Why the server needs no equivalent and the client does.** A server is *called*: the
-   binding's asynchronous driver invokes a synchronous handler, and the inversion costs
-   nothing. A client *initiates*, so something must await, and if it is not this crate it
-   is the application. The asymmetry is in the direction of control, not in the design.
+   **Why the server needs no equivalent and the client does.** A server is *called*, so the
+   awaiting is already the driver's: it holds the handler future and drives it.
+   ``UDSSVC_ARCH_0016`` makes that handler asynchronous for a reason of its own — a handler
+   outrunning ``tP2_Server`` must yield so a ``0x78`` can be offered across
+   ``UDSSVC_ARCH_0031``'s seam while it runs — but the server still needs no *layer* over
+   it, because nothing is being joined. A client *initiates*, so something must await, and
+   if it is not this crate it is the application. The asymmetry is in the direction of
+   control, not in the design.
+
+   An earlier version of this passage said the driver "invokes a synchronous handler, and
+   the inversion costs nothing". That was the design before ``UDSSVC_ARCH_0016``, and it
+   cost exactly what that element now spends: with a synchronous handler a slow one blocks
+   the driver, and every integrator builds the escape machinery themselves.
 
    **Why the lower layer exists at all**, rather than an asynchronous client alone. It is
    what a test binds to: no transport, no executor, no timing. Every clause 8.7 rule the
@@ -242,7 +251,7 @@ Two layers
    package "uds_services" {
      rectangle "async client\n(feature-gated)" as ASYNC
      rectangle "sans-io core\nencode request / interpret response" as CORE
-     interface "UdsTransport" as TR
+     interface "uds_session::DiagnosticClient" as TR
    }
 
    package "binding" {

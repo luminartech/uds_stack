@@ -15,7 +15,7 @@ check.
    }
    interface "ReadDataByIdentifier" as RDBI <<trait>> {
      type Did: TryFrom<u16>
-     read(did, out) -> Result<(), Nrc>
+     async read(did, out) -> Result<(), Nrc>
    }
    interface "RoutineControl" as RC <<trait>> {
      type Rid: TryFrom<u16>
@@ -75,10 +75,10 @@ The traits
       impl ReadDataByIdentifier for Ecu {
           type Did = MyDid;
 
-          fn read<W: embedded_io::Write>(
+          async fn read<S: automotive_wire_codec::Sink>(
               &mut self,
               did: Self::Did,
-              out: &mut W,
+              out: &mut S,
           ) -> Result<(), Nrc> { /* ... */ }
       }
 
@@ -138,7 +138,7 @@ The traits
           const MAY_RESPOND_PENDING: bool = false;
 
           type Did = MyDid;
-          fn read<W: Write>(&mut self, did: MyDid, out: &mut W) -> Result<(), Nrc> { .. }
+          async fn read<S: Sink>(&mut self, did: MyDid, out: &mut S) -> Result<(), Nrc> { .. }
       }
 
    ``UDSSVC_ARCH_0032`` settles half of admissibility from what this server implements. The
@@ -614,7 +614,7 @@ whole point of them, and it is the thing a list of signatures does not show:
       // server
       impl ReadDataByIdentifier for Ecu {
           type Did = MyDid;
-          fn read<W: Write>(&mut self, did: MyDid, out: &mut W) -> Result<(), Nrc> { .. }
+          async fn read<S: Sink>(&mut self, did: MyDid, out: &mut S) -> Result<(), Nrc> { .. }
       }
 
       // client: implements no service trait, and names no vocabulary type
