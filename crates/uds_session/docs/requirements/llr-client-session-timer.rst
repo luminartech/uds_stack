@@ -338,7 +338,7 @@ Functional keep-alive
    ``tS3_Client`` timer times out". This requirement is not guarded on the timer having
    expired, so a marked TesterPresent the application sends while the timer is still running
    restarts it as well, stretching the next interval by the time that remained. That widens
-   the wording, and deliberately. Every server the message reached has just reloaded its own
+   Table 6's wording, and deliberately; ``UDSS_LLR_0065``'s marker is not so guarded. Every server the message reached has just reloaded its own
    ``tS3_Server``, as Figure 12 key m states, so restarting the client's timer from the same
    instant keeps the two cadences aligned, and Figure 12 keys j, m and o restart the timer at
    each confirmation without asking what started the transmission. A guard on expiry would

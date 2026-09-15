@@ -234,8 +234,10 @@ before the other is what the assumption forbids.
    input and also supplied on its own; the protocol parameters of ``UDSS_LLR_0040``; the
    completion report of ``UDSS_LLR_0074``; the supply of channel storage under
    ``UDSS_LLR_0121`` and its withdrawal under ``UDSS_LLR_0125``; and the channel reset and
-   keep-alive release of ``UDSS_LLR_0180`` and ``UDSS_LLR_0184``. The last four, and the
-   setting of a protocol parameter, are acts of the caller rather than primitives; each
+   keep-alive release of ``UDSS_LLR_0180`` and ``UDSS_LLR_0184``. The last five — the
+   completion report, the supply of channel storage, its withdrawal, the channel reset and
+   the keep-alive release — and the setting of a protocol parameter, are acts of the caller
+   rather than primitives; each
    shall be accompanied by a timestamp as ``UDSS_LLR_0020`` requires, and ``UDSS_LLR_0081``
    shall order the expiries that timestamp causes, with their indications, before the act.
    Where a requirement says such an act produces no output, that is said of the act alone.
@@ -1393,7 +1395,7 @@ and leaves the means of recognising it to the implementation.
      ``T_Data.conf`` that ``UDSS_LLR_0059`` associates with it, a request classification
      shall further state the number of responses expected: ``none``, an exact number of at
      least one, or ``unknown``, and may further state either ``keep-alive``, that the message
-     is the TesterPresent the application transmits because ``tS3_Client`` expired, or
+     is a TesterPresent the application transmits to keep a non-default session alive, or
      ``repeat``, that the message repeats a request, other than the keep-alive TesterPresent,
      whose transmission, reception or response window failed, as ISO 14229-2:2021 9.7 Table 9
      requires; a repeated keep-alive TesterPresent states ``keep-alive`` again. A request
@@ -1448,7 +1450,14 @@ and leaves the means of recognising it to the implementation.
    separate from the expected response count because in physical keep-alive the
    TesterPresent may or may not require a response. The client session timer document
    records as an assumption of use that the request the application transmits in answer to
-   a keep-alive indication carries the marker, in either keep-alive mode. The server's
+   a keep-alive indication carries the marker, in either keep-alive mode.
+
+   The marker names the message's purpose rather than the expiry that prompted it, because
+   two uses in the set lie outside the expiry: ``UDSS_LLR_0157`` deliberately acts on a
+   marked TesterPresent the application sends while the timer is still running, and
+   :doc:`llr-client-error-handling` obliges the application to mark a repeated keep-alive
+   ``keep-alive`` again, a repeat being sent because the previous one failed. Defining the
+   marker by the expiry would put both outside it. The server's
    caller states the marker because ISO 14229-1:2020 8.7.6 exempts that one message from
    one-request-at-a-time, so it arrives while another service is in progress as conformant
    traffic, which the server's requirements condition on. The session
@@ -1603,21 +1612,25 @@ and leaves the means of recognising it to the implementation.
 
    A classification or addressing not of the form ``UDSS_LLR_0065``, ``UDSS_LLR_0057``,
    ``UDSS_LLR_0058`` and ``UDSS_LLR_0052`` state for the primitive and the role it arrives
-   on, other than a departure ``UDSS_LLR_0066``, ``UDSS_LLR_0069``, ``UDSS_LLR_0070`` or
-   ``UDSS_LLR_0071`` names, shall be rejected as ``UDSS_LLR_0015`` defines. An interface in
+   on, other than a departure ``UDSS_LLR_0066``, ``UDSS_LLR_0067``, ``UDSS_LLR_0068``,
+   ``UDSS_LLR_0069``, ``UDSS_LLR_0070`` or ``UDSS_LLR_0071`` names, shall be rejected as
+   ``UDSS_LLR_0015`` defines. An interface in
    which such a form cannot be expressed satisfies this without a check.
 
    Rationale: the sentences of ``UDSS_LLR_0065``, ``UDSS_LLR_0057``, ``UDSS_LLR_0058`` and
    ``UDSS_LLR_0052`` that state a form are otherwise obligations on the caller with no
    stated outcome.
-   ``UDSS_LLR_0066``, ``UDSS_LLR_0069``, ``UDSS_LLR_0070`` and ``UDSS_LLR_0071`` state the
-   outcome for the particular departures they name, each for the reason given there, and
-   are excluded here so that every departure from the stated form is named by exactly one
-   requirement: a reader citing one of those cases has one requirement to cite, and
-   narrowing or changing the outcome of any of them cannot leave this requirement
-   contradicting it. ``UDSS_LLR_0067`` and ``UDSS_LLR_0068`` need no exclusion, because a
-   classification stating ``keep-alive`` together with a session selection is of the form
-   ``UDSS_LLR_0065`` states and so is not a departure this requirement reaches.
+   ``UDSS_LLR_0066``, ``UDSS_LLR_0067``, ``UDSS_LLR_0068``, ``UDSS_LLR_0069``,
+   ``UDSS_LLR_0070`` and ``UDSS_LLR_0071`` state the outcome for the particular departures
+   they name, each for the reason given there, and are excluded here so that every departure
+   from the stated form is named by exactly one requirement: a reader citing one of those
+   cases has one requirement to cite, and narrowing or changing the outcome of any of them
+   cannot leave this requirement contradicting it.
+
+   ``UDSS_LLR_0067`` and ``UDSS_LLR_0068`` are among them because a classification stating
+   ``keep-alive`` together with a session selection is a departure from ``UDSS_LLR_0065``'s
+   form: the ``keep-alive`` marker excludes a session selection, a TesterPresent changing no
+   session, which is the reading both of those requirements rest on.
 
 .. llr:: The session layer does not inspect message data
    :id: UDSS_LLR_0073
