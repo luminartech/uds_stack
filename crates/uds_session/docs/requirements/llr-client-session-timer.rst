@@ -45,16 +45,7 @@ In functional keep-alive, nothing. Table 6's functional column names two events 
 confirmation of the session change and the confirmation of the functionally addressed
 TesterPresent, so a functionally addressed request that is not the keep-alive changes
 nothing, and the client needs the ``keep-alive`` classification of ``UDSS_LLR_0065`` to tell
-the two apart. The functional keep-alive expects no response, so under the client response
-timing document it is never a request in progress and never collides with that document's
-one-request-per-channel model; ISO 14229-1:2020 8.7.6 likewise excepts it from the server's
-one-request-at-a-time rule.
-
-In physical keep-alive, everything. Every request stops the timer and every completed
-exchange restarts it, and the physically addressed TesterPresent is one request among
-others: it may require a response, in which case it is the channel's one request in
-progress like any other. ISO 14229-2:2021 10.1.4.2 Figure 13 keys k to n show
-exactly that.
+the two apart.
 
 Assumptions of use
 ------------------
@@ -69,9 +60,7 @@ classification states ``keep-alive``: in functional keep-alive a functionally ad
 with expected response count ``none``, in physical keep-alive a physically addressed one on
 the indicated channel, with or without a response required. The standard names no functional
 address for the keep-alive, so the address is the application's choice, and
-``UDSS_LLR_0157`` accepts the confirmation on any functional channel. Where the application
-sends something else, ``UDSS_LLR_0156`` and ``UDSS_LLR_0162`` say what state the client is
-left in.
+``UDSS_LLR_0157`` accepts the confirmation on any functional channel.
 
 A client in physical keep-alive changes sessions with physically addressed requests, one per
 channel. Table 6's physical column is headed physical communication only, and
@@ -318,11 +307,8 @@ Functional keep-alive
    ``UDSS_LLR_0148``'s reason for the later one, that a peer's conformant response would
    otherwise be faulted, has no counterpart here.
 
-   Between this indication and the confirmation ``UDSS_LLR_0157`` acts on, the timer is not
-   running and the fact holds. Where the application sends anything other than the marked
-   TesterPresent, nothing restarts the timer until ``UDSS_LLR_0155`` acts on the next
-   confirmed session change; the standard makes the keep-alive the application's
-   obligation, as it makes Table 9's repeat. Postponing the TesterPresent while
+   The standard makes the keep-alive the application's obligation, as it makes Table 9's
+   repeat. Postponing the TesterPresent while
    ``tP3_Client_Func`` runs, Figure 19 key k, is :doc:`llr-client-request-spacing`'s.
 
 .. llr:: Functional keep-alive restarts on the confirmed TesterPresent
@@ -575,11 +561,7 @@ session fact, and the requests and indications on it.
    of use record that the application transmits it on the indicated channel; whether it
    requires a response is the application's choice, and ``UDSS_LLR_0161`` restarts the timer
    either way, Figure 13 key n showing both. Postponement while the channel's spacing timer
-   is active is :doc:`llr-client-request-spacing`'s. Between this indication
-   and the input ``UDSS_LLR_0161`` acts on, the timer is not running and the fact holds.
-   Where the application sends some other request instead, ``UDSS_LLR_0161`` restarts the
-   timer at the completion of that exchange; where it sends nothing, nothing restarts the
-   timer and the channel's server leaves the session when ``tS3_Server`` expires.
+   is active is :doc:`llr-client-request-spacing`'s.
 
    The indication carries the channel and not a source address: a channel is identified by
    the client's own outbound addressing, as ``UDSS_LLR_0121`` defines it, and the source is
