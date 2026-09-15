@@ -610,11 +610,21 @@ The response window
    expected count arrives as an ordinary response and would otherwise satisfy both
    requirements, one restarting the timer and the other stopping it.
 
-   The treatment of a response-pending message is the one ``UDSS_LLR_0136`` gives, admitting
-   only the ``T_DataSOM.ind`` for the same reason.
+   A response-pending message is admitted only at its ``T_DataSOM.ind``, as in
+   ``UDSS_LLR_0136``, its completion belonging to ``UDSS_LLR_0144`` and ``UDSS_LLR_0146``.
+   That the start-of-message restarts the timer here, where ``UDSS_LLR_0136`` stops it, is a
+   declared departure from 9.4 Figure 8 key c, which has the client stop ``tP_Client`` on a
+   response-pending start-of-message. Key c is a physical-addressing example, and none of
+   Figures 14 to 17 shows the start-of-message of a functionally addressed response-pending
+   message, so no cited locator settles the functional case. The departure is safe because on
+   a functional channel other servers may still answer: stopping the window on one server's
+   start-of-message would abandon the rest, which is what ``UDSS_LLR_0138`` alone is allowed
+   to do.
 
-   The solicitation qualifier is likewise the one ``UDSS_LLR_0136`` carries, for the reason
-   given there.
+   The solicitation qualifier is carried for the reason ``UDSS_LLR_0138`` gives rather than
+   the one ``UDSS_LLR_0136`` gives: an unsolicited response admitted here would lengthen a
+   window rather than close one, but the same message would reach ``UDSS_LLR_0138``'s count,
+   where it would end the exchange before every addressed server had answered.
 
    A failed reception stops the timer on a functional channel as on a physical one, and for
    the same two locators. 9.7 Table 9's functional response-reception row requires the client
@@ -1024,8 +1034,14 @@ Enhanced response timing
    responder whose address could be named. The request's addressing is what the session
    layer holds and what identifies the channel to a client operating several.
 
-   The addressing parameters carry ``S_TAtype``, so the application can distinguish Table 9's
-   cases without a further field.
+   The addressing parameters carry ``S_TAtype``, which separates Table 9's physical timeout
+   cell from its two functional ones. The two functional cells are separated by whether the
+   client knows how many servers respond, which is the expected response count the
+   application itself declared under ``UDSS_LLR_0065``, so the application can distinguish
+   all three without a further field: under physical addressing an expiry is a failure;
+   under functional addressing with an unknown count it is the ordinary end of the exchange,
+   which Table 9 says needs no retry; and with a known count it means not every expected
+   server answered.
 
    Neither cited clause requires the indication to name the reload parameter. Table 9 heads
    its timeout row ``tP_Client`` / ``tP*_Client`` and gives both the same handling, and clause
