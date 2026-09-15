@@ -40,7 +40,8 @@ tables do not budget. Known members:
 - the controlling client of ``UDSS_LLR_0082``, which Table 6's "client which requested the
   transition" needs and Table 8 budgets nothing for;
 - the request record and response count of ``UDSS_LLR_0126``, which Table 9's known-count
-  cell needs;
+  cell needs, together with the abandoned mark ``UDSS_LLR_0180`` sets on an association and,
+  on a physical channel, the open start-of-message the same requirement keeps;
 - the keeping-alive fact and the channel session facts of ``UDSS_LLR_0150`` and
   ``UDSS_LLR_0151``, without which
   a timer stopped between a keep-alive indication and its confirmation cannot be told from
