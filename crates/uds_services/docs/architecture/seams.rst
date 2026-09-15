@@ -100,6 +100,9 @@ Request context
       * - authenticated
         - Figure 5 and Figure 6 → 0x34
         - The application, forwarded by the binding
+      * - ``A_SA`` — the requesting channel
+        - Keys per-channel state, ``UDSSVC_ARCH_0035``
+        - The binding, from the request's source address
 
    Rationale: taking these as parameters rather than through a dependency is what makes the crate
    usable under any binding, and avoids depending on ``uds_session``, which is private. The
@@ -127,9 +130,18 @@ Request context
    response-pending is emitted *after* that snapshot and before the suppression gate reads
    it, so a by-value field would be stale at the only instant it is consulted.
 
-   Peer identity is deliberately absent. An application that keys state per tester — a
-   security-access attempt counter, say — holds that state in its own server type, where it
-   already holds everything else.
+   **Peer identity is present, for one reason, and the standard supplies the reason.**
+   ISO 14229-1:2020 10.6.4 requires that "an authenticated state shall be linked to a certain
+   diagnostic channel" and that "multiple clients can be handled on multiple channels with
+   different authentication settings", so ``UDSSVC_ARCH_0035``'s per-channel state cannot be
+   keyed without ``A_SA``. An earlier draft of this element excluded peer identity and
+   offered a security-access attempt counter as the example of state an application should
+   key for itself — which is the wrong example twice over: 10.4 makes security access
+   server-global, so it needs no key at all, and ``UDSSVC_ARCH_0034`` puts the counter in the
+   stack rather than in the application.
+
+   ``A_TA`` is still absent. No decision in scope reads it, and the addressing mode it would
+   otherwise carry is already present as its own field.
 
    The client side answers this question the other way, and both answers are right.
    ``UDSSVC_ARCH_0022`` requires a client's functional responses to carry each responder's
@@ -137,13 +149,16 @@ Request context
    without knowing who sent each. A server has one request in front of it and no clause
    8.7 decision that reads an address.
 
-   One challenge to this element is worth recording rather than settling here. ISO
-   14229-1 clause 7.4.1 makes ``A_SA``, ``A_TA`` and ``A_TA_Type`` *mandatory* parameters
-   of every application layer service primitive; this element carries only the third. That
-   was once defended on the ground that clause 8.7 reads only the third and the crate went
-   no further, but ``UDSSVC_ARCH_0001`` no longer bounds it that way. The omission now rests
-   on its cost — carrying the other two means an address representation that is not
-   transport-shaped — rather than on scope. See :doc:`open-questions`.
+   ISO 14229-1 clause 7.4.1 makes ``A_SA``, ``A_TA`` and ``A_TA_Type`` mandatory parameters
+   of every application layer service primitive. This element now carries two of the three,
+   and ``A_SA`` arrived because per-channel state required it rather than because 7.4.1
+   called it mandatory — which is the argument that should have carried it all along, since
+   "the standard says mandatory" gives no guidance on what a dropped parameter costs.
+
+   ``A_SA`` is this crate's own opaque channel identity, not a binding's address type, for
+   the reason given above about addressing: a DoIP logical address in ``Ctx`` would make a
+   transport a mandatory dependency of the typed layer. The binding converts, as
+   ``UDSSVC_ARCH_0018`` has it convert everything else.
 
 Outcome
 -------
