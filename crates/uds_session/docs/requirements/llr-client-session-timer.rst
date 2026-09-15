@@ -87,8 +87,10 @@ TesterPresent. Two of those restarts coincide with rows of Table 6 and the third
 
 What the client concludes about a channel's session once Table 9's repeats are exhausted is
 also :doc:`llr-client-error-handling`'s. Nothing in this document clears a channel's session
-fact: the keep-alive release of ``UDSS_LLR_0184`` does, on the application's say-so, and the
-repeat count that bounds the repeats is ``UDSS_LLR_0173``'s.
+fact where the server has simply stopped answering: ``UDSS_LLR_0163`` clears it on a
+confirmed return to the default session, and the keep-alive release of ``UDSS_LLR_0184``
+clears it on the application's say-so, but a server that has gone silent leaves the fact
+standing here. The repeat count that bounds the repeats is ``UDSS_LLR_0173``'s.
 
 Table 5 requires the ``tS3_Client`` reload value to be smaller than ``tS3_Server``. That is a
 value the caller chooses under ``UDSS_LLR_0040``, a performance obligation of the same class
@@ -435,6 +437,14 @@ session fact, and the requests and indications on it.
    ``UDSS_LLR_0065`` a negative response to a session change carries no selection, and a
    refused change moved no server into a non-default session, so nothing is there to keep
    alive.
+
+   Both bullets narrow the text again, to a selection that is not the default session.
+   Table 6 states that qualifier — "This is only true if the session type is a non-default
+   session" — in its functional column alone, not in the physical column these rows come
+   from. It is read across because ``tS3_Client`` exists to hold a non-default session open,
+   as 9.5 Table 5 defines it, and because the default-session case is not left unhandled:
+   ``UDSS_LLR_0163`` takes it, clearing the fact and stopping the timer on the same two
+   events. The functional mode reads the qualifier the same way in ``UDSS_LLR_0155``.
 
    Figure 13 key b also starts ``tS3_Client`` at the request's confirmation, in the very
    scenario, key c, where a response is required and Table 6 starts it at the response's
