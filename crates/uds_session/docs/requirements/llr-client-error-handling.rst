@@ -277,7 +277,8 @@ Responses still arriving
    which Table 9's cells, attached to a timeout or an error, do not describe. For an
    ordinary request that is the one-request-per-channel assumption enforced a little
    further; for the keep-alive TesterPresent of ``UDSS_LLR_0156``, which 10.2.4 Figure 17
-   keys g and h send inside the response window, it is a delay bounded by the transport's
+   keys p and q send between the start-of-message of key o and its completion at key r, it is
+   a delay bounded by the transport's
    transfer of that message, which 9.2 Table 4 footnotes d and e already oblige the client to
    keep inside ``tS3_Server``. The wait also covers a response whose start-of-message arrives
    after the timeout or the error, which ``UDSS_LLR_0140`` records whether or not a request
@@ -378,8 +379,9 @@ Giving a server up
    confirmed to the application under ``UDSS_LLR_0039``, shall start no response window
    under ``UDSS_LLR_0135``, and shall otherwise act as it would had its channel not been
    reset; in particular, on a functional channel ``UDSS_LLR_0170`` starts the channel's
-   spacing timer on it, on a physical channel ``UDSS_LLR_0169`` starts it where the
-   confirmation reports a failed transmission, and ``UDSS_LLR_0155``, ``UDSS_LLR_0157``,
+   spacing timer on it, on a physical channel ``UDSS_LLR_0169`` starts it on either of its
+   two conditions — a failed transmission, or the successful transmission of a request whose
+   expected response count is ``none`` — and ``UDSS_LLR_0155``, ``UDSS_LLR_0157``,
    ``UDSS_LLR_0158``, ``UDSS_LLR_0159``, ``UDSS_LLR_0161`` and ``UDSS_LLR_0163`` act on it.
 
    Rationale: the confirmation is delivered because the transport's report of the outcome
