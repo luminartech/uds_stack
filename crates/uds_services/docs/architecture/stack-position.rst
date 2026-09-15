@@ -209,6 +209,60 @@ Scope
    and ``UDSSVC_ARCH_0014`` makes ``from_u16`` fallible so an unsupported identifier cannot
    reach a handler. Documentation is what remains after that, not a substitute for it.
 
+.. arch:: This crate drives the stack
+   :id: UDSSVC_ARCH_0040
+   :depends_on: UDSSVC_ARCH_0019; UDSSVC_ARCH_0034
+   :status: draft
+   :origin: derived
+   :tags: scope; roles; driver
+
+   This crate owns the run loop. It supplies ``uds_session`` with timestamps and drains its
+   outputs, calls a transport to send and receive bytes, dispatches inbound requests to the
+   consuming application's handlers, and conducts the client's exchanges. No other crate in
+   the stack contains a driver, and a consuming application writes none.
+
+   **Two words, because the stack has two things and one name for them.** The **application
+   layer** is ISO 14229-1's, which is this crate; ISO 14229-2 names it as the session
+   layer's service user, and ``uds_session`` uses "application" in exactly that sense. The
+   **consuming application** is the ECU or tester program written against this crate's
+   interface — it defines identifiers, implements service callbacks, and calls the client.
+   Where this set previously wrote "the application" it meant the second.
+
+   Rationale: ISO 14229-2 defines a service interface between the session layer and its
+   user and names that user as the ISO 14229-1 layer. An arrangement in which a third party
+   sits between them — turning the crank on the session layer and calling into this crate —
+   describes a component no standard mentions, and it is the component that went a full
+   design cycle with no owner: ``uds_session`` declined it as out of its sans-io scope,
+   ``uds_on_ip`` states it "is not implemented in this prototype", and this crate's scope
+   element kept it out. Collapsing the service user and the driver into one removes the
+   vacancy rather than assigning it.
+
+   ``UDSSVC_ARCH_0034`` reaches the same place from the other direction. A run loop every
+   integrator writes is the largest protocol concern the stack was leaving to them, and its
+   obligations are UDS-semantic rather than transport-semantic: whether a response-pending
+   is admissible needs to know which services the server supports, clause 8.7.6's occupancy
+   of the diagnostic protocol instance is a clause 8.7 rule, and coordinating ``tP2_Server``
+   against a running handler is ISO 14229-1 meeting ISO 14229-2. A binding that owned the
+   loop would have to understand all three.
+
+   Three consequences.
+
+   * **The consuming application implements callbacks and nothing else.** That is what
+     ``UDSSVC_ARCH_0019``'s goal — "an application using this stack should not need to care
+     about UDS much at all" — has meant all along; it was not achievable while a driver
+     remained unwritten.
+   * **A binding becomes a transport implementation.** ``uds_on_ip`` supplies framing,
+     connection setup, routing activation and vehicle identification, and implements the
+     seam this crate calls. It contains no driver and no notion of a service.
+   * **This crate needs time**, which it did not before. ``UDSSVC_ARCH_0041`` is that seam.
+
+   What this costs is honesty about the server side's shape. The dispatch pipeline of
+   ``UDSSVC_ARCH_0004`` remains a pure function of a request and its context, and is still
+   testable as one. The loop around it is not: it awaits a transport and a clock. Both are
+   seams rather than dependencies, so a test binds a fake of each and needs no network and
+   no executor of its own — but the claim that this crate performs no I/O is retired here,
+   and it should be retired plainly rather than qualified away.
+
 Dependencies
 ------------
 

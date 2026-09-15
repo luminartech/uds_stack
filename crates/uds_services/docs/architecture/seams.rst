@@ -395,3 +395,66 @@ Response-pending seam
 
    ``RequestHandler::handle`` takes the responder as a parameter rather than carrying it on
    ``Ctx``, which is ``Copy`` and cannot hold a ``&mut``.
+
+Clock
+-----
+
+.. arch:: This crate declares the clock seam and ships one implementation
+   :id: UDSSVC_ARCH_0041
+   :depends_on: UDSSVC_ARCH_0030; UDSSVC_ARCH_0040
+   :status: draft
+   :origin: derived
+   :tags: seam; async; driver; time
+
+   Driving ``uds_session`` requires time: it is sans-io and evaluates a timer's expiry only
+   when a timestamp is supplied. So ``UDSSVC_ARCH_0040``'s loop needs to know what time it
+   is, and needs to wake when something is due.
+
+   .. code-block:: rust
+
+      pub trait Clock {
+          /// Monotonic milliseconds, 32-bit and wrapping.
+          fn now_ms(&self) -> u32;
+
+          /// Resolve after at least `ms` have elapsed.
+          async fn sleep(&mut self, ms: u32);
+      }
+
+   **The unit and width are ``uds_session``'s, deliberately.** ``UDSS_LLR_0114`` fixes a
+   timestamp as a 32-bit count of milliseconds and specifies interval arithmetic modulo
+   2\ :sup:`32`. Matching it exactly means no conversion sits between the clock and the
+   state machine it feeds, and no second wraparound point exists to reason about.
+
+   **``sleep`` takes a duration, and this is the part worth arguing.** A deadline in wrapping
+   ``u32`` space is ambiguous on its own: ``5`` is either a moment just past or one roughly
+   49 days away, and only a reference point separates them. This crate holds both values —
+   the deadline ``uds_session`` reports and the ``now_ms`` it just read — so it computes the
+   interval here, by the modular subtraction ``UDSS_LLR_0114`` already specifies, and passes
+   a delay that cannot be misread. An implementor writing a ``sleep_until`` would have to
+   rederive that reasoning, and every implementor would have to rederive it identically.
+
+   **The deadline comes from ``uds_session``.** ``UDSS_LLR_0304`` has the session layer
+   report the earliest timestamp at which supplying a timestamp could expire a timer, or
+   report that none is running. That report and this trait are the two halves of one
+   mechanism: the session layer says *when*, this crate computes *how long*, and the clock
+   waits. Neither half is useful alone, and they were designed a day apart for unrelated
+   reasons.
+
+   Rationale: a clock is the one thing a driver cannot abstract over and cannot supply
+   itself. Reading one directly would make every timing rule in the stack untestable except
+   in real time, which is the argument ``UDSS_LLR_0114`` makes for the layer below; taking
+   it as a seam keeps a test able to advance time by returning larger numbers.
+
+   **One implementation ships, behind a feature.** A ``tokio``-backed ``Clock`` for hosted
+   builds, so a tester application on a workstation writes none. An embedded target
+   implements the trait against its own timer — ``embassy`` or a raw hardware counter — and
+   the trait is the whole of what it must satisfy. This is the division ``UDSSVC_ARCH_0027``
+   already records as the stack's pattern, citing ``uds_protocol``'s ``clap`` and ``utoipa``
+   integrations as host conveniences that imply ``std`` and live behind features; this is the
+   first time this crate invokes it for itself.
+
+   That optional dependency needs ``UDSSVC_ARCH_0030`` amended. It currently states that this
+   crate depends on no runtime crate, which becomes: none in the default build and none in a
+   ``no_std`` build, with an optional and additive runtime behind a feature that a bare-metal
+   target never enables. The ``no_std`` claim of ``UDSSVC_ARCH_0027`` is unaffected and is
+   still evidenced the same way, on a ``*-none`` target.
