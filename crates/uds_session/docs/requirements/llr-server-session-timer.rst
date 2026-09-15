@@ -58,8 +58,9 @@ assumptions of use in the qualification repository.
   any client, for which no response message is transmitted. Two are excepted: a marked
   keep-alive, whose report is optional and which ``UDSS_LLR_0096`` makes inert if supplied,
   and a request aborted under ISO 14229-1:2020 8.7.6's OBD-range exception, whose report is
-  optional because ``UDSS_LLR_0108`` ended it on the OBD request's reception and
-  ``UDSS_LLR_0106`` matches what ends the OBD request to that request by addressing.
+  optional because the same clause has the OBD request start the default session, which the
+  bullet below obliges the caller to carry as a session selection, so ``UDSS_LLR_0098``
+  disables the timer and the aborted request's own restart under ``UDSS_LLR_0089`` is moot.
 
 * Whether to answer a session-selecting request from a client other than the controlling
   one positively is the application's decision. ISO 14229-1:2020 Annex J (informative)
@@ -375,9 +376,9 @@ The timer's state
    delivers the indication for both roles alike, clause 8.10 requiring the error result on
    the receiver side.
    The client's side of the same question decided it: ISO 14229-2:2021 9.7 Table 9 obliges
-   the client to repeat a request whose reception failed, so the client must be shown the
-   failure, and a rule that shows it to one role and hides it from the other could not be
-   stated once in ``UDSS_LLR_0036``.
+   the client to repeat the last request when a response reception fails, so the client must
+   be shown the failure, and a rule that shows it to one role and hides it from the other
+   could not be stated once in ``UDSS_LLR_0036``.
 
    The marked message is excluded because a failed reception of it while another service is
    in progress would otherwise restart the timer mid-request, the harm ``UDSS_LLR_0095``
@@ -633,8 +634,11 @@ The timer's state
    non-default session active while no request is received; it does not specify the
    resulting transition, which belongs to the application layer. ISO 14229-1:2020 10.2.2.2
    Table 25 is where that layer states it, naming a session layer timeout in the server as
-   one of the ways the programming session is left, and this requirement declines to
-   implement it as ``UDSS_LLR_0098`` declines the same table's ECUReset. Returning the session
+   one of the ways the programming session is left. This requirement declines to implement
+   that application-layer consequence, leaving it to the application on the session-timeout
+   indication, exactly as ``UDSS_LLR_0098`` leaves an ECUReset's application-layer
+   consequence to the application while acting only on the session selection the caller
+   carries. Returning the session
    layer's own state to default is required for internal consistency, since every other
    requirement in this set is conditioned on which session is active. The indication
    exists so the application can apply the application-layer consequences.

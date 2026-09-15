@@ -741,10 +741,11 @@ Service primitives
    ``S_OK``, which presupposes indications where it is not, and a client cannot detect a
    failed reception that is never indicated to it. Clause 8.10 requires the error result to
    be issued to the service user on the receiver side as on the sender side, and
-   ISO 14229-2:2021 9.7 Table 9 obliges the client to repeat a request whose reception
-   failed, which it cannot do unshown. Table 10 obliges the server only to ignore such a
-   request, which ``UDSS_LLR_0092`` reads as acting on nothing rather than as withholding
-   the indication. No requirement in the set withholds an indication. A ``T_Data.ind``
+   ISO 14229-2:2021 9.7 Table 9 obliges the client to repeat the last request when a
+   response reception fails, which it cannot do unshown. Table 10 obliges the server to
+   restart ``tS3_Server`` and otherwise only to ignore such a request, which
+   ``UDSS_LLR_0092`` transcribes and reads as acting on nothing further rather than as
+   withholding the indication. No requirement in the set withholds an indication. A ``T_Data.ind``
    rejected under ``UDSS_LLR_0027``, ``UDSS_LLR_0030``, ``UDSS_LLR_0031``, ``UDSS_LLR_0069``,
    ``UDSS_LLR_0071`` or ``UDSS_LLR_0072`` is not withheld but refused: ``UDSS_LLR_0015``
    governs it and this requirement does not reach it.
