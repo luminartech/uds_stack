@@ -345,8 +345,8 @@ Giving a server up
    which ``UDSS_LLR_0184`` covers as a separate act.
 
    The reset is neither a primitive nor a parameter but an act of the caller, as the
-   completion report of ``UDSS_LLR_0074`` is; the service interface document's preamble
-   names both.
+   completion report of ``UDSS_LLR_0074`` is; ``UDSS_LLR_0010`` names both among the inputs
+   the caller supplies and states that both are acts.
 
 .. llr:: An abandoned association stays outstanding
    :id: UDSS_LLR_0181

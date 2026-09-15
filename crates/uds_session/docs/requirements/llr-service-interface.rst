@@ -104,8 +104,8 @@ before the other is what the assumption forbids.
    The session layer shall allocate no memory.
 
    Rationale: the quantities this set keeps state for are properties of the deployment
-   rather than of the protocol — the number of a client's channels, which ``UDSS_LLR_0121``
-   makes the caller's to create and withdraw, the number of peers an instance addresses,
+   rather than of the protocol — the number of a client's channels, which ``UDSS_LLR_0120``
+   holds a timer in caller storage for, the number of peers an instance addresses,
    which ``UDSS_LLR_0059``'s associations are held per, and the number of responders
    answering behind one functional address, which ``UDSS_LLR_0139``'s table is sized for —
    so the crate cannot know them and the caller sizes them. Each of those requirements
