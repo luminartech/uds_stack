@@ -221,7 +221,7 @@ The repeat count
      repeat count unchanged.
 
    Rationale: ISO 14229-2:2021 9.7 Table 9 states only the cap, a maximum of two repeats
-   and three transmissions in the worst case, which ``UDSS_LLR_0180`` transcribes. It names
+   and three transmissions in the worst case. It names
    no count, no event that starts one and no marker, so the mechanism by which a layer that
    cannot read the message tracks the repeats is the set's own, as the count of
    ``UDSS_LLR_0236`` is. Table 9 counts service request transmissions from the request
@@ -230,13 +230,7 @@ The repeat count
    rather than at the ``T_Data.conf`` because ``UDSS_LLR_0118`` produces the ``T_Data.req``
    from it in the same step, so a request that nothing rejects is the transmission Table 9
    counts; and because a rejection under ``UDSS_LLR_0267`` leaves state unchanged, so a
-   rejected repeat is never counted. The requirements of the client documents that may
-   reject an ``S_Data.req`` for a request are ``UDSS_LLR_0176``, ``UDSS_LLR_0180`` and
-   ``UDSS_LLR_0181``, and ``UDSS_LLR_0273``, ``UDSS_LLR_0274``, ``UDSS_LLR_0252``,
-   ``UDSS_LLR_0253``, ``UDSS_LLR_0256``, ``UDSS_LLR_0258`` and ``UDSS_LLR_0203`` reject one
-   on its addressing, classification, channel or the exhaustion of association storage;
-   ``UDSS_LLR_0180`` reads the count as it was before the input under ``UDSS_LLR_0187``, so
-   the increase here never feeds the rejection there.
+   rejected repeat is never counted.
 
    The keep-alive is outside the count, and that is a declared reading: Table 9 does not
    exempt it. In physical keep-alive a TesterPresent can be transmitted between a failure
@@ -263,9 +257,7 @@ The repeat count
    the worst case is three transmissions of the request. The ``repeat`` marker is carried by
    the second and third transmissions, so a count of two means three have gone out and the
    request in hand would be the fourth. Rejection is what a layer without I/O has, for the
-   reason the preamble gives; ``UDSS_LLR_0182`` states what the report carries. An unmarked
-   request on the same channel is not rejected here and, under ``UDSS_LLR_0179``, begins a
-   new count.
+   reason the preamble gives.
 
 Responses still arriving
 ------------------------
@@ -286,8 +278,7 @@ Responses still arriving
    Table 9's two functional timeout cells and its functional reception cell each oblige the
    client to completely receive the response messages in progress before it continues.
    ``UDSS_LLR_0234`` retains the entries that evidence a response in progress past the end
-   of the request for this requirement's sake, and the timer stays stopped meanwhile,
-   ``UDSS_LLR_0155`` acting only with a request in progress.
+   of the request for this requirement's sake.
 
    Declared widening. Only the cell for a timeout with an unknown number of responding
    servers attaches the wait to further requests of any kind; the known-count cell and the
@@ -319,10 +310,7 @@ Responses still arriving
 
    The keep-alive TesterPresent of ``UDSS_LLR_0165`` is rejected like any other request on
    the channel, and unlike ``UDSS_LLR_0176``'s rejection this one carries no time to retry,
-   the wait ending on an indication rather than on a timer. Where the completion never
-   arrives the channel stays closed to every request until the reset of ``UDSS_LLR_0277``
-   releases the entry, which is the exit the preamble's assumption of use puts on the
-   application.
+   the wait ending on an indication rather than on a timer.
 
 .. llr:: A rejection under this document states its cause
    :id: UDSS_LLR_0182
@@ -336,18 +324,11 @@ Responses still arriving
    the report ``UDSS_LLR_0267`` requires shall state which of those two conditions held,
    and shall state both where both held.
 
-   Rationale: ``UDSS_LLR_0267`` requires a rejection to be reported; ``UDSS_LLR_0268``
-   requires the report to state a cause and to carry whatever content the rejecting
-   requirement itself states, and ``UDSS_LLR_0177`` is the first requirement to state such
-   content, for the spacing timer. The two causes here call for opposite actions
+   Rationale: the two causes here call for opposite actions
    from the application, waiting for the next completion under ``UDSS_LLR_0181`` and
    ceasing to repeat under ``UDSS_LLR_0180``, and a report that did not distinguish them
    would leave the application unable to follow Table 9. Both are stated where both hold
-   because the application must act on both. Where ``UDSS_LLR_0176`` also holds,
-   ``UDSS_LLR_0268`` has the one report carry the time remaining ``UDSS_LLR_0177``
-   requires as well. This constrains the report's content; it is not itself produced for
-   the caller to retrieve on the application's behalf, only more content within a report
-   already addressed to the caller.
+   because the application must act on both.
 
 Giving a server up
 ------------------
@@ -390,25 +371,13 @@ Giving a server up
    ``UDSS_LLR_0278`` keeps outstanding rather than discarding; and the keep-alive state,
    which ``UDSS_LLR_0184`` covers as a separate act.
 
-   In physical keep-alive a reset therefore leaves the channel's session fact and
-   ``tS3_Client`` timer as they were; a timer ``UDSS_LLR_0169`` stopped for the request the
-   reset ended is restarted by the next completed exchange under ``UDSS_LLR_0170`` or
-   cleared with the fact under ``UDSS_LLR_0184``, and until one of those the server's
-   ``tS3_Server`` runs unattended, which is the outcome the client session timer document
-   records for a lost response.
-
    The physical start-of-message the third effect closes is the one ``UDSS_LLR_0210``
    retains past the end of the request.
 
    Producing no output does not mean the channel goes silent: a ``T_Data.ind`` arriving
    after the reset for the message whose start-of-message the reset closed is the first
    indication of a single-frame message under ``UDSS_LLR_0199``, the pairing having nothing
-   left to match; a later ``T_DataSOM.ind`` opens a start-of-message as it always does, and
-   on a functional channel creates an entry under ``UDSS_LLR_0233``. Both reach the
-   application through ``UDSS_LLR_0137`` with the caller's classification and take no
-   ``tP_Client`` action, no request being in progress on a channel just reset; in physical
-   keep-alive ``UDSS_LLR_0170`` restarts ``tS3_Client`` on a completion among them as on any
-   other. The preamble records that the application expects this.
+   left to match. The preamble records that the application expects this.
 
    The reset is neither a primitive nor a parameter but an act of the caller, as the
    completion report of ``UDSS_LLR_0136`` is; the service interface document's preamble
@@ -458,14 +427,9 @@ Giving a server up
    would later report its expiry.
 
    Everything else the confirmation does is left to happen, because the message went out:
-   the server may still be consuming it, so 10.3's spacing wait is owed where it applies —
-   always on a functional channel under ``UDSS_LLR_0175``, and on a physical channel under
-   ``UDSS_LLR_0174`` only where the confirmation reports failure, its success branch being
-   conditioned on an expected response count of ``none`` that an abandoned request awaiting
-   a response does not have; and it may enter or leave a session on it, so the keep-alive
-   requirements follow the message rather than the reset. ``UDSS_LLR_0278`` keeps the
-   association available for these to read its classification from, rather than discarding
-   it.
+   the server may still be consuming it, so 10.3's spacing wait is owed where it applies;
+   and it may enter or leave a session on it, so the keep-alive requirements follow the
+   message rather than the reset.
 
 .. llr:: A reset naming no existing channel is rejected
    :id: UDSS_LLR_0280
@@ -524,8 +488,6 @@ Giving a server up
    on, ``UDSS_LLR_0166`` requiring that message's confirmation to arrive on one, so the
    release always has a channel to name.
 
-   A release leaves every other state alone. A physical keep-alive released while a
-   request is in progress on the channel leaves the request and its ``tP_Client`` timer
-   untouched; only ``UDSS_LLR_0277`` ends a request. A release in the other mode, or on a
+   A release leaves every other state alone. A release in the other mode, or on a
    channel whose fact does not hold, changes nothing and is not an error, the fact the
    caller wished cleared being already clear.
