@@ -25,9 +25,9 @@ three constraints Table 9 places around the repeat. The spacing Table 9 requires
 repeat of a failed transmission, and only there, is :doc:`llr-client-request-spacing`'s;
 this document cites it and does not restate it. The cap of two repeats is
 ``UDSS_LLR_0177``'s. Finishing the responses still arriving on a functional channel is
-``UDSS_LLR_0178``'s. Each is a rejection under
-``UDSS_LLR_0015``, the only means a layer with no I/O has of postponing or forbidding a
-transmission, and ``UDSS_LLR_0179`` makes the report say which constraint blocked the request.
+``UDSS_LLR_0178``'s. Each is a rejection under ``UDSS_LLR_0015``, the only means a layer
+with no I/O has of postponing or forbidding a transmission, and ``UDSS_LLR_0179`` makes the
+report say which constraint blocked the request.
 
 The repeat and its marker
 -------------------------
@@ -44,7 +44,10 @@ unbounded. ``UDSS_LLR_0065`` therefore makes ``keep-alive`` and ``repeat`` exclu
 Table 9 does not exempt the keep-alive, so its own repeats are bounded by the application,
 an obligation recorded below.
 
-What the count does not check is that a repeat follows a failure.
+What the count does not check is that a repeat follows a failure. Enforcing that would need
+a per-channel record of whether one is owed, which no requirement keeps; a request the
+application wrongly marks ``repeat`` is therefore counted against a cap it will not reach,
+which costs the application repeats it was entitled to and costs the set nothing.
 
 Responses still arriving
 ------------------------
@@ -55,8 +58,12 @@ unknown number of responding servers before further requests of any kind. Whethe
 is in progress is what an open start-of-message records, and only the session layer sees
 start-of-message indications, clause 7.3 keeping them from the application.
 ``UDSS_LLR_0141`` accordingly retains an entry whose start-of-message is open past the end
-of the request, with the timer stopped, and releases every other fact; ``UDSS_LLR_0178``
-rejects a request on the channel while any such entry remains.
+of the request and releases every other fact; ``UDSS_LLR_0178`` rejects a request on the
+channel while any such entry remains. Each retained entry closes on the ``T_Data.ind`` that
+completes its message, which reaches the application as an ``S_Data.ind`` under
+``UDSS_LLR_0036``, so that indication is the application's cue that the wait has ended.
+Unlike ``UDSS_LLR_0171``'s rejection, this one carries no time to retry: the wait ends on an
+event, not after an interval.
 
 Only the unknown-count cell attaches the wait to further requests of any kind; the
 known-count cell and the reception cell attach it to the repeat alone, at the instant of the
@@ -267,27 +274,26 @@ Responses still arriving
    Declared widening. Only the cell for a timeout with an unknown number of responding
    servers attaches the wait to further requests of any kind; the known-count cell and the
    reception cell attach it to the repeat alone, at the point in time of the timeout or of
-   the error. This requirement applies the wider reading to all three, because the set
-   keeps no record of which of the three events ended the exchange, and a fact per channel
-   to record it would buy only the right to send a different request into responses still
-   arriving. The requirement is accordingly conditioned on neither the ``repeat`` marker
-   nor a request being in progress. The condition overlaps the one-request-per-channel
-   assumption of use the client response timing document records, and enforces a fragment
-   of it; the overlap is harmless. The absence of the in-progress guard also reaches a
-   request sent during a live exchange while a multi-frame response is still arriving,
-   which Table 9's cells, attached to a timeout or an error, do not describe. For an
-   ordinary request that is the one-request-per-channel assumption enforced a little
-   further; for the keep-alive TesterPresent of ``UDSS_LLR_0156``, which 10.2.4 Figure 17
-   keys p and q send between the start-of-message of key o and its completion at key r, it is
-   a delay bounded by the transport's
-   transfer of that message, which 9.2 Table 4 footnotes d and e already oblige the client to
-   keep inside ``tS3_Server``. The wait also covers a response whose start-of-message arrives
-   after the timeout or the error, which ``UDSS_LLR_0140`` records whether or not a request
-   is in progress; the known-count and reception cells, phrased at the point in time of the
-   event, do not require that, so it too is a widening, in the safe direction, ending on the
-   same completion.
+   the error. This requirement applies the wider reading to all three, because the set keeps
+   no record of which of the three events ended the exchange, and a fact per channel to
+   record it would buy only the right to send a different request into responses still
+   arriving. The requirement is accordingly conditioned on neither the ``repeat`` marker nor
+   a request being in progress. The condition overlaps the one-request-per-channel
+   assumption of use the client response timing document records, and enforces a fragment of
+   it; the overlap is harmless. The absence of the in-progress guard also reaches a request
+   sent during a live exchange while a multi-frame response is still arriving, which Table
+   9's cells, attached to a timeout or an error, do not describe. For an ordinary request
+   that is the one-request-per-channel assumption enforced a little further; for the
+   keep-alive TesterPresent of ``UDSS_LLR_0156``, which 10.2.4 Figure 17 keys p and q send
+   between the start-of-message of key o and its completion at key r, it is a delay bounded
+   by the transport's transfer of that message, which 9.2 Table 4 footnotes d and e already
+   oblige the client to keep inside ``tS3_Server``. The wait also covers a response whose
+   start-of-message arrives after the timeout or the error, which ``UDSS_LLR_0140`` records
+   whether or not a request is in progress; the known-count and reception cells, phrased at
+   the point in time of the event, do not require that, so it too is a widening, in the safe
+   direction, ending on the same completion.
 
-.. llr:: A rejection under this document states its cause
+.. llr:: A rejection for a spent count or a response still arriving states which
    :id: UDSS_LLR_0179
    :status: draft
    :integrity_level: QM
@@ -296,14 +302,14 @@ Responses still arriving
    :tags: client; error-handling; service-interface
 
    Where the client rejects an ``S_Data.req`` under ``UDSS_LLR_0177`` or ``UDSS_LLR_0178``,
-   the report ``UDSS_LLR_0015`` requires shall state which of those two conditions held,
-   and shall state both where both held.
+   the report ``UDSS_LLR_0015`` requires shall state which of those two conditions held.
+   ``UDSS_LLR_0016`` already requires the one report to state every cause where both held.
 
    Rationale: the two causes here call for opposite actions from the application, waiting
    for the next completion under ``UDSS_LLR_0178`` and ceasing to repeat under
-   ``UDSS_LLR_0177``, and a report that did not distinguish them would leave the
-   application unable to follow Table 9. Both are stated where both hold because the
-   application must act on both.
+   ``UDSS_LLR_0177``, and a report that did not distinguish them would leave the application
+   unable to follow Table 9. Both are stated where both hold because the application must
+   act on both.
 
 Giving a server up
 ------------------
@@ -341,10 +347,10 @@ Giving a server up
    clears it. What it deliberately leaves: the protocol parameters of ``UDSS_LLR_0132`` and
    ``UDSS_LLR_0165``, which are the caller's; the spacing timer, which is left running
    because it protects a server that knows nothing of the reset, so that 10.3's wait is
-   still owed; the count ``UDSS_LLR_0138`` keeps, defined
-   relative to the last confirmation and so reset by the next; the association, which
-   ``UDSS_LLR_0181`` keeps outstanding rather than discarding; and the keep-alive state,
-   which ``UDSS_LLR_0184`` covers as a separate act.
+   still owed; the count ``UDSS_LLR_0138`` keeps, defined relative to the last confirmation
+   and so reset by the next; the association, which ``UDSS_LLR_0181`` keeps outstanding
+   rather than discarding; and the keep-alive state, which ``UDSS_LLR_0184`` covers as a
+   separate act.
 
    The reset is neither a primitive nor a parameter but an act of the caller, as the
    completion report of ``UDSS_LLR_0074`` is; ``UDSS_LLR_0010`` names both among the inputs

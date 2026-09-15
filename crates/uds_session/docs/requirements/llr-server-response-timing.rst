@@ -34,10 +34,10 @@ TesterPresent, which the caller marks ``keep-alive`` under ``UDSS_LLR_0065``.
 
 The second is a request in the OBD service range that, for a server supporting that range
 and not in the programming session, aborts the active service and starts the default
-session. That is an application-layer
-action: ``UDSS_LLR_0108`` ends the service in progress on the reception
-of the OBD request, and :doc:`llr-server-session-timer`'s assumptions of use state how the
-session change is classified and why the aborted request's completion report is optional.
+session. That is an application-layer action: ``UDSS_LLR_0108`` ends the service in progress
+on the reception of the OBD request, and :doc:`llr-server-session-timer`'s assumptions of
+use state how the session change is classified and why the aborted request's completion
+report is optional.
 
 Throughout this document, the **service in progress** is the service, if any, whose
 request the server has begun handling and not yet finished handling. ISO 14229-2:2021
@@ -66,33 +66,32 @@ the vehicle network. No requirement transcribes them.
 
 Their consequence is excluded with them. ISO 14229-2:2021 9.1.1 makes a response-pending
 message inadmissible for a service whose ``tP4_Server_Max`` equals ``tP2_Server_Max``, and
-requires that equality for services the server does not support. Whether a given service
-may go response-pending at all is therefore fixed by a per-service value the session layer
+requires that equality for services the server does not support. Whether a given service may
+go response-pending at all is therefore fixed by a per-service value the session layer
 neither holds nor can derive: ``UDSS_LLR_0073`` forbids inspecting message data, and
 ``UDSS_LLR_0042`` supplies every parameter a timer loads with the instance or with the
-caller-supplied storage it belongs to, never with a service.
-ISO 14229-2:2021 9.3 Figure 7 confirms the reading, applying the equality "for a certain
-``T_Data.ind``". ``UDSS_LLR_0119`` spaces consecutive response-pending messages; whether
-the first was admissible binds the application.
+caller-supplied storage it belongs to, never with a service. ISO 14229-2:2021 9.3 Figure 7
+confirms the reading, applying the equality "for a certain ``T_Data.ind``".
+``UDSS_LLR_0119`` spaces consecutive response-pending messages; whether the first was
+admissible binds the application.
 
 The origination of a response-pending message is excluded on the same ground as its
-admissibility. Every response-pending message
-reaches this layer as an ``S_Data.req`` the caller supplies on the application's behalf:
-the session layer permits or refuses it and keeps the bookkeeping the window and the
-spacing need, and never composes one of its own. Whether a response-pending message is the
-right answer to a given request, and the octets that carry it, belong to the ISO 14229-1
-clause 8.7 layer, which is also the layer that knows whether the service is supported —
-the predicate ISO 14229-2:2021 9.1.1 makes the admissibility turn on.
+admissibility. Every response-pending message reaches this layer as an ``S_Data.req`` the
+caller supplies on the application's behalf: the session layer permits or refuses it and
+keeps the bookkeeping the window and the spacing need, and never composes one of its own.
+Whether a response-pending message is the right answer to a given request, and the octets
+that carry it, belong to the ISO 14229-1 clause 8.7 layer, which is also the layer that
+knows whether the service is supported — the predicate ISO 14229-2:2021 9.1.1 makes the
+admissibility turn on.
 
 A caller's exit from a service in progress that never ends. The client has the channel reset
 of its error handling document; the server has nothing, deliberately: the assumption of use
 that the caller supplies a completion report for every request it does not answer is what
 ends such a request, and a server whose application neither answers nor reports has broken
 that assumption, not exhausted the standard. An association of ``UDSS_LLR_0059`` whose
-``T_Data.conf`` never arrives likewise has no server exit, as ``UDSS_LLR_0060`` records;
-the assumption of use that the transport reports a ``T_Data.conf`` for every
-``T_Data.req``, recorded on :doc:`open-questions` beside the start-of-message assumption,
-is what bounds it.
+``T_Data.conf`` never arrives likewise has no server exit, as ``UDSS_LLR_0060`` records; the
+assumption of use that the transport reports a ``T_Data.conf`` for every ``T_Data.req``,
+recorded on :doc:`open-questions` beside the start-of-message assumption, is what bounds it.
 
 The response window
 -------------------
@@ -106,9 +105,9 @@ The response window
    :source: ISO 14229-2:2021 9.1.1; ISO 14229-2:2021 9.6 Table 7
    :tags: server; p2_server
 
-   The server shall maintain a single ``tP2_Server`` timer and, while it is running, which of
-   ``tP2_Server_Max`` and ``tP2*_Server_Max`` it was loaded with, the fact ``UDSS_LLR_0117``
-   reports.
+   The server shall maintain a single ``tP2_Server`` timer and, while it is running, which
+   of ``tP2_Server_Max`` and ``tP2*_Server_Max`` it was loaded with, the fact
+   ``UDSS_LLR_0117`` reports.
 
    Clause 9.1.1 requires a single timer implementation and names ``T_Data.req``,
    ``T_Data.conf``, ``T_DataSOM.ind`` and ``T_Data.ind`` as the interface that triggers it.
@@ -150,8 +149,8 @@ The response window
    therefore enumerates the conditions the standard gives rather than the primitives it
    names, a trigger with no condition attached being untestable.
 
-   ``UDSS_LLR_0095`` and ``UDSS_LLR_0096`` in :doc:`llr-server-session-timer` are silent on
-   ``tP2_Server``; that message's exclusion
+   ``UDSS_LLR_0095`` and ``UDSS_LLR_0096`` in :doc:`llr-server-session-timer` govern the
+   request marked ``keep-alive`` and are silent on ``tP2_Server``; that request's exclusion
    from this timer is ``UDSS_LLR_0113``'s and ``UDSS_LLR_0115``'s alone, so the five
    changers above remain the whole list.
 
@@ -171,24 +170,24 @@ The response window
    Rationale: ``UDSS_LLR_0116``, ``UDSS_LLR_0118`` and ``UDSS_LLR_0119`` read the service in
    progress and ``UDSS_LLR_0119`` the time of the last response-pending confirmation, and
    ``UDSS_LLR_0103``'s closed list covers the ``tP2_Server`` timer alone, so without this
-   requirement the two facts above were state nothing introduced, initialised or bounded,
-   and two implementations could disagree about when the service ended.
+   requirement the facts above would be state that nothing introduced, initialised or
+   bounded, and two implementations could disagree about when the service ended.
 
    The anchor holds the time of the confirmation because ``UDSS_LLR_0119`` measures the
    spacing from there; it lives only while a service is in progress because the spacing it
    serves is read as running between the response-pending messages of one service.
 
    That is a declared reading rather than the footnote's words. ISO 14229-2:2021 9.2 Table 4
-   footnote b requires the minimum "between the transmission of consecutive negative messages
-   (each with negative response code 78)" during the enhanced response timing, in order to
-   avoid flooding the data link; it does not say whose service those messages answer. The
-   per-service reading is taken because the enhanced response timing the footnote is stated
-   within is opened per request under ``UDSS_LLR_0116``, and because the session layer holds
-   one anchor, which a replacement under ``UDSS_LLR_0108`` discards with the service it
-   belonged to. The cost of the reading is that a server replacing one service with another
-   may send the new service's first response-pending message without waiting: the footnote's
-   flooding concern is left to the caller there, as the preamble leaves the other bounds this
-   document does not time.
+   footnote b requires the minimum "between the transmission of consecutive negative
+   messages (each with negative response code 78)" during the enhanced response timing, in
+   order to avoid flooding the data link; it does not say whose service those messages
+   answer. The per-service reading is taken because the enhanced response timing the
+   footnote is stated within is opened per request under ``UDSS_LLR_0116``, and because the
+   session layer holds one anchor, which a replacement under ``UDSS_LLR_0108`` discards with
+   the service it belonged to. The cost of the reading is that a server replacing one
+   service with another may send the new service's first response-pending message without
+   waiting: the footnote's flooding concern is left to the caller there, as the preamble
+   leaves the other bounds this document does not time.
 
    The state is instance-resident because it is fixed in size, one fact, two addresses and
    one timestamp, as ``UDSS_LLR_0082`` holds the session facts. The two addresses form a
@@ -305,11 +304,11 @@ The response window
    :origin: derived
    :tags: server; p2_server; service-in-progress
 
-   A service shall cease to be in progress on ``T_Data.conf`` answering it and
-   reporting the outcome, successful or not, of the transmission of a solicited final
-   response, on ``T_Data.conf`` answering it and reporting an unsuccessful transmission of a
-   response-pending message, and on a completion report of ``UDSS_LLR_0074`` answering it for
-   a request not marked ``keep-alive``; when it ceases, the anchor shall be cleared.
+   A service shall cease to be in progress on ``T_Data.conf`` answering it and reporting the
+   outcome, successful or not, of the transmission of a solicited final response, on
+   ``T_Data.conf`` answering it and reporting an unsuccessful transmission of a
+   response-pending message, and on a completion report of ``UDSS_LLR_0074`` answering it
+   for a request not marked ``keep-alive``; when it ceases, the anchor shall be cleared.
 
    Rationale: ISO 14229-2:2021 10.1.4.1 Figure 12 key k places the end at the completion of
    the transmission of the final response, or at the completion of the action where no
@@ -386,7 +385,8 @@ The response window
    "changes nothing" claim elsewhere in the set checkable, and what lets ``UDSS_LLR_0105``
    state an initial state that nothing else may disturb.
 
-   The list also settles the marked ``keep-alive``, and no clause is needed here for it.
+   The closed list also settles a request marked ``keep-alive``: none of the five named
+   requirements acts on one, so no clause need be stated here for it.
 
 .. llr:: An unconfirmed response-pending message
    :id: UDSS_LLR_0112
@@ -401,10 +401,9 @@ The response window
    ``T_Data.conf``.
 
    Rationale: ``UDSS_LLR_0118``, ``UDSS_LLR_0116`` and ``UDSS_LLR_0106`` all reason about
-   this state; the term is defined once so the three cannot drift apart. It
-   is defined against the
-   association of ``UDSS_LLR_0059`` because that association is the only record this set
-   keeps of a transmission between its ``T_Data.req`` and its ``T_Data.conf``.
+   this state; the term is defined once so the three cannot drift apart. It is defined
+   against the association of ``UDSS_LLR_0059`` because that association is the only record
+   this set keeps of a transmission between its ``T_Data.req`` and its ``T_Data.conf``.
 
 .. llr:: The response timer starts on reception of a request
    :id: UDSS_LLR_0113
@@ -457,20 +456,20 @@ The response window
    window of the service actually in progress.
 
    The qualifier attaches to the final response alone. ``UDSS_LLR_0065`` states that
-   solicitation applies only to that kind, a response-pending message being by
-   construction a reply to a request, so a condition on a solicited response-pending
-   message would condition on an attribute no input carries.
+   solicitation applies only to that kind, a response-pending message being by construction
+   a reply to a request, so a condition on a solicited response-pending message would
+   condition on an attribute no input carries.
 
    The response must answer the service in progress, as ``UDSS_LLR_0106`` defines, for the
    same reason that requirement matches what ends a request by addressing: after a
    replacement the application may still pass the aborted request's response to the
    transport, and stopping the timer for it would end the window of the service actually in
-   progress, exactly as an unsolicited response would. The match governs
-   ``tP2_Server`` and the anchor alone, and that asymmetry is declared here: the
-   ``tS3_Server`` requirements of :doc:`llr-server-session-timer` act on a confirmation or a
-   completion report by its addressing and classification, so the aborted request's late
-   final response, where it goes to the controlling client, still restarts ``tS3_Server``
-   under ``UDSS_LLR_0088`` as Table 6 states, its server having answered that client.
+   progress, exactly as an unsolicited response would. The match governs ``tP2_Server`` and
+   the anchor alone, and that asymmetry is declared here: the ``tS3_Server`` requirements of
+   :doc:`llr-server-session-timer` act on a confirmation or a completion report by its
+   addressing and classification, so the aborted request's late final response, where it
+   goes to the controlling client, still restarts ``tS3_Server`` under ``UDSS_LLR_0088`` as
+   Table 6 states, its server having answered that client.
 
 .. llr:: The response timer stops on completion of a request with no response
    :id: UDSS_LLR_0115
@@ -493,23 +492,22 @@ The response window
    ``tP2_Server``.
 
    No response message is transmitted in either case, so no ``T_Data.req`` occurs and
-   ``UDSS_LLR_0114`` cannot apply. ``UDSS_LLR_0074`` supplies the report.
-   Without this requirement a suppressed-response request would leave the response
-   window running until ``UDSS_LLR_0117`` reported an overrun, for a service the standard
-   considers correctly concluded.
+   ``UDSS_LLR_0114`` cannot apply. ``UDSS_LLR_0074`` supplies the report. Without this
+   requirement a suppressed-response request would leave the response window running until
+   ``UDSS_LLR_0117`` reported an overrun, for a service the standard considers correctly
+   concluded.
 
-   The marker is the filter that ``UDSS_LLR_0089``'s scope to the controlling client is
-   not: a marked keep-alive's report, which a caller may supply, is inert under
-   ``UDSS_LLR_0096`` and would otherwise end the window of the service actually in
-   progress. Any other completion while a service is in progress is outside the preamble's
-   assumption of use. A completion report for a request that 8.7.6's second exception
-   aborted answers no service in progress where the OBD request came from another client,
-   so this requirement does not act on it: the aborted request's ending was the OBD
-   request's reception, and this requirement acts on the OBD request's own completion. The
-   guard is what lets :doc:`llr-server-session-timer`'s assumptions of use make that report
-   optional; ``UDSS_LLR_0106``'s match guards only the facts ``UDSS_LLR_0104`` keeps, and
-   without the guard here the report would stop the window ``UDSS_LLR_0113`` opened for the
-   OBD request.
+   The marker is the filter that ``UDSS_LLR_0089``'s scope to the controlling client is not:
+   a marked keep-alive's report, which a caller may supply, is inert under ``UDSS_LLR_0096``
+   and would otherwise end the window of the service actually in progress. Any other
+   completion while a service is in progress is outside the preamble's assumption of use. A
+   completion report for a request that 8.7.6's second exception aborted answers no service
+   in progress where the OBD request came from another client, so this requirement does not
+   act on it: the aborted request's ending was the OBD request's reception, and this
+   requirement acts on the OBD request's own completion. The guard is what lets
+   :doc:`llr-server-session-timer`'s assumptions of use make that report optional;
+   ``UDSS_LLR_0106``'s match guards only the facts ``UDSS_LLR_0104`` keeps, and without the
+   guard here the report would stop the window ``UDSS_LLR_0113`` opened for the OBD request.
 
 Enhanced response timing
 ------------------------
@@ -563,20 +561,19 @@ Enhanced response timing
 
    When the elapsed time since the ``tP2_Server`` timer was last started reaches the value
    it was loaded with, the server shall stop the timer and deliver a response-timing
-   indication to the application. The indication shall state which of ``tP2_Server_Max``
-   and ``tP2*_Server_Max`` the timer was carrying, and the ``S_AI[SA]`` and, where
-   ``S_Mtype`` carries one, the ``S_AI[AE]`` of the service in progress under
-   ``UDSS_LLR_0104``.
+   indication to the application. The indication shall state which of ``tP2_Server_Max`` and
+   ``tP2*_Server_Max`` the timer was carrying, and the ``S_AI[SA]`` and, where ``S_Mtype``
+   carries one, the ``S_AI[AE]`` of the service in progress under ``UDSS_LLR_0104``.
 
    Rationale: ISO 14229-2:2021 specifies ``tP2_Server`` as a performance requirement on the
    server's application and states no session layer action on its expiry. The session layer
    can observe the overrun and cannot correct it, so it reports the overrun and the
    application acts; ``UDSS_LLR_0100`` set this precedent for ``tS3_Server``.
 
-   The indication names the parameter because the application's position differs between
-   the two. After ``tP2_Server_Max`` it has sent nothing and may still send a
-   response-pending message to obtain the enhanced window. After ``tP2*_Server_Max`` it has
-   overrun the enhanced window it already requested.
+   The indication names the parameter because the application's position differs between the
+   two. After ``tP2_Server_Max`` it has sent nothing and may still send a response-pending
+   message to obtain the enhanced window. After ``tP2*_Server_Max`` it has overrun the
+   enhanced window it already requested.
 
    The indication names the service in progress because after a replacement under
    ``UDSS_LLR_0108`` the application may have two requests in hand and must know whose
@@ -636,13 +633,12 @@ Enhanced response timing
    by the caller for a response-pending message answering the service in progress, answering
    being as ``UDSS_LLR_0106`` defines it, where the response-pending anchor
    ``UDSS_LLR_0104`` keeps holds a timestamp and the elapsed time since it is less than the
-   minimum spacing. The
-   minimum spacing shall be the least whole number of milliseconds not less than three
-   tenths of ``tP2*_Server_Max`` as that parameter stands when the ``S_Data.req`` is
-   supplied, computed in integer arithmetic as ⌈3 × ``tP2*_Server_Max`` / 10⌉ without
-   overflow for any value ``UDSS_LLR_0041`` admits: with ``q`` and ``r`` the quotient and
-   remainder of ``tP2*_Server_Max`` divided by 10, the spacing is
-   3 × ``q`` + ⌈3 × ``r`` / 10⌉.
+   minimum spacing. The minimum spacing shall be the least whole number of milliseconds not
+   less than three tenths of ``tP2*_Server_Max`` as that parameter stands when the
+   ``S_Data.req`` is supplied, computed in integer arithmetic as ⌈3 × ``tP2*_Server_Max`` /
+   10⌉ without overflow for any value ``UDSS_LLR_0041`` admits: with ``q`` and ``r`` the
+   quotient and remainder of ``tP2*_Server_Max`` divided by 10, the spacing is 3 × ``q`` +
+   ⌈3 × ``r`` / 10⌉.
 
    Table 4 footnote b requires a minimum time of 0,3 × ``tP2*_Server_Max`` between the
    transmission of consecutive negative response messages carrying
