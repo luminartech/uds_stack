@@ -139,10 +139,11 @@ Request context
 
    One challenge to this element is worth recording rather than settling here. ISO
    14229-1 clause 7.4.1 makes ``A_SA``, ``A_TA`` and ``A_TA_Type`` *mandatory* parameters
-   of every application layer service primitive; this element carries only the third. The
-   defence is that clause 8.7 reads only the third and ``UDSSVC_ARCH_0001`` bounds the
-   crate to clause 8.7 — but it is a defence, not an absence of tension. See
-   :doc:`open-questions`.
+   of every application layer service primitive; this element carries only the third. That
+   was once defended on the ground that clause 8.7 reads only the third and the crate went
+   no further, but ``UDSSVC_ARCH_0001`` no longer bounds it that way. The omission now rests
+   on its cost — carrying the other two means an address representation that is not
+   transport-shaped — rather than on scope. See :doc:`open-questions`.
 
 Outcome
 -------

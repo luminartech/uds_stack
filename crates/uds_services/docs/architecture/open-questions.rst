@@ -23,20 +23,33 @@ the default session unless a programming session is active. Classifying a reques
 of those exceptions is arguably this crate's; acting on the classification is certainly
 not. Proposed split, not yet agreed: this crate classifies, the driver acts.
 
-**3. Does ``Ctx`` owe clause 7.4.1 more than it carries?** ISO 14229-1 clause 7.4.1 makes
-``A_SA``, ``A_TA`` and ``A_TA_Type`` mandatory parameters of every application layer
-service primitive; ``UDSSVC_ARCH_0015`` carries only the third. The defence is that clause
-8.7 reads only the third and ``UDSSVC_ARCH_0001`` bounds the crate to clause 8.7. The
-tension is that ``UDSSVC_ARCH_0019`` makes this crate the application's service access
-point, and an access point that drops two of three mandatory parameters is a lossy one.
-Note the client side already answers the opposite way (``UDSSVC_ARCH_0022``).
+**3. What does ``Ctx`` owe clause 7.4.1?** ISO 14229-1 clause 7.4.1 makes ``A_SA``,
+``A_TA`` and ``A_TA_Type`` mandatory parameters of every application layer service
+primitive; ``UDSSVC_ARCH_0015`` carries only the third.
+
+This was a boundary question, defended on the ground that clause 8.7 reads only the third
+and the crate went no further. ``UDSSVC_ARCH_0001`` withdrew that defence: clause 7 is this
+crate's, so the parameters are its to carry or to drop deliberately — and dropping two of
+three from what ``UDSSVC_ARCH_0019`` calls the application's service access point needs a
+better argument than the one it had.
+
+What keeps it open is the cost, not the boundary. ``UDSSVC_ARCH_0015`` declines a binding's
+addressing triple because it is transport-shaped — ``uds_on_ip``'s carries a DoIP logical
+address — so carrying ``A_SA`` and ``A_TA`` means finding a representation that is not. The
+client half is evidence that it can be done: ``UDSSVC_ARCH_0022`` already carries each
+responder's source address, for reasons of its own.
 
 **4. What does ``A_Mtype`` mean for this crate?** Clause 7.2 defines four formats —
 diagnostics, remote, secure, and secure remote — and Figure 5's optional 0x38 and 0x39
 checks exist to enforce the secure ones. Those are filed as caller-supplied checks in
 ``UDSSVC_ARCH_0011`` without an ``A_Mtype`` input to check against, which is at best
-incomplete. Whether this crate carries ``A_Mtype`` or leaves secure diagnostics out of
-scope entirely has not been decided.
+incomplete.
+
+One of the two answers has closed. Leaving secure diagnostics out of scope is no longer
+available: clause 7.2 and clause 16 are both this crate's under ``UDSSVC_ARCH_0001``, which
+records the security sub-layer as in scope and not built. So the question is what carrying
+``A_Mtype`` obliges, and whether the 0x38 and 0x39 checks stay caller-supplied once there
+is something to check them against. It travels with clause 16 rather than ahead of it.
 
 **5. What does a mid-response sink failure mean?** ``UDSSVC_ARCH_0017``'s sink can fail
 after some bytes are written. Whether the binding must discard a partial response, and
