@@ -17,9 +17,10 @@ Requirements
 Status of this set
 ------------------
 
-Draft. IDs are not yet permanent: nothing outside this repository links to this set yet, so
-renumbering and merging remain free. Once a requirement reaches ``approved`` and is linked
-externally, its ID is fixed for the life of the crate.
+Draft. The set has been renumbered in document order: IDs run contiguously from
+``UDSS_LLR_0001`` in the order the pages appear in the toctree above, and a new requirement
+takes the next free number. Once a requirement reaches ``approved`` and is linked from
+outside this repository, its ID is fixed for the life of the crate.
 
 While the set is draft it carries an :doc:`open-questions` page, recording what is not yet
 settled and why. It holds no requirements and contributes nothing to ``needs.json``; it is

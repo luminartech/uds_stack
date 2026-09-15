@@ -15,7 +15,7 @@ not have to ask whether a start of a running timer is a restart: it is.
 A requirement that leaves a running timer alone says so.
 
 .. llr:: A timer is either running or not running
-   :id: UDSS_LLR_0194
+   :id: UDSS_LLR_0075
    :status: draft
    :integrity_level: QM
    :target_level: D
@@ -28,7 +28,7 @@ A requirement that leaves a running timer alone says so.
    Without a stated two-state model those conditions have no subject.
 
 .. llr:: A timer carries the value the parameter had when it was started
-   :id: UDSS_LLR_0195
+   :id: UDSS_LLR_0076
    :status: draft
    :integrity_level: QM
    :target_level: D
@@ -40,10 +40,10 @@ A requirement that leaves a running timer alone says so.
 
    Rationale: loading the value at the start rather than reading the parameter live is
    what lets a parameter change while a timer runs without moving a window already open,
-   which ``UDSS_LLR_0262`` requires of every parameter change.
+   which ``UDSS_LLR_0043`` requires of every parameter change.
 
 .. llr:: A timer expires when its loaded value is reached
-   :id: UDSS_LLR_0303
+   :id: UDSS_LLR_0077
    :status: draft
    :integrity_level: QM
    :target_level: D
@@ -51,19 +51,19 @@ A requirement that leaves a running timer alone says so.
    :tags: timer-model; timing
 
    A timer shall expire when the elapsed time since it was set running reaches the value
-   it was loaded with under ``UDSS_LLR_0195``, or exceeds it where the requirement that set
+   it was loaded with under ``UDSS_LLR_0076``, or exceeds it where the requirement that set
    it running says so.
 
    Rationale: the set states both readings because the two bound different things.
-   ``UDSS_LLR_0148`` and ``UDSS_LLR_0241``'s spacing timer bound this side's own conduct,
+   ``UDSS_LLR_0117`` and ``UDSS_LLR_0166``'s spacing timer bound this side's own conduct,
    so the conservative reading is the earlier one and both expire at "reaches".
-   ``UDSS_LLR_0159`` instead protects a conformant peer from being faulted for a response
+   ``UDSS_LLR_0148`` instead protects a conformant peer from being faulted for a response
    that arrives exactly at the window's edge, so it expires only once the elapsed time
    strictly exceeds the loaded value. The requirement that sets a timer running states
    which of the two governs it.
 
 .. llr:: Only a running timer expires
-   :id: UDSS_LLR_0196
+   :id: UDSS_LLR_0078
    :status: draft
    :integrity_level: QM
    :target_level: D
@@ -79,7 +79,7 @@ A requirement that leaves a running timer alone says so.
    already exceeds could be read as expiring the moment anything looked at it.
 
 .. llr:: Expiry is evaluated only when a timestamp is supplied
-   :id: UDSS_LLR_0197
+   :id: UDSS_LLR_0079
    :status: draft
    :integrity_level: QM
    :target_level: D
@@ -96,7 +96,7 @@ A requirement that leaves a running timer alone says so.
    timestamp preceded the input, but at the next. Zero stays a legal parameter value.
 
 .. llr:: The session layer reports when a timer could next expire
-   :id: UDSS_LLR_0304
+   :id: UDSS_LLR_0080
    :status: draft
    :integrity_level: QM
    :target_level: D
@@ -107,22 +107,22 @@ A requirement that leaves a running timer alone says so.
    cause a timer to expire, or shall report that no timer is running.
 
    Reading the report changes nothing, and producing it evaluates no expiry: expiry is
-   evaluated only when a timestamp is supplied, as ``UDSS_LLR_0197`` requires, and this
+   evaluated only when a timestamp is supplied, as ``UDSS_LLR_0079`` requires, and this
    report only tells the caller when to supply one. Nor is the report an output in the sense
-   of ``UDSS_LLR_0292``: an output is produced for the caller to retrieve on the
+   of ``UDSS_LLR_0011``: an output is produced for the caller to retrieve on the
    application's behalf, and this report is a query the caller reads for itself, at a moment
-   of its choosing. ``UDSS_LLR_0293``'s enumeration of outputs is open, so it settles nothing
+   of its choosing. ``UDSS_LLR_0012``'s enumeration of outputs is open, so it settles nothing
    either way; what excludes the report is its kind.
 
-   Rationale: ``UDSS_LLR_0197`` makes a timer expire not when it elapses but when the caller
+   Rationale: ``UDSS_LLR_0079`` makes a timer expire not when it elapses but when the caller
    next supplies a timestamp, and nothing else in this set tells the caller when that should
    be. A caller left to guess can only poll, which rounds every timing decision in the set to
-   its tick period — ``UDSS_LLR_0285``'s spacing of consecutive response-pending messages
+   its tick period — ``UDSS_LLR_0119``'s spacing of consecutive response-pending messages
    among them — and obliges it to call in on every tick on a target where each call costs
    power. The session layer can instead state the instant exactly, from state it already
    holds and without reading a clock.
 
-   A caller-supplied timer trait was considered and rejected. ``UDSS_LLR_0292`` bars invoking
+   A caller-supplied timer trait was considered and rejected. ``UDSS_LLR_0011`` bars invoking
    a callback, handler or caller-supplied trait implementation *in order to deliver an
    output*, so a trait invoked to obtain time is not what it prohibits; but the hazard that
    requirement exists to prevent reaches the timer trait with more force, not less. Its
@@ -130,12 +130,12 @@ A requirement that leaves a running timer alone says so.
    caller does while it is part-way through a decision, and ``async`` sharpens exactly that: a
    synchronous callback cannot be re-entered by a single-threaded caller, whereas an ``await``
    inside the state machine genuinely suspends it mid-decision and lets the driver feed it
-   another input in that window. That is an argument from ``UDSS_LLR_0292``'s reasoning rather
-   than an application of its text, and it is the decisive one here. ``UDSS_LLR_0190`` reaches
+   another input in that window. That is an argument from ``UDSS_LLR_0011``'s reasoning rather
+   than an application of its text, and it is the decisive one here. ``UDSS_LLR_0017`` reaches
    the alternative directly and without argument: it forbids reading a clock and requires every
    decision that depends on elapsed time to be made from a timestamp the caller supplies, and a
    reading pulled from a trait the session layer calls is not a supplied timestamp.
-   ``UDSS_LLR_0310`` requires in consequence that the same sequence of inputs
+   ``UDSS_LLR_0007`` requires in consequence that the same sequence of inputs
    supplied from creation yield the same state and the same outputs;
    awaiting a timer would make behaviour a
    function of those inputs and of executor scheduling, an expensive property to spend at
@@ -147,7 +147,7 @@ A requirement that leaves a running timer alone says so.
    the executor is the caller's.
 
 .. llr:: Timer expiries precede the input they accompany
-   :id: UDSS_LLR_0187
+   :id: UDSS_LLR_0081
    :status: draft
    :integrity_level: QM
    :target_level: D
@@ -162,39 +162,39 @@ A requirement that leaves a running timer alone says so.
    this set that conditions on state reads it so, whether or not it says so.
 
    Every indication an expiry produces shall precede any output of the input the timestamp
-   accompanies and any rejection report for that input under ``UDSS_LLR_0267``. Where one
+   accompanies and any rejection report for that input under ``UDSS_LLR_0015``. Where one
    timestamp causes several expiries, the order of the indications those expiries produce is
    not specified.
 
-   Rationale: ``UDSS_LLR_0193`` lets a timestamp accompany an input and nothing else orders
+   Rationale: ``UDSS_LLR_0020`` lets a timestamp accompany an input and nothing else orders
    the two. The elapsed time preceded the input's arrival, so a timer that reaches its value
    at that timestamp expired before the input was seen, which is also what a caller that
    samples its clock before delivering the input observes. The other order lets the input
-   swallow the expiry: ``UDSS_LLR_0144`` would restart ``tP2_Server`` before
-   ``UDSS_LLR_0148`` reported the overrun, and ``UDSS_LLR_0104`` would stop ``tS3_Server``
-   before ``UDSS_LLR_0112`` ended the session.
+   swallow the expiry: ``UDSS_LLR_0113`` would restart ``tP2_Server`` before
+   ``UDSS_LLR_0117`` reported the overrun, and ``UDSS_LLR_0087`` would stop ``tS3_Server``
+   before ``UDSS_LLR_0100`` ended the session.
 
    Two consequences are accepted. A request marked ``keep-alive`` delivered with a timestamp
-   exactly at ``tS3_Server``'s timeout changes no timer, ``UDSS_LLR_0112`` having already
-   ended the session it would have kept alive while ``UDSS_LLR_0137`` still delivers it, the
+   exactly at ``tS3_Server``'s timeout changes no timer, ``UDSS_LLR_0100`` having already
+   ended the session it would have kept alive while ``UDSS_LLR_0036`` still delivers it, the
    timer having expired at "reaches": ISO 14229-2:2021 9.5 Table 5 states the timeout as the time the
    server keeps the session while not receiving a request, its tolerance is the caller's
    parameter to spend, and a client conformant to Table 5's ordering of ``tS3_Client`` below
    ``tS3_Server`` never sends at the boundary. And a ``T_Data.conf`` of a session-selecting
    response accompanied by a timestamp that expires ``tS3_Server`` yields, in one call,
-   ``UDSS_LLR_0112``'s timeout indication and ``UDSS_LLR_0102``'s entry into the new
+   ``UDSS_LLR_0100``'s timeout indication and ``UDSS_LLR_0085``'s entry into the new
    session, which is correct: the old session did end at that instant, and the new one is
    the application's own transition.
 
    Indications precede the input's own outputs for the same reason the expiries precede the
    input: the elapsed time preceded its arrival. The case is stated because the first
    paragraph reaches it only by reading "processes" as covering output emission, and for a
-   rejected input does not reach it at all — the input is not processed, and ``UDSS_LLR_0267``
+   rejected input does not reach it at all — the input is not processed, and ``UDSS_LLR_0015``
    borrows this requirement for state alone. The order among those indications is left open
    because several expiries on one timestamp need no order for the state they leave. On the
-   server ``UDSS_LLR_0112`` and
-   ``UDSS_LLR_0148`` touch disjoint timers and neither reads the other's. On the client the
-   only expiry action that touches another timer is ``UDSS_LLR_0170``'s, a ``tP_Client``
+   server ``UDSS_LLR_0100`` and
+   ``UDSS_LLR_0117`` touch disjoint timers and neither reads the other's. On the client the
+   only expiry action that touches another timer is ``UDSS_LLR_0161``'s, a ``tP_Client``
    expiry starting ``tS3_Client``, and a channel whose ``tP_Client`` is running has its
-   ``tS3_Client`` stopped under ``UDSS_LLR_0169``, so under the one-request-per-channel
+   ``tS3_Client`` stopped under ``UDSS_LLR_0160``, so under the one-request-per-channel
    assumption of use the two never expire together.

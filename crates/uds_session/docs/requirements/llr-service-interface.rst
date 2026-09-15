@@ -21,7 +21,7 @@ the session layer, or the session layer passing one to the application, because 
 how the standard describes a service interface. Read those statements as fixing where a
 primitive comes from and where it goes, not as describing a call: the caller supplies
 every input on the application's behalf and retrieves every output for it, as
-``UDSS_LLR_0294`` and ``UDSS_LLR_0292`` require. ISO 14229-2's *service user* is the
+``UDSS_LLR_0009`` and ``UDSS_LLR_0011`` require. ISO 14229-2's *service user* is the
 application in this document's terms.
 
 Sans-io binding
@@ -31,33 +31,33 @@ ISO 14229-2 does not contemplate a sans-io implementation, so these requirements
 derived. They fix the boundary that every other requirement in this set is written
 against. The primitives they refer to are defined in `Service primitives`_ below.
 
-Note the two senses of "input" and "output" in this document. ``UDSS_LLR_0113`` uses I/O
-in the operating-system sense, of reading and writing a device. ``UDSS_LLR_0294`` and
-``UDSS_LLR_0292`` use input and output in the state-machine sense, of values passed to
+Note the two senses of "input" and "output" in this document. ``UDSS_LLR_0001`` uses I/O
+in the operating-system sense, of reading and writing a device. ``UDSS_LLR_0009`` and
+``UDSS_LLR_0011`` use input and output in the state-machine sense, of values passed to
 and retrieved from the session layer. The first is forbidden; the second is the whole
 interface.
 
 Several inputs are acts of the caller rather than primitives, parameters or timestamps:
-the completion report of ``UDSS_LLR_0136``, the channel reset and keep-alive release of
-``UDSS_LLR_0277`` and ``UDSS_LLR_0184``, and the supply and withdrawal of a channel's
-storage under ``UDSS_LLR_0201`` and ``UDSS_LLR_0205``. ``UDSS_LLR_0295`` enumerates them
+the completion report of ``UDSS_LLR_0074``, the channel reset and keep-alive release of
+``UDSS_LLR_0180`` and ``UDSS_LLR_0184``, and the supply and withdrawal of a channel's
+storage under ``UDSS_LLR_0121`` and ``UDSS_LLR_0125``. ``UDSS_LLR_0010`` enumerates them
 among its inputs.
 
 One output is addressed to the caller that made a call rather than produced for it to
-retrieve on the application's behalf: the rejection report of ``UDSS_LLR_0267``, which is
-neither an ``S_Data.conf`` under ``UDSS_LLR_0132`` nor an output in that sense.
+retrieve on the application's behalf: the rejection report of ``UDSS_LLR_0015``, which is
+neither an ``S_Data.conf`` under ``UDSS_LLR_0056`` nor an output in that sense.
 
 One assumption of use falls on the order in which the caller supplies inputs, and is
 recorded in the qualification repository: a ``T_Data.conf`` is supplied before any
 ``T_DataSOM.ind`` or ``T_Data.ind`` the transport received after the confirmed transmission
-completed. ``UDSS_LLR_0214`` at the server and ``UDSS_LLR_0153`` at the client both read a
+completed. ``UDSS_LLR_0106`` at the server and ``UDSS_LLR_0135`` at the client both read a
 confirmation as preceding the peer's reply to it; a caller that delivered the reply first
 would have the server end the wrong request and the client open a window for a response it
 had already delivered. A transport reports the two in that order, and a caller draining one
 queue before the other is what the assumption forbids.
 
 .. llr:: The session layer performs no I/O
-   :id: UDSS_LLR_0113
+   :id: UDSS_LLR_0001
    :status: draft
    :integrity_level: QM
    :target_level: D
@@ -74,7 +74,7 @@ queue before the other is what the assumption forbids.
    runtime test; no black-box test can show that no I/O is performed.
 
 .. llr:: The crate compiles under no_std
-   :id: UDSS_LLR_0305
+   :id: UDSS_LLR_0002
    :status: draft
    :integrity_level: QM
    :target_level: D
@@ -83,14 +83,14 @@ queue before the other is what the assumption forbids.
 
    The crate shall compile under ``no_std``.
 
-   Rationale: a crate can perform no I/O of its own, as ``UDSS_LLR_0113`` requires, and
+   Rationale: a crate can perform no I/O of its own, as ``UDSS_LLR_0001`` requires, and
    still be unusable on the targets this set is written for, because it names a type that
    only ``std`` provides. The two are independent, and this one is verified by a build for
    a target without ``std`` rather than by inspection: the compiler answers it exactly, and
    a regression shows up as a failed build rather than as a reviewer's omission.
 
 .. llr:: The crate declares no dependency that performs I/O
-   :id: UDSS_LLR_0306
+   :id: UDSS_LLR_0003
    :status: draft
    :integrity_level: QM
    :target_level: D
@@ -99,7 +99,7 @@ queue before the other is what the assumption forbids.
 
    The crate shall declare no dependency that performs I/O.
 
-   Rationale: ``UDSS_LLR_0113`` binds what the crate's own sources do, and a dependency's
+   Rationale: ``UDSS_LLR_0001`` binds what the crate's own sources do, and a dependency's
    sources are not the crate's; without this requirement the prohibition could be kept to
    the letter by a dependency that opened a socket. It is verified by review of the
    dependency graph rather than by a build, no build failing over a dependency that works.
@@ -109,7 +109,7 @@ queue before the other is what the assumption forbids.
    against.
 
 .. llr:: The session layer allocates no memory
-   :id: UDSS_LLR_0307
+   :id: UDSS_LLR_0004
    :status: draft
    :integrity_level: QM
    :target_level: D
@@ -119,22 +119,22 @@ queue before the other is what the assumption forbids.
    The session layer shall allocate no memory.
 
    Rationale: the quantities this set keeps state for are properties of the deployment
-   rather than of the protocol — the number of a client's channels, which ``UDSS_LLR_0201``
+   rather than of the protocol — the number of a client's channels, which ``UDSS_LLR_0121``
    makes the caller's to create and withdraw, the number of peers an instance addresses,
-   which ``UDSS_LLR_0271``'s associations are held per, and the number of responders
-   answering behind one functional address, which ``UDSS_LLR_0232``'s table is sized for —
+   which ``UDSS_LLR_0059``'s associations are held per, and the number of responders
+   answering behind one functional address, which ``UDSS_LLR_0139``'s table is sized for —
    so the crate cannot know them and the caller sizes them. Each of those requirements
    places its state in caller-supplied storage and gives this property as the reason; until
    it was stated, the reason was given in rationale alone, and an implementation could have
-   satisfied ``UDSS_LLR_0206`` with a heap-backed map without contradicting any requirement.
-   ``UDSS_LLR_0233``'s capacity indication, which exists because a responder table can fill,
+   satisfied ``UDSS_LLR_0126`` with a heap-backed map without contradicting any requirement.
+   ``UDSS_LLR_0140``'s capacity indication, which exists because a responder table can fill,
    would then describe a case that never arises. This requirement is verified alongside
-   ``UDSS_LLR_0305`` and ``UDSS_LLR_0306``, by the build configuration and the dependency
+   ``UDSS_LLR_0002`` and ``UDSS_LLR_0003``, by the build configuration and the dependency
    graph, rather than by a runtime test. Where a fact may be kept instead is
-   ``UDSS_LLR_0311``'s, which this requirement leaves with only two places to name.
+   ``UDSS_LLR_0008``'s, which this requirement leaves with only two places to name.
 
 .. llr:: The crate contains no unsafe code
-   :id: UDSS_LLR_0308
+   :id: UDSS_LLR_0005
    :status: draft
    :integrity_level: QM
    :target_level: D
@@ -151,7 +151,7 @@ queue before the other is what the assumption forbids.
    stated property rather than an unreviewed change to a build file.
 
 .. llr:: Every input is processed or rejected, and none aborts
-   :id: UDSS_LLR_0309
+   :id: UDSS_LLR_0006
    :status: draft
    :integrity_level: QM
    :target_level: D
@@ -159,10 +159,10 @@ queue before the other is what the assumption forbids.
    :tags: service-interface; sans-io
 
    For every input the caller supplies, the session layer shall either process it or reject
-   it under ``UDSS_LLR_0267``. No input shall cause the session layer to abort or to fail to
+   it under ``UDSS_LLR_0015``. No input shall cause the session layer to abort or to fail to
    return.
 
-   Rationale: this is the global form of the argument ``UDSS_LLR_0192`` makes locally for
+   Rationale: this is the global form of the argument ``UDSS_LLR_0019`` makes locally for
    one operation. Without it the set is silent on what happens to an input
    no requirement's conditions select, and silence there is indistinguishable from a
    panic — which in a diagnostic server is an unhandled failure of a safety-related
@@ -173,7 +173,7 @@ queue before the other is what the assumption forbids.
    are the means, and the requirement is the claim they serve.
 
 .. llr:: The session layer is deterministic
-   :id: UDSS_LLR_0310
+   :id: UDSS_LLR_0007
    :status: draft
    :integrity_level: QM
    :target_level: D
@@ -182,23 +182,23 @@ queue before the other is what the assumption forbids.
 
    The same sequence of inputs supplied from creation shall yield the same state and the
    same outputs, in the same order, except where a requirement in this set leaves an order
-   unspecified. ``UDSS_LLR_0187`` leaves one such order open: where one timestamp causes
+   unspecified. ``UDSS_LLR_0081`` leaves one such order open: where one timestamp causes
    several expiries, the order of the indications they produce is not specified.
 
    Rationale: this is what makes every requirement in the set testable without a network, a
-   clock or a scheduler — a property available because ``UDSS_LLR_0113`` leaves every
-   interaction with the vehicle network to the caller, and one ``UDSS_LLR_0294`` secures by
+   clock or a scheduler — a property available because ``UDSS_LLR_0001`` leaves every
+   interaction with the vehicle network to the caller, and one ``UDSS_LLR_0009`` secures by
    admitting no source of state but an input. The exception is
-   needed because a flat claim would contradict ``UDSS_LLR_0187``, which argues that several
+   needed because a flat claim would contradict ``UDSS_LLR_0081``, which argues that several
    expiries on one timestamp need no order for the state they leave; an implementation is
    free there, and a test must be written to accept either order rather than to fix the one
-   it happened to observe. ``UDSS_LLR_0135`` states the slice of this claim that concerns
+   it happened to observe. ``UDSS_LLR_0073`` states the slice of this claim that concerns
    the message payload, as an equivalence over pairs of inputs differing only in that
    payload; that is a statement about which inputs may differ, this one about repeating the
    same inputs, and neither implies the other.
 
 .. llr:: All state lives in the instance or in caller-supplied storage
-   :id: UDSS_LLR_0311
+   :id: UDSS_LLR_0008
    :status: draft
    :integrity_level: QM
    :target_level: D
@@ -208,19 +208,19 @@ queue before the other is what the assumption forbids.
    All state the session layer keeps shall live in the instance or in storage the caller
    supplies. The session layer shall retain nothing else between inputs.
 
-   Rationale: ``UDSS_LLR_0307`` forbids the session layer to allocate; this fixes where what
+   Rationale: ``UDSS_LLR_0004`` forbids the session layer to allocate; this fixes where what
    it keeps lives instead, and adds that it retains nothing else — the part a static or a
    process-wide table would break without allocating. Together they close the inventory, so
    that a reader looking for
    where a fact is kept has two places to look and no third: the instance, as
-   ``UDSS_LLR_0212`` and ``UDSS_LLR_0221`` hold the server's state, or caller-supplied
-   storage, as ``UDSS_LLR_0206``, ``UDSS_LLR_0271``, ``UDSS_LLR_0227`` and ``UDSS_LLR_0228``
+   ``UDSS_LLR_0104`` and ``UDSS_LLR_0082`` hold the server's state, or caller-supplied
+   storage, as ``UDSS_LLR_0126``, ``UDSS_LLR_0059``, ``UDSS_LLR_0150`` and ``UDSS_LLR_0151``
    hold the rest. That the inventory is complete is at present recorded only in
    :doc:`open-questions`, a page written to be deleted when its last entry closes, which
    would take the only statement of closure with it.
 
 .. llr:: Every input is supplied by the caller
-   :id: UDSS_LLR_0294
+   :id: UDSS_LLR_0009
    :status: draft
    :integrity_level: QM
    :target_level: D
@@ -237,22 +237,22 @@ queue before the other is what the assumption forbids.
    reach the session layer except through the inputs the caller gives it.
 
 .. llr:: The inputs the caller supplies
-   :id: UDSS_LLR_0295
+   :id: UDSS_LLR_0010
    :status: draft
    :integrity_level: QM
    :target_level: D
    :origin: derived
    :tags: service-interface; sans-io
 
-   The inputs the caller supplies shall include ``S_Data.req``, as ``UDSS_LLR_0139``
-   defines it; ``T_Data.ind``, ``T_DataSOM.ind`` and ``T_Data.conf``, as ``UDSS_LLR_0244``
-   defines them; a timestamp, as ``UDSS_LLR_0193`` defines it, accompanying every other
-   input and also supplied on its own; the protocol parameters of ``UDSS_LLR_0259``; the
-   completion report of ``UDSS_LLR_0136``; the supply of channel storage under
-   ``UDSS_LLR_0201`` and its withdrawal under ``UDSS_LLR_0205``; and the channel reset and
-   keep-alive release of ``UDSS_LLR_0277`` and ``UDSS_LLR_0184``. The last four, and the
+   The inputs the caller supplies shall include ``S_Data.req``, as ``UDSS_LLR_0021``
+   defines it; ``T_Data.ind``, ``T_DataSOM.ind`` and ``T_Data.conf``, as ``UDSS_LLR_0022``
+   defines them; a timestamp, as ``UDSS_LLR_0020`` defines it, accompanying every other
+   input and also supplied on its own; the protocol parameters of ``UDSS_LLR_0040``; the
+   completion report of ``UDSS_LLR_0074``; the supply of channel storage under
+   ``UDSS_LLR_0121`` and its withdrawal under ``UDSS_LLR_0125``; and the channel reset and
+   keep-alive release of ``UDSS_LLR_0180`` and ``UDSS_LLR_0184``. The last four, and the
    setting of a protocol parameter, are acts of the caller rather than primitives; each
-   shall be accompanied by a timestamp as ``UDSS_LLR_0193`` requires, and ``UDSS_LLR_0187``
+   shall be accompanied by a timestamp as ``UDSS_LLR_0020`` requires, and ``UDSS_LLR_0081``
    shall order the expiries that timestamp causes, with their indications, before the act.
    Where a requirement says such an act produces no output, that is said of the act alone.
 
@@ -261,11 +261,11 @@ queue before the other is what the assumption forbids.
    so that whether an act carries a timestamp is not left to inference, a reset delivered
    at the instant a timer expires otherwise being read by one implementation as swallowing
    the expiry's indication and by another as following it. A timestamp may be supplied on
-   its own because a timer can expire while no message is exchanged, and ``UDSS_LLR_0112``
+   its own because a timer can expire while no message is exchanged, and ``UDSS_LLR_0100``
    requires the server to act on that expiry.
 
 .. llr:: Outputs are retrieved, not pushed
-   :id: UDSS_LLR_0292
+   :id: UDSS_LLR_0011
    :status: draft
    :integrity_level: QM
    :target_level: D
@@ -283,7 +283,7 @@ queue before the other is what the assumption forbids.
    which take no caller-supplied trait object or function, rather than by a runtime test.
 
 .. llr:: The outputs the session layer produces
-   :id: UDSS_LLR_0293
+   :id: UDSS_LLR_0012
    :status: draft
    :integrity_level: QM
    :target_level: D
@@ -291,15 +291,15 @@ queue before the other is what the assumption forbids.
    :tags: service-interface; sans-io
 
    The outputs the session layer produces for the caller to retrieve shall include
-   ``S_Data.ind`` and ``S_Data.conf``, as ``UDSS_LLR_0139`` defines them, and
-   ``T_Data.req``, as ``UDSS_LLR_0244`` defines it.
+   ``S_Data.ind`` and ``S_Data.conf``, as ``UDSS_LLR_0021`` defines them, and
+   ``T_Data.req``, as ``UDSS_LLR_0022`` defines it.
 
    Rationale: the enumeration is open so that outputs the standard does not define, such
-   as the session-timeout indication required by ``UDSS_LLR_0112``, can be delivered by
+   as the session-timeout indication required by ``UDSS_LLR_0100``, can be delivered by
    the same mechanism as the standard's own primitives.
 
 .. llr:: The session layer retains no message payload
-   :id: UDSS_LLR_0290
+   :id: UDSS_LLR_0013
    :status: draft
    :integrity_level: QM
    :target_level: D
@@ -309,14 +309,14 @@ queue before the other is what the assumption forbids.
    The session layer shall not copy or retain the contents of ``S_Data`` or ``T_Data``
    beyond the processing of the input that carried them.
 
-   Rationale: the crate is ``no_std`` and, as ``UDSS_LLR_0307`` requires, allocation-free,
+   Rationale: the crate is ``no_std`` and, as ``UDSS_LLR_0004`` requires, allocation-free,
    so it cannot own a buffer whose size it does not know. Retaining a payload would also
    imply a retransmission buffer, and no requirement in this set obliges the session layer
    to retransmit anything. The requirement is verified by inspection of the crate's types,
    which hold no buffer in which a payload could be retained, rather than by a runtime test.
 
 .. llr:: An output refers to caller-owned data
-   :id: UDSS_LLR_0291
+   :id: UDSS_LLR_0014
    :status: draft
    :integrity_level: QM
    :target_level: D
@@ -325,14 +325,14 @@ queue before the other is what the assumption forbids.
 
    An output that refers to message data shall refer to data owned by the caller.
 
-   Rationale: ``UDSS_LLR_0124`` maps ``S_Data`` onto ``T_Data``, so the two names denote
+   Rationale: ``UDSS_LLR_0047`` maps ``S_Data`` onto ``T_Data``, so the two names denote
    the same octets travelling in opposite directions; this requirement binds both. The
    requirement is verified by inspection of the crate's types, which borrow the caller's
    data for the duration of one input rather than copying it, so what an output refers to
    is always the caller's own bytes, rather than by a runtime test.
 
 .. llr:: A rejected input produces no output and changes nothing
-   :id: UDSS_LLR_0267
+   :id: UDSS_LLR_0015
    :status: draft
    :integrity_level: QM
    :target_level: D
@@ -342,12 +342,12 @@ queue before the other is what the assumption forbids.
    Where a requirement in this set requires the session layer to reject an input supplied
    by the caller, the session layer shall report the rejection to the caller, shall produce
    no output to the application and no output to the transport layer, and shall leave its
-   state as the expiries of the accompanying timestamp left it under ``UDSS_LLR_0187`` and
+   state as the expiries of the accompanying timestamp left it under ``UDSS_LLR_0081`` and
    otherwise unchanged.
 
    Rationale: requirements throughout this set refuse an input rather than react to it, and
    without this requirement none would say what refusal means. A rejection cannot be
-   reported as an ``S_Data.conf``: ``UDSS_LLR_0132`` reserves every ``S_Result`` value
+   reported as an ``S_Data.conf``: ``UDSS_LLR_0056`` reserves every ``S_Result`` value
    other than ``S_OK`` for an error detected by a lower layer, and no lower layer is
    involved, no message having been transmitted. Nor is it produced for the caller to
    retrieve on the application's behalf, as an output is; a rejection is addressed to the
@@ -356,7 +356,7 @@ queue before the other is what the assumption forbids.
    Leaving the state unchanged is what makes the rejection recoverable.
 
 .. llr:: What a rejection report carries
-   :id: UDSS_LLR_0268
+   :id: UDSS_LLR_0016
    :status: draft
    :integrity_level: QM
    :target_level: D
@@ -368,8 +368,8 @@ queue before the other is what the assumption forbids.
    reject the same input, the one report shall state every cause and carry the content
    each of them requires.
 
-   Rationale: the report carries content because ``UDSS_LLR_0177`` has it state the time
-   remaining before a postponed request may be sent and ``UDSS_LLR_0182`` the cause or
+   Rationale: the report carries content because ``UDSS_LLR_0172`` has it state the time
+   remaining before a postponed request may be sent and ``UDSS_LLR_0179`` the cause or
    causes of a refused repeat.
 
 Timebase
@@ -380,7 +380,7 @@ timestamp is and where it comes from; :doc:`llr-timer-model` fixes what a timer 
 one.
 
 .. llr:: The session layer reads no clock
-   :id: UDSS_LLR_0190
+   :id: UDSS_LLR_0017
    :status: draft
    :integrity_level: QM
    :target_level: D
@@ -395,7 +395,7 @@ one.
    arbitrarily, and lets each deployment choose the time source its platform provides.
 
 .. llr:: A timestamp is a 32-bit unsigned count of milliseconds
-   :id: UDSS_LLR_0191
+   :id: UDSS_LLR_0018
    :status: draft
    :integrity_level: QM
    :target_level: D
@@ -411,7 +411,7 @@ one.
    be tested. A 32-bit millisecond counter wraps after roughly 49 days.
 
 .. llr:: An interval is the modular difference of two timestamps
-   :id: UDSS_LLR_0192
+   :id: UDSS_LLR_0019
    :status: draft
    :integrity_level: QM
    :target_level: D
@@ -430,7 +430,7 @@ one.
    timers early, and the session layer cannot distinguish that from a legitimate wrap.
 
 .. llr:: Every input is accompanied by a timestamp
-   :id: UDSS_LLR_0193
+   :id: UDSS_LLR_0020
    :status: draft
    :integrity_level: QM
    :target_level: D
@@ -450,7 +450,7 @@ Service primitives
 ------------------
 
 .. llr:: The service interface comprises three service primitives
-   :id: UDSS_LLR_0139
+   :id: UDSS_LLR_0021
    :status: draft
    :integrity_level: QM
    :target_level: D
@@ -468,7 +468,7 @@ Service primitives
      status of a preceding ``S_Data.req``.
 
 .. llr:: The session layer exchanges four protocol data units with the transport layer
-   :id: UDSS_LLR_0244
+   :id: UDSS_LLR_0022
    :status: draft
    :integrity_level: QM
    :target_level: D
@@ -492,7 +492,7 @@ Service primitives
    ``T_Data.req`` that starts the final response.
 
 .. llr:: T_DataSOM.ind carries addressing and no result
-   :id: UDSS_LLR_0245
+   :id: UDSS_LLR_0023
    :status: draft
    :integrity_level: QM
    :target_level: D
@@ -507,13 +507,13 @@ Service primitives
    standard does not say. Clause 7.3 keeps the indication inside the session layer and
    defines no mapping for it onto an S_PDU; its Table 2 lists the transport parameters a
    message carries without saying which of them the start-of-message reports. The
-   addressing is what ``UDSS_LLR_0199``'s pairing needs. A result is excluded because a
+   addressing is what ``UDSS_LLR_0045``'s pairing needs. A result is excluded because a
    start-of-message reports a reception that has neither succeeded nor failed; the outcome
    is reported by the completion, and every requirement in this set that acts on a failed
    reception acts on a ``T_Data.ind``.
 
 .. llr:: T_Data.req carries the request's parameters
-   :id: UDSS_LLR_0246
+   :id: UDSS_LLR_0024
    :status: draft
    :integrity_level: QM
    :target_level: D
@@ -522,10 +522,10 @@ Service primitives
    :tags: service-interface; primitives
 
    ``T_Data.req`` shall carry every parameter of the ``S_Data.req`` it is produced from,
-   mapped as ``UDSS_LLR_0124`` requires.
+   mapped as ``UDSS_LLR_0047`` requires.
 
 .. llr:: T_Data.conf carries addressing and a result
-   :id: UDSS_LLR_0247
+   :id: UDSS_LLR_0025
    :status: draft
    :integrity_level: QM
    :target_level: D
@@ -535,7 +535,7 @@ Service primitives
 
    ``T_Data.conf`` shall carry ``T_Ptype``, ``T_AI[TAtype]``, ``T_AI[SA]``, ``T_AI[TA]``,
    ``T_AI[AE]`` where ``T_Ptype`` requires it, and ``T_Result``, mapped onto the session
-   layer's parameters as ``UDSS_LLR_0124`` requires; it shall carry no data and no length.
+   layer's parameters as ``UDSS_LLR_0047`` requires; it shall carry no data and no length.
 
    ``T_Data.conf``'s parameters are stated because the standard states them only by
    mapping: clause 7.6 has the ``S_Data.conf`` identify the ``S_Data.req`` it confirms by
@@ -544,7 +544,7 @@ Service primitives
    the addressing and the result and nothing else.
 
 .. llr:: The caller identifies the channel of every inbound indication at a client
-   :id: UDSS_LLR_0248
+   :id: UDSS_LLR_0026
    :status: draft
    :integrity_level: QM
    :target_level: D
@@ -552,7 +552,7 @@ Service primitives
    :tags: service-interface; channel
 
    At a client, every ``T_DataSOM.ind`` and ``T_Data.ind`` shall identify the logical
-   communication channel it belongs to, supplied by the caller; ``UDSS_LLR_0201`` defines
+   communication channel it belongs to, supplied by the caller; ``UDSS_LLR_0121`` defines
    the channel.
 
    Rationale: the caller identifies the channel because the session layer cannot. A server
@@ -564,7 +564,7 @@ Service primitives
    the request knows.
 
 .. llr:: An indication naming no existing channel is rejected
-   :id: UDSS_LLR_0249
+   :id: UDSS_LLR_0027
    :status: draft
    :integrity_level: QM
    :target_level: D
@@ -572,28 +572,28 @@ Service primitives
    :tags: service-interface; channel
 
    An indication identifying a channel the client does not have shall be rejected as
-   ``UDSS_LLR_0267`` defines.
+   ``UDSS_LLR_0015`` defines.
 
    Rationale: naming a channel that does not exist is a caller error, not an input.
 
 .. llr:: The identified channel is not checked against the indication's addressing
-   :id: UDSS_LLR_0250
+   :id: UDSS_LLR_0028
    :status: draft
    :integrity_level: QM
    :target_level: D
    :origin: derived
    :tags: service-interface; channel
 
-   The session layer shall not verify the channel identified under ``UDSS_LLR_0248``
+   The session layer shall not verify the channel identified under ``UDSS_LLR_0026``
    against the indication's addressing.
 
    Rationale: the channel named is trusted rather than checked because on a functional
    channel the response's addressing does not name the channel, and a check on a physical
-   channel alone would catch a misrouting only by coincidence; ``UDSS_LLR_0206`` records
+   channel alone would catch a misrouting only by coincidence; ``UDSS_LLR_0126`` records
    the residual.
 
 .. llr:: An instance has one role, fixed at creation
-   :id: UDSS_LLR_0263
+   :id: UDSS_LLR_0029
    :status: draft
    :integrity_level: QM
    :target_level: D
@@ -613,82 +613,82 @@ Service primitives
    meaning, and state held for one role has none in the other.
 
 .. llr:: The inputs a server rejects
-   :id: UDSS_LLR_0264
+   :id: UDSS_LLR_0030
    :status: draft
    :integrity_level: QM
    :target_level: D
    :origin: derived
    :tags: service-interface; role
 
-   A server shall reject, as ``UDSS_LLR_0267`` defines:
+   A server shall reject, as ``UDSS_LLR_0015`` defines:
 
    * an ``S_Data.req`` whose classification states kind ``request``;
    * a ``T_Data.ind`` or ``T_DataSOM.ind`` whose classification states kind ``final
      response`` or ``response pending``;
    * a ``T_DataSOM.ind`` or ``T_Data.ind`` identifying a logical communication channel;
-   * the supply or withdrawal of channel storage under ``UDSS_LLR_0201``;
-   * the channel reset of ``UDSS_LLR_0277``;
+   * the supply or withdrawal of channel storage under ``UDSS_LLR_0121``;
+   * the channel reset of ``UDSS_LLR_0180``;
    * the keep-alive release of ``UDSS_LLR_0184``.
 
    Rationale: the rejected inputs are listed rather than described, because "an input
    whose form belongs to the other role" is not decidable for an ``S_Data.req``, whose
-   form ``UDSS_LLR_0251`` defines without a role: a server asked to transmit a request
+   form ``UDSS_LLR_0065`` defines without a role: a server asked to transmit a request
    would otherwise be accepted by one implementation and refused by another. The
    reception primitives are listed for the same reason: no server requirement conditions on
    receiving a response, so one implementation would forward such an indication under
-   ``UDSS_LLR_0137`` and another refuse it. The remaining inputs — an indication
+   ``UDSS_LLR_0036`` and another refuse it. The remaining inputs — an indication
    identifying a channel, and the supply or withdrawal of channel storage, the channel
    reset and the keep-alive release that only a client performs — belong to the client
    alone; they are listed here rather than left to each owning document because a rule
    split between the two places was honoured by neither.
 
 .. llr:: The inputs a client rejects
-   :id: UDSS_LLR_0265
+   :id: UDSS_LLR_0031
    :status: draft
    :integrity_level: QM
    :target_level: D
    :origin: derived
    :tags: service-interface; role
 
-   A client shall reject, as ``UDSS_LLR_0267`` defines:
+   A client shall reject, as ``UDSS_LLR_0015`` defines:
 
    * an ``S_Data.req`` whose classification states kind ``final response`` or ``response
      pending``;
-   * the completion report of ``UDSS_LLR_0136``;
+   * the completion report of ``UDSS_LLR_0074``;
    * a ``T_Data.ind`` or ``T_DataSOM.ind`` whose classification states kind ``request``.
 
    Rationale: the rejected inputs are listed rather than described, because "an input
    whose form belongs to the other role" is not decidable for an ``S_Data.req`` or the
-   completion report, whose forms ``UDSS_LLR_0251`` and ``UDSS_LLR_0136`` define without a
+   completion report, whose forms ``UDSS_LLR_0065`` and ``UDSS_LLR_0074`` define without a
    role: a client told a request it never received is complete would otherwise be
    accepted by one implementation and refused by another. The reception primitives are
    listed for the same reason: no client requirement conditions on receiving a request,
-   so one implementation would forward such an indication under ``UDSS_LLR_0137`` and
+   so one implementation would forward such an indication under ``UDSS_LLR_0036`` and
    another refuse it. These inputs are listed here rather than left to each owning
    document because a rule split between the two places was honoured by neither.
 
 .. llr:: What creation supplies
-   :id: UDSS_LLR_0266
+   :id: UDSS_LLR_0032
    :status: draft
    :integrity_level: QM
    :target_level: D
    :origin: derived
    :tags: service-interface; role
 
-   Creation of a server shall supply the association storage of ``UDSS_LLR_0271`` and the
+   Creation of a server shall supply the association storage of ``UDSS_LLR_0059`` and the
    ``tS3_Server``, ``tP2_Server_Max`` and ``tP2*_Server_Max`` parameters of
-   ``UDSS_LLR_0261``. Creation of a client shall supply the keep-alive mode of
-   ``UDSS_LLR_0162`` and, in functional keep-alive, the storage of ``UDSS_LLR_0227`` and
-   reload parameter of ``UDSS_LLR_0229``; a client's channel storage, holding the
-   association and the parameters of ``UDSS_LLR_0300``, ``UDSS_LLR_0229`` and
-   ``UDSS_LLR_0240`` as ``UDSS_LLR_0206`` states, is supplied later under
-   ``UDSS_LLR_0201``.
+   ``UDSS_LLR_0042``. Creation of a client shall supply the keep-alive mode of
+   ``UDSS_LLR_0149`` and, in functional keep-alive, the storage of ``UDSS_LLR_0150`` and
+   reload parameter of ``UDSS_LLR_0152``; a client's channel storage, holding the
+   association and the parameters of ``UDSS_LLR_0132``, ``UDSS_LLR_0152`` and
+   ``UDSS_LLR_0165`` as ``UDSS_LLR_0126`` states, is supplied later under
+   ``UDSS_LLR_0121``.
 
    Rationale: what creation supplies is gathered here because it was stated in four
    places and enumerated in none, and a tester building the first test must collect it.
 
 .. llr:: S_Data.req requests transmission of a message
-   :id: UDSS_LLR_0118
+   :id: UDSS_LLR_0033
    :status: draft
    :integrity_level: QM
    :target_level: D
@@ -706,7 +706,7 @@ Service primitives
    ``S_Data.conf``.
 
 .. llr:: S_Data.ind delivers a received message to the application
-   :id: UDSS_LLR_0296
+   :id: UDSS_LLR_0034
    :status: draft
    :integrity_level: QM
    :target_level: D
@@ -721,7 +721,7 @@ Service primitives
    message was received.
 
 .. llr:: S_Data and S_Length are valid only on a successful reception
-   :id: UDSS_LLR_0297
+   :id: UDSS_LLR_0035
    :status: draft
    :integrity_level: QM
    :target_level: D
@@ -733,7 +733,7 @@ Service primitives
    is ``S_OK``.
 
 .. llr:: A received message is indicated to the application
-   :id: UDSS_LLR_0137
+   :id: UDSS_LLR_0036
    :status: draft
    :integrity_level: QM
    :target_level: D
@@ -743,23 +743,23 @@ Service primitives
 
    On ``T_Data.ind``, whether it reports a successful or an unsuccessful reception, the
    session layer shall produce an ``S_Data.ind`` whose parameters are those of the
-   received T_PDU mapped as ``UDSS_LLR_0124`` requires.
+   received T_PDU mapped as ``UDSS_LLR_0047`` requires.
 
    Both outcomes produce an indication because ``S_Result`` exists to report them:
-   ``UDSS_LLR_0297`` makes ``S_Data`` and ``S_Length`` valid only where ``S_Result`` is
+   ``UDSS_LLR_0035`` makes ``S_Data`` and ``S_Length`` valid only where ``S_Result`` is
    ``S_OK``, which presupposes indications where it is not, and a client cannot detect a
    failed reception that is never indicated to it. Clause 8.10 requires the error result to
    be issued to the service user on the receiver side as on the sender side, and
    ISO 14229-2:2021 9.7 Table 9 obliges the client to repeat a request whose reception
    failed, which it cannot do unshown. Table 10 obliges the server only to ignore such a
-   request, which ``UDSS_LLR_0109`` reads as acting on nothing rather than as withholding
+   request, which ``UDSS_LLR_0092`` reads as acting on nothing rather than as withholding
    the indication. No requirement in the set withholds an indication. A ``T_Data.ind``
-   rejected under ``UDSS_LLR_0249``, ``UDSS_LLR_0264``, ``UDSS_LLR_0265``, ``UDSS_LLR_0255``,
-   ``UDSS_LLR_0257`` or ``UDSS_LLR_0258`` is not withheld but refused: ``UDSS_LLR_0267``
+   rejected under ``UDSS_LLR_0027``, ``UDSS_LLR_0030``, ``UDSS_LLR_0031``, ``UDSS_LLR_0069``,
+   ``UDSS_LLR_0071`` or ``UDSS_LLR_0072`` is not withheld but refused: ``UDSS_LLR_0015``
    governs it and this requirement does not reach it.
 
 .. llr:: S_Data.conf confirms a preceding S_Data.req
-   :id: UDSS_LLR_0120
+   :id: UDSS_LLR_0037
    :status: draft
    :integrity_level: QM
    :target_level: D
@@ -774,7 +774,7 @@ Service primitives
    report its outcome.
 
 .. llr:: T_DataSOM.ind is not forwarded to the application
-   :id: UDSS_LLR_0121
+   :id: UDSS_LLR_0038
    :status: draft
    :integrity_level: QM
    :target_level: D
@@ -792,7 +792,7 @@ Service primitives
    input.
 
 .. llr:: T_Data.conf is forwarded to the application
-   :id: UDSS_LLR_0122
+   :id: UDSS_LLR_0039
    :status: draft
    :integrity_level: QM
    :target_level: D
@@ -809,7 +809,7 @@ Service primitives
    or a bit rate change.
 
 .. llr:: Protocol parameters are set through the service interface
-   :id: UDSS_LLR_0259
+   :id: UDSS_LLR_0040
    :status: draft
    :integrity_level: QM
    :target_level: D
@@ -824,7 +824,7 @@ Service primitives
    transmission and reception.
 
 .. llr:: Every timing parameter is a 32-bit value in the timestamp's unit
-   :id: UDSS_LLR_0260
+   :id: UDSS_LLR_0041
    :status: draft
    :integrity_level: QM
    :target_level: D
@@ -832,15 +832,15 @@ Service primitives
    :tags: service-interface; timing
 
    Every timing parameter that a requirement in this set conditions on, including the
-   ``tS3_Server`` timeout that ``UDSS_LLR_0112`` compares elapsed time against, shall be
-   supplied as a protocol parameter and shall be expressed in the unit ``UDSS_LLR_0191``
+   ``tS3_Server`` timeout that ``UDSS_LLR_0100`` compares elapsed time against, shall be
+   supplied as a protocol parameter and shall be expressed in the unit ``UDSS_LLR_0018``
    gives for a timestamp, as a 32-bit unsigned value.
 
    Rationale: the width matches the timestamp's because an interval is a modular
    difference of timestamps and a value beyond that range could never be reached.
 
 .. llr:: A parameter a timer loads is supplied at creation with no default
-   :id: UDSS_LLR_0261
+   :id: UDSS_LLR_0042
    :status: draft
    :integrity_level: QM
    :target_level: D
@@ -858,7 +858,7 @@ Service primitives
    would have to be loaded with a value the set declines to choose.
 
 .. llr:: A parameter may be set again at any time
-   :id: UDSS_LLR_0262
+   :id: UDSS_LLR_0043
    :status: draft
    :integrity_level: QM
    :target_level: D
@@ -867,10 +867,10 @@ Service primitives
 
    A protocol parameter may be set again at any time, and a change shall affect only a
    timer set running after it; a timer already running keeps the value it was loaded
-   with, under ``UDSS_LLR_0195``.
+   with, under ``UDSS_LLR_0076``.
 
    Rationale: a caller correcting a parameter must not disturb a window a timer already
-   running holds a peer to. ``UDSS_LLR_0195`` is the mechanism that leaves that value
+   running holds a peer to. ``UDSS_LLR_0076`` is the mechanism that leaves that value
    alone; this requirement states the outcome it serves.
 
 Message and peer identity
@@ -880,7 +880,7 @@ Two definitions the whole set depends on: which two addressing identities are th
 peer, and how a multi-frame message's start is matched to its completion.
 
 .. llr:: Peer identity and its equality
-   :id: UDSS_LLR_0198
+   :id: UDSS_LLR_0044
    :status: draft
    :integrity_level: QM
    :target_level: D
@@ -893,9 +893,9 @@ peer, and how a multi-frame message's start is matched to its completion.
    addresses are equal; an identity that carries an extension is never equal to one that
    does not.
 
-   Rationale: ``UDSS_LLR_0199`` identifies a responder by this pair, ``UDSS_LLR_0221``
-   records the controlling client as one, ``UDSS_LLR_0212`` records the request in
-   progress as one, and ``UDSS_LLR_0232`` keys the responder table on one. Stated once,
+   Rationale: ``UDSS_LLR_0045`` identifies a responder by this pair, ``UDSS_LLR_0082``
+   records the controlling client as one, ``UDSS_LLR_0104`` records the request in
+   progress as one, and ``UDSS_LLR_0139`` keys the responder table on one. Stated once,
    the four cannot drift apart. The extension is part of the identity because two clients
    behind one remote address can differ in it. Matching a confirmation's ``S_AI[TA]`` and
    ``S_AI[AE]`` against a recorded ``S_AI[SA]`` and ``S_AI[AE]`` reads the extension as the
@@ -904,7 +904,7 @@ peer, and how a multi-frame message's start is matched to its completion.
    layer's, and the reading is recorded here.
 
 .. llr:: First indication, completion and the start-of-message pairing
-   :id: UDSS_LLR_0199
+   :id: UDSS_LLR_0045
    :status: draft
    :integrity_level: QM
    :target_level: D
@@ -914,7 +914,7 @@ peer, and how a multi-frame message's start is matched to its completion.
 
    A ``T_DataSOM.ind`` shall open a start-of-message on its channel for the **responder**
    identified by its ``S_AI[SA]`` and, where ``S_Mtype`` carries one, its ``S_AI[AE]``,
-   as ``UDSS_LLR_0198`` forms and equates an identity, leaving one already open for that
+   as ``UDSS_LLR_0044`` forms and equates an identity, leaving one already open for that
    responder as it is. A ``T_Data.ind`` shall **complete** the open start-of-message on the
    same channel from the same responder where one exists, closing it, and shall otherwise
    report a **single-frame** message.
@@ -927,13 +927,13 @@ peer, and how a multi-frame message's start is matched to its completion.
    Table 3 makes single-frame against multi-frame the transport's distinction, and on a
    functional channel the multi-frame responses of several servers may interleave, so
    matching has to name the responder. The state this costs is stated with the client's
-   requirements, in ``UDSS_LLR_0232`` and ``UDSS_LLR_0206``; the server needs none of it.
+   requirements, in ``UDSS_LLR_0139`` and ``UDSS_LLR_0126``; the server needs none of it.
 
 Parameter mapping
 -----------------
 
 .. llr:: Parameter validity in each service primitive
-   :id: UDSS_LLR_0123
+   :id: UDSS_LLR_0046
    :status: draft
    :integrity_level: QM
    :target_level: D
@@ -1004,11 +1004,11 @@ Parameter mapping
    ``S_AI[AE]`` is subject to a further condition that this table does not state. Table 1
    marks it valid in all three primitives unconditionally, while ISO 14229-2:2021 8.3
    includes it in the address information only for the remote message types. Per
-   ``UDSS_LLR_0125`` and ``UDSS_LLR_0129`` it is present only where ``S_Mtype`` is
+   ``UDSS_LLR_0048`` and ``UDSS_LLR_0052`` it is present only where ``S_Mtype`` is
    ``RDiag`` or ``SecureRDiag``.
 
 .. llr:: Session layer parameters map onto transport layer parameters
-   :id: UDSS_LLR_0124
+   :id: UDSS_LLR_0047
    :status: draft
    :integrity_level: QM
    :target_level: D
@@ -1062,13 +1062,13 @@ that width is normative. Where it gives only a value set, as the enumerations do
 in-memory representation is an implementation choice.
 
 That is a deliberate departure from 8.2 for the three enumerated parameters,
-``UDSS_LLR_0125``, ``UDSS_LLR_0126`` and ``UDSS_LLR_0132``. The clause makes ``Enum`` an
+``UDSS_LLR_0048``, ``UDSS_LLR_0049`` and ``UDSS_LLR_0056``. The clause makes ``Enum`` an
 8-bit type; this crate neither encodes nor decodes those parameters on the wire, so their
 width constrains nothing observable, and fixing it would forbid a Rust representation that
 is safer and no larger. The value sets are transcribed exactly.
 
 .. llr:: S_Mtype identifies the message type and the address information present
-   :id: UDSS_LLR_0125
+   :id: UDSS_LLR_0048
    :status: draft
    :integrity_level: QM
    :target_level: D
@@ -1084,7 +1084,7 @@ is safer and no larger. The value sets are transcribed exactly.
    ``SecureRDiag``, the address information shall additionally include ``S_AE``.
 
 .. llr:: S_TAtype selects the communication model
-   :id: UDSS_LLR_0126
+   :id: UDSS_LLR_0049
    :status: draft
    :integrity_level: QM
    :target_level: D
@@ -1097,7 +1097,7 @@ is safer and no larger. The value sets are transcribed exactly.
    ``functional`` shall denote one-to-many communication.
 
 .. llr:: S_TA carries the target address
-   :id: UDSS_LLR_0127
+   :id: UDSS_LLR_0050
    :status: draft
    :integrity_level: QM
    :target_level: D
@@ -1109,7 +1109,7 @@ is safer and no larger. The value sets are transcribed exactly.
    shall encode the receiving session layer protocol entity.
 
 .. llr:: S_SA carries the source address
-   :id: UDSS_LLR_0128
+   :id: UDSS_LLR_0051
    :status: draft
    :integrity_level: QM
    :target_level: D
@@ -1121,7 +1121,7 @@ is safer and no larger. The value sets are transcribed exactly.
    shall encode the sending session layer protocol entity.
 
 .. llr:: S_AE carries the address extension
-   :id: UDSS_LLR_0129
+   :id: UDSS_LLR_0052
    :status: draft
    :integrity_level: QM
    :target_level: D
@@ -1134,7 +1134,7 @@ is safer and no larger. The value sets are transcribed exactly.
    ``S_Mtype`` is ``RDiag`` or ``SecureRDiag``.
 
 .. llr:: S_Length carries the length of S_Data
-   :id: UDSS_LLR_0298
+   :id: UDSS_LLR_0053
    :status: draft
    :integrity_level: QM
    :target_level: D
@@ -1147,7 +1147,7 @@ is safer and no larger. The value sets are transcribed exactly.
    received.
 
 .. llr:: A length differing from the data supplied is rejected
-   :id: UDSS_LLR_0299
+   :id: UDSS_LLR_0054
    :status: draft
    :integrity_level: QM
    :target_level: D
@@ -1155,16 +1155,16 @@ is safer and no larger. The value sets are transcribed exactly.
    :tags: service-interface; parameters
 
    On ``S_Data.req``, an ``S_Length`` differing from the number of bytes of ``S_Data``
-   supplied shall be rejected as ``UDSS_LLR_0267`` defines; an interface that carries the
+   supplied shall be rejected as ``UDSS_LLR_0015`` defines; an interface that carries the
    two as one value satisfies this without a check.
 
    Rationale: the rejection is the set's own, not clause 8.8's, which defines the
-   parameter and says nothing of a mismatch. Without it ``UDSS_LLR_0118``'s "``S_Length``
+   parameter and says nothing of a mismatch. Without it ``UDSS_LLR_0033``'s "``S_Length``
    bytes of ``S_Data``" would be satisfiable two ways by a caller that supplied them
    separately.
 
 .. llr:: S_Data carries the message data
-   :id: UDSS_LLR_0131
+   :id: UDSS_LLR_0055
    :status: draft
    :integrity_level: QM
    :target_level: D
@@ -1176,7 +1176,7 @@ is safer and no larger. The value sets are transcribed exactly.
    content of the request or response message to be transmitted or received.
 
 .. llr:: S_Result reports the outcome of a service execution
-   :id: UDSS_LLR_0132
+   :id: UDSS_LLR_0056
    :status: draft
    :integrity_level: QM
    :target_level: D
@@ -1207,7 +1207,7 @@ requirements are derived: ISO 14229-2 states the conditions in terms of message 
 and leaves the means of recognising it to the implementation.
 
 .. llr:: Message classification is supplied by the caller
-   :id: UDSS_LLR_0269
+   :id: UDSS_LLR_0057
    :status: draft
    :integrity_level: QM
    :target_level: D
@@ -1230,12 +1230,12 @@ and leaves the means of recognising it to the implementation.
    The classification is carried on ``T_Data.ind`` rather than on ``S_Data.ind`` because a
    client must recognise a response-pending response at reception, before the application
    has seen it. It is carried on ``T_DataSOM.ind`` for the same reason in the other
-   direction: ``UDSS_LLR_0104`` conditions on a start-of-message that begins a request. A
+   direction: ``UDSS_LLR_0087`` conditions on a start-of-message that begins a request. A
    caller supplying a start-of-message indication holds its first frame, so the
    classification is available there.
 
 .. llr:: The kind required on a failed reception addressed to a server
-   :id: UDSS_LLR_0270
+   :id: UDSS_LLR_0058
    :status: draft
    :integrity_level: QM
    :target_level: D
@@ -1243,17 +1243,17 @@ and leaves the means of recognising it to the implementation.
    :tags: service-interface; classification
 
    Where a ``T_Data.ind`` reports an unsuccessful reception, the message classification it
-   carries under ``UDSS_LLR_0269`` shall state kind ``request`` where the message was
+   carries under ``UDSS_LLR_0057`` shall state kind ``request`` where the message was
    addressed to a server, and may otherwise omit the kind.
 
-   Rationale: ``UDSS_LLR_0109`` conditions on a failed reception of a request, so the kind
+   Rationale: ``UDSS_LLR_0092`` conditions on a failed reception of a request, so the kind
    is required in that case even where the message data is incomplete. It is omissible
    otherwise because a client whose transport reports a broken reception may be unable to
-   tell a final response from a response-pending one, and ``UDSS_LLR_0251`` offers no value
+   tell a final response from a response-pending one, and ``UDSS_LLR_0065`` offers no value
    for a kind that was not determinable.
 
 .. llr:: The classification is associated with the transmission it describes
-   :id: UDSS_LLR_0271
+   :id: UDSS_LLR_0059
    :status: draft
    :integrity_level: QM
    :target_level: D
@@ -1279,44 +1279,44 @@ and leaves the means of recognising it to the implementation.
    and this requirement matches on ``S_Mtype`` as well. It is deliberate, and it is
    available: 7.3 Table 2 maps ``S_Mtype`` onto the transport's ``T_Ptype``, so the
    confirmation carries it. Two transmissions to one peer differing only in ``S_Mtype``,
-   a ``Diag`` and a ``SecureDiag`` message, differ in addressing under ``UDSS_LLR_0272``
+   a ``Diag`` and a ``SecureDiag`` message, differ in addressing under ``UDSS_LLR_0060``
    and so may be outstanding together; matching on 7.6's list alone
    would let each confirmation match the other's association, and the classification read
    from it would then describe the wrong message. ``S_Mtype`` also decides whether an
-   address extension is present at all, under ``UDSS_LLR_0125`` and ``UDSS_LLR_0129``, so
+   address extension is present at all, under ``UDSS_LLR_0048`` and ``UDSS_LLR_0052``, so
    the condition this rule places on ``S_AI[AE]`` is well defined only where the two
    ``S_Mtype`` agree.
 
    The storage is the caller's because the number of peers an instance addresses is a
-   property of the deployment and the crate does not allocate, as ``UDSS_LLR_0307``
-   requires; how the client's storage is organised per channel is ``UDSS_LLR_0206``'s.
+   property of the deployment and the crate does not allocate, as ``UDSS_LLR_0004``
+   requires; how the client's storage is organised per channel is ``UDSS_LLR_0126``'s.
 
-   The association with ``T_Data.conf`` is stated because ``UDSS_LLR_0102``,
-   ``UDSS_LLR_0106``, ``UDSS_LLR_0107``, ``UDSS_LLR_0108``, ``UDSS_LLR_0288`` and
-   ``UDSS_LLR_0289`` all condition on what kind of message a confirmation confirms, and no
+   The association with ``T_Data.conf`` is stated because ``UDSS_LLR_0085``,
+   ``UDSS_LLR_0088``, ``UDSS_LLR_0090``, ``UDSS_LLR_0091``, ``UDSS_LLR_0093`` and
+   ``UDSS_LLR_0094`` all condition on what kind of message a confirmation confirms, and no
    classification travels on the confirmation itself. The association with ``T_Data.req``
-   is stated because ``UDSS_LLR_0145`` conditions on what kind of message a transmission
-   request carries; ``UDSS_LLR_0118`` produces that ``T_Data.req`` from the ``S_Data.req``
+   is stated because ``UDSS_LLR_0114`` conditions on what kind of message a transmission
+   request carries; ``UDSS_LLR_0033`` produces that ``T_Data.req`` from the ``S_Data.req``
    in the same step, so the association costs nothing.
 
 .. llr:: At most one association is outstanding per addressing
-   :id: UDSS_LLR_0272
+   :id: UDSS_LLR_0060
    :status: draft
    :integrity_level: QM
    :target_level: D
    :origin: derived
    :tags: service-interface; classification
 
-   At most one association of ``UDSS_LLR_0271`` between an ``S_Data.req`` and its
+   At most one association of ``UDSS_LLR_0059`` between an ``S_Data.req`` and its
    ``T_Data.conf`` shall be outstanding for any one addressing, an addressing being the
    ``S_Mtype``, ``S_AI[TAtype]``, ``S_AI[SA]``, ``S_AI[TA]`` and, where ``S_Mtype`` carries
    one, ``S_AI[AE]`` that requirement matches a confirmation on.
 
-   Rationale: matching a confirmation on addressing alone, as ``UDSS_LLR_0271`` requires,
+   Rationale: matching a confirmation on addressing alone, as ``UDSS_LLR_0059`` requires,
    can only work while one transmission to a given addressing is outstanding, which the
    standard's models guarantee at the client, one request per logical communication
    channel, and assume without saying at the server. Stating the limit, and rejecting under
-   ``UDSS_LLR_0273`` and ``UDSS_LLR_0275`` what exceeds it, makes the rule checkable where
+   ``UDSS_LLR_0061`` and ``UDSS_LLR_0063`` what exceeds it, makes the rule checkable where
    the standard is silent: a server whose application asks to transmit a second response to
    a client while the first is unconfirmed, a periodic transmission alongside a solicited
    one, for instance, would otherwise leave the session layer unable to tell which
@@ -1325,13 +1325,13 @@ and leaves the means of recognising it to the implementation.
 
    The limit is survivable because each role has an exit, or an assumption in place of one.
    An association whose ``T_Data.conf`` never arrives stays outstanding: the client's exit
-   is the withdrawal of the channel's storage under ``UDSS_LLR_0205``, and the server has
+   is the withdrawal of the channel's storage under ``UDSS_LLR_0125``, and the server has
    none, resting instead on the assumption of use that the transport reports a
    ``T_Data.conf`` for every ``T_Data.req``, which :doc:`open-questions` records beside the
    start-of-message assumption.
 
 .. llr:: A request duplicating an outstanding association is rejected
-   :id: UDSS_LLR_0273
+   :id: UDSS_LLR_0061
    :status: draft
    :integrity_level: QM
    :target_level: D
@@ -1339,61 +1339,61 @@ and leaves the means of recognising it to the implementation.
    :tags: service-interface; classification
 
    An ``S_Data.req`` whose addressing equals that of an association outstanding under
-   ``UDSS_LLR_0271`` shall be rejected as ``UDSS_LLR_0267`` defines.
+   ``UDSS_LLR_0059`` shall be rejected as ``UDSS_LLR_0015`` defines.
 
-   Rationale: this is what makes the limit of ``UDSS_LLR_0272`` checkable rather than an
+   Rationale: this is what makes the limit of ``UDSS_LLR_0060`` checkable rather than an
    obligation on the caller with no stated outcome.
 
 .. llr:: A request for which no association is free is rejected
-   :id: UDSS_LLR_0274
+   :id: UDSS_LLR_0062
    :status: draft
    :integrity_level: QM
    :target_level: D
    :origin: derived
    :tags: service-interface; classification
 
-   An ``S_Data.req`` for which the caller-supplied storage of ``UDSS_LLR_0271`` has no free
-   association shall be rejected as ``UDSS_LLR_0267`` defines.
+   An ``S_Data.req`` for which the caller-supplied storage of ``UDSS_LLR_0059`` has no free
+   association shall be rejected as ``UDSS_LLR_0015`` defines.
 
    Rationale: that storage is the caller's and is sized by the deployment, so it can be
    exhausted by a caller addressing more peers than it provided for. Transmitting without
    recording the association would leave the ``T_Data.conf`` unmatchable and so rejected
-   under ``UDSS_LLR_0275``, losing the classification every requirement that reads a
+   under ``UDSS_LLR_0063``, losing the classification every requirement that reads a
    confirmation depends on; refusing the request instead tells the caller which of its two
    errors it made.
 
 .. llr:: A confirmation matching no outstanding association is rejected
-   :id: UDSS_LLR_0275
+   :id: UDSS_LLR_0063
    :status: draft
    :integrity_level: QM
    :target_level: D
    :origin: derived
    :tags: service-interface; classification
 
-   A ``T_Data.conf`` matching no association outstanding under ``UDSS_LLR_0271`` shall be
-   rejected as ``UDSS_LLR_0267`` defines.
+   A ``T_Data.conf`` matching no association outstanding under ``UDSS_LLR_0059`` shall be
+   rejected as ``UDSS_LLR_0015`` defines.
 
    Rationale: no classification travels on a confirmation itself; it travels with the
-   association ``UDSS_LLR_0271`` holds. A confirmation that matches none is therefore a
+   association ``UDSS_LLR_0059`` holds. A confirmation that matches none is therefore a
    confirmation of a transmission this set has no record of, and nothing in the set can
    tell what it confirms. Rejecting it is the only handling that does not guess.
 
 .. llr:: No association is outstanding on initialisation
-   :id: UDSS_LLR_0276
+   :id: UDSS_LLR_0064
    :status: draft
    :integrity_level: QM
    :target_level: D
    :origin: derived
    :tags: service-interface; classification
 
-   On initialisation no association of ``UDSS_LLR_0271`` shall be outstanding.
+   On initialisation no association of ``UDSS_LLR_0059`` shall be outstanding.
 
    Rationale: an instance that began with an association outstanding would reject the first
-   ``S_Data.req`` to that addressing under ``UDSS_LLR_0273``, or match the first
+   ``S_Data.req`` to that addressing under ``UDSS_LLR_0061``, or match the first
    ``T_Data.conf`` to a transmission that was never made.
 
 .. llr:: Message classification values
-   :id: UDSS_LLR_0251
+   :id: UDSS_LLR_0065
    :status: draft
    :integrity_level: QM
    :target_level: D
@@ -1404,7 +1404,7 @@ and leaves the means of recognising it to the implementation.
    transition to a diagnostic session, a session selection. The kind shall be one of:
 
    * ``request``, a message sent by a client to a server. On ``S_Data.req``, and on the
-     ``T_Data.conf`` that ``UDSS_LLR_0271`` associates with it, a request classification
+     ``T_Data.conf`` that ``UDSS_LLR_0059`` associates with it, a request classification
      shall further state the number of responses expected: ``none``, an exact number of at
      least one, or ``unknown``, and may further state either ``keep-alive``, that the message
      is the TesterPresent the application transmits because ``tS3_Client`` expired, or
@@ -1413,7 +1413,7 @@ and leaves the means of recognising it to the implementation.
      requires; a repeated keep-alive TesterPresent states ``keep-alive`` again. A request
      classification shall not state both ``keep-alive`` and ``repeat``. At a server, on
      ``T_DataSOM.ind`` and
-     ``T_Data.ind`` and, through ``UDSS_LLR_0136``, on the completion report, a request
+     ``T_Data.ind`` and, through ``UDSS_LLR_0074``, on the completion report, a request
      classification states no expected response count and no ``repeat``, and may state
      ``keep-alive``, that the message is the functionally addressed TesterPresent whose
      positive response is suppressed, which ISO 14229-1:2020 8.7.6 defines as keep-alive
@@ -1435,7 +1435,7 @@ and leaves the means of recognising it to the implementation.
    response is the usual carrier, and an ECUReset positive response or the response to an
    OBD-range request that ISO 14229-1:2020 8.7.6 has abort the active service and start the
    default session carries one for the same reason, the session layer being unable to tell
-   the services apart under ``UDSS_LLR_0135``.
+   the services apart under ``UDSS_LLR_0073``.
 
    Rationale: the definition of a final response is ISO 14229-2:2021 9.1.1's; the
    requirement is derived because the classification, not the definition, is this set's
@@ -1445,20 +1445,20 @@ and leaves the means of recognising it to the implementation.
    are not.
 
    The expected response count is stated by the client and has no server-side counterpart,
-   a server answering the one request in front of it. ``UDSS_LLR_0153`` conditions on the
+   a server answering the one request in front of it. ``UDSS_LLR_0135`` conditions on the
    count being other than ``none``, because ISO 14229-2:2021 10.3 Figure 20 permits a
    client not to start its response timer for a request needing no response, and
-   ``UDSS_LLR_0156`` conditions on the exact number, because ISO 14229-2:2021 9.7 Table 9
+   ``UDSS_LLR_0138`` conditions on the exact number, because ISO 14229-2:2021 9.7 Table 9
    makes the client's handling of a response timeout depend on whether it knew how many
    servers would respond. Neither can be determined by the session layer: the count is a
-   property of the request the application composed, and ``UDSS_LLR_0135`` forbids reading
+   property of the request the application composed, and ``UDSS_LLR_0073`` forbids reading
    it out of the message.
 
    The ``keep-alive`` marker is stated by both roles. The client states it because
-   ``UDSS_LLR_0166`` conditions on it, ISO 14229-2:2021 9.5 Table 6 restarting the client's
-   session timer on the functionally addressed TesterPresent alone, and ``UDSS_LLR_0170``
+   ``UDSS_LLR_0157`` conditions on it, ISO 14229-2:2021 9.5 Table 6 restarting the client's
+   session timer on the functionally addressed TesterPresent alone, and ``UDSS_LLR_0161``
    because ISO 14229-2:2021 9.7 Table 9 restarts it on the lost response to the physically
-   addressed one; ``UDSS_LLR_0135`` forbids recognising either from the data. It is
+   addressed one; ``UDSS_LLR_0073`` forbids recognising either from the data. It is
    separate from the expected response count because in physical keep-alive the
    TesterPresent may or may not require a response. The client session timer document
    records as an assumption of use that the request the application transmits in answer to
@@ -1467,17 +1467,17 @@ and leaves the means of recognising it to the implementation.
    one-request-at-a-time, so it arrives while another service is in progress as conformant
    traffic, which the server's requirements condition on. The session
    layer does not verify the marker against ``S_AI[TAtype]``, the same trust
-   ``UDSS_LLR_0179`` extends to ``repeat``: a physically addressed TesterPresent,
+   ``UDSS_LLR_0176`` extends to ``repeat``: a physically addressed TesterPresent,
    ISO 14229-2:2021 10.1.4.2 Figure 13's, is an ordinary request, and a caller that marks
    one has erred in a way an addressing check would catch only by coincidence. The server
    session timer document records the assumption of use.
 
    The ``repeat`` marker is stated by the client alone and has no server-side counterpart.
-   ``UDSS_LLR_0179`` and ``UDSS_LLR_0180`` condition on it because
-   ISO 14229-2:2021 9.7 Table 9 caps the client's repeats at two and ``UDSS_LLR_0135``
+   ``UDSS_LLR_0176`` and ``UDSS_LLR_0177`` condition on it because
+   ISO 14229-2:2021 9.7 Table 9 caps the client's repeats at two and ``UDSS_LLR_0073``
    forbids recognising a repeat from the data; it is a declaration the caller makes and the
    session layer does not verify. It is exclusive with ``keep-alive`` because
-   ``UDSS_LLR_0179`` keeps the keep-alive outside the repeat count, for the reason given
+   ``UDSS_LLR_0176`` keeps the keep-alive outside the repeat count, for the reason given
    there, and a request that was both would have to be counted and not counted at once.
    The client error handling document records as an assumption of use that the application
    marks each repeat other than of the keep-alive TesterPresent ``repeat``, marks a repeated
@@ -1487,14 +1487,14 @@ and leaves the means of recognising it to the implementation.
    selects a session is at once a final response and a session selection, and a single
    flat enumeration would force every requirement conditioning on finality to enumerate
    the session-selecting case as well. A session selection accompanies requests as well as
-   responses, because ``UDSS_LLR_0103`` and ``UDSS_LLR_0141`` condition on a
+   responses, because ``UDSS_LLR_0086`` and ``UDSS_LLR_0098`` condition on a
    session-selecting request for which no response is transmitted.
 
    The selection states whether the session is the default one rather than naming the
-   session. ``UDSS_LLR_0102``, ``UDSS_LLR_0103``, ``UDSS_LLR_0141`` and ``UDSS_LLR_0112``
+   session. ``UDSS_LLR_0085``, ``UDSS_LLR_0086``, ``UDSS_LLR_0098`` and ``UDSS_LLR_0100``
    all condition on whether a session is the default, and the session layer has no other
    way to tell: recognising an identifier would mean knowing the ISO 14229-1 encoding, which
-   ``UDSS_LLR_0135`` forbids. The identifier is not carried at all: no requirement reads it
+   ``UDSS_LLR_0073`` forbids. The identifier is not carried at all: no requirement reads it
    and no output would report it, so a field for it would be untestable.
 
    Solicitation is separate from kind because a periodically transmitted positive response
@@ -1504,7 +1504,7 @@ and leaves the means of recognising it to the implementation.
    construction a reply to a request, so asking whether it was solicited has no meaning.
 
 .. llr:: An expected response count of zero is rejected
-   :id: UDSS_LLR_0252
+   :id: UDSS_LLR_0066
    :status: draft
    :integrity_level: QM
    :target_level: D
@@ -1512,17 +1512,17 @@ and leaves the means of recognising it to the implementation.
    :tags: service-interface; classification
 
    On ``S_Data.req``, a request classification stating as its expected response count an
-   exact number of zero shall be rejected as ``UDSS_LLR_0267`` defines.
+   exact number of zero shall be rejected as ``UDSS_LLR_0015`` defines.
 
    Rationale: an exact number of zero is rejected rather than read as ``none``, the value
-   ``UDSS_LLR_0251`` provides for a request expecting no response, because the two would
-   otherwise be two spellings of one value with different behaviour: ``UDSS_LLR_0153`` would
-   open a window for it and ``UDSS_LLR_0156`` could never close one, no ``T_Data.ind``
+   ``UDSS_LLR_0065`` provides for a request expecting no response, because the two would
+   otherwise be two spellings of one value with different behaviour: ``UDSS_LLR_0135`` would
+   open a window for it and ``UDSS_LLR_0138`` could never close one, no ``T_Data.ind``
    bringing the count to zero, so the window would end at expiry reporting that not all
    expected servers responded to a request that expected none.
 
 .. llr:: A keep-alive with a session selection on a request is rejected
-   :id: UDSS_LLR_0253
+   :id: UDSS_LLR_0067
    :status: draft
    :integrity_level: QM
    :target_level: D
@@ -1530,36 +1530,36 @@ and leaves the means of recognising it to the implementation.
    :tags: service-interface; classification
 
    On ``S_Data.req``, a request classification stating ``keep-alive`` together with a
-   session selection shall be rejected as ``UDSS_LLR_0267`` defines.
+   session selection shall be rejected as ``UDSS_LLR_0015`` defines.
 
-   Rationale: the ``keep-alive`` marker ``UDSS_LLR_0251`` defines excludes a session
-   selection because a TesterPresent changes no session, and because ``UDSS_LLR_0164`` acts
-   on the selection and ``UDSS_LLR_0166`` on the marker with different effects on a running
+   Rationale: the ``keep-alive`` marker ``UDSS_LLR_0065`` defines excludes a session
+   selection because a TesterPresent changes no session, and because ``UDSS_LLR_0155`` acts
+   on the selection and ``UDSS_LLR_0157`` on the marker with different effects on a running
    ``tS3_Client`` timer. The rejection reaches the
    ``S_Data.req`` because the caller composes it, and not an indication, which reports a
-   message already received and which ``UDSS_LLR_0137`` forwards; the other input the
-   caller composes is the completion report, which ``UDSS_LLR_0254`` covers.
+   message already received and which ``UDSS_LLR_0036`` forwards; the other input the
+   caller composes is the completion report, which ``UDSS_LLR_0068`` covers.
 
 .. llr:: A keep-alive with a session selection on a completion report is rejected
-   :id: UDSS_LLR_0254
+   :id: UDSS_LLR_0068
    :status: draft
    :integrity_level: QM
    :target_level: D
    :origin: derived
    :tags: service-interface; classification
 
-   On the completion report of ``UDSS_LLR_0136``, a classification stating ``keep-alive``
-   together with a session selection shall be rejected as ``UDSS_LLR_0267`` defines.
+   On the completion report of ``UDSS_LLR_0074``, a classification stating ``keep-alive``
+   together with a session selection shall be rejected as ``UDSS_LLR_0015`` defines.
 
-   Rationale: the ``keep-alive`` marker ``UDSS_LLR_0251`` defines excludes a session
+   Rationale: the ``keep-alive`` marker ``UDSS_LLR_0065`` defines excludes a session
    selection because a TesterPresent changes no session. The rejection reaches the
    completion report because the caller composes it, and not an indication, which reports a
-   message already received and which ``UDSS_LLR_0137`` forwards. Without it, at a server
-   ``UDSS_LLR_0287`` and ``UDSS_LLR_0103`` would both claim a completion report so
+   message already received and which ``UDSS_LLR_0036`` forwards. Without it, at a server
+   ``UDSS_LLR_0096`` and ``UDSS_LLR_0086`` would both claim a completion report so
    classified, with opposite outcomes.
 
 .. llr:: A classification stating no kind where one is required is rejected
-   :id: UDSS_LLR_0255
+   :id: UDSS_LLR_0069
    :status: draft
    :integrity_level: QM
    :target_level: D
@@ -1567,22 +1567,22 @@ and leaves the means of recognising it to the implementation.
    :tags: service-interface; classification
 
    A ``T_Data.ind`` reporting a successful reception, or a ``T_DataSOM.ind``, whose
-   classification states no kind shall be rejected as ``UDSS_LLR_0267`` defines. A
+   classification states no kind shall be rejected as ``UDSS_LLR_0015`` defines. A
    classification's kind
-   shall be absent only where ``UDSS_LLR_0270`` permits it: on a ``T_Data.ind`` reporting
+   shall be absent only where ``UDSS_LLR_0058`` permits it: on a ``T_Data.ind`` reporting
    an unsuccessful reception of a message that was not addressed to a server.
 
    Rationale: no requirement in this set conditions on the kind of a message whose
-   reception failed and which was not addressed to a server: ``UDSS_LLR_0154`` and
-   ``UDSS_LLR_0155`` act on such a reception by its result alone, and ``UDSS_LLR_0156``,
-   ``UDSS_LLR_0157`` and ``UDSS_LLR_0282`` act only on a reception that succeeded, so the
+   reception failed and which was not addressed to a server: ``UDSS_LLR_0136`` and
+   ``UDSS_LLR_0137`` act on such a reception by its result alone, and ``UDSS_LLR_0138``,
+   ``UDSS_LLR_0144`` and ``UDSS_LLR_0146`` act only on a reception that succeeded, so the
    behaviour is defined whether the kind is stated or not. Stating the exception this way
-   keeps the three kind values ``UDSS_LLR_0251`` states a closed set, which every
+   keeps the three kind values ``UDSS_LLR_0065`` states a closed set, which every
    requirement conditioning on kind relies on. Every other indication must therefore state
    a kind, and a stated outcome is what makes that checkable.
 
 .. llr:: A request at a client stating no expected response count is rejected
-   :id: UDSS_LLR_0256
+   :id: UDSS_LLR_0070
    :status: draft
    :integrity_level: QM
    :target_level: D
@@ -1590,15 +1590,15 @@ and leaves the means of recognising it to the implementation.
    :tags: service-interface; classification
 
    At a client, on ``S_Data.req``, a request classification stating no expected response
-   count shall be rejected as ``UDSS_LLR_0267`` defines.
+   count shall be rejected as ``UDSS_LLR_0015`` defines.
 
-   Rationale: ``UDSS_LLR_0251`` requires a request classification on an ``S_Data.req`` to
+   Rationale: ``UDSS_LLR_0065`` requires a request classification on an ``S_Data.req`` to
    state the expected response count, which without a stated outcome would be an obligation
-   on the caller that no test could check. An absent count would let ``UDSS_LLR_0153`` open
-   a window that ``UDSS_LLR_0156`` could never close.
+   on the caller that no test could check. An absent count would let ``UDSS_LLR_0135`` open
+   a window that ``UDSS_LLR_0138`` could never close.
 
 .. llr:: A final response stating neither solicited nor unsolicited is rejected
-   :id: UDSS_LLR_0257
+   :id: UDSS_LLR_0071
    :status: draft
    :integrity_level: QM
    :target_level: D
@@ -1606,41 +1606,41 @@ and leaves the means of recognising it to the implementation.
    :tags: service-interface; classification
 
    A classification whose kind is ``final response`` stating neither ``solicited`` nor
-   ``unsolicited`` shall be rejected as ``UDSS_LLR_0267`` defines.
+   ``unsolicited`` shall be rejected as ``UDSS_LLR_0015`` defines.
 
-   Rationale: ``UDSS_LLR_0251`` requires such a classification to state one of the two, and
+   Rationale: ``UDSS_LLR_0065`` requires such a classification to state one of the two, and
    without a stated outcome for one that states neither, that obligation on the caller is
    untestable. The rejection introduces no value and no condition beyond the form
-   ``UDSS_LLR_0251`` states.
+   ``UDSS_LLR_0065`` states.
 
 .. llr:: A classification or addressing not of the stated form is rejected
-   :id: UDSS_LLR_0258
+   :id: UDSS_LLR_0072
    :status: draft
    :integrity_level: QM
    :target_level: D
    :origin: derived
    :tags: service-interface; classification
 
-   A classification or addressing not of the form ``UDSS_LLR_0251``, ``UDSS_LLR_0269``,
-   ``UDSS_LLR_0270`` and ``UDSS_LLR_0129`` state for the primitive and the role it arrives
-   on, other than a departure ``UDSS_LLR_0252``, ``UDSS_LLR_0255``, ``UDSS_LLR_0256`` or
-   ``UDSS_LLR_0257`` names, shall be rejected as ``UDSS_LLR_0267`` defines. An interface in
+   A classification or addressing not of the form ``UDSS_LLR_0065``, ``UDSS_LLR_0057``,
+   ``UDSS_LLR_0058`` and ``UDSS_LLR_0052`` state for the primitive and the role it arrives
+   on, other than a departure ``UDSS_LLR_0066``, ``UDSS_LLR_0069``, ``UDSS_LLR_0070`` or
+   ``UDSS_LLR_0071`` names, shall be rejected as ``UDSS_LLR_0015`` defines. An interface in
    which such a form cannot be expressed satisfies this without a check.
 
-   Rationale: the sentences of ``UDSS_LLR_0251``, ``UDSS_LLR_0269``, ``UDSS_LLR_0270`` and
-   ``UDSS_LLR_0129`` that state a form are otherwise obligations on the caller with no
+   Rationale: the sentences of ``UDSS_LLR_0065``, ``UDSS_LLR_0057``, ``UDSS_LLR_0058`` and
+   ``UDSS_LLR_0052`` that state a form are otherwise obligations on the caller with no
    stated outcome.
-   ``UDSS_LLR_0252``, ``UDSS_LLR_0255``, ``UDSS_LLR_0256`` and ``UDSS_LLR_0257`` state the
+   ``UDSS_LLR_0066``, ``UDSS_LLR_0069``, ``UDSS_LLR_0070`` and ``UDSS_LLR_0071`` state the
    outcome for the particular departures they name, each for the reason given there, and
    are excluded here so that every departure from the stated form is named by exactly one
    requirement: a reader citing one of those cases has one requirement to cite, and
    narrowing or changing the outcome of any of them cannot leave this requirement
-   contradicting it. ``UDSS_LLR_0253`` and ``UDSS_LLR_0254`` need no exclusion, because a
+   contradicting it. ``UDSS_LLR_0067`` and ``UDSS_LLR_0068`` need no exclusion, because a
    classification stating ``keep-alive`` together with a session selection is of the form
-   ``UDSS_LLR_0251`` states and so is not a departure this requirement reaches.
+   ``UDSS_LLR_0065`` states and so is not a departure this requirement reaches.
 
 .. llr:: The session layer does not inspect message data
-   :id: UDSS_LLR_0135
+   :id: UDSS_LLR_0073
    :status: draft
    :integrity_level: QM
    :target_level: D
@@ -1652,20 +1652,20 @@ and leaves the means of recognising it to the implementation.
    that are identical except for the message data forwarded between the application and
    the transport layer.
 
-   Rationale: this is what makes ``UDSS_LLR_0269`` enforceable rather than aspirational.
+   Rationale: this is what makes ``UDSS_LLR_0057`` enforceable rather than aspirational.
    Without it a classification could be supplied and then quietly second-guessed by
    parsing, and the crate would acquire a dependency on the application layer encodings
    that no requirement records.
 
    The requirement is stated as an equivalence over pairs of inputs rather than as a
    prohibition on reading, because the session layer must necessarily handle those bytes
-   in order to forward them: ``UDSS_LLR_0118`` requires it to transmit ``S_Length`` bytes
-   of ``S_Data``, and ``UDSS_LLR_0124`` maps ``S_Data`` onto ``T_Data``. A prohibition on
+   in order to forward them: ``UDSS_LLR_0033`` requires it to transmit ``S_Length`` bytes
+   of ``S_Data``, and ``UDSS_LLR_0047`` maps ``S_Data`` onto ``T_Data``. A prohibition on
    reading would contradict both, and would be unfalsifiable besides. The equivalence
    admits a direct test: vary the payload, hold everything else, and compare the outputs.
 
 .. llr:: Completion of a request with no response is reported by the caller
-   :id: UDSS_LLR_0136
+   :id: UDSS_LLR_0074
    :status: draft
    :integrity_level: QM
    :target_level: D
