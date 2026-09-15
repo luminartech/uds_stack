@@ -57,13 +57,7 @@ requires or the TesterPresent that answers a keep-alive indication.
 
 The keep-alive is one such request: rejected while the channel's spacing timer is active
 and transmitted after the reported time, which is the postponement 10.3 Figure 19 keys k to
-m show of the functionally addressed TesterPresent, key p naming the delay. The physically
-addressed one meets the same rejection where the previous request on its channel needed no
-response or failed and the channel's spacing parameter is longer than the ``tS3_Client``
-reload; on 9.2 Table 4's recommended ``tP2_Server_Max`` against 9.5 Table 5's
-``tS3_Client`` reload it is shorter, the spacing timer and ``tS3_Client`` being started by
-the same confirmation. The delay this adds is bounded by an obligation the next section
-records.
+m show of the functionally addressed TesterPresent, key p naming the delay.
 
 What this document does not cover
 ---------------------------------
@@ -79,10 +73,7 @@ timing parameter.
 Table 4's footnote on the maximum. The maximum time the client waits before its next request
 is at its discretion, provided that in a non-default session ``tS3_Server`` is kept active in
 the servers. That is an obligation on the caller of the same class as the ``tS3_Client``
-reload staying below ``tS3_Server``, which the client session timer document excludes. It
-bounds the postponement of a keep-alive described above: a TesterPresent delayed by a spacing
-timer must still reach the servers before their ``tS3_Server`` expires, which with the
-recommended values it does by a wide margin.
+reload staying below ``tS3_Server``, which the client session timer document excludes.
 
 Clause 10.3's condition that the next request follows a previous one that was completely
 handled, and its note defining completely handled. That is the one-request-per-channel
@@ -159,8 +150,7 @@ The spacing timer
    The timer becomes inactive when the elapsed time reaches the value it was loaded with
    rather than when it exceeds it. Table 3 states the parameter as a minimum time to wait,
    which a request at exactly that time satisfies, and 10.3 postpones only until the timer
-   has timed out; the bound is on this side's own conduct. A change to the spacing parameter
-   does not move a boundary already fixed; it takes effect at the next start. Table 9's
+   has timed out; the bound is on this side's own conduct. Table 9's
    "after the time ``tP3_Client_Phys``" is read the same way, the repeat being released at
    that time rather than after it, as the parameter is stated as a minimum.
 
@@ -232,10 +222,8 @@ Starting the timer
    after a failure.
 
    A confirmation arriving while the timer is already active restarts it, 10.3 stating
-   the start without condition. For an ordinary request the case cannot arise under the
-   one-request-per-channel assumption of use, ``UDSS_LLR_0171`` refusing a request while
-   the timer is active and no second request being outstanding to confirm. There is no
-   exception for a confirmation that returns the channel to the default session: 10.3 a)
+   the start without condition. There is no exception for a confirmation that returns the
+   channel to the default session: 10.3 a)
    applies in any diagnostic session, so that confirmation starts the spacing timer while
    ``UDSS_LLR_0161``, excepted by ``UDSS_LLR_0163``, does not restart ``tS3_Client``.
 
@@ -273,10 +261,8 @@ Starting the timer
    naming the functional figure ``tP3_Client_Phys``.
 
    A confirmation arriving while the timer is already active restarts it, 10.3 stating
-   the start without condition. For an ordinary request the case cannot arise under the
-   one-request-per-channel assumption of use, ``UDSS_LLR_0171`` refusing a request while
-   the timer is active and no second request being outstanding to confirm. The functional
-   keep-alive's confirmation starts this timer, Figure 19 key n.
+   the start without condition. The functional keep-alive's confirmation starts this timer,
+   Figure 19 key n.
 
 The next request
 ----------------
