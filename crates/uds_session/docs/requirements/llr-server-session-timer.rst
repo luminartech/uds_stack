@@ -450,9 +450,8 @@ The timer's state
    :source: ISO 14229-2:2021 9.7 Table 10
    :tags: server; s3_server; error-handling
 
-   While in a non-default session, on ``T_Data.conf`` reporting an unsuccessful result
-   for a response message to the controlling client whose classification does not state
-   ``unsolicited``, the server shall not retransmit the response.
+   On ``T_Data.conf`` reporting an unsuccessful result for a response message, the server
+   shall not retransmit the response.
 
    ISO 14229-2:2021 9.7 Table 10 states the prohibition in terms. Its response-transmission
    row gives, for a ``T_Data.conf`` from the transport layer with a negative result value,
@@ -461,16 +460,22 @@ The timer's state
    the response message." The second sentence is this requirement; the first is
    ``UDSS_LLR_0093``'s.
 
-   ISO 14229-5:2022 8.9.2 is not a locator of this requirement, and is named here instead.
-   It defines an unsolicited message as one the server transmits on a periodic scheduler or
-   a configured trigger, and forbids any unsolicited transmitted response message to reset
-   ``tS3_Server``; it says nothing of retransmission, so it cannot carve an exception out of
-   Table 10's row on its own. The exclusion is this set's inference: 8.9.2 takes an
-   unsolicited response out of the timer limb of that row, and the row is read here as
-   losing it entirely. An unsolicited response is therefore outside this requirement,
-   neither obliged nor forbidden to be sent again, that being the scheduler's affair.
-   ``UDSS_LLR_0093`` cites 8.9.2 in its own ``:source:`` because its claim is about the
-   timer, which is what the clause states.
+   This requirement carries none of the three qualifiers ``UDSS_LLR_0093`` carries, because
+   each of them qualifies the restart and not the prohibition. The row states its reason for
+   the restart in its own parenthetical — the timer had been stopped by the request the
+   failed response answers — and ``UDSS_LLR_0093`` narrows to the non-default session, to the
+   controlling client and away from the unsolicited response because that reason holds in no
+   other case. The second sentence states its prohibition unconditionally and offers no such
+   reason to read down by: a response whose transmission failed is not sent again whatever
+   session the server is in, whichever client it was addressed to, and whether or not a
+   request asked for it.
+
+   An unsolicited response is therefore inside this requirement, which costs nothing. What
+   the requirement forbids is the session layer sending the message again of its own motion,
+   which ``UDSS_LLR_0013`` already leaves it no means to do; a scheduler transmitting the
+   message again at its next period is the application issuing a fresh ``S_Data.req``, not
+   the session layer retransmitting this one. ISO 14229-5:2022 8.9.2, which ``UDSS_LLR_0093``
+   cites, says nothing of retransmission and so carves no exception here.
 
    The service in progress is unaffected, ``UDSS_LLR_0109`` ending it at the final
    response as 10.1.4.1 states.
