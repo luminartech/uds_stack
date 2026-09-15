@@ -109,6 +109,10 @@ The response window
    of ``tP2_Server_Max`` and ``tP2*_Server_Max`` it was loaded with, the fact
    ``UDSS_LLR_0117`` reports.
 
+   Neither cited locator asks the server to record which parameter is loaded; that conjunct
+   is derived, and exists to serve ``UDSS_LLR_0117``, which reports the two overruns as
+   different failures.
+
    Clause 9.1.1 requires a single timer implementation and names ``T_Data.req``,
    ``T_Data.conf``, ``T_DataSOM.ind`` and ``T_Data.ind`` as the interface that triggers it.
    ``UDSS_LLR_0103`` settles which of those primitives actually change the timer.

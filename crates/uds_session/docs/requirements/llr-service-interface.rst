@@ -497,9 +497,11 @@ Service primitives
    result.
 
    Rationale: which parameters ``T_DataSOM.ind`` carries is stated here because the
-   standard does not say. Clause 7.3 keeps the indication inside the session layer and
-   defines no mapping for it onto an S_PDU; its Table 2 lists the transport parameters a
-   message carries without saying which of them the start-of-message reports. The
+   standard nowhere enumerates them. Clause 7.3 keeps the indication inside the session
+   layer and defines no mapping for it onto an S_PDU; its Table 2 lists the transport
+   parameters a message carries without saying which of them the start-of-message reports;
+   and 9.1.2 REQ 5.13 speaks of "the parameters included in either ``T_DataSOM.ind`` or the
+   ``T_Data.ind`` service primitive" without saying what they are. The
    addressing is what ``UDSS_LLR_0045``'s pairing needs. A result is excluded because a
    start-of-message reports a reception that has neither succeeded nor failed; the outcome
    is reported by the completion, and every requirement in this set that acts on a failed
@@ -556,7 +558,7 @@ Service primitives
    was reached through, and nothing in the indication says which. The caller that issued
    the request knows.
 
-.. llr:: An indication naming no existing channel is rejected
+.. llr:: An indication naming no channel, or no existing one, is rejected
    :id: UDSS_LLR_0027
    :status: draft
    :integrity_level: QM
@@ -564,10 +566,17 @@ Service primitives
    :origin: derived
    :tags: service-interface; channel
 
-   An indication identifying a channel the client does not have shall be rejected as
-   ``UDSS_LLR_0015`` defines.
+   An indication identifying a channel the client does not have, or identifying no channel
+   where ``UDSS_LLR_0026`` requires one, shall be rejected as ``UDSS_LLR_0015`` defines. An
+   interface in which the identifier cannot be omitted satisfies the second limb without a
+   check.
 
-   Rationale: naming a channel that does not exist is a caller error, not an input.
+   Rationale: naming a channel that does not exist is a caller error, not an input, and so
+   is omitting the identifier ``UDSS_LLR_0026`` requires. The omission is named here because
+   ``UDSS_LLR_0072`` reaches only the classification and addressing forms, of which the
+   channel identifier is none, so without this limb ``UDSS_LLR_0026`` would be an obligation
+   on the caller with no stated outcome — what ``UDSS_LLR_0070``'s rationale calls an
+   obligation no test could check.
 
 .. llr:: The identified channel is not checked against the indication's addressing
    :id: UDSS_LLR_0028
@@ -1550,11 +1559,12 @@ means of recognising it to the implementation.
    :origin: derived
    :tags: service-interface; classification
 
-   A ``T_Data.ind`` reporting a successful reception, or a ``T_DataSOM.ind``, whose
-   classification states no kind shall be rejected as ``UDSS_LLR_0015`` defines. A
-   classification's kind shall be absent only where ``UDSS_LLR_0058`` permits it: on a
-   ``T_Data.ind`` reporting an unsuccessful reception of a message that was not addressed to
-   a server.
+   A ``T_Data.ind`` reporting a successful reception, a ``T_DataSOM.ind``, or a
+   ``T_Data.ind`` reporting an unsuccessful reception of a message that was addressed to a
+   server, whose classification states no kind, shall be rejected as ``UDSS_LLR_0015``
+   defines. A classification's kind shall be absent only where ``UDSS_LLR_0058`` permits it:
+   on a ``T_Data.ind`` reporting an unsuccessful reception of a message that was not
+   addressed to a server.
 
    Rationale: no requirement in this set conditions on the kind of a message whose
    reception failed and which was not addressed to a server: ``UDSS_LLR_0136`` and
@@ -1563,7 +1573,10 @@ means of recognising it to the implementation.
    behaviour is defined whether the kind is stated or not. Stating the exception this way
    keeps the three kind values ``UDSS_LLR_0065`` states a closed set, which every
    requirement conditioning on kind relies on. Every other indication must therefore state
-   a kind, and a stated outcome is what makes that checkable.
+   a kind, and a stated outcome is what makes that checkable — including the server-side
+   case ``UDSS_LLR_0058`` does not excuse, which this requirement names rather than merely
+   mentioning, since ``UDSS_LLR_0072`` excludes from its own reach every departure this one
+   names.
 
 .. llr:: A request at a client stating no expected response count is rejected
    :id: UDSS_LLR_0070
