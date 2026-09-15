@@ -162,6 +162,52 @@ Scope
    much at all** — in either role. It defines its identifiers, implements the services it
    serves, calls the services it needs, and the rest follows.
 
+.. arch:: The stack owns every protocol concern it can model
+   :id: UDSSVC_ARCH_0034
+   :depends_on: UDSSVC_ARCH_0001; UDSSVC_ARCH_0019
+   :status: draft
+   :origin: derived
+   :tags: scope; roles
+
+   Where ISO 14229-1 specifies behaviour, this crate implements it. Where ISO 14229-1
+   defers behaviour to the vehicle manufacturer or to the ECU, this crate implements the
+   *shape* the standard does fix and delegates only the part it defers — through an
+   interface designed so that the compliant implementation is the easy one to write.
+
+   Rationale: the crate exists because clause 8.7's rules are easy to get subtly wrong and
+   the failures are invisible against a cooperative client. That argument does not stop at
+   clause 8.7. Every protocol rule left to an integrator is reimplemented once per vehicle
+   programme and got wrong in the same ways each time, and ``UDSSVC_ARCH_0001`` has already
+   made the whole of ISO 14229-1's behaviour this crate's. A concern is delegated because
+   the standard forces it, never because delegating is easier here.
+
+   The test, applied to any behaviour in scope:
+
+   #. **Does the standard fix it?** Then it is implemented here.
+   #. **Does the standard explicitly defer it?** Then only the deferred part is delegated,
+      and the fixed part around it stays.
+   #. **Can a caller be non-compliant without noticing?** Then the seam is wrong, whatever
+      the documentation says.
+
+   ISO 14229-1:2020 10.4 is the worked example, because it does both things in one clause.
+   The *shape* is fixed: ``requestSeed`` precedes ``sendKey``, "an invalid key shall require
+   the client to start over from the beginning", a server already unlocked answers
+   ``requestSeed`` with a zero seed and "shall never send an all zero seed for a given
+   security level that is currently locked", and "only one security level shall be active at
+   any instant of time". The *policy* is disclaimed as plainly: "The vehicle manufacturer
+   shall select if the delay timer is supported", and NOTE 8 leaves "the management of
+   failed attempts (e.g. maximum number of attempts, delay, etc.) ... to the vehicle
+   manufacturer's discretion". So the sequence is this crate's and the application supplies
+   a seed, a judgement on a key, and an attempt policy. An application that implements those
+   three cannot get the ordering, the restart rule or the zero-seed probe wrong, because it
+   never sees them.
+
+   **Misuse-resistance is a design obligation, not a documentation one.** Where an error can
+   be made unrepresentable it is, in preference to warning against it: ``UDSSVC_ARCH_0033``
+   gives its constant no default so omission fails to compile rather than silently choosing,
+   and ``UDSSVC_ARCH_0014`` makes ``from_u16`` fallible so an unsupported identifier cannot
+   reach a handler. Documentation is what remains after that, not a substitute for it.
+
 Dependencies
 ------------
 
