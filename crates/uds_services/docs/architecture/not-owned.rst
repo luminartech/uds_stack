@@ -28,9 +28,10 @@ against ``UDSSVC_ARCH_0001``.
      - this crate, but not as a timer
      - ISO 14229-2 types it a *performance requirement* on the application, not
        something to run
-   * - The byte seam
-     - the binding
-     - Transport-shaped; see ``UDSSVC_ARCH_0018``
+   * - The handler and client seams
+     - ``uds_session``
+     - ISO 14229-2 specifies the application-facing service interface;
+       see ``UDSSVC_ARCH_0018``
    * - A_PDU framing, TCP handling, DoIP negative acknowledgements
      - ``uds_on_ip``
      - ISO 14229-5

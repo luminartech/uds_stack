@@ -3,25 +3,26 @@ The seams
 
 What crosses each boundary of this crate, and who owns what on either side.
 
-Six seams, in two groups.
+Six seams, and **this crate declares none of them.**
 
-Four are declared elsewhere and implemented here, because this crate is *called* across
-them: the context supplied with a request, the outcome reported back, the sink a response
-is written into, and the adapter onto a binding's byte interface. A server must be told
-the state its decisions depend on, and the caller's shape is what it is told in.
+**Each is declared by the crate that owns the document specifying it.** ``uds_session``
+declares the handler seam, the outcome, the request context, the client seam and the
+response-pending seam, because ISO 14229-2 specifies both interfaces of the session layer;
+``automotive-wire-codec`` declares the sink, because the I/O vocabulary is its. This crate
+implements two of them and calls three, which is a fact about the direction of control and
+no longer a fact about who wrote the trait.
 
-Two are declared here and implemented elsewhere, because this crate *calls* across them:
-the client's transport seam, since a client initiates rather than waits, and the
-response-pending seam, since a server that has decided to say "still working" must reach a
-transport it does not own.
-
-**Whoever is called declares the interface.** That single rule produces all six and
-explains why they point in opposite directions.
+That single rule replaces the one this page used to give. **"Whoever is called declares the
+interface"** produced a tidy symmetry — the byte seam declared by the binding because the
+binding calls in, the client seam declared here because this crate calls out — and it was
+wrong about the first half. A seam carrying an addressing triple, bytes, a sink and a
+responder is not transport-shaped, so every binding would have declared the same trait
+separately. Ownership follows the specifying document, not the direction of the call.
 
 .. uml::
    :align: center
-   :caption: The four seams declared elsewhere and implemented here. The two this
-             crate declares are below.
+   :caption: The server-side seams. Every trait on this diagram is declared by
+             ``uds_session``; the sink is ``automotive-wire-codec``'s.
 
    @startuml
    package "binding (uds_on_ip, uds_on_can)" {
@@ -31,7 +32,6 @@ explains why they point in opposite directions.
 
    package "uds_services" {
      [dispatch pipeline] as PIPE
-     [binding adapter] as AD
    }
 
    package "application" {
@@ -44,11 +44,10 @@ explains why they point in opposite directions.
    interface "Write sink" as SINK
 
    DRV -down-> BYTES
-   BYTES -down-> AD
+   BYTES -down-> PIPE
    DRV -down-> CTX
-   SESS -up-> DRV : session, security
-   CTX -down-> AD
-   AD -down-> PIPE
+   SESS -up-> DRV : addressing, timing
+   CTX -down-> PIPE
    PIPE -up-> OUT
    OUT -up-> DRV
    PIPE -down-> APPH : typed call
@@ -62,7 +61,7 @@ allocation-free. And there is no edge from anything inside ``uds_services`` to
 ``uds_session``: session state arrives as values on ``Ctx``, through the binding.
 
 .. needflow::
-   :filter: id in ["UDSSVC_ARCH_0015", "UDSSVC_ARCH_0016", "UDSSVC_ARCH_0017", "UDSSVC_ARCH_0018"]
+   :filter: "seam" in tags
    :link_types: depends_on
    :align: center
 
@@ -87,39 +86,47 @@ Request context
 
       * - Field
         - Read by
-        - Supplied by
-      * - addressing (physical / functional)
-        - Suppression, ``UDSSVC_ARCH_0009`` rule 1
-        - The binding, from the request's target address type
+        - Status
+      * - ``uds_session::Ai`` — the ISO 14229-2 addressing triple
+        - Suppression (``UDSSVC_ARCH_0009`` rule 1) reads the target address type;
+          ``UDSSVC_ARCH_0035`` keys per-channel state on the source address
+        - Carried
       * - active session
         - Figure 5 → 0x7F, Figure 6 → 0x7E
-        - ``uds_session``, forwarded by the binding
+        - Under review — see below
       * - security level
         - Figure 5 and Figure 6 optional checks → 0x33
-        - The application, forwarded by the binding
+        - Under review — see below
       * - authenticated
         - Figure 5 and Figure 6 → 0x34
-        - The application, forwarded by the binding
-      * - ``A_SA`` — the requesting channel
-        - Keys per-channel state, ``UDSSVC_ARCH_0035``
-        - The binding, from the request's source address
+        - Under review — see below
 
-   Rationale: taking these as parameters rather than through a dependency is what makes the crate
-   usable under any binding, and avoids depending on ``uds_session``, which is private. The
-   pipeline becomes a function of the request and this context, so every clause 8.7 rule is
-   testable without a network, a clock or a session layer.
+   Rationale: the pipeline is a function of the request and this context, so every clause 8.7
+   rule is testable without a network, a clock or a session layer.
+
+   **Three fields are under review, and this crate is why.** It implements
+   ``DiagnosticSessionControl``, ``SecurityAccess`` and ``Authentication``, so under
+   ``UDSSVC_ARCH_0035`` and ``UDSSVC_ARCH_0037`` it already holds the active session, the
+   security level and the authentication state. Two crates tracking the same state is how
+   they come to disagree. Unless an integration turns up where something else owns them,
+   ``Ctx`` reduces to the addressing triple alone — at which point it is worth asking whether
+   it stays a struct at all. To settle with ``uds_session`` before either crate writes it.
 
    **Session and security are raw sub-function values, passed through uninterpreted.**
    Naming the sessions here would mean this crate deciding what
    ``DiagnosticSessionControl``'s sub-functions mean, which is ``uds_protocol``'s to define
    and the application's to choose.
 
-   **Addressing is this crate's own two-variant distinction, not a binding's addressing
-   type.** No clause 8.7 decision reads a source or target address — only whether the
-   request was functionally addressed. A binding's addressing triple is transport-shaped
-   (``uds_on_ip``'s carries a DoIP logical address), so embedding one would make a
-   transport a mandatory dependency of the typed layer and contradict
-   ``UDSSVC_ARCH_0003``.
+   **Addressing is ``uds_session::Ai``, the ISO 14229-2 triple, used directly.** An earlier
+   version of this element defined a local two-variant physical/functional type instead, on
+   the ground that a binding's addressing triple is transport-shaped — ``uds_on_ip``'s
+   carried a DoIP logical address — so embedding one would make a transport a mandatory
+   dependency of the typed layer. That objection was to the *binding's* type, and it no
+   longer applies: the triple now lives in ``uds_session``, shaped by ISO 14229-2 clauses
+   8.3–8.6 rather than by DoIP, and ``UDSSVC_ARCH_0002`` already depends on that crate.
+
+   Using it directly also closes a question the set had been carrying about whether two
+   vocabularies for one concept were worth the conversion. There is one.
 
    **Whether a response-pending has been sent is deliberately not a field here, and an
    earlier draft had it wrong in a way worth recording.** Clause 8.7.5 guards both
@@ -130,35 +137,21 @@ Request context
    response-pending is emitted *after* that snapshot and before the suppression gate reads
    it, so a by-value field would be stale at the only instant it is consulted.
 
-   **Peer identity is present, for one reason, and the standard supplies the reason.**
-   ISO 14229-1:2020 10.6.4 requires that "an authenticated state shall be linked to a certain
-   diagnostic channel" and that "multiple clients can be handled on multiple channels with
-   different authentication settings", so ``UDSSVC_ARCH_0035``'s per-channel state cannot be
-   keyed without ``A_SA``. An earlier draft of this element excluded peer identity and
-   offered a security-access attempt counter as the example of state an application should
-   key for itself — which is the wrong example twice over: 10.4 makes security access
-   server-global, so it needs no key at all, and ``UDSSVC_ARCH_0034`` puts the counter in the
-   stack rather than in the application.
+   **Peer identity comes with the triple, and it is needed.** ISO 14229-1:2020 10.6.4
+   requires that "an authenticated state shall be linked to a certain diagnostic channel" and
+   that "multiple clients can be handled on multiple channels with different authentication
+   settings", so ``UDSSVC_ARCH_0035``'s per-channel state cannot be keyed without the source
+   address. An earlier draft of this element excluded peer identity altogether and offered a
+   security-access attempt counter as the example of state an application should key for
+   itself — wrong twice over: clause 10.4 makes security access server-global, so it needs no
+   key, and ``UDSSVC_ARCH_0034`` puts the counter in the stack rather than in the
+   application.
 
-   ``A_TA`` is still absent. No decision in scope reads it, and the addressing mode it would
-   otherwise carry is already present as its own field.
-
-   The client side answers this question the other way, and both answers are right.
-   ``UDSSVC_ARCH_0022`` requires a client's functional responses to carry each responder's
-   source address, because a client with several answers to one question cannot use them
-   without knowing who sent each. A server has one request in front of it and no clause
-   8.7 decision that reads an address.
-
-   ISO 14229-1 clause 7.4.1 makes ``A_SA``, ``A_TA`` and ``A_TA_Type`` mandatory parameters
-   of every application layer service primitive. This element now carries two of the three,
-   and ``A_SA`` arrived because per-channel state required it rather than because 7.4.1
-   called it mandatory — which is the argument that should have carried it all along, since
-   "the standard says mandatory" gives no guidance on what a dropped parameter costs.
-
-   ``A_SA`` is this crate's own opaque channel identity, not a binding's address type, for
-   the reason given above about addressing: a DoIP logical address in ``Ctx`` would make a
-   transport a mandatory dependency of the typed layer. The binding converts, as
-   ``UDSSVC_ARCH_0018`` has it convert everything else.
+   Taking ``Ai`` whole also settles ISO 14229-1 clause 7.4.1, which makes ``A_SA``, ``A_TA``
+   and ``A_TA_Type`` mandatory parameters of every application layer service primitive. All
+   three are present. The set argued about this for some time as though it were a question of
+   what clause 8.7 reads; it was a question of which vocabulary the seam speaks, and it
+   dissolved when the vocabulary moved to the crate that owns ISO 14229-2.
 
 Outcome
 -------
@@ -231,93 +224,77 @@ Response sink
    ``--no-default-features`` on a hosted one. Only a ``*-none`` target proves ``std`` has
    not crept back in through a dependency.
 
-Binding adapter
----------------
+The handler seam
+----------------
 
-.. arch:: The binding declares the byte seam; this crate implements it
+.. arch:: uds_session declares the handler seam; this crate implements it
    :id: UDSSVC_ARCH_0018
-   :depends_on: UDSSVC_ARCH_0003; UDSSVC_ARCH_0015; UDSSVC_ARCH_0016
+   :depends_on: UDSSVC_ARCH_0002; UDSSVC_ARCH_0015; UDSSVC_ARCH_0016
    :status: draft
    :origin: derived
    :tags: seam; transport
 
-   A byte seam is necessarily transport-shaped — it is where a binding hands off — so each
-   binding declares its own, and this crate implements whichever one its enabled feature
-   selects. Behind the ``doip`` feature it provides a blanket implementation of
-   ``uds_on_ip``'s request-handler trait for any assembled typed server, converting that
-   crate's context into the context of ``UDSSVC_ARCH_0015``.
+   A binding's driver hands a request to this crate across one seam, declared by
+   ``uds_session`` as ``RequestHandler``. This crate implements it once, for any assembled
+   typed server. There is no per-binding adapter and no transport feature.
 
-   Rationale: this keeps the dependency edge pointing outward from this crate (``UDSSVC_ARCH_0002``)
-   and keeps the binding ignorant of what a service is. The adapter is small by
-   construction: if it ever needs to make a decision, that decision belongs on one side of
-   the seam or the other, not in the conversion.
+   Rationale: ISO 14229-2 specifies both interfaces of the session layer — ``A_Data`` upward
+   and ``T_Data`` downward — so the application-facing seam is that document's, and
+   ``uds_session`` is the crate that owns it. One declaration then serves every binding, and
+   neither this crate nor ``uds_on_ip`` needs to name the other.
 
-   The conversion is where a mismatch between this crate's context and a binding's becomes
-   visible, which is its second purpose. Three mismatches stand today, and all three are
-   changes to ``uds_on_ip`` rather than to this crate:
+   **An earlier version of this element held that a byte seam is "necessarily
+   transport-shaped — it is where a binding hands off", so each binding declared its own and
+   this crate implemented whichever an enabled feature selected.** The premise does not
+   survive inspection of the signature: it carries an addressing triple, request bytes, a
+   sink and a responder, and no transport concept whatever. Every binding needed an identical
+   seam, and three of them would have declared it separately. What was transport-shaped was
+   ``uds_on_ip``'s ``Ai``, and moving the addressing vocabulary to ``uds_session`` removed
+   even that.
 
-   * its context carries an addressing triple, the active session and the security level,
-     but not the authentication state that ``UDSSVC_ARCH_0015`` requires;
-   * its handler seam is synchronous, and ``UDSSVC_ARCH_0016`` requires an asynchronous
-     one;
-   * ``RequestHandler::handle`` must take ``UDSSVC_ARCH_0031``'s responder as a further
-     parameter, since ``Ctx`` is ``Copy`` and cannot carry a ``&mut``.
+   What the relocation costs is a dependency this crate previously refused. ``uds_session``
+   is public now, and ``UDSSVC_ARCH_0002`` records what survives of the reasoning that
+   refused it.
 
-   The last two are cheap now and expensive later: that trait is declared and has no
-   implementations, so changing it costs a signature today and a migration once servers
-   exist. This is the reason the stack is being iterated as a whole rather than crate by
-   crate.
+Client seam
+-----------
 
-Client transport seam
----------------------
-
-.. arch:: This crate declares the client transport seam; the binding implements it
+.. arch:: uds_session declares the client seam; this crate uses it
    :id: UDSSVC_ARCH_0029
-   :depends_on: UDSSVC_ARCH_0003; UDSSVC_ARCH_0030
+   :depends_on: UDSSVC_ARCH_0002; UDSSVC_ARCH_0030
    :status: draft
    :origin: derived
    :tags: seam; transport; client
 
-   The asynchronous client of ``UDSSVC_ARCH_0028`` is generic over a transport trait
-   declared by this crate. A binding implements it; behind that binding's feature this
-   crate supplies the implementation for the binding's own client.
+   The asynchronous client of ``UDSSVC_ARCH_0028`` is generic over ``uds_session``'s
+   ``DiagnosticClient``. A binding's driver implements it; this crate calls it and
+   implements nothing.
 
-   .. code-block:: rust
-
-      pub trait UdsTransport {
-          type Error;
-
-          /// Send a physically addressed request and await its reply.
-          async fn send(&mut self, request: &[u8])
-              -> Result<Reply<'_>, Self::Error>;
-
-          /// Send a functionally addressed request and iterate the replies.
-          async fn send_functional(&mut self, request: &[u8])
-              -> Result<Replies<'_, Self>, Self::Error>;
-      }
-
-   Rationale: this is the exact inverse of ``UDSSVC_ARCH_0018``, and the asymmetry is deliberate
-   rather than an inconsistency. The **byte seam is declared by the binding**,
-   because the binding calls into a server and the shape of that call is transport-shaped.
-   The **transport seam is declared here**, because this crate calls out to a transport and
-   the shape of *that* call is service-shaped: it must distinguish a physically addressed
-   request answered once from a functionally addressed request answered zero or more
-   times, which is a clause 8.7 distinction and not a DoIP one.
-
-   Two consequences. The trait's reply types are **this crate's own**, not the binding's —
-   the adapter converts, exactly as it does for ``Ctx`` under ``UDSSVC_ARCH_0018`` — so the
-   typed client follows to CAN unchanged. And this crate depends on no executor: the trait
-   is asynchronous, and the runtime is the caller's (``UDSSVC_ARCH_0030``).
+   Rationale: the same argument as ``UDSSVC_ARCH_0018``, applied to the other direction of
+   control. The shape of the call is an ISO 14229-2 service primitive — an ``Ai``, a request,
+   and either one completion or a sequence of them — so ISO 14229-2's crate declares it, and
+   one declaration serves every binding.
 
    The functional case is why the trait carries two methods rather than one with a flag. A
-   functionally addressed request yields a lending sequence whose length is not known until
-   a timer expires (``UDSSVC_ARCH_0022``); typing it as the same operation as a
-   single-response exchange would force one of the two to lie.
+   functionally addressed request yields a lending sequence whose length is not known until a
+   timer expires (``UDSSVC_ARCH_0022``); typing it as the same operation as a single-response
+   exchange would force one of the two to lie. That distinction survives the move, because it
+   is a property of addressing rather than of a transport.
+
+   **An earlier version of this element declared the trait here**, as ``UdsTransport``, and
+   argued it was the exact inverse of ``UDSSVC_ARCH_0018`` — the byte seam declared by the
+   binding because the binding calls in, the transport seam declared here because this crate
+   calls out. That symmetry was real but rested on the premise ``UDSSVC_ARCH_0018`` has since
+   lost. With both seams declared by the document that specifies them, the two are no longer
+   inverses; they are the same rule applied twice.
+
+   This crate still depends on no executor: the trait is asynchronous and the runtime is the
+   caller's (``UDSSVC_ARCH_0030``).
 
 Response-pending seam
 ---------------------
 
-.. arch:: This crate declares the response-pending seam; the driver implements it
+.. arch:: uds_session declares the response-pending seam; this crate decides what crosses it
    :id: UDSSVC_ARCH_0031
    :depends_on: UDSSVC_ARCH_0016; UDSSVC_ARCH_0030; UDSSVC_ARCH_0032
    :status: draft
@@ -326,8 +303,9 @@ Response-pending seam
 
    A server that has decided to answer ``requestCorrectlyReceivedResponsePending`` (0x78)
    while a handler is still running must reach a transport it does not own, and must be
-   told when the moment to do so has arrived. Both cross one seam, declared here and
-   implemented by the binding's server driver:
+   told when the moment to do so has arrived. Both cross one seam, ``PendingResponder``,
+   declared by ``uds_session`` because *when* a response-pending is due is ``tP2_Server``
+   timing, implemented by the binding's server driver, and called from here:
 
    .. code-block:: rust
 
@@ -344,10 +322,12 @@ Response-pending seam
       }
 
    Rationale: ``UDSSVC_ARCH_0032`` puts the decision here, and a decision that cannot be
-   acted on is not a decision. The seam is declared here rather than by the binding
-   because this crate calls across it, which is the same rule that places
-   ``UDSSVC_ARCH_0029``'s transport seam here and ``UDSSVC_ARCH_0018``'s byte seam on the
-   other side.
+   acted on is not a decision. The declaration sits with ``uds_session`` for the same reason
+   as ``UDSSVC_ARCH_0018`` and ``UDSSVC_ARCH_0029``: ISO 14229-2 owns the timing that says
+   when one is due. It does not own whether one is owed, or the bytes — ISO 14229-2:2021
+   REQ 5.6 makes admissibility turn on whether the server supports the service in progress,
+   which is this crate's predicate and a session layer forbidden to inspect message data
+   cannot evaluate.
 
    Dispatch races the handler against ``due`` and offers while it waits:
 
@@ -402,6 +382,5 @@ Response-pending seam
    which costs nothing at runtime; making the parameter optional would double the dispatch
    signature to avoid a type that is already free.
 
-   The seam adds a fourth item to the changes ``UDSSVC_ARCH_0018`` requires of
-   ``uds_on_ip``: ``RequestHandler::handle`` gains the responder as a parameter, since
-   ``Ctx`` is ``Copy`` and cannot carry a ``&mut``.
+   ``RequestHandler::handle`` takes the responder as a parameter rather than carrying it on
+   ``Ctx``, which is ``Copy`` and cannot hold a ``&mut``.

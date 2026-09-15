@@ -42,8 +42,8 @@ Where this crate sits, what it depends on, and what a transport swap replaces.
 
    CLI -down-> SVC : typed requests
    APP -down-> SVC : typed service handlers
-   SVC -down-> OIP : byte seam + Ctx
-   SVC -down-> OCAN : byte seam + Ctx
+   OIP -up-> SVC : handler seam + Ctx
+   OCAN -up-> SVC : handler seam + Ctx
    OIP -down-> SESS
    OCAN -down-> SESS
    OIP -down-> DOIP
@@ -212,25 +212,36 @@ Scope
 Dependencies
 ------------
 
-.. arch:: uds_protocol is the only mandatory dependency
+.. arch:: The dependencies are uds_protocol, uds_session and the codec — never a binding
    :id: UDSSVC_ARCH_0002
    :depends_on: UDSSVC_ARCH_0001
    :status: draft
    :origin: derived
    :tags: scope; dependencies
 
-   Rationale: this crate must stay usable under any binding, and must not carry a hard dependency on
-   ``uds_session`` — which is currently private and would make this crate unpublishable.
-   It meets both by taking session state and security level as *parameters* rather than
-   through a dependency (``UDSSVC_ARCH_0015``): this crate depends on ``uds_protocol`` for
-   the request and response message types it dispatches over, and on ``embedded-io`` for
-   the response sink, and shall not depend on ``uds_session``, ``uds_on_ip``,
-   ``uds_on_can`` or ``simple_doip`` other than through an optional, additive feature.
+   This crate depends on ``uds_protocol`` for the message types it dispatches over, on
+   ``uds_session`` for the ISO 14229-2 vocabulary and the application-facing seams it
+   declares, and on ``automotive-wire-codec`` for the response sink. It shall not depend on
+   ``uds_on_ip``, ``uds_on_can`` or ``simple_doip`` at all — not optionally, and not behind
+   a feature.
 
-   The dependency edge on a binding points one way and outward: ``uds_services →
-   uds_on_ip``, optional. The binding stays ignorant of what a service is. This is the
-   ``tower``/``hyper`` arrangement, and it is what lets a typed server move to CAN
-   unchanged.
+   Rationale: a typed server must follow its application to any transport unchanged, so a
+   binding cannot appear in this crate's dependency list in any form. It does not need to:
+   the seams this crate implements and calls are declared by ``uds_session``, which
+   specifies the application-facing service interface in ISO 14229-2, so one implementation
+   serves every binding and ``uds_on_can`` becomes additive with no change here at all.
+
+   **An earlier version of this element forbade depending on ``uds_session``**, on the
+   ground that it was private and would make this crate unpublishable, and took session and
+   security state as parameters to avoid it. That constraint is gone — ``uds_session`` is
+   public — and the parameter-passing it motivated has been overtaken from the other
+   direction: this crate implements ``DiagnosticSessionControl``, ``SecurityAccess`` and
+   ``Authentication``, so under ``UDSSVC_ARCH_0035`` it owns that state rather than
+   receiving it.
+
+   What survives from that reasoning is the part that was never about publishing: two
+   crates tracking the same state is how they come to disagree, and no arrangement here
+   should produce one.
 
 .. arch:: Transport bindings are optional and additive
    :id: UDSSVC_ARCH_0003
@@ -241,16 +252,16 @@ Dependencies
 
    Rationale: a ``ReadDataByIdentifier`` handler that knows how to fetch an identifier has nothing to
    say about IP, so the ergonomic layer — the part application authors actually touch —
-   must be free to follow a server to CAN unchanged. Each transport binding is therefore
-   selected by a Cargo feature that pulls in that binding and implements its byte seam.
-   Enabling none leaves a typed server that dispatches over ``uds_protocol`` messages;
-   enabling one adds the adapter described by ``UDSSVC_ARCH_0018``.
+   must be free to follow a server to CAN unchanged. It is, because no binding appears here
+   in any form: this crate implements the single seam ``uds_session`` declares
+   (``UDSSVC_ARCH_0018``), and a binding's driver calls it. Adding ``uds_on_can`` changes
+   nothing in this crate and requires no feature.
 
-   .. code-block:: toml
-
-      [features]
-      doip  = ["dep:uds_on_ip"]
-      docan = ["dep:uds_on_can"]
+   **An earlier version of this element gave each binding a Cargo feature** —
+   ``doip = ["dep:uds_on_ip"]`` and a ``docan`` beside it — each pulling in that binding and
+   implementing its own byte seam. That followed from every binding declaring a seam of its
+   own, which is no longer the case. One seam, one implementation, no features, and nothing
+   to enable or forget.
 
    **What is not portable, stated so nobody is surprised.** The diagnostic *conversation*
    moves between transports; *connection setup* does not. DoIP has TCP connections,
@@ -355,10 +366,12 @@ opposite directions:
 
    @startuml
    [uds_services] as SVC
+   [uds_session] as SESS
    [uds_on_ip] as OIP
 
    OIP -[#4A6E8A]-> SVC : <b>calls</b>\nhands over bytes + Ctx
-   SVC -[#C0392B,dashed]-> OIP : <b>depends on</b>\nimplements its seam, behind a feature
+   SVC -[#C0392B,dashed]-> SESS : <b>depends on</b>\nimplements the seam it declares
+   OIP -[#C0392B,dashed]-> SESS : <b>depends on</b>\ndrives the session layer
 
    legend right
      |= |= edge |
@@ -370,11 +383,17 @@ opposite directions:
 *Protocol layering* runs application → clause 8.7 → binding → session → transport, because
 that is the order a request is processed in. So ``uds_on_ip`` calls ``uds_services``.
 
-*Cargo dependencies* run the other way here: ``uds_services`` optionally depends on
-``uds_on_ip``, not the reverse. The binding declares a byte seam and knows nothing about
-services; this crate implements it.
+*Cargo dependencies* do not follow that at all: neither of those two crates names the other.
+Both depend on ``uds_session``, which declares the seam between them because ISO 14229-2
+specifies the application-facing service interface. The caller and the callee meet at an
+interface owned by a third crate that is below both of them in the layering.
 
-That inversion is deliberate and is what makes the arrangement work — it is how ``tower``
-relates to ``hyper``. A layer being below another in processing order says nothing about
-which crate names the other in its manifest, and the two questions have different answers
-here.
+A layer being below another in processing order therefore says nothing about which crate
+names the other in its manifest — the two questions have different answers here, and
+confusing them is the most common way to misread this stack.
+
+An earlier version of this page described the arrangement as ``tower`` to ``hyper``: the
+binding declaring a byte seam and this crate implementing it behind a feature. That held
+while each binding declared its own seam. It no longer does — the seam's signature carries
+``Ai``, bytes and a sink and no transport concept, so it was never transport-shaped, and one
+declaration in ``uds_session`` serves every binding. See ``UDSSVC_ARCH_0018``.
