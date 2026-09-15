@@ -104,7 +104,7 @@ The timer's state
    :integrity_level: QM
    :target_level: D
    :origin: session-layer-standard
-   :source: ISO 14229-2:2021 9.2; ISO 14229-2:2021 9.5; ISO 14229-2:2021 9.5 Table 6; ISO 14229-2:2021 9.6 Table 8; ISO 14229-1:2020 Annex J J.5.1
+   :source: ISO 14229-2:2021 9.5; ISO 14229-2:2021 9.5 Table 6; ISO 14229-2:2021 9.6 Table 8; ISO 14229-1:2020 Annex J J.5.1
    :tags: server; session-state; s3_server
 
    The server shall keep, in the instance, whether the active session is the default
@@ -343,7 +343,7 @@ The timer's state
    :integrity_level: QM
    :target_level: D
    :origin: session-layer-standard
-   :source: ISO 14229-2:2021 9.5 Table 6; ISO 14229-2:2021 9.7 Table 10
+   :source: ISO 14229-2:2021 9.5 Table 6; ISO 14229-2:2021 9.7 Table 10; ISO 14229-2:2021 10.1.4.1 Figure 12
    :tags: server; s3_server; error-handling
 
    While in a non-default session, while ``tS3_Server`` is stopped and while no service is
@@ -408,7 +408,7 @@ The timer's state
 
    An unsolicited response is excluded because Table 10's reason never holds for it: no
    request stopped the timer on its behalf, and ISO 14229-5:2022 8.9.2 forbids any
-   unsolicited transmitted response message to reset ``tS3_Server``.
+   unsolicited transmitted response message to restart ``tS3_Server``.
    Without the exclusion a periodic transmission that kept failing at an interval shorter
    than the session timeout would hold the session open, the very latch-up 8.9.2 exists to
    prevent.
@@ -459,7 +459,7 @@ The timer's state
    :integrity_level: QM
    :target_level: D
    :origin: session-layer-standard
-   :source: ISO 14229-2:2021 10.1.4.1 Figure 12; ISO 14229-2:2021 10.3 Figure 20; ISO 14229-1:2020 8.7.6
+   :source: ISO 14229-2:2021 10.1.4.1 Figure 12; ISO 14229-2:2021 10.1.4.2 Figure 13; ISO 14229-2:2021 10.3 Figure 20; ISO 14229-1:2020 8.7.6
    :tags: server; s3_server; keep-alive
 
    On ``T_Data.ind`` reporting the successful reception of a request marked ``keep-alive``

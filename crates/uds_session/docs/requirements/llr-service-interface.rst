@@ -619,7 +619,8 @@ Service primitives
    * a ``T_Data.ind`` or ``T_DataSOM.ind`` whose classification states kind ``final
      response`` or ``response pending``;
    * a ``T_DataSOM.ind`` or ``T_Data.ind`` identifying a logical communication channel;
-   * the supply or withdrawal of channel storage under ``UDSS_LLR_0121``;
+   * the supply of channel storage under ``UDSS_LLR_0121`` and its withdrawal under
+     ``UDSS_LLR_0125``;
    * the channel reset of ``UDSS_LLR_0180``;
    * the keep-alive release of ``UDSS_LLR_0184``.
 
@@ -888,7 +889,7 @@ peer, and how a multi-frame message's start is matched to its completion.
    does not.
 
    Rationale: ``UDSS_LLR_0045`` identifies a responder by this pair, ``UDSS_LLR_0082``
-   records the controlling client as one, ``UDSS_LLR_0104`` records the request in
+   records the controlling client as one, ``UDSS_LLR_0104`` records the service in
    progress as one, and ``UDSS_LLR_0139`` keys the responder table on one. Stated once,
    the four cannot drift apart. The extension is part of the identity because two clients
    behind one remote address can differ in it. Matching a confirmation's ``S_AI[TA]`` and

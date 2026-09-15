@@ -400,8 +400,8 @@ The response window
    the association ``UDSS_LLR_0059`` holds for its ``S_Data.req`` has received no
    ``T_Data.conf``.
 
-   Rationale: ``UDSS_LLR_0118``, ``UDSS_LLR_0119``, ``UDSS_LLR_0116`` and ``UDSS_LLR_0106``
-   all reason about this state; the term is defined once so the four cannot drift apart. It
+   Rationale: ``UDSS_LLR_0118``, ``UDSS_LLR_0116`` and ``UDSS_LLR_0106`` all reason about
+   this state; the term is defined once so the three cannot drift apart. It
    is defined against the
    association of ``UDSS_LLR_0059`` because that association is the only record this set
    keeps of a transmission between its ``T_Data.req`` and its ``T_Data.conf``.

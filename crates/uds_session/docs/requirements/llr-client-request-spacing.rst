@@ -302,8 +302,8 @@ The next request
    required a response no spacing timer starts, and whether a second request may follow
    while the first is outstanding is the assumption's business, not this requirement's.
 
-   The rejection is per channel, where 10.3 and Table 3 speak of the next request without
-   naming a channel. That narrows the text, on the warrant of Table 7, which allots the
+   The rejection is per channel, where 10.3 and Table 3 speak of the next physically- or
+   functionally-addressed request without naming a channel. That narrows the text, on the warrant of Table 7, which allots the
    timers per channel, of 10.3 a), which values the physical parameter for the addressed
    server, and of Figure 20 key c, which transmits a functionally addressed TesterPresent
    while a physical channel's ``tP3_Client_Phys`` is running.
