@@ -151,8 +151,8 @@ The timer's state
    client, and ``tS3_Server`` shall be disabled.
 
    Rationale: clause 9.2 has the server start the default session when powered up, which is
-   the one fact the standard states; that is the initial state ``UDSS_LLR_0101`` stated
-   until it was retired into this requirement. None of the requirements permitted to change
+   the one fact the standard states; that is the initial state an earlier requirement of
+   this document stated until it was retired into this one. None of the requirements permitted to change
    the controlling client or ``tS3_Server`` is an initialisation condition, so without this
    requirement the state of those two facts before the first input would be undefined.
 
