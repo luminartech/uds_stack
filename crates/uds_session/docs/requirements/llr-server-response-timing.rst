@@ -293,8 +293,9 @@ The response window
 
    A service shall cease to be in progress on ``T_Data.conf`` answering it and
    reporting the outcome, successful or not, of the transmission of a solicited final
-   response, and on a completion report of ``UDSS_LLR_0074`` answering it for a request not
-   marked ``keep-alive``; when it ceases, the anchor shall be cleared.
+   response, on ``T_Data.conf`` answering it and reporting an unsuccessful transmission of a
+   response-pending message, and on a completion report of ``UDSS_LLR_0074`` answering it for
+   a request not marked ``keep-alive``; when it ceases, the anchor shall be cleared.
 
    Rationale: ISO 14229-2:2021 10.1.4.1 Figure 12 key k places the end at the completion of
    the transmission of the final response, or at the completion of the action where no
@@ -318,6 +319,16 @@ The response window
    a failed transmission of the response restart ``tS3_Server``, the timer that runs
    between requests, and forbids retransmission, so the standard treats the failed
    transmission as concluding the service; this requirement ends the service there.
+
+   A failed transmission of a response-pending message ends the service for that same
+   reason. Table 10's row names a ``T_Data.conf`` with a negative result value without
+   distinguishing which response failed, and ``UDSS_LLR_0093`` reads the row that way for
+   ``tS3_Server``, restarting the timer as though the exchange were over. Were the service
+   left in progress here it would end at no input this set states: ``UDSS_LLR_0114`` has
+   already stopped ``tP2_Server``, ``UDSS_LLR_0116`` will not open the enhanced window
+   without a successful transmission, and no completion report is owed for a request whose
+   response was transmitted, so only a later request's replacement under ``UDSS_LLR_0108``
+   would clear it while ``UDSS_LLR_0092``'s guard stayed shut.
 
    The anchor is cleared with the service because ``UDSS_LLR_0104`` keeps it only while a
    service is in progress, footnote b spacing the response-pending messages of one service.
