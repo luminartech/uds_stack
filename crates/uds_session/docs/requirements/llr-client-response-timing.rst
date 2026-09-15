@@ -924,10 +924,12 @@ Enhanced response timing
    :tags: client; p_client; enhanced-response-timing; responders
 
    A responder's response-pending message shall be recorded outstanding, on a channel with
-   a request in progress and where ``UDSS_LLR_0139`` provides an entry for that responder,
-   on a ``T_Data.ind`` from that responder whose reception succeeded and whose
-   classification states kind ``response pending``, and shall cease to be outstanding on
-   the first indication of any later message from that responder, response-pending or not.
+   a request in progress, on a ``T_Data.ind`` from that responder whose reception succeeded
+   and whose classification states kind ``response pending``, and shall cease to be
+   outstanding on the first indication of any later message from that responder,
+   response-pending or not. Where the responder has no entry, ``UDSS_LLR_0140`` creates one
+   on that same indication and the two effects are applied together; where the table has no
+   free entry, ``UDSS_LLR_0143`` applies instead and nothing is recorded for that responder.
 
    Rationale: Figure 16 key d adds an entry for the responding server's address when its
    response-pending message completes; key i removes the entry at the start-of-message of
@@ -935,6 +937,13 @@ Enhanced response timing
    same in a non-default session. The entry is cleared by any later message from that
    responder, response-pending or not, because key i clears at the start-of-message without
    qualifying what the message is.
+
+   The record is not guarded on the responder already having an entry. In both figures the
+   response-pending message is single-frame, so no ``T_DataSOM.ind`` precedes it and the
+   indication that records the fact is the one key d adds the entry on. Guarding the fact on
+   an entry that, for such a message, only this fact can create would leave the entry never
+   created, ``UDSS_LLR_0145`` never finding a non-empty table and the enhanced value never
+   coming into force.
 
    Where a server's next message is a further response-pending one, the default value is in
    force under ``UDSS_LLR_0145`` during its transfer and the enhanced value returns at its
