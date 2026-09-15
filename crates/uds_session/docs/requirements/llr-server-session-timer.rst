@@ -9,7 +9,8 @@ The server's session state
 
 The server holds three facts. The first is whether the active session is the default
 session, one bit. The identifier of the active session is not state: ``UDSS_LLR_0251``'s
-selection does not carry it and nothing in this set reads it. The second is the **controlling client**,
+selection does not carry it and nothing in this set reads it. The second is the
+**controlling client**,
 the ``S_AI[SA]`` and, where ``S_Mtype`` carries one, the ``S_AI[AE]`` of the client whose
 request produced the active non-default session, held only while a non-default session is
 active. The third is the
@@ -130,7 +131,8 @@ The timer's state
    The state is held in the instance rather than in caller-supplied storage because it is
    fixed in size: one bit, one addressing and one timer. The client's state grows with the
    number of channels it has, and the associations ``UDSS_LLR_0271`` holds grow with the
-   server's peers; neither is this state. Throughout this document a message is *from the controlling client*, and a
+   server's peers; neither is this state. Throughout this document a message is *from the
+   controlling client*, and a
    response is *to the controlling client*, where its ``S_AI[SA]``, or on a ``T_Data.conf``
    its ``S_AI[TA]``, and, where ``S_Mtype`` carries one, its ``S_AI[AE]`` form a peer
    identity equal to the recorded one under ``UDSS_LLR_0198``. ``tS3_Server``, when set
@@ -444,12 +446,30 @@ The timer's state
    :integrity_level: QM
    :target_level: D
    :origin: session-layer-standard
-   :source: ISO 14229-2:2021 9.7 Table 10; ISO 14229-5:2022 8.9.2
+   :source: ISO 14229-2:2021 9.7 Table 10
    :tags: server; s3_server; error-handling
 
    While in a non-default session, on ``T_Data.conf`` reporting an unsuccessful result
    for a response message to the controlling client whose classification does not state
    ``unsolicited``, the server shall not retransmit the response.
+
+   ISO 14229-2:2021 9.7 Table 10 states the prohibition in terms. Its response-transmission
+   row gives, for a ``T_Data.conf`` from the transport layer with a negative result value,
+   the handling "Restart tS3_Server timer (because it has been stopped based on the
+   previously received request message). The server shall not perform a retransmission of
+   the response message." The second sentence is this requirement; the first is
+   ``UDSS_LLR_0288``'s.
+
+   ISO 14229-5:2022 8.9.2 is not a locator of this requirement, and is named here instead.
+   It defines an unsolicited message as one the server transmits on a periodic scheduler or
+   a configured trigger, and forbids any unsolicited transmitted response message to reset
+   ``tS3_Server``; it says nothing of retransmission, so it cannot carve an exception out of
+   Table 10's row on its own. The exclusion is this set's inference: 8.9.2 takes an
+   unsolicited response out of the timer limb of that row, and the row is read here as
+   losing it entirely. An unsolicited response is therefore outside this requirement,
+   neither obliged nor forbidden to be sent again, that being the scheduler's affair.
+   ``UDSS_LLR_0288`` cites 8.9.2 in its own ``:source:`` because its claim is about the
+   timer, which is what the clause states.
 
    The service in progress is unaffected, ``UDSS_LLR_0217`` ending it at the final
    response as 10.1.4.1 states.
@@ -479,7 +499,8 @@ The timer's state
    Figure 12 key j and Figure 20 key d, both saying such a message "can be ignored" because
    the service in progress restarts the timer on its own completion under ``UDSS_LLR_0106``
    or ``UDSS_LLR_0142``. A timer disabled by the default session, not running under
-   ``UDSS_LLR_0194``'s vocabulary with no request to restart it, is ignored, Figure 12 key p saying such a message
+   ``UDSS_LLR_0194``'s vocabulary with no request to restart it, is ignored, Figure 12 key p
+   saying such a message
    "is ignored" and Figure 20 key j that it "can be ignored", a difference of modality the
    set records here. Table 6's stop row says the timer is disabled while the default session
    is active, and that case is unreachable in this requirement, ``UDSS_LLR_0221`` holding no

@@ -192,9 +192,9 @@ queue before the other is what the assumption forbids.
    several expiries, the order of the indications they produce is not specified.
 
    Rationale: this is what makes every requirement in the set testable without a network, a
-   clock or a scheduler — the property ``UDSS_LLR_0113``'s rationale relies on when it says
-   that every interaction with the vehicle network belongs to the caller, and the one
-   ``UDSS_LLR_0294`` secures by admitting no source of state but an input. The exception is
+   clock or a scheduler — a property available because ``UDSS_LLR_0113`` leaves every
+   interaction with the vehicle network to the caller, and one ``UDSS_LLR_0294`` secures by
+   admitting no source of state but an input. The exception is
    needed because a flat claim would contradict ``UDSS_LLR_0187``, which argues that several
    expiries on one timestamp need no order for the state they leave; an implementation is
    free there, and a test must be written to accept either order rather than to fix the one
@@ -318,8 +318,8 @@ queue before the other is what the assumption forbids.
    Rationale: the crate is ``no_std`` and, as ``UDSS_LLR_0307`` requires, allocation-free,
    so it cannot own a buffer whose size it does not know. Retaining a payload would also
    imply a retransmission buffer, and no requirement in this set obliges the session layer
-   to retransmit anything. The requirement is verified by inspection of the crate's types, which hold no
-   buffer in which a payload could be retained, rather than by a runtime test.
+   to retransmit anything. The requirement is verified by inspection of the crate's types,
+   which hold no buffer in which a payload could be retained, rather than by a runtime test.
 
 .. llr:: An output refers to caller-owned data
    :id: UDSS_LLR_0291
@@ -1225,7 +1225,9 @@ and leaves the means of recognising it to the implementation.
    a message is, the session layer shall determine it from that classification.
 
    Rationale: several requirements condition on message content rather than on addressing
-   alone. Determining these by parsing ``S_Data`` would bind this crate to the ISO 14229-1
+   alone: on a message's kind, on whether it selects a diagnostic session, on whether a
+   response was solicited, and on whether a request is a keep-alive or a repeat. Determining
+   those facts by parsing ``S_Data`` would bind this crate to the ISO 14229-1
    application layer encodings and would require every timing test to construct valid UDS
    frames. The caller already holds what is needed: the application composes the message it
    asks to have transmitted, and the code that supplies a ``T_Data.ind`` holds the bytes it
@@ -1234,9 +1236,9 @@ and leaves the means of recognising it to the implementation.
    The classification is carried on ``T_Data.ind`` rather than on ``S_Data.ind`` because a
    client must recognise a response-pending response at reception, before the application
    has seen it. It is carried on ``T_DataSOM.ind`` for the same reason in the other
-   direction: ``UDSS_LLR_0104`` conditions on a start-of-message that begins a request. A caller
-   supplying a start-of-message indication holds its first frame, so the classification is
-   available there.
+   direction: ``UDSS_LLR_0104`` conditions on a start-of-message that begins a request. A
+   caller supplying a start-of-message indication holds its first frame, so the
+   classification is available there.
 
 .. llr:: The kind required on a failed reception addressed to a server
    :id: UDSS_LLR_0270
@@ -1577,8 +1579,10 @@ and leaves the means of recognising it to the implementation.
    an unsuccessful reception of a message that was not addressed to a server.
 
    Rationale: no requirement in this set conditions on the kind of a message whose
-   reception failed and which was not addressed to a server, so the behaviour is defined
-   whether the kind is stated or not. Stating the exception this way
+   reception failed and which was not addressed to a server: ``UDSS_LLR_0154`` and
+   ``UDSS_LLR_0155`` act on such a reception by its result alone, and ``UDSS_LLR_0156``,
+   ``UDSS_LLR_0157`` and ``UDSS_LLR_0282`` act only on a reception that succeeded, so the
+   behaviour is defined whether the kind is stated or not. Stating the exception this way
    keeps the three kind values ``UDSS_LLR_0251`` states a closed set, which every
    requirement conditioning on kind relies on. Every other indication must therefore state
    a kind, and a stated outcome is what makes that checkable.
