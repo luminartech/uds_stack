@@ -55,14 +55,15 @@ assumption of use in the qualification repository that the application transmits
 reported time, the request the standard obliges it to send, the repeat that 9.7 Table 9
 requires or the TesterPresent that answers a keep-alive indication.
 
-The keep-alive is one such request, rejected like any other while the channel's spacing
-timer is active. 10.3 Figure 19 keys k to m show that postponement of the functionally
-addressed TesterPresent and key p names the delay. The physically addressed one meets the
-same rejection where the previous request on its channel needed no response or failed and
-the channel's spacing parameter is longer than the ``tS3_Client`` reload; on 9.2 Table 4's
-recommended ``tP2_Server_Max`` against 9.5 Table 5's ``tS3_Client`` reload it is shorter, the
-spacing timer and ``tS3_Client`` being started by the same confirmation. The delay this adds
-is bounded by an obligation the next section records.
+The keep-alive is one such request: rejected while the channel's spacing timer is active
+and transmitted after the reported time, which is the postponement 10.3 Figure 19 keys k to
+m show of the functionally addressed TesterPresent, key p naming the delay. The physically
+addressed one meets the same rejection where the previous request on its channel needed no
+response or failed and the channel's spacing parameter is longer than the ``tS3_Client``
+reload; on 9.2 Table 4's recommended ``tP2_Server_Max`` against 9.5 Table 5's
+``tS3_Client`` reload it is shorter, the spacing timer and ``tS3_Client`` being started by
+the same confirmation. The delay this adds is bounded by an obligation the next section
+records.
 
 What this document does not cover
 ---------------------------------

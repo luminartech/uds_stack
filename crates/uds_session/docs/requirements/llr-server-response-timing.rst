@@ -30,12 +30,15 @@ the qualification repository, where it is assessed from a safety perspective.
 
 Clause 8.7.6 excepts two cases. The first is the functionally addressed keep-alive
 TesterPresent, which the caller marks ``keep-alive`` under ``UDSS_LLR_0251``. A marked
-request is never the service in progress — :doc:`llr-server-session-timer` handles it
-instead — so the term keeps the uniqueness ``UDSS_LLR_0284`` and ``UDSS_LLR_0285`` rely
-on. The second is a request in the OBD
-service range that, for a server supporting that range and not in the programming
-session, aborts the active service and starts the default session. That is an
-application-layer action: ``UDSS_LLR_0216`` ends the service in progress on the reception
+request never begins a service in progress, ``UDSS_LLR_0215`` admitting only a request not
+so marked, so the term keeps the uniqueness ``UDSS_LLR_0284`` and ``UDSS_LLR_0285`` rely
+on; nor does it touch ``tP2_Server``, ``UDSS_LLR_0144`` and ``UDSS_LLR_0146`` excluding it
+from the start and the stop alike. :doc:`llr-server-session-timer` handles it instead.
+
+The second is a request in the OBD service range that, for a server supporting that range
+and not in the programming session, aborts the active service and starts the default
+session. That is an application-layer
+action: ``UDSS_LLR_0216`` ends the service in progress on the reception
 of the OBD request, and :doc:`llr-server-session-timer`'s assumptions of use state how the
 session change is classified and why the aborted request's completion report is optional.
 
@@ -61,7 +64,8 @@ requirements declare.
 The term is load-bearing in ``UDSS_LLR_0285``: the end of the service in progress is what
 clears the response-pending anchor ``UDSS_LLR_0212`` keeps, so a ``T_Data.conf`` confirming
 a response-pending message transmitted for one request delays nothing once that request has
-ended. It does answer the next request where that request comes from the same client while
+ended, provided the confirmation does not answer the next request under ``UDSS_LLR_0214``'s
+addressing match. It does answer it where the next request comes from the same client while
 the earlier one's response-pending message is still unconfirmed — after a caller
 inconsistency, or where the same client sends the OBD-range request of 8.7.6 during the
 earlier request's enhanced window, which the standard permits. ``UDSS_LLR_0214`` declares

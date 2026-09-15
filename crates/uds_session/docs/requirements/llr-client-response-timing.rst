@@ -72,7 +72,8 @@ point at which the client is no longer waiting: the response it waited for has a
 the expected responses of a functional exchange are all in, the reception failed and
 ISO 14229-2:2021 9.7 Table 9 has the client repeat the request rather than wait on, the
 window expired, or the caller reset the channel. A request expecting no response is never
-in progress in this sense, there being no response for the client to wait for.
+in progress in this sense, there being no response for the client to wait for, and
+``UDSS_LLR_0153`` starting no timer for one.
 
 A stopped timer does not by itself mean that no request is in progress. ``UDSS_LLR_0154``
 also stops the timer at the start-of-message of a response-pending message, which
