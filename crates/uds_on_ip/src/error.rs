@@ -1,20 +1,20 @@
 //! Error taxonomy.
 //!
-//! [`Error`] is generic over the session layer's error type rather than
-//! erasing it into a boxed or stringified form, because boxing needs `alloc`
-//! and this crate's core is alloc-free. The generic is threaded through
-//! [`Result`], so callers normally write `Result<T, S::Error>` and never name
-//! it directly.
+//! [`Error`] is a concrete enum. It was generic over the session layer's error
+//! type while that was a trait's associated type; `uds_session` reports a
+//! concrete `Rejection` now, so the parameter is gone and callers write
+//! `Result<T>`.
 
-use crate::session::AResult;
+use uds_session::{Rejection, SResult};
 
 /// Errors raised by this crate.
 ///
-/// `E` is the session layer's own error type
-/// ([`SessionLayer::Error`](crate::session::SessionLayer::Error)).
+/// No longer generic over a session-layer error: `uds_session` reports a
+/// concrete [`Rejection`], and the trait whose associated type this used to
+/// carry is deleted.
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
-pub enum Error<E> {
+pub enum Error {
     /// The `DoIP` transport failed.
     ///
     /// Only present with a driver feature enabled: `simple_doip::Error` is the
@@ -73,24 +73,24 @@ pub enum Error<E> {
         available: usize,
     },
 
-    /// The session layer rejected the request.
-    #[error("session layer error")]
-    Session(E),
+    /// The session layer rejected the input.
+    #[error("session layer rejected the input")]
+    Session(Rejection),
 
     /// The exchange completed unsuccessfully.
     #[error("exchange did not complete: {0:?}")]
-    Exchange(AResult),
+    Exchange(SResult),
 }
 
 #[cfg(any(feature = "client", feature = "server"))]
-impl<E> From<simple_doip::Error> for Error<E> {
+impl From<simple_doip::Error> for Error {
     fn from(e: simple_doip::Error) -> Self {
         Self::Transport(e)
     }
 }
 
-/// This crate's result type, generic over the session layer's error.
-pub type Result<T, E> = core::result::Result<T, Error<E>>;
+/// This crate's result type.
+pub type Result<T> = core::result::Result<T, Error>;
 
 /// Compile-time proof that this crate's errors, and the upstream errors it
 /// composes, implement [`core::error::Error`] rather than `std::error::Error`.
@@ -103,5 +103,5 @@ const _: () = {
     const fn assert_core_error<T: core::error::Error>() {}
     assert_core_error::<simple_doip::messages::MessageError>();
     assert_core_error::<uds_protocol::Error>();
-    assert_core_error::<Error<core::convert::Infallible>>();
+    assert_core_error::<Error>();
 };

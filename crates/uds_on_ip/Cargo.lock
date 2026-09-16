@@ -15,12 +15,7 @@ dependencies = [
 
 [[package]]
 name = "automotive-wire-codec"
-version = "0.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d3619f2db27c70d93c5390ce2e90482c26c99675a85392271d2bfe07451234f6"
-dependencies = [
- "embedded-io",
-]
+version = "0.4.0"
 
 [[package]]
 name = "bitmask-enum"
@@ -228,7 +223,6 @@ dependencies = [
  "async-trait",
  "automotive-wire-codec",
  "bytes",
- "embedded-io",
  "futures",
  "strum",
  "thiserror",
@@ -397,6 +391,7 @@ dependencies = [
  "tokio",
  "tracing",
  "uds_protocol",
+ "uds_session",
 ]
 
 [[package]]
@@ -405,10 +400,13 @@ version = "0.1.0"
 dependencies = [
  "automotive-wire-codec",
  "bitmask-enum",
- "embedded-io",
  "serde",
  "thiserror",
 ]
+
+[[package]]
+name = "uds_session"
+version = "0.1.0"
 
 [[package]]
 name = "unicode-ident"

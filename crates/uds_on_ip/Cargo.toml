@@ -20,6 +20,9 @@ exclude = ["legacy/", "docs/", ".github/"]
 # 0.5.x and uds_protocol 0.1.x are published; see ARCHITECTURE.md 8.4.
 simple_doip = { path = "../simple_doip", default-features = false }
 uds_protocol = { path = "../uds_protocol", default-features = false }
+# ISO 14229-2 session layer vocabulary. This crate holds no addressing or
+# service-primitive types of its own; see the boundary brief §2.
+uds_session = { path = "../uds_session", default-features = false }
 
 thiserror = { version = "2", default-features = false }
 embedded-io = { version = "0.7", default-features = false }

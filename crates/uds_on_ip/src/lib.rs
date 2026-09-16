@@ -16,7 +16,7 @@
 //!   `T_PDU` service primitives and parameters onto `DoIP`'s.
 //!
 //! Everything between those two layers is the session layer, which this crate
-//! *drives* but does not implement (see [`session`]).
+//! *drives* but does not implement (see `session`).
 //!
 //! ## The shape this produces
 //!
@@ -41,13 +41,13 @@
 //! ```
 //!
 //! This crate appears twice. It **wraps** the session layer rather than
-//! stacking on top of it, which is why [`session::SessionLayer`] is driven from
+//! stacking on top of it, which is why the session layer is driven from
 //! both directions. A full discussion is in `ARCHITECTURE.md`.
 //!
 //! ## `no_std` and alloc-freedom
 //!
-//! The core — [`addressing`], [`session`], [`mapping`], [`profile`],
-//! [`handler`] — is `no_std` and allocates nothing. No public type contains a
+//! The core — `addressing`, `session`, [`mapping`], [`profile`],
+//! `handler` — is `no_std` and allocates nothing. No public type contains a
 //! `Vec` or a `String`: responses borrow from a caller-supplied receive buffer,
 //! and a handler writes its response into a caller-supplied sink.
 //!
@@ -73,7 +73,7 @@
 //! It does not decode UDS messages — that is `uds_protocol` — and it does not
 //! dispatch services, choose negative response codes, or know what a data
 //! identifier is. Those are ISO 14229-1 clause 8.7 concerns and belong to
-//! `uds_services`, which reaches this crate through [`handler::RequestHandler`].
+//! `uds_services`, which reaches this crate through the `handler` module.
 //!
 //! The one exception is narrow and forced by the standard: clause 8 keys TCP
 //! connection handling on two specific service identifiers. See
@@ -82,17 +82,9 @@
 #![cfg_attr(not(feature = "std"), no_std)]
 #![forbid(unsafe_code)]
 
-pub mod addressing;
 pub mod error;
-pub mod handler;
 pub mod mapping;
-pub mod primitives;
 pub mod profile;
-pub mod session;
 
-pub use addressing::{Address, Ai, ChannelId, Mtype, TaType};
 pub use error::{Error, Result};
-pub use handler::{Ctx, Outcome, RequestHandler};
-pub use primitives::{Completion, Confirm, Indication, Request, SResult};
 pub use profile::Timing;
-pub use session::{ChannelTiming, SessionAction, SessionLayer};
