@@ -1617,7 +1617,8 @@ means of recognising it to the implementation.
    :tags: service-interface; classification
 
    A classification whose kind is ``final response`` stating neither ``solicited`` nor
-   ``unsolicited`` shall be rejected as ``UDSS_LLR_0015`` defines.
+   ``unsolicited`` shall be rejected as ``UDSS_LLR_0015`` defines. An interface in which a
+   final response cannot omit it satisfies this requirement without a check.
 
    Rationale: ``UDSS_LLR_0065`` requires such a classification to state one of the two, and
    without a stated outcome for one that states neither, that obligation on the caller is
