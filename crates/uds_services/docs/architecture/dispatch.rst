@@ -718,6 +718,22 @@ functionally addressed ``TesterPresent`` with the suppress bit set must bypass t
 occupancy, and a request in the 0x00–0x0F service range must abort an active service
 outside that range and start the default session, unless a programming session is active.
 
+Two details of that wording matter to where the line falls, and both were missing from an
+earlier version of this passage.
+
+**The second exception is conditional.** The clause opens "**If a server supports services in
+the range of 0x00 to 0x0F** receives diagnostic requests in the range of 0x00 to 0x0F …". The
+whole rule is predicated on the server implementing something in that range — which is a fact
+``UDSSVC_ARCH_0013``'s assembly list holds and a byte-level driver cannot see. That
+strengthens the proposed split rather than complicating it: classification needs what this
+crate knows.
+
+**Occupancy ends on silence too.** The instance is held "until the request message is
+processed (with final response sent **or application call without response**)", so an
+``Outcome::Suppress`` releases it exactly as a transmitted response does. A driver that
+released the instance only on a transmission would deadlock on the silence clause 8.7
+requires.
+
 Occupying a resource, bypassing it, and aborting an in-flight service are all properties
 of the driver loop that calls this crate, not of a single dispatch. What belongs here is
 at most the classification — which requests qualify for each exception — and that

@@ -16,6 +16,13 @@ the default session unless a programming session is active. Classifying a reques
 of those exceptions is arguably this crate's; acting on the classification is certainly
 not. Proposed split, not yet agreed: this crate classifies, the driver acts.
 
+The proposal got stronger on 2026-09-16 without closing. The second exception is predicated
+on "if a server supports services in the range of 0x00 to 0x0F", which only
+``UDSSVC_ARCH_0013``'s assembly list knows — so classification is not merely *arguably* this
+crate's, it is not available anywhere else. What is still open is whether this crate should
+also hold the occupancy itself, now that ``UDSSVC_ARCH_0040`` has made it the driver and the
+argument for splitting the two across a crate boundary has gone. See :doc:`dispatch`.
+
 **2. What does ``A_Mtype`` mean for this crate?** Clause 7.2 defines four formats —
 diagnostics, remote, secure, and secure remote — and Figure 5's optional 0x38 and 0x39
 checks exist to enforce the secure ones. Those are filed as caller-supplied checks in
