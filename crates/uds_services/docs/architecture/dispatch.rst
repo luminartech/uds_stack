@@ -364,7 +364,7 @@ Suppression
    :depends_on: UDSSVC_ARCH_0015; UDSSVC_ARCH_0032
    :status: draft
    :origin: application-layer-standard
-   :source: ISO 14229-1:2020 8.7.3.3 Table 5; ISO 14229-1:2020 8.7.4.3 Table 7; ISO 14229-1:2020 8.7.5
+   :source: ISO 14229-1:2020 8.7.3.3 Table 5; ISO 14229-1:2020 8.7.4.3 Table 7; ISO 14229-1:2020 8.7.5; ISO 14229-1:2020 A.1
    :tags: dispatch; suppression
 
    The final stage takes the settled response code, the addressing mode, the
@@ -386,7 +386,17 @@ Suppression
    3. **A sent response-pending overrides both suppressions.** Once
       ``requestCorrectlyReceivedResponsePending`` (0x78) has been sent, a final response
       shall be sent, independent of the bit *and* of the functional-addressing suppression
-      in rule 1.
+      in rule 1. Annex A.1 states both limbs in one sentence, which is worth quoting because
+      the tables state only the first:
+
+         When this NRC is used, the server shall always send a final response (positive or
+         negative) independent of the suppressPosRspMsgIndicationBit value **or the suppress
+         requirement for responses with NRCs SNS, SFNS, SNSIAS, SFNSIAS and ROOR on
+         functionally addressed requests.**
+
+      Tables 4 and 5 carry only "independent of the suppressPosRspMsgIndicationBit value", so
+      a reading taken from them alone gets rule 3 half right — which is the failure mode this
+      rule exists to prevent.
 
    .. uml::
       :align: center
@@ -639,9 +649,17 @@ Extension points
         - Request sequence respected for the SubFunction
         - Figure 6, after 0x33
       * - any
+        - manufacturer
+        - Manufacturer-specific failure detected
+        - Figure 5, after the busy check and before the service-identifier check
+      * - any
+        - supplier
+        - Supplier-specific failure detected
+        - Figure 5, after 0x39 and before the SubFunction branch
+      * - any
         - manufacturer / supplier
-        - Manufacturer- and supplier-specific failures
-        - Figure 5 has two such hooks, Figure 6 one
+        - Manufacturer- or supplier-specific check
+        - Figure 6, after 0x24 and before the service-specific check
 
    These are attachment points rather than implementations because none of them can be
    decided here. Whether the server is busy is a property of the application's own
@@ -651,6 +669,23 @@ Extension points
    The *position* is the part this crate owns and the part worth centralising. A caller
    that implements its own busy check in the wrong place answers 0x11 where the standard
    requires 0x21, and no amount of care inside the check itself fixes that.
+
+   The two hooks in Figure 5 are distinct and differently placed — one **manufacturer**, one
+   **supplier** — and an earlier version of this element gave them a single row reading "Figure
+   5 has two such hooks". They are separated above because a caller attaching a check to the
+   wrong one of them gets the wrong precedence against the service-identifier and security
+   checks between them.
+
+   **A transcription trap in the source, recorded so it is not re-derived.** The two figures
+   draw these hooks with *opposite polarity*: Figure 5's nodes ask "failure detected?" and take
+   the NRC exit on **YES**, while Figure 6's asks a check question and takes the NRC exit on
+   **NO**. The behaviour is the same; only the drawing differs. Whoever authors the requirement
+   should read the figure rather than copy this table.
+
+   Figure 5's busy check also carries a Key note narrowing it: the request "cannot be accepted
+   because another diagnostic task is already requested and in progress **by a different
+   client**". That is narrower than "the server is busy", and it is a per-channel question
+   under ``UDSSVC_ARCH_0035`` rather than a global one.
 
    Clause 8.7.2 carries a note that, given the choices available across these figures, a
    specific negative response code is not guaranteed for every possible test-pattern
