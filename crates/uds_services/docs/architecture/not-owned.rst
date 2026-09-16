@@ -19,7 +19,7 @@ against ``UDSSVC_ARCH_0001``.
      - ``uds_session``
      - ISO 14229-2
    * - **When a response-pending is due, and how often it may repeat**
-     - ``uds_session`` and the driver
+     - ``uds_session``
      - ISO 14229-2 timing; see below
    * - ``tP2_Server`` / ``tP2*_Server``
      - ``uds_session``
@@ -28,18 +28,18 @@ against ``UDSSVC_ARCH_0001``.
      - this crate, but not as a timer
      - ISO 14229-2 types it a *performance requirement* on the application, not
        something to run
-   * - The handler and client seams
-     - ``uds_session``
-     - ISO 14229-2 specifies the application-facing service interface;
-       see ``UDSSVC_ARCH_0018``
+   * - Framing, connection setup, routing activation
+     - the binding
+     - ISO 14229-5 and ISO 13400-2; reached through ``UDSSVC_ARCH_0029``
    * - A_PDU framing, TCP handling, DoIP negative acknowledgements
      - ``uds_on_ip``
      - ISO 14229-5
    * - Occupying the diagnostic protocol instance
-     - the binding's driver
-     - Clause 8.7.6 describes a resource, not a dispatch
-   * - Connection setup, routing activation
-     - the binding
+     - unsettled
+     - Clause 8.7.6 describes a resource, not a dispatch — but the driver that would
+       hold it is now this crate's. See :doc:`open-questions`
+   * - Establishing and configuring the link
+     - the consuming application
      - Not portable across transports; ``UDSSVC_ARCH_0003``
 
 Response-pending: what moved, and what did not
@@ -60,7 +60,8 @@ The conclusion outlived the premise by several drafts, having been re-homed onto
 It was not settled there. ``uds_session`` declines the job in its own requirement set:
 ``UDSS_LLR_0117`` reports the ``tP2_Server`` overrun and states that it "must not be read
 as obliging the session layer to produce a response", and ``UDSS_LLR_0119`` expects the
-request for a response-pending to *arrive from its caller*, which it may then refuse.
+request for a response-pending to *arrive from its caller*, which it may then refuse. With
+``UDSSVC_ARCH_0040`` that caller is this crate, so the two ends of the argument have met.
 
 ``UDSSVC_ARCH_0032`` now places the decision and the bytes here, on the standard's own
 grounds rather than on convenience: ISO 14229-2:2021 REQ 5.4 and REQ 5.6 make
@@ -80,42 +81,45 @@ which is a clause 8.7 fact this crate already computes.
 
 .. uml::
    :align: center
-   :caption: A handler that outruns ``tP2_Server``. The handler yielding is what lets
-             the driver reach step 3 at all.
+   :caption: A handler that outruns ``tP2_Server``. The handler yielding is what lets the
+             driver reach step 4 at all.
 
    @startuml
    autonumber "<b>[0]"
    hide footbox
 
    actor tester as T
-   participant "binding driver" as I
-   participant "uds_session" as S
-   participant "uds_services" as V
+   participant "uds_on_ip" as I
+   box "uds_services" #F4F7FA
+     participant "driver loop" as L
+     participant "uds_session" as S
+     participant "dispatch" as V
+   end box
    participant "slow handler" as H
 
-   I -> V : handle(ctx, bytes, sink, pending)
+   L -> V : dispatch(ctx, bytes, sink)
    activate V
    V -> H : typed handler call
    activate H
 
-   == tP2_Server expires while the handler runs ==
+   == tP2_Server expires while the handler yields ==
 
-   S -> I : response-timing indication
-   I -> V : due()
-   V -> V : admissible?\n(service implemented and\nMAY_RESPOND_PENDING)
-   V -> I : offer([7F, sid, 78])
+   L -> S : poll
+   S --> L : ResponseOverrun
+   L -> V : is a 0x78 admissible?
+   V --> L : yes — service implemented\nand MAY_RESPOND_PENDING
+   L -> S : s_data_req([7F, sid, 78])
+   L -> S : poll
+   S --> L : SessionAction::Transmit
+   L -> I : t_data_req
    I -> T : 0x78
-   note over V
-     uds_services reads no clock.
-     It is told the moment, and
-     decides the answer.
-   end note
 
    H --> V : Ok, or a negative response code
    deactivate H
-   V -> V : suppression gate,\nresponse-pending offered
-   V --> I : Responded
+   V -> V : suppression gate,\nresponse-pending submitted
+   V --> L : Responded
    deactivate V
+   L -> I : final response
    I -> T : final response
    note right of T
      Sent even if functionally addressed
@@ -124,12 +128,14 @@ which is a clause 8.7 fact this crate already computes.
    end note
    @enduml
 
-The consequence that still constrains the **binding's** server driver rather than this
-crate: dispatch must not block the loop that drains session actions, or ``due`` never
-fires and the response-pending it would have prompted is never offered.
-``UDSSVC_ARCH_0016``'s asynchronous handler seam is what keeps a slow handler from having
-to run somewhere the driver can continue past — the handler yields at its await points,
-and the driver simply continues.
+The constraint this used to place on a binding's driver now falls on this crate's own loop:
+dispatch must not block it, or the overrun at step 4 is never observed and the response-pending
+it would have prompted is never sent. ``UDSSVC_ARCH_0016``'s asynchronous handler seam is what
+makes that achievable — the handler yields at its await points and the loop keeps draining.
+
+An earlier version of this diagram had a binding driver calling a ``due()`` on this crate and
+receiving an ``offer()`` back. Both were seams to a component that no longer exists; see
+``UDSSVC_ARCH_0031``.
 
 What the layer below declines
 -----------------------------

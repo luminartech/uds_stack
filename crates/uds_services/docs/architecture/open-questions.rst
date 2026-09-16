@@ -8,8 +8,8 @@ Still open
 ----------
 
 **1. How much of clause 8.7.6 belongs here?** Multiple concurrent requests with mixed
-addressing is a clause 8.7 subclause, but occupancy of the diagnostic protocol instance is
-the driver's. The two exceptions are the hard part: a functionally addressed
+addressing is a clause 8.7 subclause, and occupancy of the diagnostic protocol instance is the
+driver's — which ``UDSSVC_ARCH_0040`` has since made this crate. The two exceptions are the hard part: a functionally addressed
 ``TesterPresent`` with the suppress bit set must bypass the occupied resource, and a
 request in the 0x00–0x0F range must abort an active service outside that range and start
 the default session unless a programming session is active. Classifying a request as one

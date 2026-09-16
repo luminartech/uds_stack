@@ -42,10 +42,9 @@ Where this crate sits, what it depends on, and what a transport swap replaces.
 
    CLI -down-> SVC : typed requests
    APP -down-> SVC : typed service handlers
-   OIP -up-> SVC : handler seam + Ctx
-   OCAN -up-> SVC : handler seam + Ctx
-   OIP -down-> SESS
-   OCAN -down-> SESS
+   SVC -down-> OIP : UdsTransport
+   SVC -down-> OCAN : UdsTransport
+   SVC -right-> SESS : drives
    OIP -down-> DOIP
    OCAN -down-> TP
 
@@ -53,6 +52,10 @@ Where this crate sits, what it depends on, and what a transport swap replaces.
    PROTO .up.> OIP
    PROTO .up.> OCAN
    @enduml
+
+``uds_session`` is drawn to the side of this crate rather than under a binding, because
+``UDSSVC_ARCH_0040`` has this crate own the ``Session`` instance: it supplies every input and
+drains every action. A binding never touches it.
 
 ``uds_protocol`` is drawn to one side with dashed edges because it is not a layer: it is
 the message vocabulary this crate and both bindings speak. Nothing is above or below it.
@@ -357,19 +360,23 @@ seams earn their keep.
    hide footbox
 
    actor tester as T
-   box "binding" #F4F7FA
-     participant "simple_doip" as D
-     participant "uds_on_ip" as I
+   participant "simple_doip" as D
+   participant "uds_on_ip" as I
+   box "uds_services" #F4F7FA
+     participant "driver loop" as L
      participant "uds_session" as S
+     participant "dispatch" as V
    end box
-   participant "uds_services" as V
-   participant "application\nhandler" as H
+   participant "consuming\napplication handler" as H
 
    T -> D : DoIP diagnostic message
    D -> I : payload bytes + addressing
-   I -> S : indicate request received
-   S --> I : active session, security level
-   I -> V : handle(ctx, request bytes, sink)
+   I --> L : next_event → DataInd
+   activate L
+   L -> S : t_data_ind(now_ms, ..)
+   L -> S : poll
+   S --> L : SessionAction::Indicate
+   L -> V : dispatch(ctx, request bytes, sink)
    activate V
 
    V -> V : decode, preconditions,\nsub-function, data parameters
@@ -378,24 +385,34 @@ seams earn their keep.
    H --> V : Ok, or a negative response code
    deactivate H
    V -> V : suppression gate
-   V --> I : Responded, or Suppress
+   V --> L : Responded, or Suppress
    deactivate V
 
    alt Responded
+     L -> S : s_data_req(response bytes)
+     L -> S : poll
+     S --> L : SessionAction::Transmit
+     L -> I : t_data_req(ai, bytes)
      I -> D : response bytes
      D -> T : DoIP diagnostic message
    else Suppress
-     I -> I : send nothing
+     L -> L : send nothing
    end
+   deactivate L
    @enduml
 
-Step 3 is the one to look at. Session and security reach this crate as *values*, from the
-binding, having been read from ``uds_session``. There is no edge from ``uds_services`` to
-``uds_session`` on any diagram in this document, and ``UDSSVC_ARCH_0002`` is why.
+The box is the point. Steps 2 through 12 are all inside this crate: it reads the transport,
+turns the session layer's crank, dispatches, and transmits. Nothing calls into it, which is
+``UDSSVC_ARCH_0018``, and session state never arrives as a parameter because this crate holds
+it (``UDSSVC_ARCH_0035``).
+
+An earlier version of this diagram had a binding in the driving position, handing this crate
+bytes and a ``Ctx`` read from ``uds_session``, and taking an ``Outcome`` back. That component
+does not exist.
 
 The final ``alt`` is not error handling. Both branches are specified outcomes of clause
 8.7. Which one applies depends on the addressing mode, which arrives on ``Ctx``, and on
-whether this dispatch offered a response-pending (``UDSSVC_ARCH_0032``) — neither of which
+whether this dispatch submitted a response-pending (``UDSSVC_ARCH_0032``) — neither of which
 inspecting the request bytes would reveal.
 
 .. arch:: An async runtime is assumed; none is depended on
@@ -420,30 +437,32 @@ inspecting the request bytes would reveal.
    what keeps ``UDSSVC_ARCH_0027``'s embedded build possible.
 
    What this assumption *buys* is recorded where it is spent:
-   ``UDSSVC_ARCH_0016`` on the server side, where an asynchronous handler removes the need
-   for the binding's driver to run slow handlers somewhere it can continue past, and
+   ``UDSSVC_ARCH_0016`` on the server side, where an asynchronous handler lets this crate's own
+   loop keep draining session actions while a slow handler runs, and
    ``UDSSVC_ARCH_0028`` on the client side, where awaiting is what makes one typed call
    possible instead of three.
 
-Two different graphs
---------------------
+One graph, and it is worth saying so
+------------------------------------
 
-The layering diagram and the Cargo dependency graph are not the same shape, and confusing
-them is the most common way to misread this stack. At the handler seam they point in
-opposite directions:
+This page used to carry a section warning that the layering diagram and the Cargo dependency
+graph were different shapes, and that confusing them was the most common way to misread the
+stack. Under ``UDSSVC_ARCH_0040`` they are the same shape, and the warning is retired rather
+than deleted because the arrangement it described was deliberate and is worth knowing was left
+behind.
 
 .. uml::
    :align: center
-   :caption: At the handler seam, the caller and the dependent are not the same crate.
+   :caption: Processing order and Cargo dependency now point the same way at every edge.
 
    @startuml
    [uds_services] as SVC
    [uds_session] as SESS
    [uds_on_ip] as OIP
 
-   OIP -[#4A6E8A]-> SVC : <b>calls</b>\nhands over bytes + Ctx
-   SVC -[#C0392B,dashed]-> SESS : <b>depends on</b>\nimplements the seam it declares
-   OIP -[#C0392B,dashed]-> SESS : <b>depends on</b>\ndrives the session layer
+   SVC -[#4A6E8A]-> OIP : <b>calls</b>\nUdsTransport
+   OIP -[#C0392B,dashed]-> SVC : <b>depends on</b>\nimplements UdsTransport
+   SVC -[#C0392B,dashed]-> SESS : <b>depends on</b>\ndrives the session layer
 
    legend right
      |= |= edge |
@@ -452,20 +471,13 @@ opposite directions:
    endlegend
    @enduml
 
-*Protocol layering* runs application → clause 8.7 → binding → session → transport, because
-that is the order a request is processed in. So ``uds_on_ip`` calls ``uds_services``.
+A caller and its callee are still opposite ends of one Cargo edge — ``uds_services`` calls
+``uds_on_ip`` and ``uds_on_ip`` names ``uds_services`` — which is the ordinary trait-inversion
+shape, not a peculiarity of this stack. What has gone is the case where *neither* crate named
+the other and both met at an interface owned by a third crate below them both.
 
-*Cargo dependencies* do not follow that at all: neither of those two crates names the other.
-Both depend on ``uds_session``, which declares the seam between them because ISO 14229-2
-specifies the application-facing service interface. The caller and the callee meet at an
-interface owned by a third crate that is below both of them in the layering.
-
-A layer being below another in processing order therefore says nothing about which crate
-names the other in its manifest — the two questions have different answers here, and
-confusing them is the most common way to misread this stack.
-
-An earlier version of this page described the arrangement as ``tower`` to ``hyper``: the
-binding declaring a byte seam and this crate implementing it behind a feature. That held
-while each binding declared its own seam. It no longer does — the seam's signature carries
-``Ai``, bytes and a sink and no transport concept, so it was never transport-shaped, and one
-declaration in ``uds_session`` serves every binding. See ``UDSSVC_ARCH_0018``.
+The retired arrangement, for the record: ``uds_on_ip`` called ``uds_services`` across a
+``RequestHandler`` that ``uds_session`` declared, so the caller and the callee met at an
+interface owned by a crate below both of them, and neither named the other in its manifest.
+That followed from a binding hosting the driver. ``UDSSVC_ARCH_0018`` records why nothing calls
+into this crate now, and ``UDSSVC_ARCH_0029`` why the one seam below it is its own.
