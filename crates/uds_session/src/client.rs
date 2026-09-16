@@ -19,20 +19,38 @@
 //! out of scope while the client is still in use is rejected with `E0597`, like any other
 //! borrow that does not live long enough.
 //!
-//! ```
+//! The example below exercises that arrangement by calling [`Client::open_channel`] with
+//! `responders`; it is `no_run` because that method is still `todo!()` and would panic if
+//! executed, but it still has to compile, which is what constrains `'r`.
+//!
+//! ```no_run
 //! use uds_session::{
-//!     ChannelSlot, Client, FunctionalKeepAlive, KeepAliveMode, ResponderSlot,
+//!     Address, Ai, ChannelParams, ChannelSlot, Client, FunctionalKeepAlive, KeepAliveMode,
+//!     Mtype, ResponderSlot, TaType, Timestamp,
 //! };
 //!
 //! let mut responders = [ResponderSlot::EMPTY; 8];
-//! let mut keep_alive = FunctionalKeepAlive::NEW;
+//! let mut keep_alive = FunctionalKeepAlive::EMPTY;
 //! let mut channels = [ChannelSlot::EMPTY; 4];
 //!
-//! let client = Client::new(
+//! let mut client = Client::new(
 //!     &mut channels,
 //!     KeepAliveMode::Functional { storage: &mut keep_alive, s3_client: 2_000 },
 //! );
-//! # let _ = (client, &mut responders);
+//!
+//! let ai = Ai {
+//!     mtype: Mtype::Diag,
+//!     sa: Address(0xF1),
+//!     ta: Address(0x10),
+//!     ta_type: TaType::Physical,
+//! };
+//! let params = ChannelParams {
+//!     default_reload: 50,
+//!     enhanced_reload: 5_000,
+//!     spacing: 60,
+//!     s3_client: None,
+//! };
+//! drop(client.open_channel(Timestamp(0), ai, params, &mut responders));
 //! ```
 
 use crate::addressing::{Address, AddressExtension, Ai};
@@ -88,7 +106,7 @@ impl ChannelSlot<'_> {
 ///
 /// ``UDSS_LLR_0121`` — returned when the caller supplies a channel's storage, valid until
 /// the caller withdraws it.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct ChannelId(u16);
 
 /// The client-wide keep-alive state of functional mode.
@@ -101,10 +119,10 @@ pub struct FunctionalKeepAlive {
 }
 
 impl FunctionalKeepAlive {
-    /// The initial state.
+    /// The initial state: no session kept alive and the timer not running.
     ///
     /// ``UDSS_LLR_0153`` — the client's session timer is initially not running.
-    pub const NEW: Self = Self { _reserved: () };
+    pub const EMPTY: Self = Self { _reserved: () };
 }
 
 /// How the client keeps servers alive.
@@ -137,9 +155,14 @@ pub enum KeepAliveMode<'s> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum ClientOutput<'d> {
-    /// `T_Data.req` — ``UDSS_LLR_0024``.
+    /// `T_Data.req` — ``UDSS_LLR_0024``. The data is the caller's own, per
+    /// ``UDSS_LLR_0014``.
     Transmit {
         /// Which channel it belongs to.
+        ///
+        /// A convenience: the request's addressing already determines the channel, since
+        /// ``UDSS_LLR_0122`` makes an addressing unique per channel, so this field saves
+        /// the caller a lookup rather than carrying information the addressing lacks.
         channel: ChannelId,
         /// Where it goes.
         ai: Ai,
@@ -150,7 +173,7 @@ pub enum ClientOutput<'d> {
     Indicate {
         /// The channel the caller identified under ``UDSS_LLR_0026``.
         channel: ChannelId,
-        /// Who it came from.
+        /// Who it came from and who it was for.
         ai: Ai,
         /// The message; meaningful only where `result` is [`SResult::Ok`]
         /// (``UDSS_LLR_0035``).
@@ -394,6 +417,15 @@ impl<'s, 'r> Client<'s, 'r> {
     /// ``UDSS_LLR_0036`` indicates it to the application; ``UDSS_LLR_0045`` pairs it with
     /// an open start-of-message; ``UDSS_LLR_0146`` records an outstanding
     /// response-pending message; ``UDSS_LLR_0143`` reports a responder beyond capacity.
+    ///
+    /// `class` is optional because ``UDSS_LLR_0058`` permits a `T_Data.ind` reporting an
+    /// unsuccessful reception of a message not addressed to a server to omit the kind, and
+    /// ``UDSS_LLR_0069`` makes that the only permitted omission, rejecting a `class` of
+    /// `None` in every other case — including a *successful* reception, which is still a
+    /// ``UDSS_LLR_0069`` rejection and not this permitted case. [`Cause::KindRequired`]
+    /// reports it.
+    ///
+    /// [`Cause::KindRequired`]: crate::rejection::Cause::KindRequired
     pub fn t_data_ind<'d>(
         &mut self,
         now: Timestamp,
@@ -401,7 +433,7 @@ impl<'s, 'r> Client<'s, 'r> {
         ai: Ai,
         data: &'d [u8],
         result: SResult,
-        class: ClientRx,
+        class: Option<ClientRx>,
     ) -> ClientReaction<'_, 'd> {
         #[allow(
             clippy::todo,
@@ -409,7 +441,8 @@ impl<'s, 'r> Client<'s, 'r> {
         )]
         {
             todo!(
-                "UDSS_LLR_0036, 0045: {now:?} {channel:?} {ai:?} {} {result:?} {class:?}",
+                "UDSS_LLR_0036, 0045, 0058, 0069: {now:?} {channel:?} {ai:?} {} {result:?} \
+                 {class:?}",
                 data.len()
             )
         }

@@ -13,9 +13,9 @@
 ///
 /// One variant per rejecting requirement that remains expressible. The requirements this
 /// crate's types discharge by construction — ``UDSS_LLR_0030``, ``UDSS_LLR_0031``,
-/// ``UDSS_LLR_0066``, ``UDSS_LLR_0067``, ``UDSS_LLR_0068``, ``UDSS_LLR_0070`` and part of
-/// ``UDSS_LLR_0072`` — have no variant here, because an input that triggers them cannot
-/// be written.
+/// ``UDSS_LLR_0054``, ``UDSS_LLR_0066``, ``UDSS_LLR_0067``, ``UDSS_LLR_0068``,
+/// ``UDSS_LLR_0070``, ``UDSS_LLR_0071`` and part of ``UDSS_LLR_0072`` — have no variant
+/// here, because an input that triggers them cannot be written.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum Cause {
@@ -24,8 +24,6 @@ pub enum Cause {
     NoSuchChannel,
     /// ``UDSS_LLR_0122`` — channel storage supplied with an existing channel addressing.
     DuplicateChannelAddressing,
-    /// ``UDSS_LLR_0054`` — `S_Length` differs from the data supplied.
-    LengthMismatch,
     /// ``UDSS_LLR_0061`` — a request duplicating an outstanding association.
     AssociationOutstanding,
     /// ``UDSS_LLR_0062`` — no association is free.
@@ -55,25 +53,23 @@ impl Cause {
         match self {
             Self::NoSuchChannel => 0,
             Self::DuplicateChannelAddressing => 1,
-            Self::LengthMismatch => 2,
-            Self::AssociationOutstanding => 3,
-            Self::NoAssociationFree => 4,
-            Self::NoMatchingAssociation => 5,
-            Self::KindRequired => 6,
-            Self::Malformed => 7,
-            Self::ResponsePendingUnconfirmed => 8,
-            Self::ResponsePendingTooSoon => 9,
-            Self::SpacingTimerRunning => 10,
-            Self::RepeatCountSpent => 11,
-            Self::ResponseStillArriving => 12,
+            Self::AssociationOutstanding => 2,
+            Self::NoAssociationFree => 3,
+            Self::NoMatchingAssociation => 4,
+            Self::KindRequired => 5,
+            Self::Malformed => 6,
+            Self::ResponsePendingUnconfirmed => 7,
+            Self::ResponsePendingTooSoon => 8,
+            Self::SpacingTimerRunning => 9,
+            Self::RepeatCountSpent => 10,
+            Self::ResponseStillArriving => 11,
         }
     }
 
     /// Every cause, in bit order, for iteration.
-    const ALL: [Self; 13] = [
+    const ALL: [Self; 12] = [
         Self::NoSuchChannel,
         Self::DuplicateChannelAddressing,
-        Self::LengthMismatch,
         Self::AssociationOutstanding,
         Self::NoAssociationFree,
         Self::NoMatchingAssociation,

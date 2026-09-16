@@ -7,7 +7,7 @@
 //! ``UDSS_LLR_0027`` describes when it says an interface in which an identifier cannot be
 //! omitted satisfies the requirement without a check.
 
-use crate::addressing::{Address, AddressExtension, Ai};
+use crate::addressing::{Address, AddressExtension, Ai, PeerIdentity};
 use crate::classification::{ServerRx, ServerTx};
 use crate::params::{ServerParameter, ServerParams, ServerReload};
 use crate::reaction::Reaction;
@@ -74,8 +74,9 @@ pub enum ServerOutput<'d> {
     /// the timer but leaves the resulting transition to the application layer, where
     /// ISO 14229-1:2020 10.2.2.2 Table 25 states it.
     SessionTimeout {
-        /// The controlling client whose session ended, per ``UDSS_LLR_0082``.
-        client: Ai,
+        /// The controlling client whose session ended, per ``UDSS_LLR_0082`` and
+        /// ``UDSS_LLR_0044``.
+        client: PeerIdentity,
     },
     /// `tP2_Server` expired with no response transmitted.
     ///
@@ -189,7 +190,9 @@ impl<'s> Server<'s> {
     /// A message has finished arriving.
     ///
     /// ``UDSS_LLR_0036`` indicates it to the application; ``UDSS_LLR_0058`` states the
-    /// kind required on a failed reception addressed to a server.
+    /// kind required on a failed reception addressed to a server. ``UDSS_LLR_0030`` bars a
+    /// server from receiving a response, which [`ServerRx`] cannot express, and from an
+    /// indication naming a channel, which this signature has no parameter for.
     pub fn t_data_ind<'d>(
         &mut self,
         now: Timestamp,

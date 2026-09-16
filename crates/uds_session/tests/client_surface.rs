@@ -16,7 +16,7 @@ use uds_session::{
 #[test]
 fn a_client_is_created_from_caller_storage() {
     let mut responders = [ResponderSlot::EMPTY; 8];
-    let mut keep_alive = FunctionalKeepAlive::NEW;
+    let mut keep_alive = FunctionalKeepAlive::EMPTY;
     let mut channels = [ChannelSlot::EMPTY; 4];
 
     let _client = Client::new(
@@ -41,14 +41,18 @@ fn physical_keep_alive_carries_no_client_wide_storage() {
 /// Type-checked, never run: every entry point the client has.
 /// ``UDSS_LLR_0031`` is discharged by the absence of `completion_report` and by
 /// [`ClientTx`] and [`ClientRx`], neither of which can express the server's kinds.
+///
+/// `ch` is taken as a parameter, as `server_surface.rs` takes its stub values, rather than
+/// constructed here: `ChannelId` has no public constructor of its own, only the one
+/// [`Client::open_channel`] returns, and that method is `todo!()`.
 #[allow(dead_code, reason = "type-checked, never run")]
 fn every_client_entry_point<'r>(
     client: &mut Client<'_, 'r>,
     responders: &'r mut [ResponderSlot],
     payload: &[u8],
+    ch: ChannelId,
 ) {
     let now = Timestamp(0);
-    let ch = ChannelId::default();
     let ai = Ai {
         mtype: Mtype::Diag,
         sa: Address(0xF1),
@@ -85,10 +89,10 @@ fn every_client_entry_point<'r>(
         ai,
         payload,
         SResult::Ok,
-        ClientRx::FinalResponse {
+        Some(ClientRx::FinalResponse {
             solicitation: Solicitation::Solicited,
             session: None,
-        },
+        }),
     ));
     drop(client.t_data_conf(now, ai, SResult::Ok));
     drop(client.tick(now));
