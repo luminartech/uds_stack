@@ -997,7 +997,7 @@ Enhanced response timing
    reading either as a general ordering rule for every case of one indication with two
    effects is this requirement's own resolution, not a fact the figures state outright.
 
-.. llr:: Response timer expiry is indicated to the application
+.. llr:: The client's response timeout is indicated to the application
    :id: UDSS_LLR_0148
    :status: draft
    :integrity_level: QM

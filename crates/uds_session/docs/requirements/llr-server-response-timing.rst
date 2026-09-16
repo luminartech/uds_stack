@@ -555,7 +555,7 @@ Enhanced response timing
    that completed, as ``UDSS_LLR_0110`` reads Table 4 footnote b for the anchor; a message
    that did not reach the data link gave the client nothing to wait ``tP2*_Server`` from.
 
-.. llr:: Response timer expiry is indicated to the application
+.. llr:: The server's response timer overrun is indicated to the application
    :id: UDSS_LLR_0117
    :status: draft
    :integrity_level: QM
