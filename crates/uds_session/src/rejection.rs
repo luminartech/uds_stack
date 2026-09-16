@@ -22,7 +22,7 @@ pub enum Cause {
     /// ``UDSS_LLR_0027``, ``UDSS_LLR_0123``, ``UDSS_LLR_0124``, ``UDSS_LLR_0134`` and
     /// ``UDSS_LLR_0183`` — an input naming a channel the client does not have.
     NoSuchChannel,
-    /// ``UDSS_LLR_0122`` — channel storage supplied with an existing channel's addressing.
+    /// ``UDSS_LLR_0122`` — channel storage supplied with an existing channel addressing.
     DuplicateChannelAddressing,
     /// ``UDSS_LLR_0054`` — `S_Length` differs from the data supplied.
     LengthMismatch,
@@ -157,13 +157,12 @@ impl Rejection {
 }
 
 /// The causes a [`Rejection`] states. Created by [`Rejection::causes`].
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug)]
 pub struct Causes {
     report: Rejection,
     next: usize,
 }
 
-#[allow(clippy::copy_iterator)]
 impl Iterator for Causes {
     type Item = Cause;
 
