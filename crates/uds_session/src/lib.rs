@@ -25,6 +25,7 @@ pub mod params;
 pub mod reaction;
 pub mod rejection;
 pub mod result;
+pub mod server;
 pub mod time;
 
 pub use addressing::{Address, AddressExtension, Ai, Mtype, PeerIdentity, TaType};
@@ -37,4 +38,5 @@ pub use params::{
 pub use reaction::Reaction;
 pub use rejection::{Cause, Causes, Rejection};
 pub use result::{SResult, TransportError};
+pub use server::{Association, Server, ServerOutput, ServerReaction};
 pub use time::Timestamp;
