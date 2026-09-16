@@ -259,7 +259,8 @@ Scope
    * **A binding becomes a transport implementation.** ``uds_on_ip`` supplies framing,
      connection setup, routing activation and vehicle identification, and implements the
      seam this crate calls. It contains no driver and no notion of a service.
-   * **This crate needs time**, which it did not before. ``UDSSVC_ARCH_0041`` is that seam.
+   * **This crate needs time**, which it did not before. It comes from the transport rather
+     than from a seam of its own — ``UDSSVC_ARCH_0041``.
 
    What this costs is honesty about the server side's shape. The dispatch pipeline of
    ``UDSSVC_ARCH_0004`` remains a pure function of a request and its context, and is still

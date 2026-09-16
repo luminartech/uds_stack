@@ -3,7 +3,9 @@ The seams
 
 What crosses each boundary of this crate, and who owns what on either side.
 
-Six seams, and **this crate declares none of them.**
+Six seams, and **this crate declares none of them.** Time is not a seventh:
+``UDSSVC_ARCH_0041`` records why the clock rides on the transport rather than getting a trait
+of its own, which is also what keeps this sentence true.
 
 **Each is declared by the crate that owns the document specifying it.** ``uds_session``
 declares the handler seam, the outcome, the request context, the client seam and the
@@ -411,63 +413,68 @@ Response-pending seam
 Clock
 -----
 
-.. arch:: This crate declares the clock seam and ships one implementation
+.. arch:: Time arrives on the transport seam; there is no clock seam
    :id: UDSSVC_ARCH_0041
-   :depends_on: UDSSVC_ARCH_0030; UDSSVC_ARCH_0040
+   :depends_on: UDSSVC_ARCH_0029; UDSSVC_ARCH_0030; UDSSVC_ARCH_0040
    :status: draft
    :origin: derived
    :tags: seam; async; driver; time
 
    Driving ``uds_session`` requires time: it is sans-io and evaluates a timer's expiry only
-   when a timestamp is supplied. So ``UDSSVC_ARCH_0040``'s loop needs to know what time it
-   is, and needs to wake when something is due.
+   when a timestamp is supplied (``UDSS_LLR_0017``). So ``UDSSVC_ARCH_0040``'s loop needs to
+   know what time it is, and needs to wake when something is due. **Both come from the
+   transport, which is asked for them as part of the seam it already implements.** This crate
+   declares no clock trait and ships no clock implementation.
 
-   .. code-block:: rust
+   Two obligations, and the second is not new:
 
-      pub trait Clock {
-          /// Monotonic milliseconds, 32-bit and wrapping.
-          fn now_ms(&self) -> u32;
+   * ``now_ms() -> u32`` — monotonic milliseconds, 32-bit and wrapping.
+   * The existing "give me the next event, or wake me after this long" call, whose timeout
+     this crate computes.
 
-          /// Resolve after at least `ms` have elapsed.
-          async fn sleep(&mut self, ms: u32);
-      }
+   Rationale: a transport that can report an inbound event *or* a timer expiry, whichever
+   comes first, already measures time — that capability is what the seam asks for, not
+   something added to it. A separate ``Clock`` trait would therefore not supply a capability
+   the transport lacks; it would duplicate one the transport must already have, and admit two
+   implementors holding two time bases that have to agree silently. That is the arrangement
+   ``UDSSVC_ARCH_0002`` refuses for session state, for the same reason: two things tracking one
+   fact is how they come to disagree.
 
-   **The unit and width are ``uds_session``'s, deliberately.** ``UDSS_LLR_0018`` fixes a
-   timestamp as a 32-bit unsigned count of milliseconds, and ``UDSS_LLR_0019`` specifies the
-   interval between two timestamps as their difference modulo 2\ :sup:`32`. Matching them
-   exactly means no conversion sits between the clock and the state machine it feeds, and no
-   second wraparound point exists to reason about.
+   It is also where the platform integration already is. Whoever writes a transport is already
+   reaching for sockets and an executor on that target; asking the same implementor for the
+   clock adds no new platform surface, while a second trait would be a second thing every
+   target has to satisfy.
 
-   **``sleep`` takes a duration, and this is the part worth arguing.** A deadline in wrapping
-   ``u32`` space is ambiguous on its own: ``5`` is either a moment just past or one roughly
-   49 days away, and only a reference point separates them. This crate holds both values —
-   the deadline ``uds_session`` reports and the ``now_ms`` it just read — so it computes the
-   interval here, by the modular subtraction ``UDSS_LLR_0019`` already specifies, and passes
-   a delay that cannot be misread. An implementor writing a ``sleep_until`` would have to
-   rederive that reasoning, and every implementor would have to rederive it identically.
+   **The timeout is a duration, and this is the part worth arguing.** A deadline in wrapping
+   ``u32`` space is ambiguous on its own: ``5`` is either a moment just past or one roughly 49
+   days away, and only a reference point separates them. This crate holds both values — the
+   deadline ``uds_session`` reports under ``UDSS_LLR_0080`` and the ``now_ms`` it just read —
+   so it computes the interval here, once, by the modular subtraction ``UDSS_LLR_0019``
+   already specifies, and passes a number that cannot be misread. Handing the transport a
+   deadline instead would oblige every implementor to rederive that arithmetic identically,
+   which is the same objection whichever side of the seam holds the clock.
 
-   **The deadline comes from ``uds_session``.** ``UDSS_LLR_0080`` has the session layer
-   report the earliest timestamp at which supplying a timestamp could expire a timer, or
-   report that none is running. That report and this trait are the two halves of one
-   mechanism: the session layer says *when*, this crate computes *how long*, and the clock
-   waits. Neither half is useful alone, and they were designed a day apart for unrelated
-   reasons.
+   **An earlier version of this element declared a ``Clock`` trait here**, with ``now_ms`` and
+   an ``async sleep(ms)``, and shipped a tokio-backed implementation behind a feature. Two
+   things retire it. ``sleep`` was redundant: the driver never sleeps independently of waiting
+   for input, so the transport's own "next event or timeout" call already *is* the wait, and
+   the clock contributes exactly one method rather than two. And the shipped implementation
+   was the only reason this crate would have carried an optional runtime dependency — with the
+   clock on the transport, ``uds_on_ip`` supplies it and this crate ships nothing.
 
-   Rationale: a clock is the one thing a driver cannot abstract over and cannot supply
-   itself. Reading one directly would make every timing rule in the stack untestable except
-   in real time, which is the argument ``UDSS_LLR_0017`` makes for the layer below; taking
-   it as a seam keeps a test able to advance time by returning larger numbers.
+   That last point is worth recording because it reverses a change the briefs had queued.
+   ``UDSSVC_ARCH_0030`` states that this crate depends on no runtime crate; the retired element
+   required it amended to "none in the default or ``no_std`` build, with an optional runtime
+   behind a feature". **No amendment is owed.** ``UDSSVC_ARCH_0030`` stands as written, in every
+   build, which is a stronger claim than the amendment would have left.
 
-   **One implementation ships, behind a feature.** A ``tokio``-backed ``Clock`` for hosted
-   builds, so a tester application on a workstation writes none. An embedded target
-   implements the trait against its own timer — ``embassy`` or a raw hardware counter — and
-   the trait is the whole of what it must satisfy. This is the division ``UDSSVC_ARCH_0027``
-   already records as the stack's pattern, citing ``uds_protocol``'s ``clap`` and ``utoipa``
-   integrations as host conveniences that imply ``std`` and live behind features; this is the
-   first time this crate invokes it for itself.
+   The reason a clock is a seam at all is unchanged, and is ``UDSS_LLR_0017``'s: reading one
+   directly would make every timing rule in the stack untestable except in real time. Taking it
+   across a seam keeps a test able to advance time by returning larger numbers — and taking it
+   across *this* seam is better for that than a separate trait would have been, because one
+   fake supplies the events and the time together and cannot make them disagree.
 
-   That optional dependency needs ``UDSSVC_ARCH_0030`` amended. It currently states that this
-   crate depends on no runtime crate, which becomes: none in the default build and none in a
-   ``no_std`` build, with an optional and additive runtime behind a feature that a bare-metal
-   target never enables. The ``no_std`` claim of ``UDSSVC_ARCH_0027`` is unaffected and is
-   still evidenced the same way, on a ``*-none`` target.
+   The cost, stated rather than discovered: "can tell the time" is now coupled to "is a
+   transport", so a deployment driving the stack over a channel it would not otherwise model as
+   a transport still implements ``now_ms``. Given the seam already demands a timeout, that is
+   not a new burden.
