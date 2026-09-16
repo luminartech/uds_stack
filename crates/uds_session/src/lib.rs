@@ -19,6 +19,8 @@
 
 #![no_std]
 
+pub mod addressing;
 pub mod time;
 
+pub use addressing::{Address, AddressExtension, Ai, Mtype, PeerIdentity, TaType};
 pub use time::Timestamp;
