@@ -41,7 +41,7 @@
 //! ```
 //!
 //! This crate appears twice. It **wraps** the session layer rather than
-//! stacking on top of it, which is why the session layer is driven from
+//! stacking on top of it, which is why `session::SessionLayer` is driven from
 //! both directions. A full discussion is in `ARCHITECTURE.md`.
 //!
 //! ## `no_std` and alloc-freedom
@@ -73,7 +73,7 @@
 //! It does not decode UDS messages — that is `uds_protocol` — and it does not
 //! dispatch services, choose negative response codes, or know what a data
 //! identifier is. Those are ISO 14229-1 clause 8.7 concerns and belong to
-//! `uds_services`, which reaches this crate through the `handler` module.
+//! `uds_services`, which drives this crate rather than being called by it.
 //!
 //! The one exception is narrow and forced by the standard: clause 8 keys TCP
 //! connection handling on two specific service identifiers. See
