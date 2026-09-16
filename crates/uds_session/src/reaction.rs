@@ -24,6 +24,20 @@ use core::marker::PhantomData;
 ///
 /// Dropping a `Reaction` without draining it discards outputs the application needed,
 /// which is why the type is `#[must_use]`.
+///
+/// # Draining
+///
+/// Drain with [`Iterator::by_ref`], then consume:
+///
+/// ```ignore
+/// for output in reaction.by_ref() {
+///     // handle each output, in order
+/// }
+/// reaction.finish()?;
+/// ```
+///
+/// `for output in reaction` would move the reaction into the loop and leave
+/// [`Reaction::finish`] unreachable, so the outcome could not be read.
 #[must_use = "an undrained reaction discards the outputs this input produced"]
 #[derive(Debug)]
 pub struct Reaction<'s, 'd, O, T = ()> {

@@ -13,12 +13,8 @@ use uds_session::{Reaction, Rejection};
 /// role output types arrive with their roles. `tests/server_surface.rs` exercises the
 /// same drain over `ServerOutput`.
 #[allow(dead_code, reason = "type-checked, never run; see the module comment")]
-#[allow(
-    clippy::while_let_on_iterator,
-    reason = "spells out `Reaction::next` explicitly; never executed"
-)]
 fn a_reaction_is_drained_then_finished(mut r: Reaction<'_, '_, u8>) -> Result<(), Rejection> {
-    while let Some(_output) = r.next() {}
+    for _output in r.by_ref() {}
     r.finish()
 }
 
