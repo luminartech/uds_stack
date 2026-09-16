@@ -21,12 +21,16 @@
 
 pub mod addressing;
 pub mod classification;
+pub mod params;
 pub mod result;
 pub mod time;
 
 pub use addressing::{Address, AddressExtension, Ai, Mtype, PeerIdentity, TaType};
 pub use classification::{
     ClientRx, ClientTx, ExpectedResponses, ServerRx, ServerTx, SessionSelection, Solicitation,
+};
+pub use params::{
+    ChannelParameter, ChannelParams, ChannelReload, ServerParameter, ServerParams, ServerReload,
 };
 pub use result::{SResult, TransportError};
 pub use time::Timestamp;
