@@ -14,15 +14,17 @@
 //! and passes an empty slice.
 //!
 //! `Client<'s, 'r>` borrows the channel array for `'s` and each responder array for `'r`.
-//! Rust drops in reverse declaration order, so **declare every responder array before the
-//! channel array**:
+//! Both are ordinary borrows: each responder array must simply outlive the client that
+//! holds it. No particular declaration order is required — a responder array that goes
+//! out of scope while the client is still in use is rejected with `E0597`, like any other
+//! borrow that does not live long enough.
 //!
 //! ```
 //! use uds_session::{ChannelSlot, Client, FunctionalKeepAlive, KeepAliveMode, ResponderSlot};
 //!
-//! let mut responders = [ResponderSlot::EMPTY; 8];   // first
+//! let mut responders = [ResponderSlot::EMPTY; 8];
 //! let mut keep_alive = FunctionalKeepAlive::NEW;
-//! let mut channels = [ChannelSlot::EMPTY; 4];       // second
+//! let mut channels = [ChannelSlot::EMPTY; 4];
 //!
 //! let client = Client::new(
 //!     &mut channels,

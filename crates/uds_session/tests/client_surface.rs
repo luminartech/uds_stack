@@ -10,9 +10,9 @@ use uds_session::{
 /// ``UDSS_LLR_0139`` — the responder table's capacity is the number of entries that
 /// storage holds, and a physical channel keeps no table at all.
 ///
-/// Note the declaration order. `Client<'s, 'r>` borrows the channel array for `'s` and
-/// each responder array for `'r`, with `'r` outliving `'s`, so every responder array must
-/// be declared *before* the channel array.
+/// `Client<'s, 'r>` borrows the channel array for `'s` and each responder array for `'r`.
+/// Both are ordinary borrows: no particular declaration order is required, only that each
+/// responder array outlives the client that holds it.
 #[test]
 fn a_client_is_created_from_caller_storage() {
     let mut responders = [ResponderSlot::EMPTY; 8];
