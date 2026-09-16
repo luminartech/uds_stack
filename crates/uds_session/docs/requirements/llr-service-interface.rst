@@ -633,6 +633,10 @@ Service primitives
    * the channel reset of ``UDSS_LLR_0180``;
    * the keep-alive release of ``UDSS_LLR_0184``.
 
+   An interface in which a server cannot be handed a response classification, a channel
+   identifier, channel storage, a channel reset or a keep-alive release satisfies this
+   requirement without a check.
+
    Rationale: the rejected inputs are listed rather than described, because "an input
    whose form belongs to the other role" is not decidable for an ``S_Data.req``, whose
    form ``UDSS_LLR_0065`` defines without a role: a server asked to transmit a request
@@ -659,6 +663,10 @@ Service primitives
      pending``;
    * the completion report of ``UDSS_LLR_0074``;
    * a ``T_Data.ind`` or ``T_DataSOM.ind`` whose classification states kind ``request``.
+
+   An interface in which a client cannot be handed a response classification to transmit, a
+   request classification to receive, or a completion report satisfies this requirement
+   without a check.
 
    Rationale: the rejected inputs are listed rather than described, because "an input
    whose form belongs to the other role" is not decidable for an ``S_Data.req`` or the
@@ -1508,7 +1516,8 @@ means of recognising it to the implementation.
    :tags: service-interface; classification
 
    On ``S_Data.req``, a request classification stating as its expected response count an
-   exact number of zero shall be rejected as ``UDSS_LLR_0015`` defines.
+   exact number of zero shall be rejected as ``UDSS_LLR_0015`` defines. An interface whose
+   exact count cannot hold zero satisfies this requirement without a check.
 
    Rationale: an exact number of zero is rejected rather than read as ``none``, the value
    ``UDSS_LLR_0065`` provides for a request expecting no response, because the two would
@@ -1523,7 +1532,9 @@ means of recognising it to the implementation.
    :tags: service-interface; classification
 
    On ``S_Data.req``, a request classification stating ``keep-alive`` together with a
-   session selection shall be rejected as ``UDSS_LLR_0015`` defines.
+   session selection shall be rejected as ``UDSS_LLR_0015`` defines. An interface in which a
+   keep-alive request carries no session selection satisfies this requirement without a
+   check.
 
    Rationale: the ``keep-alive`` marker ``UDSS_LLR_0065`` defines excludes a session
    selection because a TesterPresent changes no session, and because ``UDSS_LLR_0155`` acts
@@ -1542,7 +1553,9 @@ means of recognising it to the implementation.
    :tags: service-interface; classification
 
    On the completion report of ``UDSS_LLR_0074``, a classification stating ``keep-alive``
-   together with a session selection shall be rejected as ``UDSS_LLR_0015`` defines.
+   together with a session selection shall be rejected as ``UDSS_LLR_0015`` defines. An
+   interface in which a keep-alive completion report carries no session selection satisfies
+   this requirement without a check.
 
    Rationale: the ``keep-alive`` marker ``UDSS_LLR_0065`` defines excludes a session
    selection because a TesterPresent changes no session. The rejection reaches the
@@ -1587,7 +1600,8 @@ means of recognising it to the implementation.
    :tags: service-interface; classification
 
    At a client, on ``S_Data.req``, a request classification stating no expected response
-   count shall be rejected as ``UDSS_LLR_0015`` defines.
+   count shall be rejected as ``UDSS_LLR_0015`` defines. An interface in which the expected
+   response count cannot be omitted satisfies this requirement without a check.
 
    Rationale: ``UDSS_LLR_0065`` requires a request classification on an ``S_Data.req`` to
    state the expected response count, which without a stated outcome would be an obligation
@@ -1623,7 +1637,8 @@ means of recognising it to the implementation.
    on, other than a departure ``UDSS_LLR_0066``, ``UDSS_LLR_0067``, ``UDSS_LLR_0068``,
    ``UDSS_LLR_0069``, ``UDSS_LLR_0070`` or ``UDSS_LLR_0071`` names, shall be rejected as
    ``UDSS_LLR_0015`` defines. An interface in which such a form cannot be expressed
-   satisfies this without a check.
+   satisfies this without a check. An interface whose classification and addressing types
+   admit no other form satisfies this requirement, for those forms, without a check.
 
    Rationale: the sentences of ``UDSS_LLR_0065``, ``UDSS_LLR_0057``, ``UDSS_LLR_0058`` and
    ``UDSS_LLR_0052`` that state a form are otherwise obligations on the caller with no
