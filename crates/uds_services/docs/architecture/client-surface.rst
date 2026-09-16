@@ -212,11 +212,11 @@ Two layers
    call the binding, and hand back the bytes, which is precisely what ``UDSSVC_ARCH_0020``
    says a client application never does.
 
-   **Why the server needs no equivalent and the client does.** A server is *called*, so the
-   awaiting is already the driver's: it holds the handler future and drives it.
-   ``UDSSVC_ARCH_0016`` makes that handler asynchronous for a reason of its own — a handler
-   outrunning ``tP2_Server`` must yield so a ``0x78`` can be offered across
-   ``UDSSVC_ARCH_0031``'s seam while it runs — but the server still needs no *layer* over
+   **Why the server needs no equivalent and the client does.** A server *responds*, so the
+   awaiting belongs to the loop that read the request: ``UDSSVC_ARCH_0040``'s driver holds the
+   handler future and drives it. ``UDSSVC_ARCH_0016`` makes that handler asynchronous for a
+   reason of its own — a handler outrunning ``tP2_Server`` must yield so the loop can submit a
+   ``0x78`` (``UDSSVC_ARCH_0031``) while it runs — but the server still needs no *layer* over
    it, because nothing is being joined. A client *initiates*, so something must await, and
    if it is not this crate it is the application. The asymmetry is in the direction of
    control, not in the design.

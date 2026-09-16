@@ -114,10 +114,15 @@ Request context
    :origin: derived
    :tags: seam; ctx
 
-   Every input the pipeline needs but cannot determine from the request bytes is supplied
-   by the caller as a request context. The context carries exactly the inputs the mandatory
-   decision nodes of Figures 5 and 6 and the suppression rules of clause 8.7.5 read, and
-   nothing else:
+   Every input the pipeline needs but cannot determine from the request bytes reaches it as a
+   request context. The context carries exactly the inputs the mandatory decision nodes of
+   Figures 5 and 6 and the suppression rules of clause 8.7.5 read, and nothing else:
+
+   **``Ctx`` is internal.** It was a seam while something outside this crate called the
+   pipeline; ``UDSSVC_ARCH_0018`` records that nothing does. The driver constructs it from the
+   ``S_Data.ind`` it drained, and no other crate names the type. What the field list has to be
+   right about is therefore only what the pipeline reads — the cross-crate negotiation the
+   element used to anticipate is this crate's own decision now.
 
    .. list-table::
       :header-rows: 1
@@ -146,10 +151,10 @@ Request context
    **Three fields are under review, and this crate is why.** It implements
    ``DiagnosticSessionControl``, ``SecurityAccess`` and ``Authentication``, so under
    ``UDSSVC_ARCH_0035`` and ``UDSSVC_ARCH_0037`` it already holds the active session, the
-   security level and the authentication state. Two crates tracking the same state is how
-   they come to disagree. Unless an integration turns up where something else owns them,
+   security level and the authentication state. Reading them from a struct it just built from
+   state it already owns is a copy, not an input. Unless something else turns out to own them,
    ``Ctx`` reduces to the addressing triple alone — at which point it is worth asking whether
-   it stays a struct at all. To settle with ``uds_session`` before either crate writes it.
+   it stays a struct at all. Nothing outside this crate has to agree to that any more.
 
    **Session and security are raw sub-function values, passed through uninterpreted.**
    Naming the sessions here would mean this crate deciding what
@@ -209,22 +214,27 @@ Outcome
    was written and should be transmitted, or whether nothing is to be sent. A negative
    response is the first of those, not an error. The error type is the sink's own.
 
-   Silence must be a distinguishable outcome rather than "wrote nothing", because the
-   caller has to tell "clause 8.7 requires no response" apart from "the handler produced an
-   empty response" apart from "something went wrong". Only the first is a reason not to
-   transmit.
+   Silence must be a distinguishable outcome rather than "wrote nothing", because the loop
+   has to tell "clause 8.7 requires no response" apart from "the handler produced an empty
+   response" apart from "something went wrong". Only the first is a reason not to transmit.
 
-   Genuine transport failures are the binding's concern and never reach a handler.
+   **``Outcome`` is internal**, for the reason ``UDSSVC_ARCH_0018`` gives: dispatch reports to
+   the driver loop in this crate, not across a seam. That does not weaken the argument above.
+   The three cases still have to be distinguishable, and the loop still has to act on them
+   differently — it simply does so without a public type.
+
+   Genuine transport failures are the binding's concern, reach this crate as a ``DataConf``
+   carrying an ``SResult``, and never reach a handler.
 
    **Dispatch and the handlers it calls are asynchronous**, which is what
-   ``UDSSVC_ARCH_0030``'s assumption is spent on here. The gain is specific: a handler
-   that takes longer than ``tP2_Server`` yields at its await points, so dispatch can offer
-   a ``0x78`` across ``UDSSVC_ARCH_0031``'s seam while the handler it covers is still
-   running, and the binding's driver keeps draining session actions throughout.
+   ``UDSSVC_ARCH_0030``'s assumption is spent on here. The gain is specific: a handler that
+   takes longer than ``tP2_Server`` yields at its await points, so the driver keeps draining
+   session actions while it runs and can submit a ``0x78`` (``UDSSVC_ARCH_0031``) in that
+   window. With a synchronous handler the loop stops, the overrun is never observed, and the
+   response-pending the standard allows is never sent.
 
-   Without this, that is machinery every integrator has to build — the driver must arrange
-   for a slow handler to run somewhere it can continue past, and nothing in this crate or
-   the binding does it for them. See :doc:`not-owned`.
+   Without this, that is machinery every integrator would have to build. It is now machinery
+   nobody builds, because the driver is here and the handler yields into it.
 
    The honest limit: an asynchronous seam does not make blocking work non-blocking. A
    handler that busy-waits on a flash erase stalls the executor exactly as a synchronous
@@ -234,9 +244,9 @@ Outcome
 Response sink
 -------------
 
-.. arch:: A response is written into a caller-supplied sink
+.. arch:: A response is written into a sink, never returned owned
    :id: UDSSVC_ARCH_0017
-   :depends_on: UDSSVC_ARCH_0001
+   :depends_on: UDSSVC_ARCH_0001; UDSSVC_ARCH_0029
    :status: draft
    :origin: derived
    :tags: seam; no_std
@@ -244,9 +254,16 @@ Response sink
    Rationale: allocation-freedom cannot be retrofitted, because the signatures that make an API
    alloc-free are the ones callers depend on: adding it later is a breaking change to every
    handler in every application. A handler therefore writes its response into an
-   ``automotive_wire_codec::Sink`` supplied by the caller, rather than returning an owned
-   response. No public type carries a ``Vec`` or a ``String``, and the crate builds under
-   ``no_std`` without ``alloc``.
+   ``automotive_wire_codec::Sink`` it is handed, rather than returning an owned response. No
+   public type carries a ``Vec`` or a ``String``, and the crate builds under ``no_std`` without
+   ``alloc``.
+
+   **The sink is this crate's**, which is a change of owner rather than of design. It was the
+   binding driver's while the driver lived there; ``UDSSVC_ARCH_0040`` moved the driver here, so
+   the buffer a response is assembled in is this crate's to hold and to bound. Where the storage
+   itself comes from — a caller-supplied buffer or one sized at assembly alongside
+   ``UDSSVC_ARCH_0035``'s protocol state — is a deployment question this element does not
+   settle, and either satisfies it.
 
    **The sink is ``awc``'s rather than ``embedded-io``'s, and the difference produces an
    NRC.** ``Sink`` carries ``remaining()``. The sink is bounded at the transport's maximum
@@ -270,15 +287,17 @@ Response sink
    conformant server truncate valid responses in order to produce an NRC nothing asked for.
 
    The sink is a **generic parameter, not ``dyn``**. That costs object safety — there is no
-   ``Box<dyn UdsServer>``, and a driver is generic over the handler type instead. For a
+   ``Box<dyn UdsServer>``, and the driver is generic over the handler type instead. For a
    crate that must build without ``alloc``, where boxing is unavailable anyway, it is the
    right trade, but it is a deliberate one and should be revisited if a dynamic service
    registry is ever wanted.
 
    One consequence to design against rather than discover: a sink can fail mid-response,
-   after some bytes are already written. What a partially written response means at the
-   handler seam — whether the binding must discard it, and whether this crate must avoid
-   writing until it can complete — is not settled. ``awc``'s decision to expose ``write_all``
+   after some bytes are already written. What a partially written response means — whether the
+   partial bytes are discarded before anything is submitted to the transport, and whether this
+   crate must therefore avoid writing until it can complete — is not settled. It is wholly this
+   crate's question now that it owns both the sink and the transport, where it used to need a
+   binding's agreement. ``awc``'s decision to expose ``write_all``
    rather than ``write`` removes the *partial write* case, but not the *failed part-way
    through* case. See :doc:`open-questions`.
 
