@@ -20,8 +20,11 @@
 //!
 //! # How the surface discharges its requirements
 //!
-//! Three requirements name inspection of these types as their verification method, so
-//! what a reviewer should look at is stated here rather than left to be inferred.
+//! Four requirements are best verified by looking at these types directly, so what a
+//! reviewer should look at is stated here rather than left to be inferred. Three of them
+//! name inspection of the crate's types as their own verification method; the fourth,
+//! ``UDSS_LLR_0081``, is enforced by [`Reaction::finish`]'s signature rather than verified
+//! that way, and is included here for the same reason.
 //!
 //! - **``UDSS_LLR_0011``** — outputs are retrieved, not pushed. No public type takes a
 //!   caller-supplied trait object, trait bound or function; storage is passed as slices
@@ -42,14 +45,15 @@
 //!
 //! | Requirement | What makes it unrepresentable |
 //! | --- | --- |
-//! | ``UDSS_LLR_0027`` (second limb) | [`Client::t_data_ind`]'s mandatory [`ChannelId`] |
-//! | ``UDSS_LLR_0030`` | [`ServerTx`], [`ServerRx`], and the methods [`Server`] lacks |
+//! | ``UDSS_LLR_0027`` (second limb) | `t_data_ind`/`t_data_som_ind` require `ChannelId` |
+//! | ``UDSS_LLR_0030`` | [`ServerTx`], [`ServerRx`], absent methods, and no channel param |
 //! | ``UDSS_LLR_0031`` | [`ClientTx`], [`ClientRx`], and the absent completion report |
 //! | ``UDSS_LLR_0054`` | a payload passed as a slice carries its own length |
 //! | ``UDSS_LLR_0066`` | [`ExpectedResponses::Exactly`] holds a `NonZeroU16` |
 //! | ``UDSS_LLR_0067`` | the `KeepAlive` variants carry no session selection |
 //! | ``UDSS_LLR_0068`` | the `KeepAlive` variants carry no session selection |
 //! | ``UDSS_LLR_0070`` | [`ClientTx`]'s expected count is a required field |
+//! | ``UDSS_LLR_0071`` | `Solicitation` is a required field on a final response |
 //! | ``UDSS_LLR_0072`` (in part) | the classification enums admit no other form |
 //!
 //! [`Reaction::finish`]: reaction::Reaction::finish

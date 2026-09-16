@@ -54,6 +54,11 @@ impl<O, T> Reaction<'_, '_, O, T> {
     /// rejecting requirement asked for. Consuming `self` is what enforces
     /// ``UDSS_LLR_0081``'s ordering.
     ///
+    /// `finish` may be called without draining first, in which case the undrained outputs
+    /// are discarded along with `self`. The type enforces only the *ordering*
+    /// ``UDSS_LLR_0081`` requires between expiry indications and the report, not that
+    /// every output is actually delivered to the caller.
+    ///
     /// # Errors
     ///
     /// Returns the [`Rejection`] report if the input was rejected.

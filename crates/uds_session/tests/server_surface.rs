@@ -22,9 +22,11 @@ fn a_server_is_created_from_caller_storage_and_three_parameters() {
 }
 
 /// Type-checked, never run: every entry point the server has, with the types it takes.
-/// ``UDSS_LLR_0030``'s last four bullets are discharged by the methods this impl does
-/// *not* have — there is no `open_channel`, `withdraw_channel`, `reset_channel` or
-/// `release_keep_alive` on a `Server`.
+/// ``UDSS_LLR_0030`` has six bullets. Its last three are discharged by the methods this
+/// impl does *not* have — there is no `open_channel`, `withdraw_channel`, `reset_channel`
+/// or `release_keep_alive` on a `Server`. Its third bullet, an indication identifying a
+/// channel, is discharged by the absent channel parameter on `t_data_som_ind` and
+/// `t_data_ind` below.
 #[allow(dead_code, reason = "type-checked, never run")]
 fn every_server_entry_point(server: &mut Server<'_>, payload: &[u8]) {
     // ``UDSS_LLR_0080`` — a query the caller reads for itself, taking `&self`, not an

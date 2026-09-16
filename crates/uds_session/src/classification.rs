@@ -112,6 +112,9 @@ pub enum ServerTx {
         /// ``UDSS_LLR_0071`` requires one or the other.
         solicitation: Solicitation,
         /// Present where the response effects a session transition.
+        ///
+        /// ``UDSS_LLR_0085`` and ``UDSS_LLR_0098`` read it to decide whether the server's
+        /// session timer starts or the server returns to the default session.
         session: Option<SessionSelection>,
     },
     /// A negative response whose code is `requestCorrectlyReceived-ResponsePending`.
@@ -133,6 +136,9 @@ pub enum ClientRx {
         /// ``UDSS_LLR_0071`` requires one or the other.
         solicitation: Solicitation,
         /// Present where the response effects a session transition.
+        ///
+        /// ``UDSS_LLR_0159`` and ``UDSS_LLR_0163`` read it, together with `solicitation`,
+        /// to engage or disengage physical keep-alive.
         session: Option<SessionSelection>,
     },
     /// A response-pending message — ``UDSS_LLR_0136`` and ``UDSS_LLR_0146`` act on it.
