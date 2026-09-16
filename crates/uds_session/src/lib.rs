@@ -13,9 +13,45 @@
 //!
 //! # Status
 //!
-//! No behaviour is implemented yet. Requirements are authored before the code that
-//! satisfies them — the ordering is evidence that cannot be reconstructed afterwards — so
-//! implementation follows the published requirement set rather than preceding it.
+//! The public surface is complete; behaviour is not. Every entry point is `todo!()` and
+//! carries the requirements it will satisfy in its documentation. Requirements are
+//! authored before the code that satisfies them — the ordering is evidence that cannot be
+//! reconstructed afterwards.
+//!
+//! # How the surface discharges its requirements
+//!
+//! Three requirements name inspection of these types as their verification method, so
+//! what a reviewer should look at is stated here rather than left to be inferred.
+//!
+//! - **``UDSS_LLR_0011``** — outputs are retrieved, not pushed. No public type takes a
+//!   caller-supplied trait object, trait bound or function; storage is passed as slices
+//!   for the same reason. Every input returns a [`Reaction`] the caller drains.
+//! - **``UDSS_LLR_0013``** — no payload is retained. No type here holds an owned buffer.
+//! - **``UDSS_LLR_0014``** — an output refers to caller-owned data. [`ServerOutput`] and
+//!   [`ClientOutput`] borrow `&'d [u8]` from the input that supplied it, and the
+//!   [`Reaction`] carrying them cannot outlive that borrow.
+//! - **``UDSS_LLR_0081``** — expiry indications precede the input's outputs and any
+//!   rejection report. [`Reaction::finish`] consumes the drain, so the report is
+//!   unreachable until draining stops.
+//!
+//! # Requirements discharged by construction
+//!
+//! Where the requirement set asks for an input to be rejected and these types make that
+//! input unwritable, the requirement is satisfied without a check —
+//! ``UDSS_LLR_0027`` states that discharge explicitly and the rest follow it:
+//!
+//! | Requirement | What makes it unrepresentable |
+//! | --- | --- |
+//! | ``UDSS_LLR_0027`` (second limb) | [`Client::t_data_ind`]'s mandatory [`ChannelId`] |
+//! | ``UDSS_LLR_0030`` | [`ServerTx`], [`ServerRx`], and the methods [`Server`] lacks |
+//! | ``UDSS_LLR_0031`` | [`ClientTx`], [`ClientRx`], and the absent completion report |
+//! | ``UDSS_LLR_0054`` | a payload passed as a slice carries its own length |
+//! | ``UDSS_LLR_0066`` | [`ExpectedResponses::Exactly`] holds a `NonZeroU16` |
+//! | ``UDSS_LLR_0067``, ``UDSS_LLR_0068`` | the `KeepAlive` variants carry no session selection |
+//! | ``UDSS_LLR_0070`` | [`ClientTx`]'s expected count is a required field |
+//! | ``UDSS_LLR_0072`` (in part) | the classification enums admit no other form |
+//!
+//! [`Reaction::finish`]: reaction::Reaction::finish
 
 #![no_std]
 
