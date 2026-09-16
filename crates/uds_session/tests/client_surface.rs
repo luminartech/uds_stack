@@ -2,8 +2,8 @@
 
 use uds_session::{
     Address, Ai, ChannelId, ChannelParameter, ChannelParams, ChannelSlot, Client, ClientRx,
-    ClientTx, ExpectedResponses, FunctionalKeepAlive, KeepAliveMode, Mtype, ResponderSlot, SResult,
-    Solicitation, TaType, Timestamp,
+    ClientTx, ExpectedResponses, FunctionalKeepAlive, KeepAliveMode, Mtype, ResponderSlot,
+    SResult, Solicitation, TaType, Timestamp,
 };
 
 /// ``UDSS_LLR_0121`` — a channel exists from the moment its storage is supplied.

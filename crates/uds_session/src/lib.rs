@@ -47,7 +47,8 @@
 //! | ``UDSS_LLR_0031`` | [`ClientTx`], [`ClientRx`], and the absent completion report |
 //! | ``UDSS_LLR_0054`` | a payload passed as a slice carries its own length |
 //! | ``UDSS_LLR_0066`` | [`ExpectedResponses::Exactly`] holds a `NonZeroU16` |
-//! | ``UDSS_LLR_0067``, ``UDSS_LLR_0068`` | the `KeepAlive` variants carry no session selection |
+//! | ``UDSS_LLR_0067`` | the `KeepAlive` variants carry no session selection |
+//! | ``UDSS_LLR_0068`` | the `KeepAlive` variants carry no session selection |
 //! | ``UDSS_LLR_0070`` | [`ClientTx`]'s expected count is a required field |
 //! | ``UDSS_LLR_0072`` (in part) | the classification enums admit no other form |
 //!
@@ -67,14 +68,16 @@ pub mod time;
 
 pub use addressing::{Address, AddressExtension, Ai, Mtype, PeerIdentity, TaType};
 pub use classification::{
-    ClientRx, ClientTx, ExpectedResponses, ServerRx, ServerTx, SessionSelection, Solicitation,
+    ClientRx, ClientTx, ExpectedResponses, ServerRx, ServerTx, SessionSelection,
+    Solicitation,
 };
 pub use client::{
     ChannelId, ChannelSlot, Client, ClientOutput, ClientReaction, FunctionalKeepAlive,
     KeepAliveMode, ResponderSlot,
 };
 pub use params::{
-    ChannelParameter, ChannelParams, ChannelReload, ServerParameter, ServerParams, ServerReload,
+    ChannelParameter, ChannelParams, ChannelReload, ServerParameter, ServerParams,
+    ServerReload,
 };
 pub use reaction::Reaction;
 pub use rejection::{Cause, Causes, Rejection};

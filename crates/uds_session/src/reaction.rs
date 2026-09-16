@@ -75,7 +75,10 @@ impl<O, T> Iterator for Reaction<'_, '_, O, T> {
             reason = "API stub; behaviour lands with its requirement"
         )]
         {
-            todo!("outputs are generated from session state; see UDSS_LLR_0081 for their order")
+            todo!(
+                "outputs are generated from session state; see UDSS_LLR_0081 for \
+                 their order"
+            )
         }
     }
 }

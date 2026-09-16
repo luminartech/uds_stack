@@ -1,8 +1,8 @@
 //! Compile-time checks on the server surface, plus the storage wiring a caller must do.
 
 use uds_session::{
-    Address, Ai, Association, Mtype, SResult, Server, ServerParameter, ServerParams, ServerRx,
-    ServerTx, Solicitation, TaType, Timestamp,
+    Address, Ai, Association, Mtype, SResult, Server, ServerParameter, ServerParams,
+    ServerRx, ServerTx, Solicitation, TaType, Timestamp,
 };
 
 /// ``UDSS_LLR_0032`` — creation supplies the association storage of ``UDSS_LLR_0059`` and

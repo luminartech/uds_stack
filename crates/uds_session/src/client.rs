@@ -20,7 +20,9 @@
 //! borrow that does not live long enough.
 //!
 //! ```
-//! use uds_session::{ChannelSlot, Client, FunctionalKeepAlive, KeepAliveMode, ResponderSlot};
+//! use uds_session::{
+//!     ChannelSlot, Client, FunctionalKeepAlive, KeepAliveMode, ResponderSlot,
+//! };
 //!
 //! let mut responders = [ResponderSlot::EMPTY; 8];
 //! let mut keep_alive = FunctionalKeepAlive::NEW;
