@@ -365,16 +365,16 @@ Response-pending seam
    ``UDSSVC_ARCH_0019`` true: the driver transmits bytes it need not understand.
 
    **``offer`` returns immediately and reports nothing.** Submission and confirmation are
-   two moments in ISO 14229-2:2021, not one — ``UDSS_LLR_0145`` stops ``tP2_Server`` at the
-   ``T_Data.req`` and ``UDSS_LLR_0218`` anchors the spacing at the ``T_Data.conf`` — and
+   two moments in ISO 14229-2:2021, not one — ``UDSS_LLR_0114`` stops ``tP2_Server`` at the
+   ``T_Data.req`` and ``UDSS_LLR_0110`` anchors the spacing at the ``T_Data.conf`` — and
    awaiting the second inside dispatch would stall the handler for the duration of a
    transmission, which is the opposite of what ``UDSSVC_ARCH_0016``'s asynchronous seam
    exists to buy.
 
    **``offer`` reports refusal but not failure, and the asymmetry is the point.** A
-   submission the session layer refuses — for spacing under ``UDSS_LLR_0285``, for an
-   unconfirmed predecessor under ``UDSS_LLR_0284``, or for an association that is duplicated
-   or exhausted under ``UDSS_LLR_0273`` and ``UDSS_LLR_0274`` — is rejected *synchronously*,
+   submission the session layer refuses — for spacing under ``UDSS_LLR_0119``, for an
+   unconfirmed predecessor under ``UDSS_LLR_0118``, or for an association that is duplicated
+   or exhausted under ``UDSS_LLR_0061`` and ``UDSS_LLR_0062`` — is rejected *synchronously*,
    at the moment it is supplied, and the driver knows at once. That is a clause 8.7 fact:
    nothing was sent, so ``UDSSVC_ARCH_0009``'s override must not fire. A transmission that
    is accepted and later fails is a different thing, reported asynchronously as a
@@ -420,20 +420,21 @@ Clock
           async fn sleep(&mut self, ms: u32);
       }
 
-   **The unit and width are ``uds_session``'s, deliberately.** ``UDSS_LLR_0114`` fixes a
-   timestamp as a 32-bit count of milliseconds and specifies interval arithmetic modulo
-   2\ :sup:`32`. Matching it exactly means no conversion sits between the clock and the
-   state machine it feeds, and no second wraparound point exists to reason about.
+   **The unit and width are ``uds_session``'s, deliberately.** ``UDSS_LLR_0018`` fixes a
+   timestamp as a 32-bit unsigned count of milliseconds, and ``UDSS_LLR_0019`` specifies the
+   interval between two timestamps as their difference modulo 2\ :sup:`32`. Matching them
+   exactly means no conversion sits between the clock and the state machine it feeds, and no
+   second wraparound point exists to reason about.
 
    **``sleep`` takes a duration, and this is the part worth arguing.** A deadline in wrapping
    ``u32`` space is ambiguous on its own: ``5`` is either a moment just past or one roughly
    49 days away, and only a reference point separates them. This crate holds both values —
    the deadline ``uds_session`` reports and the ``now_ms`` it just read — so it computes the
-   interval here, by the modular subtraction ``UDSS_LLR_0114`` already specifies, and passes
+   interval here, by the modular subtraction ``UDSS_LLR_0019`` already specifies, and passes
    a delay that cannot be misread. An implementor writing a ``sleep_until`` would have to
    rederive that reasoning, and every implementor would have to rederive it identically.
 
-   **The deadline comes from ``uds_session``.** ``UDSS_LLR_0304`` has the session layer
+   **The deadline comes from ``uds_session``.** ``UDSS_LLR_0080`` has the session layer
    report the earliest timestamp at which supplying a timestamp could expire a timer, or
    report that none is running. That report and this trait are the two halves of one
    mechanism: the session layer says *when*, this crate computes *how long*, and the clock
@@ -442,7 +443,7 @@ Clock
 
    Rationale: a clock is the one thing a driver cannot abstract over and cannot supply
    itself. Reading one directly would make every timing rule in the stack untestable except
-   in real time, which is the argument ``UDSS_LLR_0114`` makes for the layer below; taking
+   in real time, which is the argument ``UDSS_LLR_0017`` makes for the layer below; taking
    it as a seam keeps a test able to advance time by returning larger numbers.
 
    **One implementation ships, behind a feature.** A ``tokio``-backed ``Clock`` for hosted

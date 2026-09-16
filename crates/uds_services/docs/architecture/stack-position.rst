@@ -120,6 +120,11 @@ Scope
      side is discharged by ``UDSSVC_ARCH_0036``, ``UDSSVC_ARCH_0037`` and
      ``UDSSVC_ARCH_0038``. What is not built is the client orchestration, and only its
      standardized steps are common enough across vehicle programmes to be worth building.
+   * **The per-service negative response evaluation sequences**, fifteen normative figures
+     the "Specific SID CHECK" box of Figures 5 and 6 hands off to. ``UDSSVC_ARCH_0042``
+     records that the ordering is normative and this crate's, and that the seam by which a
+     service trait expresses it is not yet designed. Until it is, a handler chooses its own
+     code and its own order, which is the arrangement this crate exists to remove.
    * **Clause 16**, the security sub-layer. Its 16.1.4 general server response behaviour is
      this crate's by the same argument as clause 8.7; its 16.1.3 access flow spans
      exchanges as clause 17 does. ``UDSSVC_ARCH_0011`` files Figure 5's optional 0x38 and

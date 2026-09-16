@@ -112,7 +112,10 @@ rather than merely the code path.
                :run the handler;
                note right
                  Ok, or a code of the
-                 handler's own choosing
+                 handler's own choosing.
+                 The standard fixes the
+                 order within a service
+                 too — UDSSVC_ARCH_0042
                end note
              endif
            endif
@@ -167,10 +170,10 @@ Mandatory preconditions
 .. arch:: The mandatory precondition stage follows Figure 5's order
    :id: UDSSVC_ARCH_0006
    :part_of: UDSSVC_ARCH_0004
-   :depends_on: UDSSVC_ARCH_0013; UDSSVC_ARCH_0015
+   :depends_on: UDSSVC_ARCH_0013; UDSSVC_ARCH_0015; UDSSVC_ARCH_0034
    :status: draft
    :origin: application-layer-standard
-   :source: ISO 14229-1:2020 8.7.2 Figure 5
+   :source: ISO 14229-1:2020 8.7.2 Figure 5; ISO 14229-1:2020 10.2 Table 23
    :tags: dispatch; nrc
 
    The stage evaluates Figure 5's mandatory checks in the standard's order:
@@ -195,13 +198,65 @@ Mandatory preconditions
       * - 3
         - Service identifier supported in active session?
         - 0x7F
-        - Declared per service against ``Ctx::active_session``
+        - Table 23 where it decides; declared per service otherwise — see below
 
    Figure 5 places three optional checks and two manufacturer/supplier-specific hooks
    around this sequence; they are ``UDSSVC_ARCH_0011``.
 
+   **Check 3 is partly fixed by the standard, and this crate answers the fixed part.** Clause
+   10.2's Table 23 states, for each service it lists, whether it is available in the
+   ``defaultSession``. Twelve rows carry an unqualified **"not applicable"**, and those twelve
+   are not a policy an integrator chooses:
+
+   ``SecurityAccess`` (0x27), ``CommunicationControl`` (0x28), ``SecuredDataTransmission``
+   (0x84), ``ControlDTCSetting`` (0x85), ``LinkControl`` (0x87),
+   ``ReadDataByPeriodicIdentifier`` (0x2A), ``InputOutputControlByIdentifier`` (0x2F),
+   ``RequestDownload`` (0x34), ``RequestUpload`` (0x35), ``TransferData`` (0x36),
+   ``RequestTransferExit`` (0x37), ``RequestFileTransfer`` (0x38).
+
+   Five further rows are footnoted and are genuinely the application's, because the footnote
+   makes them conditional on something only the application knows:
+
+   .. list-table::
+      :header-rows: 1
+      :widths: 42 58
+
+      * - Row
+        - Footnote
+      * - ``ResponseOnEvent`` (0x86)
+        - a — implementation specific whether it is also allowed during the defaultSession
+      * - ``ReadDataByIdentifier`` (0x22), ``ReadScalingDataByIdentifier`` (0x24),
+          ``WriteDataByIdentifier`` (0x2E)
+        - b — secured dataIdentifiers require ``SecurityAccess``, hence a non-default session
+      * - ``ReadMemoryByAddress`` (0x23), ``WriteMemoryByAddress`` (0x3D)
+        - c — secured memory areas, likewise
+      * - ``DynamicallyDefineDataIdentifier`` (0x2C)
+        - d — may be defined dynamically in the default *and* non-default session
+      * - ``RoutineControl`` (0x31)
+        - e — secured routines require ``SecurityAccess``; a routine the client must stop
+          actively also requires a non-default session
+
+   So the check is the conjunction of Table 23's answer, where Table 23 gives one, and the
+   application's declaration otherwise. ``UDSSVC_ARCH_0013``'s assembly list already names
+   every supported service, so the fixed half needs no new input from anyone.
+
+   This follows ``UDSSVC_ARCH_0034`` rather than preference: the standard fixes the twelve, so
+   the twelve are implemented here; the standard defers the five, so the five are delegated. A
+   server answering a ``RequestDownload`` in the ``defaultSession`` is not exercising a choice,
+   it is failing a check nobody asked it to make. An earlier version of this element made the
+   whole check application-declared.
+
+   **What it costs**, stated because it is the first place this crate overrides an integrator
+   rather than merely constraining one: a vehicle programme whose own session matrix disagrees
+   with Table 23 on one of the twelve will find this crate refusing the request. Table 23 is
+   normative and the refusal is correct, but whether an escape hatch is owed — and if so
+   whether it is per service or whole-table — is not settled here. Note also that four of the
+   twelve (0x2A, 0x2F, 0x87, 0x84) have no ``uds_protocol`` message type, so a third of the
+   rule is unreachable for the reason ``UDSSVC_ARCH_0038`` records at the end.
+
    Two orderings here are worth stating explicitly, because both are counter-intuitive and
-   both are observable:
+   both are observable. Figure 5 is an image in the markdown conversion of the standard and
+   was read from the PDF on 2026-09-16; both orderings are confirmed there verbatim:
 
    * **Authentication precedes the session check.** A request for a supported service in
      the wrong session, from an unauthenticated client, is answered 0x34 and not 0x7F.
@@ -394,12 +449,12 @@ Suppression
    refusal is reported synchronously, so ``UDSSVC_ARCH_0031``'s ``offer`` returns it and the
    gate does not fire on it. This matters because refusal does **not** imply that an earlier
    response-pending got out: the spacing and unconfirmed-predecessor limbs
-   (``UDSS_LLR_0285``, ``UDSS_LLR_0284``) do presuppose one, but ``UDSS_LLR_0273`` and
-   ``UDSS_LLR_0274`` refuse a submission for a duplicated or exhausted transmission
+   (``UDSS_LLR_0119``, ``UDSS_LLR_0118``) do presuppose one, but ``UDSS_LLR_0061`` and
+   ``UDSS_LLR_0062`` refuse a submission for a duplicated or exhausted transmission
    association, which can catch the *first* offer for a request with nothing yet sent.
 
    What remains is the accepted submission whose transmission later fails.
-   ``UDSS_LLR_0218`` has such a transmission never reach the data link, so the client saw no
+   ``UDSS_LLR_0110`` has such a transmission never reach the data link, so the client saw no
    response-pending and is still waiting out ``tP2``, where an unsuppressed final response is
    harmless.
 
@@ -486,6 +541,54 @@ Suppression
    rule 3 becomes a fact this crate owns rather than an input, which is why
    ``UDSSVC_ARCH_0015`` carries no response-pending field. And ``uds_session`` needs no new
    output reporting that a 0x78 has been sent; an earlier draft asked for one.
+
+The service-specific check
+--------------------------
+
+.. arch:: Each service's own negative response order is normative and this crate's
+   :id: UDSSVC_ARCH_0042
+   :part_of: UDSSVC_ARCH_0004
+   :depends_on: UDSSVC_ARCH_0012; UDSSVC_ARCH_0034
+   :status: draft
+   :origin: application-layer-standard
+   :source: ISO 14229-1:2020 8.7.2 Figure 5; ISO 14229-1:2020 8.7.3.1 Figure 6; ISO 14229-1:2020 Figures 11, 20-23, 26-35
+   :tags: dispatch; nrc; traits
+
+   Figure 5 ends at a box reading "Specific SID CHECK" and Figure 6 at one reading "Specific
+   SID checks". That box is not the end of the standard's ordering — it is a handover to
+   fifteen further normative figures, one per service, each fixing the order in which that
+   service's own negative response codes are evaluated. Each is introduced by the same
+   sentence in its service's clause: *"The evaluation sequence is documented in Figure N."*
+
+   The figures are 11, 20, 21, 22, 23, 26, 27, 28, 29, 30, 31, 32, 33, 34 and 35.
+
+   **The ordering is normative, so it is this crate's**, by ``UDSSVC_ARCH_0034`` and by
+   ``UDSSVC_ARCH_0004``'s own argument one level down: a server that reorders these checks
+   produces a *different* negative response code for the same request, which is
+   correct-looking behaviour that fails conformance. That is as true of Figure 33's order
+   within ``TransferData`` as of Figure 5's order across services. Nothing distinguishes the
+   two cases except that one is drawn in clause 8.7 and the other in clause 15.
+
+   **It is not built, and this element exists so that is a recorded gap rather than an
+   inference from silence** — ``UDSSVC_ARCH_0001`` holds that a clause with no seam and no
+   implementation is unbuilt, not out of scope. Until it is built, ``UDSSVC_ARCH_0004``'s
+   pipeline ends at the handler and a handler returns "a code of its own choosing", which
+   means the per-service order is the application's to get right. That is the arrangement this
+   crate exists to remove, and it is temporary.
+
+   What is not yet designed is the seam. A service trait would have to express its evaluation
+   order in a form the dispatcher can apply, and the candidates differ sharply in cost: a
+   declared sequence of predicates per trait, a fixed set of typed pre-handler hooks per
+   service, or generated code per figure. Choosing between them wants more than one figure
+   read in full, which is a pass of its own.
+
+   Rationale for recording it now rather than then: four services are in the first slice, and
+   their figures are small enough to carry in the handler contract meanwhile. The cost of not
+   recording it is that the gap reads as a decision — the set would appear to have concluded
+   that per-service ordering is the application's, which it has not.
+
+   An earlier version of this set had no element here at all, and none of ``not-owned``,
+   ``UDSSVC_ARCH_0001``'s in-scope list or :doc:`open-questions` mentioned these figures.
 
 Extension points
 ----------------

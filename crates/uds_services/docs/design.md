@@ -274,7 +274,7 @@ argument below was sound *for a synchronous handler*: one that is still working
 is not returning, so it cannot also be watching a clock. The architecture set
 later made the handler seam asynchronous (`UDSSVC_ARCH_0016`), which removed the
 premise, but the conclusion survived. `uds_session` was never willing to take
-the job either — its `UDSS_LLR_0148` reports the `tP2_Server` overrun and states
+the job either — its `UDSS_LLR_0117` reports the `tP2_Server` overrun and states
 it "must not be read as obliging the session layer to produce a response".
 `UDSSVC_ARCH_0032` now places the decision and the bytes here, on ISO 14229-2
 REQ 5.4 and REQ 5.6, which make admissibility turn on whether the server
