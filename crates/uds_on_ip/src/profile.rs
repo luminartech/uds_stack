@@ -5,29 +5,42 @@
 //! behaviour lives: how a UDS message is framed into a `DoIP` diagnostic message,
 //! and what the transport must do around particular services.
 
-/// The timing parameters this transport supplies to the session layer.
+/// The `tP_Client` reload pair this transport dictates.
 ///
-/// ISO 14229-5:2022 REQ 7.19 defers the values themselves to ISO 14229-2. What
-/// this crate contributes is the *choice of parameter*: `DoIP` offers no
+/// ISO 14229-5:2022 REQ 7.19 defers the values to ISO 14229-2. What this crate
+/// contributes is the *choice of parameter*: `DoIP` offers no
 /// `T_DataSOM.ind`, so the `tP6` pair applies rather than the `tP2` pair
 /// (ISO 14229-2:2021 REQ 5.11).
 ///
-/// ISO 14229-2:2021 clause 9.2 Table 4 specifies these as minima derived from
-/// the server's timing and vehicle-network delays, not as fixed values, so
-/// there is no defensible universal default. The values here are the
-/// conventional starting points for a bench setup and must be configured for a
-/// real vehicle.
-///
-/// Values are milliseconds, matching the unit the session layer's clock uses
-/// (ISO 14229-2:2021 clause 9.5 Table 5 states its timing parameters in ms).
-/// Carrying `Duration` here would mean converting at the seam on every call,
-/// which is a conversion that can only go wrong.
+/// This is what `UdsTransport::channel_timing` supplies. The spacing pair is
+/// deliberately not part of it — see [`Spacing`].
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct Timing {
+pub struct Reloads {
     /// `tP6_Client_Max` — wait for a complete response after `T_Data.conf`.
     pub p6_client_max_ms: u32,
     /// `tP6*_Client_Max` — enhanced wait after a response-pending NRC.
     pub p6_star_client_max_ms: u32,
+}
+
+impl Reloads {
+    /// The value for whichever reload the session layer says is in force.
+    #[must_use]
+    pub const fn value_for(&self, which: uds_session::ChannelReload) -> u32 {
+        match which {
+            uds_session::ChannelReload::Default => self.p6_client_max_ms,
+            uds_session::ChannelReload::Enhanced => self.p6_star_client_max_ms,
+        }
+    }
+}
+
+/// Minimum spacing between consecutive requests.
+///
+/// ISO 14229-2:2021 clause 9.7 client policy. Separate from [`Reloads`]
+/// because a transport has no view on it: the reload pair is dictated by
+/// whether the transport offers a `T_DataSOM.ind`, while the spacing is the
+/// client's own conduct.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct Spacing {
     /// `tP3_Client_Phys` — minimum spacing before the next physically
     /// addressed request when the previous one required no response.
     pub p3_client_phys_ms: u32,
@@ -35,13 +48,33 @@ pub struct Timing {
     pub p3_client_func_ms: u32,
 }
 
+/// Every ISO 14229-5 timing parameter this profile carries.
+///
+/// ISO 14229-2:2021 clause 9.2 Table 4 specifies the reloads as minima derived
+/// from the server's timing and vehicle-network delays, not as fixed values,
+/// so there is no defensible universal default. The values in [`Timing::default`]
+/// are conventional bench starting points and must be configured for a real
+/// vehicle.
+///
+/// Values are milliseconds, matching `uds_session::Timestamp`'s unit. Carrying
+/// a `Duration` here would mean converting at the seam on every call, which is
+/// a conversion that can only go wrong.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct Timing {
+    /// What the session layer loads its response timer with.
+    pub reloads: Reloads,
+    /// What the client waits before its next request.
+    pub spacing: Spacing,
+}
+
 impl Default for Timing {
     fn default() -> Self {
         Self {
-            p6_client_max_ms: 2_000,
-            p6_star_client_max_ms: 5_000,
-            p3_client_phys_ms: 0,
-            p3_client_func_ms: 0,
+            reloads: Reloads {
+                p6_client_max_ms: 2_000,
+                p6_star_client_max_ms: 5_000,
+            },
+            spacing: Spacing::default(),
         }
     }
 }
@@ -114,4 +147,64 @@ pub fn post_exchange(request: &[u8], response: &[u8]) -> PostExchange {
 #[must_use]
 pub fn periodic_record_within_limit(len: usize) -> bool {
     todo!("REQ 7.17 — bound against the non-segmented UDSonIP message limit")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Reloads, Spacing, Timing};
+    use uds_session::ChannelReload;
+
+    /// ISO 14229-2:2021 REQ 5.11 — `DoIP` has no `T_DataSOM.ind`, so the `tP6`
+    /// pair applies rather than the `tP2` pair. The session layer does not
+    /// distinguish the two cases; the distinction survives in the values this
+    /// transport supplies.
+    #[test]
+    fn the_reload_pair_answers_the_session_layers_question() {
+        let reloads = Reloads {
+            p6_client_max_ms: 2_000,
+            p6_star_client_max_ms: 5_000,
+        };
+        assert_eq!(reloads.value_for(ChannelReload::Default), 2_000);
+        assert_eq!(reloads.value_for(ChannelReload::Enhanced), 5_000);
+    }
+
+    /// Design doc §6.2 — spacing is ISO 14229-2 clause 9.7 client policy, on
+    /// which a transport has no view, so it is not part of what
+    /// `channel_timing` supplies.
+    // The two bindings below exist to make the compiler check the field
+    // types; clippy's pedantic lint against no-op underscore bindings
+    // doesn't recognize that as a side effect, but it is the test.
+    #[allow(clippy::no_effect_underscore_binding)]
+    #[test]
+    fn spacing_is_separable_from_the_reloads() {
+        let timing = Timing::default();
+        let _reloads_alone: Reloads = timing.reloads;
+        let _spacing_alone: Spacing = timing.spacing;
+    }
+
+    /// Boundary brief §3.4 — confirmed, not assumed.
+    ///
+    /// Clause 8 keys TCP connection handling on `DiagnosticSessionControl` and
+    /// `ECUReset`. Under the agreed design the driver sits above the session
+    /// layer, so what reaches this crate is a `T_PDU` rather than an `A_PDU`.
+    ///
+    /// On `DoIP` that distinction is nominal: ISO 14229-5:2022 REQ 4.4 Table 5
+    /// maps `T_Data` onto the `DoIP` diagnostic message's user data unchanged,
+    /// and `DoIP` performs no segmentation — which is the same fact
+    /// ISO 14229-2:2021 REQ 5.11 rests on when it gives `DoIP` the `tP6` pair
+    /// for having no `T_DataSOM.ind`. So the `A_PDU` and the `T_PDU` are the
+    /// same octets and the first one is still the service identifier.
+    ///
+    /// On a segmented transport this would not hold, and a binding for one
+    /// must re-derive it rather than copy this module.
+    #[test]
+    fn the_service_identifier_is_the_first_octet_of_a_t_pdu() {
+        use super::service_ids::{DIAGNOSTIC_SESSION_CONTROL, ECU_RESET};
+
+        let session_control_t_pdu = [DIAGNOSTIC_SESSION_CONTROL, 0x03];
+        let ecu_reset_t_pdu = [ECU_RESET, 0x01];
+
+        assert_eq!(session_control_t_pdu[0], DIAGNOSTIC_SESSION_CONTROL);
+        assert_eq!(ecu_reset_t_pdu[0], ECU_RESET);
+    }
 }
