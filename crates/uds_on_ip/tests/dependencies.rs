@@ -4,13 +4,22 @@
 //! AURIX `TC4x` is a qualification target. The I/O vocabulary is
 //! `automotive-wire-codec`'s for the whole stack.
 
-/// A dependency is a manifest line whose key is the crate name. Checking for
-/// the bare substring instead would match this crate's own comments, which
+/// True if `name` is declared as a dependency, in either TOML form: an inline
+/// or dotted key (`tokio = { … }`, `tokio.version = "1"`) or a section header
+/// (`[dependencies.tokio]`, `[target.'cfg(…)'.dependencies.tokio]`). Checking
+/// for the bare substring instead would match this crate's own comments, which
 /// legitimately name both crates in explaining why they are absent.
 fn declares_dependency(manifest: &str, name: &str) -> bool {
-    manifest
-        .lines()
-        .any(|line| line.trim_start().starts_with(name))
+    manifest.lines().any(|line| {
+        let line = line.trim_start();
+        line.starts_with(name)
+            || line
+                .strip_prefix('[')
+                .and_then(|section| section.strip_suffix(']'))
+                .is_some_and(|section| {
+                    section.contains("dependencies") && section.ends_with(&format!(".{name}"))
+                })
+    })
 }
 
 #[test]
@@ -33,4 +42,18 @@ fn the_io_vocabulary_is_the_codecs() {
         declares_dependency(manifest, "automotive-wire-codec"),
         "the stack's I/O vocabulary is a mandatory dependency"
     );
+}
+
+#[test]
+fn a_section_header_dependency_is_detected() {
+    // The form the plain prefix check missed. Guarding against reintroduction
+    // is this file's whole purpose, so the check must see every way a
+    // dependency can be spelled.
+    assert!(declares_dependency("[dependencies.tokio]", "tokio"));
+    assert!(declares_dependency(
+        "[target.'cfg(unix)'.dependencies.tokio]",
+        "tokio"
+    ));
+    assert!(!declares_dependency("# tokio is deliberately absent", "tokio"));
+    assert!(!declares_dependency("[dependencies]", "tokio"));
 }
