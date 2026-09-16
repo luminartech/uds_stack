@@ -3,64 +3,101 @@ The seams
 
 What crosses each boundary of this crate, and who owns what on either side.
 
-Six seams, and **this crate declares none of them.** Time is not a seventh:
-``UDSSVC_ARCH_0041`` records why the clock rides on the transport rather than getting a trait
-of its own, which is also what keeps this sentence true.
+**Three seams, and this crate declares two of them.** ``UDSSVC_ARCH_0040`` made this crate the
+driver, which settles who declares what by settling who calls whom:
 
-**Each is declared by the crate that owns the document specifying it.** ``uds_session``
-declares the handler seam, the outcome, the request context, the client seam and the
-response-pending seam, because ISO 14229-2 specifies both interfaces of the session layer;
-``automotive-wire-codec`` declares the sink, because the I/O vocabulary is its. This crate
-implements two of them and calls three, which is a fact about the direction of control and
-no longer a fact about who wrote the trait.
+.. list-table::
+   :header-rows: 1
+   :widths: 26 20 24 30
 
-That single rule replaces the one this page used to give. **"Whoever is called declares the
-interface"** produced a tidy symmetry — the byte seam declared by the binding because the
-binding calls in, the client seam declared here because this crate calls out — and it was
-wrong about the first half. A seam carrying an addressing triple, bytes, a sink and a
-responder is not transport-shaped, so every binding would have declared the same trait
-separately. Ownership follows the specifying document, not the direction of the call.
+   * - Seam
+     - Declared by
+     - Implemented by
+     - Element
+   * - Service traits and callbacks
+     - this crate
+     - the consuming application
+     - ``UDSSVC_ARCH_0012``, ``UDSSVC_ARCH_0033``, ``UDSSVC_ARCH_0038``
+   * - ``UdsTransport``
+     - this crate
+     - a binding (``uds_on_ip``, ``uds_on_can``)
+     - ``UDSSVC_ARCH_0029``, and ``UDSSVC_ARCH_0041`` for the time on it
+   * - The response sink
+     - ``automotive-wire-codec``
+     - the caller, or this crate's own buffer
+     - ``UDSSVC_ARCH_0017``
+
+The rule behind it is the one this page has given since the seams moved: **a seam is declared
+by whoever the design makes responsible for it**, which for a driver means the interfaces above
+and below are both its own. The sink is the exception and stays ``awc``'s, because an I/O
+vocabulary shared by five crates belongs to none of them.
+
+**Two earlier arrangements are recorded rather than deleted, because each is more plausible
+than what replaced it.**
+
+The first held that *"whoever is called declares the interface"* — the byte seam declared by
+the binding because the binding calls in, the transport seam declared here because this crate
+calls out. Tidy, and wrong about the first half: a seam carrying an addressing triple, bytes, a
+sink and a responder is not transport-shaped, so every binding would have declared the same
+trait separately.
+
+The second replaced it with *"ownership follows the specifying document"*, and moved five seams
+into ``uds_session`` on the ground that ISO 14229-2 specifies both interfaces of the session
+layer. That was right about the document and wrong about the component. ISO 14229-2 names its
+service user as the ISO 14229-1 layer — this crate — so there was never a third party between
+them for those interfaces to sit between. Once ``UDSSVC_ARCH_0040`` collapsed the service user
+and the driver into one, four of the five seams stopped having two sides: ``RequestHandler``,
+``PendingResponder`` and ``DiagnosticClient`` had nobody left to call them, and ``Ctx`` stopped
+crossing a boundary at all. ``uds_session`` declares none of them now, and says so in its own
+brief.
+
+What survived that collapse is a library of ISO 14229-2 types and one state machine, which this
+crate drives. ``uds_session`` declares no outward trait and calls nothing.
 
 .. uml::
    :align: center
-   :caption: The server-side seams. Every trait on this diagram is declared by
-             ``uds_session``; the sink is ``automotive-wire-codec``'s.
+   :caption: The seams under the driver. Everything inside the ``uds_services`` box is
+             internal; only the three interfaces on its boundary are seams.
 
    @startuml
-   package "binding (uds_on_ip, uds_on_can)" {
-     [server driver] as DRV
-     [uds_session] as SESS
+   package "consuming application" {
+     [typed service handlers] as APPH
+     [tester code] as CLI
    }
 
    package "uds_services" {
+     [driver loop] as DRV
      [dispatch pipeline] as PIPE
+     [typed client] as TC
+     [uds_session::Session] as SESS
    }
 
-   package "application" {
-     [typed service handlers] as APPH
+   package "binding (uds_on_ip, uds_on_can)" {
+     [transport] as TR
    }
 
-   interface "request bytes" as BYTES
-   interface "Ctx" as CTX
-   interface "Outcome" as OUT
-   interface "Write sink" as SINK
+   interface "service traits" as ST
+   interface "UdsTransport" as UT
+   interface "awc::Sink" as SINK
 
-   DRV -down-> BYTES
-   BYTES -down-> PIPE
-   DRV -down-> CTX
-   SESS -up-> DRV : addressing, timing
-   CTX -down-> PIPE
-   PIPE -up-> OUT
-   OUT -up-> DRV
-   PIPE -down-> APPH : typed call
-   APPH -up-> SINK
-   SINK -up-> DRV : bytes the driver owns
+   APPH -up-> ST
+   CLI -down-> TC
+   ST -down-> PIPE
+   DRV -down-> PIPE
+   DRV -right-> SESS : timestamps in,\nactions out
+   TC -down-> DRV
+   DRV -down-> UT
+   UT -down-> TR
+   PIPE -up-> SINK
+   SINK -up-> APPH : handlers write here
    @enduml
 
-Two things the diagram is meant to settle. The sink belongs to the **driver**, not to this
-crate — a handler writes into memory the caller owns, which is what makes the crate
-allocation-free. And there is no edge from anything inside ``uds_services`` to
-``uds_session``: session state arrives as values on ``Ctx``, through the binding.
+Three things the diagram is meant to settle. The **sink is this crate's**, bounded at the
+transport's maximum payload where one exists — it was the driver's when the driver lived in the
+binding, and the driver moved. ``uds_session`` is **inside** the box: this crate owns the
+``Session`` instance, supplies every input and drains every action, which is why no arrow
+leaves the package for it. And the consuming application touches exactly two things, the
+service traits and the typed client, which is ``UDSSVC_ARCH_0019``'s goal stated as a picture.
 
 .. needflow::
    :filter: "seam" in tags
@@ -249,166 +286,172 @@ Response sink
    ``--no-default-features`` on a hosted one. Only a ``*-none`` target proves ``std`` has
    not crept back in through a dependency.
 
-The handler seam
-----------------
+The transport seam
+------------------
 
-.. arch:: uds_session declares the handler seam; this crate implements it
-   :id: UDSSVC_ARCH_0018
-   :depends_on: UDSSVC_ARCH_0002; UDSSVC_ARCH_0015; UDSSVC_ARCH_0016
-   :status: draft
-   :origin: derived
-   :tags: seam; transport
-
-   A binding's driver hands a request to this crate across one seam, declared by
-   ``uds_session`` as ``RequestHandler``. This crate implements it once, for any assembled
-   typed server. There is no per-binding adapter and no transport feature.
-
-   Rationale: ISO 14229-2 specifies both interfaces of the session layer — ``A_Data`` upward
-   and ``T_Data`` downward — so the application-facing seam is that document's, and
-   ``uds_session`` is the crate that owns it. One declaration then serves every binding, and
-   neither this crate nor ``uds_on_ip`` needs to name the other.
-
-   **An earlier version of this element held that a byte seam is "necessarily
-   transport-shaped — it is where a binding hands off", so each binding declared its own and
-   this crate implemented whichever an enabled feature selected.** The premise does not
-   survive inspection of the signature: it carries an addressing triple, request bytes, a
-   sink and a responder, and no transport concept whatever. Every binding needed an identical
-   seam, and three of them would have declared it separately. What was transport-shaped was
-   ``uds_on_ip``'s ``Ai``, and moving the addressing vocabulary to ``uds_session`` removed
-   even that.
-
-   What the relocation costs is a dependency this crate previously refused. ``uds_session``
-   is public now, and ``UDSSVC_ARCH_0002`` records what survives of the reasoning that
-   refused it.
-
-Client seam
------------
-
-.. arch:: uds_session declares the client seam; this crate uses it
+.. arch:: This crate declares the transport seam and calls it
    :id: UDSSVC_ARCH_0029
-   :depends_on: UDSSVC_ARCH_0002; UDSSVC_ARCH_0030
+   :depends_on: UDSSVC_ARCH_0002; UDSSVC_ARCH_0030; UDSSVC_ARCH_0040
    :status: draft
    :origin: derived
-   :tags: seam; transport; client
+   :tags: seam; transport; client; driver
 
-   The asynchronous client of ``UDSSVC_ARCH_0028`` is generic over ``uds_session``'s
-   ``DiagnosticClient``. A binding's driver implements it; this crate calls it and
-   implements nothing.
-
-   Rationale: the same argument as ``UDSSVC_ARCH_0018``, applied to the other direction of
-   control. The shape of the call is an ISO 14229-2 service primitive — an ``Ai``, a request,
-   and either one completion or a sequence of them — so ISO 14229-2's crate declares it, and
-   one declaration serves every binding.
-
-   The functional case is why the trait carries two methods rather than one with a flag. A
-   functionally addressed request yields a lending sequence whose length is not known until a
-   timer expires (``UDSSVC_ARCH_0022``); typing it as the same operation as a single-response
-   exchange would force one of the two to lie. That distinction survives the move, because it
-   is a property of addressing rather than of a transport.
-
-   **An earlier version of this element declared the trait here**, as ``UdsTransport``, and
-   argued it was the exact inverse of ``UDSSVC_ARCH_0018`` — the byte seam declared by the
-   binding because the binding calls in, the transport seam declared here because this crate
-   calls out. That symmetry was real but rested on the premise ``UDSSVC_ARCH_0018`` has since
-   lost. With both seams declared by the document that specifies them, the two are no longer
-   inverses; they are the same rule applied twice.
-
-   This crate still depends on no executor: the trait is asynchronous and the runtime is the
-   caller's (``UDSSVC_ARCH_0030``).
-
-Response-pending seam
----------------------
-
-.. arch:: uds_session declares the response-pending seam; this crate decides what crosses it
-   :id: UDSSVC_ARCH_0031
-   :depends_on: UDSSVC_ARCH_0016; UDSSVC_ARCH_0030; UDSSVC_ARCH_0032
-   :status: draft
-   :origin: derived
-   :tags: seam; transport; async; response-pending
-
-   A server that has decided to answer ``requestCorrectlyReceivedResponsePending`` (0x78)
-   while a handler is still running must reach a transport it does not own, and must be
-   told when the moment to do so has arrived. Both cross one seam, ``PendingResponder``,
-   declared by ``uds_session`` because *when* a response-pending is due is ``tP2_Server``
-   timing, implemented by the binding's server driver, and called from here:
+   One trait sits below this crate, declared here and implemented by a binding:
 
    .. code-block:: rust
 
-      pub trait PendingResponder {
-          /// Resolves when a response-pending should next be considered.
-          ///
-          /// Cancel-safe: dispatch drops and recreates this future every time
-          /// the handler makes progress.
-          async fn due(&mut self);
+      pub trait UdsTransport {
+          type Error;
 
-          /// Submit a response-pending for transmission. Returns immediately.
-          /// `false` means the session layer refused it and nothing was sent.
-          fn offer(&mut self, message: [u8; 3]) -> bool;
+          /// T_Data.req — hand a T_PDU to the transport.
+          async fn t_data_req(&mut self, ai: Ai, data: &[u8]) -> Result<(), Self::Error>;
+
+          /// The next inbound event, or `Timeout` when `timeout_ms` elapses first.
+          async fn next_event(&mut self, timeout_ms: Option<u32>)
+              -> Result<TransportEvent<'_>, Self::Error>;
+
+          /// Largest A_PDU this transport will carry, where it knows one.
+          fn max_payload(&self) -> Option<usize>;
+
+          /// The tP_Client reload pair this transport dictates.
+          fn channel_timing(&self) -> ChannelTiming;
+
+          /// Monotonic milliseconds, 32-bit and wrapping (UDSSVC_ARCH_0041).
+          fn now_ms(&self) -> u32;
       }
 
-   Rationale: ``UDSSVC_ARCH_0032`` puts the decision here, and a decision that cannot be
-   acted on is not a decision. The declaration sits with ``uds_session`` for the same reason
-   as ``UDSSVC_ARCH_0018`` and ``UDSSVC_ARCH_0029``: ISO 14229-2 owns the timing that says
-   when one is due. It does not own whether one is owed, or the bytes — ISO 14229-2:2021
-   REQ 5.6 makes admissibility turn on whether the server supports the service in progress,
-   which is this crate's predicate and a session layer forbidden to inspect message data
-   cannot evaluate.
+   ``Ai``, ``SResult`` and ``ChannelTiming`` are ``uds_session``'s. **Nothing in the trait is
+   DoIP-shaped, which is the test of whether it is the right seam** — a CAN binding implements
+   the same five methods, and ``uds_on_can`` becomes additive with no change here.
 
-   Dispatch races the handler against ``due`` and offers while it waits:
+   Rationale: this crate calls out to a transport, so this crate declares what it calls. The
+   trait is a transport's whole obligation to the stack: carry bytes in both directions, say how
+   large a payload it will take, say what timing it dictates, and tell the time. It carries no
+   notion of a service, a data identifier or a negative response code, which is what keeps a
+   binding from needing to understand UDS.
 
-   .. code-block:: rust
+   **It serves both roles, and that is a change from what it replaced.** The client's exchanges
+   and the server's inbound requests are the same bytes on the same transport; only what this
+   crate does with them differs. A separate client trait would have obliged a binding to
+   implement two interfaces to the same socket.
 
-      let mut handler = pin!(self.handle(..));
-      let mut sent = false;
-      let settled = loop {
-          select! {
-              settled = &mut handler => break settled,
-              () = pending.due() => if MAY_RESPOND_PENDING {
-                  sent |= pending.offer([0x7F, sid, 0x78]);
-              }
-          }
-      };
+   The asynchrony is ``UDSSVC_ARCH_0030``'s: the trait is ``async`` and the runtime is the
+   caller's, so this crate still depends on no executor.
 
-   Four properties, each of which was arrived at rather than assumed.
+   **Three earlier versions of this element are on the record, and the middle one is the
+   instructive failure.**
 
-   **The message is passed by value, in three bytes.** ISO 14229-1:2020 Annex A gives
-   ``requestCorrectlyReceivedResponsePending`` no payload, so a response-pending is always
-   ``0x7F``, the echoed service identifier, and ``0x78``. Passing it by value removes the
-   second sink, the borrow against the one ``UDSSVC_ARCH_0017`` already holds, and any
-   allocation question. Composing it here rather than in the driver is what keeps
-   ``UDSSVC_ARCH_0019`` true: the driver transmits bytes it need not understand.
+   It first declared ``UdsTransport`` here, argued as the exact inverse of a byte seam the
+   binding declared — that symmetry was real and rested on a premise that did not survive.
+   It then moved to ``uds_session`` as ``DiagnosticClient``, on the ground that an ISO 14229-2
+   service primitive belongs to ISO 14229-2's crate. That reasoning was sound about the
+   *document* and wrong about the *component*: ISO 14229-2 names its service user as the
+   ISO 14229-1 layer, so with ``UDSSVC_ARCH_0040`` making this crate both the service user and
+   the driver, ``DiagnosticClient`` had no caller on the other side. It is back, and it is one
+   trait rather than two.
 
-   **``offer`` returns immediately and reports nothing.** Submission and confirmation are
-   two moments in ISO 14229-2:2021, not one — ``UDSS_LLR_0114`` stops ``tP2_Server`` at the
-   ``T_Data.req`` and ``UDSS_LLR_0110`` anchors the spacing at the ``T_Data.conf`` — and
-   awaiting the second inside dispatch would stall the handler for the duration of a
-   transmission, which is the opposite of what ``UDSSVC_ARCH_0016``'s asynchronous seam
-   exists to buy.
+   The functional case that justified splitting the old client trait into two methods survives
+   as a property of this crate's client surface rather than of the transport.
+   ``UDSSVC_ARCH_0022``'s lending sequence is assembled here, from however many ``DataInd``
+   events arrive before the window closes; a transport reports each one and counts nothing.
 
-   **``offer`` reports refusal but not failure, and the asymmetry is the point.** A
-   submission the session layer refuses — for spacing under ``UDSS_LLR_0119``, for an
-   unconfirmed predecessor under ``UDSS_LLR_0118``, or for an association that is duplicated
-   or exhausted under ``UDSS_LLR_0061`` and ``UDSS_LLR_0062`` — is rejected *synchronously*,
-   at the moment it is supplied, and the driver knows at once. That is a clause 8.7 fact:
-   nothing was sent, so ``UDSSVC_ARCH_0009``'s override must not fire. A transmission that
-   is accepted and later fails is a different thing, reported asynchronously as a
-   ``T_Data.conf``, and is the binding's to absorb under ``UDSSVC_ARCH_0016``. So the return
-   is a ``bool`` rather than a ``Result``: it answers "was this accepted for transmission",
-   which the driver can pass straight through, and never "did it arrive", which would oblige
-   the driver to track confirmations on this crate's behalf.
+There is no handler seam
+------------------------
 
-   **``due`` must be cancel-safe, and that is a contract rather than a note.** The future
-   is dropped and rebuilt on every handler wakeup. A driver that implemented it by starting
-   a fresh interval on each call would never become due under a handler that yields often,
-   and the failure would appear only under load.
+.. arch:: Nothing calls into this crate; the inbound path is the driver's own
+   :id: UDSSVC_ARCH_0018
+   :depends_on: UDSSVC_ARCH_0029; UDSSVC_ARCH_0040
+   :status: draft
+   :origin: derived
+   :tags: seam; transport; driver
 
-   A server whose services all decline response-pending under ``UDSSVC_ARCH_0033`` still
-   names a responder. This crate supplies an implementation whose ``due`` never resolves,
-   which costs nothing at runtime; making the parameter optional would double the dispatch
-   signature to avoid a type that is already free.
+   No trait exists by which something outside this crate hands it a request. The driver of
+   ``UDSSVC_ARCH_0040`` reads a ``TransportEvent::DataInd`` from ``UDSSVC_ARCH_0029``'s
+   transport, submits it to the ``uds_session::Session`` it owns, takes the resulting
+   ``S_Data.ind``, and calls its own dispatch pipeline. Every step of that is internal.
 
-   ``RequestHandler::handle`` takes the responder as a parameter rather than carrying it on
-   ``Ctx``, which is ``Copy`` and cannot hold a ``&mut``.
+   Rationale: recorded as an element rather than as an omission, because a handler seam is the
+   single most likely thing to be re-proposed here. Two full design cycles produced one — first
+   declared by each binding, then declared by ``uds_session`` as ``RequestHandler`` — and both
+   followed from the same unexamined premise: that something below this crate turns the crank
+   and calls upward. Nothing does. ISO 14229-2 defines an interface between the session layer
+   and its service user and names that user as the ISO 14229-1 layer, so a crank-turning third
+   party is a component no standard describes.
+
+   Two things that used to cross this seam are now internal, and are named here because their
+   elements still describe them as though they crossed something: ``Ctx``
+   (``UDSSVC_ARCH_0015``) is the dispatch pipeline's input, constructed here from the session
+   layer's indication; ``Outcome`` (``UDSSVC_ARCH_0016``) is what dispatch reports to the loop
+   around it. Neither is a public type by necessity, and neither is a seam.
+
+   **What this does not change** is the pipeline's shape. ``UDSSVC_ARCH_0004`` is still a pure
+   function of a request and its context, still testable without a transport, a clock or a
+   session layer. Removing the seam removed a trait, not a boundary — the boundary is still
+   there, it is just not a public one.
+
+Response-pending
+----------------
+
+.. arch:: A response-pending is an ordinary transmission, not a seam
+   :id: UDSSVC_ARCH_0031
+   :depends_on: UDSSVC_ARCH_0016; UDSSVC_ARCH_0029; UDSSVC_ARCH_0032
+   :status: draft
+   :origin: derived
+   :tags: seam; async; response-pending
+
+   When ``UDSSVC_ARCH_0032`` decides a ``requestCorrectlyReceivedResponsePending`` (0x78) is
+   admissible and composes its three octets, they go out the way every other response does:
+   submitted to the ``uds_session::Session`` this crate owns as an ordinary ``S_Data.req``, and
+   transmitted through ``UDSSVC_ARCH_0029``'s transport when the resulting action is drained.
+   There is no separate interface and nothing new in anyone's surface.
+
+   The moment is known the same way. ``uds_session`` reports the ``tP2_Server`` overrun
+   (``UDSS_LLR_0117``) as one of the outputs the driver already drains, so dispatch learns that
+   a response-pending is due from the loop it is already running, not from a trait it is
+   handed.
+
+   Rationale: the decision and the bytes are this crate's (``UDSSVC_ARCH_0032``) and so is the
+   transport (``UDSSVC_ARCH_0029``), so nothing crosses a crate boundary and a seam would have
+   two sides in the same crate. What remains true, and is what this element is really about, is
+   the **division of labour with the session layer** — unchanged by the seam's removal:
+
+   .. list-table::
+      :header-rows: 1
+      :widths: 40 60
+
+      * - This crate answers
+        - ``uds_session`` answers
+      * - *Whether* a 0x78 is admissible, and *what* bytes it is
+        - *When* one is due, whether a submission is accepted, and how often one may repeat
+
+   The session layer's constraints are where they always were and are the reason a submission
+   can be refused: it rejects one while a predecessor is unconfirmed (``UDSS_LLR_0118``), spaces
+   consecutive ones (``UDSS_LLR_0119``), refuses a duplicated or exhausted transmission
+   association (``UDSS_LLR_0061``, ``UDSS_LLR_0062``), and anchors on a confirmed transmission
+   (``UDSS_LLR_0110``). A refusal is reported synchronously, at the moment of submission, which
+   is what ``UDSSVC_ARCH_0009``'s gate needs: a refused submission is not a send, so the
+   suppression override must not fire on it.
+
+   **An earlier version of this element declared a ``PendingResponder`` trait** with a
+   cancel-safe ``due()`` and an ``offer()`` returning ``bool``, declared by ``uds_session`` and
+   implemented by a binding's driver. It described a seam between this crate and a component
+   that no longer exists. Two of its arguments survive intact and are worth keeping, because
+   both were arrived at rather than assumed:
+
+   * **Submission and confirmation are two moments, not one.** ``UDSS_LLR_0114`` stops
+     ``tP2_Server`` at the ``T_Data.req`` and ``UDSS_LLR_0110`` anchors spacing at the
+     ``T_Data.conf``. Dispatch must not wait for the second, or a slow handler stalls for the
+     duration of a transmission — the opposite of what ``UDSSVC_ARCH_0016``'s asynchronous seam
+     buys.
+   * **Refusal and failure are different answers.** A synchronous refusal means nothing was
+     sent. An accepted submission whose transmission later fails is reported asynchronously as
+     a ``T_Data.conf`` and is absorbed by the loop; ``UDSS_LLR_0110`` has such a transmission
+     never reach the data link, so the client saw no response-pending and an unsuppressed final
+     response is harmless.
+
+   The asymmetry that follows is ``UDSSVC_ARCH_0009``'s to state: treating an accepted
+   submission as sent can cost one message a waiting client accepts, while treating a sent one
+   as unsent produces silence where the standard requires a final response.
 
 Clock
 -----

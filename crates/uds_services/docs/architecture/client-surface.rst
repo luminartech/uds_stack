@@ -251,18 +251,24 @@ Two layers
    package "uds_services" {
      rectangle "async client\n(feature-gated)" as ASYNC
      rectangle "sans-io core\nencode request / interpret response" as CORE
-     interface "uds_session::DiagnosticClient" as TR
+     rectangle "driver loop + uds_session" as DRV
+     interface "UdsTransport" as TR
    }
 
    package "binding" {
-     rectangle "uds_on_ip::Client\nstd + tokio" as BIND
+     rectangle "uds_on_ip\ntransport" as BIND
    }
 
    APP -down-> ASYNC : read(..).await
    ASYNC -down-> CORE : encode / interpret
-   ASYNC -down-> TR : send(..).await
+   ASYNC -down-> DRV : exchange
+   DRV -down-> TR
    BIND .up.|> TR : implements
    @enduml
+
+The client and the server share the loop and the transport beneath them. That is why
+``UDSSVC_ARCH_0029`` declares one trait rather than a client one and a server one: the bytes
+and the socket are the same, and only what this crate does with them differs.
 
 .. needflow::
    :filter: "client" in tags

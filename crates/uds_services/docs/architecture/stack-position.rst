@@ -286,10 +286,17 @@ Dependencies
    a feature.
 
    Rationale: a typed server must follow its application to any transport unchanged, so a
-   binding cannot appear in this crate's dependency list in any form. It does not need to:
-   the seams this crate implements and calls are declared by ``uds_session``, which
-   specifies the application-facing service interface in ISO 14229-2, so one implementation
-   serves every binding and ``uds_on_can`` becomes additive with no change here at all.
+   binding cannot appear in this crate's dependency list in any form. It does not need to: this
+   crate declares ``UDSSVC_ARCH_0029``'s ``UdsTransport`` and a binding implements it, so the
+   Cargo edge points from the binding to here and ``uds_on_can`` becomes additive with no change
+   here at all.
+
+   **An intermediate version had these seams declared by ``uds_session``**, on the ground that
+   ISO 14229-2 specifies the application-facing service interface. Right about the document,
+   wrong about the component — that interface is between the session layer and *this crate*, so
+   with ``UDSSVC_ARCH_0040`` there is no third party for it to sit between. ``uds_session``
+   declares no outward trait at all now. The dependency on it stands for the ISO 14229-2
+   vocabulary and the state machine this crate drives.
 
    **An earlier version of this element forbade depending on ``uds_session``**, on the
    ground that it was private and would make this crate unpublishable, and took session and
@@ -311,11 +318,16 @@ Dependencies
    :tags: scope; transport
 
    Rationale: a ``ReadDataByIdentifier`` handler that knows how to fetch an identifier has nothing to
-   say about IP, so the ergonomic layer — the part application authors actually touch —
-   must be free to follow a server to CAN unchanged. It is, because no binding appears here
-   in any form: this crate implements the single seam ``uds_session`` declares
-   (``UDSSVC_ARCH_0018``), and a binding's driver calls it. Adding ``uds_on_can`` changes
-   nothing in this crate and requires no feature.
+   say about IP, so the ergonomic layer — the part consuming-application authors actually touch —
+   must be free to follow a server to CAN unchanged. It is, because no binding appears here in
+   any form: this crate declares the single seam (``UDSSVC_ARCH_0029``) and a binding implements
+   it. Adding ``uds_on_can`` changes nothing in this crate and requires no feature.
+
+   **"Binding" now means a transport implementation**, not a host for a driver. Under
+   ``UDSSVC_ARCH_0040`` a binding supplies framing, connection setup, routing activation and
+   vehicle identification, implements ``UdsTransport``, and contains no run loop and no notion
+   of a service. Earlier versions of this element used the word for a component that also drove
+   the stack.
 
    **An earlier version of this element gave each binding a Cargo feature** —
    ``doip = ["dep:uds_on_ip"]`` and a ``docan`` beside it — each pulling in that binding and
