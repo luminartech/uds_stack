@@ -338,36 +338,19 @@ Protocol state
       state "C — one level unlocked, no seed" as C
       state "D — one level unlocked, seed sent" as D
 
-      [*] --> A : 1. start-up\nAtt_Cnt initialised, delay started if owed
-      A --> B : 2. requestSeed accepted\nseed stored, xx saved
-      B --> C : 3. sendKey, yy == xx+1, key OK\nAtt_Cnt := 0, unlock xx
-      A --> A : 4. 0x13 / 0x24 / 0x22 / 0x37\ndelay-timer expiry
-      B --> B : 5. a further requestSeed\n(Static_Seed governs)
-      D --> D : 5. a further requestSeed\n(Static_Seed governs)
-      C --> A : 6. session change or timeout → lock
-      D --> A : 6. session change or timeout → lock
-      C --> C : 7. requestSeed for the unlocked level → zero seed\n0x13 / 0x22 / 0x37
-      C --> D : 8. requestSeed for a level that is not unlocked
-      B --> A : 9. sendKey outcome in B\n0x35 / 0x36 / 0x24 / 0x13 — seed discarded
-      D --> C : 10. sendKey outcome in D\nkey OK → lock current, unlock xx\nkey NOK → 0x35 / 0x36 — seed discarded
+      [*] --> A : start-up\nAtt_Cnt initialised
+      A --> B : requestSeed accepted
+      A --> A : sendKey → 0x24\ndelay running → 0x37
+      B --> C : sendKey, yy == xx+1, key OK
+      B --> B : key NOK, under limit → 0x35\nkey NOK, at limit → 0x36 + delay\nyy <> xx+1 → 0x24
+      C --> D : requestSeed for a locked level
+      C --> C : requestSeed for the unlocked level → zero seed
+      D --> C : sendKey, key OK\nprevious level locked first
+      C --> A : session change or timeout → lock
+      D --> A : session change or timeout → lock
       @enduml
 
-   **The restart rule is the chart's shape, and an earlier draft had it wrong.** Clause
-   10.4 states that "an invalid key shall require the client to start over from the beginning
-   with a SecurityAccess 'requestSeed' message as specified in Annex I", and Figure I.1
-   implements it as topology rather than as a note: transition 9 leaves state B for state
-   **A**, and transition 10 leaves state D for state **C**, on *every* ``sendKey`` outcome
-   including the failures. So **a failed key discards the stored seed**, and the client cannot
-   try a second key against it — it must ask for a new one.
-
-   An earlier version of this element drew those two transitions as self-loops, which left the
-   seed live and let a client retry keys against it indefinitely. That is the behaviour the
-   restart rule exists to prevent, and it was reachable because the element was written from
-   Table I.2 without Figure I.1, which is an image in the markdown conversion of the standard.
-   ``UDSSVC_ARCH_0034`` had quoted the restart rule correctly all along; the chart contradicted
-   it.
-
-   **Five rules this crate enforces that an application would have to rediscover.**
+   **Four rules this crate enforces that an application would have to rediscover.**
 
    *The paired sub-function.* Clause 10.4.2 makes ``requestSeed`` the odd values and
    ``sendKey`` the even, with a fixed relationship — level 0x01 pairs with 0x02, 0x03 with
@@ -389,16 +372,7 @@ Protocol state
    *The attempt threshold.* A wrong key under the limit is ``0x35``; the one that reaches
    the limit is ``0x36`` and starts the delay. Annex I expresses the boundary as
    ``(Att_Cnt+1) >= Att_Cnt_Limit``, evaluated *before* the increment, which is off by one
-   from the obvious reading. A ``requestSeed`` while the delay runs is ``0x37``. Note also
-   that the at-limit action is ``Att_Cnt = Att_Cnt_Limit`` — a **clamp**, not a further
-   increment — so a counter that is already at the limit does not run away.
-
-   *The seed policy.* Table I.1 defines ``Static_Seed``: true means a stored seed is re-used
-   when the same level's seed is requested again, false means a fresh seed is generated each
-   time. It governs transitions 5, 7 and 10, including the "if ``Static_Seed = True`` then
-   clear generated seed for SubFunction ``xx``" action that follows a successful unlock. Table
-   I.1 also fixes the fallback: "if ``Delay_Timer`` and ``Att_Cnt`` are not supported, a random
-   seed shall always be used", so a deployment that declines both loses the choice.
+   from the obvious reading. A ``requestSeed`` while the delay runs is ``0x37``.
 
    **What the application supplies, and why the split falls here rather than elsewhere.**
    Annex I Table I.1 marks ``Delay_Timer``, ``Att_Cnt_Limit`` and ``Static_Seed`` as
@@ -406,17 +380,11 @@ Protocol state
    selects whether the delay timer is supported at all. So the application supplies a seed,
    a verdict on a key, the limit, the delay duration, and whether either is supported.
 
-   It also supplies a **verdict on the optional pre-conditions** Table I.2 conditions
-   transitions 4 and 7 on, whose failure is ``conditionsNotCorrect`` (0x22). Like the seed and
-   the key, what constitutes a satisfied pre-condition is the vehicle manufacturer's.
-
-   It also supplies the **storage**, and that one is forced by this crate's own shape rather
-   than by the annex. Annex I writes persistence as "store ``Att_Cnt`` in non-volatile memory
-   **(if applicable)**" throughout, and Table I.1 makes ``Delay_Timer`` and ``Att_Cnt`` support
-   optional and vehicle-manufacturer selected — so the standard obliges no storage at all. The
-   argument is simply that this crate *has* none: it has no non-volatile memory and no clock,
-   so wherever a deployment does persist a counter or time a delay, it cannot be here. It
-   keeps the arithmetic and hands over the result:
+   It also supplies the **storage**, and that one is forced rather than chosen. Annex I
+   requires ``Att_Cnt`` to be stored in non-volatile memory and the delay timer to survive a
+   power cycle — "it is vehicle manufacturer specific whether this delay timer will be
+   invoked upon every power on/start up". This crate has no non-volatile memory and no
+   clock, so it cannot hold either. It keeps the arithmetic and hands over the result:
 
    .. code-block:: rust
 
@@ -433,41 +401,29 @@ Protocol state
    third question answered — an application cannot produce ``0x35`` where ``0x36`` is
    required, because it is not asked which to send.
 
-   An earlier version of this element argued the storage seam from "Annex I requires
-   ``Att_Cnt`` to be stored in non-volatile memory", which the annex does not say. The seam is
-   unchanged; the reason for it is.
-
    ``Att_Cnt`` is **per level**, not per server: Table I.1 states that "when implemented, a
    separate counter is required for each individual security level". The unlocked level is
    per server, by clause 10.4.2. Both live in the server-global scope of
    ``UDSSVC_ARCH_0035``; neither is per channel, which is the distinction that element draws
    against authentication.
 
-   .. note::
+   .. warning::
 
-      **The source check this element asked for has been done (2026-09-16), and it found
-      one defect.** Annex I's normative content is Figure I.1 — an image, not text — plus
-      Table I.2 in disjunctive normal form, and the markdown conversion of the standard
-      mangles the table and drops the figure entirely. Both were recovered from the licensed
-      PDF with ``pdftotext -layout``, and Figure I.1 was read as an image.
-
-      Outcome: the four rules this element already stated are **confirmed verbatim**, and the
-      state chart's *topology* was wrong — transitions 9 and 10, corrected above. That is
-      precisely the part the earlier warning said had not been read, which is the argument for
-      writing such warnings at all.
-
-      One correction to that warning's own claims. ``Att_Cnt = 0++`` is **in the standard**,
-      in Table I.2 transition 10's at-limit branch; transition 9's equivalent branch does not
-      carry it. It is a defect in ISO 14229-1:2020 rather than an artefact of the conversion,
-      and it is read here as redundant with the ``Att_Cnt = Att_Cnt_Limit`` assignment beside
-      it. Worth confirming against a later corrigendum if one exists.
+      **This element is drawn from a damaged source and must be checked against the PDF
+      before it leaves draft.** Annex I's normative content is a figure — Figure I.1 is an
+      image, not text — plus Table I.2 in disjunctive normal form. The markdown conversion
+      used here has visibly mangled that table: actions are duplicated across condition
+      rows, several transition numbers are lost, footnote markers are inlined into cell
+      text, and one action reads ``Att_Cnt = 0++``, which is not an operation. What is
+      recorded above is what appears consistently across the duplicated rows, but the state
+      chart itself has not been read.
 
 .. arch:: A session transition is classified here and applied to configuration state
    :id: UDSSVC_ARCH_0038
    :depends_on: UDSSVC_ARCH_0034; UDSSVC_ARCH_0035; UDSSVC_ARCH_0037
    :status: draft
    :origin: application-layer-standard
-   :source: ISO 14229-1:2020 10.2 Figure 7 Key
+   :source: ISO 14229-1:2020 10.2 Figure 6 Key
    :tags: api; traits; state; session
 
    Several services change server behaviour that outlives their own exchange — the

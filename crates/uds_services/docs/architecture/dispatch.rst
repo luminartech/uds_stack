@@ -394,12 +394,12 @@ Suppression
    refusal is reported synchronously, so ``UDSSVC_ARCH_0031``'s ``offer`` returns it and the
    gate does not fire on it. This matters because refusal does **not** imply that an earlier
    response-pending got out: the spacing and unconfirmed-predecessor limbs
-   (``UDSS_LLR_0119``, ``UDSS_LLR_0118``) do presuppose one, but ``UDSS_LLR_0061`` and
-   ``UDSS_LLR_0062`` refuse a submission for a duplicated or exhausted transmission
+   (``UDSS_LLR_0285``, ``UDSS_LLR_0284``) do presuppose one, but ``UDSS_LLR_0273`` and
+   ``UDSS_LLR_0274`` refuse a submission for a duplicated or exhausted transmission
    association, which can catch the *first* offer for a request with nothing yet sent.
 
    What remains is the accepted submission whose transmission later fails.
-   ``UDSS_LLR_0110`` has such a transmission never reach the data link, so the client saw no
+   ``UDSS_LLR_0218`` has such a transmission never reach the data link, so the client saw no
    response-pending and is still waiting out ``tP2``, where an unsuppressed final response is
    harmless.
 

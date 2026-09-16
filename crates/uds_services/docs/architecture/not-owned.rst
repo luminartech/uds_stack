@@ -58,8 +58,8 @@ The conclusion outlived the premise by several drafts, having been re-homed onto
 ``uds_session`` where it looked settled.
 
 It was not settled there. ``uds_session`` declines the job in its own requirement set:
-``UDSS_LLR_0117`` reports the ``tP2_Server`` overrun and states that it "must not be read
-as obliging the session layer to produce a response", and ``UDSS_LLR_0119`` expects the
+``UDSS_LLR_0148`` reports the ``tP2_Server`` overrun and states that it "must not be read
+as obliging the session layer to produce a response", and ``UDSS_LLR_0285`` expects the
 request for a response-pending to *arrive from its caller*, which it may then refuse.
 
 ``UDSSVC_ARCH_0032`` now places the decision and the bytes here, on the standard's own
