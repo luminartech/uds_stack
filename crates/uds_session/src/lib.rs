@@ -20,7 +20,13 @@
 #![no_std]
 
 pub mod addressing;
+pub mod classification;
+pub mod result;
 pub mod time;
 
 pub use addressing::{Address, AddressExtension, Ai, Mtype, PeerIdentity, TaType};
+pub use classification::{
+    ClientRx, ClientTx, ExpectedResponses, ServerRx, ServerTx, SessionSelection, Solicitation,
+};
+pub use result::{SResult, TransportError};
 pub use time::Timestamp;
