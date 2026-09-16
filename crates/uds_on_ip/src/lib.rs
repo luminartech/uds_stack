@@ -90,15 +90,9 @@ pub mod primitives;
 pub mod profile;
 pub mod session;
 
-#[cfg(feature = "client")]
-pub mod client;
-
 pub use addressing::{Address, Ai, ChannelId, Mtype, TaType};
 pub use error::{Error, Result};
 pub use handler::{Ctx, Outcome, RequestHandler};
 pub use primitives::{Completion, Confirm, Indication, Request, SResult};
 pub use profile::Timing;
 pub use session::{ChannelTiming, SessionAction, SessionLayer};
-
-#[cfg(feature = "client")]
-pub use client::{Client, ClientOptions, Responses};
