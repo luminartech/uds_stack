@@ -22,6 +22,7 @@
 pub mod addressing;
 pub mod classification;
 pub mod params;
+pub mod rejection;
 pub mod result;
 pub mod time;
 
@@ -32,5 +33,6 @@ pub use classification::{
 pub use params::{
     ChannelParameter, ChannelParams, ChannelReload, ServerParameter, ServerParams, ServerReload,
 };
+pub use rejection::{Cause, Causes, Rejection};
 pub use result::{SResult, TransportError};
 pub use time::Timestamp;
