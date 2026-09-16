@@ -210,13 +210,25 @@ Response sink
    ``no_std`` without ``alloc``.
 
    **The sink is ``awc``'s rather than ``embedded-io``'s, and the difference produces an
-   NRC.** ``Sink`` carries ``remaining()``. A binding bounds the sink at the transport's
-   advertised maximum response length, an over-long response fails at the write with the
-   needed and available counts intact, and this crate turns that counted failure into
-   ``responseTooLong`` (0x14). That settles a question the set had been carrying: the maximum
-   response length is a transport property this crate does not know, but the negative
-   response code is a clause 8.7 outcome that is nobody else's. ``embedded-io`` leaves this
-   crate's dependency list entirely.
+   NRC.** ``Sink`` carries ``remaining()``. The sink is bounded at the transport's maximum
+   payload, an over-long response fails at the write with the needed and available counts
+   intact, and this crate turns that counted failure into ``responseTooLong`` (0x14). That
+   settles a question the set had been carrying: the maximum is a transport property this
+   crate does not know, but the negative response code is a clause 8.7 outcome that is nobody
+   else's. ``embedded-io`` leaves this crate's dependency list entirely.
+
+   **The bound itself is less solid than this element assumed.** On DoIP the number is *Max.
+   data size*, which ISO 13400-2:2019 Table 11 lists as an **optional** item of the entity
+   status response — so a conformant entity may advertise none — and defines as "the maximum
+   size of one logical **request** that this DoIP entity can process", which is the inbound
+   direction rather than the outbound one a response occupies.
+
+   Two consequences to design around rather than assume away. There may be **no bound to
+   apply**, in which case 0x14 is unreachable and a response is limited only by the sink the
+   caller supplied; that is a correct outcome, not a degraded one. And where a bound does
+   exist, **whose it is** — this server's or the peer's — is the transport's question to
+   answer, not this crate's. What must not happen is a fabricated default, which would make a
+   conformant server truncate valid responses in order to produce an NRC nothing asked for.
 
    The sink is a **generic parameter, not ``dyn``**. That costs object safety — there is no
    ``Box<dyn UdsServer>``, and a driver is generic over the handler type instead. For a

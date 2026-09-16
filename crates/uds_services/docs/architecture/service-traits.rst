@@ -221,6 +221,12 @@ Protocol state
           clients can be handled on multiple channels with different authentication
           settings." (10.6.4)
 
+   Annex J corroborates the keying without being the authority for it. It is informative, so
+   it obliges nothing, but it is where clause 8.7.6 sends a reader asking how multiple clients
+   are handled, and its J.2 recommends that "a unique Address Information should be assigned
+   to each communication participant to allow the detection of different clients" — which is
+   ``A_SA``, used for exactly this purpose.
+
    Those two clauses rule in opposite directions on the same question, so a design that
    collapses them is wrong whichever way it collapses.
 
@@ -474,6 +480,9 @@ Protocol state
    ``ControlDTCSetting`` state, the ``CommunicationControl`` state, a periodic schedule, an
    event registration, an active output control. Clause 10.2 specifies what a diagnostic
    session transition does to every one of them, and it does not do the same thing to each.
+
+   The four classes are Figure 7's Key notes 1 to 4. An earlier version of this element cited
+   them as "Figure 6 Key", which is clause 8.7.3.1's SubFunction figure and has no such notes.
 
    .. list-table:: Clause 10.2's four transition classes
       :header-rows: 1

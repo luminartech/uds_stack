@@ -349,6 +349,13 @@ Data parameters
    write it — would answer a request naming an identifier twice with one record, and be
    non-conformant.
 
+   The same clause gives the server one limit it may impose: "the server may limit the number
+   of dataIdentifiers that can be simultaneously requested as agreed upon by the vehicle
+   manufacturer and system supplier". That is a per-server constant of the kind
+   ``UDSSVC_ARCH_0033`` already collects on a service trait, and nothing in the set declares
+   it yet. Exceeding it is a ``requestOutOfRange`` (0x31) by the same path as an unsupported
+   identifier.
+
    The rule shapes the service trait signatures: a per-identifier handler must be callable
    once per requested identifier, and "unsupported identifier" must be distinguishable
    from "identifier supported but the read failed". The first contributes to the ALL / At
