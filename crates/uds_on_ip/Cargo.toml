@@ -16,30 +16,26 @@ authors = [
 exclude = ["legacy/", "docs/", ".github/"]
 
 [dependencies]
-# Path deps during the prototype. Swap to registry versions once simple_doip
-# 0.5.x and uds_protocol 0.1.x are published; see ARCHITECTURE.md 8.4.
+# Path deps during the prototype. Swap to registry versions once the stack
+# publishes; see ARCHITECTURE.md 8.4.
 simple_doip = { path = "../simple_doip", default-features = false }
 uds_protocol = { path = "../uds_protocol", default-features = false }
-# ISO 14229-2 session layer vocabulary. This crate holds no addressing or
-# service-primitive types of its own; see the boundary brief §2.
 uds_session = { path = "../uds_session", default-features = false }
 
-thiserror = { version = "2", default-features = false }
-embedded-io = { version = "0.7", default-features = false }
-tokio = { version = "1", features = ["rt", "time", "sync"], optional = true }
-tracing = { version = "0.1", optional = true }
+# The I/O vocabulary for the whole stack. awc 0.4 owns the sink trait and has
+# no runtime dependencies of its own, which is why this crate names no other.
+automotive-wire-codec = { path = "../../automotive_wire_format", default-features = false }
 
-[dev-dependencies]
-tokio = { version = "1", features = ["macros", "rt-multi-thread", "net", "io-util", "time"] }
+thiserror = { version = "2", default-features = false }
 
 [features]
-# The core (addressing, session seam, transport mapping, profile, handler seam)
-# is no_std and alloc-free. Only the async drivers need std.
-default = ["client"]
-alloc = ["embedded-io/alloc", "simple_doip/alloc", "uds_protocol/alloc"]
-std = ["alloc", "embedded-io/std", "thiserror/std", "simple_doip/std", "uds_protocol/std"]
-client = ["std", "simple_doip/client", "dep:tokio", "dep:tracing"]
-server = ["std", "simple_doip/server", "dep:tokio", "dep:tracing"]
+# No runtime is named anywhere. An `async fn` implies neither std nor an
+# executor, so the default build is no_std and a bare-metal target — AURIX
+# TC4x is a qualification target — stays reachable. A runtime adapter, when
+# one is written, is additive and lives behind its own feature.
+default = []
+alloc = ["simple_doip/alloc", "uds_protocol/alloc"]
+std = ["alloc", "thiserror/std", "simple_doip/std", "uds_protocol/std"]
 
 [lints.rust]
 unsafe_code = "forbid"

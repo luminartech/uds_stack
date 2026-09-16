@@ -15,16 +15,15 @@ use uds_session::{Rejection, SResult};
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum Error {
-    /// The `DoIP` transport failed.
+    /// A `DoIP` message could not be encoded or decoded.
     ///
-    /// Only present with a driver feature enabled: `simple_doip::Error` is the
-    /// async driver's error type and does not exist in a `no_std` build. That
-    /// gating is correct rather than incidental — a transport failure is a
-    /// property of the driver, and the alloc-free core performs no I/O to fail
-    /// at.
-    #[cfg(any(feature = "client", feature = "server"))]
-    #[error("DoIP transport error: {0}")]
-    Transport(simple_doip::Error),
+    /// `simple_doip::Error` is its async driver's error type, gated on that
+    /// crate's `client`/`server` features. This crate has no driver — it is a
+    /// transport whose socket is the caller's — so the wire-level error is the
+    /// one that crosses this boundary. A socket's own failures reach the caller
+    /// through the transport surface, not through this variant.
+    #[error("DoIP message error: {0}")]
+    Wire(simple_doip::messages::MessageError),
 
     /// `tP_Client` expired without a complete response
     /// (ISO 14229-2:2021 REQ 5.16).
@@ -82,10 +81,9 @@ pub enum Error {
     Exchange(SResult),
 }
 
-#[cfg(any(feature = "client", feature = "server"))]
-impl From<simple_doip::Error> for Error {
-    fn from(e: simple_doip::Error) -> Self {
-        Self::Transport(e)
+impl From<simple_doip::messages::MessageError> for Error {
+    fn from(e: simple_doip::messages::MessageError) -> Self {
+        Self::Wire(e)
     }
 }
 
