@@ -192,143 +192,99 @@ first.
 
 ## 6. What each repository has to answer
 
-These came out of authoring `uds_services`' architecture against ISO 14229-1 clause 8.7.
-They cannot be settled in one repository alone, and each blocks something.
+**Rewritten 2026-09-16.** The version this replaces was written before the driver moved into
+`uds_services` and before the boundary briefs were issued, and it had gone stale in five
+places — it gave "whoever is called declares the interface" as the ownership rule, described
+`uds_on_ip`'s `Ai` as DoIP-shaped and unusable by the typed layer, asked `uds_session` to
+expose that a `0x78` had been sent, described a `Ctx` that crosses a crate boundary, and had
+`uds_services` defining its own physical/functional addressing type. None of those is now
+true. **The per-crate boundary briefs under `diagnostics/briefs/` are current; this section
+is the index to them, not a second source.**
+
+Two rules replaced the ones this section used to carry, and both are worth stating because
+the superseded versions are the more plausible ones:
+
+- **Ownership follows the specifying document, not the direction of the call.** "Whoever is
+  called declares the interface" produced a tidy symmetry and was wrong: a seam carrying an
+  addressing triple, bytes and a sink is not transport-shaped, so every binding would have
+  declared the same trait separately.
+- **`uds_services` drives.** It owns the `uds_session::Session` instance, supplies every
+  input, drains every action, and calls a transport through a trait it declares. `uds_session`
+  encodes the ISO 14229-2 state machine and drives nothing; a binding is a transport
+  implementation with no driver and no notion of a service. The driver was the one component
+  that went a full design cycle with no owner, each crate declining it in turn.
 
 ### `uds_on_ip`
 
-**Its client is byte-level, and that is the seam a typed client sits on.** `Client::send`
-takes `&[u8]` and returns a `Completion`; `send_functional` returns a lending sequence.
-`uds_services` now owns the typed client surface above it, so two things need confirming
-on that side: that the byte signatures are the intended long-term seam (they mirror the
-handler seam, so probably yes), and that `Indication.ai` will keep carrying each
-responder's source address — the typed client depends on it to attribute functional
-responses, and it is the only way to tell them apart.
+See `briefs/uds_on_ip-boundary-brief.md`. It becomes a transport implementation: most of the
+ISO 14229-2 vocabulary it currently holds moves to `uds_session`, and what remains is the
+ISO 14229-5 profile, the DoIP mapping, and an impl of `uds_services::UdsTransport`.
 
-Note also that every method on that client is currently `todo!()`. The typed surface can
-be designed against its shape but cannot be exercised until it is real.
+Still open and blocking: its client is entirely `todo!()`, so the typed client surface can be
+designed against its shape but not exercised. Each `DataInd` must carry the responding
+server's `S_AI[SA]` — it is the only way to attribute functional responses, and functional
+addressing currently collapses to a single response, which is a shape change rather than a
+fix.
 
-`uds_services` reaches it through a transport trait *it* declares, rather than binding to
-`uds_on_ip::Client` directly — the mirror of the handler seam, which that crate declares.
-The rule behind both: **whoever is called declares the interface.** A binding calls into a
-server, so the binding declares the byte seam; this crate calls out to a transport, so this
-crate declares the transport seam. Nothing is needed from `uds_on_ip` for that beyond the
-signatures it already has.
-
-**Its documentation already delegates upward, in two places.** `Client::send` says a
-negative response "is a response, and interpreting it belongs to a higher layer", and the
-handler seam says it does not know what a service or a negative response code is. Both are
-correct and both are now discharged by `uds_services`. Worth a cross-reference in that
-crate's architecture so the delegation is visible from the declining side too.
-
-**Its handler seam must become asynchronous, and now is when that is cheap.**
-`RequestHandler::handle` is synchronous today. `UDSSVC_ARCH_0016` requires an asynchronous
-one, and the gain is concrete: a handler that outruns `tP2_Server` yields at its await
-points, so the driver keeps draining session actions and transmits the `0x78` that
-`uds_session` decided to send. Without it, that crate's own architecture is left carrying
-the constraint that "a slow handler has to run somewhere the driver can continue past" —
-machinery every integrator has to build. The trait is declared and has no implementations,
-so this costs a signature now and a migration once servers exist.
-
-The premise is `UDSSVC_ARCH_0030`: an async executor is assumed everywhere, `embassy`
-included, and no crate here depends on one. Note that `async` implies neither a runtime
-nor `std` — the executor is the caller's — so this does not compromise a `no_std` build.
-A tokio *dependency* would; an `async fn` does not.
-
-**Its request context is missing two fields.** `Ctx` today carries an addressing triple,
-the active session and the security level. Clause 8.7's mandatory validation sequence also
-reads:
-
-- **whether authentication has succeeded** — Figures 5 and 6 both place an authentication
-  check on the *mandatory* path, producing 0x34, ahead of the session check; and
-- **whether a response-pending (0x78) has already been sent** — clause 8.7.5 guards both
-  suppression rules on this, and states that once one has gone out the final response
-  shall be sent regardless.
-
-Without the second, a functionally addressed request that took long enough to earn a 0x78
-is answered with silence where the standard requires a final negative response. The
-failure needs both a slow handler and functional addressing to appear, so it will not show
-up in ordinary testing.
-
-**Its `Ai` is DoIP-shaped, and cannot be the typed layer's addressing type.** It embeds
-`simple_doip::LogicalAddress`. `uds_services` therefore defines its own two-variant
-physical/functional distinction and converts in the `doip` adapter, because no clause 8.7
-decision reads a source or target address. Worth asking once whether the ISO 14229-2
-addressing triple belongs in a crate both can depend on.
+**New from the conformance pass:** `max_payload()` cannot cite ISO 14229-5 REQ 7.17, which is
+a *ReadDataByPeriodicIdentifier* requirement. The real bound is DoIP's Max. data size, which
+ISO 13400-2:2019 Table 11 marks **optional** and defines as the maximum size of one logical
+*request*. Both facts need an answer before the trait is written.
 
 ### `uds_session`
 
-**It must expose that a 0x78 has been sent.** It owns the `tP2_Server` timer and makes the
-decision, so it is the only crate that knows; today that state is internal. See above for
-what depends on it.
+See `briefs/uds_session-boundary-brief.md` and `briefs/uds_session-id-remap-2026-09-16.md`.
+It is ISO 14229-2 whole, sans-io, with no dependencies and no outward traits. It declares no
+`RequestHandler`, no `PendingResponder`, no `DiagnosticClient` and no `Ctx` — the earlier
+arrangement that gave it all four is discarded, and is recorded in that brief because it is
+more plausible than the real one and will otherwise be re-proposed.
 
-Also confirm the ownership table in `uds_services/docs/architecture/not-owned.rst` matches
-what `uds_session` believes it owns — particularly that `tP4_Server` is a performance
-requirement on the application rather than a timer to run.
+It owes the stack one thing: **publish `needs.json`**. It is built at
+`docs/_build/needs/needs.json` and `.gitignore` puts it out of reach, so no sibling can wire
+`needs_external_needs` against it. Until that lands, every cross-repo citation in the stack is
+unverifiable prose — which is exactly how `uds_services` came to carry nine broken ones
+through a renumber, all of them correct when written.
+
+Confirm also that `not-owned.rst`'s ownership table matches what this crate believes it owns,
+particularly that `tP4_Server` is a performance requirement rather than a timer to run. *(This
+one is now checked: ISO 14229-2:2021 REQ 5.3 types it exactly that way.)*
 
 ### `simple_doip`
 
-**Two server seams exist, and it is not settled which is canonical.** The bare-metal entity
-exports a `fn(&[u8], &mut [u8]) -> i32` request callback in production code — the same byte
-seam `uds_on_ip` declares, one layer further down. Either that callback is the canonical
-seam for `no_std` targets and `uds_services` should target it too, or it is a bare-metal
-convenience that does not compose with the typed path. This blocks the server story rather
-than decorating it.
+See `briefs/simple_doip-boundary-brief.md`. Two server seams exist and it is not settled which
+is canonical: the bare-metal entity exports a `fn(&[u8], &mut [u8]) -> i32` request callback
+in production code. Under the current arrangement that callback has no place — the driver is
+two layers above it — so the question is whether it is deleted or kept as a bare-metal
+convenience that does not compose with the typed path.
+
+Also owed upward: the entity's Max. data size, with the qualification above.
 
 ### `uds_protocol`
 
-This crate turns out to be the most load-bearing of the four, because a single set of
-message definitions has to serve both roles in both build environments.
+See `briefs/uds_protocol-boundary-brief.md`. It is the most load-bearing of the four, because
+one set of message definitions has to serve both roles in both build environments.
 
-**All four paths through a message definition are now in use.** A client constructs and
-encodes requests and decodes responses; a server decodes requests and constructs and
-encodes responses. Before, only the server's two were exercised. Confirm every modelled
-service is constructible from native values and not only decodable from the wire — for the
-four services of the first pass it is, each having a `new` alongside `Encode` and `Decode`,
-and `ReadDataByIdentifierRequest` carries native and wire-backed variants precisely so a
-caller can build one either way. Check this property first when adding a service.
+All four paths through a message definition are now in use, so every modelled service must be
+constructible from native values and not only decodable from the wire — check that first when
+adding one. Keep re-exporting `Encode` and `Decode`: `UDSSVC_ARCH_0026` gets a data record's
+extent from the record type's own decoder rather than from a hand-written length, so
+`Decode`'s "decode from the FRONT of `buf`, return `(value, unconsumed_remainder)`" wording is
+a contract now, not a convention.
 
-**Both build environments must be covered.** The server compiles into embedded firmware
-without `std` or `alloc`; the client compiles into host tooling with both. The existing
-feature division is exactly right and is worth stating as an invariant rather than leaving
-as a habit: `clap` and `utoipa` imply `std` and exist for host tooling, `serde` is wired
-core-only as the one integration usable on a bare-metal target. The rest of the stack —
-and the application's own identifier vocabulary — should follow that pattern.
+Two decode properties `uds_services` depends on: the error taxonomy must map totally onto
+`0x13`, and the unmodelled-service variant must mean `0x11` rather than `0x13` — a request
+naming a service it does not model may be perfectly well formed.
 
-**One clause that is easy to violate by being helpful.** ISO 14229-1:2020 11.2.1: a
-request may contain the same data identifier more than once, and the server shall treat
-each as a separate parameter and respond for each as often as requested. Anything that
-collects requested identifiers into a set is non-conformant. Worth checking that
-`ReadDataByIdentifierRequest::dids()` preserves duplicates and order, and worth a test
-that says so.
+*(Checked in the conformance pass: ISO 14229-1:2020 11.2.1 does say a request "may contain the
+same dataIdentifier multiple times" and that the server "shall respond with data for each
+dataIdentifier as often as requested", so anything collecting identifiers into a set is
+non-conformant. Worth the test that says so.)*
 
-**`Decode`'s front-split contract is now load-bearing above you.** Clause 11.2.1 makes the
-dataRecord format vehicle-manufacturer specific and 11.2.3.1 shows no length field between
-records, so a `ReadDataByIdentifier` response is splittable only by someone who knows each
-record's extent. `uds_protocol` correctly leaves it opaque, and `uds_services` gets the
-extent from the record type's own `Decode` impl — "decode from the FRONT of `buf`; return
-`(value, unconsumed_remainder)`" — rather than from a hand-written length
-(`UDSSVC_ARCH_0026`). Two consequences: keep re-exporting `Encode` and `Decode` (the
-identifier traits reach them through you, so no new dependency on
-`automotive-wire-codec` is needed), and treat that front-split-and-return-the-remainder
-wording as the contract it now is.
-
-That decision came from `automotive_wire_format`'s own reasoning, and it generalises:
-`Encode::encoded_size` defaults to running `encode` against a counting sink because
-"hand-maintained sizes cannot drift from `encode` — the bug class every migrated consumer
-had". Any crate here tempted to add a length constant should read that note first. Do not
-add a length inference either. Two things to confirm, both of which `uds_services` now depends on:
-
-- **Its decode error taxonomy is the source of 0x13.** `uds_services` maps decode failures
-  to `incorrectMessageLengthOrInvalidFormat` and needs the mapping to be total.
-- **The unmodelled-service variant means 0x11, not 0x13.** A request naming a service
-  `uds_protocol` does not model may be perfectly well formed; reaching that variant means
-  the server has no implementation, which is `serviceNotSupported`. Confirm nothing in the
-  decode path conflates the two.
-
-Also worth a note in that crate: `responseTooLong` (0x14) appears in its permitted codes
-for `ReadDataByIdentifier` but in neither Figure 5 nor Figure 6, and who produces it is
-open — the maximum response length is a transport property.
+The content gap bounds the release rather than the boundary work: eight services are named in
+`UdsServiceType` with no message type. Four of them — `0x2A`, `0x2F`, `0x87`, `0x84` — are
+among the twelve that ISO 14229-1 Table 23 fixes as unavailable in the defaultSession, so the
+session-permission rule `uds_services` is taking on is partially unreachable for the same
+reason its session-transition matrix is.
 
 ## 7. The scope trap, which cost this repository a rewrite
 
@@ -364,6 +320,40 @@ into host tooling with both, from one set of definitions. That is not a deployme
 to be discovered at CI time — it constrains the types, and `UDSSVC_ARCH_0027` states it.
 If your crate is on both sides of that line, say so in an element and make sure both
 configurations are actually built.
+
+**Author from the PDF, not from the markdown conversion.** This is the rule the 2026-09-16
+conformance pass produced, and it cost `uds_services` one substantively wrong element to
+learn.
+
+The markdown under `~/dev/luminar/iso_specs/markdown/` is reliable for prose and unreliable
+for exactly the structures an architecture is authored from. Confirmed in one afternoon
+against ISO 14229-1:2020 alone:
+
+- **Figures are images with no text.** Figure 5 and Figure 6 — the whole of clause 8.7's
+  validation order — are PNGs. So are Figure 7 and Figure I.1. Four `uds_services` elements
+  carried `:origin: application-layer-standard` citing Figure 5 or Figure 6 while the working
+  copy contained neither, and nothing in the set said so. They have since been read and all
+  four are confirmed; the point is that nobody could have known that.
+- **Table footnotes vanish.** Table 23's footnotes `a`–`e` are referenced from the cells and
+  present in neither `clean.md` nor `raw.md`. They are what separates the rows the standard
+  fixes from the rows it leaves to the manufacturer — i.e. the whole decision.
+- **Figure keys get spliced.** Figure 7's Key note 4 is interleaved across two bullets and
+  reads as nonsense.
+
+`pdftotext -layout <spec>.pdf` recovered every one of them, and the figures themselves are
+readable as images directly. Three habits follow:
+
+1. Use `pdftotext -layout` as the source of record for any table, figure key or normative
+   annex. Use the markdown for prose.
+1. **Read the figure.** If an element cites one, open the PNG. `uds_services` had a state
+   chart wrong in a way that changed behaviour, in the one element whose warning said the
+   figure had not been read — the warning was right.
+1. **Say when you have not.** An element resting on an unread source should carry a warning
+   the way `UDSSVC_ARCH_0037` did. It is the only reason that defect was findable.
+
+A related trap for `validate_needs.py`: it checks that `origin` and `source` are present, not
+that what they name exists. `UDSSVC_ARCH_0038` cited "10.2 Figure 6" through several drafts,
+and clause 10.2 has no Figure 6.
 
 **Two questions to ask of your own crate**, both of which found something here:
 
