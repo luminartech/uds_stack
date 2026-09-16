@@ -18,3 +18,7 @@
 //! implementation follows the published requirement set rather than preceding it.
 
 #![no_std]
+
+pub mod time;
+
+pub use time::Timestamp;
