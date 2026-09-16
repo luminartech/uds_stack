@@ -21,6 +21,7 @@
 
 pub mod addressing;
 pub mod classification;
+pub mod client;
 pub mod params;
 pub mod reaction;
 pub mod rejection;
@@ -31,6 +32,10 @@ pub mod time;
 pub use addressing::{Address, AddressExtension, Ai, Mtype, PeerIdentity, TaType};
 pub use classification::{
     ClientRx, ClientTx, ExpectedResponses, ServerRx, ServerTx, SessionSelection, Solicitation,
+};
+pub use client::{
+    ChannelId, ChannelSlot, Client, ClientOutput, ClientReaction, FunctionalKeepAlive,
+    KeepAliveMode, ResponderSlot,
 };
 pub use params::{
     ChannelParameter, ChannelParams, ChannelReload, ServerParameter, ServerParams, ServerReload,

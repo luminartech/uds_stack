@@ -1,0 +1,462 @@
+//! The client role.
+//!
+//! ``UDSS_LLR_0029`` fixes the role at creation; see [`crate::server`] for why the two
+//! roles are separate types. ``UDSS_LLR_0031`` lists what a client rejects, and each item
+//! is unrepresentable here: there is no `completion_report`, and [`ClientTx`] and
+//! [`ClientRx`] cannot express the server's kinds.
+//!
+//! # Storage
+//!
+//! ``UDSS_LLR_0004`` forbids allocation, so every capacity is a slice the caller owns.
+//! ``UDSS_LLR_0121`` makes supplying a channel's storage the act that brings the channel
+//! into being, and ``UDSS_LLR_0139`` makes a functional channel's responder-table
+//! capacity the number of entries that storage holds — a physical channel keeps no table
+//! and passes an empty slice.
+//!
+//! `Client<'s, 'r>` borrows the channel array for `'s` and each responder array for `'r`.
+//! Rust drops in reverse declaration order, so **declare every responder array before the
+//! channel array**:
+//!
+//! ```
+//! use uds_session::{ChannelSlot, Client, FunctionalKeepAlive, KeepAliveMode, ResponderSlot};
+//!
+//! let mut responders = [ResponderSlot::EMPTY; 8];   // first
+//! let mut keep_alive = FunctionalKeepAlive::NEW;
+//! let mut channels = [ChannelSlot::EMPTY; 4];       // second
+//!
+//! let client = Client::new(
+//!     &mut channels,
+//!     KeepAliveMode::Functional { storage: &mut keep_alive, s3_client: 2_000 },
+//! );
+//! # let _ = (client, &mut responders);
+//! ```
+
+use crate::addressing::{Address, AddressExtension, Ai};
+use crate::classification::{ClientRx, ClientTx};
+use crate::params::{ChannelParameter, ChannelParams, ChannelReload};
+use crate::reaction::Reaction;
+use crate::result::SResult;
+use crate::time::Timestamp;
+
+/// One entry of a functional channel's responder table.
+///
+/// ``UDSS_LLR_0139`` — keyed by a responder's peer identity, recording whether a
+/// start-of-message is open and whether a response-pending message is outstanding.
+/// ISO 14229-2:2021 9.6 Table 7 allots the client one timer per channel and no storage
+/// for either fact, which is why this requirement is derived.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ResponderSlot {
+    _reserved: (),
+}
+
+impl ResponderSlot {
+    /// A free entry.
+    pub const EMPTY: Self = Self { _reserved: () };
+}
+
+/// One channel's storage.
+///
+/// ``UDSS_LLR_0126`` — every fact a document of this set keeps per channel lives here:
+/// the channel's `tP_Client` and spacing timers and their parameters, whether a request
+/// is in progress and its addressing and classification, the response count, the one
+/// association ``UDSS_LLR_0059`` holds and whether it is abandoned, the repeat count of
+/// ``UDSS_LLR_0173``, and the open start-of-message on a physical channel.
+///
+/// The responder slice is held by `&'r mut`, which makes `ChannelSlot` **invariant** in
+/// `'r`. That invariance is the cost the design accepted in order to keep
+/// ``UDSS_LLR_0139``'s per-channel capacity literal, so the stub carries it rather than a
+/// covariant placeholder — otherwise the worked example below would reassure a caller
+/// about an arrangement nobody had actually compiled.
+#[derive(Debug)]
+pub struct ChannelSlot<'r> {
+    _responders: Option<&'r mut [ResponderSlot]>,
+}
+
+impl ChannelSlot<'_> {
+    /// A slot holding no channel.
+    ///
+    /// `ChannelSlot` is not `Copy`, because it owns a mutable borrow. `[ChannelSlot::EMPTY;
+    /// N]` still works: Rust permits array-repeat of a `const` item for non-`Copy` types.
+    pub const EMPTY: Self = Self { _responders: None };
+}
+
+/// Identifies a channel of this client.
+///
+/// ``UDSS_LLR_0121`` — returned when the caller supplies a channel's storage, valid until
+/// the caller withdraws it.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct ChannelId(u16);
+
+/// The client-wide keep-alive state of functional mode.
+///
+/// ``UDSS_LLR_0150`` — one `tS3_Client` timer and one keeping-alive fact, fixed in size
+/// and nonetheless caller-supplied, so that one storage shape serves both modes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FunctionalKeepAlive {
+    _reserved: (),
+}
+
+impl FunctionalKeepAlive {
+    /// The initial state.
+    ///
+    /// ``UDSS_LLR_0153`` — the client's session timer is initially not running.
+    pub const NEW: Self = Self { _reserved: () };
+}
+
+/// How the client keeps servers alive.
+///
+/// ``UDSS_LLR_0149`` — fixed when the instance is created; no input changes it. The mode
+/// selects which of ``UDSS_LLR_0155`` to ``UDSS_LLR_0163`` and ``UDSS_LLR_0184`` act.
+#[derive(Debug, PartialEq, Eq)]
+pub enum KeepAliveMode<'s> {
+    /// A functionally addressed `TesterPresent` each time the client's `tS3_Client`
+    /// expires. ISO 14229-2:2021 9.6 Table 8 allots a single timer here.
+    Functional {
+        /// ``UDSS_LLR_0150`` — the client-wide timer and fact.
+        storage: &'s mut FunctionalKeepAlive,
+        /// ``UDSS_LLR_0152`` — the single `tS3_Client` reload, which must cover the
+        /// longest path among every server the functional address reaches.
+        s3_client: u32,
+    },
+    /// A physically addressed `TesterPresent` on a physical channel when that channel's
+    /// `tS3_Client` expires with no other request sent on it.
+    ///
+    /// ``UDSS_LLR_0151`` — the fact and the timer live in each channel's storage, and
+    /// ``UDSS_LLR_0152`` puts that channel's reload in [`ChannelParams::s3_client`], so
+    /// this variant carries nothing.
+    Physical,
+}
+
+/// What a client produces for the caller to retrieve.
+///
+/// ``UDSS_LLR_0012`` — the standard's own outputs, plus the ones it does not define.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum ClientOutput<'d> {
+    /// `T_Data.req` — ``UDSS_LLR_0024``.
+    Transmit {
+        /// Which channel it belongs to.
+        channel: ChannelId,
+        /// Where it goes.
+        ai: Ai,
+        /// What to send.
+        data: &'d [u8],
+    },
+    /// `S_Data.ind` — ``UDSS_LLR_0034`` and ``UDSS_LLR_0036``.
+    Indicate {
+        /// The channel the caller identified under ``UDSS_LLR_0026``.
+        channel: ChannelId,
+        /// Who it came from.
+        ai: Ai,
+        /// The message; meaningful only where `result` is [`SResult::Ok`]
+        /// (``UDSS_LLR_0035``).
+        data: &'d [u8],
+        /// The outcome of the reception.
+        result: SResult,
+    },
+    /// `S_Data.conf` — ``UDSS_LLR_0037``.
+    Confirm {
+        /// The addressing identifying the request confirmed, per ``UDSS_LLR_0059``.
+        ai: Ai,
+        /// The outcome of the transmission.
+        result: SResult,
+    },
+    /// A channel's `tP_Client` expired with the response window unfilled.
+    ///
+    /// ``UDSS_LLR_0148`` — ISO 14229-2:2021 9.1.2's error condition, which 9.7 Table 9
+    /// heads "Timeout".
+    ResponseTimeout {
+        /// The addressing of the request whose window expired.
+        ai: Ai,
+        /// Which of the default and enhanced reload parameters the timer was carrying.
+        loaded: ChannelReload,
+    },
+    /// A keep-alive `TesterPresent` is due.
+    ///
+    /// ``UDSS_LLR_0156`` in functional keep-alive, carrying no addressing because the
+    /// keep-alive is client-wide; ``UDSS_LLR_0162`` in physical keep-alive, carrying the
+    /// channel. The session layer requests it rather than composing it — it never builds
+    /// a message.
+    KeepAliveDue {
+        /// `None` in functional keep-alive; the channel in physical keep-alive.
+        channel: Option<ChannelId>,
+    },
+    /// A responder was seen that the table has no room for.
+    ///
+    /// ``UDSS_LLR_0143`` — the client records nothing for it and says so, rather than
+    /// silently mistracking it. Where the same `T_Data.ind` also produces an
+    /// [`ClientOutput::Indicate`], this precedes it.
+    Capacity {
+        /// The channel it arrived on.
+        channel: ChannelId,
+        /// The responder's `S_AI[SA]`.
+        sa: Address,
+        /// Its `S_AI[AE]`, where `S_Mtype` carries one.
+        ae: Option<AddressExtension>,
+    },
+}
+
+/// A reaction carrying client outputs.
+pub type ClientReaction<'s, 'd, T = ()> = Reaction<'s, 'd, ClientOutput<'d>, T>;
+
+/// The session layer in the client role.
+///
+/// ``UDSS_LLR_0008`` — all state lives here or in the caller-supplied storage this
+/// borrows.
+#[derive(Debug)]
+pub struct Client<'s, 'r> {
+    _channels: &'s mut [ChannelSlot<'r>],
+    _keep_alive: KeepAliveMode<'s>,
+}
+
+impl<'s, 'r> Client<'s, 'r> {
+    /// Create a client.
+    ///
+    /// ``UDSS_LLR_0032`` — creation supplies the keep-alive mode of ``UDSS_LLR_0149``
+    /// and, in functional keep-alive, the storage of ``UDSS_LLR_0150`` and the reload
+    /// parameter of ``UDSS_LLR_0152``. Channel storage is supplied later, under
+    /// ``UDSS_LLR_0121``; the length of `channels` bounds how many may exist at once.
+    #[must_use]
+    pub fn new(channels: &'s mut [ChannelSlot<'r>], keep_alive: KeepAliveMode<'s>) -> Self {
+        Self {
+            _channels: channels,
+            _keep_alive: keep_alive,
+        }
+    }
+
+    /// Supply a channel's storage, which is what creates the channel.
+    ///
+    /// ``UDSS_LLR_0121`` — the channel exists from this moment, identified by `ai`, until
+    /// it is withdrawn. ``UDSS_LLR_0122`` rejects an addressing equal to an existing
+    /// channel's, because two channels one `S_Data.req` names would leave which timer
+    /// starts undetermined. `responders` is the table of ``UDSS_LLR_0139``; pass an empty
+    /// slice for a physical channel, which keeps none.
+    pub fn open_channel(
+        &mut self,
+        now: Timestamp,
+        ai: Ai,
+        params: ChannelParams,
+        responders: &'r mut [ResponderSlot],
+    ) -> ClientReaction<'_, 'static, ChannelId> {
+        #[allow(
+            clippy::todo,
+            reason = "API stub; behaviour lands with its requirement"
+        )]
+        {
+            todo!(
+                "UDSS_LLR_0121, 0122: {now:?} {ai:?} {params:?} {}",
+                responders.len()
+            )
+        }
+    }
+
+    /// Withdraw a channel's storage, which discards the channel.
+    ///
+    /// ``UDSS_LLR_0125`` — permitted at any time, discarding without output every fact
+    /// this set holds for the channel, an outstanding association included. It is the
+    /// caller's last exit: a transmission whose confirmation never comes leaves its
+    /// association outstanding and only withdrawal clears it. ``UDSS_LLR_0124`` rejects
+    /// one naming a channel the client does not have.
+    pub fn withdraw_channel(
+        &mut self,
+        now: Timestamp,
+        channel: ChannelId,
+    ) -> ClientReaction<'_, 'static> {
+        #[allow(
+            clippy::todo,
+            reason = "API stub; behaviour lands with its requirement"
+        )]
+        {
+            todo!("UDSS_LLR_0124, 0125: {now:?} {channel:?}")
+        }
+    }
+
+    /// Set a per-channel protocol parameter.
+    ///
+    /// ``UDSS_LLR_0043`` permits it at any time; ``UDSS_LLR_0134`` rejects a setting
+    /// naming a channel the client does not have, there being no storage to carry it.
+    pub fn set_parameter(
+        &mut self,
+        now: Timestamp,
+        channel: ChannelId,
+        parameter: ChannelParameter,
+    ) -> ClientReaction<'_, 'static> {
+        #[allow(
+            clippy::todo,
+            reason = "API stub; behaviour lands with its requirement"
+        )]
+        {
+            todo!("UDSS_LLR_0043, 0134: {now:?} {channel:?} {parameter:?}")
+        }
+    }
+
+    /// Reset a channel.
+    ///
+    /// ``UDSS_LLR_0180`` — ends any request in progress and stops its timer with no
+    /// indication, marks an unconfirmed association abandoned, closes the open
+    /// start-of-message or releases every responder entry, and zeroes the repeat count.
+    /// It produces no output. ISO 14229-2:2021 9.7 Table 9 ends at the third transmission
+    /// and says nothing of what the client concludes, so something the caller invokes has
+    /// to clear the state that persists on its own. ``UDSS_LLR_0183`` rejects a reset
+    /// naming no existing channel.
+    pub fn reset_channel(
+        &mut self,
+        now: Timestamp,
+        channel: ChannelId,
+    ) -> ClientReaction<'_, 'static> {
+        #[allow(
+            clippy::todo,
+            reason = "API stub; behaviour lands with its requirement"
+        )]
+        {
+            todo!("UDSS_LLR_0180, 0183: {now:?} {channel:?}")
+        }
+    }
+
+    /// Release a keep-alive.
+    ///
+    /// ``UDSS_LLR_0184`` — clears the session fact and stops the timer, in whichever mode
+    /// applies to the named channel; in every other case it changes nothing, and it
+    /// produces no output. Without it the physical fact would keep restarting a
+    /// keep-alive for a server the application has given up. It is separate from
+    /// [`Client::reset_channel`] because the two answer different situations.
+    pub fn release_keep_alive(
+        &mut self,
+        now: Timestamp,
+        channel: ChannelId,
+    ) -> ClientReaction<'_, 'static> {
+        #[allow(
+            clippy::todo,
+            reason = "API stub; behaviour lands with its requirement"
+        )]
+        {
+            todo!("UDSS_LLR_0184: {now:?} {channel:?}")
+        }
+    }
+
+    /// Request transmission of a request.
+    ///
+    /// ``UDSS_LLR_0033``. ``UDSS_LLR_0123`` rejects an addressing naming no existing
+    /// channel, ``UDSS_LLR_0061`` a request duplicating an outstanding association,
+    /// ``UDSS_LLR_0171`` one on a channel whose spacing timer is running — with
+    /// ``UDSS_LLR_0172``'s remaining time in the report — and ``UDSS_LLR_0177`` and
+    /// ``UDSS_LLR_0178`` a third repeat or one sent while responses are still arriving.
+    pub fn s_data_req<'d>(
+        &mut self,
+        now: Timestamp,
+        ai: Ai,
+        data: &'d [u8],
+        class: ClientTx,
+    ) -> ClientReaction<'_, 'd> {
+        #[allow(
+            clippy::todo,
+            reason = "API stub; behaviour lands with its requirement"
+        )]
+        {
+            todo!(
+                "UDSS_LLR_0033, 0123: {now:?} {ai:?} {} {class:?}",
+                data.len()
+            )
+        }
+    }
+
+    /// A message has started arriving.
+    ///
+    /// ``UDSS_LLR_0023`` — addressing and no result. ``UDSS_LLR_0026`` requires the
+    /// caller to identify the channel, because the session layer cannot: a response from
+    /// one server may belong to the physical channel to that server or to a functional
+    /// channel it was reached through, and nothing in the indication says which. A
+    /// mandatory parameter discharges ``UDSS_LLR_0027``'s second limb by construction,
+    /// as that requirement anticipates. ``UDSS_LLR_0028`` does not check it against the
+    /// addressing.
+    pub fn t_data_som_ind(
+        &mut self,
+        now: Timestamp,
+        channel: ChannelId,
+        ai: Ai,
+        class: ClientRx,
+    ) -> ClientReaction<'_, 'static> {
+        #[allow(
+            clippy::todo,
+            reason = "API stub; behaviour lands with its requirement"
+        )]
+        {
+            todo!("UDSS_LLR_0023, 0026, 0136: {now:?} {channel:?} {ai:?} {class:?}")
+        }
+    }
+
+    /// A message has finished arriving.
+    ///
+    /// ``UDSS_LLR_0036`` indicates it to the application; ``UDSS_LLR_0045`` pairs it with
+    /// an open start-of-message; ``UDSS_LLR_0146`` records an outstanding
+    /// response-pending message; ``UDSS_LLR_0143`` reports a responder beyond capacity.
+    pub fn t_data_ind<'d>(
+        &mut self,
+        now: Timestamp,
+        channel: ChannelId,
+        ai: Ai,
+        data: &'d [u8],
+        result: SResult,
+        class: ClientRx,
+    ) -> ClientReaction<'_, 'd> {
+        #[allow(
+            clippy::todo,
+            reason = "API stub; behaviour lands with its requirement"
+        )]
+        {
+            todo!(
+                "UDSS_LLR_0036, 0045: {now:?} {channel:?} {ai:?} {} {result:?} {class:?}",
+                data.len()
+            )
+        }
+    }
+
+    /// A transmission has completed.
+    ///
+    /// ``UDSS_LLR_0025``. It takes no channel, deliberately: ``UDSS_LLR_0059`` matches a
+    /// confirmation to its association by addressing alone, which is the standard's own
+    /// rule in ISO 14229-2:2021 7.6. ``UDSS_LLR_0063`` rejects one matching none, which
+    /// is what a confirmation arriving after its channel was withdrawn does.
+    pub fn t_data_conf(
+        &mut self,
+        now: Timestamp,
+        ai: Ai,
+        result: SResult,
+    ) -> ClientReaction<'_, 'static> {
+        #[allow(
+            clippy::todo,
+            reason = "API stub; behaviour lands with its requirement"
+        )]
+        {
+            todo!("UDSS_LLR_0025, 0059, 0063: {now:?} {ai:?} {result:?}")
+        }
+    }
+
+    /// Supply a timestamp on its own.
+    ///
+    /// ``UDSS_LLR_0010`` and ``UDSS_LLR_0079`` — see [`crate::Server::tick`].
+    pub fn tick(&mut self, now: Timestamp) -> ClientReaction<'_, 'static> {
+        #[allow(
+            clippy::todo,
+            reason = "API stub; behaviour lands with its requirement"
+        )]
+        {
+            todo!("UDSS_LLR_0010, 0079: {now:?}")
+        }
+    }
+
+    /// The earliest timestamp at which a supplied timestamp could expire a timer.
+    ///
+    /// ``UDSS_LLR_0080`` — see [`crate::Server::next_deadline`]. On a client this covers
+    /// the response, spacing and session timers of every channel.
+    #[must_use]
+    pub fn next_deadline(&self) -> Option<Timestamp> {
+        #[allow(
+            clippy::todo,
+            reason = "API stub; behaviour lands with its requirement"
+        )]
+        {
+            todo!("UDSS_LLR_0080")
+        }
+    }
+}
