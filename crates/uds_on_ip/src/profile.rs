@@ -25,7 +25,7 @@ pub struct Reloads {
 impl Reloads {
     /// The value for whichever reload the session layer says is in force.
     #[must_use]
-    pub const fn value_for(&self, which: uds_session::ChannelReload) -> u32 {
+    pub const fn value_for(self, which: uds_session::ChannelReload) -> u32 {
         match which {
             uds_session::ChannelReload::Default => self.p6_client_max_ms,
             uds_session::ChannelReload::Enhanced => self.p6_star_client_max_ms,
@@ -98,6 +98,25 @@ impl Default for Timing {
 /// So the invariant is narrower than first written: this crate knows these two
 /// identifiers and nothing else. No sub-function, no data identifier, no
 /// routine identifier, no NRC policy.
+///
+/// # The read is of a `T_PDU`, and that is confirmed rather than assumed
+///
+/// Clause 8 keys this handling on a service identifier, and under this
+/// stack's design the driver sits above the session layer — so what reaches
+/// this crate is a `T_PDU`, not an `A_PDU`.
+///
+/// On `DoIP` the distinction is nominal. ISO 14229-5:2022 REQ 4.4 Table 5
+/// maps `T_Data` onto the `DoIP` diagnostic message's user data unchanged,
+/// and `DoIP` performs no segmentation — the same fact ISO 14229-2:2021
+/// REQ 5.11 rests on when it gives `DoIP` the `tP6` pair for having no
+/// `T_DataSOM.ind`. The two PDUs are therefore the same octets, and the
+/// first is still the service identifier.
+///
+/// On a segmented transport this would not hold, so a binding for one must
+/// re-derive it rather than copy this module. That is a reading of the
+/// standards rather than a property a test can hold: it becomes testable
+/// when `post_exchange` is implemented and can be exercised against a real
+/// `T_PDU`.
 pub mod service_ids {
     use uds_protocol::UdsServiceType;
 
@@ -171,40 +190,12 @@ mod tests {
     /// Design doc §6.2 — spacing is ISO 14229-2 clause 9.7 client policy, on
     /// which a transport has no view, so it is not part of what
     /// `channel_timing` supplies.
-    // The two bindings below exist to make the compiler check the field
-    // types; clippy's pedantic lint against no-op underscore bindings
-    // doesn't recognize that as a side effect, but it is the test.
-    #[allow(clippy::no_effect_underscore_binding)]
     #[test]
     fn spacing_is_separable_from_the_reloads() {
         let timing = Timing::default();
-        let _reloads_alone: Reloads = timing.reloads;
-        let _spacing_alone: Spacing = timing.spacing;
-    }
-
-    /// Boundary brief §3.4 — confirmed, not assumed.
-    ///
-    /// Clause 8 keys TCP connection handling on `DiagnosticSessionControl` and
-    /// `ECUReset`. Under the agreed design the driver sits above the session
-    /// layer, so what reaches this crate is a `T_PDU` rather than an `A_PDU`.
-    ///
-    /// On `DoIP` that distinction is nominal: ISO 14229-5:2022 REQ 4.4 Table 5
-    /// maps `T_Data` onto the `DoIP` diagnostic message's user data unchanged,
-    /// and `DoIP` performs no segmentation — which is the same fact
-    /// ISO 14229-2:2021 REQ 5.11 rests on when it gives `DoIP` the `tP6` pair
-    /// for having no `T_DataSOM.ind`. So the `A_PDU` and the `T_PDU` are the
-    /// same octets and the first one is still the service identifier.
-    ///
-    /// On a segmented transport this would not hold, and a binding for one
-    /// must re-derive it rather than copy this module.
-    #[test]
-    fn the_service_identifier_is_the_first_octet_of_a_t_pdu() {
-        use super::service_ids::{DIAGNOSTIC_SESSION_CONTROL, ECU_RESET};
-
-        let session_control_t_pdu = [DIAGNOSTIC_SESSION_CONTROL, 0x03];
-        let ecu_reset_t_pdu = [ECU_RESET, 0x01];
-
-        assert_eq!(session_control_t_pdu[0], DIAGNOSTIC_SESSION_CONTROL);
-        assert_eq!(ecu_reset_t_pdu[0], ECU_RESET);
+        let reloads: Reloads = timing.reloads;
+        let spacing: Spacing = timing.spacing;
+        assert_eq!(reloads, timing.reloads);
+        assert_eq!(spacing, timing.spacing);
     }
 }
