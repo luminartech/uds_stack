@@ -633,9 +633,9 @@ Service primitives
    * the channel reset of ``UDSS_LLR_0180``;
    * the keep-alive release of ``UDSS_LLR_0184``.
 
-   An interface in which a server cannot be handed a response classification, a channel
-   identifier, channel storage, a channel reset or a keep-alive release satisfies this
-   requirement without a check.
+   An interface in which a server cannot be handed a request classification to transmit, a
+   response classification to receive, a channel identifier, channel storage, a channel
+   reset or a keep-alive release satisfies this requirement without a check.
 
    Rationale: the rejected inputs are listed rather than described, because "an input
    whose form belongs to the other role" is not decidable for an ``S_Data.req``, whose
@@ -1637,8 +1637,7 @@ means of recognising it to the implementation.
    on, other than a departure ``UDSS_LLR_0066``, ``UDSS_LLR_0067``, ``UDSS_LLR_0068``,
    ``UDSS_LLR_0069``, ``UDSS_LLR_0070`` or ``UDSS_LLR_0071`` names, shall be rejected as
    ``UDSS_LLR_0015`` defines. An interface in which such a form cannot be expressed
-   satisfies this without a check. An interface whose classification and addressing types
-   admit no other form satisfies this requirement, for those forms, without a check.
+   satisfies this without a check.
 
    Rationale: the sentences of ``UDSS_LLR_0065``, ``UDSS_LLR_0057``, ``UDSS_LLR_0058`` and
    ``UDSS_LLR_0052`` that state a form are otherwise obligations on the caller with no
