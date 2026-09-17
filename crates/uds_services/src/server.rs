@@ -117,17 +117,21 @@ impl<A: ServiceSet, T: UdsTransport, const PEERS: usize> Server<A, T, PEERS> {
             return Ok(());
         };
 
+        let Some(request_bytes) = in_flight.get(..len) else {
+            // A transport reported more bytes than the buffer it was handed. That
+            // breaks UdsTransport::next_event's contract, and this crate cannot
+            // answer a message it does not have — so the event is dropped rather
+            // than indexed. Panicking here would make a binding's arithmetic slip
+            // an ECU fault, which is what the panic-freedom lints exist to prevent.
+            return Ok(());
+        };
+
         let now = self.transport.now();
         let mut indication = None;
-        #[allow(
-            clippy::indexing_slicing,
-            reason = "TransportEvent::DataInd documents len as bounding the first len \
-                      bytes of the buffer the driver supplied, so len <= in_flight.len()"
-        )]
         let mut reaction = self.session.t_data_ind(
             now,
             ai,
-            &in_flight[..len],
+            request_bytes,
             SResult::Ok,
             ServerRx::Request { session: None },
         );
