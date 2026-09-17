@@ -75,6 +75,22 @@ pub struct Reloads {
     pub enhanced_reload: u32,
 }
 
+impl Reloads {
+    /// The reload `which` names.
+    ///
+    /// ``UDSS_LLR_0132`` defines the pair; ``UDSS_LLR_0148`` has a timeout indication
+    /// name which of the two was in force. The mapping between them is ISO
+    /// 14229-2:2021 and nothing else, so it belongs here rather than in a caller that
+    /// holds both a `Reloads` and a `ChannelReload`.
+    #[must_use]
+    pub const fn value_for(self, which: ChannelReload) -> u32 {
+        match which {
+            ChannelReload::Default => self.default_reload,
+            ChannelReload::Enhanced => self.enhanced_reload,
+        }
+    }
+}
+
 /// What opening a physical channel supplies.
 ///
 /// ``UDSS_LLR_0126`` holds these with the channel.
@@ -137,7 +153,10 @@ pub enum FunctionalChannelParameter {
 
 #[cfg(test)]
 mod tests {
-    use super::{FunctionalChannelParams, PhysicalChannelParams, Reloads, ServerParams};
+    use super::{
+        ChannelReload, FunctionalChannelParams, PhysicalChannelParams, Reloads,
+        ServerParams,
+    };
 
     /// ``UDSS_LLR_0151`` and ``UDSS_LLR_0152`` — a `tS3_Client` belongs to a physical
     /// channel in physical keep-alive and to no functional channel. The types carry
@@ -171,5 +190,18 @@ mod tests {
             p2_star_server_max: 5_000,
         };
         assert_eq!(p.p2_star_server_max, 5_000);
+    }
+
+    /// ``UDSS_LLR_0132`` names the pair and ``UDSS_LLR_0148`` names which reload a
+    /// timeout indication carries, so `value_for` must pick the matching field rather
+    /// than a fixed one.
+    #[test]
+    fn value_for_selects_the_reload_named_by_the_channel_reload() {
+        let reloads = Reloads {
+            default_reload: 50,
+            enhanced_reload: 5_000,
+        };
+        assert_eq!(reloads.value_for(ChannelReload::Default), 50);
+        assert_eq!(reloads.value_for(ChannelReload::Enhanced), 5_000);
     }
 }
