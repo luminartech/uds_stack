@@ -55,3 +55,6 @@
 
 pub mod storage;
 pub use storage::{Buffers, Storage, Store};
+
+pub mod sink;
+pub use sink::ResponseSink;
