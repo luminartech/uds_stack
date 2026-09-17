@@ -90,6 +90,36 @@ impl Cause {
     ];
 }
 
+impl core::fmt::Display for Cause {
+    /// One short, lower-case phrase naming the condition, not the requirement number,
+    /// so a caller reading it understands what it did wrong without opening the
+    /// requirement set. ``UDSS_LLR_0016`` requires a report to state the cause; this is
+    /// what states it in a form a caller can render.
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.write_str(match self {
+            Self::NoSuchChannel => "no such channel",
+            Self::DuplicateChannelAddressing => "a channel already has this addressing",
+            Self::AssociationOutstanding => "an association is already outstanding",
+            Self::NoAssociationFree => "no association is free",
+            Self::NoMatchingAssociation => "no outstanding association matches",
+            Self::KindRequired => "a kind is required but none was stated",
+            Self::Malformed => "malformed",
+            Self::ResponsePendingUnconfirmed => {
+                "a response-pending message arrived while one is unconfirmed"
+            }
+            Self::ResponsePendingTooSoon => {
+                "a response-pending message arrived inside the minimum spacing"
+            }
+            Self::SpacingTimerRunning => "the channel's spacing timer is running",
+            Self::RepeatCountSpent => "the repeat count is spent",
+            Self::ResponseStillArriving => "a response is still arriving",
+            Self::S3ClientReloadMismatch => {
+                "the tS3_Client reload disagrees with the channel's keep-alive mode"
+            }
+        })
+    }
+}
+
 /// Why an input was refused, and what the refusing requirement asked the report to carry.
 ///
 /// ``UDSS_LLR_0016`` — a set of causes rather than one, because where several
@@ -159,6 +189,38 @@ impl Rejection {
     }
 }
 
+impl core::fmt::Display for Rejection {
+    /// Every cause this report states, rendered in bit order and separated by `"; "`, with
+    /// the spacing wait appended where [`Rejection::spacing_remaining`] is `Some`.
+    /// ``UDSS_LLR_0016`` requires one report to state every cause that held and carry the
+    /// content each rejecting requirement asked for, so rendering does not stop at the
+    /// first cause, and ``UDSS_LLR_0172`` is the requirement that wait carries.
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        let mut first = true;
+        for cause in self.causes() {
+            if first {
+                first = false;
+            } else {
+                f.write_str("; ")?;
+            }
+            core::fmt::Display::fmt(&cause, f)?;
+        }
+        if let Some(remaining) = self.spacing_remaining {
+            if !first {
+                f.write_str("; ")?;
+            }
+            write!(f, "{remaining} ms remaining on the spacing timer")?;
+        }
+        Ok(())
+    }
+}
+
+/// A rejection can be returned with `?` rather than translated at the call boundary.
+///
+/// No `source`: a rejection wraps nothing lower, it *is* the failure, so there is nothing
+/// beneath it to report.
+impl core::error::Error for Rejection {}
+
 /// The causes a [`Rejection`] states. Created by [`Rejection::causes`].
 #[derive(Debug)]
 pub struct Causes {
@@ -224,5 +286,62 @@ mod tests {
             Rejection::new(Cause::NoSuchChannel).spacing_remaining(),
             None
         );
+    }
+
+    /// A fixed-size `core::fmt::Write` sink. The crate has no `alloc`, so a test that
+    /// renders a value needs somewhere to render it to.
+    struct Buf {
+        bytes: [u8; 256],
+        used: usize,
+    }
+
+    impl Buf {
+        const fn new() -> Self {
+            Self {
+                bytes: [0; 256],
+                used: 0,
+            }
+        }
+
+        fn as_str(&self) -> &str {
+            core::str::from_utf8(self.bytes.get(..self.used).unwrap_or(&[])).unwrap_or("")
+        }
+    }
+
+    impl core::fmt::Write for Buf {
+        fn write_str(&mut self, s: &str) -> core::fmt::Result {
+            let end = self.used.saturating_add(s.len());
+            let room = self.bytes.get_mut(self.used..end).ok_or(core::fmt::Error)?;
+            room.copy_from_slice(s.as_bytes());
+            self.used = end;
+            Ok(())
+        }
+    }
+
+    /// ``UDSS_LLR_0016`` — a report renders every cause it states, so a caller does not
+    /// have to write the mapping themselves.
+    #[test]
+    fn a_report_renders_every_cause_it_states() {
+        use core::fmt::Write as _;
+
+        let r = Rejection::new(Cause::NoSuchChannel).with(Cause::RepeatCountSpent);
+        let mut buf = Buf::new();
+        write!(buf, "{r}").ok();
+        let rendered = buf.as_str();
+        assert!(rendered.contains("channel"), "rendered: {rendered}");
+        assert!(rendered.contains("repeat"), "rendered: {rendered}");
+    }
+
+    /// ``UDSS_LLR_0172`` — a rejection carrying a spacing wait renders that wait, since
+    /// it is content the rejecting requirement asked the report to carry.
+    #[test]
+    fn a_report_renders_its_spacing_wait() {
+        use core::fmt::Write as _;
+
+        let r = Rejection::new(Cause::SpacingTimerRunning).with_spacing_remaining(17);
+        let mut buf = Buf::new();
+        write!(buf, "{r}").ok();
+        let rendered = buf.as_str();
+        assert!(rendered.contains("17"), "rendered: {rendered}");
     }
 }
