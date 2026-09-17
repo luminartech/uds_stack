@@ -24,7 +24,7 @@ driver, which settles who declares what by settling who calls whom:
      - ``UDSSVC_ARCH_0029``, and ``UDSSVC_ARCH_0041`` for the time on it
    * - The response sink
      - ``automotive-wire-codec``
-     - the caller, or this crate's own buffer
+     - this crate's own buffer
      - ``UDSSVC_ARCH_0017``
 
 The rule behind it is the one this page has given since the seams moved: **a seam is declared
@@ -92,12 +92,13 @@ crate drives. ``uds_session`` declares no outward trait and calls nothing.
    SINK -up-> APPH : handlers write here
    @enduml
 
-Three things the diagram is meant to settle. The **sink is this crate's**, bounded at the
-transport's maximum payload where one exists — it was the driver's when the driver lived in the
-binding, and the driver moved. ``uds_session`` is **inside** the box: this crate owns the
-``Session`` instance, supplies every input and drains every action, which is why no arrow
-leaves the package for it. And the consuming application touches exactly two things, the
-service traits and the typed client, which is ``UDSSVC_ARCH_0019``'s goal stated as a picture.
+Three things the diagram is meant to settle. The **sink is this crate's**, over a buffer
+this crate sizes and bounded also by the peer's advertised maximum where it made one — it
+was the driver's when the driver lived in the binding, and the driver moved. ``uds_session``
+is **inside** the box: this crate owns the ``Session`` instance, supplies every input and
+drains every action, which is why no arrow leaves the package for it. And the consuming
+application touches exactly two things, the service traits and the typed client, which is
+``UDSSVC_ARCH_0019``'s goal stated as a picture.
 
 .. needflow::
    :filter: "seam" in tags
@@ -107,22 +108,41 @@ service traits and the typed client, which is ``UDSSVC_ARCH_0019``'s goal stated
 Request context
 ---------------
 
-.. arch:: Ctx carries one field per mandatory decision input
+.. arch:: There is no Ctx; the addressing triple is the pipeline's only extra input
    :id: UDSSVC_ARCH_0015
    :depends_on: UDSSVC_ARCH_0002
    :status: draft
    :origin: derived
    :tags: seam; ctx
 
-   Every input the pipeline needs but cannot determine from the request bytes reaches it as a
-   request context. The context carries exactly the inputs the mandatory decision nodes of
-   Figures 5 and 6 and the suppression rules of clause 8.7.5 read, and nothing else:
+   Every input the pipeline needs but cannot determine from the request bytes is exactly
+   one thing: the ISO 14229-2 addressing triple, ``uds_session::Ai``. There is no request
+   context struct. The driver takes the ``Ai`` from the ``S_Data.ind`` it drained and passes
+   it into the pipeline beside the request bytes; everything else the mandatory decision
+   nodes of Figures 5 and 6 and the suppression rules of clause 8.7.5 read, this crate
+   already holds.
 
-   **``Ctx`` is internal.** It was a seam while something outside this crate called the
-   pipeline; ``UDSSVC_ARCH_0018`` records that nothing does. The driver constructs it from the
-   ``S_Data.ind`` it drained, and no other crate names the type. What the field list has to be
-   right about is therefore only what the pipeline reads — the cross-crate negotiation the
-   element used to anticipate is this crate's own decision now.
+   **One thing is not yet wired, and is recorded so it is not mistaken for settled.** The
+   internal pipeline takes the triple where it needs it — ``UDSSVC_ARCH_0009``'s suppression
+   predicate is a function of a code and an ``Ai``. But the assembled entry point,
+   ``ServiceSet::dispatch``, currently takes only the request bytes and the sink: the driver
+   holds the ``Ai`` and does not hand it over. Nothing depends on that yet, because the
+   pipeline behind ``dispatch`` is ``UDSSVC_ARCH_0042``'s pass and is ``todo!()`` — but the
+   parameter has to appear before rule 1 can be evaluated, and this element is the one that
+   says so.
+
+   Rationale: the pipeline is a function of the request and its addressing, so every clause
+   8.7 rule is testable without a network, a clock or a session layer. That property was
+   never what ``Ctx`` bought — it is what having *no* transport, clock or session layer in
+   the signature buys, and a struct of one field does not add to it.
+
+   **``Ctx`` is retired, and the whole of its reasoning is on the record because it was
+   arrived at rather than assumed.** It was proposed as a seam: while something outside this
+   crate called the pipeline, the inputs that pipeline could not derive had to arrive
+   somehow, and a struct carrying one field per mandatory decision node of Figures 5 and 6
+   is the disciplined way to write that — the field list is a checklist against the
+   standard, and a check with no field is a check nobody implemented. It carried four
+   things:
 
    .. list-table::
       :header-rows: 1
@@ -130,31 +150,38 @@ Request context
 
       * - Field
         - Read by
-        - Status
+        - What became of it
       * - ``uds_session::Ai`` — the ISO 14229-2 addressing triple
         - Suppression (``UDSSVC_ARCH_0009`` rule 1) reads the target address type;
           ``UDSSVC_ARCH_0035`` keys per-channel state on the source address
-        - Carried
+        - Survives, passed on its own
       * - active session
         - Figure 5 → 0x7F, Figure 6 → 0x7E
-        - Under review — see below
+        - Held here; not an input
       * - security level
         - Figure 5 and Figure 6 optional checks → 0x33
-        - Under review — see below
+        - Held here; not an input
       * - authenticated
         - Figure 5 and Figure 6 → 0x34
-        - Under review — see below
+        - Held here; not an input
 
-   Rationale: the pipeline is a function of the request and this context, so every clause 8.7
-   rule is testable without a network, a clock or a session layer.
+   The three that went had been marked "under review" on a suspicion this element stated and
+   did not close: that this crate implements ``DiagnosticSessionControl``,
+   ``SecurityAccess`` and ``Authentication``, so under ``UDSSVC_ARCH_0035`` and
+   ``UDSSVC_ARCH_0037`` it already holds the active session, the security level and the
+   authentication state — and reading them back from a struct it just built from state it
+   owns is a copy, not an input. All three resolved that way, none of them differently,
+   which is the outcome the suspicion predicted. What remained was the addressing triple
+   alone, and a struct wrapping one ``Ai`` is a rename rather than a type.
+   ``UDSSVC_ARCH_0018`` had already removed the last reason for it to be nameable from
+   outside; when the field list reduced to one, the struct went with it.
 
-   **Three fields are under review, and this crate is why.** It implements
-   ``DiagnosticSessionControl``, ``SecurityAccess`` and ``Authentication``, so under
-   ``UDSSVC_ARCH_0035`` and ``UDSSVC_ARCH_0037`` it already holds the active session, the
-   security level and the authentication state. Reading them from a struct it just built from
-   state it already owns is a copy, not an input. Unless something else turns out to own them,
-   ``Ctx`` reduces to the addressing triple alone — at which point it is worth asking whether
-   it stays a struct at all. Nothing outside this crate has to agree to that any more.
+   Two things this does not weaken. The checklist argument was sound and is now owed
+   elsewhere — nothing about deleting the struct implements Figures 5 and 6's checks, and
+   the state they read being local makes it *easier* to forget a check, not harder, because
+   no empty field remains to accuse anyone. And the pipeline's testability is unchanged for
+   the reason given above. Open question 6, which asked what ``Ctx`` finally carried across
+   the stack, is retired: nothing carries it, because there is nothing to carry.
 
    **Session and security are raw sub-function values, passed through uninterpreted.**
    Naming the sessions here would mean this crate deciding what
@@ -218,10 +245,20 @@ Outcome
    has to tell "clause 8.7 requires no response" apart from "the handler produced an empty
    response" apart from "something went wrong". Only the first is a reason not to transmit.
 
-   **``Outcome`` is internal**, for the reason ``UDSSVC_ARCH_0018`` gives: dispatch reports to
-   the driver loop in this crate, not across a seam. That does not weaken the argument above.
-   The three cases still have to be distinguishable, and the loop still has to act on them
-   differently — it simply does so without a public type.
+   **``Outcome`` is ``pub(crate)``**, for the reason ``UDSSVC_ARCH_0018`` gives: dispatch
+   reports to the driver loop in this crate, not across a seam. That does not weaken the
+   argument above. The three cases still have to be distinguishable, and the loop still has
+   to act on them differently — it simply does so without a public type.
+
+   **How the three cases are spelled is worth stating, because they are not one enum.** The
+   distinction is carried by a ``Result`` whose success type has two variants: *responded*
+   and *silent* are the ``Ok`` cases, and the failure is the ``Err``. So the three remain
+   three, and the shape says which one is exceptional — a negative response is written bytes
+   and arrives as *responded*, exactly as ``UDSSVC_ARCH_0009``'s argument requires, while
+   only a sink failure reaches the ``Err`` branch a caller might learn to ignore. The
+   internal ``Outcome`` is that ``Ok`` type inside the pipeline; ``Responded`` is the one
+   the assembled ``ServiceSet::dispatch`` returns, and it is public only because the trait
+   an application's assembly implements has to name it. An application still writes neither.
 
    Genuine transport failures are the binding's concern, reach this crate as a ``DataConf``
    carrying an ``SResult``, and never reach a handler.
@@ -260,26 +297,59 @@ Response sink
 
    **The sink is this crate's**, which is a change of owner rather than of design. It was the
    binding driver's while the driver lived there; ``UDSSVC_ARCH_0040`` moved the driver here, so
-   the buffer a response is assembled in is this crate's to hold and to bound. Where the storage
-   itself comes from — a caller-supplied buffer or one sized at assembly alongside
-   ``UDSSVC_ARCH_0035``'s protocol state — is a deployment question this element does not
-   settle, and either satisfies it.
+   the buffer a response is assembled in is this crate's to hold and to bound.
+
+   **Where the storage comes from is now settled, and this element left it open.** It used
+   to say that a caller-supplied buffer and one sized at assembly alongside
+   ``UDSSVC_ARCH_0035``'s protocol state were both admissible and that the choice was a
+   deployment question. It is not a deployment question, because only one of the two is
+   reachable: ``UDSSVC_ARCH_0013``'s macro folds each service's declared maxima into array
+   lengths at a site where the types are concrete, and the driver holds the resulting arrays
+   inline. **The application picks no number and passes no buffer.** That is a stronger
+   property than the open version allowed for — a caller-supplied buffer can be too small
+   for the very response the server's own declarations say it may produce, and there is no
+   size an application could pick that the crate could check against, whereas a folded one
+   cannot be wrong by construction.
+
+   There are **three** such buffers, not one, and the reason is ``UDSSVC_ARCH_0031``'s
+   response-pending window rather than anything about responses. A handler holds a request
+   borrowing the in-flight buffer, so that buffer cannot be lent back to the transport while
+   the handler runs; since ``UDSSVC_ARCH_0041`` retired the clock seam, waiting on the
+   transport is the only way this crate can wait, so without a second buffer the
+   ``tP2_Server`` deadline is never observed and no 0x78 is ever sent. The third is the
+   response. Clause 8.7.6's two exceptions are a second use for the concurrent buffer, not
+   the reason it exists.
 
    **The sink is ``awc``'s rather than ``embedded-io``'s, and the difference produces an
-   NRC.** A response is written through an ``awc::Limited``, which bounds it at the
-   transport's maximum payload; an over-long response fails at the write with
-   ``InsufficientBuffer``'s ``needed`` and ``available`` counts intact, and this crate turns
-   that counted failure into ``responseTooLong`` (0x14). That settles a question the set had
-   been carrying: the maximum is a transport property this crate does not know, but the
-   negative response code is a clause 8.7 outcome that is nobody else's. ``embedded-io`` leaves
-   this crate's dependency list entirely.
+   NRC.** A response is written through a sink bounded at the peer's maximum payload where
+   one is advertised; an over-long response fails at the write with the counts intact, and
+   this crate turns that counted failure into ``responseTooLong`` (0x14). That settles a
+   question the set had been carrying: the maximum is a transport property this crate does
+   not know, but the negative response code is a clause 8.7 outcome that is nobody else's.
+   ``embedded-io`` leaves this crate's dependency list entirely.
 
-   **An earlier version of this element said "``Sink`` carries ``remaining()``", which is not
-   true of the crate as released.** In ``automotive-wire-codec`` 0.4.0 the trait carries
-   ``write_all`` alone; ``remaining()`` is an inherent method on ``SliceSink`` and ``Limited``,
-   so a handler generic over ``S: Sink`` cannot call it. The mechanism is unaffected — it never
-   needed a handler to ask how much room was left, only for the failure to be counted — but the
-   member it named was wrong, and this element is the one that has to be right about it.
+   **This element's account of that failure type has now been wrong three times, and the
+   count is the point.** The versions, in order:
+
+   1. "``Sink`` carries ``remaining()``." It does not. In ``automotive-wire-codec`` 0.4.0
+      the trait carries ``write_all`` alone; ``remaining()`` is an inherent method on
+      ``SliceSink`` and ``Limited``, so a handler generic over ``S: Sink`` cannot call it.
+   2. "``InsufficientBuffer``'s ``needed`` and ``available`` counts." There is no
+      ``needed``. The field is ``needed_at_least``.
+   3. The correction to (2) was still wrong about what the number *means*. ``awc`` 0.4.0
+      documents ``needed_at_least`` as a **lower bound** on the encode's total size — the
+      encode stopped at the write that failed, so whatever remained was never measured. An
+      exact total requires ``Encode::encoded_size``.
+
+   The mechanism has survived all three, for the same reason each time: 0x14 carries no
+   length, so this crate needs the failure to be *counted* only in the sense of being
+   distinguishable from every other write failure, and never needs the count itself. That is
+   also why each error was cheap enough to survive review — nothing downstream reads the
+   field, so naming it wrongly broke nothing and compiled nothing. Three misses at a
+   member no code path depends on is evidence about this document rather than about the
+   design: a claim nothing tests is a claim that stays wrong. A reader should treat the
+   field names here as the least reliable sentences on the page and check them against
+   ``automotive_wire_format/src/error.rs``.
 
    **The bound itself is less solid than this element assumed.** On DoIP the number is *Max.
    data size*, which ISO 13400-2:2019 Table 11 lists as an **optional** item of the entity
@@ -294,20 +364,33 @@ Response sink
    answer, not this crate's. What must not happen is a fabricated default, which would make a
    conformant server truncate valid responses in order to produce an NRC nothing asked for.
 
-   The sink is a **generic parameter, not ``dyn``**. That costs object safety — there is no
-   ``Box<dyn UdsServer>``, and the driver is generic over the handler type instead. For a
-   crate that must build without ``alloc``, where boxing is unavailable anyway, it is the
-   right trade, but it is a deliberate one and should be revisited if a dynamic service
-   registry is ever wanted.
+   The sink is a **concrete type, ``ResponseSink``** — neither ``dyn`` nor generic — and
+   that too is a change this element should record rather than quietly adopt. It said the
+   sink was a **generic parameter, not ``dyn``**, and weighed the lost object safety: no
+   ``Box<dyn ServiceSet>``, the driver generic over the handler type, defensible for a crate
+   that cannot box anyway. Both halves of that trade are gone, because the premise under
+   them was that the sink *might be the caller's*. Once the storage question above closed,
+   it cannot be: this crate owns the response buffer, so there is exactly one sink type and
+   a ``<S: Sink>`` parameter abstracts over a set with one member. Dropping it removes a
+   type parameter from every service trait, every generated impl and the driver, and costs
+   nothing at run time, since dispatch was fully monomorphised either way. The object-safety
+   observation survives unchanged and is simply owed by a different type now: ``ServiceSet``
+   is not object-safe, and a dynamic service registry would still be a redesign.
 
    One consequence to design against rather than discover: a sink can fail mid-response,
-   after some bytes are already written. What a partially written response means — whether the
-   partial bytes are discarded before anything is submitted to the transport, and whether this
-   crate must therefore avoid writing until it can complete — is not settled. It is wholly this
-   crate's question now that it owns both the sink and the transport, where it used to need a
-   binding's agreement. ``awc``'s decision to expose ``write_all``
-   rather than ``write`` removes the *partial write* case, but not the *failed part-way
-   through* case. See :doc:`open-questions`.
+   after some bytes are already written. ``awc``'s decision to expose ``write_all`` rather
+   than ``write`` removes the *partial write* case, but not the *failed part-way through*
+   case. What remains of the question is narrower than this element used to state it. It
+   asked whether "the binding must discard a partial response" — which needed a binding's
+   agreement. It does not any more: this crate owns both the buffer and the transport, so a
+   partial response is discarded by the only mechanism that matters, which is **not
+   submitting it**. Nothing is handed to ``uds_session`` or to the transport until the
+   handler has returned and the outcome says bytes are to be sent, so a failed response
+   never reaches the wire and the bytes in the buffer are simply overwritten by the next
+   one. What is still genuinely open is whether a *transport* must be told that a response
+   it was never offered was abandoned — which matters only where a transport has already
+   been made aware of an impending response, and on ``UDSSVC_ARCH_0029``'s seam it has not.
+   See :doc:`open-questions`.
 
    ``no_std`` freedom is verified on a bare-metal target, not by
    ``--no-default-features`` on a hosted one. Only a ``*-none`` target proves ``std`` has
@@ -328,28 +411,103 @@ The transport seam
    .. code-block:: rust
 
       pub trait UdsTransport {
+          /// What this transport's failures are. Never interpreted by this crate.
           type Error;
+
+          /// The largest A_PDU this transport can carry, where its protocol caps it.
+          /// Participates in UDSSVC_ARCH_0013's const fold.
+          const MAX_PDU: usize = usize::MAX;
 
           /// T_Data.req — hand a T_PDU to the transport.
           async fn t_data_req(&mut self, ai: Ai, data: &[u8]) -> Result<(), Self::Error>;
 
-          /// The next inbound event, or `Timeout` when `timeout_ms` elapses first.
-          async fn next_event(&mut self, timeout_ms: Option<u32>)
-              -> Result<TransportEvent<'_>, Self::Error>;
+          /// Fill `buffer` with the next inbound message, or return
+          /// `TransportEvent::Deadline` when `deadline` passes first.
+          async fn next_event(&mut self, buffer: &mut [u8], deadline: Option<Timestamp>)
+              -> Result<TransportEvent, Self::Error>;
 
-          /// Largest A_PDU this transport will carry, where it knows one.
-          fn max_payload(&self) -> Option<usize>;
+          /// The largest request this entity will accept, where it advertises one.
+          fn inbound_max(&self) -> Option<usize>;
+
+          /// The largest response the peer will accept, where it advertised one.
+          fn outbound_max(&self) -> Option<usize>;
 
           /// The tP_Client reload pair this transport dictates.
-          fn channel_timing(&self) -> ChannelTiming;
+          fn channel_timing(&self) -> Reloads;
 
           /// Monotonic milliseconds, 32-bit and wrapping (UDSSVC_ARCH_0041).
-          fn now_ms(&self) -> u32;
+          fn now(&self) -> Timestamp;
       }
 
-   ``Ai``, ``SResult`` and ``ChannelTiming`` are ``uds_session``'s. **Nothing in the trait is
-   DoIP-shaped, which is the test of whether it is the right seam** — a CAN binding implements
-   the same five methods, and ``uds_on_can`` becomes additive with no change here.
+   ``Ai``, ``SResult``, ``Reloads`` and ``Timestamp`` are ``uds_session``'s. **Nothing in
+   the trait is DoIP-shaped, which is the test of whether it is the right seam** — a CAN
+   binding implements the same six methods, and ``uds_on_can`` becomes additive with no
+   change here.
+
+   **Five changes from the version above, and the first is the one that mattered.**
+
+   *``next_event`` fills a caller's buffer instead of lending one.* It used to return
+   ``TransportEvent<'_>``, borrowing the transport's own receive buffer, which is the
+   obvious shape and does not work. The borrow lives exactly as long as the request does,
+   and the request lives until a response has been composed from it — so for the whole of
+   that window the transport is mutably borrowed and ``t_data_req`` cannot be called. **The
+   driver could never send the response the request provoked.** It is not a borrow-checker
+   inconvenience with a workaround; it is the seam saying the design was wrong, because a
+   request-response protocol whose request pins the channel it must be answered on cannot
+   run. The buffer is the driver's (``UDSSVC_ARCH_0017``'s three), the event carries a
+   length into it, and the borrow ends when the call returns. ``TransportEvent`` has no
+   lifetime parameter at all now, which is what keeps the property from being reintroduced
+   by accident.
+
+   *``timeout_ms`` became a ``Timestamp`` deadline.* ``UDSSVC_ARCH_0041`` carries the
+   argument and retires the one that put a duration here.
+
+   *``max_payload`` split into ``inbound_max`` and ``outbound_max``.* One number could not
+   answer both questions because the standard's number is **request-shaped**: ISO
+   13400-2:2019 Table 11 defines *Max. data size* as "the maximum size of one logical
+   request that this DoIP entity can process". A server asking what it may *send* is
+   therefore asking about the client's advertisement, not its own, and the two are
+   different values belonging to different entities. Collapsing them bounds a response by
+   the server's own receive capacity, which is a limit nothing in the standard imposes.
+   The directions are also sourced differently: ``inbound_max`` is this crate's in-flight
+   buffer length handed *down* to the transport to advertise — a number the fold derives, so
+   a transport is told it rather than asked to invent it — while ``outbound_max`` is what
+   the peer advertised, read *up*. ``MAX_PDU`` is a third thing again: a protocol-fixed cap
+   known at compile time, which is why it is an associated const and joins the fold.
+
+   *``now_ms() -> u32`` became ``now() -> Timestamp``.* Same obligation, a type that carries
+   ``UDSS_LLR_0019``'s modular arithmetic with it.
+
+   *Three variants were added, and two of them are conformance requirements rather than
+   conveniences.*
+
+   ``DataTooLong`` reports a message longer than the buffer offered, with what fit and —
+   where the transport can know it without reading the whole message, as DoIP can from its
+   generic header — how long it really was. It is a **variant rather than a flag** on
+   ``DataInd`` because of how each fails: destructuring ``DataInd { ai, len, .. }`` is
+   idiomatic and would silently discard a truncation flag, leaving a fragment decoded as a
+   complete message, whereas an unhandled variant drops a message the client is already
+   required to repeat. One fails dangerous, the other safe. It is also not an error
+   condition: a driver serving a request offers only the small concurrent buffer, so
+   truncation is the *normal* outcome there, and clause 8.7.6 already says what is owed —
+   the server is occupied, and ``busyRepeatRequest`` (0x21) needs only the service
+   identifier and the addressing.
+
+   ``Periodic`` **cannot be a ``DataInd``**. ISO 14229-5:2022 REQ 7.20 requires a periodic
+   response not to reset ``tS3_Server``, and ``DataInd`` is precisely what is fed to the
+   session layer and resets it. Delivering one as a ``DataInd`` is a conformance failure,
+   not a shortcut, so the variant is forced by the standard rather than chosen for tidiness.
+   Its ``0x8004`` payload type is DoIP-specific but its *shape* is not — a CAN binding
+   implementing periodic responses reports the same three things.
+
+   ``Closed`` **cannot be an ``Err``**. ISO 14229-5:2022 REQ 7.9 and REQ 7.11 make a
+   server-initiated close part of the normal ``DiagnosticSessionControl`` and ``ECUReset``
+   flows, so an expected close is a step in a prescribed sequence and not a failure. Typing
+   it as an error would put a conformant flow into the branch ``UDSSVC_ARCH_0016`` argues
+   callers learn to ignore — the same mistake, one seam lower. It carries whether the close
+   was expected and nothing more, because the driver's decision is binary: reconnect and
+   repeat routing activation, or fail the exchange. A transport with no connections never
+   emits it, exactly as one that never truncates never emits ``DataTooLong``.
 
    Rationale: this crate calls out to a transport, so this crate declares what it calls. The
    trait is a transport's whole obligation to the stack: carry bytes in both directions, say how
@@ -498,9 +656,9 @@ Clock
 
    Two obligations, and the second is not new:
 
-   * ``now_ms() -> u32`` — monotonic milliseconds, 32-bit and wrapping.
-   * The existing "give me the next event, or wake me after this long" call, whose timeout
-     this crate computes.
+   * ``now() -> Timestamp`` — monotonic milliseconds, 32-bit and wrapping.
+   * The existing "give me the next event, or wake me when this deadline passes" call,
+     whose deadline this crate passes through.
 
    Rationale: a transport that can report an inbound event *or* a timer expiry, whichever
    comes first, already measures time — that capability is what the seam asks for, not
@@ -515,14 +673,33 @@ Clock
    clock adds no new platform surface, while a second trait would be a second thing every
    target has to satisfy.
 
-   **The timeout is a duration, and this is the part worth arguing.** A deadline in wrapping
-   ``u32`` space is ambiguous on its own: ``5`` is either a moment just past or one roughly 49
-   days away, and only a reference point separates them. This crate holds both values — the
+   **The seam carries a deadline, and the argument that it should carry a duration is
+   retired.** That argument was this element's longest and is kept on the record because it
+   was correct about everything except the type. It ran: a deadline in wrapping ``u32``
+   space is ambiguous on its own, since ``5`` is either a moment just past or one roughly 49
+   days away and only a reference point separates them; this crate holds both values — the
    deadline ``uds_session`` reports under ``UDSS_LLR_0080`` and the ``now_ms`` it just read —
-   so it computes the interval here, once, by the modular subtraction ``UDSS_LLR_0019``
-   already specifies, and passes a number that cannot be misread. Handing the transport a
-   deadline instead would oblige every implementor to rederive that arithmetic identically,
-   which is the same objection whichever side of the seam holds the clock.
+   so it should compute the interval here, once, by the modular subtraction
+   ``UDSS_LLR_0019`` already specifies, and pass a number that cannot be misread. Handing
+   the transport a raw deadline would otherwise oblige every implementor to rederive that
+   arithmetic identically, which is the same objection whichever side of the seam holds the
+   clock.
+
+   What retires it is that the arithmetic no longer has to be rederived by anyone.
+   ``uds_session::Timestamp`` is not a bare ``u32``: ``Timestamp::interval_since`` performs
+   exactly the modular subtraction the paragraph above worried about, and a ``Timestamp``
+   carries its own interpretation across the seam. So the premise — that a deadline is a
+   number an implementor must know how to read — is false for this type, and with it the
+   conclusion. Passing ``uds_session::Server::next_deadline``'s value through untouched is
+   then strictly better than computing an interval from it, on two counts the duration form
+   could not offer. It is **lossless**: an interval is computed against a ``now`` sampled at
+   one instant and consumed at a later one, so every duration crossing the seam is stale by
+   however long the crossing took, while a deadline means the same thing whenever it is
+   read. And it removes a step rather than moving one — *neither* side computes an interval
+   now, where the duration form had this crate doing it on every iteration.
+
+   The ambiguity the old argument identified was real. It was a property of ``u32``, and the
+   fix was to stop using one.
 
    **An earlier version of this element declared a ``Clock`` trait here**, with ``now_ms`` and
    an ``async sleep(ms)``, and shipped a tokio-backed implementation behind a feature. Two
@@ -546,5 +723,5 @@ Clock
 
    The cost, stated rather than discovered: "can tell the time" is now coupled to "is a
    transport", so a deployment driving the stack over a channel it would not otherwise model as
-   a transport still implements ``now_ms``. Given the seam already demands a timeout, that is
+   a transport still implements ``now``. Given the seam already demands a deadline, that is
    not a new burden.

@@ -265,6 +265,50 @@ Scope
    * **This crate needs time**, which it did not before. It comes from the transport rather
      than from a seam of its own — ``UDSSVC_ARCH_0041``.
 
+   **What "drains its outputs" means concretely**, since this element asserted the loop's
+   existence before the contract on the other side of it was fixed. ``uds_session`` does not
+   offer a ``poll()`` returning one output at a time. Each input — ``t_data_ind``,
+   ``s_data_req``, ``tick`` — returns a *reaction*: an iterator over that input's outputs,
+   which the driver drains with ``Iterator::by_ref`` and then closes with ``finish()``,
+   whose return value is the input's verdict. Drain, then finish; the two are not
+   interchangeable and neither is optional, because the outputs are what must reach the
+   transport and the verdict is what says whether a submission was accepted at all
+   (``UDSSVC_ARCH_0031``'s refusal, which ``UDSSVC_ARCH_0009``'s gate depends on). Every
+   ``Transmit`` is sent from *inside* the drain rather than after it, so the last output is
+   not the only one that reaches the wire.
+
+   Four properties of the loop body are load-bearing and none of them is obvious from the
+   description above. They are recorded here because each is a borrow-order constraint that
+   reads as an arbitrary stylistic choice, and each would be "simplified" away by a reader
+   who did not know what it was for.
+
+   1. **Every transport query is sampled before any future holding ``&mut transport``
+      exists.** ``outbound_max`` and ``now`` take ``&self``, but a live ``next_event``
+      future refuses even shared access — so the deadline, the outbound bound and the
+      timestamp are all read first. One timestamp per iteration follows, which is the shape
+      ``uds_session`` asks for anyway: a timestamp accompanies every input, and two reads in
+      one iteration could disagree.
+   2. **The indication is taken out of the drain before ``finish()`` is called.** An output
+      outlives the reaction that yielded it, which is what lets dispatch run with
+      ``&mut session`` free again. This is not a tidiness point: dispatching while the
+      reaction still borrows the session would leave no way to submit a 0x78 during the
+      handler, and ``UDSSVC_ARCH_0031``'s window would not exist.
+   3. **The select is a loop over ``handler.as_mut()``, not a one-shot.** A plain
+      ``select2(handler, waiting)`` moves the handler in and drops it the moment the
+      deadline wins — which is the exact opposite of what a response-pending is for, since
+      0x78 means *the handler is still running*. Re-borrowing through ``Pin::as_mut`` lets
+      one handler survive arbitrarily many deadlines and arbitrarily many 0x78s.
+   4. **Two ``pin!`` scopes, because ``pin!`` binds to the enclosing block.** The handler is
+      scoped so it drops before the sink is read for the bytes to transmit; the waiting
+      future is scoped per iteration so it drops before the 0x78 path needs
+      ``&mut transport`` to send. Without the inner scope the response-pending cannot be
+      transmitted while the thing that detected the deadline is still alive.
+
+   The loop body is consequently long and is not split into helpers. That is deliberate:
+   the four properties above are properties of *one* borrow order, and a helper taking
+   ``&mut self.session`` and ``&mut self.transport`` across a call boundary is precisely
+   what the scoping exists to avoid.
+
    What this costs is honesty about the server side's shape. The dispatch pipeline of
    ``UDSSVC_ARCH_0004`` remains a pure function of a request and its context, and is still
    testable as one. The loop around it is not: it awaits a transport and a clock. Both are

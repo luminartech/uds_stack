@@ -316,6 +316,25 @@ Mandatory preconditions
    for some routines and not others would be wrong, so the decision is deferred to the
    service-specific check where both parameters are in hand.
 
+   **The trait shape this implies is settled, and it settles open question 5.**
+   ``RoutineControl`` carries three methods — ``start``, ``stop`` and ``results``, one per
+   sub-function of clause 13.2 — rather than one method taking the sub-function as a
+   parameter. The question the set had been carrying was whether Figure 5's exclusion should
+   be expressed in the type or merely documented on a trait shaped like every other
+   service's. Three methods is the answer, for a reason that outranks taste: this is the
+   only service whose *handler* decides ``subFunctionNotSupported`` (0x12), because it is
+   the only one the centralised sub-function stage does not run for. A single method taking
+   a sub-function byte would leave that asymmetry invisible — the signature would be
+   indistinguishable from every service whose 0x12 is settled before the handler is reached,
+   and an implementor would have no prompt to answer it. Split into three, a routine that
+   cannot be stopped returns 0x12 from ``stop`` and from nowhere else, and the exclusion is
+   a property a reader can see in the surface rather than one they must be told about.
+
+   The cost is stated rather than discovered: adding a sub-function to clause 13 would add a
+   method to the trait, which is a breaking change where a parameter would not have been.
+   Clause 13.2's three have been stable across editions, and a service whose handler owns
+   the 0x12 decision has to gain a case either way.
+
 Data parameters
 ---------------
 

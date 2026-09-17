@@ -90,7 +90,7 @@ The traits
    surface discoverable — "implement ``ReadDataByIdentifier``" is a thing a reader can look
    up, where "override method 9 of 16" is not.
 
-.. arch:: Assembly is explicit, through a declarative macro
+.. arch:: Assembly is explicit, and the macro is the crate's const evaluator
    :id: UDSSVC_ARCH_0013
    :depends_on: UDSSVC_ARCH_0012
    :status: draft
@@ -102,16 +102,37 @@ The traits
 
    .. code-block:: rust
 
-      uds_server! { Ecu: ReadDataByIdentifier, RoutineControl }
+      uds_server! {
+          Ecu: ReadDataByIdentifier, SecurityAccess, DataTransfer;
+          transport = DoIpTransport<TcpSocket>,
+          channels = 4,
+      }
 
    A service absent from the list is not supported, and a request naming it settles with
    ``serviceNotSupported`` (0x11) by the path in ``UDSSVC_ARCH_0006``.
 
    Rationale: Rust cannot ask whether a type implements a trait, so a generic dispatcher over
-   ``S: UdsServer`` has no way to discover which per-service traits ``S`` implements. An
+   ``S: ServiceSet`` has no way to discover which per-service traits ``S`` implements. An
    assembly step resolves this directly: the list is declared once, and the dispatch match
    is generated from it — rather than the application writing that service-identifier match
    itself, which is precisely the clause 8.7 machinery this crate exists to own.
+
+   **The load-bearing reason assembly is a macro is const evaluation, not explicitness**,
+   and this element understated it for as long as it named only the dispatch match. An
+   associated const of a *generic* parameter is not usable as an array length:
+   ``[u8; S::MAX_REQUEST]`` for ``S: SomeService`` is rejected without the unstable
+   ``generic_const_exprs``, so no blanket impl and no generic function anywhere in this
+   crate can fold a service's declared maximum into a buffer. At the macro's expansion site
+   the types are concrete — ``<Ecu as DataTransfer>::MAX_BLOCK_LENGTH`` is an ordinary
+   const — and folding a list of them into an array length is stable Rust with nothing
+   unusual about it. That is why the macro exists where a blanket impl would otherwise
+   serve, and it is what lets ``UDSSVC_ARCH_0017``'s buffers be sized without the
+   application picking a number.
+
+   ``UdsTransport::MAX_PDU`` joins the same fold, which is why the assembly names the
+   transport type. That introduces no dependency on a binding: the *application* names the
+   type and already depends on both crates, so ``UDSSVC_ARCH_0002`` and ``UDSSVC_ARCH_0003``
+   are untouched.
 
    The macro is ``macro_rules!``, not a procedural macro: a declarative macro can match the
    service names as literal identifiers and expand one arm per service, which is all this
@@ -119,6 +140,14 @@ The traits
 
    The list also makes the set of supported services readable directly in the application,
    without inferring it from which methods were overridden.
+
+   **The trait the macro implements is ``ServiceSet``, and it was called ``UdsServer``
+   here until the driver landed.** ``UDSSVC_ARCH_0040`` made this crate the driver, and the
+   driver is a struct named ``Server``. Two names one letter apart, one meaning "the set of
+   services an application implements" and the other "the loop that calls them", is a trap
+   rather than a naming preference: a reader who reaches for ``UdsServer`` expecting the
+   thing that runs finds the thing that is run. The trait is the assembled *set*, so it is
+   named for that, and ``Server`` is left to mean one thing.
 
 .. arch:: Each service declares whether it may answer response-pending
    :id: UDSSVC_ARCH_0033
@@ -191,7 +220,8 @@ Protocol state
    .. code-block:: rust
 
       uds_server! {
-          Ecu: ReadDataByIdentifier, SecurityAccess, RequestDownload, TransferData;
+          Ecu: ReadDataByIdentifier, SecurityAccess, DataTransfer;
+          transport = DoIpTransport<TcpSocket>,
           channels = 4,
       }
 
@@ -238,10 +268,37 @@ Protocol state
 
    **Sizing is declared, not allocated.** ``UDSSVC_ARCH_0017`` forbids allocation, so the
    per-channel table is a const-generic array whose length the assembly states. A deployment
-   that supports one tester writes ``channels = 1`` and pays for one. The alternative —
-   caller-supplied storage, as ``uds_session`` takes — is available if a deployment ever
-   needs to size this at run time, and is deliberately not taken now: it costs every caller a
-   lifetime and a borrow to buy flexibility no known deployment wants.
+   that supports one tester writes ``channels = 1`` and pays for one.
+
+   **That choice is now forced rather than preferred, and the reason is worth recording
+   because this element argued it the weaker way.** It used to say that caller-supplied
+   storage — the shape ``uds_session`` itself takes — remained available if a deployment
+   ever wanted to size the table at run time, and was declined only because it costs every
+   caller a lifetime and a borrow. Implementation retired that. ``UDSSVC_ARCH_0040``'s
+   driver *owns* a ``uds_session::Server<PEERS>`` by value, alongside the storage and the
+   transport, in one struct an application holds. A borrowing session would have that struct
+   hold a reference to storage the same struct owns, which is a self-referential composition
+   and not expressible: the attempt fails at ``E0515`` returning a reference to a local, or
+   at ``E0503`` using the owner while the borrow lives, and no arrangement of the fields
+   escapes it without ``unsafe``, which ``#![forbid(unsafe_code)]`` does not permit. So
+   const-generic storage is not the ergonomic choice over an available alternative; it is
+   the only one the composition admits. The lifetime-and-borrow cost stands as an
+   observation, not as the reason.
+
+   **A real gap, stated plainly: ``channels = N`` is captured and never used.** The macro
+   parses it and the expansion discards it. It had a consumer once — the association table
+   was this crate's to size — and lost it when associations moved into
+   ``uds_session::Server<PEERS>``, taken by value with its own const parameter. An
+   application therefore states its peer count twice: once as ``channels = N`` in the
+   assembly, where nothing reads it, and once as the third parameter of
+   ``Server<A, T, PEERS>``, which is what actually sizes the association array. Nothing
+   makes the two agree, and no diagnostic fires when they disagree. The intended consumer,
+   this element's own per-channel authentication table keyed on ``A_SA``, **is not built**:
+   there is no table, no keying and no per-channel state of any kind in the crate as it
+   stands. The clause 10.6.4 obligation above is therefore a design this element records and
+   not behaviour the crate has. Closing it means either the macro emitting the
+   ``Server<A, T, N>`` alias from ``channels`` so the count is stated once, or the parameter
+   going away until the table that wanted it exists.
 
    What this element does **not** settle is what happens to this state on a session
    transition. ISO 14229-1:2020 10.2 requires a return to ``defaultSession`` to relock
@@ -306,6 +363,30 @@ Protocol state
    the bytes themselves, and any finalisation failure at exit (0x72). Each is a property of
    one ECU. None of the sequencing is reachable from the handler, so no application can
    answer 0x73 where 0x24 is required, or accept a second transfer while one is live.
+
+   **``maxNumberOfBlockLength`` is an associated const, not a value a handler returns**, and
+   the change removes a disagreement rather than saving a parameter. Clause 14.2 obliges the
+   server to report the number in its ``RequestDownload`` positive response, and
+   ``UDSSVC_ARCH_0013``'s fold needs the same number to size the buffer a block is decoded
+   into. Had ``begin`` returned it, those would be two statements of one fact made at two
+   different times — one at compile time in the array length, one per request from a
+   handler — with nothing obliging them to match, and a handler advertising more than the
+   buffer holds produces a client that sends a block the server structurally cannot receive.
+   As ``DataTransfer::MAX_BLOCK_LENGTH`` the value is declared once, folded into the buffer
+   and composed into the response by this crate, so ``begin`` returns nothing and the two
+   cannot diverge. ``SUPPORTS_UPLOAD`` sits beside it for the same kind of reason: a
+   download-only server never puts a block in a *response*, so it must not pay for a
+   response buffer sized to hold one.
+
+   **Direction is carried by ``TransferRequest`` rather than by a separate field**, which is
+   what makes the paragraph above structural instead of advisory. The repeated-block rule
+   splits by direction — a repeated download is answered without calling the handler, a
+   repeated upload calls it again — so direction is not an attribute of a request that
+   happens to be worth knowing; it is the thing that selects the behaviour. As an enum,
+   ``Download``, ``Upload`` and ``File`` each carry exactly the parameters clause 15 gives
+   them, a file transfer's ``modeOfOperation`` and ``filePathAndName`` are not a memory
+   address and a size pretending otherwise, and there is no state in which the direction is
+   absent or contradicts the parameters beside it.
 
    This element is the first instance of ``UDSSVC_ARCH_0035`` and is what tests it: the
    state is created at assembly, reached only by the dispatcher, and sized without
@@ -379,7 +460,32 @@ Protocol state
    ``sendKey`` the even, with a fixed relationship — level 0x01 pairs with 0x02, 0x03 with
    0x04. Annex I checks ``yy == xx+1`` against the *stored* ``xx`` and answers ``0x24`` when
    it fails, so a ``sendKey`` for a level whose seed was never requested is a sequence error
-   rather than a bad key.
+   rather than a bad key. The pair is held as one value, ``SecurityLevel``, rather than as a
+   raw sub-function byte, which is what makes ``yy == xx+1`` structural instead of checked.
+
+   **A defect was found and fixed in that pairing during implementation, and it is recorded
+   here because the way it hid is more instructive than the arithmetic.**
+   ``SecurityLevel::from_request_seed`` originally admitted **any** odd ``u8``, on the
+   reading that "``requestSeed`` is the odd values" is the whole of clause 10.4.2's rule. It
+   is not, and ``0xFF`` is the counter-example: it is odd, so it was admitted, and
+   ``send_key``'s ``self.0 + 1`` then overflowed — a panic in a release ``no_std`` build, on
+   a byte an untrusted client chooses, reached by sending one ``SecurityAccess`` request.
+   The overflow sat under an ``#[allow(clippy::arithmetic_side_effects)]`` whose stated
+   reason **asserted that the overflow was impossible**, so the lint that exists to catch
+   exactly this had been told not to, by a justification that was itself the bug. An
+   ``#[allow]`` reason is a claim about the code, and this one was false; it is worth
+   recording that the suppression is what made the defect survive review, not the missing
+   bound.
+
+   The bound is now odd values **below ``0x7F``**, and it is derived rather than patched to
+   the failing case. A sub-function byte is seven bits, because bit 7 is
+   ``suppressPosRspMsgIndication`` — so *both* halves of a ``requestSeed``/``sendKey`` pair
+   must fall in ``0x00``–``0x7F`` to be sub-function values at all. That excludes every odd
+   byte above ``0x7F`` as a level, and excludes ``0x7F`` itself for a second reason: its
+   partner would be ``0x80``, which is not a sub-function but the suppress bit set on zero.
+   The largest level is therefore ``0x7D``, pairing with ``0x7E``. Fixing it as "reject
+   ``0xFF``" would have left ``0x81`` through ``0xFD`` admitted and the type meaning
+   something the standard does not.
 
    *The zero seed.* A ``requestSeed`` for a level already unlocked is answered positively
    with a seed of zero, and clause 10.4.2 adds that a server "shall never send an all zero
