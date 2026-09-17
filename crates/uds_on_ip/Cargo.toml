@@ -45,3 +45,10 @@ missing_debug_implementations = "deny"
 
 [lints.clippy]
 pedantic = { level = "deny", priority = -1 }
+# A wildcard arm is how a variant gets silently discarded, and this crate has
+# two cases that would go that way if it were allowed: mapping::DoIpEvent's
+# Periodic and Closed have no TransportEvent to become. Denying the wildcard
+# means a match over an enum must say what it does with every case, so the
+# hole has to be written down in code rather than remembered.
+wildcard_enum_match_arm = "deny"
+

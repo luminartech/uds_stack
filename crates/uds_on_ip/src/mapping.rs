@@ -5,11 +5,16 @@
 //! Table 5 maps the parameters (`T_SA` ↔ `DoIP_SA`, `T_TA` ↔ `DoIP_TA`, …) with
 //! `T_AE` marked not applicable because `DoIP` has no address extension.
 //!
-//! The mapping is nearly an identity, so this module is thin. Its one piece of
-//! real work is deciding *which* transport event an inbound `DoIP` message is —
-//! and in particular recognising that a diagnostic message acknowledgement is a
-//! `T_Data.conf`, because that is what starts `tP_Client`
-//! (ISO 14229-2:2021 REQ 5.9).
+//! The mapping is nearly an identity, so this module is thin, and what it
+//! publishes is thinner still: the address conversions and the one constant
+//! ISO 14229-5 adds to ISO 13400-2's payload types.
+//!
+//! Classifying an inbound message — in particular recognising that a
+//! diagnostic message acknowledgement is a `T_Data.conf`, because that is what
+//! starts `tP_Client` (ISO 14229-2:2021 REQ 5.9) — happens here too, but
+//! privately. It produces vocabulary the driver never sees, and publishing it
+//! would leave a caller two event types and only prose to say which was
+//! theirs.
 
 use uds_session::{Address, Ai, Mtype, SResult};
 
@@ -43,9 +48,13 @@ pub const fn from_logical(addr: simple_doip::LogicalAddress) -> Address {
 /// ISO 14229-5:2022 REQ 7.9 and REQ 7.11 make a server-initiated close part of
 /// the `DiagnosticSessionControl` and `ECUReset` flows, so a close is not
 /// necessarily a fault.
+// Constructed once `classify`'s body lands. Note that this suppression
+// clearing is NOT evidence that a close reaches the driver: `classify` will
+// build this, and `next_event` may then have nowhere to put it. That hole is
+// held by `the_two_cases_with_nowhere_to_go` below, not by this attribute.
 #[expect(
     dead_code,
-    reason = "reached once next_event's body replaces its todo!()"
+    reason = "constructed once classify's body replaces its todo!()"
 )]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum CloseCause {
@@ -61,6 +70,14 @@ pub(crate) enum CloseCause {
 /// Introduced by ISO 14229-5:2022 REQ 7.16, **not** by ISO 13400-2:2019, whose
 /// diagnostic payload types stop at `0x8003`. It is therefore this crate's to
 /// interpret rather than `simple_doip`'s to name — see `ARCHITECTURE.md` §3.1.
+///
+/// # Nothing in this crate acts on it yet
+///
+/// Published as vocabulary, not as a capability. A message with this payload
+/// type can be neither received (`simple_doip`'s `Payload` models only the
+/// types ISO 13400-2 defines, with no catch-all) nor delivered (the event seam
+/// has no periodic case). Both are open with the neighbouring crates; until
+/// they close, this constant names the number and promises nothing else.
 pub const PERIODIC_RESPONSE_PAYLOAD_TYPE: u16 = 0x8004;
 
 /// The `DoIP` target address for this addressing triple, or why it has none.
@@ -86,7 +103,7 @@ pub fn target_of(ai: Ai) -> Result<simple_doip::LogicalAddress, MappingError> {
 /// prose to say which is theirs.
 #[expect(
     dead_code,
-    reason = "reached once next_event's body replaces its todo!()"
+    reason = "constructed once classify's body replaces its todo!()"
 )]
 #[derive(Debug)]
 pub(crate) enum DoIpEvent<'a> {
@@ -142,7 +159,8 @@ pub(crate) enum DoIpEvent<'a> {
 /// defines, with no catch-all carrying an unmodelled type's bytes, so
 /// [`DoIpEvent::Periodic`] cannot be constructed. This needs no UDS semantics
 /// in `simple_doip` — only a variant meaning "a payload type I do not model,
-/// and here are its bytes". Named in that repository's brief §5.
+/// and here are its bytes". Raised with that repository 2026-09-17 in
+/// `2026-09-17-uds_on_ip-payload-and-ack-gaps.md`.
 #[expect(
     unused_variables,
     reason = "message is unused until classify's body replaces the todo!() above"
@@ -158,7 +176,7 @@ pub(crate) fn classify<'a>(message: &simple_doip::messages::Message<'a>) -> Opti
 
 #[cfg(test)]
 mod tests {
-    use super::{MappingError, target_of};
+    use super::{CloseCause, DoIpEvent, MappingError, target_of};
     use uds_session::{Address, AddressExtension, Ai, Mtype, TaType};
 
     fn ai_with(mtype: Mtype) -> Ai {
@@ -183,6 +201,61 @@ mod tests {
         assert_eq!(
             target_of(ai_with(Mtype::SecureRDiag { ae })),
             Err(MappingError::AddressExtensionUnsupported)
+        );
+    }
+
+    /// The two classified cases that have no seam event to become.
+    ///
+    /// This match is exhaustive and the crate denies `wildcard_enum_match_arm`,
+    /// so a new [`DoIpEvent`] case breaks this build rather than being quietly
+    /// absorbed by a `_` arm. `Periodic` and `Closed` reach `unreachable` arms
+    /// *by design*: they are the hole, located here in code rather than left in
+    /// a doc comment two files away.
+    ///
+    /// **When `TransportEvent` gains a `Periodic` or `Closed` case**, delete the
+    /// corresponding arm here and translate it in `transport::next_event`. The
+    /// companion guard is `transport::tests::the_seam_carries_four_cases`,
+    /// which stops compiling at the same moment.
+    ///
+    /// The danger this exists for is specific: `classify` will construct all
+    /// four cases, so `#[expect(dead_code)]` on [`DoIpEvent`] clears itself
+    /// whether or not the two holes were ever filled. Nothing else in the build
+    /// would notice a periodic response being decoded and dropped.
+    #[test]
+    fn the_two_cases_with_nowhere_to_go() {
+        /// The `TransportEvent` case this would need, or `None` if it already
+        /// has one. Each hole names its own missing case rather than sharing a
+        /// `false` with the other, so filling one is an edit to one arm.
+        fn missing_seam_case(event: &DoIpEvent<'_>) -> Option<&'static str> {
+            match event {
+                DoIpEvent::Ind { .. } | DoIpEvent::Conf { .. } => None,
+                DoIpEvent::Periodic { .. } => Some("Periodic"),
+                DoIpEvent::Closed { .. } => Some("Closed"),
+            }
+        }
+
+        assert_eq!(
+            missing_seam_case(&DoIpEvent::Ind {
+                source: Address(0x0E80),
+                data: &[],
+            }),
+            None,
+        );
+        assert_eq!(
+            missing_seam_case(&DoIpEvent::Closed {
+                cause: CloseCause::ServiceInitiated,
+            }),
+            Some("Closed"),
+            "ISO 14229-5:2022 REQ 7.9 / 7.11 — a close still has no seam case",
+        );
+        assert_eq!(
+            missing_seam_case(&DoIpEvent::Periodic {
+                source: Address(0x0E80),
+                pdid: 0x01,
+                data: &[],
+            }),
+            Some("Periodic"),
+            "ISO 14229-5:2022 REQ 7.16 — a periodic response still has no seam case",
         );
     }
 

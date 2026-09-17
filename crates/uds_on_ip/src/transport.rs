@@ -19,12 +19,13 @@ use uds_session::{Ai, SResult, Timestamp};
 /// Mirrors `uds_services::TransportEvent`, which is the trait's type once it
 /// is published.
 ///
-/// `mapping::DoIpEvent`'s other two cases — a periodic response and a
-/// connection close — have no case here, and that is an open hole rather than
-/// a decision: a driver looping on [`next_event`](DoIpTransport::next_event)
-/// cannot currently learn that its connection went away, and a periodic
-/// response (ISO 14229-5:2022 REQ 7.16) has nowhere to be delivered. Both are
-/// cases on a type `uds_services` owns; raised with them 2026-09-17.
+/// Two inbound facts have no case here, and that is an open hole rather than a
+/// decision: a driver looping on [`next_event`](DoIpTransport::next_event)
+/// cannot learn that its connection went away (ISO 14229-5:2022 REQ 7.9,
+/// REQ 7.11), and a periodic response (REQ 7.16) has nowhere to be delivered.
+/// Both are cases on a type `uds_services` owns; raised with them 2026-09-17,
+/// and held by `mapping::tests::the_two_cases_with_nowhere_to_go` rather than
+/// by this paragraph.
 ///
 /// # Why this carries no lifetime
 ///
@@ -259,9 +260,8 @@ impl<S> DoIpTransport<S> {
     /// So that the returned event borrows nothing from `self`. See
     /// [`TransportEvent`] for the defect that shape had. It also means this
     /// crate holds no inbound buffer of its own: the `DoIP` header is read into
-    /// a small local array and the payload goes straight into `buffer`, so
-    /// `mapping::DoIpEvent` can keep borrowing
-    /// because it never crosses the seam.
+    /// a small local array and the payload goes straight into `buffer`, so the
+    /// only bytes that outlive the call are the caller's own.
     ///
     /// `buffer`'s length is what this entity can actually receive, and is
     /// therefore the value it should advertise as its ISO 13400-2:2019 Table 11
@@ -283,10 +283,10 @@ impl<S> DoIpTransport<S> {
     /// `busyRepeatRequest` (0x21) regardless, and composing one needs the
     /// service identifier and the addressing, both of which this carries.
     ///
-    /// The truncation is decided here rather than in
-    /// `mapping::classify`, which takes a complete
-    /// message: the generic header's payload length is read before the payload,
-    /// so the decision is made before there is anything to classify.
+    /// Truncation is decided from the generic header, whose payload length is
+    /// read before the payload itself — so the decision is made before there is
+    /// a whole message to classify, and never by comparing `len` to
+    /// `buffer.len()` after the fact.
     ///
     /// # Errors
     ///
@@ -370,6 +370,31 @@ mod tests {
     fn an_event_borrows_nothing_from_the_transport() {
         const fn assert_static<T: 'static>() {}
         assert_static::<super::TransportEvent>();
+    }
+
+    /// The seam carries four cases, and a fifth must not arrive unnoticed.
+    ///
+    /// This match is exhaustive with no wildcard arm, so adding a case to
+    /// [`TransportEvent`] stops this test compiling. That is the intent: the
+    /// two cases this seam is *missing* — a periodic response and a connection
+    /// close — are tracked in `mapping::tests::the_two_cases_with_nowhere_to_go`,
+    /// and when `uds_services` adds either to its type, both guards fire at
+    /// once and point at each other.
+    ///
+    /// Verified by watching it fail: a fifth variant added to the enum breaks
+    /// this match as non-exhaustive.
+    #[test]
+    fn the_seam_carries_four_cases() {
+        fn name(event: &super::TransportEvent) -> &'static str {
+            match event {
+                super::TransportEvent::DataInd { .. } => "DataInd",
+                super::TransportEvent::DataTooLong { .. } => "DataTooLong",
+                super::TransportEvent::DataConf { .. } => "DataConf",
+                super::TransportEvent::Deadline => "Deadline",
+            }
+        }
+
+        assert_eq!(name(&super::TransportEvent::Deadline), "Deadline");
     }
 
     /// `DataInd` reports an extent into the caller's buffer rather than a

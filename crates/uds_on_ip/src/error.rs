@@ -8,6 +8,14 @@
 //! [`TransportEvent::DataTooLong`](crate::TransportEvent), and what to do with
 //! the connection after an exchange is [`profile::PostExchange`](crate::profile::PostExchange).
 //! Only a failure that leaves nothing to report at all is an [`Error`].
+//!
+//! Two variants, therefore, and one absence worth stating. A *closed
+//! connection* has no variant: ISO 14229-5:2022 REQ 7.9 and REQ 7.11 make a
+//! server-initiated close part of the `DiagnosticSessionControl` and `ECUReset`
+//! flows, so an expected close and a failed one are different events, and one
+//! variant conflating them would be worse than the gap. It belongs on the event
+//! seam, which `uds_services` owns; raised with them 2026-09-17 and tracked by
+//! `mapping::tests::the_two_cases_with_nowhere_to_go`.
 
 /// Errors raised by this crate.
 #[derive(Debug, thiserror::Error)]
@@ -22,26 +30,6 @@ pub enum Error {
     /// wire-level error is the one that crosses this boundary instead.
     #[error("DoIP message error: {0}")]
     Wire(#[from] simple_doip::messages::MessageError),
-
-    /// The connection closed.
-    ///
-    /// # This variant is provisional
-    ///
-    /// ISO 14229-5:2022 REQ 7.9 and REQ 7.11 make a server-initiated close part
-    /// of the `DiagnosticSessionControl` and `ECUReset` flows, so a close is
-    /// routinely *expected* rather than a fault — and this crate cannot act on
-    /// either kind. It does not reconnect: [`profile::post_exchange`] returns
-    /// [`ReconnectAndReactivate`] as advice the caller acts on.
-    ///
-    /// So an expected close and an unexpected one both end up here, which is
-    /// the wrong shape, and the right one is a case on the event seam that
-    /// `uds_services` owns. Raised with them 2026-09-17; this variant holds
-    /// the fact until that lands.
-    ///
-    /// [`profile::post_exchange`]: crate::profile::post_exchange
-    /// [`ReconnectAndReactivate`]: crate::profile::PostExchange::ReconnectAndReactivate
-    #[error("connection closed")]
-    ConnectionClosed,
 
     /// The addressing cannot be carried over `DoIP`.
     #[error(transparent)]

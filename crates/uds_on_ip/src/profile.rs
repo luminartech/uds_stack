@@ -83,8 +83,8 @@ impl Default for Timing {
 ///
 /// # Why this crate knows any service identifier at all
 ///
-/// `ARCHITECTURE.md` §11 states that `uds_on_ip` never learns what a service
-/// is. These two constants are the exception the standard itself forces, and
+/// `ARCHITECTURE.md` §13, invariant 5, states that `uds_on_ip` never learns
+/// what a service is. These two constants are the exception the standard itself forces, and
 /// the exhaustive list of it.
 ///
 /// ISO 14229-5:2022 REQ 7.8–7.11 make TCP connection handling part of the
