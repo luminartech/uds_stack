@@ -97,25 +97,27 @@ pub type ServerReaction<'s, 'd, T = ()> = Reaction<'s, 'd, ServerOutput<'d>, T>;
 
 /// The session layer in the server role.
 ///
-/// ``UDSS_LLR_0008`` — all state lives here or in the caller-supplied storage this
-/// borrows; nothing is retained anywhere else between inputs.
+/// ``UDSS_LLR_0008`` — all state lives here, in the caller-supplied storage this owns;
+/// nothing is retained anywhere else between inputs.
 #[derive(Debug)]
-pub struct Server<'s> {
-    _associations: &'s mut [Association],
+pub struct Server<const A: usize> {
+    _associations: [Association; A],
     _params: ServerParams,
 }
 
-impl<'s> Server<'s> {
+impl<const A: usize> Server<A> {
     /// Create a server.
     ///
     /// ``UDSS_LLR_0032`` — creation supplies the association storage of
     /// ``UDSS_LLR_0059`` and the `tS3_Server`, `tP2_Server_Max` and `tP2*_Server_Max`
-    /// parameters of ``UDSS_LLR_0042``, which have no defaults. The storage is the
-    /// caller's because ``UDSS_LLR_0004`` forbids allocation and the number of peers is a
-    /// property of the deployment; its length is the capacity ``UDSS_LLR_0062`` rejects
-    /// against.
+    /// parameters of ``UDSS_LLR_0042``, which have no defaults. The storage is supplied
+    /// by value: ``UDSS_LLR_0004`` forbids allocation and the number of peers is a
+    /// property of the deployment, so the caller sizes it as `A` and hands it over.
+    /// ``UDSS_LLR_0008`` is satisfied in both its branches at once — the caller supplies
+    /// the storage, and it then lives in the instance. `A` is the capacity
+    /// ``UDSS_LLR_0062`` rejects against.
     #[must_use]
-    pub fn new(associations: &'s mut [Association], params: ServerParams) -> Self {
+    pub const fn new(associations: [Association; A], params: ServerParams) -> Self {
         Self {
             _associations: associations,
             _params: params,
