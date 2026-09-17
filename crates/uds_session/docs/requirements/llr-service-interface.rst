@@ -647,10 +647,10 @@ Service primitives
    reception primitives are listed for the same reason: no server requirement conditions on
    receiving a response, so one implementation would forward such an indication under
    ``UDSS_LLR_0036`` and another refuse it. The remaining inputs — an indication
-   identifying a channel, and the supply or withdrawal of channel storage, the channel
-   reset and the keep-alive release that only a client performs — belong to the client
-   alone; they are listed here rather than left to each owning document because a rule
-   split between the two places was honoured by neither.
+   identifying a channel, and the opening or withdrawal of a channel, the channel reset
+   and the keep-alive release that only a client performs — belong to the client alone;
+   they are listed here rather than left to each owning document because a rule split
+   between the two places was honoured by neither.
 
 .. llr:: The inputs a client rejects
    :id: UDSS_LLR_0031
@@ -693,9 +693,10 @@ Service primitives
    ``tS3_Server``, ``tP2_Server_Max`` and ``tP2*_Server_Max`` parameters of
    ``UDSS_LLR_0042``. Creation of a client shall supply the keep-alive mode of
    ``UDSS_LLR_0149`` and, in functional keep-alive, the storage of ``UDSS_LLR_0150`` and
-   reload parameter of ``UDSS_LLR_0152``; a client's channel storage, holding the
-   association and the parameters of ``UDSS_LLR_0132``, ``UDSS_LLR_0152`` and
-   ``UDSS_LLR_0165`` as ``UDSS_LLR_0126`` states, is supplied later under ``UDSS_LLR_0121``.
+   reload parameter of ``UDSS_LLR_0152``, together with a client's channel storage, holding
+   the association and the parameters of ``UDSS_LLR_0132``, ``UDSS_LLR_0152`` and
+   ``UDSS_LLR_0165`` as ``UDSS_LLR_0126`` states; ``UDSS_LLR_0121`` governs when a channel
+   begins to use that storage.
 
    Rationale: what creation supplies is gathered here because it was stated in four
    places and enumerated in none, and a tester building the first test must collect it.
@@ -1332,10 +1333,10 @@ means of recognising it to the implementation.
 
    The limit is survivable because each role has an exit, or an assumption in place of one.
    An association whose ``T_Data.conf`` never arrives stays outstanding: the client's exit
-   is the withdrawal of the channel's storage under ``UDSS_LLR_0125``, and the server has
-   none, resting instead on the assumption of use that the transport reports a
-   ``T_Data.conf`` for every ``T_Data.req``, which :doc:`open-questions` records beside the
-   start-of-message assumption.
+   is the withdrawal of the channel under ``UDSS_LLR_0125``, and the server has none,
+   resting instead on the assumption of use that the transport reports a ``T_Data.conf``
+   for every ``T_Data.req``, which :doc:`open-questions` records beside the start-of-message
+   assumption.
 
 .. llr:: A request duplicating an outstanding association is rejected
    :id: UDSS_LLR_0061

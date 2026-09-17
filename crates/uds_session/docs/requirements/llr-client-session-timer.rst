@@ -231,12 +231,12 @@ The timer's state
    :origin: derived
    :tags: client; s3_client; session-state
 
-   After the client instance is created, and while a physical channel's storage remains
-   supplied, the state of the client's ``tS3_Client`` timers and its keeping-alive and
-   session facts shall be changed only as ``UDSS_LLR_0155`` to ``UDSS_LLR_0163`` and
-   ``UDSS_LLR_0184`` require. Withdrawal of a physical channel's storage under
-   ``UDSS_LLR_0125`` ends that channel and discards the timer and session fact
-   ``UDSS_LLR_0151`` keeps in it, which is why the list is closed only for its lifetime.
+   After the client instance is created, and while a physical channel exists, the state of
+   the client's ``tS3_Client`` timers and its keeping-alive and session facts shall be
+   changed only as ``UDSS_LLR_0155`` to ``UDSS_LLR_0163`` and ``UDSS_LLR_0184`` require.
+   Withdrawal of a physical channel under ``UDSS_LLR_0125`` ends it and discards the timer
+   and session fact ``UDSS_LLR_0151`` keeps in it, which is why the list is closed only for
+   its lifetime.
 
    Rationale: a closed list of the requirements that may change the timers and facts is what
    makes a "changes nothing" claim elsewhere in the set checkable, and what lets

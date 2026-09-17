@@ -180,8 +180,8 @@ The spacing timer
    :tags: client; p3_client
 
    While a channel exists, the state of that channel's spacing timer shall be changed only
-   as ``UDSS_LLR_0169`` and ``UDSS_LLR_0170`` require. Withdrawal of that storage under
-   ``UDSS_LLR_0125`` ends the channel and discards the timer with it.
+   as ``UDSS_LLR_0169`` and ``UDSS_LLR_0170`` require. Withdrawal of the channel under
+   ``UDSS_LLR_0125`` ends it and discards the timer with it.
 
    Rationale: nothing beyond those two requirements and the timer's own expiry changes it.
    Clause 10.3 states the timer's whole effect as a condition on the next transmission, so a

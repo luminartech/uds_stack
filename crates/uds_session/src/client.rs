@@ -9,8 +9,10 @@
 //!
 //! ``UDSS_LLR_0004`` forbids allocation, so storage is supplied by the caller, by value.
 //! `Client` carries no lifetime as a result: nothing here is borrowed, so nothing here can
-//! outlive it or be reasoned about across it. ``UDSS_LLR_0121`` makes supplying a
-//! channel's storage the act that brings the channel into being.
+//! outlive it or be reasoned about across it. The physical and functional arrays are
+//! supplied whole at [`Client::new`], before any channel exists; ``UDSS_LLR_0121`` makes
+//! opening a channel, not supplying that storage, the act that brings the channel into
+//! being.
 //!
 //! The physical and functional arrays are separate because the two channel kinds hold
 //! different state. ``UDSS_LLR_0139`` gives a functional channel a responder table and
@@ -89,8 +91,9 @@ impl PhysicalSlot {
 ///
 /// ``UDSS_LLR_0126`` holds the per-channel facts, as [`PhysicalSlot`] lists them, except
 /// the `tS3_Client` timer and session fact, which ``UDSS_LLR_0151`` gives to physical
-/// channels alone. ``UDSS_LLR_0139`` adds the responder table, whose capacity is the
-/// number of entries this storage holds — `R`.
+/// channels alone, and the channel-level start-of-message fact, which ``UDSS_LLR_0139``
+/// holds per responder here instead. ``UDSS_LLR_0139`` adds the responder table, whose
+/// capacity is the number of entries this storage holds — `R`.
 #[derive(Debug)]
 pub struct FunctionalSlot<const R: usize> {
     _responders: [ResponderSlot; R],
@@ -107,10 +110,10 @@ impl<const R: usize> FunctionalSlot<R> {
 
 /// Identifies a channel of this client.
 ///
-/// ``UDSS_LLR_0121`` — returned when the caller supplies a channel's storage, valid until
-/// the caller withdraws it. A channel is of either kind, physical or functional; the
-/// client itself knows which of its two arrays a given id belongs to, so the caller need
-/// not track which array it came from.
+/// ``UDSS_LLR_0121`` — returned when the caller opens a channel, valid until the caller
+/// withdraws it. A channel is of either kind, physical or functional; the client itself
+/// knows which of its two arrays a given id belongs to, so the caller need not track
+/// which array it came from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct ChannelId(u16);
 
@@ -308,7 +311,7 @@ impl<const PHYS: usize, const FUNC: usize, const R: usize> Client<PHYS, FUNC, R>
         }
     }
 
-    /// Withdraw a channel's storage, which discards the channel.
+    /// Withdraw a channel, which discards it.
     ///
     /// ``UDSS_LLR_0125`` — permitted at any time, discarding without output every fact
     /// this set holds for the channel, an outstanding association included. It is the

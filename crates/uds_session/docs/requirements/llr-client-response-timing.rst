@@ -53,8 +53,8 @@ The session layer cannot place an inbound indication on a channel by itself. A p
 addressed response answers either the physical channel to that server or a functional
 channel the server was reached through, and nothing in the indication says which.
 ``UDSS_LLR_0026`` therefore requires the caller to identify the channel each
-``T_DataSOM.ind`` and ``T_Data.ind`` belongs to. A channel exists while the caller supplies
-its storage, as ``UDSS_LLR_0121`` states. ``UDSS_LLR_0045`` settles which indication is the
+``T_DataSOM.ind`` and ``T_Data.ind`` belongs to. A channel exists from when the caller opens
+it, as ``UDSS_LLR_0121`` states. ``UDSS_LLR_0045`` settles which indication is the
 start of a message and which its completion, and this document uses its terms **first
 indication** and **completion** without restating them.
 
@@ -248,12 +248,12 @@ The response window
    :origin: derived
    :tags: client; p_client; service-interface
 
-   Withdrawal of a channel's storage shall be permitted at any time and shall discard,
-   without output, every fact this set holds for the channel, an association outstanding on
-   it included; a ``T_Data.conf`` arriving for that association thereafter matches none
-   while no channel of that addressing exists and is rejected under ``UDSS_LLR_0063``. A
-   caller that supplies the same addressing again before that confirmation arrives has it
-   matched to whatever association the new channel then holds, ``UDSS_LLR_0059`` matching by
+   Withdrawal of a channel shall be permitted at any time and shall discard, without
+   output, every fact this set holds for the channel, an association outstanding on it
+   included; a ``T_Data.conf`` arriving for that association thereafter matches none while
+   no channel of that addressing exists and is rejected under ``UDSS_LLR_0063``. A caller
+   that opens the same addressing again before that confirmation arrives has it matched to
+   whatever association the new channel then holds, ``UDSS_LLR_0059`` matching by
    addressing alone, or rejected under ``UDSS_LLR_0063`` where it holds none; not doing so
    is an assumption of use.
 
@@ -385,9 +385,9 @@ The response window
 
    While a channel exists, the state of that channel's ``tP_Client`` timer shall be changed
    only as ``UDSS_LLR_0135``, ``UDSS_LLR_0136``, ``UDSS_LLR_0137``, ``UDSS_LLR_0138``,
-   ``UDSS_LLR_0144``, ``UDSS_LLR_0148`` and ``UDSS_LLR_0180`` require. Withdrawal of that
-   storage under ``UDSS_LLR_0125`` ends the channel and discards the timer with it, which is
-   why the list is closed only for the storage's lifetime.
+   ``UDSS_LLR_0144``, ``UDSS_LLR_0148`` and ``UDSS_LLR_0180`` require. Withdrawal of the
+   channel under ``UDSS_LLR_0125`` ends it and discards the timer with it, which is why the
+   list is closed only for its lifetime.
 
    Rationale: a closed list of the requirements that may change the timer is what makes a
    "changes nothing" claim elsewhere in the set checkable, and what lets ``UDSS_LLR_0127``

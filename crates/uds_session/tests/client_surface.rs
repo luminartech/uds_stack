@@ -7,7 +7,7 @@ use uds_session::{
     PhysicalSlot, Reloads, SResult, Solicitation, TaType, Timestamp,
 };
 
-/// ``UDSS_LLR_0121`` — a channel exists from the moment its storage is supplied.
+/// ``UDSS_LLR_0121`` — a channel exists from the moment the caller opens it.
 /// ``UDSS_LLR_0139`` — the responder table's capacity is the number of entries that
 /// storage holds, and a physical channel keeps no table at all.
 ///

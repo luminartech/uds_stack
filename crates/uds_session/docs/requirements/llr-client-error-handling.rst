@@ -187,8 +187,8 @@ The repeat count
    :tags: client; error-handling; repeat
 
    While a channel exists, its repeat count shall be changed only as ``UDSS_LLR_0176`` and
-   ``UDSS_LLR_0180`` require. Withdrawal of that storage under ``UDSS_LLR_0125`` ends the
-   channel and discards the count with it.
+   ``UDSS_LLR_0180`` require. Withdrawal of the channel under ``UDSS_LLR_0125`` ends it and
+   discards the count with it.
 
    Rationale: the rule ``UDSS_LLR_0081`` fixes is what lets ``UDSS_LLR_0176`` and
    ``UDSS_LLR_0177`` act on the same ``S_Data.req``, the one reading the count the other
@@ -370,7 +370,7 @@ Giving a server up
    or the channel is withdrawn under ``UDSS_LLR_0125``.
 
    Rationale: the association's only exits are the ones ``UDSS_LLR_0060`` already gives it
-   — its ``T_Data.conf`` arriving, or the caller withdrawing the channel's storage under
+   — its ``T_Data.conf`` arriving, or the caller withdrawing the channel under
    ``UDSS_LLR_0125`` — and the reset manufactures neither, so the association stands until
    one of them.
 

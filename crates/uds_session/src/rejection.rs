@@ -22,7 +22,7 @@ pub enum Cause {
     /// ``UDSS_LLR_0027``, ``UDSS_LLR_0123``, ``UDSS_LLR_0124``, ``UDSS_LLR_0134`` and
     /// ``UDSS_LLR_0183`` — an input naming a channel the client does not have.
     NoSuchChannel,
-    /// ``UDSS_LLR_0122`` — channel storage supplied with an existing channel addressing.
+    /// ``UDSS_LLR_0122`` — a channel opened with an existing channel's addressing.
     DuplicateChannelAddressing,
     /// ``UDSS_LLR_0061`` — a request duplicating an outstanding association.
     AssociationOutstanding,
