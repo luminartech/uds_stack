@@ -55,6 +55,9 @@
 
 pub mod assembly;
 
+pub mod client;
+pub use client::{Answer, Client, Response, Responses};
+
 pub mod server;
 pub use server::Server;
 
