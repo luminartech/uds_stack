@@ -30,12 +30,18 @@ pub struct Spacing {
 
 /// Every ISO 14229-5 timing parameter this profile carries.
 ///
+/// # There is deliberately no `Default`
 ///
 /// ISO 14229-2:2021 clause 9.2 Table 4 specifies the reloads as minima derived
-/// from the server's timing and vehicle-network delays, not as fixed values,
-/// so there is no defensible universal default. The values in [`Timing::default`]
-/// are conventional bench starting points and must be configured for a real
-/// vehicle.
+/// from the server's timing and the vehicle network's delays, not as fixed
+/// values, so no universal default is defensible. An `impl Default` would put
+/// the strongest invitation Rust has on the one value nobody should accept,
+/// and `Timing::default()` reads like a configured transport while installing
+/// a guess — the failure being spurious `tP6` timeouts on a live bus, blamed
+/// on the ECU long before anyone re-reads this paragraph.
+///
+/// [`Timing::bench`] supplies the same numbers under a name that says what
+/// they are, so bench values cannot be reached without asking for them.
 ///
 /// Values are milliseconds, matching `uds_session::Timestamp`'s unit. Carrying
 /// a `Duration` here would mean converting at the seam on every call, which is
@@ -52,14 +58,25 @@ pub struct Timing {
     pub spacing: Spacing,
 }
 
-impl Default for Timing {
-    fn default() -> Self {
+impl Timing {
+    /// Conventional bench values, for a desk setup and for tests.
+    ///
+    /// `tP6_Client_Max` 2000 ms and `tP6*_Client_Max` 5000 ms, with no request
+    /// spacing. These are a starting point on a bench and are **not** a
+    /// configuration for a vehicle: clause 9.2 Table 4 derives the real minima
+    /// from the server's timing and the network's delays, which this crate
+    /// cannot know. See [`Timing`].
+    #[must_use]
+    pub const fn bench() -> Self {
         Self {
             reloads: uds_session::Reloads {
                 default_reload: 2_000,
                 enhanced_reload: 5_000,
             },
-            spacing: Spacing::default(),
+            spacing: Spacing {
+                p3_client_phys_ms: 0,
+                p3_client_func_ms: 0,
+            },
         }
     }
 }
@@ -114,6 +131,12 @@ pub mod service_ids {
 }
 
 /// What the transport must do once an exchange completes.
+///
+/// Whether a *negative* response also implies a close is not stated by clause 8
+/// as directly as the positive case is: REQ 7.9 and REQ 7.11 both describe the
+/// close as following a *positive* response. Treating a negative response as
+/// [`Continue`](PostExchange::Continue) is the reading taken here, and is a
+/// candidate open question for the requirement set.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum PostExchange {
     /// Nothing; the connection continues to serve the session.
@@ -124,39 +147,39 @@ pub enum PostExchange {
     ReconnectAndReactivate,
 }
 
-/// Decide what must happen to the connection after this exchange.
+/// Whether the server answered positively.
 ///
-/// Keyed only on the request's service identifier and whether the response was
-/// positive, per REQ 7.8 and REQ 7.10.
-///
-/// # Prototype note
-///
-/// Whether a *negative* response also implies a close is not stated by clause 8
-/// as directly as the positive case is; REQ 7.9 and REQ 7.11 both describe the
-/// close as following a *positive* response. Treating a negative response as
-/// `Continue` is the reading taken here and is a candidate open question for
-/// the requirement set.
-#[expect(
-    unused_variables,
-    reason = "request and response are unused until post_exchange's body replaces the todo!() above"
-)]
-#[must_use]
-pub fn post_exchange(request: &[u8], response: &[u8]) -> PostExchange {
-    todo!("REQ 7.8 / REQ 7.10 — key on service_ids and response polarity")
+/// A `bool` would do the same work and read as `post_exchange(sid, true)` at
+/// the call site, where `true` says nothing about which way round the question
+/// was asked.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ResponsePolarity {
+    /// A positive response.
+    Positive,
+    /// A negative response, carrying an NRC this crate does not read.
+    Negative,
 }
 
-/// Whether a periodic data record fits the non-segmented message limit.
+/// Decide what must happen to the connection after this exchange.
 ///
-/// ISO 14229-5:2022 REQ 7.17 requires that the record referenced by a periodic
-/// data identifier not exceed the length limit of a non-segmented `UDSonIP`
-/// message.
+/// Keyed on the request's service identifier and the response's polarity, per
+/// REQ 7.8 and REQ 7.10 — which is all clause 8 keys it on, so those are the
+/// only two things this takes.
+///
+/// An earlier shape took the request and response as two `&[u8]`. Two
+/// same-typed slices in one signature can be passed the wrong way round, and
+/// swapping them silently returns the wrong answer for the most consequential
+/// question this module asks: whether the connection is about to close under
+/// the caller. A `u8` and an enum cannot be swapped. The caller reads the
+/// service identifier from the request's first octet — see [`service_ids`] for
+/// why that is the service identifier on `DoIP` specifically.
 #[expect(
     unused_variables,
-    reason = "len is unused until periodic_record_within_limit's body replaces the todo!() above"
+    reason = "both are unused until post_exchange's body replaces the todo!() below"
 )]
 #[must_use]
-pub fn periodic_record_within_limit(len: usize) -> bool {
-    todo!("REQ 7.17 — bound against the non-segmented UDSonIP message limit")
+pub fn post_exchange(request_sid: u8, response: ResponsePolarity) -> PostExchange {
+    todo!("REQ 7.8 / REQ 7.10 — key on service_ids and response polarity")
 }
 
 #[cfg(test)]
@@ -164,9 +187,10 @@ mod tests {
     use super::{Spacing, Timing};
     use uds_session::Reloads;
 
-    /// Design doc §6.2 — spacing is ISO 14229-2 clause 9.7 client policy, on
-    /// which a transport has no view, so it is not part of what
-    /// `channel_timing` supplies.
+    /// Spacing is ISO 14229-2:2021 clause 9.7 client policy, on which a
+    /// transport has no view, so it is not part of what `channel_timing`
+    /// supplies. The reload pair is dictated by whether the transport offers a
+    /// `T_DataSOM.ind`; the spacing is the client's own conduct.
     ///
     /// The assertion is the type annotations on the two bindings below, not a
     /// runtime check: `Timing` is `Copy`, so an `assert_eq!` against the
@@ -186,7 +210,7 @@ mod tests {
     )]
     #[test]
     fn spacing_is_separable_from_the_reloads() {
-        let timing = Timing::default();
+        let timing = Timing::bench();
         let reloads: Reloads = timing.reloads;
         let spacing: Spacing = timing.spacing;
     }

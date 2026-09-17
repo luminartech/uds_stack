@@ -54,8 +54,10 @@
 //! ## Status
 //!
 //! **Prototype.** The public API is unstable and most bodies are
-//! unimplemented. Known gaps are recorded in `ARCHITECTURE.md` §9 and in the
-//! boundary brief carried alongside this repository.
+//! unimplemented. Known gaps are recorded in `ARCHITECTURE.md` §9, which ships
+//! with the package, and each one is also named at the item it affects — see
+//! [`DoIpTransport::next_event`](transport::DoIpTransport::next_event)'s missing socket bound and
+//! [`mapping::PERIODIC_RESPONSE_PAYLOAD_TYPE`]'s unreachable payload type.
 //!
 //! ## What this crate deliberately does not do
 //!

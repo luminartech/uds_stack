@@ -78,6 +78,13 @@ pub(crate) enum CloseCause {
 /// types ISO 13400-2 defines, with no catch-all) nor delivered (the event seam
 /// has no periodic case). Both are open with the neighbouring crates; until
 /// they close, this constant names the number and promises nothing else.
+///
+/// REQ 7.17's length bound — a periodic data record must not exceed the
+/// non-segmented `UDSonIP` message limit — has no home here yet either. It was
+/// briefly a free `periodic_record_within_limit(len) -> bool` in `profile`,
+/// which no caller was obliged to consult and no path could reach; it is
+/// deleted until there is a periodic record to bound, at which point the check
+/// belongs where the record is accepted rather than beside it.
 pub const PERIODIC_RESPONSE_PAYLOAD_TYPE: u16 = 0x8004;
 
 /// The `DoIP` target address for this addressing triple, or why it has none.
@@ -122,24 +129,13 @@ pub(crate) enum DoIpEvent<'a> {
     Conf {
         /// The acknowledging entity.
         peer: Address,
-        /// Derived from the acknowledgement's code, **not** from its payload
-        /// type.
+        /// The acknowledgement's outcome.
         ///
-        /// `simple_doip`'s `Message::diagnostic_message_ack` stamps the
-        /// positive payload type (`0x8002`) into the header whatever the ack
-        /// code says, so the payload type does not discriminate. Its
-        /// `DiagnosticMessageAck` carries the real `ack_code`, and that is what
-        /// this reads.
-        ///
-        /// # Blocked: a received `0x8003` arrives with nothing in it
-        ///
-        /// `Payload::decode` maps `0x8003` to the fieldless
-        /// `Payload::DiagnosticMessageNack`, discarding the NACK code, the
-        /// addresses and the echoed request bytes. So `SResult::Transport`
-        /// cannot yet be given the code ISO 13400-2 sent, and a `0x8003` can
-        /// only become a bare "the transport rejected it". Raised with that
-        /// repository 2026-09-17 in
-        /// `2026-09-17-uds_on_ip-payload-and-ack-gaps.md`.
+        /// The rule for deriving it — read the ack code, never the payload
+        /// type — is stated once, on
+        /// [`TransportEvent::DataConf`](crate::TransportEvent), which is where
+        /// a caller reads it. Restating it here is how the two copies drifted
+        /// the first time.
         result: SResult,
     },
     /// A periodic response (`DoIP` `0x8004`).

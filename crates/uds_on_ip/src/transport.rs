@@ -99,8 +99,28 @@ pub enum TransportEvent {
     DataConf {
         /// The addressing of the transmission being confirmed.
         ai: Ai,
-        /// `SResult::Ok` for a `0x8002`; a `0x8003` is one
-        /// `SResult::Transport` value.
+        /// Derived from the acknowledgement's **code**, never from its
+        /// payload type.
+        ///
+        /// The two disagree in practice. `simple_doip`'s
+        /// `Message::diagnostic_message_ack` stamps the positive payload type
+        /// (`0x8002`) into the header whatever the ack code says — its own
+        /// documented limitation — so reading the payload type would report a
+        /// rejection as an acceptance and start `tP_Client` for a message the
+        /// entity never accepted. ISO 13400-2 makes the code the authority
+        /// regardless of which crate is emitting.
+        ///
+        /// # A rejection cannot yet say why
+        ///
+        /// `SResult::Transport` carries a `TransportError(u16)` precisely so a
+        /// lower layer's own code reaches the caller unchanged, and there is
+        /// nothing to put in it: `Payload::decode` maps a received `0x8003` to
+        /// a fieldless variant, discarding the NACK code, both addresses and
+        /// the echoed request bytes. So every rejection currently collapses to
+        /// "the transport refused it", where ISO 13400-2 distinguishes an
+        /// unknown target address from routing not activated from an
+        /// out-of-memory entity — three failures a tester acts on differently.
+        /// Raised with `simple_doip` 2026-09-17.
         result: SResult,
     },
     /// The deadline the driver supplied passed before anything arrived.
@@ -232,7 +252,7 @@ impl<S> DoIpTransport<S> {
     /// than absent.
     #[must_use]
     pub fn now(&self) -> Timestamp {
-        todo!("clock source is the socket adapter's; see design doc decision 1")
+        todo!("the clock belongs to whatever S is; see the missing-bound note on next_event")
     }
 
     /// `T_Data.req` — map a `T_PDU` onto a `DoIP` diagnostic message and send it.
@@ -332,11 +352,12 @@ mod tests {
     /// conformant `DoIP` entity need not advertise one and `None` is a correct
     /// answer rather than a defect.
     ///
-    /// Design doc §1 decision 3: `uds_services` bounds the response sink only
-    /// where a bound is known, and never fabricates one.
+    /// A bound is therefore reported only where one was learned, and never
+    /// fabricated: a response sink bounded at an invented number would reject
+    /// responses the peer would have accepted.
     #[test]
     fn an_unadvertised_max_data_size_is_none_not_a_guess() {
-        let t = super::DoIpTransport::new((), crate::profile::Timing::default());
+        let t = super::DoIpTransport::new((), crate::profile::Timing::bench());
         assert_eq!(t.inbound_max(), None);
         assert_eq!(t.outbound_max(), None);
     }
@@ -346,7 +367,7 @@ mod tests {
     /// answering one does not answer the other.
     #[test]
     fn the_two_directions_are_independent() {
-        let mut t = super::DoIpTransport::new((), crate::profile::Timing::default());
+        let mut t = super::DoIpTransport::new((), crate::profile::Timing::bench());
         t.set_inbound_max(Some(4096));
         assert_eq!(t.inbound_max(), Some(4096));
         assert_eq!(
