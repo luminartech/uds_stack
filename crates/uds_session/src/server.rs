@@ -23,7 +23,6 @@ use crate::time::Timestamp;
 /// length is the server's capacity.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Association {
-    // Private: `UDSS_LLR_0008` puts this state here, and nothing outside reads it.
     _reserved: (),
 }
 

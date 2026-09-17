@@ -9,7 +9,9 @@ Every document the set planned is now written, and the server session timer docu
 oldest, has been reworked against the rest. Three of the entries that remain are not
 waiting on a document: one is a question of convention, one a decision about a build-time
 switch that wants the full inventory first, and one a statement that belongs in the
-qualification repository.
+qualification repository. One more records a limit accepted rather than chased: a gap
+between what ``Reaction`` enforces and what it can be made to enforce without breaching a
+requirement of its own.
 
 A question closes by being answered in a requirement, not here. When that happens the
 entry is deleted and the requirement carries the reasoning, as a ``Rationale:`` paragraph
@@ -123,6 +125,33 @@ The channel reset of ``UDSS_LLR_0180`` has since given the application an exit: 
 start-of-message the transport never completes is closed by resetting its channel. That
 bounds the harm of a transport that breaks the assumption without settling where the
 assumption is stated.
+
+``Reaction`` enforces the order of its outputs, not that they are delivered
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+``Reaction`` is ``#[must_use]``, and the obligation it states is discharged by calling
+``Reaction::finish``, which drops any outputs the caller has not already drained by
+iterating. That makes ``UDSS_LLR_0081``'s ordering between the indications an expiry
+produces and the input's own rejection report a property of the type — ``finish`` cannot
+be reached without going through the drain that would have produced them — but it does not
+make delivery to the application a property of the type: a caller who calls ``finish``
+first, before draining, loses every output the input produced, with the same code shape as
+a caller who drained correctly. A session timeout, a response timeout and a keep-alive due
+are lost exactly as silently as any other output.
+
+The usual remedy for a type that must be exhausted before it yields its result is a
+``drain_with(f)`` taking a closure to call on each output, so that the outcome is returned
+only from the call that ran the closure over every item. ``UDSS_LLR_0011`` forbids that
+shape here: it forbids the session layer to invoke a callback, handler, or caller-supplied
+trait implementation, and a closure parameter on a public method is exactly that. Rust
+also has no linear type — nothing short of `unsafe`, which ``UDSS_LLR_0004``'s crate
+attributes forbid, forces a value to be exhausted before it can be consumed. Between the
+two, ``Reaction`` enforces what a type can enforce here: the order, not the delivery.
+
+What would settle it is a shape in which the rejection outcome is reachable only from a
+drain that actually ran to completion, without a caller-supplied function reaching that
+drain. No such shape is in hand, and the API is not to be contorted chasing one until
+there is. Touches ``UDSS_LLR_0081``, ``UDSS_LLR_0011`` and ``UDSS_LLR_0004``.
 
 Sequencing
 ----------
