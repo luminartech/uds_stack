@@ -1,1 +1,125 @@
 //! Routine — ISO 14229-1:2020 clause 13.
+
+use crate::{ResponseSink, RoutineIdentifier};
+use uds_protocol::NegativeResponseCode;
+
+/// `RoutineControl` (0x31).
+///
+/// ``UDSSVC_ARCH_0007`` — Figure 5 excludes service identifier 0x31 from the centralised
+/// sub-function stage, because a routine's sub-function is meaningful only together with
+/// its routine identifier: whether `stopRoutine` is supported is a property of the
+/// routine, not of the service. **Three methods rather than one with a sub-function
+/// parameter**, so that asymmetry is visible in the type rather than documented. Settles
+/// open question 5.
+pub trait RoutineControl {
+    /// This application's routine identifier enumeration.
+    type Rid: RoutineIdentifier;
+
+    /// ``UDSSVC_ARCH_0033`` — a routine outrunning `tP2_Server` is the paradigm case.
+    const MAY_RESPOND_PENDING: bool;
+
+    /// The longest option record this server accepts.
+    const MAX_OPTION_LEN: usize;
+
+    /// `startRoutine` (0x01).
+    ///
+    /// # Errors
+    ///
+    /// The [`NegativeResponseCode`], including `subFunctionNotSupported` (0x12) where
+    /// this routine cannot be started — a decision no other service's handler makes.
+    fn start(
+        &mut self,
+        routine: Self::Rid,
+        option_record: &[u8],
+        out: &mut ResponseSink<'_>,
+    ) -> impl core::future::Future<Output = Result<(), NegativeResponseCode>>;
+
+    /// `stopRoutine` (0x02).
+    ///
+    /// # Errors
+    ///
+    /// The [`NegativeResponseCode`], including 0x12 where this routine cannot be stopped.
+    fn stop(
+        &mut self,
+        routine: Self::Rid,
+        option_record: &[u8],
+        out: &mut ResponseSink<'_>,
+    ) -> impl core::future::Future<Output = Result<(), NegativeResponseCode>>;
+
+    /// `requestRoutineResults` (0x03).
+    ///
+    /// # Errors
+    ///
+    /// The [`NegativeResponseCode`], including 0x12 where this routine reports none.
+    fn results(
+        &mut self,
+        routine: Self::Rid,
+        option_record: &[u8],
+        out: &mut ResponseSink<'_>,
+    ) -> impl core::future::Future<Output = Result<(), NegativeResponseCode>>;
+}
+
+#[cfg(test)]
+#[allow(
+    clippy::unused_async_trait_impl,
+    reason = "the fixtures never await — that is not a real defect in test code"
+)]
+mod tests {
+    use super::RoutineControl;
+    use crate::{ResponseSink, RoutineIdentifier};
+    use uds_protocol::NegativeResponseCode;
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    struct Rid(u16);
+    impl RoutineIdentifier for Rid {
+        const MAX_STATUS_LEN: usize = 8;
+        fn as_u16(self) -> u16 {
+            self.0
+        }
+        fn from_u16(v: u16) -> Option<Self> {
+            Some(Self(v))
+        }
+    }
+
+    struct Ecu;
+    impl RoutineControl for Ecu {
+        type Rid = Rid;
+        const MAY_RESPOND_PENDING: bool = true;
+        const MAX_OPTION_LEN: usize = 4;
+        async fn start(
+            &mut self,
+            _r: Rid,
+            _o: &[u8],
+            _s: &mut ResponseSink<'_>,
+        ) -> Result<(), NegativeResponseCode> {
+            Ok(())
+        }
+        async fn stop(
+            &mut self,
+            _r: Rid,
+            _o: &[u8],
+            _s: &mut ResponseSink<'_>,
+        ) -> Result<(), NegativeResponseCode> {
+            Err(NegativeResponseCode::SubFunctionNotSupported)
+        }
+        async fn results(
+            &mut self,
+            _r: Rid,
+            _o: &[u8],
+            _s: &mut ResponseSink<'_>,
+        ) -> Result<(), NegativeResponseCode> {
+            Ok(())
+        }
+    }
+
+    /// ``UDSSVC_ARCH_0007`` — Figure 5 excludes 0x31 from the centralised sub-function
+    /// stage, because whether `stopRoutine` is supported is a property of the *routine*,
+    /// not of the service. Three methods make that asymmetry structural: a routine that
+    /// does not support stopping returns 0x12 from `stop` alone, and no other service's
+    /// handler decides 0x12 at all. Settles open question 5.
+    #[test]
+    fn a_routine_answers_0x12_for_itself_and_only_there() {
+        fn assert_three_methods<T: RoutineControl>() {}
+        assert_three_methods::<Ecu>();
+    }
+}

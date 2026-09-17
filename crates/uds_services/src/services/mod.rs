@@ -29,6 +29,9 @@ pub mod transfer;
 // until Tasks 8-11 fill them, and re-exporting a type that does not exist is
 // `E0432: unresolved import`. Each of those tasks adds its own line here as it
 // creates the module's contents.
+pub use data::{ReadDataByIdentifier, WriteDataByIdentifier};
+pub use dtc::{ClearDiagnosticInformation, ReadDtcInformation};
+pub use routine::RoutineControl;
 pub use session::{
     CommunicationControl, ControlDtcSetting, DiagnosticSessionControl, EcuReset,
     SessionTiming, TesterPresent,
