@@ -194,6 +194,12 @@ The timer's state
    physical keep-alive each physical channel shall have its own, each supplied under
    ``UDSS_LLR_0042``.
 
+   Opening a physical channel whose parameters state a ``tS3_Client`` reload while the
+   client is in functional keep-alive, where the reload has no meaning, shall be rejected
+   as ``UDSS_LLR_0015`` defines; opening one that states no reload while the client is in
+   physical keep-alive, where this requirement requires one, shall be rejected the same
+   way.
+
    The reload parameter follows the timer. Table 5 states that the ``tS3_Client`` timeout
    value includes the travel time of the message on the network, gateway delays among them,
    and in physical keep-alive each channel's timer serves one point-to-point path whose

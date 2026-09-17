@@ -46,6 +46,10 @@ pub enum Cause {
     RepeatCountSpent,
     /// ``UDSS_LLR_0178`` — a functional channel has not finished receiving.
     ResponseStillArriving,
+    /// ``UDSS_LLR_0152`` — a physical channel opened with a `tS3_Client` reload while the
+    /// client is in functional keep-alive, where the reload has no meaning, or opened
+    /// with none while the client is in physical keep-alive, where one is required.
+    S3ClientReloadMismatch,
 }
 
 impl Cause {
@@ -64,11 +68,12 @@ impl Cause {
             Self::SpacingTimerRunning => 9,
             Self::RepeatCountSpent => 10,
             Self::ResponseStillArriving => 11,
+            Self::S3ClientReloadMismatch => 12,
         }
     }
 
     /// Every cause, in bit order, for iteration.
-    const ALL: [Self; 12] = [
+    const ALL: [Self; 13] = [
         Self::NoSuchChannel,
         Self::DuplicateChannelAddressing,
         Self::AssociationOutstanding,
@@ -81,6 +86,7 @@ impl Cause {
         Self::SpacingTimerRunning,
         Self::RepeatCountSpent,
         Self::ResponseStillArriving,
+        Self::S3ClientReloadMismatch,
     ];
 }
 

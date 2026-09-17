@@ -87,10 +87,9 @@ pub struct PhysicalChannelParams {
     /// ``UDSS_LLR_0152`` — `tS3_Client`, present in physical keep-alive, where
     /// ``UDSS_LLR_0151`` puts the fact and timer on each physical channel, and absent in
     /// functional keep-alive, where no requirement gives a physical channel's `tS3_Client`
-    /// a meaning. See the open questions page for the residual this leaves: the client's
-    /// keep-alive mode is not reflected in this type, so neither a `Some` here in
-    /// functional keep-alive nor a `None` in physical keep-alive is itself rejected by any
-    /// requirement.
+    /// a meaning. Opening a channel where this disagrees with the client's keep-alive mode
+    /// is rejected under [`crate::Cause::S3ClientReloadMismatch`], as ``UDSS_LLR_0152``
+    /// requires.
     pub s3_client: Option<u32>,
 }
 

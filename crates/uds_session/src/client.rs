@@ -324,7 +324,9 @@ impl<const PHYS: usize, const FUNC: usize, const R: usize> Client<PHYS, FUNC, R>
     /// `addressing` forms with [`TaType::Physical`], until it is withdrawn.
     /// ``UDSS_LLR_0122`` rejects an addressing equal to an existing channel's. Opening
     /// supplies this channel's parameters, per ``UDSS_LLR_0042``. Rejected where no
-    /// physical slot is free.
+    /// physical slot is free, and rejected under [`crate::Cause::S3ClientReloadMismatch`]
+    /// where ``params.s3_client`` disagrees with the client's keep-alive mode, as
+    /// ``UDSS_LLR_0152`` requires.
     ///
     /// `addressing` carries no `ta_type`: this method supplies
     /// [`TaType::Physical`] itself, so a channel opened here can never disagree with
