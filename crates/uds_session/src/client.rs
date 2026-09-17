@@ -399,7 +399,9 @@ impl<const PHYS: usize, const FUNC: usize, const R: usize> Client<PHYS, FUNC, R>
     /// ``UDSS_LLR_0043`` permits it at any time; ``UDSS_LLR_0134`` rejects a setting
     /// naming a channel the client does not have. Its wrong-kind limb needs no check
     /// here: `channel` is a [`PhysicalChannelId`], so this can never name a functional
-    /// channel.
+    /// channel. Setting [`PhysicalChannelParameter::S3Client`] to a value while the client
+    /// is in functional keep-alive, where the channel's reload has no meaning, is rejected
+    /// under [`crate::Cause::S3ClientReloadMismatch`], as ``UDSS_LLR_0152`` requires.
     pub fn set_physical_parameter(
         &mut self,
         now: Timestamp,
@@ -433,6 +435,29 @@ impl<const PHYS: usize, const FUNC: usize, const R: usize> Client<PHYS, FUNC, R>
         )]
         {
             todo!("UDSS_LLR_0043, 0134: {now:?} {channel:?} {parameter:?}")
+        }
+    }
+
+    /// Set the client-wide `tS3_Client` reload of functional keep-alive.
+    ///
+    /// ``UDSS_LLR_0040`` puts protocol-parameter setting in the service interface;
+    /// ``UDSS_LLR_0042`` gives this reload no default, ``UDSS_LLR_0152`` its one supply
+    /// point per mode; ``UDSS_LLR_0043`` permits setting it again at any time. In physical
+    /// keep-alive there is no client-wide reload to set, so the call is rejected under
+    /// [`crate::Cause::S3ClientReloadMismatch`], as ``UDSS_LLR_0152`` requires: the same
+    /// cause as a physical channel's own mismatch, since both are a reload disagreeing
+    /// with the client's keep-alive mode.
+    pub fn set_keep_alive_reload(
+        &mut self,
+        now: Timestamp,
+        s3_client: u32,
+    ) -> ClientReaction<'_, 'static> {
+        #[allow(
+            clippy::todo,
+            reason = "API stub; behaviour lands with its requirement"
+        )]
+        {
+            todo!("UDSS_LLR_0040, 0042, 0043, 0152: {now:?} {s3_client:?}")
         }
     }
 

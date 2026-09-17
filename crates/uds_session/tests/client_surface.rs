@@ -91,6 +91,7 @@ fn every_client_entry_point(
         ch_func,
         FunctionalChannelParameter::Spacing(70),
     ));
+    drop(client.set_keep_alive_reload(now, 2_000));
     drop(client.reset_channel(now, ch_func.into()));
     drop(client.release_keep_alive(now, ch_phys.into()));
     drop(client.s_data_req(
