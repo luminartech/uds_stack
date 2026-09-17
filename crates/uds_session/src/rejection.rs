@@ -14,8 +14,9 @@
 /// One variant per rejecting requirement that remains expressible. The requirements this
 /// crate's types discharge by construction — ``UDSS_LLR_0030``, ``UDSS_LLR_0031``,
 /// ``UDSS_LLR_0054``, ``UDSS_LLR_0066``, ``UDSS_LLR_0067``, ``UDSS_LLR_0068``,
-/// ``UDSS_LLR_0070``, ``UDSS_LLR_0071`` and part of ``UDSS_LLR_0072`` — have no variant
-/// here, because an input that triggers them cannot be written.
+/// ``UDSS_LLR_0070``, ``UDSS_LLR_0071``, part of ``UDSS_LLR_0072`` and part of
+/// ``UDSS_LLR_0134`` — have no variant here, because an input that triggers them cannot
+/// be written.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum Cause {
@@ -45,9 +46,6 @@ pub enum Cause {
     RepeatCountSpent,
     /// ``UDSS_LLR_0178`` — a functional channel has not finished receiving.
     ResponseStillArriving,
-    /// ``UDSS_LLR_0134`` — a per-channel parameter setting naming a channel of the wrong
-    /// kind: a physical parameter naming a functional channel, or the reverse.
-    WrongChannelKind,
 }
 
 impl Cause {
@@ -66,12 +64,11 @@ impl Cause {
             Self::SpacingTimerRunning => 9,
             Self::RepeatCountSpent => 10,
             Self::ResponseStillArriving => 11,
-            Self::WrongChannelKind => 12,
         }
     }
 
     /// Every cause, in bit order, for iteration.
-    const ALL: [Self; 13] = [
+    const ALL: [Self; 12] = [
         Self::NoSuchChannel,
         Self::DuplicateChannelAddressing,
         Self::AssociationOutstanding,
@@ -84,7 +81,6 @@ impl Cause {
         Self::SpacingTimerRunning,
         Self::RepeatCountSpent,
         Self::ResponseStillArriving,
-        Self::WrongChannelKind,
     ];
 }
 

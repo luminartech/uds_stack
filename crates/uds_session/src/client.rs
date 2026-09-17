@@ -111,21 +111,56 @@ impl<const R: usize> FunctionalSlot<R> {
     };
 }
 
-/// Identifies a channel of this client.
+/// Identifies a physical channel of this client.
 ///
-/// ``UDSS_LLR_0121`` — returned when the caller opens a channel, valid until the caller
-/// withdraws it. A channel is of either kind, physical or functional; the client itself
-/// knows which of its two arrays a given id belongs to, so the caller need not track
-/// which array it came from.
-///
-/// The identifier must distinguish the two arrays: `PHYS` and `FUNC` each index from
-/// zero independently, so a raw index alone would collide between a physical and a
-/// functional channel, and the representation has to carry the kind alongside the index
-/// to tell them apart. There is no ordering across the two arrays for the same reason an
-/// index alone would collide, so `PartialOrd` and `Ord` are not derived; nothing needs
-/// them.
+/// ``UDSS_LLR_0121`` — returned when the caller opens one, valid until it is withdrawn.
+/// `PHYS` indexes from zero independently of `FUNC`, so this carries no ordering across
+/// the two arrays; `PartialOrd` and `Ord` are not derived, since nothing needs them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct ChannelId(u16);
+pub struct PhysicalChannelId(u16);
+
+/// Identifies a functional channel of this client.
+///
+/// ``UDSS_LLR_0121`` — returned when the caller opens one, valid until it is withdrawn.
+/// `FUNC` indexes from zero independently of `PHYS`, so this carries no ordering across
+/// the two arrays; `PartialOrd` and `Ord` are not derived, since nothing needs them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct FunctionalChannelId(u16);
+
+/// Identifies a channel of either kind.
+///
+/// ``UDSS_LLR_0049`` distinguishes the two kinds and this set gives them different
+/// state — ``UDSS_LLR_0139`` a responder table to a functional channel and
+/// ``UDSS_LLR_0151`` a `tS3_Client` to a physical one — so the identity carries the kind.
+/// Operations that act on either kind take this; those that act on one take that kind's
+/// own identity, which is why no setting can name a channel of the wrong kind.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ChannelId {
+    /// A physical channel.
+    Physical(PhysicalChannelId),
+    /// A functional channel.
+    Functional(FunctionalChannelId),
+}
+
+impl From<PhysicalChannelId> for ChannelId {
+    /// Widen a physical channel's identity to either kind's.
+    ///
+    /// ``UDSS_LLR_0121`` — the same channel, named by the identity a kind-agnostic
+    /// method such as [`Client::withdraw_channel`] takes.
+    fn from(id: PhysicalChannelId) -> Self {
+        Self::Physical(id)
+    }
+}
+
+impl From<FunctionalChannelId> for ChannelId {
+    /// Widen a functional channel's identity to either kind's.
+    ///
+    /// ``UDSS_LLR_0121`` — the same channel, named by the identity a kind-agnostic
+    /// method such as [`Client::withdraw_channel`] takes.
+    fn from(id: FunctionalChannelId) -> Self {
+        Self::Functional(id)
+    }
+}
 
 /// The client-wide keep-alive state of functional mode.
 ///
@@ -223,20 +258,21 @@ pub enum ClientOutput<'d> {
     ///
     /// ``UDSS_LLR_0156`` in functional keep-alive, carrying no addressing because the
     /// keep-alive is client-wide; ``UDSS_LLR_0162`` in physical keep-alive, carrying the
-    /// channel. The session layer requests it rather than composing it — it never builds
-    /// a message.
+    /// physical channel. The session layer requests it rather than composing it — it
+    /// never builds a message.
     KeepAliveDue {
-        /// `None` in functional keep-alive; the channel in physical keep-alive.
-        channel: Option<ChannelId>,
+        /// `None` in functional keep-alive; the physical channel in physical keep-alive.
+        channel: Option<PhysicalChannelId>,
     },
     /// A responder was seen that the table has no room for.
     ///
     /// ``UDSS_LLR_0143`` — the client records nothing for it and says so, rather than
     /// silently mistracking it. Where the same `T_Data.ind` also produces an
-    /// [`ClientOutput::Indicate`], this precedes it.
+    /// [`ClientOutput::Indicate`], this precedes it. The table belongs to a functional
+    /// channel alone: ``UDSS_LLR_0139`` gives a physical one no table to overflow.
     Capacity {
-        /// The channel it arrived on.
-        channel: ChannelId,
+        /// The functional channel it arrived on.
+        channel: FunctionalChannelId,
         /// The responder's `S_AI[SA]`.
         sa: Address,
         /// Its `S_AI[AE]`, where `S_Mtype` carries one.
@@ -298,7 +334,7 @@ impl<const PHYS: usize, const FUNC: usize, const R: usize> Client<PHYS, FUNC, R>
         now: Timestamp,
         addressing: ChannelAddressing,
         params: PhysicalChannelParams,
-    ) -> ClientReaction<'_, 'static, ChannelId> {
+    ) -> ClientReaction<'_, 'static, PhysicalChannelId> {
         let ai = addressing.with_ta_type(TaType::Physical);
         #[allow(
             clippy::todo,
@@ -324,7 +360,7 @@ impl<const PHYS: usize, const FUNC: usize, const R: usize> Client<PHYS, FUNC, R>
         now: Timestamp,
         addressing: ChannelAddressing,
         params: FunctionalChannelParams,
-    ) -> ClientReaction<'_, 'static, ChannelId> {
+    ) -> ClientReaction<'_, 'static, FunctionalChannelId> {
         let ai = addressing.with_ta_type(TaType::Functional);
         #[allow(
             clippy::todo,
@@ -359,15 +395,13 @@ impl<const PHYS: usize, const FUNC: usize, const R: usize> Client<PHYS, FUNC, R>
     /// Set a physical channel's protocol parameter.
     ///
     /// ``UDSS_LLR_0043`` permits it at any time; ``UDSS_LLR_0134`` rejects a setting
-    /// naming a channel the client does not have, or naming a functional channel, there
-    /// being no storage of the right shape to carry it in either case
-    /// ([`Cause::WrongChannelKind`] for the second).
-    ///
-    /// [`Cause::WrongChannelKind`]: crate::rejection::Cause::WrongChannelKind
+    /// naming a channel the client does not have. Its wrong-kind limb needs no check
+    /// here: `channel` is a [`PhysicalChannelId`], so this can never name a functional
+    /// channel.
     pub fn set_physical_parameter(
         &mut self,
         now: Timestamp,
-        channel: ChannelId,
+        channel: PhysicalChannelId,
         parameter: PhysicalChannelParameter,
     ) -> ClientReaction<'_, 'static> {
         #[allow(
@@ -382,15 +416,13 @@ impl<const PHYS: usize, const FUNC: usize, const R: usize> Client<PHYS, FUNC, R>
     /// Set a functional channel's protocol parameter.
     ///
     /// ``UDSS_LLR_0043`` permits it at any time; ``UDSS_LLR_0134`` rejects a setting
-    /// naming a channel the client does not have, or naming a physical channel, there
-    /// being no storage of the right shape to carry it in either case
-    /// ([`Cause::WrongChannelKind`] for the second).
-    ///
-    /// [`Cause::WrongChannelKind`]: crate::rejection::Cause::WrongChannelKind
+    /// naming a channel the client does not have. Its wrong-kind limb needs no check
+    /// here: `channel` is a [`FunctionalChannelId`], so this can never name a physical
+    /// channel.
     pub fn set_functional_parameter(
         &mut self,
         now: Timestamp,
-        channel: ChannelId,
+        channel: FunctionalChannelId,
         parameter: FunctionalChannelParameter,
     ) -> ClientReaction<'_, 'static> {
         #[allow(

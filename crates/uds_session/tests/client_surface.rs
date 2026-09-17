@@ -1,10 +1,11 @@
 //! Compile-time checks on the client surface, and the storage wiring a caller must do.
 
 use uds_session::{
-    Address, Ai, ChannelAddressing, ChannelId, Client, ClientRx, ClientTx,
-    ExpectedResponses, FunctionalChannelParameter, FunctionalChannelParams,
-    FunctionalKeepAlive, FunctionalSlot, KeepAliveMode, Mtype, PhysicalChannelParameter,
-    PhysicalChannelParams, PhysicalSlot, Reloads, SResult, Solicitation, TaType, Timestamp,
+    Address, Ai, ChannelAddressing, Client, ClientRx, ClientTx, ExpectedResponses,
+    FunctionalChannelId, FunctionalChannelParameter, FunctionalChannelParams,
+    FunctionalKeepAlive, FunctionalSlot, KeepAliveMode, Mtype, PhysicalChannelId,
+    PhysicalChannelParameter, PhysicalChannelParams, PhysicalSlot, Reloads, SResult,
+    Solicitation, TaType, Timestamp,
 };
 
 /// ``UDSS_LLR_0121`` — a channel exists from the moment the caller opens it.
@@ -37,12 +38,19 @@ fn physical_keep_alive_carries_no_client_wide_storage() {
 /// ``UDSS_LLR_0031`` is discharged by the absence of `completion_report` and by
 /// [`ClientTx`] and [`ClientRx`], neither of which can express the server's kinds.
 ///
-/// `ch` is taken as a parameter, as `server_surface.rs` takes its stub values, rather than
-/// constructed here: `ChannelId` has no public constructor of its own, only the one
-/// [`Client::open_physical_channel`] and [`Client::open_functional_channel`] return, and
-/// those methods are `todo!()`.
+/// `ch_phys` and `ch_func` are taken as parameters, as `server_surface.rs` takes its stub
+/// values, rather than constructed here: neither id has a public constructor of its own,
+/// only the one [`Client::open_physical_channel`] and [`Client::open_functional_channel`]
+/// each return, and those methods are `todo!()`. Each flows to its own kind's setter
+/// directly; a kind-agnostic method takes `.into()` of one or the other, showing both
+/// widen to [`uds_session::ChannelId`].
 #[allow(dead_code, reason = "type-checked, never run")]
-fn every_client_entry_point(client: &mut Client<4, 1, 8>, payload: &[u8], ch: ChannelId) {
+fn every_client_entry_point(
+    client: &mut Client<4, 1, 8>,
+    payload: &[u8],
+    ch_phys: PhysicalChannelId,
+    ch_func: FunctionalChannelId,
+) {
     let now = Timestamp(0);
     let ai = Ai {
         mtype: Mtype::Diag,
@@ -72,11 +80,19 @@ fn every_client_entry_point(client: &mut Client<4, 1, 8>, payload: &[u8], ch: Ch
     let _: Option<Timestamp> = client.next_deadline();
     drop(client.open_physical_channel(now, addressing, physical_params));
     drop(client.open_functional_channel(now, addressing, functional_params));
-    drop(client.withdraw_channel(now, ch));
-    drop(client.set_physical_parameter(now, ch, PhysicalChannelParameter::Spacing(70)));
-    drop(client.set_functional_parameter(now, ch, FunctionalChannelParameter::Spacing(70)));
-    drop(client.reset_channel(now, ch));
-    drop(client.release_keep_alive(now, ch));
+    drop(client.withdraw_channel(now, ch_phys.into()));
+    drop(client.set_physical_parameter(
+        now,
+        ch_phys,
+        PhysicalChannelParameter::Spacing(70),
+    ));
+    drop(client.set_functional_parameter(
+        now,
+        ch_func,
+        FunctionalChannelParameter::Spacing(70),
+    ));
+    drop(client.reset_channel(now, ch_func.into()));
+    drop(client.release_keep_alive(now, ch_phys.into()));
     drop(client.s_data_req(
         now,
         ai,
@@ -87,10 +103,10 @@ fn every_client_entry_point(client: &mut Client<4, 1, 8>, payload: &[u8], ch: Ch
             session: None,
         },
     ));
-    drop(client.t_data_som_ind(now, ch, ai, ClientRx::ResponsePending));
+    drop(client.t_data_som_ind(now, ch_func.into(), ai, ClientRx::ResponsePending));
     drop(client.t_data_ind(
         now,
-        ch,
+        ch_phys.into(),
         ai,
         payload,
         SResult::Ok,

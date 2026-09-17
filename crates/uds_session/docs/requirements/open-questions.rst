@@ -9,8 +9,8 @@ Every document the set planned is now written, and the server session timer docu
 oldest, has been reworked against the rest. Three of the entries that remain are not
 waiting on a document: one is a question of convention, one a decision about a build-time
 switch that wants the full inventory first, and one a statement that belongs in the
-qualification repository. Two more were raised reviewing the storage-by-value change to
-the public surface, and record a residual left by a type that could have gone further and
+qualification repository. One more was raised reviewing the storage-by-value change to
+the public surface, and records a residual left by a type that could have gone further and
 did not.
 
 A question closes by being answered in a requirement, not here. When that happens the
@@ -146,24 +146,6 @@ already type ``PHYS``, ``FUNC`` and ``R`` are the closest precedent for moving i
 type; whether that is worth the extra generic parameter, and what it would do to every
 signature that currently reads simply `Client<PHYS, FUNC, R>`, is not yet decided. Touches
 ``UDSS_LLR_0042``, ``UDSS_LLR_0149``, ``UDSS_LLR_0151`` and ``UDSS_LLR_0152``.
-
-Would typed channel ids discharge ``UDSS_LLR_0134``'s wrong-kind rejection by construction?
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-``set_physical_parameter`` and ``set_functional_parameter`` each take a ``ChannelId`` and
-``UDSS_LLR_0134`` now rejects one naming the other kind's channel. A ``PhysicalChannelId``
-and ``FunctionalChannelId`` split, one per opening method's return type, would make that
-setting unwritable instead of rejected, the same move ``UDSS_LLR_0121``'s addressing
-split already makes for a channel's ``S_AI[TAtype]``.
-
-It was not taken here because a single ``ChannelId`` is not only the setters' currency:
-``ClientOutput::Transmit``, ``Indicate`` and ``Capacity`` each carry one with no separate
-case per kind, and ``withdraw_channel``, ``reset_channel`` and ``release_keep_alive`` are
-kind-agnostic by ``UDSS_LLR_0125``, ``UDSS_LLR_0180`` and ``UDSS_LLR_0184`` and take a
-plain ``ChannelId`` for that reason. A split would need an enum over the two id types
-wherever a channel of either kind is named, in exchange for removing one rejection cause
-from the two per-channel setters alone. Touches ``UDSS_LLR_0121``, ``UDSS_LLR_0125``,
-``UDSS_LLR_0134``, ``UDSS_LLR_0180`` and ``UDSS_LLR_0184``.
 
 Sequencing
 ----------

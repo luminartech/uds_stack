@@ -68,6 +68,7 @@
 //! | ``UDSS_LLR_0070`` | [`ClientTx`]'s expected count is a required field |
 //! | ``UDSS_LLR_0071`` | `Solicitation` is a required field on a final response |
 //! | ``UDSS_LLR_0072`` (in part) | the classification enums admit no other form |
+//! | ``UDSS_LLR_0134`` (wrong-kind limb) | the setters each require that kind's own id |
 //! | ``UDSS_LLR_0151``, ``UDSS_LLR_0152`` | a functional channel states no `s3_client` |
 //!
 //! [`Reaction::finish`]: reaction::Reaction::finish
@@ -92,8 +93,9 @@ pub use classification::{
     Solicitation,
 };
 pub use client::{
-    ChannelId, Client, ClientOutput, ClientReaction, FunctionalKeepAlive, FunctionalSlot,
-    KeepAliveMode, PhysicalSlot, ResponderSlot,
+    ChannelId, Client, ClientOutput, ClientReaction, FunctionalChannelId,
+    FunctionalKeepAlive, FunctionalSlot, KeepAliveMode, PhysicalChannelId, PhysicalSlot,
+    ResponderSlot,
 };
 pub use params::{
     ChannelReload, FunctionalChannelParameter, FunctionalChannelParams,

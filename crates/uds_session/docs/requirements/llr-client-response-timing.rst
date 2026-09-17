@@ -455,16 +455,19 @@ The response window
    A setting of a per-channel parameter that identifies a channel the client does not have
    shall be rejected as ``UDSS_LLR_0015`` defines, and so shall a physical channel
    parameter naming a functional channel or a functional channel parameter naming a
-   physical channel.
+   physical channel. An interface in which a per-channel setting cannot name a channel of
+   the wrong kind satisfies that limb without a check.
 
    Rationale: a parameter attached to a channel that does not exist has no storage to
    carry it, so the setting cannot be honoured; ``UDSS_LLR_0015`` is what a rejection means
    throughout this set, and without a requirement naming it here an implementation could
    as easily discard such a setting silently as report it. A channel of the wrong kind
    does exist, so that alone would not trigger the first sentence: a physical channel
-   parameter has no meaning for a functional channel and the reverse, so a setting naming
-   the wrong kind is rejected for the same reason as one naming no channel at all — there
-   is no storage of the right shape to carry it.
+   parameter has no meaning for a functional channel and the reverse, so the wrong-kind
+   setting needs the same rejection, for the same reason — there is no storage of the
+   right shape to carry it — unless the setter's own parameter is typed to that channel's
+   kind, in which case the setting cannot be written at all and there is nothing left to
+   reject, ``UDSS_LLR_0027``'s idiom for a mandatory parameter.
 
 .. llr:: The response timer starts on confirmation of a request expecting a response
    :id: UDSS_LLR_0135

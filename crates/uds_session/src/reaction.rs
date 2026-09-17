@@ -20,8 +20,8 @@ use core::marker::PhantomData;
 /// The outputs of one input, and its outcome.
 ///
 /// `'s` borrows the session, `'d` the input's payload, `O` is the role's output type and
-/// `T` what acceptance yields — [`crate::ChannelId`] for `open_physical_channel` and
-/// `open_functional_channel`, `()` elsewhere.
+/// `T` what acceptance yields — [`crate::PhysicalChannelId`] for `open_physical_channel`,
+/// [`crate::FunctionalChannelId`] for `open_functional_channel`, `()` elsewhere.
 ///
 /// Dropping a `Reaction` without draining it discards outputs the application needed,
 /// which is why the type is `#[must_use]`.
