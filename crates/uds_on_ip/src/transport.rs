@@ -12,22 +12,40 @@
 use crate::error::Error;
 use crate::mapping::target_of;
 use crate::profile::{Reloads, Timing};
-use uds_session::{Ai, SResult};
+use uds_session::{Ai, SResult, Timestamp};
 
 /// The driver's view of what arrived, or that its deadline passed first.
 ///
 /// Mirrors `uds_services::TransportEvent` exactly; `mapping::DoIpEvent`'s
 /// other two cases — a periodic response and a connection close — are handled
 /// inside this module and do not cross the seam.
-#[derive(Debug)]
-pub enum TransportEvent<'a> {
-    /// A complete inbound message.
+///
+/// # Why this carries no lifetime
+///
+/// An earlier shape was `TransportEvent<'a>` with `DataInd` holding
+/// `data: &'a [u8]`, returned from `next_event(&mut self, ..)`. That ties the
+/// event's lifetime to the transport's `&mut self`, so holding the request
+/// bytes holds the transport mutably borrowed and
+/// [`t_data_req`](DoIpTransport::t_data_req) can never be called — the server
+/// could never answer the request it had just received. It is not a corner
+/// case: every inbound path reaches it, because the decoded request borrows
+/// the bytes and the handler writes its response while those borrows are live.
+///
+/// Reported by `uds_services` on 2026-09-17 and fixed here by having
+/// [`next_event`](DoIpTransport::next_event) fill a buffer the caller owns.
+/// The borrow ends when the call returns, so this type is `'static` and the
+/// offending lifetime does not exist.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum TransportEvent {
+    /// A complete inbound message, written into the buffer the caller passed
+    /// to [`next_event`](DoIpTransport::next_event).
     DataInd {
         /// Addressing, with the responder's `S_AI[SA]` — the only way to tell
         /// functional responses apart.
         ai: Ai,
-        /// The UDS payload.
-        data: &'a [u8],
+        /// How many bytes of the caller's buffer the payload occupies. The
+        /// payload is that buffer's first `len` bytes.
+        len: usize,
     },
     /// The outcome of a requested transmission.
     ///
@@ -88,8 +106,16 @@ impl<S> DoIpTransport<S> {
         }
     }
 
-    /// Record this entity's own *Max. data size*, learned from its
-    /// configuration or from its entity status response.
+    /// Record this entity's own *Max. data size* — what it advertises in the
+    /// ISO 13400-2:2019 Table 11 entity status response.
+    ///
+    /// MDS is "the maximum size of one logical **request** that this `DoIP`
+    /// entity can process", which is precisely the length of the buffer the
+    /// driver passes to [`next_event`](Self::next_event): a request larger than
+    /// that buffer cannot be received, whatever this entity claims. The driver
+    /// derives that size from the services it assembled and reports it here, so
+    /// the advertised value and the buffer that must hold the request cannot
+    /// disagree.
     pub fn set_inbound_max(&mut self, max: Option<usize>) {
         self.inbound_max = max;
     }
@@ -128,9 +154,21 @@ impl<S> DoIpTransport<S> {
         self.timing.reloads
     }
 
-    /// Monotonic milliseconds, 32-bit and wrapping.
+    /// The current time.
+    ///
+    /// [`Timestamp`] rather than a bare `u32`: it is a newtype over exactly
+    /// that `u32`, and it carries `interval_since`, the modulo-2³² subtraction
+    /// `UDSS_LLR_0019` requires. Typing the clock this way means the value
+    /// `uds_session`'s `next_deadline` returns can be handed straight back to
+    /// [`next_event`](Self::next_event) with no arithmetic on either side of
+    /// the seam.
+    ///
+    /// This is the same argument `profile` already makes for keeping
+    /// milliseconds rather than a `Duration`, one step further: carrying a bare
+    /// `u32` where a `Timestamp` is meant leaves the conversion implicit rather
+    /// than absent.
     #[must_use]
-    pub fn now_ms(&self) -> u32 {
+    pub fn now(&self) -> Timestamp {
         todo!("clock source is the socket adapter's; see design doc decision 1")
     }
 
@@ -149,23 +187,39 @@ impl<S> DoIpTransport<S> {
         todo!("REQ 4.3 Table 4 — send as a DoIP diagnostic message")
     }
 
-    /// The next inbound event, or [`TransportEvent::Deadline`] when
-    /// `deadline_ms` passes first.
+    /// The next inbound event, or [`TransportEvent::Deadline`] when `deadline`
+    /// passes first.
     ///
-    /// The deadline is the session layer's `next_deadline_ms`, so this
-    /// transport never invents one.
+    /// An inbound payload is written into `buffer` and reported as
+    /// [`TransportEvent::DataInd`]'s `len`; the caller reads
+    /// `&buffer[..len]`. `deadline` is the session layer's `next_deadline`, so
+    /// this transport never invents one.
+    ///
+    /// # Why the caller supplies the buffer
+    ///
+    /// So that the returned event borrows nothing from `self`. See
+    /// [`TransportEvent`] for the defect that shape had. It also means this
+    /// crate holds no inbound buffer of its own: the `DoIP` header is read into
+    /// a small local array and the payload goes straight into `buffer`, so
+    /// [`mapping::DoIpEvent`](crate::mapping::DoIpEvent) can keep borrowing
+    /// because it never crosses the seam.
+    ///
+    /// `buffer`'s length is what this entity can actually receive, and is
+    /// therefore the value it should advertise as its ISO 13400-2:2019 Table 11
+    /// *Max. data size* — see [`set_inbound_max`](Self::set_inbound_max).
     ///
     /// # Errors
     ///
     /// [`Error`] if the socket fails.
     #[expect(
         unused_variables,
-        reason = "deadline_ms is unused until next_event's body replaces the todo!() below"
+        reason = "buffer and deadline are unused until next_event's body replaces the todo!()"
     )]
     pub async fn next_event(
         &mut self,
-        deadline_ms: Option<u32>,
-    ) -> Result<TransportEvent<'_>, Error> {
+        buffer: &mut [u8],
+        deadline: Option<Timestamp>,
+    ) -> Result<TransportEvent, Error> {
         todo!("read a DoIP message, mapping::classify it, translate the two seam cases")
     }
 }
@@ -199,5 +253,58 @@ mod tests {
             None,
             "this entity's own MDS says nothing about what the peer will accept"
         );
+    }
+
+    /// The property whose absence made the driver unwritable.
+    ///
+    /// `TransportEvent` previously carried a lifetime borrowed from
+    /// `next_event`'s `&mut self`, so a driver holding the request bytes could
+    /// not call `t_data_req` to answer them. The assertion is the bound, not
+    /// the call — `assert_static` has no body worth running.
+    ///
+    /// Verified by watching it fail: reintroducing a borrowing variant on the
+    /// enum breaks this line's build, because naming `TransportEvent` without a
+    /// lifetime argument stops resolving.
+    ///
+    /// **If you are here because this line failed to compile, do not repair it
+    /// by writing `TransportEvent<'_>`.** In this position `'_` is inferred as
+    /// `'static`, so the bound would be satisfied trivially and the guarantee
+    /// would be gone while the test still passed. The failure means the enum
+    /// regained a lifetime, which is the defect — fix the enum.
+    #[test]
+    fn an_event_borrows_nothing_from_the_transport() {
+        const fn assert_static<T: 'static>() {}
+        assert_static::<super::TransportEvent>();
+    }
+
+    /// `DataInd` reports an extent into the caller's buffer rather than a
+    /// borrow of the transport, so the caller reads `&buffer[..len]`.
+    #[test]
+    fn a_data_indication_indexes_the_callers_buffer() {
+        let buffer = [0xAA_u8; 8];
+        let ai = uds_session::Ai {
+            mtype: uds_session::Mtype::Diag,
+            sa: uds_session::Address(0x0E80),
+            ta: uds_session::Address(0x0E00),
+            ta_type: uds_session::TaType::Physical,
+        };
+        let event = super::TransportEvent::DataInd { ai, len: 3 };
+
+        let super::TransportEvent::DataInd { len, .. } = event else {
+            panic!("constructed a DataInd")
+        };
+        assert_eq!(&buffer[..len], &[0xAA, 0xAA, 0xAA]);
+    }
+
+    /// `Timestamp` is what makes the deadline exchangeable across the seam
+    /// without arithmetic: the value `uds_session` reports as a next deadline
+    /// goes straight back into `next_event`, and `interval_since` carries
+    /// `UDSS_LLR_0019`'s modulo-2³² subtraction so a wrap is not a special
+    /// case at either end.
+    #[test]
+    fn a_deadline_survives_the_wrap_it_is_typed_for() {
+        let before_wrap = uds_session::Timestamp(u32::MAX - 10);
+        let after_wrap = uds_session::Timestamp(5);
+        assert_eq!(after_wrap.interval_since(before_wrap), 16);
     }
 }
