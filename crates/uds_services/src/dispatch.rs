@@ -41,7 +41,10 @@ pub(crate) enum Outcome {
 /// negative response codes on a functionally addressed request, and Annex A.1 names them.
 /// The list is closed: silencing any other would be a server that never reports the
 /// failure it had.
-#[allow(dead_code, reason = "used by tests and the pipeline that will call it")]
+#[allow(
+    dead_code,
+    reason = "no caller until the UDSSVC_ARCH_0042 pipeline lands"
+)]
 pub(crate) const fn suppresses(code: NegativeResponseCode, ai: Ai) -> bool {
     matches!(ai.ta_type, TaType::Functional)
         && matches!(
