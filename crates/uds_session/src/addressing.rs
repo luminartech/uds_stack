@@ -75,6 +75,42 @@ pub struct Ai {
     pub ta_type: TaType,
 }
 
+/// The addressing of a channel, without its ``S_AI[TAtype]``.
+///
+/// ``UDSS_LLR_0121`` identifies a channel by the addressing stated when opening it, and
+/// ``UDSS_LLR_0049`` gives ``S_AI[TAtype]`` two values, physical and functional. A channel
+/// is one or the other because the *method* that opens it says which —
+/// [`crate::Client::open_physical_channel`] and
+/// [`crate::Client::open_functional_channel`] — so this type carries every other part of
+/// the addressing and leaves `ta_type` for [`ChannelAddressing::with_ta_type`] to supply,
+/// making a channel that disagrees with its own opening method unwritable.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct ChannelAddressing {
+    /// ``S_Mtype`` — ``UDSS_LLR_0048``.
+    pub mtype: Mtype,
+    /// ``S_AI[SA]`` — ``UDSS_LLR_0051``.
+    pub sa: Address,
+    /// ``S_AI[TA]`` — ``UDSS_LLR_0050``.
+    pub ta: Address,
+}
+
+impl ChannelAddressing {
+    /// The full addressing this channel addressing forms with a given ``S_AI[TAtype]``.
+    ///
+    /// ``UDSS_LLR_0121`` with ``UDSS_LLR_0049``: the caller can see the correspondence
+    /// between a channel's addressing and the [`Ai`] the opening method forms from it, and
+    /// the crate uses this internally to form the [`Ai`] it hands on.
+    #[must_use]
+    pub const fn with_ta_type(self, ta_type: TaType) -> Ai {
+        Ai {
+            mtype: self.mtype,
+            sa: self.sa,
+            ta: self.ta,
+            ta_type,
+        }
+    }
+}
+
 /// Who a peer is.
 ///
 /// ``UDSS_LLR_0044`` — an address and, where ``S_Mtype`` carries one, an address

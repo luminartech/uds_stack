@@ -41,7 +41,7 @@
 //! # let _ = client;
 //! ```
 
-use crate::addressing::{Address, AddressExtension, Ai};
+use crate::addressing::{Address, AddressExtension, Ai, ChannelAddressing, TaType};
 use crate::classification::{ClientRx, ClientTx};
 use crate::params::{
     ChannelReload, FunctionalChannelParameter, FunctionalChannelParams,
@@ -114,7 +114,14 @@ impl<const R: usize> FunctionalSlot<R> {
 /// withdraws it. A channel is of either kind, physical or functional; the client itself
 /// knows which of its two arrays a given id belongs to, so the caller need not track
 /// which array it came from.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+///
+/// The identifier must distinguish the two arrays: `PHYS` and `FUNC` each index from
+/// zero independently, so a raw index alone would collide between a physical and a
+/// functional channel, and the representation has to carry the kind alongside the index
+/// to tell them apart. There is no ordering across the two arrays for the same reason an
+/// index alone would collide, so `PartialOrd` and `Ord` are not derived; nothing needs
+/// them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ChannelId(u16);
 
 /// The client-wide keep-alive state of functional mode.
@@ -273,41 +280,54 @@ impl<const PHYS: usize, const FUNC: usize, const R: usize> Client<PHYS, FUNC, R>
 
     /// Open a physical channel.
     ///
-    /// ``UDSS_LLR_0121`` — the channel exists from this moment, identified by `ai`, until
-    /// it is withdrawn. ``UDSS_LLR_0122`` rejects an addressing equal to an existing
-    /// channel's. Rejected where no physical slot is free.
+    /// ``UDSS_LLR_0121`` — the channel exists from this moment, identified by the [`Ai`]
+    /// `addressing` forms with [`TaType::Physical`], until it is withdrawn.
+    /// ``UDSS_LLR_0122`` rejects an addressing equal to an existing channel's. Opening
+    /// supplies this channel's parameters, per ``UDSS_LLR_0042``. Rejected where no
+    /// physical slot is free.
+    ///
+    /// `addressing` carries no `ta_type`: this method supplies
+    /// [`TaType::Physical`] itself, so a channel opened here can never disagree with
+    /// ``UDSS_LLR_0049`` by carrying [`TaType::Functional`].
     pub fn open_physical_channel(
         &mut self,
         now: Timestamp,
-        ai: Ai,
+        addressing: ChannelAddressing,
         params: PhysicalChannelParams,
     ) -> ClientReaction<'_, 'static, ChannelId> {
+        let ai = addressing.with_ta_type(TaType::Physical);
         #[allow(
             clippy::todo,
             reason = "API stub; behaviour lands with its requirement"
         )]
         {
-            todo!("UDSS_LLR_0121, 0122: {now:?} {ai:?} {params:?}")
+            todo!("UDSS_LLR_0121, 0122, 0042: {now:?} {ai:?} {params:?}")
         }
     }
 
     /// Open a functional channel.
     ///
-    /// ``UDSS_LLR_0121`` and ``UDSS_LLR_0122`` as for a physical channel.
-    /// ``UDSS_LLR_0139`` gives it a responder table of `R` entries. Rejected where no
-    /// functional slot is free.
+    /// ``UDSS_LLR_0121`` and ``UDSS_LLR_0122`` as for a physical channel, the channel
+    /// identified by the [`Ai`] `addressing` forms with [`TaType::Functional`]. Opening
+    /// supplies this channel's parameters, per ``UDSS_LLR_0042``. ``UDSS_LLR_0139`` gives
+    /// it a responder table of `R` entries. Rejected where no functional slot is free.
+    ///
+    /// `addressing` carries no `ta_type`: this method supplies
+    /// [`TaType::Functional`] itself, so a channel opened here can never disagree with
+    /// ``UDSS_LLR_0049`` by carrying [`TaType::Physical`].
     pub fn open_functional_channel(
         &mut self,
         now: Timestamp,
-        ai: Ai,
+        addressing: ChannelAddressing,
         params: FunctionalChannelParams,
     ) -> ClientReaction<'_, 'static, ChannelId> {
+        let ai = addressing.with_ta_type(TaType::Functional);
         #[allow(
             clippy::todo,
             reason = "API stub; behaviour lands with its requirement"
         )]
         {
-            todo!("UDSS_LLR_0121, 0122, 0139: {now:?} {ai:?} {params:?}")
+            todo!("UDSS_LLR_0121, 0122, 0139, 0042: {now:?} {ai:?} {params:?}")
         }
     }
 
@@ -335,7 +355,11 @@ impl<const PHYS: usize, const FUNC: usize, const R: usize> Client<PHYS, FUNC, R>
     /// Set a physical channel's protocol parameter.
     ///
     /// ``UDSS_LLR_0043`` permits it at any time; ``UDSS_LLR_0134`` rejects a setting
-    /// naming a channel the client does not have, there being no storage to carry it.
+    /// naming a channel the client does not have, or naming a functional channel, there
+    /// being no storage of the right shape to carry it in either case
+    /// ([`Cause::WrongChannelKind`] for the second).
+    ///
+    /// [`Cause::WrongChannelKind`]: crate::rejection::Cause::WrongChannelKind
     pub fn set_physical_parameter(
         &mut self,
         now: Timestamp,
@@ -354,7 +378,11 @@ impl<const PHYS: usize, const FUNC: usize, const R: usize> Client<PHYS, FUNC, R>
     /// Set a functional channel's protocol parameter.
     ///
     /// ``UDSS_LLR_0043`` permits it at any time; ``UDSS_LLR_0134`` rejects a setting
-    /// naming a channel the client does not have, there being no storage to carry it.
+    /// naming a channel the client does not have, or naming a physical channel, there
+    /// being no storage of the right shape to carry it in either case
+    /// ([`Cause::WrongChannelKind`] for the second).
+    ///
+    /// [`Cause::WrongChannelKind`]: crate::rejection::Cause::WrongChannelKind
     pub fn set_functional_parameter(
         &mut self,
         now: Timestamp,

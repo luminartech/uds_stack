@@ -1,10 +1,10 @@
 //! Compile-time checks on the client surface, and the storage wiring a caller must do.
 
 use uds_session::{
-    Address, Ai, ChannelId, Client, ClientRx, ClientTx, ExpectedResponses,
-    FunctionalChannelParameter, FunctionalChannelParams, FunctionalKeepAlive,
-    FunctionalSlot, KeepAliveMode, Mtype, PhysicalChannelParameter, PhysicalChannelParams,
-    PhysicalSlot, Reloads, SResult, Solicitation, TaType, Timestamp,
+    Address, Ai, ChannelAddressing, ChannelId, Client, ClientRx, ClientTx,
+    ExpectedResponses, FunctionalChannelParameter, FunctionalChannelParams,
+    FunctionalKeepAlive, FunctionalSlot, KeepAliveMode, Mtype, PhysicalChannelParameter,
+    PhysicalChannelParams, PhysicalSlot, Reloads, SResult, Solicitation, TaType, Timestamp,
 };
 
 /// ``UDSS_LLR_0121`` — a channel exists from the moment the caller opens it.
@@ -50,6 +50,11 @@ fn every_client_entry_point(client: &mut Client<4, 1, 8>, payload: &[u8], ch: Ch
         ta: Address(0x10),
         ta_type: TaType::Physical,
     };
+    let addressing = ChannelAddressing {
+        mtype: Mtype::Diag,
+        sa: Address(0xF1),
+        ta: Address(0x10),
+    };
     let reloads = Reloads {
         default_reload: 50,
         enhanced_reload: 5_000,
@@ -57,7 +62,7 @@ fn every_client_entry_point(client: &mut Client<4, 1, 8>, payload: &[u8], ch: Ch
     let physical_params = PhysicalChannelParams {
         reloads,
         spacing: 60,
-        s3_client: 2_000,
+        s3_client: Some(2_000),
     };
     let functional_params = FunctionalChannelParams {
         reloads,
@@ -65,8 +70,8 @@ fn every_client_entry_point(client: &mut Client<4, 1, 8>, payload: &[u8], ch: Ch
     };
 
     let _: Option<Timestamp> = client.next_deadline();
-    drop(client.open_physical_channel(now, ai, physical_params));
-    drop(client.open_functional_channel(now, ai, functional_params));
+    drop(client.open_physical_channel(now, addressing, physical_params));
+    drop(client.open_functional_channel(now, addressing, functional_params));
     drop(client.withdraw_channel(now, ch));
     drop(client.set_physical_parameter(now, ch, PhysicalChannelParameter::Spacing(70)));
     drop(client.set_functional_parameter(now, ch, FunctionalChannelParameter::Spacing(70)));

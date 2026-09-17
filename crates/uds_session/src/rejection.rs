@@ -45,6 +45,9 @@ pub enum Cause {
     RepeatCountSpent,
     /// ``UDSS_LLR_0178`` — a functional channel has not finished receiving.
     ResponseStillArriving,
+    /// ``UDSS_LLR_0134`` — a per-channel parameter setting naming a channel of the wrong
+    /// kind: a physical parameter naming a functional channel, or the reverse.
+    WrongChannelKind,
 }
 
 impl Cause {
@@ -63,11 +66,12 @@ impl Cause {
             Self::SpacingTimerRunning => 9,
             Self::RepeatCountSpent => 10,
             Self::ResponseStillArriving => 11,
+            Self::WrongChannelKind => 12,
         }
     }
 
     /// Every cause, in bit order, for iteration.
-    const ALL: [Self; 12] = [
+    const ALL: [Self; 13] = [
         Self::NoSuchChannel,
         Self::DuplicateChannelAddressing,
         Self::AssociationOutstanding,
@@ -80,6 +84,7 @@ impl Cause {
         Self::SpacingTimerRunning,
         Self::RepeatCountSpent,
         Self::ResponseStillArriving,
+        Self::WrongChannelKind,
     ];
 }
 

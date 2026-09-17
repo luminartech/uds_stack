@@ -80,7 +80,9 @@ pub mod result;
 pub mod server;
 pub mod time;
 
-pub use addressing::{Address, AddressExtension, Ai, Mtype, PeerIdentity, TaType};
+pub use addressing::{
+    Address, AddressExtension, Ai, ChannelAddressing, Mtype, PeerIdentity, TaType,
+};
 pub use classification::{
     ClientRx, ClientTx, ExpectedResponses, ServerRx, ServerTx, SessionSelection,
     Solicitation,

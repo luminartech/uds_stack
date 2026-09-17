@@ -84,11 +84,14 @@ pub struct PhysicalChannelParams {
     pub reloads: Reloads,
     /// ``UDSS_LLR_0165`` — `tP3_Client_Phys`.
     pub spacing: u32,
-    /// ``UDSS_LLR_0152`` — `tS3_Client`, which physical keep-alive gives to each physical
-    /// channel. A functional channel has none, which is why this field is here and not on
-    /// [`FunctionalChannelParams`]: ``UDSS_LLR_0151`` puts the fact and timer on physical
-    /// channels alone, and splitting the types makes that true by construction.
-    pub s3_client: u32,
+    /// ``UDSS_LLR_0152`` — `tS3_Client`, present in physical keep-alive, where
+    /// ``UDSS_LLR_0151`` puts the fact and timer on each physical channel, and absent in
+    /// functional keep-alive, where no requirement gives a physical channel's `tS3_Client`
+    /// a meaning. See the open questions page for the residual this leaves: the client's
+    /// keep-alive mode is not reflected in this type, so neither a `Some` here in
+    /// functional keep-alive nor a `None` in physical keep-alive is itself rejected by any
+    /// requirement.
+    pub s3_client: Option<u32>,
 }
 
 /// What opening a functional channel supplies.
@@ -149,13 +152,13 @@ mod tests {
         let physical = PhysicalChannelParams {
             reloads,
             spacing: 60,
-            s3_client: 2_000,
+            s3_client: Some(2_000),
         };
         let functional = FunctionalChannelParams {
             reloads,
             spacing: 70,
         };
-        assert_eq!(physical.s3_client, 2_000);
+        assert_eq!(physical.s3_client, Some(2_000));
         assert_eq!(functional.reloads.default_reload, 50);
     }
 
