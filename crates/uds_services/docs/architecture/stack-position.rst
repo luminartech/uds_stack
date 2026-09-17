@@ -415,12 +415,16 @@ seams earn their keep.
 
    T -> D : DoIP diagnostic message
    D -> I : payload bytes + addressing
-   I --> L : next_event → DataInd
+   I --> L : next_event(buffer, deadline)\n→ DataInd { ai, len }
    activate L
-   L -> S : t_data_ind(now_ms, ..)
-   L -> S : poll
-   S --> L : SessionAction::Indicate
-   L -> V : dispatch(ctx, request bytes, sink)
+   L -> S : t_data_ind(now, ai, bytes, ..)
+   S --> L : a reaction (an iterator\nover this input's outputs)
+   loop drain with Iterator::by_ref
+     S --> L : ServerOutput::Indicate { ai, data }
+   end
+   L -> S : finish()
+   S --> L : this input's verdict
+   L -> V : dispatch(request bytes, sink)
    activate V
 
    V -> V : decode, preconditions,\nsub-function, data parameters
@@ -429,26 +433,40 @@ seams earn their keep.
    H --> V : Ok, or a negative response code
    deactivate H
    V -> V : suppression gate
-   V --> L : Responded, or Suppress
+   V --> L : Responded::Yes,\nor Responded::Suppressed
    deactivate V
 
-   alt Responded
-     L -> S : s_data_req(response bytes)
-     L -> S : poll
-     S --> L : SessionAction::Transmit
-     L -> I : t_data_req(ai, bytes)
-     I -> D : response bytes
-     D -> T : DoIP diagnostic message
-   else Suppress
+   alt Responded::Yes
+     L -> S : s_data_req(now, ai, response bytes, ..)
+     S --> L : a reaction
+     loop drain with Iterator::by_ref
+       S --> L : ServerOutput::Transmit { ai, data }
+       L -> I : t_data_req(ai, data)
+       I -> D : response bytes
+       D -> T : DoIP diagnostic message
+     end
+     L -> S : finish()
+     S --> L : accepted, or refused
+   else Responded::Suppressed
      L -> L : send nothing
    end
    deactivate L
    @enduml
 
-The box is the point. Steps 2 through 12 are all inside this crate: it reads the transport,
-turns the session layer's crank, dispatches, and transmits. Nothing calls into it, which is
+The box is the point. Everything between the transport handing up an event and the transport
+being handed bytes back is inside this crate: it reads the transport, turns the session
+layer's crank, dispatches, and transmits. Nothing calls into it, which is
 ``UDSSVC_ARCH_0018``, and session state never arrives as a parameter because this crate holds
-it (``UDSSVC_ARCH_0035``).
+it (``UDSSVC_ARCH_0035``) — which is why ``dispatch`` takes the request bytes and a sink and
+nothing else.
+
+**Two details of the drain are drawn deliberately, because both are load-bearing**
+(``UDSSVC_ARCH_0040``). An input does not return one output: it returns a *reaction*, which
+the driver drains with ``Iterator::by_ref`` and then consumes with ``finish()``, whose value
+is that input's verdict — and a refused submission is exactly what ``UDSSVC_ARCH_0009``'s
+suppression gate needs to know about. And ``t_data_req`` is called from **inside** the drain
+rather than after it, because every ``Transmit`` must reach the transport, not only the last
+one.
 
 An earlier version of this diagram had a binding in the driving position, handing this crate
 bytes and a ``Ctx`` read from ``uds_session``, and taking an ``Outcome`` back. That component

@@ -26,8 +26,11 @@ service outside that range and start the default session unless a programming se
 active. Neither is performed. Nor is the negative case: anything arriving mid-service that
 is *not* an exception is occupancy and owes ``busyRepeatRequest`` (0x21), and a
 ``DataTooLong`` on the concurrent buffer owes the same — the driver's concurrent arm
-currently re-arms the deadline and does nothing else. The classifier is called by nobody.
-See :doc:`dispatch`.
+currently re-arms the deadline and does nothing else. No caller in ``src/`` invokes
+``is_concurrent_exception`` at all; the only call site in the repository is
+``tests/composition.rs``, which exercises it to prove the classifier is reachable. So the
+classification exists and is tested, and nothing in the running server consults it. See
+:doc:`dispatch`.
 
 **2. What does ``A_Mtype`` mean for this crate?** Clause 7.2 defines four formats —
 diagnostics, remote, secure, and secure remote — and Figure 5's optional 0x38 and 0x39

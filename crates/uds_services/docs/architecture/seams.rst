@@ -323,10 +323,15 @@ Response sink
    **The sink is ``awc``'s rather than ``embedded-io``'s, and the difference produces an
    NRC.** A response is written through a sink bounded at the peer's maximum payload where
    one is advertised; an over-long response fails at the write with the counts intact, and
-   this crate turns that counted failure into ``responseTooLong`` (0x14). That settles a
-   question the set had been carrying: the maximum is a transport property this crate does
+   this crate is to turn that counted failure into ``responseTooLong`` (0x14). That settles
+   a question the set had been carrying: the maximum is a transport property this crate does
    not know, but the negative response code is a clause 8.7 outcome that is nobody else's.
    ``embedded-io`` leaves this crate's dependency list entirely.
+
+   **Unbuilt, and stated as such.** The bound exists — ``ResponseSink`` holds it and
+   rejects a write past it — but nothing maps the rejection to 0x14, because the pipeline
+   that would do the mapping is ``UDSSVC_ARCH_0042``'s pass and is ``todo!()`` today. This
+   element describes the arrangement, not behaviour the crate has.
 
    **This element's account of that failure type has now been wrong three times, and the
    count is the point.** The versions, in order:
@@ -469,11 +474,18 @@ The transport seam
    therefore asking about the client's advertisement, not its own, and the two are
    different values belonging to different entities. Collapsing them bounds a response by
    the server's own receive capacity, which is a limit nothing in the standard imposes.
-   The directions are also sourced differently: ``inbound_max`` is this crate's in-flight
-   buffer length handed *down* to the transport to advertise — a number the fold derives, so
-   a transport is told it rather than asked to invent it — while ``outbound_max`` is what
-   the peer advertised, read *up*. ``MAX_PDU`` is a third thing again: a protocol-fixed cap
-   known at compile time, which is why it is an associated const and joins the fold.
+   The directions are also sourced differently: ``inbound_max`` is meant to be this crate's
+   in-flight buffer length handed *down* to the transport to advertise — a number the fold
+   derives, so a transport is told it rather than asked to invent it — while
+   ``outbound_max`` is what the peer advertised, read *up*. ``MAX_PDU`` is a third thing: a
+   protocol-fixed cap known at compile time, which is why it is an associated const and
+   joins the fold.
+
+   **The ``inbound_max`` half of that is unbuilt**, and is marked rather than implied. The
+   trait has only a getter, and nothing in this crate calls it or supplies the number: the
+   driver reads ``outbound_max`` and never mentions ``inbound_max``, so a binding today has
+   to invent the very value this paragraph says it would be told. Closing it needs a route
+   for the crate to *state* the length — the fold knows it — not merely a method for asking.
 
    *``now_ms() -> u32`` became ``now() -> Timestamp``.* Same obligation, a type that carries
    ``UDSS_LLR_0019``'s modular arithmetic with it.

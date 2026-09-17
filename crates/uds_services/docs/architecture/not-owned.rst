@@ -82,7 +82,7 @@ which is a clause 8.7 fact this crate already computes.
 .. uml::
    :align: center
    :caption: A handler that outruns ``tP2_Server``. The handler yielding is what lets the
-             driver reach step 4 at all.
+             driver observe the overrun at all.
 
    @startuml
    autonumber "<b>[0]"
@@ -97,41 +97,55 @@ which is a clause 8.7 fact this crate already computes.
    end box
    participant "slow handler" as H
 
-   L -> V : dispatch(ctx, bytes, sink)
+   L -> V : dispatch(bytes, sink)
    activate V
    V -> H : typed handler call
    activate H
 
    == tP2_Server expires while the handler yields ==
 
-   L -> S : poll
-   S --> L : ResponseOverrun
+   L -> S : tick(now)
+   S --> L : a reaction
+   loop drain with Iterator::by_ref
+     S --> L : ServerOutput::ResponseOverrun
+   end
+   L -> S : finish()
    L -> V : is a 0x78 admissible?
    V --> L : yes — service implemented\nand MAY_RESPOND_PENDING
-   L -> S : s_data_req([7F, sid, 78])
-   L -> S : poll
-   S --> L : SessionAction::Transmit
-   L -> I : t_data_req
-   I -> T : 0x78
+   L -> S : s_data_req(now, ai, [7F, sid, 78],\nServerTx::ResponsePending)
+   S --> L : a reaction
+   loop drain with Iterator::by_ref
+     S --> L : ServerOutput::Transmit { ai, data }
+     L -> I : t_data_req(ai, data)
+     I -> T : 0x78
+   end
+   L -> S : finish()
+   S --> L : accepted, or refused
 
    H --> V : Ok, or a negative response code
    deactivate H
    V -> V : suppression gate,\nresponse-pending submitted
-   V --> L : Responded
+   V --> L : Responded::Yes
    deactivate V
-   L -> I : final response
-   I -> T : final response
-   note right of T
-     Sent even if functionally addressed
-     and the code is one of the five
-     normally silenced.
-   end note
+   L -> S : s_data_req(now, ai, response bytes,\nServerTx::FinalResponse)
+   loop drain with Iterator::by_ref
+     S --> L : ServerOutput::Transmit { ai, data }
+     L -> I : t_data_req(ai, data)
+     I -> T : final response
+     note right of T
+       Sent even if functionally addressed
+       and the code is one of the five
+       normally silenced.
+     end note
+   end
+   L -> S : finish()
    @enduml
 
 The constraint this used to place on a binding's driver now falls on this crate's own loop:
-dispatch must not block it, or the overrun at step 4 is never observed and the response-pending
-it would have prompted is never sent. ``UDSSVC_ARCH_0016``'s asynchronous handler seam is what
-makes that achievable — the handler yields at its await points and the loop keeps draining.
+dispatch must not block it, or the ``ResponseOverrun`` is never observed and the
+response-pending it would have prompted is never sent. ``UDSSVC_ARCH_0016``'s asynchronous
+handler seam is what makes that achievable — the handler yields at its await points and the
+loop keeps draining.
 
 An earlier version of this diagram had a binding driver calling a ``due()`` on this crate and
 receiving an ``offer()`` back. Both were seams to a component that no longer exists; see
