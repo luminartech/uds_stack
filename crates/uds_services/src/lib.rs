@@ -61,3 +61,6 @@ pub use sink::ResponseSink;
 
 pub mod transport;
 pub use transport::{TransportEvent, UdsTransport};
+
+pub mod select;
+pub use select::{Either, Select2, select2};
