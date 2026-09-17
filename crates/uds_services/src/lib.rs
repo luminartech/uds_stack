@@ -71,7 +71,8 @@ pub use identifier::{DataIdentifier, RecordError, RoutineIdentifier};
 pub mod services;
 pub use services::{
     ClearDiagnosticInformation, CommunicationControl, ControlDtcSetting,
-    DiagnosticSessionControl, EcuReset, ReadDataByIdentifier, ReadDtcInformation,
-    Responded, RoutineControl, ServiceSet, SessionTiming, SessionTransition, TesterPresent,
+    DiagnosticSessionControl, EcuReset, KeyVerdict, ReadDataByIdentifier,
+    ReadDtcInformation, Responded, RoutineControl, SecurityAccess, SecurityLevel,
+    SecurityPolicy, ServiceSet, SessionTiming, SessionTransition, TesterPresent,
     WriteDataByIdentifier,
 };

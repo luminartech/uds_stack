@@ -32,6 +32,7 @@ pub mod transfer;
 pub use data::{ReadDataByIdentifier, WriteDataByIdentifier};
 pub use dtc::{ClearDiagnosticInformation, ReadDtcInformation};
 pub use routine::RoutineControl;
+pub use security::{KeyVerdict, SecurityAccess, SecurityLevel, SecurityPolicy};
 pub use session::{
     CommunicationControl, ControlDtcSetting, DiagnosticSessionControl, EcuReset,
     SessionTiming, TesterPresent,
