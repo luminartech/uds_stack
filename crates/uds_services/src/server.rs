@@ -108,8 +108,12 @@ impl<A: ServiceSet, T: UdsTransport, const PEERS: usize> Server<A, T, PEERS> {
             .next_event(&mut in_flight[..], deadline)
             .await?;
         let TransportEvent::DataInd { ai, len } = ev else {
-            // DataTooLong here is a request larger than this entity's MDS; DataConf and
-            // Deadline are handled by ticking. All three are UDSSVC_ARCH_0042 work.
+            // Everything that is not a request is dropped here, and each case is owed
+            // something this stub does not yet do: a DataTooLong at this point exceeds
+            // this entity's own MDS and owes busyRepeatRequest or 0x13; a DataConf must
+            // reach uds_session's t_data_conf; a Deadline outside a handler must reach
+            // tick(); Periodic and Closed have no handler at all. Listed in this task's
+            // report as elided behaviour, not implemented here.
             return Ok(());
         };
 
