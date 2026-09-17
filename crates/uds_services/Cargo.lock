@@ -4,12 +4,7 @@ version = 4
 
 [[package]]
 name = "automotive-wire-codec"
-version = "0.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d3619f2db27c70d93c5390ce2e90482c26c99675a85392271d2bfe07451234f6"
-dependencies = [
- "embedded-io",
-]
+version = "0.4.0"
 
 [[package]]
 name = "bitmask-enum"
@@ -20,12 +15,6 @@ dependencies = [
  "quote",
  "syn 2.0.119",
 ]
-
-[[package]]
-name = "embedded-io"
-version = "0.7.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9eb1aa714776b75c7e67e1da744b81a129b3ff919c8712b5e1b32252c1f07cc7"
 
 [[package]]
 name = "proc-macro2"
@@ -123,7 +112,6 @@ version = "0.1.0"
 dependencies = [
  "automotive-wire-codec",
  "bitmask-enum",
- "embedded-io",
  "serde",
  "thiserror",
 ]
@@ -132,9 +120,14 @@ dependencies = [
 name = "uds_services"
 version = "0.0.0"
 dependencies = [
- "embedded-io",
+ "automotive-wire-codec",
  "uds_protocol",
+ "uds_session",
 ]
+
+[[package]]
+name = "uds_session"
+version = "0.1.0"
 
 [[package]]
 name = "unicode-ident"

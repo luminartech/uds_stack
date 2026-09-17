@@ -12,20 +12,25 @@ categories = ["no-std", "embedded", "network-programming"]
 publish = false                                  # pre-implementation
 
 [dependencies]
-# L1 message codec. The only mandatory dependency: this crate dispatches
-# over uds_protocol's message types and never re-encodes them itself.
+# L1 message codec. This crate dispatches over uds_protocol's message types and
+# never re-encodes them itself.
 uds_protocol = { path = "../uds_protocol", default-features = false }
-embedded-io = { version = "0.7", default-features = false }
+
+# ISO 14229-2 session layer. This crate owns a Server<PEERS> by value and drives
+# it (UDSSVC_ARCH_0040), and speaks its vocabulary on the transport seam.
+uds_session = { path = "../uds_session", default-features = false }
+
+# The I/O vocabulary for the whole stack. Sink is what a handler writes into.
+automotive-wire-codec = { path = "../../automotive_wire_format", default-features = false }
 
 [features]
+# No binding is ever a dependency, in any feature: UDSSVC_ARCH_0002 points the
+# dependency arrow one way and UDSSVC_ARCH_0003 makes bindings additive at the
+# application. No runtime is named either (UDSSVC_ARCH_0030) — an `async fn`
+# implies neither std nor an executor, so a bare-metal target stays reachable.
 default = []
-alloc = ["uds_protocol/alloc", "embedded-io/alloc"]
-std = ["alloc", "uds_protocol/std", "embedded-io/std"]
-# Transport bindings are optional and additive. Each one adapts this crate's
-# typed dispatch onto that binding's byte seam; none of them is a dependency
-# of the dispatch itself. See docs/design.md section 4.
-# doip  = ["dep:uds_on_ip"]
-# docan = ["dep:uds_on_can"]
+alloc = ["uds_protocol/alloc"]
+std = ["alloc", "uds_protocol/std"]
 
 [lints.rust]
 unsafe_code = "forbid"
@@ -34,3 +39,24 @@ missing_debug_implementations = "deny"
 
 [lints.clippy]
 pedantic = { level = "deny", priority = -1 }
+
+# --- Panic freedom -----------------------------------------------------------------
+# A panic in a diagnostic server is an unhandled failure in a safety-related component.
+# `deny` rather than `forbid`: a local `allow` carrying a reviewed justification is a
+# legitimate outcome, silently reaching for `unwrap` is not. `todo` is denied for the
+# same reason it is allowed at each stub site — the allow is the record that a body is
+# outstanding, and it stops being free the moment the lint is off.
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+unreachable = "deny"
+todo = "deny"
+unimplemented = "deny"
+indexing_slicing = "deny"
+
+# --- Arithmetic and conversions ----------------------------------------------------
+# Buffer offsets and response lengths are this crate's arithmetic, and the same source
+# builds for a 32-bit target where a silently truncating cast is a portability defect
+# host tests will not catch.
+arithmetic_side_effects = "deny"
+as_conversions = "deny"

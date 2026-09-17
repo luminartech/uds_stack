@@ -24,10 +24,9 @@
 //!
 //! # Status
 //!
-//! **Pre-implementation.** No behaviour exists yet. The architecture, and the
-//! open questions that must be settled before the shape is fixed, are the
-//! sphinx-needs set under `docs/architecture/`; `docs/design.md` is the earlier
-//! design conversation, superseded in part.
+//! **API stub.** The public surface is complete; behaviour is not. Every entry
+//! point is `todo!()` and carries the architecture element it will satisfy.
+//! `tests/composition.rs` assembles a server against the whole surface.
 //!
 //! # Scope
 //!
@@ -40,16 +39,16 @@
 //! the service; *when* one is due remains the session layer's.
 //!
 //! A handler that knows how to fetch a data identifier has nothing to say
-//! about IP, so the transport binding is an optional feature and the same
-//! typed server works over `DoIP` or CAN.
+//! about IP. A binding is never a feature of this crate — it implements
+//! [`UdsTransport`], and the application names it (`UDSSVC_ARCH_0003`).
 //!
 //! # Design constraints
 //!
 //! `no_std` and allocation-free. A handler writes its response into a
-//! caller-supplied `automotive_wire_codec::Sink` rather than returning a `Vec`,
+//! [`ResponseSink`] this crate owns rather than returning a `Vec`,
 //! and no public type carries a `Vec` or a `String`. This is designed in
 //! rather than deferred: the signatures that make an API alloc-free are the
 //! ones callers depend on, so it cannot be retrofitted later.
 
-#![cfg_attr(not(feature = "std"), no_std)]
+#![no_std]
 #![forbid(unsafe_code)]
