@@ -140,9 +140,12 @@ impl<S> DoIpTransport<S> {
     ///
     /// [`Error`] if the addressing cannot be carried — the two remote message
     /// types have no `DoIP` representation — or if the socket fails.
-    #[allow(unused_variables, clippy::unused_async)]
+    #[expect(
+        unused_variables,
+        reason = "data is unused until t_data_req's body replaces the todo!() below"
+    )]
     pub async fn t_data_req(&mut self, ai: Ai, data: &[u8]) -> Result<(), Error> {
-        let _target = target_of(&ai)?;
+        let _target = target_of(ai)?;
         todo!("REQ 4.3 Table 4 — send as a DoIP diagnostic message")
     }
 
@@ -155,7 +158,10 @@ impl<S> DoIpTransport<S> {
     /// # Errors
     ///
     /// [`Error`] if the socket fails.
-    #[allow(unused_variables, clippy::unused_async)]
+    #[expect(
+        unused_variables,
+        reason = "deadline_ms is unused until next_event's body replaces the todo!() below"
+    )]
     pub async fn next_event(
         &mut self,
         deadline_ms: Option<u32>,

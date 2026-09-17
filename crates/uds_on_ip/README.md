@@ -1,5 +1,10 @@
 # UDS on IP
 
+> **Status: prototype, mid-refactor.** This README describes the superseded
+> implementation retired to `legacy/`. The crate is now a transport below the
+> session layer, with no driver and no runtime dependency — see the crate
+> documentation (`cargo doc --open`) for what it actually provides today.
+
 This crate provides UDS (Unified Diagnostic Services) session management over DoIP (Diagnostics over IP) transport. It serves as the bridge layer between the protocol definition crate [`uds_protocol`](https://github.com/luminartech/uds_protocol) and the transport layer crate [`simple_doip`](https://github.com/luminartech/simple_doip).
 
 ## Motivation

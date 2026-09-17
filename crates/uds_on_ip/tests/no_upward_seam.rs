@@ -44,3 +44,22 @@ fn the_crate_docs_do_not_describe_the_reversed_design() {
         "the driver is above the session layer; this crate is below it"
     );
 }
+
+/// `lib.rs` is not the only file that can claim the reversed design:
+/// `profile.rs`'s module doc made exactly this claim on its own, undetected
+/// by the scan above because that scan only ever reads `lib.rs`.
+///
+/// The banned phrase is scoped to "the crate that sits", not the bare phrase
+/// "above the session layer": `profile::service_ids`'s doc correctly says
+/// "the driver sits above the session layer" when explaining *why* this
+/// crate reads a `T_PDU` rather than an `A_PDU`, and that sentence is true —
+/// the driver (`uds_services`) really is above the session layer. Only a
+/// claim about *this crate's own* position is the defect.
+#[test]
+fn profile_docs_do_not_describe_the_reversed_design() {
+    let source = include_str!("../src/profile.rs");
+    assert!(
+        !source.contains("the crate that sits"),
+        "the crate is wholly below the session layer; profile.rs is no exception"
+    );
+}

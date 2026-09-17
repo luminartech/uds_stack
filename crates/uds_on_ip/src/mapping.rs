@@ -28,13 +28,13 @@ pub enum MappingError {
 
 /// ISO 14229-2 `S_TA` to ISO 13400-2 logical address.
 #[must_use]
-pub fn to_logical(addr: Address) -> simple_doip::LogicalAddress {
+pub const fn to_logical(addr: Address) -> simple_doip::LogicalAddress {
     simple_doip::LogicalAddress(addr.0)
 }
 
 /// ISO 13400-2 logical address to ISO 14229-2 `S_TA`.
 #[must_use]
-pub fn from_logical(addr: simple_doip::LogicalAddress) -> Address {
+pub const fn from_logical(addr: simple_doip::LogicalAddress) -> Address {
     Address(addr.0)
 }
 
@@ -65,7 +65,7 @@ pub const PERIODIC_RESPONSE_PAYLOAD_TYPE: u16 = 0x8004;
 ///
 /// [`MappingError::AddressExtensionUnsupported`] for the two remote message
 /// types.
-pub fn target_of(ai: &Ai) -> Result<simple_doip::LogicalAddress, MappingError> {
+pub fn target_of(ai: Ai) -> Result<simple_doip::LogicalAddress, MappingError> {
     match ai.mtype {
         Mtype::Diag | Mtype::SecureDiag => Ok(to_logical(ai.ta)),
         Mtype::RDiag { .. } | Mtype::SecureRDiag { .. } => {
@@ -121,6 +121,11 @@ pub enum DoIpEvent<'a> {
 
 /// Classify an inbound `DoIP` message.
 ///
+/// `None` for a payload type this crate assigns no [`DoIpEvent`] meaning —
+/// one of ISO 13400-2's non-diagnostic payload types (routing activation,
+/// vehicle identification, and so on), which belong to `simple_doip`'s own
+/// connection handling rather than to a UDS exchange.
+///
 /// # Prototype gap — `0x8004` is currently unrepresentable
 ///
 /// `simple_doip`'s `Payload` models exactly the payload types ISO 13400-2
@@ -128,7 +133,10 @@ pub enum DoIpEvent<'a> {
 /// [`DoIpEvent::Periodic`] cannot be constructed. This needs no UDS semantics
 /// in `simple_doip` — only a variant meaning "a payload type I do not model,
 /// and here are its bytes". Named in that repository's brief §5.
-#[allow(unused_variables)]
+#[expect(
+    unused_variables,
+    reason = "message is unused until classify's body replaces the todo!() above"
+)]
 #[must_use]
 pub fn classify<'a>(message: &simple_doip::messages::Message<'a>) -> Option<DoIpEvent<'a>> {
     todo!("classify Payload into a DoIpEvent; blocked on the 0x8004 gap above")
@@ -155,11 +163,11 @@ mod tests {
     fn a_remote_message_type_is_rejected() {
         let ae = AddressExtension(0x0001);
         assert_eq!(
-            target_of(&ai_with(Mtype::RDiag { ae })),
+            target_of(ai_with(Mtype::RDiag { ae })),
             Err(MappingError::AddressExtensionUnsupported)
         );
         assert_eq!(
-            target_of(&ai_with(Mtype::SecureRDiag { ae })),
+            target_of(ai_with(Mtype::SecureRDiag { ae })),
             Err(MappingError::AddressExtensionUnsupported)
         );
     }
@@ -167,11 +175,11 @@ mod tests {
     #[test]
     fn a_local_message_type_maps_to_its_target() {
         assert_eq!(
-            target_of(&ai_with(Mtype::Diag)).map(|a| a.0),
+            target_of(ai_with(Mtype::Diag)).map(|a| a.0),
             Ok(0x0E80)
         );
         assert_eq!(
-            target_of(&ai_with(Mtype::SecureDiag)).map(|a| a.0),
+            target_of(ai_with(Mtype::SecureDiag)).map(|a| a.0),
             Ok(0x0E80)
         );
     }

@@ -1,9 +1,9 @@
 //! Application layer: the `UDSonIP` profile.
 //!
-//! ISO 14229-5:2022 clause 8, REQ 7.1–7.20. This is the half of the crate that
-//! sits *above* the session layer, and it is where the genuinely IP-specific
-//! behaviour lives: how a UDS message is framed into a `DoIP` diagnostic message,
-//! and what the transport must do around particular services.
+//! ISO 14229-5:2022 clause 8, REQ 7.1–7.20. This is the clause 8 profile the
+//! transport applies, and it is where the genuinely IP-specific behaviour
+//! lives: how a UDS message is framed into a `DoIP` diagnostic message, and
+//! what the transport must do around particular services.
 
 /// The `tP_Client` reload pair this transport dictates.
 ///
@@ -151,7 +151,10 @@ pub enum PostExchange {
 /// close as following a *positive* response. Treating a negative response as
 /// `Continue` is the reading taken here and is a candidate open question for
 /// the requirement set.
-#[allow(unused_variables)]
+#[expect(
+    unused_variables,
+    reason = "request and response are unused until post_exchange's body replaces the todo!() above"
+)]
 #[must_use]
 pub fn post_exchange(request: &[u8], response: &[u8]) -> PostExchange {
     todo!("REQ 7.8 / REQ 7.10 — key on service_ids and response polarity")
@@ -162,7 +165,10 @@ pub fn post_exchange(request: &[u8], response: &[u8]) -> PostExchange {
 /// ISO 14229-5:2022 REQ 7.17 requires that the record referenced by a periodic
 /// data identifier not exceed the length limit of a non-segmented `UDSonIP`
 /// message.
-#[allow(unused_variables)]
+#[expect(
+    unused_variables,
+    reason = "len is unused until periodic_record_within_limit's body replaces the todo!() above"
+)]
 #[must_use]
 pub fn periodic_record_within_limit(len: usize) -> bool {
     todo!("REQ 7.17 — bound against the non-segmented UDSonIP message limit")
@@ -190,12 +196,21 @@ mod tests {
     /// Design doc §6.2 — spacing is ISO 14229-2 clause 9.7 client policy, on
     /// which a transport has no view, so it is not part of what
     /// `channel_timing` supplies.
+    ///
+    /// The assertion is the type annotations on the two bindings below, not a
+    /// runtime check: `Timing` is `Copy`, so an `assert_eq!` against the
+    /// source field would compare a value to itself and could never fail.
+    /// This fails to *compile* instead, the moment `Timing` loses the split
+    /// between `reloads` and `spacing` or either field retypes.
+    #[expect(
+        unused_variables,
+        reason = "reloads and spacing exist only for their type annotations to type-check; \
+                  see the doc comment above"
+    )]
     #[test]
     fn spacing_is_separable_from_the_reloads() {
         let timing = Timing::default();
         let reloads: Reloads = timing.reloads;
         let spacing: Spacing = timing.spacing;
-        assert_eq!(reloads, timing.reloads);
-        assert_eq!(spacing, timing.spacing);
     }
 }
