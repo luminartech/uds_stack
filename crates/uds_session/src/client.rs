@@ -20,7 +20,10 @@
 //! `tS3_Client` timer and gives a functional channel none. Splitting [`PhysicalSlot`] from
 //! [`FunctionalSlot`] keeps both facts true by construction rather than by a runtime
 //! check, and it means a physical channel is never charged storage for a table it must
-//! not keep.
+//! not keep. That is earned rather than assumed: [`Client::open_physical_channel`] and
+//! [`Client::open_functional_channel`] each take a [`crate::ChannelAddressing`], which
+//! carries no `ta_type`, and each supplies ``UDSS_LLR_0049``'s matching value itself, so a
+//! channel stored in one array can never carry the other kind's `S_AI[TAtype]`.
 //!
 //! `R` sizes every functional channel's responder table alike; a client with no
 //! functional channels at all sets `FUNC` to `0` and pays no storage for one.
@@ -246,10 +249,11 @@ pub type ClientReaction<'s, 'd, T = ()> = Reaction<'s, 'd, ClientOutput<'d>, T>;
 
 /// The session layer in the client role.
 ///
-/// ``UDSS_LLR_0008`` — all state lives here, supplied by the caller at creation and at
-/// each `open_channel`. The arrays split by channel kind because the two kinds hold
-/// different state: ``UDSS_LLR_0139`` gives a responder table to functional channels
-/// alone, and ``UDSS_LLR_0151`` a `tS3_Client` to physical ones alone.
+/// ``UDSS_LLR_0008`` — all state lives here: the channel storage and keep-alive mode are
+/// supplied by the caller at creation, and opening a channel supplies that channel's own
+/// parameters. The arrays split by channel kind because the two kinds hold different
+/// state: ``UDSS_LLR_0139`` gives a responder table to functional channels alone, and
+/// ``UDSS_LLR_0151`` a `tS3_Client` to physical ones alone.
 #[derive(Debug)]
 pub struct Client<const PHYS: usize, const FUNC: usize, const R: usize> {
     _physical: [PhysicalSlot; PHYS],
@@ -565,8 +569,10 @@ impl<const PHYS: usize, const FUNC: usize, const R: usize> Client<PHYS, FUNC, R>
 
     /// The earliest timestamp at which a supplied timestamp could expire a timer.
     ///
-    /// ``UDSS_LLR_0080`` — see [`crate::Server::next_deadline`]. On a client this covers
-    /// the response, spacing and session timers of every channel.
+    /// ``UDSS_LLR_0080`` — see [`crate::Server::next_deadline`]: the earliest deadline of
+    /// any timer currently running, on a client the response, spacing and session timers
+    /// of every channel, and, in functional keep-alive, the client-wide `tS3_Client` of
+    /// ``UDSS_LLR_0150``, which belongs to no channel and which ``UDSS_LLR_0156`` expires.
     #[must_use]
     pub fn next_deadline(&self) -> Option<Timestamp> {
         #[allow(

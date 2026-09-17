@@ -15,7 +15,11 @@
 //! ``UDSS_LLR_0139`` gives a functional channel a responder table and a physical channel
 //! none, and ``UDSS_LLR_0151`` gives a physical channel a `tS3_Client` timer and a
 //! functional channel none. Splitting the arrays keeps both facts true by construction and
-//! stops a physical channel being charged storage for a table it must not keep.
+//! stops a physical channel being charged storage for a table it must not keep. The split
+//! agrees with ``UDSS_LLR_0049``'s `S_AI[TAtype]` because
+//! [`Client::open_physical_channel`] and [`Client::open_functional_channel`] each supply
+//! the matching `ta_type` themselves from a [`ChannelAddressing`] that cannot state the
+//! other one, so a channel stored in one array can never carry the other kind's addressing.
 //!
 //! `unsafe` is forbidden crate-wide, and the lint configuration in `Cargo.toml` applies to
 //! every target rather than to the crate root alone.

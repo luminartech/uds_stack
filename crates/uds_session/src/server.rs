@@ -19,7 +19,7 @@ use crate::time::Timestamp;
 /// The association binds an `S_Data.req`'s classification and addressing to the
 /// `T_Data.req` produced from it and the `T_Data.conf` that reports its outcome, from the
 /// request until the confirmation. ``UDSS_LLR_0060`` permits at most one outstanding per
-/// addressing; ``UDSS_LLR_0062`` rejects a request for which none is free, so the slice's
+/// addressing; ``UDSS_LLR_0062`` rejects a request for which none is free, so the array's
 /// length is the server's capacity.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Association {
