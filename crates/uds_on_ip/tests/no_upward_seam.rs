@@ -45,21 +45,20 @@ fn the_crate_docs_do_not_describe_the_reversed_design() {
     );
 }
 
-/// `lib.rs` is not the only file that can claim the reversed design:
-/// `profile.rs`'s module doc made exactly this claim on its own, undetected
-/// by the scan above because that scan only ever reads `lib.rs`.
-///
-/// The banned phrase is scoped to "the crate that sits", not the bare phrase
-/// "above the session layer": `profile::service_ids`'s doc correctly says
-/// "the driver sits above the session layer" when explaining *why* this
-/// crate reads a `T_PDU` rather than an `A_PDU`, and that sentence is true —
-/// the driver (`uds_services`) really is above the session layer. Only a
-/// claim about *this crate's own* position is the defect.
+/// The crate is wholly below the session layer; only the *driver* sits above
+/// it. Keying on that invariant, rather than on any particular phrasing,
+/// is deliberate: the previous guard matched one exact substring and would
+/// have passed "this half of the crate sits above the session layer" — the
+/// very wording it was written to catch.
 #[test]
-fn profile_docs_do_not_describe_the_reversed_design() {
+fn only_the_driver_is_claimed_to_sit_above_the_session_layer() {
     let source = include_str!("../src/profile.rs");
-    assert!(
-        !source.contains("the crate that sits"),
-        "the crate is wholly below the session layer; profile.rs is no exception"
-    );
+    for (i, _) in source.match_indices("above the session layer") {
+        let context = &source[i.saturating_sub(40)..i];
+        assert!(
+            context.contains("driver"),
+            "a claim of sitting above the session layer must be about the \
+             driver, not this crate — the crate is wholly below it"
+        );
+    }
 }
