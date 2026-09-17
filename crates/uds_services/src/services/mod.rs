@@ -25,10 +25,6 @@ pub mod security;
 pub mod session;
 pub mod transfer;
 
-// No `pub use` of the service traits yet. The six modules above are one-line stubs
-// until Tasks 8-11 fill them, and re-exporting a type that does not exist is
-// `E0432: unresolved import`. Each of those tasks adds its own line here as it
-// creates the module's contents.
 pub use data::{ReadDataByIdentifier, WriteDataByIdentifier};
 pub use dtc::{ClearDiagnosticInformation, ReadDtcInformation};
 pub use routine::RoutineControl;
@@ -37,6 +33,7 @@ pub use session::{
     CommunicationControl, ControlDtcSetting, DiagnosticSessionControl, EcuReset,
     SessionTiming, TesterPresent,
 };
+pub use transfer::{DataTransfer, TransferRequest};
 
 /// Whether clause 8.7 requires a response to be transmitted.
 ///
