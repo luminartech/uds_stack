@@ -266,12 +266,20 @@ Response sink
    settle, and either satisfies it.
 
    **The sink is ``awc``'s rather than ``embedded-io``'s, and the difference produces an
-   NRC.** ``Sink`` carries ``remaining()``. The sink is bounded at the transport's maximum
-   payload, an over-long response fails at the write with the needed and available counts
-   intact, and this crate turns that counted failure into ``responseTooLong`` (0x14). That
-   settles a question the set had been carrying: the maximum is a transport property this
-   crate does not know, but the negative response code is a clause 8.7 outcome that is nobody
-   else's. ``embedded-io`` leaves this crate's dependency list entirely.
+   NRC.** A response is written through an ``awc::Limited``, which bounds it at the
+   transport's maximum payload; an over-long response fails at the write with
+   ``InsufficientBuffer``'s ``needed`` and ``available`` counts intact, and this crate turns
+   that counted failure into ``responseTooLong`` (0x14). That settles a question the set had
+   been carrying: the maximum is a transport property this crate does not know, but the
+   negative response code is a clause 8.7 outcome that is nobody else's. ``embedded-io`` leaves
+   this crate's dependency list entirely.
+
+   **An earlier version of this element said "``Sink`` carries ``remaining()``", which is not
+   true of the crate as released.** In ``automotive-wire-codec`` 0.4.0 the trait carries
+   ``write_all`` alone; ``remaining()`` is an inherent method on ``SliceSink`` and ``Limited``,
+   so a handler generic over ``S: Sink`` cannot call it. The mechanism is unaffected — it never
+   needed a handler to ask how much room was left, only for the failure to be counted — but the
+   member it named was wrong, and this element is the one that has to be right about it.
 
    **The bound itself is less solid than this element assumed.** On DoIP the number is *Max.
    data size*, which ISO 13400-2:2019 Table 11 lists as an **optional** item of the entity
