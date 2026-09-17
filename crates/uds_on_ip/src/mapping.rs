@@ -122,8 +122,24 @@ pub(crate) enum DoIpEvent<'a> {
     Conf {
         /// The acknowledging entity.
         peer: Address,
-        /// `SResult::Ok` for `0x8002`; a `0x8003` becomes one
-        /// `SResult::Transport` value carrying the NACK code.
+        /// Derived from the acknowledgement's code, **not** from its payload
+        /// type.
+        ///
+        /// `simple_doip`'s `Message::diagnostic_message_ack` stamps the
+        /// positive payload type (`0x8002`) into the header whatever the ack
+        /// code says, so the payload type does not discriminate. Its
+        /// `DiagnosticMessageAck` carries the real `ack_code`, and that is what
+        /// this reads.
+        ///
+        /// # Blocked: a received `0x8003` arrives with nothing in it
+        ///
+        /// `Payload::decode` maps `0x8003` to the fieldless
+        /// `Payload::DiagnosticMessageNack`, discarding the NACK code, the
+        /// addresses and the echoed request bytes. So `SResult::Transport`
+        /// cannot yet be given the code ISO 13400-2 sent, and a `0x8003` can
+        /// only become a bare "the transport rejected it". Raised with that
+        /// repository 2026-09-17 in
+        /// `2026-09-17-uds_on_ip-payload-and-ack-gaps.md`.
         result: SResult,
     },
     /// A periodic response (`DoIP` `0x8004`).
