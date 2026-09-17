@@ -7,7 +7,7 @@
 //!
 //! ISO 14229-5 clause 7 enumerates its own content as a table of requirements
 //! grouped by OSI layer, and that table is this crate's scope. It owns two
-//! layers of the stack:
+//! layers:
 //!
 //! - **Clause 8, the application profile** (`REQ 7.1`–`7.20`) — the `A_PDU`
 //!   format, TCP connection handling around `DiagnosticSessionControl` and
@@ -15,65 +15,51 @@
 //! - **Clause 11, the transport mapping** (`REQ 4.3`, `REQ 4.4`) — mapping the
 //!   `T_PDU` service primitives and parameters onto `DoIP`'s.
 //!
-//! Everything between those two layers is the session layer, which this crate
-//! *drives* but does not implement (see `session`).
-//!
-//! ## The shape this produces
+//! ## Where it sits
 //!
 //! ```text
-//!   application
-//!        │ A_Data
-//!   ┌────▼─────────────────────┐
-//!   │ uds_on_ip · clause 8     │  application profile
-//!   └────┬─────────────────────┘
-//!        │ S_Data
-//!   ┌────▼─────────────────────┐
-//!   │ uds_session              │  ISO 14229-2
-//!   └────┬─────────────────────┘
-//!        │ T_Data
-//!   ┌────▼─────────────────────┐
-//!   │ uds_on_ip · clause 11    │  transport mapping
-//!   └────┬─────────────────────┘
-//!        │ `DoIP_Data`
-//!   ┌────▼─────────────────────┐
-//!   │ simple_doip              │  ISO 13400-2
-//!   └──────────────────────────┘
+//!   consuming application
+//!        ↕  typed service traits / typed client calls
+//!   uds_services      the driver — owns the Session, declares UdsTransport
+//!        ↓  UdsTransport
+//!   uds_on_ip         ISO 14229-5 profile + DoIP mapping  ← this crate
+//!        ↓
+//!   simple_doip       ISO 13400-2
 //! ```
 //!
-//! This crate appears twice. It **wraps** the session layer rather than
-//! stacking on top of it, which is why `session::SessionLayer` is driven from
-//! both directions. A full discussion is in `ARCHITECTURE.md`.
+//! This crate is **wholly below** the session layer. It hosts no driver, calls
+//! nothing upward, and knows nothing about services. `uds_services` owns the
+//! `uds_session::Session`, supplies its inputs, drains its actions, and calls
+//! this crate through a trait it declares — which is why the dependency edge
+//! points from here to `uds_services` and not the other way.
 //!
-//! ## `no_std` and alloc-freedom
+//! ## `no_std`, alloc-freedom, and no runtime
 //!
-//! The core — `addressing`, `session`, [`mapping`], [`profile`],
-//! `handler` — is `no_std` and allocates nothing. No public type contains a
-//! `Vec` or a `String`: responses borrow from a caller-supplied receive buffer,
-//! and a handler writes its response into a caller-supplied sink.
+//! The crate is `no_std` and allocates nothing: no public type contains a
+//! `Vec` or a `String`, and an inbound message borrows the receive buffer.
 //!
-//! Only the async drivers need `std`, and only because the first of them sits
-//! on `tokio` and std sockets. That is a property of the driver, not of the
-//! API: a bare-metal driver presents the same shape, so gaining one later is
-//! additive rather than a breaking redesign. Designing for that from the start
-//! is the point — alloc-freedom cannot be retrofitted into a published API.
+//! It is **async without naming a runtime**. An `async fn` implies neither an
+//! executor nor `std`, but a runtime *dependency* would compromise the
+//! `no_std` build — and a bare-metal AURIX `TC4x` target is a qualification
+//! target. [`transport::DoIpTransport`] is therefore generic over its socket,
+//! and an adapter for tokio or embassy is additive.
 //!
 //! ## Status
 //!
-//! **Prototype.** Every crate in this stack flows through a requirements-then-
-//! architecture process, with a prototype preceding both to retire technical
-//! risk; this is that prototype. The public API is unstable, most bodies are
-//! unimplemented, and nothing here should be read as evidence of what the
-//! standard requires — only of what is buildable.
-//!
-//! Known gaps, and the distance from this design to the pre-prototype code, are
-//! recorded in `ARCHITECTURE.md` §9.
+//! **Prototype.** The public API is unstable and most bodies are
+//! unimplemented. Known gaps are recorded in `ARCHITECTURE.md` §9 and in the
+//! boundary brief carried alongside this repository.
 //!
 //! ## What this crate deliberately does not do
 //!
 //! It does not decode UDS messages — that is `uds_protocol` — and it does not
 //! dispatch services, choose negative response codes, or know what a data
 //! identifier is. Those are ISO 14229-1 clause 8.7 concerns and belong to
-//! `uds_services`, which drives this crate rather than being called by it.
+//! `uds_services`.
+//!
+//! It holds no ISO 14229-2 vocabulary. Addressing, the service primitives and
+//! the session state machine are `uds_session`'s, and are used from there
+//! rather than redeclared here.
 //!
 //! The one exception is narrow and forced by the standard: clause 8 keys TCP
 //! connection handling on two specific service identifiers. See

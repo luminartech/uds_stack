@@ -28,3 +28,19 @@ fn the_crate_declares_no_upward_trait() {
         );
     }
 }
+
+/// The boundary brief §4: the "this crate appears twice / wraps the session
+/// layer" sandwich no longer describes the design. The driver is above the
+/// session layer and this crate is wholly below it.
+#[test]
+fn the_crate_docs_do_not_describe_the_reversed_design() {
+    let source = include_str!("../src/lib.rs");
+    assert!(
+        !source.contains("appears twice"),
+        "this crate is wholly below the session layer now"
+    );
+    assert!(
+        !source.contains("wraps the session layer"),
+        "the driver is above the session layer; this crate is below it"
+    );
+}
