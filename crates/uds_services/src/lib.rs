@@ -52,3 +52,6 @@
 
 #![no_std]
 #![forbid(unsafe_code)]
+
+pub mod storage;
+pub use storage::{Buffers, Storage, Store};
