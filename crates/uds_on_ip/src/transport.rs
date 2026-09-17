@@ -47,6 +47,43 @@ pub enum TransportEvent {
         /// payload is that buffer's first `len` bytes.
         len: usize,
     },
+    /// A message longer than the buffer supplied, of which only the front
+    /// arrived.
+    ///
+    /// Its first `len` bytes are in the caller's buffer and `declared` is how
+    /// long the message actually was. This is **classifiable but not
+    /// dispatchable**: enough to read the service identifier and answer
+    /// `busyRepeatRequest` (0x21), which ISO 14229-1 8.7.6 owes a request
+    /// arriving while a service is in progress, and not enough to decode.
+    ///
+    /// # Why a variant rather than a flag on `DataInd`
+    ///
+    /// `DataInd { ai, len, truncated }` was the alternative. It loses to the
+    /// asymmetry of how each is ignored: `let DataInd { ai, len, .. }` discards
+    /// the flag in ordinary, idiomatic destructuring, and the consequence is a
+    /// fragment decoded as though it were a whole message. A separate variant
+    /// can be swallowed by a wildcard arm too, but swallowing it *drops* the
+    /// message, which costs a retry the client is already required to make.
+    /// One shape fails safe and the other fails dangerous.
+    DataTooLong {
+        /// Addressing, so the caller can answer the peer it came from.
+        ai: Ai,
+        /// How many bytes of the caller's buffer hold the front of the
+        /// message. At least the service identifier, unless the message was
+        /// empty.
+        len: usize,
+        /// How long the message actually was.
+        ///
+        /// Free on `DoIP`: ISO 13400-2's generic header carries the payload
+        /// length, and it is read before the payload. It is what tells an
+        /// entity how large its buffer needed to be — without it, a caller
+        /// learns only "too long" and can never size for the traffic it
+        /// actually sees. That matters most where [`inbound_max`] is `None`,
+        /// since such an entity advertises no bound and can be sent anything.
+        ///
+        /// [`inbound_max`]: DoIpTransport::inbound_max
+        declared: usize,
+    },
     /// The outcome of a requested transmission.
     ///
     /// Raised from the diagnostic message **acknowledgement**, never from the
@@ -110,12 +147,22 @@ impl<S> DoIpTransport<S> {
     /// ISO 13400-2:2019 Table 11 entity status response.
     ///
     /// MDS is "the maximum size of one logical **request** that this `DoIP`
-    /// entity can process", which is precisely the length of the buffer the
-    /// driver passes to [`next_event`](Self::next_event): a request larger than
-    /// that buffer cannot be received, whatever this entity claims. The driver
-    /// derives that size from the services it assembled and reports it here, so
-    /// the advertised value and the buffer that must hold the request cannot
-    /// disagree.
+    /// entity can process", which is bounded by the buffer a full request is
+    /// decoded from: a request larger than that cannot be processed, whatever
+    /// this entity claims. The driver derives that size from the services it
+    /// assembled and reports it here, so the advertised value and the buffer
+    /// that must hold the request cannot disagree.
+    ///
+    /// Note *which* buffer, because there are two and the larger one is not the
+    /// one usually in [`next_event`](Self::next_event)'s hand. A driver keeps a
+    /// full-size buffer for the request it is serving, and a small one to keep
+    /// receiving while a service is in progress — ISO 14229-1 8.7.6 obliges it
+    /// to accept the functionally addressed `TesterPresent` and the
+    /// `0x00`–`0x0F` range in that window. **MDS is the full-size one.** A
+    /// request arriving against the small buffer is reported as
+    /// [`TransportEvent::DataTooLong`] and answered `busyRepeatRequest` (0x21);
+    /// that is occupancy, not a size this entity cannot handle, so it must not
+    /// lower what is advertised.
     pub fn set_inbound_max(&mut self, max: Option<usize>) {
         self.inbound_max = max;
     }
@@ -208,6 +255,27 @@ impl<S> DoIpTransport<S> {
     /// therefore the value it should advertise as its ISO 13400-2:2019 Table 11
     /// *Max. data size* — see [`set_inbound_max`](Self::set_inbound_max).
     ///
+    /// # A message longer than `buffer`
+    ///
+    /// Reported as [`TransportEvent::DataTooLong`], never as a `DataInd` whose
+    /// `len` happens to equal `buffer.len()`. The caller must be able to tell a
+    /// whole message from the front of a longer one: the first is dispatchable
+    /// and the second is only classifiable, and delivering the second as the
+    /// first would have a decoder read a fragment as a message.
+    ///
+    /// A caller passing a deliberately small buffer — to keep receiving while a
+    /// service is in progress, as ISO 14229-1 8.7.6 requires for the
+    /// functionally addressed `TesterPresent` and the `0x00`–`0x0F` range —
+    /// should expect this whenever an ordinary request arrives in that window.
+    /// It is the normal outcome there, not a fault: 8.7.6 owes that request
+    /// `busyRepeatRequest` (0x21) regardless, and composing one needs the
+    /// service identifier and the addressing, both of which this carries.
+    ///
+    /// The truncation is decided here rather than in
+    /// [`mapping::classify`](crate::mapping::classify), which takes a complete
+    /// message: the generic header's payload length is read before the payload,
+    /// so the decision is made before there is anything to classify.
+    ///
     /// # Errors
     ///
     /// [`Error`] if the socket fails.
@@ -294,6 +362,71 @@ mod tests {
             panic!("constructed a DataInd")
         };
         assert_eq!(&buffer[..len], &[0xAA, 0xAA, 0xAA]);
+    }
+
+    /// A truncated message is a distinct variant, so the case cannot be
+    /// reached by the destructuring that reads a whole one.
+    ///
+    /// `DataInd`'s fields are a subset of `DataTooLong`'s, which is what makes
+    /// the flag alternative dangerous: `DataInd { ai, len, .. }` would bind
+    /// identically whether or not a `truncated` flag were set. Matching by
+    /// variant cannot do that — an arm written for a whole message does not
+    /// accept a truncated one.
+    #[test]
+    fn a_truncated_message_is_not_a_whole_one() {
+        let ai = uds_session::Ai {
+            mtype: uds_session::Mtype::Diag,
+            sa: uds_session::Address(0x0E80),
+            ta: uds_session::Address(0x0E00),
+            ta_type: uds_session::TaType::Physical,
+        };
+        let whole = super::TransportEvent::DataInd { ai, len: 4 };
+        let front = super::TransportEvent::DataTooLong {
+            ai,
+            len: 4,
+            declared: 4096,
+        };
+
+        assert_ne!(
+            whole, front,
+            "the same four bytes mean different things depending on whether \
+             more of the message exists"
+        );
+        assert!(
+            !matches!(front, super::TransportEvent::DataInd { .. }),
+            "an arm written for a dispatchable message must not accept a \
+             classifiable fragment"
+        );
+    }
+
+    /// `declared` is what tells an entity how large its buffer needed to be.
+    ///
+    /// Reporting only `len` would say "too long" without ever saying how long,
+    /// so an entity could never size for the traffic it actually sees — which
+    /// bites hardest where `inbound_max` is `None` and nothing is advertised.
+    #[test]
+    fn a_truncated_message_reports_the_size_it_needed() {
+        let ai = uds_session::Ai {
+            mtype: uds_session::Mtype::Diag,
+            sa: uds_session::Address(0x0E80),
+            ta: uds_session::Address(0x0E00),
+            ta_type: uds_session::TaType::Physical,
+        };
+        let super::TransportEvent::DataTooLong { len, declared, .. } =
+            (super::TransportEvent::DataTooLong {
+                ai,
+                len: 8,
+                declared: 1026,
+            })
+        else {
+            panic!("constructed a DataTooLong")
+        };
+
+        assert!(declared > len, "truncation means more existed than arrived");
+        assert_eq!(
+            declared, 1026,
+            "the shortfall is knowable, not merely detectable"
+        );
     }
 
     /// `Timestamp` is what makes the deadline exchangeable across the seam
