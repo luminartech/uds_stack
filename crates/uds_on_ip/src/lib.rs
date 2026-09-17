@@ -85,6 +85,8 @@
 pub mod error;
 pub mod mapping;
 pub mod profile;
+pub mod transport;
 
 pub use error::{Error, Result};
 pub use profile::Timing;
+pub use transport::{DoIpTransport, TransportEvent};

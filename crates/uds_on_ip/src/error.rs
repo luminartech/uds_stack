@@ -79,6 +79,10 @@ pub enum Error {
     /// The exchange completed unsuccessfully.
     #[error("exchange did not complete: {0:?}")]
     Exchange(SResult),
+
+    /// The addressing cannot be carried over `DoIP`.
+    #[error(transparent)]
+    Mapping(#[from] crate::mapping::MappingError),
 }
 
 impl From<simple_doip::messages::MessageError> for Error {
