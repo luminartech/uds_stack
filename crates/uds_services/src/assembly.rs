@@ -45,23 +45,53 @@ pub const fn min2(a: usize, b: usize) -> usize {
 #[doc(hidden)]
 #[macro_export]
 macro_rules! __uds_sids {
-    (DiagnosticSessionControl)   => { [0x10_u8] };
-    (EcuReset)                   => { [0x11_u8] };
-    (ClearDiagnosticInformation) => { [0x14_u8] };
-    (ReadDtcInformation)         => { [0x19_u8] };
-    (ReadDataByIdentifier)       => { [0x22_u8] };
-    (SecurityAccess)             => { [0x27_u8] };
-    (CommunicationControl)       => { [0x28_u8] };
-    (WriteDataByIdentifier)      => { [0x2E_u8] };
-    (RoutineControl)             => { [0x31_u8] };
-    (DataTransfer)               => { [0x34_u8, 0x35_u8, 0x36_u8, 0x37_u8, 0x38_u8] };
-    (TesterPresent)              => { [0x3E_u8] };
-    (ControlDtcSetting)          => { [0x85_u8] };
+    (DiagnosticSessionControl) => {
+        [0x10_u8]
+    };
+    (EcuReset) => {
+        [0x11_u8]
+    };
+    (ClearDiagnosticInformation) => {
+        [0x14_u8]
+    };
+    (ReadDtcInformation) => {
+        [0x19_u8]
+    };
+    (ReadDataByIdentifier) => {
+        [0x22_u8]
+    };
+    (SecurityAccess) => {
+        [0x27_u8]
+    };
+    (CommunicationControl) => {
+        [0x28_u8]
+    };
+    (WriteDataByIdentifier) => {
+        [0x2E_u8]
+    };
+    (RoutineControl) => {
+        [0x31_u8]
+    };
+    (DataTransfer) => {
+        [0x34_u8, 0x35_u8, 0x36_u8, 0x37_u8, 0x38_u8]
+    };
+    (TesterPresent) => {
+        [0x3E_u8]
+    };
+    (ControlDtcSetting) => {
+        [0x85_u8]
+    };
 }
 
 /// What one service contributes to the in-flight buffer's length.
+///
+/// `#[rustfmt::skip]`: rustfmt 1.9.0 does not converge on the two-level associated-type
+/// chains below (`<<$ty as _>::Did as _>::MAX_RECORD_LEN`) — each `cargo fmt` run adds
+/// further indentation to the continuation line rather than reaching a fixed point. The
+/// arms are hand-formatted instead, verified to stay within the crate's 92-column limit.
 #[doc(hidden)]
 #[macro_export]
+#[rustfmt::skip]
 macro_rules! __uds_request_bound {
     ($ty:ty, DataTransfer) => {
         2 + <$ty as $crate::DataTransfer>::MAX_BLOCK_LENGTH
@@ -85,8 +115,12 @@ macro_rules! __uds_request_bound {
 }
 
 /// What one service contributes to the response buffer's length.
+///
+/// `#[rustfmt::skip]`: see `__uds_request_bound!`'s note above — the same non-convergent
+/// chain formatting affects the `ReadDataByIdentifier` and `RoutineControl` arms here.
 #[doc(hidden)]
 #[macro_export]
+#[rustfmt::skip]
 macro_rules! __uds_response_bound {
     ($ty:ty, ReadDataByIdentifier) => {
         1 + <$ty as $crate::ReadDataByIdentifier>::MAX_DIDS_PER_REQUEST
@@ -123,7 +157,9 @@ macro_rules! __uds_response_bound {
 #[doc(hidden)]
 #[macro_export]
 macro_rules! __uds_may_pend {
-    ($ty:ty, $svc:ident) => { <$ty as $crate::$svc>::MAY_RESPOND_PENDING };
+    ($ty:ty, $svc:ident) => {
+        <$ty as $crate::$svc>::MAY_RESPOND_PENDING
+    };
 }
 
 /// Assemble a server from the services it implements.
