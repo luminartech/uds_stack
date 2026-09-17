@@ -147,8 +147,13 @@ pub trait UdsTransport {
     /// The largest request this entity will accept, where it advertises one.
     ///
     /// ISO 13400-2:2019 Table 11 makes *Max. data size* optional, so `None` is
-    /// conformant. Its value is the in-flight buffer's length, which this crate derives
-    /// — so a transport is told this number rather than asked to invent it.
+    /// conformant. Its value is the in-flight buffer's length, which this crate derives.
+    ///
+    /// **The route that would hand a transport that number is unbuilt.** The trait has
+    /// this getter and nothing else: nothing in this crate calls it and nothing supplies
+    /// the length, so a binding today has to invent the very value the assembly already
+    /// derived. Closing it needs a way for the crate to *state* the length, which is a
+    /// seam decision rather than a missing setter.
     fn inbound_max(&self) -> Option<usize>;
 
     /// The largest response the peer will accept, where it advertised one.

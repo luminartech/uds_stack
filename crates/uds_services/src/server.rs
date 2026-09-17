@@ -30,7 +30,11 @@ use uds_session::{
 ///
 /// `PEERS` is a parameter rather than a derived constant because the session layer's type
 /// is `uds_session::Server<PEERS>`, and an associated const of a generic cannot be a const
-/// generic argument. [`crate::uds_server`] emits a type alias, so no application writes it.
+/// generic argument. **[`crate::uds_server`] emits no type alias**: an application writes
+/// `Server<Ecu, T, N>` out by hand, as `tests/composition.rs` does. So the peer count is
+/// stated twice — once as `channels = N` in the assembly, where nothing reads it, and
+/// once here, where it actually sizes the association array — and nothing diagnoses a
+/// disagreement between them.
 #[derive(Debug)]
 pub struct Server<A: ServiceSet, T: UdsTransport, const PEERS: usize> {
     services: A,
@@ -67,10 +71,13 @@ impl<A: ServiceSet, T: UdsTransport, const PEERS: usize> Server<A, T, PEERS> {
     ///
     /// Four properties of the body below are load-bearing and none is obvious:
     ///
-    /// 1. **Every transport query is sampled before any future holding
-    ///    `&mut transport` exists.** `outbound_max` and `now` take `&self`, but a live
-    ///    `next_event` future refuses even shared access. One timestamp per iteration
-    ///    follows, which matches `uds_session`'s "a timestamp accompanies every input".
+    /// 1. **Every transport query is sampled while no future holding `&mut transport`
+    ///    exists.** `outbound_max` and `now` take `&self`, but a live `next_event`
+    ///    future refuses even shared access, so both are read after that await returns
+    ///    — which is also what makes a peer limit learned during the exchange that
+    ///    delivered this request apply to its response. `now()` is called once per input
+    ///    handed to `uds_session`, three times in this body, which matches its "a
+    ///    timestamp accompanies every input".
     /// 2. **The `Indicate` comes out of the drain before `finish()`.** A
     ///    `ServerOutput<'d>` outlives the reaction that yielded it, which is what lets
     ///    dispatch run with `&mut session` free — required, or the 0x78 window does not
@@ -100,7 +107,6 @@ impl<A: ServiceSet, T: UdsTransport, const PEERS: usize> Server<A, T, PEERS> {
             response,
         } = self.store.split();
 
-        let outbound_max = self.transport.outbound_max();
         let deadline = self.session.next_deadline();
 
         let ev = self
@@ -127,6 +133,7 @@ impl<A: ServiceSet, T: UdsTransport, const PEERS: usize> Server<A, T, PEERS> {
         };
 
         let now = self.transport.now();
+        let outbound_max = self.transport.outbound_max();
         let mut indication = None;
         let mut reaction = self.session.t_data_ind(
             now,
@@ -265,7 +272,8 @@ mod tests {
     /// The driver holds a `uds_session::Server<PEERS>`, and an associated const of a
     /// generic parameter cannot be a const generic argument — the same
     /// `generic_const_exprs` wall the buffers hit. So `PEERS` is a parameter of this
-    /// type, and the macro emits a type alias so no application writes it.
+    /// type, and an application writes it out: the macro emits no alias, which is why
+    /// the peer count is stated twice with nothing checking that the two agree.
     ///
     /// The real construction is `tests/composition.rs`; here only the params shape is
     /// asserted, because a concrete `ServiceSet` does not exist yet in this crate.

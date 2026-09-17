@@ -105,6 +105,23 @@ pub trait ServiceSet {
     /// services in the range of 0x00 to 0x0F", which only the assembly list knows — so
     /// classification is not merely arguably this crate's, it is available nowhere else.
     ///
+    /// **This method decides what the request bytes can decide, and no more.** It reads
+    /// the service identifier, and for `TesterPresent` the `suppressPosRspMsgIndication`
+    /// bit — bit 7 of the sub-function byte — so a `TesterPresent` without it is not
+    /// admitted. Whether the request was *functionally* addressed is not in the bytes:
+    /// the `Ai` travels with the transport event and the driver is what holds it.
+    /// **The driver does not check it.** [`crate::Server::step`] has the `Ai` and never
+    /// consults it here, so a physically addressed suppressed `TesterPresent` classifies
+    /// as the first exception although clause 8.7.6 does not admit it. Closing that is
+    /// the driver's to do, and how the addressing reaches this classification is open
+    /// question 1.
+    ///
+    /// **The second limb is unreachable as the crate stands.** No service
+    /// [`crate::uds_server`] can assemble falls in `0x00`–`0x0F` — that range is OBD
+    /// territory, which `uds_protocol` does not model — so no assembled server can
+    /// return `true` from it. The arm is kept because it is where the case will be
+    /// handled when a service in that range arrives.
+    ///
     /// Anything else arriving mid-service is occupancy and owes `busyRepeatRequest`
     /// (0x21). *Acting* on a classification is open question 1.
     fn is_concurrent_exception(&self, request: &[u8]) -> bool;

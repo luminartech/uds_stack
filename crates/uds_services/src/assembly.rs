@@ -182,11 +182,17 @@ macro_rules! __uds_may_pend {
 /// because `$ty:ty` cannot be followed by a bare identifier — the legal followers are
 /// `{ [ => , > = : ; | as where`.
 ///
-/// `channels = N` sizes both the per-channel authentication table of
-/// ``UDSSVC_ARCH_0035`` and `uds_session`'s association storage, on the stated assumption
-/// that the two counts are the same: both are bounded by the number of clients the server
-/// answers at once. If a deployment ever needs them to differ, this gains a second
-/// parameter.
+/// **`channels = N` is parsed and never used.** It was to size the per-channel
+/// authentication table of ``UDSSVC_ARCH_0035`` and `uds_session`'s association storage.
+/// It sizes neither: the associations moved into `uds_session::Server<PEERS>`, taken by
+/// value with its own const parameter, and **the authentication table is not built** --
+/// there is no table, no keying and no per-channel state in this crate. `$channels`
+/// therefore appears nowhere but the matcher, and the expansion discards it.
+///
+/// An application states its peer count twice as a result: once here, where nothing
+/// reads it, and once as the third parameter of [`crate::Server`], which is what
+/// actually sizes the association array. Nothing makes the two agree, and no diagnostic
+/// fires when they disagree.
 #[macro_export]
 macro_rules! uds_server {
     (
@@ -210,6 +216,12 @@ macro_rules! uds_server {
             // Clause 8.7.6 admits only a two-byte TesterPresent and a 0x00-0x0F request
             // while a service is in progress. Anything larger is occupancy and is
             // answered busyRepeatRequest from its service identifier alone.
+            //
+            // No service `uds_server!` can currently assemble falls in 0x00-0x0F --
+            // that range is OBD territory, which uds_protocol does not model -- so the
+            // second exception is unreachable today. The arm in
+            // `is_concurrent_exception` below is where it will be handled when a
+            // service in that range arrives.
             const CONCURRENT: usize = 8;
 
             impl $crate::ServiceSet for $ty {
@@ -250,7 +262,16 @@ macro_rules! uds_server {
 
                 fn is_concurrent_exception(&self, request: &[u8]) -> bool {
                     match request.first() {
-                        Some(0x3E) => true,
+                        // Clause 8.7.6's first exception is a TesterPresent whose
+                        // sub-function carries suppressPosRspMsgIndication, which is
+                        // bit 7 of that byte. `get` rather than an index: this crate
+                        // denies indexing_slicing.
+                        Some(0x3E) => {
+                            request.get(1).is_some_and(|sub| sub & 0x80 != 0)
+                        }
+                        // Unreachable as the crate stands: no service `uds_server!`
+                        // can assemble falls in 0x00-0x0F. Kept as the place the case
+                        // will be handled when one does.
                         Some(sid) if *sid <= 0x0F => self.supports(*sid),
                         _ => false,
                     }

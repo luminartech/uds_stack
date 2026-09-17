@@ -170,7 +170,8 @@ The traits
           const MAY_RESPOND_PENDING: bool = false;
 
           type Did = MyDid;
-          async fn read<S: Sink>(&mut self, did: MyDid, out: &mut S) -> Result<(), Nrc> { .. }
+          async fn read(&mut self, did: MyDid, out: &mut ResponseSink<'_>)
+              -> Result<(), Nrc> { .. }
       }
 
    ``UDSSVC_ARCH_0032`` settles half of admissibility from what this server implements. The
@@ -782,11 +783,14 @@ whole point of them, and it is the thing a list of signatures does not show:
       // server
       impl ReadDataByIdentifier for Ecu {
           type Did = MyDid;
-          async fn read<S: Sink>(&mut self, did: MyDid, out: &mut S) -> Result<(), Nrc> { .. }
+          async fn read(&mut self, did: MyDid, out: &mut ResponseSink<'_>)
+              -> Result<(), Nrc> { .. }
       }
 
       // client: implements no service trait, and names no vocabulary type
-      let records = client.read_data_by_identifier(&[MyDid::VehicleSpeed])?;
+      let response = client
+          .read_data_by_identifier(Address(0x0E80), &[MyDid::VehicleSpeed])
+          .await?;
 
    Rationale: ISO 14229-1 fixes identifier *ranges* and a small set of standardised values, not the
    catalogue: data and routine identifiers are vehicle-manufacturer or system-supplier

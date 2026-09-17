@@ -114,11 +114,16 @@ mod tests {
 
     /// ``UDSSVC_ARCH_0007`` — Figure 5 excludes 0x31 from the centralised sub-function
     /// stage, because whether `stopRoutine` is supported is a property of the *routine*,
-    /// not of the service. Three methods make that asymmetry structural: a routine that
-    /// does not support stopping returns 0x12 from `stop` alone, and no other service's
-    /// handler decides 0x12 at all. Settles open question 5.
+    /// not of the service. Three separate methods make that asymmetry structural: a
+    /// routine that does not support stopping returns 0x12 from `stop` alone. Settles
+    /// open question 5.
+    ///
+    /// This is a trait-bound check and nothing more: it establishes that `start`, `stop`
+    /// and `results` are each required, because the fixture above satisfies
+    /// `RoutineControl` only by implementing all three. No 0x12 behaviour is observed
+    /// here — there is none to observe until the pipeline lands.
     #[test]
-    fn a_routine_answers_0x12_for_itself_and_only_there() {
+    fn routine_control_requires_start_stop_and_results_separately() {
         fn assert_three_methods<T: RoutineControl>() {}
         assert_three_methods::<Ecu>();
     }

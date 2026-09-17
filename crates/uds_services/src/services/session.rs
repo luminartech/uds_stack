@@ -69,8 +69,11 @@ pub trait EcuReset {
 /// Restarting `tS3_Server` is deliberately absent: ISO 14229-2 puts it in the session
 /// layer and ``UDSSVC_ARCH_0002`` keeps it there. This exists for servers that act on it.
 pub trait TesterPresent {
-    /// Always false. A server too busy to answer the message whose only purpose is to
-    /// say it is still there has a larger problem than a response-pending.
+    /// ``UDSSVC_ARCH_0033``. **Should be false, and nothing here makes it so**: this is
+    /// a const without a default, declared by the application, and `__uds_may_pend!`
+    /// expands whatever it declares unconditionally. The reason it should be false is
+    /// that a server too busy to answer the message whose only purpose is to say it is
+    /// still there has a larger problem than a response-pending.
     const MAY_RESPOND_PENDING: bool;
 
     /// Called on each accepted `TesterPresent`.
@@ -102,6 +105,15 @@ pub trait ControlDtcSetting {
     const MAY_RESPOND_PENDING: bool;
 
     /// Turn DTC setting on or off, with the manufacturer-specific option record.
+    ///
+    /// **`option_record` is bounded at four bytes, although the slice type does not say
+    /// so.** `__uds_request_bound!`'s catch-all gives 0x85 six bytes — a service
+    /// identifier, a sub-function and four parameter bytes — which is all this service
+    /// contributes to the derived in-flight buffer. A request longer than that buffer
+    /// arrives as [`TransportEvent::DataTooLong`](crate::TransportEvent) and the driver
+    /// drops it. Where another service in the same assembly widened the buffer a longer
+    /// record can still reach here, and nothing rejects it; no const expresses the
+    /// ceiling, and adding one is a design change rather than a correction.
     ///
     /// # Errors
     ///

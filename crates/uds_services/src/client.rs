@@ -165,6 +165,26 @@ impl<T: UdsTransport, const PHYS: usize, const FUNC: usize, const R: usize>
             todo!("UDSSVC_ARCH_0020: encode, exchange, interpret")
         }
     }
+
+    /// Read one or more data identifiers from every server on a functional address.
+    ///
+    /// ``UDSSVC_ARCH_0022`` — a functional request reaches every server, so zero or
+    /// more may answer and there is no single response to return. The answers come back
+    /// as a lending sequence: this is the only way to obtain a [`Responses`], and
+    /// draining it is how each server's answer is read. Failures and negative responses
+    /// both surface there — a transport error per answer, and a negative response as
+    /// [`Response::Negative`], which is not an error.
+    pub fn read_data_by_identifier_functional<D: DataIdentifier>(
+        &mut self,
+        target: Address,
+        identifiers: &[D],
+    ) -> Responses<'_, T, D, PHYS, FUNC, R> {
+        #[allow(clippy::todo, reason = "API stub; behaviour lands with its element")]
+        {
+            let _ = (&mut self.transport, target, identifiers.len());
+            todo!("UDSSVC_ARCH_0022: encode and open the response window")
+        }
+    }
 }
 
 #[cfg(test)]

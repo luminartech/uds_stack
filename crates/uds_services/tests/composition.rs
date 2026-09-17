@@ -228,10 +228,14 @@ fn response_pending_permission_follows_the_declaration() {
     assert!(!ecu.may_respond_pending(0x2E));
 }
 
-/// Clause 8.7.6's two exceptions, and nothing else. A server that does not implement
-/// anything in 0x00-0x0F admits only the `TesterPresent`.
+/// A suppressed `TesterPresent` is admitted mid-service and an ordinary request is not.
+/// That is the whole of what this establishes: clause 8.7.6's *second* exception, a
+/// request in 0x00-0x0F, is unreachable for any server `uds_server!` can assemble --
+/// that range is OBD territory, which `uds_protocol` does not model, so the minimum SID
+/// in `__uds_sids!` is 0x10. The 0x01 assertion is therefore a guard that the limb stays
+/// closed while nothing can open it, not a demonstration that it works.
 #[test]
-fn only_8_7_6s_two_exceptions_are_admitted_mid_service() {
+fn a_suppressed_tester_present_is_admitted_and_an_ordinary_request_is_not() {
     let ecu = Ecu::new();
     assert!(ecu.is_concurrent_exception(&[0x3E, 0x80]));
     assert!(!ecu.is_concurrent_exception(&[0x01]));
