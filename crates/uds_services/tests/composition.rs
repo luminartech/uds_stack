@@ -5,7 +5,6 @@
 //! declared maxima into buffer lengths, and that the result constructs in a `static`
 //! without a stack temporary.
 
-#![allow(clippy::todo, reason = "the fake handlers below are never called")]
 #![allow(
     clippy::unused_async_trait_impl,
     reason = "the fixtures below never await anything, since they exist only to name \
