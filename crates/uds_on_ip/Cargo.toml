@@ -22,9 +22,10 @@ simple_doip = { path = "../simple_doip", default-features = false }
 uds_protocol = { path = "../uds_protocol", default-features = false }
 uds_session = { path = "../uds_session", default-features = false }
 
-# The I/O vocabulary for the whole stack. awc 0.4 owns the sink trait and has
-# no runtime dependencies of its own, which is why this crate names no other.
-automotive-wire-codec = { path = "../../automotive_wire_format", default-features = false }
+# automotive-wire-codec is deliberately NOT a direct dependency. Its `Encode`
+# and `Decode` are re-exported by simple_doip::messages, which is the crate
+# this one is layered on, so the codec vocabulary arrives through the layer
+# below rather than around it.
 
 thiserror = { version = "2", default-features = false }
 

@@ -1,15 +1,15 @@
 //! Error taxonomy.
 //!
-//! [`Error`] is a concrete enum. It was generic over the session layer's error
-//! type while that was a trait's associated type; that parameter is gone, and
-//! callers write `Result<T>`.
-
-use uds_session::SResult;
+//! [`Error`] is a concrete enum, and a short one: this crate is a transport,
+//! so most of what can go wrong here reaches the caller as a *value* on the
+//! event seam rather than as an error. An exchange's outcome is
+//! [`TransportEvent::DataConf`](crate::TransportEvent)'s `SResult`, a message
+//! too large for the caller's buffer is
+//! [`TransportEvent::DataTooLong`](crate::TransportEvent), and what to do with
+//! the connection after an exchange is [`profile::PostExchange`](crate::profile::PostExchange).
+//! Only a failure that leaves nothing to report at all is an [`Error`].
 
 /// Errors raised by this crate.
-///
-/// No longer generic over a session-layer error: the trait whose associated
-/// type this used to carry is deleted.
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum Error {
@@ -19,44 +19,34 @@ pub enum Error {
     /// This does not carry `simple_doip::Error`, that crate's async driver's
     /// error type, gated on its `client`/`server` features. This crate has no
     /// driver — it is a transport whose socket is the caller's — so the
-    /// wire-level error is the one that crosses this boundary instead. A
-    /// socket's own failures reach the caller through the transport surface,
-    /// not through this variant.
+    /// wire-level error is the one that crosses this boundary instead.
     #[error("DoIP message error: {0}")]
     Wire(#[from] simple_doip::messages::MessageError),
 
-    /// The connection closed and could not be re-established.
+    /// The connection closed.
     ///
-    /// Distinct from an *expected* close: ISO 14229-5:2022 REQ 7.9 and REQ 7.11
-    /// make a server-initiated close part of the `DiagnosticSessionControl` and
-    /// `ECUReset` flows, and those are handled rather than reported.
+    /// # This variant is provisional
+    ///
+    /// ISO 14229-5:2022 REQ 7.9 and REQ 7.11 make a server-initiated close part
+    /// of the `DiagnosticSessionControl` and `ECUReset` flows, so a close is
+    /// routinely *expected* rather than a fault — and this crate cannot act on
+    /// either kind. It does not reconnect: [`profile::post_exchange`] returns
+    /// [`ReconnectAndReactivate`] as advice the caller acts on.
+    ///
+    /// So an expected close and an unexpected one both end up here, which is
+    /// the wrong shape, and the right one is a case on the event seam that
+    /// `uds_services` owns. Raised with them 2026-09-17; this variant holds
+    /// the fact until that lands.
+    ///
+    /// [`profile::post_exchange`]: crate::profile::post_exchange
+    /// [`ReconnectAndReactivate`]: crate::profile::PostExchange::ReconnectAndReactivate
     #[error("connection closed")]
     ConnectionClosed,
-
-    /// Re-establishing the connection after an expected close failed, so the
-    /// service could not be completed (ISO 14229-5:2022 REQ 7.8, REQ 7.10).
-    #[error("could not re-establish the connection and repeat routing activation")]
-    ReactivationFailed,
-
-    /// A periodic data record exceeded the non-segmented message limit
-    /// (ISO 14229-5:2022 REQ 7.17).
-    #[error("periodic data record of {len} bytes exceeds the non-segmented message limit")]
-    PeriodicRecordTooLong {
-        /// The offending record length.
-        len: usize,
-    },
-
-    /// The exchange completed unsuccessfully.
-    #[error("exchange did not complete: {0:?}")]
-    Exchange(SResult),
 
     /// The addressing cannot be carried over `DoIP`.
     #[error(transparent)]
     Mapping(#[from] crate::mapping::MappingError),
 }
-
-/// This crate's result type.
-pub type Result<T> = core::result::Result<T, Error>;
 
 /// Compile-time proof that this crate's errors, and the upstream errors it
 /// composes, implement [`core::error::Error`] rather than `std::error::Error`.

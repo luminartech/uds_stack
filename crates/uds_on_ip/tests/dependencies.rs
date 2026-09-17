@@ -1,8 +1,8 @@
 //! What this crate may and may not depend on.
 //!
 //! Naming a runtime would compromise the `no_std` build, and a bare-metal
-//! AURIX `TC4x` is a qualification target. The I/O vocabulary is
-//! `automotive-wire-codec`'s for the whole stack.
+//! AURIX `TC4x` is a qualification target. The codec vocabulary arrives
+//! through the layer below rather than around it.
 
 /// True if `name` is declared as a dependency, in either TOML form: an inline
 /// or dotted key (`tokio = { … }`, `tokio.version = "1"`) or a section header
@@ -32,15 +32,18 @@ fn no_runtime_is_named() {
 }
 
 #[test]
-fn the_io_vocabulary_is_the_codecs() {
+fn the_codec_vocabulary_comes_through_the_layer_below() {
     let manifest = include_str!("../Cargo.toml");
     assert!(
         !declares_dependency(manifest, "embedded-io"),
-        "awc 0.4 owns the sink trait; embedded-io leaves the dependency list"
+        "embedded-io left this crate's dependency list and has not been readmitted"
     );
     assert!(
-        declares_dependency(manifest, "automotive-wire-codec"),
-        "the stack's I/O vocabulary is a mandatory dependency"
+        !declares_dependency(manifest, "automotive-wire-codec"),
+        "Encode and Decode are re-exported by simple_doip::messages, and \
+         Encode::encode_to_slice needs no sink named here — so a direct awc \
+         dependency means something new is wanted from it. Say what, in the \
+         manifest comment, and change this assertion deliberately."
     );
 }
 
@@ -54,6 +57,9 @@ fn a_section_header_dependency_is_detected() {
         "[target.'cfg(unix)'.dependencies.tokio]",
         "tokio"
     ));
-    assert!(!declares_dependency("# tokio is deliberately absent", "tokio"));
+    assert!(!declares_dependency(
+        "# tokio is deliberately absent",
+        "tokio"
+    ));
     assert!(!declares_dependency("[dependencies]", "tokio"));
 }

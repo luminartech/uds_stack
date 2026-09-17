@@ -16,9 +16,15 @@ use uds_session::{Ai, SResult, Timestamp};
 
 /// The driver's view of what arrived, or that its deadline passed first.
 ///
-/// Mirrors `uds_services::TransportEvent` exactly; `mapping::DoIpEvent`'s
-/// other two cases — a periodic response and a connection close — are handled
-/// inside this module and do not cross the seam.
+/// Mirrors `uds_services::TransportEvent`, which is the trait's type once it
+/// is published.
+///
+/// `mapping::DoIpEvent`'s other two cases — a periodic response and a
+/// connection close — have no case here, and that is an open hole rather than
+/// a decision: a driver looping on [`next_event`](DoIpTransport::next_event)
+/// cannot currently learn that its connection went away, and a periodic
+/// response (ISO 14229-5:2022 REQ 7.16) has nowhere to be delivered. Both are
+/// cases on a type `uds_services` owns; raised with them 2026-09-17.
 ///
 /// # Why this carries no lifetime
 ///
@@ -105,7 +111,10 @@ pub enum TransportEvent {
 /// `S` is the socket, so no runtime is named: this builds for a bare-metal
 /// target as readily as for tokio, and an adapter for either is additive.
 pub struct DoIpTransport<S> {
-    #[expect(dead_code, reason = "read once t_data_req and next_event leave todo!()")]
+    #[expect(
+        dead_code,
+        reason = "read once t_data_req and next_event leave todo!()"
+    )]
     socket: S,
     timing: Timing,
     inbound_max: Option<usize>,
@@ -223,8 +232,11 @@ impl<S> DoIpTransport<S> {
     ///
     /// # Errors
     ///
-    /// [`Error`] if the addressing cannot be carried — the two remote message
-    /// types have no `DoIP` representation — or if the socket fails.
+    /// [`Error::Mapping`] if the addressing cannot be carried: the two remote
+    /// message types have no `DoIP` representation.
+    ///
+    /// A *socket* failure has no variant yet — see
+    /// [`next_event`](Self::next_event).
     #[expect(
         unused_variables,
         reason = "data is unused until t_data_req's body replaces the todo!() below"
@@ -248,7 +260,7 @@ impl<S> DoIpTransport<S> {
     /// [`TransportEvent`] for the defect that shape had. It also means this
     /// crate holds no inbound buffer of its own: the `DoIP` header is read into
     /// a small local array and the payload goes straight into `buffer`, so
-    /// [`mapping::DoIpEvent`](crate::mapping::DoIpEvent) can keep borrowing
+    /// `mapping::DoIpEvent` can keep borrowing
     /// because it never crosses the seam.
     ///
     /// `buffer`'s length is what this entity can actually receive, and is
@@ -272,13 +284,28 @@ impl<S> DoIpTransport<S> {
     /// service identifier and the addressing, both of which this carries.
     ///
     /// The truncation is decided here rather than in
-    /// [`mapping::classify`](crate::mapping::classify), which takes a complete
+    /// `mapping::classify`, which takes a complete
     /// message: the generic header's payload length is read before the payload,
     /// so the decision is made before there is anything to classify.
     ///
     /// # Errors
     ///
-    /// [`Error`] if the socket fails.
+    /// [`Error::Wire`] if a `DoIP` message could not be decoded.
+    ///
+    /// # A socket failure has nowhere to go yet
+    ///
+    /// `S` carries no bound, so a socket has no error type for [`Error`] to
+    /// compose, and [`Error::Wire`] is explicitly not it. There is no such
+    /// bound available to take: `automotive-wire-codec`'s `Sink` is
+    /// synchronous, has no read side, and its `WriteError::Io` carries no
+    /// detail by design, while every async surface in `simple_doip` sits
+    /// behind its `codec` feature, which requires `std` and a runtime. No
+    /// `no_std` async socket seam exists anywhere in this stack.
+    ///
+    /// The shape this will take is settled — `uds_services`' `UdsTransport`
+    /// declares an associated `Error`, so the socket's failure is this crate's
+    /// to name — but the bound it names is an open decision. Until it lands,
+    /// the failure this method is most likely to have is unrepresentable.
     #[expect(
         unused_variables,
         reason = "buffer and deadline are unused until next_event's body replaces the todo!()"

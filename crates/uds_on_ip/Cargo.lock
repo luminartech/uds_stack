@@ -178,7 +178,6 @@ dependencies = [
 name = "uds_on_ip"
 version = "0.2.0-alpha.1"
 dependencies = [
- "automotive-wire-codec",
  "simple_doip",
  "thiserror",
  "uds_protocol",

@@ -43,8 +43,12 @@ pub const fn from_logical(addr: simple_doip::LogicalAddress) -> Address {
 /// ISO 14229-5:2022 REQ 7.9 and REQ 7.11 make a server-initiated close part of
 /// the `DiagnosticSessionControl` and `ECUReset` flows, so a close is not
 /// necessarily a fault.
+#[expect(
+    dead_code,
+    reason = "reached once next_event's body replaces its todo!()"
+)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum CloseCause {
+pub(crate) enum CloseCause {
     /// Expected: the server closed after a positive response and before
     /// executing the service (REQ 7.9, REQ 7.11).
     ServiceInitiated,
@@ -76,10 +80,16 @@ pub fn target_of(ai: Ai) -> Result<simple_doip::LogicalAddress, MappingError> {
 
 /// An inbound `DoIP` message, classified.
 ///
-/// Crate-internal in effect: `transport` translates the two that cross the
-/// stack's seam into the driver's event type and handles the other two itself.
+/// Crate-internal: `transport` translates the cases that cross the stack's
+/// seam into the driver's event type. Not public, because a caller reading
+/// this crate would otherwise face two event vocabularies with nothing but
+/// prose to say which is theirs.
+#[expect(
+    dead_code,
+    reason = "reached once next_event's body replaces its todo!()"
+)]
 #[derive(Debug)]
-pub enum DoIpEvent<'a> {
+pub(crate) enum DoIpEvent<'a> {
     /// `T_Data.ind` — a diagnostic message (`DoIP` `0x8001`).
     Ind {
         /// The responding entity. Under functional addressing this differs
@@ -137,14 +147,18 @@ pub enum DoIpEvent<'a> {
     unused_variables,
     reason = "message is unused until classify's body replaces the todo!() above"
 )]
+#[expect(
+    dead_code,
+    reason = "called once next_event's body replaces its todo!()"
+)]
 #[must_use]
-pub fn classify<'a>(message: &simple_doip::messages::Message<'a>) -> Option<DoIpEvent<'a>> {
+pub(crate) fn classify<'a>(message: &simple_doip::messages::Message<'a>) -> Option<DoIpEvent<'a>> {
     todo!("classify Payload into a DoIpEvent; blocked on the 0x8004 gap above")
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{target_of, MappingError};
+    use super::{MappingError, target_of};
     use uds_session::{Address, AddressExtension, Ai, Mtype, TaType};
 
     fn ai_with(mtype: Mtype) -> Ai {
@@ -174,10 +188,7 @@ mod tests {
 
     #[test]
     fn a_local_message_type_maps_to_its_target() {
-        assert_eq!(
-            target_of(ai_with(Mtype::Diag)).map(|a| a.0),
-            Ok(0x0E80)
-        );
+        assert_eq!(target_of(ai_with(Mtype::Diag)).map(|a| a.0), Ok(0x0E80));
         assert_eq!(
             target_of(ai_with(Mtype::SecureDiag)).map(|a| a.0),
             Ok(0x0E80)
