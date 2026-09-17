@@ -69,4 +69,7 @@ pub mod identifier;
 pub use identifier::{DataIdentifier, RecordError, RoutineIdentifier};
 
 pub mod services;
-pub use services::{Responded, ServiceSet, SessionTransition};
+pub use services::{
+    CommunicationControl, ControlDtcSetting, DiagnosticSessionControl, EcuReset, Responded,
+    ServiceSet, SessionTiming, SessionTransition, TesterPresent,
+};

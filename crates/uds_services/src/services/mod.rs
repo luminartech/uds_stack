@@ -29,6 +29,10 @@ pub mod transfer;
 // until Tasks 8-11 fill them, and re-exporting a type that does not exist is
 // `E0432: unresolved import`. Each of those tasks adds its own line here as it
 // creates the module's contents.
+pub use session::{
+    CommunicationControl, ControlDtcSetting, DiagnosticSessionControl, EcuReset,
+    SessionTiming, TesterPresent,
+};
 
 /// Whether clause 8.7 requires a response to be transmitted.
 ///
