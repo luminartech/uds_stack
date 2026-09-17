@@ -187,7 +187,8 @@ The response window
 
    A logical communication channel shall exist from the moment the caller opens it,
    identified by the addressing the caller states when opening it, until the caller
-   withdraws it.
+   withdraws it. The session layer shall return a handle identifying the channel, which
+   its outputs and per-channel inputs use.
 
    Rationale: neither clause the timer requirement ``UDSS_LLR_0120`` cites says where a
    channel's timer lives; the standard states what timers are needed, not where they live.
@@ -286,7 +287,7 @@ The response window
 
    Rationale: the storage is the caller's for the reason ``UDSS_LLR_0120`` gives for the
    timer it holds, and the rest of a channel's state is put in the same place so that one
-   act of the caller supplies and withdraws all of it.
+   act of the caller, withdrawal, discards all of it.
 
    The request record is held because requirements read it: ``UDSS_LLR_0148`` reports the
    addressing of the request whose window expired, ``UDSS_LLR_0138`` reads the expected
@@ -443,7 +444,7 @@ The response window
    per-channel for the same reason, so the rule is stated once rather than separately in
    each of the three places it applies.
 
-.. llr:: A parameter setting naming no existing channel is rejected
+.. llr:: A parameter setting naming no existing or wrong-kind channel is rejected
    :id: UDSS_LLR_0134
    :status: draft
    :integrity_level: QM
@@ -452,12 +453,18 @@ The response window
    :tags: client; p_client; service-interface
 
    A setting of a per-channel parameter that identifies a channel the client does not have
-   shall be rejected as ``UDSS_LLR_0015`` defines.
+   shall be rejected as ``UDSS_LLR_0015`` defines, and so shall a physical channel
+   parameter naming a functional channel or a functional channel parameter naming a
+   physical channel.
 
    Rationale: a parameter attached to a channel that does not exist has no storage to
    carry it, so the setting cannot be honoured; ``UDSS_LLR_0015`` is what a rejection means
    throughout this set, and without a requirement naming it here an implementation could
-   as easily discard such a setting silently as report it.
+   as easily discard such a setting silently as report it. A channel of the wrong kind
+   does exist, so that alone would not trigger the first sentence: a physical channel
+   parameter has no meaning for a functional channel and the reverse, so a setting naming
+   the wrong kind is rejected for the same reason as one naming no channel at all — there
+   is no storage of the right shape to carry it.
 
 .. llr:: The response timer starts on confirmation of a request expecting a response
    :id: UDSS_LLR_0135

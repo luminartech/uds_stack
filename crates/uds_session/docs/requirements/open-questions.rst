@@ -6,10 +6,12 @@ not yet made. Each entry records what is at stake, which requirements it touches
 what would settle it.
 
 Every document the set planned is now written, and the server session timer document, the
-oldest, has been reworked against the rest. The three entries that remain are not waiting
-on a document: one is a question of convention, one a decision about a build-time switch
-that wants the full inventory first, and one a statement that belongs in the qualification
-repository.
+oldest, has been reworked against the rest. Three of the entries that remain are not
+waiting on a document: one is a question of convention, one a decision about a build-time
+switch that wants the full inventory first, and one a statement that belongs in the
+qualification repository. Two more were raised reviewing the storage-by-value change to
+the public surface, and record a residual left by a type that could have gone further and
+did not.
 
 A question closes by being answered in a requirement, not here. When that happens the
 entry is deleted and the requirement carries the reasoning, as a ``Rationale:`` paragraph
@@ -123,6 +125,45 @@ The channel reset of ``UDSS_LLR_0180`` has since given the application an exit: 
 start-of-message the transport never completes is closed by resetting its channel. That
 bounds the harm of a transport that breaks the assumption without settling where the
 assumption is stated.
+
+Does a functional-keep-alive physical channel's ``s3_client`` mean anything?
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+``PhysicalChannelParams::s3_client`` is an ``Option<u32>`` on every physical channel,
+because ``UDSS_LLR_0152`` gives each physical channel its own ``tS3_Client`` reload only
+in physical keep-alive; in functional keep-alive ``UDSS_LLR_0151`` puts no ``tS3_Client``
+fact or timer on a physical channel at all. Nothing in this set says what a caller's
+``Some`` means when opening a physical channel under functional keep-alive, and nothing
+says what a `None` means under physical keep-alive, where ``UDSS_LLR_0152`` requires the
+value: neither is given meaning, and neither is rejected.
+
+Making the field track the mode — present only under physical keep-alive, absent only
+under functional keep-alive — would need the keep-alive mode itself in the type that
+carries ``s3_client``, so that the compiler, not a runtime check, rules out the other
+three combinations. ``KeepAliveMode`` is a run-time field of ``Client``, chosen once at
+``Client::new`` and never changed (``UDSS_LLR_0149``), so the const-generic sizes that
+already type ``PHYS``, ``FUNC`` and ``R`` are the closest precedent for moving it into the
+type; whether that is worth the extra generic parameter, and what it would do to every
+signature that currently reads simply `Client<PHYS, FUNC, R>`, is not yet decided. Touches
+``UDSS_LLR_0042``, ``UDSS_LLR_0149``, ``UDSS_LLR_0151`` and ``UDSS_LLR_0152``.
+
+Would typed channel ids discharge ``UDSS_LLR_0134``'s wrong-kind rejection by construction?
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+``set_physical_parameter`` and ``set_functional_parameter`` each take a ``ChannelId`` and
+``UDSS_LLR_0134`` now rejects one naming the other kind's channel. A ``PhysicalChannelId``
+and ``FunctionalChannelId`` split, one per opening method's return type, would make that
+setting unwritable instead of rejected, the same move ``UDSS_LLR_0121``'s addressing
+split already makes for a channel's ``S_AI[TAtype]``.
+
+It was not taken here because a single ``ChannelId`` is not only the setters' currency:
+``ClientOutput::Transmit``, ``Indicate`` and ``Capacity`` each carry one with no separate
+case per kind, and ``withdraw_channel``, ``reset_channel`` and ``release_keep_alive`` are
+kind-agnostic by ``UDSS_LLR_0125``, ``UDSS_LLR_0180`` and ``UDSS_LLR_0184`` and take a
+plain ``ChannelId`` for that reason. A split would need an enum over the two id types
+wherever a channel of either kind is named, in exchange for removing one rejection cause
+from the two per-channel setters alone. Touches ``UDSS_LLR_0121``, ``UDSS_LLR_0125``,
+``UDSS_LLR_0134``, ``UDSS_LLR_0180`` and ``UDSS_LLR_0184``.
 
 Sequencing
 ----------

@@ -154,11 +154,12 @@ The timer's state
    Table 8 allots a single timer where the functional TesterPresent is used, with no
    further timers per activated session.
 
-   The functional timer and fact are fixed in size, as the server's state ``UDSS_LLR_0082``
-   holds in the instance is, and are nonetheless supplied by the caller: the client's state
-   is uniformly caller-owned, so one storage shape serves both modes, and the mode is fixed
-   at creation under ``UDSS_LLR_0149``, so the caller can size the storage then. That is a
-   declared asymmetry with the server, and it costs nothing observable.
+   The functional timer and fact are fixed in size — the storage has exactly one value —
+   and are nonetheless supplied by the caller, by value, with the instance:
+   ``UDSS_LLR_0008`` puts every fact the client holds in storage the caller supplies, and a
+   fact with nothing left to size is no exception to that rule. The server's association
+   storage of ``UDSS_LLR_0059`` is supplied the same way, so this is the one rule applied
+   consistently to both roles, not an asymmetry between them.
 
 .. llr:: Physical keep-alive state and where it lives
    :id: UDSS_LLR_0151

@@ -694,10 +694,12 @@ Service primitives
    ``tS3_Server``, ``tP2_Server_Max`` and ``tP2*_Server_Max`` parameters of
    ``UDSS_LLR_0042``. Creation of a client shall supply the keep-alive mode of
    ``UDSS_LLR_0149`` and, in functional keep-alive, the storage of ``UDSS_LLR_0150`` and
-   reload parameter of ``UDSS_LLR_0152``, together with a client's channel storage, holding
-   the association and the parameters of ``UDSS_LLR_0132``, ``UDSS_LLR_0152`` and
-   ``UDSS_LLR_0165`` as ``UDSS_LLR_0126`` states; ``UDSS_LLR_0121`` governs when a channel
-   begins to use that storage.
+   reload parameter of ``UDSS_LLR_0152``, together with the client's channel storage — the
+   physical and functional arrays ``UDSS_LLR_0126`` holds a channel's facts in, including
+   the one association it may carry. Opening a channel, under ``UDSS_LLR_0121``, shall
+   supply that channel's own parameters: the response-window pair of ``UDSS_LLR_0132``,
+   the spacing parameter of ``UDSS_LLR_0165``, and, on a physical channel, the
+   ``tS3_Client`` reload of ``UDSS_LLR_0152``.
 
    Rationale: what creation supplies is gathered here because it was stated in four
    places and enumerated in none, and a tester building the first test must collect it.
@@ -852,7 +854,7 @@ Service primitives
    Rationale: the width matches the timestamp's because an interval is a modular
    difference of timestamps and a value beyond that range could never be reached.
 
-.. llr:: A parameter a timer loads is supplied at creation with no default
+.. llr:: A parameter a timer loads has a fixed supply point and no default
    :id: UDSS_LLR_0042
    :status: draft
    :integrity_level: QM
@@ -861,8 +863,9 @@ Service primitives
    :tags: service-interface; timing
 
    Every protocol parameter that a requirement loads a timer with shall be supplied with
-   the instance, or with the caller-supplied storage, it belongs to when that is created,
-   and shall have no default.
+   the instance it belongs to when that instance is created, with the caller-supplied
+   storage it belongs to when that storage is created, or with the channel it belongs to
+   when that channel is opened, and shall have no default.
 
    Rationale: no requirement in this set fixes a value for any timing parameter: the
    recommended and default values in ISO 14229-2:2021 9 are properties of a vehicle
