@@ -637,8 +637,9 @@ Service primitives
    * the keep-alive release of ``UDSS_LLR_0184``.
 
    An interface in which a server cannot be handed a request classification to transmit, a
-   response classification to receive, a channel identifier, channel storage, a channel
-   reset or a keep-alive release satisfies this requirement without a check.
+   response classification to receive, a channel identifier, the opening or withdrawal of
+   a channel, a channel reset or a keep-alive release satisfies this requirement without a
+   check.
 
    Rationale: the rejected inputs are listed rather than described, because "an input
    whose form belongs to the other role" is not decidable for an ``S_Data.req``, whose
