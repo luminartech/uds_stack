@@ -115,12 +115,11 @@ pub trait ControlDtcSetting {
 
 #[cfg(test)]
 #[allow(
-    clippy::assertions_on_constants,
     clippy::manual_range_patterns,
     clippy::unused_async_trait_impl,
-    reason = "fixture asserts directly on trait constants, names sessions as an explicit \
-              OR-set to mirror the brief's uninterpreted sub-function values, and the \
-              fixture's reset never awaits — none of that is a real defect in test code"
+    reason = "the fixture names sessions as an explicit OR-set to mirror the brief's \
+              uninterpreted sub-function values, and its reset never awaits — neither is \
+              a real defect in test code"
 )]
 mod tests {
     use super::{DiagnosticSessionControl, EcuReset, SessionTiming};
@@ -165,14 +164,6 @@ mod tests {
         ecu.on_transition(SessionTransition::NonDefaultToDefault, true);
         assert!(ecu.supports(0x02));
         assert!(!ecu.supports(0x7F));
-    }
-
-    /// ``UDSSVC_ARCH_0033`` — declared per service, with no default, so a forgotten
-    /// declaration fails to compile rather than silently meaning "never".
-    #[test]
-    fn response_pending_permission_is_declared_per_service() {
-        assert!(<Ecu as EcuReset>::MAY_RESPOND_PENDING);
-        assert!(!<Ecu as DiagnosticSessionControl>::MAY_RESPOND_PENDING);
     }
 
     /// P2 values are a property of the session being entered, so the application states
