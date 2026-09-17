@@ -50,9 +50,7 @@ pub enum TransportEvent<'a> {
 /// `S` is the socket, so no runtime is named: this builds for a bare-metal
 /// target as readily as for tokio, and an adapter for either is additive.
 pub struct DoIpTransport<S> {
-    // Read once `t_data_req` and `next_event` leave `todo!()`; both are stubs
-    // for now (see their bodies), so nothing yet reads through the socket.
-    #[allow(dead_code)]
+    #[expect(dead_code, reason = "read once t_data_req and next_event leave todo!()")]
     socket: S,
     timing: Timing,
     inbound_max: Option<usize>,
