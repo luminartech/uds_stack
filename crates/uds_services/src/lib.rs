@@ -53,6 +53,8 @@
 #![no_std]
 #![forbid(unsafe_code)]
 
+pub mod assembly;
+
 pub mod storage;
 pub use storage::{Buffers, Storage, Store};
 
