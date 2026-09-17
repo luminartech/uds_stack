@@ -67,9 +67,10 @@
 //! | ``UDSS_LLR_0068`` | the `KeepAlive` variants carry no session selection |
 //! | ``UDSS_LLR_0070`` | [`ClientTx`]'s expected count is a required field |
 //! | ``UDSS_LLR_0071`` | `Solicitation` is a required field on a final response |
-//! | ``UDSS_LLR_0072`` (in part) | the classification enums admit no other form |
+//! | ``UDSS_LLR_0072`` | the enums admit no other form; full walk in the requirement |
 //! | ``UDSS_LLR_0134`` (wrong-kind limb) | the setters each require that kind's own id |
-//! | ``UDSS_LLR_0151``, ``UDSS_LLR_0152`` | a functional channel states no `s3_client` |
+//! | ``UDSS_LLR_0151`` | a functional channel states no `s3_client` |
+//! | ``UDSS_LLR_0152`` (absent limb) | a functional channel states no `s3_client` |
 //!
 //! [`Reaction::finish`]: reaction::Reaction::finish
 

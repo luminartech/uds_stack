@@ -1662,6 +1662,24 @@ means of recognising it to the implementation.
    form: the ``keep-alive`` marker excludes a session selection, a TesterPresent changing no
    session, which is the reading both of those requirements rest on.
 
+   No residual departure remains once ``UDSS_LLR_0066`` to ``UDSS_LLR_0071`` are excluded,
+   so this requirement is discharged by construction in full rather than in part. Walked
+   against each source in turn: ``UDSS_LLR_0052``'s address extension travels inside
+   ``Mtype``'s ``RDiag`` and ``SecureRDiag`` variants, so it cannot be present on a message
+   of a type that carries none, nor absent from one that does. ``UDSS_LLR_0057``'s
+   classification is a required parameter of every primitive that carries one, absent only
+   where ``UDSS_LLR_0058`` permits it, and that omission is ``UDSS_LLR_0069``'s case, not
+   this one. ``UDSS_LLR_0058``'s kind requirement binds a message addressed to a server,
+   which only a server's own reception primitive carries under ``UDSS_LLR_0030``, and whose
+   classification states kind ``request`` in every case ``UDSS_LLR_0065`` gives it; a
+   client's reception primitive, which alone can carry another kind, is never addressed to a
+   server. ``UDSS_LLR_0065``'s remaining forms are closed by separate variants, required
+   fields or a ``NonZeroU16``, save one: a session selection's presence is tied to whether
+   the message effects a session transition, a fact ``UDSS_LLR_0073`` forbids the session
+   layer from determining. The session layer can therefore never recognise an input as
+   departing from that one form, so no departure from it is an input this requirement can
+   reach either, and the closed set of remaining forms leaves nothing else for it to reach.
+
 .. llr:: The session layer does not inspect message data
    :id: UDSS_LLR_0073
    :status: draft

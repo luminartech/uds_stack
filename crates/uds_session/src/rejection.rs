@@ -12,11 +12,11 @@
 /// Why an input was rejected.
 ///
 /// One variant per rejecting requirement that remains expressible. The requirements this
-/// crate's types discharge by construction — ``UDSS_LLR_0030``, ``UDSS_LLR_0031``,
-/// ``UDSS_LLR_0054``, ``UDSS_LLR_0066``, ``UDSS_LLR_0067``, ``UDSS_LLR_0068``,
-/// ``UDSS_LLR_0070``, ``UDSS_LLR_0071``, part of ``UDSS_LLR_0072`` and part of
-/// ``UDSS_LLR_0134`` — have no variant here, because an input that triggers them cannot
-/// be written.
+/// crate's types discharge by construction — ``UDSS_LLR_0027`` (second limb),
+/// ``UDSS_LLR_0030``, ``UDSS_LLR_0031``, ``UDSS_LLR_0054``, ``UDSS_LLR_0066``,
+/// ``UDSS_LLR_0067``, ``UDSS_LLR_0068``, ``UDSS_LLR_0070``, ``UDSS_LLR_0071``,
+/// ``UDSS_LLR_0072`` and part of ``UDSS_LLR_0134`` — have no variant here, because an
+/// input that triggers them cannot be written.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum Cause {
@@ -33,8 +33,6 @@ pub enum Cause {
     NoMatchingAssociation,
     /// ``UDSS_LLR_0069`` — a classification stating no kind where one is required.
     KindRequired,
-    /// ``UDSS_LLR_0072`` — a classification or addressing not of the stated form.
-    Malformed,
     /// ``UDSS_LLR_0118`` — a response-pending message while one is unconfirmed.
     ResponsePendingUnconfirmed,
     /// ``UDSS_LLR_0119`` — a response-pending message inside the minimum spacing.
@@ -46,9 +44,11 @@ pub enum Cause {
     RepeatCountSpent,
     /// ``UDSS_LLR_0178`` — a functional channel has not finished receiving.
     ResponseStillArriving,
-    /// ``UDSS_LLR_0152`` — a physical channel opened with a `tS3_Client` reload while the
-    /// client is in functional keep-alive, where the reload has no meaning, or opened
-    /// with none while the client is in physical keep-alive, where one is required.
+    /// ``UDSS_LLR_0152`` — a `tS3_Client` reload supplied in disagreement with the
+    /// client's keep-alive mode: a physical channel's reload stated, at opening or by a
+    /// later setting, while the client is in functional keep-alive; a physical channel
+    /// opened with none while the client is in physical keep-alive; or the client-wide
+    /// reload set while the client is in physical keep-alive, where none exists to set.
     S3ClientReloadMismatch,
 }
 
@@ -62,25 +62,23 @@ impl Cause {
             Self::NoAssociationFree => 3,
             Self::NoMatchingAssociation => 4,
             Self::KindRequired => 5,
-            Self::Malformed => 6,
-            Self::ResponsePendingUnconfirmed => 7,
-            Self::ResponsePendingTooSoon => 8,
-            Self::SpacingTimerRunning => 9,
-            Self::RepeatCountSpent => 10,
-            Self::ResponseStillArriving => 11,
-            Self::S3ClientReloadMismatch => 12,
+            Self::ResponsePendingUnconfirmed => 6,
+            Self::ResponsePendingTooSoon => 7,
+            Self::SpacingTimerRunning => 8,
+            Self::RepeatCountSpent => 9,
+            Self::ResponseStillArriving => 10,
+            Self::S3ClientReloadMismatch => 11,
         }
     }
 
     /// Every cause, in bit order, for iteration.
-    const ALL: [Self; 13] = [
+    const ALL: [Self; 12] = [
         Self::NoSuchChannel,
         Self::DuplicateChannelAddressing,
         Self::AssociationOutstanding,
         Self::NoAssociationFree,
         Self::NoMatchingAssociation,
         Self::KindRequired,
-        Self::Malformed,
         Self::ResponsePendingUnconfirmed,
         Self::ResponsePendingTooSoon,
         Self::SpacingTimerRunning,
@@ -93,8 +91,9 @@ impl Cause {
 impl core::fmt::Display for Cause {
     /// One short, lower-case phrase naming the condition, not the requirement number,
     /// so a caller reading it understands what it did wrong without opening the
-    /// requirement set. ``UDSS_LLR_0016`` requires a report to state the cause; this is
-    /// what states it in a form a caller can render.
+    /// requirement set. ``UDSS_LLR_0016`` requires a report to state the cause;
+    /// [`Rejection::causes`] is what states it, and this is a rendering of that state
+    /// for a caller who wants text rather than a value to match on.
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.write_str(match self {
             Self::NoSuchChannel => "no such channel",
@@ -103,7 +102,6 @@ impl core::fmt::Display for Cause {
             Self::NoAssociationFree => "no association is free",
             Self::NoMatchingAssociation => "no outstanding association matches",
             Self::KindRequired => "a kind is required but none was stated",
-            Self::Malformed => "malformed",
             Self::ResponsePendingUnconfirmed => {
                 "a response-pending message arrived while one is unconfirmed"
             }
