@@ -20,7 +20,7 @@
 //! ```text
 //!   consuming application
 //!        ↕  typed service traits / typed client calls
-//!   uds_services      the driver — owns the Session, declares UdsTransport
+//!   uds_services      the driver — owns Client/Server, declares UdsTransport
 //!        ↓  UdsTransport
 //!   uds_on_ip         ISO 14229-5 profile + DoIP mapping  ← this crate
 //!        ↓
@@ -29,8 +29,10 @@
 //!
 //! This crate is **wholly below** the session layer. It hosts no driver, calls
 //! nothing upward, and knows nothing about services. `uds_services` owns the
-//! `uds_session::Session`, supplies its inputs, drains its actions, and calls
-//! this crate through a trait it declares.
+//! `uds_session::Client` or `uds_session::Server` — `UDSS_LLR_0029` fixes the
+//! role at creation, so a node acting as both holds two instances rather than
+//! one session object — supplies its inputs, drains its actions, and calls this
+//! crate through a trait it declares.
 //!
 //! That trait does not exist yet — `uds_services` is still being written — so
 //! [`transport::DoIpTransport`] carries its methods as inherent methods for

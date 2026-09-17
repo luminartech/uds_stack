@@ -4,38 +4,18 @@
 //! transport applies, and it is where the genuinely IP-specific behaviour
 //! lives: how a UDS message is framed into a `DoIP` diagnostic message, and
 //! what the transport must do around particular services.
-
-/// The `tP_Client` reload pair this transport dictates.
-///
-/// ISO 14229-5:2022 REQ 7.19 defers the values to ISO 14229-2. What this crate
-/// contributes is the *choice of parameter*: `DoIP` offers no
-/// `T_DataSOM.ind`, so the `tP6` pair applies rather than the `tP2` pair
-/// (ISO 14229-2:2021 REQ 5.11).
-///
-/// This is what `UdsTransport::channel_timing` supplies. The spacing pair is
-/// deliberately not part of it — see [`Spacing`].
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct Reloads {
-    /// `tP6_Client_Max` — wait for a complete response after `T_Data.conf`.
-    pub p6_client_max_ms: u32,
-    /// `tP6*_Client_Max` — enhanced wait after a response-pending NRC.
-    pub p6_star_client_max_ms: u32,
-}
-
-impl Reloads {
-    /// The value for whichever reload the session layer says is in force.
-    #[must_use]
-    pub const fn value_for(self, which: uds_session::ChannelReload) -> u32 {
-        match which {
-            uds_session::ChannelReload::Default => self.p6_client_max_ms,
-            uds_session::ChannelReload::Enhanced => self.p6_star_client_max_ms,
-        }
-    }
-}
+//!
+//! The `tP_Client` reload pair is [`uds_session::Reloads`] and is deliberately
+//! not redeclared here. This crate's contribution is not the type but the
+//! *choice of parameter*: `DoIP` offers no `T_DataSOM.ind`, so ISO 14229-2:2021
+//! REQ 5.11 gives it the `tP6` pair rather than the `tP2` pair. The session
+//! layer does not distinguish the two cases — which is why its field names do
+//! not say `p6` — and the distinction survives in the values this transport
+//! supplies, not in a second type.
 
 /// Minimum spacing between consecutive requests.
 ///
-/// ISO 14229-2:2021 clause 9.7 client policy. Separate from [`Reloads`]
+/// ISO 14229-2:2021 clause 9.7 client policy. Separate from [`uds_session::Reloads`]
 /// because a transport has no view on it: the reload pair is dictated by
 /// whether the transport offers a `T_DataSOM.ind`, while the spacing is the
 /// client's own conduct.
@@ -50,6 +30,7 @@ pub struct Spacing {
 
 /// Every ISO 14229-5 timing parameter this profile carries.
 ///
+///
 /// ISO 14229-2:2021 clause 9.2 Table 4 specifies the reloads as minima derived
 /// from the server's timing and vehicle-network delays, not as fixed values,
 /// so there is no defensible universal default. The values in [`Timing::default`]
@@ -62,7 +43,11 @@ pub struct Spacing {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct Timing {
     /// What the session layer loads its response timer with.
-    pub reloads: Reloads,
+    ///
+    /// `uds_session`'s type, not one of ours. On `DoIP` these carry the `tP6`
+    /// pair (ISO 14229-2:2021 REQ 5.11); the field names do not say so because
+    /// the session layer does not distinguish `tP2` from `tP6`.
+    pub reloads: uds_session::Reloads,
     /// What the client waits before its next request.
     pub spacing: Spacing,
 }
@@ -70,9 +55,9 @@ pub struct Timing {
 impl Default for Timing {
     fn default() -> Self {
         Self {
-            reloads: Reloads {
-                p6_client_max_ms: 2_000,
-                p6_star_client_max_ms: 5_000,
+            reloads: uds_session::Reloads {
+                default_reload: 2_000,
+                enhanced_reload: 5_000,
             },
             spacing: Spacing::default(),
         }
@@ -176,22 +161,8 @@ pub fn periodic_record_within_limit(len: usize) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{Reloads, Spacing, Timing};
-    use uds_session::ChannelReload;
-
-    /// ISO 14229-2:2021 REQ 5.11 — `DoIP` has no `T_DataSOM.ind`, so the `tP6`
-    /// pair applies rather than the `tP2` pair. The session layer does not
-    /// distinguish the two cases; the distinction survives in the values this
-    /// transport supplies.
-    #[test]
-    fn the_reload_pair_answers_the_session_layers_question() {
-        let reloads = Reloads {
-            p6_client_max_ms: 2_000,
-            p6_star_client_max_ms: 5_000,
-        };
-        assert_eq!(reloads.value_for(ChannelReload::Default), 2_000);
-        assert_eq!(reloads.value_for(ChannelReload::Enhanced), 5_000);
-    }
+    use super::{Spacing, Timing};
+    use uds_session::Reloads;
 
     /// Design doc §6.2 — spacing is ISO 14229-2 clause 9.7 client policy, on
     /// which a transport has no view, so it is not part of what
@@ -202,6 +173,12 @@ mod tests {
     /// source field would compare a value to itself and could never fail.
     /// This fails to *compile* instead, the moment `Timing` loses the split
     /// between `reloads` and `spacing` or either field retypes.
+    ///
+    /// It does *not* guard which crate owns `Reloads`. Checked by
+    /// reintroducing a local reload type: `transport::channel_timing`'s return
+    /// signature fails first, so the library stops compiling before this test
+    /// target is built and the annotation below never fires. The signature is
+    /// the guard for ownership; this test guards the split.
     #[expect(
         unused_variables,
         reason = "reloads and spacing exist only for their type annotations to type-check; \

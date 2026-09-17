@@ -11,8 +11,8 @@
 
 use crate::error::Error;
 use crate::mapping::target_of;
-use crate::profile::{Reloads, Timing};
-use uds_session::{Ai, SResult, Timestamp};
+use crate::profile::Timing;
+use uds_session::{Ai, Reloads, SResult, Timestamp};
 
 /// The driver's view of what arrived, or that its deadline passed first.
 ///
@@ -206,6 +206,12 @@ impl<S> DoIpTransport<S> {
     }
 
     /// The `tP_Client` reload pair this transport dictates.
+    ///
+    /// [`uds_session::Reloads`], because the session layer owns the pair. What
+    /// this transport dictates is *which* pair: `DoIP` has no `T_DataSOM.ind`,
+    /// so ISO 14229-2:2021 REQ 5.11 gives it `tP6` rather than `tP2`. The
+    /// session layer does not distinguish the two, so the choice lives in these
+    /// values and nowhere else.
     #[must_use]
     pub const fn channel_timing(&self) -> Reloads {
         self.timing.reloads
