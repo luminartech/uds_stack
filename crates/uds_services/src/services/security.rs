@@ -45,9 +45,15 @@ pub struct SecurityLevel(u8);
 
 impl SecurityLevel {
     /// The level a `requestSeed` sub-function names, or `None` where it is not one.
+    ///
+    /// A `requestSeed` sub-function is odd by construction, and must leave room for its
+    /// `sendKey` partner: a sub-function byte is seven bits, because bit 7 is
+    /// `suppressPosRspMsgIndication`, so both halves of the pair have to fall in
+    /// `0x00`–`0x7F`. `0x7F` itself is rejected because its partner would be `0x80`,
+    /// which is not a sub-function value at all.
     #[must_use]
     pub const fn from_request_seed(sub_function: u8) -> Option<Self> {
-        if sub_function % 2 == 1 {
+        if sub_function % 2 == 1 && sub_function < 0x7F {
             Some(Self(sub_function))
         } else {
             None
@@ -64,7 +70,8 @@ impl SecurityLevel {
     #[must_use]
     #[allow(
         clippy::arithmetic_side_effects,
-        reason = "from_request_seed admits only odd values, so +1 cannot overflow u8"
+        reason = "from_request_seed admits only odd values below 0x7F, so the partner \
+                  is at most 0x7E and the addition cannot overflow"
     )]
     pub const fn send_key(self) -> u8 {
         self.0 + 1
@@ -169,6 +176,18 @@ mod tests {
         let l = SecurityLevel::from_request_seed(0x01).expect("0x01 is a requestSeed");
         assert_eq!((l.request_seed(), l.send_key()), (0x01, 0x02));
         assert_eq!(SecurityLevel::from_request_seed(0x02), None);
+    }
+
+    /// The pair must fit the seven-bit sub-function range: 0xFF is odd, but its partner
+    /// would overflow, and 0x7F's partner would be 0x80, which is not a sub-function.
+    #[test]
+    fn a_level_whose_partner_would_not_fit_is_rejected() {
+        assert_eq!(SecurityLevel::from_request_seed(0xFF), None);
+        assert_eq!(SecurityLevel::from_request_seed(0x7F), None);
+        assert_eq!(
+            SecurityLevel::from_request_seed(0x7D).map(SecurityLevel::send_key),
+            Some(0x7E)
+        );
     }
 
     /// Table I.1's fallback: "if Delay_Timer and Att_Cnt are not supported, a random
