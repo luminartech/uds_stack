@@ -144,14 +144,14 @@ The usual remedy for a type that must be exhausted before it yields its result i
 only from the call that ran the closure over every item. ``UDSS_LLR_0011`` forbids that
 shape here: it forbids the session layer to invoke a callback, handler, or caller-supplied
 trait implementation, and a closure parameter on a public method is exactly that. Rust
-also has no linear type — nothing short of `unsafe`, which ``UDSS_LLR_0004``'s crate
+also has no linear type — nothing short of `unsafe`, which ``UDSS_LLR_0005``'s crate
 attributes forbid, forces a value to be exhausted before it can be consumed. Between the
 two, ``Reaction`` enforces what a type can enforce here: the order, not the delivery.
 
 What would settle it is a shape in which the rejection outcome is reachable only from a
 drain that actually ran to completion, without a caller-supplied function reaching that
 drain. No such shape is in hand, and the API is not to be contorted chasing one until
-there is. Touches ``UDSS_LLR_0081``, ``UDSS_LLR_0011`` and ``UDSS_LLR_0004``.
+there is. Touches ``UDSS_LLR_0081``, ``UDSS_LLR_0011`` and ``UDSS_LLR_0005``.
 
 Sequencing
 ----------
