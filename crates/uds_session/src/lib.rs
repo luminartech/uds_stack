@@ -5,8 +5,17 @@
 //! caller supplies a monotonic timestamp together with inbound transport events, and
 //! drains the resulting actions.
 //!
-//! The crate is `no_std` and performs no allocation. Storage is provided by the caller, so
-//! sizing is a deployment decision rather than a compile-time constant of this crate.
+//! The crate is `no_std` and performs no allocation. Storage is supplied by the caller, by
+//! value: `Server<A>` owns an array of `A` associations, and `Client<PHYS, FUNC, R>` owns
+//! `PHYS` physical channel slots and `FUNC` functional channel slots of `R` responders
+//! each. Sizing every array is a deployment decision, expressed as a const generic, rather
+//! than a compile-time constant of this crate.
+//!
+//! The client's arrays split by channel kind because the two kinds hold different state:
+//! ``UDSS_LLR_0139`` gives a functional channel a responder table and a physical channel
+//! none, and ``UDSS_LLR_0151`` gives a physical channel a `tS3_Client` timer and a
+//! functional channel none. Splitting the arrays keeps both facts true by construction and
+//! stops a physical channel being charged storage for a table it must not keep.
 //!
 //! `unsafe` is forbidden crate-wide, and the lint configuration in `Cargo.toml` applies to
 //! every target rather than to the crate root alone.
@@ -27,7 +36,7 @@
 //! that way, and is included here for the same reason.
 //!
 //! - **``UDSS_LLR_0011``** — outputs are retrieved, not pushed. No public type takes a
-//!   caller-supplied trait object, trait bound or function; storage is passed as slices
+//!   caller-supplied trait object, trait bound or function; storage is supplied by value
 //!   for the same reason. Every input returns a [`Reaction`] the caller drains.
 //! - **``UDSS_LLR_0013``** — no payload is retained. No type here holds an owned buffer.
 //! - **``UDSS_LLR_0014``** — an output refers to caller-owned data. [`ServerOutput`] and
@@ -55,6 +64,7 @@
 //! | ``UDSS_LLR_0070`` | [`ClientTx`]'s expected count is a required field |
 //! | ``UDSS_LLR_0071`` | `Solicitation` is a required field on a final response |
 //! | ``UDSS_LLR_0072`` (in part) | the classification enums admit no other form |
+//! | ``UDSS_LLR_0151``, ``UDSS_LLR_0152`` | a functional channel states no `s3_client` |
 //!
 //! [`Reaction::finish`]: reaction::Reaction::finish
 
