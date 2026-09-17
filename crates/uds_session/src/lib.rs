@@ -76,12 +76,13 @@ pub use classification::{
     Solicitation,
 };
 pub use client::{
-    ChannelId, ChannelSlot, Client, ClientOutput, ClientReaction, FunctionalKeepAlive,
-    KeepAliveMode, ResponderSlot,
+    ChannelId, Client, ClientOutput, ClientReaction, FunctionalKeepAlive, FunctionalSlot,
+    KeepAliveMode, PhysicalSlot, ResponderSlot,
 };
 pub use params::{
-    ChannelParameter, ChannelParams, ChannelReload, ServerParameter, ServerParams,
-    ServerReload,
+    ChannelReload, FunctionalChannelParameter, FunctionalChannelParams,
+    PhysicalChannelParameter, PhysicalChannelParams, Reloads, ServerParameter,
+    ServerParams, ServerReload,
 };
 pub use reaction::Reaction;
 pub use rejection::{Cause, Causes, Rejection};

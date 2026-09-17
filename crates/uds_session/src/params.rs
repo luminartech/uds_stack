@@ -60,63 +60,103 @@ pub enum ServerParameter {
     P2StarServerMax(u32),
 }
 
-/// What supplying a channel's storage supplies alongside it.
+/// The `tP_Client` reload pair a transport dictates.
 ///
-/// ``UDSS_LLR_0126`` holds these with the channel; ``UDSS_LLR_0132``, ``UDSS_LLR_0152``
-/// and ``UDSS_LLR_0165`` define them.
+/// ``UDSS_LLR_0132`` names the pair. They are nested rather than flat because a
+/// transport dictates them while having no view on the `tP3` spacing of
+/// ``UDSS_LLR_0165``, which is client policy under ISO 14229-2:2021 9.7; the split
+/// follows the requirement boundary rather than cutting across it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct ChannelParams {
+pub struct Reloads {
     /// ``UDSS_LLR_0132`` — `tP2_Client_Max`, or `tP6_Client_Max` where the transport has
     /// no `T_DataSOM.ind`. The session layer does not distinguish the two cases.
     pub default_reload: u32,
     /// ``UDSS_LLR_0132`` — `tP2*_Client_Max` or `tP6*_Client_Max`.
     pub enhanced_reload: u32,
-    /// ``UDSS_LLR_0165`` — `tP3_Client_Phys` on a physical channel, `tP3_Client_Func` on
-    /// a functional one.
-    pub spacing: u32,
-    /// ``UDSS_LLR_0152`` — `tS3_Client`, present only in physical keep-alive, where each
-    /// physical channel has its own. In functional keep-alive the client has a single
-    /// one, supplied with the keep-alive mode at creation.
-    pub s3_client: Option<u32>,
 }
 
-/// One channel parameter, for setting it again.
+/// What opening a physical channel supplies.
+///
+/// ``UDSS_LLR_0126`` holds these with the channel.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct PhysicalChannelParams {
+    /// ``UDSS_LLR_0132`` — the response window pair.
+    pub reloads: Reloads,
+    /// ``UDSS_LLR_0165`` — `tP3_Client_Phys`.
+    pub spacing: u32,
+    /// ``UDSS_LLR_0152`` — `tS3_Client`, which physical keep-alive gives to each physical
+    /// channel. A functional channel has none, which is why this field is here and not on
+    /// [`FunctionalChannelParams`]: ``UDSS_LLR_0151`` puts the fact and timer on physical
+    /// channels alone, and splitting the types makes that true by construction.
+    pub s3_client: u32,
+}
+
+/// What opening a functional channel supplies.
+///
+/// ``UDSS_LLR_0126`` holds these with the channel. There is no `tS3_Client`:
+/// ``UDSS_LLR_0150`` keeps functional keep-alive's single timer with the instance.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct FunctionalChannelParams {
+    /// ``UDSS_LLR_0132`` — the response window pair.
+    pub reloads: Reloads,
+    /// ``UDSS_LLR_0165`` — `tP3_Client_Func`.
+    pub spacing: u32,
+}
+
+/// One physical channel parameter, for setting it again.
 ///
 /// ``UDSS_LLR_0043``; ``UDSS_LLR_0134`` rejects a setting naming a channel the client
 /// does not have.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum ChannelParameter {
+pub enum PhysicalChannelParameter {
     /// The default response reload.
     DefaultReload(u32),
     /// The enhanced response reload.
     EnhancedReload(u32),
     /// The request spacing.
     Spacing(u32),
-    /// `tS3_Client`, in physical keep-alive.
+    /// `tS3_Client`.
     S3Client(u32),
+}
+
+/// One functional channel parameter, for setting it again.
+///
+/// ``UDSS_LLR_0043``; ``UDSS_LLR_0134`` rejects a setting naming a channel the client
+/// does not have.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum FunctionalChannelParameter {
+    /// The default response reload.
+    DefaultReload(u32),
+    /// The enhanced response reload.
+    EnhancedReload(u32),
+    /// The request spacing.
+    Spacing(u32),
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{ChannelParams, ServerParams};
+    use super::{FunctionalChannelParams, PhysicalChannelParams, Reloads, ServerParams};
 
-    /// ``UDSS_LLR_0152`` — functional keep-alive has one `tS3_Client` for the client and
-    /// physical keep-alive one per physical channel, so a channel's is optional.
+    /// ``UDSS_LLR_0151`` and ``UDSS_LLR_0152`` — a `tS3_Client` belongs to a physical
+    /// channel in physical keep-alive and to no functional channel. The types carry
+    /// that: there is no field on which to state one for a functional channel.
     #[test]
-    fn a_channel_carries_a_session_reload_only_in_physical_keep_alive() {
-        let functional = ChannelParams {
+    fn only_a_physical_channel_carries_a_session_reload() {
+        let reloads = Reloads {
             default_reload: 50,
             enhanced_reload: 5_000,
+        };
+        let physical = PhysicalChannelParams {
+            reloads,
             spacing: 60,
-            s3_client: None,
+            s3_client: 2_000,
         };
-        assert_eq!(functional.s3_client, None);
-
-        let physical = ChannelParams {
-            s3_client: Some(2_000),
-            ..functional
+        let functional = FunctionalChannelParams {
+            reloads,
+            spacing: 70,
         };
-        assert_eq!(physical.s3_client, Some(2_000));
+        assert_eq!(physical.s3_client, 2_000);
+        assert_eq!(functional.reloads.default_reload, 50);
     }
 
     /// ``UDSS_LLR_0119`` derives the response-pending spacing from `tP2*_Server_Max`

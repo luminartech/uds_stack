@@ -7,55 +7,44 @@
 //!
 //! # Storage
 //!
-//! ``UDSS_LLR_0004`` forbids allocation, so every capacity is a slice the caller owns.
-//! ``UDSS_LLR_0121`` makes supplying a channel's storage the act that brings the channel
-//! into being, and ``UDSS_LLR_0139`` makes a functional channel's responder-table
-//! capacity the number of entries that storage holds — a physical channel keeps no table
-//! and passes an empty slice.
+//! ``UDSS_LLR_0004`` forbids allocation, so storage is supplied by the caller, by value.
+//! `Client` carries no lifetime as a result: nothing here is borrowed, so nothing here can
+//! outlive it or be reasoned about across it. ``UDSS_LLR_0121`` makes supplying a
+//! channel's storage the act that brings the channel into being.
 //!
-//! `Client<'s, 'r>` borrows the channel array for `'s` and each responder array for `'r`.
-//! Both are ordinary borrows: each responder array must simply outlive the client that
-//! holds it. No particular declaration order is required — a responder array that goes
-//! out of scope while the client is still in use is rejected with `E0597`, like any other
-//! borrow that does not live long enough.
+//! The physical and functional arrays are separate because the two channel kinds hold
+//! different state. ``UDSS_LLR_0139`` gives a functional channel a responder table and
+//! gives a physical channel none; ``UDSS_LLR_0151`` gives a physical channel a
+//! `tS3_Client` timer and gives a functional channel none. Splitting [`PhysicalSlot`] from
+//! [`FunctionalSlot`] keeps both facts true by construction rather than by a runtime
+//! check, and it means a physical channel is never charged storage for a table it must
+//! not keep.
 //!
-//! The example below exercises that arrangement by calling [`Client::open_channel`] with
-//! `responders`; it is `no_run` because that method is still `todo!()` and would panic if
-//! executed, but it still has to compile, which is what constrains `'r`.
+//! `R` sizes every functional channel's responder table alike; a client with no
+//! functional channels at all sets `FUNC` to `0` and pays no storage for one.
 //!
-//! ```no_run
+//! ```
 //! use uds_session::{
-//!     Address, Ai, ChannelParams, ChannelSlot, Client, FunctionalKeepAlive, KeepAliveMode,
-//!     Mtype, ResponderSlot, TaType, Timestamp,
+//!     Client, FunctionalKeepAlive, FunctionalSlot, KeepAliveMode, PhysicalSlot,
 //! };
 //!
-//! let mut responders = [ResponderSlot::EMPTY; 8];
-//! let mut keep_alive = FunctionalKeepAlive::EMPTY;
-//! let mut channels = [ChannelSlot::EMPTY; 4];
-//!
-//! let mut client = Client::new(
-//!     &mut channels,
-//!     KeepAliveMode::Functional { storage: &mut keep_alive, s3_client: 2_000 },
+//! let client: Client<4, 1, 8> = Client::new(
+//!     [PhysicalSlot::EMPTY; 4],
+//!     [FunctionalSlot::EMPTY; 1],
+//!     KeepAliveMode::Functional {
+//!         storage: FunctionalKeepAlive::EMPTY,
+//!         s3_client: 2_000,
+//!     },
 //! );
-//!
-//! let ai = Ai {
-//!     mtype: Mtype::Diag,
-//!     sa: Address(0xF1),
-//!     ta: Address(0x10),
-//!     ta_type: TaType::Physical,
-//! };
-//! let params = ChannelParams {
-//!     default_reload: 50,
-//!     enhanced_reload: 5_000,
-//!     spacing: 60,
-//!     s3_client: None,
-//! };
-//! drop(client.open_channel(Timestamp(0), ai, params, &mut responders));
+//! # let _ = client;
 //! ```
 
 use crate::addressing::{Address, AddressExtension, Ai};
 use crate::classification::{ClientRx, ClientTx};
-use crate::params::{ChannelParameter, ChannelParams, ChannelReload};
+use crate::params::{
+    ChannelReload, FunctionalChannelParameter, FunctionalChannelParams,
+    PhysicalChannelParameter, PhysicalChannelParams,
+};
 use crate::reaction::Reaction;
 use crate::result::SResult;
 use crate::time::Timestamp;
@@ -76,36 +65,52 @@ impl ResponderSlot {
     pub const EMPTY: Self = Self { _reserved: () };
 }
 
-/// One channel's storage.
+/// One physical channel's storage.
 ///
 /// ``UDSS_LLR_0126`` — every fact a document of this set keeps per channel lives here:
 /// the channel's `tP_Client` and spacing timers and their parameters, whether a request
 /// is in progress and its addressing and classification, the response count, the one
 /// association ``UDSS_LLR_0059`` holds and whether it is abandoned, the repeat count of
-/// ``UDSS_LLR_0173``, and the open start-of-message on a physical channel.
+/// ``UDSS_LLR_0173``, whether a start-of-message is open, and in physical keep-alive the
+/// `tS3_Client` timer and session fact of ``UDSS_LLR_0151``.
 ///
-/// The responder slice is held by `&'r mut`, which makes `ChannelSlot` **invariant** in
-/// `'r`. That invariance is the cost the design accepted in order to keep
-/// ``UDSS_LLR_0139``'s per-channel capacity literal, so the stub carries it rather than a
-/// covariant placeholder — otherwise the worked example below would reassure a caller
-/// about an arrangement nobody had actually compiled.
+/// It holds no responder table: ``UDSS_LLR_0139`` gives one to functional channels alone.
 #[derive(Debug)]
-pub struct ChannelSlot<'r> {
-    _responders: Option<&'r mut [ResponderSlot]>,
+pub struct PhysicalSlot {
+    _reserved: (),
 }
 
-impl ChannelSlot<'_> {
+impl PhysicalSlot {
     /// A slot holding no channel.
+    pub const EMPTY: Self = Self { _reserved: () };
+}
+
+/// One functional channel's storage, with room for `R` responders.
+///
+/// ``UDSS_LLR_0126`` holds the per-channel facts, as [`PhysicalSlot`] lists them, except
+/// the `tS3_Client` timer and session fact, which ``UDSS_LLR_0151`` gives to physical
+/// channels alone. ``UDSS_LLR_0139`` adds the responder table, whose capacity is the
+/// number of entries this storage holds — `R`.
+#[derive(Debug)]
+pub struct FunctionalSlot<const R: usize> {
+    _responders: [ResponderSlot; R],
+}
+
+impl<const R: usize> FunctionalSlot<R> {
+    /// A slot holding no channel, its responder table empty.
     ///
-    /// `ChannelSlot` is not `Copy`, because it owns a mutable borrow. `[ChannelSlot::EMPTY;
-    /// N]` still works: Rust permits array-repeat of a `const` item for non-`Copy` types.
-    pub const EMPTY: Self = Self { _responders: None };
+    /// ``UDSS_LLR_0142`` — a channel's responder table holds no entry when it is opened.
+    pub const EMPTY: Self = Self {
+        _responders: [ResponderSlot::EMPTY; R],
+    };
 }
 
 /// Identifies a channel of this client.
 ///
 /// ``UDSS_LLR_0121`` — returned when the caller supplies a channel's storage, valid until
-/// the caller withdraws it.
+/// the caller withdraws it. A channel is of either kind, physical or functional; the
+/// client itself knows which of its two arrays a given id belongs to, so the caller need
+/// not track which array it came from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct ChannelId(u16);
 
@@ -130,22 +135,25 @@ impl FunctionalKeepAlive {
 /// ``UDSS_LLR_0149`` — fixed when the instance is created; no input changes it. The mode
 /// selects which of ``UDSS_LLR_0155`` to ``UDSS_LLR_0163`` and ``UDSS_LLR_0184`` act.
 #[derive(Debug, PartialEq, Eq)]
-pub enum KeepAliveMode<'s> {
+pub enum KeepAliveMode {
     /// A functionally addressed `TesterPresent` each time the client's `tS3_Client`
     /// expires. ISO 14229-2:2021 9.6 Table 8 allots a single timer here.
+    ///
+    /// ``UDSS_LLR_0150`` — the client-wide timer and fact, supplied by value with the
+    /// instance, and the single `tS3_Client` reload of ``UDSS_LLR_0152``.
     Functional {
-        /// ``UDSS_LLR_0150`` — the client-wide timer and fact.
-        storage: &'s mut FunctionalKeepAlive,
-        /// ``UDSS_LLR_0152`` — the single `tS3_Client` reload, which must cover the
-        /// longest path among every server the functional address reaches.
+        /// The client-wide timer and keeping-alive fact.
+        storage: FunctionalKeepAlive,
+        /// The single `tS3_Client` reload, which must cover the longest path among every
+        /// server the functional address reaches.
         s3_client: u32,
     },
     /// A physically addressed `TesterPresent` on a physical channel when that channel's
     /// `tS3_Client` expires with no other request sent on it.
     ///
-    /// ``UDSS_LLR_0151`` — the fact and the timer live in each channel's storage, and
-    /// ``UDSS_LLR_0152`` puts that channel's reload in [`ChannelParams::s3_client`], so
-    /// this variant carries nothing.
+    /// ``UDSS_LLR_0151`` — the fact and timer live in each physical channel's storage and
+    /// ``UDSS_LLR_0152`` puts that channel's reload in
+    /// [`crate::PhysicalChannelParams::s3_client`], so this variant carries nothing.
     Physical,
 }
 
@@ -228,52 +236,75 @@ pub type ClientReaction<'s, 'd, T = ()> = Reaction<'s, 'd, ClientOutput<'d>, T>;
 
 /// The session layer in the client role.
 ///
-/// ``UDSS_LLR_0008`` — all state lives here or in the caller-supplied storage this
-/// borrows.
+/// ``UDSS_LLR_0008`` — all state lives here, supplied by the caller at creation and at
+/// each `open_channel`. The arrays split by channel kind because the two kinds hold
+/// different state: ``UDSS_LLR_0139`` gives a responder table to functional channels
+/// alone, and ``UDSS_LLR_0151`` a `tS3_Client` to physical ones alone.
 #[derive(Debug)]
-pub struct Client<'s, 'r> {
-    _channels: &'s mut [ChannelSlot<'r>],
-    _keep_alive: KeepAliveMode<'s>,
+pub struct Client<const PHYS: usize, const FUNC: usize, const R: usize> {
+    _physical: [PhysicalSlot; PHYS],
+    _functional: [FunctionalSlot<R>; FUNC],
+    _keep_alive: KeepAliveMode,
 }
 
-impl<'s, 'r> Client<'s, 'r> {
+impl<const PHYS: usize, const FUNC: usize, const R: usize> Client<PHYS, FUNC, R> {
     /// Create a client.
     ///
     /// ``UDSS_LLR_0032`` — creation supplies the keep-alive mode of ``UDSS_LLR_0149``
-    /// and, in functional keep-alive, the storage of ``UDSS_LLR_0150`` and the reload
-    /// parameter of ``UDSS_LLR_0152``. Channel storage is supplied later, under
-    /// ``UDSS_LLR_0121``; the length of `channels` bounds how many may exist at once.
+    /// and, in functional keep-alive, the storage of ``UDSS_LLR_0150`` and the reload of
+    /// ``UDSS_LLR_0152``. Channel storage is supplied here too, by value: `PHYS` physical
+    /// slots and `FUNC` functional slots of `R` responders each. A channel begins to
+    /// exist when the caller opens one, under ``UDSS_LLR_0121``.
     #[must_use]
-    pub fn new(channels: &'s mut [ChannelSlot<'r>], keep_alive: KeepAliveMode<'s>) -> Self {
+    pub const fn new(
+        physical: [PhysicalSlot; PHYS],
+        functional: [FunctionalSlot<R>; FUNC],
+        keep_alive: KeepAliveMode,
+    ) -> Self {
         Self {
-            _channels: channels,
+            _physical: physical,
+            _functional: functional,
             _keep_alive: keep_alive,
         }
     }
 
-    /// Supply a channel's storage, which is what creates the channel.
+    /// Open a physical channel.
     ///
     /// ``UDSS_LLR_0121`` — the channel exists from this moment, identified by `ai`, until
     /// it is withdrawn. ``UDSS_LLR_0122`` rejects an addressing equal to an existing
-    /// channel's, because two channels one `S_Data.req` names would leave which timer
-    /// starts undetermined. `responders` is the table of ``UDSS_LLR_0139``; pass an empty
-    /// slice for a physical channel, which keeps none.
-    pub fn open_channel(
+    /// channel's. Rejected where no physical slot is free.
+    pub fn open_physical_channel(
         &mut self,
         now: Timestamp,
         ai: Ai,
-        params: ChannelParams,
-        responders: &'r mut [ResponderSlot],
+        params: PhysicalChannelParams,
     ) -> ClientReaction<'_, 'static, ChannelId> {
         #[allow(
             clippy::todo,
             reason = "API stub; behaviour lands with its requirement"
         )]
         {
-            todo!(
-                "UDSS_LLR_0121, 0122: {now:?} {ai:?} {params:?} {}",
-                responders.len()
-            )
+            todo!("UDSS_LLR_0121, 0122: {now:?} {ai:?} {params:?}")
+        }
+    }
+
+    /// Open a functional channel.
+    ///
+    /// ``UDSS_LLR_0121`` and ``UDSS_LLR_0122`` as for a physical channel.
+    /// ``UDSS_LLR_0139`` gives it a responder table of `R` entries. Rejected where no
+    /// functional slot is free.
+    pub fn open_functional_channel(
+        &mut self,
+        now: Timestamp,
+        ai: Ai,
+        params: FunctionalChannelParams,
+    ) -> ClientReaction<'_, 'static, ChannelId> {
+        #[allow(
+            clippy::todo,
+            reason = "API stub; behaviour lands with its requirement"
+        )]
+        {
+            todo!("UDSS_LLR_0121, 0122, 0139: {now:?} {ai:?} {params:?}")
         }
     }
 
@@ -298,15 +329,34 @@ impl<'s, 'r> Client<'s, 'r> {
         }
     }
 
-    /// Set a per-channel protocol parameter.
+    /// Set a physical channel's protocol parameter.
     ///
     /// ``UDSS_LLR_0043`` permits it at any time; ``UDSS_LLR_0134`` rejects a setting
     /// naming a channel the client does not have, there being no storage to carry it.
-    pub fn set_parameter(
+    pub fn set_physical_parameter(
         &mut self,
         now: Timestamp,
         channel: ChannelId,
-        parameter: ChannelParameter,
+        parameter: PhysicalChannelParameter,
+    ) -> ClientReaction<'_, 'static> {
+        #[allow(
+            clippy::todo,
+            reason = "API stub; behaviour lands with its requirement"
+        )]
+        {
+            todo!("UDSS_LLR_0043, 0134: {now:?} {channel:?} {parameter:?}")
+        }
+    }
+
+    /// Set a functional channel's protocol parameter.
+    ///
+    /// ``UDSS_LLR_0043`` permits it at any time; ``UDSS_LLR_0134`` rejects a setting
+    /// naming a channel the client does not have, there being no storage to carry it.
+    pub fn set_functional_parameter(
+        &mut self,
+        now: Timestamp,
+        channel: ChannelId,
+        parameter: FunctionalChannelParameter,
     ) -> ClientReaction<'_, 'static> {
         #[allow(
             clippy::todo,
