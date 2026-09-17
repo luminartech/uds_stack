@@ -165,7 +165,7 @@ The spacing timer
    :origin: derived
    :tags: client; p3_client
 
-   When a channel's storage is supplied its spacing timer shall not be running.
+   When a channel is opened its spacing timer shall not be running.
 
    Rationale: the initial state is stated for the reason ``UDSS_LLR_0127`` gives: none of
    ``UDSS_LLR_0168``'s conditions is an initialisation condition, so without it the state of
@@ -179,9 +179,9 @@ The spacing timer
    :origin: derived
    :tags: client; p3_client
 
-   While a channel's storage remains supplied, the state of that channel's spacing timer
-   shall be changed only as ``UDSS_LLR_0169`` and ``UDSS_LLR_0170`` require. Withdrawal of
-   that storage under ``UDSS_LLR_0125`` ends the channel and discards the timer with it.
+   While a channel exists, the state of that channel's spacing timer shall be changed only
+   as ``UDSS_LLR_0169`` and ``UDSS_LLR_0170`` require. Withdrawal of that storage under
+   ``UDSS_LLR_0125`` ends the channel and discards the timer with it.
 
    Rationale: nothing beyond those two requirements and the timer's own expiry changes it.
    Clause 10.3 states the timer's whole effect as a condition on the next transmission, so a

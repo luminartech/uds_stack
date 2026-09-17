@@ -172,11 +172,11 @@ The repeat count
    :origin: derived
    :tags: client; error-handling; repeat
 
-   When the channel's storage is supplied the count shall be zero.
+   When the channel is opened the count shall be zero.
 
    Rationale: the initial state is stated for the reason ``UDSS_LLR_0127`` gives: none of
    ``UDSS_LLR_0175``'s conditions is an initialisation condition, so without it the count
-   would be undefined before the channel's storage is supplied.
+   would be undefined before the channel is opened.
 
 .. llr:: What changes a channel's repeat count
    :id: UDSS_LLR_0175
@@ -186,9 +186,9 @@ The repeat count
    :origin: derived
    :tags: client; error-handling; repeat
 
-   While a channel's storage remains supplied, its repeat count shall be changed only as
-   ``UDSS_LLR_0176`` and ``UDSS_LLR_0180`` require. Withdrawal of that storage under
-   ``UDSS_LLR_0125`` ends the channel and discards the count with it.
+   While a channel exists, its repeat count shall be changed only as ``UDSS_LLR_0176`` and
+   ``UDSS_LLR_0180`` require. Withdrawal of that storage under ``UDSS_LLR_0125`` ends the
+   channel and discards the count with it.
 
    Rationale: the rule ``UDSS_LLR_0081`` fixes is what lets ``UDSS_LLR_0176`` and
    ``UDSS_LLR_0177`` act on the same ``S_Data.req``, the one reading the count the other
@@ -367,7 +367,7 @@ Giving a server up
    On a channel reset under ``UDSS_LLR_0180`` marking an association **abandoned**, that
    association shall remain outstanding under ``UDSS_LLR_0059``, ``UDSS_LLR_0061``
    rejecting a further ``S_Data.req`` to its addressing, until its ``T_Data.conf`` arrives
-   or the channel's storage is withdrawn under ``UDSS_LLR_0125``.
+   or the channel is withdrawn under ``UDSS_LLR_0125``.
 
    Rationale: the association's only exits are the ones ``UDSS_LLR_0060`` already gives it
    — its ``T_Data.conf`` arriving, or the caller withdrawing the channel's storage under

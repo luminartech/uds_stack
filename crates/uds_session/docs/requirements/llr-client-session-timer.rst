@@ -214,8 +214,8 @@ The timer's state
 
    On creation of the instance, no ``tS3_Client`` timer shall be running for the client
    instance and no keeping-alive fact shall hold. In physical keep-alive, when a physical
-   channel's storage is supplied, its ``tS3_Client`` timer shall not be running and its
-   session fact shall not hold.
+   channel is opened, its ``tS3_Client`` timer shall not be running and its session fact
+   shall not hold.
 
    Rationale: the initial state follows Table 6, whose functional column starts the timer
    only for a non-default session: in the default session nothing is kept alive. It is

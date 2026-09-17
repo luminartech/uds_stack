@@ -177,7 +177,7 @@ The response window
    ``UDSS_LLR_0004`` requires. Neither cited clause requires it; the standard states what
    timers are needed, not where they live.
 
-.. llr:: A channel exists while its storage is supplied
+.. llr:: A channel exists from when the caller opens it
    :id: UDSS_LLR_0121
    :status: draft
    :integrity_level: QM
@@ -185,19 +185,18 @@ The response window
    :origin: derived
    :tags: client; p_client; service-interface
 
-   A logical communication channel shall exist from the moment the caller supplies its
-   storage, identified by the addressing the caller states for that storage, until the
-   caller withdraws it.
+   A logical communication channel shall exist from the moment the caller opens it,
+   identified by the addressing the caller states when opening it, until the caller
+   withdraws it.
 
    Rationale: neither clause the timer requirement ``UDSS_LLR_0120`` cites says where a
    channel's timer lives; the standard states what timers are needed, not where they live.
-   Supplying the storage is therefore what brings a channel into being, and is stated so
-   because ``UDSS_LLR_0027`` rejects an indication that names a channel the client does not
-   have and nothing otherwise said how a channel came to exist: an implementer could create
-   one on the first ``S_Data.req`` to a new addressing or demand a registration the set
-   never named. Supplying and withdrawing the storage are acts of the caller, as the
-   completion report of ``UDSS_LLR_0074`` is an input that is neither a primitive nor a
-   parameter.
+   Opening a channel is therefore what brings it into being, and is stated so because
+   ``UDSS_LLR_0027`` rejects an indication that names a channel the client does not have and
+   nothing otherwise said how a channel came to exist: an implementer could create one on
+   the first ``S_Data.req`` to a new addressing or demand a registration the set never
+   named. Opening and withdrawing a channel are acts of the caller, as the completion report
+   of ``UDSS_LLR_0074`` is an input that is neither a primitive nor a parameter.
 
 .. llr:: Duplicate channel addressing is rejected
    :id: UDSS_LLR_0122
@@ -207,7 +206,7 @@ The response window
    :origin: derived
    :tags: client; p_client; service-interface
 
-   Supplying storage whose addressing equals that of an existing channel shall be rejected
+   Opening a channel whose addressing equals that of an existing channel shall be rejected
    as ``UDSS_LLR_0015`` defines.
 
    Rationale: two channels one ``S_Data.req`` names would leave which timer starts and
@@ -311,8 +310,8 @@ The response window
    :origin: derived
    :tags: client; p_client; request-in-progress
 
-   When a channel's storage is supplied its ``tP_Client`` timer shall not be running, no
-   request shall be in progress and no start-of-message shall be open.
+   When a channel is opened its ``tP_Client`` timer shall not be running, no request shall
+   be in progress and no start-of-message shall be open.
 
    Rationale: the initial state is stated because none of the conditions ``UDSS_LLR_0131``
    admits is an initialisation condition, so without it the state of a timer before the
@@ -384,11 +383,11 @@ The response window
    :origin: derived
    :tags: client; p_client
 
-   While a channel's storage remains supplied, the state of that channel's ``tP_Client``
-   timer shall be changed only as ``UDSS_LLR_0135``, ``UDSS_LLR_0136``, ``UDSS_LLR_0137``,
-   ``UDSS_LLR_0138``, ``UDSS_LLR_0144``, ``UDSS_LLR_0148`` and ``UDSS_LLR_0180`` require.
-   Withdrawal of that storage under ``UDSS_LLR_0125`` ends the channel and discards the
-   timer with it, which is why the list is closed only for the storage's lifetime.
+   While a channel exists, the state of that channel's ``tP_Client`` timer shall be changed
+   only as ``UDSS_LLR_0135``, ``UDSS_LLR_0136``, ``UDSS_LLR_0137``, ``UDSS_LLR_0138``,
+   ``UDSS_LLR_0144``, ``UDSS_LLR_0148`` and ``UDSS_LLR_0180`` require. Withdrawal of that
+   storage under ``UDSS_LLR_0125`` ends the channel and discards the timer with it, which is
+   why the list is closed only for the storage's lifetime.
 
    Rationale: a closed list of the requirements that may change the timer is what makes a
    "changes nothing" claim elsewhere in the set checkable, and what lets ``UDSS_LLR_0127``
@@ -805,13 +804,11 @@ Responders on a functional channel
    :origin: derived
    :tags: client; p_client; responders
 
-   When a functional channel's storage is supplied its responder table shall hold no
-   entry.
+   When a functional channel is opened its responder table shall hold no entry.
 
    Rationale: the initial state is stated for the reason ``UDSS_LLR_0127`` gives: none of
    the conditions that create, retain or release an entry is an initialisation condition,
-   so without it the table's contents before the channel's storage is supplied would be
-   undefined.
+   so without it the table's contents before the channel is opened would be undefined.
 
 .. llr:: A responder beyond the table's capacity is reported and not tracked
    :id: UDSS_LLR_0143

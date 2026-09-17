@@ -115,7 +115,9 @@ before the other is what the assumption forbids.
    This requirement is verified alongside ``UDSS_LLR_0002`` and ``UDSS_LLR_0003``, by the
    build configuration and the dependency graph, rather than by a runtime test. Where a fact
    may be kept instead is ``UDSS_LLR_0008``'s, which this requirement leaves with only two
-   places to name.
+   places to name. Supplying that storage by value instead of by borrow changes nothing
+   here: the caller still sizes each quantity, now at compile time, so "the crate cannot
+   know them and the caller sizes them" holds unchanged.
 
 .. llr:: The crate contains no unsafe code
    :id: UDSS_LLR_0005
@@ -195,11 +197,12 @@ before the other is what the assumption forbids.
    Rationale: ``UDSS_LLR_0004`` forbids the session layer to allocate; this fixes where what
    it keeps lives instead, and adds that it retains nothing else — the part a static or a
    process-wide table would break without allocating. Together they close the inventory, so
-   that a reader looking for
-   where a fact is kept has two places to look and no third: the instance, as
-   ``UDSS_LLR_0104`` and ``UDSS_LLR_0082`` hold the server's state, or caller-supplied
-   storage, as ``UDSS_LLR_0126``, ``UDSS_LLR_0059``, ``UDSS_LLR_0150`` and ``UDSS_LLR_0151``
-   hold the rest. That the inventory is complete is at present recorded only in
+   that a reader looking for where a fact is kept has two places to look and no third: the
+   instance, as ``UDSS_LLR_0104`` and ``UDSS_LLR_0082`` hold the server's state, or
+   caller-supplied storage, as ``UDSS_LLR_0126``, ``UDSS_LLR_0059``, ``UDSS_LLR_0150`` and
+   ``UDSS_LLR_0151`` hold the rest. Storage supplied by value satisfies both branches at
+   once — the caller supplies it and it then lives in the instance — so the two places
+   remain the whole inventory. That the inventory is complete is at present recorded only in
    :doc:`open-questions`, a page written to be deleted when its last entry closes, which
    would take the only statement of closure with it.
 
@@ -232,10 +235,10 @@ before the other is what the assumption forbids.
    it; ``T_Data.ind``, ``T_DataSOM.ind`` and ``T_Data.conf``, as ``UDSS_LLR_0022`` defines
    them; a timestamp, as ``UDSS_LLR_0020`` defines it, accompanying every other input and
    also supplied on its own; the protocol parameters of ``UDSS_LLR_0040``; the completion
-   report of ``UDSS_LLR_0074``; the supply of channel storage under ``UDSS_LLR_0121`` and
-   its withdrawal under ``UDSS_LLR_0125``; and the channel reset and keep-alive release of
+   report of ``UDSS_LLR_0074``; the opening of a channel under ``UDSS_LLR_0121`` and its
+   withdrawal under ``UDSS_LLR_0125``; and the channel reset and keep-alive release of
    ``UDSS_LLR_0180`` and ``UDSS_LLR_0184``. The last five — the completion report, the
-   supply of channel storage, its withdrawal, the channel reset and the keep-alive release —
+   opening of a channel, its withdrawal, the channel reset and the keep-alive release —
    and the setting of a protocol parameter, are acts of the caller rather than primitives;
    each shall be accompanied by a timestamp as ``UDSS_LLR_0020`` requires, and
    ``UDSS_LLR_0081`` shall order the expiries that timestamp causes, with their indications,
@@ -628,7 +631,7 @@ Service primitives
    * a ``T_Data.ind`` or ``T_DataSOM.ind`` whose classification states kind ``final
      response`` or ``response pending``;
    * a ``T_DataSOM.ind`` or ``T_Data.ind`` identifying a logical communication channel;
-   * the supply of channel storage under ``UDSS_LLR_0121`` and its withdrawal under
+   * the opening of a channel under ``UDSS_LLR_0121`` and its withdrawal under
      ``UDSS_LLR_0125``;
    * the channel reset of ``UDSS_LLR_0180``;
    * the keep-alive release of ``UDSS_LLR_0184``.
