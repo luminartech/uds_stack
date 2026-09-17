@@ -30,8 +30,13 @@
 //! This crate is **wholly below** the session layer. It hosts no driver, calls
 //! nothing upward, and knows nothing about services. `uds_services` owns the
 //! `uds_session::Session`, supplies its inputs, drains its actions, and calls
-//! this crate through a trait it declares — which is why the dependency edge
-//! points from here to `uds_services` and not the other way.
+//! this crate through a trait it declares.
+//!
+//! That trait does not exist yet — `uds_services` is still being written — so
+//! [`transport::DoIpTransport`] carries its methods as inherent methods for
+//! now. When it lands, the dependency edge will run from here to
+//! `uds_services` and not the other way, because `uds_services` never names a
+//! transport.
 //!
 //! ## `no_std`, alloc-freedom, and no runtime
 //!
