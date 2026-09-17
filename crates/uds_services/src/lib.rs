@@ -55,6 +55,9 @@
 
 pub mod assembly;
 
+pub mod server;
+pub use server::Server;
+
 pub mod storage;
 pub use storage::{Buffers, Storage, Store};
 
