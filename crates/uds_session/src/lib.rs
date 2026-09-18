@@ -105,7 +105,7 @@ pub use params::{
     ChannelParameter, ChannelParams, ChannelReload, Reloads, ServerParameter, ServerParams,
     ServerReload,
 };
-pub use reaction::Reaction;
+pub use reaction::{Outputs, Reaction};
 pub use rejection::{Cause, Causes, Rejection};
 pub use result::{SResult, TransportError};
 pub use server::{Association, Server, ServerOutput, ServerReaction};

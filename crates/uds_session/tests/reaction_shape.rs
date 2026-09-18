@@ -16,7 +16,19 @@ use uds_session::{Reaction, Rejection};
 fn a_reaction_is_drained_then_finished(
     mut r: Reaction<'_, '_, u8>,
 ) -> Result<(), Rejection> {
-    for _output in r.by_ref() {}
+    for _output in r.outputs() {}
+    r.finish()
+}
+
+/// The drain borrows, so the reaction outlives it and can be drained more than once
+/// before the outcome is read. What must not compile is a drain that *consumes* the
+/// reaction: `for _ in r {}` used to, and silently discarded the report.
+#[allow(dead_code, reason = "type-checked, never run; see the module comment")]
+fn draining_twice_still_reaches_the_outcome(
+    mut r: Reaction<'_, '_, u8>,
+) -> Result<(), Rejection> {
+    for _output in r.outputs() {}
+    for _output in r.outputs() {}
     r.finish()
 }
 

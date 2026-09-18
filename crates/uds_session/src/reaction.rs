@@ -8,8 +8,8 @@
 //! lifetime differs per call, which is unrepresentable without `unsafe`, and
 //! `Cargo.toml` forbids `unsafe`.
 //!
-//! So an input returns this, the caller drains it, and then consumes it to learn whether
-//! the input was accepted. ``UDSS_LLR_0081`` requires every indication an expiry produced
+//! So an input returns this, the caller drains it through [`Reaction::outputs`], and then
+//! consumes it to learn whether the input was accepted. ``UDSS_LLR_0081`` requires every indication an expiry produced
 //! to precede both the input's own outputs and any rejection report; consuming the drain
 //! to reach [`Reaction::finish`] makes that ordering a property of the type rather than
 //! of the caller's discipline.
@@ -28,17 +28,30 @@ use core::marker::PhantomData;
 ///
 /// # Draining
 ///
-/// Drain with [`Iterator::by_ref`], then consume:
+/// Drain through [`Reaction::outputs`], then consume:
 ///
-/// ```ignore
-/// for output in reaction.by_ref() {
-///     // handle each output, in order
+/// ```
+/// use uds_session::{Reaction, Rejection};
+///
+/// fn handle(mut reaction: Reaction<'_, '_, u8>) -> Result<(), Rejection> {
+///     for output in reaction.outputs() {
+///         let _ = output; // handle each output, in order
+///     }
+///     reaction.finish()
 /// }
-/// reaction.finish()?;
 /// ```
 ///
-/// `for output in reaction` would move the reaction into the loop and leave
-/// [`Reaction::finish`] unreachable, so the outcome could not be read.
+/// [`Reaction::outputs`] borrows rather than consuming, so the reaction survives the loop
+/// and [`Reaction::finish`] stays reachable. `Reaction` deliberately does not implement
+/// [`Iterator`] itself: it did once, and `for output in reaction` — the spelling a reader
+/// reaches for first — moved it into the loop and discarded the rejection report with it,
+/// silently, because a `for` loop counts as a use and satisfies `#[must_use]`. That
+/// spelling is now a type error.
+///
+/// What the type still does not enforce is that [`Reaction::finish`] is called at all: a
+/// reaction bound to a variable, drained, and dropped is accepted. ``UDSS_LLR_0081`` fixes
+/// the order between the expiry indications and the report, so the outputs cannot be made
+/// to arrive through the report instead, which is what enforcing the call would take.
 #[must_use = "an undrained reaction discards the outputs this input produced"]
 #[derive(Debug)]
 pub struct Reaction<'s, 'd, O, T = ()> {
@@ -72,7 +85,31 @@ impl<O, T> Reaction<'_, '_, O, T> {
     }
 }
 
-impl<O, T> Iterator for Reaction<'_, '_, O, T> {
+impl<O, T> Reaction<'_, '_, O, T> {
+    /// The outputs this input produced, in the order ``UDSS_LLR_0081`` requires.
+    ///
+    /// ``UDSS_LLR_0011`` — the caller retrieves them; nothing is pushed. The iterator
+    /// borrows the reaction, so draining does not consume it and
+    /// [`Reaction::finish`] remains reachable afterwards. See `# Draining`.
+    pub fn outputs(&mut self) -> Outputs<'_, O> {
+        Outputs {
+            reaction: PhantomData,
+            output: PhantomData,
+        }
+    }
+}
+
+/// The outputs of one input. Created by [`Reaction::outputs`].
+///
+/// ``UDSS_LLR_0081`` — every indication an expiry produced comes first, then the input's
+/// own outputs. Dropping this before it is exhausted discards the rest.
+#[derive(Debug)]
+pub struct Outputs<'r, O> {
+    reaction: PhantomData<&'r mut ()>,
+    output: PhantomData<fn() -> O>,
+}
+
+impl<O> Iterator for Outputs<'_, O> {
     type Item = O;
 
     fn next(&mut self) -> Option<O> {
