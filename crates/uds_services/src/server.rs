@@ -48,7 +48,7 @@ impl<A: ServiceSet, T: UdsTransport, const PEERS: usize> Server<A, T, PEERS> {
     /// kilobytes, so a runtime constructor would build a stack temporary before the move
     /// and a small-stack target could not hold it. `static SERVER: EcuServer =
     /// EcuServer::new(..)` constructs in place, which is what
-    /// [`Storage::EMPTY`](crate::Storage::EMPTY) being an associated const buys.
+    /// [`Storage::EMPTY`] being an associated const buys.
     ///
     /// The driver builds its own session, so an application never names `uds_session`.
     pub const fn new(services: A, transport: T, params: ServerParams) -> Self {

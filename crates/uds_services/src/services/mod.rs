@@ -7,7 +7,7 @@
 //! list, and the assembly is that list.
 //!
 //! Every handler returns `Result<(), NegativeResponseCode>` and writes into a
-//! [`ResponseSink`](crate::ResponseSink). The negative response code is `uds_protocol`'s;
+//! [`ResponseSink`]. The negative response code is `uds_protocol`'s;
 //! this crate defines none.
 //!
 //! **Every service trait declares `MAY_RESPOND_PENDING` with no default**, so omitting it
