@@ -132,8 +132,9 @@ pub struct FunctionalChannelId(u16);
 /// ``UDSS_LLR_0049`` distinguishes the two kinds and this set gives them different
 /// state — ``UDSS_LLR_0139`` a responder table to a functional channel and
 /// ``UDSS_LLR_0151`` a `tS3_Client` to a physical one — so the identity carries the kind.
-/// Operations that act on either kind take this; those that act on one take that kind's
-/// own identity, which is why no setting can name a channel of the wrong kind.
+/// Operations that act on either kind take anything that converts into this, so either
+/// kind's own identity passes directly; those that act on one kind take that kind's own
+/// identity, which is why no setting can name a channel of the wrong kind.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ChannelId {
     /// A physical channel.
@@ -145,8 +146,9 @@ pub enum ChannelId {
 impl From<PhysicalChannelId> for ChannelId {
     /// Widen a physical channel's identity to either kind's.
     ///
-    /// ``UDSS_LLR_0121`` — the same channel, named by the identity a kind-agnostic
-    /// method such as [`Client::withdraw_channel`] takes.
+    /// ``UDSS_LLR_0121`` — the same channel. A kind-agnostic method such as
+    /// [`Client::withdraw_channel`] takes `impl Into<ChannelId>`, so this conversion
+    /// happens at the call rather than in the caller's own code.
     fn from(id: PhysicalChannelId) -> Self {
         Self::Physical(id)
     }
@@ -155,8 +157,9 @@ impl From<PhysicalChannelId> for ChannelId {
 impl From<FunctionalChannelId> for ChannelId {
     /// Widen a functional channel's identity to either kind's.
     ///
-    /// ``UDSS_LLR_0121`` — the same channel, named by the identity a kind-agnostic
-    /// method such as [`Client::withdraw_channel`] takes.
+    /// ``UDSS_LLR_0121`` — the same channel. A kind-agnostic method such as
+    /// [`Client::withdraw_channel`] takes `impl Into<ChannelId>`, so this conversion
+    /// happens at the call rather than in the caller's own code.
     fn from(id: FunctionalChannelId) -> Self {
         Self::Functional(id)
     }
@@ -383,8 +386,9 @@ impl<const PHYS: usize, const FUNC: usize, const R: usize> Client<PHYS, FUNC, R>
     pub fn withdraw_channel(
         &mut self,
         now: Timestamp,
-        channel: ChannelId,
+        channel: impl Into<ChannelId>,
     ) -> ClientReaction<'_, 'static> {
+        let channel = channel.into();
         #[allow(
             clippy::todo,
             reason = "API stub; behaviour lands with its requirement"
@@ -473,8 +477,9 @@ impl<const PHYS: usize, const FUNC: usize, const R: usize> Client<PHYS, FUNC, R>
     pub fn reset_channel(
         &mut self,
         now: Timestamp,
-        channel: ChannelId,
+        channel: impl Into<ChannelId>,
     ) -> ClientReaction<'_, 'static> {
+        let channel = channel.into();
         #[allow(
             clippy::todo,
             reason = "API stub; behaviour lands with its requirement"
@@ -494,8 +499,9 @@ impl<const PHYS: usize, const FUNC: usize, const R: usize> Client<PHYS, FUNC, R>
     pub fn release_keep_alive(
         &mut self,
         now: Timestamp,
-        channel: ChannelId,
+        channel: impl Into<ChannelId>,
     ) -> ClientReaction<'_, 'static> {
+        let channel = channel.into();
         #[allow(
             clippy::todo,
             reason = "API stub; behaviour lands with its requirement"
@@ -543,10 +549,11 @@ impl<const PHYS: usize, const FUNC: usize, const R: usize> Client<PHYS, FUNC, R>
     pub fn t_data_som_ind(
         &mut self,
         now: Timestamp,
-        channel: ChannelId,
+        channel: impl Into<ChannelId>,
         ai: Ai,
         class: ClientRx,
     ) -> ClientReaction<'_, 'static> {
+        let channel = channel.into();
         #[allow(
             clippy::todo,
             reason = "API stub; behaviour lands with its requirement"
@@ -573,12 +580,13 @@ impl<const PHYS: usize, const FUNC: usize, const R: usize> Client<PHYS, FUNC, R>
     pub fn t_data_ind<'d>(
         &mut self,
         now: Timestamp,
-        channel: ChannelId,
+        channel: impl Into<ChannelId>,
         ai: Ai,
         data: &'d [u8],
         result: SResult,
         class: Option<ClientRx>,
     ) -> ClientReaction<'_, 'd> {
+        let channel = channel.into();
         #[allow(
             clippy::todo,
             reason = "API stub; behaviour lands with its requirement"

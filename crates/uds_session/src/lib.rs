@@ -58,7 +58,7 @@
 //!
 //! | Requirement | What makes it unrepresentable |
 //! | --- | --- |
-//! | ``UDSS_LLR_0027`` (second limb) | `t_data_ind`/`t_data_som_ind` require `ChannelId` |
+//! | ``UDSS_LLR_0027`` (second limb) | `t_data_ind`/`t_data_som_ind` require a channel |
 //! | ``UDSS_LLR_0030`` | [`ServerTx`], [`ServerRx`], absent methods, and no channel param |
 //! | ``UDSS_LLR_0031`` | [`ClientTx`], [`ClientRx`], and the absent completion report |
 //! | ``UDSS_LLR_0054`` | a payload passed as a slice carries its own length |

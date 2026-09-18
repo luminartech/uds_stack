@@ -1,11 +1,11 @@
 //! Compile-time checks on the client surface, and the storage wiring a caller must do.
 
 use uds_session::{
-    Address, Ai, ChannelAddressing, Client, ClientRx, ClientTx, ExpectedResponses,
-    FunctionalChannelId, FunctionalChannelParameter, FunctionalChannelParams,
-    FunctionalKeepAlive, FunctionalSlot, KeepAliveMode, Mtype, PhysicalChannelId,
-    PhysicalChannelParameter, PhysicalChannelParams, PhysicalSlot, Reloads, SResult,
-    Solicitation, TaType, Timestamp,
+    Address, Ai, ChannelAddressing, ChannelId, Client, ClientRx, ClientTx,
+    ExpectedResponses, FunctionalChannelId, FunctionalChannelParameter,
+    FunctionalChannelParams, FunctionalKeepAlive, FunctionalSlot, KeepAliveMode, Mtype,
+    PhysicalChannelId, PhysicalChannelParameter, PhysicalChannelParams, PhysicalSlot,
+    Reloads, SResult, Solicitation, TaType, Timestamp,
 };
 
 /// ``UDSS_LLR_0121`` — a channel exists from the moment the caller opens it.
@@ -42,8 +42,10 @@ fn physical_keep_alive_carries_no_client_wide_storage() {
 /// values, rather than constructed here: neither id has a public constructor of its own,
 /// only the one [`Client::open_physical_channel`] and [`Client::open_functional_channel`]
 /// each return, and those methods are `todo!()`. Each flows to its own kind's setter
-/// directly; a kind-agnostic method takes `.into()` of one or the other, showing both
-/// widen to [`uds_session::ChannelId`].
+/// directly, and to the kind-agnostic methods directly as well: those take
+/// `impl Into<`[`ChannelId`]`>`, so both kinds pass without a widening step at the call.
+/// [`Client::reset_channel`] is passed a [`ChannelId`] itself, since the widened parameter
+/// has to keep accepting the type it replaced.
 #[allow(dead_code, reason = "type-checked, never run")]
 fn every_client_entry_point(
     client: &mut Client<4, 1, 8>,
@@ -80,7 +82,7 @@ fn every_client_entry_point(
     let _: Option<Timestamp> = client.next_deadline();
     drop(client.open_physical_channel(now, addressing, physical_params));
     drop(client.open_functional_channel(now, addressing, functional_params));
-    drop(client.withdraw_channel(now, ch_phys.into()));
+    drop(client.withdraw_channel(now, ch_phys));
     drop(client.set_physical_parameter(
         now,
         ch_phys,
@@ -92,8 +94,8 @@ fn every_client_entry_point(
         FunctionalChannelParameter::Spacing(70),
     ));
     drop(client.set_keep_alive_reload(now, 2_000));
-    drop(client.reset_channel(now, ch_func.into()));
-    drop(client.release_keep_alive(now, ch_phys.into()));
+    drop(client.reset_channel(now, ChannelId::Functional(ch_func)));
+    drop(client.release_keep_alive(now, ch_phys));
     drop(client.s_data_req(
         now,
         ai,
@@ -104,10 +106,10 @@ fn every_client_entry_point(
             session: None,
         },
     ));
-    drop(client.t_data_som_ind(now, ch_func.into(), ai, ClientRx::ResponsePending));
+    drop(client.t_data_som_ind(now, ch_func, ai, ClientRx::ResponsePending));
     drop(client.t_data_ind(
         now,
-        ch_phys.into(),
+        ch_phys,
         ai,
         payload,
         SResult::Ok,
