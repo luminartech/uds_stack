@@ -107,7 +107,13 @@ pub enum TransportEvent<'b> {
 /// adds no capability and avoids two implementors holding two timebases.
 pub trait UdsTransport {
     /// What this transport's failures are. Never interpreted by this crate.
-    type Error;
+    ///
+    /// `Debug` is the one bound, because it surfaces from [`crate::Server::step`] and
+    /// every client method: a caller that receives one and cannot render it has an error
+    /// it can only discard. Not interpreting a transport's failures and not being able to
+    /// print them are different commitments, and this crate makes only the first. On
+    /// `no_std` there is no wider trait to ask for.
+    type Error: core::fmt::Debug;
 
     /// The largest `A_PDU` this transport can carry, where its protocol caps it.
     ///
