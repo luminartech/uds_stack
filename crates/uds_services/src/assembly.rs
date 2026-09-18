@@ -170,36 +170,41 @@ macro_rules! __uds_may_pend {
 /// uds_server! {
 ///     Ecu: ReadDataByIdentifier, SecurityAccess, DataTransfer;
 ///     transport = DoIpTransport<TcpSocket>,
-///     channels = 4,
+///     peers = 4,
+///     server = EcuServer,
 /// }
+///
+/// static SERVER: EcuServer = EcuServer::new(Ecu::new(), transport, PARAMS);
 /// ```
 ///
 /// Naming the transport lets its [`MAX_PDU`](crate::UdsTransport::MAX_PDU) join the fold.
 /// It introduces no dependency on a binding: the *application* names the type, and it
 /// already depends on both crates, so ``UDSSVC_ARCH_0002`` and ``0003`` are untouched.
 ///
-/// The syntax is `Ecu: ..; transport = T, channels = N` rather than `Ecu over T: ..`
-/// because `$ty:ty` cannot be followed by a bare identifier — the legal followers are
+/// `peers = N` sizes the association array of the `uds_session::Server<N>` the driver
+/// owns, and `server = Name` is the alias it is reached through — the macro emits
+/// `type Name = Server<Ecu, Transport, N>`, so the count is written once, where it acts.
+/// It was `channels = N` and sized nothing at all: an application wrote the number here,
+/// where the expansion discarded it, and again as [`crate::Server`]'s third parameter,
+/// where it did the work, with no diagnostic when the two disagreed. The rename also
+/// clears a collision — a *channel* in `uds_session` is a client's physical or functional
+/// channel, which is a different thing from a server's peer.
+///
+/// The syntax is `Ecu: ..; transport = T, ..` rather than `Ecu over T: ..` because
+/// `$ty:ty` cannot be followed by a bare identifier — the legal followers are
 /// `{ [ => , > = : ; | as where`.
-///
-/// **`channels = N` is parsed and never used.** It was to size the per-channel
-/// authentication table of ``UDSSVC_ARCH_0035`` and `uds_session`'s association storage.
-/// It sizes neither: the associations moved into `uds_session::Server<PEERS>`, taken by
-/// value with its own const parameter, and **the authentication table is not built** --
-/// there is no table, no keying and no per-channel state in this crate. `$channels`
-/// therefore appears nowhere but the matcher, and the expansion discards it.
-///
-/// An application states its peer count twice as a result: once here, where nothing
-/// reads it, and once as the third parameter of [`crate::Server`], which is what
-/// actually sizes the association array. Nothing makes the two agree, and no diagnostic
-/// fires when they disagree.
 #[macro_export]
 macro_rules! uds_server {
     (
         $ty:ty : $($svc:ident),+ $(,)? ;
         transport = $transport:ty,
-        channels = $channels:expr $(,)?
+        peers = $peers:expr,
+        server = $server:ident $(,)?
     ) => {
+        /// The assembled server: this application's services, storage, session layer and
+        /// transport. Emitted by `uds_server!`.
+        type $server = $crate::Server<$ty, $transport, { $peers }>;
+
         const _: () = {
             const IN_FLIGHT: usize = $crate::assembly::min2(
                 $crate::assembly::max_of(&[

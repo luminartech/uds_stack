@@ -30,11 +30,8 @@ use uds_session::{
 ///
 /// `PEERS` is a parameter rather than a derived constant because the session layer's type
 /// is `uds_session::Server<PEERS>`, and an associated const of a generic cannot be a const
-/// generic argument. **[`crate::uds_server`] emits no type alias**: an application writes
-/// `Server<Ecu, T, N>` out by hand, as `tests/composition.rs` does. So the peer count is
-/// stated twice — once as `channels = N` in the assembly, where nothing reads it, and
-/// once here, where it actually sizes the association array — and nothing diagnoses a
-/// disagreement between them.
+/// generic argument. An application does not write it: [`crate::uds_server`]'s
+/// `peers = N` supplies it and the macro emits the alias, so the count appears once.
 #[derive(Debug)]
 pub struct Server<A: ServiceSet, T: UdsTransport, const PEERS: usize> {
     services: A,
@@ -267,8 +264,7 @@ mod tests {
     /// The driver holds a `uds_session::Server<PEERS>`, and an associated const of a
     /// generic parameter cannot be a const generic argument — the same
     /// `generic_const_exprs` wall the buffers hit. So `PEERS` is a parameter of this
-    /// type, and an application writes it out: the macro emits no alias, which is why
-    /// the peer count is stated twice with nothing checking that the two agree.
+    /// type, supplied by `uds_server!`'s `peers = N` through the alias it emits.
     ///
     /// The real construction is `tests/composition.rs`; here only the params shape is
     /// asserted, because a concrete `ServiceSet` does not exist yet in this crate.

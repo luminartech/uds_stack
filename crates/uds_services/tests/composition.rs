@@ -16,8 +16,8 @@ use automotive_wire_codec::Sink;
 use uds_protocol::NegativeResponseCode as Nrc;
 use uds_services::{
     DataIdentifier, DataTransfer, KeyVerdict, ReadDataByIdentifier, RecordError,
-    ResponseSink, SecurityAccess, SecurityLevel, SecurityPolicy, Server, ServiceSet,
-    Storage, TransferRequest, TransportEvent, UdsTransport, uds_server,
+    ResponseSink, SecurityAccess, SecurityLevel, SecurityPolicy, ServiceSet, Storage,
+    TransferRequest, TransportEvent, UdsTransport, uds_server,
 };
 use uds_session::{Ai, Reloads, ServerParams, Timestamp};
 
@@ -172,10 +172,9 @@ impl UdsTransport for FakeTransport {
 uds_server! {
     Ecu: ReadDataByIdentifier, SecurityAccess, DataTransfer;
     transport = FakeTransport,
-    channels = 4,
+    peers = 4,
+    server = EcuServer,
 }
-
-type EcuServer = Server<Ecu, FakeTransport, 4>;
 
 const PARAMS: ServerParams = ServerParams {
     s3_server: 5_000,
