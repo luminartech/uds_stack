@@ -25,8 +25,10 @@
 //! carries no `ta_type`, and each supplies ``UDSS_LLR_0049``'s matching value itself, so a
 //! channel stored in one array can never carry the other kind's `S_AI[TAtype]`.
 //!
-//! `R` sizes every functional channel's responder table alike; a client with no
-//! functional channels at all sets `FUNC` to `0` and pays no storage for one.
+//! `R` sizes every functional channel's responder table alike. A client with no
+//! functional channels at all sets `FUNC` to `0`, pays no storage for one, and leaves `R`
+//! to its default of `0` rather than naming a table size that would mean nothing:
+//! `Client<2, 0>`.
 //!
 //! ```
 //! use uds_session::{
@@ -293,8 +295,10 @@ pub type ClientReaction<'s, 'd, T = ()> = Reaction<'s, 'd, ClientOutput<'d>, T>;
 /// parameters. The arrays split by channel kind because the two kinds hold different
 /// state: ``UDSS_LLR_0139`` gives a responder table to functional channels alone, and
 /// ``UDSS_LLR_0151`` a `tS3_Client` to physical ones alone.
+///
+/// `R` defaults to `0`, since a client with `FUNC` of `0` has no responder table to size.
 #[derive(Debug)]
-pub struct Client<const PHYS: usize, const FUNC: usize, const R: usize> {
+pub struct Client<const PHYS: usize, const FUNC: usize, const R: usize = 0> {
     _physical: [PhysicalSlot; PHYS],
     _functional: [FunctionalSlot<R>; FUNC],
     _keep_alive: KeepAliveMode,

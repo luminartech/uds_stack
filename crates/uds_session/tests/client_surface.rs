@@ -28,9 +28,12 @@ fn a_client_is_created_from_caller_storage() {
 
 /// ``UDSS_LLR_0151`` — in physical keep-alive the fact and timer live in each channel's
 /// storage, so the mode carries nothing.
+///
+/// `R` is left to its default: with `FUNC` of `0` there is no responder table to size, so
+/// the caller names no capacity for one.
 #[test]
 fn physical_keep_alive_carries_no_client_wide_storage() {
-    let _client: Client<2, 0, 8> =
+    let _client: Client<2, 0> =
         Client::new([PhysicalSlot::EMPTY; 2], [], KeepAliveMode::Physical);
 }
 
