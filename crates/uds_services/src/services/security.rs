@@ -68,13 +68,8 @@ impl SecurityLevel {
 
     /// The `sendKey` sub-function value.
     #[must_use]
-    #[allow(
-        clippy::arithmetic_side_effects,
-        reason = "from_request_seed admits only odd values below 0x7F, so the partner \
-                  is at most 0x7E and the addition cannot overflow"
-    )]
     pub const fn send_key(self) -> u8 {
-        self.0 + 1
+        self.0.saturating_add(1)
     }
 }
 

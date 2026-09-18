@@ -14,10 +14,13 @@ use automotive_wire_codec::{InsufficientBuffer, Sink, WriteError};
 /// nothing is fabricated and nothing is asked of a layer that does not know it —
 /// which is what ``UDSSVC_ARCH_0017`` requires after ISO 13400-2:2019 Table 11 made
 /// *Max. data size* optional.
+///
+/// The bound is not a field. [`Self::new`] truncates the buffer to it, so "written never
+/// exceeds the limit, which never exceeds the buffer" is one slice length rather than an
+/// ordering between two numbers that each method had to be trusted to maintain.
 #[derive(Debug)]
 pub struct ResponseSink<'a> {
     buffer: &'a mut [u8],
-    limit: usize,
     written: usize,
 }
 
@@ -25,15 +28,11 @@ impl<'a> ResponseSink<'a> {
     /// A sink over `buffer`, bounded also by the peer's advertisement where it made one.
     #[must_use]
     pub fn new(buffer: &'a mut [u8], outbound_max: Option<usize>) -> Self {
-        let limit = match outbound_max {
-            Some(max) if max < buffer.len() => max,
-            _ => buffer.len(),
-        };
-        Self {
-            buffer,
-            limit,
-            written: 0,
-        }
+        let limit = outbound_max.map_or(buffer.len(), |max| max.min(buffer.len()));
+        let buffer = buffer
+            .split_at_mut_checked(limit)
+            .map_or(&mut [][..], |(within, _beyond)| within);
+        Self { buffer, written: 0 }
     }
 
     /// How many bytes the handler has written.
@@ -47,48 +46,33 @@ impl<'a> ResponseSink<'a> {
     /// The driver needs this because [`Self::new`] moves the slice in, leaving no
     /// other route back to the bytes it must transmit.
     #[must_use]
-    #[allow(
-        clippy::indexing_slicing,
-        reason = "written never exceeds limit, which never exceeds buffer.len()"
-    )]
     pub fn written_bytes(&self) -> &[u8] {
-        &self.buffer[..self.written]
+        self.buffer.get(..self.written).unwrap_or(&[])
     }
 
     /// How many more bytes will be accepted before the bound is hit.
     #[must_use]
-    #[allow(
-        clippy::arithmetic_side_effects,
-        reason = "written never exceeds limit: write_all rejects first"
-    )]
     pub const fn remaining(&self) -> usize {
-        self.limit - self.written
+        self.buffer.len().saturating_sub(self.written)
     }
 }
 
 impl Sink for ResponseSink<'_> {
-    #[allow(
-        clippy::arithmetic_side_effects,
-        reason = "the checked add guards the sum before either use"
-    )]
-    #[allow(
-        clippy::indexing_slicing,
-        reason = "end is proven <= limit <= buffer.len() by the guard above"
-    )]
     fn write_all(&mut self, bytes: &[u8]) -> Result<(), WriteError> {
-        let Some(end) = self.written.checked_add(bytes.len()) else {
-            return Err(WriteError::Insufficient(InsufficientBuffer {
-                needed_at_least: usize::MAX,
-                available: self.limit,
-            }));
+        let available = self.buffer.len();
+        let insufficient = |needed_at_least| {
+            Err(WriteError::Insufficient(InsufficientBuffer {
+                needed_at_least,
+                available,
+            }))
         };
-        if end > self.limit {
-            return Err(WriteError::Insufficient(InsufficientBuffer {
-                needed_at_least: end,
-                available: self.limit,
-            }));
-        }
-        self.buffer[self.written..end].copy_from_slice(bytes);
+        let Some(end) = self.written.checked_add(bytes.len()) else {
+            return insufficient(usize::MAX);
+        };
+        let Some(room) = self.buffer.get_mut(self.written..end) else {
+            return insufficient(end);
+        };
+        room.copy_from_slice(bytes);
         self.written = end;
         Ok(())
     }

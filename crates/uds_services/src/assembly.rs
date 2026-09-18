@@ -13,23 +13,17 @@
 //! sizes are derived without the application picking a number.
 
 /// The largest value in `values`, or zero where there are none.
+///
+/// Walked by splitting rather than by index: a `const fn` cannot use an iterator, and an
+/// index plus a counter needs two prose invariants that this needs none of.
 #[must_use]
-#[allow(
-    clippy::indexing_slicing,
-    reason = "i is bounded by the while condition immediately above each use"
-)]
-#[allow(
-    clippy::arithmetic_side_effects,
-    reason = "i increments to values.len(), which cannot overflow usize"
-)]
-pub const fn max_of(values: &[usize]) -> usize {
+pub const fn max_of(mut values: &[usize]) -> usize {
     let mut best = 0;
-    let mut i = 0;
-    while i < values.len() {
-        if values[i] > best {
-            best = values[i];
+    while let Some((&first, rest)) = values.split_first() {
+        if first > best {
+            best = first;
         }
-        i += 1;
+        values = rest;
     }
     best
 }
@@ -108,6 +102,9 @@ macro_rules! __uds_request_bound {
     };
     ($ty:ty, SecurityAccess) => {
         2 + <$ty as $crate::SecurityAccess>::MAX_KEY_LEN
+    };
+    ($ty:ty, ControlDtcSetting) => {
+        2 + <$ty as $crate::ControlDtcSetting>::MAX_OPTION_RECORD_LEN
     };
     // Every other request is a service identifier, a sub-function and at most four
     // parameter bytes. Clause-fixed, so a constant.

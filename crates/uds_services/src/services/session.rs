@@ -104,16 +104,20 @@ pub trait ControlDtcSetting {
     /// ``UDSSVC_ARCH_0033``.
     const MAY_RESPOND_PENDING: bool;
 
+    /// The longest `DTCSettingControlOptionRecord` this server accepts.
+    ///
+    /// Clause 10.7 leaves the record manufacturer-specific and gives it no fixed width,
+    /// so the ceiling is the application's to state — and stating it is what puts this
+    /// service's real contribution into the derived in-flight buffer. Before this const
+    /// the service was folded in at the catch-all's six bytes and a longer record was
+    /// bounded only by whatever *other* service in the same assembly happened to widen
+    /// the buffer.
+    const MAX_OPTION_RECORD_LEN: usize;
+
     /// Turn DTC setting on or off, with the manufacturer-specific option record.
     ///
-    /// **`option_record` is bounded at four bytes, although the slice type does not say
-    /// so.** `__uds_request_bound!`'s catch-all gives 0x85 six bytes — a service
-    /// identifier, a sub-function and four parameter bytes — which is all this service
-    /// contributes to the derived in-flight buffer. A request longer than that buffer
-    /// arrives as [`TransportEvent::DataTooLong`](crate::TransportEvent) and the driver
-    /// drops it. Where another service in the same assembly widened the buffer a longer
-    /// record can still reach here, and nothing rejects it; no const expresses the
-    /// ceiling, and adding one is a design change rather than a correction.
+    /// `option_record` is at most [`Self::MAX_OPTION_RECORD_LEN`] bytes; a request
+    /// carrying more is rejected before it reaches here.
     ///
     /// # Errors
     ///

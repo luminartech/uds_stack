@@ -17,7 +17,7 @@ use crate::storage::{Buffers, Storage};
 use crate::transport::{TransportEvent, UdsTransport};
 pub use uds_session::ServerParams;
 use uds_session::{
-    Association, SResult, Server as SessionServer, ServerOutput, ServerRx, ServerTx,
+    Ai, Association, SResult, Server as SessionServer, ServerOutput, ServerRx, ServerTx,
     Solicitation,
 };
 
@@ -91,13 +91,6 @@ impl<A: ServiceSet, T: UdsTransport, const PEERS: usize> Server<A, T, PEERS> {
     ///
     /// [`UdsTransport::Error`] where the transport failed. A negative response is not an
     /// error: it is a response, written into the sink.
-    #[allow(
-        clippy::too_many_lines,
-        reason = "the four load-bearing properties above are properties of this body's \
-                  borrow order; splitting it into helpers would pass &mut self.session \
-                  and &mut self.transport across a call boundary, which is exactly what \
-                  the scoping this function relies on exists to avoid"
-    )]
     pub async fn step(&mut self) -> Result<(), T::Error> {
         let Buffers {
             in_flight,
@@ -167,34 +160,8 @@ impl<A: ServiceSet, T: UdsTransport, const PEERS: usize> Server<A, T, PEERS> {
                 match event {
                     Either::Left(done) => break done,
                     Either::Right(Ok(TransportEvent::Deadline)) => {
-                        // The deadline passing is not itself the overrun. Tick the
-                        // session and act on what it reports: UDSS_LLR_0117's
-                        // ResponseOverrun is the output that says a 0x78 is due.
-                        let now = self.transport.now();
-                        let mut overran = false;
-                        let mut tick = self.session.tick(now);
-                        for out in tick.outputs() {
-                            if let ServerOutput::ResponseOverrun { .. } = out {
-                                overran = true;
-                            }
-                        }
-                        let _ = tick.finish();
-
-                        if overran {
-                            let pending = [0x7F_u8, sid, 0x78];
-                            let mut r = self.session.s_data_req(
-                                now,
-                                ai,
-                                &pending,
-                                ServerTx::ResponsePending,
-                            );
-                            for out in r.outputs() {
-                                if let ServerOutput::Transmit { ai, data } = out {
-                                    self.transport.t_data_req(ai, data).await?;
-                                }
-                            }
-                            let _sent = r.finish().is_ok();
-                        }
+                        answer_overrun(&mut self.session, &mut self.transport, ai, sid)
+                            .await?;
                         deadline = self.session.next_deadline();
                     }
                     Either::Right(Ok(TransportEvent::Closed { expected })) => {
@@ -225,7 +192,7 @@ impl<A: ServiceSet, T: UdsTransport, const PEERS: usize> Server<A, T, PEERS> {
         }
 
         let now = self.transport.now();
-        let mut r = self.session.s_data_req(
+        let reaction = self.session.s_data_req(
             now,
             ai,
             sink.written_bytes(),
@@ -234,16 +201,7 @@ impl<A: ServiceSet, T: UdsTransport, const PEERS: usize> Server<A, T, PEERS> {
                 session: None,
             },
         );
-        // Sent inside the drain: every Transmit must reach the transport, not just the
-        // last. The reaction borrows &mut session and t_data_req borrows &mut transport,
-        // which are disjoint fields.
-        for out in r.outputs() {
-            if let ServerOutput::Transmit { ai, data } = out {
-                self.transport.t_data_req(ai, data).await?;
-            }
-        }
-        let _ = r.finish();
-        Ok(())
+        transmit_all(reaction, &mut self.transport).await
     }
 
     /// Run until the transport fails.
@@ -256,6 +214,50 @@ impl<A: ServiceSet, T: UdsTransport, const PEERS: usize> Server<A, T, PEERS> {
             self.step().await?;
         }
     }
+}
+
+/// Drain a reaction, sending every `Transmit` it yields.
+///
+/// Inside the drain, not after it: a reaction may yield several and all of them must
+/// reach the transport. The reaction borrows the session and `t_data_req` borrows the
+/// transport, which is why they arrive as two arguments rather than as one `&mut self` —
+/// disjoint fields are disjoint borrows only while nothing has merged them.
+async fn transmit_all<T: UdsTransport>(
+    mut reaction: uds_session::Reaction<'_, '_, ServerOutput<'_>>,
+    transport: &mut T,
+) -> Result<(), T::Error> {
+    for out in reaction.outputs() {
+        if let ServerOutput::Transmit { ai, data } = out {
+            transport.t_data_req(ai, data).await?;
+        }
+    }
+    let _ = reaction.finish();
+    Ok(())
+}
+
+/// Answer `requestCorrectlyReceivedResponsePending` (0x78) if one has come due.
+///
+/// ``UDSSVC_ARCH_0031``. The deadline passing is not itself the overrun: the session
+/// layer is ticked and `UDSS_LLR_0117`'s `ResponseOverrun` is the output that says a 0x78
+/// is owed. A deadline that passed for any other reason produces no message.
+async fn answer_overrun<T: UdsTransport, const PEERS: usize>(
+    session: &mut SessionServer<PEERS>,
+    transport: &mut T,
+    ai: Ai,
+    sid: u8,
+) -> Result<(), T::Error> {
+    let now = transport.now();
+    let mut tick = session.tick(now);
+    let overran = tick
+        .outputs()
+        .any(|out| matches!(out, ServerOutput::ResponseOverrun { .. }));
+    let _ = tick.finish();
+    if !overran {
+        return Ok(());
+    }
+    let pending = [0x7F_u8, sid, 0x78];
+    let reaction = session.s_data_req(now, ai, &pending, ServerTx::ResponsePending);
+    transmit_all(reaction, transport).await
 }
 
 #[cfg(test)]
