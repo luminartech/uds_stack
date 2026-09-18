@@ -15,7 +15,9 @@
 //!
 //! The in-flight buffer's length is also the entity's ISO 13400-2:2019 Table 11
 //! *Max. data size* — that table defines MDS as "the maximum size of one logical request
-//! that this `DoIP` entity can process", which is the array a full request is decoded from.
+//! that this `DoIP` entity can process", which is the array a full request is decoded
+//! from. Nothing carries the number across [`crate::UdsTransport`] yet; when a binding
+//! needs to advertise it, the seam gains a way for this crate to state it.
 
 /// The three buffers, together.
 #[derive(Debug)]

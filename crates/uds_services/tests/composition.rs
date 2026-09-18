@@ -152,9 +152,6 @@ impl UdsTransport for FakeTransport {
     ) -> Result<TransportEvent<'b>, ()> {
         Ok(TransportEvent::Deadline)
     }
-    fn inbound_max(&self) -> Option<usize> {
-        None
-    }
     fn outbound_max(&self) -> Option<usize> {
         None
     }

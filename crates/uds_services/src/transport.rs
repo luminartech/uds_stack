@@ -149,22 +149,18 @@ pub trait UdsTransport {
         deadline: Option<Timestamp>,
     ) -> impl core::future::Future<Output = Result<TransportEvent<'b>, Self::Error>>;
 
-    /// The largest request this entity will accept, where it advertises one.
-    ///
-    /// ISO 13400-2:2019 Table 11 makes *Max. data size* optional, so `None` is
-    /// conformant. Its value is the in-flight buffer's length, which this crate derives.
-    ///
-    /// **The route that would hand a transport that number is unbuilt.** The trait has
-    /// this getter and nothing else: nothing in this crate calls it and nothing supplies
-    /// the length, so a binding today has to invent the very value the assembly already
-    /// derived. Closing it needs a way for the crate to *state* the length, which is a
-    /// seam decision rather than a missing setter.
-    fn inbound_max(&self) -> Option<usize>;
-
     /// The largest response the peer will accept, where it advertised one.
     ///
-    /// MDS is defined for *requests*, so a server asking what it may send is asking
-    /// about the client.
+    /// ISO 13400-2:2019 Table 11 makes *Max. data size* optional, so `None` is
+    /// conformant and leaves the response buffer as the only bound. MDS is defined for
+    /// *requests*, so a server asking what it may send is asking about the client.
+    ///
+    /// There is deliberately no `inbound_max`. This entity's own MDS is the in-flight
+    /// buffer's length, which [`crate::uds_server`] derives — so a transport that has to
+    /// advertise it needs the crate to *state* the number, not to be asked for it. The
+    /// getter that used to sit here was never called and nothing supplied its value, so
+    /// a binding had to invent the one figure the assembly already knew. Stating it is a
+    /// seam addition to make when a binding needs it.
     fn outbound_max(&self) -> Option<usize>;
 
     /// The `tP_Client` reload pair this transport dictates.
@@ -218,10 +214,6 @@ mod tests {
             };
             data.copy_from_slice(src);
             Ok(TransportEvent::DataInd { ai: ai(), data })
-        }
-
-        fn inbound_max(&self) -> Option<usize> {
-            None
         }
 
         fn outbound_max(&self) -> Option<usize> {
