@@ -20,7 +20,7 @@
 
 use crate::{DataIdentifier, UdsTransport};
 use uds_protocol::NegativeResponseCode;
-use uds_session::Address;
+use uds_session::{Address, KeepAlive};
 
 /// What one server said.
 ///
@@ -66,22 +66,24 @@ pub struct Answer<V> {
 pub struct Responses<
     'c,
     T: UdsTransport,
+    K: KeepAlive,
     D: DataIdentifier,
     const PHYS: usize,
     const FUNC: usize,
     const R: usize,
 > {
-    client: &'c mut Client<T, PHYS, FUNC, R>,
+    client: &'c mut Client<T, K, PHYS, FUNC, R>,
     _marker: core::marker::PhantomData<D>,
 }
 
 impl<
     T: UdsTransport,
+    K: KeepAlive,
     D: DataIdentifier,
     const PHYS: usize,
     const FUNC: usize,
     const R: usize,
-> Responses<'_, T, D, PHYS, FUNC, R>
+> Responses<'_, T, K, D, PHYS, FUNC, R>
 {
     /// The next answer, or `None` when the response window has closed.
     ///
@@ -108,17 +110,28 @@ impl<
 /// ``UDSSVC_ARCH_0028`` — the core is sans-io; awaiting is the layer above it, so the
 /// encode and interpret halves are usable without a transport at all.
 ///
-/// `PHYS`, `FUNC` and `R` mirror `uds_session::Client<PHYS, FUNC, R>`: physical channels,
-/// functional channels, and responders per functional channel. `R = 0` gives a
-/// physical-only client zero-sized responder tables.
+/// `K`, `PHYS`, `FUNC` and `R` mirror `uds_session::Client<K, PHYS, FUNC, R>`: the
+/// keep-alive mode, physical channels, functional channels, and responders per functional
+/// channel. `R = 0` gives a physical-only client zero-sized responder tables.
+///
+/// `K` is `uds_session::FunctionalKeepAlive` or `PhysicalKeepAlive`, sealed there to those
+/// two. Holding it in the type is that crate's `UDSS_LLR_0149`: the mode is fixed at
+/// creation, so the methods that supply a `tS3_Client` reload exist only on the mode that
+/// gives one a meaning.
 #[derive(Debug)]
-pub struct Client<T: UdsTransport, const PHYS: usize, const FUNC: usize, const R: usize> {
-    session: uds_session::Client<PHYS, FUNC, R>,
+pub struct Client<
+    T: UdsTransport,
+    K: KeepAlive,
+    const PHYS: usize,
+    const FUNC: usize,
+    const R: usize,
+> {
+    session: uds_session::Client<K, PHYS, FUNC, R>,
     transport: T,
 }
 
-impl<T: UdsTransport, const PHYS: usize, const FUNC: usize, const R: usize>
-    Client<T, PHYS, FUNC, R>
+impl<T: UdsTransport, K: KeepAlive, const PHYS: usize, const FUNC: usize, const R: usize>
+    Client<T, K, PHYS, FUNC, R>
 {
     /// A client over `transport`, owning its session-layer storage by value.
     ///
@@ -129,7 +142,7 @@ impl<T: UdsTransport, const PHYS: usize, const FUNC: usize, const R: usize>
         transport: T,
         physical: [uds_session::PhysicalSlot; PHYS],
         functional: [uds_session::FunctionalSlot<R>; FUNC],
-        keep_alive: uds_session::KeepAliveMode,
+        keep_alive: K,
     ) -> Self {
         Self {
             session: uds_session::Client::new(physical, functional, keep_alive),
@@ -178,7 +191,7 @@ impl<T: UdsTransport, const PHYS: usize, const FUNC: usize, const R: usize>
         &mut self,
         target: Address,
         identifiers: &[D],
-    ) -> Responses<'_, T, D, PHYS, FUNC, R> {
+    ) -> Responses<'_, T, K, D, PHYS, FUNC, R> {
         #[allow(clippy::todo, reason = "API stub; behaviour lands with its element")]
         {
             let _ = (&mut self.transport, target, identifiers.len());

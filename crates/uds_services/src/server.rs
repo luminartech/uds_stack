@@ -142,7 +142,7 @@ impl<A: ServiceSet, T: UdsTransport, const PEERS: usize> Server<A, T, PEERS> {
             SResult::Ok,
             ServerRx::Request { session: None },
         );
-        for out in reaction.by_ref() {
+        for out in reaction.outputs() {
             if let ServerOutput::Indicate {
                 ai,
                 data,
@@ -180,7 +180,7 @@ impl<A: ServiceSet, T: UdsTransport, const PEERS: usize> Server<A, T, PEERS> {
                         let now = self.transport.now();
                         let mut overran = false;
                         let mut tick = self.session.tick(now);
-                        for out in tick.by_ref() {
+                        for out in tick.outputs() {
                             if let ServerOutput::ResponseOverrun { .. } = out {
                                 overran = true;
                             }
@@ -195,7 +195,7 @@ impl<A: ServiceSet, T: UdsTransport, const PEERS: usize> Server<A, T, PEERS> {
                                 &pending,
                                 ServerTx::ResponsePending,
                             );
-                            for out in r.by_ref() {
+                            for out in r.outputs() {
                                 if let ServerOutput::Transmit { ai, data } = out {
                                     self.transport.t_data_req(ai, data).await?;
                                 }
@@ -244,7 +244,7 @@ impl<A: ServiceSet, T: UdsTransport, const PEERS: usize> Server<A, T, PEERS> {
         // Sent inside the drain: every Transmit must reach the transport, not just the
         // last. The reaction borrows &mut session and t_data_req borrows &mut transport,
         // which are disjoint fields.
-        for out in r.by_ref() {
+        for out in r.outputs() {
             if let ServerOutput::Transmit { ai, data } = out {
                 self.transport.t_data_req(ai, data).await?;
             }
