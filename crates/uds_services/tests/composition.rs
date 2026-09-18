@@ -145,11 +145,11 @@ impl UdsTransport for FakeTransport {
     async fn t_data_req(&mut self, _ai: Ai, _d: &[u8]) -> Result<(), ()> {
         Ok(())
     }
-    async fn next_event(
+    async fn next_event<'b>(
         &mut self,
-        _b: &mut [u8],
+        _b: &'b mut [u8],
         _d: Option<Timestamp>,
-    ) -> Result<TransportEvent, ()> {
+    ) -> Result<TransportEvent<'b>, ()> {
         Ok(TransportEvent::Deadline)
     }
     fn inbound_max(&self) -> Option<usize> {

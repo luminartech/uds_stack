@@ -11,25 +11,27 @@ use uds_session::{Ai, Reloads, SResult, Timestamp};
 
 /// What the transport reports, or that the driver's deadline passed first.
 ///
-/// **No lifetime.** The payload went into the buffer the driver supplied, so nothing
-/// here borrows the transport — which is what lets the driver call
-/// [`UdsTransport::t_data_req`] while the request bytes that provoked the response are
-/// still live.
+/// **The lifetime is the driver's buffer, never the transport.** A message arrives as the
+/// subslice of the supplied buffer that it occupies, so the borrow ends when the buffer's
+/// does — which is what lets the driver call [`UdsTransport::t_data_req`] while the
+/// request bytes that provoked the response are still live. Reporting a length instead
+/// would put that tie in prose: the driver would have to re-slice its own buffer and
+/// defend against a length larger than what it lent.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[non_exhaustive]
-pub enum TransportEvent {
-    /// A complete inbound message, in the first `len` bytes of the supplied buffer.
+pub enum TransportEvent<'b> {
+    /// A complete inbound message.
     DataInd {
         /// Addressing, with the peer's `S_AI[SA]` — the only way to tell functional
         /// responses apart.
         ai: Ai,
-        /// How much of the buffer the message occupies.
-        len: usize,
+        /// The message, in the buffer the driver supplied.
+        data: &'b [u8],
     },
-    /// A message longer than the supplied buffer. The first `len` bytes are present.
+    /// A message longer than the supplied buffer, truncated to what fit.
     ///
     /// A variant rather than a flag on [`Self::DataInd`], because destructuring
-    /// `DataInd { ai, len, .. }` is idiomatic and would silently discard a flag,
+    /// `DataInd { ai, data, .. }` is idiomatic and would silently discard a flag,
     /// leaving a fragment decoded as a message. Reached when the driver is serving a
     /// request and offers only the small concurrent buffer, where by clause 8.7.6 the
     /// server is occupied and owes `busyRepeatRequest` (0x21) — a decision needing only
@@ -37,8 +39,8 @@ pub enum TransportEvent {
     DataTooLong {
         /// Addressing.
         ai: Ai,
-        /// How much fit.
-        len: usize,
+        /// What fit.
+        data: &'b [u8],
         /// How long the message actually was, where the transport knows. `DoIP` reads
         /// it from the generic header before the payload, so it is free there; a
         /// transport that cannot know without reading the whole message reports `None`
@@ -72,8 +74,8 @@ pub enum TransportEvent {
         ai: Ai,
         /// The periodic data identifier.
         pdid: u8,
-        /// How much of the supplied buffer the record occupies.
-        len: usize,
+        /// The record, in the buffer the driver supplied.
+        data: &'b [u8],
     },
     /// The connection went away.
     ///
@@ -127,7 +129,10 @@ pub trait UdsTransport {
     /// Fill `buffer` with the next inbound message, or return
     /// [`TransportEvent::Deadline`] when `deadline` passes first.
     ///
-    /// The buffer is the driver's, so the borrow ends when this returns. `deadline` is
+    /// The event borrows `buffer`, not the transport, so `&mut self` is released when the
+    /// returned future completes and the driver may transmit while the request is live.
+    /// A message is reported as the subslice it occupies; there is no length to overstate.
+    /// `deadline` is
     /// `uds_session::Server::next_deadline`'s value passed through untouched —
     /// `Timestamp` carries `UDSS_LLR_0019`'s modular arithmetic, so neither side of
     /// this seam computes an interval.
@@ -138,11 +143,11 @@ pub trait UdsTransport {
     /// # Errors
     ///
     /// [`Self::Error`] where the link fails.
-    fn next_event(
+    fn next_event<'b>(
         &mut self,
-        buffer: &mut [u8],
+        buffer: &'b mut [u8],
         deadline: Option<Timestamp>,
-    ) -> impl core::future::Future<Output = Result<TransportEvent, Self::Error>>;
+    ) -> impl core::future::Future<Output = Result<TransportEvent<'b>, Self::Error>>;
 
     /// The largest request this entity will accept, where it advertises one.
     ///
@@ -174,9 +179,14 @@ pub trait UdsTransport {
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::unused_async_trait_impl,
+    reason = "the loopback fixture never awaits — it exists to prove the borrow shape \
+              of the seam, not to do I/O"
+)]
 mod tests {
-    use super::TransportEvent;
-    use uds_session::{Address, Ai, Mtype, SResult, TaType};
+    use super::{TransportEvent, UdsTransport};
+    use uds_session::{Address, Ai, Mtype, Reloads, SResult, TaType, Timestamp};
 
     fn ai() -> Ai {
         Ai {
@@ -187,52 +197,110 @@ mod tests {
         }
     }
 
-    /// ``UDSSVC_ARCH_0029`` as amended — the event carries a length into the caller's
-    /// buffer, never a borrow of the transport. A borrowed event keeps the transport
-    /// mutably borrowed for as long as the request lives, so the driver could never
-    /// call `t_data_req` to answer it.
+    struct Loopback;
+
+    impl UdsTransport for Loopback {
+        type Error = ();
+
+        async fn t_data_req(&mut self, _ai: Ai, _data: &[u8]) -> Result<(), ()> {
+            Ok(())
+        }
+
+        async fn next_event<'b>(
+            &mut self,
+            buffer: &'b mut [u8],
+            _deadline: Option<Timestamp>,
+        ) -> Result<TransportEvent<'b>, ()> {
+            const MESSAGE: [u8; 3] = [0x22, 0xF1, 0x90];
+            let n = buffer.len().min(MESSAGE.len());
+            let (Some(data), Some(src)) = (buffer.get_mut(..n), MESSAGE.get(..n)) else {
+                return Ok(TransportEvent::Deadline);
+            };
+            data.copy_from_slice(src);
+            Ok(TransportEvent::DataInd { ai: ai(), data })
+        }
+
+        fn inbound_max(&self) -> Option<usize> {
+            None
+        }
+
+        fn outbound_max(&self) -> Option<usize> {
+            None
+        }
+
+        fn channel_timing(&self) -> Reloads {
+            Reloads {
+                default_reload: 2_000,
+                enhanced_reload: 5_000,
+            }
+        }
+
+        fn now(&self) -> Timestamp {
+            Timestamp(0)
+        }
+    }
+
+    /// ``UDSSVC_ARCH_0029`` as amended — the event borrows the *buffer*, so the driver
+    /// answers a request while its bytes are still live. This is the shape `Server::step`
+    /// needs and the one a borrow of the transport would forbid: an event tied to
+    /// `&mut self` keeps the transport mutably borrowed for as long as the request lives,
+    /// and `t_data_req` could never be called to answer it.
     ///
-    /// **This assertion has a trap.** It fails by `TransportEvent` no longer resolving
-    /// without a lifetime argument, and the obvious repair — writing
-    /// `TransportEvent<'_>` — makes `'_` infer `'static`, so the bound passes trivially
-    /// and the guarantee is gone while this test stays green. Verify it by
-    /// reintroducing a borrowing variant and watching it fail, not by watching it pass.
+    /// This is a compile-time assertion wearing a test's clothes. It fails by not
+    /// building.
     #[test]
-    fn an_event_borrows_nothing() {
-        fn assert_static<T: 'static>(_: &T) {}
-        assert_static(&TransportEvent::DataInd { ai: ai(), len: 7 });
-        assert_static(&TransportEvent::DataTooLong {
-            ai: ai(),
-            len: 8,
-            declared: Some(1_024),
+    fn a_request_can_be_answered_while_its_bytes_are_live() {
+        let mut buffer = [0_u8; 8];
+        let mut transport = Loopback;
+        let sent = core::pin::pin!(async {
+            let ev = transport.next_event(&mut buffer, None).await?;
+            let TransportEvent::DataInd { ai, data } = ev else {
+                return Err(());
+            };
+            transport.t_data_req(ai, data).await?;
+            Ok::<usize, ()>(data.len())
         });
-        assert_static(&TransportEvent::DataConf {
-            ai: ai(),
-            result: SResult::Ok,
-        });
-        assert_static(&TransportEvent::Periodic {
-            ai: ai(),
-            pdid: 0x01,
-            len: 4,
-        });
-        assert_static(&TransportEvent::Closed { expected: true });
-        assert_static(&TransportEvent::Deadline);
+        assert_eq!(poll_once(sent), Some(Ok(3)));
     }
 
     /// A truncated message is a distinct variant rather than a flag on `DataInd`.
-    /// Destructuring `DataInd { ai, len, .. }` would silently discard a flag and
+    /// Destructuring `DataInd { ai, data, .. }` would silently discard a flag and
     /// decode a fragment as a message; a swallowed variant only drops a message the
     /// client is already required to repeat. One fails safe, the other dangerous.
     #[test]
     fn truncation_is_a_variant_an_ordinary_arm_cannot_absorb() {
-        let whole = TransportEvent::DataInd { ai: ai(), len: 4 };
+        let whole = TransportEvent::DataInd {
+            ai: ai(),
+            data: &[0x22, 0xF1, 0x90],
+        };
         let part = TransportEvent::DataTooLong {
             ai: ai(),
-            len: 4,
+            data: &[0x22, 0xF1, 0x90],
             declared: Some(90),
         };
         assert_ne!(whole, part);
         assert!(matches!(whole, TransportEvent::DataInd { .. }));
         assert!(!matches!(part, TransportEvent::DataInd { .. }));
+    }
+
+    /// A `DataConf` carries no payload, so it does not constrain the buffer's lifetime.
+    #[test]
+    fn a_confirmation_carries_no_payload() {
+        let c: TransportEvent<'static> = TransportEvent::DataConf {
+            ai: ai(),
+            result: SResult::Ok,
+        };
+        assert!(matches!(c, TransportEvent::DataConf { .. }));
+    }
+
+    fn poll_once<F: core::future::Future>(
+        mut f: core::pin::Pin<&mut F>,
+    ) -> Option<F::Output> {
+        let waker = core::task::Waker::noop();
+        let mut cx = core::task::Context::from_waker(waker);
+        match f.as_mut().poll(&mut cx) {
+            core::task::Poll::Ready(v) => Some(v),
+            core::task::Poll::Pending => None,
+        }
     }
 }

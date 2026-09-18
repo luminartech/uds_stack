@@ -113,22 +113,17 @@ impl<A: ServiceSet, T: UdsTransport, const PEERS: usize> Server<A, T, PEERS> {
             .transport
             .next_event(&mut in_flight[..], deadline)
             .await?;
-        let TransportEvent::DataInd { ai, len } = ev else {
+        let TransportEvent::DataInd {
+            ai,
+            data: request_bytes,
+        } = ev
+        else {
             // Everything that is not a request is dropped here, and each case is owed
             // something this stub does not yet do: a DataTooLong at this point exceeds
             // this entity's own MDS and owes busyRepeatRequest or 0x13; a DataConf must
             // reach uds_session's t_data_conf; a Deadline outside a handler must reach
             // tick(); Periodic and Closed have no handler at all. Listed in this task's
             // report as elided behaviour, not implemented here.
-            return Ok(());
-        };
-
-        let Some(request_bytes) = in_flight.get(..len) else {
-            // A transport reported more bytes than the buffer it was handed. That
-            // breaks UdsTransport::next_event's contract, and this crate cannot
-            // answer a message it does not have — so the event is dropped rather
-            // than indexed. Panicking here would make a binding's arithmetic slip
-            // an ECU fault, which is what the panic-freedom lints exist to prevent.
             return Ok(());
         };
 
