@@ -32,8 +32,10 @@ pub struct Buffers<'a> {
 /// The storage one assembled application needs.
 ///
 /// ``UDSSVC_ARCH_0013`` — implemented by the type [`crate::uds_server`] generates,
-/// never by hand.
-pub trait Storage {
+/// never by hand. Sealed, so "never" is a compile error rather than a request: [`Store`]
+/// is the only implementor, and a hand-written one could pick lengths that disagree with
+/// the maxima the assembly folded.
+pub trait Storage: crate::sealed::Sealed {
     /// Zeroed storage.
     ///
     /// An associated const rather than a `const fn`, because trait methods cannot be
@@ -57,6 +59,11 @@ pub struct Store<const REQ: usize, const CONC: usize, const RSP: usize> {
     in_flight: [u8; REQ],
     concurrent: [u8; CONC],
     response: [u8; RSP],
+}
+
+impl<const REQ: usize, const CONC: usize, const RSP: usize> crate::sealed::Sealed
+    for Store<REQ, CONC, RSP>
+{
 }
 
 impl<const REQ: usize, const CONC: usize, const RSP: usize> Storage

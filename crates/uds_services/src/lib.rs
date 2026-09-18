@@ -85,4 +85,7 @@ pub use services::{
     TransferRequest, WriteDataByIdentifier,
 };
 
+#[doc(hidden)]
+pub mod sealed;
+
 mod dispatch;

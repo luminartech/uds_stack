@@ -224,6 +224,8 @@ macro_rules! uds_server {
             // service in that range arrives.
             const CONCURRENT: usize = 8;
 
+            impl $crate::sealed::Sealed for $ty {}
+
             impl $crate::ServiceSet for $ty {
                 type Store = $crate::Store<IN_FLIGHT, CONCURRENT, RESPONSE>;
 

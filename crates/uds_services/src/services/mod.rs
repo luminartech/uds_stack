@@ -68,7 +68,12 @@ pub enum SessionTransition {
 /// One application's assembled service implementations.
 ///
 /// ``UDSSVC_ARCH_0013`` — implemented by [`crate::uds_server`], never by hand.
-pub trait ServiceSet {
+///
+/// Sealed through [`crate::sealed`]. The whole derivation argument — that
+/// [`Self::Store`]'s lengths are folded from this application's declared maxima — holds
+/// only while the macro is what chooses them; a hand-written impl can pick any lengths it
+/// likes and still advertise the declared maxima on the wire.
+pub trait ServiceSet: crate::sealed::Sealed {
     /// The storage whose sizes were derived from this application's declared maxima.
     type Store: Storage;
 
