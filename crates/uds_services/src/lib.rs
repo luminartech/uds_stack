@@ -19,8 +19,10 @@
 //! and the rest follows.
 //!
 //! A client application names services in that same identifier vocabulary and
-//! gets typed results back, negative responses included — which the layer
-//! below explicitly declines to interpret.
+//! gets its results back in it: a `ReadDataByIdentifier` response arrives as the
+//! identifier/record pairs the application declared, not as the bytes the server
+//! concatenated. Negative responses come back too — the layer below explicitly
+//! declines to interpret them, and this is the layer that does.
 //!
 //! # Status
 //!
@@ -56,7 +58,7 @@
 pub mod assembly;
 
 pub mod client;
-pub use client::{Answer, Client, Response, Responses};
+pub use client::{Answer, Client, Records, Response, Responses};
 
 pub mod server;
 pub use server::{Server, ServerParams};

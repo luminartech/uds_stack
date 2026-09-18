@@ -18,7 +18,7 @@
 //! exercised end to end yet (open question 7). Its shape is settled enough to design
 //! against; its behaviour is not.
 
-use crate::{DataIdentifier, UdsTransport};
+use crate::{DataIdentifier, RecordError, UdsTransport};
 use uds_protocol::NegativeResponseCode;
 use uds_session::{Address, KeepAlive};
 
@@ -96,11 +96,66 @@ impl<
         reason = "async is load-bearing: the body awaits the transport once it \
                   replaces this todo!(), and neither lint can see past the stub"
     )]
-    pub async fn next(&mut self) -> Option<Result<Answer<&[u8]>, T::Error>> {
+    pub async fn next(&mut self) -> Option<Result<Answer<Records<'_, D>>, T::Error>> {
         #[allow(clippy::todo, reason = "API stub; behaviour lands with its element")]
         {
             let _ = &mut *self.client;
             todo!("UDSSVC_ARCH_0022: lend the next decoded answer")
+        }
+    }
+}
+
+/// The identifier/record pairs in one `ReadDataByIdentifier` response.
+///
+/// ``UDSSVC_ARCH_0026`` — the application declared each identifier's record structure, so
+/// splitting a multi-identifier response needs nothing this crate knows about the data.
+/// A response is a concatenation of `(identifier, record)` with no length prefixes, and
+/// [`DataIdentifier::split_record`] is what makes it walkable.
+///
+/// Items borrow the receive buffer, not the iterator, so this is an ordinary [`Iterator`]
+/// rather than a lending one. `Clone` but not `Copy`: a copied iterator silently restarts
+/// the walk, which is the whole hazard `clippy::copy_iterator` names.
+#[derive(Debug, Clone)]
+#[must_use = "the records are the response; dropping this discards it"]
+pub struct Records<'d, D> {
+    rest: &'d [u8],
+    identifier: core::marker::PhantomData<fn() -> D>,
+}
+
+impl<'d, D: DataIdentifier> Records<'d, D> {
+    /// Walk `response`, the bytes after the `0x62` service identifier.
+    pub const fn new(response: &'d [u8]) -> Self {
+        Self {
+            rest: response,
+            identifier: core::marker::PhantomData,
+        }
+    }
+}
+
+impl<'d, D: DataIdentifier> Iterator for Records<'d, D> {
+    type Item = Result<(D, &'d [u8]), RecordError>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.rest.is_empty() {
+            return None;
+        }
+        let Some((identifier, tail)) = self.rest.split_first_chunk::<2>() else {
+            self.rest = &[];
+            return Some(Err(RecordError::Short));
+        };
+        let Some(did) = D::from_u16(u16::from_be_bytes(*identifier)) else {
+            self.rest = &[];
+            return Some(Err(RecordError::UnknownIdentifier));
+        };
+        match did.split_record(tail) {
+            Ok((record, rest)) => {
+                self.rest = rest;
+                Some(Ok((did, record)))
+            }
+            Err(e) => {
+                self.rest = &[];
+                Some(Err(e))
+            }
         }
     }
 }
@@ -152,6 +207,11 @@ impl<T: UdsTransport, K: KeepAlive, const PHYS: usize, const FUNC: usize, const 
 
     /// Read one or more data identifiers from one server.
     ///
+    /// The response comes back as [`Records`], the identifier/record pairs it carries,
+    /// not as the undivided bytes: the application already declared each record's
+    /// structure through [`DataIdentifier::split_record`], so re-walking the response by
+    /// hand would be the caller redoing work this crate can do.
+    ///
     /// # Errors
     ///
     /// [`UdsTransport::Error`] where the transport failed. A negative response is **not**
@@ -166,7 +226,7 @@ impl<T: UdsTransport, K: KeepAlive, const PHYS: usize, const FUNC: usize, const 
         &mut self,
         target: Address,
         identifiers: &[D],
-    ) -> Result<Response<&[u8]>, T::Error> {
+    ) -> Result<Response<Records<'_, D>>, T::Error> {
         #[allow(clippy::todo, reason = "API stub; behaviour lands with its element")]
         {
             let _ = (
@@ -202,9 +262,40 @@ impl<T: UdsTransport, K: KeepAlive, const PHYS: usize, const FUNC: usize, const 
 
 #[cfg(test)]
 mod tests {
-    use super::{Answer, Response};
+    use super::{Answer, Records, Response};
+    use crate::{DataIdentifier, RecordError};
     use uds_protocol::NegativeResponseCode;
     use uds_session::Address;
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    enum TestDid {
+        VehicleSpeed,
+        VinNumber,
+    }
+
+    impl DataIdentifier for TestDid {
+        const MAX_RECORD_LEN: usize = 17;
+        fn as_u16(self) -> u16 {
+            match self {
+                Self::VehicleSpeed => 0xF4_0D,
+                Self::VinNumber => 0xF1_90,
+            }
+        }
+        fn from_u16(value: u16) -> Option<Self> {
+            match value {
+                0xF4_0D => Some(Self::VehicleSpeed),
+                0xF1_90 => Some(Self::VinNumber),
+                _ => None,
+            }
+        }
+        fn split_record(self, buf: &[u8]) -> Result<(&[u8], &[u8]), RecordError> {
+            let w = match self {
+                Self::VehicleSpeed => 1,
+                Self::VinNumber => 17,
+            };
+            buf.split_at_checked(w).ok_or(RecordError::Short)
+        }
+    }
 
     /// ``UDSSVC_ARCH_0021`` — a negative response is a response, and this crate is the
     /// layer that interprets it. `uds_on_ip` says so from the other side: "A UDS
@@ -236,5 +327,56 @@ mod tests {
             response: Response::Positive(&[0x62][..]),
         };
         assert_eq!(a.from, Address(0x0E01));
+    }
+
+    /// ``UDSSVC_ARCH_0026`` — the application declared the record widths, so the client
+    /// hands back typed pairs rather than the undivided response. Two identifiers of
+    /// different widths in one response is the case that makes the point: nothing but
+    /// `split_record` can tell where the first record ends.
+    #[test]
+    fn a_response_splits_into_the_records_the_application_declared() {
+        // 0xF40D and its one byte, then 0xF190 and its seventeen.
+        let mut bytes = [0_u8; 22];
+        let header = [0xF4, 0x0D, 0x40, 0xF1, 0x90];
+        let Some(front) = bytes.get_mut(..header.len()) else {
+            return;
+        };
+        front.copy_from_slice(&header);
+
+        let mut records = Records::<TestDid>::new(&bytes);
+        assert_eq!(
+            records.next(),
+            Some(Ok((TestDid::VehicleSpeed, &[0x40][..])))
+        );
+        assert_eq!(
+            records.next(),
+            Some(Ok((TestDid::VinNumber, &[0x00; 17][..])))
+        );
+        assert_eq!(records.next(), None);
+    }
+
+    /// An empty response yields nothing rather than an error: a server that answered
+    /// positively with no records has answered.
+    #[test]
+    fn an_empty_response_yields_no_records() {
+        assert_eq!(Records::<TestDid>::new(&[]).count(), 0);
+    }
+
+    /// A record shorter than the application declared is `Short`, and the walk stops —
+    /// once the framing is lost there is no next identifier to find.
+    #[test]
+    fn a_truncated_record_ends_the_walk() {
+        let mut records = Records::<TestDid>::new(&[0xF1, 0x90, 0x00, 0x00]);
+        assert_eq!(records.next(), Some(Err(RecordError::Short)));
+        assert_eq!(records.next(), None);
+    }
+
+    /// An identifier this application never defined is its own error. On a request that
+    /// is `requestOutOfRange`; in a response it is a server naming something unasked for.
+    #[test]
+    fn an_identifier_the_application_does_not_define_is_reported() {
+        let mut records = Records::<TestDid>::new(&[0xDE, 0xAD, 0x00]);
+        assert_eq!(records.next(), Some(Err(RecordError::UnknownIdentifier)));
+        assert_eq!(records.next(), None);
     }
 }
