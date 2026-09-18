@@ -15,11 +15,11 @@
 use automotive_wire_codec::Sink;
 use uds_protocol::NegativeResponseCode as Nrc;
 use uds_services::{
-    DataIdentifier, DataTransfer, KeyVerdict, ReadDataByIdentifier, RecordError,
-    ResponseSink, SecurityAccess, SecurityLevel, SecurityPolicy, ServiceSet, Storage,
-    TransferRequest, TransportEvent, UdsTransport, uds_server,
+    Address, Ai, DataIdentifier, DataTransfer, KeyVerdict, Mtype, ReadDataByIdentifier,
+    RecordError, Reloads, ResponseSink, SecurityAccess, SecurityLevel, SecurityPolicy,
+    ServerParams, ServiceSet, Storage, TaType, Timestamp, TransferRequest, TransportEvent,
+    UdsTransport, uds_server,
 };
-use uds_session::{Ai, Reloads, ServerParams, Timestamp};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Did {
@@ -227,18 +227,33 @@ fn response_pending_permission_follows_the_declaration() {
     assert!(!ecu.may_respond_pending(0x2E));
 }
 
-/// A suppressed `TesterPresent` is admitted mid-service and an ordinary request is not.
-/// That is the whole of what this establishes: clause 8.7.6's *second* exception, a
-/// request in 0x00-0x0F, is unreachable for any server `uds_server!` can assemble --
-/// that range is OBD territory, which `uds_protocol` does not model, so the minimum SID
-/// in `__uds_sids!` is 0x10. The 0x01 assertion is therefore a guard that the limb stays
-/// closed while nothing can open it, not a demonstration that it works.
+/// Clause 8.7.6's first exception is a **functionally addressed** suppressed
+/// `TesterPresent`. The same bytes physically addressed are not admitted, which is the
+/// distinction the classifier could not draw while its only argument was the request.
+///
+/// The *second* exception, a request in 0x00-0x0F, is unreachable for any server
+/// `uds_server!` can assemble -- that range is OBD territory, which `uds_protocol` does
+/// not model, so the minimum SID in `__uds_sids!` is 0x10. The 0x01 assertion is a guard
+/// that the limb stays closed while nothing can open it, not a demonstration that it
+/// works.
 #[test]
-fn a_suppressed_tester_present_is_admitted_and_an_ordinary_request_is_not() {
+fn the_tester_present_exception_is_admitted_only_when_functionally_addressed() {
+    fn ai(ta_type: TaType) -> Ai {
+        Ai {
+            mtype: Mtype::Diag,
+            sa: Address(0x0E80),
+            ta: Address(0x0E00),
+            ta_type,
+        }
+    }
+
     let ecu = Ecu::new();
-    assert!(ecu.is_concurrent_exception(&[0x3E, 0x80]));
-    assert!(!ecu.is_concurrent_exception(&[0x01]));
-    assert!(!ecu.is_concurrent_exception(&[0x22, 0xF1, 0x90]));
+    assert!(ecu.is_concurrent_exception(&[0x3E, 0x80], ai(TaType::Functional)));
+    assert!(!ecu.is_concurrent_exception(&[0x3E, 0x80], ai(TaType::Physical)));
+    // Without the suppress bit it is an ordinary request either way.
+    assert!(!ecu.is_concurrent_exception(&[0x3E, 0x00], ai(TaType::Functional)));
+    assert!(!ecu.is_concurrent_exception(&[0x01], ai(TaType::Functional)));
+    assert!(!ecu.is_concurrent_exception(&[0x22, 0xF1, 0x90], ai(TaType::Functional)));
 }
 
 /// Referencing the static is what forces the const evaluation to run.

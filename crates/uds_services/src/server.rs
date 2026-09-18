@@ -15,9 +15,10 @@ use crate::select::{Either, select2};
 use crate::services::{Responded, ServiceSet};
 use crate::storage::{Buffers, Storage};
 use crate::transport::{TransportEvent, UdsTransport};
+pub use uds_session::ServerParams;
 use uds_session::{
-    Association, SResult, Server as SessionServer, ServerOutput, ServerParams, ServerRx,
-    ServerTx, Solicitation,
+    Association, SResult, Server as SessionServer, ServerOutput, ServerRx, ServerTx,
+    Solicitation,
 };
 
 /// The UDS server: an application's services, its storage, a session layer and a

@@ -7,7 +7,7 @@
 //! code, and nothing in it is `DoIP`-shaped, which is the test of whether it is the
 //! right seam. It serves both roles.
 
-use uds_session::{Ai, Reloads, SResult, Timestamp};
+pub use uds_session::{Address, Ai, Mtype, Reloads, SResult, TaType, Timestamp};
 
 /// What the transport reports, or that the driver's deadline passed first.
 ///

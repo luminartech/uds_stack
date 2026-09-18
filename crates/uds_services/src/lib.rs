@@ -59,7 +59,7 @@ pub mod client;
 pub use client::{Answer, Client, Response, Responses};
 
 pub mod server;
-pub use server::Server;
+pub use server::{Server, ServerParams};
 
 pub mod storage;
 pub use storage::{Buffers, Storage, Store};
@@ -68,7 +68,9 @@ pub mod sink;
 pub use sink::ResponseSink;
 
 pub mod transport;
-pub use transport::{TransportEvent, UdsTransport};
+pub use transport::{
+    Address, Ai, Mtype, Reloads, SResult, TaType, Timestamp, TransportEvent, UdsTransport,
+};
 
 pub mod select;
 pub use select::{Either, Select2, select2};
