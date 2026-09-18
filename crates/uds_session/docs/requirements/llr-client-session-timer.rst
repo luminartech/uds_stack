@@ -206,7 +206,12 @@ The timer's state
    counterpart at a later setting: a setting under ``UDSS_LLR_0043`` either names the
    parameter, supplying a value, or is not made at all, so a physical channel already open
    cannot be caused to state no reload, and only its opening can be rejected on that
-   ground.
+   ground. An interface in which a reload can be supplied only where the client's
+   keep-alive mode gives it a meaning, and must be supplied where that mode requires one,
+   satisfies this paragraph without a check, as ``UDSS_LLR_0027`` describes for the
+   identifier it names: where the mode is fixed at creation, as the first paragraph of
+   ``UDSS_LLR_0149`` requires, every disagreement above is a disagreement with a fact
+   already settled, and none of the three need be expressible.
 
    The reload parameter follows the timer. Table 5 states that the ``tS3_Client`` timeout
    value includes the travel time of the message on the network, gateway delays among them,
