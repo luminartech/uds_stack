@@ -91,58 +91,37 @@ impl Reloads {
     }
 }
 
-/// What opening a physical channel supplies.
+/// What opening a channel supplies.
 ///
-/// ``UDSS_LLR_0126`` holds these with the channel.
+/// ``UDSS_LLR_0126`` holds these with the channel. One type serves both kinds: the two
+/// differ only in which ``UDSS_LLR_0165`` spacing parameter the value is, and the opening
+/// method says which kind is being opened.
+///
+/// There is no `tS3_Client` here. ``UDSS_LLR_0152`` gives a physical channel its own
+/// reload in physical keep-alive and none at all in functional keep-alive, so the reload
+/// is an argument of [`crate::Client::open_physical_channel`] in the mode that has one and
+/// absent from the method in the mode that does not.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct PhysicalChannelParams {
+pub struct ChannelParams {
     /// ``UDSS_LLR_0132`` — the response window pair.
     pub reloads: Reloads,
-    /// ``UDSS_LLR_0165`` — `tP3_Client_Phys`.
-    pub spacing: u32,
-    /// ``UDSS_LLR_0152`` — `tS3_Client`, present in physical keep-alive, where
-    /// ``UDSS_LLR_0151`` puts the fact and timer on each physical channel, and absent in
-    /// functional keep-alive, where no requirement gives a physical channel's `tS3_Client`
-    /// a meaning. Opening a channel where this disagrees with the client's keep-alive mode
-    /// is rejected under [`crate::Cause::S3ClientReloadMismatch`], as ``UDSS_LLR_0152``
-    /// requires.
-    pub s3_client: Option<u32>,
-}
-
-/// What opening a functional channel supplies.
-///
-/// ``UDSS_LLR_0126`` holds these with the channel. There is no `tS3_Client`:
-/// ``UDSS_LLR_0150`` keeps functional keep-alive's single timer with the instance.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct FunctionalChannelParams {
-    /// ``UDSS_LLR_0132`` — the response window pair.
-    pub reloads: Reloads,
-    /// ``UDSS_LLR_0165`` — `tP3_Client_Func`.
+    /// ``UDSS_LLR_0165`` — `tP3_Client_Phys` on a physical channel, `tP3_Client_Func` on
+    /// a functional one.
     pub spacing: u32,
 }
 
-/// One physical channel parameter, for setting it again.
+/// One channel parameter, for setting it again.
 ///
 /// ``UDSS_LLR_0043``; ``UDSS_LLR_0134`` rejects a setting naming a channel the client
-/// does not have.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum PhysicalChannelParameter {
-    /// The default response reload.
-    DefaultReload(u32),
-    /// The enhanced response reload.
-    EnhancedReload(u32),
-    /// The request spacing.
-    Spacing(u32),
-    /// `tS3_Client`.
-    S3Client(u32),
-}
-
-/// One functional channel parameter, for setting it again.
+/// does not have. One type serves both kinds: the setter takes that kind's own channel
+/// identity, which is what keeps a setting from naming a channel of the wrong kind, so the
+/// parameter itself need not be split as well.
 ///
-/// ``UDSS_LLR_0043``; ``UDSS_LLR_0134`` rejects a setting naming a channel the client
-/// does not have.
+/// `tS3_Client` is not among these. ``UDSS_LLR_0152`` gives a physical channel one only in
+/// physical keep-alive, so [`crate::Client::set_physical_s3_client`] carries it and exists
+/// only in that mode.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum FunctionalChannelParameter {
+pub enum ChannelParameter {
     /// The default response reload.
     DefaultReload(u32),
     /// The enhanced response reload.
@@ -153,31 +132,25 @@ pub enum FunctionalChannelParameter {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        ChannelReload, FunctionalChannelParams, PhysicalChannelParams, Reloads,
-        ServerParams,
-    };
+    use super::{ChannelParams, ChannelReload, Reloads, ServerParams};
 
     /// ``UDSS_LLR_0151`` and ``UDSS_LLR_0152`` — a `tS3_Client` belongs to a physical
-    /// channel in physical keep-alive and to no functional channel. The types carry
-    /// that: there is no field on which to state one for a functional channel.
+    /// channel in physical keep-alive and to no channel at all in functional keep-alive.
+    /// The types carry that: there is no field here on which to state one, in either
+    /// kind, so the reload can only arrive through the opening method of the mode that
+    /// gives it a meaning.
     #[test]
-    fn only_a_physical_channel_carries_a_session_reload() {
+    fn no_channel_parameter_carries_a_session_reload() {
         let reloads = Reloads {
             default_reload: 50,
             enhanced_reload: 5_000,
         };
-        let physical = PhysicalChannelParams {
+        let params = ChannelParams {
             reloads,
             spacing: 60,
-            s3_client: Some(2_000),
         };
-        let functional = FunctionalChannelParams {
-            reloads,
-            spacing: 70,
-        };
-        assert_eq!(physical.s3_client, Some(2_000));
-        assert_eq!(functional.reloads.default_reload, 50);
+        assert_eq!(params.reloads.default_reload, 50);
+        assert_eq!(params.spacing, 60);
     }
 
     /// ``UDSS_LLR_0119`` derives the response-pending spacing from `tP2*_Server_Max`

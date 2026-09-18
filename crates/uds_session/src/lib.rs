@@ -6,9 +6,9 @@
 //! drains the resulting actions.
 //!
 //! The crate is `no_std` and performs no allocation. Storage is supplied by the caller, by
-//! value: `Server<A>` owns an array of `A` associations, and `Client<PHYS, FUNC, R>` owns
-//! `PHYS` physical channel slots and `FUNC` functional channel slots of `R` responders
-//! each. Sizing every array is a deployment decision, expressed as a const generic, rather
+//! value: `Server<A>` owns an array of `A` associations, and `Client<K, PHYS, FUNC, R>`
+//! owns `PHYS` physical channel slots and `FUNC` functional channel slots of `R`
+//! responders each, with `K` the keep-alive mode of ``UDSS_LLR_0149``. Sizing every array is a deployment decision, expressed as a const generic, rather
 //! than a compile-time constant of this crate.
 //!
 //! The client's arrays split by channel kind because the two kinds hold different state:
@@ -41,8 +41,10 @@
 //!
 //! - **``UDSS_LLR_0011``** — outputs are retrieved, not pushed. Nothing here delivers an
 //!   output through a callback, handler or caller-supplied trait implementation: no public
-//!   type takes a trait object or a function, and storage is supplied by value for the
-//!   same reason. Every input returns a [`Reaction`] the caller drains.
+//!   type takes a trait object or a function, storage is supplied by value for the same
+//!   reason, and the one trait a caller can name — [`KeepAlive`], which selects a
+//!   [`Client`]'s mode and carries no output — is sealed, so no implementation of it can
+//!   be the caller's. Every input returns a [`Reaction`] the caller drains.
 //! - **``UDSS_LLR_0013``** — no payload is retained. No type here holds an owned buffer.
 //! - **``UDSS_LLR_0014``** — an output refers to caller-owned data. [`ServerOutput`] and
 //!   [`ClientOutput`] borrow `&'d [u8]` from the input that supplied it, and the
@@ -70,8 +72,8 @@
 //! | ``UDSS_LLR_0071`` | `Solicitation` is a required field on a final response |
 //! | ``UDSS_LLR_0072`` | the enums admit no other form; full walk in the requirement |
 //! | ``UDSS_LLR_0134`` (wrong-kind limb) | the setters each require that kind's own id |
-//! | ``UDSS_LLR_0151`` | a functional channel states no `s3_client` |
-//! | ``UDSS_LLR_0152`` (absent limb) | a functional channel states no `s3_client` |
+//! | ``UDSS_LLR_0151`` | no channel parameter states an `s3_client` |
+//! | ``UDSS_LLR_0152`` | the reload methods exist only on the mode that has one |
 //!
 //! [`Reaction::finish`]: reaction::Reaction::finish
 
@@ -96,13 +98,12 @@ pub use classification::{
 };
 pub use client::{
     ChannelId, Client, ClientOutput, ClientReaction, FunctionalChannelId,
-    FunctionalKeepAlive, FunctionalSlot, KeepAliveMode, PhysicalChannelId, PhysicalSlot,
-    ResponderSlot,
+    FunctionalKeepAlive, FunctionalSlot, KeepAlive, PhysicalChannelId, PhysicalKeepAlive,
+    PhysicalSlot, ResponderSlot,
 };
 pub use params::{
-    ChannelReload, FunctionalChannelParameter, FunctionalChannelParams,
-    PhysicalChannelParameter, PhysicalChannelParams, Reloads, ServerParameter,
-    ServerParams, ServerReload,
+    ChannelParameter, ChannelParams, ChannelReload, Reloads, ServerParameter, ServerParams,
+    ServerReload,
 };
 pub use reaction::Reaction;
 pub use rejection::{Cause, Causes, Rejection};

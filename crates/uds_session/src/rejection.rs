@@ -15,8 +15,8 @@
 /// crate's types discharge by construction — ``UDSS_LLR_0027`` (second limb),
 /// ``UDSS_LLR_0030``, ``UDSS_LLR_0031``, ``UDSS_LLR_0054``, ``UDSS_LLR_0066``,
 /// ``UDSS_LLR_0067``, ``UDSS_LLR_0068``, ``UDSS_LLR_0070``, ``UDSS_LLR_0071``,
-/// ``UDSS_LLR_0072`` and part of ``UDSS_LLR_0134`` — have no variant here, because an
-/// input that triggers them cannot be written.
+/// ``UDSS_LLR_0072``, ``UDSS_LLR_0152`` and part of ``UDSS_LLR_0134`` — have no variant
+/// here, because an input that triggers them cannot be written.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum Cause {
@@ -44,12 +44,6 @@ pub enum Cause {
     RepeatCountSpent,
     /// ``UDSS_LLR_0178`` — a functional channel has not finished receiving.
     ResponseStillArriving,
-    /// ``UDSS_LLR_0152`` — a `tS3_Client` reload supplied in disagreement with the
-    /// client's keep-alive mode: a physical channel's reload stated, at opening or by a
-    /// later setting, while the client is in functional keep-alive; a physical channel
-    /// opened with none while the client is in physical keep-alive; or the client-wide
-    /// reload set while the client is in physical keep-alive, where none exists to set.
-    S3ClientReloadMismatch,
 }
 
 impl Cause {
@@ -67,12 +61,11 @@ impl Cause {
             Self::SpacingTimerRunning => 8,
             Self::RepeatCountSpent => 9,
             Self::ResponseStillArriving => 10,
-            Self::S3ClientReloadMismatch => 11,
         }
     }
 
     /// Every cause, in bit order, for iteration.
-    const ALL: [Self; 12] = [
+    const ALL: [Self; 11] = [
         Self::NoSuchChannel,
         Self::DuplicateChannelAddressing,
         Self::AssociationOutstanding,
@@ -84,7 +77,6 @@ impl Cause {
         Self::SpacingTimerRunning,
         Self::RepeatCountSpent,
         Self::ResponseStillArriving,
-        Self::S3ClientReloadMismatch,
     ];
 }
 
@@ -111,9 +103,6 @@ impl core::fmt::Display for Cause {
             Self::SpacingTimerRunning => "the channel's spacing timer is running",
             Self::RepeatCountSpent => "the repeat count is spent",
             Self::ResponseStillArriving => "a response is still arriving",
-            Self::S3ClientReloadMismatch => {
-                "the tS3_Client reload disagrees with the channel's keep-alive mode"
-            }
         })
     }
 }

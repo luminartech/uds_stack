@@ -1,11 +1,10 @@
 //! Compile-time checks on the client surface, and the storage wiring a caller must do.
 
 use uds_session::{
-    Address, Ai, ChannelAddressing, ChannelId, Client, ClientRx, ClientTx,
-    ExpectedResponses, FunctionalChannelId, FunctionalChannelParameter,
-    FunctionalChannelParams, FunctionalKeepAlive, FunctionalSlot, KeepAliveMode, Mtype,
-    PhysicalChannelId, PhysicalChannelParameter, PhysicalChannelParams, PhysicalSlot,
-    Reloads, SResult, Solicitation, TaType, Timestamp,
+    Address, Ai, ChannelAddressing, ChannelId, ChannelParameter, ChannelParams, Client,
+    ClientRx, ClientTx, ExpectedResponses, FunctionalChannelId, FunctionalKeepAlive,
+    FunctionalSlot, Mtype, PhysicalChannelId, PhysicalKeepAlive, PhysicalSlot, Reloads,
+    SResult, Solicitation, TaType, Timestamp,
 };
 
 /// ``UDSS_LLR_0121`` — a channel exists from the moment the caller opens it.
@@ -16,13 +15,10 @@ use uds_session::{
 /// kind, since only a functional channel carries a responder table.
 #[test]
 fn a_client_is_created_from_caller_storage() {
-    let _client: Client<4, 1, 8> = Client::new(
+    let _client: Client<FunctionalKeepAlive, 4, 1, 8> = Client::new(
         [PhysicalSlot::EMPTY; 4],
         [FunctionalSlot::EMPTY; 1],
-        KeepAliveMode::Functional {
-            storage: FunctionalKeepAlive::EMPTY,
-            s3_client: 2_000,
-        },
+        FunctionalKeepAlive::new(2_000),
     );
 }
 
@@ -33,8 +29,8 @@ fn a_client_is_created_from_caller_storage() {
 /// the caller names no capacity for one.
 #[test]
 fn physical_keep_alive_carries_no_client_wide_storage() {
-    let _client: Client<2, 0> =
-        Client::new([PhysicalSlot::EMPTY; 2], [], KeepAliveMode::Physical);
+    let _client: Client<PhysicalKeepAlive, 2, 0> =
+        Client::new([PhysicalSlot::EMPTY; 2], [], PhysicalKeepAlive);
 }
 
 /// Type-checked, never run: every entry point the client has.
@@ -51,7 +47,7 @@ fn physical_keep_alive_carries_no_client_wide_storage() {
 /// has to keep accepting the type it replaced.
 #[allow(dead_code, reason = "type-checked, never run")]
 fn every_client_entry_point(
-    client: &mut Client<4, 1, 8>,
+    client: &mut Client<FunctionalKeepAlive, 4, 1, 8>,
     payload: &[u8],
     ch_phys: PhysicalChannelId,
     ch_func: FunctionalChannelId,
@@ -72,12 +68,11 @@ fn every_client_entry_point(
         default_reload: 50,
         enhanced_reload: 5_000,
     };
-    let physical_params = PhysicalChannelParams {
+    let physical_params = ChannelParams {
         reloads,
         spacing: 60,
-        s3_client: Some(2_000),
     };
-    let functional_params = FunctionalChannelParams {
+    let functional_params = ChannelParams {
         reloads,
         spacing: 70,
     };
@@ -86,16 +81,8 @@ fn every_client_entry_point(
     drop(client.open_physical_channel(now, addressing, physical_params));
     drop(client.open_functional_channel(now, addressing, functional_params));
     drop(client.withdraw_channel(now, ch_phys));
-    drop(client.set_physical_parameter(
-        now,
-        ch_phys,
-        PhysicalChannelParameter::Spacing(70),
-    ));
-    drop(client.set_functional_parameter(
-        now,
-        ch_func,
-        FunctionalChannelParameter::Spacing(70),
-    ));
+    drop(client.set_physical_parameter(now, ch_phys, ChannelParameter::Spacing(70)));
+    drop(client.set_functional_parameter(now, ch_func, ChannelParameter::Spacing(70)));
     drop(client.set_keep_alive_reload(now, 2_000));
     drop(client.reset_channel(now, ChannelId::Functional(ch_func)));
     drop(client.release_keep_alive(now, ch_phys));
@@ -123,4 +110,30 @@ fn every_client_entry_point(
     ));
     drop(client.t_data_conf(now, ai, SResult::Ok));
     drop(client.tick(now));
+}
+
+/// ``UDSS_LLR_0152`` — the physical-keep-alive surface, which differs from the functional
+/// one in exactly the two places that requirement names: opening a physical channel
+/// carries this channel's reload, and there is no client-wide reload to set.
+#[allow(dead_code, reason = "type-checked, never run")]
+fn every_physical_keep_alive_entry_point(
+    client: &mut Client<PhysicalKeepAlive, 2, 0>,
+    ch_phys: PhysicalChannelId,
+) {
+    let now = Timestamp(0);
+    let addressing = ChannelAddressing {
+        mtype: Mtype::Diag,
+        sa: Address(0xF1),
+        ta: Address(0x10),
+    };
+    let params = ChannelParams {
+        reloads: Reloads {
+            default_reload: 50,
+            enhanced_reload: 5_000,
+        },
+        spacing: 60,
+    };
+
+    drop(client.open_physical_channel(now, addressing, params, 2_000));
+    drop(client.set_physical_s3_client(now, ch_phys, 3_000));
 }

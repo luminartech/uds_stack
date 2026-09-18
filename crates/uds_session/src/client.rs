@@ -31,27 +31,19 @@
 //! `Client<2, 0>`.
 //!
 //! ```
-//! use uds_session::{
-//!     Client, FunctionalKeepAlive, FunctionalSlot, KeepAliveMode, PhysicalSlot,
-//! };
+//! use uds_session::{Client, FunctionalKeepAlive, FunctionalSlot, PhysicalSlot};
 //!
-//! let client: Client<4, 1, 8> = Client::new(
+//! let client: Client<FunctionalKeepAlive, 4, 1, 8> = Client::new(
 //!     [PhysicalSlot::EMPTY; 4],
 //!     [FunctionalSlot::EMPTY; 1],
-//!     KeepAliveMode::Functional {
-//!         storage: FunctionalKeepAlive::EMPTY,
-//!         s3_client: 2_000,
-//!     },
+//!     FunctionalKeepAlive::new(2_000),
 //! );
 //! # let _ = client;
 //! ```
 
 use crate::addressing::{Address, AddressExtension, Ai, ChannelAddressing, TaType};
 use crate::classification::{ClientRx, ClientTx};
-use crate::params::{
-    ChannelReload, FunctionalChannelParameter, FunctionalChannelParams,
-    PhysicalChannelParameter, PhysicalChannelParams,
-};
+use crate::params::{ChannelParameter, ChannelParams, ChannelReload};
 use crate::reaction::Reaction;
 use crate::result::SResult;
 use crate::time::Timestamp;
@@ -167,48 +159,68 @@ impl From<FunctionalChannelId> for ChannelId {
     }
 }
 
-/// The client-wide keep-alive state of functional mode.
-///
-/// ``UDSS_LLR_0150`` — one `tS3_Client` timer and one keeping-alive fact, fixed in size
-/// and nonetheless caller-supplied, so that one storage shape serves both modes.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct FunctionalKeepAlive {
-    _reserved: (),
-}
-
-impl FunctionalKeepAlive {
-    /// The initial state: no session kept alive and the timer not running.
-    ///
-    /// ``UDSS_LLR_0153`` — the client's session timer is initially not running.
-    pub const EMPTY: Self = Self { _reserved: () };
+mod sealed {
+    /// Sealed so that the keep-alive modes are exactly the two ``UDSS_LLR_0149`` names.
+    pub trait Sealed {}
 }
 
 /// How the client keeps servers alive.
 ///
-/// ``UDSS_LLR_0149`` — fixed when the instance is created; no input changes it. The mode
-/// selects which of ``UDSS_LLR_0155`` to ``UDSS_LLR_0163`` and ``UDSS_LLR_0184`` act.
-#[derive(Debug, PartialEq, Eq)]
-pub enum KeepAliveMode {
-    /// A functionally addressed `TesterPresent` each time the client's `tS3_Client`
-    /// expires. ISO 14229-2:2021 9.6 Table 8 allots a single timer here.
-    ///
-    /// ``UDSS_LLR_0150`` — the client-wide timer and fact, supplied by value with the
-    /// instance, and the single `tS3_Client` reload of ``UDSS_LLR_0152``.
-    Functional {
-        /// The client-wide timer and keeping-alive fact.
-        storage: FunctionalKeepAlive,
-        /// The single `tS3_Client` reload, which must cover the longest path among every
-        /// server the functional address reaches.
-        s3_client: u32,
-    },
-    /// A physically addressed `TesterPresent` on a physical channel when that channel's
-    /// `tS3_Client` expires with no other request sent on it.
-    ///
-    /// ``UDSS_LLR_0151`` — the fact and timer live in each physical channel's storage and
-    /// ``UDSS_LLR_0152`` puts that channel's reload in
-    /// [`crate::PhysicalChannelParams::s3_client`], so this variant carries nothing.
-    Physical,
+/// ``UDSS_LLR_0149`` — one of two modes, fixed when the instance is created, changed by no
+/// input. The mode selects which state ``UDSS_LLR_0150`` or ``UDSS_LLR_0151`` requires and
+/// which of ``UDSS_LLR_0155`` to ``UDSS_LLR_0163`` and ``UDSS_LLR_0184`` act.
+///
+/// It is a type parameter of [`Client`] rather than a value inside it because
+/// ``UDSS_LLR_0149`` settles it at creation and nothing afterwards can move it. Holding it
+/// in the type is what lets ``UDSS_LLR_0152`` be satisfied without a check: the methods
+/// that supply a `tS3_Client` reload exist only on the mode that gives one a meaning, so
+/// none of that requirement's three disagreements can be written.
+///
+/// The trait is sealed. A mode is not an extension point — the standard names two — and
+/// ``UDSS_LLR_0011`` forbids the session layer to deliver an output through a
+/// caller-supplied trait implementation, which sealing keeps true of every trait here.
+pub trait KeepAlive: sealed::Sealed + core::fmt::Debug {}
+
+/// Functional keep-alive: one `TesterPresent` for the client, functionally addressed.
+///
+/// ``UDSS_LLR_0150`` — a single `tS3_Client` timer and a single keeping-alive fact for the
+/// instance, with the single reload of ``UDSS_LLR_0152``. ISO 14229-2:2021 9.6 Table 8
+/// allots one timer here, so this value is fixed in size; it is caller-supplied all the
+/// same, because ``UDSS_LLR_0008`` puts every fact the client holds in the caller's
+/// storage and a fact with nothing left to size is no exception.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FunctionalKeepAlive {
+    _s3_client: u32,
 }
+
+impl FunctionalKeepAlive {
+    /// The initial state, with the client-wide `tS3_Client` reload.
+    ///
+    /// ``UDSS_LLR_0153`` — no session is kept alive and the timer is not running.
+    /// ``UDSS_LLR_0152`` — `s3_client` must cover the longest path among every server the
+    /// functional address reaches. [`Client::set_keep_alive_reload`] sets it again.
+    #[must_use]
+    pub const fn new(s3_client: u32) -> Self {
+        Self {
+            _s3_client: s3_client,
+        }
+    }
+}
+
+impl sealed::Sealed for FunctionalKeepAlive {}
+impl KeepAlive for FunctionalKeepAlive {}
+
+/// Physical keep-alive: a `TesterPresent` per physical channel, physically addressed.
+///
+/// ``UDSS_LLR_0151`` — the timer and session fact live in each physical channel's own
+/// storage, and ``UDSS_LLR_0152`` gives each physical channel its own reload, supplied at
+/// [`Client::open_physical_channel`]. Nothing is client-wide, so this mode carries no
+/// value at all.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PhysicalKeepAlive;
+
+impl sealed::Sealed for PhysicalKeepAlive {}
+impl KeepAlive for PhysicalKeepAlive {}
 
 /// What a client produces for the caller to retrieve.
 ///
@@ -296,15 +308,21 @@ pub type ClientReaction<'s, 'd, T = ()> = Reaction<'s, 'd, ClientOutput<'d>, T>;
 /// state: ``UDSS_LLR_0139`` gives a responder table to functional channels alone, and
 /// ``UDSS_LLR_0151`` a `tS3_Client` to physical ones alone.
 ///
+/// `K` is the keep-alive mode of ``UDSS_LLR_0149``, fixed at creation and held in the type
+/// rather than in a field — see [`KeepAlive`]. It is inferred from the value passed to
+/// [`Client::new`], so a caller names it only where they annotate the type.
+///
 /// `R` defaults to `0`, since a client with `FUNC` of `0` has no responder table to size.
 #[derive(Debug)]
-pub struct Client<const PHYS: usize, const FUNC: usize, const R: usize = 0> {
+pub struct Client<K: KeepAlive, const PHYS: usize, const FUNC: usize, const R: usize = 0> {
     _physical: [PhysicalSlot; PHYS],
     _functional: [FunctionalSlot<R>; FUNC],
-    _keep_alive: KeepAliveMode,
+    _keep_alive: K,
 }
 
-impl<const PHYS: usize, const FUNC: usize, const R: usize> Client<PHYS, FUNC, R> {
+impl<K: KeepAlive, const PHYS: usize, const FUNC: usize, const R: usize>
+    Client<K, PHYS, FUNC, R>
+{
     /// Create a client.
     ///
     /// ``UDSS_LLR_0032`` — creation supplies the keep-alive mode of ``UDSS_LLR_0149``
@@ -312,45 +330,19 @@ impl<const PHYS: usize, const FUNC: usize, const R: usize> Client<PHYS, FUNC, R>
     /// ``UDSS_LLR_0152``. Channel storage is supplied here too, by value: `PHYS` physical
     /// slots and `FUNC` functional slots of `R` responders each. A channel begins to
     /// exist when the caller opens one, under ``UDSS_LLR_0121``.
+    ///
+    /// `keep_alive` is [`FunctionalKeepAlive`] or [`PhysicalKeepAlive`], and fixes `K` for
+    /// the life of the instance, as ``UDSS_LLR_0149`` requires.
     #[must_use]
     pub const fn new(
         physical: [PhysicalSlot; PHYS],
         functional: [FunctionalSlot<R>; FUNC],
-        keep_alive: KeepAliveMode,
+        keep_alive: K,
     ) -> Self {
         Self {
             _physical: physical,
             _functional: functional,
             _keep_alive: keep_alive,
-        }
-    }
-
-    /// Open a physical channel.
-    ///
-    /// ``UDSS_LLR_0121`` — the channel exists from this moment, identified by the [`Ai`]
-    /// `addressing` forms with [`TaType::Physical`], until it is withdrawn.
-    /// ``UDSS_LLR_0122`` rejects an addressing equal to an existing channel's. Opening
-    /// supplies this channel's parameters, per ``UDSS_LLR_0042``. Rejected where no
-    /// physical slot is free, and rejected under [`crate::Cause::S3ClientReloadMismatch`]
-    /// where ``params.s3_client`` disagrees with the client's keep-alive mode, as
-    /// ``UDSS_LLR_0152`` requires.
-    ///
-    /// `addressing` carries no `ta_type`: this method supplies
-    /// [`TaType::Physical`] itself, so a channel opened here can never disagree with
-    /// ``UDSS_LLR_0049`` by carrying [`TaType::Functional`].
-    pub fn open_physical_channel(
-        &mut self,
-        now: Timestamp,
-        addressing: ChannelAddressing,
-        params: PhysicalChannelParams,
-    ) -> ClientReaction<'_, 'static, PhysicalChannelId> {
-        let ai = addressing.with_ta_type(TaType::Physical);
-        #[allow(
-            clippy::todo,
-            reason = "API stub; behaviour lands with its requirement"
-        )]
-        {
-            todo!("UDSS_LLR_0121, 0122, 0042: {now:?} {ai:?} {params:?}")
         }
     }
 
@@ -368,7 +360,7 @@ impl<const PHYS: usize, const FUNC: usize, const R: usize> Client<PHYS, FUNC, R>
         &mut self,
         now: Timestamp,
         addressing: ChannelAddressing,
-        params: FunctionalChannelParams,
+        params: ChannelParams,
     ) -> ClientReaction<'_, 'static, FunctionalChannelId> {
         let ai = addressing.with_ta_type(TaType::Functional);
         #[allow(
@@ -407,14 +399,13 @@ impl<const PHYS: usize, const FUNC: usize, const R: usize> Client<PHYS, FUNC, R>
     /// ``UDSS_LLR_0043`` permits it at any time; ``UDSS_LLR_0134`` rejects a setting
     /// naming a channel the client does not have. Its wrong-kind limb needs no check
     /// here: `channel` is a [`PhysicalChannelId`], so this can never name a functional
-    /// channel. Setting [`PhysicalChannelParameter::S3Client`] to a value while the client
-    /// is in functional keep-alive, where the channel's reload has no meaning, is rejected
-    /// under [`crate::Cause::S3ClientReloadMismatch`], as ``UDSS_LLR_0152`` requires.
+    /// channel. A physical channel's `tS3_Client` is not among the parameters — see
+    /// [`Client::set_physical_s3_client`], which exists only in physical keep-alive.
     pub fn set_physical_parameter(
         &mut self,
         now: Timestamp,
         channel: PhysicalChannelId,
-        parameter: PhysicalChannelParameter,
+        parameter: ChannelParameter,
     ) -> ClientReaction<'_, 'static> {
         #[allow(
             clippy::todo,
@@ -435,7 +426,7 @@ impl<const PHYS: usize, const FUNC: usize, const R: usize> Client<PHYS, FUNC, R>
         &mut self,
         now: Timestamp,
         channel: FunctionalChannelId,
-        parameter: FunctionalChannelParameter,
+        parameter: ChannelParameter,
     ) -> ClientReaction<'_, 'static> {
         #[allow(
             clippy::todo,
@@ -443,29 +434,6 @@ impl<const PHYS: usize, const FUNC: usize, const R: usize> Client<PHYS, FUNC, R>
         )]
         {
             todo!("UDSS_LLR_0043, 0134: {now:?} {channel:?} {parameter:?}")
-        }
-    }
-
-    /// Set the client-wide `tS3_Client` reload of functional keep-alive.
-    ///
-    /// ``UDSS_LLR_0040`` puts protocol-parameter setting in the service interface;
-    /// ``UDSS_LLR_0042`` gives this reload no default, ``UDSS_LLR_0152`` its one supply
-    /// point per mode; ``UDSS_LLR_0043`` permits setting it again at any time. In physical
-    /// keep-alive there is no client-wide reload to set, so the call is rejected under
-    /// [`crate::Cause::S3ClientReloadMismatch`], as ``UDSS_LLR_0152`` requires: the same
-    /// cause as a physical channel's own mismatch, since both are a reload disagreeing
-    /// with the client's keep-alive mode.
-    pub fn set_keep_alive_reload(
-        &mut self,
-        now: Timestamp,
-        s3_client: u32,
-    ) -> ClientReaction<'_, 'static> {
-        #[allow(
-            clippy::todo,
-            reason = "API stub; behaviour lands with its requirement"
-        )]
-        {
-            todo!("UDSS_LLR_0040, 0042, 0043, 0152: {now:?} {s3_client:?}")
         }
     }
 
@@ -652,6 +620,120 @@ impl<const PHYS: usize, const FUNC: usize, const R: usize> Client<PHYS, FUNC, R>
         )]
         {
             todo!("UDSS_LLR_0080")
+        }
+    }
+}
+
+impl<const PHYS: usize, const FUNC: usize, const R: usize>
+    Client<FunctionalKeepAlive, PHYS, FUNC, R>
+{
+    /// Open a physical channel.
+    ///
+    /// ``UDSS_LLR_0121`` — the channel exists from this moment, identified by the [`Ai`]
+    /// `addressing` forms with [`TaType::Physical`], until it is withdrawn.
+    /// ``UDSS_LLR_0122`` rejects an addressing equal to an existing channel's. Opening
+    /// supplies this channel's parameters, per ``UDSS_LLR_0042``. Rejected where no
+    /// physical slot is free.
+    ///
+    /// `addressing` carries no `ta_type`: this method supplies [`TaType::Physical`]
+    /// itself, so a channel opened here can never disagree with ``UDSS_LLR_0049`` by
+    /// carrying [`TaType::Functional`].
+    ///
+    /// There is no `tS3_Client` argument. ``UDSS_LLR_0152`` gives a physical channel no
+    /// reload in functional keep-alive, and this method is the one reachable in that mode,
+    /// so the first of that requirement's three disagreements cannot be written.
+    pub fn open_physical_channel(
+        &mut self,
+        now: Timestamp,
+        addressing: ChannelAddressing,
+        params: ChannelParams,
+    ) -> ClientReaction<'_, 'static, PhysicalChannelId> {
+        let ai = addressing.with_ta_type(TaType::Physical);
+        #[allow(
+            clippy::todo,
+            reason = "API stub; behaviour lands with its requirement"
+        )]
+        {
+            todo!("UDSS_LLR_0121, 0122, 0042: {now:?} {ai:?} {params:?}")
+        }
+    }
+
+    /// Set the client-wide `tS3_Client` reload.
+    ///
+    /// ``UDSS_LLR_0040`` puts protocol-parameter setting in the service interface;
+    /// ``UDSS_LLR_0042`` gives this reload no default and ``UDSS_LLR_0152`` gives
+    /// functional keep-alive exactly one; ``UDSS_LLR_0043`` permits setting it again at
+    /// any time.
+    ///
+    /// It exists only here. ``UDSS_LLR_0152`` has no client-wide reload in physical
+    /// keep-alive, and a method absent from that mode is the third of that requirement's
+    /// disagreements made unwritable.
+    pub fn set_keep_alive_reload(
+        &mut self,
+        now: Timestamp,
+        s3_client: u32,
+    ) -> ClientReaction<'_, 'static> {
+        #[allow(
+            clippy::todo,
+            reason = "API stub; behaviour lands with its requirement"
+        )]
+        {
+            todo!("UDSS_LLR_0040, 0042, 0043, 0152: {now:?} {s3_client:?}")
+        }
+    }
+}
+
+impl<const PHYS: usize, const FUNC: usize, const R: usize>
+    Client<PhysicalKeepAlive, PHYS, FUNC, R>
+{
+    /// Open a physical channel, with this channel's `tS3_Client` reload.
+    ///
+    /// ``UDSS_LLR_0121``, ``UDSS_LLR_0122`` and ``UDSS_LLR_0042`` as in functional
+    /// keep-alive — see [`Client::open_physical_channel`] on that mode, whose signature
+    /// differs from this one only in the absent reload.
+    ///
+    /// `s3_client` is required, not optional. ``UDSS_LLR_0151`` puts the timer and session
+    /// fact in this channel's storage and ``UDSS_LLR_0152`` gives the channel its own
+    /// reload in this mode, so omitting it is the second of that requirement's
+    /// disagreements — and a mandatory argument is what makes it unwritable.
+    pub fn open_physical_channel(
+        &mut self,
+        now: Timestamp,
+        addressing: ChannelAddressing,
+        params: ChannelParams,
+        s3_client: u32,
+    ) -> ClientReaction<'_, 'static, PhysicalChannelId> {
+        let ai = addressing.with_ta_type(TaType::Physical);
+        #[allow(
+            clippy::todo,
+            reason = "API stub; behaviour lands with its requirement"
+        )]
+        {
+            todo!(
+                "UDSS_LLR_0121, 0122, 0042, 0152: {now:?} {ai:?} {params:?} {s3_client:?}"
+            )
+        }
+    }
+
+    /// Set a physical channel's `tS3_Client` reload.
+    ///
+    /// ``UDSS_LLR_0043`` permits it at any time; ``UDSS_LLR_0134`` rejects a setting
+    /// naming a channel the client does not have. It is separate from
+    /// [`Client::set_physical_parameter`] because ``UDSS_LLR_0152`` gives a physical
+    /// channel a reload in this mode alone, and a parameter absent from the other mode's
+    /// surface is what keeps the first of that requirement's disagreements unwritable.
+    pub fn set_physical_s3_client(
+        &mut self,
+        now: Timestamp,
+        channel: PhysicalChannelId,
+        s3_client: u32,
+    ) -> ClientReaction<'_, 'static> {
+        #[allow(
+            clippy::todo,
+            reason = "API stub; behaviour lands with its requirement"
+        )]
+        {
+            todo!("UDSS_LLR_0043, 0134, 0152: {now:?} {channel:?} {s3_client:?}")
         }
     }
 }
