@@ -39,9 +39,10 @@
 //! ``UDSS_LLR_0081``, is enforced by [`Reaction::finish`]'s signature rather than verified
 //! that way, and is included here for the same reason.
 //!
-//! - **``UDSS_LLR_0011``** — outputs are retrieved, not pushed. No public type takes a
-//!   caller-supplied trait object, trait bound or function; storage is supplied by value
-//!   for the same reason. Every input returns a [`Reaction`] the caller drains.
+//! - **``UDSS_LLR_0011``** — outputs are retrieved, not pushed. Nothing here delivers an
+//!   output through a callback, handler or caller-supplied trait implementation: no public
+//!   type takes a trait object or a function, and storage is supplied by value for the
+//!   same reason. Every input returns a [`Reaction`] the caller drains.
 //! - **``UDSS_LLR_0013``** — no payload is retained. No type here holds an owned buffer.
 //! - **``UDSS_LLR_0014``** — an output refers to caller-owned data. [`ServerOutput`] and
 //!   [`ClientOutput`] borrow `&'d [u8]` from the input that supplied it, and the
