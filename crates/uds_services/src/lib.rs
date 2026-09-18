@@ -74,8 +74,7 @@ pub use transport::{
     Address, Ai, Mtype, Reloads, SResult, TaType, Timestamp, TransportEvent, UdsTransport,
 };
 
-pub mod select;
-pub use select::{Either, Select2, select2};
+mod select;
 
 pub mod identifier;
 pub use identifier::{DataIdentifier, RecordError, RoutineIdentifier};

@@ -14,8 +14,13 @@
 
 /// The largest value in `values`, or zero where there are none.
 ///
+/// `#[doc(hidden)]`: macro plumbing. It is `pub` only because [`crate::uds_server`]
+/// expands in the application's crate and has to name it there, the same reason
+/// `__uds_request_bound!` and its siblings are.
+///
 /// Walked by splitting rather than by index: a `const fn` cannot use an iterator, and an
 /// index plus a counter needs two prose invariants that this needs none of.
+#[doc(hidden)]
 #[must_use]
 pub const fn max_of(mut values: &[usize]) -> usize {
     let mut best = 0;
@@ -30,6 +35,10 @@ pub const fn max_of(mut values: &[usize]) -> usize {
 
 /// The smaller of two values. Caps a derived size at
 /// [`crate::UdsTransport::MAX_PDU`].
+///
+/// `#[doc(hidden)]`: macro plumbing, as [`max_of`] is. `core::cmp::min` is not `const` on
+/// stable, which is why this exists at all.
+#[doc(hidden)]
 #[must_use]
 pub const fn min2(a: usize, b: usize) -> usize {
     if a < b { a } else { b }

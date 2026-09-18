@@ -23,14 +23,16 @@ uds_session = { path = "../uds_session", default-features = false }
 # The I/O vocabulary for the whole stack. Sink is what a handler writes into.
 automotive-wire-codec = { path = "../../automotive_wire_format", default-features = false }
 
-[features]
-# No binding is ever a dependency, in any feature: UDSSVC_ARCH_0002 points the
-# dependency arrow one way and UDSSVC_ARCH_0003 makes bindings additive at the
-# application. No runtime is named either (UDSSVC_ARCH_0030) — an `async fn`
-# implies neither std nor an executor, so a bare-metal target stays reachable.
-default = []
-alloc = ["uds_protocol/alloc"]
-std = ["alloc", "uds_protocol/std"]
+# No [features] table. This crate is no_std and allocation-free in every
+# configuration, and nothing in src/ reads a cfg — `alloc` and `std` only forwarded to
+# uds_protocol, so they promised a variation this crate's surface never made. An
+# application already depends on uds_protocol directly (its handlers return
+# NegativeResponseCode) and enables those there.
+#
+# No binding is ever a dependency either: UDSSVC_ARCH_0002 points the dependency arrow
+# one way and UDSSVC_ARCH_0003 makes bindings additive at the application. No runtime is
+# named (UDSSVC_ARCH_0030) — an `async fn` implies neither std nor an executor, so a
+# bare-metal target stays reachable.
 
 [lints.rust]
 unsafe_code = "forbid"

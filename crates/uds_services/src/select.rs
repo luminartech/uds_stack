@@ -6,6 +6,10 @@
 //! forbids depending on a runtime, so this crate writes its own. It is the only
 //! machinery here that is not UDS.
 //!
+//! **Not public.** The driver is its only caller, and a UDS crate publishing a
+//! general-purpose two-way select would be answering questions about executor semantics
+//! that are no part of what it promises.
+//!
 //! The `Unpin` bounds keep it free of `unsafe`. An `async fn` future is `!Unpin`, but
 //! `Pin<&mut F>` is always `Unpin` and is a `Future` when `F` is, so a caller wraps each
 //! side in [`core::pin::pin!`] and the bound is met safely. The driver additionally uses
@@ -17,7 +21,7 @@ use core::task::{Context, Poll};
 
 /// Which of two futures completed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum Either<A, B> {
+pub(crate) enum Either<A, B> {
     /// The first completed.
     Left(A),
     /// The second completed.
@@ -27,7 +31,7 @@ pub enum Either<A, B> {
 /// The future [`select2`] returns.
 #[derive(Debug)]
 #[must_use = "a select does nothing until it is awaited"]
-pub struct Select2<F, G> {
+pub(crate) struct Select2<F, G> {
     first: F,
     second: G,
 }
@@ -53,7 +57,10 @@ impl<F: Future + Unpin, G: Future + Unpin> Future for Select2<F, G> {
 /// deliberately: a handler that finished in the same wake as the deadline has a final
 /// response to send, and a response-pending for work already done is a message the
 /// standard does not ask for.
-pub fn select2<F: Future + Unpin, G: Future + Unpin>(first: F, second: G) -> Select2<F, G> {
+pub(crate) fn select2<F: Future + Unpin, G: Future + Unpin>(
+    first: F,
+    second: G,
+) -> Select2<F, G> {
     Select2 { first, second }
 }
 
