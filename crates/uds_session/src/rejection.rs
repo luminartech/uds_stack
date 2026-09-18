@@ -9,102 +9,91 @@
 //! A rejection is not an `S_Data.conf`: ``UDSS_LLR_0056`` reserves every non-`Ok`
 //! `S_Result` for an error a lower layer detected, and no lower layer is involved.
 
-/// Why an input was rejected.
+/// Declares [`Cause`] and everything derived from it.
 ///
-/// One variant per rejecting requirement that remains expressible. The requirements this
-/// crate's types discharge by construction — ``UDSS_LLR_0027`` (second limb),
-/// ``UDSS_LLR_0030``, ``UDSS_LLR_0031``, ``UDSS_LLR_0054``, ``UDSS_LLR_0066``,
-/// ``UDSS_LLR_0067``, ``UDSS_LLR_0068``, ``UDSS_LLR_0070``, ``UDSS_LLR_0071``,
-/// ``UDSS_LLR_0072``, ``UDSS_LLR_0152`` and part of ``UDSS_LLR_0134`` — have no variant
-/// here, because an input that triggers them cannot be written.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-#[non_exhaustive]
-pub enum Cause {
+/// The variants, their bits, their documentation and their rendered text are one list.
+/// [`Cause::ALL`] and the [`Display`](core::fmt::Display) arms are generated from it, so a
+/// cause cannot come to exist that iteration fails to yield or that renders as nothing —
+/// which is what a second, hand-maintained copy of the variant list would allow, silently,
+/// against ``UDSS_LLR_0016``. The one hazard left is two variants sharing a bit, and
+/// `every_cause_has_its_own_bit` walks `ALL` to rule that out.
+macro_rules! causes {
+    (
+        $(
+            $(#[$attr:meta])*
+            $variant:ident = $bit:literal => $text:literal,
+        )+
+    ) => {
+        /// Why an input was rejected.
+        ///
+        /// One variant per rejecting requirement that remains expressible. The
+        /// requirements this crate's types discharge by construction —
+        /// ``UDSS_LLR_0027`` (second limb), ``UDSS_LLR_0030``, ``UDSS_LLR_0031``,
+        /// ``UDSS_LLR_0054``, ``UDSS_LLR_0066``, ``UDSS_LLR_0067``, ``UDSS_LLR_0068``,
+        /// ``UDSS_LLR_0070``, ``UDSS_LLR_0071``, ``UDSS_LLR_0072``, ``UDSS_LLR_0152``
+        /// and part of ``UDSS_LLR_0134`` — have no variant here, because an input that
+        /// triggers them cannot be written.
+        #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+        #[non_exhaustive]
+        pub enum Cause {
+            $( $(#[$attr])* $variant, )+
+        }
+
+        impl Cause {
+            /// The bit this cause occupies in a [`Rejection`]'s set.
+            const fn bit(self) -> u16 {
+                match self {
+                    $( Self::$variant => $bit, )+
+                }
+            }
+
+            /// Every cause, in bit order, for iteration.
+            const ALL: &'static [Self] = &[ $( Self::$variant, )+ ];
+        }
+
+        impl core::fmt::Display for Cause {
+            /// One short, lower-case phrase naming the condition, not the requirement
+            /// number, so a caller reading it understands what it did wrong without
+            /// opening the requirement set. ``UDSS_LLR_0016`` requires a report to state
+            /// the cause; [`Rejection::causes`] is what states it, and this is a
+            /// rendering of that state for a caller who wants text rather than a value to
+            /// match on.
+            fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+                f.write_str(match self {
+                    $( Self::$variant => $text, )+
+                })
+            }
+        }
+    };
+}
+
+causes! {
     /// ``UDSS_LLR_0027``, ``UDSS_LLR_0123``, ``UDSS_LLR_0124``, ``UDSS_LLR_0134`` and
     /// ``UDSS_LLR_0183`` — an input naming a channel the client does not have.
-    NoSuchChannel,
+    NoSuchChannel = 0 => "no such channel",
     /// ``UDSS_LLR_0122`` — a channel opened with an existing channel's addressing.
-    DuplicateChannelAddressing,
+    DuplicateChannelAddressing = 1 => "a channel already has this addressing",
     /// ``UDSS_LLR_0061`` — a request duplicating an outstanding association.
-    AssociationOutstanding,
+    AssociationOutstanding = 2 => "an association is already outstanding",
     /// ``UDSS_LLR_0062`` — no association is free.
-    NoAssociationFree,
+    NoAssociationFree = 3 => "no association is free",
     /// ``UDSS_LLR_0063`` — a confirmation matching no outstanding association.
-    NoMatchingAssociation,
+    NoMatchingAssociation = 4 => "no outstanding association matches",
     /// ``UDSS_LLR_0069`` — a classification stating no kind where one is required.
-    KindRequired,
+    KindRequired = 5 => "a kind is required but none was stated",
     /// ``UDSS_LLR_0118`` — a response-pending message while one is unconfirmed.
-    ResponsePendingUnconfirmed,
+    ResponsePendingUnconfirmed = 6 =>
+        "a response-pending message arrived while one is unconfirmed",
     /// ``UDSS_LLR_0119`` — a response-pending message inside the minimum spacing.
-    ResponsePendingTooSoon,
+    ResponsePendingTooSoon = 7 =>
+        "a response-pending message arrived inside the minimum spacing",
     /// ``UDSS_LLR_0171`` — a request on a channel whose spacing timer is running.
     /// [`Rejection::spacing_remaining`] carries the wait ``UDSS_LLR_0172`` requires.
-    SpacingTimerRunning,
+    SpacingTimerRunning = 8 => "the channel's spacing timer is running",
     /// ``UDSS_LLR_0177`` — a third repeat. ISO 14229-2:2021 9.7 Table 9 caps them at two.
-    RepeatCountSpent,
+    RepeatCountSpent = 9 => "the repeat count is spent",
     /// ``UDSS_LLR_0178`` — a functional channel has not finished receiving.
-    ResponseStillArriving,
-}
-
-impl Cause {
-    /// The bit this cause occupies in a [`Rejection`]'s set.
-    const fn bit(self) -> u16 {
-        match self {
-            Self::NoSuchChannel => 0,
-            Self::DuplicateChannelAddressing => 1,
-            Self::AssociationOutstanding => 2,
-            Self::NoAssociationFree => 3,
-            Self::NoMatchingAssociation => 4,
-            Self::KindRequired => 5,
-            Self::ResponsePendingUnconfirmed => 6,
-            Self::ResponsePendingTooSoon => 7,
-            Self::SpacingTimerRunning => 8,
-            Self::RepeatCountSpent => 9,
-            Self::ResponseStillArriving => 10,
-        }
-    }
-
-    /// Every cause, in bit order, for iteration.
-    const ALL: [Self; 11] = [
-        Self::NoSuchChannel,
-        Self::DuplicateChannelAddressing,
-        Self::AssociationOutstanding,
-        Self::NoAssociationFree,
-        Self::NoMatchingAssociation,
-        Self::KindRequired,
-        Self::ResponsePendingUnconfirmed,
-        Self::ResponsePendingTooSoon,
-        Self::SpacingTimerRunning,
-        Self::RepeatCountSpent,
-        Self::ResponseStillArriving,
-    ];
-}
-
-impl core::fmt::Display for Cause {
-    /// One short, lower-case phrase naming the condition, not the requirement number,
-    /// so a caller reading it understands what it did wrong without opening the
-    /// requirement set. ``UDSS_LLR_0016`` requires a report to state the cause;
-    /// [`Rejection::causes`] is what states it, and this is a rendering of that state
-    /// for a caller who wants text rather than a value to match on.
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        f.write_str(match self {
-            Self::NoSuchChannel => "no such channel",
-            Self::DuplicateChannelAddressing => "a channel already has this addressing",
-            Self::AssociationOutstanding => "an association is already outstanding",
-            Self::NoAssociationFree => "no association is free",
-            Self::NoMatchingAssociation => "no outstanding association matches",
-            Self::KindRequired => "a kind is required but none was stated",
-            Self::ResponsePendingUnconfirmed => {
-                "a response-pending message arrived while one is unconfirmed"
-            }
-            Self::ResponsePendingTooSoon => {
-                "a response-pending message arrived inside the minimum spacing"
-            }
-            Self::SpacingTimerRunning => "the channel's spacing timer is running",
-            Self::RepeatCountSpent => "the repeat count is spent",
-            Self::ResponseStillArriving => "a response is still arriving",
-        })
-    }
+    ResponseStillArriving = 10 => "a response is still arriving",
 }
 
 /// Why an input was refused, and what the refusing requirement asked the report to carry.
@@ -232,6 +221,21 @@ impl Iterator for Causes {
 #[cfg(test)]
 mod tests {
     use super::{Cause, Rejection};
+
+    /// ``UDSS_LLR_0016`` — a report states every cause that held, so no two causes may
+    /// share a bit: a shared bit would have one report state a cause that did not hold
+    /// and hide one that did. `ALL` is generated from the same list that declares the
+    /// variants, so walking it is a complete check rather than a sample.
+    #[test]
+    fn every_cause_has_its_own_bit() {
+        let mut seen: u16 = 0;
+        for cause in Cause::ALL {
+            assert!(cause.bit() < 16, "{cause} does not fit the report's set");
+            let mask = 1u16 << cause.bit();
+            assert_eq!(seen & mask, 0, "{cause} shares a bit with an earlier cause");
+            seen |= mask;
+        }
+    }
 
     /// ``UDSS_LLR_0016`` — a report states the cause of the rejection.
     #[test]
