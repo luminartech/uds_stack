@@ -44,6 +44,31 @@ pub const fn min2(a: usize, b: usize) -> usize {
     if a < b { a } else { b }
 }
 
+/// The response bound for `ReadDTCInformation`: the widest layout this server answers.
+///
+/// `#[doc(hidden)]`: macro plumbing, as [`max_of`] is. Saturating throughout because this
+/// crate denies `arithmetic_side_effects`, and a declared maximum large enough to
+/// overflow `usize` is capped by [`min2`] against
+/// [`MAX_PDU`](crate::UdsTransport::MAX_PDU) immediately afterwards.
+#[doc(hidden)]
+#[must_use]
+pub const fn dtc_response_bound(
+    mut reports: &[crate::DtcReportKind],
+    max_dtcs: usize,
+) -> usize {
+    let mut best = 0;
+    while let Some((&kind, rest)) = reports.split_first() {
+        let size = kind
+            .header_len()
+            .saturating_add(max_dtcs.saturating_mul(kind.record_len()));
+        if size > best {
+            best = size;
+        }
+        reports = rest;
+    }
+    best
+}
+
 /// Every service identifier a service trait covers.
 #[doc(hidden)]
 #[macro_export]
@@ -115,6 +140,9 @@ macro_rules! __uds_request_bound {
     ($ty:ty, ControlDtcSetting) => {
         2 + <$ty as $crate::ControlDtcSetting>::MAX_OPTION_RECORD_LEN
     };
+    // Clause 12.3's widest request is 0x18/0x19: service identifier, sub-function, a
+    // three-byte DTC, a record number and a memorySelection byte. Over the catch-all.
+    ($ty:ty, ReadDtcInformation) => { 7_usize };
     // Every other request is a service identifier, a sub-function and at most four
     // parameter bytes. Clause-fixed, so a constant.
     ($ty:ty, $svc:ident) => { 6_usize };
@@ -134,8 +162,10 @@ macro_rules! __uds_response_bound {
                 as $crate::DataIdentifier>::MAX_RECORD_LEN)
     };
     ($ty:ty, ReadDtcInformation) => {
-        3 + <$ty as $crate::ReadDtcInformation>::MAX_DTCS
-            * <$ty as $crate::ReadDtcInformation>::DTC_RECORD_LEN
+        $crate::assembly::dtc_response_bound(
+            <$ty as $crate::ReadDtcInformation>::REPORTS,
+            <$ty as $crate::ReadDtcInformation>::MAX_DTCS,
+        )
     };
     ($ty:ty, DataTransfer) => {
         if <$ty as $crate::DataTransfer>::SUPPORTS_UPLOAD {
@@ -403,7 +433,36 @@ macro_rules! uds_server {
 
 #[cfg(test)]
 mod tests {
-    use super::{max_of, min2};
+    use super::{dtc_response_bound, max_of, min2};
+    use crate::DtcReportKind;
+
+    /// The widest layout wins, and it is not always the one with the widest records: a
+    /// `SeverityList` of ten beats a `DtcList` of ten on record width, and `Count` beats
+    /// both when the server reports no records at all.
+    #[test]
+    fn the_widest_declared_layout_sets_the_bound() {
+        const LIST: usize = dtc_response_bound(&[DtcReportKind::DtcList], 10);
+        const SEVERITY: usize = dtc_response_bound(&[DtcReportKind::SeverityList], 10);
+        const BOTH: usize =
+            dtc_response_bound(&[DtcReportKind::DtcList, DtcReportKind::SeverityList], 10);
+        assert_eq!((LIST, SEVERITY, BOTH), (3 + 40, 3 + 60, 3 + 60));
+    }
+
+    /// The header is part of the bound, so a layout carrying no records still needs
+    /// room, and `WwhObdSeverity`'s five header bytes plus the `0x59` are counted.
+    #[test]
+    fn a_layout_without_records_still_needs_its_header() {
+        const COUNT: usize = dtc_response_bound(&[DtcReportKind::Count], 10);
+        const WWH: usize = dtc_response_bound(&[DtcReportKind::WwhObdSeverity], 10);
+        assert_eq!((COUNT, WWH), (6, 6 + 50));
+    }
+
+    /// A server declaring no report types folds to zero, as an empty service set does.
+    #[test]
+    fn no_declared_layout_folds_to_zero() {
+        const NONE: usize = dtc_response_bound(&[], 10);
+        assert_eq!(NONE, 0);
+    }
 
     /// The fold the macro performs, as a `const` so it fails to *compile* rather than
     /// to run if it ever stops being const-evaluable — which is the property that

@@ -26,7 +26,7 @@ pub mod session;
 pub mod transfer;
 
 pub use data::{ReadDataByIdentifier, WriteDataByIdentifier};
-pub use dtc::{ClearDiagnosticInformation, ReadDtcInformation};
+pub use dtc::{ClearDiagnosticInformation, DtcReportKind, ReadDtcInformation};
 pub use routine::RoutineControl;
 pub use security::{KeyVerdict, SecurityAccess, SecurityLevel, SecurityPolicy};
 pub use session::{

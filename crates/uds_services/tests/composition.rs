@@ -14,11 +14,13 @@
 
 use uds_protocol::NegativeResponseCode as Nrc;
 use uds_services::{
-    Address, Ai, CommunicationControl, CommunicationControlType, CommunicationType,
-    DataIdentifier, DataTransfer, KeyVerdict, Mtype, ReadDataByIdentifier, RecordError,
-    Reloads, ResponseSink, SecurityAccess, SecurityLevel, SecurityPolicy, ServerParams,
-    ServiceSet, Sink, Storage, SubnetNumber, TaType, Timestamp, TransferRequest,
-    TransportEvent, UdsTransport, uds_server,
+    Address, Ai, ClearDiagnosticInformation, CommunicationControl, CommunicationControlType,
+    CommunicationType, DataIdentifier, DataTransfer, DtcReportKind, DtcStatusMask,
+    FunctionalGroupIdentifier, KeyVerdict, Mtype, ReadDataByIdentifier,
+    ReadDtcInfoSubFunction, ReadDtcInformation, RecordError, Reloads, ResponseSink,
+    SecurityAccess, SecurityLevel, SecurityPolicy, ServerParams, ServiceSet, Sink, Storage,
+    SubnetNumber, TaType, Timestamp, TransferRequest, TransportEvent, UdsTransport,
+    uds_server,
 };
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Did {
@@ -74,6 +76,38 @@ impl ReadDataByIdentifier for Ecu {
             Did::VinNumber => out.write_all(&[0x00; 17]),
         }
         .map_err(|_| Nrc::ResponseTooLong)
+    }
+}
+
+impl ReadDtcInformation for Ecu {
+    const MAY_RESPOND_PENDING: bool = false;
+    const MAX_DTCS: usize = 10;
+    const REPORTS: &'static [DtcReportKind] =
+        &[DtcReportKind::DtcList, DtcReportKind::SeverityList];
+    // No `parameters: &[u8]`: every report type's parameters ride on its variant.
+    async fn read_dtc_information(
+        &mut self,
+        request: ReadDtcInfoSubFunction,
+        _out: &mut ResponseSink<'_>,
+    ) -> Result<(), Nrc> {
+        match request {
+            ReadDtcInfoSubFunction::ReportDtcByStatusMask(_mask) => Ok(()),
+            _ => Err(Nrc::SubFunctionNotSupported),
+        }
+    }
+}
+
+impl ClearDiagnosticInformation for Ecu {
+    const MAY_RESPOND_PENDING: bool = true;
+    async fn clear(
+        &mut self,
+        group: FunctionalGroupIdentifier,
+        _memory_selection: Option<u8>,
+    ) -> Result<(), Nrc> {
+        match group {
+            FunctionalGroupIdentifier::EmissionsSystemGroup => Ok(()),
+            _ => Err(Nrc::RequestOutOfRange),
+        }
     }
 }
 
@@ -186,7 +220,8 @@ impl UdsTransport for FakeTransport {
 }
 
 uds_server! {
-    Ecu: ReadDataByIdentifier, SecurityAccess, DataTransfer, CommunicationControl;
+    Ecu: ReadDataByIdentifier, SecurityAccess, DataTransfer, ReadDtcInformation,
+         ClearDiagnosticInformation, CommunicationControl;
     transport = FakeTransport,
     peers = 4,
     server = EcuServer,
@@ -205,6 +240,12 @@ static SERVER: EcuServer = EcuServer::new(Ecu::new(), FakeTransport, PARAMS);
 /// The in-flight buffer is dominated by `TransferData` — the same constant the server
 /// must advertise as `maxNumberOfBlockLength`. The response buffer is dominated by a
 /// four-identifier read, because this server is download-only and never sends a block.
+///
+/// `ReadDTCInformation` is the other contender and loses: this server declares
+/// [`DtcReportKind::SeverityList`], whose six-byte records make it the widest of the two
+/// layouts it answers, for `3 + 10 * 6 = 63` against the read's 77. Under the
+/// `DTC_RECORD_LEN` this replaced, the obvious declaration of `4` would have folded in
+/// `3 + 10 * 4 = 43` and left a severity report twenty bytes short of its own buffer.
 ///
 /// **If these fail, the macro's bound arms are wrong, not these numbers.** Read a failure
 /// as the design being wrong about a bound.
@@ -230,6 +271,8 @@ fn the_assembled_list_answers_service_supported() {
     assert!(ecu.supports(0x22));
     assert!(ecu.supports(0x27));
     assert!(ecu.supports(0x36));
+    assert!(ecu.supports(0x19));
+    assert!(ecu.supports(0x14));
     assert!(ecu.supports(0x28));
     assert!(!ecu.supports(0x2E));
     assert!(!ecu.supports(0x85));
@@ -284,6 +327,8 @@ fn the_server_constructs_in_a_static() {
 /// hazard this retyping removes: as `u8`s they sat adjacent in the signature and swapping
 /// them compiled, and as unrelated enums the swap is a type error.
 ///
+/// `ReadDtcInformation` is the other half of the change: its report type carries its own
+/// parameters, so the handler no longer receives — or has to parse — a `&[u8]` beside it.
 #[test]
 fn the_handler_seam_is_typed_not_byte_shaped() {
     fn poll_once<F: Future>(mut f: core::pin::Pin<&mut F>) -> Option<F::Output> {
@@ -307,5 +352,17 @@ fn the_handler_seam_is_typed_not_byte_shaped() {
     // `SubnetNumber` distinguishes these two, where the old `Option<u16>` could not.
     assert_ne!(SubnetNumber::ReceivedOn, SubnetNumber::AllConnectedNetworks);
 
+    let mut buffer = [0_u8; 8];
+    let mut sink = ResponseSink::new(&mut buffer, None);
+    let report = ReadDtcInfoSubFunction::ReportDtcByStatusMask(DtcStatusMask::TestFailed);
+    assert_eq!(
+        poll_once(core::pin::pin!(ecu.read_dtc_information(report, &mut sink))),
+        Some(Ok(()))
+    );
+
+    let cleared = poll_once(core::pin::pin!(
+        ecu.clear(FunctionalGroupIdentifier::EmissionsSystemGroup, None)
+    ));
+    assert_eq!(cleared, Some(Ok(())));
 }
 
