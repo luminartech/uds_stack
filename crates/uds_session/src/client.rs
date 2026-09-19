@@ -167,9 +167,10 @@ mod sealed {
 
 /// How the client keeps servers alive.
 ///
-/// ``UDSS_LLR_0149`` — one of two modes, fixed when the instance is created, changed by no
-/// input. The mode selects which state ``UDSS_LLR_0150`` or ``UDSS_LLR_0151`` requires and
-/// which of ``UDSS_LLR_0155`` to ``UDSS_LLR_0163`` and ``UDSS_LLR_0184`` act.
+/// ``UDSS_LLR_0149`` — one of two modes, fixed when the instance is created, changed by
+/// no input. The mode selects which state ``UDSS_LLR_0150`` or ``UDSS_LLR_0151``
+/// requires, and which of ``UDSS_LLR_0155`` to ``UDSS_LLR_0163`` and ``UDSS_LLR_0184``
+/// act.
 ///
 /// It is a type parameter of [`Client`] rather than a value inside it because
 /// ``UDSS_LLR_0149`` settles it at creation and nothing afterwards can move it. Holding it
@@ -184,8 +185,8 @@ pub trait KeepAliveMode: sealed::Sealed + core::fmt::Debug {}
 
 /// Functional keep-alive: one `TesterPresent` for the client, functionally addressed.
 ///
-/// ``UDSS_LLR_0150`` — a single `tS3_Client` timer and a single keeping-alive fact for the
-/// instance, with the single reload of ``UDSS_LLR_0152``. ISO 14229-2:2021 9.6 Table 8
+/// ``UDSS_LLR_0150`` — a single `tS3_Client` timer and a single keeping-alive fact for
+/// the instance, with the single reload of ``UDSS_LLR_0152``. ISO 14229-2:2021 9.6 Table 8
 /// allots one timer here, so this value is fixed in size; it is caller-supplied all the
 /// same, because ``UDSS_LLR_0008`` puts every fact the client holds in the caller's
 /// storage and a fact with nothing left to size is no exception.
@@ -315,8 +316,8 @@ pub type ClientReaction<'s, 'd, T = ()> = Reaction<'s, 'd, ClientOutput<'d>, T>;
 /// ``UDSS_LLR_0151`` a `tS3_Client` to physical ones alone.
 ///
 /// `K` is the keep-alive mode of ``UDSS_LLR_0149``, fixed at creation and held in the type
-/// rather than in a field — see [`KeepAliveMode`]. It is inferred from the value passed to
-/// [`Client::new`], so a caller names it only where they annotate the type.
+/// rather than in a field — see [`KeepAliveMode`]. It is inferred from the value passed
+/// to [`Client::new`], so a caller names it only where they annotate the type.
 ///
 /// `R` defaults to `0`, since a client with `FUNC` of `0` has no responder table to size.
 #[derive(Debug)]

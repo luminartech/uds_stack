@@ -8,8 +8,9 @@
 //! The crate is `no_std` and performs no allocation. Storage is supplied by the caller, by
 //! value: `Server<A>` owns an array of `A` associations, and `Client<K, PHYS, FUNC, R>`
 //! owns `PHYS` physical channel slots and `FUNC` functional channel slots of `R`
-//! responders each, with `K` the keep-alive mode of ``UDSS_LLR_0149``. Sizing every array is a deployment decision, expressed as a const generic, rather
-//! than a compile-time constant of this crate.
+//! responders each, with `K` the keep-alive mode of ``UDSS_LLR_0149``. Sizing every array
+//! is a deployment decision, expressed as a const generic, rather than a compile-time
+//! constant of this crate.
 //!
 //! The client's arrays split by channel kind because the two kinds hold different state:
 //! ``UDSS_LLR_0139`` gives a functional channel a responder table and a physical channel

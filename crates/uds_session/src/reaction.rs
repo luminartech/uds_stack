@@ -9,10 +9,10 @@
 //! `Cargo.toml` forbids `unsafe`.
 //!
 //! So an input returns this, the caller drains it through [`Reaction::outputs`], and then
-//! consumes it to learn whether the input was accepted. ``UDSS_LLR_0081`` requires every indication an expiry produced
-//! to precede both the input's own outputs and any rejection report; consuming the drain
-//! to reach [`Reaction::finish`] makes that ordering a property of the type rather than
-//! of the caller's discipline.
+//! consumes it to learn whether the input was accepted. ``UDSS_LLR_0081`` requires every
+//! indication an expiry produced to precede both the input's own outputs and any
+//! rejection report; consuming the drain to reach [`Reaction::finish`] makes that
+//! ordering a property of the type rather than of the caller's discipline.
 
 use crate::rejection::Rejection;
 use core::marker::PhantomData;
@@ -42,16 +42,14 @@ use core::marker::PhantomData;
 /// ```
 ///
 /// [`Reaction::outputs`] borrows rather than consuming, so the reaction survives the loop
-/// and [`Reaction::finish`] stays reachable. `Reaction` deliberately does not implement
-/// [`Iterator`] itself: it did once, and `for output in reaction` — the spelling a reader
-/// reaches for first — moved it into the loop and discarded the rejection report with it,
-/// silently, because a `for` loop counts as a use and satisfies `#[must_use]`. That
-/// spelling is now a type error.
+/// and [`Reaction::finish`] stays reachable afterwards. `Reaction` is deliberately not an
+/// [`Iterator`] itself, so `for output in reaction` does not compile: it would move the
+/// reaction into the loop and leave the outcome unreadable.
 ///
-/// What the type still does not enforce is that [`Reaction::finish`] is called at all: a
-/// reaction bound to a variable, drained, and dropped is accepted. ``UDSS_LLR_0081`` fixes
-/// the order between the expiry indications and the report, so the outputs cannot be made
-/// to arrive through the report instead, which is what enforcing the call would take.
+/// What the type does not enforce is that [`Reaction::finish`] is called at all — a
+/// reaction that is drained and then dropped is accepted. ``UDSS_LLR_0081`` fixes the
+/// order between the expiry indications and the report, so the outputs cannot be made to
+/// arrive through the report instead, which is what enforcing the call would take.
 #[must_use = "an undrained reaction discards the outputs this input produced"]
 #[derive(Debug)]
 pub struct Reaction<'s, 'd, O, T = ()> {
@@ -83,9 +81,7 @@ impl<O, T> Reaction<'_, '_, O, T> {
     pub fn finish(self) -> Result<T, Rejection> {
         self.outcome
     }
-}
 
-impl<O, T> Reaction<'_, '_, O, T> {
     /// The outputs this input produced, in the order ``UDSS_LLR_0081`` requires.
     ///
     /// ``UDSS_LLR_0011`` — the caller retrieves them; nothing is pushed. The iterator
