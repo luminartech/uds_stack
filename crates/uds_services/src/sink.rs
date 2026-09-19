@@ -1,10 +1,8 @@
 //! The one sink a handler writes into.
 //!
-//! ``UDSSVC_ARCH_0017``. Neither `dyn` nor generic: a `<S: Sink>` parameter was only
-//! ever needed because the sink might be the caller's, and under [`crate::storage`] it
-//! cannot be — this crate owns the response buffer. Removing it takes a type parameter
-//! off every service trait, every generated impl and [`crate::Server`] itself, and
-//! costs nothing, because dispatch stays fully monomorphised with no vtable.
+//! ``UDSSVC_ARCH_0017``. Neither `dyn` nor generic: [`crate::storage`] owns the response
+//! buffer, so the sink is never the caller's and there is nothing for a type parameter to
+//! vary. Dispatch stays fully monomorphised, with no vtable.
 
 use automotive_wire_codec::{InsufficientBuffer, Sink, WriteError};
 

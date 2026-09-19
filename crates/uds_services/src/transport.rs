@@ -163,10 +163,8 @@ pub trait UdsTransport {
     ///
     /// There is deliberately no `inbound_max`. This entity's own MDS is the in-flight
     /// buffer's length, which [`crate::uds_server`] derives — so a transport that has to
-    /// advertise it needs the crate to *state* the number, not to be asked for it. The
-    /// getter that used to sit here was never called and nothing supplied its value, so
-    /// a binding had to invent the one figure the assembly already knew. Stating it is a
-    /// seam addition to make when a binding needs it.
+    /// advertise it needs the crate to *state* the number, not to be asked for it.
+    /// Stating it is a seam addition to make when a binding needs it.
     fn outbound_max(&self) -> Option<usize>;
 
     /// The `tP_Client` reload pair this transport dictates.

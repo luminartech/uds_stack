@@ -67,26 +67,6 @@ impl<A: ServiceSet, T: UdsTransport, const PEERS: usize> Server<A, T, PEERS> {
 
     /// Handle one transport event.
     ///
-    /// Four properties of the body below are load-bearing and none is obvious:
-    ///
-    /// 1. **Every transport query is sampled while no future holding `&mut transport`
-    ///    exists.** `outbound_max` and `now` take `&self`, but a live `next_event`
-    ///    future refuses even shared access, so both are read after that await returns
-    ///    — which is also what makes a peer limit learned during the exchange that
-    ///    delivered this request apply to its response. `now()` is called once per input
-    ///    handed to `uds_session`, three times in this body, which matches its "a
-    ///    timestamp accompanies every input".
-    /// 2. **The `Indicate` comes out of the drain before `finish()`.** A
-    ///    `ServerOutput<'d>` outlives the reaction that yielded it, which is what lets
-    ///    dispatch run with `&mut session` free — required, or the 0x78 window does not
-    ///    exist.
-    /// 3. **The select is a loop over `handler.as_mut()`, not a one-shot.** A plain
-    ///    `select2(handler, waiting)` drops the handler the moment the deadline wins,
-    ///    which is the opposite of what a response-pending is for.
-    /// 4. **Two scopes, because `pin!` binds to the enclosing block.** `handler` is
-    ///    scoped so it drops before `sink` is read; `waiting` is scoped per iteration so
-    ///    it drops before the 0x78 path needs `&mut transport`.
-    ///
     /// # Errors
     ///
     /// [`UdsTransport::Error`] where the transport failed. A negative response is not an
@@ -118,6 +98,12 @@ impl<A: ServiceSet, T: UdsTransport, const PEERS: usize> Server<A, T, PEERS> {
             return Ok(());
         };
 
+        // Sampled here, not earlier: `outbound_max` and `now` take `&self`, but a live
+        // `next_event` future refuses even shared access, so both have to be read after
+        // that await returns. It is also what makes a peer limit learned during the
+        // exchange that delivered this request apply to its response. `now()` is called
+        // once per input handed to uds_session, three times in this body, matching its
+        // "a timestamp accompanies every input".
         let now = self.transport.now();
         let outbound_max = self.transport.outbound_max();
         let mut indication = None;
@@ -128,6 +114,9 @@ impl<A: ServiceSet, T: UdsTransport, const PEERS: usize> Server<A, T, PEERS> {
             SResult::Ok,
             ServerRx::Request { session: None },
         );
+        // The `Indicate` is taken out of the drain before `finish()`: a `ServerOutput<'d>`
+        // outlives the reaction that yielded it, which is what lets dispatch run with
+        // `&mut session` free. Required, or the 0x78 window does not exist.
         for out in reaction.outputs() {
             if let ServerOutput::Indicate {
                 ai,
@@ -147,9 +136,15 @@ impl<A: ServiceSet, T: UdsTransport, const PEERS: usize> Server<A, T, PEERS> {
         let mut sink = ResponseSink::new(response, outbound_max);
         let pending_deadline = self.session.next_deadline();
 
+        // Two scopes, because `pin!` binds to the enclosing block: `handler` is scoped so
+        // it drops before `sink` is read, and `waiting` is scoped per iteration so it
+        // drops before the 0x78 path needs `&mut transport`.
         let outcome = {
             let mut handler = core::pin::pin!(self.services.dispatch(request, &mut sink));
             let mut deadline = pending_deadline;
+            // A loop over `handler.as_mut()`, not a one-shot: a plain
+            // `select2(handler, waiting)` drops the handler the moment the deadline wins,
+            // which is the opposite of what a response-pending is for.
             loop {
                 let event = {
                     let waiting = core::pin::pin!(

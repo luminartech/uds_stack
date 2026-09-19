@@ -3,12 +3,10 @@
 //! ``UDSSVC_ARCH_0018`` — nothing outside this crate calls this. The driver passes the
 //! addressing it drained and calls in; what is here is its own vocabulary, not a seam.
 //!
-//! **There is no `Ctx`.** ``UDSSVC_ARCH_0015`` carried active session, security level and
-//! authentication state as fields "under review", and all three resolved the same way:
-//! this crate implements `DiagnosticSessionControl`, `SecurityAccess` and
-//! `Authentication`, so under ``UDSSVC_ARCH_0035`` it already holds them, and reading them
-//! from a struct it just built is a copy rather than an input. Its closing question —
-//! whether it stays a struct at all — answers itself. The driver passes
+//! **The pipeline takes no context struct.** Under ``UDSSVC_ARCH_0035`` this crate
+//! already holds the active session, the security level and the authentication state,
+//! because it implements the services that own them — so reading them back out of a
+//! struct it had just built would be a copy, not an input. What the driver does pass is
 //! `uds_session::Ai`, which ISO 14229-1:2020 clause 7.4.1 makes a mandatory parameter of
 //! every application layer service primitive anyway.
 //!

@@ -131,10 +131,8 @@ pub trait ControlDtcSetting {
     ///
     /// Clause 10.7 leaves the record manufacturer-specific and gives it no fixed width,
     /// so the ceiling is the application's to state — and stating it is what puts this
-    /// service's real contribution into the derived in-flight buffer. Before this const
-    /// the service was folded in at the catch-all's six bytes and a longer record was
-    /// bounded only by whatever *other* service in the same assembly happened to widen
-    /// the buffer.
+    /// service's real contribution into the derived in-flight buffer rather than the
+    /// catch-all's six bytes.
     const MAX_OPTION_RECORD_LEN: usize;
 
     /// Apply `setting`, with the manufacturer-specific option record.

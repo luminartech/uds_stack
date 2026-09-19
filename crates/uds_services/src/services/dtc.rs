@@ -78,8 +78,8 @@ pub trait ReadDtcInformation {
     /// [`crate::uds_server`] folds `max(header + MAX_DTCS * record)` over these into the
     /// response buffer. Declaring the layouts rather than a width is what makes the
     /// buffer right: a server answering [`DtcReportKind::SeverityList`] needs six-byte
-    /// records where [`DtcReportKind::DtcList`] needs four, and the number was previously
-    /// the application's to state and to get wrong.
+    /// records where [`DtcReportKind::DtcList`] needs four, and neither width is the
+    /// application's to know.
     const REPORTS: &'static [DtcReportKind];
 
     /// Write the report `request` asks for into `out`.

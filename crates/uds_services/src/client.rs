@@ -14,10 +14,6 @@
 //! Mirroring the split costs a third const parameter and buys the same thing it buys
 //! them — a physical-only client pays nothing for responder tables, and a functional
 //! channel cannot be given a session reload it has no use for.
-//!
-//! **Unverified.** `uds_on_ip`'s client is entirely `todo!()`, so this half cannot be
-//! exercised end to end yet (open question 7). Its shape is settled enough to design
-//! against; its behaviour is not.
 
 use crate::storage::ClientStorage;
 use crate::{DataIdentifier, RecordError, UdsTransport};
@@ -122,9 +118,10 @@ impl<D: DataIdentifier> Answer<'_, D> {
 /// to lie about the common case.
 ///
 /// The sequence is **lending**: an answer borrows the receive buffer and is valid only
-/// until the next is taken. ``UDSSVC_ARCH_0017``'s reasoning — an owned sequence allocates
-/// per response. An inherent `async fn` rather than a `Stream`, for the same reason
-/// `uds_on_ip`'s equivalent is not one: a `Stream` item cannot borrow the receive buffer.
+/// until the next is taken. ``UDSSVC_ARCH_0017``'s reasoning — an owned sequence
+/// allocates per response. An inherent `async fn` rather than a `Stream`, for the same
+/// reason `uds_on_ip`'s equivalent is not one: a `Stream` item cannot borrow the receive
+/// buffer.
 #[derive(Debug)]
 #[must_use = "an undrained sequence discards the answers the request produced"]
 pub struct Responses<

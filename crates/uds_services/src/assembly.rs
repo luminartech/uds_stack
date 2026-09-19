@@ -217,11 +217,6 @@ macro_rules! __uds_may_pend {
 /// `peers = N` sizes the association array of the `uds_session::Server<N>` the driver
 /// owns, and `server = Name` is the alias it is reached through — the macro emits
 /// `type Name = Server<Ecu, Transport, N>`, so the count is written once, where it acts.
-/// It was `channels = N` and sized nothing at all: an application wrote the number here,
-/// where the expansion discarded it, and again as [`crate::Server`]'s third parameter,
-/// where it did the work, with no diagnostic when the two disagreed. The rename also
-/// clears a collision — a *channel* in `uds_session` is a client's physical or functional
-/// channel, which is a different thing from a server's peer.
 ///
 /// The syntax is `Ecu: ..; transport = T, ..` rather than `Ecu over T: ..` because
 /// `$ty:ty` cannot be followed by a bare identifier — the legal followers are
@@ -230,10 +225,13 @@ macro_rules! __uds_may_pend {
 /// # Examples
 ///
 /// Two services, a transport, and the buffer lengths the macro folds from what they
-/// declared. Nothing here picks a size: `1_026` is [`DataTransfer::MAX_BLOCK_LENGTH`](crate::DataTransfer::MAX_BLOCK_LENGTH)
-/// plus its service identifier and block sequence counter, and `77` is
-/// [`ReadDataByIdentifier::MAX_DIDS_PER_REQUEST`](crate::ReadDataByIdentifier::MAX_DIDS_PER_REQUEST) records of
-/// [`DataIdentifier::MAX_RECORD_LEN`](crate::DataIdentifier::MAX_RECORD_LEN) plus their identifiers.
+/// declared. Nothing here picks a size: `1_026` is [`MAX_BLOCK_LENGTH`] plus its service
+/// identifier and block sequence counter, and `77` is [`MAX_DIDS_PER_REQUEST`] records of
+/// [`MAX_RECORD_LEN`] plus their identifiers.
+///
+/// [`MAX_BLOCK_LENGTH`]: crate::DataTransfer::MAX_BLOCK_LENGTH
+/// [`MAX_DIDS_PER_REQUEST`]: crate::ReadDataByIdentifier::MAX_DIDS_PER_REQUEST
+/// [`MAX_RECORD_LEN`]: crate::DataIdentifier::MAX_RECORD_LEN
 ///
 /// ```
 /// # use uds_services::{

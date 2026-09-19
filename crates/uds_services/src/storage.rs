@@ -7,10 +7,10 @@
 //!
 //! **Three buffers, and the reason is the response-pending window.** A handler holds a
 //! decoded request borrowing the in-flight buffer, so that buffer cannot be handed back
-//! to [`crate::UdsTransport::next_event`] while the handler runs. Since
-//! ``UDSSVC_ARCH_0041`` retired the clock seam, `next_event` is the only way this crate
-//! can wait — so without a second buffer the driver cannot observe the `tP2_Server`
-//! deadline and ``UDSSVC_ARCH_0031``'s 0x78 never happens. Clause 8.7.6's two exceptions
+//! to [`crate::UdsTransport::next_event`] while the handler runs. `next_event` is the
+//! only way this crate can wait (``UDSSVC_ARCH_0041``), so without a second buffer the
+//! driver cannot observe the `tP2_Server` deadline and ``UDSSVC_ARCH_0031``'s 0x78 never
+//! happens. Clause 8.7.6's two exceptions
 //! are the second reason, not the first.
 //!
 //! The in-flight buffer's length is also the entity's ISO 13400-2:2019 Table 11

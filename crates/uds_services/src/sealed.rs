@@ -1,7 +1,7 @@
 //! The seal on [`ServiceSet`](crate::ServiceSet) and [`Storage`](crate::Storage).
 //!
-//! Both traits are documented as implemented by [`crate::uds_server`] and never by hand,
-//! and before this module that was a convention a doc comment held. What it held is the
+//! Both traits are implemented by [`crate::uds_server`] and never by hand, and the seal
+//! is what makes "never" a compile error rather than a request. What rests on it is the
 //! whole derivation argument: an application that writes its own
 //! `impl ServiceSet { type Store = Store<1, 1, 1>; .. }` compiles, truncates every request
 //! at one byte, and still advertises `MAX_BLOCK_LENGTH` over the wire.
