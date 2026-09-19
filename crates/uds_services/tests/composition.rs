@@ -12,15 +12,14 @@
               in test code"
 )]
 
-use automotive_wire_codec::Sink;
 use uds_protocol::NegativeResponseCode as Nrc;
 use uds_services::{
-    Address, Ai, DataIdentifier, DataTransfer, KeyVerdict, Mtype, ReadDataByIdentifier,
-    RecordError, Reloads, ResponseSink, SecurityAccess, SecurityLevel, SecurityPolicy,
-    ServerParams, ServiceSet, Storage, TaType, Timestamp, TransferRequest, TransportEvent,
-    UdsTransport, uds_server,
+    Address, Ai, CommunicationControl, CommunicationControlType, CommunicationType,
+    DataIdentifier, DataTransfer, KeyVerdict, Mtype, ReadDataByIdentifier, RecordError,
+    Reloads, ResponseSink, SecurityAccess, SecurityLevel, SecurityPolicy, ServerParams,
+    ServiceSet, Sink, Storage, SubnetNumber, TaType, Timestamp, TransferRequest,
+    TransportEvent, UdsTransport, uds_server,
 };
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Did {
     VehicleSpeed,
@@ -75,6 +74,26 @@ impl ReadDataByIdentifier for Ecu {
             Did::VinNumber => out.write_all(&[0x00; 17]),
         }
         .map_err(|_| Nrc::ResponseTooLong)
+    }
+}
+
+impl CommunicationControl for Ecu {
+    const MAY_RESPOND_PENDING: bool = false;
+    // The two sub-function bytes are unrelated types, so they cannot be transposed.
+    async fn control(
+        &mut self,
+        control_type: CommunicationControlType,
+        communication_type: CommunicationType,
+        node: SubnetNumber,
+    ) -> Result<(), Nrc> {
+        match (control_type, communication_type, node) {
+            (
+                CommunicationControlType::DisableRxAndTx,
+                CommunicationType::NetworkManagement,
+                SubnetNumber::ReceivedOn,
+            ) => Err(Nrc::ConditionsNotCorrect),
+            _ => Ok(()),
+        }
     }
 }
 
@@ -167,7 +186,7 @@ impl UdsTransport for FakeTransport {
 }
 
 uds_server! {
-    Ecu: ReadDataByIdentifier, SecurityAccess, DataTransfer;
+    Ecu: ReadDataByIdentifier, SecurityAccess, DataTransfer, CommunicationControl;
     transport = FakeTransport,
     peers = 4,
     server = EcuServer,
@@ -211,6 +230,7 @@ fn the_assembled_list_answers_service_supported() {
     assert!(ecu.supports(0x22));
     assert!(ecu.supports(0x27));
     assert!(ecu.supports(0x36));
+    assert!(ecu.supports(0x28));
     assert!(!ecu.supports(0x2E));
     assert!(!ecu.supports(0x85));
 }
@@ -258,3 +278,34 @@ fn the_tester_present_exception_is_admitted_only_when_functionally_addressed() {
 fn the_server_constructs_in_a_static() {
     assert!(!core::ptr::addr_of!(SERVER).is_null());
 }
+
+/// The handler seam speaks `uds_protocol`'s vocabulary, so a sub-function is a named
+/// value rather than a byte. The two `CommunicationControl` sub-function bytes were the
+/// hazard this retyping removes: as `u8`s they sat adjacent in the signature and swapping
+/// them compiled, and as unrelated enums the swap is a type error.
+///
+#[test]
+fn the_handler_seam_is_typed_not_byte_shaped() {
+    fn poll_once<F: Future>(mut f: core::pin::Pin<&mut F>) -> Option<F::Output> {
+        let waker = core::task::Waker::noop();
+        let mut cx = core::task::Context::from_waker(waker);
+        match f.as_mut().poll(&mut cx) {
+            core::task::Poll::Ready(v) => Some(v),
+            core::task::Poll::Pending => None,
+        }
+    }
+
+    let mut ecu = Ecu::new();
+
+    let denied = poll_once(core::pin::pin!(ecu.control(
+        CommunicationControlType::DisableRxAndTx,
+        CommunicationType::NetworkManagement,
+        SubnetNumber::ReceivedOn,
+    )));
+    assert_eq!(denied, Some(Err(Nrc::ConditionsNotCorrect)));
+
+    // `SubnetNumber` distinguishes these two, where the old `Option<u16>` could not.
+    assert_ne!(SubnetNumber::ReceivedOn, SubnetNumber::AllConnectedNetworks);
+
+}
+
