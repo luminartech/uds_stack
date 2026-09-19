@@ -201,37 +201,65 @@ pub(crate) enum DoIpEvent<'a> {
     },
 }
 
-/// Classify an inbound `DoIP` message.
+/// Classify an inbound `DoIP` message from its header and its payload bytes.
 ///
-/// `None` for a payload type this crate assigns no [`DoIpEvent`] meaning —
+/// `Ok(None)` for a payload type this crate assigns no [`DoIpEvent`] meaning —
 /// one of ISO 13400-2's non-diagnostic payload types (routing activation,
 /// vehicle identification, and so on), which belong to `simple_doip`'s own
 /// connection handling rather than to a UDS exchange.
 ///
-/// # Prototype gap — `0x8004` is currently unrepresentable
+/// # Why this takes a header rather than a decoded `Message`
 ///
-/// `simple_doip`'s `Payload` models exactly the payload types ISO 13400-2
-/// defines, with no catch-all carrying an unmodelled type's bytes, so
-/// [`DoIpEvent::Periodic`] cannot be constructed. This needs no UDS semantics
-/// in `simple_doip` — only a variant meaning "a payload type I do not model,
-/// and here are its bytes". Raised with that repository 2026-09-17 in
-/// `2026-09-17-uds_on_ip-payload-and-ack-gaps.md`.
+/// Because `0x8004` is not decodable by the layer below, and routing it there
+/// turns a conformant message into an error.
+///
+/// ISO 13400-2:2019 does not define `0x8004`; ISO 14229-5:2022 REQ 7.16 adds
+/// it. `simple_doip` maps every value it does not model to
+/// `PayloadType::Reserved`, and `Payload::decode` returns a `MessageError` for
+/// `Reserved(_)` rather than decoding it — correctly, since it cannot know what
+/// the bytes mean. So a periodic response handed to `Message::decode` comes
+/// back as a wire error, and a driver that tears down a connection on an `Err`
+/// would do so on a message the standard requires the server to send. That is
+/// the same failure `uds_services::TransportEvent::Closed` exists to prevent
+/// for an expected close.
+///
+/// Reading [`Header::payload_type`](simple_doip::messages::Header) first keeps
+/// the decision here: `Payload::decode` is called only for the types it models,
+/// and `0x8004` is this crate's to interpret, which is what
+/// [`PERIODIC_RESPONSE_PAYLOAD_TYPE`] has always said it was. Both facts are
+/// pinned by `tests::the_layer_below_cannot_decode_a_periodic_response`, which
+/// starts failing when `simple_doip` gains a catch-all.
+///
+/// The generic header is read before the payload in any case — it is what
+/// carries the payload length, and so what decides truncation — so this costs
+/// no extra read.
+///
+/// # Errors
+///
+/// A [`MessageError`](simple_doip::messages::MessageError) from the layer below
+/// for a payload it models but cannot decode.
 #[expect(
     unused_variables,
-    reason = "message is unused until classify's body replaces the todo!() above"
+    reason = "header and payload are unused until classify's body replaces the todo!()"
 )]
 #[expect(
     dead_code,
     reason = "called once next_event's body replaces its todo!()"
 )]
-#[must_use]
-pub(crate) fn classify<'a>(message: &simple_doip::messages::Message<'a>) -> Option<DoIpEvent<'a>> {
-    todo!("classify Payload into a DoIpEvent; blocked on the 0x8004 gap above")
+pub(crate) fn classify<'a>(
+    header: &simple_doip::messages::Header,
+    payload: &'a [u8],
+) -> Result<Option<DoIpEvent<'a>>, simple_doip::messages::MessageError> {
+    todo!(
+        "branch on header.payload_type: 0x8001 -> Ind, 0x8002/0x8003 -> Conf, \
+         0x8004 -> Periodic decoded here, everything else -> Ok(None)"
+    )
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{CloseCause, DoIpEvent, MappingError, target_of};
+    use super::{CloseCause, DoIpEvent, MappingError, PERIODIC_RESPONSE_PAYLOAD_TYPE, target_of};
+    use simple_doip::messages::{Payload, PayloadType};
     use uds_session::{Address, AddressExtension, Ai, Mtype, TaType};
 
     fn ai_with(mtype: Mtype) -> Ai {
@@ -330,6 +358,71 @@ mod tests {
         assert!(
             !CloseCause::TransportFailure.expected(),
             "a link that went away is not a flow the standard prescribes",
+        );
+    }
+
+    /// The layer below cannot decode a periodic response, which is why
+    /// [`classify`](super::classify) reads the payload type from the header
+    /// rather than handing the message to `Payload::decode`.
+    ///
+    /// Two facts, both `simple_doip`'s and neither ours to assume: `0x8004` is
+    /// a payload type it does not model, and an unmodelled type is an **error**
+    /// from `Payload::decode` rather than something it passes through. The
+    /// second is what makes this a conformance problem instead of a missing
+    /// capability — ISO 14229-5:2022 REQ 7.16 requires the server to send this
+    /// message, and routing it through the layer below reports it as a wire
+    /// failure.
+    ///
+    /// **When this test starts failing**, `simple_doip` has gained the
+    /// catch-all variant asked for in
+    /// `2026-09-17-uds_on_ip-payload-and-ack-gaps.md`. That is good news:
+    /// delete this test and let the message decode normally.
+    #[test]
+    fn the_layer_below_cannot_decode_a_periodic_response() {
+        let periodic = PayloadType::from(PERIODIC_RESPONSE_PAYLOAD_TYPE);
+        assert_eq!(
+            periodic,
+            PayloadType::Reserved(PERIODIC_RESPONSE_PAYLOAD_TYPE),
+            "ISO 13400-2:2019 stops at 0x8003; 0x8004 is REQ 7.16's addition",
+        );
+        assert!(
+            Payload::decode(&[], periodic).is_err(),
+            "an unmodelled payload type is an error below, so a conformant \
+             periodic response must never be routed through Payload::decode",
+        );
+    }
+
+    /// A rejection is stamped with the *positive* payload type, so the ack code
+    /// is the only thing that may be read.
+    ///
+    /// `Message::diagnostic_message_ack` writes
+    /// `PayloadType::DiagnosticMessagePositiveAcknowledge` into the header
+    /// whatever the code says — `simple_doip`'s own documented limitation. This
+    /// pins it, because `DoIpEvent::Conf`'s rule depends on it being true: a
+    /// transport reading the payload type would report a rejection as an
+    /// acceptance and start `tP_Client` for a message the entity never
+    /// accepted.
+    ///
+    /// **When this test starts failing**, `simple_doip` has fixed it. Delete
+    /// the test; the rule it defends stays correct either way, because
+    /// ISO 13400-2 makes the code authoritative regardless.
+    #[test]
+    fn a_rejection_is_stamped_with_the_positive_payload_type() {
+        use simple_doip::messages::{DiagnosticAckCode, Message};
+
+        let rejected = Message::diagnostic_message_ack(
+            simple_doip::messages::ProtocolVersion::V2019,
+            simple_doip::LogicalAddress(0x0E80),
+            simple_doip::LogicalAddress(0x0E00),
+            DiagnosticAckCode::UnknownTargetAddress,
+            &[],
+        );
+
+        assert_eq!(
+            rejected.header.payload_type,
+            PayloadType::DiagnosticMessagePositiveAcknowledge,
+            "the header says positive for a rejection, so only the ack code \
+             may be read to derive an SResult",
         );
     }
 
