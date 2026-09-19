@@ -84,10 +84,7 @@ pub enum TransportEvent {
         /// length, and it is read before the payload. It is what tells an
         /// entity how large its buffer needed to be — without it, a caller
         /// learns only "too long" and can never size for the traffic it
-        /// actually sees. That matters most where [`inbound_max`] is `None`,
-        /// since such an entity advertises no bound and can be sent anything.
-        ///
-        /// [`inbound_max`]: DoIpTransport::inbound_max
+        /// actually sees.
         declared: usize,
     },
     /// The outcome of a requested transmission.
@@ -137,7 +134,6 @@ pub struct DoIpTransport<S> {
     )]
     socket: S,
     reloads: Reloads,
-    inbound_max: Option<usize>,
     outbound_max: Option<usize>,
 }
 
@@ -154,7 +150,6 @@ impl<S> core::fmt::Debug for DoIpTransport<S> {
         f.debug_struct("DoIpTransport")
             .field("socket", &"..")
             .field("reloads", &self.reloads)
-            .field("inbound_max", &self.inbound_max)
             .field("outbound_max", &self.outbound_max)
             .finish()
     }
@@ -171,33 +166,8 @@ impl<S> DoIpTransport<S> {
         Self {
             socket,
             reloads,
-            inbound_max: None,
             outbound_max: None,
         }
-    }
-
-    /// Record this entity's own *Max. data size* — what it advertises in the
-    /// ISO 13400-2:2019 Table 11 entity status response.
-    ///
-    /// MDS is "the maximum size of one logical **request** that this `DoIP`
-    /// entity can process", which is bounded by the buffer a full request is
-    /// decoded from: a request larger than that cannot be processed, whatever
-    /// this entity claims. The driver derives that size from the services it
-    /// assembled and reports it here, so the advertised value and the buffer
-    /// that must hold the request cannot disagree.
-    ///
-    /// Note *which* buffer, because there are two and the larger one is not the
-    /// one usually in [`next_event`](Self::next_event)'s hand. A driver keeps a
-    /// full-size buffer for the request it is serving, and a small one to keep
-    /// receiving while a service is in progress — ISO 14229-1 8.7.6 obliges it
-    /// to accept the functionally addressed `TesterPresent` and the
-    /// `0x00`–`0x0F` range in that window. **MDS is the full-size one.** A
-    /// request arriving against the small buffer is reported as
-    /// [`TransportEvent::DataTooLong`] and answered `busyRepeatRequest` (0x21);
-    /// that is occupancy, not a size this entity cannot handle, so it must not
-    /// lower what is advertised.
-    pub fn set_inbound_max(&mut self, max: Option<usize>) {
-        self.inbound_max = max;
     }
 
     /// Record the peer's advertised *Max. data size*, learned from the peer's
@@ -205,17 +175,24 @@ impl<S> DoIpTransport<S> {
     ///
     /// A server typically has not requested one, which is why this stays
     /// `None` and `responseTooLong` is then unreachable rather than fabricated.
+    ///
+    /// # There is no inbound counterpart
+    ///
+    /// This entity's *own* MDS is not this crate's to hold. `simple_doip`
+    /// answers the ISO 13400-2:2019 Table 11 entity status request itself and
+    /// fills `max_data_size` from its own receive capacity, so a number stored
+    /// here would reach no response. `uds_services` reached the same conclusion
+    /// from the other side and removed `inbound_max` from its transport trait:
+    /// the driver derives the figure from the services it assembled, and
+    /// nothing on the seam ever asked for it.
+    ///
+    /// An `inbound_max`/`set_inbound_max` pair used to sit here, with a
+    /// paragraph explaining how the advertised number and the buffer that must
+    /// hold a request were kept in agreement. Nothing enforced that agreement,
+    /// and with the producer and the consumer both elsewhere there was nothing
+    /// for it to agree with.
     pub fn set_outbound_max(&mut self, max: Option<usize>) {
         self.outbound_max = max;
-    }
-
-    /// The largest `A_PDU` this entity will accept, where it advertises one.
-    ///
-    /// ISO 13400-2:2019 Table 11 — support for *Max. data size* is
-    /// **optional**, so `None` is conformant.
-    #[must_use]
-    pub const fn inbound_max(&self) -> Option<usize> {
-        self.inbound_max
     }
 
     /// The largest `A_PDU` the peer will accept, where it has advertised one.
@@ -292,10 +269,6 @@ impl<S> DoIpTransport<S> {
     /// a small local array and the payload goes straight into `buffer`, so the
     /// only bytes that outlive the call are the caller's own.
     ///
-    /// `buffer`'s length is what this entity can actually receive, and is
-    /// therefore the value it should advertise as its ISO 13400-2:2019 Table 11
-    /// *Max. data size* — see [`set_inbound_max`](Self::set_inbound_max).
-    ///
     /// # A message longer than `buffer`
     ///
     /// Reported as [`TransportEvent::DataTooLong`], never as a `DataInd` whose
@@ -361,23 +334,15 @@ mod tests {
     #[test]
     fn an_unadvertised_max_data_size_is_none_not_a_guess() {
         let t = super::DoIpTransport::new((), crate::profile::bench_reloads());
-        assert_eq!(t.inbound_max(), None);
         assert_eq!(t.outbound_max(), None);
     }
 
-    /// MDS is "the maximum size of one logical **request** that this `DoIP`
-    /// entity can process", so the two directions are different questions and
-    /// answering one does not answer the other.
+    /// What the peer advertised is what `outbound_max` reports.
     #[test]
-    fn the_two_directions_are_independent() {
+    fn the_peers_bound_is_reported_once_it_is_learned() {
         let mut t = super::DoIpTransport::new((), crate::profile::bench_reloads());
-        t.set_inbound_max(Some(4096));
-        assert_eq!(t.inbound_max(), Some(4096));
-        assert_eq!(
-            t.outbound_max(),
-            None,
-            "this entity's own MDS says nothing about what the peer will accept"
-        );
+        t.set_outbound_max(Some(4096));
+        assert_eq!(t.outbound_max(), Some(4096));
     }
 
     /// The property whose absence made the driver unwritable.
@@ -484,8 +449,7 @@ mod tests {
     /// `declared` is what tells an entity how large its buffer needed to be.
     ///
     /// Reporting only `len` would say "too long" without ever saying how long,
-    /// so an entity could never size for the traffic it actually sees — which
-    /// bites hardest where `inbound_max` is `None` and nothing is advertised.
+    /// so an entity could never size for the traffic it actually sees.
     #[test]
     fn a_truncated_message_reports_the_size_it_needed() {
         let ai = uds_session::Ai {
