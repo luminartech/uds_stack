@@ -42,7 +42,7 @@ impl Association {
 /// ``UDSS_LLR_0012`` enumerates the standard's own outputs and leaves the enumeration
 /// open, so that outputs the standard does not define reach the application by the same
 /// mechanism. That requirement is what `#[non_exhaustive]` here rests on: it is one of
-/// only two in the set — ``UDSS_LLR_0010`` for inputs is the other — that states an open
+/// only two in the set — ``UDSS_LLR_0010`` for inputs is the other — that state an open
 /// enumeration, and everywhere else the requirement set closes its own vocabulary.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]

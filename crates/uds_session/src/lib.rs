@@ -107,7 +107,7 @@ pub use params::{
     ServerReload,
 };
 pub use reaction::{Outputs, Reaction};
-pub use rejection::{Cause, Causes, Rejection};
+pub use rejection::{Cause, Causes, Content, Rejection, ReportedCause};
 pub use result::{SResult, TransportError};
 pub use server::{Association, Server, ServerOutput, ServerReaction};
 pub use time::Timestamp;

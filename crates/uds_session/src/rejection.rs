@@ -17,11 +17,15 @@
 /// which is what a second, hand-maintained copy of the variant list would allow, silently,
 /// against ``UDSS_LLR_0016``. The one hazard left is two variants sharing a bit, and
 /// `every_cause_has_its_own_bit` walks `ALL` to rule that out.
+///
+/// An entry may name the content its requirement states for the report, in parentheses
+/// after the bit. That generates the matching [`Content`] variant, so the content and the
+/// cause it belongs to come from one line and cannot drift apart.
 macro_rules! causes {
     (
         $(
             $(#[$attr:meta])*
-            $variant:ident = $bit:literal => $text:literal,
+            $variant:ident = $bit:literal $( ( $field:ident : $ty:ty ) )? => $text:literal,
         )+
     ) => {
         /// Why an input was rejected.
@@ -55,6 +59,35 @@ macro_rules! causes {
 
             /// Every cause, in bit order, for iteration.
             const ALL: &'static [Self] = &[ $( Self::$variant, )+ ];
+        }
+
+        /// The content a rejecting requirement states for the report.
+        ///
+        /// ``UDSS_LLR_0016`` — a report carries "the content each of them requires", so
+        /// content belongs to a cause rather than to the report as a whole, and
+        /// [`Causes`] yields the two together. One variant per requirement that states
+        /// content; ``UDSS_LLR_0172`` is the only one that does.
+        ///
+        /// Exhaustive, as [`Cause`] is and for the same reason.
+        #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+        pub enum Content {
+            $( $(
+                #[doc = concat!("What ", stringify!($variant), " states.")]
+                $variant {
+                    /// The value the rejecting requirement asked the report to carry.
+                    $field: $ty,
+                },
+            )? )+
+        }
+
+        impl Content {
+            /// The cause this content belongs to.
+            #[must_use]
+            pub const fn cause(self) -> Cause {
+                match self {
+                    $( $( Self::$variant { $field: _ } => Cause::$variant, )? )+
+                }
+            }
         }
 
         impl core::fmt::Display for Cause {
@@ -94,8 +127,10 @@ causes! {
     ResponsePendingTooSoon = 7 =>
         "a response-pending message arrived inside the minimum spacing",
     /// ``UDSS_LLR_0171`` — a request on a channel whose spacing timer is running.
-    /// [`Rejection::spacing_remaining`] carries the wait ``UDSS_LLR_0172`` requires.
-    SpacingTimerRunning = 8 => "the channel's spacing timer is running",
+    /// ``UDSS_LLR_0172`` has the report state the wait, which rides with this cause as
+    /// [`Content::SpacingTimerRunning`].
+    SpacingTimerRunning = 8 (remaining: u32) =>
+        "the channel's spacing timer is running",
     /// ``UDSS_LLR_0177`` — a third repeat. ISO 14229-2:2021 9.7 Table 9 caps them at two.
     RepeatCountSpent = 9 => "the repeat count is spent",
     /// ``UDSS_LLR_0178`` — a functional channel has not finished receiving.
@@ -110,7 +145,7 @@ causes! {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Rejection {
     causes: u16,
-    spacing_remaining: Option<u32>,
+    content: Option<Content>,
 }
 
 impl Rejection {
@@ -119,7 +154,7 @@ impl Rejection {
     pub(crate) const fn new(cause: Cause) -> Self {
         Self {
             causes: 1u16 << cause.bit(),
-            spacing_remaining: None,
+            content: None,
         }
     }
 
@@ -132,12 +167,15 @@ impl Rejection {
         }
     }
 
-    /// The same report, carrying the wait ``UDSS_LLR_0172`` requires.
+    /// The same report, carrying the content a rejecting requirement states.
+    ///
+    /// ``UDSS_LLR_0016`` — the cause `content` belongs to is stated as well, since a
+    /// report cannot carry content for a cause it does not state.
     #[allow(dead_code)]
-    pub(crate) const fn with_spacing_remaining(self, remaining: u32) -> Self {
+    pub(crate) const fn with_content(self, content: Content) -> Self {
         Self {
-            spacing_remaining: Some(remaining),
-            ..self
+            causes: self.causes | (1u16 << content.cause().bit()),
+            content: Some(content),
         }
     }
 
@@ -147,11 +185,13 @@ impl Rejection {
         self.causes & (1u16 << cause.bit()) != 0
     }
 
-    /// Every cause this report states.
+    /// Every cause this report states, each with the content its requirement asked for.
     ///
-    /// ``UDSS_LLR_0016`` — more than one where more than one held. ``UDSS_LLR_0179``
-    /// names the case: [`Cause::RepeatCountSpent`] and [`Cause::ResponseStillArriving`]
-    /// call for opposite actions, so both are stated where both hold.
+    /// ``UDSS_LLR_0016`` — more than one cause where more than one held.
+    /// ``UDSS_LLR_0179`` names the case: [`Cause::RepeatCountSpent`] and
+    /// [`Cause::ResponseStillArriving`] call for opposite actions, so both are stated
+    /// where both hold. The content rides with the cause it belongs to, which is how
+    /// ``UDSS_LLR_0016`` words it.
     #[must_use]
     pub const fn causes(self) -> Causes {
         Causes {
@@ -159,39 +199,37 @@ impl Rejection {
             next: 0,
         }
     }
+}
 
-    /// The time in milliseconds until the channel's spacing timer expires.
+impl core::fmt::Display for Content {
+    /// The content, rendered after the cause it belongs to.
     ///
-    /// ``UDSS_LLR_0172`` — present only on a rejection under ``UDSS_LLR_0171``, because
-    /// ISO 14229-2:2021 10.3 postpones the request but gives the application no way to
-    /// learn until when.
-    #[must_use]
-    pub const fn spacing_remaining(self) -> Option<u32> {
-        self.spacing_remaining
+    /// Exhaustive and hand-written rather than generated: [`Content`] is closed, so the
+    /// compiler requires an arm here for every variant the list declares.
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::SpacingTimerRunning { remaining } => {
+                write!(f, "{remaining} ms remaining")
+            }
+        }
     }
 }
 
 impl core::fmt::Display for Rejection {
-    /// Every cause this report states, rendered in bit order and separated by `"; "`, with
-    /// the spacing wait appended where [`Rejection::spacing_remaining`] is `Some`.
+    /// Every cause this report states, rendered in bit order and separated by `"; "`, each
+    /// followed by its content in parentheses where its requirement stated any.
     /// ``UDSS_LLR_0016`` requires one report to state every cause that held and carry the
     /// content each rejecting requirement asked for, so rendering does not stop at the
-    /// first cause, and ``UDSS_LLR_0172`` is the requirement that wait carries.
+    /// first cause and the content stays with the cause it belongs to.
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        let mut first = true;
-        for cause in self.causes() {
-            if first {
-                first = false;
-            } else {
+        for (index, reported) in self.causes().enumerate() {
+            if index > 0 {
                 f.write_str("; ")?;
             }
-            core::fmt::Display::fmt(&cause, f)?;
-        }
-        if let Some(remaining) = self.spacing_remaining {
-            if !first {
-                f.write_str("; ")?;
+            core::fmt::Display::fmt(&reported.cause, f)?;
+            if let Some(content) = reported.content {
+                write!(f, " ({content})")?;
             }
-            write!(f, "{remaining} ms remaining on the spacing timer")?;
         }
         Ok(())
     }
@@ -203,6 +241,18 @@ impl core::fmt::Display for Rejection {
 /// beneath it to report.
 impl core::error::Error for Rejection {}
 
+/// One cause a report states, with the content its requirement asked for.
+///
+/// ``UDSS_LLR_0016``. `content` is `None` for every cause whose requirement states none,
+/// which is all of them but ``UDSS_LLR_0172``'s.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct ReportedCause {
+    /// Why the input was rejected.
+    pub cause: Cause,
+    /// What the rejecting requirement asked the report to carry.
+    pub content: Option<Content>,
+}
+
 /// The causes a [`Rejection`] states. Created by [`Rejection::causes`].
 #[derive(Debug)]
 pub struct Causes {
@@ -211,13 +261,21 @@ pub struct Causes {
 }
 
 impl Iterator for Causes {
-    type Item = Cause;
+    type Item = ReportedCause;
 
-    fn next(&mut self) -> Option<Cause> {
+    fn next(&mut self) -> Option<ReportedCause> {
         while let Some(cause) = Cause::ALL.get(self.next) {
             self.next = self.next.saturating_add(1);
             if self.report.contains(*cause) {
-                return Some(*cause);
+                return Some(ReportedCause {
+                    cause: *cause,
+                    content: match self.report.content {
+                        Some(content) if content.cause().bit() == cause.bit() => {
+                            Some(content)
+                        }
+                        _ => None,
+                    },
+                });
             }
         }
         None
@@ -226,7 +284,7 @@ impl Iterator for Causes {
 
 #[cfg(test)]
 mod tests {
-    use super::{Cause, Rejection};
+    use super::{Cause, Content, Rejection};
 
     /// ``UDSS_LLR_0016`` — a report states every cause that held, so no two causes may
     /// share a bit: a shared bit would have one report state a cause that did not hold
@@ -250,7 +308,7 @@ mod tests {
         assert!(r.contains(Cause::NoSuchChannel));
         assert!(!r.contains(Cause::RepeatCountSpent));
         let mut listed = r.causes();
-        assert_eq!(listed.next(), Some(Cause::NoSuchChannel));
+        assert_eq!(listed.next().map(|r| r.cause), Some(Cause::NoSuchChannel));
         assert_eq!(listed.next(), None);
     }
 
@@ -273,16 +331,36 @@ mod tests {
         assert_eq!(r.causes().count(), 1);
     }
 
-    /// ``UDSS_LLR_0172`` — a rejection under ``UDSS_LLR_0171`` states the time remaining
-    /// until the channel's spacing timer expires. No other rejection carries it.
+    /// ``UDSS_LLR_0016`` — the content a rejecting requirement states rides with the
+    /// cause it belongs to, and ``UDSS_LLR_0172`` is the only requirement that states
+    /// any, so every other cause reports none.
     #[test]
-    fn only_a_spacing_rejection_carries_a_remaining_time() {
-        let spacing = Rejection::new(Cause::SpacingTimerRunning).with_spacing_remaining(17);
-        assert_eq!(spacing.spacing_remaining(), Some(17));
+    fn content_is_reported_with_the_cause_it_belongs_to() {
+        let spacing = Rejection::new(Cause::RepeatCountSpent)
+            .with_content(Content::SpacingTimerRunning { remaining: 17 });
+
+        let reported: [_; 2] = [spacing.causes().next(), spacing.causes().nth(1)];
         assert_eq!(
-            Rejection::new(Cause::NoSuchChannel).spacing_remaining(),
-            None
+            reported[0].map(|r| (r.cause, r.content)),
+            Some((
+                Cause::SpacingTimerRunning,
+                Some(Content::SpacingTimerRunning { remaining: 17 })
+            ))
         );
+        assert_eq!(
+            reported[1].map(|r| (r.cause, r.content)),
+            Some((Cause::RepeatCountSpent, None))
+        );
+    }
+
+    /// ``UDSS_LLR_0016`` — a report cannot carry content for a cause it does not state,
+    /// so supplying content states that cause too.
+    #[test]
+    fn content_states_its_own_cause() {
+        let r = Rejection::new(Cause::NoSuchChannel)
+            .with_content(Content::SpacingTimerRunning { remaining: 5 });
+        assert!(r.contains(Cause::SpacingTimerRunning));
+        assert_eq!(r.causes().count(), 2);
     }
 
     /// A fixed-size `core::fmt::Write` sink. The crate has no `alloc`, so a test that
@@ -335,10 +413,12 @@ mod tests {
     fn a_report_renders_its_spacing_wait() {
         use core::fmt::Write as _;
 
-        let r = Rejection::new(Cause::SpacingTimerRunning).with_spacing_remaining(17);
+        let r = Rejection::new(Cause::SpacingTimerRunning)
+            .with_content(Content::SpacingTimerRunning { remaining: 17 });
         let mut buf = Buf::new();
         write!(buf, "{r}").ok();
         let rendered = buf.as_str();
         assert!(rendered.contains("17"), "rendered: {rendered}");
+        assert!(rendered.contains("spacing timer"), "rendered: {rendered}");
     }
 }
