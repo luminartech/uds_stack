@@ -83,5 +83,4 @@ pub mod profile;
 pub mod transport;
 
 pub use error::Error;
-pub use profile::Timing;
 pub use transport::{DoIpTransport, TransportEvent};

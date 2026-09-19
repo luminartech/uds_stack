@@ -11,7 +11,6 @@
 
 use crate::error::Error;
 use crate::mapping::target_of;
-use crate::profile::Timing;
 use uds_session::{Ai, Reloads, SResult, Timestamp};
 
 /// The driver's view of what arrived, or that its deadline passed first.
@@ -137,7 +136,7 @@ pub struct DoIpTransport<S> {
         reason = "read once t_data_req and next_event leave todo!()"
     )]
     socket: S,
-    timing: Timing,
+    reloads: Reloads,
     inbound_max: Option<usize>,
     outbound_max: Option<usize>,
 }
@@ -154,7 +153,7 @@ impl<S> core::fmt::Debug for DoIpTransport<S> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("DoIpTransport")
             .field("socket", &"..")
-            .field("timing", &self.timing)
+            .field("reloads", &self.reloads)
             .field("inbound_max", &self.inbound_max)
             .field("outbound_max", &self.outbound_max)
             .finish()
@@ -162,12 +161,16 @@ impl<S> core::fmt::Debug for DoIpTransport<S> {
 }
 
 impl<S> DoIpTransport<S> {
-    /// A transport over `socket` with `timing`, advertising no size bound in
-    /// either direction until one is learned.
-    pub const fn new(socket: S, timing: Timing) -> Self {
+    /// A transport over `socket`, loading the session layer's response timer
+    /// with `reloads`, and advertising no size bound in either direction until
+    /// one is learned.
+    ///
+    /// See [`profile::bench_reloads`](crate::profile::bench_reloads) for values
+    /// suitable for a bench, and for why they are not suitable for a vehicle.
+    pub const fn new(socket: S, reloads: Reloads) -> Self {
         Self {
             socket,
-            timing,
+            reloads,
             inbound_max: None,
             outbound_max: None,
         }
@@ -234,7 +237,7 @@ impl<S> DoIpTransport<S> {
     /// values and nowhere else.
     #[must_use]
     pub const fn channel_timing(&self) -> Reloads {
-        self.timing.reloads
+        self.reloads
     }
 
     /// The current time.
@@ -357,7 +360,7 @@ mod tests {
     /// responses the peer would have accepted.
     #[test]
     fn an_unadvertised_max_data_size_is_none_not_a_guess() {
-        let t = super::DoIpTransport::new((), crate::profile::Timing::bench());
+        let t = super::DoIpTransport::new((), crate::profile::bench_reloads());
         assert_eq!(t.inbound_max(), None);
         assert_eq!(t.outbound_max(), None);
     }
@@ -367,7 +370,7 @@ mod tests {
     /// answering one does not answer the other.
     #[test]
     fn the_two_directions_are_independent() {
-        let mut t = super::DoIpTransport::new((), crate::profile::Timing::bench());
+        let mut t = super::DoIpTransport::new((), crate::profile::bench_reloads());
         t.set_inbound_max(Some(4096));
         assert_eq!(t.inbound_max(), Some(4096));
         assert_eq!(

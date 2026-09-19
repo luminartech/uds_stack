@@ -13,71 +13,37 @@
 //! not say `p6` — and the distinction survives in the values this transport
 //! supplies, not in a second type.
 
-/// Minimum spacing between consecutive requests.
+/// Conventional bench reload values, for a desk setup and for tests.
 ///
-/// ISO 14229-2:2021 clause 9.7 client policy. Separate from [`uds_session::Reloads`]
-/// because a transport has no view on it: the reload pair is dictated by
-/// whether the transport offers a `T_DataSOM.ind`, while the spacing is the
-/// client's own conduct.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub struct Spacing {
-    /// `tP3_Client_Phys` — minimum spacing before the next physically
-    /// addressed request when the previous one required no response.
-    pub p3_client_phys_ms: u32,
-    /// `tP3_Client_Func` — the same, for functionally addressed requests.
-    pub p3_client_func_ms: u32,
-}
-
-/// Every ISO 14229-5 timing parameter this profile carries.
-///
-/// # There is deliberately no `Default`
-///
+/// `tP6_Client_Max` 2000 ms and `tP6*_Client_Max` 5000 ms. These are a starting
+/// point on a bench and are **not** a configuration for a vehicle:
 /// ISO 14229-2:2021 clause 9.2 Table 4 specifies the reloads as minima derived
-/// from the server's timing and the vehicle network's delays, not as fixed
-/// values, so no universal default is defensible. An `impl Default` would put
-/// the strongest invitation Rust has on the one value nobody should accept,
-/// and `Timing::default()` reads like a configured transport while installing
-/// a guess — the failure being spurious `tP6` timeouts on a live bus, blamed
-/// on the ECU long before anyone re-reads this paragraph.
+/// from the server's timing and the vehicle network's delays, which this crate
+/// cannot know. Shipping these is how a live bus produces spurious `tP6`
+/// timeouts that get blamed on the ECU.
 ///
-/// [`Timing::bench`] supplies the same numbers under a name that says what
-/// they are, so bench values cannot be reached without asking for them.
+/// A named function rather than a `Default`, so bench values cannot be reached
+/// without asking for them by name — `Reloads` itself has no `Default`, and
+/// this crate does not add the strongest invitation Rust has to the one value
+/// nobody should accept.
 ///
-/// Values are milliseconds, matching `uds_session::Timestamp`'s unit. Carrying
-/// a `Duration` here would mean converting at the seam on every call, which is
-/// a conversion that can only go wrong.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct Timing {
-    /// What the session layer loads its response timer with.
-    ///
-    /// `uds_session`'s type, not one of ours. On `DoIP` these carry the `tP6`
-    /// pair (ISO 14229-2:2021 REQ 5.11); the field names do not say so because
-    /// the session layer does not distinguish `tP2` from `tP6`.
-    pub reloads: uds_session::Reloads,
-    /// What the client waits before its next request.
-    pub spacing: Spacing,
-}
-
-impl Timing {
-    /// Conventional bench values, for a desk setup and for tests.
-    ///
-    /// `tP6_Client_Max` 2000 ms and `tP6*_Client_Max` 5000 ms, with no request
-    /// spacing. These are a starting point on a bench and are **not** a
-    /// configuration for a vehicle: clause 9.2 Table 4 derives the real minima
-    /// from the server's timing and the network's delays, which this crate
-    /// cannot know. See [`Timing`].
-    #[must_use]
-    pub const fn bench() -> Self {
-        Self {
-            reloads: uds_session::Reloads {
-                default_reload: 2_000,
-                enhanced_reload: 5_000,
-            },
-            spacing: Spacing {
-                p3_client_phys_ms: 0,
-                p3_client_func_ms: 0,
-            },
-        }
+/// # There is deliberately no `Spacing` here
+///
+/// `tP3_Client_Phys` and `tP3_Client_Func` were a `Spacing` struct on a `Timing`
+/// type this module owned. Nothing read either field: `channel_timing` returns
+/// the reloads alone, and `uds_services::UdsTransport::channel_timing` says why
+/// that is right — a transport dictates the reload pair, because the pair
+/// follows from having no `T_DataSOM.ind`, but has no view on spacing, which is
+/// ISO 14229-2:2021 clause 9.7 client policy. Carrying a field this crate
+/// stores and never applies taught a caller that configuring it did something.
+///
+/// Values are milliseconds, matching `uds_session::Timestamp`'s unit. Carrying a
+/// `Duration` would mean converting at the seam on every call.
+#[must_use]
+pub const fn bench_reloads() -> uds_session::Reloads {
+    uds_session::Reloads {
+        default_reload: 2_000,
+        enhanced_reload: 5_000,
     }
 }
 
@@ -184,34 +150,18 @@ pub fn post_exchange(request_sid: u8, response: ResponsePolarity) -> PostExchang
 
 #[cfg(test)]
 mod tests {
-    use super::{Spacing, Timing};
-    use uds_session::Reloads;
+    use super::bench_reloads;
 
-    /// Spacing is ISO 14229-2:2021 clause 9.7 client policy, on which a
-    /// transport has no view, so it is not part of what `channel_timing`
-    /// supplies. The reload pair is dictated by whether the transport offers a
-    /// `T_DataSOM.ind`; the spacing is the client's own conduct.
-    ///
-    /// The assertion is the type annotations on the two bindings below, not a
-    /// runtime check: `Timing` is `Copy`, so an `assert_eq!` against the
-    /// source field would compare a value to itself and could never fail.
-    /// This fails to *compile* instead, the moment `Timing` loses the split
-    /// between `reloads` and `spacing` or either field retypes.
-    ///
-    /// It does *not* guard which crate owns `Reloads`. Checked by
-    /// reintroducing a local reload type: `transport::channel_timing`'s return
-    /// signature fails first, so the library stops compiling before this test
-    /// target is built and the annotation below never fires. The signature is
-    /// the guard for ownership; this test guards the split.
-    #[expect(
-        unused_variables,
-        reason = "reloads and spacing exist only for their type annotations to type-check; \
-                  see the doc comment above"
-    )]
+    /// The bench values are the `tP6` pair, and they are the ones a reader of
+    /// ISO 14229-2:2021 clause 9.2 Table 4 would recognise as conventional.
     #[test]
-    fn spacing_is_separable_from_the_reloads() {
-        let timing = Timing::bench();
-        let reloads: Reloads = timing.reloads;
-        let spacing: Spacing = timing.spacing;
+    fn the_bench_reloads_are_the_conventional_pair() {
+        let reloads = bench_reloads();
+        assert_eq!(reloads.default_reload, 2_000);
+        assert_eq!(reloads.enhanced_reload, 5_000);
+        assert!(
+            reloads.enhanced_reload > reloads.default_reload,
+            "tP6* extends tP6; a pair that did not would stall a response-pending flow",
+        );
     }
 }
