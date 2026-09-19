@@ -42,7 +42,7 @@
 //! - **``UDSS_LLR_0011``** — outputs are retrieved, not pushed. Nothing here delivers an
 //!   output through a callback, handler or caller-supplied trait implementation: no public
 //!   type takes a trait object or a function, storage is supplied by value for the same
-//!   reason, and the one trait a caller can name — [`KeepAlive`], which selects a
+//!   reason, and the one trait a caller can name — [`KeepAliveMode`], which selects a
 //!   [`Client`]'s mode and carries no output — is sealed, so no implementation of it can
 //!   be the caller's. Every input returns a [`Reaction`] the caller drains.
 //! - **``UDSS_LLR_0013``** — no payload is retained. No type here holds an owned buffer.
@@ -66,8 +66,8 @@
 //! | ``UDSS_LLR_0031`` | [`ClientTx`], [`ClientRx`], and the absent completion report |
 //! | ``UDSS_LLR_0054`` | a payload passed as a slice carries its own length |
 //! | ``UDSS_LLR_0066`` | [`ExpectedResponses::Exactly`] holds a `NonZeroU16` |
-//! | ``UDSS_LLR_0067`` | the `KeepAlive` variants carry no session selection |
-//! | ``UDSS_LLR_0068`` | the `KeepAlive` variants carry no session selection |
+//! | ``UDSS_LLR_0067`` | `ClientTx::KeepAlive` carries no session selection |
+//! | ``UDSS_LLR_0068`` | `ServerRx::KeepAlive` carries no session selection |
 //! | ``UDSS_LLR_0070`` | [`ClientTx`]'s expected count is a required field |
 //! | ``UDSS_LLR_0071`` | `Solicitation` is a required field on a final response |
 //! | ``UDSS_LLR_0072`` | the enums admit no other form; full walk in the requirement |
@@ -98,8 +98,8 @@ pub use classification::{
 };
 pub use client::{
     ChannelId, Client, ClientOutput, ClientReaction, FunctionalChannelId,
-    FunctionalKeepAlive, FunctionalSlot, KeepAlive, PhysicalChannelId, PhysicalKeepAlive,
-    PhysicalSlot, ResponderSlot,
+    FunctionalKeepAlive, FunctionalSlot, KeepAliveMode, PhysicalChannelId,
+    PhysicalKeepAlive, PhysicalSlot, ResponderSlot,
 };
 pub use params::{
     ChannelParameter, ChannelParams, ChannelReload, Reloads, ServerParameter, ServerParams,

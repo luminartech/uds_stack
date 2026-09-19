@@ -180,7 +180,7 @@ mod sealed {
 /// The trait is sealed. A mode is not an extension point — the standard names two — and
 /// ``UDSS_LLR_0011`` forbids the session layer to deliver an output through a
 /// caller-supplied trait implementation, which sealing keeps true of every trait here.
-pub trait KeepAlive: sealed::Sealed + core::fmt::Debug {}
+pub trait KeepAliveMode: sealed::Sealed + core::fmt::Debug {}
 
 /// Functional keep-alive: one `TesterPresent` for the client, functionally addressed.
 ///
@@ -212,7 +212,7 @@ impl FunctionalKeepAlive {
 }
 
 impl sealed::Sealed for FunctionalKeepAlive {}
-impl KeepAlive for FunctionalKeepAlive {}
+impl KeepAliveMode for FunctionalKeepAlive {}
 
 /// Physical keep-alive: a `TesterPresent` per physical channel, physically addressed.
 ///
@@ -226,7 +226,7 @@ impl KeepAlive for FunctionalKeepAlive {}
 pub struct PhysicalKeepAlive;
 
 impl sealed::Sealed for PhysicalKeepAlive {}
-impl KeepAlive for PhysicalKeepAlive {}
+impl KeepAliveMode for PhysicalKeepAlive {}
 
 /// What a client produces for the caller to retrieve.
 ///
@@ -315,18 +315,23 @@ pub type ClientReaction<'s, 'd, T = ()> = Reaction<'s, 'd, ClientOutput<'d>, T>;
 /// ``UDSS_LLR_0151`` a `tS3_Client` to physical ones alone.
 ///
 /// `K` is the keep-alive mode of ``UDSS_LLR_0149``, fixed at creation and held in the type
-/// rather than in a field — see [`KeepAlive`]. It is inferred from the value passed to
+/// rather than in a field — see [`KeepAliveMode`]. It is inferred from the value passed to
 /// [`Client::new`], so a caller names it only where they annotate the type.
 ///
 /// `R` defaults to `0`, since a client with `FUNC` of `0` has no responder table to size.
 #[derive(Debug)]
-pub struct Client<K: KeepAlive, const PHYS: usize, const FUNC: usize, const R: usize = 0> {
+pub struct Client<
+    K: KeepAliveMode,
+    const PHYS: usize,
+    const FUNC: usize,
+    const R: usize = 0,
+> {
     _physical: [PhysicalSlot; PHYS],
     _functional: [FunctionalSlot<R>; FUNC],
     _keep_alive: K,
 }
 
-impl<K: KeepAlive, const PHYS: usize, const FUNC: usize, const R: usize>
+impl<K: KeepAliveMode, const PHYS: usize, const FUNC: usize, const R: usize>
     Client<K, PHYS, FUNC, R>
 {
     /// Create a client.
