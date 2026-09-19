@@ -8,8 +8,9 @@
 //! declines it in writing, and there is no layer between the two.
 //!
 //! **The storage shape mirrors `uds_session`'s.** That crate splits channels by kind:
-//! `PhysicalSlot` carries no responder table where `FunctionalSlot<R>` does, and
-//! `PhysicalChannelParams` carries `s3_client` where `FunctionalChannelParams` does not.
+//! `PhysicalSlot` carries no responder table where `FunctionalSlot<R>` does, and a
+//! physical channel's `tS3_Client` is an argument of `open_physical_channel` in physical
+//! keep-alive and absent from it in functional keep-alive.
 //! Mirroring the split costs a third const parameter and buys the same thing it buys
 //! them — a physical-only client pays nothing for responder tables, and a functional
 //! channel cannot be given a session reload it has no use for.
