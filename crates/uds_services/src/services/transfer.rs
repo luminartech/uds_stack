@@ -1,7 +1,7 @@
 //! Upload and download — ISO 14229-1:2020 clause 15.
 
 use crate::ResponseSink;
-use uds_protocol::NegativeResponseCode;
+use uds_protocol::{DataFormatIdentifier, FileOperationMode, NegativeResponseCode};
 
 /// What a transfer is being requested for.
 ///
@@ -11,33 +11,41 @@ use uds_protocol::NegativeResponseCode;
 /// treats repetition uniformly is wrong in one direction whichever uniform choice it
 /// makes.
 ///
-/// Address and size are raw slices because their widths are declared by the
-/// `addressAndLengthFormatIdentifier` and mean whatever the application's memory map says.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+/// Address and size arrive decoded. Their wire widths are declared by the
+/// `addressAndLengthFormatIdentifier`, which `uds_protocol` reads to size the fields —
+/// so the widths are a decoding concern that is already settled by the time a handler is
+/// called, and the identifier itself never reaches one. The two are [`u64`] and [`u32`]
+/// after ISO 14229-1:2020 Table H.1, which caps `memoryAddress` at five bytes and
+/// `memorySize` at four; being different types, they also cannot be transposed.
+///
+/// Not [`Hash`]: [`FileOperationMode`] is not, and a transfer request is a thing to match
+/// on rather than a key to look one up by.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum TransferRequest<'a> {
     /// `RequestDownload` (0x34) — the client sends data to the server.
     Download {
-        /// `dataFormatIdentifier`, uninterpreted here.
-        data_format: u8,
-        /// `memoryAddress`.
-        address: &'a [u8],
-        /// `memorySize`.
-        size: &'a [u8],
+        /// `dataFormatIdentifier`; see [`DataFormatIdentifier`], whose
+        /// [`NONE`](DataFormatIdentifier::NONE) is the uncompressed, unencrypted case.
+        data_format: DataFormatIdentifier,
+        /// `memoryAddress`, decoded.
+        address: u64,
+        /// `memorySize`, decoded.
+        size: u32,
     },
     /// `RequestUpload` (0x35) — the server sends data to the client.
     Upload {
-        /// `dataFormatIdentifier`, uninterpreted here.
-        data_format: u8,
-        /// `memoryAddress`.
-        address: &'a [u8],
-        /// `memorySize`.
-        size: &'a [u8],
+        /// `dataFormatIdentifier`; see [`DataFormatIdentifier`].
+        data_format: DataFormatIdentifier,
+        /// `memoryAddress`, decoded.
+        address: u64,
+        /// `memorySize`, decoded.
+        size: u32,
     },
     /// `RequestFileTransfer` (0x38).
     File {
-        /// `modeOfOperation`.
-        operation: u8,
+        /// `modeOfOperation`; see [`FileOperationMode`].
+        operation: FileOperationMode,
         /// `filePathAndName`.
         path: &'a [u8],
     },
@@ -121,7 +129,7 @@ pub trait DataTransfer {
               defect in test code"
 )]
 mod tests {
-    use super::{DataTransfer, TransferRequest};
+    use super::{DataFormatIdentifier, DataTransfer, TransferRequest};
     use crate::ResponseSink;
     use uds_protocol::NegativeResponseCode;
 
@@ -183,14 +191,14 @@ mod tests {
     #[test]
     fn direction_is_carried_by_the_request() {
         let d = TransferRequest::Download {
-            data_format: 0,
-            address: &[],
-            size: &[],
+            data_format: DataFormatIdentifier::NONE,
+            address: 0x0800_0000,
+            size: 0x0002_0000,
         };
         let u = TransferRequest::Upload {
-            data_format: 0,
-            address: &[],
-            size: &[],
+            data_format: DataFormatIdentifier::NONE,
+            address: 0x0800_0000,
+            size: 0x0002_0000,
         };
         assert_ne!(d, u);
     }

@@ -104,3 +104,20 @@ pub use services::{
 pub mod sealed;
 
 mod dispatch;
+/// The protocol vocabulary this crate's handler signatures are written in.
+///
+/// Re-exported so an application implementing a service trait names one crate, not two.
+/// Every one of these is `uds_protocol`'s — this crate defines no sub-function, no reset
+/// type and no negative response code (``UDSSVC_ARCH_0002``). They are re-exported rather
+/// than re-modelled because a parallel enumeration here would be a second place for the
+/// same clause to be written down, and the two would drift.
+///
+/// Each sub-function type is range-checked to `0x00`-`0x7F` on construction, so none of
+/// them can carry `suppressPosRspMsgIndication`: that bit is the pipeline's and never
+/// reaches a handler.
+pub use uds_protocol::{
+    CLEAR_ALL_DTCS, CommunicationControlType, CommunicationType, DiagnosticSessionType,
+    DtcRecord, DtcSettingType, DtcStatusMask, FileOperationMode, FunctionalGroupIdentifier,
+    NegativeResponseCode, ReadDtcInfoSubFunction, ResetType, SubnetNumber,
+};
+
