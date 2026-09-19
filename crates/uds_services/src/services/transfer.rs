@@ -21,7 +21,6 @@ use uds_protocol::{DataFormatIdentifier, FileOperationMode, NegativeResponseCode
 /// Not [`Hash`]: [`FileOperationMode`] is not, and a transfer request is a thing to match
 /// on rather than a key to look one up by.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[non_exhaustive]
 pub enum TransferRequest<'a> {
     /// `RequestDownload` (0x34) — the client sends data to the server.
     Download {

@@ -51,6 +51,22 @@
 //! and no public type carries a `Vec` or a `String`. This is designed in
 //! rather than deferred: the signatures that make an API alloc-free are the
 //! ones callers depend on, so it cannot be retrofitted later.
+//!
+//! # Exhaustive matching
+//!
+//! Nothing here is `#[non_exhaustive]`, and that is a decision rather than an omission.
+//!
+//! The attribute rests on a requirement stating an *open* enumeration. No requirement in
+//! this crate's set states one: every enumeration here is closed by ISO 14229 or by the
+//! architecture, from [`SessionTransition`]'s four transitions of clause 10.2 Figure 7 to
+//! [`DtcReportKind`]'s five response layouts of clause 12.3. `uds_session` keeps the
+//! attribute on exactly the two outputs its own requirement set leaves open, and on
+//! nothing else, for the same reason.
+//!
+//! So a caller matches exhaustively and a new variant stops their build. That is the
+//! correct signal: it says a requirement changed and their handling needs revisiting.
+//! `#[non_exhaustive]` would turn it into a wildcard arm that absorbs the change in
+//! silence, which is the same failure as a hand-maintained variant list.
 
 #![no_std]
 #![forbid(unsafe_code)]

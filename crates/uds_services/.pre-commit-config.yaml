@@ -82,6 +82,17 @@ repos:
         language: system
         types: [rust]
         pass_filenames: false
+      # rustfmt wraps code to rustfmt.toml's max_width and leaves comments alone:
+      # `wrap_comments` is nightly-only, so on a stable toolchain `cargo fmt --check`
+      # passes on a doc comment of any length. That makes the declared width enforced
+      # for code and left to a reviewer's eye for prose — the arrangement rustfmt.toml's
+      # own comment says it exists to avoid. This closes the gap, reading the limit from
+      # rustfmt.toml so the width is declared once rather than twice.
+      - id: line-width
+        name: line width
+        entry: python3 tools/check_line_width.py
+        language: system
+        types: [rust]
       # ---
       # Policy checks on the authored need set — architecture elements and requirements
       # alike: the ID scheme and global uniqueness, mandatory fields per type, permitted
@@ -95,8 +106,8 @@ repos:
       # environment and runs in milliseconds.
       # The policy checks are themselves guarded. Each check below must be demonstrated to
       # stop something; a guard rail is only verified by watching it fail.
-      - id: validate-needs-tests
-        name: validate_needs self-tests
+      - id: tools-tests
+        name: tools self-tests
         entry: python3 -m unittest discover --start-directory tools --pattern test_*.py
         language: system
         pass_filenames: false

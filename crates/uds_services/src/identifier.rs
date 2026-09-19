@@ -11,7 +11,6 @@
 
 /// Why a record could not be taken from a buffer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-#[non_exhaustive]
 pub enum RecordError {
     /// Fewer bytes remained than this identifier's record needs.
     Short,

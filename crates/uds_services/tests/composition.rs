@@ -431,25 +431,29 @@ fn the_client_constructs_in_a_static() {
 /// `match` and a `for`: the walk yields pairs rather than `Result`s, because the response
 /// was checked when it was built.
 #[expect(dead_code, reason = "compiled for its signature, never called")]
-async fn read_the_vin(tester: &mut Tester) -> Result<(), ()> {
-    match tester
-        .read_data_by_identifier(Address(0x0E00), &[Did::VinNumber])
-        .await?
-    {
-        Response::Positive(records) => {
-            for (did, record) in records {
-                let _ = (did, record);
+async fn read_the_vin(tester: &mut Tester) -> Result<&'static str, ()> {
+    Ok(
+        match tester
+            .read_data_by_identifier(Address(0x0E00), &[Did::VinNumber])
+            .await?
+        {
+            Response::Positive(records) => {
+                for (did, record) in records {
+                    let _ = (did, record);
+                }
+                "read"
             }
-        }
-        Response::Negative(code) => {
-            let _ = code;
-        }
-        Response::Malformed(error) => {
-            let _ = error;
-        }
-        Response::NoResponseExpected => {}
-    }
-    Ok(())
+            Response::Negative(code) => {
+                let _ = code;
+                "declined"
+            }
+            Response::Malformed(error) => {
+                let _ = error;
+                "unreadable"
+            }
+            Response::NoResponseExpected => "suppressed",
+        },
+    )
 }
 
 /// The functional path, which is where the depth was worst: an answer is one `match`, and
@@ -472,7 +476,6 @@ async fn read_the_vin_from_every_server(tester: &mut Tester) -> Result<(), ()> {
             Answer::Malformed { from, error } => {
                 let _ = (from, error);
             }
-            _ => {}
         }
     }
     Ok(())

@@ -15,7 +15,6 @@ use uds_protocol::{
 /// The five correspond one-to-one to [`uds_protocol::ReadDtcInfoResponse`]'s variants,
 /// which is where the widths below are read from rather than restated.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-#[non_exhaustive]
 pub enum DtcReportKind {
     /// A count and no records — sub-functions `0x01` and `0x07`.
     Count,

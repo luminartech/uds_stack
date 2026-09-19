@@ -67,7 +67,6 @@ pub enum Response<V> {
 /// silent produces no answer at all, which is the response window closing rather than a
 /// value to match on.
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[non_exhaustive]
 pub enum Answer<'d, D: DataIdentifier> {
     /// A positive response, its records already validated against this vocabulary.
     Positive {
