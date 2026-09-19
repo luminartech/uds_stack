@@ -132,6 +132,46 @@ impl<'d, D: DataIdentifier> Records<'d, D> {
         }
     }
 }
+///
+/// # Examples
+///
+/// ```
+/// # use uds_services::{DataIdentifier, RecordError, Records};
+/// # #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// # enum Did { VehicleSpeed, VinNumber }
+/// #
+/// # impl DataIdentifier for Did {
+/// #     const MAX_RECORD_LEN: usize = 17;
+/// #     fn as_u16(self) -> u16 {
+/// #         match self { Self::VehicleSpeed => 0xF4_0D, Self::VinNumber => 0xF1_90 }
+/// #     }
+/// #     fn from_u16(v: u16) -> Option<Self> {
+/// #         match v {
+/// #             0xF4_0D => Some(Self::VehicleSpeed),
+/// #             0xF1_90 => Some(Self::VinNumber),
+/// #             _ => None,
+/// #         }
+/// #     }
+/// #     fn split_record(self, buf: &[u8]) -> Result<(&[u8], &[u8]), RecordError> {
+/// #         let width = match self { Self::VehicleSpeed => 1, Self::VinNumber => 17 };
+/// #         buf.split_at_checked(width).ok_or(RecordError::Short)
+/// #     }
+/// # }
+/// // 0xF40D and its one byte, then 0xF190 and its seventeen. There are no length
+/// // prefixes: `split_record` is the only thing that knows where a record ends.
+/// let mut response = [0_u8; 22];
+/// response[..5].copy_from_slice(&[0xF4, 0x0D, 0x40, 0xF1, 0x90]);
+///
+/// let mut records = Records::<Did>::new(&response);
+/// assert_eq!(records.next(), Some(Ok((Did::VehicleSpeed, &[0x40][..]))));
+/// assert_eq!(records.next(), Some(Ok((Did::VinNumber, &[0x00; 17][..]))));
+/// assert_eq!(records.next(), None);
+///
+/// // An identifier this application never declared ends the walk.
+/// let mut unknown = Records::<Did>::new(&[0xDE, 0xAD, 0x00]);
+/// assert_eq!(unknown.next(), Some(Err(RecordError::UnknownIdentifier)));
+/// assert_eq!(unknown.next(), None);
+/// ```
 
 impl<'d, D: DataIdentifier> Iterator for Records<'d, D> {
     type Item = Result<(D, &'d [u8]), RecordError>;

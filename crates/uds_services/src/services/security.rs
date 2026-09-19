@@ -51,6 +51,23 @@ impl SecurityLevel {
     /// `suppressPosRspMsgIndication`, so both halves of the pair have to fall in
     /// `0x00`–`0x7F`. `0x7F` itself is rejected because its partner would be `0x80`,
     /// which is not a sub-function value at all.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use uds_services::SecurityLevel;
+    ///
+    /// let level = SecurityLevel::from_request_seed(0x01)
+    ///     .expect("0x01 is a requestSeed sub-function");
+    /// assert_eq!(level.request_seed(), 0x01);
+    /// assert_eq!(level.send_key(), 0x02);
+    ///
+    /// // An even sub-function is a `sendKey`; it names no level of its own.
+    /// assert!(SecurityLevel::from_request_seed(0x02).is_none());
+    /// // 0x7F is rejected because its partner would be 0x80, which is not a
+    /// // sub-function value at all.
+    /// assert!(SecurityLevel::from_request_seed(0x7F).is_none());
+    /// ```
     #[must_use]
     pub const fn from_request_seed(sub_function: u8) -> Option<Self> {
         if sub_function % 2 == 1 && sub_function < 0x7F {

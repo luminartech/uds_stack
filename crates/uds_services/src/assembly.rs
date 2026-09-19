@@ -172,17 +172,6 @@ macro_rules! __uds_may_pend {
 ///
 /// ``UDSSVC_ARCH_0013``, ``UDSSVC_ARCH_0035``.
 ///
-/// ```ignore
-/// uds_server! {
-///     Ecu: ReadDataByIdentifier, SecurityAccess, DataTransfer;
-///     transport = DoIpTransport<TcpSocket>,
-///     peers = 4,
-///     server = EcuServer,
-/// }
-///
-/// static SERVER: EcuServer = EcuServer::new(Ecu::new(), transport, PARAMS);
-/// ```
-///
 /// Naming the transport lets its [`MAX_PDU`](crate::UdsTransport::MAX_PDU) join the fold.
 /// It introduces no dependency on a binding: the *application* names the type, and it
 /// already depends on both crates, so ``UDSSVC_ARCH_0002`` and ``0003`` are untouched.
@@ -229,6 +218,118 @@ macro_rules! uds_server {
             // answered busyRepeatRequest from its service identifier alone.
             //
             // No service `uds_server!` can currently assemble falls in 0x00-0x0F --
+///
+/// # Examples
+///
+/// Two services, a transport, and the buffer lengths the macro folds from what they
+/// declared. Nothing here picks a size: `1_026` is [`DataTransfer::MAX_BLOCK_LENGTH`](crate::DataTransfer::MAX_BLOCK_LENGTH)
+/// plus its service identifier and block sequence counter, and `77` is
+/// [`ReadDataByIdentifier::MAX_DIDS_PER_REQUEST`](crate::ReadDataByIdentifier::MAX_DIDS_PER_REQUEST) records of
+/// [`DataIdentifier::MAX_RECORD_LEN`](crate::DataIdentifier::MAX_RECORD_LEN) plus their identifiers.
+///
+/// ```
+/// # use uds_services::{
+/// #     Ai, DataIdentifier, DataTransfer, ReadDataByIdentifier, RecordError, Reloads,
+/// #     ResponseSink, ServerParams, ServiceSet, Storage, Timestamp, TransferRequest,
+/// #     TransportEvent, UdsTransport, uds_server,
+/// # };
+/// # use uds_protocol::NegativeResponseCode as Nrc;
+/// #
+/// # #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// # enum Did { VehicleSpeed, VinNumber }
+/// #
+/// # impl DataIdentifier for Did {
+/// #     const MAX_RECORD_LEN: usize = 17;
+/// #     fn as_u16(self) -> u16 {
+/// #         match self { Self::VehicleSpeed => 0xF4_0D, Self::VinNumber => 0xF1_90 }
+/// #     }
+/// #     fn from_u16(v: u16) -> Option<Self> {
+/// #         match v {
+/// #             0xF4_0D => Some(Self::VehicleSpeed),
+/// #             0xF1_90 => Some(Self::VinNumber),
+/// #             _ => None,
+/// #         }
+/// #     }
+/// #     fn split_record(self, buf: &[u8]) -> Result<(&[u8], &[u8]), RecordError> {
+/// #         let width = match self { Self::VehicleSpeed => 1, Self::VinNumber => 17 };
+/// #         buf.split_at_checked(width).ok_or(RecordError::Short)
+/// #     }
+/// # }
+/// #
+/// # #[derive(Debug)]
+/// # struct Ecu;
+/// #
+/// # impl Ecu {
+/// #     const fn new() -> Self { Self }
+/// # }
+/// #
+/// # impl ReadDataByIdentifier for Ecu {
+/// #     type Did = Did;
+/// #     const MAY_RESPOND_PENDING: bool = false;
+/// #     const MAX_DIDS_PER_REQUEST: usize = 4;
+/// #     async fn read(
+/// #         &mut self,
+/// #         _did: Did,
+/// #         _out: &mut ResponseSink<'_>,
+/// #     ) -> Result<(), Nrc> { Ok(()) }
+/// # }
+/// #
+/// # impl DataTransfer for Ecu {
+/// #     const MAY_RESPOND_PENDING: bool = true;
+/// #     const MAX_BLOCK_LENGTH: usize = 1_024;
+/// #     const SUPPORTS_UPLOAD: bool = false;
+/// #     async fn begin(&mut self, _r: TransferRequest<'_>) -> Result<(), Nrc> { Ok(()) }
+/// #     async fn block(
+/// #         &mut self,
+/// #         _data: &[u8],
+/// #         _out: &mut ResponseSink<'_>,
+/// #     ) -> Result<(), Nrc> { Ok(()) }
+/// #     async fn exit(
+/// #         &mut self,
+/// #         _record: &[u8],
+/// #         _out: &mut ResponseSink<'_>,
+/// #     ) -> Result<(), Nrc> { Ok(()) }
+/// # }
+/// #
+/// # #[derive(Debug)]
+/// # struct DoIpTransport;
+/// #
+/// # impl UdsTransport for DoIpTransport {
+/// #     type Error = ();
+/// #     async fn t_data_req(&mut self, _ai: Ai, _data: &[u8]) -> Result<(), ()> { Ok(()) }
+/// #     async fn next_event<'b>(
+/// #         &mut self,
+/// #         _buffer: &'b mut [u8],
+/// #         _deadline: Option<Timestamp>,
+/// #     ) -> Result<TransportEvent<'b>, ()> { Ok(TransportEvent::Deadline) }
+/// #     fn outbound_max(&self) -> Option<usize> { None }
+/// #     fn channel_timing(&self) -> Reloads {
+/// #         Reloads { default_reload: 2_000, enhanced_reload: 5_000 }
+/// #     }
+/// #     fn now(&self) -> Timestamp { Timestamp(0) }
+/// # }
+/// #
+/// # const PARAMS: ServerParams = ServerParams {
+/// #     s3_server: 5_000,
+/// #     p2_server_max: 50,
+/// #     p2_star_server_max: 5_000,
+/// # };
+/// uds_server! {
+///     Ecu: ReadDataByIdentifier, DataTransfer;
+///     transport = DoIpTransport,
+///     peers = 4,
+///     server = EcuServer,
+/// }
+///
+/// // Constructed in place: no stack temporary holds the buffers on the way in.
+/// static SERVER: EcuServer = EcuServer::new(Ecu::new(), DoIpTransport, PARAMS);
+///
+/// let mut store = <<Ecu as ServiceSet>::Store as Storage>::EMPTY;
+/// let buffers = store.split();
+/// assert_eq!(buffers.in_flight.len(), 1_026);
+/// assert_eq!(buffers.response.len(), 77);
+/// # let _ = &SERVER;
+/// ```
             // that range is OBD territory, which uds_protocol does not model -- so the
             // second exception is unreachable today. The arm in
             // `is_concurrent_exception` below is where it will be handled when a
