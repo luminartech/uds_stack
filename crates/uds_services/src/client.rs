@@ -50,22 +50,68 @@ pub enum Response<V> {
     /// A negative response, decoded. Not an error: a server answering
     /// `serviceNotSupported` has answered.
     Negative(NegativeResponseCode),
+    /// A positive response whose bytes do not parse against this application's
+    /// identifiers.
+    ///
+    /// Not an error, for the reason [`Answer::Malformed`] is not: the server answered and
+    /// the transport delivered it intact.
+    Malformed(RecordError),
     /// The exchange completed and nothing came back — the suppress bit, or a
     /// functionally addressed request no server supports. Distinct from a timeout,
     /// because a timeout is a fault and suppression is not.
     NoResponseExpected,
 }
 
-/// One server's answer, with the server that gave it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Answer<V> {
-    /// The responding server's `S_AI[SA]`.
+/// One server's answer to a functionally addressed request.
+///
+/// ``UDSSVC_ARCH_0022`` — each responding server sets its own source address, and that is
+/// how answers are told apart, so every variant carries one.
+///
+/// There is no "nothing came back" case here, unlike [`Response`]: a server that stays
+/// silent produces no answer at all, which is the response window closing rather than a
+/// value to match on.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum Answer<'d, D: DataIdentifier> {
+    /// A positive response, its records already validated against this vocabulary.
+    Positive {
+        /// The responding server's `S_AI[SA]`.
+        from: Address,
+        /// The identifier/record pairs it carried.
+        records: Records<'d, D>,
+    },
+    /// A negative response. Not an error: a server answering `serviceNotSupported` has
+    /// answered.
+    Negative {
+        /// The responding server's `S_AI[SA]`.
+        from: Address,
+        /// What it declined with.
+        code: NegativeResponseCode,
+    },
+    /// A positive response whose bytes do not parse against this application's
+    /// identifiers.
     ///
-    /// ``UDSSVC_ARCH_0022`` — for a functionally addressed request each responding server
-    /// sets its own source address, and that is how responses are told apart.
-    pub from: Address,
-    /// What it said.
-    pub response: Response<V>,
+    /// Not a [`UdsTransport::Error`]: the transport delivered the message intact and the
+    /// server answered. What failed is the agreement about what the bytes mean, which is
+    /// a disagreement between two applications rather than a link fault.
+    Malformed {
+        /// The responding server's `S_AI[SA]`.
+        from: Address,
+        /// Why the response could not be walked.
+        error: RecordError,
+    },
+}
+
+impl<D: DataIdentifier> Answer<'_, D> {
+    /// The responding server's `S_AI[SA]`, whichever answer this is.
+    #[must_use]
+    pub const fn from(&self) -> Address {
+        match self {
+            Self::Positive { from, .. }
+            | Self::Negative { from, .. }
+            | Self::Malformed { from, .. } => *from,
+        }
+    }
 }
 
 /// The answers to one functionally addressed request.
@@ -113,7 +159,7 @@ impl<
         reason = "async is load-bearing: the body awaits the transport once it \
                   replaces this todo!(), and neither lint can see past the stub"
     )]
-    pub async fn next(&mut self) -> Option<Result<Answer<Records<'_, C>>, T::Error>> {
+    pub async fn next(&mut self) -> Option<Result<Answer<'_, C>, T::Error>> {
         #[allow(clippy::todo, reason = "API stub; behaviour lands with its element")]
         {
             let _ = &mut *self.client;
@@ -129,50 +175,16 @@ impl<
 /// A response is a concatenation of `(identifier, record)` with no length prefixes, and
 /// [`DataIdentifier::split_record`] is what makes it walkable.
 ///
+/// **Walking one cannot fail.** The whole response is checked when this is built, so a
+/// framing error is one [`RecordError`] reported once — as [`Answer::Malformed`] or
+/// [`Response::Malformed`] — rather than a `Result` at every step of a walk that could
+/// only ever fail once and then end. There is no half-walked response: either every pair
+/// is reachable or none is.
+///
 /// Items borrow the receive buffer, not the iterator, so this is an ordinary [`Iterator`]
 /// rather than a lending one. `Clone` but not `Copy`: a copied iterator silently restarts
 /// the walk, which is the whole hazard `clippy::copy_iterator` names.
-///
-/// # Examples
-///
-/// ```
-/// # use uds_services::{DataIdentifier, RecordError, Records};
-/// # #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-/// # enum Did { VehicleSpeed, VinNumber }
-/// #
-/// # impl DataIdentifier for Did {
-/// #     const MAX_RECORD_LEN: usize = 17;
-/// #     fn as_u16(self) -> u16 {
-/// #         match self { Self::VehicleSpeed => 0xF4_0D, Self::VinNumber => 0xF1_90 }
-/// #     }
-/// #     fn from_u16(v: u16) -> Option<Self> {
-/// #         match v {
-/// #             0xF4_0D => Some(Self::VehicleSpeed),
-/// #             0xF1_90 => Some(Self::VinNumber),
-/// #             _ => None,
-/// #         }
-/// #     }
-/// #     fn split_record(self, buf: &[u8]) -> Result<(&[u8], &[u8]), RecordError> {
-/// #         let width = match self { Self::VehicleSpeed => 1, Self::VinNumber => 17 };
-/// #         buf.split_at_checked(width).ok_or(RecordError::Short)
-/// #     }
-/// # }
-/// // 0xF40D and its one byte, then 0xF190 and its seventeen. There are no length
-/// // prefixes: `split_record` is the only thing that knows where a record ends.
-/// let mut response = [0_u8; 22];
-/// response[..5].copy_from_slice(&[0xF4, 0x0D, 0x40, 0xF1, 0x90]);
-///
-/// let mut records = Records::<Did>::new(&response);
-/// assert_eq!(records.next(), Some(Ok((Did::VehicleSpeed, &[0x40][..]))));
-/// assert_eq!(records.next(), Some(Ok((Did::VinNumber, &[0x00; 17][..]))));
-/// assert_eq!(records.next(), None);
-///
-/// // An identifier this application never declared ends the walk.
-/// let mut unknown = Records::<Did>::new(&[0xDE, 0xAD, 0x00]);
-/// assert_eq!(unknown.next(), Some(Err(RecordError::UnknownIdentifier)));
-/// assert_eq!(unknown.next(), None);
-/// ```
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 #[must_use = "the records are the response; dropping this discards it"]
 pub struct Records<'d, D> {
     rest: &'d [u8],
@@ -180,40 +192,53 @@ pub struct Records<'d, D> {
 }
 
 impl<'d, D: DataIdentifier> Records<'d, D> {
-    /// Walk `response`, the bytes after the `0x62` service identifier.
-    pub const fn new(response: &'d [u8]) -> Self {
-        Self {
+    /// Check `response` — the bytes after the echoed service identifier — and hold it
+    /// for walking.
+    ///
+    /// Not public: a [`Records`] comes from a read, so the offset this expects is never
+    /// a caller's to get right.
+    ///
+    /// # Errors
+    ///
+    /// [`RecordError`] where an identifier is not one this application defines, or a
+    /// record is shorter than it declared, or bytes trail the last whole record.
+    #[allow(
+        dead_code,
+        reason = "no caller until the UDSSVC_ARCH_0020 read lands; the tests below \
+                  exercise it"
+    )]
+    pub(crate) fn validate(response: &'d [u8]) -> Result<Self, RecordError> {
+        let mut rest = response;
+        while !rest.is_empty() {
+            let Some((identifier, tail)) = rest.split_first_chunk::<2>() else {
+                return Err(RecordError::Short);
+            };
+            let Some(did) = D::from_u16(u16::from_be_bytes(*identifier)) else {
+                return Err(RecordError::UnknownIdentifier);
+            };
+            let (_record, remainder) = did.split_record(tail)?;
+            rest = remainder;
+        }
+        Ok(Self {
             rest: response,
             identifier: core::marker::PhantomData,
-        }
+        })
     }
 }
 
 impl<'d, D: DataIdentifier> Iterator for Records<'d, D> {
-    type Item = Result<(D, &'d [u8]), RecordError>;
+    type Item = (D, &'d [u8]);
 
     fn next(&mut self) -> Option<Self::Item> {
-        if self.rest.is_empty() {
-            return None;
-        }
-        let Some((identifier, tail)) = self.rest.split_first_chunk::<2>() else {
-            self.rest = &[];
-            return Some(Err(RecordError::Short));
-        };
-        let Some(did) = D::from_u16(u16::from_be_bytes(*identifier)) else {
-            self.rest = &[];
-            return Some(Err(RecordError::UnknownIdentifier));
-        };
-        match did.split_record(tail) {
-            Ok((record, rest)) => {
-                self.rest = rest;
-                Some(Ok((did, record)))
-            }
-            Err(e) => {
-                self.rest = &[];
-                Some(Err(e))
-            }
-        }
+        let (identifier, tail) = self.rest.split_first_chunk::<2>()?;
+        let did = D::from_u16(u16::from_be_bytes(*identifier))?;
+        // `validate` walked this same path already, so none of the three fallible steps
+        // here can fail. Ending the walk is the honest way to say so: this crate denies
+        // both `panic` and `unreachable`, and stopping cannot be worse than the half-walk
+        // the validation exists to prevent.
+        let (record, rest) = did.split_record(tail).ok()?;
+        self.rest = rest;
+        Some((did, record))
     }
 }
 
@@ -395,20 +420,28 @@ mod tests {
     /// ``UDSSVC_ARCH_0022`` — each answer carries the source address of the server that
     /// produced it. For a functionally addressed request every responding server sets
     /// its own, and a sequence of decoded responses without their senders would be
-    /// unattributable.
+    /// unattributable — so `from` is on every variant and reachable without matching.
     #[test]
     fn every_answer_names_its_sender() {
-        let a = Answer {
+        let declined: Answer<'_, TestDid> = Answer::Negative {
             from: Address(0x0E01),
-            response: Response::Positive(&[0x62][..]),
+            code: NegativeResponseCode::ServiceNotSupported,
         };
-        assert_eq!(a.from, Address(0x0E01));
+        let broken: Answer<'_, TestDid> = Answer::Malformed {
+            from: Address(0x0E02),
+            error: RecordError::Short,
+        };
+        assert_eq!(declined.from(), Address(0x0E01));
+        assert_eq!(broken.from(), Address(0x0E02));
     }
 
     /// ``UDSSVC_ARCH_0026`` — the application declared the record widths, so the client
     /// hands back typed pairs rather than the undivided response. Two identifiers of
     /// different widths in one response is the case that makes the point: nothing but
     /// `split_record` can tell where the first record ends.
+    ///
+    /// Walking yields pairs, not `Result`s: the response was checked when the walk was
+    /// built.
     #[test]
     fn a_response_splits_into_the_records_the_application_declared() {
         // 0xF40D and its one byte, then 0xF190 and its seventeen.
@@ -419,15 +452,11 @@ mod tests {
         };
         front.copy_from_slice(&header);
 
-        let mut records = Records::<TestDid>::new(&bytes);
-        assert_eq!(
-            records.next(),
-            Some(Ok((TestDid::VehicleSpeed, &[0x40][..])))
-        );
-        assert_eq!(
-            records.next(),
-            Some(Ok((TestDid::VinNumber, &[0x00; 17][..])))
-        );
+        let Ok(mut records) = Records::<TestDid>::validate(&bytes) else {
+            return;
+        };
+        assert_eq!(records.next(), Some((TestDid::VehicleSpeed, &[0x40][..])));
+        assert_eq!(records.next(), Some((TestDid::VinNumber, &[0x00; 17][..])));
         assert_eq!(records.next(), None);
     }
 
@@ -435,24 +464,44 @@ mod tests {
     /// positively with no records has answered.
     #[test]
     fn an_empty_response_yields_no_records() {
-        assert_eq!(Records::<TestDid>::new(&[]).count(), 0);
+        let Ok(records) = Records::<TestDid>::validate(&[]) else {
+            return;
+        };
+        assert_eq!(records.count(), 0);
     }
 
-    /// A record shorter than the application declared is `Short`, and the walk stops —
-    /// once the framing is lost there is no next identifier to find.
+    /// A record shorter than the application declared is rejected when the walk is
+    /// built, not discovered part-way through one. The distinction is the point of
+    /// validating: a caller never sees a response half-walked.
     #[test]
-    fn a_truncated_record_ends_the_walk() {
-        let mut records = Records::<TestDid>::new(&[0xF1, 0x90, 0x00, 0x00]);
-        assert_eq!(records.next(), Some(Err(RecordError::Short)));
-        assert_eq!(records.next(), None);
+    fn a_truncated_record_is_rejected_before_the_walk() {
+        assert_eq!(
+            Records::<TestDid>::validate(&[0xF1, 0x90, 0x00, 0x00]),
+            Err(RecordError::Short)
+        );
     }
 
     /// An identifier this application never defined is its own error. On a request that
-    /// is `requestOutOfRange`; in a response it is a server naming something unasked for.
+    /// is `requestOutOfRange`; in a response it is a server naming something unasked
+    /// for, and it too is caught before any pair is handed out.
     #[test]
-    fn an_identifier_the_application_does_not_define_is_reported() {
-        let mut records = Records::<TestDid>::new(&[0xDE, 0xAD, 0x00]);
-        assert_eq!(records.next(), Some(Err(RecordError::UnknownIdentifier)));
-        assert_eq!(records.next(), None);
+    fn an_identifier_the_application_does_not_define_is_rejected() {
+        assert_eq!(
+            Records::<TestDid>::validate(&[0xDE, 0xAD, 0x00]),
+            Err(RecordError::UnknownIdentifier)
+        );
+    }
+
+    /// The records before a bad one are not handed out either. A response whose first
+    /// pair is whole and whose second is truncated is rejected entire — which is what
+    /// "there is no half-walked response" means, and what a per-record `Result` could
+    /// not express.
+    #[test]
+    fn a_good_record_before_a_bad_one_is_not_yielded() {
+        let response = [0xF4, 0x0D, 0x40, 0xF1, 0x90, 0x00];
+        assert_eq!(
+            Records::<TestDid>::validate(&response),
+            Err(RecordError::Short)
+        );
     }
 }

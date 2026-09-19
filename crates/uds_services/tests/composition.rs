@@ -14,13 +14,14 @@
 
 use uds_protocol::NegativeResponseCode as Nrc;
 use uds_services::{
-    Address, Ai, ClearDiagnosticInformation, ClientSet, ClientStorage,
+    Address, Ai, Answer, ClearDiagnosticInformation, ClientSet, ClientStorage,
     CommunicationControl, CommunicationControlType, CommunicationType, DataIdentifier,
     DataTransfer, DtcReportKind, DtcStatusMask, FunctionalGroupIdentifier, KeyVerdict,
     Mtype, PhysicalKeepAlive, ReadDataByIdentifier, ReadDtcInfoSubFunction,
-    ReadDtcInformation, RecordError, Reloads, ResponseSink, SecurityAccess, SecurityLevel,
-    SecurityPolicy, ServerParams, ServiceSet, Sink, Storage, SubnetNumber, TaType,
-    Timestamp, TransferRequest, TransportEvent, UdsTransport, uds_client, uds_server,
+    ReadDtcInformation, RecordError, Reloads, Response, ResponseSink, SecurityAccess,
+    SecurityLevel, SecurityPolicy, ServerParams, ServiceSet, Sink, Storage, SubnetNumber,
+    TaType, Timestamp, TransferRequest, TransportEvent, UdsTransport, uds_client,
+    uds_server,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -411,16 +412,55 @@ fn the_client_constructs_in_a_static() {
 ///
 /// It also pins the borrow this crate could not express until the client owned storage —
 /// `Records<'_, Did>` borrows the response buffer out of `&mut Tester`. Never awaited, so
-/// the `todo!()` body is compiled and not run: a compile-time assertion in a test's
+/// the `todo!()` bodies are compiled and not run: compile-time assertions in a test's
 /// clothes, as `transport.rs`'s borrow test is.
+///
+/// What they assert beyond the borrow is the shape of a read. Reaching a record is a
+/// `match` and a `for`: the walk yields pairs rather than `Result`s, because the response
+/// was checked when it was built.
 #[expect(dead_code, reason = "compiled for its signature, never called")]
 async fn read_the_vin(tester: &mut Tester) -> Result<(), ()> {
-    let answer = tester
+    match tester
         .read_data_by_identifier(Address(0x0E00), &[Did::VinNumber])
-        .await?;
-    if let uds_services::Response::Positive(records) = answer {
-        for record in records {
-            let _ = record;
+        .await?
+    {
+        Response::Positive(records) => {
+            for (did, record) in records {
+                let _ = (did, record);
+            }
+        }
+        Response::Negative(code) => {
+            let _ = code;
+        }
+        Response::Malformed(error) => {
+            let _ = error;
+        }
+        Response::NoResponseExpected => {}
+    }
+    Ok(())
+}
+
+/// The functional path, which is where the depth was worst: an answer is one `match`, and
+/// every case names the server that gave it. There is no "nothing came back" arm, because
+/// a silent server produces no answer at all — the window closing is `None`.
+#[expect(dead_code, reason = "compiled for its signature, never called")]
+async fn read_the_vin_from_every_server(tester: &mut Tester) -> Result<(), ()> {
+    let mut answers =
+        tester.read_data_by_identifier_functional(Address(0x0E00), &[Did::VehicleSpeed]);
+    while let Some(answer) = answers.next().await {
+        match answer? {
+            Answer::Positive { from, records } => {
+                for (did, record) in records {
+                    let _ = (from, did, record);
+                }
+            }
+            Answer::Negative { from, code } => {
+                let _ = (from, code);
+            }
+            Answer::Malformed { from, error } => {
+                let _ = (from, error);
+            }
+            _ => {}
         }
     }
     Ok(())
