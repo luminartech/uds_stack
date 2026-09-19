@@ -22,7 +22,7 @@
 use crate::storage::ClientStorage;
 use crate::{DataIdentifier, RecordError, UdsTransport};
 use uds_protocol::NegativeResponseCode;
-use uds_session::{Address, KeepAlive};
+use uds_session::{Address, KeepAliveMode};
 
 /// One application's identifier vocabulary, with the storage derived from it.
 ///
@@ -85,7 +85,7 @@ pub struct Responses<
     'c,
     C: ClientSet,
     T: UdsTransport,
-    K: KeepAlive,
+    K: KeepAliveMode,
     const PHYS: usize,
     const FUNC: usize,
     const R: usize = 0,
@@ -96,7 +96,7 @@ pub struct Responses<
 impl<
     C: ClientSet,
     T: UdsTransport,
-    K: KeepAlive,
+    K: KeepAliveMode,
     const PHYS: usize,
     const FUNC: usize,
     const R: usize,
@@ -240,7 +240,7 @@ impl<'d, D: DataIdentifier> Iterator for Records<'d, D> {
 pub struct Client<
     C: ClientSet,
     T: UdsTransport,
-    K: KeepAlive,
+    K: KeepAliveMode,
     const PHYS: usize,
     const FUNC: usize,
     const R: usize = 0,
@@ -253,7 +253,7 @@ pub struct Client<
 impl<
     C: ClientSet,
     T: UdsTransport,
-    K: KeepAlive,
+    K: KeepAliveMode,
     const PHYS: usize,
     const FUNC: usize,
     const R: usize,

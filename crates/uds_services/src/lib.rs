@@ -91,7 +91,7 @@ pub use transport::{
 /// Re-exported for the reason the protocol vocabulary above is: [`crate::uds_client`]'s
 /// `keep_alive = ..` names one, and an application should not take a dependency on
 /// `uds_session` to write it.
-pub use uds_session::{FunctionalKeepAlive, KeepAlive, PhysicalKeepAlive};
+pub use uds_session::{FunctionalKeepAlive, KeepAliveMode, PhysicalKeepAlive};
 
 mod select;
 
