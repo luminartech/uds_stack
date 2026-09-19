@@ -181,6 +181,7 @@ dependencies = [
  "simple_doip",
  "thiserror",
  "uds_protocol",
+ "uds_services",
  "uds_session",
 ]
 
@@ -192,6 +193,15 @@ dependencies = [
  "bitmask-enum",
  "serde",
  "thiserror",
+]
+
+[[package]]
+name = "uds_services"
+version = "0.0.0"
+dependencies = [
+ "automotive-wire-codec",
+ "uds_protocol",
+ "uds_session",
 ]
 
 [[package]]

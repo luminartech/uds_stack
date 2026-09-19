@@ -22,6 +22,14 @@ simple_doip = { path = "../simple_doip", default-features = false }
 uds_protocol = { path = "../uds_protocol", default-features = false }
 uds_session = { path = "../uds_session", default-features = false }
 
+# The seam this crate sits below. uds_services declares UdsTransport and owns
+# TransportEvent; this crate implements the first and returns the second, so
+# both arrive from there rather than being mirrored here. The dependency arrow
+# runs this way and only this way — uds_services never names a transport
+# (UDSSVC_ARCH_0002), which is what keeps a binding additive at the application.
+# It has no feature table, so nothing below forwards to it.
+uds_services = { path = "../uds_services", default-features = false }
+
 # automotive-wire-codec is deliberately NOT a direct dependency. Its `Encode`
 # and `Decode` are re-exported by simple_doip::messages, which is the crate
 # this one is layered on, so the codec vocabulary arrives through the layer

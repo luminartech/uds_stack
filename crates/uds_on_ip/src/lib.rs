@@ -32,13 +32,18 @@
 //! `uds_session::Client` or `uds_session::Server` — `UDSS_LLR_0029` fixes the
 //! role at creation, so a node acting as both holds two instances rather than
 //! one session object — supplies its inputs, drains its actions, and calls this
-//! crate through a trait it declares.
+//! crate through the trait it declares.
 //!
-//! That trait does not exist yet — `uds_services` is still being written — so
-//! [`transport::DoIpTransport`] carries its methods as inherent methods for
-//! now. When it lands, the dependency edge will run from here to
-//! `uds_services` and not the other way, because `uds_services` never names a
-//! transport.
+//! That trait is [`uds_services::UdsTransport`], and
+//! [`transport::DoIpTransport`] implements it. The dependency edge runs from
+//! here to `uds_services` and not the other way, because `uds_services` never
+//! names a transport (`UDSSVC_ARCH_0002`) — which is what keeps a binding
+//! additive at the application.
+//!
+//! The event type is `uds_services::TransportEvent`, taken from there rather
+//! than mirrored here. A mirror is two vocabularies for one seam; this crate
+//! carried one for a day and the two had already diverged on whether an event
+//! borrows the driver's buffer when they were compared.
 //!
 //! ## `no_std`, alloc-freedom, and no runtime
 //!
@@ -54,9 +59,12 @@
 //! ## Status
 //!
 //! **Prototype.** The public API is unstable and most bodies are
-//! unimplemented. Known gaps are recorded in `ARCHITECTURE.md` §9, which ships
-//! with the package, and each one is also named at the item it affects — see
-//! [`DoIpTransport::next_event`](transport::DoIpTransport::next_event)'s missing socket bound and
+//! unimplemented — this crate's `impl` is the first real implementation of
+//! `UdsTransport`, so the seam's shape is attested by one fake transport in
+//! `uds_services` and nothing else. Known gaps are recorded in
+//! `ARCHITECTURE.md` §9, which ships with the package, and each one is also
+//! named at the item it affects — see
+//! [`UdsTransport::next_event`](uds_services::UdsTransport::next_event)'s missing socket bound and
 //! [`mapping::PERIODIC_RESPONSE_PAYLOAD_TYPE`]'s unreachable payload type.
 //!
 //! ## What this crate deliberately does not do
@@ -83,4 +91,9 @@ pub mod profile;
 pub mod transport;
 
 pub use error::Error;
-pub use transport::{DoIpTransport, TransportEvent};
+pub use transport::DoIpTransport;
+
+// `TransportEvent` is deliberately not re-exported. It is
+// `uds_services::TransportEvent`, and a caller matching on one reaches for it
+// where the trait that produces it lives; re-exporting would put the same type
+// under two paths and invite the mirror back under a different name.

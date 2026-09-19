@@ -38,6 +38,10 @@ pub const fn to_logical(addr: Address) -> simple_doip::LogicalAddress {
 }
 
 /// ISO 13400-2 logical address to ISO 14229-2 `S_TA`.
+///
+/// The inverse of [`to_logical`], and the direction [`classify`] takes: an
+/// inbound diagnostic message carries the responder's logical address, which
+/// becomes the `S_AI[SA]` the driver needs to tell functional responses apart.
 #[must_use]
 pub const fn from_logical(addr: simple_doip::LogicalAddress) -> Address {
     Address(addr.0)
@@ -47,11 +51,9 @@ pub const fn from_logical(addr: simple_doip::LogicalAddress) -> Address {
 ///
 /// ISO 14229-5:2022 REQ 7.9 and REQ 7.11 make a server-initiated close part of
 /// the `DiagnosticSessionControl` and `ECUReset` flows, so a close is not
-/// necessarily a fault.
-// Constructed once `classify`'s body lands. Note that this suppression
-// clearing is NOT evidence that a close reaches the driver: `classify` will
-// build this, and `next_event` may then have nowhere to put it. That hole is
-// held by `the_two_cases_with_nowhere_to_go` below, not by this attribute.
+/// necessarily a fault. This becomes
+/// `uds_services::TransportEvent::Closed`'s `expected`, which is binary because
+/// the driver's decision is; see `a_close_cause_is_the_seams_expected_flag`.
 #[expect(
     dead_code,
     reason = "constructed once classify's body replaces its todo!()"
@@ -74,10 +76,12 @@ pub(crate) enum CloseCause {
 /// # Nothing in this crate acts on it yet
 ///
 /// Published as vocabulary, not as a capability. A message with this payload
-/// type can be neither received (`simple_doip`'s `Payload` models only the
-/// types ISO 13400-2 defines, with no catch-all) nor delivered (the event seam
-/// has no periodic case). Both are open with the neighbouring crates; until
-/// they close, this constant names the number and promises nothing else.
+/// type cannot yet be *received*: `simple_doip`'s `Payload` models only the
+/// types ISO 13400-2 defines, with no catch-all carrying an unmodelled type's
+/// bytes. Delivery is no longer a gap —
+/// `uds_services::TransportEvent::Periodic` exists as of 2026-09-17 — so one
+/// half of this is closed and the constant still promises nothing until the
+/// other is.
 ///
 /// REQ 7.17's length bound — a periodic data record must not exceed the
 /// non-segmented `UDSonIP` message limit — has no home here yet either. It was
@@ -131,11 +135,24 @@ pub(crate) enum DoIpEvent<'a> {
         peer: Address,
         /// The acknowledgement's outcome.
         ///
-        /// The rule for deriving it — read the ack code, never the payload
-        /// type — is stated once, on
-        /// [`TransportEvent::DataConf`](crate::TransportEvent), which is where
-        /// a caller reads it. Restating it here is how the two copies drifted
-        /// the first time.
+        /// Derived from the acknowledgement's **code**, never from its payload
+        /// type. The two disagree in practice: `simple_doip`'s
+        /// `Message::diagnostic_message_ack` stamps the positive payload type
+        /// (`0x8002`) into the header whatever the ack code says — its own
+        /// documented limitation — so reading the payload type would report a
+        /// rejection as an acceptance and start `tP_Client` for a message the
+        /// entity never accepted. ISO 13400-2 makes the code the authority
+        /// regardless of which crate is emitting.
+        ///
+        /// A rejection cannot yet say why. `SResult::Transport` carries a
+        /// `TransportError(u16)` precisely so a lower layer's own code reaches
+        /// the driver unchanged, and there is nothing to put in it:
+        /// `Payload::decode` maps a received `0x8003` to a fieldless variant,
+        /// discarding the NACK code, both addresses and the echoed request
+        /// bytes. Every rejection therefore collapses to "the transport refused
+        /// it", where ISO 13400-2 distinguishes an unknown target address from
+        /// routing not activated from an out-of-memory entity — three failures a
+        /// tester acts on differently. Raised with `simple_doip` 2026-09-17.
         result: SResult,
     },
     /// A periodic response (`DoIP` `0x8004`).
@@ -216,58 +233,59 @@ mod tests {
         );
     }
 
-    /// The two classified cases that have no seam event to become.
+    /// Every classified case has a seam event to become.
     ///
     /// This match is exhaustive and the crate denies `wildcard_enum_match_arm`,
     /// so a new [`DoIpEvent`] case breaks this build rather than being quietly
-    /// absorbed by a `_` arm. `Periodic` and `Closed` reach `unreachable` arms
-    /// *by design*: they are the hole, located here in code rather than left in
-    /// a doc comment two files away.
+    /// absorbed by a `_` arm.
     ///
-    /// **When `TransportEvent` gains a `Periodic` or `Closed` case**, delete the
-    /// corresponding arm here and translate it in `transport::next_event`. The
-    /// companion guard is `transport::tests::the_seam_carries_four_cases`,
-    /// which stops compiling at the same moment.
+    /// It replaces `the_two_cases_with_nowhere_to_go`, which held open the two
+    /// holes this seam used to have: a periodic response (REQ 7.16) and a
+    /// connection close (REQ 7.9, REQ 7.11) could both be classified here and
+    /// had nowhere to be delivered. `uds_services` published
+    /// `TransportEvent::Periodic` and `TransportEvent::Closed` on 2026-09-17,
+    /// so the holes are closed and this asserts the opposite property.
     ///
-    /// The danger this exists for is specific: `classify` will construct all
-    /// four cases, so `#[expect(dead_code)]` on [`DoIpEvent`] clears itself
-    /// whether or not the two holes were ever filled. Nothing else in the build
-    /// would notice a periodic response being decoded and dropped.
+    /// The danger it exists for is unchanged: `classify` constructs all four
+    /// cases, so `#[expect(dead_code)]` on [`DoIpEvent`] clears itself whether
+    /// or not each case reaches the driver. Nothing else in the build would
+    /// notice a periodic response being decoded and dropped.
     #[test]
-    fn the_two_cases_with_nowhere_to_go() {
-        /// The `TransportEvent` case this would need, or `None` if it already
-        /// has one. Each hole names its own missing case rather than sharing a
-        /// `false` with the other, so filling one is an edit to one arm.
-        fn missing_seam_case(event: &DoIpEvent<'_>) -> Option<&'static str> {
+    fn every_classified_case_has_a_seam_event() {
+        /// The `uds_services::TransportEvent` case this becomes. A `&'static
+        /// str` rather than a constructed event, because building one needs a
+        /// buffer to borrow and the mapping is what is under test.
+        fn seam_case(event: &DoIpEvent<'_>) -> &'static str {
             match event {
-                DoIpEvent::Ind { .. } | DoIpEvent::Conf { .. } => None,
-                DoIpEvent::Periodic { .. } => Some("Periodic"),
-                DoIpEvent::Closed { .. } => Some("Closed"),
+                DoIpEvent::Ind { .. } => "DataInd",
+                DoIpEvent::Conf { .. } => "DataConf",
+                DoIpEvent::Periodic { .. } => "Periodic",
+                DoIpEvent::Closed { .. } => "Closed",
             }
         }
 
         assert_eq!(
-            missing_seam_case(&DoIpEvent::Ind {
+            seam_case(&DoIpEvent::Ind {
                 source: Address(0x0E80),
                 data: &[],
             }),
-            None,
+            "DataInd",
         );
         assert_eq!(
-            missing_seam_case(&DoIpEvent::Closed {
+            seam_case(&DoIpEvent::Closed {
                 cause: CloseCause::ServiceInitiated,
             }),
-            Some("Closed"),
-            "ISO 14229-5:2022 REQ 7.9 / 7.11 — a close still has no seam case",
+            "Closed",
+            "ISO 14229-5:2022 REQ 7.9 / 7.11",
         );
         assert_eq!(
-            missing_seam_case(&DoIpEvent::Periodic {
+            seam_case(&DoIpEvent::Periodic {
                 source: Address(0x0E80),
                 pdid: 0x01,
                 data: &[],
             }),
-            Some("Periodic"),
-            "ISO 14229-5:2022 REQ 7.16 — a periodic response still has no seam case",
+            "Periodic",
+            "ISO 14229-5:2022 REQ 7.16",
         );
     }
 

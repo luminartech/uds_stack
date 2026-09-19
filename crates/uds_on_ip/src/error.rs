@@ -1,21 +1,25 @@
 //! Error taxonomy.
 //!
 //! [`Error`] is a concrete enum, and a short one: this crate is a transport,
-//! so most of what can go wrong here reaches the caller as a *value* on the
+//! so most of what can go wrong here reaches the driver as a *value* on the
 //! event seam rather than as an error. An exchange's outcome is
-//! [`TransportEvent::DataConf`](crate::TransportEvent)'s `SResult`, a message
-//! too large for the caller's buffer is
-//! [`TransportEvent::DataTooLong`](crate::TransportEvent), and what to do with
-//! the connection after an exchange is [`profile::PostExchange`](crate::profile::PostExchange).
-//! Only a failure that leaves nothing to report at all is an [`Error`].
+//! `uds_services::TransportEvent::DataConf`'s `SResult`, a message too large
+//! for the driver's buffer is `TransportEvent::DataTooLong`, and a connection
+//! that went away is `TransportEvent::Closed`. Only a failure that leaves
+//! nothing to report at all is an [`Error`].
 //!
 //! Two variants, therefore, and one absence worth stating. A *closed
-//! connection* has no variant: ISO 14229-5:2022 REQ 7.9 and REQ 7.11 make a
-//! server-initiated close part of the `DiagnosticSessionControl` and `ECUReset`
-//! flows, so an expected close and a failed one are different events, and one
-//! variant conflating them would be worse than the gap. It belongs on the event
-//! seam, which `uds_services` owns; raised with them 2026-09-17 and tracked by
-//! `mapping::tests::the_two_cases_with_nowhere_to_go`.
+//! connection* has no variant, and now needs none: ISO 14229-5:2022 REQ 7.9 and
+//! REQ 7.11 make a server-initiated close part of the
+//! `DiagnosticSessionControl` and `ECUReset` flows, so an expected close
+//! arriving as an `Err` would have a driver treat a conformant flow as a
+//! failure. `uds_services` published `TransportEvent::Closed { expected }` on
+//! 2026-09-17, which is where it belongs.
+//!
+//! This type is [`uds_services::UdsTransport::Error`], so a socket failure is
+//! this crate's to name. It has no variant yet — see
+//! [`UdsTransport::next_event`](uds_services::UdsTransport::next_event) for
+//! why there is no bound to take one from.
 
 /// Errors raised by this crate.
 #[derive(Debug, thiserror::Error)]

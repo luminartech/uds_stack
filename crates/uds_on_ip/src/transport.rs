@@ -1,9 +1,10 @@
 //! The crate's outward interface.
 //!
-//! [`DoIpTransport`] carries the methods `uds_services::UdsTransport`
-//! requires. The `impl` block arrives once that crate publishes the trait;
-//! until then these are inherent methods with the agreed signatures, so the
-//! implementation is exercised rather than blocked.
+//! [`DoIpTransport`] implements [`uds_services::UdsTransport`], which is the
+//! whole of what this crate owes the stack. The trait and its
+//! [`TransportEvent`](uds_services::TransportEvent) arrive from `uds_services`
+//! rather than being mirrored here: a mirror is two vocabularies for one seam,
+//! and the two drifted apart within a day of being written.
 //!
 //! Nothing here is shaped by `uds_services`: the trait's own test is that a
 //! CAN binding implements the same methods, so a `DoIP`-shaped seam would be
@@ -11,117 +12,8 @@
 
 use crate::error::Error;
 use crate::mapping::target_of;
-use uds_session::{Ai, Reloads, SResult, Timestamp};
-
-/// The driver's view of what arrived, or that its deadline passed first.
-///
-/// Mirrors `uds_services::TransportEvent`, which is the trait's type once it
-/// is published.
-///
-/// Two inbound facts have no case here, and that is an open hole rather than a
-/// decision: a driver looping on [`next_event`](DoIpTransport::next_event)
-/// cannot learn that its connection went away (ISO 14229-5:2022 REQ 7.9,
-/// REQ 7.11), and a periodic response (REQ 7.16) has nowhere to be delivered.
-/// Both are cases on a type `uds_services` owns; raised with them 2026-09-17,
-/// and held by `mapping::tests::the_two_cases_with_nowhere_to_go` rather than
-/// by this paragraph.
-///
-/// # Why this carries no lifetime
-///
-/// An earlier shape was `TransportEvent<'a>` with `DataInd` holding
-/// `data: &'a [u8]`, returned from `next_event(&mut self, ..)`. That ties the
-/// event's lifetime to the transport's `&mut self`, so holding the request
-/// bytes holds the transport mutably borrowed and
-/// [`t_data_req`](DoIpTransport::t_data_req) can never be called — the server
-/// could never answer the request it had just received. It is not a corner
-/// case: every inbound path reaches it, because the decoded request borrows
-/// the bytes and the handler writes its response while those borrows are live.
-///
-/// Reported by `uds_services` on 2026-09-17 and fixed here by having
-/// [`next_event`](DoIpTransport::next_event) fill a buffer the caller owns.
-/// The borrow ends when the call returns, so this type is `'static` and the
-/// offending lifetime does not exist.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum TransportEvent {
-    /// A complete inbound message, written into the buffer the caller passed
-    /// to [`next_event`](DoIpTransport::next_event).
-    DataInd {
-        /// Addressing, with the responder's `S_AI[SA]` — the only way to tell
-        /// functional responses apart.
-        ai: Ai,
-        /// How many bytes of the caller's buffer the payload occupies. The
-        /// payload is that buffer's first `len` bytes.
-        len: usize,
-    },
-    /// A message longer than the buffer supplied, of which only the front
-    /// arrived.
-    ///
-    /// Its first `len` bytes are in the caller's buffer and `declared` is how
-    /// long the message actually was. This is **classifiable but not
-    /// dispatchable**: enough to read the service identifier and answer
-    /// `busyRepeatRequest` (0x21), which ISO 14229-1 8.7.6 owes a request
-    /// arriving while a service is in progress, and not enough to decode.
-    ///
-    /// # Why a variant rather than a flag on `DataInd`
-    ///
-    /// `DataInd { ai, len, truncated }` was the alternative. It loses to the
-    /// asymmetry of how each is ignored: `let DataInd { ai, len, .. }` discards
-    /// the flag in ordinary, idiomatic destructuring, and the consequence is a
-    /// fragment decoded as though it were a whole message. A separate variant
-    /// can be swallowed by a wildcard arm too, but swallowing it *drops* the
-    /// message, which costs a retry the client is already required to make.
-    /// One shape fails safe and the other fails dangerous.
-    DataTooLong {
-        /// Addressing, so the caller can answer the peer it came from.
-        ai: Ai,
-        /// How many bytes of the caller's buffer hold the front of the
-        /// message. At least the service identifier, unless the message was
-        /// empty.
-        len: usize,
-        /// How long the message actually was.
-        ///
-        /// Free on `DoIP`: ISO 13400-2's generic header carries the payload
-        /// length, and it is read before the payload. It is what tells an
-        /// entity how large its buffer needed to be — without it, a caller
-        /// learns only "too long" and can never size for the traffic it
-        /// actually sees.
-        declared: usize,
-    },
-    /// The outcome of a requested transmission.
-    ///
-    /// Raised from the diagnostic message **acknowledgement**, never from the
-    /// socket write returning, because the acknowledgement is what starts
-    /// `tP_Client` (ISO 14229-2:2021 REQ 5.9).
-    DataConf {
-        /// The addressing of the transmission being confirmed.
-        ai: Ai,
-        /// Derived from the acknowledgement's **code**, never from its
-        /// payload type.
-        ///
-        /// The two disagree in practice. `simple_doip`'s
-        /// `Message::diagnostic_message_ack` stamps the positive payload type
-        /// (`0x8002`) into the header whatever the ack code says — its own
-        /// documented limitation — so reading the payload type would report a
-        /// rejection as an acceptance and start `tP_Client` for a message the
-        /// entity never accepted. ISO 13400-2 makes the code the authority
-        /// regardless of which crate is emitting.
-        ///
-        /// # A rejection cannot yet say why
-        ///
-        /// `SResult::Transport` carries a `TransportError(u16)` precisely so a
-        /// lower layer's own code reaches the caller unchanged, and there is
-        /// nothing to put in it: `Payload::decode` maps a received `0x8003` to
-        /// a fieldless variant, discarding the NACK code, both addresses and
-        /// the echoed request bytes. So every rejection currently collapses to
-        /// "the transport refused it", where ISO 13400-2 distinguishes an
-        /// unknown target address from routing not activated from an
-        /// out-of-memory entity — three failures a tester acts on differently.
-        /// Raised with `simple_doip` 2026-09-17.
-        result: SResult,
-    },
-    /// The deadline the driver supplied passed before anything arrived.
-    Deadline,
-}
+use uds_services::{TransportEvent, UdsTransport};
+use uds_session::{Ai, Reloads, Timestamp};
 
 /// ISO 14229-5 over `DoIP`.
 ///
@@ -137,14 +29,12 @@ pub struct DoIpTransport<S> {
     outbound_max: Option<usize>,
 }
 
-// Written by hand rather than derived. `#[derive(Debug)]` here would generate
-// a conditional `impl<S: Debug> Debug for DoIpTransport<S>`; on this toolchain
-// `missing_debug_implementations` happens to accept that as covering the
-// type, but the conditional impl is still the wrong API: it leaves
-// `DoIpTransport<S>` with no `Debug` at all for any socket that does not
-// itself implement `Debug`, which is the common case rather than the
-// exception. An unconditional impl that treats the socket as opaque covers
-// every `S`.
+// Written by hand rather than derived, and held by
+// `tests::a_transport_over_an_opaque_socket_is_debug` rather than by this
+// paragraph. `#[derive(Debug)]` would generate a conditional
+// `impl<S: Debug> Debug for DoIpTransport<S>`, leaving `DoIpTransport<S>` with
+// no `Debug` at all for any socket that is not itself `Debug` — the common case
+// rather than the exception.
 impl<S> core::fmt::Debug for DoIpTransport<S> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("DoIpTransport")
@@ -157,11 +47,13 @@ impl<S> core::fmt::Debug for DoIpTransport<S> {
 
 impl<S> DoIpTransport<S> {
     /// A transport over `socket`, loading the session layer's response timer
-    /// with `reloads`, and advertising no size bound in either direction until
-    /// one is learned.
+    /// with `reloads`.
     ///
     /// See [`profile::bench_reloads`](crate::profile::bench_reloads) for values
     /// suitable for a bench, and for why they are not suitable for a vehicle.
+    ///
+    /// The peer's size bound starts unknown, because it is learned from the
+    /// peer's entity status response rather than assumed.
     pub const fn new(socket: S, reloads: Reloads) -> Self {
         Self {
             socket,
@@ -182,9 +74,9 @@ impl<S> DoIpTransport<S> {
     /// answers the ISO 13400-2:2019 Table 11 entity status request itself and
     /// fills `max_data_size` from its own receive capacity, so a number stored
     /// here would reach no response. `uds_services` reached the same conclusion
-    /// from the other side and removed `inbound_max` from its transport trait:
-    /// the driver derives the figure from the services it assembled, and
-    /// nothing on the seam ever asked for it.
+    /// from the other side and removed `inbound_max` from
+    /// [`UdsTransport`]: the driver derives the figure from the services it
+    /// assembled and nothing on the seam ever asked for it.
     ///
     /// An `inbound_max`/`set_inbound_max` pair used to sit here, with a
     /// paragraph explaining how the advertised number and the buffer that must
@@ -194,46 +86,10 @@ impl<S> DoIpTransport<S> {
     pub fn set_outbound_max(&mut self, max: Option<usize>) {
         self.outbound_max = max;
     }
+}
 
-    /// The largest `A_PDU` the peer will accept, where it has advertised one.
-    ///
-    /// This is what bounds a *response*: MDS is defined as the maximum size of
-    /// one logical **request** the entity can process, so a server asking what
-    /// it may send is asking about the client.
-    #[must_use]
-    pub const fn outbound_max(&self) -> Option<usize> {
-        self.outbound_max
-    }
-
-    /// The `tP_Client` reload pair this transport dictates.
-    ///
-    /// [`uds_session::Reloads`], because the session layer owns the pair. What
-    /// this transport dictates is *which* pair: `DoIP` has no `T_DataSOM.ind`,
-    /// so ISO 14229-2:2021 REQ 5.11 gives it `tP6` rather than `tP2`. The
-    /// session layer does not distinguish the two, so the choice lives in these
-    /// values and nowhere else.
-    #[must_use]
-    pub const fn channel_timing(&self) -> Reloads {
-        self.reloads
-    }
-
-    /// The current time.
-    ///
-    /// [`Timestamp`] rather than a bare `u32`: it is a newtype over exactly
-    /// that `u32`, and it carries `interval_since`, the modulo-2³² subtraction
-    /// `UDSS_LLR_0019` requires. Typing the clock this way means the value
-    /// `uds_session`'s `next_deadline` returns can be handed straight back to
-    /// [`next_event`](Self::next_event) with no arithmetic on either side of
-    /// the seam.
-    ///
-    /// This is the same argument `profile` already makes for keeping
-    /// milliseconds rather than a `Duration`, one step further: carrying a bare
-    /// `u32` where a `Timestamp` is meant leaves the conversion implicit rather
-    /// than absent.
-    #[must_use]
-    pub fn now(&self) -> Timestamp {
-        todo!("the clock belongs to whatever S is; see the missing-bound note on next_event")
-    }
+impl<S> UdsTransport for DoIpTransport<S> {
+    type Error = Error;
 
     /// `T_Data.req` — map a `T_PDU` onto a `DoIP` diagnostic message and send it.
     ///
@@ -242,53 +98,45 @@ impl<S> DoIpTransport<S> {
     /// [`Error::Mapping`] if the addressing cannot be carried: the two remote
     /// message types have no `DoIP` representation.
     ///
-    /// A *socket* failure has no variant yet — see
-    /// [`next_event`](Self::next_event).
+    /// A *socket* failure has no variant yet — see [`Self::next_event`].
     #[expect(
         unused_variables,
         reason = "data is unused until t_data_req's body replaces the todo!() below"
     )]
-    pub async fn t_data_req(&mut self, ai: Ai, data: &[u8]) -> Result<(), Error> {
+    async fn t_data_req(&mut self, ai: Ai, data: &[u8]) -> Result<(), Error> {
         let _target = target_of(ai)?;
         todo!("REQ 4.3 Table 4 — send as a DoIP diagnostic message")
     }
 
-    /// The next inbound event, or [`TransportEvent::Deadline`] when `deadline`
-    /// passes first.
+    /// The next inbound event, or
+    /// [`TransportEvent::Deadline`](uds_services::TransportEvent::Deadline)
+    /// when `deadline` passes first.
     ///
-    /// An inbound payload is written into `buffer` and reported as
-    /// [`TransportEvent::DataInd`]'s `len`; the caller reads
-    /// `&buffer[..len]`. `deadline` is the session layer's `next_deadline`, so
-    /// this transport never invents one.
-    ///
-    /// # Why the caller supplies the buffer
-    ///
-    /// So that the returned event borrows nothing from `self`. See
-    /// [`TransportEvent`] for the defect that shape had. It also means this
-    /// crate holds no inbound buffer of its own: the `DoIP` header is read into
-    /// a small local array and the payload goes straight into `buffer`, so the
-    /// only bytes that outlive the call are the caller's own.
+    /// An inbound payload is written into `buffer` and reported as the subslice
+    /// it occupies, so the event borrows the caller's buffer and never `self` —
+    /// which is what lets the driver answer a request while its bytes are still
+    /// live. `deadline` is the session layer's `next_deadline`, so this
+    /// transport never invents one.
     ///
     /// # A message longer than `buffer`
     ///
-    /// Reported as [`TransportEvent::DataTooLong`], never as a `DataInd` whose
-    /// `len` happens to equal `buffer.len()`. The caller must be able to tell a
-    /// whole message from the front of a longer one: the first is dispatchable
-    /// and the second is only classifiable, and delivering the second as the
-    /// first would have a decoder read a fragment as a message.
+    /// Reported as
+    /// [`TransportEvent::DataTooLong`](uds_services::TransportEvent::DataTooLong),
+    /// never as a `DataInd` whose data happens to fill `buffer`. The caller must
+    /// be able to tell a whole message from the front of a longer one: the first
+    /// is dispatchable and the second is only classifiable.
     ///
-    /// A caller passing a deliberately small buffer — to keep receiving while a
-    /// service is in progress, as ISO 14229-1 8.7.6 requires for the
-    /// functionally addressed `TesterPresent` and the `0x00`–`0x0F` range —
-    /// should expect this whenever an ordinary request arrives in that window.
-    /// It is the normal outcome there, not a fault: 8.7.6 owes that request
+    /// `declared` is always `Some` here. ISO 13400-2's generic header carries
+    /// the payload length and it is read before the payload, so truncation is
+    /// decided before there is a whole message to classify — never by comparing
+    /// what arrived against `buffer.len()` afterwards.
+    ///
+    /// A driver serving a request offers only its small concurrent buffer, as
+    /// ISO 14229-1 8.7.6 requires for the functionally addressed
+    /// `TesterPresent` and the `0x00`–`0x0F` range. Truncation is the normal
+    /// outcome in that window, not a fault: 8.7.6 owes that request
     /// `busyRepeatRequest` (0x21) regardless, and composing one needs the
     /// service identifier and the addressing, both of which this carries.
-    ///
-    /// Truncation is decided from the generic header, whose payload length is
-    /// read before the payload itself — so the decision is made before there is
-    /// a whole message to classify, and never by comparing `len` to
-    /// `buffer.len()` after the fact.
     ///
     /// # Errors
     ///
@@ -304,182 +152,106 @@ impl<S> DoIpTransport<S> {
     /// behind its `codec` feature, which requires `std` and a runtime. No
     /// `no_std` async socket seam exists anywhere in this stack.
     ///
-    /// The shape this will take is settled — `uds_services`' `UdsTransport`
-    /// declares an associated `Error`, so the socket's failure is this crate's
-    /// to name — but the bound it names is an open decision. Until it lands,
-    /// the failure this method is most likely to have is unrepresentable.
+    /// [`UdsTransport::Error`] is this crate's to name, so the shape is settled
+    /// and only the bound is open. Until it lands, the failure this method is
+    /// most likely to have is unrepresentable.
     #[expect(
         unused_variables,
         reason = "buffer and deadline are unused until next_event's body replaces the todo!()"
     )]
-    pub async fn next_event(
+    async fn next_event<'b>(
         &mut self,
-        buffer: &mut [u8],
+        buffer: &'b mut [u8],
         deadline: Option<Timestamp>,
-    ) -> Result<TransportEvent, Error> {
-        todo!("read a DoIP message, mapping::classify it, translate the two seam cases")
+    ) -> Result<TransportEvent<'b>, Error> {
+        todo!("read a DoIP message, mapping::classify it, translate it onto the seam")
+    }
+
+    /// The largest `A_PDU` the peer will accept, where it has advertised one.
+    ///
+    /// ISO 13400-2:2019 Table 11 — support for *Max. data size* is
+    /// **optional**, so `None` is conformant. MDS is defined as the maximum
+    /// size of one logical **request** an entity can process, so a server
+    /// asking what it may send is asking about the client.
+    fn outbound_max(&self) -> Option<usize> {
+        self.outbound_max
+    }
+
+    /// The `tP_Client` reload pair this transport dictates.
+    ///
+    /// What this transport dictates is *which* pair: `DoIP` has no
+    /// `T_DataSOM.ind`, so ISO 14229-2:2021 REQ 5.11 gives it `tP6` rather than
+    /// `tP2`. The session layer does not distinguish the two, so the choice
+    /// lives in these values and nowhere else.
+    fn channel_timing(&self) -> Reloads {
+        self.reloads
+    }
+
+    /// The current time.
+    ///
+    /// [`Timestamp`] rather than a bare `u32`: it is a newtype over exactly
+    /// that `u32`, and it carries `interval_since`, the modulo-2³² subtraction
+    /// `UDSS_LLR_0019` requires. The value `uds_session`'s `next_deadline`
+    /// returns can then be handed straight back to [`Self::next_event`] with no
+    /// arithmetic on either side of the seam.
+    fn now(&self) -> Timestamp {
+        todo!("the clock belongs to whatever S is; see the missing-bound note on next_event")
     }
 }
 
 #[cfg(test)]
 mod tests {
-    /// ISO 13400-2:2019 Table 11 lists *Max. data size* as the fourth item of
-    /// the entity status response and marks its support **optional**, so a
-    /// conformant `DoIP` entity need not advertise one and `None` is a correct
+    use super::DoIpTransport;
+    use crate::profile::bench_reloads;
+    use uds_services::UdsTransport;
+
+    /// ISO 13400-2:2019 Table 11 marks *Max. data size* support **optional**, so
+    /// a conformant `DoIP` entity need not advertise one and `None` is a correct
     /// answer rather than a defect.
     ///
-    /// A bound is therefore reported only where one was learned, and never
-    /// fabricated: a response sink bounded at an invented number would reject
-    /// responses the peer would have accepted.
+    /// A bound is reported only where one was learned, never fabricated: a
+    /// response sink bounded at an invented number would reject responses the
+    /// peer would have accepted.
     #[test]
     fn an_unadvertised_max_data_size_is_none_not_a_guess() {
-        let t = super::DoIpTransport::new((), crate::profile::bench_reloads());
+        let t = DoIpTransport::new((), bench_reloads());
         assert_eq!(t.outbound_max(), None);
     }
 
     /// What the peer advertised is what `outbound_max` reports.
     #[test]
     fn the_peers_bound_is_reported_once_it_is_learned() {
-        let mut t = super::DoIpTransport::new((), crate::profile::bench_reloads());
+        let mut t = DoIpTransport::new((), bench_reloads());
         t.set_outbound_max(Some(4096));
         assert_eq!(t.outbound_max(), Some(4096));
     }
 
-    /// The property whose absence made the driver unwritable.
-    ///
-    /// `TransportEvent` previously carried a lifetime borrowed from
-    /// `next_event`'s `&mut self`, so a driver holding the request bytes could
-    /// not call `t_data_req` to answer them. The assertion is the bound, not
-    /// the call — `assert_static` has no body worth running.
-    ///
-    /// Verified by watching it fail: reintroducing a borrowing variant on the
-    /// enum breaks this line's build, because naming `TransportEvent` without a
-    /// lifetime argument stops resolving.
-    ///
-    /// **If you are here because this line failed to compile, do not repair it
-    /// by writing `TransportEvent<'_>`.** In this position `'_` is inferred as
-    /// `'static`, so the bound would be satisfied trivially and the guarantee
-    /// would be gone while the test still passed. The failure means the enum
-    /// regained a lifetime, which is the defect — fix the enum.
+    /// The reload pair crosses the seam unchanged, so `DoIP`'s choice of `tP6`
+    /// is what the session layer actually loads.
     #[test]
-    fn an_event_borrows_nothing_from_the_transport() {
-        const fn assert_static<T: 'static>() {}
-        assert_static::<super::TransportEvent>();
+    fn the_reloads_reach_the_seam_unchanged() {
+        let t = DoIpTransport::new((), bench_reloads());
+        assert_eq!(t.channel_timing(), bench_reloads());
     }
 
-    /// The seam carries four cases, and a fifth must not arrive unnoticed.
+    /// The hand-written `Debug` covers a socket that is not itself `Debug`.
     ///
-    /// This match is exhaustive with no wildcard arm, so adding a case to
-    /// [`TransportEvent`] stops this test compiling. That is the intent: the
-    /// two cases this seam is *missing* — a periodic response and a connection
-    /// close — are tracked in `mapping::tests::the_two_cases_with_nowhere_to_go`,
-    /// and when `uds_services` adds either to its type, both guards fire at
-    /// once and point at each other.
-    ///
-    /// Verified by watching it fail: a fifth variant added to the enum breaks
-    /// this match as non-exhaustive.
+    /// This is the guard for that choice; the note above the impl only explains
+    /// it. A `#[derive(Debug)]` generates `impl<S: Debug>`, under which
+    /// `DoIpTransport<OpaqueSocket>` has no `Debug` at all and this stops
+    /// compiling. Verified by deriving it and watching this line fail.
     #[test]
-    fn the_seam_carries_four_cases() {
-        fn name(event: &super::TransportEvent) -> &'static str {
-            match event {
-                super::TransportEvent::DataInd { .. } => "DataInd",
-                super::TransportEvent::DataTooLong { .. } => "DataTooLong",
-                super::TransportEvent::DataConf { .. } => "DataConf",
-                super::TransportEvent::Deadline => "Deadline",
-            }
-        }
-
-        assert_eq!(name(&super::TransportEvent::Deadline), "Deadline");
-    }
-
-    /// `DataInd` reports an extent into the caller's buffer rather than a
-    /// borrow of the transport, so the caller reads `&buffer[..len]`.
-    #[test]
-    fn a_data_indication_indexes_the_callers_buffer() {
-        let buffer = [0xAA_u8; 8];
-        let ai = uds_session::Ai {
-            mtype: uds_session::Mtype::Diag,
-            sa: uds_session::Address(0x0E80),
-            ta: uds_session::Address(0x0E00),
-            ta_type: uds_session::TaType::Physical,
-        };
-        let event = super::TransportEvent::DataInd { ai, len: 3 };
-
-        let super::TransportEvent::DataInd { len, .. } = event else {
-            panic!("constructed a DataInd")
-        };
-        assert_eq!(&buffer[..len], &[0xAA, 0xAA, 0xAA]);
-    }
-
-    /// A truncated message is a distinct variant, so the case cannot be
-    /// reached by the destructuring that reads a whole one.
-    ///
-    /// `DataInd`'s fields are a subset of `DataTooLong`'s, which is what makes
-    /// the flag alternative dangerous: `DataInd { ai, len, .. }` would bind
-    /// identically whether or not a `truncated` flag were set. Matching by
-    /// variant cannot do that — an arm written for a whole message does not
-    /// accept a truncated one.
-    #[test]
-    fn a_truncated_message_is_not_a_whole_one() {
-        let ai = uds_session::Ai {
-            mtype: uds_session::Mtype::Diag,
-            sa: uds_session::Address(0x0E80),
-            ta: uds_session::Address(0x0E00),
-            ta_type: uds_session::TaType::Physical,
-        };
-        let whole = super::TransportEvent::DataInd { ai, len: 4 };
-        let front = super::TransportEvent::DataTooLong {
-            ai,
-            len: 4,
-            declared: 4096,
-        };
-
-        assert_ne!(
-            whole, front,
-            "the same four bytes mean different things depending on whether \
-             more of the message exists"
-        );
-        assert!(
-            !matches!(front, super::TransportEvent::DataInd { .. }),
-            "an arm written for a dispatchable message must not accept a \
-             classifiable fragment"
-        );
-    }
-
-    /// `declared` is what tells an entity how large its buffer needed to be.
-    ///
-    /// Reporting only `len` would say "too long" without ever saying how long,
-    /// so an entity could never size for the traffic it actually sees.
-    #[test]
-    fn a_truncated_message_reports_the_size_it_needed() {
-        let ai = uds_session::Ai {
-            mtype: uds_session::Mtype::Diag,
-            sa: uds_session::Address(0x0E80),
-            ta: uds_session::Address(0x0E00),
-            ta_type: uds_session::TaType::Physical,
-        };
-        let super::TransportEvent::DataTooLong { len, declared, .. } =
-            (super::TransportEvent::DataTooLong {
-                ai,
-                len: 8,
-                declared: 1026,
-            })
-        else {
-            panic!("constructed a DataTooLong")
-        };
-
-        assert!(declared > len, "truncation means more existed than arrived");
-        assert_eq!(
-            declared, 1026,
-            "the shortfall is knowable, not merely detectable"
-        );
+    fn a_transport_over_an_opaque_socket_is_debug() {
+        struct OpaqueSocket;
+        const fn assert_debug<T: core::fmt::Debug>() {}
+        assert_debug::<DoIpTransport<OpaqueSocket>>();
     }
 
     /// `Timestamp` is what makes the deadline exchangeable across the seam
     /// without arithmetic: the value `uds_session` reports as a next deadline
     /// goes straight back into `next_event`, and `interval_since` carries
-    /// `UDSS_LLR_0019`'s modulo-2³² subtraction so a wrap is not a special
-    /// case at either end.
+    /// `UDSS_LLR_0019`'s modulo-2³² subtraction so a wrap is not a special case
+    /// at either end.
     #[test]
     fn a_deadline_survives_the_wrap_it_is_typed_for() {
         let before_wrap = uds_session::Timestamp(u32::MAX - 10);
