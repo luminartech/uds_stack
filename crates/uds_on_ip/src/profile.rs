@@ -85,72 +85,85 @@ pub const fn bench_reloads() -> uds_session::Reloads {
 /// standards rather than a property a test can hold: it becomes testable
 /// when `post_exchange` is implemented and can be exercised against a real
 /// `T_PDU`.
-pub mod service_ids {
+pub(crate) mod service_ids {
     use uds_protocol::UdsServiceType;
 
     /// `DiagnosticSessionControl` (ISO 14229-5:2022 REQ 7.8, REQ 7.9).
-    pub const DIAGNOSTIC_SESSION_CONTROL: u8 =
+    pub(crate) const DIAGNOSTIC_SESSION_CONTROL: u8 =
         UdsServiceType::DiagnosticSessionControl.to_request_sid();
 
     /// `ECUReset` (ISO 14229-5:2022 REQ 7.10, REQ 7.11).
-    pub const ECU_RESET: u8 = UdsServiceType::EcuReset.to_request_sid();
+    pub(crate) const ECU_RESET: u8 = UdsServiceType::EcuReset.to_request_sid();
 }
 
-/// What the transport must do once an exchange completes.
+/// Whether a close arriving now is part of a flow the standard prescribes.
 ///
-/// Whether a *negative* response also implies a close is not stated by clause 8
-/// as directly as the positive case is: REQ 7.9 and REQ 7.11 both describe the
-/// close as following a *positive* response. Treating a negative response as
-/// [`Continue`](PostExchange::Continue) is the reading taken here, and is a
-/// candidate open question for the requirement set.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum PostExchange {
-    /// Nothing; the connection continues to serve the session.
-    Continue,
-    /// Expect the server to close, then re-establish the connection and repeat
-    /// routing activation before further diagnostic communication
-    /// (ISO 14229-5:2022 REQ 7.8, REQ 7.10).
-    ReconnectAndReactivate,
-}
-
-/// Whether the server answered positively.
+/// `request_sid` is the service identifier of the request this transport last
+/// sent — its first octet; see [`service_ids`] for why that is the service
+/// identifier on `DoIP` specifically.
 ///
-/// A `bool` would do the same work and read as `post_exchange(sid, true)` at
-/// the call site, where `true` says nothing about which way round the question
-/// was asked.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum ResponsePolarity {
-    /// A positive response.
-    Positive,
-    /// A negative response, carrying an NRC this crate does not read.
-    Negative,
-}
-
-/// Decide what must happen to the connection after this exchange.
+/// # Why this classifies a close rather than predicting one
 ///
-/// Keyed on the request's service identifier and the response's polarity, per
-/// REQ 7.8 and REQ 7.10 — which is all clause 8 keys it on, so those are the
-/// only two things this takes.
+/// An earlier shape was `post_exchange(request_sid, response) -> PostExchange`,
+/// a public function returning `Continue` or `ReconnectAndReactivate` once an
+/// exchange finished. It had to answer a question clause 8 does not settle:
+/// REQ 7.9 and REQ 7.11 describe the close as following a *positive* response,
+/// and say nothing about a negative one, so predicting a close meant guessing
+/// what a negative response implies and recording the guess as an open question
+/// against the requirement set.
 ///
-/// An earlier shape took the request and response as two `&[u8]`. Two
-/// same-typed slices in one signature can be passed the wrong way round, and
-/// swapping them silently returns the wrong answer for the most consequential
-/// question this module asks: whether the connection is about to close under
-/// the caller. A `u8` and an enum cannot be swapped. The caller reads the
-/// service identifier from the request's first octet — see [`service_ids`] for
-/// why that is the service identifier on `DoIP` specifically.
-#[expect(
-    unused_variables,
-    reason = "both are unused until post_exchange's body replaces the todo!() below"
-)]
+/// Keyed on a close that has already happened, that question does not arise.
+/// This never predicts anything: `uds_services::TransportEvent::Closed` reports
+/// a close the transport observed, and all this decides is whether it was
+/// plausibly prescribed. A negative response needs no ruling because nothing
+/// asks for one.
+///
+/// # This is deliberately not exact
+///
+/// It does not read the response at all, so a negative response to one of these
+/// two services followed by an unrelated drop is reported as expected. Reading
+/// the response would make it exact, at the cost of a third piece of ISO 14229-1
+/// vocabulary here — the `0x7F` negative-response format, and
+/// `requestCorrectlyReceived-ResponsePending` (0x78), which must not disarm a
+/// pending close.
+///
+/// The imprecision is taken deliberately, because the two errors are not
+/// symmetric. Reporting `expected` wrongly costs the driver a reconnect and a
+/// routing activation on an exchange that had already failed. Reporting an
+/// expected close as unexpected makes the driver fail an exchange the standard
+/// prescribes — a conformance failure rather than a wasted round trip.
 #[must_use]
-pub fn post_exchange(request_sid: u8, response: ResponsePolarity) -> PostExchange {
-    todo!("REQ 7.8 / REQ 7.10 — key on service_ids and response polarity")
+pub(crate) const fn close_is_expected_after(request_sid: u8) -> bool {
+    matches!(
+        request_sid,
+        service_ids::DIAGNOSTIC_SESSION_CONTROL | service_ids::ECU_RESET
+    )
 }
 
 #[cfg(test)]
 mod tests {
-    use super::bench_reloads;
+    use super::{bench_reloads, close_is_expected_after, service_ids};
+
+    /// The two services clause 8 makes TCP connection handling part of, and
+    /// nothing else. `0x10` and `0x11` are spelled out rather than taken from
+    /// `service_ids`, so the constants and the rule cannot drift together.
+    #[test]
+    fn only_the_two_services_clause_8_names_expect_a_close() {
+        assert!(close_is_expected_after(0x10), "DiagnosticSessionControl");
+        assert!(close_is_expected_after(0x11), "ECUReset");
+        assert_eq!(service_ids::DIAGNOSTIC_SESSION_CONTROL, 0x10);
+        assert_eq!(service_ids::ECU_RESET, 0x11);
+
+        for sid in 0x00..=0xFF_u8 {
+            if sid == 0x10 || sid == 0x11 {
+                continue;
+            }
+            assert!(
+                !close_is_expected_after(sid),
+                "{sid:#04X} is not a service clause 8 keys connection handling on",
+            );
+        }
+    }
 
     /// The bench values are the `tP6` pair, and they are the ones a reader of
     /// ISO 14229-2:2021 clause 9.2 Table 4 would recognise as conventional.

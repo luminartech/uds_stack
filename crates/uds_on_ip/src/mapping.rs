@@ -54,9 +54,16 @@ pub const fn from_logical(addr: simple_doip::LogicalAddress) -> Address {
 /// necessarily a fault. This becomes
 /// `uds_services::TransportEvent::Closed`'s `expected`, which is binary because
 /// the driver's decision is; see `a_close_cause_is_the_seams_expected_flag`.
-#[expect(
-    dead_code,
-    reason = "constructed once classify's body replaces its todo!()"
+// `cfg_attr(not(test), ...)` rather than a bare `expect`: the tests below
+// construct both variants, so under `cfg(test)` the type is not dead and a bare
+// expectation goes unfulfilled. The suppression is for the non-test build, where
+// `classify` is still a `todo!()`.
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "constructed once classify's body replaces its todo!()"
+    )
 )]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum CloseCause {
@@ -65,6 +72,25 @@ pub(crate) enum CloseCause {
     ServiceInitiated,
     /// Unexpected: the transport failed.
     TransportFailure,
+}
+
+impl CloseCause {
+    /// `uds_services::TransportEvent::Closed`'s `expected` flag.
+    ///
+    /// The seam's flag is binary because the driver's decision is — reconnect
+    /// and repeat routing activation, or fail the exchange — so the distinction
+    /// this enum keeps is the one this crate needs in order to *make* that
+    /// decision, not one the driver would act on differently.
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "called once next_event's body replaces its todo!()"
+        )
+    )]
+    pub(crate) const fn expected(self) -> bool {
+        matches!(self, Self::ServiceInitiated)
+    }
 }
 
 /// The `DoIP` payload type carrying UDS periodic responses.
@@ -286,6 +312,24 @@ mod tests {
             }),
             "Periodic",
             "ISO 14229-5:2022 REQ 7.16",
+        );
+    }
+
+    /// Only a close the standard prescribes is reported as expected.
+    ///
+    /// The direction matters more than the mapping: reporting a prescribed
+    /// close as unexpected makes the driver fail a conformant
+    /// `DiagnosticSessionControl` or `ECUReset` flow, which is the failure
+    /// `uds_services::TransportEvent::Closed` exists to prevent.
+    #[test]
+    fn only_a_prescribed_close_is_expected() {
+        assert!(
+            CloseCause::ServiceInitiated.expected(),
+            "REQ 7.9 / 7.11 make this close part of the flow",
+        );
+        assert!(
+            !CloseCause::TransportFailure.expected(),
+            "a link that went away is not a flow the standard prescribes",
         );
     }
 

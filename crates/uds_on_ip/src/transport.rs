@@ -12,6 +12,7 @@
 
 use crate::error::Error;
 use crate::mapping::target_of;
+use crate::profile::close_is_expected_after;
 use uds_services::{TransportEvent, UdsTransport};
 use uds_session::{Ai, Reloads, Timestamp};
 
@@ -27,6 +28,15 @@ pub struct DoIpTransport<S> {
     socket: S,
     reloads: Reloads,
     outbound_max: Option<usize>,
+    /// Whether the request most recently handed to `t_data_req` is one whose
+    /// flow ends in a server-initiated close.
+    ///
+    /// The whole of what this crate needs to fill in
+    /// `TransportEvent::Closed`'s `expected`. See
+    /// [`close_is_expected_after`](crate::profile::close_is_expected_after) for
+    /// why the classification is armed on the request rather than derived from
+    /// the response.
+    expecting_close: bool,
 }
 
 // Written by hand rather than derived, and held by
@@ -41,6 +51,7 @@ impl<S> core::fmt::Debug for DoIpTransport<S> {
             .field("socket", &"..")
             .field("reloads", &self.reloads)
             .field("outbound_max", &self.outbound_max)
+            .field("expecting_close", &self.expecting_close)
             .finish()
     }
 }
@@ -59,6 +70,7 @@ impl<S> DoIpTransport<S> {
             socket,
             reloads,
             outbound_max: None,
+            expecting_close: false,
         }
     }
 
@@ -93,18 +105,25 @@ impl<S> UdsTransport for DoIpTransport<S> {
 
     /// `T_Data.req` — map a `T_PDU` onto a `DoIP` diagnostic message and send it.
     ///
+    /// Sending also decides how a close arriving afterwards will be reported:
+    /// ISO 14229-5:2022 REQ 7.8 and REQ 7.10 make a server-initiated close part
+    /// of the `DiagnosticSessionControl` and `ECUReset` flows, so the request
+    /// that was sent is what says whether a close is prescribed. The driver is
+    /// told on
+    /// [`TransportEvent::Closed`](uds_services::TransportEvent::Closed) and is
+    /// never asked to work it out.
+    ///
     /// # Errors
     ///
     /// [`Error::Mapping`] if the addressing cannot be carried: the two remote
     /// message types have no `DoIP` representation.
     ///
     /// A *socket* failure has no variant yet — see [`Self::next_event`].
-    #[expect(
-        unused_variables,
-        reason = "data is unused until t_data_req's body replaces the todo!() below"
-    )]
     async fn t_data_req(&mut self, ai: Ai, data: &[u8]) -> Result<(), Error> {
         let _target = target_of(ai)?;
+        self.expecting_close = data
+            .first()
+            .is_some_and(|sid| close_is_expected_after(*sid));
         todo!("REQ 4.3 Table 4 — send as a DoIP diagnostic message")
     }
 
