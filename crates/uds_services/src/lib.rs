@@ -69,6 +69,18 @@ pub use storage::{Buffers, Storage, Store};
 pub mod sink;
 pub use sink::ResponseSink;
 
+/// The write vocabulary a handler needs to use a [`ResponseSink`].
+///
+/// [`Sink`] is re-exported because `write_all` is one of its methods: without the trait
+/// in scope a handler cannot write a byte, and importing it meant declaring a dependency
+/// on a crate the application otherwise never names.
+///
+/// [`Encode`] is the reason that matters beyond convenience. `uds_protocol`'s types
+/// encode *into* a [`Sink`], and [`ResponseSink`] is one — so a handler writes
+/// `DtcRecord::new(0xC0, 0x01, 0x23).encode(out)?` rather than assembling the bytes by
+/// hand, and the length cannot disagree with the value.
+pub use automotive_wire_codec::{Encode, InsufficientBuffer, Sink, WriteError};
+
 pub mod transport;
 pub use transport::{
     Address, Ai, Mtype, Reloads, SResult, TaType, Timestamp, TransportEvent, UdsTransport,

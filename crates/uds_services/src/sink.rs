@@ -18,6 +18,26 @@ use automotive_wire_codec::{InsufficientBuffer, Sink, WriteError};
 /// The bound is not a field. [`Self::new`] truncates the buffer to it, so "written never
 /// exceeds the limit, which never exceeds the buffer" is one slice length rather than an
 /// ordering between two numbers that each method had to be trusted to maintain.
+///
+/// # Examples
+///
+/// ```
+/// use uds_services::{ResponseSink, Sink};
+///
+/// let mut buffer = [0_u8; 8];
+/// // The peer advertised room for five bytes, so five is the bound, not eight.
+/// let mut sink = ResponseSink::new(&mut buffer, Some(5));
+/// assert_eq!(sink.remaining(), 5);
+///
+/// sink.write_all(&[0x62, 0xF1, 0x90])?;
+/// assert_eq!(sink.written_bytes(), &[0x62, 0xF1, 0x90]);
+/// assert_eq!(sink.remaining(), 2);
+///
+/// // A write that would cross the bound is refused whole: nothing is recorded.
+/// assert!(sink.write_all(&[0x00; 3]).is_err());
+/// assert_eq!(sink.written(), 3);
+/// # Ok::<(), uds_services::WriteError>(())
+/// ```
 #[derive(Debug)]
 pub struct ResponseSink<'a> {
     buffer: &'a mut [u8],
@@ -82,6 +102,25 @@ impl Sink for ResponseSink<'_> {
 mod tests {
     use super::ResponseSink;
     use automotive_wire_codec::{Sink, WriteError};
+    use uds_protocol::{DtcRecord, DtcStatusMask, Encode};
+
+    /// `uds_protocol`'s types encode into an `automotive_wire_codec::Sink`, and this is
+    /// one — so a handler writes a value and its length cannot disagree with its bytes.
+    /// Both traits are re-exported from the crate root so reaching this needs no third
+    /// dependency.
+    #[test]
+    fn a_protocol_value_encodes_straight_into_the_sink() {
+        let mut buf = [0_u8; 8];
+        let mut sink = ResponseSink::new(&mut buf, None);
+
+        let written = DtcRecord::new(0xC0, 0x01, 0x23)
+            .encode(&mut sink)
+            .and_then(|n| Ok(n + DtcStatusMask::TestFailed.encode(&mut sink)?));
+
+        // `uds_protocol::Error` is not `PartialEq`, so compare the success side.
+        assert_eq!(written.ok(), Some(4));
+        assert_eq!(sink.written_bytes(), &[0xC0, 0x01, 0x23, 0x01]);
+    }
 
     /// ``UDSSVC_ARCH_0017`` — with no peer advertisement the buffer alone bounds the
     /// response, which is a correct outcome rather than a degraded one.
