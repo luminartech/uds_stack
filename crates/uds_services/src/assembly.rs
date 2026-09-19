@@ -193,6 +193,14 @@ macro_rules! __uds_response_bound {
 #[doc(hidden)]
 #[macro_export]
 macro_rules! __uds_may_pend {
+    // Neither service can be in progress when a deadline passes — see their trait docs —
+    // so neither declares the constant and the answer is not the application's to give.
+    ($ty:ty, TesterPresent) => {
+        false
+    };
+    ($ty:ty, DiagnosticSessionControl) => {
+        false
+    };
     ($ty:ty, $svc:ident) => {
         <$ty as $crate::$svc>::MAY_RESPOND_PENDING
     };

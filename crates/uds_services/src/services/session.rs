@@ -25,10 +25,14 @@ pub struct SessionTiming {
 /// ``UDSSVC_ARCH_0035`` puts the active session in this crate and ``UDSSVC_ARCH_0038``
 /// classifies the change before the application sees it, so an application never tracks
 /// a session itself.
+///
+/// **No `MAY_RESPOND_PENDING`**, unlike the services in ``UDSSVC_ARCH_0033``. A
+/// response-pending is what the driver sends while it is still awaiting a handler, and
+/// nothing here is awaited: [`Self::supports`] and [`Self::timing`] are lookups the
+/// pipeline makes before composing the response, and [`Self::on_transition`] runs after
+/// that response has gone out. There is no window in which a 0x78 could come due, so the
+/// constant would have had one possible value and no effect.
 pub trait DiagnosticSessionControl {
-    /// ``UDSSVC_ARCH_0033``. No default: omission must not compile.
-    const MAY_RESPOND_PENDING: bool;
-
     /// The longest positive response beyond the mandatory four timing bytes.
     const MAX_RESPONSE_LEN: usize;
 
@@ -82,14 +86,13 @@ pub trait EcuReset {
 ///
 /// Restarting `tS3_Server` is deliberately absent: ISO 14229-2 puts it in the session
 /// layer and ``UDSSVC_ARCH_0002`` keeps it there. This exists for servers that act on it.
+///
+/// **No `MAY_RESPOND_PENDING`**, for the reason
+/// [`DiagnosticSessionControl`] has none: [`Self::on_tester_present`] is synchronous, so
+/// the driver is never awaiting it when a deadline passes and no 0x78 can become due.
+/// Which is as well — a server too busy to answer the message whose only purpose is to
+/// say it is still there has a larger problem than a response-pending.
 pub trait TesterPresent {
-    /// ``UDSSVC_ARCH_0033``. **Should be false, and nothing here makes it so**: this is
-    /// a const without a default, declared by the application, and `__uds_may_pend!`
-    /// expands whatever it declares unconditionally. The reason it should be false is
-    /// that a server too busy to answer the message whose only purpose is to say it is
-    /// still there has a larger problem than a response-pending.
-    const MAY_RESPOND_PENDING: bool;
-
     /// Called on each accepted `TesterPresent`.
     fn on_tester_present(&mut self);
 }
@@ -168,7 +171,6 @@ mod tests {
     struct Ecu;
 
     impl DiagnosticSessionControl for Ecu {
-        const MAY_RESPOND_PENDING: bool = false;
         const MAX_RESPONSE_LEN: usize = 0;
         fn supports(&self, session: DiagnosticSessionType) -> bool {
             matches!(

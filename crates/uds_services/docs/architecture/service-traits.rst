@@ -159,8 +159,9 @@ The traits
    :origin: derived
    :tags: api; traits; response-pending
 
-   Each service trait carries an associated constant, with **no default**, stating whether
-   that service may answer ``requestCorrectlyReceivedResponsePending`` (0x78):
+   Each service trait whose handler can be in progress when a deadline passes carries an
+   associated constant, with **no default**, stating whether that service may answer
+   ``requestCorrectlyReceivedResponsePending`` (0x78):
 
    .. code-block:: rust
 
@@ -196,6 +197,21 @@ The traits
    implemented, not of the request or the server's current state: admissibility folds at
    compile time, and REQ 5.6's unsupported-service case needs no runtime check at all,
    since a service that is not implemented has no impl to read the constant from.
+
+   **Two services do not carry it, and cannot.** A response-pending is what the driver
+   sends while it is still awaiting a handler, so a service with nothing awaited has no
+   window in which one could come due. ``TesterPresent``'s ``on_tester_present`` is
+   synchronous; ``DiagnosticSessionControl``'s ``supports`` and ``timing`` are lookups the
+   pipeline makes before composing the response, and its ``on_transition`` runs after that
+   response has gone out. On both, the constant would have had one possible value and no
+   effect, and declaring it asked an application to answer a question with one answer.
+   ``__uds_may_pend!`` answers ``false`` for both, so this is not a default reintroduced by
+   another name: there is nothing an application can write that would change it.
+
+   This is a statement about the *shape of the trait*, not about the two services. If
+   ``on_transition`` ever becomes ``async`` — entering a programming session can be slow —
+   then ``DiagnosticSessionControl`` acquires a window and the constant comes back with
+   it.
 
 .. needflow::
    :filter: id in ["UDSSVC_ARCH_0012", "UDSSVC_ARCH_0013", "UDSSVC_ARCH_0014"]

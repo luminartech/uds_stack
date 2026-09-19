@@ -10,9 +10,12 @@
 //! [`ResponseSink`]. The negative response code is `uds_protocol`'s;
 //! this crate defines none.
 //!
-//! **Every service trait declares `MAY_RESPOND_PENDING` with no default**, so omitting it
-//! fails to compile. A default of `false` would let a forgotten declaration silently mean
-//! "never 0x78", which is a conformance decision nobody made.
+//! **A service trait whose handler can be in progress declares `MAY_RESPOND_PENDING`
+//! with no default**, so omitting it fails to compile. A default of `false` would let a
+//! forgotten declaration silently mean "never 0x78", which is a conformance decision
+//! nobody made. [`DiagnosticSessionControl`] and [`TesterPresent`] do not declare it:
+//! neither is ever awaited, so no response-pending can come due and the constant would
+//! have had one possible value and no effect.
 
 use crate::storage::Storage;
 use crate::{Ai, ResponseSink};

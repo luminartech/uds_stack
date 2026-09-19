@@ -20,8 +20,8 @@ use uds_services::{
     Mtype, PhysicalKeepAlive, ReadDataByIdentifier, ReadDtcInfoSubFunction,
     ReadDtcInformation, RecordError, Reloads, Response, ResponseSink, SecurityAccess,
     SecurityLevel, SecurityPolicy, ServerParams, ServiceSet, Sink, Storage, SubnetNumber,
-    TaType, Timestamp, TransferRequest, TransportEvent, UdsTransport, uds_client,
-    uds_server,
+    TaType, TesterPresent, Timestamp, TransferRequest, TransportEvent, UdsTransport,
+    uds_client, uds_server,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -111,6 +111,12 @@ impl ClearDiagnosticInformation for Ecu {
             _ => Err(Nrc::RequestOutOfRange),
         }
     }
+}
+
+impl TesterPresent for Ecu {
+    // No `MAY_RESPOND_PENDING`: the trait does not carry one, because a synchronous
+    // handler can never be in progress when a deadline passes.
+    fn on_tester_present(&mut self) {}
 }
 
 impl CommunicationControl for Ecu {
@@ -223,7 +229,7 @@ impl UdsTransport for FakeTransport {
 
 uds_server! {
     Ecu: ReadDataByIdentifier, SecurityAccess, DataTransfer, ReadDtcInformation,
-         ClearDiagnosticInformation, CommunicationControl;
+         ClearDiagnosticInformation, CommunicationControl, TesterPresent;
     transport = FakeTransport,
     peers = 4,
     server = EcuServer,
@@ -276,6 +282,7 @@ fn the_assembled_list_answers_service_supported() {
     assert!(ecu.supports(0x19));
     assert!(ecu.supports(0x14));
     assert!(ecu.supports(0x28));
+    assert!(ecu.supports(0x3E));
     assert!(!ecu.supports(0x2E));
     assert!(!ecu.supports(0x85));
 }
@@ -287,6 +294,9 @@ fn response_pending_permission_follows_the_declaration() {
     assert!(ecu.may_respond_pending(0x34));
     assert!(!ecu.may_respond_pending(0x22));
     assert!(!ecu.may_respond_pending(0x2E));
+    // 0x3E is false because the trait carries no constant to declare otherwise, not
+    // because this server declared it so. Nothing an application writes can flip it.
+    assert!(!ecu.may_respond_pending(0x3E));
 }
 
 /// Clause 8.7.6's first exception is a **functionally addressed** suppressed
