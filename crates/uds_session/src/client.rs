@@ -54,7 +54,8 @@ use crate::time::Timestamp;
 /// start-of-message is open and whether a response-pending message is outstanding.
 /// ISO 14229-2:2021 9.6 Table 7 allots the client one timer per channel and no storage
 /// for either fact, which is why this requirement is derived.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Storage is moved into the instance, never duplicated — see [`crate::Association`].
+#[derive(Debug)]
 pub struct ResponderSlot {
     _reserved: (),
 }
@@ -188,7 +189,10 @@ pub trait KeepAlive: sealed::Sealed + core::fmt::Debug {}
 /// allots one timer here, so this value is fixed in size; it is caller-supplied all the
 /// same, because ``UDSS_LLR_0008`` puts every fact the client holds in the caller's
 /// storage and a fact with nothing left to size is no exception.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Storage is moved into the instance, never duplicated — see [`crate::Association`]. A
+/// copy of this is a second `tS3_Client` timer, which ``UDSS_LLR_0150`` gives the client
+/// exactly one of.
+#[derive(Debug)]
 pub struct FunctionalKeepAlive {
     _s3_client: u32,
 }
@@ -216,7 +220,9 @@ impl KeepAlive for FunctionalKeepAlive {}
 /// storage, and ``UDSS_LLR_0152`` gives each physical channel its own reload, supplied at
 /// [`Client::open_physical_channel`]. Nothing is client-wide, so this mode carries no
 /// value at all.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// It holds nothing, but it is still moved rather than copied, so that a keep-alive mode
+/// reaches [`Client::new`] the same way in both modes — see [`crate::Association`].
+#[derive(Debug)]
 pub struct PhysicalKeepAlive;
 
 impl sealed::Sealed for PhysicalKeepAlive {}

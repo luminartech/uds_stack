@@ -21,7 +21,11 @@ use crate::time::Timestamp;
 /// request until the confirmation. ``UDSS_LLR_0060`` permits at most one outstanding per
 /// addressing; ``UDSS_LLR_0062`` rejects a request for which none is free, so the array's
 /// length is the server's capacity.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Storage is moved into the instance, never duplicated: a copy of an outstanding
+/// association is an association the session layer does not know it has. `Copy` and
+/// equality are deliberately absent for that reason, and the array is built from
+/// [`Association::EMPTY`] rather than from a copy.
+#[derive(Debug)]
 pub struct Association {
     _reserved: (),
 }
