@@ -50,7 +50,11 @@ pub struct ServerParams {
 /// ``UDSS_LLR_0040`` puts parameter setting in the service interface; ``UDSS_LLR_0043``
 /// permits it at any time, and ``UDSS_LLR_0076`` keeps a running timer on the value it
 /// was loaded with, so a change never moves a window already open.
+///
+/// Non-exhaustive: the set of tunable parameters is this crate's, not the standard's, and
+/// a caller should not be broken by one this crate has yet to learn about.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum ServerParameter {
     /// `tS3_Server`.
     S3Server(u32),
@@ -120,19 +124,33 @@ pub struct ChannelParams {
 /// `tS3_Client` is not among these. ``UDSS_LLR_0152`` gives a physical channel one only in
 /// physical keep-alive, so [`crate::Client::set_physical_s3_client`] carries it and exists
 /// only in that mode.
+///
+/// Non-exhaustive: the set of tunable parameters is this crate's, not the standard's, and
+/// a caller should not be broken by one this crate has yet to learn about.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum ChannelParameter {
-    /// The default response reload.
+    /// Both response reloads at once.
+    ///
+    /// ``UDSS_LLR_0132`` makes the two a pair a transport dictates together, and
+    /// [`Reloads`] is the shape a transport hands over. Setting the pair is one act, so
+    /// applying a new transport profile does not leave the channel briefly holding one
+    /// reload from each — a state no profile describes.
+    Reloads(Reloads),
+    /// The default response reload, on its own.
     DefaultReload(u32),
-    /// The enhanced response reload.
+    /// The enhanced response reload, on its own.
     EnhancedReload(u32),
     /// The request spacing.
+    ///
+    /// ``UDSS_LLR_0165`` makes this client policy rather than transport, which is why it
+    /// is not part of [`ChannelParameter::Reloads`].
     Spacing(u32),
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{ChannelParams, ChannelReload, Reloads, ServerParams};
+    use super::{ChannelParameter, ChannelParams, ChannelReload, Reloads, ServerParams};
 
     /// ``UDSS_LLR_0151`` and ``UDSS_LLR_0152`` — a `tS3_Client` belongs to a physical
     /// channel in physical keep-alive and to no channel at all in functional keep-alive.
@@ -163,6 +181,30 @@ mod tests {
             p2_star_server_max: 5_000,
         };
         assert_eq!(p.p2_star_server_max, 5_000);
+    }
+
+    /// ``UDSS_LLR_0132`` makes the reloads a pair a transport dictates together, so a
+    /// caller holding a [`Reloads`] can set it as one parameter rather than taking it
+    /// apart into two settings with a mismatched pair in between.
+    #[test]
+    fn the_reload_pair_can_be_set_as_one_parameter() {
+        let reloads = Reloads {
+            default_reload: 50,
+            enhanced_reload: 5_000,
+        };
+        let carried = match ChannelParameter::Reloads(reloads) {
+            ChannelParameter::Reloads(set) => Some(set),
+            _ => None,
+        };
+        assert_eq!(carried, Some(reloads));
+        assert_eq!(
+            carried.map(|set| set.value_for(ChannelReload::Default)),
+            Some(50)
+        );
+        assert_eq!(
+            carried.map(|set| set.value_for(ChannelReload::Enhanced)),
+            Some(5_000)
+        );
     }
 
     /// ``UDSS_LLR_0132`` names the pair and ``UDSS_LLR_0148`` names which reload a
