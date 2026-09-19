@@ -19,9 +19,26 @@
 //! exercised end to end yet (open question 7). Its shape is settled enough to design
 //! against; its behaviour is not.
 
+use crate::storage::ClientStorage;
 use crate::{DataIdentifier, RecordError, UdsTransport};
 use uds_protocol::NegativeResponseCode;
 use uds_session::{Address, KeepAlive};
+
+/// One application's identifier vocabulary, with the storage derived from it.
+///
+/// ``UDSSVC_ARCH_0013`` for the client half — implemented by [`crate::uds_client`],
+/// never by hand. It is implemented on the *identifier enumeration* rather than on an
+/// application type, because unlike a server a client has no handler state: the
+/// identifiers are the only thing the application declares, and they are what the buffer
+/// lengths are folded from.
+///
+/// Sealed through [`crate::sealed`], for the reason
+/// [`ServiceSet`](crate::ServiceSet) is: the derivation argument holds only while the
+/// macro is what chooses [`Self::Store`]'s lengths.
+pub trait ClientSet: DataIdentifier + crate::sealed::Sealed {
+    /// The storage whose lengths were folded from this vocabulary's declared maxima.
+    type Store: ClientStorage;
+}
 
 /// What one server said.
 ///
@@ -66,25 +83,24 @@ pub struct Answer<V> {
 #[must_use = "an undrained sequence discards the answers the request produced"]
 pub struct Responses<
     'c,
+    C: ClientSet,
     T: UdsTransport,
     K: KeepAlive,
-    D: DataIdentifier,
     const PHYS: usize,
     const FUNC: usize,
-    const R: usize,
+    const R: usize = 0,
 > {
-    client: &'c mut Client<T, K, PHYS, FUNC, R>,
-    _marker: core::marker::PhantomData<D>,
+    client: &'c mut Client<C, T, K, PHYS, FUNC, R>,
 }
 
 impl<
+    C: ClientSet,
     T: UdsTransport,
     K: KeepAlive,
-    D: DataIdentifier,
     const PHYS: usize,
     const FUNC: usize,
     const R: usize,
-> Responses<'_, T, K, D, PHYS, FUNC, R>
+> Responses<'_, C, T, K, PHYS, FUNC, R>
 {
     /// The next answer, or `None` when the response window has closed.
     ///
@@ -97,7 +113,7 @@ impl<
         reason = "async is load-bearing: the body awaits the transport once it \
                   replaces this todo!(), and neither lint can see past the stub"
     )]
-    pub async fn next(&mut self) -> Option<Result<Answer<Records<'_, D>>, T::Error>> {
+    pub async fn next(&mut self) -> Option<Result<Answer<Records<'_, C>>, T::Error>> {
         #[allow(clippy::todo, reason = "API stub; behaviour lands with its element")]
         {
             let _ = &mut *self.client;
@@ -116,22 +132,6 @@ impl<
 /// Items borrow the receive buffer, not the iterator, so this is an ordinary [`Iterator`]
 /// rather than a lending one. `Clone` but not `Copy`: a copied iterator silently restarts
 /// the walk, which is the whole hazard `clippy::copy_iterator` names.
-#[derive(Debug, Clone)]
-#[must_use = "the records are the response; dropping this discards it"]
-pub struct Records<'d, D> {
-    rest: &'d [u8],
-    identifier: core::marker::PhantomData<fn() -> D>,
-}
-
-impl<'d, D: DataIdentifier> Records<'d, D> {
-    /// Walk `response`, the bytes after the `0x62` service identifier.
-    pub const fn new(response: &'d [u8]) -> Self {
-        Self {
-            rest: response,
-            identifier: core::marker::PhantomData,
-        }
-    }
-}
 ///
 /// # Examples
 ///
@@ -172,6 +172,22 @@ impl<'d, D: DataIdentifier> Records<'d, D> {
 /// assert_eq!(unknown.next(), Some(Err(RecordError::UnknownIdentifier)));
 /// assert_eq!(unknown.next(), None);
 /// ```
+#[derive(Debug, Clone)]
+#[must_use = "the records are the response; dropping this discards it"]
+pub struct Records<'d, D> {
+    rest: &'d [u8],
+    identifier: core::marker::PhantomData<fn() -> D>,
+}
+
+impl<'d, D: DataIdentifier> Records<'d, D> {
+    /// Walk `response`, the bytes after the `0x62` service identifier.
+    pub const fn new(response: &'d [u8]) -> Self {
+        Self {
+            rest: response,
+            identifier: core::marker::PhantomData,
+        }
+    }
+}
 
 impl<'d, D: DataIdentifier> Iterator for Records<'d, D> {
     type Item = Result<(D, &'d [u8]), RecordError>;
@@ -206,9 +222,15 @@ impl<'d, D: DataIdentifier> Iterator for Records<'d, D> {
 /// ``UDSSVC_ARCH_0028`` — the core is sans-io; awaiting is the layer above it, so the
 /// encode and interpret halves are usable without a transport at all.
 ///
-/// `K`, `PHYS`, `FUNC` and `R` mirror `uds_session::Client<K, PHYS, FUNC, R>`: the
-/// keep-alive mode, physical channels, functional channels, and responders per functional
-/// channel. `R = 0` gives a physical-only client zero-sized responder tables.
+/// `C` is the identifier vocabulary and, through [`ClientSet::Store`], the buffers folded
+/// from it. `K`, `PHYS`, `FUNC` and `R` mirror `uds_session::Client<K, PHYS, FUNC, R>`:
+/// the keep-alive mode, physical channels, functional channels, and responders per
+/// functional channel. `R` defaults to `0`, as it does there, so a physical-only client
+/// does not write a count for tables it has none of.
+///
+/// An application never spells any of this. [`crate::uds_client`] emits
+/// `type Tester = Client<..>` and that alias is the name at every call site, the same way
+/// [`crate::uds_server`]'s `server = Name` works.
 ///
 /// `K` is `uds_session::FunctionalKeepAlive` or `PhysicalKeepAlive`, sealed there to those
 /// two. Holding it in the type is that crate's `UDSS_LLR_0149`: the mode is fixed at
@@ -216,33 +238,45 @@ impl<'d, D: DataIdentifier> Iterator for Records<'d, D> {
 /// gives one a meaning.
 #[derive(Debug)]
 pub struct Client<
+    C: ClientSet,
+    T: UdsTransport,
+    K: KeepAlive,
+    const PHYS: usize,
+    const FUNC: usize,
+    const R: usize = 0,
+> {
+    session: uds_session::Client<K, PHYS, FUNC, R>,
+    transport: T,
+    store: C::Store,
+}
+
+impl<
+    C: ClientSet,
     T: UdsTransport,
     K: KeepAlive,
     const PHYS: usize,
     const FUNC: usize,
     const R: usize,
-> {
-    session: uds_session::Client<K, PHYS, FUNC, R>,
-    transport: T,
-}
-
-impl<T: UdsTransport, K: KeepAlive, const PHYS: usize, const FUNC: usize, const R: usize>
-    Client<T, K, PHYS, FUNC, R>
+> Client<C, T, K, PHYS, FUNC, R>
 {
-    /// A client over `transport`, owning its session-layer storage by value.
+    /// A client over `transport`, owning its session-layer and buffer storage by value.
     ///
-    /// The slot arrays are the caller's, supplied by value, so no lifetime reaches a
-    /// consuming application — the same shape `Server::new` uses, and the reason
-    /// `uds_session` moved its storage off references.
-    pub const fn new(
-        transport: T,
-        physical: [uds_session::PhysicalSlot; PHYS],
-        functional: [uds_session::FunctionalSlot<R>; FUNC],
-        keep_alive: K,
-    ) -> Self {
+    /// A `const fn`, which is load-bearing for the reason
+    /// [`crate::Server::new`] is one: the buffers are inline and a runtime constructor
+    /// would build a stack temporary before the move.
+    ///
+    /// The channel slots are built here rather than supplied, so an application never
+    /// names `uds_session` — the same commitment [`crate::Server::new`] already makes by
+    /// building its own session.
+    pub const fn new(transport: T, keep_alive: K) -> Self {
         Self {
-            session: uds_session::Client::new(physical, functional, keep_alive),
+            session: uds_session::Client::new(
+                [uds_session::PhysicalSlot::EMPTY; PHYS],
+                [uds_session::FunctionalSlot::EMPTY; FUNC],
+                keep_alive,
+            ),
             transport,
+            store: <C::Store as ClientStorage>::EMPTY,
         }
     }
 
@@ -263,16 +297,17 @@ impl<T: UdsTransport, K: KeepAlive, const PHYS: usize, const FUNC: usize, const 
         reason = "async is load-bearing: the body awaits the transport once it \
                   replaces this todo!(), and neither lint can see past the stub"
     )]
-    pub async fn read_data_by_identifier<D: DataIdentifier>(
+    pub async fn read_data_by_identifier(
         &mut self,
         target: Address,
-        identifiers: &[D],
-    ) -> Result<Response<Records<'_, D>>, T::Error> {
+        identifiers: &[C],
+    ) -> Result<Response<Records<'_, C>>, T::Error> {
         #[allow(clippy::todo, reason = "API stub; behaviour lands with its element")]
         {
             let _ = (
                 &mut self.transport,
                 &mut self.session,
+                self.store.split(),
                 target,
                 identifiers.len(),
             );
@@ -288,11 +323,11 @@ impl<T: UdsTransport, K: KeepAlive, const PHYS: usize, const FUNC: usize, const 
     /// draining it is how each server's answer is read. Failures and negative responses
     /// both surface there — a transport error per answer, and a negative response as
     /// [`Response::Negative`], which is not an error.
-    pub fn read_data_by_identifier_functional<D: DataIdentifier>(
+    pub fn read_data_by_identifier_functional(
         &mut self,
         target: Address,
-        identifiers: &[D],
-    ) -> Responses<'_, T, K, D, PHYS, FUNC, R> {
+        identifiers: &[C],
+    ) -> Responses<'_, C, T, K, PHYS, FUNC, R> {
         #[allow(clippy::todo, reason = "API stub; behaviour lands with its element")]
         {
             let _ = (&mut self.transport, target, identifiers.len());

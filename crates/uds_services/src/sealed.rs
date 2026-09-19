@@ -7,7 +7,10 @@
 //! at one byte, and still advertises `MAX_BLOCK_LENGTH` over the wire.
 //!
 //! [`Storage`](crate::Storage) is sealed outright — `Store` is its only implementor and
-//! nothing outside this crate can add one.
+//! nothing outside this crate can add one. [`ClientStorage`](crate::ClientStorage) and
+//! `ClientStore` are the client's pair, sealed for the same reason: a hand-written
+//! implementor could pick buffer lengths that disagree with the maxima the assembly
+//! folded.
 //!
 //! [`ServiceSet`](crate::ServiceSet) is sealed as far as a macro-implemented trait can be.
 //! The expansion happens in the application's crate, so the path it names has to be
@@ -15,5 +18,6 @@
 //! requires deliberately naming a `#[doc(hidden)]` item this module documents as not
 //! yours. It is a lock, not a wall.
 
-/// Implemented by [`crate::uds_server`] and by `Store`. Not yours to implement.
+/// Implemented by [`crate::uds_server`], [`crate::uds_client`], `Store` and
+/// `ClientStore`. Not yours to implement.
 pub trait Sealed {}

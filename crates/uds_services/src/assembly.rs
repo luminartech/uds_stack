@@ -218,36 +218,6 @@ macro_rules! __uds_may_pend {
 /// The syntax is `Ecu: ..; transport = T, ..` rather than `Ecu over T: ..` because
 /// `$ty:ty` cannot be followed by a bare identifier — the legal followers are
 /// `{ [ => , > = : ; | as where`.
-#[macro_export]
-macro_rules! uds_server {
-    (
-        $ty:ty : $($svc:ident),+ $(,)? ;
-        transport = $transport:ty,
-        peers = $peers:expr,
-        server = $server:ident $(,)?
-    ) => {
-        /// The assembled server: this application's services, storage, session layer and
-        /// transport. Emitted by `uds_server!`.
-        type $server = $crate::Server<$ty, $transport, { $peers }>;
-
-        const _: () = {
-            const IN_FLIGHT: usize = $crate::assembly::min2(
-                $crate::assembly::max_of(&[
-                    $( $crate::__uds_request_bound!($ty, $svc) ),+
-                ]),
-                <$transport as $crate::UdsTransport>::MAX_PDU,
-            );
-            const RESPONSE: usize = $crate::assembly::min2(
-                $crate::assembly::max_of(&[
-                    $( $crate::__uds_response_bound!($ty, $svc) ),+
-                ]),
-                <$transport as $crate::UdsTransport>::MAX_PDU,
-            );
-            // Clause 8.7.6 admits only a two-byte TesterPresent and a 0x00-0x0F request
-            // while a service is in progress. Anything larger is occupancy and is
-            // answered busyRepeatRequest from its service identifier alone.
-            //
-            // No service `uds_server!` can currently assemble falls in 0x00-0x0F --
 ///
 /// # Examples
 ///
@@ -360,6 +330,36 @@ macro_rules! uds_server {
 /// assert_eq!(buffers.response.len(), 77);
 /// # let _ = &SERVER;
 /// ```
+#[macro_export]
+macro_rules! uds_server {
+    (
+        $ty:ty : $($svc:ident),+ $(,)? ;
+        transport = $transport:ty,
+        peers = $peers:expr,
+        server = $server:ident $(,)?
+    ) => {
+        /// The assembled server: this application's services, storage, session layer and
+        /// transport. Emitted by `uds_server!`.
+        type $server = $crate::Server<$ty, $transport, { $peers }>;
+
+        const _: () = {
+            const IN_FLIGHT: usize = $crate::assembly::min2(
+                $crate::assembly::max_of(&[
+                    $( $crate::__uds_request_bound!($ty, $svc) ),+
+                ]),
+                <$transport as $crate::UdsTransport>::MAX_PDU,
+            );
+            const RESPONSE: usize = $crate::assembly::min2(
+                $crate::assembly::max_of(&[
+                    $( $crate::__uds_response_bound!($ty, $svc) ),+
+                ]),
+                <$transport as $crate::UdsTransport>::MAX_PDU,
+            );
+            // Clause 8.7.6 admits only a two-byte TesterPresent and a 0x00-0x0F request
+            // while a service is in progress. Anything larger is occupancy and is
+            // answered busyRepeatRequest from its service identifier alone.
+            //
+            // No service `uds_server!` can currently assemble falls in 0x00-0x0F --
             // that range is OBD territory, which uds_protocol does not model -- so the
             // second exception is unreachable today. The arm in
             // `is_concurrent_exception` below is where it will be handled when a
@@ -426,6 +426,122 @@ macro_rules! uds_server {
                         _ => false,
                     }
                 }
+            }
+        };
+    };
+}
+
+/// Assemble a client from the identifier vocabulary it speaks.
+///
+/// ``UDSSVC_ARCH_0020``, ``UDSSVC_ARCH_0024`` — the same enumeration a server's handlers
+/// are written against names a client's requests, so a vehicle programme that builds both
+/// from one definition gets a compile error when only one was updated.
+///
+/// The fold is [`crate::uds_server`]'s `ReadDataByIdentifier` arms, run against the
+/// client's side of the same exchange: a request is the service identifier and two bytes
+/// per identifier, and a response is the service identifier and each identifier beside
+/// its record. Naming the transport lets its
+/// [`MAX_PDU`](crate::UdsTransport::MAX_PDU) cap both, exactly as it does for a server.
+///
+/// `client = Name` is the alias the client is reached through, so the channel counts and
+/// the keep-alive mode are written once, here, rather than at every signature that names
+/// a client.
+///
+/// # Examples
+///
+/// ```
+/// # use uds_services::{
+/// #     Ai, DataIdentifier, PhysicalKeepAlive, RecordError, Reloads, Timestamp,
+/// #     TransportEvent, UdsTransport, uds_client,
+/// # };
+/// # #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// # enum Did { VehicleSpeed, VinNumber }
+/// #
+/// # impl DataIdentifier for Did {
+/// #     const MAX_RECORD_LEN: usize = 17;
+/// #     fn as_u16(self) -> u16 {
+/// #         match self { Self::VehicleSpeed => 0xF4_0D, Self::VinNumber => 0xF1_90 }
+/// #     }
+/// #     fn from_u16(v: u16) -> Option<Self> {
+/// #         match v {
+/// #             0xF4_0D => Some(Self::VehicleSpeed),
+/// #             0xF1_90 => Some(Self::VinNumber),
+/// #             _ => None,
+/// #         }
+/// #     }
+/// #     fn split_record(self, buf: &[u8]) -> Result<(&[u8], &[u8]), RecordError> {
+/// #         let width = match self { Self::VehicleSpeed => 1, Self::VinNumber => 17 };
+/// #         buf.split_at_checked(width).ok_or(RecordError::Short)
+/// #     }
+/// # }
+/// #
+/// # #[derive(Debug)]
+/// # struct DoIpTransport;
+/// # impl UdsTransport for DoIpTransport {
+/// #     type Error = ();
+/// #     async fn t_data_req(&mut self, _ai: Ai, _d: &[u8]) -> Result<(), ()> { Ok(()) }
+/// #     async fn next_event<'b>(
+/// #         &mut self,
+/// #         _b: &'b mut [u8],
+/// #         _d: Option<Timestamp>,
+/// #     ) -> Result<TransportEvent<'b>, ()> { Ok(TransportEvent::Deadline) }
+/// #     fn outbound_max(&self) -> Option<usize> { None }
+/// #     fn channel_timing(&self) -> Reloads {
+/// #         Reloads { default_reload: 2_000, enhanced_reload: 5_000 }
+/// #     }
+/// #     fn now(&self) -> Timestamp { Timestamp(0) }
+/// # }
+/// uds_client! {
+///     Did;
+///     transport = DoIpTransport,
+///     max_dids_per_request = 4,
+///     physical = 2,
+///     functional = 1,
+///     responders = 4,
+///     keep_alive = PhysicalKeepAlive,
+///     client = Tester,
+/// }
+///
+/// static TESTER: Tester = Tester::new(DoIpTransport, PhysicalKeepAlive);
+/// # let _ = &TESTER;
+/// ```
+#[macro_export]
+macro_rules! uds_client {
+    (
+        $did:ty ;
+        transport = $transport:ty,
+        max_dids_per_request = $max_dids:expr,
+        physical = $phys:expr,
+        functional = $func:expr,
+        responders = $responders:expr,
+        keep_alive = $keep_alive:ty,
+        client = $client:ident $(,)?
+    ) => {
+        /// The assembled client: this application's identifiers, its buffers, session
+        /// layer and transport. Emitted by `uds_client!`.
+        type $client = $crate::Client<
+            $did,
+            $transport,
+            $keep_alive,
+            { $phys },
+            { $func },
+            { $responders },
+        >;
+
+        const _: () = {
+            const REQUEST: usize = $crate::assembly::min2(
+                1 + 2 * { $max_dids },
+                <$transport as $crate::UdsTransport>::MAX_PDU,
+            );
+            const RESPONSE: usize = $crate::assembly::min2(
+                1 + { $max_dids } * (2 + <$did as $crate::DataIdentifier>::MAX_RECORD_LEN),
+                <$transport as $crate::UdsTransport>::MAX_PDU,
+            );
+
+            impl $crate::sealed::Sealed for $did {}
+
+            impl $crate::ClientSet for $did {
+                type Store = $crate::ClientStore<REQUEST, RESPONSE>;
             }
         };
     };

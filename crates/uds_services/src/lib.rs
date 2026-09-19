@@ -58,13 +58,13 @@
 pub mod assembly;
 
 pub mod client;
-pub use client::{Answer, Client, Records, Response, Responses};
+pub use client::{Answer, Client, ClientSet, Records, Response, Responses};
 
 pub mod server;
 pub use server::{Server, ServerParams};
 
 pub mod storage;
-pub use storage::{Buffers, Storage, Store};
+pub use storage::{Buffers, ClientBuffers, ClientStorage, ClientStore, Storage, Store};
 
 pub mod sink;
 pub use sink::ResponseSink;
@@ -86,6 +86,13 @@ pub use transport::{
     Address, Ai, Mtype, Reloads, SResult, TaType, Timestamp, TransportEvent, UdsTransport,
 };
 
+/// The keep-alive modes a client is built in, from `uds_session`.
+///
+/// Re-exported for the reason the protocol vocabulary above is: [`crate::uds_client`]'s
+/// `keep_alive = ..` names one, and an application should not take a dependency on
+/// `uds_session` to write it.
+pub use uds_session::{FunctionalKeepAlive, KeepAlive, PhysicalKeepAlive};
+
 mod select;
 
 pub mod identifier;
@@ -100,10 +107,6 @@ pub use services::{
     TransferRequest, WriteDataByIdentifier,
 };
 
-#[doc(hidden)]
-pub mod sealed;
-
-mod dispatch;
 /// The protocol vocabulary this crate's handler signatures are written in.
 ///
 /// Re-exported so an application implementing a service trait names one crate, not two.
@@ -121,3 +124,7 @@ pub use uds_protocol::{
     NegativeResponseCode, ReadDtcInfoSubFunction, ResetType, SubnetNumber,
 };
 
+#[doc(hidden)]
+pub mod sealed;
+
+mod dispatch;

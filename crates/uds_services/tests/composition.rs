@@ -14,14 +14,15 @@
 
 use uds_protocol::NegativeResponseCode as Nrc;
 use uds_services::{
-    Address, Ai, ClearDiagnosticInformation, CommunicationControl, CommunicationControlType,
-    CommunicationType, DataIdentifier, DataTransfer, DtcReportKind, DtcStatusMask,
-    FunctionalGroupIdentifier, KeyVerdict, Mtype, ReadDataByIdentifier,
-    ReadDtcInfoSubFunction, ReadDtcInformation, RecordError, Reloads, ResponseSink,
-    SecurityAccess, SecurityLevel, SecurityPolicy, ServerParams, ServiceSet, Sink, Storage,
-    SubnetNumber, TaType, Timestamp, TransferRequest, TransportEvent, UdsTransport,
-    uds_server,
+    Address, Ai, ClearDiagnosticInformation, ClientSet, ClientStorage,
+    CommunicationControl, CommunicationControlType, CommunicationType, DataIdentifier,
+    DataTransfer, DtcReportKind, DtcStatusMask, FunctionalGroupIdentifier, KeyVerdict,
+    Mtype, PhysicalKeepAlive, ReadDataByIdentifier, ReadDtcInfoSubFunction,
+    ReadDtcInformation, RecordError, Reloads, ResponseSink, SecurityAccess, SecurityLevel,
+    SecurityPolicy, ServerParams, ServiceSet, Sink, Storage, SubnetNumber, TaType,
+    Timestamp, TransferRequest, TransportEvent, UdsTransport, uds_client, uds_server,
 };
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Did {
     VehicleSpeed,
@@ -366,3 +367,61 @@ fn the_handler_seam_is_typed_not_byte_shaped() {
     assert_eq!(cleared, Some(Ok(())));
 }
 
+uds_client! {
+    Did;
+    transport = FakeTransport,
+    max_dids_per_request = 4,
+    physical = 2,
+    functional = 1,
+    responders = 4,
+    keep_alive = PhysicalKeepAlive,
+    client = Tester,
+}
+
+/// A client constructs in a `static` for the same reason the server above does, and
+/// without the application naming `uds_session` to supply channel slots.
+static TESTER: Tester = Tester::new(FakeTransport, PhysicalKeepAlive);
+
+/// ``UDSSVC_ARCH_0024`` — the tester and the server size the same exchange from the same
+/// `Did` declaration. The request is the service identifier and two bytes per identifier;
+/// the response is the service identifier and each identifier beside its record, which is
+/// the same `1 + 4 * (2 + 17)` the server folded in for `ReadDataByIdentifier`.
+///
+/// **If these disagree, one side of the vocabulary moved without the other.** That is the
+/// compile error one identifier catalogue serving both roles exists to produce.
+#[test]
+fn the_client_buffers_are_derived_from_the_same_declaration() {
+    let mut store = <<Did as ClientSet>::Store as ClientStorage>::EMPTY;
+    let b = store.split();
+    assert_eq!(b.request.len(), 1 + 2 * 4);
+    assert_eq!(b.response.len(), 1 + 4 * (2 + 17));
+
+    let mut server_store = <<Ecu as ServiceSet>::Store as Storage>::EMPTY;
+    assert_eq!(b.response.len(), server_store.split().response.len());
+}
+
+/// Referencing the static is what forces the client's const evaluation to run.
+#[test]
+fn the_client_constructs_in_a_static() {
+    assert!(!core::ptr::addr_of!(TESTER).is_null());
+}
+
+/// The point of the alias: a signature naming a client names *one* type, where before it
+/// spelled a transport, a keep-alive mode and three counts.
+///
+/// It also pins the borrow this crate could not express until the client owned storage —
+/// `Records<'_, Did>` borrows the response buffer out of `&mut Tester`. Never awaited, so
+/// the `todo!()` body is compiled and not run: a compile-time assertion in a test's
+/// clothes, as `transport.rs`'s borrow test is.
+#[expect(dead_code, reason = "compiled for its signature, never called")]
+async fn read_the_vin(tester: &mut Tester) -> Result<(), ()> {
+    let answer = tester
+        .read_data_by_identifier(Address(0x0E00), &[Did::VinNumber])
+        .await?;
+    if let uds_services::Response::Positive(records) = answer {
+        for record in records {
+            let _ = record;
+        }
+    }
+    Ok(())
+}

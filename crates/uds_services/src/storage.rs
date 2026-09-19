@@ -86,10 +86,92 @@ impl<const REQ: usize, const CONC: usize, const RSP: usize> Storage
     }
 }
 
+/// The two buffers a client needs, together.
+#[derive(Debug)]
+pub struct ClientBuffers<'a> {
+    /// Where a request is encoded before it goes to the transport.
+    pub request: &'a mut [u8],
+    /// Where a response lands, and what [`crate::Records`] borrows.
+    pub response: &'a mut [u8],
+}
+
+/// The storage one assembled client needs.
+///
+/// ``UDSSVC_ARCH_0017`` for the client half: the buffers are this crate's, and
+/// [`crate::uds_client`] folds their lengths from the identifier enumeration's declared
+/// maximum record and the most identifiers one request may name. Sealed for the reason
+/// [`Storage`] is — a hand-written implementor could pick lengths that disagree with the
+/// maxima the assembly folded.
+///
+/// [`Debug`] is a supertrait because [`crate::Responses`] holds a `&mut Client` and so
+/// needs the store's `Debug` one projection deeper than a derive can infer, and this
+/// crate denies `missing_debug_implementations`.
+///
+/// **Two buffers rather than one.** A single buffer would be the larger of the two and
+/// therefore smaller than this pair, and the request would not survive the response
+/// landing on top of it. Keeping them apart is what lets a retransmission after a
+/// `tP_Client` expiry re-send the bytes it already encoded, rather than encoding them
+/// again into storage the caller may be holding as [`crate::Records`].
+pub trait ClientStorage: crate::sealed::Sealed + core::fmt::Debug {
+    /// Zeroed storage.
+    ///
+    /// An associated const for the reason [`Storage::EMPTY`] is one: a client built at
+    /// runtime is a stack temporary before the move, and
+    /// [`crate::Client::new`] must work in a `static` initialiser.
+    const EMPTY: Self;
+
+    /// Both buffers at once.
+    fn split(&mut self) -> ClientBuffers<'_>;
+}
+
+/// Storage for an assembled client.
+///
+/// Public because the generated code names it; its fields are not.
+#[derive(Debug)]
+pub struct ClientStore<const REQ: usize, const RSP: usize> {
+    request: [u8; REQ],
+    response: [u8; RSP],
+}
+
+impl<const REQ: usize, const RSP: usize> crate::sealed::Sealed for ClientStore<REQ, RSP> {}
+
+impl<const REQ: usize, const RSP: usize> ClientStorage for ClientStore<REQ, RSP> {
+    const EMPTY: Self = Self {
+        request: [0; REQ],
+        response: [0; RSP],
+    };
+
+    fn split(&mut self) -> ClientBuffers<'_> {
+        ClientBuffers {
+            request: &mut self.request,
+            response: &mut self.response,
+        }
+    }
+}
+
 #[cfg(test)]
 #[allow(clippy::indexing_slicing)]
 mod tests {
-    use super::{Storage, Store};
+    use super::{ClientStorage, ClientStore, Storage, Store};
+
+    /// The client's two arrays are the declared lengths, and both are reachable at once
+    /// so a request can be encoded while the response buffer is live.
+    #[test]
+    fn the_client_buffers_are_the_declared_lengths() {
+        let mut s = <ClientStore<9, 77> as ClientStorage>::EMPTY;
+        let b = s.split();
+        assert_eq!((b.request.len(), b.response.len()), (9, 77));
+        b.request[0] = 0x22;
+        b.response[0] = 0x62;
+        assert_eq!((b.request[0], b.response[0]), (0x22, 0x62));
+    }
+
+    /// A client constructs in a `static` for the same reason a server does.
+    #[test]
+    fn client_storage_is_const_constructible() {
+        static STORE: ClientStore<9, 77> = <ClientStore<9, 77> as ClientStorage>::EMPTY;
+        assert_eq!(core::mem::size_of_val(&STORE), 86);
+    }
 
     /// The three arrays are exactly the declared sizes. The whole derivation scheme
     /// rests on this, so it is asserted rather than assumed.
