@@ -51,10 +51,11 @@ pub struct ServerParams {
 /// permits it at any time, and ``UDSS_LLR_0076`` keeps a running timer on the value it
 /// was loaded with, so a change never moves a window already open.
 ///
-/// Non-exhaustive: the set of tunable parameters is this crate's, not the standard's, and
-/// a caller should not be broken by one this crate has yet to learn about.
+/// Exhaustive. ``UDSS_LLR_0041`` makes the protocol parameters exactly those a
+/// requirement of this set conditions on, so the set is closed by the requirement set
+/// rather than open-ended. A parameter can only appear by a requirement changing, and a
+/// caller whose match then fails to compile is being told exactly that.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-#[non_exhaustive]
 pub enum ServerParameter {
     /// `tS3_Server`.
     S3Server(u32),
@@ -125,10 +126,8 @@ pub struct ChannelParams {
 /// physical keep-alive, so [`crate::Client::set_physical_s3_client`] carries it and exists
 /// only in that mode.
 ///
-/// Non-exhaustive: the set of tunable parameters is this crate's, not the standard's, and
-/// a caller should not be broken by one this crate has yet to learn about.
+/// Exhaustive, for the reason [`ServerParameter`] gives: ``UDSS_LLR_0041`` closes the set.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-#[non_exhaustive]
 pub enum ChannelParameter {
     /// Both response reloads at once.
     ///

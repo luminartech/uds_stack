@@ -33,8 +33,14 @@ macro_rules! causes {
         /// ``UDSS_LLR_0070``, ``UDSS_LLR_0071``, ``UDSS_LLR_0072``, ``UDSS_LLR_0152``
         /// and part of ``UDSS_LLR_0134`` — have no variant here, because an input that
         /// triggers them cannot be written.
+        ///
+        /// Exhaustive. The set is one variant per rejecting requirement, so it is closed
+        /// by the requirement set; no requirement here states an open enumeration, and
+        /// only ``UDSS_LLR_0010`` and ``UDSS_LLR_0012`` do so anywhere in the set. A
+        /// cause can appear only by a requirement changing, and a caller whose match then
+        /// fails to compile is being told exactly that — which a wildcard arm would
+        /// swallow.
         #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-        #[non_exhaustive]
         pub enum Cause {
             $( $(#[$attr])* $variant, )+
         }

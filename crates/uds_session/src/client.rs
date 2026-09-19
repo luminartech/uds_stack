@@ -231,7 +231,9 @@ impl KeepAliveMode for PhysicalKeepAlive {}
 
 /// What a client produces for the caller to retrieve.
 ///
-/// ``UDSS_LLR_0012`` — the standard's own outputs, plus the ones it does not define.
+/// ``UDSS_LLR_0012`` — the standard's own outputs, plus the ones it does not define. That
+/// requirement states an open enumeration, which is what `#[non_exhaustive]` rests on
+/// here; see [`crate::ServerOutput`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum ClientOutput<'d> {
