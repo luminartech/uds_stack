@@ -361,15 +361,10 @@ macro_rules! uds_server {
                 ]),
                 <$transport as $crate::UdsTransport>::MAX_PDU,
             );
-            // Clause 8.7.6 admits only a two-byte TesterPresent and a 0x00-0x0F request
-            // while a service is in progress. Anything larger is occupancy and is
-            // answered busyRepeatRequest from its service identifier alone.
-            //
-            // No service `uds_server!` can currently assemble falls in 0x00-0x0F --
-            // that range is OBD territory, which uds_protocol does not model -- so the
-            // second exception is unreachable today. The arm in
-            // `is_concurrent_exception` below is where it will be handled when a
-            // service in that range arrives.
+            // The only message clause 8.7.6 admits while a service is in progress is a
+            // two-byte TesterPresent. Anything larger is occupancy, and is answered
+            // busyRepeatRequest from its service identifier alone -- so this buffer need
+            // only be wide enough to read that identifier and reject what follows.
             const CONCURRENT: usize = 8;
 
             impl $crate::sealed::Sealed for $ty {}
@@ -425,10 +420,6 @@ macro_rules! uds_server {
                             ::core::matches!(ai.ta_type, $crate::TaType::Functional)
                                 && request.get(1).is_some_and(|sub| sub & 0x80 != 0)
                         }
-                        // Unreachable as the crate stands: no service `uds_server!`
-                        // can assemble falls in 0x00-0x0F. Kept as the place the case
-                        // will be handled when one does.
-                        Some(sid) if *sid <= 0x0F => self.supports(*sid),
                         _ => false,
                     }
                 }

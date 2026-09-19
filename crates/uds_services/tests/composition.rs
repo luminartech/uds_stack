@@ -299,15 +299,16 @@ fn response_pending_permission_follows_the_declaration() {
     assert!(!ecu.may_respond_pending(0x3E));
 }
 
-/// Clause 8.7.6's first exception is a **functionally addressed** suppressed
-/// `TesterPresent`. The same bytes physically addressed are not admitted, which is the
-/// distinction the classifier could not draw while its only argument was the request.
+/// The one message clause 8.7.6 admits mid-service is a **functionally addressed**
+/// suppressed `TesterPresent`. The same bytes physically addressed are not admitted,
+/// which is the distinction the classifier could not draw while its only argument was
+/// the request.
 ///
-/// The *second* exception, a request in 0x00-0x0F, is unreachable for any server
-/// `uds_server!` can assemble -- that range is OBD territory, which `uds_protocol` does
-/// not model, so the minimum SID in `__uds_sids!` is 0x10. The 0x01 assertion is a guard
-/// that the limb stays closed while nothing can open it, not a demonstration that it
-/// works.
+/// The 0x01 assertion covers the clause's other exception, a request in 0x00-0x0F. No
+/// server `uds_server!` can assemble reaches it — the lowest SID in `__uds_sids!` is
+/// 0x10, because that range is OBD territory and `uds_protocol` does not model it — so
+/// what this pins is that such a request is ordinary occupancy here, owing
+/// busyRepeatRequest like any other.
 #[test]
 fn the_tester_present_exception_is_admitted_only_when_functionally_addressed() {
     fn ai(ta_type: TaType) -> Ai {
@@ -324,6 +325,7 @@ fn the_tester_present_exception_is_admitted_only_when_functionally_addressed() {
     assert!(!ecu.is_concurrent_exception(&[0x3E, 0x80], ai(TaType::Physical)));
     // Without the suppress bit it is an ordinary request either way.
     assert!(!ecu.is_concurrent_exception(&[0x3E, 0x00], ai(TaType::Functional)));
+    // An OBD-range service identifier: no exception, because none is assemblable.
     assert!(!ecu.is_concurrent_exception(&[0x01], ai(TaType::Functional)));
     assert!(!ecu.is_concurrent_exception(&[0x22, 0xF1, 0x90], ai(TaType::Functional)));
 }

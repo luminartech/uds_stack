@@ -105,25 +105,20 @@ pub trait ServiceSet: crate::sealed::Sealed {
     /// ``UDSSVC_ARCH_0033``.
     fn may_respond_pending(&self, sid: u8) -> bool;
 
-    /// Whether `request`, addressed this way, is one of clause 8.7.6's two exceptions to
-    /// one-request-at-a-time.
+    /// Whether `request`, addressed this way, may proceed while a service is already in
+    /// progress.
     ///
-    /// A **functionally addressed** `TesterPresent` with `suppressPosRspMsgIndication`
-    /// set, which bypasses the occupied diagnostic protocol instance; or a request in the
-    /// `0x00`–`0x0F` range, which aborts the active service. The second is predicated on
-    /// "if a server supports services in the range of 0x00 to 0x0F", which only the
-    /// assembly list knows — so classification is not merely arguably this crate's, it is
-    /// available nowhere else.
+    /// True for a **functionally addressed** `TesterPresent` carrying
+    /// `suppressPosRspMsgIndication`, which clause 8.7.6 lets bypass the occupied
+    /// diagnostic protocol instance. The addressing is a parameter because that
+    /// condition turns on it and the bytes do not carry it; `ai` is the one the driver
+    /// drained from the transport event alongside `request`.
     ///
-    /// The addressing is a parameter because the first exception is conditioned on it and
-    /// the bytes do not carry it. `ai` is the one the driver drained from the transport
-    /// event alongside `request`.
-    ///
-    /// **The second limb is unreachable as the crate stands.** No service
-    /// [`crate::uds_server`] can assemble falls in `0x00`–`0x0F` — that range is OBD
-    /// territory, which `uds_protocol` does not model — so no assembled server can
-    /// return `true` from it. The arm is kept because it is where the case will be
-    /// handled when a service in that range arrives.
+    /// Clause 8.7.6 admits a second exception — a request in `0x00`–`0x0F`, which aborts
+    /// the active service — and no assembled server can meet it. That range is OBD
+    /// territory, which `uds_protocol` does not model, so [`crate::uds_server`] can
+    /// assemble no service in it and the case cannot arise. Its absence here is coverage,
+    /// not an omission.
     ///
     /// Anything else arriving mid-service is occupancy and owes `busyRepeatRequest`
     /// (0x21). *Acting* on a classification is open question 1.

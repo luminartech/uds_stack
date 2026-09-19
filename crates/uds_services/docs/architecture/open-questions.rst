@@ -23,7 +23,12 @@ nowhere else.
 functionally addressed ``TesterPresent`` with the suppress bit set must bypass the occupied
 diagnostic protocol instance, and a request in the 0x00–0x0F range must abort an active
 service outside that range and start the default session unless a programming session is
-active. Neither is performed. Nor is the negative case: anything arriving mid-service that
+active. The first is not performed. The second cannot arise: the clause predicates it on
+the server supporting a service in that range, ``uds_server!`` can assemble none — the
+lowest identifier in ``__uds_sids!`` is 0x10, that range being OBD territory
+``uds_protocol`` does not model — and ``is_concurrent_exception`` therefore no longer
+carries an arm for it. The arm returns with the first service in that range, which cannot
+be added without editing the same macro. Nor is the negative case: anything arriving mid-service that
 is *not* an exception is occupancy and owes ``busyRepeatRequest`` (0x21), and a
 ``DataTooLong`` on the concurrent buffer owes the same — the driver's concurrent arm
 currently re-arms the deadline and does nothing else. No caller in ``src/`` invokes
