@@ -748,6 +748,16 @@ Service primitives
    On ``S_Data.ind``, ``S_Data`` and ``S_Length`` shall be valid only where ``S_Result``
    is ``S_OK``.
 
+   An interface that carries the data and the result as one value, in which the data is
+   present only where the result is ``S_OK``, satisfies this without a check.
+
+   The same shape serves the ``T_Data.ind`` that ``UDSS_LLR_0047`` maps onto this
+   indication. A reception input carrying its data and its result as one value cannot
+   supply data that this requirement then makes invalid, so the caller is never asked for
+   a payload no requirement of this set may read. That is a consequence of this
+   requirement and ``UDSS_LLR_0047`` together rather than a further obligation: nothing
+   here requires the data of a failed reception, and nothing may use it.
+
 .. llr:: A received message is indicated to the application
    :id: UDSS_LLR_0036
    :status: draft
@@ -1598,6 +1608,21 @@ means of recognising it to the implementation.
    case ``UDSS_LLR_0058`` does not excuse, which this requirement names rather than merely
    mentioning, since ``UDSS_LLR_0072`` excludes from its own reach every departure this one
    names.
+
+   Every case this requirement reaches is discharged by construction in an interface that
+   makes the kind a required part of each indication obliged to state one and admits its
+   absence only where ``UDSS_LLR_0058`` permits it, so this requirement is discharged in
+   full rather than in part. Walked against each case in turn. A ``T_Data.ind`` reporting a
+   successful reception states a kind in both roles: at a server because its classification
+   is a required parameter, and at a client because the value carrying the reception's data
+   carries its classification inseparably with it. A ``T_DataSOM.ind`` states one where its
+   classification is a required parameter, which it is in both roles. A ``T_Data.ind``
+   reporting an unsuccessful reception of a message addressed to a server states one
+   because only a server's own reception primitive carries such a message, under
+   ``UDSS_LLR_0030``, and its classification is a required parameter there. The one absence
+   that remains expressible is then a client's reception of a message whose reception
+   failed, which is exactly the case ``UDSS_LLR_0058`` permits, so the second sentence is
+   satisfied by the same construction rather than by a separate check.
 
 .. llr:: A request at a client stating no expected response count is rejected
    :id: UDSS_LLR_0070
