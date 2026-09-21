@@ -1,7 +1,7 @@
 [project]
-name = "uds-services-docs"
+name = "uds-stack-docs"
 version = "0"
-description = "Architecture, requirements and documentation build environment for the uds_services crate"
+description = "Architecture, requirements and documentation build environment for the uds_stack workspace"
 # Upper bound is load-bearing, not caution. sphinx-needs 5.1.0 calls `ast.NameConstant`,
 # which was removed after Python 3.12, and Sphinx aborts on import rather than degrading.
 # Expressing it here makes the resolver refuse a broken interpreter instead of leaving a

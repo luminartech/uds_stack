@@ -2,3 +2,15 @@
 # generated from them. These are how a change gets designed, not part of the
 # stack, and this repository is public.
 docs/superpowers/
+
+# Sphinx build output.
+docs/_build/
+
+# Cargo build output.
+/target/
+
+# Python bytecode from the policy checkers.
+__pycache__/
+
+# macOS finder metadata. Several of these arrived with the imported histories.
+.DS_Store
