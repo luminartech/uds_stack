@@ -76,19 +76,19 @@
 //! | ``UDSS_LLR_0151`` | no channel parameter states an `s3_client` |
 //! | ``UDSS_LLR_0152`` | the reload methods exist only on the mode that has one |
 //!
-//! [`Reaction::finish`]: reaction::Reaction::finish
+//! [`Reaction::finish`]: Reaction::finish
 
 #![no_std]
 
-pub mod addressing;
-pub mod classification;
-pub mod client;
-pub mod params;
-pub mod reaction;
-pub mod rejection;
-pub mod result;
-pub mod server;
-pub mod time;
+mod addressing;
+mod classification;
+mod client;
+mod params;
+mod reaction;
+mod rejection;
+mod result;
+mod server;
+mod time;
 
 pub use addressing::{
     Address, AddressExtension, Ai, ChannelAddressing, Mtype, PeerIdentity, TaType,

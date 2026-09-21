@@ -1,6 +1,6 @@
 //! The client role.
 //!
-//! ``UDSS_LLR_0029`` fixes the role at creation; see [`crate::server`] for why the two
+//! ``UDSS_LLR_0029`` fixes the role at creation; see [`crate::Server`] for why the two
 //! roles are separate types. ``UDSS_LLR_0031`` lists what a client rejects, and each item
 //! is unrepresentable here: there is no `completion_report`, and [`ClientTx`] and
 //! [`ClientRx`] cannot express the server's kinds.
