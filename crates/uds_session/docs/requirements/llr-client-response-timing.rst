@@ -188,7 +188,8 @@ The response window
    A logical communication channel shall exist from the moment the caller opens it,
    identified by the addressing the caller states when opening it, until the caller
    withdraws it. The session layer shall return a handle identifying the channel, which
-   its outputs and per-channel inputs use.
+   its outputs and per-channel inputs use. A handle identifying a channel the caller has
+   withdrawn shall identify no channel opened afterwards.
 
    Rationale: neither clause the timer requirement ``UDSS_LLR_0120`` cites says where a
    channel's timer lives; the standard states what timers are needed, not where they live.
@@ -198,6 +199,17 @@ The response window
    the first ``S_Data.req`` to a new addressing or demand a registration the set never
    named. Opening and withdrawing a channel are acts of the caller, as the completion report
    of ``UDSS_LLR_0074`` is an input that is neither a primitive nor a parameter.
+
+   A withdrawn channel's handle identifies no later channel because ``UDSS_LLR_0027``,
+   ``UDSS_LLR_0124``, ``UDSS_LLR_0134`` and ``UDSS_LLR_0183`` each reject an input or act
+   naming a channel the client does not have, and a handle the client reissued to a channel
+   opened afterwards names a channel it *does* have. Those four rejections would then not
+   reach the case that needs them most: a caller still holding the handle of a channel it
+   withdrew would silently act on another channel instead of being refused. This states the
+   guarantee and not how it is met. A handle may be made unique over the instance's
+   lifetime, or the storage a channel occupied may record enough to tell the channels that
+   have occupied it apart; either satisfies this, and ``UDSS_LLR_0125`` does not discard
+   what the second needs.
 
 .. llr:: Duplicate channel addressing is rejected
    :id: UDSS_LLR_0122
@@ -251,7 +263,9 @@ The response window
 
    Withdrawal of a channel shall be permitted at any time and shall discard, without
    output, every fact this set holds for the channel, an association outstanding on it
-   included; a ``T_Data.conf`` arriving for that association thereafter matches none while
+   included, save what ``UDSS_LLR_0121`` needs to keep a handle of the withdrawn channel
+   from identifying one opened afterwards; a ``T_Data.conf`` arriving for that association
+   thereafter matches none while
    no channel of that addressing exists and is rejected under ``UDSS_LLR_0063``. A caller
    that opens the same addressing again before that confirmation arrives has it matched to
    whatever association the new channel then holds, ``UDSS_LLR_0059`` matching by
