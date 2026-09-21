@@ -1,0 +1,4 @@
+# The requirement set and the crate share one width. rustfmt's default is 100, which
+# silently reflowed code past the project's stated 92 columns, so the limit is declared
+# here rather than left to reviewers to catch by eye.
+max_width = 92

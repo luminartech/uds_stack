@@ -1,0 +1,50 @@
+[package]
+name = "uds_session"
+version = "0.1.0"
+edition = "2024"
+# Dual licence at the consumer's option, the Rust ecosystem's convention. Apache-2.0
+# carries an express patent grant, which matters for an automotive protocol; MIT is here
+# because a downstream that cannot take Apache-2.0 should still have a path. The same
+# licence covers the requirement set under docs/.
+#
+# Neither licence grants any right in the ISO standards the requirements cite, which remain
+# ISO's. See "Relationship to the standards" in README.md.
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+
+# Lints are declared here rather than as inner attributes in lib.rs so that they apply
+# uniformly to every target — lib, tests, examples, benches — instead of only to the
+# crate root. A guard rail that stops at the test boundary is not a guard rail.
+[lints.rust]
+# `forbid`, not `deny`. Deny can be switched off locally with an `allow` attribute;
+# forbid cannot, which is the entire point. Note the scope honestly: this forbids
+# `unsafe` in *this* crate's sources. Dependencies, `core` included, are unaffected and
+# are covered separately by dependency review.
+unsafe_code = "forbid"
+missing_docs = "deny"
+missing_debug_implementations = "deny"
+
+[lints.clippy]
+# Negative priority so the specific lints below can override members of the group.
+pedantic = { level = "deny", priority = -1 }
+
+# --- Panic freedom -----------------------------------------------------------------
+# A panic in a diagnostic server is an unhandled failure in a safety-related component.
+# These are `deny` rather than `forbid`: a local `allow` carrying a reviewed
+# justification is a legitimate outcome, silently reaching for `unwrap` is not.
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+unreachable = "deny"
+todo = "deny"
+unimplemented = "deny"
+indexing_slicing = "deny"
+
+# --- Arithmetic and conversions ----------------------------------------------------
+# Timer arithmetic is the substance of this crate, so overflow behaviour should be stated
+# rather than inherited: these force an explicit `checked_*` or `saturating_*` at every
+# site. `as_conversions` matters because the same source is built for a 32-bit target,
+# where a silently truncating cast is a portability defect host tests will not catch.
+arithmetic_side_effects = "deny"
+as_conversions = "deny"
