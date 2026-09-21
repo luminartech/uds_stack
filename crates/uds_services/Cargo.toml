@@ -1,0 +1,64 @@
+[package]
+name = "uds_services"
+version = "0.0.0"
+edition = "2024"
+rust-version = "1.88"
+description = "ISO 14229-1 clause 8.7 server response implementation rules: typed UDS service dispatch over caller-defined identifiers"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/luminartech/uds_stack"
+readme = "README.md"
+keywords = ["uds", "iso14229", "automotive", "diagnostics", "no-std"]
+categories = ["no-std", "embedded", "network-programming"]
+publish = false                                  # pre-implementation
+
+[dependencies]
+# L1 message codec. This crate dispatches over uds_protocol's message types and
+# never re-encodes them itself.
+uds_protocol = { path = "../uds_protocol", default-features = false }
+
+# ISO 14229-2 session layer. This crate owns a Server<PEERS> by value and drives
+# it (UDSSVC_ARCH_0040), and speaks its vocabulary on the transport seam.
+uds_session = { path = "../uds_session", default-features = false }
+
+# The I/O vocabulary for the whole stack. Sink is what a handler writes into.
+automotive-wire-codec = { path = "../../automotive_wire_format", default-features = false }
+
+# No [features] table. This crate is no_std and allocation-free in every
+# configuration, and nothing in src/ reads a cfg — `alloc` and `std` only forwarded to
+# uds_protocol, so they promised a variation this crate's surface never made. An
+# application already depends on uds_protocol directly (its handlers return
+# NegativeResponseCode) and enables those there.
+#
+# No binding is ever a dependency either: UDSSVC_ARCH_0002 points the dependency arrow
+# one way and UDSSVC_ARCH_0003 makes bindings additive at the application. No runtime is
+# named (UDSSVC_ARCH_0030) — an `async fn` implies neither std nor an executor, so a
+# bare-metal target stays reachable.
+
+[lints.rust]
+unsafe_code = "forbid"
+missing_docs = "deny"
+missing_debug_implementations = "deny"
+
+[lints.clippy]
+pedantic = { level = "deny", priority = -1 }
+
+# --- Panic freedom -----------------------------------------------------------------
+# A panic in a diagnostic server is an unhandled failure in a safety-related component.
+# `deny` rather than `forbid`: a local `allow` carrying a reviewed justification is a
+# legitimate outcome, silently reaching for `unwrap` is not. `todo` is denied for the
+# same reason it is allowed at each stub site — the allow is the record that a body is
+# outstanding, and it stops being free the moment the lint is off.
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+unreachable = "deny"
+todo = "deny"
+unimplemented = "deny"
+indexing_slicing = "deny"
+
+# --- Arithmetic and conversions ----------------------------------------------------
+# Buffer offsets and response lengths are this crate's arithmetic, and the same source
+# builds for a 32-bit target where a silently truncating cast is a portability defect
+# host tests will not catch.
+arithmetic_side_effects = "deny"
+as_conversions = "deny"

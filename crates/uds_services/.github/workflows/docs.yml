@@ -1,0 +1,136 @@
+# Publishes the documentation set — architecture and requirements — to GitHub Pages.
+#
+# Builds on every pull request and every push to main; deploys from main alone. A pull
+# request build is a gate, not a preview. There are no previews: GitHub Pages serves one
+# site per repository, so previewing means writing builds into subdirectories of a branch
+# and pruning them when a pull request closes, and stale previews outlive the branches
+# that made them. Reviewers read the rendered set locally instead: `just html`.
+#
+# The gate earns its place. `sphinx-build -b needs`, which pre-commit runs, writes no
+# documents, so it never resolves references: a broken `:ref:` or `:doc:` passes every
+# local check at exit 0 and fails only under the html builder. Without a pull request
+# build that failure lands on main, and because a push-event failure carries no required
+# status check, the site would simply stop updating without saying so.
+#
+# One prerequisite this workflow cannot satisfy for itself: Pages must be enabled on the
+# repository with Source set to "GitHub Actions". `deploy-pages` does not enable it, and
+# against an unconfigured repository it fails with "Get Pages site failed. Please verify
+# that the repository has Pages enabled and configured to build using GitHub Actions".
+# `actions/configure-pages` has an `enablement` input but its own documentation requires a
+# token other than GITHUB_TOKEN for it, so this cannot be moved into the workflow. If the
+# deploy job ever fails that way, check the setting before the YAML — and remember that on
+# a push it fails silently, for the reason in the paragraph above.
+name: Documentation
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  # So the site can be republished without an empty commit, e.g. after changing a Pages
+  # setting or re-running a failed deployment. A dispatch against any other ref builds and
+  # stops, because the deploy job below is guarded on the ref rather than on the event.
+  workflow_dispatch:
+
+# Read-only by default. The build job runs third-party package code through `uv sync`, and
+# granting the deployment's capabilities workflow-wide would let that code mint the Pages
+# OIDC token and publish. They belong to the deploy job alone, which runs no checkout and
+# no third-party code beyond the deploy action itself.
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    # Superseding a build of the same ref is always right: only the newest commit on a
+    # pull request is worth reporting on. Keyed by ref so concurrent pull requests do not
+    # queue behind one another.
+    concurrency:
+      group: docs-build-${{ github.ref }}
+      cancel-in-progress: true
+    steps:
+      - uses: actions/checkout@v7
+
+      # Pinned for the same reason everything else here is: uv.lock, .python-version,
+      # `--frozen` and the `==` pins in pyproject.toml all exist so a given needs.json can
+      # be reproduced. setup-uv otherwise floats to whatever uv shipped that day, and a
+      # breaking release would break the deploy with no change in the repository to blame.
+      #
+      # The action reference is a full version because setup-uv publishes no moving major
+      # tag: it stopped at v7, and v8 onwards exist only as exact versions. `@v10` does not
+      # resolve. Do not "tidy" this to a major tag; the other actions here have one and
+      # this one does not.
+      - uses: astral-sh/setup-uv@v10.0.1
+        with:
+          version: "0.11.26"
+          enable-cache: true
+
+      # `--frozen` refuses to re-resolve. The interpreter is pinned by .python-version and
+      # bounded in pyproject.toml, and uv installs it here.
+      - run: uv sync --frozen
+
+      # PlantUML is the one dependency of this build that uv cannot pin, because it is a
+      # Java program invoked as a subprocess: `sphinxcontrib-plantuml` is the Python
+      # binding, not the renderer. The apt package pulls a JRE with it.
+      #
+      # This step is not optional and its absence does not degrade gracefully. Every
+      # architecture diagram, hand-authored and `needflow`-generated alike, fails to render
+      # and the build fails on the warning — which is the behaviour we want, since a
+      # silently diagram-free architecture page would be worse than a failed deploy.
+      - name: Install the PlantUML renderer
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends --yes plantuml
+          plantuml -version | head -n 1
+
+      # Keep this in step with the `html` recipe in the justfile, which is what a reviewer
+      # runs locally. Warnings are errors, so an orphaned page, an unknown directive or an
+      # unresolved reference fails the build rather than publishing quietly. `-q` is
+      # omitted deliberately: a build log nobody watches is worth more than a quiet one.
+      - run: uv run --frozen sphinx-build -b html -W docs docs/_build/html
+
+      # The site is what a person reads, and nothing else.
+      #
+      # needs.json is the one that matters. `needs_build_json` in conf.py makes the *html*
+      # builder emit it alongside the pages, so publishing the directory unpruned would put
+      # it at a stable public URL rebuilt on every push to main. That export is consumed as
+      # evidence against a committed snapshot, for reproducibility; a live URL is exactly
+      # what must not be available to point at instead.
+      #
+      # permalink.html has to go with it. sphinx-needs emits it for every builder except
+      # `needs`, and it resolves `permalink.html?id=UDSSVC_ARCH_0001` by fetching needs.json
+      # over XHR through a handler that fires only on HTTP 200, with no error branch. Left
+      # behind once needs.json is gone it sits on "Searching, Please Wait..." forever, and
+      # a dead by-ID entry point is worse than none. It cannot be switched off in conf.py:
+      # `needs_permalink_file = ""` leaves install_permalink_file writing to the output
+      # directory itself, which crashes the build rather than skipping the file.
+      #
+      # Dot-paths need no pruning. upload-pages-artifact passes `--exclude=.[^/]*` to tar
+      # unless `include-hidden-files` is set, so .doctrees and .buildinfo never ship.
+      - name: Prune non-published build output
+        run: rm -f docs/_build/html/needs.json docs/_build/html/permalink.html
+
+      - uses: actions/upload-pages-artifact@v5
+        with:
+          path: docs/_build/html
+
+  deploy:
+    needs: build
+    # Guarded on the ref, not the event: a pull request builds at refs/pull/N/merge and a
+    # dispatch can name any branch, so this covers both without enumerating events.
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    # Pages has a single deployment target, so overlapping deployments would race. Queue
+    # rather than cancel: cancelling mid-deploy can leave the site half-written, and a
+    # superseded deployment has already been superseded by the time it matters.
+    concurrency:
+      group: pages
+      cancel-in-progress: false
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v5
