@@ -1,0 +1,298 @@
+use crate::{
+    ClearDiagnosticInfoResponse, CommunicationControlResponse, ControlDtcSettingResponse, Decode,
+    DiagnosticSessionControlResponse, EcuResetResponse, Encode, Error, Incomplete,
+    NegativeResponse, ReadDataByIdentifierResponse, ReadDtcInfoResponse, RequestDownloadResponse,
+    RequestFileTransferResponse, RequestTransferExitResponse, RequestUploadResponse,
+    RoutineControlResponse, SecurityAccessResponse, TesterPresentResponse, TransferDataResponse,
+    UdsServiceType, WriteDataByIdentifierResponse,
+};
+use automotive_wire_codec::{write_bytes, write_u8};
+
+/// Parsed zero-copy UDS response. Borrows from the wire buffer.
+///
+/// Variable-length payloads are stored as raw `&'a [u8]` slices that can be
+/// further parsed on demand.
+#[derive(Clone, Debug, Eq, PartialEq)]
+#[non_exhaustive]
+pub enum Response<'a> {
+    /// Positive response to `ClearDiagnosticInfo`.
+    ClearDiagnosticInfo(ClearDiagnosticInfoResponse),
+    /// Positive response to `CommunicationControl`.
+    CommunicationControl(CommunicationControlResponse),
+    /// Positive response to `ControlDtcSetting`.
+    ControlDtcSetting(ControlDtcSettingResponse),
+    /// Positive response to `DiagnosticSessionControl`.
+    DiagnosticSessionControl(DiagnosticSessionControlResponse),
+    /// Positive response to `EcuReset`.
+    EcuReset(EcuResetResponse),
+    /// Negative response to any request.
+    NegativeResponse(NegativeResponse),
+    /// Positive response to `ReadDataByIdentifier`: raw `[DID][data record]…` bytes.
+    ///
+    /// Unlike the request (a self-delimiting list of 2-byte DIDs, parsed by
+    /// [`ReadDataByIdentifierRequest::dids`](crate::ReadDataByIdentifierRequest::dids)),
+    /// this response is left opaque **by design**: each data record's length is defined by
+    /// the ECU's configuration for that DID and is *not* present on the wire, so the library
+    /// cannot split it into `(DID, value)` pairs. Parse it caller-side once you know each
+    /// DID's record length — read the 2-byte big-endian DID, take the application-defined
+    /// number of data bytes, then repeat on the remainder.
+    ReadDataByIdentifier(ReadDataByIdentifierResponse<'a>),
+    /// Positive response to `ReadDTCInformation` with lazy iterators.
+    ReadDtcInfo(ReadDtcInfoResponse<'a>),
+    /// Positive response to `RequestDownload`.
+    RequestDownload(RequestDownloadResponse<'a>),
+    /// Positive response to `RequestFileTransfer`.
+    RequestFileTransfer(RequestFileTransferResponse<'a>),
+    /// Positive response to `RequestTransferExit`.
+    RequestTransferExit(RequestTransferExitResponse<'a>),
+    /// Positive response to `RequestUpload`.
+    RequestUpload(RequestUploadResponse<'a>),
+    /// Positive response to `RoutineControl`.
+    RoutineControl(RoutineControlResponse<'a>),
+    /// Positive response to `SecurityAccess`.
+    SecurityAccess(SecurityAccessResponse<'a>),
+    /// Positive response to `TesterPresent`.
+    TesterPresent(TesterPresentResponse),
+    /// Positive response to `TransferData`.
+    TransferData(TransferDataResponse<'a>),
+    /// Positive response to `WriteDataByIdentifier`. Contains the echoed DID.
+    WriteDataByIdentifier(WriteDataByIdentifierResponse),
+    /// A known-but-unmodeled (or unrecognized) service response. Carries the raw service
+    /// byte and the raw payload bytes following the service identifier.
+    ///
+    /// Re-encoding is lossless for every service byte: the raw `sid` is echoed verbatim.
+    Other {
+        /// The raw service identifier byte from the wire.
+        sid: u8,
+        /// Raw payload bytes after the service byte.
+        data: &'a [u8],
+    },
+}
+
+/// # Remainder
+///
+/// The returned remainder is **always empty**. A UDS frame is not self-delimiting — its length
+/// comes from the transport (ISO-TP, `DoIP`, ...), not from the message — so one buffer is exactly
+/// one frame, and every payload is decoded with `decode_exact`. This means `decode` behaves as
+/// `decode_exact` despite the streaming shape of the [`Decode`] contract: do **not** feed it
+/// concatenated frames expecting it to consume one at a time, and note that
+/// [`DecodeIter`](crate::DecodeIter) over such a buffer would treat the whole thing as a single
+/// frame. Split frames at the transport layer before calling this.
+impl<'a> Decode<'a> for Response<'a> {
+    type Error = crate::Error;
+
+    fn decode(buf: &'a [u8]) -> Result<(Self, &'a [u8]), Error> {
+        if buf.is_empty() {
+            return Err(Error::InsufficientData(Incomplete {
+                needed: 1,
+                available: buf.len(),
+            }));
+        }
+        let service = UdsServiceType::from_response_sid(buf[0]);
+        let payload = &buf[1..];
+
+        let response = match service {
+            UdsServiceType::ClearDiagnosticInfo => Self::ClearDiagnosticInfo(
+                <ClearDiagnosticInfoResponse as Decode>::decode_exact(payload)?,
+            ),
+            UdsServiceType::CommunicationControl => Self::CommunicationControl(
+                <CommunicationControlResponse as Decode>::decode_exact(payload)?,
+            ),
+            UdsServiceType::ControlDtcSetting => Self::ControlDtcSetting(
+                <ControlDtcSettingResponse as Decode>::decode_exact(payload)?,
+            ),
+            UdsServiceType::DiagnosticSessionControl => Self::DiagnosticSessionControl(
+                <DiagnosticSessionControlResponse as Decode>::decode_exact(payload)?,
+            ),
+            UdsServiceType::EcuReset => {
+                Self::EcuReset(<EcuResetResponse as Decode>::decode_exact(payload)?)
+            }
+            UdsServiceType::NegativeResponse => {
+                Self::NegativeResponse(<NegativeResponse as Decode>::decode_exact(payload)?)
+            }
+            UdsServiceType::ReadDataByIdentifier => {
+                Self::ReadDataByIdentifier(ReadDataByIdentifierResponse::new(payload))
+            }
+            UdsServiceType::ReadDtcInfo => {
+                Self::ReadDtcInfo(<ReadDtcInfoResponse as Decode>::decode_exact(payload)?)
+            }
+            UdsServiceType::RequestDownload => {
+                Self::RequestDownload(<RequestDownloadResponse as Decode>::decode_exact(payload)?)
+            }
+            UdsServiceType::RequestFileTransfer => Self::RequestFileTransfer(
+                <RequestFileTransferResponse as Decode>::decode_exact(payload)?,
+            ),
+            UdsServiceType::RequestTransferExit => Self::RequestTransferExit(
+                <RequestTransferExitResponse as Decode>::decode_exact(payload)?,
+            ),
+            UdsServiceType::RequestUpload => {
+                Self::RequestUpload(<RequestUploadResponse as Decode>::decode_exact(payload)?)
+            }
+            UdsServiceType::RoutineControl => {
+                Self::RoutineControl(<RoutineControlResponse as Decode>::decode_exact(payload)?)
+            }
+            UdsServiceType::SecurityAccess => {
+                Self::SecurityAccess(<SecurityAccessResponse as Decode>::decode_exact(payload)?)
+            }
+            UdsServiceType::TesterPresent => {
+                Self::TesterPresent(<TesterPresentResponse as Decode>::decode_exact(payload)?)
+            }
+            UdsServiceType::TransferData => {
+                Self::TransferData(<TransferDataResponse as Decode>::decode_exact(payload)?)
+            }
+            UdsServiceType::WriteDataByIdentifier => Self::WriteDataByIdentifier(
+                <WriteDataByIdentifierResponse as Decode>::decode_exact(payload)?,
+            ),
+            _ => Self::Other {
+                sid: buf[0],
+                data: payload,
+            },
+        };
+        Ok((response, &[]))
+    }
+}
+
+impl Response<'_> {
+    /// The [`UdsServiceType`] this response frame addresses.
+    ///
+    /// For `NegativeResponse` this returns [`UdsServiceType::NegativeResponse`] (the frame's
+    /// own type); the *failed* request service is `NegativeResponse::request_service()`.
+    #[must_use]
+    pub fn service(&self) -> UdsServiceType {
+        match self {
+            Self::Other { sid, .. } => UdsServiceType::from_response_sid(*sid),
+            other => UdsServiceType::from_response_sid(other.response_sid()),
+        }
+    }
+
+    /// Returns the response service-ID byte that frames this response on the wire.
+    fn response_sid(&self) -> u8 {
+        match self {
+            Self::ClearDiagnosticInfo(_) => UdsServiceType::ClearDiagnosticInfo.to_response_sid(),
+            Self::CommunicationControl(_) => UdsServiceType::CommunicationControl.to_response_sid(),
+            Self::ControlDtcSetting(_) => UdsServiceType::ControlDtcSetting.to_response_sid(),
+            Self::DiagnosticSessionControl(_) => {
+                UdsServiceType::DiagnosticSessionControl.to_response_sid()
+            }
+            Self::EcuReset(_) => UdsServiceType::EcuReset.to_response_sid(),
+            Self::NegativeResponse(_) => UdsServiceType::NegativeResponse.to_response_sid(),
+            Self::ReadDataByIdentifier(_) => UdsServiceType::ReadDataByIdentifier.to_response_sid(),
+            Self::ReadDtcInfo(_) => UdsServiceType::ReadDtcInfo.to_response_sid(),
+            Self::RequestDownload(_) => UdsServiceType::RequestDownload.to_response_sid(),
+            Self::RequestFileTransfer(_) => UdsServiceType::RequestFileTransfer.to_response_sid(),
+            Self::RequestTransferExit(_) => UdsServiceType::RequestTransferExit.to_response_sid(),
+            Self::RequestUpload(_) => UdsServiceType::RequestUpload.to_response_sid(),
+            Self::RoutineControl(_) => UdsServiceType::RoutineControl.to_response_sid(),
+            Self::SecurityAccess(_) => UdsServiceType::SecurityAccess.to_response_sid(),
+            Self::TesterPresent(_) => UdsServiceType::TesterPresent.to_response_sid(),
+            Self::TransferData(_) => UdsServiceType::TransferData.to_response_sid(),
+            Self::WriteDataByIdentifier(_) => {
+                UdsServiceType::WriteDataByIdentifier.to_response_sid()
+            }
+            Self::Other { sid, .. } => *sid,
+        }
+    }
+}
+
+impl Encode for Response<'_> {
+    type Error = crate::Error;
+
+    fn encode(&self, writer: &mut impl automotive_wire_codec::Sink) -> Result<usize, Error> {
+        let sid_len = write_u8(writer, self.response_sid())?;
+        let payload = match self {
+            Self::ClearDiagnosticInfo(resp) => resp.encode(writer)?,
+            Self::RequestTransferExit(resp) => resp.encode(writer)?,
+            Self::RequestUpload(resp) => resp.encode(writer)?,
+            Self::CommunicationControl(resp) => resp.encode(writer)?,
+            Self::ControlDtcSetting(resp) => resp.encode(writer)?,
+            Self::DiagnosticSessionControl(resp) => resp.encode(writer)?,
+            Self::EcuReset(resp) => resp.encode(writer)?,
+            Self::NegativeResponse(resp) => resp.encode(writer)?,
+            Self::ReadDataByIdentifier(resp) => resp.encode(writer)?,
+            Self::WriteDataByIdentifier(resp) => resp.encode(writer)?,
+            Self::ReadDtcInfo(resp) => resp.encode(writer)?,
+            Self::RequestDownload(resp) => resp.encode(writer)?,
+            Self::RequestFileTransfer(resp) => resp.encode(writer)?,
+            Self::RoutineControl(resp) => resp.encode(writer)?,
+            Self::SecurityAccess(resp) => resp.encode(writer)?,
+            Self::TesterPresent(resp) => resp.encode(writer)?,
+            Self::TransferData(resp) => resp.encode(writer)?,
+            Self::Other { data, .. } => write_bytes(writer, data)?,
+        };
+        Ok(sid_len + payload)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn write_data_by_identifier_response_roundtrips() {
+        // SID 0x6E, echoed DID 0xF190
+        let wire = [0x6E, 0xF1, 0x90];
+        let (resp, remaining) = Response::decode(&wire).unwrap();
+        assert!(remaining.is_empty());
+        assert!(matches!(resp, Response::WriteDataByIdentifier(_)));
+        let mut buf = [0u8; 8];
+        let written =
+            Encode::encode(&resp, &mut automotive_wire_codec::SliceSink::new(&mut buf)).unwrap();
+        assert_eq!(&buf[..written], &wire);
+    }
+
+    #[test]
+    fn routine_control_response_roundtrips() {
+        // SID 0x71, sub 0x01, RID 0xFF00, status 0x10
+        let wire = [0x71, 0x01, 0xFF, 0x00, 0x10];
+        let (resp, remaining) = Response::decode(&wire).unwrap();
+        assert!(remaining.is_empty());
+        let mut buf = [0u8; 8];
+        let written =
+            Encode::encode(&resp, &mut automotive_wire_codec::SliceSink::new(&mut buf)).unwrap();
+        assert_eq!(&buf[..written], &wire);
+    }
+
+    #[test]
+    fn unmodeled_response_decodes_to_other() {
+        // 0x63 = ReadMemoryByAddress positive response, not modeled.
+        let frame = [0x63, 0x01, 0x02];
+        let (resp, remaining) = Response::decode(&frame).unwrap();
+        assert!(remaining.is_empty());
+        match resp {
+            Response::Other { sid, data } => {
+                assert_eq!(sid, 0x63);
+                assert_eq!(data, &[0x01, 0x02]);
+            }
+            other => panic!("expected Other, got {other:?}"),
+        }
+        let mut buf = [0u8; 8];
+        let written =
+            Encode::encode(&resp, &mut automotive_wire_codec::SliceSink::new(&mut buf)).unwrap();
+        assert_eq!(&buf[..written], &frame);
+    }
+
+    #[test]
+    fn unknown_response_byte_round_trips_losslessly() {
+        let frame = [0x99, 0x01, 0x02];
+        let (resp, _) = Response::decode(&frame).unwrap();
+        assert!(matches!(resp, Response::Other { sid: 0x99, .. }));
+        assert_eq!(resp.service(), UdsServiceType::from_response_sid(0x99));
+        let mut buf = [0u8; 8];
+        let written =
+            Encode::encode(&resp, &mut automotive_wire_codec::SliceSink::new(&mut buf)).unwrap();
+        assert_eq!(&buf[..written], &frame); // previously became 0x7F (NegativeResponse)
+    }
+
+    #[test]
+    fn clear_diagnostic_info_response_rejects_trailing_bytes() {
+        // Bare SID round-trips; a conformant ClearDiagnosticInfo positive response is [0x54].
+        let (resp, remaining) = Response::decode(&[0x54]).unwrap();
+        assert!(remaining.is_empty());
+        assert!(matches!(resp, Response::ClearDiagnosticInfo(_)));
+        // Trailing bytes after the SID are now rejected (matches every other response arm).
+        assert!(matches!(
+            Response::decode(&[0x54, 0xAA]),
+            Err(crate::Error::TrailingBytes(_))
+        ));
+    }
+}

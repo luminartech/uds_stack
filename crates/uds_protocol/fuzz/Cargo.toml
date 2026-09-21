@@ -1,0 +1,31 @@
+[package]
+name = "uds_protocol-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+automotive-wire-codec = { path = "../../../automotive_wire_format", default-features = false }
+libfuzzer-sys = "0.4"
+uds_protocol = { path = ".." }
+
+[[bin]]
+name = "fuzz_request_decode"
+path = "fuzz_targets/fuzz_request_decode.rs"
+doc = false
+
+[[bin]]
+name = "fuzz_response_decode"
+path = "fuzz_targets/fuzz_response_decode.rs"
+doc = false
+
+[[bin]]
+name = "fuzz_roundtrip"
+path = "fuzz_targets/fuzz_roundtrip.rs"
+doc = false
+
+[workspace]
+members = ["."]

@@ -1,0 +1,83 @@
+# Thin caller for the org-wide reusable Rust CI workflow. This file owns the
+# triggers and repo-specific configuration; luminartech/rust_workflow owns the
+# jobs (pre-commit, lint, build, no_std canary, unit/property/fuzz tests,
+# miri, MSRV, semver, security audit, docs, publish dry run, and release-plz
+# automation).
+name: CI
+
+on:
+  pull_request:
+  merge_group:
+  push:
+    branches: [main]
+  schedule:
+    - cron: '0 5 * * *'
+  workflow_dispatch:
+    inputs:
+      enable-comprehensive-tests:
+        description: 'Run comprehensive test suites (longer fuzz, miri)'
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  ci:
+    uses: luminartech/rust_workflow/.github/workflows/rust-ci.yml@v1
+    # Test jobs downscope themselves to contents: read; this grant is only
+    # used by the release-plz jobs (release PR + tag/GitHub-release publish).
+    permissions:
+      contents: write
+      pull-requests: write
+      # For audit-check's PR annotations (use-audit-check below).
+      checks: write
+    secrets:
+      cargo-registry-token: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+      release-plz-app-id: ${{ secrets.RELEASE_PLZ_APP_ID }}
+      release-plz-app-private-key: ${{ secrets.RELEASE_PLZ_APP_PRIVATE_KEY }}
+      codecov-token: ${{ secrets.CODECOV_TOKEN }}
+    with:
+      # Restrict publishing to the canonical repo so forks never publish.
+      publish-repository: luminartech/uds_protocol
+      # Publish cargo-audit findings as a check run with PR annotations
+      # (fork PRs automatically fall back to the plain cargo-audit step).
+      use-audit-check: true
+      # release-plz owns versioning, changelogs, tags, and publishing.
+      use-release-plz: true
+      # Unlike automotive_wire_codec, this crate does have an `alloc` feature,
+      # so the alloc build and lint variants stay enabled (the default) rather
+      # than being skipped with `alloc-feature: ''`. The crate core is
+      # no_std + no-alloc; `alloc` only adds conveniences on top.
+      #
+      # The Unit Tests job runs everything, because it is the job that uploads
+      # coverage. automotive_wire_codec can afford a disjoint split -- its property
+      # suites are integration tests, so `kind(test)` cleanly separates them --
+      # but here the property tests are `proptest!` blocks inside the lib, and
+      # excluding them from the coverage job dropped
+      # shared/negative_response_code.rs from 64.6% to 8.0% line coverage and the
+      # total from 80.2% to 79.2%, because a proptest is the only thing that
+      # exercises that file. Coverage should describe the whole suite, so the
+      # split is overlapping rather than disjoint: Property Tests re-runs the four
+      # proptests under their own name for a readable signal, and costs 0.02s.
+      #
+      # Do not set this to a filter that can select nothing. `cargo nextest`
+      # exits 4 on an empty selection, which is how the first version of this file
+      # failed CI: `kind(test)` matched no tests, because `main` has no `tests/`
+      # directory yet.
+      unit-test-filter: 'all()'
+      property-test-filter: 'test(~prop_)'
+      # Comprehensive runs (nightly, merge queue, main) fuzz for 10 minutes.
+      # Three targets: request decode, response decode, and round trip.
+      fuzz-max-time-comprehensive: 600
+      # Coverage + junit test results go to Codecov; the ci profile comes
+      # from .config/nextest.toml.
+      upload-codecov: true
+      nextest-profile: ci
+      # Wire the manual dispatch toggle through to the comprehensive path.
+      comprehensive-tests: ${{ inputs.enable-comprehensive-tests || false }}

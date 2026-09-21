@@ -1,0 +1,135 @@
+# Unified Diagnostics Services (UDS) Protocol
+
+This crate offers an ergonomic, `no_std`-friendly implementation of the UDS (ISO 14229) protocol codec in Rust.
+It targets embedded ECU diagnostics and desktop tooling alike: encoding and decoding UDS protocol messages — and custom data types — with no required allocator and no async runtime.
+It is not in a complete state yet, please check back soon!
+
+[![Crates.io](https://img.shields.io/crates/v/uds_protocol.svg?style=for-the-badge)](https://crates.io/crates/uds_protocol)
+[![Docs.rs](https://img.shields.io/docsrs/uds_protocol?style=for-the-badge)](https://docs.rs/uds_protocol)
+[![Codecov](https://img.shields.io/codecov/c/github/luminartech/uds_protocol?style=for-the-badge)](https://app.codecov.io/github/luminartech/uds_protocol)
+[![MIT License](https://img.shields.io/badge/license-MIT-blue.svg?style=for-the-badge)](./LICENSE-MIT)
+[![APACHE License](https://img.shields.io/badge/license-APACHE-blue.svg?style=for-the-badge)](./LICENSE-APACHE)
+
+This library provides serialization and deserialization of UDS messages.
+It is based on the ISO 14229-1:2020 standard.
+
+| Service Name                       | Request SID | Response SID | Support |
+| ---------------------------------- | ----------- | ------------ | ------- |
+| `DiagnosticSessionControl`         | 0x10        | 0x50         | ✓       |
+| `EcuReset`                         | 0x11        | 0x51         | ✓       |
+| `ClearDiagnosticInformation`       | 0x14        | 0x54         | ✓       |
+| `ReadDTCInformation`               | 0x19        | 0x59         | Partial |
+| `ReadDataByIdentifier`             | 0x22        | 0x62         | ✓       |
+| `ReadMemoryByAddress`              | 0x23        | 0x63         |         |
+| `ReadScalingDataByIdentifier`      | 0x24        | 0x64         |         |
+| `SecurityAccess`                   | 0x27        | 0x67         | ✓       |
+| `CommunicationControl`             | 0x28        | 0x68         | ✓       |
+| `Authentication`                   | 0x29        | 0x69         |         |
+| `ReadDataByPeriodicIdentifier`     | 0x2A        | 0x6A         |         |
+| `DynamicallyDefineDataIdentifier`  | 0x2C        | 0x6C         |         |
+| `WriteDataByIdentifier`            | 0x2E        | 0x6E         | ✓       |
+| `InputOutputControlByIdentifier`   | 0x2F        | 0x6F         |         |
+| `RoutineControl`                   | 0x31        | 0x71         | ✓       |
+| `RequestDownload`                  | 0x34        | 0x74         | ✓       |
+| `RequestUpload`                    | 0x35        | 0x75         | ✓       |
+| `TransferData`                     | 0x36        | 0x76         | ✓       |
+| `RequestTransferExit`              | 0x37        | 0x77         | ✓       |
+| `RequestFileTransfer`              | 0x38        | 0x78         | ✓       |
+| `WriteMemoryByAddress`             | 0x3D        | 0x7D         |         |
+| `TesterPresent`                    | 0x3E        | 0x7E         | ✓       |
+| `AccessTimingParameters`[^1]       | 0x83        | 0xC3         |         |
+| `SecuredDataTransmission`          | 0x84        | 0xC4         |         |
+| `ControlDtcSetting`                | 0x85        | 0xC5         | ✓       |
+| `ResponseOnEvent`                  | 0x86        | 0xC6         |         |
+| `LinkControl`                      | 0x87        | 0xC7         |         |
+
+[^1]: `AccessTimingParameters` (0x83) was defined in ISO 14229-1:2013 and removed in the 2020
+edition. `UdsServiceType` still names it so a 2013-era service byte round-trips rather than
+becoming an unrecognized `Other`, but it is not part of the standard this crate targets.
+
+## Features
+
+Default is `std`. The crate is `no_std` and allocation-free at its core; everything below is
+additive.
+
+| Feature | Implies | What it gives you |
+|---------|---------|-------------------|
+| `std` *(default)* | `alloc` | `std::error::Error` for [`Error`]. Turn it off for bare metal. |
+| `alloc` | — | The `alloc`-only conveniences. Nothing in the wire codec needs it; encoding and decoding work with borrowed slices alone. |
+| `serde` | — | `Serialize`/`Deserialize` on the request, response and parameter types. The only optional integration usable on a bare-metal target: it is wired as a core-only dependency and picks up serde's `alloc`/`std` layers only when this crate's own are on. |
+| `utoipa` | `std`, `serde` | `ToSchema` for `OpenAPI` generation. |
+| `clap` | `std` | `ValueEnum` on the sub-function enums, for building a CLI tester. |
+
+Two implications are worth knowing about:
+
+- **`utoipa` implies `serde`** because a `ToSchema` here describes the *`serde`* representation.
+  Several types serialize as a single protocol byte rather than as their Rust shape — a
+  `DataFormatIdentifier` is `33`, not `{"compression_method":2,"encryption_method":1}` — and the
+  schemas are written to match. Without `serde` the schema would describe a wire format that
+  build cannot produce.
+- **`utoipa` and `clap` imply `std`** because their derive macros expand to `std::`, `String` and
+  `Vec` paths inside this crate, which cannot compile under `#![no_std]`.
+
+With `serde` enabled, the types that carry a range invariant deserialize through the same
+classifier the wire decoder uses, so a hand-written payload cannot construct a value that would
+encode to an illegal byte.
+
+## Integration
+
+`uds_protocol` is a synchronous, allocation-free codec. It owns no sockets, buffers, or
+async runtime. To use it over any transport (`DoIP`, `UDSonIP`, ISO-TP, …):
+
+- **Decode** an inbound frame from the `&[u8]` you received.
+- **Encode** an outbound frame into any `automotive_wire_codec::Sink` (or a caller-owned
+  buffer sized with `encoded_size()`, via `SliceSink`).
+
+Drive the I/O loop from your own sync or async layer — the crate never blocks or awaits.
+
+### Encode (build a request)
+
+```rust
+use automotive_wire_codec::SliceSink;
+use uds_protocol::{Encode, TesterPresentRequest};
+
+let req = TesterPresentRequest::new(false);
+let mut buf = [0u8; 8];
+let mut sink = SliceSink::new(&mut buf);
+let written = Encode::encode(&req, &mut sink).unwrap();
+// `buf[..written]` is the wire frame, ready to hand to your transport.
+```
+
+### Decode (parse a response)
+
+```rust
+use uds_protocol::{Decode, Response};
+
+// `frame` is the &[u8] your transport handed you.
+let frame = [0x7E, 0x00];
+let (response, _rest) = Response::decode(&frame).unwrap();
+```
+
+The decoded value **borrows** from `frame`: it points into that buffer (like a `struct`
+overlaid on a `char buf[]`) and is valid only while `frame` lives. Copy out any fields
+you need to keep before the buffer is reused.
+
+## Service coverage
+
+These services decode into typed [`Request`]/[`Response`] variants: `DiagnosticSessionControl`,
+`EcuReset`, `SecurityAccess`, `CommunicationControl`, `TesterPresent`, `ControlDtcSetting`,
+`ReadDataByIdentifier`, `WriteDataByIdentifier`, `ClearDiagnosticInfo`, `ReadDtcInfo`,
+`RoutineControl`, `RequestDownload`, `RequestUpload`, `TransferData`, `RequestTransferExit`,
+`RequestFileTransfer`, and `NegativeResponse`.
+
+All other services enumerated in [`UdsServiceType`] (e.g. `Authentication`, `ReadMemoryByAddress`,
+`ResponseOnEvent`) are not individually modeled. Frames for them decode into
+[`Request::Other`] / [`Response::Other`], carrying the service type and raw payload bytes for
+pass-through.
+
+## Wire codec dependency
+
+`uds_protocol` builds its byte-level decoding on top of the [`automotive-wire-codec`](https://crates.io/crates/automotive-wire-codec)
+crate, and re-exports its `Incomplete`, `TrailingBytes` and `InvalidWidth` types and its codec
+traits (`Encode`, `Decode`, `DecodeIter`) at the crate root. These types are intentionally part of `uds_protocol`'s public API:
+they are shared across the Luminar automotive protocol crates so that callers handling multiple
+protocols see one consistent short-read/trailing-data error shape. Because of this, a semver-major
+release of `automotive-wire-codec` is a breaking change for `uds_protocol` as well.

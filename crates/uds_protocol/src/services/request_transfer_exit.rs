@@ -1,0 +1,111 @@
+//! `RequestTransferExit` (0x37 / 0x77) service implementation.
+use crate::{Decode, Encode, Error, NegativeResponseCode};
+use automotive_wire_codec::write_bytes;
+
+macro_rules! transfer_exit_descriptor {
+    ($name:ident, $doc:literal) => {
+        #[doc = $doc]
+        #[cfg_attr(feature = "serde", derive(serde::Deserialize, serde::Serialize))]
+        #[cfg_attr(feature = "utoipa", derive(utoipa::ToSchema))]
+        #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+        #[non_exhaustive]
+        pub struct $name<'d> {
+            /// The optional, opaque parameter record (empty slice if absent).
+            #[cfg_attr(feature = "serde", serde(borrow))]
+            pub parameter_record: &'d [u8],
+        }
+        impl<'d> $name<'d> {
+            /// Create from the optional parameter record (empty slice if absent).
+            #[must_use]
+            pub const fn new(parameter_record: &'d [u8]) -> Self {
+                Self { parameter_record }
+            }
+        }
+        impl Encode for $name<'_> {
+            type Error = crate::Error;
+
+            fn encode(
+                &self,
+                writer: &mut impl automotive_wire_codec::Sink,
+            ) -> Result<usize, Error> {
+                Ok(write_bytes(writer, self.parameter_record)?)
+            }
+        }
+        impl<'a> Decode<'a> for $name<'a> {
+            type Error = crate::Error;
+
+            fn decode(buf: &'a [u8]) -> Result<(Self, &'a [u8]), Error> {
+                Ok((
+                    Self {
+                        parameter_record: buf,
+                    },
+                    &[],
+                ))
+            }
+        }
+    };
+}
+
+transfer_exit_descriptor!(
+    RequestTransferExitRequest,
+    "Request to exit a transfer, carrying an optional parameter record."
+);
+transfer_exit_descriptor!(
+    RequestTransferExitResponse,
+    "Positive response to `RequestTransferExit`, carrying an optional parameter record."
+);
+
+const REQUEST_TRANSFER_EXIT_NEGATIVE_RESPONSE_CODES: [NegativeResponseCode; 4] = [
+    NegativeResponseCode::IncorrectMessageLengthOrInvalidFormat,
+    NegativeResponseCode::RequestSequenceError,
+    NegativeResponseCode::RequestOutOfRange,
+    NegativeResponseCode::GeneralProgrammingFailure,
+];
+
+impl RequestTransferExitRequest<'_> {
+    /// Get the allowed [`NegativeResponseCode`] variants for this request.
+    #[must_use]
+    pub fn allowed_nack_codes() -> &'static [NegativeResponseCode] {
+        &REQUEST_TRANSFER_EXIT_NEGATIVE_RESPONSE_CODES
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{Decode, Encode, NegativeResponseCode, test_util::assert_encode_size_agrees};
+
+    #[test]
+    fn test_allowed_nack_codes() {
+        let codes = RequestTransferExitRequest::allowed_nack_codes();
+        assert!(codes.contains(&NegativeResponseCode::RequestSequenceError));
+    }
+
+    #[test]
+    fn derive_contract() {
+        use crate::test_util::assert_impl_eq;
+        assert_impl_eq::<RequestTransferExitRequest<'static>>();
+        assert_impl_eq::<RequestTransferExitResponse<'static>>();
+        #[cfg(feature = "serde")]
+        {
+            use crate::test_util::assert_impl_serde;
+            assert_impl_serde::<RequestTransferExitRequest<'_>>();
+            assert_impl_serde::<RequestTransferExitResponse<'_>>();
+        }
+    }
+
+    #[test]
+    fn rte_request_round_trips_with_and_without_record() {
+        for rec in [&[][..], &[0xAA, 0xBB][..]] {
+            let req = RequestTransferExitRequest::new(rec);
+            let mut buf = [0u8; 8];
+            let n =
+                Encode::encode(&req, &mut automotive_wire_codec::SliceSink::new(&mut buf)).unwrap();
+            assert_eq!(&buf[..n], rec);
+            let (d, rest) = <RequestTransferExitRequest as Decode>::decode(&buf[..n]).unwrap();
+            assert!(rest.is_empty());
+            assert_eq!(d.parameter_record, rec);
+            assert_encode_size_agrees(&req);
+        }
+    }
+}

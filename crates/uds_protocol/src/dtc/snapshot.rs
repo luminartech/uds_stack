@@ -1,0 +1,100 @@
+//! Diagnostic Trouble Code (DTC) Snapshot Data
+//! Snapshot data represents a collection of sensor values captured when a DTC is triggered.
+//! Represents the state of the server at the time the DTC was triggered.
+
+use crate::{Decode, Encode, Error, Incomplete};
+use automotive_wire_codec::write_u8;
+
+/// Identifies which DTC snapshot record is being requested or reported.
+#[cfg_attr(feature = "serde", derive(serde::Deserialize, serde::Serialize))]
+#[cfg_attr(feature = "utoipa", derive(utoipa::ToSchema))]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[non_exhaustive]
+pub enum DtcSnapshotRecordNumber {
+    /// Reserved for Legislative purposes
+    Reserved(u8),
+    /// Indicates the number of the specific `DTCSnapshot` data record requested
+    Number(u8),
+    /// Requests that the server report all `DTCSnapshot` data records at once
+    All,
+}
+
+impl DtcSnapshotRecordNumber {
+    /// Create a `DtcSnapshotRecordNumber`, classifying the raw byte into `Reserved`
+    /// (`0x00`/`0xF0`), `All` (`0xFF`), or `Number`. Every byte is accepted (decoding is
+    /// deliberately liberal); no value is rejected.
+    #[must_use]
+    pub const fn new(record_number: u8) -> Self {
+        match record_number {
+            0x00 | 0xF0 => Self::Reserved(record_number),
+            0xFF => Self::All,
+            _ => Self::Number(record_number),
+        }
+    }
+    /// Return the raw `u8` value of this snapshot record number.
+    #[must_use]
+    #[allow(clippy::match_same_arms)]
+    pub const fn value(&self) -> u8 {
+        match self {
+            DtcSnapshotRecordNumber::Reserved(value) => *value,
+            DtcSnapshotRecordNumber::Number(value) => *value,
+            DtcSnapshotRecordNumber::All => 0xFF,
+        }
+    }
+}
+
+impl PartialEq<u8> for DtcSnapshotRecordNumber {
+    fn eq(&self, other: &u8) -> bool {
+        self.value() == *other
+    }
+}
+
+impl Encode for DtcSnapshotRecordNumber {
+    type Error = crate::Error;
+
+    fn encode(&self, writer: &mut impl automotive_wire_codec::Sink) -> Result<usize, Error> {
+        Ok(write_u8(writer, self.value())?)
+    }
+}
+
+impl<'a> Decode<'a> for DtcSnapshotRecordNumber {
+    type Error = crate::Error;
+
+    fn decode(buf: &'a [u8]) -> Result<(Self, &'a [u8]), Error> {
+        if buf.is_empty() {
+            return Err(Error::InsufficientData(Incomplete {
+                needed: 1,
+                available: buf.len(),
+            }));
+        }
+        Ok((Self::new(buf[0]), &buf[1..]))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn snapshot_record_number() {
+        let record = DtcSnapshotRecordNumber::new(0x01);
+        assert_eq!(record.value(), 0x01);
+        assert_eq!(record, DtcSnapshotRecordNumber::Number(0x01));
+
+        let all = DtcSnapshotRecordNumber::new(0xFF);
+        assert_eq!(all, DtcSnapshotRecordNumber::All);
+    }
+
+    #[test]
+    fn encode_snapshot_record_number() {
+        use crate::test_util::assert_encode_size_agrees;
+        let n = DtcSnapshotRecordNumber::new(0x02);
+        let mut buf = [0u8; 4];
+        let written =
+            crate::Encode::encode(&n, &mut automotive_wire_codec::SliceSink::new(&mut buf))
+                .unwrap();
+        assert_eq!(written, 1);
+        assert_eq!(buf[0], 0x02);
+        assert_encode_size_agrees(&n);
+    }
+}
