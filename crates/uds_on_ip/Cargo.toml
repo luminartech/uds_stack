@@ -1,0 +1,62 @@
+[package]
+name = "uds_on_ip"
+version = "0.2.0-alpha.1"
+edition = "2024"
+rust-version = "1.88"
+description = "UDS on Internet Protocol (ISO 14229-5): the UDSonIP application profile and the transport mapping onto DoIP"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/luminartech/uds_on_ip"
+readme = "README.md"
+keywords = ["uds", "doip", "iso14229", "automotive", "diagnostics"]
+categories = ["network-programming", "encoding"]
+authors = [
+    "Zachary Heylmun <zachary_heylmun@microvision.com>",
+    "Justin Kovacich <justin_kovacich@microvision.com>",
+]
+exclude = ["legacy/", "docs/", ".github/"]
+
+[dependencies]
+# Path deps during the prototype. Swap to registry versions once the stack
+# publishes; see ARCHITECTURE.md 8.4.
+simple_doip = { path = "../simple_doip", default-features = false }
+uds_protocol = { path = "../uds_protocol", default-features = false }
+uds_session = { path = "../uds_session", default-features = false }
+
+# The seam this crate sits below. uds_services declares UdsTransport and owns
+# TransportEvent; this crate implements the first and returns the second, so
+# both arrive from there rather than being mirrored here. The dependency arrow
+# runs this way and only this way — uds_services never names a transport
+# (UDSSVC_ARCH_0002), which is what keeps a binding additive at the application.
+# It has no feature table, so nothing below forwards to it.
+uds_services = { path = "../uds_services", default-features = false }
+
+# automotive-wire-codec is deliberately NOT a direct dependency. Its `Encode`
+# and `Decode` are re-exported by simple_doip::messages, which is the crate
+# this one is layered on, so the codec vocabulary arrives through the layer
+# below rather than around it.
+
+thiserror = { version = "2", default-features = false }
+
+[features]
+# No runtime is named anywhere. An `async fn` implies neither std nor an
+# executor, so the default build is no_std and a bare-metal target — AURIX
+# TC4x is a qualification target — stays reachable. A runtime adapter, when
+# one is written, is additive and lives behind its own feature.
+default = []
+alloc = ["simple_doip/alloc", "uds_protocol/alloc"]
+std = ["alloc", "thiserror/std", "simple_doip/std", "uds_protocol/std"]
+
+[lints.rust]
+unsafe_code = "forbid"
+missing_docs = "deny"
+missing_debug_implementations = "deny"
+
+[lints.clippy]
+pedantic = { level = "deny", priority = -1 }
+# A wildcard arm is how a variant gets silently discarded, and this crate has
+# two cases that would go that way if it were allowed: mapping::DoIpEvent's
+# Periodic and Closed have no TransportEvent to become. Denying the wildcard
+# means a match over an enum must say what it does with every case, so the
+# hole has to be written down in code rather than remembered.
+wildcard_enum_match_arm = "deny"
+
