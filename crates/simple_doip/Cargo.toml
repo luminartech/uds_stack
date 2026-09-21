@@ -1,0 +1,76 @@
+[package]
+name = "simple_doip"
+version = "0.6.0"
+edition = "2024"
+rust-version = "1.88"
+description = "An ISO 13400-2 (DoIP) implementation with a no_std, zero-copy protocol core and optional async client and server"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/luminartech/simple_doip"
+readme = "README.md"
+keywords = ["doip", "iso13400", "automotive", "diagnostics", "no-std"]
+categories = ["network-programming", "embedded", "no-std"]
+exclude = [
+    "docs/",
+    ".github/",
+    ".vscode/",
+    # Repo-local tooling, not part of the library a consumer receives.
+    "release-plz.toml",
+    "rust-toolchain.toml",
+]
+
+# `default = []`, so docs.rs would otherwise build the no_std core alone and
+# publish a reference with no `client`, `server`, `codec`, `alloc` or `std`
+# API in it -- most of what the README points a reader at. Every feature is
+# additive, so all of them can be on at once.
+[package.metadata.docs.rs]
+all-features = true
+
+[dependencies]
+automotive-wire-codec = { path = "../../automotive_wire_format" }
+strum = { version = "0.27", default-features = false, features = ["derive"] }
+thiserror = { version = "2", default-features = false }
+tracing = { version = "0.1", default-features = false, optional = true }
+# std-only, all optional
+async-trait = { version = "0.1", optional = true }
+bytes = { version = "1", optional = true }
+futures = { version = "0.3", optional = true }
+tokio = { version = "1", optional = true, features = [
+    "macros",
+    "rt",
+    "rt-multi-thread",
+    "time",
+] }
+tokio-util = { version = "0.7", optional = true, features = ["net", "codec"] }
+
+[dev-dependencies]
+anyhow = "1"
+proptest = "1"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "net", "io-util", "time"] }
+tracing-subscriber = { version = "0.3", features = ["fmt"] }
+
+[features]
+default = []
+alloc = []
+std = ["alloc", "thiserror/std", "dep:tracing", "tracing/std"]
+codec = ["std", "dep:tokio", "dep:tokio-util", "dep:bytes"]
+client = ["codec", "dep:async-trait", "dep:futures"]
+server = ["codec", "dep:async-trait", "dep:futures"]
+
+[[test]]
+name = "golden_vectors"
+
+[[test]]
+name = "integration_test"
+required-features = ["client", "server"]
+
+[[test]]
+name = "udp_identification"
+required-features = ["server"]
+
+[[example]]
+name = "simple_client"
+required-features = ["client"]
+
+[[example]]
+name = "echo_server"
+required-features = ["server"]
