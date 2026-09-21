@@ -94,75 +94,217 @@ pub(crate) mod service_ids {
 
     /// `ECUReset` (ISO 14229-5:2022 REQ 7.10, REQ 7.11).
     pub(crate) const ECU_RESET: u8 = UdsServiceType::EcuReset.to_request_sid();
+
+    /// The positive response to `DiagnosticSessionControl` (REQ 7.9).
+    pub(crate) const DIAGNOSTIC_SESSION_CONTROL_RESPONSE: u8 =
+        UdsServiceType::DiagnosticSessionControl.to_response_sid();
+
+    /// The positive response to `ECUReset` (REQ 7.11).
+    pub(crate) const ECU_RESET_RESPONSE: u8 = UdsServiceType::EcuReset.to_response_sid();
 }
 
-/// Whether a close arriving now is part of a flow the standard prescribes.
+/// What ISO 14229-5 clause 8 requires of the connection once this message has
+/// been sent.
 ///
-/// `request_sid` is the service identifier of the request this transport last
-/// sent — its first octet; see [`service_ids`] for why that is the service
-/// identifier on `DoIP` specifically.
+/// Both requirements this carries are keyed on the same four octets, so one
+/// read of a message's first byte classifies either — and the request and
+/// response identifiers are disjoint, so no assumption about this transport's
+/// role is needed to tell them apart.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum ConnectionAction {
+    /// Nothing follows. The connection continues to serve the session.
+    Continue,
+    /// REQ 7.8, REQ 7.10 — a client sent `DiagnosticSessionControl` or
+    /// `ECUReset`, so the server will close and a close arriving now is
+    /// prescribed rather than a fault.
+    ExpectClose,
+    /// REQ 7.9, REQ 7.11 — a server sent a positive response to one of those
+    /// two services, and **must itself initiate** the close, after the response
+    /// and before executing the service.
+    InitiateClose,
+}
+
+impl ConnectionAction {
+    /// Whether a close arriving now is one the standard prescribes.
+    ///
+    /// This is `uds_services::TransportEvent::Closed`'s `expected` flag. True
+    /// for both non-`Continue` cases: a client awaiting the server's close and
+    /// a server that has just caused one are both in a prescribed flow, and the
+    /// driver's decision — end the exchange rather than treat it as a failure —
+    /// is the same either way.
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "read once next_event's body replaces its todo!()")
+    )]
+    pub(crate) const fn close_is_prescribed(self) -> bool {
+        matches!(self, Self::ExpectClose | Self::InitiateClose)
+    }
+}
+
+/// Classify a message this transport is about to send, by its first octet.
 ///
-/// # Why this classifies a close rather than predicting one
+/// See [`service_ids`] for why the first octet is the service identifier on
+/// `DoIP` specifically.
+///
+/// # Why this crate reads the octet, rather than being told
+///
+/// REQ 7.9 and REQ 7.11 are ISO 14229-5 clause 8, which is this crate's scope.
+/// `uds_services` offered to pass the fact across the transport seam instead,
+/// and that would have moved the requirement rather than the plumbing: to set
+/// such a flag, a driver must know that clause 8 demands a close, which is
+/// knowledge ISO 14229-1 does not give it. `simple_doip` cannot decide it
+/// either — recognising a service identifier is exactly what `ARCHITECTURE.md`
+/// §13 invariant 2 forbids it.
+///
+/// That leaves one home, and it is not a widening of what this crate knows:
+/// the identifiers are the same two clause 8 already forces, now in their
+/// response form as well, and each is derived from `uds_protocol`'s
+/// `UdsServiceType` rather than written here as a byte.
+///
+/// # Why a close is classified, never predicted
 ///
 /// An earlier shape was `post_exchange(request_sid, response) -> PostExchange`,
 /// a public function returning `Continue` or `ReconnectAndReactivate` once an
 /// exchange finished. It had to answer a question clause 8 does not settle:
-/// REQ 7.9 and REQ 7.11 describe the close as following a *positive* response,
+/// REQ 7.9 and REQ 7.11 describe the close as following a *positive* response
 /// and say nothing about a negative one, so predicting a close meant guessing
-/// what a negative response implies and recording the guess as an open question
-/// against the requirement set.
+/// what a negative response implies.
 ///
-/// Keyed on a close that has already happened, that question does not arise.
-/// This never predicts anything: `uds_services::TransportEvent::Closed` reports
-/// a close the transport observed, and all this decides is whether it was
-/// plausibly prescribed. A negative response needs no ruling because nothing
-/// asks for one.
+/// Keyed on what was sent, that question does not arise.
+/// [`ExpectClose`](ConnectionAction::ExpectClose) says a close would be
+/// prescribed, and classifies one that happens;
+/// [`InitiateClose`](ConnectionAction::InitiateClose) fires only on a positive
+/// response, because a negative one has first octet `0x7F` and lands in
+/// [`Continue`](ConnectionAction::Continue) without a rule being needed.
 ///
-/// # This is deliberately not exact
+/// A response-pending behaves for the same reason: `0x7F` with NRC `0x78` is
+/// `Continue`, and the final positive response that follows is what triggers
+/// the close. And a request carrying the suppress-positive-response bit
+/// produces no response at all, so nothing is sent, nothing is classified, and
+/// no close is triggered — which is what REQ 7.9 requires, since it keys on
+/// *having sent* a positive response.
 ///
-/// It does not read the response at all, so a negative response to one of these
-/// two services followed by an unrelated drop is reported as expected. Reading
-/// the response would make it exact, at the cost of a third piece of ISO 14229-1
-/// vocabulary here — the `0x7F` negative-response format, and
-/// `requestCorrectlyReceived-ResponsePending` (0x78), which must not disarm a
-/// pending close.
+/// # The client half is deliberately not exact
 ///
-/// The imprecision is taken deliberately, because the two errors are not
-/// symmetric. Reporting `expected` wrongly costs the driver a reconnect and a
-/// routing activation on an exchange that had already failed. Reporting an
-/// expected close as unexpected makes the driver fail an exchange the standard
-/// prescribes — a conformance failure rather than a wasted round trip.
+/// [`ExpectClose`](ConnectionAction::ExpectClose) does not read the response,
+/// so a negative response to one of these two services followed by an unrelated
+/// drop is still reported as expected. Reading it would make the classification
+/// exact at the cost of `0x7F` and `0x78` handling here, and the two errors are
+/// not symmetric: reporting a close as prescribed when it was not costs a
+/// reconnect on an exchange that had already failed, where reporting a
+/// prescribed close as unexpected makes a driver fail a flow the standard
+/// requires.
 #[must_use]
-pub(crate) const fn close_is_expected_after(request_sid: u8) -> bool {
-    matches!(
-        request_sid,
-        service_ids::DIAGNOSTIC_SESSION_CONTROL | service_ids::ECU_RESET
-    )
+pub(crate) const fn after_sending(first_octet: u8) -> ConnectionAction {
+    match first_octet {
+        service_ids::DIAGNOSTIC_SESSION_CONTROL | service_ids::ECU_RESET => {
+            ConnectionAction::ExpectClose
+        }
+        service_ids::DIAGNOSTIC_SESSION_CONTROL_RESPONSE | service_ids::ECU_RESET_RESPONSE => {
+            ConnectionAction::InitiateClose
+        }
+        _ => ConnectionAction::Continue,
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{bench_reloads, close_is_expected_after, service_ids};
+    use super::{ConnectionAction, after_sending, bench_reloads, service_ids};
 
-    /// The two services clause 8 makes TCP connection handling part of, and
-    /// nothing else. `0x10` and `0x11` are spelled out rather than taken from
-    /// `service_ids`, so the constants and the rule cannot drift together.
+    /// The four octets clause 8 keys connection handling on, and what each
+    /// requires. Spelled out as literals rather than taken from `service_ids`,
+    /// so the constants and the rule cannot drift together — if
+    /// `uds_protocol`'s derivation ever moved, this fails rather than agreeing
+    /// with itself.
     #[test]
-    fn only_the_two_services_clause_8_names_expect_a_close() {
-        assert!(close_is_expected_after(0x10), "DiagnosticSessionControl");
-        assert!(close_is_expected_after(0x11), "ECUReset");
+    fn clause_8_keys_on_four_octets() {
         assert_eq!(service_ids::DIAGNOSTIC_SESSION_CONTROL, 0x10);
         assert_eq!(service_ids::ECU_RESET, 0x11);
+        assert_eq!(service_ids::DIAGNOSTIC_SESSION_CONTROL_RESPONSE, 0x50);
+        assert_eq!(service_ids::ECU_RESET_RESPONSE, 0x51);
 
-        for sid in 0x00..=0xFF_u8 {
-            if sid == 0x10 || sid == 0x11 {
+        assert_eq!(after_sending(0x10), ConnectionAction::ExpectClose);
+        assert_eq!(after_sending(0x11), ConnectionAction::ExpectClose);
+        assert_eq!(after_sending(0x50), ConnectionAction::InitiateClose);
+        assert_eq!(after_sending(0x51), ConnectionAction::InitiateClose);
+    }
+
+    /// Nothing else in the byte range means anything to this crate.
+    ///
+    /// The exhaustive half of the invariant that `uds_on_ip` never learns what
+    /// a service is: 252 of the 256 possible first octets are `Continue`, and
+    /// the four that are not are the ones the standard itself forces.
+    ///
+    /// Verified by watching it fail: adding `0x22` — `ReadDataByIdentifier`, an
+    /// ordinary service with no connection handling — to `after_sending`'s arm
+    /// breaks this test, and `transport::tests::
+    /// what_the_connection_owes_is_replaced_by_every_send` with it.
+    #[test]
+    fn every_other_octet_is_continue() {
+        for octet in 0x00..=0xFF_u8 {
+            if matches!(octet, 0x10 | 0x11 | 0x50 | 0x51) {
                 continue;
             }
-            assert!(
-                !close_is_expected_after(sid),
-                "{sid:#04X} is not a service clause 8 keys connection handling on",
+            assert_eq!(
+                after_sending(octet),
+                ConnectionAction::Continue,
+                "{octet:#04X} is not a service clause 8 keys connection handling on",
             );
         }
+    }
+
+    /// The request and response identifiers are disjoint, which is what makes
+    /// one read of the first octet correct for both roles.
+    ///
+    /// Without this, telling `ExpectClose` from `InitiateClose` would need to
+    /// know whether this transport is serving a client or a server — a fact
+    /// `DoIpTransport` does not hold and `uds_services` does not put on the
+    /// seam. The disjointness makes the question unnecessary rather than
+    /// answered, so there is no role assumption for anything to enforce.
+    #[test]
+    fn a_request_identifier_is_never_a_response_identifier() {
+        let requests = [
+            service_ids::DIAGNOSTIC_SESSION_CONTROL,
+            service_ids::ECU_RESET,
+        ];
+        let responses = [
+            service_ids::DIAGNOSTIC_SESSION_CONTROL_RESPONSE,
+            service_ids::ECU_RESET_RESPONSE,
+        ];
+        for request in requests {
+            assert!(
+                !responses.contains(&request),
+                "{request:#04X} would be classified by role rather than by value",
+            );
+        }
+    }
+
+    /// A negative response triggers no close, and needs no rule to say so.
+    ///
+    /// REQ 7.9 and REQ 7.11 key the close on a *positive* response. A negative
+    /// one has first octet `0x7F` whatever the service, so it falls to
+    /// `Continue` without this crate reading an NRC or knowing what one is.
+    /// `0x78` — response-pending — is the case that would otherwise be
+    /// dangerous: it is not a final response, and closing after it would end an
+    /// exchange the server is still working on.
+    #[test]
+    fn a_negative_response_closes_nothing() {
+        assert_eq!(after_sending(0x7F), ConnectionAction::Continue);
+    }
+
+    /// Both prescribed cases produce `expected`, and only those two.
+    ///
+    /// A client awaiting the server's close and a server that has just caused
+    /// one are both in a flow the standard requires, and the driver's decision
+    /// is the same for both: end the exchange rather than report a failure.
+    #[test]
+    fn only_a_prescribed_flow_reports_expected() {
+        assert!(ConnectionAction::ExpectClose.close_is_prescribed());
+        assert!(ConnectionAction::InitiateClose.close_is_prescribed());
+        assert!(
+            !ConnectionAction::Continue.close_is_prescribed(),
+            "a drop during an ordinary exchange is not prescribed by anything",
+        );
     }
 
     /// The bench values are the `tP6` pair, and they are the ones a reader of

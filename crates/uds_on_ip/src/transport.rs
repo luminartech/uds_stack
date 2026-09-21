@@ -12,7 +12,7 @@
 
 use crate::error::Error;
 use crate::mapping::target_of;
-use crate::profile::close_is_expected_after;
+use crate::profile::{ConnectionAction, after_sending};
 use uds_services::{TransportEvent, UdsTransport};
 use uds_session::{Ai, Reloads, Timestamp};
 
@@ -28,15 +28,23 @@ pub struct DoIpTransport<S> {
     socket: S,
     reloads: Reloads,
     outbound_max: Option<usize>,
-    /// Whether the request most recently handed to `t_data_req` is one whose
-    /// flow ends in a server-initiated close.
+    /// What ISO 14229-5 clause 8 required of the connection after the message
+    /// most recently handed to `t_data_req`.
     ///
-    /// The whole of what this crate needs to fill in
-    /// `TransportEvent::Closed`'s `expected`. See
-    /// [`close_is_expected_after`](crate::profile::close_is_expected_after) for
-    /// why the classification is armed on the request rather than derived from
-    /// the response.
-    expecting_close: bool,
+    /// Stored rather than acted on and discarded, because the two non-trivial
+    /// cases have different lifetimes.
+    /// [`InitiateClose`](ConnectionAction::InitiateClose) is spent immediately —
+    /// the close follows that one send. `ExpectClose` outlives the call: it is
+    /// read whenever a close eventually arrives, to fill in
+    /// `uds_services::TransportEvent::Closed`'s `expected`, and that may be
+    /// several events later.
+    ///
+    /// Every send overwrites it, including with `Continue`. Leaving a stale
+    /// `ExpectClose` in place would have one `DiagnosticSessionControl` arm the
+    /// transport for the rest of its life, so that every later drop — a pulled
+    /// cable, a crashed entity — reported itself as a flow the standard
+    /// prescribes.
+    last_send: ConnectionAction,
 }
 
 // Written by hand rather than derived, and held by
@@ -51,7 +59,7 @@ impl<S> core::fmt::Debug for DoIpTransport<S> {
             .field("socket", &"..")
             .field("reloads", &self.reloads)
             .field("outbound_max", &self.outbound_max)
-            .field("expecting_close", &self.expecting_close)
+            .field("last_send", &self.last_send)
             .finish()
     }
 }
@@ -70,7 +78,7 @@ impl<S> DoIpTransport<S> {
             socket,
             reloads,
             outbound_max: None,
-            expecting_close: false,
+            last_send: ConnectionAction::Continue,
         }
     }
 
@@ -98,6 +106,23 @@ impl<S> DoIpTransport<S> {
     pub fn set_outbound_max(&mut self, max: Option<usize>) {
         self.outbound_max = max;
     }
+
+    /// Record what ISO 14229-5 clause 8 requires of the connection after
+    /// sending `data`, from its first octet.
+    ///
+    /// Split out of [`t_data_req`](UdsTransport::t_data_req) so it is reachable
+    /// from a test: that method ends in a `todo!()`, so nothing could otherwise
+    /// observe the arming — including the case that matters most, a `Continue`
+    /// clearing a previous `ExpectClose`.
+    ///
+    /// An empty message records [`ConnectionAction::Continue`]. There is no
+    /// service identifier to key on, and clause 8 attaches no connection
+    /// handling to a message that carries none.
+    fn record_what_follows(&mut self, data: &[u8]) {
+        self.last_send = data
+            .first()
+            .map_or(ConnectionAction::Continue, |octet| after_sending(*octet));
+    }
 }
 
 impl<S> UdsTransport for DoIpTransport<S> {
@@ -105,13 +130,24 @@ impl<S> UdsTransport for DoIpTransport<S> {
 
     /// `T_Data.req` — map a `T_PDU` onto a `DoIP` diagnostic message and send it.
     ///
-    /// Sending also decides how a close arriving afterwards will be reported:
-    /// ISO 14229-5:2022 REQ 7.8 and REQ 7.10 make a server-initiated close part
-    /// of the `DiagnosticSessionControl` and `ECUReset` flows, so the request
-    /// that was sent is what says whether a close is prescribed. The driver is
-    /// told on
-    /// [`TransportEvent::Closed`](uds_services::TransportEvent::Closed) and is
-    /// never asked to work it out.
+    /// # What the connection owes afterwards
+    ///
+    /// The message's first octet decides it, via
+    /// [`after_sending`](crate::profile::after_sending), and both ISO 14229-5
+    /// clause 8 connection requirements come from that one read.
+    ///
+    /// A client sending `DiagnosticSessionControl` or `ECUReset` arms
+    /// [`ConnectionAction::ExpectClose`], so the close REQ 7.8 and REQ 7.10
+    /// prescribe is reported to the driver as expected rather than as a fault.
+    /// A server sending a *positive response* to either arms
+    /// [`ConnectionAction::InitiateClose`]: REQ 7.9 and REQ 7.11 require the
+    /// server itself to close, after the response and before executing the
+    /// service, so this transport asks the connection to close once the send
+    /// completes.
+    ///
+    /// The driver is told, and never asked to work either out — see
+    /// [`after_sending`](crate::profile::after_sending) for why the decision
+    /// lands in this crate rather than above or below it.
     ///
     /// # Errors
     ///
@@ -121,10 +157,11 @@ impl<S> UdsTransport for DoIpTransport<S> {
     /// A *socket* failure has no variant yet — see [`Self::next_event`].
     async fn t_data_req(&mut self, ai: Ai, data: &[u8]) -> Result<(), Error> {
         let _target = target_of(ai)?;
-        self.expecting_close = data
-            .first()
-            .is_some_and(|sid| close_is_expected_after(*sid));
-        todo!("REQ 4.3 Table 4 — send as a DoIP diagnostic message")
+        self.record_what_follows(data);
+        todo!(
+            "REQ 4.3 Table 4 — send as a DoIP diagnostic message, then close the \
+             connection if last_send is InitiateClose"
+        )
     }
 
     /// The next inbound event, or
@@ -221,7 +258,7 @@ impl<S> UdsTransport for DoIpTransport<S> {
 #[cfg(test)]
 mod tests {
     use super::DoIpTransport;
-    use crate::profile::bench_reloads;
+    use crate::profile::{ConnectionAction, bench_reloads};
     use uds_services::UdsTransport;
 
     /// ISO 13400-2:2019 Table 11 marks *Max. data size* support **optional**, so
@@ -264,6 +301,83 @@ mod tests {
         struct OpaqueSocket;
         const fn assert_debug<T: core::fmt::Debug>() {}
         assert_debug::<DoIpTransport<OpaqueSocket>>();
+    }
+
+    /// A send records what the connection owes afterwards, and a later send
+    /// replaces it.
+    ///
+    /// The clearing is the half worth testing. A stale `ExpectClose` is silent:
+    /// nothing fails, and every close for the rest of the transport's life
+    /// reports itself as a flow the standard prescribes — so a pulled cable
+    /// during an ordinary `ReadDataByIdentifier` exchange would tell the driver
+    /// to end the exchange cleanly instead of failing it.
+    ///
+    /// Verified by watching it fail: making `record_what_follows` skip the
+    /// write when the action is `Continue` — the plausible shape of this bug,
+    /// since it reads as "only record something interesting" — breaks this test
+    /// and two of its neighbours.
+    #[test]
+    fn what_the_connection_owes_is_replaced_by_every_send() {
+        let mut t = DoIpTransport::new((), bench_reloads());
+        assert_eq!(
+            t.last_send,
+            ConnectionAction::Continue,
+            "a fresh transport owes nothing",
+        );
+
+        t.record_what_follows(&[0x10, 0x03]);
+        assert_eq!(
+            t.last_send,
+            ConnectionAction::ExpectClose,
+            "REQ 7.8 — a client sent DiagnosticSessionControl",
+        );
+
+        t.record_what_follows(&[0x22, 0xF1, 0x90]);
+        assert_eq!(
+            t.last_send,
+            ConnectionAction::Continue,
+            "ReadDataByIdentifier must clear it, or the arming never expires",
+        );
+    }
+
+    /// A server's positive response arms the close it must itself initiate.
+    ///
+    /// The mirror of the client case, and the direction REQ 7.9 and REQ 7.11
+    /// specify: the server closes after sending the positive response and
+    /// before executing the service.
+    #[test]
+    fn a_positive_response_arms_the_close_a_server_owes() {
+        let mut t = DoIpTransport::new((), bench_reloads());
+
+        t.record_what_follows(&[0x50, 0x03]);
+        assert_eq!(t.last_send, ConnectionAction::InitiateClose);
+
+        t.record_what_follows(&[0x7F, 0x10, 0x22]);
+        assert_eq!(
+            t.last_send,
+            ConnectionAction::Continue,
+            "a negative response to the same service closes nothing",
+        );
+    }
+
+    /// An empty message keys on nothing and owes nothing.
+    ///
+    /// `data.first()` is `None`, and clause 8 attaches no connection handling to
+    /// a message carrying no service identifier. Worth pinning because the
+    /// alternative — indexing octet zero — would panic on a message a peer
+    /// controls the length of.
+    #[test]
+    fn an_empty_message_owes_nothing() {
+        let mut t = DoIpTransport::new((), bench_reloads());
+        t.record_what_follows(&[0x11]);
+        assert_eq!(
+            t.last_send,
+            ConnectionAction::ExpectClose,
+            "0x11 is the ECUReset request, so a close is coming",
+        );
+
+        t.record_what_follows(&[]);
+        assert_eq!(t.last_send, ConnectionAction::Continue);
     }
 
     /// `Timestamp` is what makes the deadline exchangeable across the seam
