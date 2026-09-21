@@ -234,10 +234,17 @@ The response window
    :tags: client; p_client; service-interface
 
    An ``S_Data.req`` whose addressing names no existing channel shall be rejected as
-   ``UDSS_LLR_0015`` defines.
+   ``UDSS_LLR_0015`` defines. An interface in which a request names the channel itself,
+   rather than an addressing from which the channel is found, makes an addressing naming no
+   channel at all unwritable and satisfies this limb without a check; the limb that remains
+   is a request naming a channel the caller has withdrawn, which ``UDSS_LLR_0121`` makes
+   recognisable.
 
    Rationale: naming a channel that does not exist is a caller error, not an input, and is
-   treated as ``UDSS_LLR_0027`` treats the same error on an indication.
+   treated as ``UDSS_LLR_0027`` treats the same error on an indication. The addressing form
+   of this requirement conflates two caller errors, an addressing that never named a channel
+   and one whose channel has since been withdrawn; an interface that names the channel
+   separates them, leaving only the second.
 
 .. llr:: A withdrawal naming no existing channel is rejected
    :id: UDSS_LLR_0124
