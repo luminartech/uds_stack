@@ -131,7 +131,16 @@ impl<A: ServiceSet, T: UdsTransport, const PEERS: usize> Server<A, T, PEERS> {
         let Some((ai, request)) = indication else {
             return Ok(());
         };
-        let sid = request.first().copied().unwrap_or(0);
+        // The byte is kept as received because a negative response echoes it
+        // (ISO 14229-1:2020 Table 21, SIDRQ), and `UdsServiceType::to_request_sid` maps
+        // every value it does not model back to 0x7F.
+        //
+        // Elided: an empty request carries no service identifier, so clause 8.7's first
+        // check cannot run on it and it owes incorrectMessageLengthOrInvalidFormat
+        // (0x13). Dropping it is this stub's behaviour, not the intended one.
+        let Some(sid) = request.first().copied() else {
+            return Ok(());
+        };
 
         let mut sink = ResponseSink::new(response, outbound_max);
         let pending_deadline = self.session.next_deadline();

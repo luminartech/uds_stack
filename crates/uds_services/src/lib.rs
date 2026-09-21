@@ -137,7 +137,7 @@ pub use services::{
 pub use uds_protocol::{
     CLEAR_ALL_DTCS, CommunicationControlType, CommunicationType, DiagnosticSessionType,
     DtcRecord, DtcSettingType, DtcStatusMask, FileOperationMode, FunctionalGroupIdentifier,
-    NegativeResponseCode, ReadDtcInfoSubFunction, ResetType, SubnetNumber,
+    NegativeResponseCode, ReadDtcInfoSubFunction, ResetType, SubnetNumber, UdsServiceType,
 };
 
 #[doc(hidden)]

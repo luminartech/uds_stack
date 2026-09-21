@@ -19,7 +19,7 @@
 
 use crate::storage::Storage;
 use crate::{Ai, ResponseSink};
-use uds_protocol::NegativeResponseCode;
+use uds_protocol::{NegativeResponseCode, UdsServiceType};
 
 pub mod data;
 pub mod dtc;
@@ -94,16 +94,18 @@ pub trait ServiceSet: crate::sealed::Sealed {
         out: &mut ResponseSink<'_>,
     ) -> impl core::future::Future<Output = Result<Responded, NegativeResponseCode>>;
 
-    /// Whether this server implements `sid` at all.
+    /// Whether this server implements `service` at all.
     ///
     /// ``UDSSVC_ARCH_0006`` — Figure 5's first mandatory check, and the one only the
-    /// assembly list can answer.
-    fn supports(&self, sid: u8) -> bool;
+    /// assembly list can answer. A byte that names no service arrives as
+    /// [`UdsServiceType::UnsupportedDiagnosticService`], which no assembly list contains,
+    /// so it answers `false` without a special case.
+    fn supports(&self, service: UdsServiceType) -> bool;
 
-    /// Whether `sid`'s handler may answer `requestCorrectlyReceivedResponsePending`.
+    /// Whether `service`'s handler may answer `requestCorrectlyReceivedResponsePending`.
     ///
     /// ``UDSSVC_ARCH_0033``.
-    fn may_respond_pending(&self, sid: u8) -> bool;
+    fn may_respond_pending(&self, service: UdsServiceType) -> bool;
 
     /// Whether `request`, addressed this way, may proceed while a service is already in
     /// progress.

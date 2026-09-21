@@ -69,45 +69,55 @@ pub const fn dtc_response_bound(
     best
 }
 
-/// Every service identifier a service trait covers.
+/// Every service a service trait covers, named rather than spelled as a wire byte.
+///
+/// The byte for each is `uds_protocol`'s to know (``UDSSVC_ARCH_0001`` gives it the
+/// format), so this list says only *which services this server implements*, which is
+/// the behaviour half and the fact ``UDSSVC_ARCH_0013`` needs.
 #[doc(hidden)]
 #[macro_export]
 macro_rules! __uds_sids {
     (DiagnosticSessionControl) => {
-        [0x10_u8]
+        [$crate::UdsServiceType::DiagnosticSessionControl]
     };
     (EcuReset) => {
-        [0x11_u8]
+        [$crate::UdsServiceType::EcuReset]
     };
     (ClearDiagnosticInformation) => {
-        [0x14_u8]
+        [$crate::UdsServiceType::ClearDiagnosticInfo]
     };
     (ReadDtcInformation) => {
-        [0x19_u8]
+        [$crate::UdsServiceType::ReadDtcInfo]
     };
     (ReadDataByIdentifier) => {
-        [0x22_u8]
+        [$crate::UdsServiceType::ReadDataByIdentifier]
     };
     (SecurityAccess) => {
-        [0x27_u8]
+        [$crate::UdsServiceType::SecurityAccess]
     };
     (CommunicationControl) => {
-        [0x28_u8]
+        [$crate::UdsServiceType::CommunicationControl]
     };
     (WriteDataByIdentifier) => {
-        [0x2E_u8]
+        [$crate::UdsServiceType::WriteDataByIdentifier]
     };
     (RoutineControl) => {
-        [0x31_u8]
+        [$crate::UdsServiceType::RoutineControl]
     };
     (DataTransfer) => {
-        [0x34_u8, 0x35_u8, 0x36_u8, 0x37_u8, 0x38_u8]
+        [
+            $crate::UdsServiceType::RequestDownload,
+            $crate::UdsServiceType::RequestUpload,
+            $crate::UdsServiceType::TransferData,
+            $crate::UdsServiceType::RequestTransferExit,
+            $crate::UdsServiceType::RequestFileTransfer,
+        ]
     };
     (TesterPresent) => {
-        [0x3E_u8]
+        [$crate::UdsServiceType::TesterPresent]
     };
     (ControlDtcSetting) => {
-        [0x85_u8]
+        [$crate::UdsServiceType::ControlDtcSetting]
     };
 }
 
@@ -393,13 +403,15 @@ macro_rules! uds_server {
                     }
                 }
 
-                fn supports(&self, sid: u8) -> bool {
-                    $( if $crate::__uds_sids!($svc).contains(&sid) { return true; } )+
+                fn supports(&self, service: $crate::UdsServiceType) -> bool {
+                    $( if $crate::__uds_sids!($svc).contains(&service) {
+                        return true;
+                    } )+
                     false
                 }
 
-                fn may_respond_pending(&self, sid: u8) -> bool {
-                    $( if $crate::__uds_sids!($svc).contains(&sid) {
+                fn may_respond_pending(&self, service: $crate::UdsServiceType) -> bool {
+                    $( if $crate::__uds_sids!($svc).contains(&service) {
                         return $crate::__uds_may_pend!($ty, $svc);
                     } )+
                     false

@@ -20,8 +20,8 @@ use uds_services::{
     Mtype, PhysicalKeepAlive, ReadDataByIdentifier, ReadDtcInfoSubFunction,
     ReadDtcInformation, RecordError, Reloads, Response, ResponseSink, SecurityAccess,
     SecurityLevel, SecurityPolicy, ServerParams, ServiceSet, Sink, Storage, SubnetNumber,
-    TaType, TesterPresent, Timestamp, TransferRequest, TransportEvent, UdsTransport,
-    uds_client, uds_server,
+    TaType, TesterPresent, Timestamp, TransferRequest, TransportEvent, UdsServiceType,
+    UdsTransport, uds_client, uds_server,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -276,27 +276,29 @@ fn the_buffers_are_derived_from_the_declared_maxima() {
 #[test]
 fn the_assembled_list_answers_service_supported() {
     let ecu = Ecu::new();
-    assert!(ecu.supports(0x22));
-    assert!(ecu.supports(0x27));
-    assert!(ecu.supports(0x36));
-    assert!(ecu.supports(0x19));
-    assert!(ecu.supports(0x14));
-    assert!(ecu.supports(0x28));
-    assert!(ecu.supports(0x3E));
-    assert!(!ecu.supports(0x2E));
-    assert!(!ecu.supports(0x85));
+    assert!(ecu.supports(UdsServiceType::ReadDataByIdentifier));
+    assert!(ecu.supports(UdsServiceType::SecurityAccess));
+    assert!(ecu.supports(UdsServiceType::TransferData));
+    assert!(ecu.supports(UdsServiceType::ReadDtcInfo));
+    assert!(ecu.supports(UdsServiceType::ClearDiagnosticInfo));
+    assert!(ecu.supports(UdsServiceType::CommunicationControl));
+    assert!(ecu.supports(UdsServiceType::TesterPresent));
+    assert!(!ecu.supports(UdsServiceType::WriteDataByIdentifier));
+    assert!(!ecu.supports(UdsServiceType::ControlDtcSetting));
+    // A byte naming no service at all resolves to one variant, which no list contains.
+    assert!(!ecu.supports(UdsServiceType::from_request_sid(0x01)));
 }
 
 /// ``UDSSVC_ARCH_0033`` — Annex A permission is per service and declared.
 #[test]
 fn response_pending_permission_follows_the_declaration() {
     let ecu = Ecu::new();
-    assert!(ecu.may_respond_pending(0x34));
-    assert!(!ecu.may_respond_pending(0x22));
-    assert!(!ecu.may_respond_pending(0x2E));
+    assert!(ecu.may_respond_pending(UdsServiceType::RequestDownload));
+    assert!(!ecu.may_respond_pending(UdsServiceType::ReadDataByIdentifier));
+    assert!(!ecu.may_respond_pending(UdsServiceType::WriteDataByIdentifier));
     // 0x3E is false because the trait carries no constant to declare otherwise, not
     // because this server declared it so. Nothing an application writes can flip it.
-    assert!(!ecu.may_respond_pending(0x3E));
+    assert!(!ecu.may_respond_pending(UdsServiceType::TesterPresent));
 }
 
 /// The one message clause 8.7.6 admits mid-service is a **functionally addressed**
