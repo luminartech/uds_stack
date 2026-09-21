@@ -50,12 +50,21 @@ GENERATED_TYPES = {"impl", "test"}
 
 NEED_TYPES = AUTHORED_TYPES | GENERATED_TYPES
 
-# One pattern per authored type, so an architecture element cannot be filed under a
-# requirement ID or the reverse. Both halves of the ID carry meaning: the prefix says which
-# crate in the stack owns it, the segment says what kind of thing it is.
+# One prefix per crate in the stack. The prefix says which crate owns an ID; the segment
+# says what kind of thing it is. Both halves are checked, so an architecture element
+# cannot be filed under a requirement ID or the reverse, in any crate.
+#
+# Only the prefixes actually in use are registered. A crate that has authored nothing gets
+# its prefix when it authors something -- registering one in advance invites an ID from a
+# set that does not exist yet.
+#
+# Keep in step with needs_id_regex in docs/conf.py.
+CRATE_PREFIXES = ("UDSS", "UDSSVC")
+
+_PREFIX_ALT = "|".join(CRATE_PREFIXES)
 ID_PATTERNS = {
-    "arch": re.compile(r"^UDSSVC_ARCH_\d{4}$"),
-    "llr": re.compile(r"^UDSSVC_LLR_\d{4}$"),
+    "arch": re.compile(rf"^({_PREFIX_ALT})_ARCH_\d{{4}}$"),
+    "llr": re.compile(rf"^({_PREFIX_ALT})_LLR_\d{{4}}$"),
 }
 
 STATUSES = {"draft", "review", "approved", "obsolete"}

@@ -448,5 +448,70 @@ class ArchTests(TempTree):
         self.assertIn("duplicate id", stderr)
 
 
+class MultiPrefixIds(unittest.TestCase):
+    """The set holds needs from more than one crate, each with its own ID prefix."""
+
+    def test_accepts_uds_session_llr_prefix(self):
+        need = vn.Need(
+            type="llr",
+            title="A derived requirement from another crate",
+            path=Path("docs/requirements/llr-timer-model.rst"),
+            line=1,
+            options={
+                "id": "UDSS_LLR_0123",
+                "status": "draft",
+                "origin": "derived",
+                "integrity_level": "QM",
+                "target_level": "ASIL-B",
+            },
+            body="Rationale: a derived requirement states its reasoning.",
+        )
+        self.assertEqual(
+            [], [p for p in vn.check_need(need) if "registered scheme" in p.message]
+        )
+
+    def test_accepts_uds_services_arch_prefix(self):
+        need = vn.Need(
+            type="arch",
+            title="A dependency arrow",
+            path=Path("docs/architecture/seams.rst"),
+            line=1,
+            options={"id": "UDSSVC_ARCH_0002", "status": "draft", "origin": "derived"},
+            body="Rationale: the dependency arrow runs one way.",
+        )
+        self.assertEqual(
+            [], [p for p in vn.check_need(need) if "registered scheme" in p.message]
+        )
+
+    def test_rejects_an_unregistered_prefix(self):
+        need = vn.Need(
+            type="llr",
+            title="A requirement under an unregistered prefix",
+            path=Path("docs/requirements/llr-timer-model.rst"),
+            line=1,
+            options={
+                "id": "NOPE_LLR_0001",
+                "status": "draft",
+                "origin": "derived",
+                "integrity_level": "QM",
+                "target_level": "ASIL-B",
+            },
+            body="Rationale: text.",
+        )
+        self.assertTrue(any("registered scheme" in p.message for p in vn.check_need(need)))
+
+    def test_rejects_a_type_filed_under_the_wrong_segment(self):
+        """An arch cannot wear an LLR id, or the reverse, whatever the prefix."""
+        need = vn.Need(
+            type="arch",
+            title="An architecture element wearing a requirement id",
+            path=Path("docs/architecture/seams.rst"),
+            line=1,
+            options={"id": "UDSSVC_LLR_0002", "status": "draft", "origin": "derived"},
+            body="Rationale: text.",
+        )
+        self.assertTrue(any("registered scheme" in p.message for p in vn.check_need(need)))
+
+
 if __name__ == "__main__":
     unittest.main()
