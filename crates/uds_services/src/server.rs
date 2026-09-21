@@ -169,15 +169,21 @@ impl<A: ServiceSet, T: UdsTransport, const PEERS: usize> Server<A, T, PEERS> {
                         deadline = self.session.next_deadline();
                     }
                     Either::Right(Ok(TransportEvent::Closed { expected })) => {
-                        // Either way the exchange is over: a server does not reconnect
+                        // The exchange is over either way: a server does not reconnect
                         // (ISO 13400-2 REQ 8.DoIP-144 puts routing activation on the
                         // client), so there is nothing to do but stop.
                         //
-                        // Elided: REQ 7.9 and 7.11 put the prescribed close *after* the
-                        // positive response, so a close arriving here -- while a handler
-                        // is still running -- is not that flow. Telling the two apart,
-                        // and initiating the close those requirements require of a
-                        // server, both need seam work this stub does not have.
+                        // A close reaching *this* arm is never REQ 7.9's or 7.11's. Those
+                        // follow a positive response, and nothing positive has been sent
+                        // yet -- the only thing this loop hands to `t_data_req` is
+                        // `answer_overrun`'s response-pending, whose first octet is 0x7F.
+                        // So `expected` needs no examination here; a mid-handler close is
+                        // a dropped link or a tester leaving early.
+                        //
+                        // Elided: which is why reporting it as `Suppressed` is wrong. That
+                        // says clause 8.7 required no response, where the truth is that
+                        // none could be sent. Distinguishing them is the pipeline's, and
+                        // the pipeline is `todo!()`.
                         let _ = expected;
                         break Ok(Responded::Suppressed);
                     }
