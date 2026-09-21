@@ -160,10 +160,15 @@ impl<A: ServiceSet, T: UdsTransport, const PEERS: usize> Server<A, T, PEERS> {
                         deadline = self.session.next_deadline();
                     }
                     Either::Right(Ok(TransportEvent::Closed { expected })) => {
-                        // REQ 7.9 / 7.11 make an expected close part of the normal
-                        // DiagnosticSessionControl and ECUReset flows, so it ends the
-                        // exchange without failing it. An unexpected close is the same
-                        // shape here; what differs is what the caller does next.
+                        // Either way the exchange is over: a server does not reconnect
+                        // (ISO 13400-2 REQ 8.DoIP-144 puts routing activation on the
+                        // client), so there is nothing to do but stop.
+                        //
+                        // Elided: REQ 7.9 and 7.11 put the prescribed close *after* the
+                        // positive response, so a close arriving here -- while a handler
+                        // is still running -- is not that flow. Telling the two apart,
+                        // and initiating the close those requirements require of a
+                        // server, both need seam work this stub does not have.
                         let _ = expected;
                         break Ok(Responded::Suppressed);
                     }

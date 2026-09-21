@@ -78,16 +78,21 @@ pub enum TransportEvent<'b> {
     },
     /// The connection went away.
     ///
-    /// ISO 14229-5:2022 REQ 7.9 and REQ 7.11 make a server-initiated close **part of
-    /// the normal `DiagnosticSessionControl` and `ECUReset` flows**, so an expected
-    /// close is not a failure and must not arrive as `Err`. A transport with no
-    /// connections never emits this, exactly as one that never truncates never emits
+    /// ISO 14229-5:2022 REQ 7.9 and REQ 7.11 make a close **part of the normal
+    /// `DiagnosticSessionControl` and `ECUReset` flows**: the server initiates one after
+    /// sending the positive response and before executing the service. So a close is not
+    /// a failure and must not arrive as `Err`. A transport with no connections never
+    /// emits this, exactly as one that never truncates never emits
     /// [`Self::DataTooLong`].
     Closed {
-        /// Whether the close was part of a flow the standard prescribes. The driver's
-        /// decision is binary — reconnect and repeat routing activation, or fail the
-        /// exchange — and the reason behind an unexpected close is not something a
-        /// driver can act on differently.
+        /// Whether the close was one the standard prescribes.
+        ///
+        /// **Informational: re-establishing the connection is never this crate's.**
+        /// ISO 13400-2:2019 REQ 8.DoIP-144 puts the routing activation request on the
+        /// *client* entity, so a server is reconnected *to* and never reconnects, and a
+        /// client's own reconnection is its transport's business below this seam
+        /// (``UDSSVC_ARCH_0002``). Nothing here asks a transport to reconnect, and no
+        /// method to do so exists.
         expected: bool,
     },
     /// The deadline the driver supplied passed before anything arrived.
