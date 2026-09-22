@@ -23,9 +23,10 @@
 //! All methods must be called from a single context (no internal locking).
 
 use crate::messages::{
-    ActivationTypeCode, Decode, DiagnosticAckCode, DiagnosticMessage, Encode, EntityStatusNodeType,
-    EntityStatusResponse, FurtherActionRequired, Header, Message, NackCode, Payload, PayloadType,
-    ProtocolVersion, RoutingActivationRequest, VehicleIdentificationResponse, VinGidSyncStatus,
+    ActivationTypeCode, Decode, DiagnosticAckCode, DiagnosticMessage, Encode,
+    EntityStatusNodeType, EntityStatusResponse, FurtherActionRequired, Header, Message,
+    NackCode, Payload, PayloadType, ProtocolVersion, RoutingActivationRequest,
+    VehicleIdentificationResponse, VinGidSyncStatus,
 };
 use crate::{LogicalAddress, try_frame};
 use automotive_wire_codec::SliceSink;
@@ -334,7 +335,10 @@ fn send_diag_ack(
     }
 }
 
-fn handle_routing_activation(s: &mut Session<'_>, req: &RoutingActivationRequest) -> TcpVerdict {
+fn handle_routing_activation(
+    s: &mut Session<'_>,
+    req: &RoutingActivationRequest,
+) -> TcpVerdict {
     let source = req.source_address;
     let (code, verdict) = if !source.is_valid_client_address() {
         (
@@ -374,7 +378,10 @@ fn handle_routing_activation(s: &mut Session<'_>, req: &RoutingActivationRequest
     verdict
 }
 
-fn handle_diagnostic_message(s: &mut Session<'_>, dm: &DiagnosticMessage<'_>) -> TcpVerdict {
+fn handle_diagnostic_message(
+    s: &mut Session<'_>,
+    dm: &DiagnosticMessage<'_>,
+) -> TcpVerdict {
     let Some(tester) = *s.active_tester else {
         // ISO 13400-2: a diagnostic message on a socket without routing
         // activation invalidates the connection.
@@ -415,7 +422,8 @@ fn handle_diagnostic_message(s: &mut Session<'_>, dm: &DiagnosticMessage<'_>) ->
     // `<= 0` means the dispatch produced no response; a negative return maps to
     // zero written bytes, which the guard below then skips.
     let written =
-        usize::try_from((s.cb.on_uds_request)(dm.user_data, &mut s.uds_resp_buf[..])).unwrap_or(0);
+        usize::try_from((s.cb.on_uds_request)(dm.user_data, &mut s.uds_resp_buf[..]))
+            .unwrap_or(0);
     if written > 0 {
         let len = written.min(UDS_RESP_CAP);
         let msg = Message::diagnostic_message(
@@ -429,7 +437,11 @@ fn handle_diagnostic_message(s: &mut Session<'_>, dm: &DiagnosticMessage<'_>) ->
     TcpVerdict::KeepOpen
 }
 
-fn handle_tcp_frame(s: &mut Session<'_>, header: &Header, payload_bytes: &[u8]) -> TcpVerdict {
+fn handle_tcp_frame(
+    s: &mut Session<'_>,
+    header: &Header,
+    payload_bytes: &[u8],
+) -> TcpVerdict {
     match Payload::decode(payload_bytes, header.payload_type) {
         Ok(Payload::RoutingActivationRequest(req)) => handle_routing_activation(s, &req),
         Ok(Payload::DiagnosticMessage(dm)) => handle_diagnostic_message(s, &dm),

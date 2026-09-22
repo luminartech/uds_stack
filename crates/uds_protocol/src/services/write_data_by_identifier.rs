@@ -67,7 +67,10 @@ impl<'d> WriteDataByIdentifierRequest<'d> {
 impl Encode for WriteDataByIdentifierRequest<'_> {
     type Error = crate::Error;
 
-    fn encode(&self, writer: &mut impl automotive_wire_codec::Sink) -> Result<usize, Error> {
+    fn encode(
+        &self,
+        writer: &mut impl automotive_wire_codec::Sink,
+    ) -> Result<usize, Error> {
         let mut written = write_u16_be(writer, self.identifier)?;
         written += write_bytes(writer, self.data)?;
         Ok(written)
@@ -120,7 +123,10 @@ impl WriteDataByIdentifierResponse {
 impl Encode for WriteDataByIdentifierResponse {
     type Error = crate::Error;
 
-    fn encode(&self, writer: &mut impl automotive_wire_codec::Sink) -> Result<usize, Error> {
+    fn encode(
+        &self,
+        writer: &mut impl automotive_wire_codec::Sink,
+    ) -> Result<usize, Error> {
         Ok(write_u16_be(writer, self.identifier)?)
     }
 }
@@ -200,9 +206,11 @@ mod test {
     fn wdbi_request_round_trips() {
         let req = WriteDataByIdentifierRequest::new(0xF190, &[0x01, 0x02, 0x03]).unwrap();
         let mut buf = [0u8; 8];
-        let n = Encode::encode(&req, &mut automotive_wire_codec::SliceSink::new(&mut buf)).unwrap();
+        let n = Encode::encode(&req, &mut automotive_wire_codec::SliceSink::new(&mut buf))
+            .unwrap();
         assert_eq!(&buf[..n], &[0xF1, 0x90, 0x01, 0x02, 0x03]);
-        let (decoded, rest) = <WriteDataByIdentifierRequest as Decode>::decode(&buf[..n]).unwrap();
+        let (decoded, rest) =
+            <WriteDataByIdentifierRequest as Decode>::decode(&buf[..n]).unwrap();
         assert!(rest.is_empty());
         assert_eq!(decoded.identifier, 0xF190);
         assert_eq!(decoded.data, &[0x01, 0x02, 0x03]);

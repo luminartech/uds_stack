@@ -17,7 +17,8 @@ fn declares_dependency(manifest: &str, name: &str) -> bool {
                 .strip_prefix('[')
                 .and_then(|section| section.strip_suffix(']'))
                 .is_some_and(|section| {
-                    section.contains("dependencies") && section.ends_with(&format!(".{name}"))
+                    section.contains("dependencies")
+                        && section.ends_with(&format!(".{name}"))
                 })
     })
 }

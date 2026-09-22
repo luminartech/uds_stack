@@ -52,7 +52,10 @@ impl PartialEq<u8> for DtcSnapshotRecordNumber {
 impl Encode for DtcSnapshotRecordNumber {
     type Error = crate::Error;
 
-    fn encode(&self, writer: &mut impl automotive_wire_codec::Sink) -> Result<usize, Error> {
+    fn encode(
+        &self,
+        writer: &mut impl automotive_wire_codec::Sink,
+    ) -> Result<usize, Error> {
         Ok(write_u8(writer, self.value())?)
     }
 }

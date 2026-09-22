@@ -564,7 +564,8 @@ mod test {
         // on `UnsupportedDiagnosticService` rather than being silently mapped to a real service.
         // Written with `any` rather than collecting, so this compiles without `alloc`.
         let is_request_sid = |b: u8| SERVICES.iter().any(|&(_, r, _, _)| r == b);
-        let is_response_sid = |b: u8| b == 0x7F || SERVICES.iter().any(|&(_, _, s, _)| s == b);
+        let is_response_sid =
+            |b: u8| b == 0x7F || SERVICES.iter().any(|&(_, _, s, _)| s == b);
 
         for byte in 0x00..=0xFFu8 {
             let from_request = UdsServiceType::from_request_sid(byte);

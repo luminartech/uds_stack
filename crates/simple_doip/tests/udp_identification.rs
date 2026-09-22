@@ -8,8 +8,8 @@ use async_trait::async_trait;
 use simple_doip::{
     Error, LogicalAddress,
     messages::{
-        Decode, DiagnosticMessage, Message, OwnedMessage, Payload, RoutingActivationRequest,
-        RoutingActivationResponseCode,
+        Decode, DiagnosticMessage, Message, OwnedMessage, Payload,
+        RoutingActivationRequest, RoutingActivationResponseCode,
     },
     server::{ResponseWriter, Server, ServerConnectionHandler},
 };
@@ -69,7 +69,8 @@ impl ServerConnectionHandler for IdentityHandler {
 
 /// A `VehicleIdentificationRequest` on the wire: 8-byte header, no payload.
 /// Protocol version 0x02 with its inverse 0xFD, payload type 0x0001, length 0.
-const VEHICLE_IDENTIFICATION_REQUEST: [u8; 8] = [0x02, 0xFD, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00];
+const VEHICLE_IDENTIFICATION_REQUEST: [u8; 8] =
+    [0x02, 0xFD, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00];
 
 /// Too short to be a `DoIP` generic header, so `Message::decode` rejects it. Any
 /// host on the network can send this, so the responder must log and carry on.
@@ -89,8 +90,8 @@ const IDENTIFICATION_REQUEST_WITH_EID: [u8; 14] = [
 /// `VehicleIdentificationRequestWithVIN` (0x0003), naming a VIN that is not this
 /// entity's: 8-byte header plus a 17-byte VIN.
 const IDENTIFICATION_REQUEST_WITH_VIN: [u8; 25] = [
-    0x02, 0xFD, 0x00, 0x03, 0x00, 0x00, 0x00, 0x11, b'O', b'T', b'H', b'E', b'R', b'0', b'0', b'0',
-    b'0', b'0', b'0', b'0', b'0', b'0', b'0', b'0', b'1',
+    0x02, 0xFD, 0x00, 0x03, 0x00, 0x00, 0x00, 0x11, b'O', b'T', b'H', b'E', b'R', b'0',
+    b'0', b'0', b'0', b'0', b'0', b'0', b'0', b'0', b'0', b'0', b'1',
 ];
 
 /// How long to wait before concluding the responder deliberately sent nothing.
@@ -123,7 +124,8 @@ async fn expect_identification_response(client: &UdpSocket) {
 
     // `Decode` is implemented for the BORROWED `Message<'a>`, not `OwnedMessage`,
     // and returns (message, remaining_bytes) — not a bare message.
-    let (message, _rest) = Message::decode(&buf[..len]).expect("decode identification response");
+    let (message, _rest) =
+        Message::decode(&buf[..len]).expect("decode identification response");
     // ISO 13400-2 has a single wire payload type (0x0004) for both the
     // unsolicited announcement and the directed reply, so `Payload::decode`
     // always yields `VehicleAnnouncement` — never the `VehicleIdentificationResponse`

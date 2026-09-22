@@ -28,7 +28,9 @@ impl From<u8> for FurtherActionRequired {
         match value {
             0x00 => FurtherActionRequired::NoFurtherActionRequired,
             0x01..=0x0F => FurtherActionRequired::Reserved(value),
-            0x10 => FurtherActionRequired::RoutingActivationRequiredToInitiateCentralSecurity,
+            0x10 => {
+                FurtherActionRequired::RoutingActivationRequiredToInitiateCentralSecurity
+            }
             0x11..=0xFF => FurtherActionRequired::VehicleManufacturerSpecific(value),
         }
     }
@@ -38,7 +40,9 @@ impl From<FurtherActionRequired> for u8 {
     fn from(value: FurtherActionRequired) -> Self {
         match value {
             FurtherActionRequired::NoFurtherActionRequired => 0x00,
-            FurtherActionRequired::RoutingActivationRequiredToInitiateCentralSecurity => 0x10,
+            FurtherActionRequired::RoutingActivationRequiredToInitiateCentralSecurity => {
+                0x10
+            }
             FurtherActionRequired::Reserved(value)
             | FurtherActionRequired::VehicleManufacturerSpecific(value) => value,
         }
@@ -152,7 +156,10 @@ impl Encode for VehicleIdentificationResponse {
     ///
     /// # Errors
     /// Returns [`MessageError::Io`] if the writer fails.
-    fn encode(&self, writer: &mut impl automotive_wire_codec::Sink) -> Result<usize, MessageError> {
+    fn encode(
+        &self,
+        writer: &mut impl automotive_wire_codec::Sink,
+    ) -> Result<usize, MessageError> {
         write_bytes(writer, &self.vin)?;
         write_u16_be(writer, self.logical_address.into())?;
         write_bytes(writer, &self.entity_id)?;

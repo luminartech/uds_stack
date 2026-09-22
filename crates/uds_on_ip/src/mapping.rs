@@ -258,7 +258,9 @@ pub(crate) fn classify<'a>(
 
 #[cfg(test)]
 mod tests {
-    use super::{CloseCause, DoIpEvent, MappingError, PERIODIC_RESPONSE_PAYLOAD_TYPE, target_of};
+    use super::{
+        CloseCause, DoIpEvent, MappingError, PERIODIC_RESPONSE_PAYLOAD_TYPE, target_of,
+    };
     use simple_doip::messages::{Payload, PayloadType};
     use uds_session::{Address, AddressExtension, Ai, Mtype, TaType};
 

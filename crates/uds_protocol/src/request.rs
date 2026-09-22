@@ -110,27 +110,27 @@ impl<'a> Decode<'a> for Request<'a> {
             UdsServiceType::ReadDtcInfo => {
                 Self::ReadDtcInfo(<ReadDtcInfoRequest as Decode>::decode_exact(payload)?)
             }
-            UdsServiceType::RequestDownload => {
-                Self::RequestDownload(<RequestDownloadRequest as Decode>::decode_exact(payload)?)
-            }
+            UdsServiceType::RequestDownload => Self::RequestDownload(
+                <RequestDownloadRequest as Decode>::decode_exact(payload)?,
+            ),
             UdsServiceType::RequestFileTransfer => Self::RequestFileTransfer(
                 <RequestFileTransferRequest as Decode>::decode_exact(payload)?,
             ),
             UdsServiceType::RequestTransferExit => Self::RequestTransferExit(
                 <RequestTransferExitRequest as Decode>::decode_exact(payload)?,
             ),
-            UdsServiceType::RequestUpload => {
-                Self::RequestUpload(<RequestUploadRequest as Decode>::decode_exact(payload)?)
-            }
-            UdsServiceType::RoutineControl => {
-                Self::RoutineControl(<RoutineControlRequest as Decode>::decode_exact(payload)?)
-            }
-            UdsServiceType::SecurityAccess => {
-                Self::SecurityAccess(<SecurityAccessRequest as Decode>::decode_exact(payload)?)
-            }
-            UdsServiceType::TesterPresent => {
-                Self::TesterPresent(<TesterPresentRequest as Decode>::decode_exact(payload)?)
-            }
+            UdsServiceType::RequestUpload => Self::RequestUpload(
+                <RequestUploadRequest as Decode>::decode_exact(payload)?,
+            ),
+            UdsServiceType::RoutineControl => Self::RoutineControl(
+                <RoutineControlRequest as Decode>::decode_exact(payload)?,
+            ),
+            UdsServiceType::SecurityAccess => Self::SecurityAccess(
+                <SecurityAccessRequest as Decode>::decode_exact(payload)?,
+            ),
+            UdsServiceType::TesterPresent => Self::TesterPresent(
+                <TesterPresentRequest as Decode>::decode_exact(payload)?,
+            ),
             UdsServiceType::TransferData => {
                 Self::TransferData(<TransferDataRequest as Decode>::decode_exact(payload)?)
             }
@@ -149,7 +149,10 @@ impl<'a> Decode<'a> for Request<'a> {
 impl Encode for Request<'_> {
     type Error = crate::Error;
 
-    fn encode(&self, writer: &mut impl automotive_wire_codec::Sink) -> Result<usize, Error> {
+    fn encode(
+        &self,
+        writer: &mut impl automotive_wire_codec::Sink,
+    ) -> Result<usize, Error> {
         let sid = match self {
             Self::Other { sid, .. } => *sid,
             other => other.service().to_request_sid(),
@@ -275,24 +278,36 @@ impl Request<'_> {
     #[must_use]
     pub fn allowed_nack_codes(&self) -> &'static [NegativeResponseCode] {
         match self {
-            Self::ClearDiagnosticInfo(_) => ClearDiagnosticInfoRequest::allowed_nack_codes(),
-            Self::CommunicationControl(_) => CommunicationControlRequest::allowed_nack_codes(),
+            Self::ClearDiagnosticInfo(_) => {
+                ClearDiagnosticInfoRequest::allowed_nack_codes()
+            }
+            Self::CommunicationControl(_) => {
+                CommunicationControlRequest::allowed_nack_codes()
+            }
             Self::ControlDtcSetting(_) => ControlDtcSettingRequest::allowed_nack_codes(),
             Self::DiagnosticSessionControl(_) => {
                 DiagnosticSessionControlRequest::allowed_nack_codes()
             }
             Self::EcuReset(_) => EcuResetRequest::allowed_nack_codes(),
-            Self::ReadDataByIdentifier(_) => ReadDataByIdentifierRequest::allowed_nack_codes(),
+            Self::ReadDataByIdentifier(_) => {
+                ReadDataByIdentifierRequest::allowed_nack_codes()
+            }
             Self::ReadDtcInfo(_) => ReadDtcInfoRequest::allowed_nack_codes(),
             Self::RequestDownload(_) => RequestDownloadRequest::allowed_nack_codes(),
-            Self::RequestFileTransfer(_) => RequestFileTransferRequest::allowed_nack_codes(),
-            Self::RequestTransferExit(_) => RequestTransferExitRequest::allowed_nack_codes(),
+            Self::RequestFileTransfer(_) => {
+                RequestFileTransferRequest::allowed_nack_codes()
+            }
+            Self::RequestTransferExit(_) => {
+                RequestTransferExitRequest::allowed_nack_codes()
+            }
             Self::RequestUpload(_) => RequestUploadRequest::allowed_nack_codes(),
             Self::RoutineControl(_) => RoutineControlRequest::allowed_nack_codes(),
             Self::SecurityAccess(_) => SecurityAccessRequest::allowed_nack_codes(),
             Self::TesterPresent(_) => TesterPresentRequest::allowed_nack_codes(),
             Self::TransferData(_) => TransferDataRequest::allowed_nack_codes(),
-            Self::WriteDataByIdentifier(_) => WriteDataByIdentifierRequest::allowed_nack_codes(),
+            Self::WriteDataByIdentifier(_) => {
+                WriteDataByIdentifierRequest::allowed_nack_codes()
+            }
             Self::Other { .. } => &[],
         }
     }
@@ -341,10 +356,12 @@ mod tests {
 
     #[test]
     fn suppression_forwards_to_inner_request() {
-        let suppressed = Request::EcuReset(EcuResetRequest::new(true, ResetType::HardReset));
+        let suppressed =
+            Request::EcuReset(EcuResetRequest::new(true, ResetType::HardReset));
         assert_eq!(suppressed.is_positive_response_suppressed(), Some(true));
 
-        let not_suppressed = Request::EcuReset(EcuResetRequest::new(false, ResetType::HardReset));
+        let not_suppressed =
+            Request::EcuReset(EcuResetRequest::new(false, ResetType::HardReset));
         assert_eq!(
             not_suppressed.is_positive_response_suppressed(),
             Some(false)
@@ -409,7 +426,8 @@ mod tests {
         assert!(matches!(req, Request::WriteDataByIdentifier(_)));
         let mut buf = [0u8; 8];
         let written =
-            Encode::encode(&req, &mut automotive_wire_codec::SliceSink::new(&mut buf)).unwrap();
+            Encode::encode(&req, &mut automotive_wire_codec::SliceSink::new(&mut buf))
+                .unwrap();
         assert_eq!(&buf[..written], &wire);
     }
 
@@ -422,7 +440,8 @@ mod tests {
         assert_eq!(req.is_positive_response_suppressed(), Some(true));
         let mut buf = [0u8; 8];
         let written =
-            Encode::encode(&req, &mut automotive_wire_codec::SliceSink::new(&mut buf)).unwrap();
+            Encode::encode(&req, &mut automotive_wire_codec::SliceSink::new(&mut buf))
+                .unwrap();
         assert_eq!(&buf[..written], &wire);
     }
 
@@ -622,7 +641,8 @@ mod tests {
         }
         let mut buf = [0u8; 8];
         let written =
-            Encode::encode(&req, &mut automotive_wire_codec::SliceSink::new(&mut buf)).unwrap();
+            Encode::encode(&req, &mut automotive_wire_codec::SliceSink::new(&mut buf))
+                .unwrap();
         assert_eq!(&buf[..written], &frame);
     }
 
@@ -641,7 +661,8 @@ mod tests {
         }
         let mut buf = [0u8; 8];
         let written =
-            Encode::encode(&req, &mut automotive_wire_codec::SliceSink::new(&mut buf)).unwrap();
+            Encode::encode(&req, &mut automotive_wire_codec::SliceSink::new(&mut buf))
+                .unwrap();
         assert_eq!(&buf[..written], &frame); // previously re-encoded as 0x7F
     }
 }

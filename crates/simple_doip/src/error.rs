@@ -1,7 +1,8 @@
 use crate::{
     LogicalAddress,
     messages::{
-        DiagnosticAckCode, MessageError, NackCode, PayloadType, RoutingActivationResponseCode,
+        DiagnosticAckCode, MessageError, NackCode, PayloadType,
+        RoutingActivationResponseCode,
     },
 };
 use std::string::String;

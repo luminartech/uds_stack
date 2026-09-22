@@ -1,4 +1,6 @@
-use automotive_wire_codec::{Incomplete, InvalidWidth, ReadUintError, TrailingBytes, WriteError};
+use automotive_wire_codec::{
+    Incomplete, InvalidWidth, ReadUintError, TrailingBytes, WriteError,
+};
 use thiserror::Error;
 
 use crate::NegativeResponseCode;
@@ -72,7 +74,9 @@ pub enum Error {
     #[error("Invalid Encryption/Compression Method: {0}")]
     InvalidEncryptionCompressionMethod(u8),
     /// The `RequestFileTransfer` `modeOfOperation` byte is not valid.
-    #[error("Invalid FileTransfer modeOfOperation (server will send requestOutOfRange): {0}")]
+    #[error(
+        "Invalid FileTransfer modeOfOperation (server will send requestOutOfRange): {0}"
+    )]
     InvalidFileOperationMode(u8),
     /// The `ReadDTCInformation` sub-function byte is not valid.
     #[error("Invalid DTC Subfunction Type: {0}")]
@@ -163,7 +167,9 @@ impl Error {
             | Self::InvalidTesterPresentType(_)
             | Self::InvalidRoutineControlSubFunction(_)
             | Self::InvalidDtcSubfunctionType(_)
-            | Self::InvalidDtcSetting(_) => Some(NegativeResponseCode::SubFunctionNotSupported),
+            | Self::InvalidDtcSetting(_) => {
+                Some(NegativeResponseCode::SubFunctionNotSupported)
+            }
 
             // A parameter value is outside its permitted range.
             Self::InvalidCommunicationType(_)
@@ -172,7 +178,9 @@ impl Error {
             | Self::InvalidAddressAndLengthFormatIdentifier(_)
             | Self::InvalidDtcRecord(_)
             | Self::InvalidEncryptionCompressionMethod(_)
-            | Self::InvalidFileOperationMode(_) => Some(NegativeResponseCode::RequestOutOfRange),
+            | Self::InvalidFileOperationMode(_) => {
+                Some(NegativeResponseCode::RequestOutOfRange)
+            }
 
             // Transport failure. ISO does not model this as an NRC at all: clause 7.4.1.6
             // surfaces it to the server application as `A_Result = error`. There is no byte to
@@ -322,9 +330,9 @@ mod nrc_mapping_tests {
     #[test]
     fn every_error_maps_to_its_iso_negative_response_code() {
         for (err, want, why) in cases() {
-            let nrc = err
-                .negative_response_code()
-                .expect("every case in this table is a protocol error, not a transport one");
+            let nrc = err.negative_response_code().expect(
+                "every case in this table is a protocol error, not a transport one",
+            );
             let got = u8::from(nrc);
             assert_eq!(
                 got, want,
@@ -394,7 +402,9 @@ mod tests {
             matches!(Error::from(inc), Error::InsufficientData(i) if i.needed == 4 && i.available == 1)
         );
         let iw = ReadUintError::InvalidWidth(InvalidWidth { max: 4, got: 5 });
-        assert!(matches!(Error::from(iw), Error::InvalidWidth(w) if w.max == 4 && w.got == 5));
+        assert!(
+            matches!(Error::from(iw), Error::InvalidWidth(w) if w.max == 4 && w.got == 5)
+        );
     }
 
     #[test]

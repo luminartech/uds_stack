@@ -58,7 +58,8 @@ fn a_session_layer_can_tell_not_suppressed_from_cannot_say() {
 
     // Enumerated but unmodeled: still answerable, because the sub-function is a fact of the
     // standard even where the payload is not modeled.
-    let (unmodeled, _) = Request::decode(&[0x2C, 0x81, 0xF3, 0x00]).expect("DDDI with SPRMIB");
+    let (unmodeled, _) =
+        Request::decode(&[0x2C, 0x81, 0xF3, 0x00]).expect("DDDI with SPRMIB");
     assert_eq!(unmodeled.is_positive_response_suppressed(), Some(true));
 
     // Vendor-specific: unknown, and the caller must supply the answer itself.
@@ -78,7 +79,8 @@ fn dtc_fault_detection_counter_record_is_constructible_downstream() {
     // This is the `Item` type of a public iterator and is re-exported at the crate root so
     // callers can name it. Without a constructor, `#[non_exhaustive]` made the only way to
     // obtain one decoding bytes through `DtcFaultDetectionIter` — E0639 out here.
-    let record = DtcFaultDetectionCounterRecord::new(DtcRecord::new(0x01, 0x02, 0x03), 0x2A);
+    let record =
+        DtcFaultDetectionCounterRecord::new(DtcRecord::new(0x01, 0x02, 0x03), 0x2A);
     assert_eq!(record.dtc_record, DtcRecord::new(0x01, 0x02, 0x03));
     assert_eq!(record.dtc_fault_detection_counter, 0x2A);
 }
@@ -148,7 +150,9 @@ fn serde_cannot_build_a_reserved_variant_that_aliases_a_named_one() {
     assert_eq!(serde_json::to_string(&round).unwrap(), "1");
 
     // The old escape route no longer parses at all.
-    assert!(serde_json::from_str::<DtcFormatIdentifier>(r#"{"IsoSaeReserved":1}"#).is_err());
+    assert!(
+        serde_json::from_str::<DtcFormatIdentifier>(r#"{"IsoSaeReserved":1}"#).is_err()
+    );
 
     // Every byte survives the round trip through the classifier, so no aliasing state exists.
     for byte in 0x00..=0xFFu8 {
@@ -207,8 +211,9 @@ mod serde_cannot_bypass_validation {
         // fields directly, so it is a second constructor that skips the check. `filePathAndName`
         // is declared by a two-byte length prefix, so a longer name cannot be encoded.
         let too_long = "a".repeat(usize::from(u16::MAX) + 1);
-        let json = serde_json::to_string(&serde_json::json!({ "file_path_and_name": too_long }))
-            .expect("serializes");
+        let json =
+            serde_json::to_string(&serde_json::json!({ "file_path_and_name": too_long }))
+                .expect("serializes");
         assert!(
             serde_json::from_str::<NamePayload>(&json).is_err(),
             "a name longer than the two-byte length prefix must be rejected on the way in"
@@ -217,10 +222,11 @@ mod serde_cannot_bypass_validation {
         // ...and the longest legal name is still accepted, so the guard is a bound and not a
         // blanket refusal.
         let longest = "a".repeat(usize::from(u16::MAX));
-        let json = serde_json::to_string(&serde_json::json!({ "file_path_and_name": longest }))
-            .expect("serializes");
-        let payload: NamePayload =
-            serde_json::from_str(&json).expect("u16::MAX bytes is the largest declarable name");
+        let json =
+            serde_json::to_string(&serde_json::json!({ "file_path_and_name": longest }))
+                .expect("serializes");
+        let payload: NamePayload = serde_json::from_str(&json)
+            .expect("u16::MAX bytes is the largest declarable name");
         assert_eq!(payload.file_path_and_name().len(), usize::from(u16::MAX));
     }
 
@@ -263,7 +269,8 @@ mod serde_cannot_bypass_validation {
         // `TryFrom` called the classifier; it is now enforced by the classifier being serde's
         // entry point for the field. Same guarantee, so the same bytes must be refused.
         for byte in 0x80..=0xFFu8 {
-            let json = format!(r#"{{"suppress_positive_response":false,"sub_function":{byte}}}"#);
+            let json =
+                format!(r#"{{"suppress_positive_response":false,"sub_function":{byte}}}"#);
             assert!(
                 serde_json::from_str::<TesterPresentRequest>(&json).is_err(),
                 "sub_function {byte:#04X} has bit 7 set and must be rejected"
@@ -278,7 +285,8 @@ mod serde_cannot_bypass_validation {
         // And every legal byte round-trips, reserved values included, so the range check did not
         // become a blanket rejection.
         for byte in 0x00..=0x7Fu8 {
-            let json = format!(r#"{{"suppress_positive_response":true,"sub_function":{byte}}}"#);
+            let json =
+                format!(r#"{{"suppress_positive_response":true,"sub_function":{byte}}}"#);
             let req: TesterPresentRequest =
                 serde_json::from_str(&json).expect("0x00..=0x7F is legal");
             assert_eq!(req.sub_function(), byte);
@@ -288,7 +296,8 @@ mod serde_cannot_bypass_validation {
     }
 
     use uds_protocol::{
-        CommunicationType, DataFormatIdentifier, DtcSettingType, SecurityAccessLevel, SubnetNumber,
+        CommunicationType, DataFormatIdentifier, DtcSettingType, SecurityAccessLevel,
+        SubnetNumber,
     };
 
     #[test]
@@ -343,9 +352,10 @@ mod serde_cannot_bypass_validation {
             .is_err()
         );
         // A reserved-but-legal byte is still accepted, because decode must round-trip it.
-        let req: TesterPresentRequest =
-            serde_json::from_str(r#"{"suppress_positive_response":false,"sub_function":66}"#)
-                .unwrap();
+        let req: TesterPresentRequest = serde_json::from_str(
+            r#"{"suppress_positive_response":false,"sub_function":66}"#,
+        )
+        .unwrap();
         assert_eq!(req.sub_function(), 0x42);
     }
 

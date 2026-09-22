@@ -19,11 +19,12 @@ use proptest::prelude::*;
 use simple_doip::{
     LogicalAddress,
     messages::{
-        ActivationTypeCode, AliveCheckResponse, Decode, DiagnosticAckCode, DiagnosticMessage,
-        DiagnosticMessageAck, DiagnosticPowerModeCode, Encode, EntityStatusNodeType,
-        EntityStatusResponse, FurtherActionRequired, Header, Message, MessageError, NackCode,
-        Payload, PayloadType, ProtocolVersion, RoutingActivationRequest, RoutingActivationResponse,
-        RoutingActivationResponseCode, VehicleIdentificationResponse, VinGidSyncStatus,
+        ActivationTypeCode, AliveCheckResponse, Decode, DiagnosticAckCode,
+        DiagnosticMessage, DiagnosticMessageAck, DiagnosticPowerModeCode, Encode,
+        EntityStatusNodeType, EntityStatusResponse, FurtherActionRequired, Header, Message,
+        MessageError, NackCode, Payload, PayloadType, ProtocolVersion,
+        RoutingActivationRequest, RoutingActivationResponse, RoutingActivationResponseCode,
+        VehicleIdentificationResponse, VinGidSyncStatus,
     },
 };
 
@@ -32,7 +33,10 @@ use simple_doip::{
 /// and return the written prefix. Also asserts `encoded_size()` agrees with what `encode`
 /// wrote, since a closed-form size override that drifts from its `encode`
 /// corrupts the header's `payload_length` silently.
-fn encode_to<'buf>(value: &impl Encode<Error = MessageError>, buf: &'buf mut [u8]) -> &'buf [u8] {
+fn encode_to<'buf>(
+    value: &impl Encode<Error = MessageError>,
+    buf: &'buf mut [u8],
+) -> &'buf [u8] {
     let written = {
         let mut writer = SliceSink::new(buf);
         value.encode(&mut writer).expect("encode failed")

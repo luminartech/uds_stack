@@ -88,7 +88,10 @@ impl NegativeResponse {
 impl Encode for NegativeResponse {
     type Error = crate::Error;
 
-    fn encode(&self, writer: &mut impl automotive_wire_codec::Sink) -> Result<usize, Error> {
+    fn encode(
+        &self,
+        writer: &mut impl automotive_wire_codec::Sink,
+    ) -> Result<usize, Error> {
         Ok(write_bytes(
             writer,
             &[self.request_service_sid, u8::from(self.nrc)],
@@ -141,12 +144,13 @@ mod tests {
             crate::Request::Other { sid, .. } => sid,
             other => panic!("expected Other, got {other:?}"),
         };
-        let nack = NegativeResponse::new_with_sid(sid, NegativeResponseCode::ServiceNotSupported);
+        let nack =
+            NegativeResponse::new_with_sid(sid, NegativeResponseCode::ServiceNotSupported);
         assert_eq!(nack.request_service_sid(), 0x40);
 
         let mut buf = [0u8; 2];
-        let n =
-            Encode::encode(&nack, &mut automotive_wire_codec::SliceSink::new(&mut buf)).unwrap();
+        let n = Encode::encode(&nack, &mut automotive_wire_codec::SliceSink::new(&mut buf))
+            .unwrap();
         assert_eq!(&buf[..n], &[0x40, 0x11]);
 
         // The typed constructor still collapses unmodeled services, which is why the raw
@@ -168,7 +172,8 @@ mod tests {
         assert_eq!(nr.request_service_sid(), 0x40);
         assert_eq!(nr.request_service(), UdsServiceType::from_request_sid(0x40));
         let mut buf = [0u8; 2];
-        let n = Encode::encode(&nr, &mut automotive_wire_codec::SliceSink::new(&mut buf)).unwrap();
+        let n = Encode::encode(&nr, &mut automotive_wire_codec::SliceSink::new(&mut buf))
+            .unwrap();
         assert_eq!(&buf[..n], &wire);
     }
 }

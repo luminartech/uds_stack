@@ -260,7 +260,9 @@ impl From<UdsIdentifier> for u16 {
             UdsIdentifier::SystemNameOrEngineType => 0xF197,
             UdsIdentifier::RepairShopOrTesterSerialNumber => 0xF198,
             UdsIdentifier::ProgrammingDate => 0xF199,
-            UdsIdentifier::CalibrationRepairShopCodeOrCalibrationEquipmentSerialNumber => 0xF19A,
+            UdsIdentifier::CalibrationRepairShopCodeOrCalibrationEquipmentSerialNumber => {
+                0xF19A
+            }
             UdsIdentifier::CalibrationDate => 0xF19B,
             UdsIdentifier::CalibrationEquipmentSoftwareNumber => 0xF19C,
             UdsIdentifier::EcuInstallationDate => 0xF19D,
@@ -343,7 +345,9 @@ pub enum UdsRoutineIdentifier {
 impl From<u16> for UdsRoutineIdentifier {
     fn from(value: u16) -> Self {
         match value {
-            0x0000..=0x00FF | 0xE300..=0xEFFF | 0xFF02..=0xFFFF => Self::IsoSaeReserved(value),
+            0x0000..=0x00FF | 0xE300..=0xEFFF | 0xFF02..=0xFFFF => {
+                Self::IsoSaeReserved(value)
+            }
             0x0100..=0x01FF => Self::TachographTestIds(value),
             0x0200..=0xDFFF => Self::VehicleManufacturerSpecific(value),
             0xE000..=0xE1FF => Self::ObdTestIds(value),

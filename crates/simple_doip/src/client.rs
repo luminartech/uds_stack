@@ -6,8 +6,8 @@ use crate::{
     client_inner::{ControlMessage, Inner},
     connection,
     messages::{
-        ActivationTypeCode, MessageError, OwnedMessage, ProtocolVersion, RoutingActivationResponse,
-        RoutingActivationResponseCode,
+        ActivationTypeCode, MessageError, OwnedMessage, ProtocolVersion,
+        RoutingActivationResponse, RoutingActivationResponseCode,
     },
 };
 use std::{
@@ -149,13 +149,15 @@ where
         // Inspect the bind result before attempting routing activation below: a
         // failed bind leaves the inner task alive with no socket, so it would
         // answer with `SocketNotBound`, masking the real connect error.
-        let port = response
-            .await
-            .map_err(|_| Error::BindFailed("Connection task terminated unexpectedly".into()))??;
+        let port = response.await.map_err(|_| {
+            Error::BindFailed("Connection task terminated unexpectedly".into())
+        })??;
 
         // Automatically send a routing activation request if the client options specify it
         'routing: {
-            if let Some(routing_activation_options) = client_options.routing_activation_options {
+            if let Some(routing_activation_options) =
+                client_options.routing_activation_options
+            {
                 let message = OwnedMessage::routing_activation_request(
                     client_options.protocol_version,
                     client_options.client_logical_address,
@@ -170,9 +172,12 @@ where
                     .send(message)
                     .await
                     .map_err(|_| Error::RoutingActivationFailed)
-                    .inspect_err(|e| debug!("Failed to send routing activation request: {e}"))
+                    .inspect_err(|e| {
+                        debug!("Failed to send routing activation request: {e}")
+                    })
                     .inspect(|()| trace!("Routing activation request sent successfully"))?;
-                let res = tokio::time::timeout(TCP_TIMEOUT_INITIAL_INACTIVITY, response).await;
+                let res =
+                    tokio::time::timeout(TCP_TIMEOUT_INITIAL_INACTIVITY, response).await;
                 // Elapsed error handling
                 let Ok(res) = res else {
                     tracing::warn!(
@@ -268,7 +273,8 @@ where
     pub async fn reconnect(&mut self) -> Result<Option<OwnedMessage>, Error> {
         let _ = Self::bind_socket(&self.control_sender, &self.client_options).await?;
         trace!("Reconnected, checking for in-flight messages over 5 seconds");
-        let res = tokio::time::timeout(Duration::from_secs(5), self.update_receiver.recv()).await;
+        let res =
+            tokio::time::timeout(Duration::from_secs(5), self.update_receiver.recv()).await;
         // Elapsed error handling, no response in flight
         let Ok(res) = res else {
             return Ok(None);
@@ -340,7 +346,8 @@ where
         &mut self,
         timeout: Duration,
     ) -> Result<OwnedMessage, Error> {
-        let (response, ctrl_msg) = ControlMessage::create_receive_diagnostic_response(timeout);
+        let (response, ctrl_msg) =
+            ControlMessage::create_receive_diagnostic_response(timeout);
         self.control_sender
             .send(ctrl_msg)
             .await

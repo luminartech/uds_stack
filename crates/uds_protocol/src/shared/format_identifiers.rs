@@ -83,7 +83,10 @@ impl AddressAndLengthFormatIdentifier {
     /// Returns [`Error::InvalidAddressAndLengthFormatIdentifier`] carrying the byte the widths
     /// would have formed if `memory_size_length` is outside 1 to 4 or `memory_address_length` is
     /// outside 1 to 5, which Annex H Table H.1 marks "not applicable".
-    pub const fn new(memory_size_length: u8, memory_address_length: u8) -> Result<Self, Error> {
+    pub const fn new(
+        memory_size_length: u8,
+        memory_address_length: u8,
+    ) -> Result<Self, Error> {
         if !matches!(memory_size_length, 1..=MAX_MEMORY_SIZE_LENGTH)
             || !matches!(memory_address_length, 1..=MAX_MEMORY_ADDRESS_LENGTH)
         {
@@ -279,7 +282,8 @@ impl From<u8> for DataFormatIdentifier {
 }
 impl From<DataFormatIdentifier> for u8 {
     fn from(data_format_identifier: DataFormatIdentifier) -> u8 {
-        data_format_identifier.encryption_method | (data_format_identifier.compression_method << 4)
+        data_format_identifier.encryption_method
+            | (data_format_identifier.compression_method << 4)
     }
 }
 
@@ -296,7 +300,8 @@ mod tests {
     use super::*;
     #[test]
     fn memory_format_identifier() {
-        let memory_format_identifier = AddressAndLengthFormatIdentifier::try_from(0x23).unwrap();
+        let memory_format_identifier =
+            AddressAndLengthFormatIdentifier::try_from(0x23).unwrap();
         assert_eq!(memory_format_identifier.memory_size_length, 2);
         assert_eq!(memory_format_identifier.memory_address_length, 3);
 
@@ -326,8 +331,10 @@ mod tests {
         for size_len in 1..=4u8 {
             for addr_len in 1..=5u8 {
                 let byte = (size_len << 4) | addr_len;
-                let mfi = AddressAndLengthFormatIdentifier::try_from(byte)
-                    .unwrap_or_else(|e| panic!("Table H.1 lists {byte:#04X} as valid, got {e:?}"));
+                let mfi =
+                    AddressAndLengthFormatIdentifier::try_from(byte).unwrap_or_else(|e| {
+                        panic!("Table H.1 lists {byte:#04X} as valid, got {e:?}")
+                    });
                 assert_eq!(mfi.memory_size_length, size_len, "for {byte:#04X}");
                 assert_eq!(mfi.memory_address_length, addr_len, "for {byte:#04X}");
                 assert_eq!(u8::from(mfi), byte, "round trip for {byte:#04X}");

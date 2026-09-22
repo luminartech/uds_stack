@@ -14,8 +14,8 @@ use simple_doip::LogicalAddress;
 use simple_doip::messages::{
     ActivationTypeCode, AliveCheckResponse, DiagnosticAckCode, DiagnosticMessage,
     DiagnosticMessageAck, DiagnosticPowerModeCode, Encode, EntityStatusNodeType,
-    EntityStatusResponse, FurtherActionRequired, Header, MessageError, NackCode, PayloadType,
-    ProtocolVersion, RoutingActivationRequest, RoutingActivationResponse,
+    EntityStatusResponse, FurtherActionRequired, Header, MessageError, NackCode,
+    PayloadType, ProtocolVersion, RoutingActivationRequest, RoutingActivationResponse,
     RoutingActivationResponseCode, VehicleIdentificationResponse, VinGidSyncStatus,
 };
 
@@ -207,8 +207,8 @@ fn golden_diagnostic_message() {
             source_address: LogicalAddress(0xE400),
             target_address: LogicalAddress(0x00FF),
             user_data: &[
-                0x22u8, 0xF1, 0x90, 0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09,
-                0x0A, 0x0B, 0x0C,
+                0x22u8, 0xF1, 0x90, 0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
+                0x09, 0x0A, 0x0B, 0x0C,
             ][..],
         },
     );

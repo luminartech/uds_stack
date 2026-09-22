@@ -73,7 +73,9 @@ impl RequestTransferExitRequest<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{Decode, Encode, NegativeResponseCode, test_util::assert_encode_size_agrees};
+    use crate::{
+        Decode, Encode, NegativeResponseCode, test_util::assert_encode_size_agrees,
+    };
 
     #[test]
     fn test_allowed_nack_codes() {
@@ -100,9 +102,11 @@ mod tests {
             let req = RequestTransferExitRequest::new(rec);
             let mut buf = [0u8; 8];
             let n =
-                Encode::encode(&req, &mut automotive_wire_codec::SliceSink::new(&mut buf)).unwrap();
+                Encode::encode(&req, &mut automotive_wire_codec::SliceSink::new(&mut buf))
+                    .unwrap();
             assert_eq!(&buf[..n], rec);
-            let (d, rest) = <RequestTransferExitRequest as Decode>::decode(&buf[..n]).unwrap();
+            let (d, rest) =
+                <RequestTransferExitRequest as Decode>::decode(&buf[..n]).unwrap();
             assert!(rest.is_empty());
             assert_eq!(d.parameter_record, rec);
             assert_encode_size_agrees(&req);

@@ -64,7 +64,10 @@ impl<'d> TransferDataRequest<'d> {
 impl Encode for TransferDataRequest<'_> {
     type Error = crate::Error;
 
-    fn encode(&self, writer: &mut impl automotive_wire_codec::Sink) -> Result<usize, Error> {
+    fn encode(
+        &self,
+        writer: &mut impl automotive_wire_codec::Sink,
+    ) -> Result<usize, Error> {
         let mut written = write_u8(writer, self.block_sequence_counter)?;
         written += write_bytes(writer, self.data)?;
         Ok(written)
@@ -118,7 +121,10 @@ impl<'d> TransferDataResponse<'d> {
 impl Encode for TransferDataResponse<'_> {
     type Error = crate::Error;
 
-    fn encode(&self, writer: &mut impl automotive_wire_codec::Sink) -> Result<usize, Error> {
+    fn encode(
+        &self,
+        writer: &mut impl automotive_wire_codec::Sink,
+    ) -> Result<usize, Error> {
         let mut written = write_u8(writer, self.block_sequence_counter)?;
         written += write_bytes(writer, self.data)?;
         Ok(written)
@@ -148,7 +154,9 @@ impl<'a> Decode<'a> for TransferDataResponse<'a> {
 #[cfg(test)]
 mod request {
     use super::*;
-    use crate::{Decode, Encode, NegativeResponseCode, test_util::assert_encode_size_agrees};
+    use crate::{
+        Decode, Encode, NegativeResponseCode, test_util::assert_encode_size_agrees,
+    };
 
     #[test]
     fn test_allowed_nack_codes() {

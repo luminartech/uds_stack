@@ -47,4 +47,8 @@ pub(crate) const fn assert_impl_eq<T: Eq>() {}
 /// Compile-time assertion that `T` round-trips serde (borrowed deserialize allowed).
 #[cfg(feature = "serde")]
 #[allow(dead_code)]
-pub(crate) const fn assert_impl_serde<'de, T: serde::Serialize + serde::Deserialize<'de>>() {}
+pub(crate) const fn assert_impl_serde<
+    'de,
+    T: serde::Serialize + serde::Deserialize<'de>,
+>() {
+}

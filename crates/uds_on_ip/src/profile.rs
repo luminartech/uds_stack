@@ -200,9 +200,8 @@ pub(crate) const fn after_sending(first_octet: u8) -> ConnectionAction {
         service_ids::DIAGNOSTIC_SESSION_CONTROL | service_ids::ECU_RESET => {
             ConnectionAction::ExpectClose
         }
-        service_ids::DIAGNOSTIC_SESSION_CONTROL_RESPONSE | service_ids::ECU_RESET_RESPONSE => {
-            ConnectionAction::InitiateClose
-        }
+        service_ids::DIAGNOSTIC_SESSION_CONTROL_RESPONSE
+        | service_ids::ECU_RESET_RESPONSE => ConnectionAction::InitiateClose,
         _ => ConnectionAction::Continue,
     }
 }

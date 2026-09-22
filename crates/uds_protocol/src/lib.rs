@@ -16,14 +16,15 @@ pub use automotive_wire_codec::{Decode, DecodeIter, Encode};
 
 mod dtc;
 pub use dtc::{
-    CLEAR_ALL_DTCS, DtcExtDataRecordNumber, DtcFormatIdentifier, DtcRecord, DtcSeverityMask,
-    DtcSnapshotRecordNumber, DtcStatusMask, DtcStoredDataRecordNumber, FunctionalGroupIdentifier,
+    CLEAR_ALL_DTCS, DtcExtDataRecordNumber, DtcFormatIdentifier, DtcRecord,
+    DtcSeverityMask, DtcSnapshotRecordNumber, DtcStatusMask, DtcStoredDataRecordNumber,
+    FunctionalGroupIdentifier,
 };
 
 mod shared;
 pub use shared::{
-    AddressAndLengthFormatIdentifier, DataFormatIdentifier, NegativeResponseCode, UdsIdentifier,
-    UdsRoutineIdentifier,
+    AddressAndLengthFormatIdentifier, DataFormatIdentifier, NegativeResponseCode,
+    UdsIdentifier, UdsRoutineIdentifier,
 };
 
 mod request;
@@ -40,18 +41,19 @@ pub use services::{
     ClearDiagnosticInfoRequest, ClearDiagnosticInfoResponse, CommunicationControlRequest,
     CommunicationControlResponse, CommunicationControlType, CommunicationType,
     ControlDtcSettingRequest, ControlDtcSettingResponse, DiagnosticSessionControlRequest,
-    DiagnosticSessionControlResponse, DiagnosticSessionType, DirSizePayload, DtcAndStatusIter,
-    DtcFaultDetectionCounterRecord, DtcFaultDetectionIter, DtcSettingType, EcuResetRequest,
-    EcuResetResponse, FileOperationMode, FileSizePayload, NamePayload, NegativeResponse,
-    PositionPayload, ReadDataByIdentifierRequest, ReadDataByIdentifierResponse, ReadDtcInfoRequest,
-    ReadDtcInfoResponse, ReadDtcInfoSubFunction, RequestDownloadRequest, RequestDownloadResponse,
+    DiagnosticSessionControlResponse, DiagnosticSessionType, DirSizePayload,
+    DtcAndStatusIter, DtcFaultDetectionCounterRecord, DtcFaultDetectionIter,
+    DtcSettingType, EcuResetRequest, EcuResetResponse, FileOperationMode, FileSizePayload,
+    NamePayload, NegativeResponse, PositionPayload, ReadDataByIdentifierRequest,
+    ReadDataByIdentifierResponse, ReadDtcInfoRequest, ReadDtcInfoResponse,
+    ReadDtcInfoSubFunction, RequestDownloadRequest, RequestDownloadResponse,
     RequestFileTransferRequest, RequestFileTransferResponse, RequestTransferExitRequest,
     RequestTransferExitResponse, RequestUploadRequest, RequestUploadResponse, ResetType,
-    RoutineControlRequest, RoutineControlResponse, RoutineControlSubFunction, SecurityAccessLevel,
-    SecurityAccessRequest, SecurityAccessResponse, SecurityAccessType, SentDataPayload,
-    SizePayload, SubnetNumber, TesterPresentRequest, TesterPresentResponse, TransferDataRequest,
-    TransferDataResponse, WriteDataByIdentifierRequest, WriteDataByIdentifierResponse,
-    WwhObdDtcSeverityIter,
+    RoutineControlRequest, RoutineControlResponse, RoutineControlSubFunction,
+    SecurityAccessLevel, SecurityAccessRequest, SecurityAccessResponse, SecurityAccessType,
+    SentDataPayload, SizePayload, SubnetNumber, TesterPresentRequest,
+    TesterPresentResponse, TransferDataRequest, TransferDataResponse,
+    WriteDataByIdentifierRequest, WriteDataByIdentifierResponse, WwhObdDtcSeverityIter,
 };
 
 #[cfg(test)]
@@ -63,10 +65,12 @@ mod no_std_api_tests {
         let req = TesterPresentRequest::new(false);
         let mut buf = [0u8; 8];
         let written =
-            Encode::encode(&req, &mut automotive_wire_codec::SliceSink::new(&mut buf)).unwrap();
+            Encode::encode(&req, &mut automotive_wire_codec::SliceSink::new(&mut buf))
+                .unwrap();
         assert_eq!(written, 1);
 
-        let (decoded, rest) = <TesterPresentRequest as Decode>::decode(&buf[..written]).unwrap();
+        let (decoded, rest) =
+            <TesterPresentRequest as Decode>::decode(&buf[..written]).unwrap();
         assert_eq!(decoded, req);
         assert!(rest.is_empty());
     }
@@ -79,7 +83,8 @@ mod no_std_api_tests {
         let written = req.encode_to_slice(&mut buf).unwrap();
         assert_eq!(written, 5);
 
-        let (decoded, _) = <TransferDataRequest as Decode>::decode(&buf[..written]).unwrap();
+        let (decoded, _) =
+            <TransferDataRequest as Decode>::decode(&buf[..written]).unwrap();
         assert_eq!(decoded.block_sequence_counter, 0x05);
         assert_eq!(decoded.data, &[0x01, 0x02, 0x03, 0x04]);
     }
@@ -280,7 +285,8 @@ mod no_std_api_tests {
     #[test]
     fn const_construction() {
         // Verify const construction works at compile time
-        const _REQ: TransferDataRequest<'static> = TransferDataRequest::new(1, &[0x01, 0x02, 0x03]);
+        const _REQ: TransferDataRequest<'static> =
+            TransferDataRequest::new(1, &[0x01, 0x02, 0x03]);
         const _SEC: SecurityAccessRequest<'static> = SecurityAccessRequest::new(
             false,
             SecurityAccessType::RequestSeed(match SecurityAccessLevel::new(0x01) {

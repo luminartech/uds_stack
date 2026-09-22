@@ -1,10 +1,11 @@
 use crate::{
-    ClearDiagnosticInfoResponse, CommunicationControlResponse, ControlDtcSettingResponse, Decode,
-    DiagnosticSessionControlResponse, EcuResetResponse, Encode, Error, Incomplete,
-    NegativeResponse, ReadDataByIdentifierResponse, ReadDtcInfoResponse, RequestDownloadResponse,
-    RequestFileTransferResponse, RequestTransferExitResponse, RequestUploadResponse,
-    RoutineControlResponse, SecurityAccessResponse, TesterPresentResponse, TransferDataResponse,
-    UdsServiceType, WriteDataByIdentifierResponse,
+    ClearDiagnosticInfoResponse, CommunicationControlResponse, ControlDtcSettingResponse,
+    Decode, DiagnosticSessionControlResponse, EcuResetResponse, Encode, Error, Incomplete,
+    NegativeResponse, ReadDataByIdentifierResponse, ReadDtcInfoResponse,
+    RequestDownloadResponse, RequestFileTransferResponse, RequestTransferExitResponse,
+    RequestUploadResponse, RoutineControlResponse, SecurityAccessResponse,
+    TesterPresentResponse, TransferDataResponse, UdsServiceType,
+    WriteDataByIdentifierResponse,
 };
 use automotive_wire_codec::{write_bytes, write_u8};
 
@@ -116,27 +117,27 @@ impl<'a> Decode<'a> for Response<'a> {
             UdsServiceType::ReadDtcInfo => {
                 Self::ReadDtcInfo(<ReadDtcInfoResponse as Decode>::decode_exact(payload)?)
             }
-            UdsServiceType::RequestDownload => {
-                Self::RequestDownload(<RequestDownloadResponse as Decode>::decode_exact(payload)?)
-            }
+            UdsServiceType::RequestDownload => Self::RequestDownload(
+                <RequestDownloadResponse as Decode>::decode_exact(payload)?,
+            ),
             UdsServiceType::RequestFileTransfer => Self::RequestFileTransfer(
                 <RequestFileTransferResponse as Decode>::decode_exact(payload)?,
             ),
             UdsServiceType::RequestTransferExit => Self::RequestTransferExit(
                 <RequestTransferExitResponse as Decode>::decode_exact(payload)?,
             ),
-            UdsServiceType::RequestUpload => {
-                Self::RequestUpload(<RequestUploadResponse as Decode>::decode_exact(payload)?)
-            }
-            UdsServiceType::RoutineControl => {
-                Self::RoutineControl(<RoutineControlResponse as Decode>::decode_exact(payload)?)
-            }
-            UdsServiceType::SecurityAccess => {
-                Self::SecurityAccess(<SecurityAccessResponse as Decode>::decode_exact(payload)?)
-            }
-            UdsServiceType::TesterPresent => {
-                Self::TesterPresent(<TesterPresentResponse as Decode>::decode_exact(payload)?)
-            }
+            UdsServiceType::RequestUpload => Self::RequestUpload(
+                <RequestUploadResponse as Decode>::decode_exact(payload)?,
+            ),
+            UdsServiceType::RoutineControl => Self::RoutineControl(
+                <RoutineControlResponse as Decode>::decode_exact(payload)?,
+            ),
+            UdsServiceType::SecurityAccess => Self::SecurityAccess(
+                <SecurityAccessResponse as Decode>::decode_exact(payload)?,
+            ),
+            UdsServiceType::TesterPresent => Self::TesterPresent(
+                <TesterPresentResponse as Decode>::decode_exact(payload)?,
+            ),
             UdsServiceType::TransferData => {
                 Self::TransferData(<TransferDataResponse as Decode>::decode_exact(payload)?)
             }
@@ -168,19 +169,31 @@ impl Response<'_> {
     /// Returns the response service-ID byte that frames this response on the wire.
     fn response_sid(&self) -> u8 {
         match self {
-            Self::ClearDiagnosticInfo(_) => UdsServiceType::ClearDiagnosticInfo.to_response_sid(),
-            Self::CommunicationControl(_) => UdsServiceType::CommunicationControl.to_response_sid(),
-            Self::ControlDtcSetting(_) => UdsServiceType::ControlDtcSetting.to_response_sid(),
+            Self::ClearDiagnosticInfo(_) => {
+                UdsServiceType::ClearDiagnosticInfo.to_response_sid()
+            }
+            Self::CommunicationControl(_) => {
+                UdsServiceType::CommunicationControl.to_response_sid()
+            }
+            Self::ControlDtcSetting(_) => {
+                UdsServiceType::ControlDtcSetting.to_response_sid()
+            }
             Self::DiagnosticSessionControl(_) => {
                 UdsServiceType::DiagnosticSessionControl.to_response_sid()
             }
             Self::EcuReset(_) => UdsServiceType::EcuReset.to_response_sid(),
             Self::NegativeResponse(_) => UdsServiceType::NegativeResponse.to_response_sid(),
-            Self::ReadDataByIdentifier(_) => UdsServiceType::ReadDataByIdentifier.to_response_sid(),
+            Self::ReadDataByIdentifier(_) => {
+                UdsServiceType::ReadDataByIdentifier.to_response_sid()
+            }
             Self::ReadDtcInfo(_) => UdsServiceType::ReadDtcInfo.to_response_sid(),
             Self::RequestDownload(_) => UdsServiceType::RequestDownload.to_response_sid(),
-            Self::RequestFileTransfer(_) => UdsServiceType::RequestFileTransfer.to_response_sid(),
-            Self::RequestTransferExit(_) => UdsServiceType::RequestTransferExit.to_response_sid(),
+            Self::RequestFileTransfer(_) => {
+                UdsServiceType::RequestFileTransfer.to_response_sid()
+            }
+            Self::RequestTransferExit(_) => {
+                UdsServiceType::RequestTransferExit.to_response_sid()
+            }
             Self::RequestUpload(_) => UdsServiceType::RequestUpload.to_response_sid(),
             Self::RoutineControl(_) => UdsServiceType::RoutineControl.to_response_sid(),
             Self::SecurityAccess(_) => UdsServiceType::SecurityAccess.to_response_sid(),
@@ -197,7 +210,10 @@ impl Response<'_> {
 impl Encode for Response<'_> {
     type Error = crate::Error;
 
-    fn encode(&self, writer: &mut impl automotive_wire_codec::Sink) -> Result<usize, Error> {
+    fn encode(
+        &self,
+        writer: &mut impl automotive_wire_codec::Sink,
+    ) -> Result<usize, Error> {
         let sid_len = write_u8(writer, self.response_sid())?;
         let payload = match self {
             Self::ClearDiagnosticInfo(resp) => resp.encode(writer)?,
@@ -236,7 +252,8 @@ mod tests {
         assert!(matches!(resp, Response::WriteDataByIdentifier(_)));
         let mut buf = [0u8; 8];
         let written =
-            Encode::encode(&resp, &mut automotive_wire_codec::SliceSink::new(&mut buf)).unwrap();
+            Encode::encode(&resp, &mut automotive_wire_codec::SliceSink::new(&mut buf))
+                .unwrap();
         assert_eq!(&buf[..written], &wire);
     }
 
@@ -248,7 +265,8 @@ mod tests {
         assert!(remaining.is_empty());
         let mut buf = [0u8; 8];
         let written =
-            Encode::encode(&resp, &mut automotive_wire_codec::SliceSink::new(&mut buf)).unwrap();
+            Encode::encode(&resp, &mut automotive_wire_codec::SliceSink::new(&mut buf))
+                .unwrap();
         assert_eq!(&buf[..written], &wire);
     }
 
@@ -267,7 +285,8 @@ mod tests {
         }
         let mut buf = [0u8; 8];
         let written =
-            Encode::encode(&resp, &mut automotive_wire_codec::SliceSink::new(&mut buf)).unwrap();
+            Encode::encode(&resp, &mut automotive_wire_codec::SliceSink::new(&mut buf))
+                .unwrap();
         assert_eq!(&buf[..written], &frame);
     }
 
@@ -279,7 +298,8 @@ mod tests {
         assert_eq!(resp.service(), UdsServiceType::from_response_sid(0x99));
         let mut buf = [0u8; 8];
         let written =
-            Encode::encode(&resp, &mut automotive_wire_codec::SliceSink::new(&mut buf)).unwrap();
+            Encode::encode(&resp, &mut automotive_wire_codec::SliceSink::new(&mut buf))
+                .unwrap();
         assert_eq!(&buf[..written], &frame); // previously became 0x7F (NegativeResponse)
     }
 

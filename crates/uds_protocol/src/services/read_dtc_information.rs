@@ -53,7 +53,10 @@ impl ReadDtcInfoRequest {
 impl Encode for ReadDtcInfoRequest {
     type Error = crate::Error;
 
-    fn encode(&self, writer: &mut impl automotive_wire_codec::Sink) -> Result<usize, Error> {
+    fn encode(
+        &self,
+        writer: &mut impl automotive_wire_codec::Sink,
+    ) -> Result<usize, Error> {
         // The sub-function byte carries SPRMIB in bit 7, so it is written here rather than by
         // `ReadDtcInfoSubFunction::encode`, which has no way to know the flag.
         let sub_function = fuse_sprmib(
@@ -192,10 +195,12 @@ mod read_dtc_info_request_encode_tests {
     #[test]
     fn encode_no_param_subfunction() {
         // 0x0A ReportSupportedDtc, no parameters.
-        let req = ReadDtcInfoRequest::new(false, ReadDtcInfoSubFunction::ReportSupportedDtc);
+        let req =
+            ReadDtcInfoRequest::new(false, ReadDtcInfoSubFunction::ReportSupportedDtc);
         let mut buf = [0u8; 8];
         let written =
-            Encode::encode(&req, &mut automotive_wire_codec::SliceSink::new(&mut buf)).unwrap();
+            Encode::encode(&req, &mut automotive_wire_codec::SliceSink::new(&mut buf))
+                .unwrap();
         assert_eq!(&buf[..written], &[0x0A]);
         assert_encode_size_agrees(&req);
     }
@@ -204,11 +209,14 @@ mod read_dtc_info_request_encode_tests {
     fn encode_single_param_subfunction() {
         // 0x02 ReportDtcByStatusMask(mask). DtcStatusMask is 1 byte.
         let mask = DtcStatusMask::from(0xFF);
-        let req =
-            ReadDtcInfoRequest::new(false, ReadDtcInfoSubFunction::ReportDtcByStatusMask(mask));
+        let req = ReadDtcInfoRequest::new(
+            false,
+            ReadDtcInfoSubFunction::ReportDtcByStatusMask(mask),
+        );
         let mut buf = [0u8; 8];
         let written =
-            Encode::encode(&req, &mut automotive_wire_codec::SliceSink::new(&mut buf)).unwrap();
+            Encode::encode(&req, &mut automotive_wire_codec::SliceSink::new(&mut buf))
+                .unwrap();
         assert_eq!(&buf[..written], &[0x02, 0xFF]);
         assert_encode_size_agrees(&req);
     }
@@ -267,7 +275,8 @@ mod read_dtc_info_request_encode_tests {
 
         let mut buf = [0u8; 8];
         let written =
-            Encode::encode(&req, &mut automotive_wire_codec::SliceSink::new(&mut buf)).unwrap();
+            Encode::encode(&req, &mut automotive_wire_codec::SliceSink::new(&mut buf))
+                .unwrap();
         assert_eq!(&buf[..written], &wire);
         assert_encode_size_agrees(&req);
     }
@@ -292,7 +301,8 @@ mod read_dtc_info_request_encode_tests {
         );
         let mut buf = [0u8; 8];
         let written =
-            Encode::encode(&req, &mut automotive_wire_codec::SliceSink::new(&mut buf)).unwrap();
+            Encode::encode(&req, &mut automotive_wire_codec::SliceSink::new(&mut buf))
+                .unwrap();
         assert_eq!(&buf[..written], &[0x42, 0x33, 0x08, 0b1000_0000]);
         assert_encode_size_agrees(&req);
     }
@@ -300,10 +310,12 @@ mod read_dtc_info_request_encode_tests {
     #[test]
     fn encode_reserved_subfunction() {
         // IsoSaeReserved carries the sub-function byte itself, no params.
-        let req = ReadDtcInfoRequest::new(false, ReadDtcInfoSubFunction::IsoSaeReserved(0x57));
+        let req =
+            ReadDtcInfoRequest::new(false, ReadDtcInfoSubFunction::IsoSaeReserved(0x57));
         let mut buf = [0u8; 8];
         let written =
-            Encode::encode(&req, &mut automotive_wire_codec::SliceSink::new(&mut buf)).unwrap();
+            Encode::encode(&req, &mut automotive_wire_codec::SliceSink::new(&mut buf))
+                .unwrap();
         assert_eq!(&buf[..written], &[0x57]);
         assert_encode_size_agrees(&req);
     }
@@ -338,8 +350,10 @@ mod read_dtc_info_request_encode_tests {
         for req in cases {
             let mut buf = [0u8; 16];
             let written =
-                Encode::encode(&req, &mut automotive_wire_codec::SliceSink::new(&mut buf)).unwrap();
-            let decoded = <ReadDtcInfoRequest as Decode>::decode_exact(&buf[..written]).unwrap();
+                Encode::encode(&req, &mut automotive_wire_codec::SliceSink::new(&mut buf))
+                    .unwrap();
+            let decoded =
+                <ReadDtcInfoRequest as Decode>::decode_exact(&buf[..written]).unwrap();
             assert_eq!(decoded, req);
         }
     }
@@ -599,7 +613,8 @@ impl ReadDtcInfoSubFunction {
             S::ReportSeverityInfoOfDtc(r) => {
                 written += r.encode(writer)?;
             }
-            S::ReportDtcExtDataRecordByRecordNumber(n) | S::ReportSupportedDtcExtDataRecord(n) => {
+            S::ReportDtcExtDataRecordByRecordNumber(n)
+            | S::ReportSupportedDtcExtDataRecord(n) => {
                 written += n.encode(writer)?;
             }
             S::ReportUserDefMemoryDtcSnapshotRecordByDtcNumber(r, n, mem) => {
@@ -647,7 +662,10 @@ impl Encode for ReadDtcInfoSubFunction {
     /// Encode a [`ReadDtcInfoRequest`] instead to control the suppress-positive-response bit;
     /// this impl always leaves it clear, because the flag lives on the request rather than on
     /// the sub-function.
-    fn encode(&self, writer: &mut impl automotive_wire_codec::Sink) -> Result<usize, Error> {
+    fn encode(
+        &self,
+        writer: &mut impl automotive_wire_codec::Sink,
+    ) -> Result<usize, Error> {
         let mut written = write_u8(writer, self.value())?;
         written += self.encode_parameters(writer)?;
         Ok(written)
@@ -718,7 +736,8 @@ impl Iterator for DtcAndStatusIter<'_> {
             self.remaining = &[];
             return Some(Err(Error::IncorrectMessageLengthOrInvalidFormat));
         }
-        let record = DtcRecord::new(self.remaining[0], self.remaining[1], self.remaining[2]);
+        let record =
+            DtcRecord::new(self.remaining[0], self.remaining[1], self.remaining[2]);
         let status = DtcStatusMask::from(self.remaining[3]);
         self.remaining = &self.remaining[4..];
         Some(Ok((record, status)))
@@ -774,7 +793,9 @@ impl<'a> DtcFaultDetectionIter<'a> {
     /// # Errors
     /// Returns an error if the byte data contains a partial record.
     #[cfg(feature = "alloc")]
-    pub fn collect_all(self) -> Result<alloc::vec::Vec<DtcFaultDetectionCounterRecord>, Error> {
+    pub fn collect_all(
+        self,
+    ) -> Result<alloc::vec::Vec<DtcFaultDetectionCounterRecord>, Error> {
         self.collect()
     }
 }
@@ -791,7 +812,8 @@ impl Iterator for DtcFaultDetectionIter<'_> {
             self.remaining = &[];
             return Some(Err(Error::IncorrectMessageLengthOrInvalidFormat));
         }
-        let dtc_record = DtcRecord::new(self.remaining[0], self.remaining[1], self.remaining[2]);
+        let dtc_record =
+            DtcRecord::new(self.remaining[0], self.remaining[1], self.remaining[2]);
         let dtc_fault_detection_counter = self.remaining[3];
         self.remaining = &self.remaining[4..];
         Some(Ok(DtcFaultDetectionCounterRecord {
@@ -874,7 +896,8 @@ impl Iterator for WwhObdDtcSeverityIter<'_> {
             return Some(Err(Error::IncorrectMessageLengthOrInvalidFormat));
         }
         let severity = DtcSeverityMask::from(self.remaining[0]);
-        let record = DtcRecord::new(self.remaining[1], self.remaining[2], self.remaining[3]);
+        let record =
+            DtcRecord::new(self.remaining[1], self.remaining[2], self.remaining[3]);
         let status = DtcStatusMask::from(self.remaining[4]);
         self.remaining = &self.remaining[5..];
         Some(Ok((severity, record, status)))
@@ -1148,7 +1171,10 @@ impl<'a> Decode<'a> for ReadDtcInfoResponse<'a> {
 impl Encode for ReadDtcInfoResponse<'_> {
     type Error = crate::Error;
 
-    fn encode(&self, writer: &mut impl automotive_wire_codec::Sink) -> Result<usize, Error> {
+    fn encode(
+        &self,
+        writer: &mut impl automotive_wire_codec::Sink,
+    ) -> Result<usize, Error> {
         let mut written = 0;
         match self {
             Self::NumberOfDtcs {
@@ -1177,8 +1203,10 @@ impl Encode for ReadDtcInfoResponse<'_> {
                 status_availability_mask,
                 raw_records,
             } => {
-                written +=
-                    write_bytes(writer, &[*sub_function_id, status_availability_mask.bits()])?;
+                written += write_bytes(
+                    writer,
+                    &[*sub_function_id, status_availability_mask.bits()],
+                )?;
                 written += write_bytes(writer, raw_records)?;
             }
             Self::DtcFaultDetectionCounterList { raw_records } => {
@@ -1426,7 +1454,9 @@ mod response_decode_tests {
             for records in 0..=3usize {
                 let (buf, len) = frame(prefix, width * records);
                 let (resp, _) = <ReadDtcInfoResponse as Decode>::decode(&buf[..len])
-                    .unwrap_or_else(|e| panic!("{label}: {records} records should decode: {e:?}"));
+                    .unwrap_or_else(|e| {
+                        panic!("{label}: {records} records should decode: {e:?}")
+                    });
                 let counted = resp
                     .dtc_and_status_iter()
                     .map(Iterator::count)

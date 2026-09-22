@@ -119,7 +119,10 @@ impl TesterPresentRequest {
 impl Encode for TesterPresentRequest {
     type Error = crate::Error;
 
-    fn encode(&self, writer: &mut impl automotive_wire_codec::Sink) -> Result<usize, Error> {
+    fn encode(
+        &self,
+        writer: &mut impl automotive_wire_codec::Sink,
+    ) -> Result<usize, Error> {
         // Fuse the SPRMIB bit back onto the sub-function at the wire boundary. The retained
         // sub-function is written verbatim so a reserved value round-trips unchanged.
         let sub_function = SuppressablePositiveResponse::new(
@@ -143,7 +146,8 @@ impl<'a> Decode<'a> for TesterPresentRequest {
         // Split out the SPRMIB flag. Once SPRMIB is stripped the low 7 bits are always a
         // valid zero sub-function, so this never rejects; the sub-function value is retained
         // so that a reserved byte re-encodes unchanged.
-        let sub_function = SuppressablePositiveResponse::<ZeroSubFunction>::try_from(buf[0])?;
+        let sub_function =
+            SuppressablePositiveResponse::<ZeroSubFunction>::try_from(buf[0])?;
         Ok((
             Self {
                 suppress_positive_response: sub_function.suppress_positive_response(),
@@ -196,7 +200,10 @@ impl Default for TesterPresentResponse {
 impl Encode for TesterPresentResponse {
     type Error = crate::Error;
 
-    fn encode(&self, writer: &mut impl automotive_wire_codec::Sink) -> Result<usize, Error> {
+    fn encode(
+        &self,
+        writer: &mut impl automotive_wire_codec::Sink,
+    ) -> Result<usize, Error> {
         Ok(write_u8(writer, u8::from(self.zero_sub_function))?)
     }
 }
@@ -229,7 +236,10 @@ mod test {
             let try_result: Result<ZeroSubFunction, Error> = ZeroSubFunction::try_from(i);
             match i {
                 0x00 => {
-                    assert_eq!(try_result.unwrap(), ZeroSubFunction::NoSubFunctionSupported);
+                    assert_eq!(
+                        try_result.unwrap(),
+                        ZeroSubFunction::NoSubFunctionSupported
+                    );
                 }
                 0x01..=0x7F => {
                     assert!(matches!(try_result, Ok(ZeroSubFunction::IsoSaeReserved(_))));
@@ -309,8 +319,11 @@ mod test {
                 assert_eq!(req.sub_function(), raw, "sub-function byte not retained");
 
                 let mut buf = [0u8; 4];
-                let n = Encode::encode(&req, &mut automotive_wire_codec::SliceSink::new(&mut buf))
-                    .unwrap();
+                let n = Encode::encode(
+                    &req,
+                    &mut automotive_wire_codec::SliceSink::new(&mut buf),
+                )
+                .unwrap();
                 assert_eq!(&buf[..n], &wire, "lossy re-encode for {wire:02X?}");
                 assert_encode_size_agrees(&req);
             }

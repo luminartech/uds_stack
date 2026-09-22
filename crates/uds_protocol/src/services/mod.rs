@@ -14,7 +14,8 @@ pub use control_dtc_settings::{
 
 mod diagnostic_session_control;
 pub use diagnostic_session_control::{
-    DiagnosticSessionControlRequest, DiagnosticSessionControlResponse, DiagnosticSessionType,
+    DiagnosticSessionControlRequest, DiagnosticSessionControlResponse,
+    DiagnosticSessionType,
 };
 
 mod ecu_reset;
@@ -24,17 +25,20 @@ mod negative_response;
 pub use negative_response::NegativeResponse;
 
 mod read_data_by_identifier;
-pub use read_data_by_identifier::{ReadDataByIdentifierRequest, ReadDataByIdentifierResponse};
+pub use read_data_by_identifier::{
+    ReadDataByIdentifierRequest, ReadDataByIdentifierResponse,
+};
 
 mod read_dtc_information;
 pub use read_dtc_information::{
-    DtcAndStatusIter, DtcFaultDetectionCounterRecord, DtcFaultDetectionIter, ReadDtcInfoRequest,
-    ReadDtcInfoResponse, ReadDtcInfoSubFunction, WwhObdDtcSeverityIter,
+    DtcAndStatusIter, DtcFaultDetectionCounterRecord, DtcFaultDetectionIter,
+    ReadDtcInfoRequest, ReadDtcInfoResponse, ReadDtcInfoSubFunction, WwhObdDtcSeverityIter,
 };
 
 mod upload_download;
 pub use upload_download::{
-    RequestDownloadRequest, RequestDownloadResponse, RequestUploadRequest, RequestUploadResponse,
+    RequestDownloadRequest, RequestDownloadResponse, RequestUploadRequest,
+    RequestUploadResponse,
 };
 
 mod request_file_transfer;
@@ -63,4 +67,6 @@ mod request_transfer_exit;
 pub use request_transfer_exit::{RequestTransferExitRequest, RequestTransferExitResponse};
 
 mod write_data_by_identifier;
-pub use write_data_by_identifier::{WriteDataByIdentifierRequest, WriteDataByIdentifierResponse};
+pub use write_data_by_identifier::{
+    WriteDataByIdentifierRequest, WriteDataByIdentifierResponse,
+};

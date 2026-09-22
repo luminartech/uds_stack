@@ -251,7 +251,9 @@ impl<S> UdsTransport for DoIpTransport<S> {
     /// returns can then be handed straight back to [`Self::next_event`] with no
     /// arithmetic on either side of the seam.
     fn now(&self) -> Timestamp {
-        todo!("the clock belongs to whatever S is; see the missing-bound note on next_event")
+        todo!(
+            "the clock belongs to whatever S is; see the missing-bound note on next_event"
+        )
     }
 }
 

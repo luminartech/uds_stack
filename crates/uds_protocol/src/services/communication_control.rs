@@ -332,7 +332,9 @@ mod communication_type_tests {
             match i & MESSAGE_TYPE_MASK {
                 0x00 => assert!(matches!(msg_type, Ok(CommunicationType::IsoSaeReserved))),
                 0x01 => assert!(matches!(msg_type, Ok(CommunicationType::Normal))),
-                0x02 => assert!(matches!(msg_type, Ok(CommunicationType::NetworkManagement))),
+                0x02 => {
+                    assert!(matches!(msg_type, Ok(CommunicationType::NetworkManagement)));
+                }
                 _ => assert!(matches!(
                     msg_type,
                     Ok(CommunicationType::NormalAndNetworkManagement)
@@ -507,10 +509,15 @@ impl CommunicationControlRequest {
 impl Encode for CommunicationControlRequest {
     type Error = crate::Error;
 
-    fn encode(&self, writer: &mut impl automotive_wire_codec::Sink) -> Result<usize, Error> {
+    fn encode(
+        &self,
+        writer: &mut impl automotive_wire_codec::Sink,
+    ) -> Result<usize, Error> {
         // Fuse the SPRMIB bit onto the sub-function at the wire boundary.
-        let sub_function =
-            SuppressablePositiveResponse::new(self.suppress_positive_response, self.control_type);
+        let sub_function = SuppressablePositiveResponse::new(
+            self.suppress_positive_response,
+            self.control_type,
+        );
         let mut written = write_bytes(
             writer,
             &[
@@ -562,7 +569,8 @@ impl<'a> Decode<'a> for CommunicationControlRequest {
             }
             _ => Ok((
                 Self {
-                    suppress_positive_response: communication_enable.suppress_positive_response(),
+                    suppress_positive_response: communication_enable
+                        .suppress_positive_response(),
                     control_type: communication_enable.value(),
                     communication_type,
                     subnet,
@@ -598,7 +606,10 @@ impl CommunicationControlResponse {
 impl Encode for CommunicationControlResponse {
     type Error = crate::Error;
 
-    fn encode(&self, writer: &mut impl automotive_wire_codec::Sink) -> Result<usize, Error> {
+    fn encode(
+        &self,
+        writer: &mut impl automotive_wire_codec::Sink,
+    ) -> Result<usize, Error> {
         Ok(write_u8(writer, u8::from(self.control_type))?)
     }
 }
@@ -695,7 +706,8 @@ mod request {
 
         let mut buf = [0u8; 8];
         let written =
-            Encode::encode(&req, &mut automotive_wire_codec::SliceSink::new(&mut buf)).unwrap();
+            Encode::encode(&req, &mut automotive_wire_codec::SliceSink::new(&mut buf))
+                .unwrap();
         assert_eq!(&buf[..written], &[0x03, 0xF3]);
         assert_encode_size_agrees(&req);
     }

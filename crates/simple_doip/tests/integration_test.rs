@@ -26,7 +26,8 @@ use simple_doip::{
     message_codec::MessageCodec,
     messages::{
         ActivationTypeCode, DiagnosticAckCode, DiagnosticMessage, Encode, OwnedMessage,
-        OwnedPayload, ProtocolVersion, RoutingActivationRequest, RoutingActivationResponseCode,
+        OwnedPayload, ProtocolVersion, RoutingActivationRequest,
+        RoutingActivationResponseCode,
     },
     server::{ResponseWriter, Server, ServerConnectionHandler},
 };
@@ -298,7 +299,8 @@ impl Connector for TestConnector {
         gateway_address: SocketAddr,
     ) -> Result<(OwnedReadHalf, OwnedWriteHalf), Error> {
         let stream =
-            tokio::time::timeout(TEST_TIMEOUT, TcpStream::connect(gateway_address)).await??;
+            tokio::time::timeout(TEST_TIMEOUT, TcpStream::connect(gateway_address))
+                .await??;
         stream.set_nodelay(true)?;
         Ok(stream.into_split())
     }
@@ -446,7 +448,8 @@ async fn unsupported_payload_type_does_not_kill_server() {
         ActivationTypeCode::Default,
         None,
     );
-    let mut activation_bytes = vec![0u8; routing_activation_request.encoded_size().unwrap()];
+    let mut activation_bytes =
+        vec![0u8; routing_activation_request.encoded_size().unwrap()];
     let written = {
         let mut writer = SliceSink::new(&mut activation_bytes);
         routing_activation_request.encode(&mut writer).unwrap()
@@ -1133,8 +1136,8 @@ async fn ack_later_than_the_entity_requirement_but_inside_the_loss_timeout_succe
 async fn diagnostic_message_timeout_below_the_ack_delay_expires() {
     let (server_addr, accept_loop) = start_server_with(SlowAckThenRespondHandler).await;
 
-    let options =
-        client_options(server_addr).with_diagnostic_message_timeout(Duration::from_millis(20));
+    let options = client_options(server_addr)
+        .with_diagnostic_message_timeout(Duration::from_millis(20));
     let mut client = with_timeout(
         "connect with a 20ms diagnostic-message timeout",
         Client::<TestConnector>::connect(options),
@@ -1171,8 +1174,8 @@ async fn diagnostic_message_timeout_below_the_ack_delay_expires() {
 async fn diagnostic_message_timeout_above_the_ack_delay_succeeds() {
     let (server_addr, accept_loop) = start_server_with(SlowAckThenRespondHandler).await;
 
-    let options =
-        client_options(server_addr).with_diagnostic_message_timeout(Duration::from_millis(1500));
+    let options = client_options(server_addr)
+        .with_diagnostic_message_timeout(Duration::from_millis(1500));
     let mut client = with_timeout(
         "connect with a 1500ms diagnostic-message timeout",
         Client::<TestConnector>::connect(options),

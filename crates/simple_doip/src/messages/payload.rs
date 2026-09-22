@@ -131,7 +131,9 @@ impl Payload<'_> {
         match self {
             Payload::DoIPNack(nack) => OwnedPayload::DoIPNack(*nack),
             Payload::AliveCheckRequest => OwnedPayload::AliveCheckRequest,
-            Payload::AliveCheckResponse(response) => OwnedPayload::AliveCheckResponse(*response),
+            Payload::AliveCheckResponse(response) => {
+                OwnedPayload::AliveCheckResponse(*response)
+            }
             Payload::DiagnosticMessage(message) => {
                 OwnedPayload::DiagnosticMessage(message.to_owned_message())
             }
@@ -143,15 +145,21 @@ impl Payload<'_> {
             Payload::EntityStatusResponse(response) => {
                 OwnedPayload::EntityStatusResponse(*response)
             }
-            Payload::PowerModeInfoResponse(code) => OwnedPayload::PowerModeInfoResponse(*code),
+            Payload::PowerModeInfoResponse(code) => {
+                OwnedPayload::PowerModeInfoResponse(*code)
+            }
             Payload::RoutingActivationRequest(request) => {
                 OwnedPayload::RoutingActivationRequest(*request)
             }
             Payload::RoutingActivationResponse(response) => {
                 OwnedPayload::RoutingActivationResponse(*response)
             }
-            Payload::VehicleAnnouncement(response) => OwnedPayload::VehicleAnnouncement(*response),
-            Payload::VehicleIdentificationRequest => OwnedPayload::VehicleIdentificationRequest,
+            Payload::VehicleAnnouncement(response) => {
+                OwnedPayload::VehicleAnnouncement(*response)
+            }
+            Payload::VehicleIdentificationRequest => {
+                OwnedPayload::VehicleIdentificationRequest
+            }
             Payload::VehicleIdentificationResponse(response) => {
                 OwnedPayload::VehicleIdentificationResponse(*response)
             }
@@ -167,25 +175,35 @@ impl OwnedPayload {
         match self {
             OwnedPayload::DoIPNack(nack) => Payload::DoIPNack(*nack),
             OwnedPayload::AliveCheckRequest => Payload::AliveCheckRequest,
-            OwnedPayload::AliveCheckResponse(response) => Payload::AliveCheckResponse(*response),
+            OwnedPayload::AliveCheckResponse(response) => {
+                Payload::AliveCheckResponse(*response)
+            }
             OwnedPayload::DiagnosticMessage(message) => {
                 Payload::DiagnosticMessage(message.as_ref())
             }
-            OwnedPayload::DiagnosticMessageAck(ack) => Payload::DiagnosticMessageAck(ack.as_ref()),
+            OwnedPayload::DiagnosticMessageAck(ack) => {
+                Payload::DiagnosticMessageAck(ack.as_ref())
+            }
             OwnedPayload::DiagnosticMessageNack => Payload::DiagnosticMessageNack,
             OwnedPayload::EntityStatusRequest => Payload::EntityStatusRequest,
             OwnedPayload::EntityStatusResponse(response) => {
                 Payload::EntityStatusResponse(*response)
             }
-            OwnedPayload::PowerModeInfoResponse(code) => Payload::PowerModeInfoResponse(*code),
+            OwnedPayload::PowerModeInfoResponse(code) => {
+                Payload::PowerModeInfoResponse(*code)
+            }
             OwnedPayload::RoutingActivationRequest(request) => {
                 Payload::RoutingActivationRequest(*request)
             }
             OwnedPayload::RoutingActivationResponse(response) => {
                 Payload::RoutingActivationResponse(*response)
             }
-            OwnedPayload::VehicleAnnouncement(response) => Payload::VehicleAnnouncement(*response),
-            OwnedPayload::VehicleIdentificationRequest => Payload::VehicleIdentificationRequest,
+            OwnedPayload::VehicleAnnouncement(response) => {
+                Payload::VehicleAnnouncement(*response)
+            }
+            OwnedPayload::VehicleIdentificationRequest => {
+                Payload::VehicleIdentificationRequest
+            }
             OwnedPayload::VehicleIdentificationResponse(response) => {
                 Payload::VehicleIdentificationResponse(*response)
             }
@@ -232,7 +250,9 @@ impl<'a> Payload<'a> {
             PayloadType::DiagnosticMessagePositiveAcknowledge => {
                 Self::DiagnosticMessageAck(DiagnosticMessageAck::decode(buf)?.0)
             }
-            PayloadType::DiagnosticMessageNegativeAcknowledge => Self::DiagnosticMessageNack,
+            PayloadType::DiagnosticMessageNegativeAcknowledge => {
+                Self::DiagnosticMessageNack
+            }
             // `DiagnosticPowerModeInfoRequest` has no dedicated `Payload` variant, and the
             // reserved ranges are not decodable. Return an error rather than panicking on
             // peer-controlled input.
@@ -258,7 +278,9 @@ impl Encode for Payload<'_> {
             Payload::AliveCheckResponse(alive_check_response) => {
                 alive_check_response.encoded_size()?
             }
-            Payload::DiagnosticMessage(diagnostic_message) => diagnostic_message.encoded_size()?,
+            Payload::DiagnosticMessage(diagnostic_message) => {
+                diagnostic_message.encoded_size()?
+            }
             Payload::DiagnosticMessageAck(diagnostic_message_ack) => {
                 diagnostic_message_ack.encoded_size()?
             }
@@ -286,7 +308,10 @@ impl Encode for Payload<'_> {
     ///
     /// # Errors
     /// Returns a [`MessageError`] if the payload cannot be serialized
-    fn encode(&self, writer: &mut impl automotive_wire_codec::Sink) -> Result<usize, MessageError> {
+    fn encode(
+        &self,
+        writer: &mut impl automotive_wire_codec::Sink,
+    ) -> Result<usize, MessageError> {
         Ok(match self {
             Payload::DoIPNack(nack) => nack.encode(writer)?,
             Payload::AliveCheckRequest
@@ -296,7 +321,9 @@ impl Encode for Payload<'_> {
             Payload::AliveCheckResponse(alive_check_response) => {
                 alive_check_response.encode(writer)?
             }
-            Payload::DiagnosticMessage(diagnostic_message) => diagnostic_message.encode(writer)?,
+            Payload::DiagnosticMessage(diagnostic_message) => {
+                diagnostic_message.encode(writer)?
+            }
             Payload::DiagnosticMessageAck(diagnostic_message_ack) => {
                 diagnostic_message_ack.encode(writer)?
             }
@@ -378,7 +405,8 @@ mod tests {
         };
         assert_eq!(written, payload.encoded_size().unwrap());
 
-        let decoded = Payload::decode(&buf[..written], PayloadType::VehicleAnnouncement).unwrap();
+        let decoded =
+            Payload::decode(&buf[..written], PayloadType::VehicleAnnouncement).unwrap();
         assert_eq!(decoded, payload);
     }
 }

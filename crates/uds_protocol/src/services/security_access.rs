@@ -133,14 +133,14 @@ mod security_access_type_tests {
     use super::*;
 
     const REQUEST_SEED_VALUES: [u8; 33] = [
-        0x01, 0x03, 0x05, 0x07, 0x09, 0x0B, 0x0D, 0x0F, 0x11, 0x13, 0x15, 0x17, 0x19, 0x1B, 0x1D,
-        0x1F, 0x21, 0x23, 0x25, 0x27, 0x29, 0x2B, 0x2D, 0x2F, 0x31, 0x33, 0x35, 0x37, 0x39, 0x3B,
-        0x3D, 0x3F, 0x41,
+        0x01, 0x03, 0x05, 0x07, 0x09, 0x0B, 0x0D, 0x0F, 0x11, 0x13, 0x15, 0x17, 0x19, 0x1B,
+        0x1D, 0x1F, 0x21, 0x23, 0x25, 0x27, 0x29, 0x2B, 0x2D, 0x2F, 0x31, 0x33, 0x35, 0x37,
+        0x39, 0x3B, 0x3D, 0x3F, 0x41,
     ];
     const SEND_KEY_VALUES: [u8; 33] = [
-        0x02, 0x04, 0x06, 0x08, 0x0A, 0x0C, 0x0E, 0x10, 0x12, 0x14, 0x16, 0x18, 0x1A, 0x1C, 0x1E,
-        0x20, 0x22, 0x24, 0x26, 0x28, 0x2A, 0x2C, 0x2E, 0x30, 0x32, 0x34, 0x36, 0x38, 0x3A, 0x3C,
-        0x3E, 0x40, 0x42,
+        0x02, 0x04, 0x06, 0x08, 0x0A, 0x0C, 0x0E, 0x10, 0x12, 0x14, 0x16, 0x18, 0x1A, 0x1C,
+        0x1E, 0x20, 0x22, 0x24, 0x26, 0x28, 0x2A, 0x2C, 0x2E, 0x30, 0x32, 0x34, 0x36, 0x38,
+        0x3A, 0x3C, 0x3E, 0x40, 0x42,
     ];
     /// Check that we properly decode and encode hex bytes
     #[test]
@@ -301,9 +301,14 @@ impl<'d> SecurityAccessRequest<'d> {
 impl Encode for SecurityAccessRequest<'_> {
     type Error = crate::Error;
 
-    fn encode(&self, writer: &mut impl automotive_wire_codec::Sink) -> Result<usize, Error> {
-        let sub_function =
-            SuppressablePositiveResponse::new(self.suppress_positive_response, self.access_type);
+    fn encode(
+        &self,
+        writer: &mut impl automotive_wire_codec::Sink,
+    ) -> Result<usize, Error> {
+        let sub_function = SuppressablePositiveResponse::new(
+            self.suppress_positive_response,
+            self.access_type,
+        );
         let mut written = write_u8(writer, u8::from(sub_function))?;
         written += write_bytes(writer, self.request_data)?;
         Ok(written)
@@ -320,7 +325,8 @@ impl<'a> Decode<'a> for SecurityAccessRequest<'a> {
                 available: buf.len(),
             }));
         }
-        let sub_function = SuppressablePositiveResponse::<SecurityAccessType>::try_from(buf[0])?;
+        let sub_function =
+            SuppressablePositiveResponse::<SecurityAccessType>::try_from(buf[0])?;
         Ok((
             Self {
                 suppress_positive_response: sub_function.suppress_positive_response(),
@@ -359,7 +365,10 @@ impl<'d> SecurityAccessResponse<'d> {
 impl Encode for SecurityAccessResponse<'_> {
     type Error = crate::Error;
 
-    fn encode(&self, writer: &mut impl automotive_wire_codec::Sink) -> Result<usize, Error> {
+    fn encode(
+        &self,
+        writer: &mut impl automotive_wire_codec::Sink,
+    ) -> Result<usize, Error> {
         let mut written = write_u8(writer, u8::from(self.access_type))?;
         written += write_bytes(writer, self.security_seed)?;
         Ok(written)
@@ -390,7 +399,9 @@ impl<'a> Decode<'a> for SecurityAccessResponse<'a> {
 #[cfg(test)]
 mod request {
     use super::*;
-    use crate::{Decode, Encode, test_util::assert_encode_size_agrees, test_util::assert_impl_eq};
+    use crate::{
+        Decode, Encode, test_util::assert_encode_size_agrees, test_util::assert_impl_eq,
+    };
 
     #[test]
     fn derive_contract() {
@@ -420,7 +431,8 @@ mod request {
 
         let mut buf = [0u8; 16];
         let written =
-            Encode::encode(&req, &mut automotive_wire_codec::SliceSink::new(&mut buf)).unwrap();
+            Encode::encode(&req, &mut automotive_wire_codec::SliceSink::new(&mut buf))
+                .unwrap();
         // The bytes, not just the count: the two halves of this test were otherwise
         // disconnected, so swapping what `encode` writes went unnoticed.
         assert_eq!(&buf[..written], &bytes);
@@ -450,7 +462,8 @@ mod response {
 
         let mut buf = [0u8; 16];
         let written =
-            Encode::encode(&resp, &mut automotive_wire_codec::SliceSink::new(&mut buf)).unwrap();
+            Encode::encode(&resp, &mut automotive_wire_codec::SliceSink::new(&mut buf))
+                .unwrap();
         assert_eq!(&buf[..written], &bytes);
         assert_eq!(written, resp.encoded_size().unwrap());
         assert_encode_size_agrees(&resp);

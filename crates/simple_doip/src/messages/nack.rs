@@ -88,7 +88,10 @@ impl Encode for NackCode {
     ///
     /// # Errors
     /// Returns [`MessageError::Io`] if the writer fails.
-    fn encode(&self, writer: &mut impl automotive_wire_codec::Sink) -> Result<usize, MessageError> {
+    fn encode(
+        &self,
+        writer: &mut impl automotive_wire_codec::Sink,
+    ) -> Result<usize, MessageError> {
         write_u8(writer, (*self).into())?;
         Ok(1)
     }

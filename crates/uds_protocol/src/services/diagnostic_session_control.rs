@@ -201,9 +201,14 @@ impl DiagnosticSessionControlRequest {
 impl Encode for DiagnosticSessionControlRequest {
     type Error = crate::Error;
 
-    fn encode(&self, writer: &mut impl automotive_wire_codec::Sink) -> Result<usize, Error> {
-        let sub_function =
-            SuppressablePositiveResponse::new(self.suppress_positive_response, self.session_type);
+    fn encode(
+        &self,
+        writer: &mut impl automotive_wire_codec::Sink,
+    ) -> Result<usize, Error> {
+        let sub_function = SuppressablePositiveResponse::new(
+            self.suppress_positive_response,
+            self.session_type,
+        );
         Ok(write_u8(writer, u8::from(sub_function))?)
     }
 }
@@ -218,7 +223,8 @@ impl<'a> Decode<'a> for DiagnosticSessionControlRequest {
                 available: buf.len(),
             }));
         }
-        let sub_function = SuppressablePositiveResponse::<DiagnosticSessionType>::try_from(buf[0])?;
+        let sub_function =
+            SuppressablePositiveResponse::<DiagnosticSessionType>::try_from(buf[0])?;
         Ok((
             Self {
                 suppress_positive_response: sub_function.suppress_positive_response(),
@@ -269,7 +275,10 @@ impl DiagnosticSessionControlResponse {
 impl Encode for DiagnosticSessionControlResponse {
     type Error = crate::Error;
 
-    fn encode(&self, writer: &mut impl automotive_wire_codec::Sink) -> Result<usize, Error> {
+    fn encode(
+        &self,
+        writer: &mut impl automotive_wire_codec::Sink,
+    ) -> Result<usize, Error> {
         let mut written = write_u8(writer, u8::from(self.session_type))?;
         written += write_u16_be(writer, self.p2_server_max)?;
         written += write_u16_be(writer, self.p2_star_server_max)?;
@@ -333,7 +342,8 @@ mod response {
     #[test]
     fn test_diagnostic_session_control_response() {
         let bytes = [0x02, 0x11, 0x22, 0x33, 0x44];
-        let (resp, _) = <DiagnosticSessionControlResponse as Decode>::decode(&bytes).unwrap();
+        let (resp, _) =
+            <DiagnosticSessionControlResponse as Decode>::decode(&bytes).unwrap();
         assert_eq!(resp.session_type, DiagnosticSessionType::ProgrammingSession);
         assert_eq!(resp.p2_server_max, 0x1122);
         assert_eq!(resp.p2_star_server_max, 0x3344);

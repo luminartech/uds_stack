@@ -29,7 +29,9 @@ pub use power_mode_info_response::DiagnosticPowerModeCode;
 mod routing_activation_request;
 pub use routing_activation_request::{ActivationTypeCode, RoutingActivationRequest};
 mod routing_activation_response;
-pub use routing_activation_response::{RoutingActivationResponse, RoutingActivationResponseCode};
+pub use routing_activation_response::{
+    RoutingActivationResponse, RoutingActivationResponseCode,
+};
 mod traits;
 use traits::take;
 pub use traits::{Decode, Encode};
@@ -92,7 +94,9 @@ impl<'a> Message<'a> {
             PayloadType::RoutingActivationRequest => {
                 payload_type == PayloadType::RoutingActivationResponse
             }
-            PayloadType::AliveCheckRequest => payload_type == PayloadType::AliveCheckResponse,
+            PayloadType::AliveCheckRequest => {
+                payload_type == PayloadType::AliveCheckResponse
+            }
             PayloadType::DiagnosticMessage => {
                 // DiagnosticMessage can be a request or response in certain models
                 payload_type == PayloadType::DiagnosticMessageNegativeAcknowledge
@@ -318,7 +322,10 @@ impl Encode for Message<'_> {
     /// Returns a [`MessageError`] if the header or payload cannot be
     /// serialized, or [`MessageError::PayloadTooLarge`] if the payload does
     /// not fit the `u32` length field.
-    fn encode(&self, writer: &mut impl automotive_wire_codec::Sink) -> Result<usize, MessageError> {
+    fn encode(
+        &self,
+        writer: &mut impl automotive_wire_codec::Sink,
+    ) -> Result<usize, MessageError> {
         let payload_length = self.payload.encoded_size()?;
         let header = Header::new(
             self.header.protocol_version,
@@ -531,7 +538,10 @@ impl Encode for OwnedMessage {
         self.as_ref().encoded_size()
     }
 
-    fn encode(&self, writer: &mut impl automotive_wire_codec::Sink) -> Result<usize, MessageError> {
+    fn encode(
+        &self,
+        writer: &mut impl automotive_wire_codec::Sink,
+    ) -> Result<usize, MessageError> {
         self.as_ref().encode(writer)
     }
 }
@@ -574,8 +584,8 @@ mod tests {
         );
         assert_eq!(deserialized_message.header.payload_length, 1);
         let buf: [u8; 15] = [
-            0x01, 0xFE, 0x00, 0x01, 0x00, 0x00, 0x00, 0x07, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-            0x00,
+            0x01, 0xFE, 0x00, 0x01, 0x00, 0x00, 0x00, 0x07, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00,
         ];
         let deserialized_message: Message<'_> = Message::decode(&buf).unwrap().0;
         assert_eq!(
@@ -702,8 +712,9 @@ mod alloc_conversion_tests {
     use super::*;
     use crate::messages::{
         AliveCheckResponse, DiagnosticAckCode, DiagnosticMessage, DiagnosticMessageAck,
-        DiagnosticPowerModeCode, EntityStatusNodeType, EntityStatusResponse, FurtherActionRequired,
-        NackCode, RoutingActivationResponseCode, VehicleIdentificationResponse, VinGidSyncStatus,
+        DiagnosticPowerModeCode, EntityStatusNodeType, EntityStatusResponse,
+        FurtherActionRequired, NackCode, RoutingActivationResponseCode,
+        VehicleIdentificationResponse, VinGidSyncStatus,
     };
     use alloc::vec::Vec;
 

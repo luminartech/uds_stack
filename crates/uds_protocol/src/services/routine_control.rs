@@ -115,9 +115,14 @@ impl<'d> RoutineControlRequest<'d> {
 impl Encode for RoutineControlRequest<'_> {
     type Error = crate::Error;
 
-    fn encode(&self, writer: &mut impl automotive_wire_codec::Sink) -> Result<usize, Error> {
-        let sub_function =
-            SuppressablePositiveResponse::new(self.suppress_positive_response, self.sub_function);
+    fn encode(
+        &self,
+        writer: &mut impl automotive_wire_codec::Sink,
+    ) -> Result<usize, Error> {
+        let sub_function = SuppressablePositiveResponse::new(
+            self.suppress_positive_response,
+            self.sub_function,
+        );
         let mut written = write_u8(writer, u8::from(sub_function))?;
         written += write_u16_be(writer, self.routine_id)?;
         written += write_bytes(writer, self.option_record)?;
@@ -197,7 +202,10 @@ impl<'d> RoutineControlResponse<'d> {
 impl Encode for RoutineControlResponse<'_> {
     type Error = crate::Error;
 
-    fn encode(&self, writer: &mut impl automotive_wire_codec::Sink) -> Result<usize, Error> {
+    fn encode(
+        &self,
+        writer: &mut impl automotive_wire_codec::Sink,
+    ) -> Result<usize, Error> {
         let mut written = write_u8(writer, u8::from(self.sub_function))?;
         written += write_u16_be(writer, self.routine_id)?;
         written += write_bytes(writer, self.status_record)?;
@@ -304,7 +312,8 @@ mod test {
             &[0xAA],
         );
         let mut buf = [0u8; 8];
-        let n = Encode::encode(&req, &mut automotive_wire_codec::SliceSink::new(&mut buf)).unwrap();
+        let n = Encode::encode(&req, &mut automotive_wire_codec::SliceSink::new(&mut buf))
+            .unwrap();
         assert_eq!(&buf[..n], &[0x81, 0xFF, 0x00, 0xAA]); // 0x81 = StartRoutine | SPRMIB
         let (d, rest) = <RoutineControlRequest as Decode>::decode(&buf[..n]).unwrap();
         assert!(rest.is_empty());
@@ -322,11 +331,14 @@ mod test {
 
     #[test]
     fn rc_response_round_trips_and_rejects_sprmib_bit() {
-        let resp =
-            RoutineControlResponse::new(RoutineControlSubFunction::StartRoutine, 0xFF00, &[0x10]);
+        let resp = RoutineControlResponse::new(
+            RoutineControlSubFunction::StartRoutine,
+            0xFF00,
+            &[0x10],
+        );
         let mut buf = [0u8; 8];
-        let n =
-            Encode::encode(&resp, &mut automotive_wire_codec::SliceSink::new(&mut buf)).unwrap();
+        let n = Encode::encode(&resp, &mut automotive_wire_codec::SliceSink::new(&mut buf))
+            .unwrap();
         assert_eq!(&buf[..n], &[0x01, 0xFF, 0x00, 0x10]);
         let (d, _) = <RoutineControlResponse as Decode>::decode(&buf[..n]).unwrap();
         assert_eq!(d.sub_function, RoutineControlSubFunction::StartRoutine);

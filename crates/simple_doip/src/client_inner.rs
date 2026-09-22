@@ -130,7 +130,9 @@ where
     Conn: crate::connection::Connector + 'static + Send + Sync,
 {
     /// Spawns the inner client to run in the background and returns the send and receive channels
-    pub fn spawn(client_options: ClientOptions) -> (ControlSender, UpdateReceiver<MessageError>) {
+    pub fn spawn(
+        client_options: ClientOptions,
+    ) -> (ControlSender, UpdateReceiver<MessageError>) {
         trace!("Spawning inner client");
         let (control_sender, control_receiver) = mpsc::channel(16);
         let (update_sender, update_receiver) = mpsc::channel(16);
@@ -240,8 +242,9 @@ where
 
                 // Await for the response through the run loop
                 if send_result.is_ok() {
-                    self.await_response_deadline =
-                        Some(tokio::time::Instant::now() + crate::TCP_TIMEOUT_INITIAL_INACTIVITY);
+                    self.await_response_deadline = Some(
+                        tokio::time::Instant::now() + crate::TCP_TIMEOUT_INITIAL_INACTIVITY,
+                    );
                     self.active_request =
                         Some(ControlMessage::AwaitResponse(message.clone(), response));
                 } else if let Err(e) = send_result
@@ -253,7 +256,8 @@ where
             ControlMessage::AwaitResponse(message, response) => {
                 trace!("Awaiting response for message: {:?}", message);
                 // This is handled in the run loop while receiving messages
-                self.active_request = Some(ControlMessage::AwaitResponse(message, response));
+                self.active_request =
+                    Some(ControlMessage::AwaitResponse(message, response));
             }
             ControlMessage::SendDiagnosticMessage(message, response) => {
                 if self.tcp_data_socket.is_none() {
@@ -391,7 +395,10 @@ where
     }
 
     /// Process a message received from the socket. Returns `true` if the run loop should exit.
-    async fn process_received_message(&mut self, message: Result<OwnedMessage, Error>) -> bool {
+    async fn process_received_message(
+        &mut self,
+        message: Result<OwnedMessage, Error>,
+    ) -> bool {
         match message {
             Ok(received_message) => {
                 match received_message.payload {
@@ -416,14 +423,16 @@ where
                                 let _ = response.send(Ok(()));
                             } else {
                                 trace!("Received negative ACK: {:?}", ack.ack_code);
-                                let _ =
-                                    response.send(Err(Error::DiagnosticMessageNack(ack.ack_code)));
+                                let _ = response
+                                    .send(Err(Error::DiagnosticMessageNack(ack.ack_code)));
                             }
                             return false;
                         }
                         // For AwaitResponse, continue waiting for DiagnosticMessage
                         if ack.ack_code.is_positive_ack() {
-                            trace!("Received Diagnostic Message Ack, waiting for full response");
+                            trace!(
+                                "Received Diagnostic Message Ack, waiting for full response"
+                            );
                             return false;
                         }
                         // Negative ACK while an AwaitResponse is pending. Despite
@@ -472,17 +481,24 @@ where
                     }
                 } else if self.active_request.is_none() {
                     // No active request - check if this is a DiagnosticMessage we should buffer
-                    if matches!(received_message.payload, OwnedPayload::DiagnosticMessage(_)) {
+                    if matches!(
+                        received_message.payload,
+                        OwnedPayload::DiagnosticMessage(_)
+                    ) {
                         debug!(
                             "Buffering diagnostic response (no active request): {:?}",
                             received_message
                         );
                         self.pending_diagnostic_response = Some(received_message);
                     } else {
-                        trace!("No active request, sending received message to update channel");
+                        trace!(
+                            "No active request, sending received message to update channel"
+                        );
                         self.run = true;
                         if self.update_sender.send(Ok(received_message)).await.is_err() {
-                            tracing::error!("Failed to send received message to update channel");
+                            tracing::error!(
+                                "Failed to send received message to update channel"
+                            );
                             self.run = false;
                             return true;
                         }

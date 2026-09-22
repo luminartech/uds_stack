@@ -4,7 +4,8 @@ use core::fmt::UpperHex;
 use crate::LogicalAddress;
 
 use automotive_wire_codec::{
-    read_array, read_optional_array, read_u8, read_u16_be, write_bytes, write_u8, write_u16_be,
+    read_array, read_optional_array, read_u8, read_u16_be, write_bytes, write_u8,
+    write_u16_be,
 };
 
 use super::message_error::MessageError;
@@ -145,7 +146,10 @@ impl Encode for RoutingActivationRequest {
     ///
     /// # Errors
     /// Returns [`MessageError::Io`] if the writer fails.
-    fn encode(&self, writer: &mut impl automotive_wire_codec::Sink) -> Result<usize, MessageError> {
+    fn encode(
+        &self,
+        writer: &mut impl automotive_wire_codec::Sink,
+    ) -> Result<usize, MessageError> {
         write_u16_be(writer, self.source_address.into())?;
         write_u8(writer, self.activation_type.into())?;
         write_bytes(writer, &self.reserved)?;

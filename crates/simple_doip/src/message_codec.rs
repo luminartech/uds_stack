@@ -71,7 +71,11 @@ impl Decoder for MessageCodec {
 
 impl Encoder<&OwnedMessage> for MessageCodec {
     type Error = MessageError;
-    fn encode(&mut self, message: &OwnedMessage, dst: &mut BytesMut) -> Result<(), Self::Error> {
+    fn encode(
+        &mut self,
+        message: &OwnedMessage,
+        dst: &mut BytesMut,
+    ) -> Result<(), Self::Error> {
         let size = message.encoded_size()?;
         // `automotive_wire_codec` ships no growable sink (see MIGRATION notes),
         // and the orphan rule blocks a local `Sink for Vec<u8>`/`BytesMut` impl
@@ -97,7 +101,8 @@ mod tests {
 
     /// Valid header, but payload type 0x9999 is unmodeled. Framing succeeds; the body
     /// decode fails with a RECOVERABLE `UnsupportedPayloadType`.
-    const UNSUPPORTED_FRAME: [u8; 9] = [0x02, 0xFD, 0x99, 0x99, 0x00, 0x00, 0x00, 0x01, 0x00];
+    const UNSUPPORTED_FRAME: [u8; 9] =
+        [0x02, 0xFD, 0x99, 0x99, 0x00, 0x00, 0x00, 0x01, 0x00];
 
     /// Corrupt inverse protocol version (0xFE, expected 0xFD): framing-FATAL.
     const CORRUPT_HEADER: [u8; 8] = [0x02, 0xFE, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00];
@@ -171,7 +176,8 @@ mod tests {
     /// succeeds (the header is well-formed) and it is `Payload::decode` itself that
     /// returns a framing-fatal `MessageError::Incomplete`, which `decode` must propagate
     /// rather than skip.
-    const TRUNCATED_BODY_FRAME: [u8; 9] = [0x02, 0xFD, 0x00, 0x05, 0x00, 0x00, 0x00, 0x01, 0x03];
+    const TRUNCATED_BODY_FRAME: [u8; 9] =
+        [0x02, 0xFD, 0x00, 0x05, 0x00, 0x00, 0x00, 0x01, 0x03];
 
     #[test]
     fn truncated_body_is_fatal_via_classifier() {

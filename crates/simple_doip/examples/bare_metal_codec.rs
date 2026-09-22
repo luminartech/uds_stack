@@ -7,7 +7,9 @@
 //! with `cargo build --example bare_metal_codec --no-default-features`.
 
 use automotive_wire_codec::SliceSink;
-use simple_doip::messages::{ActivationTypeCode, Encode, Message, Payload, ProtocolVersion};
+use simple_doip::messages::{
+    ActivationTypeCode, Encode, Message, Payload, ProtocolVersion,
+};
 use simple_doip::{LogicalAddress, try_frame};
 
 fn main() {
@@ -36,8 +38,9 @@ fn main() {
         .expect("framing a complete message should not fail")
         .expect("a complete message should be available");
     assert_eq!(routing_consumed, routing_written);
-    let routing_payload = Payload::decode(routing_frame.payload, routing_frame.header.payload_type)
-        .expect("decoding a routing activation request payload should not fail");
+    let routing_payload =
+        Payload::decode(routing_frame.payload, routing_frame.header.payload_type)
+            .expect("decoding a routing activation request payload should not fail");
     let decoded_routing = Message {
         header: routing_frame.header,
         payload: routing_payload,
@@ -64,9 +67,10 @@ fn main() {
     let partial = &diagnostic_buf[..diagnostic_written - 1];
     assert!(matches!(try_frame(partial), Ok(None)));
 
-    let (diagnostic_frame, diagnostic_consumed) = try_frame(&diagnostic_buf[..diagnostic_written])
-        .expect("framing a complete message should not fail")
-        .expect("a complete message should be available");
+    let (diagnostic_frame, diagnostic_consumed) =
+        try_frame(&diagnostic_buf[..diagnostic_written])
+            .expect("framing a complete message should not fail")
+            .expect("a complete message should be available");
     assert_eq!(diagnostic_consumed, diagnostic_written);
     let diagnostic_payload = Payload::decode(
         diagnostic_frame.payload,

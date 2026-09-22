@@ -33,7 +33,10 @@ impl<'a> ReadDataByIdentifierResponse<'a> {
 impl Encode for ReadDataByIdentifierResponse<'_> {
     type Error = crate::Error;
 
-    fn encode(&self, writer: &mut impl automotive_wire_codec::Sink) -> Result<usize, Error> {
+    fn encode(
+        &self,
+        writer: &mut impl automotive_wire_codec::Sink,
+    ) -> Result<usize, Error> {
         Ok(write_bytes(writer, self.records)?)
     }
 }
@@ -129,7 +132,10 @@ impl Iterator for DidIter<'_> {
 impl Encode for ReadDataByIdentifierRequest<'_> {
     type Error = crate::Error;
 
-    fn encode(&self, writer: &mut impl automotive_wire_codec::Sink) -> Result<usize, Error> {
+    fn encode(
+        &self,
+        writer: &mut impl automotive_wire_codec::Sink,
+    ) -> Result<usize, Error> {
         match self.dids {
             Dids::Native(s) => {
                 let mut written = 0;
@@ -174,7 +180,8 @@ mod test {
     fn rdbi_native_encodes_be() {
         let req = ReadDataByIdentifierRequest::new(&[0xF190, 0xF186]);
         let mut buf = [0u8; 8];
-        let n = Encode::encode(&req, &mut automotive_wire_codec::SliceSink::new(&mut buf)).unwrap();
+        let n = Encode::encode(&req, &mut automotive_wire_codec::SliceSink::new(&mut buf))
+            .unwrap();
         assert_eq!(&buf[..n], &[0xF1, 0x90, 0xF1, 0x86]);
         assert_encode_size_agrees(&req);
     }
@@ -182,7 +189,8 @@ mod test {
     #[test]
     fn rdbi_wire_decodes_and_dids_iterates() {
         let (req, rest) =
-            <ReadDataByIdentifierRequest as Decode>::decode(&[0xF1, 0x90, 0xF1, 0x86]).unwrap();
+            <ReadDataByIdentifierRequest as Decode>::decode(&[0xF1, 0x90, 0xF1, 0x86])
+                .unwrap();
         assert!(rest.is_empty());
         // Iterate without alloc (no_std-friendly): pull items directly.
         let mut it = req.dids();
@@ -197,10 +205,12 @@ mod test {
         let native = ReadDataByIdentifierRequest::new(&[0xF190]);
         let mut a = [0u8; 4];
         let na =
-            Encode::encode(&native, &mut automotive_wire_codec::SliceSink::new(&mut a)).unwrap();
+            Encode::encode(&native, &mut automotive_wire_codec::SliceSink::new(&mut a))
+                .unwrap();
         let (wire, _) = <ReadDataByIdentifierRequest as Decode>::decode(&a[..na]).unwrap();
         let mut b = [0u8; 4];
-        let nb = Encode::encode(&wire, &mut automotive_wire_codec::SliceSink::new(&mut b)).unwrap();
+        let nb = Encode::encode(&wire, &mut automotive_wire_codec::SliceSink::new(&mut b))
+            .unwrap();
         assert_eq!(a[..na], b[..nb]);
     }
 
@@ -208,19 +218,22 @@ mod test {
     fn rdbi_rejects_empty_and_odd() {
         assert!(<ReadDataByIdentifierRequest as Decode>::decode(&[]).is_err());
         assert!(<ReadDataByIdentifierRequest as Decode>::decode(&[0xF1]).is_err());
-        assert!(<ReadDataByIdentifierRequest as Decode>::decode(&[0xF1, 0x90, 0xF1]).is_err());
+        assert!(
+            <ReadDataByIdentifierRequest as Decode>::decode(&[0xF1, 0x90, 0xF1]).is_err()
+        );
     }
 
     #[test]
     fn rdbi_response_wraps_and_roundtrips() {
         use crate::{Decode, Encode};
         let raw = [0xF1, 0x90, 0x01, 0x02];
-        let (resp, remaining) = <ReadDataByIdentifierResponse as Decode>::decode(&raw).unwrap();
+        let (resp, remaining) =
+            <ReadDataByIdentifierResponse as Decode>::decode(&raw).unwrap();
         assert!(remaining.is_empty());
         assert_eq!(resp.records, &raw);
         let mut buf = [0u8; 8];
-        let n =
-            Encode::encode(&resp, &mut automotive_wire_codec::SliceSink::new(&mut buf)).unwrap();
+        let n = Encode::encode(&resp, &mut automotive_wire_codec::SliceSink::new(&mut buf))
+            .unwrap();
         assert_eq!(&buf[..n], &raw);
     }
 
@@ -230,7 +243,8 @@ mod test {
         let req = ReadDataByIdentifierRequest::new(&ids);
         let mut buf = [0u8; 16];
         let written =
-            Encode::encode(&req, &mut automotive_wire_codec::SliceSink::new(&mut buf)).unwrap();
+            Encode::encode(&req, &mut automotive_wire_codec::SliceSink::new(&mut buf))
+                .unwrap();
         assert_eq!(written, 4); // 2 DIDs * 2 bytes each
         assert_eq!(&buf[..4], &[0xF1, 0x80, 0xF1, 0x86]);
         assert_encode_size_agrees(&req);

@@ -9,10 +9,10 @@ use crate::{
     logical_address::LogicalAddress,
     message_codec::MessageCodec,
     messages::{
-        Decode, DiagnosticMessage, DiagnosticPowerModeCode, Encode, FurtherActionRequired, Message,
-        OwnedMessage, OwnedPayload, Payload, PayloadType, ProtocolVersion,
-        RoutingActivationRequest, RoutingActivationResponseCode, VehicleIdentificationResponse,
-        VinGidSyncStatus,
+        Decode, DiagnosticMessage, DiagnosticPowerModeCode, Encode, FurtherActionRequired,
+        Message, OwnedMessage, OwnedPayload, Payload, PayloadType, ProtocolVersion,
+        RoutingActivationRequest, RoutingActivationResponseCode,
+        VehicleIdentificationResponse, VinGidSyncStatus,
     },
 };
 use async_trait::async_trait;
@@ -242,7 +242,10 @@ pub trait ServerConnectionHandler {
     }
 
     /// Respond to an Alive Check request
-    async fn alive_check(&self, client_info: &ClientConnectionInfo) -> Result<OwnedMessage, Error> {
+    async fn alive_check(
+        &self,
+        client_info: &ClientConnectionInfo,
+    ) -> Result<OwnedMessage, Error> {
         Ok(OwnedMessage::alive_check_response(
             self.protocol_version(),
             client_info.logical_address,
@@ -354,7 +357,10 @@ where
     /// The `Result` is retained so [`run_server`](Self::run_server) can
     /// propagate its bind failure through a matching return type, and so a
     /// future shutdown path has somewhere to report one.
-    pub async fn run_server_with_listener(&self, tcp_listener: TcpListener) -> Result<(), Error> {
+    pub async fn run_server_with_listener(
+        &self,
+        tcp_listener: TcpListener,
+    ) -> Result<(), Error> {
         loop {
             match tcp_listener.accept().await {
                 Ok((tcp_stream, client_socket_addr)) => {
@@ -519,7 +525,9 @@ where
             {
                 Ok(response) => response,
                 Err(handler_error) => {
-                    warn!("Identification handler failed for {peer}, skipping: {handler_error}");
+                    warn!(
+                        "Identification handler failed for {peer}, skipping: {handler_error}"
+                    );
                     continue;
                 }
             };
@@ -537,13 +545,17 @@ where
             let mut encoded = match reply.encoded_size() {
                 Ok(size) => std::vec![0u8; size],
                 Err(size_error) => {
-                    warn!("Failed to size identification response for {peer}: {size_error}");
+                    warn!(
+                        "Failed to size identification response for {peer}: {size_error}"
+                    );
                     continue;
                 }
             };
             let mut sink = automotive_wire_codec::SliceSink::new(&mut encoded);
             if let Err(encode_error) = reply.encode(&mut sink) {
-                warn!("Failed to encode identification response for {peer}: {encode_error}");
+                warn!(
+                    "Failed to encode identification response for {peer}: {encode_error}"
+                );
                 continue;
             }
 
@@ -693,7 +705,9 @@ where
                 );
                 Ok(None)
             }
-            OwnedPayload::VehicleIdentificationResponse(_vehicle_identification_response) => {
+            OwnedPayload::VehicleIdentificationResponse(
+                _vehicle_identification_response,
+            ) => {
                 warn!(
                     "Client sent a server-role VehicleIdentificationResponse message, source: {client_socket_addr}"
                 );

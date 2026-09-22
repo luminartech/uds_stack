@@ -166,7 +166,8 @@ impl From<PayloadType> for u16 {
             PayloadType::DiagnosticMessage => 0x8001,
             PayloadType::DiagnosticMessagePositiveAcknowledge => 0x8002,
             PayloadType::DiagnosticMessageNegativeAcknowledge => 0x8003,
-            PayloadType::Reserved(value) | PayloadType::ReservedVehicleManufacturer(value) => value,
+            PayloadType::Reserved(value)
+            | PayloadType::ReservedVehicleManufacturer(value) => value,
         }
     }
 }
@@ -268,7 +269,10 @@ impl Encode for Header {
     ///
     /// # Errors
     /// Returns [`MessageError::Io`] if the writer fails.
-    fn encode(&self, writer: &mut impl automotive_wire_codec::Sink) -> Result<usize, MessageError> {
+    fn encode(
+        &self,
+        writer: &mut impl automotive_wire_codec::Sink,
+    ) -> Result<usize, MessageError> {
         write_u8(writer, self.protocol_version.into())?;
         write_u8(writer, self.inverse_protocol_version)?;
         write_u16_be(writer, self.payload_type.into())?;

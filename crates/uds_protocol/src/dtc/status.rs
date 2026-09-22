@@ -109,7 +109,10 @@ pub enum DtcStatusMask {
 
 impl Encode for DtcStatusMask {
     type Error = crate::Error;
-    fn encode(&self, writer: &mut impl automotive_wire_codec::Sink) -> Result<usize, Error> {
+    fn encode(
+        &self,
+        writer: &mut impl automotive_wire_codec::Sink,
+    ) -> Result<usize, Error> {
         Ok(write_u8(writer, self.bits())?)
     }
 }
@@ -305,7 +308,9 @@ impl DtcRecord {
     /// stable, so a `const` table of DTC values needs this.
     #[must_use]
     pub const fn to_u32(&self) -> u32 {
-        ((self.high_byte as u32) << 16) | ((self.middle_byte as u32) << 8) | self.low_byte as u32
+        ((self.high_byte as u32) << 16)
+            | ((self.middle_byte as u32) << 8)
+            | self.low_byte as u32
     }
 }
 
@@ -320,7 +325,10 @@ impl From<DtcRecord> for u32 {
 impl Encode for DtcRecord {
     type Error = crate::Error;
 
-    fn encode(&self, writer: &mut impl automotive_wire_codec::Sink) -> Result<usize, Error> {
+    fn encode(
+        &self,
+        writer: &mut impl automotive_wire_codec::Sink,
+    ) -> Result<usize, Error> {
         Ok(write_bytes(
             writer,
             &[self.high_byte, self.middle_byte, self.low_byte],
@@ -434,7 +442,10 @@ impl From<FunctionalGroupIdentifier> for u8 {
 impl Encode for FunctionalGroupIdentifier {
     type Error = crate::Error;
 
-    fn encode(&self, writer: &mut impl automotive_wire_codec::Sink) -> Result<usize, Error> {
+    fn encode(
+        &self,
+        writer: &mut impl automotive_wire_codec::Sink,
+    ) -> Result<usize, Error> {
         Ok(write_u8(writer, self.value())?)
     }
 }
@@ -502,7 +513,11 @@ impl DtcSeverityMask {
     #[must_use]
     pub fn is_valid(&self) -> bool {
         self.intersects(
-            Self::DtcClass0 | Self::DtcClass1 | Self::DtcClass2 | Self::DtcClass3 | Self::DtcClass4,
+            Self::DtcClass0
+                | Self::DtcClass1
+                | Self::DtcClass2
+                | Self::DtcClass3
+                | Self::DtcClass4,
         )
     }
 }
@@ -510,7 +525,10 @@ impl DtcSeverityMask {
 impl Encode for DtcSeverityMask {
     type Error = crate::Error;
 
-    fn encode(&self, writer: &mut impl automotive_wire_codec::Sink) -> Result<usize, Error> {
+    fn encode(
+        &self,
+        writer: &mut impl automotive_wire_codec::Sink,
+    ) -> Result<usize, Error> {
         Ok(write_u8(writer, self.bits())?)
     }
 }
@@ -587,7 +605,10 @@ impl From<u8> for DtcStoredDataRecordNumber {
 impl Encode for DtcStoredDataRecordNumber {
     type Error = crate::Error;
 
-    fn encode(&self, writer: &mut impl automotive_wire_codec::Sink) -> Result<usize, Error> {
+    fn encode(
+        &self,
+        writer: &mut impl automotive_wire_codec::Sink,
+    ) -> Result<usize, Error> {
         Ok(write_u8(writer, self.0)?)
     }
 }
@@ -616,7 +637,8 @@ mod encode_param_tests {
         let n = DtcStoredDataRecordNumber::new(0x05);
         let mut buf = [0u8; 4];
         let written =
-            Encode::encode(&n, &mut automotive_wire_codec::SliceSink::new(&mut buf)).unwrap();
+            Encode::encode(&n, &mut automotive_wire_codec::SliceSink::new(&mut buf))
+                .unwrap();
         assert_eq!(written, 1);
         assert_eq!(buf[0], 0x05);
         assert_encode_size_agrees(&n);
@@ -647,7 +669,8 @@ mod encode_param_tests {
         let m = DtcSeverityMask::CheckImmediately;
         let mut buf = [0u8; 4];
         let written =
-            Encode::encode(&m, &mut automotive_wire_codec::SliceSink::new(&mut buf)).unwrap();
+            Encode::encode(&m, &mut automotive_wire_codec::SliceSink::new(&mut buf))
+                .unwrap();
         assert_eq!(written, 1);
         assert_eq!(buf[0], 0b1000_0000);
         assert_encode_size_agrees(&m);
@@ -658,7 +681,8 @@ mod encode_param_tests {
         let g = FunctionalGroupIdentifier::EmissionsSystemGroup;
         let mut buf = [0u8; 4];
         let written =
-            Encode::encode(&g, &mut automotive_wire_codec::SliceSink::new(&mut buf)).unwrap();
+            Encode::encode(&g, &mut automotive_wire_codec::SliceSink::new(&mut buf))
+                .unwrap();
         assert_eq!(written, 1);
         assert_eq!(buf[0], 0x33);
         assert_encode_size_agrees(&g);
