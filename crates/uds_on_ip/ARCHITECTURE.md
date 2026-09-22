@@ -712,9 +712,10 @@ where it was checked. Re-checked on 2026-09-22, after the workspace merge, for
 the entries this revision touches.
 
 An earlier version of this section analysed `src/client.rs`, `src/session.rs`
-and their siblings. Those files were retired to `legacy/` and the crate
-rewritten against the seams of [§4](#4-the-seams); every gap listed there was
-about code that no longer ships. It has been replaced rather than amended.
+and their siblings. Those files were retired and have since been removed from
+the crate entirely, and it was rewritten against the seams of
+[§4](#4-the-seams); every gap listed there was about code that no longer
+ships. It has been replaced rather than amended.
 
 ### 9.1 Prerequisites — blocking, and not in this crate
 
