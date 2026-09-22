@@ -1,0 +1,79 @@
+# The crate gate. Every command here is one `just` recipe or one cargo invocation that
+# is also runnable locally -- CI that cannot be reproduced on a laptop is a guess.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: -D warnings
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test --workspace --all-features
+      - run: cargo test --workspace --no-default-features
+
+  clippy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo fmt --all --check
+      - run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+
+  # The check a host build cannot make. A workspace Cargo.lock unifies features across
+  # members, so a std dependency enabled by one crate can reach a no_std sibling and
+  # nothing in the `test` job above would notice.
+  embedded:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: thumbv7em-none-eabihf
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build -p uds_protocol --target thumbv7em-none-eabihf --no-default-features
+      - run: cargo build -p uds_session  --target thumbv7em-none-eabihf --no-default-features
+      - run: cargo build -p uds_services --target thumbv7em-none-eabihf --no-default-features
+      - run: cargo build -p uds_on_ip    --target thumbv7em-none-eabihf --no-default-features
+      - run: cargo build -p uds_protocol --target thumbv7em-none-eabihf --no-default-features --features alloc
+      - run: cargo build -p uds_on_ip    --target thumbv7em-none-eabihf --no-default-features --features alloc
+
+  # Each crate declares its own rust-version floor; the lowest across the workspace is
+  # what a `cargo build` on an old toolchain actually needs.
+  msrv:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.88
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo check --workspace --all-features
+
+  docs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo doc --workspace --all-features --no-deps
+
+  deny:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: EmbarkStudios/cargo-deny-action@v2
