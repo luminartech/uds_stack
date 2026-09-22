@@ -1220,7 +1220,7 @@ async fn handler_can_emit_ack_then_response() {
     match first.payload {
         OwnedPayload::DiagnosticMessageAck(ref ack) => {
             // Assert the code, not just the variant: the ack payload type is
-            // hardcoded positive regardless of the code (ARCHITECTURE §7.2), so
+            // hardcoded positive regardless of the code (ARCHITECTURE §7.1), so
             // a variant-only check would pass on a negative ack too and would
             // depend on that bug staying exactly as it is.
             assert_eq!(ack.ack_code, DiagnosticAckCode::RoutingConfirmationAck);

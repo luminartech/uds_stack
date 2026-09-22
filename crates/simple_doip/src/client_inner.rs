@@ -450,7 +450,7 @@ where
                         // caller receives `Ok(..)` carrying a rejection.
                         //
                         // ENTANGLEMENT: this is downstream of the deliberately-deferred
-                        // `0x8002` hardcode (see ARCHITECTURE.md section 7.2). Whoever
+                        // `0x8002` hardcode (see ARCHITECTURE.md section 7.1). Whoever
                         // fixes that hardcode changes this path: once negative acks carry
                         // `0x8003`, `is_response` stops matching and the caller starts
                         // seeing an error instead. Decide deliberately what a rejected
