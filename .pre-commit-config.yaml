@@ -104,8 +104,18 @@ repos:
         language: system
         pass_filenames: false
         files: ^docs/(architecture|requirements)/.*\.rst$
+      # rustfmt wraps code to rustfmt.toml's max_width and leaves comments alone:
+      # `wrap_comments` is nightly-only, so on a stable toolchain `cargo fmt --check`
+      # passes on a doc comment of any length. That makes the declared width enforced
+      # for code and left to a reviewer's eye for prose — the arrangement rustfmt.toml's
+      # own comment says it exists to avoid. This closes the gap, reading the limit from
+      # rustfmt.toml so the width is declared once rather than twice.
+      #
+      # `types: [rust]`, as in the config this came from. It is not an .rst checker: a
+      # sphinx-needs `:source:` field holds semicolon-separated spec locators on one
+      # line and cannot be wrapped without breaking the field.
       - id: check-line-width
         name: line width
         entry: python3 tools/check_line_width.py
         language: system
-        files: ^docs/.*\.rst$
+        types: [rust]

@@ -136,7 +136,7 @@ server over tokio.
 <!-- Only v0.1.0, v0.5.1 and v0.5.2 were ever tagged, so the intermediate
      versions have no comparison range to link. -->
 
-[0.6.0]: https://github.com/luminartech/simple_doip/compare/v0.5.2...v0.6.0
-[0.5.2]: https://github.com/luminartech/simple_doip/compare/v0.5.1...v0.5.2
-[0.5.1]: https://github.com/luminartech/simple_doip/compare/v0.1.0...v0.5.1
 [0.1.0]: https://github.com/luminartech/simple_doip/releases/tag/v0.1.0
+[0.5.1]: https://github.com/luminartech/simple_doip/compare/v0.1.0...v0.5.1
+[0.5.2]: https://github.com/luminartech/simple_doip/compare/v0.5.1...v0.5.2
+[0.6.0]: https://github.com/luminartech/simple_doip/compare/v0.5.2...v0.6.0

@@ -59,4 +59,3 @@ pedantic = { level = "deny", priority = -1 }
 # means a match over an enum must say what it does with every case, so the
 # hole has to be written down in code rather than remembered.
 wildcard_enum_match_arm = "deny"
-

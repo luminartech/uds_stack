@@ -11,6 +11,7 @@ fuzz_target!(|data: &[u8]| {
     let Some((type_bytes, payload_bytes)) = data.split_at_checked(2) else {
         return;
     };
-    let payload_type = PayloadType::from(u16::from_be_bytes([type_bytes[0], type_bytes[1]]));
+    let payload_type =
+        PayloadType::from(u16::from_be_bytes([type_bytes[0], type_bytes[1]]));
     let _ = Payload::decode(payload_bytes, payload_type);
 });

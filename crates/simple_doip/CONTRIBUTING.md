@@ -70,12 +70,12 @@ configuration, shared byte-for-byte with `uds_protocol` and
 
 The version comes out of the squashed subjects since the last release:
 
-| Subject | Effect while `0.x` |
-|---|---|
-| `feat:` | minor |
-| `fix:`, `perf:`, `refactor:`, `revert:`, `docs:` | patch |
-| `chore:`, `ci:`, `build:`, `test:`, `style:` | nothing on their own |
-| any of the above with `!`, or a `BREAKING CHANGE:` footer | minor |
+| Subject                                                   | Effect while `0.x`   |
+| --------------------------------------------------------- | -------------------- |
+| `feat:`                                                   | minor                |
+| `fix:`, `perf:`, `refactor:`, `revert:`, `docs:`          | patch                |
+| `chore:`, `ci:`, `build:`, `test:`, `style:`              | nothing on their own |
+| any of the above with `!`, or a `BREAKING CHANGE:` footer | minor                |
 
 Pre-1.0 a breaking change is a minor bump, so `!` is what lifts a `fix:` out
 of a patch. Reach for it whenever a caller has to change something to keep
