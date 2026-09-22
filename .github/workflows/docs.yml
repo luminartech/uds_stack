@@ -1,12 +1,28 @@
 # The requirement-set gate. needs.json is consumed as evidence against a committed
 # snapshot, so the toolchain that produces it is pinned and `--frozen` refuses to
 # re-resolve.
+#
+# The `needs` job also builds the browsable HTML and hands it to `deploy`, which
+# publishes it to GitHub Pages. Builds on every pull request and every push to main;
+# deploys from main alone. A pull request build is a gate, not a preview: GitHub Pages
+# serves one site per repository, so reviewers read the rendered set locally instead.
 name: Docs
 
 on:
   push:
     branches: [main]
   pull_request:
+  # So the site can be republished without an empty commit, e.g. after changing a Pages
+  # setting or re-running a failed deployment. A dispatch against any other ref builds
+  # and stops, because the deploy job below is guarded on the ref rather than the event.
+  workflow_dispatch:
+
+# Read-only by default. The build job runs third-party package code through `uv sync`,
+# and granting the deployment's capabilities workflow-wide would let that code mint the
+# Pages OIDC token and publish. They belong to the deploy job alone, which runs no
+# checkout and no third-party code beyond the deploy action itself.
+permissions:
+  contents: read
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -30,3 +46,43 @@ jobs:
       # link fails the build rather than passing quietly.
       - run: uv run --frozen sphinx-build -b needs -W -q docs docs/_build/needs
       - run: uv run --frozen sphinx-build -b html  -W -q docs docs/_build/html
+
+      # The site is what a person reads, and nothing else.
+      #
+      # needs.json is the one that matters. `needs_build_json` in conf.py makes the
+      # *html* builder emit it alongside the pages, so publishing the directory
+      # unpruned would put it at a stable public URL rebuilt on every push to main.
+      # That export is consumed as evidence against a committed snapshot, for
+      # reproducibility; a live URL is exactly what must not be available to point at
+      # instead.
+      #
+      # permalink.html has to go with it: sphinx-needs emits it for every builder
+      # except `needs`, and left behind once needs.json is gone it never resolves.
+      - name: Prune non-published build output
+        run: rm -f docs/_build/html/needs.json docs/_build/html/permalink.html
+
+      - uses: actions/upload-pages-artifact@v5
+        with:
+          path: docs/_build/html
+
+  deploy:
+    needs: needs
+    # Guarded on the ref, not the event: a pull request builds at refs/pull/N/merge and
+    # a dispatch can name any branch, so this covers both without enumerating events.
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    # Pages has a single deployment target, so overlapping deployments would race.
+    # Queue rather than cancel: cancelling mid-deploy can leave the site half-written,
+    # and a superseded deployment has already been superseded by the time it matters.
+    concurrency:
+      group: pages
+      cancel-in-progress: false
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v5

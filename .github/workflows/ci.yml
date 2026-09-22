@@ -1,79 +1,199 @@
-# The crate gate. Every command here is one `just` recipe or one cargo invocation that
-# is also runnable locally -- CI that cannot be reproduced on a laptop is a guess.
+# Thin caller for the org-wide reusable Rust CI workflow. This file owns the triggers and
+# repo-specific configuration; luminartech/rust_workflow owns most of the jobs: pre-commit,
+# lint, build, no_std canary, unit/property tests with coverage, miri, MSRV, semver-checks,
+# security audit, docs, a publish dry run, and the release-plz automation.
+#
+# rust-ci.yml's commands are crate-shaped (no `--workspace`, no `package`/`members` input),
+# but that turns out not to matter here: this is a *virtual* workspace manifest (no root
+# [package]), and a bare `cargo <cmd>` with no `-p` at a virtual workspace root already
+# defaults to every member -- confirmed locally for build, clippy and test. The one job the
+# reusable workflow genuinely cannot reach is fuzzing: its fuzz-tests job runs
+# `cargo fuzz build`/`list`/`run` at the checkout root, which is where a single-crate repo's
+# `fuzz/` directory lives, and has no input to point it elsewhere. This workspace's two fuzz
+# targets live under crates/simple_doip/fuzz and crates/uds_protocol/fuzz instead, so
+# run-fuzz-tests is disabled below and replaced with the two hand-rolled jobs at the bottom
+# of this file. See task-14b-report.md for the rust_workflow change (a `fuzz-directory`
+# input) that would let this move back into the reusable workflow.
 name: CI
 
 on:
+  pull_request:
+  merge_group:
   push:
     branches: [main]
-  pull_request:
+  schedule:
+    - cron: '0 5 * * *'
+  workflow_dispatch:
+    inputs:
+      enable-comprehensive-tests:
+        description: 'Run comprehensive test suites (longer fuzz, miri)'
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
   cancel-in-progress: true
 
-env:
-  CARGO_TERM_COLOR: always
-  RUSTFLAGS: -D warnings
-
 jobs:
-  test:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-      - run: cargo test --workspace --all-features
-      - run: cargo test --workspace --no-default-features
+  ci:
+    uses: luminartech/rust_workflow/.github/workflows/rust-ci.yml@v1
+    # The reusable workflow's test jobs downscope themselves to contents: read; this grant
+    # is only used by the release-plz jobs (release PR + tag/GitHub-release publish).
+    permissions:
+      contents: write
+      pull-requests: write
+    secrets:
+      cargo-registry-token: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+      release-plz-app-id: ${{ secrets.RELEASE_PLZ_APP_ID }}
+      release-plz-app-private-key: ${{ secrets.RELEASE_PLZ_APP_PRIVATE_KEY }}
+    with:
+      # Restrict publishing/release-plz to the canonical repo so a fork never publishes.
+      publish-repository: luminartech/uds_stack
+      # release-plz.toml already carries per-crate publish flags and namespaced tags for
+      # this workspace, so let release-plz own versioning, changelogs, tags and publish --
+      # matching the pre-merge uds_protocol and simple_doip callers.
+      use-release-plz: true
 
-  clippy:
+      # The root Cargo.toml is a virtual manifest with no [package], so there is no
+      # rust-version for the msrv job to read by default (it would fail: "No msrv input
+      # and no rust-version in Cargo.toml"). 1.88 is the floor that matters: an msrv build
+      # with no -p builds every member together, so the highest per-crate rust-version
+      # (uds_session, uds_services, simple_doip and uds_on_ip all declare 1.88 -- only
+      # uds_protocol's own manifest still says 1.85.0) is what a shared build actually
+      # needs. This matches the previous hand-rolled msrv job's choice.
+      msrv: '1.88'
+
+      # Scoped to the two crates that are actually on crates.io, so cargo-semver-checks has
+      # a real published baseline to diff against. uds_services is `publish = false`;
+      # uds_session and uds_on_ip (still alpha) have never been published. Leaving
+      # `package` empty is not simply the safer default here: the same input also selects
+      # which crate(s) `cargo publish --dry-run` targets, and this scopes both jobs down to
+      # the two live crates rather than validating packaging for uds_session/uds_on_ip too.
+      # Left this way because cargo-semver-checks' behavior against a workspace mixing
+      # published, unpublished and publish=false crates could not be verified end-to-end in
+      # this environment (see the report) -- narrowing to a known-good pair avoids finding
+      # that out for the first time in CI.
+      package: 'uds_protocol,simple_doip'
+
+      # This workspace's proptest suites are `proptest!` blocks inside lib code, not a
+      # separate integration-test target, so excluding them from the coverage job would
+      # understate coverage. Deliberately overlapping rather than disjoint: the property
+      # job re-runs the same tests under their own name for a readable signal.
+      unit-test-filter: 'all()'
+      property-test-filter: 'test(~prop_)'
+
+      # thumbv7em-none-eabihf, not the workflow's thumbv6m-none-eabi default: it is the
+      # target the justfile's own `embedded_target` names and the one the previous
+      # hand-rolled `embedded` job checked against (AURIX TC4x stand-in).
+      no-std-target: thumbv7em-none-eabihf
+
+      # See the module comment above: the reusable workflow cannot reach either fuzz
+      # target in this layout.
+      run-fuzz-tests: false
+
+      comprehensive-tests: ${{ inputs.enable-comprehensive-tests || false }}
+
+  # ===================================================================================
+  # Fuzz Tests (hand-rolled: the reusable workflow's fuzz-tests job cannot reach these)
+  # ===================================================================================
+  # Each job mirrors rust-ci.yml's own fuzz-tests job (nightly toolchain, cargo-fuzz,
+  # bounded run time, artifacts-on-failure) but scoped to one crate's fuzz/ directory.
+  fuzz-uds-protocol:
+    name: Fuzz Tests (uds_protocol)
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: crates/uds_protocol
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@v7
         with:
-          components: clippy, rustfmt
-      - uses: Swatinem/rust-cache@v2
-      - run: cargo fmt --all --check
-      - run: cargo clippy --workspace --all-targets --all-features -- -D warnings
-
-  # The check a host build cannot make. A workspace Cargo.lock unifies features across
-  # members, so a std dependency enabled by one crate can reach a no_std sibling and
-  # nothing in the `test` job above would notice.
-  embedded:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master 2026-07-14
         with:
-          targets: thumbv7em-none-eabihf
+          toolchain: nightly
       - uses: Swatinem/rust-cache@v2
-      - run: cargo build -p uds_protocol --target thumbv7em-none-eabihf --no-default-features
-      - run: cargo build -p uds_session  --target thumbv7em-none-eabihf --no-default-features
-      - run: cargo build -p uds_services --target thumbv7em-none-eabihf --no-default-features
-      - run: cargo build -p uds_on_ip    --target thumbv7em-none-eabihf --no-default-features
-      - run: cargo build -p uds_protocol --target thumbv7em-none-eabihf --no-default-features --features alloc
-      - run: cargo build -p uds_on_ip    --target thumbv7em-none-eabihf --no-default-features --features alloc
+        with:
+          workspaces: crates/uds_protocol/fuzz
+      - name: Install cargo-fuzz
+        uses: taiki-e/cache-cargo-install-action@v3
+        with:
+          tool: cargo-fuzz
+      - name: Build fuzz targets
+        run: cargo fuzz build
+      - name: Run fuzz targets
+        shell: bash
+        env:
+          COMPREHENSIVE: >-
+            ${{ inputs.enable-comprehensive-tests
+                || github.event_name == 'schedule'
+                || github.event_name == 'merge_group'
+                || (github.event_name == 'push' && github.ref_name == 'main') }}
+        run: |
+          max_time=6
+          if [[ "$COMPREHENSIVE" == "true" ]]; then
+            max_time=600
+          fi
+          for target in $(cargo fuzz list); do
+            cargo fuzz run "$target" -- -max_total_time="$max_time"
+          done
+      - name: Upload fuzz artifacts on failure
+        uses: actions/upload-artifact@v7
+        if: failure()
+        with:
+          name: fuzz-artifacts-uds_protocol
+          path: crates/uds_protocol/fuzz/artifacts/
+          retention-days: 30
 
-  # Each crate declares its own rust-version floor; the lowest across the workspace is
-  # what a `cargo build` on an old toolchain actually needs.
-  msrv:
+  fuzz-simple-doip:
+    name: Fuzz Tests (simple_doip)
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: crates/simple_doip
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@1.88
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master 2026-07-14
+        with:
+          toolchain: nightly
       - uses: Swatinem/rust-cache@v2
-      - run: cargo check --workspace --all-features
-
-  docs:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-      - run: cargo doc --workspace --all-features --no-deps
-
-  deny:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          workspaces: crates/simple_doip/fuzz
+      - name: Install cargo-fuzz
+        uses: taiki-e/cache-cargo-install-action@v3
+        with:
+          tool: cargo-fuzz
+      - name: Build fuzz targets
+        run: cargo fuzz build
+      - name: Run fuzz targets
+        shell: bash
+        env:
+          COMPREHENSIVE: >-
+            ${{ inputs.enable-comprehensive-tests
+                || github.event_name == 'schedule'
+                || github.event_name == 'merge_group'
+                || (github.event_name == 'push' && github.ref_name == 'main') }}
+        run: |
+          max_time=6
+          if [[ "$COMPREHENSIVE" == "true" ]]; then
+            max_time=600
+          fi
+          for target in $(cargo fuzz list); do
+            cargo fuzz run "$target" -- -max_total_time="$max_time"
+          done
+      - name: Upload fuzz artifacts on failure
+        uses: actions/upload-artifact@v7
+        if: failure()
+        with:
+          name: fuzz-artifacts-simple_doip
+          path: crates/simple_doip/fuzz/artifacts/
+          retention-days: 30
