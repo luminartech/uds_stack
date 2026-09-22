@@ -44,7 +44,7 @@ in the meantime are marked in place in the file itself.
 It does not decode UDS messages — that is
 [`uds_protocol`](https://crates.io/crates/uds_protocol) — and it does not
 dispatch services, choose negative response codes, or know what a data
-identifier is; those are ISO 14229-1 clause 8.7 concerns and belong to
+identifier is; those are ISO 14229-1 behaviour and belong to
 [`uds_services`](https://github.com/luminartech/uds_stack/tree/main/crates/uds_services).
 It holds no ISO 14229-2 vocabulary: addressing, the service primitives and the
 session state machine are
@@ -53,7 +53,8 @@ and are used from there rather than redeclared here.
 
 The one exception is narrow and forced by the standard: clause 8 keys TCP
 connection handling on two specific service identifiers
-(`DiagnosticSessionControl` and `ECUReset`). See `profile::service_ids`.
+(`DiagnosticSessionControl` and `ECUReset`), so this crate recognises those two
+bytes and nothing else about them.
 
 It also names no async runtime. An `async fn` implies neither an executor nor
 `std`, but a runtime *dependency* would compromise the `no_std` build, so

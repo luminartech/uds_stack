@@ -41,10 +41,6 @@ repos:
     - id: check-yaml
       args: [--allow-multiple-documents]
     - id: check-json
-      # .vscode/launch.json is JSONC (comments, per VS Code convention); a plain JSON
-      # parser rejects it. Excluding it instead of dropping the hook keeps check-json
-      # enforcing strict JSON everywhere else, including the root renovate.json.
-      exclude: ^crates/.*/\.vscode/.*\.json$
     - id: check-added-large-files
       args: [--maxkb=1024]
     - id: check-merge-conflict

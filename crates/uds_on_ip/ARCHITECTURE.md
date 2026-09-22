@@ -74,7 +74,7 @@ name a transport are bound to one.
 
 | Standard | Scope | Crate |
 | --- | --- | --- |
-| ISO 14229-1:2020 cl. 8.7 | Server response implementation rules — dispatch, NRC selection | **`uds_services`** |
+| ISO 14229-1:2020 (behaviour) | Dispatch and NRC selection, incl. the cl. 8.7 response rules | **`uds_services`** |
 | ISO 14229-1:2020 cl. 7, 10–15 | Diagnostic service message definitions | **`uds_protocol`** |
 | ISO 14229-2:2021 | Session layer services — `S_Data`, `tP_Client`, `tS3` | **`uds_session`** |
 | ISO 14229-5:2022 | UDSonIP application profile; `T_Data` ↔ `DoIP_Data` mapping | **`uds_on_ip`** |
@@ -180,7 +180,7 @@ service, and the identifiers themselves are derived from `uds_protocol`'s
 `UdsServiceType` rather than written here as bytes. See
 [§3.6](#36-when-and-what) for why the rule lands here and not one layer up.
 
-### 3.5 `uds_services` — ISO 14229-1 cl. 8.7
+### 3.5 `uds_services` — ISO 14229-1's behaviour
 
 Owns the ergonomic layer — per-service handler traits, the dispatch table, and
 the negative-response rules of clause 8.7 — **and the driver**. It holds a
@@ -615,7 +615,7 @@ as it would attach.
 ```mermaid
 flowchart TB
     APP["Application<br/>typed service handlers"]
-    USVC["uds_services<br/>ISO 14229-1 cl. 8.7 · driver<br/><i>declares UdsTransport</i>"]
+    USVC["uds_services<br/>ISO 14229-1 behaviour · driver<br/><i>declares UdsTransport</i>"]
     US["uds_session<br/>ISO 14229-2<br/><i>shared</i>"]
     UOI["uds_on_ip<br/>ISO 14229-5"]
     UOC["uds_on_can<br/>ISO 14229-3"]

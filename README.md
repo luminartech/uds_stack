@@ -12,13 +12,17 @@ Each crate is scoped by which standard specifies its behaviour, not by
 convenience. That rule is what keeps the layering honest: a crate that would
 have to read another standard to do its job has the wrong boundary.
 
-| Crate                                 | Standard            | What it owns                                                                                                                                           |
-| ------------------------------------- | ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| [`uds_protocol`](crates/uds_protocol) | ISO 14229-1         | The message format. Encodes and decodes UDS requests and responses; no dispatch, no policy, no session state.                                          |
-| [`uds_session`](crates/uds_session)   | ISO 14229-2         | The session layer, as a sans-io state machine. Never learns its transport, and never reads a clock.                                                    |
-| [`uds_services`](crates/uds_services) | ISO 14229-1 cl. 8.7 | Server response implementation rules: typed service dispatch over caller-defined identifiers. Declares the transport seam and implements no transport. |
-| [`simple_doip`](crates/simple_doip)   | ISO 13400-2         | DoIP. A `no_std`, zero-copy protocol core with optional async client and server.                                                                       |
-| [`uds_on_ip`](crates/uds_on_ip)       | ISO 14229-5         | The UDSonIP application profile, and the mapping of UDS onto DoIP.                                                                                     |
+| Crate                                 | Standard                | What it owns                                                                                                                                                                                          |
+| ------------------------------------- | ----------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [`uds_protocol`](crates/uds_protocol) | ISO 14229-1 (format)    | The message format. Encodes and decodes UDS requests and responses; no dispatch, no policy, no session state.                                                                                         |
+| [`uds_session`](crates/uds_session)   | ISO 14229-2             | The session layer, as a sans-io state machine. Never learns its transport, and never reads a clock.                                                                                                   |
+| [`uds_services`](crates/uds_services) | ISO 14229-1 (behaviour) | Everything in ISO 14229-1 that is not the format: typed service dispatch over caller-defined identifiers, and the clause 8.7 response rules. Declares the transport seam and implements no transport. |
+| [`simple_doip`](crates/simple_doip)   | ISO 13400-2             | DoIP. A `no_std`, zero-copy protocol core with optional async client and server.                                                                                                                      |
+| [`uds_on_ip`](crates/uds_on_ip)       | ISO 14229-5             | The UDSonIP application profile, and the mapping of UDS onto DoIP.                                                                                                                                    |
+
+ISO 14229-1 is the one document too large for that rule to settle on its own,
+so it is the stack's only split: `uds_protocol` owns its format, `uds_services`
+owns everything else in it. Every other standard is owned whole.
 
 The wire codec these share, [`automotive-wire-codec`][awc], is released
 separately: it serves protocols outside this stack as well.
@@ -34,13 +38,13 @@ edge runs from implementor to declarer.
 Under active development, and honest about it: the crates are at different
 maturities and not all of them are published.
 
-| Crate          | Version       | crates.io                                          |
-| -------------- | ------------- | -------------------------------------------------- |
-| `uds_protocol` | 0.1.0         | [published](https://crates.io/crates/uds_protocol) |
-| `simple_doip`  | 0.6.0         | [published](https://crates.io/crates/simple_doip)  |
-| `uds_session`  | 0.1.0         | not yet                                            |
-| `uds_on_ip`    | 0.2.0-alpha.1 | not yet                                            |
-| `uds_services` | 0.0.0         | pre-implementation                                 |
+| Crate          | Version       | Where it stands                                                                            |
+| -------------- | ------------- | ------------------------------------------------------------------------------------------ |
+| `uds_protocol` | 0.1.0         | Implemented. [Published](https://crates.io/crates/uds_protocol).                           |
+| `simple_doip`  | 0.6.0         | Implemented. [Published](https://crates.io/crates/simple_doip).                            |
+| `uds_session`  | 0.1.0         | Pre-implementation: the public surface is complete, the bodies are `todo!()`. Unpublished. |
+| `uds_on_ip`    | 0.2.0-alpha.1 | Alpha: the API shape is settled, the transport bodies are `todo!()`. Unpublished.          |
+| `uds_services` | 0.0.0         | Pre-implementation. `publish = false`.                                                     |
 
 Versions are independent. A release of one crate says nothing about the others.
 

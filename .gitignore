@@ -14,3 +14,6 @@ __pycache__/
 
 # macOS finder metadata. Several of these arrived with the imported histories.
 .DS_Store
+
+# Editor scratch.
+.vscode/

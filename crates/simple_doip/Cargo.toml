@@ -9,14 +9,11 @@ repository = "https://github.com/luminartech/uds_stack"
 readme = "README.md"
 keywords = ["doip", "iso13400", "automotive", "diagnostics", "no-std"]
 categories = ["network-programming", "embedded", "no-std"]
-exclude = [
-    "docs/",
-    ".github/",
-    ".vscode/",
-    # Repo-local tooling, not part of the library a consumer receives.
-    "release-plz.toml",
-    "rust-toolchain.toml",
-]
+# Editor scratch an editor may recreate locally. Everything else that used to
+# be listed here -- docs/, .github/, release-plz.toml, rust-toolchain.toml --
+# moved to the workspace root in the consolidation and can no longer appear
+# under this crate at all.
+exclude = [".vscode/"]
 
 # `default = []`, so docs.rs would otherwise build the no_std core alone and
 # publish a reference with no `client`, `server`, `codec`, `alloc` or `std`

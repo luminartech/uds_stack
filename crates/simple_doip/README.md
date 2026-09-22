@@ -57,8 +57,8 @@ case, within these bounds:
   acknowledgement is dropped, so a peer that answers first appears never to
   answer at all.
 
-[`ARCHITECTURE.md`](ARCHITECTURE.md) §7 has the mechanics behind each of these,
-and the deferred work around them.
+[`ARCHITECTURE.md`](ARCHITECTURE.md) §7 records these and the rest of the
+deferred work.
 
 None of this constrains bare-metal or single-client use.
 

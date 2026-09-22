@@ -2,6 +2,10 @@
 name = "uds_session"
 version = "0.1.0"
 edition = "2024"
+rust-version = "1.88"
+description = "ISO 14229-2 session layer: a transport-agnostic, no_std, sans-io state machine for the client and server roles"
+keywords = ["uds", "iso14229", "automotive", "diagnostics", "no-std"]
+categories = ["no-std", "embedded", "network-programming"]
 # Dual licence at the consumer's option, the Rust ecosystem's convention. Apache-2.0
 # carries an express patent grant, which matters for an automotive protocol; MIT is here
 # because a downstream that cannot take Apache-2.0 should still have a path. The same

@@ -1,4 +1,4 @@
-# uds_protocol
+# `uds_protocol`
 
 `uds_protocol` owns ISO 14229-1's message format: encoding and decoding UDS
 requests and responses. It targets embedded ECU diagnostics and desktop
@@ -23,7 +23,7 @@ other crate in the stack.
   (ISO 14229-2) sits beside it in the stack but does not depend on it — the
   session layer never reads a message's content.
 - [`uds_services`](https://github.com/luminartech/uds_stack/tree/main/crates/uds_services)
-  (ISO 14229-1 cl. 8.7) and
+  (ISO 14229-1's behaviour, to this crate's format) and
   [`uds_on_ip`](https://github.com/luminartech/uds_stack/tree/main/crates/uds_on_ip)
   (ISO 14229-5) both depend on this crate directly: they dispatch and transport
   the message types this crate encodes and decodes.
@@ -143,16 +143,12 @@ you need to keep before the buffer is reused.
 
 ## Service coverage
 
-These services decode into typed [`Request`]/[`Response`] variants: `DiagnosticSessionControl`,
-`EcuReset`, `SecurityAccess`, `CommunicationControl`, `TesterPresent`, `ControlDtcSetting`,
-`ReadDataByIdentifier`, `WriteDataByIdentifier`, `ClearDiagnosticInfo`, `ReadDtcInfo`,
-`RoutineControl`, `RequestDownload`, `RequestUpload`, `TransferData`, `RequestTransferExit`,
-`RequestFileTransfer`, and `NegativeResponse`.
-
-All other services enumerated in [`UdsServiceType`] (e.g. `Authentication`, `ReadMemoryByAddress`,
-`ResponseOnEvent`) are not individually modeled. Frames for them decode into
-[`Request::Other`] / [`Response::Other`], carrying the service type and raw payload bytes for
-pass-through.
+A checkmark in the table above means the service decodes into a typed
+[`Request`]/[`Response`] variant; [`NegativeResponse`] is typed as well. Every
+other service [`UdsServiceType`] enumerates decodes into [`Request::Other`] /
+[`Response::Other`], carrying the service type and the raw payload bytes for
+pass-through — an unmodelled service is handed to you intact rather than
+rejected.
 
 ## Wire codec dependency
 
@@ -186,5 +182,5 @@ at your option.
 
 Neither licence grants any right in ISO 14229-1 itself, which remains ISO's —
 see
-["Relationship to the standards"](https://github.com/luminartech/uds_stack#relationship-to-the-standards)
+[Relationship to the standards](https://github.com/luminartech/uds_stack#relationship-to-the-standards)
 in the workspace README.

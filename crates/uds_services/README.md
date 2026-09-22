@@ -1,13 +1,14 @@
 # uds_services
 
-ISO 14229-1 clause 8.7 server response implementation rules: typed UDS service
-dispatch over caller-defined identifiers.
+Everything in ISO 14229-1 that is not the message format: typed UDS service
+dispatch over caller-defined identifiers, and the clause 8.7 server response
+implementation rules.
 
 ## Where this fits
 
-`uds_services` is the layer described in the
-[`uds_stack`](https://github.com/luminartech/uds_stack) workspace README as
-"the last layer that understands UDS." It depends on
+`uds_services` is the last layer in the
+[`uds_stack`](https://github.com/luminartech/uds_stack) workspace that
+understands UDS: everything below it deals in bytes. It depends on
 [`uds_protocol`](https://crates.io/crates/uds_protocol) (ISO 14229-1 messages)
 and [`uds_session`](https://github.com/luminartech/uds_stack/tree/main/crates/uds_session)
 (ISO 14229-2 session timing), and drives the latter by value. Everything above
@@ -28,7 +29,7 @@ The architecture is authored as a sphinx-needs set under
 [`docs/architecture/`](https://github.com/luminartech/uds_stack/tree/main/docs/architecture)
 at the workspace root — not inside this crate's own directory — and is meant to
 be read rendered, at <https://luminartech.github.io/uds_stack/>. It carries
-twenty-four architecture elements (`UDSSVC_ARCH_####`), each recording either
+forty-two architecture elements (`UDSSVC_ARCH_####`), each recording either
 the clause that forces it or the reasoning behind choosing it, and an
 [open questions](https://github.com/luminartech/uds_stack/blob/main/docs/architecture/open-questions.rst)
 page for what is still unsettled. That set is provisional in the same sense as
@@ -101,7 +102,7 @@ server works over DoIP or CAN.
 ```
                     application
                          │  typed service handlers
-                  uds_services          ISO 14229-1 cl. 8.7   ← this crate
+                  uds_services          ISO 14229-1 behaviour ← this crate
                          │  byte seam, owned by the binding
           ┌──────────────┴──────────────┐
       uds_on_ip                   uds_on_can
@@ -114,8 +115,10 @@ server works over DoIP or CAN.
 ```
 
 One crate per ISO document, so "does this belong here?" is answered by asking
-which document specifies the behaviour. `uds_on_can` is drawn to show the
-shape the design buys, not a crate that exists in this workspace yet.
+which document specifies the behaviour. ISO 14229-1 is the single exception —
+too large for that rule to settle, so `uds_protocol` takes its format and this
+crate takes the rest. `uds_on_can` is drawn to show the shape the design buys,
+not a crate that exists in this workspace yet.
 
 ## Design constraints
 

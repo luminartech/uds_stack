@@ -10,7 +10,7 @@ and the server role.
 workspace. It depends on nothing else in the stack — no other crate's message
 format or transport is any of its business — and is driven directly by
 [`uds_services`](https://github.com/luminartech/uds_stack/tree/main/crates/uds_services)
-(ISO 14229-1 cl. 8.7), which owns the `Client`/`Server` instance and supplies
+(ISO 14229-1's behaviour), which owns the `Client`/`Server` instance and supplies
 every input.
 
 ## Status
