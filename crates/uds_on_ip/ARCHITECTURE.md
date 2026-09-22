@@ -50,6 +50,12 @@ in parallel against one agreed set of boundaries.
 > This repository contains no copy of any ISO standard, and the standards
 > remain ISO's; nothing here reproduces their text at length.
 
+> **This document is provisional.** Formal architecture and requirements for
+> this stack are being authored in sphinx-needs and will live under
+> `docs/architecture/`. That set supersedes this file when it lands. Until
+> then this is cut down to what still checks out against the code, not
+> migrated or rewritten wholesale.
+
 ---
 
 ## 1. The organising idea
@@ -68,7 +74,7 @@ name a transport are bound to one.
 
 | Standard | Scope | Crate |
 | --- | --- | --- |
-| ISO 14229-1:2020 cl. 8.7 | Server response implementation rules — dispatch, NRC selection | **`uds_services`** *(proposed)* |
+| ISO 14229-1:2020 cl. 8.7 | Server response implementation rules — dispatch, NRC selection | **`uds_services`** |
 | ISO 14229-1:2020 cl. 7, 10–15 | Diagnostic service message definitions | **`uds_protocol`** |
 | ISO 14229-2:2021 | Session layer services — `S_Data`, `tP_Client`, `tS3` | **`uds_session`** |
 | ISO 14229-5:2022 | UDSonIP application profile; `T_Data` ↔ `DoIP_Data` mapping | **`uds_on_ip`** |
@@ -346,37 +352,6 @@ The protocol layering that produced the sandwich reading is real and unchanged;
 what was wrong was inferring a *crate* boundary from it. See
 [§8.1](#81-protocol-layering).
 
-## 5. Where manufacturer-specific types enter
-
-Data identifiers, routine identifiers, and most DTCs are vehicle-manufacturer
-specific — ISO 14229-1 fixes ranges and a small set of standardised values, not
-the catalogue. The library therefore cannot own those enumerations. The
-application supplies them as associated types:
-
-```rust
-pub trait UdsServer {
-    type Did:  DataIdentifier;      // application's enum
-    type Rid:  RoutineIdentifier;
-    type Sess: SessionType;
-}
-
-pub trait ReadDataByIdentifier: UdsServer {
-    fn read(&mut self, did: Self::Did, out: &mut impl Writer) -> Result<(), Nrc>;
-}
-```
-
-This is what makes the compiler the completeness check the design is aiming for.
-Adding a variant to the application's `Did` enum breaks its own exhaustive
-`match`, so a newly defined identifier cannot silently go unhandled. A service
-the application does not implement at all answers `serviceNotSupported`
-automatically.
-
-Open design question, tracked in `uds_services` rather than here: whether
-per-service traits plus a `uds_server! { .. }` assembly macro is worth a
-proc-macro dependency, versus one trait whose default methods return
-`serviceNotSupported`. The macro extends the compile-time completeness signal
-from the identifier level up to the service level.
-
 ## 6. Timing ownership
 
 Timers are the easiest thing to duplicate across layers by accident, so
@@ -409,13 +384,13 @@ need to be — it is simply still running.
 
 One consequence for the driver, which is `uds_services`. Dispatch to a handler
 must not block the loop that drains session actions, or the timer cannot fire
-while a handler is executing. Their handler seam is `async`, so a slow handler
-yields rather than blocking — but whether the drain actually proceeds while a
-handler is pending is a property of their loop, and that loop is still
-unimplemented. They record a related gap of their own: a `Closed` event arriving
-while a handler is running is currently absorbed as a clean end of exchange,
-which cannot be the REQ 7.9 flow, because at that point no response has gone
-out.
+while a handler is executing. `uds_services::Server::step` does this: it races
+the handler against `next_event` and answers an overrun with response-pending
+while the handler keeps running. One gap remains there: a `Closed` event
+arriving while a handler is running is currently absorbed as a clean end of
+exchange (`Responded::Suppressed`), which cannot be the REQ 7.9 flow, because
+at that point no response has gone out. `uds_services` records this against
+its own dispatch pipeline, not against the loop shape.
 
 An earlier draft placed this constraint on a synchronous `RequestHandler` trait
 declared in *this* crate. That trait is deleted
@@ -589,7 +564,6 @@ flowchart LR
     AWC --> UP
     AWC --> SD
     AWC --> USVC
-    UP --> US
     UP --> USVC
     UP --> UOI
     US --> USVC
@@ -724,7 +698,7 @@ until its dependencies do.
 
 | Crate | crates.io | Blocker |
 | --- | --- | --- |
-| `automotive-wire-codec` | 0.3.0 | 0.4.0 release in flight |
+| `automotive-wire-codec` | 0.4.0 | — |
 | `uds_protocol` | 0.1.0 | — |
 | `simple_doip` | 0.6.0 | — |
 | `uds_session` | unpublished | Publication not yet attempted |
@@ -734,7 +708,8 @@ until its dependencies do.
 ## 9. Gap analysis
 
 Verified against the working tree on 2026-09-21, not recalled. Each entry names
-where it was checked.
+where it was checked. Re-checked on 2026-09-22, after the workspace merge, for
+the entries this revision touches.
 
 An earlier version of this section analysed `src/client.rs`, `src/session.rs`
 and their siblings. Those files were retired to `legacy/` and the crate
@@ -774,11 +749,14 @@ about code that no longer ships. It has been replaced rather than amended.
   again here because until it moves, this crate is implementing ISO 13400-2
   services and [§13](#13-invariants-to-preserve) invariant 1 is violated by this
   crate too, not only by `simple_doip`.
-- **REQ 7.9 / 7.11 have no trigger yet.** A server must initiate the close after
-  sending a positive `DiagnosticSessionControl` or `ECUReset` response. Nothing
-  in the stack is positioned to do it: this crate does not read outbound
-  responses, and the transport seam carries no way to ask for a close. Ownership
-  is settled ([§3.6](#36-when-and-what)); the mechanism is not built.
+- **REQ 7.9 / 7.11 are classified but not triggered.** `profile::after_sending`
+  now reads a message's first octet and records whether a close is owed
+  (`ConnectionAction::ExpectClose` / `InitiateClose`), and `transport.rs` calls
+  it on every send. But `t_data_req` itself is still a `todo!()`, so nothing
+  acts on what it recorded, and there is nowhere below to ask: the connection
+  seam of [§4.2](#42-connection-seam--uds_on_ip--simple_doip-proposed) carries
+  no `close()` yet. Ownership is settled ([§3.6](#36-when-and-what)); the
+  end-to-end mechanism is not.
 - **REQ 7.17 has no home.** The periodic data record length bound is not checked
   anywhere. It was briefly a free function in `profile` that no caller was
   obliged to consult and no path could reach, and was deleted until there is a
@@ -844,19 +822,23 @@ Two consequences for this crate specifically:
 ## 11. `no_std` scope
 
 `simple_doip` names a bare-metal diagnostic ECU as its forcing function and
-`uds_protocol` is `no_std`; the shipping `uds_on_ip` is `tokio` plus
-`async-trait`, so the question does not answer itself.
+`uds_protocol` is `no_std`, so `uds_on_ip` answering the same way is a
+requirement, not a default.
 
-The position taken here: **the core is `no_std` and alloc-free; only the drivers
-need `std`.** Addressing, the session seam, the transport mapping, the profile
-and the handler seam allocate nothing and build for a `*-none` target. Responses
-borrow a caller-supplied receive buffer and a handler writes into a
-caller-supplied sink, so no public type carries a `Vec` or a `String`.
+The position taken here, and the one the crate now builds to: **the core is
+`no_std` and alloc-free; only a driver needs `std`.** No runtime is named
+anywhere in this crate — `default = []`, and `tests/dependencies.rs` fails the
+build if a `tokio` dependency is reintroduced. Addressing, the session seam,
+the transport mapping, the profile and the handler seam allocate nothing and
+build for a `*-none` target. Responses borrow a caller-supplied receive buffer
+and a handler writes into a caller-supplied sink, so no public type carries a
+`Vec` or a `String`.
 
 This is designed in rather than deferred because it cannot be retrofitted: the
 signatures that make an API alloc-free are the same signatures callers depend
-on. The first driver happens to sit on `tokio`, but a bare-metal driver presents
-the same shape, which makes gaining one additive.
+on. No driver exists yet for any runtime — `DoIpTransport<S>`'s bodies are
+still `todo!()` — but the socket being a bare type parameter is what makes a
+tokio adapter and a bare-metal one equally additive whenever one is written.
 
 ## 12. Distribution constraints
 
