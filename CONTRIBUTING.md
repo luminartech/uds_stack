@@ -38,14 +38,14 @@ $ just check-all
 That runs the documentation checks, the test suite, clippy, and the bare-metal
 builds. Run it before pushing. Individually:
 
-| Recipe            | What it does                                                      |
-| ----------------- | ----------------------------------------------------------------- |
-| `just test`       | `cargo test --workspace --all-features`                           |
-| `just clippy`     | clippy over all targets, warnings denied                          |
-| `just embedded`   | builds the `no_std` crates for a bare-metal target                |
-| `just check-docs` | requirement-set policy checks, tool self-tests, needs build       |
-| `just html`       | browsable documentation, which is how the set is meant to be read |
-| `just check`      | every pre-commit hook over every file                             |
+| Recipe            | What it does                                                        |
+| ----------------- | ------------------------------------------------------------------- |
+| `just test`       | `cargo test --workspace --all-features`                             |
+| `just clippy`     | clippy over all targets, warnings denied                            |
+| `just embedded`   | builds the `no_std` crates for a bare-metal target                  |
+| `just check-docs` | requirement-set and governance checks, tool self-tests, needs build |
+| `just html`       | browsable documentation, which is how the set is meant to be read   |
+| `just check`      | every pre-commit hook over every file                               |
 
 `just --list` shows the rest.
 
@@ -111,3 +111,19 @@ records where a requirement came from, not what it means.
 ## Security
 
 Do not open a public issue for a security problem. See [SECURITY.md](SECURITY.md).
+
+## Licensing of contributions
+
+Every crate here is dual licensed under [MIT](LICENSE-MIT) or
+[Apache-2.0](LICENSE-APACHE) at the user's option, from the one pair of files
+at the repository root — each crate's `LICENSE-MIT` and `LICENSE-APACHE` is a
+symlink to them, so there is one text to keep current and no way for a crate to
+drift from it.
+
+Unless you state otherwise, any contribution you intentionally submit for
+inclusion in this work, as defined in the Apache-2.0 licence, is dual licensed
+on those same terms, with no additional conditions.
+
+That covers the requirement and architecture set under `docs/` as well as the
+code. It grants nothing in the ISO standards themselves, which remain ISO's —
+see [Relationship to the standards](README.md#relationship-to-the-standards).

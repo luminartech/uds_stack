@@ -178,5 +178,5 @@ private vulnerability reporting; see [`SECURITY.md`](https://github.com/luminart
 
 ## Licence
 
-Licensed under either of [MIT](LICENSE-MIT) or
-[Apache-2.0](LICENSE-APACHE) at your option.
+Licensed under either of [MIT](LICENSE-MIT) or [Apache-2.0](LICENSE-APACHE)
+at your option. Both files are the workspace's, shared by every crate here.

@@ -130,10 +130,9 @@ Security reports go through GitHub's private vulnerability reporting; see
 
 ## Licence
 
-Licensed under either of
+Licensed under either of [MIT](LICENSE-MIT) or [Apache-2.0](LICENSE-APACHE)
+at your option. Both files are the workspace's, shared by every crate here.
 
-- Apache License, Version 2.0 ([`LICENSE-APACHE`](LICENSE-APACHE))
-- MIT License ([`LICENSE-MIT`](LICENSE-MIT))
-
-at your option. One licence covers the crate's source and the requirement set alike,
-including each requirement's trace to the clause it came from.
+The same licence covers the requirement set under
+[`docs/`](https://github.com/luminartech/uds_stack/tree/main/docs), including
+each requirement's trace to the clause it came from.

@@ -246,6 +246,10 @@ pub(crate) enum DoIpEvent<'a> {
     dead_code,
     reason = "called once next_event's body replaces its todo!()"
 )]
+#[expect(
+    clippy::todo,
+    reason = "unwritten body; the allow is the record that it is outstanding"
+)]
 pub(crate) fn classify<'a>(
     header: &simple_doip::messages::Header,
     payload: &'a [u8],

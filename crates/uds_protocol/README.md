@@ -7,8 +7,8 @@ allocator and no async runtime.
 
 [![Crates.io](https://img.shields.io/crates/v/uds_protocol.svg?style=for-the-badge)](https://crates.io/crates/uds_protocol)
 [![Docs.rs](https://img.shields.io/docsrs/uds_protocol?style=for-the-badge)](https://docs.rs/uds_protocol)
-[![MIT License](https://img.shields.io/badge/license-MIT-blue.svg?style=for-the-badge)](./LICENSE-MIT)
-[![APACHE License](https://img.shields.io/badge/license-APACHE-blue.svg?style=for-the-badge)](./LICENSE-APACHE)
+[![MIT License](https://img.shields.io/badge/license-MIT-blue.svg?style=for-the-badge)](LICENSE-MIT)
+[![APACHE License](https://img.shields.io/badge/license-APACHE-blue.svg?style=for-the-badge)](LICENSE-APACHE)
 
 This library is based on the ISO 14229-1:2020 standard.
 
@@ -177,8 +177,8 @@ Security reports go through GitHub's private vulnerability reporting; see
 
 ## Licence
 
-Licensed under either of [MIT](./LICENSE-MIT) or [Apache-2.0](./LICENSE-APACHE)
-at your option.
+Licensed under either of [MIT](LICENSE-MIT) or [Apache-2.0](LICENSE-APACHE)
+at your option. Both files are the workspace's, shared by every crate here.
 
 Neither licence grants any right in ISO 14229-1 itself, which remains ISO's —
 see

@@ -25,8 +25,9 @@ use std::collections::BTreeSet;
 /// Section numbers cited as `` `ARCHITECTURE.md` §N `` anywhere in the crate.
 fn cited_sections(source: &str) -> BTreeSet<String> {
     let mut found = BTreeSet::new();
-    for (index, _) in source.match_indices("ARCHITECTURE.md` §") {
-        let tail = &source[index + "ARCHITECTURE.md` §".len()..];
+    // `split` rather than `match_indices` + slicing: each piece after the first
+    // already starts where the number does, so there is no offset to compute.
+    for tail in source.split("ARCHITECTURE.md` §").skip(1) {
         let number: String = tail
             .chars()
             .take_while(|c| c.is_ascii_digit() || *c == '.')

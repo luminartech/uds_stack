@@ -155,6 +155,10 @@ impl<S> UdsTransport for DoIpTransport<S> {
     /// message types have no `DoIP` representation.
     ///
     /// A *socket* failure has no variant yet — see [`Self::next_event`].
+    #[expect(
+        clippy::todo,
+        reason = "unwritten body; the allow is the record that it is outstanding"
+    )]
     async fn t_data_req(&mut self, ai: Ai, data: &[u8]) -> Result<(), Error> {
         let _target = target_of(ai)?;
         self.record_what_follows(data);
@@ -215,6 +219,10 @@ impl<S> UdsTransport for DoIpTransport<S> {
         unused_variables,
         reason = "buffer and deadline are unused until next_event's body replaces the todo!()"
     )]
+    #[expect(
+        clippy::todo,
+        reason = "unwritten body; the allow is the record that it is outstanding"
+    )]
     async fn next_event<'b>(
         &mut self,
         buffer: &'b mut [u8],
@@ -250,6 +258,10 @@ impl<S> UdsTransport for DoIpTransport<S> {
     /// `UDSS_LLR_0019` requires. The value `uds_session`'s `next_deadline`
     /// returns can then be handed straight back to [`Self::next_event`] with no
     /// arithmetic on either side of the seam.
+    #[expect(
+        clippy::todo,
+        reason = "unwritten body; the allow is the record that it is outstanding"
+    )]
     fn now(&self) -> Timestamp {
         todo!(
             "the clock belongs to whatever S is; see the missing-bound note on next_event"

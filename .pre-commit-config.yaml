@@ -115,3 +115,14 @@ repos:
         entry: python3 tools/check_line_width.py
         language: system
         types: [rust]
+      # The licence, contributing and security texts are the workspace's, and each
+      # crate reaches them by symlink. Replacing a symlink with a copy looks like an
+      # ordinary file in a diff and is wrong the first time the root text changes,
+      # so nothing but a check notices. `always_run`, because the defect is a file
+      # appearing where none was tracked before.
+      - id: check-governance
+        name: shared licence and governance files
+        entry: python3 tools/check_governance.py
+        language: system
+        pass_filenames: false
+        always_run: true

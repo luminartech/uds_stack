@@ -46,6 +46,13 @@ html:
 validate:
     python3 tools/validate_needs.py
 
+# Cargo has no workspace-level licence file: it packages what sits in the crate
+# directory. Each crate therefore symlinks the root pair, which `cargo package`
+# dereferences into the published archive. This checks the arrangement is intact.
+[doc("Check the licence and governance files are shared, not copied")]
+governance:
+    python3 tools/check_governance.py
+
 # Run this after adding needs. A count that did not move by the expected amount means a
 # directive was skipped rather than rejected, which is the failure mode this stack has
 # been bitten by before.
@@ -126,7 +133,7 @@ check:
     pre-commit run --all-files
 
 [doc("The fast subset a documentation change needs; use `check` before pushing")]
-check-docs: test-tools validate docs
+check-docs: test-tools validate governance docs
 
 [doc("The full gate: crates and docs")]
 check-all: check-docs test clippy embedded
