@@ -31,7 +31,7 @@ This leads to duplicated logic across applications and tight coupling between th
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │                    Application Code                         │
-│              ([INTERNAL_PROJECT_REDACTED], [PRODUCT_NAME_REDACTED], [PRODUCT_NAME_REDACTED], etc.)                │
+│              (diagnostic tools, test harnesses)             │
 └──────────────────────────┬──────────────────────────────────┘
                            │ UDS Requests/Responses
                            ▼

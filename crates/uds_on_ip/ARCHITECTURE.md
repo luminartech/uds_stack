@@ -702,35 +702,34 @@ the stack — the codec, the message definitions, the session layer, the
 bindings, the service dispatch — is intended to be a genuinely public crate,
 not an internal artifact.
 
-The internal [INTERNAL_REGISTRY_REDACTED] registry does not change that. It **proxies crates.io** as
-a source replacement, so internal builds resolve public dependencies through
-it. That is build infrastructure, not a publication target, and it relaxes
-nothing about ordering: a crate proxied from crates.io must first *be* on
-crates.io.
-
-So the ordering is strict and bottom-up, because crates.io accepts neither git
+The ordering is strict and bottom-up, because crates.io accepts neither git
 dependencies nor dependencies hosted in another registry — every dependency
-must already be there. A crate that builds and resolves perfectly inside the
-internal environment can still be unpublishable, and nothing surfaces that
-until publication is attempted. `cargo publish --dry-run` on every pull request
-is what catches it early; the shared workflow already has that stage.
+must already be there. A crate that builds and resolves perfectly against local
+path dependencies can still be unpublishable, and nothing surfaces that until
+publication is attempted. `cargo publish --dry-run` on every pull request is
+what catches it early.
 
-This also settles the SDK question in
-[§12.1](#121-this-crate-ships-to-customers-as-source): the bundle vendors these
-crates today because customers cannot reach an internal registry. Once they are
-public, the bundle can take ordinary registry dependencies instead.
+Sharing one workspace makes the ordering visible rather than discovered: the
+five crates resolve against each other by path for development and by version
+for publication, and a `[workspace.dependencies]` entry that lacks a version is
+a packaging failure at dry-run time rather than at release time.
 
-The consequence for this crate is unwelcome but real: `uds_on_ip` cannot
-publish until both of its dependencies do, and neither is there yet.
+This also settles the question in
+[§12](#12-distribution-constraints): consumers build this crate from source today
+because it is not yet on crates.io. Once it is, they can take an ordinary
+registry dependency instead.
+
+The consequence for this crate is unwelcome but real: `uds_on_ip` cannot publish
+until its dependencies do.
 
 | Crate | crates.io | Blocker |
 | --- | --- | --- |
-| `automotive-wire-codec` | 0.3.0 | — |
-| `uds_protocol` | 0.0.2 | `main` is at 0.1.0; the release PR has been open since 2026-07-30 |
-| `simple_doip` | unpublished | Publication tooling in flight |
-| `uds_on_ip` | unpublished | Both of the above |
-| `uds_session` | unpublished | Pre-implementation |
-| `uds_services` | pre-implementation | — |
+| `automotive-wire-codec` | 0.3.0 | 0.4.0 release in flight |
+| `uds_protocol` | 0.1.0 | — |
+| `simple_doip` | 0.6.0 | — |
+| `uds_session` | unpublished | Publication not yet attempted |
+| `uds_services` | unpublished | Pre-implementation; `publish = false` |
+| `uds_on_ip` | unpublished | `uds_session`, `uds_services` |
 
 ## 9. Gap analysis
 
@@ -789,12 +788,6 @@ about code that no longer ships. It has been replaced rather than amended.
   from the generic header specifically so a periodic response does not reach
   `Payload::decode` and come back as a wire error, but its body is still a
   `todo!()` and the `0x8004` payload layout is not yet written down.
-- **Two unobtainable dependencies.** `uds_session` is a private repository and
-  `uds_services` is not publicly visible, and this crate depends on both
-  unconditionally — while [§12.1](#121-this-crate-ships-to-customers-as-source)
-  has it shipping to customers as source. The optional-feature mitigation an
-  earlier draft relied on no longer exists
-  ([§12.3](#123-two-dependencies-a-customer-cannot-obtain)).
 - **Functional addressing has no fan-out test.** ISO 14229-5:2022 Figure 8 has
   several servers answering one functional request, with `tP_Client` expiry
   rather than a single response being the signal that no more are coming.
@@ -867,79 +860,22 @@ the same shape, which makes gaining one additive.
 
 ## 12. Distribution constraints
 
-Two constraints that change what "publication order" in
-[§8.4](#84-publication-order) means. Both bind before any of the design above
-can ship. Verified 2026-09-10 against fetched `origin/main` refs, not local
-checkouts.
+Verified 2026-09-22.
 
-### 12.1 This crate ships to customers as source
+This crate is built from source by its consumers today, because it is not yet on
+crates.io. Once it and its dependencies publish, a consumer can take ordinary
+registry dependencies instead ([§8.4](#84-publication-order)).
 
-`[INTERNAL_PROJECT_REDACTED]`'s `[INTERNAL_PATH_REDACTED]/sdk.toml` lists `crates/uds_on_ip` under
-`[component.diagnostics]`, alongside `uds_protocol` and `simple_doip`. The
-manifest's own comment gives the reason: all three are workspace path deps of
-`[INTERNAL_COMPONENT_REDACTED]`, so the bundle must carry them or the copied
-manifests dangle. The SDK is built from source by consumers.
-
-This is transitional. Once these crates are on crates.io the bundle can take
-ordinary registry dependencies instead of vendoring sources
-([§8.4](#84-publication-order)) — which is one of the reasons the public
-publication matters.
-
-Three things follow:
+Two consequences, and both outlive that change:
 
 - The redesign in this document is a **breaking change to shipped code**, and
   no migration path is stated anywhere. One is owed before it lands.
-- [§9](#9-gap-analysis) is a public defect list on a customer-facing crate.
-  That may still be right — the defects are real and concealing them serves
-  nobody — but it should be a decision, not an accident.
-- This document ships with the crate. That is why the citation note at the top
-  is one line rather than an argument about policy.
+- [§9](#9-gap-analysis) is a public defect list on a crate consumers build from
+  source. That may still be right — the defects are real and concealing them
+  serves nobody — but it should be a decision, not an accident.
 
-### 12.2 Two copies exist, and the split-out is in progress
-
-`crates/uds_protocol` and `crates/simple_doip` are git submodules of `[INTERNAL_PROJECT_REDACTED]`
-pointing at their standalone repositories. `crates/uds_on_ip` is not — it is a
-plain directory in `[INTERNAL_PROJECT_REDACTED]`'s tree, so this repository is a second copy of it.
-
-**This is transitional.** The crates are being removed from `[INTERNAL_PROJECT_REDACTED]` and consumed
-from an internal [INTERNAL_REGISTRY_REDACTED] registry instead, retiring the monorepo. **This
-repository is canonical**; `[INTERNAL_PROJECT_REDACTED]`'s in-tree copy is the one going away.
-
-Until that removal lands there is no mechanism to notice divergence — a
-submodule pins a revision, an in-tree copy drifts silently — and the two are
-byte-identical today only because nobody has changed one without the other.
-`[INTERNAL_PROJECT_REDACTED]`'s CI builds its copy (`-p uds_on_ip`) and filters on
-`crates/uds_on_ip/**`; nothing fetches or mirrors. So the ordering matters:
-the prototype is what first diverges them, and reconciling two histories
-afterwards costs more than removing the copy first.
-
-### 12.3 Two dependencies a customer cannot obtain
-
-Re-verified via the GitHub API on 2026-09-21: `luminartech/uds_session` is
-**private**, and `luminartech/uds_services` is **not visible** to the token used
-— it either does not exist yet or is private too. `simple_doip` and
-`uds_protocol` are public.
-
-This crate now depends on both unconditionally. That is a harder constraint than
-the one an earlier draft recorded, and the mitigation it named is gone: it
-described the `uds_session` edge as optional, behind a `SessionLayer` adapter
-feature, with an interim in-crate session implementation as the default. The
-adapter never existed, the interim implementation was retired to `legacy/`, and
-the edge is now a plain dependency — joined by a second one, to the crate that
-declares the transport seam.
-
-So [§12.1](#121-this-crate-ships-to-customers-as-source)'s "ships to customers as
-source" and the dependency list cannot both stand as they are. Three ways out,
-none of them this document's to choose:
-
-- publish `uds_session` and `uds_services` before `uds_on_ip` ships;
-- ship the three together as one distribution;
-- re-establish a default build that depends on neither, which means reinstating
-  something like the interim session implementation and declaring the transport
-  seam locally — the design this crate deliberately left.
-
-Recorded as a gap in [§9.2](#92-design-gaps-in-this-crate) rather than resolved
-here.
+This document ships with the crate. That is why the citation note at the top is
+one line rather than an argument about policy.
 
 ## 13. Invariants to preserve
 
