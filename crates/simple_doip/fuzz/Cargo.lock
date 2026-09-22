@@ -22,6 +22,8 @@ dependencies = [
 [[package]]
 name = "automotive-wire-codec"
 version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a826dcc5dd8dbd6e3b5a19bd3da3c9b7a4dd712f5ce6a346cbf8f3e203e4a4d1"
 
 [[package]]
 name = "bytes"
