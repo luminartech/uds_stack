@@ -1,12 +1,43 @@
 # simple_doip
 
-An ISO 13400-2 (DoIP) implementation with a `no_std`, zero-copy protocol core
-and optional async client and server.
+`simple_doip` owns ISO 13400-2: Diagnostics over IP (DoIP). It is a `no_std`,
+zero-copy protocol core with optional async client and server.
 
 [`ARCHITECTURE.md`](ARCHITECTURE.md) describes how the crate is put together —
 the feature-gated layering, the sans-io framing/decode seam, the error taxonomy,
 the relationship to `automotive-wire-codec`, and the known issues and deferred
 refactors a new maintainer should read before changing anything.
+**Provisional**: it is being replaced by the sphinx-needs set under
+[`docs/`](https://github.com/luminartech/uds_stack/tree/main/docs) at the
+[`uds_stack`](https://github.com/luminartech/uds_stack) workspace root, and
+where the two disagree, `docs/` wins.
+
+## Where this fits
+
+This crate is the transport at the bottom of the `uds_stack` workspace: it
+knows DoIP framing and nothing about UDS.
+[`uds_on_ip`](https://github.com/luminartech/uds_stack/tree/main/crates/uds_on_ip)
+(ISO 14229-5) is the one crate in this stack that depends on it, mapping the
+`UDSonIP` application profile onto the DoIP messages this crate provides.
+
+## What this crate deliberately does not do
+
+It models protocol **structure** only. It knows what a diagnostic message
+looks like on the wire; it does not know what the UDS bytes inside one *mean*.
+`Payload::DiagnosticMessage` carries `user_data: &[u8]` and nothing more — no
+service dispatch, no session timing, no UDS decoding. Those are
+[`uds_protocol`](https://crates.io/crates/uds_protocol)'s,
+[`uds_session`](https://github.com/luminartech/uds_stack/tree/main/crates/uds_session)'s
+and
+[`uds_services`](https://github.com/luminartech/uds_stack/tree/main/crates/uds_services)'s
+concerns, and this crate has no dependency on any of them.
+
+## Status
+
+Published at 0.6.0. See the
+[workspace README](https://github.com/luminartech/uds_stack#status) for where
+the other crates in the stack stand — versions are independent, and a release
+of one says nothing about the others.
 
 ## Scope and limitations
 
@@ -131,13 +162,21 @@ semver: a breaking change in that crate is a breaking change here too.
 The minimum supported Rust version is **1.88**, bound by let-chain syntax
 used in this crate.
 
+## Relationship to the standards
+
+Neither licence below grants any right in ISO 13400-2, which remains ISO's, and
+no text of the standard is reproduced here or in `ARCHITECTURE.md`. See
+["Relationship to the standards"](https://github.com/luminartech/uds_stack#relationship-to-the-standards)
+in the workspace README for the fuller statement that applies to every crate in
+this stack.
+
 ## Contributing
 
 Pull requests, bug reports and questions are welcome — see
 [`CONTRIBUTING.md`](https://github.com/luminartech/uds_stack/blob/main/CONTRIBUTING.md). Security reports go through GitHub's
 private vulnerability reporting; see [`SECURITY.md`](https://github.com/luminartech/uds_stack/blob/main/SECURITY.md).
 
-## License
+## Licence
 
 Licensed under either of [MIT](LICENSE-MIT) or
 [Apache-2.0](LICENSE-APACHE) at your option.

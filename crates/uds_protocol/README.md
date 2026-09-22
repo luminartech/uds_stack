@@ -1,20 +1,44 @@
-# Unified Diagnostics Services (UDS) Protocol
+# uds_protocol
 
-This crate offers an ergonomic, `no_std`-friendly implementation of the UDS (ISO 14229) protocol codec in Rust.
-It targets embedded ECU diagnostics and desktop tooling alike: encoding and decoding UDS protocol messages — and custom data types — with no required allocator and no async runtime.
-It is not in a complete state yet, please check back soon!
+`uds_protocol` owns ISO 14229-1's message format: encoding and decoding UDS
+requests and responses. It targets embedded ECU diagnostics and desktop
+tooling alike — `no_std` and allocation-free at its core, with no required
+allocator and no async runtime.
 
 [![Crates.io](https://img.shields.io/crates/v/uds_protocol.svg?style=for-the-badge)](https://crates.io/crates/uds_protocol)
 [![Docs.rs](https://img.shields.io/docsrs/uds_protocol?style=for-the-badge)](https://docs.rs/uds_protocol)
-[![Codecov](https://img.shields.io/codecov/c/github/luminartech/uds_protocol?style=for-the-badge)](https://app.codecov.io/github/luminartech/uds_protocol)
 [![MIT License](https://img.shields.io/badge/license-MIT-blue.svg?style=for-the-badge)](./LICENSE-MIT)
 [![APACHE License](https://img.shields.io/badge/license-APACHE-blue.svg?style=for-the-badge)](./LICENSE-APACHE)
 
-This library provides serialization and deserialization of UDS messages.
-It is based on the ISO 14229-1:2020 standard.
+This library is based on the ISO 14229-1:2020 standard.
+
+## Where this fits
+
+`uds_protocol` is the bottom of the stack described in the
+[`uds_stack`](https://github.com/luminartech/uds_stack) workspace README: the
+message format that everything above it builds on. It has no dependency on any
+other crate in the stack.
+
+- [`uds_session`](https://github.com/luminartech/uds_stack/tree/main/crates/uds_session)
+  (ISO 14229-2) sits beside it in the stack but does not depend on it — the
+  session layer never reads a message's content.
+- [`uds_services`](https://github.com/luminartech/uds_stack/tree/main/crates/uds_services)
+  (ISO 14229-1 cl. 8.7) and
+  [`uds_on_ip`](https://github.com/luminartech/uds_stack/tree/main/crates/uds_on_ip)
+  (ISO 14229-5) both depend on this crate directly: they dispatch and transport
+  the message types this crate encodes and decodes.
+
+## What this crate does not do
+
+It is a synchronous, allocation-free codec, and nothing more. It owns no
+sockets, buffers, or async runtime; it does not dispatch a request to a
+handler, choose a negative response code, or hold any session state. Driving
+the I/O loop, over `DoIP`, `UDSonIP`, ISO-TP, or anything else, is a caller's
+job — see [`uds_services`](https://github.com/luminartech/uds_stack/tree/main/crates/uds_services)
+for the layer that owns dispatch.
 
 | Service Name                       | Request SID | Response SID | Support |
-| ---------------------------------- | ----------- | ------------ | ------- |
+| ----------------------------------- | ----------- | ------------ | ------- |
 | `DiagnosticSessionControl`         | 0x10        | 0x50         | ✓       |
 | `EcuReset`                         | 0x11        | 0x51         | ✓       |
 | `ClearDiagnosticInformation`       | 0x14        | 0x54         | ✓       |
@@ -47,10 +71,15 @@ It is based on the ISO 14229-1:2020 standard.
 edition. `UdsServiceType` still names it so a 2013-era service byte round-trips rather than
 becoming an unrecognized `Other`, but it is not part of the standard this crate targets.
 
+## `no_std` support
+
+The crate is `no_std` and allocation-free at its core; everything below is
+additive. Encoding and decoding work with borrowed slices alone — no service in
+the table above needs an allocator to be represented.
+
 ## Features
 
-Default is `std`. The crate is `no_std` and allocation-free at its core; everything below is
-additive.
+Default is `std`.
 
 | Feature | Implies | What it gives you |
 |---------|---------|-------------------|
@@ -74,7 +103,7 @@ With `serde` enabled, the types that carry a range invariant deserialize through
 classifier the wire decoder uses, so a hand-written payload cannot construct a value that would
 encode to an illegal byte.
 
-## Integration
+## Usage
 
 `uds_protocol` is a synchronous, allocation-free codec. It owns no sockets, buffers, or
 async runtime. To use it over any transport (`DoIP`, `UDSonIP`, ISO-TP, …):
@@ -133,3 +162,29 @@ traits (`Encode`, `Decode`, `DecodeIter`) at the crate root. These types are int
 they are shared across the Luminar automotive protocol crates so that callers handling multiple
 protocols see one consistent short-read/trailing-data error shape. Because of this, a semver-major
 release of `automotive-wire-codec` is a breaking change for `uds_protocol` as well.
+
+## Status
+
+Published at 0.1.0. Under active development, and versioned independently of
+the rest of the stack — see the
+[workspace README](https://github.com/luminartech/uds_stack#status) for where
+the other crates stand. The service coverage table above is the honest measure
+of what is implemented today; a request without a checkmark decodes as
+[`Request::Other`] rather than failing.
+
+## Contributing
+
+Pull requests, bug reports and questions are welcome — see
+[`CONTRIBUTING.md`](https://github.com/luminartech/uds_stack/blob/main/CONTRIBUTING.md).
+Security reports go through GitHub's private vulnerability reporting; see
+[`SECURITY.md`](https://github.com/luminartech/uds_stack/blob/main/SECURITY.md).
+
+## Licence
+
+Licensed under either of [MIT](./LICENSE-MIT) or [Apache-2.0](./LICENSE-APACHE)
+at your option.
+
+Neither licence grants any right in ISO 14229-1 itself, which remains ISO's —
+see
+["Relationship to the standards"](https://github.com/luminartech/uds_stack#relationship-to-the-standards)
+in the workspace README.

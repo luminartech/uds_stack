@@ -1,201 +1,133 @@
-# UDS on IP
+# uds_on_ip
 
-> **Status: prototype, mid-refactor.** This README describes the superseded
-> implementation retired to `legacy/`. The crate is now a transport below the
-> session layer, with no driver and no runtime dependency — see the crate
-> documentation (`cargo doc --open`) for what it actually provides today.
+`uds_on_ip` owns **ISO 14229-5 (`UDSonIP`)**: the application profile that
+binds Unified Diagnostic Services to a `DoIP` transport. It owns two layers of
+that standard — clause 8, the application profile (the `A_PDU` format, TCP
+connection handling around `DiagnosticSessionControl` and `ECUReset`, and which
+timing parameters apply), and clause 11, the mapping of `T_PDU` service
+primitives onto `DoIP`'s.
 
-This crate provides UDS (Unified Diagnostic Services) session management over DoIP (Diagnostics over IP) transport. It serves as the bridge layer between the protocol definition crate [`uds_protocol`](https://github.com/luminartech/uds_protocol) and the transport layer crate [`simple_doip`](https://github.com/luminartech/simple_doip).
+## Where this fits
 
-## Motivation
-
-The automotive diagnostics stack has a natural layered architecture:
-
-| Layer | Crate | Responsibility |
-|-------|-------|----------------|
-| Protocol | `uds_protocol` | UDS message encoding/decoding (ISO 14229) |
-| **Session** | **`uds_on_ip`** | **Session management, keepalive, routing** |
-| Transport | `simple_doip` | DoIP framing and TCP/UDP transport (ISO 13400) |
-
-Without this intermediate layer, application code must handle:
-- Connection lifecycle (routing activation/deactivation)
-- Session keepalive (tester present messages)
-- Response timeout handling (P2/P2* timers)
-- Response pending (NRC 0x78) management
-- Request/response correlation
-
-This leads to duplicated logic across applications and tight coupling between the protocol and transport layers.
-
-## Architecture
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│                    Application Code                         │
-│              (diagnostic tools, test harnesses)             │
-└──────────────────────────┬──────────────────────────────────┘
-                           │ UDS Requests/Responses
-                           ▼
-┌─────────────────────────────────────────────────────────────┐
-│                       uds_on_ip                             │
-│  ┌─────────────────────────────────────────────────────┐    │
-│  │              Session Manager                        │    │
-│  │  - Tracks diagnostic session state                  │    │
-│  │  - Manages security access level                    │    │
-│  └─────────────────────────────────────────────────────┘    │
-│  ┌─────────────────────────────────────────────────────┐    │
-│  │              Keepalive Service                      │    │
-│  │  - Sends periodic TesterPresent (0x3E)              │    │
-│  │  - Resets timer on any diagnostic activity          │    │
-│  └─────────────────────────────────────────────────────┘    │
-│  ┌─────────────────────────────────────────────────────┐    │
-│  │              Response Handler                       │    │
-│  │  - Correlates responses to pending requests         │    │
-│  │  - Handles NRC 0x78 (response pending)              │    │
-│  │  - Manages P2/P2* timeouts                          │    │
-│  └─────────────────────────────────────────────────────┘    │
-│  ┌─────────────────────────────────────────────────────┐    │
-│  │              Connection Manager                     │    │
-│  │  - DoIP routing activation                          │    │
-│  │  - Reconnection on connection loss                  │    │
-│  │  - Logical address management                       │    │
-│  └─────────────────────────────────────────────────────┘    │
-└──────────────────────────┬──────────────────────────────────┘
-                           │ DoIP Diagnostic Messages
-                           ▼
-┌─────────────────────────────────────────────────────────────┐
-│                      simple_doip                            │
-│  - DoIP message framing (ISO 13400-2)                       │
-│  - TCP connection management                                │
-│  - UDP vehicle discovery                                    │
-└─────────────────────────────────────────────────────────────┘
+```text
+  consuming application
+       ↕  typed service traits / typed client calls
+  uds_services      the driver — owns Client/Server, declares UdsTransport
+       ↓  UdsTransport
+  uds_on_ip         ISO 14229-5 profile + DoIP mapping  ← this crate
+       ↓
+  simple_doip       ISO 13400-2
 ```
 
-## Key Features
+This crate is **wholly below** the session layer in the
+[`uds_stack`](https://github.com/luminartech/uds_stack) workspace. It hosts no
+driver, calls nothing upward, and knows nothing about services. It implements
+[`uds_services`](https://github.com/luminartech/uds_stack/tree/main/crates/uds_services)'s
+`UdsTransport` trait, and depends on
+[`simple_doip`](https://crates.io/crates/simple_doip) (ISO 13400-2) below it and
+on [`uds_protocol`](https://crates.io/crates/uds_protocol) and
+[`uds_session`](https://github.com/luminartech/uds_stack/tree/main/crates/uds_session)
+for their shared vocabulary. The dependency edge runs from here to
+`uds_services`, never the other way — `uds_services` never names a transport,
+which is what keeps a binding additive at the application.
 
-### Session Management
+[`ARCHITECTURE.md`](ARCHITECTURE.md) has the fuller picture, including the
+seams to `simple_doip` and `uds_services` and the standard's own citations.
+**Provisional**: it is a design document that predates parts of the current
+code and is being replaced by the sphinx-needs set under
+[`docs/`](https://github.com/luminartech/uds_stack/tree/main/docs) at the
+workspace root; where the two disagree, `docs/` wins, and corrections found
+in the meantime are marked in place in the file itself.
 
-Tracks the current diagnostic session type and handles session transitions:
+## What this crate deliberately does not do
 
-- Default Session (0x01)
-- Programming Session (0x02)
-- Extended Diagnostic Session (0x03)
-- Vendor-specific sessions
+It does not decode UDS messages — that is
+[`uds_protocol`](https://crates.io/crates/uds_protocol) — and it does not
+dispatch services, choose negative response codes, or know what a data
+identifier is; those are ISO 14229-1 clause 8.7 concerns and belong to
+[`uds_services`](https://github.com/luminartech/uds_stack/tree/main/crates/uds_services).
+It holds no ISO 14229-2 vocabulary: addressing, the service primitives and the
+session state machine are
+[`uds_session`](https://github.com/luminartech/uds_stack/tree/main/crates/uds_session)'s,
+and are used from there rather than redeclared here.
 
-### Tester Present Keepalive
+The one exception is narrow and forced by the standard: clause 8 keys TCP
+connection handling on two specific service identifiers
+(`DiagnosticSessionControl` and `ECUReset`). See `profile::service_ids`.
 
-UDS sessions timeout if no diagnostic activity occurs. This crate automatically sends `TesterPresent` (SID 0x3E) messages at configurable intervals to keep sessions alive. The keepalive timer resets on any diagnostic activity.
+It also names no async runtime. An `async fn` implies neither an executor nor
+`std`, but a runtime *dependency* would compromise the `no_std` build, so
+`DoIpTransport` is generic over its socket and an adapter for tokio, embassy,
+or a bare-metal driver is additive rather than built in.
 
-### Response Timeout Handling
+## Status
 
-Implements the P2 and P2* timing parameters from ISO 14229:
+**Alpha (`0.2.0-alpha.1`), not yet published.** The public API shape is
+settled — `DoIpTransport<S>` implements `uds_services::UdsTransport` — but the
+transport method bodies are still `todo!()`: sending a message
+(`t_data_req`), reading the next event (`next_event`), and reading the clock
+(`now`) all panic today rather than doing anything. Constructing a transport
+and recording its outbound size bound already work and are exercised by unit
+tests; the wire-level send/receive path is the work that remains. See the
+[workspace README](https://github.com/luminartech/uds_stack#status) for how
+this compares to the rest of the stack.
 
-- **P2 Server Max**: Maximum time for initial response (default 50ms, extended to 5s for robustness)
-- **P2* Server Max**: Extended timeout after NRC 0x78 response pending (default 5s, can be 25s+)
+## Feature flags
 
-When the ECU responds with NRC 0x78 (Response Pending), the crate automatically extends the timeout and waits for the final response.
+| Feature | Implies | What it gives you |
+|---------|---------|--------------------|
+| `std` *(off by default)* | `alloc` | `std::error::Error` for `Error`, and `std` on `simple_doip`/`uds_protocol`. |
+| `alloc` | — | The `alloc`-only layers of `simple_doip` and `uds_protocol`. Nothing in this crate's own code needs it. |
 
-### Request/Response Correlation
+`default = []`, so the crate is `no_std` out of the box.
 
-DoIP connections can have multiple outstanding requests. This crate tracks pending requests and routes responses to the correct caller based on service ID matching.
+## `no_std` support
+
+`no_std` and allocation-free in its default configuration: no public type
+contains a `Vec` or a `String`, and an inbound message borrows the receive
+buffer. A bare-metal AURIX `TC4x` target is a qualification target for this
+stack, which is why no feature here ever names a runtime.
 
 ## Usage
 
+The API shape can be exercised today even though the transport methods
+themselves are not implemented yet:
+
 ```rust
-use std::net::IpAddr;
-use uds_on_ip::{UdsClient, UdsClientOptions, SessionConfig};
-use uds_protocol::Response;
+use uds_on_ip::DoIpTransport;
+use uds_on_ip::profile::bench_reloads;
+use uds_services::UdsTransport;
 
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Configure session behavior
-    let session_config = SessionConfig::new()
-        .with_tester_present_interval(std::time::Duration::from_secs(2))
-        .with_response_timeout(std::time::Duration::from_secs(5));
+// `S` is your own socket type; nothing here names a runtime.
+let socket = (); // stand-in until a real async or bare-metal socket is wired in
+let mut transport = DoIpTransport::new(socket, bench_reloads());
 
-    // Configure connection options
-    let options = UdsClientOptions::new([192, 168, 1, 100].into())
-        .with_server_logical_address(0x0001)
-        .with_routing_activation(true)
-        .with_session_config(session_config);
-
-    // Connect to sensor - handles DoIP routing activation
-    let client = UdsClient::connect(options).await?;
-
-    // Enter extended diagnostic session
-    let response = client.enter_extended_session().await?;
-
-    // Extract timing parameters from response
-    if let Response::DiagnosticSessionControl(session) = response {
-        println!("P2 Server Max: {} ms", session.p2_server_max);
-        println!("P2* Server Max: {} ms", session.p2_star_server_max * 10);
-    }
-
-    // Send tester present to verify session
-    client.tester_present(true).await?;
-
-    // Clean shutdown
-    client.shutdown().await;
-    Ok(())
-}
+// Learned from the peer's entity status response, once one arrives.
+transport.set_outbound_max(Some(4096));
+assert_eq!(transport.outbound_max(), Some(4096));
 ```
 
-### Running the Example
+`bench_reloads()` gives the conventional `tP6` reload pair for a desk setup —
+see its documentation for why it is not a configuration for a vehicle.
+Calling `t_data_req`, `next_event`, or `now` on the transport still panics; see
+[Status](#status).
 
-A complete example is provided that demonstrates connecting to a server and entering an extended diagnostic session:
+## Relationship to the standards
 
-```bash
-# Run against localhost (requires a DoIP server running)
-cargo run --example extended_session
+Neither licence below grants any right in ISO 14229-5, which remains ISO's,
+and no text of the standard is reproduced here or in `ARCHITECTURE.md`. See
+["Relationship to the standards"](https://github.com/luminartech/uds_stack#relationship-to-the-standards)
+in the workspace README for the fuller statement that applies to every crate
+in this stack.
 
-# Run against a specific IP
-cargo run --example extended_session -- 192.168.1.100
-```
+## Contributing
 
-## Configuration
+Pull requests, bug reports and questions are welcome — see
+[`CONTRIBUTING.md`](https://github.com/luminartech/uds_stack/blob/main/CONTRIBUTING.md).
+Security reports go through GitHub's private vulnerability reporting; see
+[`SECURITY.md`](https://github.com/luminartech/uds_stack/blob/main/SECURITY.md).
 
-| Parameter | Default | Description |
-|-----------|---------|-------------|
-| `tester_present_interval` | 2s | How often to send keepalive messages |
-| `response_timeout` | 5s | Initial response timeout (P2 max) |
-| `response_pending_timeout` | 25s | Extended timeout after NRC 0x78 (P2* max) |
-| `auto_tester_present` | true | Whether to automatically send keepalives |
+## Licence
 
-## Recent behavior changes
-
-If you have downstream code built against an older `uds_on_ip`, these are
-the behavior changes worth knowing about:
-
-- **TesterPresent suppressed during NRC 0x78.** Once the ECU returns NRC
-  0x78 (response pending), the in-loop tester-present is held off until
-  the response cycle completes. This prevents the rare ECU
-  configurations that NACK a TP mid-pending (observed during app→FBL
-  transitions) from corrupting the in-flight request.
-- **P2\* applied after NRC 0x78.** The session switches from the regular
-  `response_timeout` (P2) to `response_pending_timeout` (P2\*) once a
-  pending response arrives, instead of timing out at the original P2.
-- **Initial-send reconnect returns `ReconnectedWithoutResponse`.** A
-  reconnect that happens before the first response is no longer reported
-  as a generic timeout — callers can distinguish "reconnected but the
-  request was never answered" from "request was sent and timed out."
-- **Timeout-path re-send restored after reconnect.** If a reconnect
-  happens during the wait, the request is automatically re-sent on the
-  new connection rather than dropped silently.
-- **2-byte NACKs rejected as malformed.** Truncated NACKs no longer
-  decode into bogus negative responses; they surface as a protocol error.
-- **Stray cross-SID responses ignored on reconnect.** If a stale response
-  for a previous SID arrives after reconnect, it's discarded and the
-  current request is re-sent immediately.
-- **Post-reconnect TP gated on keepalive-active.** After a reconnect, the
-  tester-present pump only resumes if keepalive was active before — it
-  doesn't start sending TPs on a session that wasn't using them.
-
-## Dependencies
-
-- [`uds_protocol`](https://github.com/luminartech/uds_protocol) - UDS message types and encoding
-- [`simple_doip`](https://github.com/luminartech/simple_doip) - DoIP transport layer
-
-## Standards References
-
-- ISO 14229-1:2020 - Unified Diagnostic Services (UDS)
-- ISO 14229-2:2021 - Session layer services
-- ISO 13400-2:2019 - DoIP transport protocol
+Licensed under either of [MIT](LICENSE-MIT) or [Apache-2.0](LICENSE-APACHE) at
+your option.
