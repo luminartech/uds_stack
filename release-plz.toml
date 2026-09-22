@@ -1,0 +1,33 @@
+# Workspace mode. Each package versions and releases on its own cadence: the five crates
+# sit at five different versions and two are already on crates.io at versions a unified
+# scheme could not reproduce. A single workspace version would force a lockstep release
+# and would misreport what changed in any given one.
+[workspace]
+# Each package keeps the changelog that arrived with it from its own repository.
+changelog_update = true
+git_release_enable = true
+# Tags are namespaced by crate, matching the tag scheme the history import used.
+git_tag_name = "{{ package }}/v{{ version }}"
+
+[[package]]
+name = "uds_protocol"
+publish = true
+
+[[package]]
+name = "uds_session"
+publish = true
+
+[[package]]
+name = "simple_doip"
+publish = true
+
+[[package]]
+name = "uds_on_ip"
+publish = true
+
+# Pre-implementation; Cargo.toml also carries `publish = false`. Stated here too so a
+# release run cannot be talked into it by a manifest edit alone.
+[[package]]
+name = "uds_services"
+publish = false
+release = false

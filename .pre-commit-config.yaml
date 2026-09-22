@@ -1,0 +1,111 @@
+default_language_version:
+  python: python3.12
+default_stages: [pre-commit]
+default_install_hook_types: [pre-commit, prepare-commit-msg, commit-msg]
+repos:
+  # The new pr-lint workflow rejects a PR title that is not a conventional
+  # commit, and squash-merge uses the PR title as the commit message. Checking
+  # the same grammar locally means the failure shows up before the push rather
+  # than in CI.
+  - repo: https://github.com/compilerla/conventional-pre-commit
+    rev: v4.4.0
+    hooks:
+      - id: conventional-pre-commit
+        stages: [commit-msg]
+        args:
+          - --strict
+          - feat
+          - fix
+          - perf
+          - docs
+          - refactor
+          - revert
+          - style
+          - test
+          - chore
+          - ci
+          - build
+  - repo: meta
+    hooks:
+      - id: check-hooks-apply
+      - id: check-useless-excludes
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+    - id: trailing-whitespace
+      exclude_types:
+        - markdown
+    - id: end-of-file-fixer
+      exclude_types:
+        - rust
+    - id: check-yaml
+      args: [--allow-multiple-documents]
+    - id: check-json
+      # .vscode/launch.json is JSONC (comments, per VS Code convention); a plain JSON
+      # parser rejects it. Excluding it instead of dropping the hook keeps check-json
+      # enforcing strict JSON everywhere else, including the root renovate.json.
+      exclude: ^crates/.*/\.vscode/.*\.json$
+    - id: check-added-large-files
+      args: [--maxkb=1024]
+    - id: check-merge-conflict
+    - id: mixed-line-ending
+      args: [--fix=lf]
+      exclude_types:
+        - batch
+  - repo: https://github.com/executablebooks/mdformat
+    rev: 0.7.22
+    hooks:
+    - id: mdformat
+      # crates/uds_protocol/README.md is that crate's front page *and* its crate-level
+      # rustdoc, via `#![doc = include_str!(".../README.md")]`. mdformat escapes `[` and
+      # `]`, which turns every rustdoc intra-doc link in it into literal text: measured on
+      # the generated HTML, escaping drops the links to `Request`, `Response` and
+      # `UdsServiceType` from 3/3/2 to 1/1/1. Formatting prose is not worth silently
+      # breaking the published documentation.
+      #
+      # crates/simple_doip's README and ARCHITECTURE.md are excluded too: that crate's own
+      # pre-workspace config left mdformat out entirely because both files are full of
+      # intra-doc-style references and tables that the escaping mangles.
+      #
+      # crates/uds_on_ip's README and ARCHITECTURE.md are excluded for the same reason,
+      # confirmed by running this hook once over the workspace: it turned
+      # `**P2* Server Max**` into `**P2* Server Max*\*`, corrupting the bold span around a
+      # literal `*` in prose (the P2* timer name), not just reformatting it.
+      exclude: ^crates/(uds_protocol/README|(simple_doip|uds_on_ip)/(README|ARCHITECTURE))\.md$
+      language_version: python3
+      additional_dependencies:
+          - linkify-it-py==1.0.3
+          - mdformat-gfm==0.3.5
+  - repo: https://github.com/crate-ci/typos
+    rev: v1.39.1
+    hooks:
+      - id: typos
+        args: ["--config", ".typos.toml"]
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.29.0
+    hooks:
+      - id: gitleaks
+  - repo: https://github.com/FeryET/pre-commit-rust
+    rev: v1.2.1
+    hooks:
+      - id: fmt
+      - id: cargo-check
+  - repo: local
+    hooks:
+      # Policy checks on the authored need set across the workspace: architecture elements
+      # in docs/architecture/ and requirements in docs/requirements/. Stdlib only, so it
+      # needs no environment and runs in milliseconds. Complementary to the Sphinx `needs`
+      # build (in CI, not here) rather than a substitute for it: Sphinx validates directive
+      # syntax, link integrity and its own schema; this validates the parts of the process
+      # Sphinx has no concept of.
+      - id: validate-needs
+        name: requirement-set policy checks
+        entry: python3 tools/validate_needs.py
+        language: system
+        pass_filenames: false
+        files: ^docs/(architecture|requirements)/.*\.rst$
+      - id: check-line-width
+        name: line width
+        entry: python3 tools/check_line_width.py
+        language: system
+        files: ^docs/.*\.rst$

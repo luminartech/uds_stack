@@ -1,0 +1,23 @@
+# Words the workspace's crates use deliberately that `typos` reads as misspellings.
+# Union of the exception lists each crate carried before the workspace consolidation;
+# entries are not crate-scoped, so keeping them all at the root costs nothing and avoids
+# re-litigating which crate a term came from.
+[default.extend-words]
+# Domain-specific terms that are not typos.
+OT = "OT"
+# "response pending" is a DoIP/UDS message; a sequence of them is "pendings".
+pendings = "pendings"
+# From "catch-alls" -- the enum variants that absorb unknown wire values.
+alls = "alls"
+# From "mis-mapped".
+mis = "mis"
+# ISO 14229-2 terminology. The standard's own vocabulary is used deliberately -- it is what
+# makes the private clause mapping mechanical -- so a few of its abbreviations need to be
+# allowed through.
+#
+# Add entries only when typos actually objects to one. An exception list padded with terms
+# that were never flagged hides which ones are load-bearing, and quietly widens the set of
+# real misspellings the checker will accept.
+
+# StartOfMessage, as in the T_DataSOM.ind transport primitive.
+SOM = "SOM"
