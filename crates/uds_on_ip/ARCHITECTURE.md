@@ -866,13 +866,9 @@ This crate is built from source by its consumers today, because it is not yet on
 crates.io. Once it and its dependencies publish, a consumer can take ordinary
 registry dependencies instead ([§8.4](#84-publication-order)).
 
-Two consequences, and both outlive that change:
-
-- The redesign in this document is a **breaking change to shipped code**, and
-  no migration path is stated anywhere. One is owed before it lands.
-- [§9](#9-gap-analysis) is a public defect list on a crate consumers build from
-  source. That may still be right — the defects are real and concealing them
-  serves nobody — but it should be a decision, not an accident.
+One consequence outlives that change: the redesign in this document is a
+**breaking change to shipped code**, and no migration path is stated anywhere.
+One is owed before it lands.
 
 This document ships with the crate. That is why the citation note at the top is
 one line rather than an argument about policy.
