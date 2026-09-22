@@ -269,8 +269,9 @@ mod request {
 
     #[test]
     fn reserved_setting_types_are_still_rejected() {
-        // Table 128 reserves 0x00, 0x03-0x3F and 0x7F. ControlDTCSetting and RoutineControl are
-        // the two services that validate their sub-function, so both must answer NRC 0x12.
+        // Table 128 reserves 0x00, 0x03-0x3F and 0x7F. ControlDTCSetting and RoutineControl
+        // are the two services that validate their sub-function, so both must answer NRC
+        // 0x12.
         for byte in [0x00u8, 0x03, 0x3F, 0x7F] {
             let err = <ControlDtcSettingRequest as Decode>::decode(&[byte])
                 .expect_err("a reserved DTCSettingType must be rejected");
@@ -288,9 +289,9 @@ mod request {
     #[test]
     fn a_dtc_setting_control_option_record_round_trips() {
         // Table 127 marks DTCSettingControlOptionRecord `U`, and Table 129 describes it as
-        // carrying e.g. a list of DTCs to turn on or off. Table 132 reserves NRC 0x31 for an
-        // error *in that record*, which a server can only detect if it is decoded at all.
-        // Without it, `85 02 AA BB CC` was rejected as having trailing bytes.
+        // carrying e.g. a list of DTCs to turn on or off. Table 132 reserves NRC 0x31 for
+        // an error *in that record*, which a server can only detect if it is decoded at
+        // all. Without it, `85 02 AA BB CC` was rejected as having trailing bytes.
         let wire = [0x85, 0x02, 0xAA, 0xBB, 0xCC];
         let (req, _) = crate::Request::decode(&wire).unwrap();
         let crate::Request::ControlDtcSetting(inner) = req else {

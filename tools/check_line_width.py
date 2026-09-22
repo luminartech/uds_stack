@@ -11,10 +11,24 @@ This closes that gap. It reads the limit from ``rustfmt.toml`` rather than resta
 so the width is declared once; a second copy here would be the drift this check exists to
 catch, one level up.
 
-Every line is measured, not only comment lines. Rustfmt already holds code within the
-limit, so a code line that trips this is one rustfmt could not wrap either — an unbroken
-string literal, most often — and that is equally something to fix by hand rather than to
-discover later.
+Only comment lines are measured, and not all of them. This check exists for the lines
+rustfmt declines to wrap; a code line rustfmt left long is one it *could not* wrap — an
+unbroken string literal, most often — and reporting it asks for the literal to be
+falsified or split awkwardly rather than for anything to be fixed. Several of this
+stack's are verbatim ISO table titles, where shortening the string would misquote the
+standard it cites.
+
+Three kinds of comment line are exempt for the same reason, each because wrapping it
+would break something rather than tidy it:
+
+  * a markdown table row, whose columns stop aligning and whose cells stop parsing
+  * a banner separator, which is ``////`` and therefore an ordinary comment anyway
+  * a line with no whitespace to break at, such as a bare URL or one long intra-doc link
+  * anything inside a ``` fence, which is a doc test: code again, and wrapping it breaks
+    the example it is there to demonstrate
+
+What this gives up is the long-string-literal case, which no longer has a checker. That
+is deliberate: it was reporting things that should not change.
 
 Lengths are counted in characters, not bytes: an em dash is one column.
 
@@ -46,16 +60,42 @@ def max_width(config: str) -> int:
     return int(found.group(1)) if found else RUSTFMT_DEFAULT_MAX_WIDTH
 
 
-def violations(path: str, text: str, limit: int) -> list[tuple[int, int, str]]:
-    """Every line of ``text`` longer than ``limit``, as ``(line number, width, line)``.
+# A comment line rustfmt will not wrap: `//`, `///` or `//!`, but not `////` and longer,
+# which Rust treats as an ordinary comment and which is how banner separators are written.
+_COMMENT = re.compile(r"^\s*(?://!|///(?!/)|//(?![/!]))(?P<body>.*)$")
+_TABLE_ROW = re.compile(r"^\s*\|.*\|\s*$")
+_FENCE = re.compile(r"^```")
 
-    Line numbers are 1-based, matching what an editor and a compiler diagnostic show.
+
+def _wrappable(line: str) -> bool:
+    """Whether ``line`` is a comment this check can reasonably ask anyone to rewrap."""
+    found = _COMMENT.match(line)
+    if not found:
+        return False
+    body = found.group("body").strip()
+    if not body or _TABLE_ROW.match(body):
+        return False
+    # Nothing to break at: one long token, such as a URL or a single intra-doc link.
+    return " " in body
+
+
+def violations(path: str, text: str, limit: int) -> list[tuple[int, int, str]]:
+    """Every wrappable comment line of ``text`` longer than ``limit``.
+
+    Returned as ``(line number, width, line)``. Line numbers are 1-based, matching what an
+    editor and a compiler diagnostic show. See the module docstring for what is exempt and
+    why.
     """
-    return [
-        (number, len(line), line)
-        for number, line in enumerate(text.splitlines(), start=1)
-        if len(line) > limit
-    ]
+    found: list[tuple[int, int, str]] = []
+    fenced = False
+    for number, line in enumerate(text.splitlines(), start=1):
+        comment = _COMMENT.match(line)
+        if comment and _FENCE.match(comment.group("body").strip()):
+            fenced = not fenced
+            continue
+        if not fenced and len(line) > limit and _wrappable(line):
+            found.append((number, len(line), line))
+    return found
 
 
 def _config_text(root: Path) -> str:

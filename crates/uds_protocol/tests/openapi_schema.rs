@@ -17,8 +17,8 @@
 //! A schema that lies is worse than a verbose one, so these are checked, not eyeballed.
 
 #![cfg(all(feature = "utoipa", feature = "serde"))]
-// utoipa's `OpenApi` derive expands to `iter().for_each(..)`, so this lint fires on generated
-// code that this file cannot change.
+// utoipa's `OpenApi` derive expands to `iter().for_each(..)`, so this lint fires on
+// generated code that this file cannot change.
 #![allow(clippy::needless_for_each)]
 
 use std::collections::BTreeSet;
@@ -88,8 +88,8 @@ fn the_document_has_no_dangling_refs() {
          no-op, and only the derive overrides it."
     );
 
-    // And the children really are pulled in, so the assertion above is not passing vacuously on
-    // a document that happens to contain no `$ref`s at all.
+    // And the children really are pulled in, so the assertion above is not passing
+    // vacuously on a document that happens to contain no `$ref`s at all.
     assert!(
         schemas.contains_key("SubnetNumber"),
         "expected the composite request to register its child schemas, got {:?}",
@@ -138,8 +138,8 @@ macro_rules! assert_schema_bound_matches_serde {
             $name
         );
 
-        // A contiguous `minimum..=maximum` cannot express a set with gaps, so any type with gaps
-        // has to say so in prose or the schema is still lying.
+        // A contiguous `minimum..=maximum` cannot express a set with gaps, so any type with
+        // gaps has to say so in prose or the schema is still lying.
         let description = schema
             .get("description")
             .and_then(serde_json::Value::as_str)
@@ -186,9 +186,9 @@ fn every_byte_schema_advertises_the_range_serde_enforces() {
 
 #[test]
 fn no_schema_description_leaks_a_private_type_or_is_empty() {
-    // Types a downstream crate cannot name. A schema that mentions one hands a client author a
-    // dead end, and these two are the whole reason the reprs exist — so leaking them into the
-    // published description defeats the point.
+    // Types a downstream crate cannot name. A schema that mentions one hands a client
+    // author a dead end, and these two are the whole reason the reprs exist — so leaking
+    // them into the published description defeats the point.
     const PRIVATE: [&str; 2] = ["ZeroSubFunction", "MemoryFormatIdentifier"];
 
     let json = Api::openapi().to_json().expect("serializes");
@@ -198,8 +198,8 @@ fn no_schema_description_leaks_a_private_type_or_is_empty() {
         .expect("components.schemas");
 
     for (name, schema) in schemas {
-        // Field descriptions are published too, and they come from field rustdoc, so they are
-        // just as capable of naming a private type as the top-level one is.
+        // Field descriptions are published too, and they come from field rustdoc, so they
+        // are just as capable of naming a private type as the top-level one is.
         if let Some(properties) = schema
             .get("properties")
             .and_then(serde_json::Value::as_object)
@@ -237,9 +237,10 @@ fn no_schema_description_leaks_a_private_type_or_is_empty() {
                  {description:?}"
             );
         }
-        // The verb-less description this test exists to catch began with a bare newline: utoipa
-        // dropped the `#[doc = concat!(..)]` fragment carrying the sentence's subject and left the
-        // blank line that had followed it. A leading blank line is that exact signature.
+        // The verb-less description this test exists to catch began with a bare newline:
+        // utoipa dropped the `#[doc = concat!(..)]` fragment carrying the sentence's
+        // subject and left the blank line that had followed it. A leading blank line is
+        // that exact signature.
         assert!(
             !description.starts_with(char::is_whitespace),
             "{name}'s description starts with whitespace, which is what a dropped \

@@ -99,7 +99,8 @@ pub enum DtcStatusMask {
     TestFailedSinceLastClear,
 
     /// Indicates whether a test has run and completed during the current operation cycle,
-    ///     or whether is has run and completed after the last `ClearDiagnosticInformation` during the current operation cycle
+    /// or whether is has run and completed after the last `ClearDiagnosticInformation`
+    /// during the current operation cycle
     ///
     /// Bit state definition:
     /// * 0 - Test has run and completed during the current operation cycle
@@ -659,10 +660,11 @@ mod encode_param_tests {
 
     #[test]
     fn stored_data_record_number_accepts_every_byte_and_flags_the_reserved_one() {
-        // ISO 14229-1:2020 clause 12.3.3.2 reserves only 0x00 for this parameter: "DTCStoredData
-        // records in range of 0x01 through 0xFE shall be available for vehicle manufacturer
-        // specific usage", and 0xFF requests all records. 0xF0 belongs to the *snapshot*
-        // record-number space and used to be rejected here by a check copied from there.
+        // ISO 14229-1:2020 clause 12.3.3.2 reserves only 0x00 for this parameter:
+        // "DTCStoredData records in range of 0x01 through 0xFE shall be available for
+        // vehicle manufacturer specific usage", and 0xFF requests all records. 0xF0 belongs
+        // to the *snapshot* record-number space and used to be rejected here by a check
+        // copied from there.
         for byte in [0x00u8, 0x01, 0xF0, 0xFE, 0xFF] {
             let number = DtcStoredDataRecordNumber::new(byte);
             assert_eq!(number.value(), byte);

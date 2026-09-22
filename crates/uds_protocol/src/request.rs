@@ -231,9 +231,10 @@ impl Request<'_> {
             Self::RoutineControl(req) => Some(req.suppress_positive_response),
             Self::SecurityAccess(req) => Some(req.suppress_positive_response),
             Self::TesterPresent(req) => Some(req.suppress_positive_response),
-            // The modeled services ISO gives no sub-function. Spelled out rather than folded
-            // into a wildcard: a wildcard is what made every unrecognized service silently
-            // report `false`, and it would do the same to the next variant added here.
+            // The modeled services ISO gives no sub-function. Spelled out rather than
+            // folded into a wildcard: a wildcard is what made every unrecognized service
+            // silently report `false`, and it would do the same to the next variant added
+            // here.
             Self::ClearDiagnosticInfo(_)
             | Self::ReadDataByIdentifier(_)
             | Self::RequestDownload(_)
@@ -371,9 +372,9 @@ mod tests {
 
     #[test]
     fn suppression_is_read_from_the_sub_function_of_an_unmodeled_service() {
-        // 0x2C DynamicallyDefineDataIdentifier is enumerated but unmodeled, so it decodes to
-        // `Other`. It does have a sub-function, so bit 7 of the first payload byte is its
-        // SPRMIB and the crate can answer even though it does not model the payload.
+        // 0x2C DynamicallyDefineDataIdentifier is enumerated but unmodeled, so it decodes
+        // to `Other`. It does have a sub-function, so bit 7 of the first payload byte is
+        // its SPRMIB and the crate can answer even though it does not model the payload.
         // Sub-function 0x01 defineByIdentifier, with and without the bit.
         let (suppressed, _) = Request::decode(&[0x2C, 0x81, 0xF3, 0x00]).unwrap();
         assert!(matches!(suppressed, Request::Other { .. }));
@@ -390,8 +391,9 @@ mod tests {
     fn an_unmodeled_service_without_a_sub_function_is_never_suppressed() {
         // 0x23 ReadMemoryByAddress is enumerated but unmodeled, and ISO gives it no
         // sub-function -- so there is no SPRMIB anywhere in the frame and the answer is a
-        // definite `Some(false)`, whatever the payload bytes happen to be. 0xAA has bit 7 set,
-        // which would read as "suppressed" if the payload were mistaken for a sub-function.
+        // definite `Some(false)`, whatever the payload bytes happen to be. 0xAA has bit 7
+        // set, which would read as "suppressed" if the payload were mistaken for a
+        // sub-function.
         let (req, _) = Request::decode(&[0x23, 0xAA, 0xBB]).unwrap();
         assert!(matches!(req, Request::Other { .. }));
         assert_eq!(req.is_positive_response_suppressed(), Some(false));
@@ -400,9 +402,10 @@ mod tests {
     #[test]
     fn suppression_is_unknown_for_a_vendor_specific_service() {
         // 0x40 is not in the ISO request table, so it is presumably vendor-specific and the
-        // crate has no basis for an answer. This is the case the `Option` exists for: reporting
-        // `false` here made a fire-and-forget vendor request look response-expected, so a
-        // session layer started tP_Client, timed out, and retried it twice.
+        // crate has no basis for an answer. This is the case the `Option` exists for:
+        // reporting `false` here made a fire-and-forget vendor request look
+        // response-expected, so a session layer started tP_Client, timed out, and retried
+        // it twice.
         let (req, _) = Request::decode(&[0x40, 0xAA, 0xBB]).unwrap();
         assert!(matches!(req, Request::Other { .. }));
         assert_eq!(req.is_positive_response_suppressed(), None);
@@ -410,9 +413,10 @@ mod tests {
 
     #[test]
     fn suppression_is_unknown_when_the_sub_function_byte_is_absent() {
-        // 0x2C has a sub-function, but this frame carries no payload -- so the byte the SPRMIB
-        // lives in is not on the wire. The frame is malformed for the service; either way there
-        // is no bit to report, so the answer is unknown rather than `Some(false)`.
+        // 0x2C has a sub-function, but this frame carries no payload -- so the byte the
+        // SPRMIB lives in is not on the wire. The frame is malformed for the service;
+        // either way there is no bit to report, so the answer is unknown rather than
+        // `Some(false)`.
         let (req, _) = Request::decode(&[0x2C]).unwrap();
         assert!(matches!(req, Request::Other { data, .. } if data.is_empty()));
         assert_eq!(req.is_positive_response_suppressed(), None);
@@ -543,13 +547,13 @@ mod tests {
     #[test]
     fn allowed_nack_codes_dispatches_for_every_modeled_variant() {
         // Every one of the 16 request types has an inherent `allowed_nack_codes()`, but
-        // without this dispatcher a caller holding a *decoded* `Request` had to re-match all
-        // 16 variants to reach it — on a `#[non_exhaustive]` enum they cannot match
+        // without this dispatcher a caller holding a *decoded* `Request` had to re-match
+        // all 16 variants to reach it — on a `#[non_exhaustive]` enum they cannot match
         // exhaustively. Frames are minimal-but-valid for each service.
         //
         // Each frame is paired with the inherent table it must dispatch to. Asserting only
-        // `!is_empty()` made the test vacuous: every modeled service has a non-empty table, so
-        // any arm could return any *other* service's set and still pass.
+        // `!is_empty()` made the test vacuous: every modeled service has a non-empty table,
+        // so any arm could return any *other* service's set and still pass.
         let frames = modeled_frames();
         for (frame, expected) in frames {
             let (req, _) = Request::decode(frame).unwrap_or_else(|e| {
@@ -570,13 +574,13 @@ mod tests {
 
     #[test]
     fn every_modeled_variant_agrees_with_the_sub_function_table() {
-        // `has_sub_function` and the match in `is_positive_response_suppressed` are two copies
-        // of one ISO fact, and nothing else stops them from drifting. This ties them together as
-        // a biconditional: the table says a service has a sub-function exactly when the dispatch
-        // reports a set SPRMIB for a frame that sets one.
+        // `has_sub_function` and the match in `is_positive_response_suppressed` are two
+        // copies of one ISO fact, and nothing else stops them from drifting. This ties them
+        // together as a biconditional: the table says a service has a sub-function exactly
+        // when the dispatch reports a set SPRMIB for a frame that sets one.
         //
-        // `modeled_frames` sets the SPRMIB on every service that has one, which is what makes
-        // the equality below meaningful in both directions.
+        // `modeled_frames` sets the SPRMIB on every service that has one, which is what
+        // makes the equality below meaningful in both directions.
         for (frame, _) in modeled_frames() {
             let (req, _) = Request::decode(frame).unwrap_or_else(|e| {
                 panic!("frame {frame:02X?} should decode, got {e:?}");
@@ -599,10 +603,10 @@ mod tests {
                 suppressed.is_some(),
                 "{service:?} is modeled, so its SPRMIB is never unknown"
             );
-            // The frames set the SPRMIB wherever the service has a sub-function to set it in, so
-            // the two must be equal: `Some(true)` for the eight services that have one,
-            // `Some(false)` for the eight that do not. Any table entry flipped either way breaks
-            // this.
+            // The frames set the SPRMIB wherever the service has a sub-function to set it
+            // in, so the two must be equal: `Some(true)` for the eight services that have
+            // one, `Some(false)` for the eight that do not. Any table entry flipped either
+            // way breaks this.
             assert_eq!(
                 suppressed,
                 service.has_sub_function(),
@@ -622,8 +626,8 @@ mod tests {
 
     #[test]
     fn allowed_nack_codes_is_empty_for_pass_through() {
-        // 0x23 ReadMemoryByAddress is enumerated but unmodeled, so the crate has no NRC table
-        // for it. An empty slice says "unknown", not "none apply".
+        // 0x23 ReadMemoryByAddress is enumerated but unmodeled, so the crate has no NRC
+        // table for it. An empty slice says "unknown", not "none apply".
         let (req, _) = Request::decode(&[0x23, 0xAA]).unwrap();
         assert!(matches!(req, Request::Other { .. }));
         assert!(req.allowed_nack_codes().is_empty());

@@ -450,11 +450,11 @@ where
                         // caller receives `Ok(..)` carrying a rejection.
                         //
                         // ENTANGLEMENT: this is downstream of the deliberately-deferred
-                        // `0x8002` hardcode (see ARCHITECTURE.md section 7.2). Whoever fixes
-                        // that hardcode changes this path: once negative acks carry `0x8003`,
-                        // `is_response` stops matching and the caller starts seeing an error
-                        // instead. Decide deliberately what a rejected diagnostic message
-                        // should surface as when making that change.
+                        // `0x8002` hardcode (see ARCHITECTURE.md section 7.2). Whoever
+                        // fixes that hardcode changes this path: once negative acks carry
+                        // `0x8003`, `is_response` stops matching and the caller starts
+                        // seeing an error instead. Decide deliberately what a rejected
+                        // diagnostic message should surface as when making that change.
                     }
                     _ => trace!("Received message: {received_message:?}"),
                 }
@@ -483,7 +483,8 @@ where
                         return true;
                     }
                 } else if self.active_request.is_none() {
-                    // No active request - check if this is a DiagnosticMessage we should buffer
+                    // No active request - check if this is a DiagnosticMessage we should
+                    // buffer
                     if matches!(
                         received_message.payload,
                         OwnedPayload::DiagnosticMessage(_)
@@ -579,13 +580,14 @@ where
                         }
                         debug!("Received control message: {:?}", ctrl_opt.as_ref().unwrap());
                         // A request may still be pending here: the caller can stop awaiting
-                        // one (`tokio::time::timeout`, `tokio::select!`, or the deliberately
-                        // recoverable routing-activation timeout in `Client::bind_socket`) and
-                        // then issue another. The new request wins - refusing it would strand
-                        // the client behind a request nobody is waiting for - but the displaced
-                        // request is told rather than dropped, per the take-or-restore
-                        // discipline: dropping its oneshot `Sender` would surface as an
-                        // indistinguishable closed channel.
+                        // one (`tokio::time::timeout`, `tokio::select!`, or the
+                        // deliberately recoverable routing-activation timeout in
+                        // `Client::bind_socket`) and then issue another. The new request
+                        // wins - refusing it would strand the client behind a request
+                        // nobody is waiting for - but the displaced request is told rather
+                        // than dropped, per the take-or-restore discipline: dropping its
+                        // oneshot `Sender` would surface as an indistinguishable closed
+                        // channel.
                         self.supersede_active_request();
                         self.active_request = ctrl_opt;
                     }

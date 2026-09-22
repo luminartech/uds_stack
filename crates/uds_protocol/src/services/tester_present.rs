@@ -15,10 +15,11 @@ const NO_SUBFUNCTION_VALUE: u8 = 0x00;
 /// The range of values is only 7 of the 8 bits, with bit 7 being used as the
 /// Suppress Positive Response (SPR) Message Indication Bit.
 //
-// `serde(try_from = "u8", into = "u8")` is what keeps a deserialized value inside 0x00..=0x7F:
-// it routes through the `TryFrom<u8>` below, the same classifier `decode` uses. The two public
-// types then just rename the field, so no mirror struct is needed to enforce the range -- the
-// invariant is single-field, and `serde`/`utoipa` can both express that directly.
+// `serde(try_from = "u8", into = "u8")` is what keeps a deserialized value inside
+// 0x00..=0x7F: it routes through the `TryFrom<u8>` below, the same classifier `decode`
+// uses. The two public types then just rename the field, so no mirror struct is needed to
+// enforce the range -- the invariant is single-field, and `serde`/`utoipa` can both express
+// that directly.
 #[cfg_attr(feature = "serde", derive(serde::Deserialize, serde::Serialize))]
 #[cfg_attr(feature = "serde", serde(try_from = "u8", into = "u8"))]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -79,9 +80,9 @@ pub struct TesterPresentRequest {
     ///
     /// Serialized as `sub_function`: a byte in `0x00..=0x7F`.
     //
-    // The `rename` plus `value_type` is what keeps the private enum out of both the wire format
-    // and the schema. Two mirror structs used to do this; the invariant is single-field, so a
-    // field attribute expresses it directly.
+    // The `rename` plus `value_type` is what keeps the private enum out of both the wire
+    // format and the schema. Two mirror structs used to do this; the invariant is
+    // single-field, so a field attribute expresses it directly.
     #[cfg_attr(feature = "serde", serde(rename = "sub_function"))]
     #[cfg_attr(
         feature = "utoipa",
@@ -146,8 +147,8 @@ impl<'a> Decode<'a> for TesterPresentRequest {
             }));
         }
         // Split out the SPRMIB flag. Once SPRMIB is stripped the low 7 bits are always a
-        // valid zero sub-function, so this never rejects; the sub-function value is retained
-        // so that a reserved byte re-encodes unchanged.
+        // valid zero sub-function, so this never rejects; the sub-function value is
+        // retained so that a reserved byte re-encodes unchanged.
         let sub_function =
             SuppressablePositiveResponse::<ZeroSubFunction>::try_from(buf[0])?;
         Ok((
@@ -284,8 +285,8 @@ mod test {
                     assert_eq!(result.unwrap(), expected);
                 }
                 0x01..=0x7F => {
-                    // Reserved sub-function bytes decode with SPRMIB clear, and the reserved
-                    // value is retained verbatim (see
+                    // Reserved sub-function bytes decode with SPRMIB clear, and the
+                    // reserved value is retained verbatim (see
                     // `reserved_sub_function_survives_a_round_trip`).
                     let req = result.unwrap();
                     assert!(!req.suppress_positive_response);
@@ -296,7 +297,8 @@ mod test {
                     assert_eq!(result.unwrap(), expected);
                 }
                 0x81..=0xFF => {
-                    // SPRMIB set over a reserved value: both the flag and the value are kept.
+                    // SPRMIB set over a reserved value: both the flag and the value are
+                    // kept.
                     let req = result.unwrap();
                     assert!(req.suppress_positive_response);
                     assert_eq!(req.sub_function(), i & 0x7F);
@@ -307,11 +309,11 @@ mod test {
 
     #[test]
     fn reserved_sub_function_survives_a_round_trip() {
-        // Reserved sub-function bytes must re-encode byte-for-byte. Previously the value was
-        // discarded and normalized to 0x00, so `[0x3E, 0x01]` came back out as `[0x3E, 0x00]` —
-        // the request silently rewrote the tester's frame, while `TesterPresentResponse`
-        // preserved the same values. A server needs the original byte to report
-        // subFunctionNotSupported against it.
+        // Reserved sub-function bytes must re-encode byte-for-byte. Previously the value
+        // was discarded and normalized to 0x00, so `[0x3E, 0x01]` came back out as `[0x3E,
+        // 0x00]` — the request silently rewrote the tester's frame, while
+        // `TesterPresentResponse` preserved the same values. A server needs the original
+        // byte to report subFunctionNotSupported against it.
         for raw in [0x00u8, 0x01, 0x42, 0x7F] {
             for suppress in [false, true] {
                 let wire = [raw | if suppress { 0x80 } else { 0x00 }];

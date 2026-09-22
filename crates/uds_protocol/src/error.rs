@@ -191,8 +191,8 @@ impl Error {
             }
 
             // Transport failure. ISO does not model this as an NRC at all: clause 7.4.1.6
-            // surfaces it to the server application as `A_Result = error`. There is no byte to
-            // put on the wire, because the wire is what failed.
+            // surfaces it to the server application as `A_Result = error`. There is no byte
+            // to put on the wire, because the wire is what failed.
             Self::Write(_) => None,
         }
     }
@@ -262,7 +262,8 @@ mod nrc_mapping_tests {
                 0x13,
                 "explicit length/format",
             ),
-            // --- 0x12 subFunctionNotSupported: the sub-function byte is not a known value ---
+            // --- 0x12 subFunctionNotSupported: the sub-function byte is not a known value
+            // ---
             (
                 Error::InvalidDiagnosticSessionType(0x99),
                 0x12,
@@ -351,11 +352,12 @@ mod nrc_mapping_tests {
 
     #[test]
     fn mapping_never_produces_a_positive_or_reserved_code() {
-        // This is deliberately narrower than "the codes the ISO tables allow": the per-service
-        // tables are a floor, not a ceiling (clause 9.4 — the A.1 codes "shall be used in
-        // addition to" them), so table membership is not the property to assert. What must hold
-        // is that a decode failure never reports a positive response and never invents a
-        // reserved code, either of which would put an illegal byte on the wire.
+        // This is deliberately narrower than "the codes the ISO tables allow": the
+        // per-service tables are a floor, not a ceiling (clause 9.4 — the A.1 codes "shall
+        // be used in addition to" them), so table membership is not the property to assert.
+        // What must hold is that a decode failure never reports a positive response and
+        // never invents a reserved code, either of which would put an illegal byte on the
+        // wire.
         for (err, _, why) in cases() {
             let nrc = err
                 .negative_response_code()

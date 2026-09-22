@@ -193,7 +193,8 @@ where
                     );
                     break 'routing;
                 };
-                // if the timeout specifically and keep working, the routing activation may not be supported
+                // if the timeout specifically and keep working, the routing activation may
+                // not be supported
                 debug!("Routing Activation Response received: {:?}", res);
                 match res {
                     Ok(OwnedMessage { payload, header }) => {

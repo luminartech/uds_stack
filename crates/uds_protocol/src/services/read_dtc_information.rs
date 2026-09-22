@@ -57,8 +57,8 @@ impl Encode for ReadDtcInfoRequest {
         &self,
         writer: &mut impl automotive_wire_codec::Sink,
     ) -> Result<usize, Error> {
-        // The sub-function byte carries SPRMIB in bit 7, so it is written here rather than by
-        // `ReadDtcInfoSubFunction::encode`, which has no way to know the flag.
+        // The sub-function byte carries SPRMIB in bit 7, so it is written here rather than
+        // by `ReadDtcInfoSubFunction::encode`, which has no way to know the flag.
         let sub_function = fuse_sprmib(
             self.suppress_positive_response,
             self.dtc_subfunction.value(),
@@ -224,11 +224,11 @@ mod read_dtc_info_request_encode_tests {
     #[test]
     fn both_sprmib_values_round_trip_through_the_request_frame() {
         // ISO 14229-1:2020 Table 11 requires that "values of both '0' and '1' shall be
-        // supported for all SubFunction parameter values ... supported by the server for any
-        // given service", and clause 12.3.2.2 introduces 0x19's sub-function table with
+        // supported for all SubFunction parameter values ... supported by the server for
+        // any given service", and clause 12.3.2.2 introduces 0x19's sub-function table with
         // "(suppressPosRspMsgIndicationBit (bit 7) not shown)". A suppressed
-        // reportDTCByStatusMask used to be rejected with TrailingBytes, because the raw 0x82
-        // fell through to IsoSaeReserved, which consumes no payload.
+        // reportDTCByStatusMask used to be rejected with TrailingBytes, because the raw
+        // 0x82 fell through to IsoSaeReserved, which consumes no payload.
         for (wire, suppressed) in [
             ([0x19, 0x02, 0xFF].as_slice(), Some(false)),
             ([0x19, 0x82, 0xFF].as_slice(), Some(true)),
@@ -247,9 +247,9 @@ mod read_dtc_info_request_encode_tests {
 
     #[test]
     fn a_suppressed_sub_function_is_not_mistaken_for_a_reserved_one() {
-        // 0x8A is reportSupportedDTC with SPRMIB set. Matching on the raw byte decoded this as
-        // IsoSaeReserved(0x8A) and reported suppression as false, so a server built on this
-        // answered SubFunctionNotSupported to a request it was required to execute.
+        // 0x8A is reportSupportedDTC with SPRMIB set. Matching on the raw byte decoded this
+        // as IsoSaeReserved(0x8A) and reported suppression as false, so a server built on
+        // this answered SubFunctionNotSupported to a request it was required to execute.
         let (req, _) = <ReadDtcInfoRequest as Decode>::decode(&[0x8A]).unwrap();
         assert_eq!(
             req.dtc_subfunction,
@@ -323,7 +323,8 @@ mod read_dtc_info_request_encode_tests {
     #[test]
     fn read_dtc_info_request_roundtrips() {
         use crate::Decode;
-        // Encode into a scratch buffer (oracle), then decode_exact and assert round-trip fidelity.
+        // Encode into a scratch buffer (oracle), then decode_exact and assert round-trip
+        // fidelity.
         let cases = [
             ReadDtcInfoRequest::new(false, ReadDtcInfoSubFunction::ReportSupportedDtc),
             ReadDtcInfoRequest::new(
@@ -1276,11 +1277,11 @@ mod response_decode_tests {
 
     #[test]
     fn the_dtc_count_response_carries_a_format_identifier() {
-        // ISO 14229-1:2020 Table 341 (flow example #1) is exactly these six bytes:
-        // SID, reportType, DTCStatusAvailabilityMask, DTCFormatIdentifier, count high, low.
-        // Table 319 marks all of them `M`. The format identifier used to be missing from the
-        // model, so it was read as the count high byte: this frame was rejected outright, and
-        // a count of 1 came back as 0x0100.
+        // ISO 14229-1:2020 Table 341 (flow example #1) is exactly these six bytes: SID,
+        // reportType, DTCStatusAvailabilityMask, DTCFormatIdentifier, count high, low.
+        // Table 319 marks all of them `M`. The format identifier used to be missing from
+        // the model, so it was read as the count high byte: this frame was rejected
+        // outright, and a count of 1 came back as 0x0100.
         let wire = [0x59, 0x01, 0x2F, 0x01, 0x00, 0x01];
         let (resp, _) = Response::decode(&wire).unwrap();
         let Response::ReadDtcInfo(ReadDtcInfoResponse::NumberOfDtcs {
@@ -1312,9 +1313,10 @@ mod response_decode_tests {
         // DTCSeverityAvailabilityMask, DTCFormatIdentifier, then 5-byte records of
         // severity + 3-byte DTC + status.
         //
-        // Nothing had ever asserted a value this iterator yields, nor any of the four header
-        // fields — every test checked only counts and `is_ok()`. Reversing the header fields, or
-        // swapping severity with status and reversing the DTC bytes, passed the whole suite.
+        // Nothing had ever asserted a value this iterator yields, nor any of the four
+        // header fields — every test checked only counts and `is_ok()`. Reversing the
+        // header fields, or swapping severity with status and reversing the DTC bytes,
+        // passed the whole suite.
         let wire = [
             0x59, 0x42, 0x33, 0xFF, 0xF0, 0x01, 0x80, 0x01, 0x02, 0x03, 0x0A,
         ];
@@ -1370,9 +1372,9 @@ mod response_decode_tests {
 
     #[test]
     fn an_insufficient_data_shortfall_measures_both_counts_on_one_buffer() {
-        // `needed` used to include the sub-function byte while `available` was measured after it
-        // was sliced off, so a caller computing `needed - available` got a shortfall one byte
-        // too large. Both are now relative to the payload.
+        // `needed` used to include the sub-function byte while `available` was measured
+        // after it was sliced off, so a caller computing `needed - available` got a
+        // shortfall one byte too large. Both are now relative to the payload.
         for (label, frame, needed, available) in [
             ("0x01 count", [0x59, 0x01, 0x2F].as_slice(), 4, 1),
             ("0x02 list", [0x59, 0x02].as_slice(), 1, 0),
@@ -1393,8 +1395,9 @@ mod response_decode_tests {
 
     #[test]
     fn a_dtc_count_response_missing_the_count_is_rejected() {
-        // Four payload bytes are mandatory after the sub-function echo; three is a truncated
-        // frame, not a frame whose format identifier happens to be the count's high byte.
+        // Four payload bytes are mandatory after the sub-function echo; three is a
+        // truncated frame, not a frame whose format identifier happens to be the count's
+        // high byte.
         assert!(<ReadDtcInfoResponse as Decode>::decode(&[0x01, 0x2F, 0x01]).is_err());
     }
 
@@ -1407,7 +1410,8 @@ mod response_decode_tests {
         ("DtcFaultDetectionCounterList 0x14", &[0x14], 4),
         // 0x08: status availability mask, then 6-byte DTCAndSeverityRecord entries.
         ("DtcSeverityList 0x08", &[0x08, 0xFF], 6),
-        // 0x42: fgid + status mask + severity mask + format id, then 5-byte WWH-OBD records.
+        // 0x42: fgid + status mask + severity mask + format id, then 5-byte WWH-OBD
+        // records.
         (
             "WwhObdDtcByMaskRecord 0x42",
             &[0x42, 0x33, 0xFF, 0xF0, 0x01],
@@ -1434,14 +1438,14 @@ mod response_decode_tests {
 
     #[test]
     fn record_lists_must_divide_evenly_into_records() {
-        // A trailing partial record means the frame is malformed. Rejecting it here matches how
-        // the crate treats every other length mismatch, and means the iterators returned by the
-        // accessors can never see a partial tail.
-        // Every misaligned length below two whole records, which crucially includes 1..width --
-        // a list too short to hold even one record. That range was untested, so a `whole_records`
-        // that accepted any short list passed: 0 records was covered by
-        // `empty_record_lists_are_valid` and 1 record by the aligned test, but the 0-valid /
-        // 1-invalid boundary, the whole point of the check, was not.
+        // A trailing partial record means the frame is malformed. Rejecting it here matches
+        // how the crate treats every other length mismatch, and means the iterators
+        // returned by the accessors can never see a partial tail. Every misaligned length
+        // below two whole records, which crucially includes 1..width -- a list too short to
+        // hold even one record. That range was untested, so a `whole_records` that accepted
+        // any short list passed: 0 records was covered by `empty_record_lists_are_valid`
+        // and 1 record by the aligned test, but the 0-valid / 1-invalid boundary, the whole
+        // point of the check, was not.
         for (label, prefix, width) in LISTS {
             for record_bytes in (1..2 * width).filter(|n| n % width != 0) {
                 let (buf, len) = frame(prefix, record_bytes);
@@ -1490,7 +1494,8 @@ mod response_decode_tests {
 
     #[test]
     fn a_misaligned_list_is_rejected_at_the_frame_layer_too() {
-        // SID 0x59, sub 0x02, mask 0xFF, then 5 record bytes — one byte past a whole record.
+        // SID 0x59, sub 0x02, mask 0xFF, then 5 record bytes — one byte past a whole
+        // record.
         let wire = [0x59, 0x02, 0xFF, 0x01, 0x02, 0x03, 0x0A, 0xEE];
         assert!(matches!(
             Response::decode(&wire),
@@ -1559,11 +1564,11 @@ mod iter_tests {
     #[test]
     fn partial_tail_yields_one_error_then_terminates() {
         // Previously `next()` returned `Some(Err(..))` on a partial record *without*
-        // advancing `remaining`, so the iterator yielded that error forever: `for _ in iter`
-        // looped, `count()` hung, and `collect::<Vec<Result<..>>>()` allocated without bound.
-        // `collect_all()` happened to terminate only because `collect::<Result<Vec, _>>()`
-        // short-circuits on the first error. Bounded with `take` so a regression fails
-        // instead of hanging the suite.
+        // advancing `remaining`, so the iterator yielded that error forever: `for _ in
+        // iter` looped, `count()` hung, and `collect::<Vec<Result<..>>>()` allocated
+        // without bound. `collect_all()` happened to terminate only because
+        // `collect::<Result<Vec, _>>()` short-circuits on the first error. Bounded with
+        // `take` so a regression fails instead of hanging the suite.
         let data = [0x01, 0x02, 0x03, 0x0A, 0xFF]; // one complete record + 1 stray byte
         let items: heapless_vec::Bounded<8> =
             DtcAndStatusIter::new(&data).take(8).collect_bounded();
@@ -1591,9 +1596,10 @@ mod iter_tests {
 
     #[test]
     fn size_hint_matches_the_number_of_items_yielded() {
-        // All three iterators, every buffer length across several record boundaries. The two
-        // record widths differ (4 bytes vs 5), so each needs its own `div_ceil` checked.
-        // `take` bounds the count so a non-termination regression fails rather than hangs.
+        // All three iterators, every buffer length across several record boundaries. The
+        // two record widths differ (4 bytes vs 5), so each needs its own `div_ceil`
+        // checked. `take` bounds the count so a non-termination regression fails rather
+        // than hangs.
         let data = [0u8; 16];
         for len in 0usize..=16 {
             let it = DtcAndStatusIter::new(&data[..len]);
@@ -1642,9 +1648,9 @@ mod iter_tests {
         // FusedIterator is only sound if `next()` keeps returning None once drained.
         //
         // The drains are bounded, like the ones in `size_hint_matches_the_number_of_items_
-        // yielded`: a 7-byte buffer can yield at most 2 items, so `take(8)` cannot hide a real
-        // result, and a regression that stops advancing `remaining` fails here instead of
-        // hanging `cargo test` forever with the other failures unreported.
+        // yielded`: a 7-byte buffer can yield at most 2 items, so `take(8)` cannot hide a
+        // real result, and a regression that stops advancing `remaining` fails here instead
+        // of hanging `cargo test` forever with the other failures unreported.
         const CAP: usize = 8;
         let data = [0u8; 7]; // not a whole number of records for either width
 

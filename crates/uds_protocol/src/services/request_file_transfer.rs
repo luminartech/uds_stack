@@ -264,8 +264,8 @@ pub enum RequestFileTransferRequest<'a> {
 const REQUEST_FILE_TRANSFER_NEGATIVE_RESPONSE_CODES: [NegativeResponseCode; 7] = [
     NegativeResponseCode::IncorrectMessageLengthOrInvalidFormat,
     NegativeResponseCode::ConditionsNotCorrect,
-    // Table 484: "shall be returned when modeOfOperation is 06 (ResumeFile) and the requested
-    // file has already been completely transferred".
+    // Table 484: "shall be returned when modeOfOperation is 06 (ResumeFile) and the
+    // requested file has already been completely transferred".
     NegativeResponseCode::RequestSequenceError,
     NegativeResponseCode::RequestOutOfRange,
     NegativeResponseCode::SecurityAccessDenied,
@@ -995,10 +995,10 @@ mod request_tests {
 
     #[test]
     fn test_allowed_nack_codes() {
-        // ISO 14229-1:2020 Table 484 lists exactly these seven codes. Pinned as a set rather
-        // than spot-checked, because a `contains` assertion cannot notice a missing code --
-        // and three were missing, including the requestSequenceError that Table 484 defines
-        // specifically for ResumeFile on an already-complete transfer.
+        // ISO 14229-1:2020 Table 484 lists exactly these seven codes. Pinned as a set
+        // rather than spot-checked, because a `contains` assertion cannot notice a missing
+        // code -- and three were missing, including the requestSequenceError that Table 484
+        // defines specifically for ResumeFile on an already-complete transfer.
         let codes = RequestFileTransferRequest::allowed_nack_codes();
         let mut bytes = [0u8; 7];
         assert_eq!(codes.len(), bytes.len(), "wrong number of codes: {codes:?}");
@@ -1078,10 +1078,11 @@ mod request_tests {
 
     #[test]
     fn the_mode_byte_comes_from_the_variant() {
-        // `NamePayload` used to carry its own `mode_of_operation`, and the field won over the
-        // variant: an `AddFile` request built with a `DeleteFile` payload encoded as DeleteFile
-        // and silently dropped the format identifier and both sizes. With the field gone the
-        // variant is the single source of the byte, so that state is unrepresentable.
+        // `NamePayload` used to carry its own `mode_of_operation`, and the field won over
+        // the variant: an `AddFile` request built with a `DeleteFile` payload encoded as
+        // DeleteFile and silently dropped the format identifier and both sizes. With the
+        // field gone the variant is the single source of the byte, so that state is
+        // unrepresentable.
         let req = RequestFileTransferRequest::AddFile(
             name_payload("/a"),
             DataFormatIdentifier::NONE,

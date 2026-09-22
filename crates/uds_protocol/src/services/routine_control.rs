@@ -267,10 +267,10 @@ mod test {
     #[test]
     fn status_record_covers_routine_info_as_well() {
         // ISO 14229-1:2020 Table 428 puts an optional `routineInfo` byte at #5, before the
-        // routineStatusRecord, with presence left to the vehicle manufacturer. Nothing on the
-        // wire distinguishes "routineInfo + status" from "status only", so `status_record`
-        // deliberately spans both and the field docs say so. Pinned here because a future
-        // reader might otherwise "fix" it into a wrong split.
+        // routineStatusRecord, with presence left to the vehicle manufacturer. Nothing on
+        // the wire distinguishes "routineInfo + status" from "status only", so
+        // `status_record` deliberately spans both and the field docs say so. Pinned here
+        // because a future reader might otherwise "fix" it into a wrong split.
         let wire = [0x71, 0x01, 0xF0, 0x0F, 0xAA, 0x32];
         let (resp, _) = crate::Response::decode(&wire).unwrap();
         let crate::Response::RoutineControl(inner) = resp else {
@@ -294,8 +294,8 @@ mod test {
         // ISOSAEReserved. Table 430 requires NRC 0x12 for a sub-function that "is either
         // generally not supported or is not supported for the requested RoutineIdentifier".
         // Reporting IncorrectMessageLengthOrInvalidFormat sent 0x13 instead, for a request
-        // whose length was perfectly correct -- and disagreed with ControlDTCSetting, the only
-        // other service that validates its sub-function.
+        // whose length was perfectly correct -- and disagreed with ControlDTCSetting, the
+        // only other service that validates its sub-function.
         for byte in [0x00u8, 0x04, 0x10, 0x7F] {
             let err = crate::Request::decode(&[0x31, byte, 0xF0, 0x0F])
                 .expect_err("a reserved routineControlType must be rejected");

@@ -136,8 +136,8 @@ mod tests {
 
     #[test]
     fn a_server_can_nack_an_unmodeled_service_byte() {
-        // The pass-through case this type advertises, from the *construction* side. A server
-        // that decodes `Request::Other { sid: 0x40 }` must be able to answer
+        // The pass-through case this type advertises, from the *construction* side. A
+        // server that decodes `Request::Other { sid: 0x40 }` must be able to answer
         // serviceNotSupported echoing 0x40. `new()` cannot express that: it routes through
         // `to_request_sid()`, which collapses every unmodeled service to 0x7F.
         let (req, _) = <crate::Request as Decode>::decode(&[0x40, 0xAA]).unwrap();

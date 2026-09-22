@@ -94,9 +94,9 @@ impl AddressAndLengthFormatIdentifier {
         if !matches!(memory_size_length, 1..=MAX_MEMORY_SIZE_LENGTH)
             || !matches!(memory_address_length, 1..=MAX_MEMORY_ADDRESS_LENGTH)
         {
-            // Report the byte, not the nibble, so the message matches what a tester configures
-            // and what `try_from` would have been given. Nibbles wider than 4 bits are masked to
-            // keep the reported byte a faithful packing of the two.
+            // Report the byte, not the nibble, so the message matches what a tester
+            // configures and what `try_from` would have been given. Nibbles wider than 4
+            // bits are masked to keep the reported byte a faithful packing of the two.
             return Err(Error::InvalidAddressAndLengthFormatIdentifier(
                 ((memory_size_length & LOW_NIBBLE_MASK) << 4)
                     | (memory_address_length & LOW_NIBBLE_MASK),
@@ -133,10 +133,11 @@ impl TryFrom<u8> for AddressAndLengthFormatIdentifier {
     type Error = Error;
     fn try_from(value: u8) -> Result<Self, Error> {
         // High nibble: bytes used for the memorySize parameter. Table H.1 marks 1 through 4
-        // applicable (manageable size 256 bytes to 4 GB); 0 and 5..=15 are "not applicable".
+        // applicable (manageable size 256 bytes to 4 GB); 0 and 5..=15 are "not
+        // applicable".
         let memory_size_length = (value & MEMORY_SIZE_NIBBLE_MASK) >> 4;
-        // Low nibble: bytes used for the memoryAddress parameter. Table H.1 marks 1 through 5
-        // applicable (addressable memory 256 bytes to 1024 GB - 1).
+        // Low nibble: bytes used for the memoryAddress parameter. Table H.1 marks 1 through
+        // 5 applicable (addressable memory 256 bytes to 1024 GB - 1).
         let memory_address_length = value & MEMORY_ADDRESS_NIBBLE_MASK;
 
         if !matches!(memory_size_length, 1..=MAX_MEMORY_SIZE_LENGTH) {
@@ -234,10 +235,9 @@ impl DataFormatIdentifier {
     ///
     /// # Errors
     /// Returns [`Error::InvalidEncryptionCompressionMethod`] if either value does not fit
-    /// in a nibble (i.e. is greater than `0x0F`).
-    // Written as explicit range checks rather than a `?` on a helper: `?` is not permitted in
-    // a `const fn`, and const construction is what lets callers put a `DataFormatIdentifier`
-    // in a `const` table.
+    /// in a nibble (i.e. is greater than `0x0F`). Written as explicit range checks rather
+    /// than a `?` on a helper: `?` is not permitted in a `const fn`, and const construction
+    /// is what lets callers put a `DataFormatIdentifier` in a `const` table.
     pub const fn new(compression_method: u8, encryption_method: u8) -> Result<Self, Error> {
         if compression_method > NIBBLE_MAX {
             return Err(Error::InvalidEncryptionCompressionMethod(
@@ -318,8 +318,8 @@ mod tests {
 
     #[test]
     fn failed_memory_format_identifier() {
-        // Tables 444 and 449 both put an invalid addressAndLengthFormatIdentifier on NRC 0x31
-        // requestOutOfRange, not 0x13.
+        // Tables 444 and 449 both put an invalid addressAndLengthFormatIdentifier on NRC
+        // 0x31 requestOutOfRange, not 0x13.
         let memory_format_identifier = AddressAndLengthFormatIdentifier::try_from(0x00);
         assert!(matches!(
             memory_format_identifier,
@@ -415,10 +415,11 @@ mod tests {
 
             #[test]
             fn prop_length_format_identifier_normalizes_the_reserved_nibble(byte in any::<u8>()) {
-                // Tables 443 and 448 require the low nibble to be '0', so re-encoding any byte
-                // must clear it while preserving the block-length nibble. Generating the full
-                // `u8` range rather than `high_nibble << 4` is what makes this a real property:
-                // the narrower generator held trivially whichever way the impl behaved.
+                // Tables 443 and 448 require the low nibble to be '0', so re-encoding any
+                // byte must clear it while preserving the block-length nibble. Generating
+                // the full `u8` range rather than `high_nibble << 4` is what makes this a
+                // real property: the narrower generator held trivially whichever way the
+                // impl behaved.
                 let lfi = LengthFormatIdentifier::from(byte);
                 let back: u8 = lfi.into();
                 prop_assert_eq!(byte & 0xF0, back);
@@ -427,8 +428,8 @@ mod tests {
             #[test]
             fn prop_memory_format_identifier_roundtrip(
                 // The full range Annex H Table H.1 declares applicable. Narrowing these to
-                // what the decoder happened to accept is what previously let an off-by-one in
-                // the range checks sit underneath a passing property test.
+                // what the decoder happened to accept is what previously let an off-by-one
+                // in the range checks sit underneath a passing property test.
                 size_len in 1u8..=MAX_MEMORY_SIZE_LENGTH,
                 addr_len in 1u8..=MAX_MEMORY_ADDRESS_LENGTH,
             ) {

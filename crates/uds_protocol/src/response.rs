@@ -306,7 +306,8 @@ mod tests {
 
     #[test]
     fn clear_diagnostic_info_response_rejects_trailing_bytes() {
-        // Bare SID round-trips; a conformant ClearDiagnosticInfo positive response is [0x54].
+        // Bare SID round-trips; a conformant ClearDiagnosticInfo positive response is
+        // [0x54].
         let (resp, remaining) = Response::decode(&[0x54]).unwrap();
         assert!(remaining.is_empty());
         assert!(matches!(resp, Response::ClearDiagnosticInfo(_)));

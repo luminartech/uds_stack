@@ -219,10 +219,10 @@ mod test {
 
     #[test]
     fn wdbi_request_requires_at_least_one_data_byte() {
-        // ISO 14229-1:2020 Table 277 marks dataRecord `data#1` as `M` (only `data#2..#m` are
-        // `U`), and Figure 26's key states "minimum length is 4 byte (SI + DID + DREC)". A
-        // 3-byte message used to decode into an empty data record, so a server would attempt a
-        // zero-length write rather than answering NRC 0x13.
+        // ISO 14229-1:2020 Table 277 marks dataRecord `data#1` as `M` (only `data#2..#m`
+        // are `U`), and Figure 26's key states "minimum length is 4 byte (SI + DID +
+        // DREC)". A 3-byte message used to decode into an empty data record, so a server
+        // would attempt a zero-length write rather than answering NRC 0x13.
         let err = <WriteDataByIdentifierRequest as Decode>::decode(&[0xF1, 0x90])
             .expect_err("a write with no data record must be rejected");
         assert!(

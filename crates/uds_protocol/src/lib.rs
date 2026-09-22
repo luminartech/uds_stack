@@ -118,10 +118,10 @@ mod no_std_api_tests {
     fn dtc_and_status_iter_roundtrip() {
         // 2 DTC records: (0x01,0x02,0x03, status=0x0A), (0x04,0x05,0x06, status=0x0B)
         //
-        // Deliberately not gated on `alloc`, and written with `next()` rather than `collect()`
-        // for that reason. While this was gated, mutating the status byte to a constant left
-        // `--no-default-features` fully green — so the assertion below existed but did not
-        // protect the config the crate targets first.
+        // Deliberately not gated on `alloc`, and written with `next()` rather than
+        // `collect()` for that reason. While this was gated, mutating the status byte to a
+        // constant left `--no-default-features` fully green — so the assertion below
+        // existed but did not protect the config the crate targets first.
         let data = [0x01, 0x02, 0x03, 0x0A, 0x04, 0x05, 0x06, 0x0B];
         let mut iter = DtcAndStatusIter::new(&data);
         assert_eq!(iter.len(), 2);
@@ -129,7 +129,8 @@ mod no_std_api_tests {
         let (dtc, status) = iter.next().unwrap().unwrap();
         assert_eq!(u32::from(dtc), 0x01_0203);
         // The status byte matters as much as the DTC: 0x02 and 0x0A-0x0E are the most-used
-        // sub-functions, and nothing asserted it, so "every DTC reports status 0x00" passed.
+        // sub-functions, and nothing asserted it, so "every DTC reports status 0x00"
+        // passed.
         assert_eq!(status.bits(), 0x0A);
 
         let (dtc, status) = iter.next().unwrap().unwrap();
@@ -141,9 +142,9 @@ mod no_std_api_tests {
 
     #[test]
     fn fault_detection_counter_record_is_nameable_from_crate_root() {
-        // `DtcFaultDetectionCounterRecord` is the `Item` of `DtcFaultDetectionIter`. Without a
-        // crate-root path, callers can iterate but cannot name the type — no `Vec<T>`, no struct
-        // field, no helper signature. This pins the re-export.
+        // `DtcFaultDetectionCounterRecord` is the `Item` of `DtcFaultDetectionIter`.
+        // Without a crate-root path, callers can iterate but cannot name the type — no
+        // `Vec<T>`, no struct field, no helper signature. This pins the re-export.
         let data = [0x01, 0x02, 0x03, 0x2A];
         let record: DtcFaultDetectionCounterRecord =
             DtcFaultDetectionIter::new(&data).next().unwrap().unwrap();
@@ -186,8 +187,8 @@ mod no_std_api_tests {
 
     #[test]
     fn request_upload_frames_roundtrip() {
-        // RequestUpload request: SID=0x35, DFI=0x00, ALFID=0x12 (size 1 byte, addr 2 bytes),
-        // addr=0xBEEF, size=0x10
+        // RequestUpload request: SID=0x35, DFI=0x00, ALFID=0x12 (size 1 byte, addr 2
+        // bytes), addr=0xBEEF, size=0x10
         let wire = [0x35, 0x00, 0x12, 0xBE, 0xEF, 0x10];
         let (req, _) = Request::decode(&wire).unwrap();
         assert_eq!(req.service(), UdsServiceType::RequestUpload);
@@ -246,7 +247,8 @@ mod no_std_api_tests {
 
     #[test]
     fn read_dtc_info_request_encodes_through_public_api() {
-        // Public-surface construction: types reached via crate root, not shared::/services::.
+        // Public-surface construction: types reached via crate root, not
+        // shared::/services::.
         let req = ReadDtcInfoRequest::new(
             false,
             ReadDtcInfoSubFunction::ReportDtcByStatusMask(DtcStatusMask::from(0xFF)),
@@ -260,7 +262,8 @@ mod no_std_api_tests {
 
     #[test]
     fn write_data_by_identifier_response_roundtrips_through_public_api() {
-        // Reachability check: the WDBI response codec works through the crate-root public API.
+        // Reachability check: the WDBI response codec works through the crate-root public
+        // API.
         let resp = WriteDataByIdentifierResponse::new(0xBEEF);
         let mut buf = [0u8; 4];
         let written = resp.encode_to_slice(&mut buf).unwrap();
@@ -311,8 +314,8 @@ mod no_std_api_tests {
         };
 
         // Getting the byte back out must be const too, or a `const` dispatch table can be
-        // built but not read. These four had only a non-const `From`, so each of these lines
-        // was previously an E0015.
+        // built but not read. These four had only a non-const `From`, so each of these
+        // lines was previously an E0015.
         const DTC_U32: u32 = DTC.to_u32();
         const DFI_BYTE: u8 = DFI.value();
         const NRC_BYTE: u8 = NegativeResponseCode::ConditionsNotCorrect.value();
@@ -334,8 +337,8 @@ mod no_std_api_tests {
     #[test]
     fn communication_control_requests_are_const_constructible() {
         // Both constructors were the crate's only non-`const` `new`s. The blocker was
-        // `u8::from(control_type)` in their error payload, which an inherent `const fn value()`
-        // on the enum removes.
+        // `u8::from(control_type)` in their error payload, which an inherent `const fn
+        // value()` on the enum removes.
         const REQ: CommunicationControlRequest = match CommunicationControlRequest::new(
             false,
             CommunicationControlType::DisableRxAndTx,

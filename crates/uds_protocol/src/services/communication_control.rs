@@ -260,11 +260,12 @@ impl TryFrom<u8> for SubnetNumber {
 /// Serializes as its variant name (`"Normal"`), not as a number — unlike the other
 /// single-byte types in this crate.
 //
-// That is deliberate, and the reason belongs here rather than in the rustdoc, because utoipa
-// publishes the rustdoc as the schema description. There is nothing to smuggle: the four variants
-// are in bijection with 0x00..=0x03 and TryFrom<u8> accepts all four. Routing serde through the
-// byte would be *worse*, because TryFrom<u8> reads bits 1-0 of a whole communicationType byte and
-// masks the rest -- so deserializing 17 would silently yield Normal and re-serialize as 1.
+// That is deliberate, and the reason belongs here rather than in the rustdoc, because
+// utoipa publishes the rustdoc as the schema description. There is nothing to smuggle: the
+// four variants are in bijection with 0x00..=0x03 and TryFrom<u8> accepts all four. Routing
+// serde through the byte would be *worse*, because TryFrom<u8> reads bits 1-0 of a whole
+// communicationType byte and masks the rest -- so deserializing 17 would silently yield
+// Normal and re-serialize as 1.
 #[cfg_attr(feature = "serde", derive(serde::Deserialize, serde::Serialize))]
 #[cfg_attr(feature = "utoipa", derive(utoipa::ToSchema))]
 #[cfg_attr(feature = "clap", derive(clap::ValueEnum))]
@@ -323,8 +324,8 @@ mod communication_type_tests {
     /// Check that we properly decode and encode hex bytes
     #[test]
     fn communication_type_from_all_u8_values() {
-        // `CommunicationType` is bits 1-0 of the byte, so the subnet nibble is ignored here and
-        // only the reserved bits 3-2 can make a byte invalid (Annex B Table B.1).
+        // `CommunicationType` is bits 1-0 of the byte, so the subnet nibble is ignored here
+        // and only the reserved bits 3-2 can make a byte invalid (Annex B Table B.1).
         for i in 0..=u8::MAX {
             let msg_type = CommunicationType::try_from(i);
             if i & RESERVED_BITS_MASK != 0 {
@@ -642,11 +643,12 @@ mod request {
 
     #[test]
     fn the_communication_type_byte_carries_a_subnet_number() {
-        // ISO 14229-1:2020 Annex B Table B.1 splits this byte: bits 0-1 are the message type,
-        // bits 4-7 the subnet number (0 = the specified types on all connected networks,
-        // 1-E = a specific subnet, F = the network the request arrived on). The whole byte was
-        // matched against 0x00..=0x03, so 0xF3 -- "network management and normal messages on
-        // the network this request came in on", a common real-world value -- was rejected.
+        // ISO 14229-1:2020 Annex B Table B.1 splits this byte: bits 0-1 are the message
+        // type, bits 4-7 the subnet number (0 = the specified types on all connected
+        // networks, 1-E = a specific subnet, F = the network the request arrived on). The
+        // whole byte was matched against 0x00..=0x03, so 0xF3 -- "network management and
+        // normal messages on the network this request came in on", a common real-world
+        // value -- was rejected.
         for (byte, message_type, subnet) in [
             (
                 0x03u8,
@@ -690,7 +692,8 @@ mod request {
 
     #[test]
     fn the_reserved_bits_of_the_communication_type_byte_must_be_zero() {
-        // Table B.1 marks bits 2-3 ISOSAEReserved, so a conformant client leaves them clear.
+        // Table B.1 marks bits 2-3 ISOSAEReserved, so a conformant client leaves them
+        // clear.
         for byte in [0x07u8, 0x0B, 0x0F, 0xFF] {
             assert!(
                 CommunicationType::try_from(byte).is_err(),

@@ -97,9 +97,10 @@ const REQUESTS: &[Example] = &[
         cite: "Table 468 - RequestTransferExit request",
         bytes: &[0x37],
     },
-    // Table 486: modeOfOperation = AddFile, filePathAndNameLength = 0x001E,
-    // filePathAndName = "D:\mapdata\europe\germany1.yxz", dataFormatIdentifier = 0x11,
-    // fileSizeParameterLength = 2, fileSizeUnCompressed = 0xC350, fileSizeCompressed = 0x7530.
+    // Table 486: modeOfOperation = AddFile, filePathAndNameLength = 0x001E, filePathAndName
+    // = "D:\mapdata\europe\germany1.yxz", dataFormatIdentifier = 0x11,
+    // fileSizeParameterLength = 2, fileSizeUnCompressed = 0xC350, fileSizeCompressed =
+    // 0x7530.
     Example {
         cite: "Table 486 - RequestFileTransfer request example (AddFile)",
         bytes: &[
@@ -198,9 +199,9 @@ fn every_spec_request_example_decodes_and_re_encodes_unchanged() {
     for Example { cite, bytes } in REQUESTS {
         let req = Request::decode_exact(bytes)
             .unwrap_or_else(|e| panic!("{cite}: decode of {bytes:02X?} failed: {e:?}"));
-        // `Request::Other` carries the SID and payload verbatim, so it round-trips perfectly.
-        // Without this, a frame for a service the crate does not model would pass silently and
-        // this suite would report coverage it does not have.
+        // `Request::Other` carries the SID and payload verbatim, so it round-trips
+        // perfectly. Without this, a frame for a service the crate does not model would
+        // pass silently and this suite would report coverage it does not have.
         assert!(
             !matches!(req, Request::Other { .. }),
             "{cite}: decoded to Request::Other, so this service is not actually modeled"
@@ -218,7 +219,8 @@ fn every_spec_response_example_decodes_and_re_encodes_unchanged() {
     for Example { cite, bytes } in RESPONSES {
         let resp = Response::decode_exact(bytes)
             .unwrap_or_else(|e| panic!("{cite}: decode of {bytes:02X?} failed: {e:?}"));
-        // Same trap as on the request side: `Response::Other` round-trips any SID unchanged.
+        // Same trap as on the request side: `Response::Other` round-trips any SID
+        // unchanged.
         assert!(
             !matches!(resp, Response::Other { .. }),
             "{cite}: decoded to Response::Other, so this service is not actually modeled"
@@ -234,10 +236,11 @@ fn every_spec_response_example_decodes_and_re_encodes_unchanged() {
 #[test]
 fn the_set_of_services_with_spec_example_coverage_is_pinned() {
     // A tripwire on this file's own fixtures, not a property of the crate: it reads the two
-    // const arrays above, so no production change can make it fail. Its only job is to force a
-    // deliberate edit here when a service gains or loses spec-example coverage. The previous
-    // name claimed it checked coverage of "every service the crate models", which it does not
-    // and cannot -- the crate models 16 request services and 13 have frames below.
+    // const arrays above, so no production change can make it fail. Its only job is to
+    // force a deliberate edit here when a service gains or loses spec-example coverage. The
+    // previous name claimed it checked coverage of "every service the crate models", which
+    // it does not and cannot -- the crate models 16 request services and 13 have frames
+    // below.
     let mut sids: Vec<u8> = REQUESTS.iter().map(|e| e.bytes[0]).collect();
     sids.sort_unstable();
     sids.dedup();
@@ -250,20 +253,23 @@ fn the_set_of_services_with_spec_example_coverage_is_pinned() {
     );
 
     // Where a modeled service has no request frame here, the reason is that its example
-    // table's byte-value column is not machine-readable in the markdown conversion, NOT that
-    // the standard omits the example. An earlier version of this comment claimed the latter
-    // about 0x10, 0x11 and 0x27, and that was simply wrong: Table 31 (DiagnosticSessionControl),
-    // Table 38 (ECUReset) and Tables 47/49/51 (SecurityAccess) are all request byte tables.
+    // table's byte-value column is not machine-readable in the markdown conversion, NOT
+    // that the standard omits the example. An earlier version of this comment claimed the
+    // latter about 0x10, 0x11 and 0x27, and that was simply wrong: Table 31
+    // (DiagnosticSessionControl), Table 38 (ECUReset) and Tables 47/49/51 (SecurityAccess)
+    // are all request byte tables.
     //
-    // In Tables 31, 38 and 47 the conversion merged the byte value into the description cell
-    // ("ECUReset Request SID 11 16"), so the values can only be recovered by cross-referencing
-    // the parameter-definition tables — that is inference, not quotation, and quotation is the
-    // whole point of this suite. Table 49 survived the conversion intact and is included above.
-    // Table 472 (RequestUpload) is the same story: bytes #7 and #8 of its memorySize are not
-    // legible, so 0x35 has no frame here despite being fully modeled.
+    // In Tables 31, 38 and 47 the conversion merged the byte value into the description
+    // cell ("ECUReset Request SID 11 16"), so the values can only be recovered by
+    // cross-referencing the parameter-definition tables — that is inference, not quotation,
+    // and quotation is the whole point of this suite. Table 49 survived the conversion
+    // intact and is included above. Table 472 (RequestUpload) is the same story: bytes #7
+    // and #8 of its memorySize are not legible, so 0x35 has no frame here despite being
+    // fully modeled.
     //
-    // This is the same class of extraction hazard as the two-bytes-in-one-cell rows noted on
-    // Tables 486 and 487. Verify against the PDF before adding a frame, never against a guess.
+    // This is the same class of extraction hazard as the two-bytes-in-one-cell rows noted
+    // on Tables 486 and 487. Verify against the PDF before adding a frame, never against a
+    // guess.
     let mut response_sids: Vec<u8> = RESPONSES.iter().map(|e| e.bytes[0]).collect();
     response_sids.sort_unstable();
     response_sids.dedup();

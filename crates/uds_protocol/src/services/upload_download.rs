@@ -99,18 +99,19 @@ macro_rules! upload_download_service {
                 if memory_address > 0xFF_FFFF_FFFF {
                     return Err(Error::InvalidMemoryAddress(memory_address));
                 }
-                // A width of 0 is "not applicable" in Table H.1, so clamp to one byte even when
-                // the value is 0. Written as `if` rather than `.max(1)` because `Ord::max` is not
-                // callable in a `const fn`.
+                // A width of 0 is "not applicable" in Table H.1, so clamp to one byte even
+                // when the value is 0. Written as `if` rather than `.max(1)` because
+                // `Ord::max` is not callable in a `const fn`.
                 let address_bytes = (u64::BITS - memory_address.leading_zeros()).div_ceil(8) as u8;
                 let memory_address_length = if address_bytes == 0 { 1 } else { address_bytes };
                 let size_bytes = (u32::BITS - memory_size.leading_zeros()).div_ceil(8) as u8;
                 let memory_size_length = if size_bytes == 0 { 1 } else { size_bytes };
-                // Delegate rather than build the value here, so there is exactly one path that
-                // decides whether a (value, width) pair is acceptable. These two used to be
-                // independent, and disagreed: the same over-wide address produced
-                // `InvalidMemoryAddress` from one and `IncorrectMessageLengthOrInvalidFormat`
-                // from the other, i.e. NRC 0x31 versus 0x13 for one input.
+                // Delegate rather than build the value here, so there is exactly one path
+                // that decides whether a (value, width) pair is acceptable. These two used
+                // to be independent, and disagreed: the same over-wide address produced
+                // `InvalidMemoryAddress` from one and
+                // `IncorrectMessageLengthOrInvalidFormat` from the other, i.e. NRC 0x31
+                // versus 0x13 for one input.
                 match AddressAndLengthFormatIdentifier::new(
                     memory_size_length,
                     memory_address_length,
@@ -147,8 +148,8 @@ macro_rules! upload_download_service {
                 memory_address: u64,
                 memory_size: u32,
             ) -> Result<Self, Error> {
-                // A width of n bytes holds values below 1 << (8 * n). Shifted and compared as
-                // u128 so the widest case cannot overflow.
+                // A width of n bytes holds values below 1 << (8 * n). Shifted and compared
+                // as u128 so the widest case cannot overflow.
                 if (memory_address as u128) >= (1u128 << (8 * alfid.memory_address_length() as u32))
                 {
                     return Err(Error::InvalidMemoryAddress(memory_address));
@@ -433,7 +434,8 @@ macro_rules! upload_download_service {
             }
         }
 
-        // Both services get the same coverage, generated alongside them so neither can drift.
+        // Both services get the same coverage, generated alongside them so neither can
+        // drift.
         #[cfg(test)]
         mod $test_mod {
             use super::*;
@@ -511,9 +513,10 @@ macro_rules! upload_download_service {
             #[test]
             fn new_derives_the_alfid_nibbles_in_wire_order() {
                 // The two nibbles are asymmetric here on purpose: the high nibble is the
-                // memorySize width and the low nibble the memoryAddress width, so transposing
-                // them changes these bytes. A symmetric case (or a length-only assertion)
-                // cannot tell the two apart, and a swap silently truncates the address.
+                // memorySize width and the low nibble the memoryAddress width, so
+                // transposing them changes these bytes. A symmetric case (or a length-only
+                // assertion) cannot tell the two apart, and a swap silently truncates the
+                // address.
                 for (address, size, want) in [
                     // 4-byte address, 1-byte size -> ALFID 0x14
                     (
@@ -543,11 +546,11 @@ macro_rules! upload_download_service {
             #[test]
             fn explicit_widths_can_reproduce_the_spec_example_alfid() {
                 // ISO 14229-1:2020 Table 441 makes the addressAndLengthFormatIdentifier a
-                // client choice, not a function of the values. Table 462's own example declares
-                // 3 bytes of memorySize for the value 0x00FFFF, which needs only 2 -- so `new`,
-                // which always derives minimal widths, cannot produce that frame. Real
-                // bootloaders commonly mandate a fixed ALFID (often 0x44) and answer
-                // requestOutOfRange otherwise.
+                // client choice, not a function of the values. Table 462's own example
+                // declares 3 bytes of memorySize for the value 0x00FFFF, which needs only 2
+                // -- so `new`, which always derives minimal widths, cannot produce that
+                // frame. Real bootloaders commonly mandate a fixed ALFID (often 0x44) and
+                // answer requestOutOfRange otherwise.
                 let req = $req::new_with_alfid(
                     DataFormatIdentifier::from(0x11),
                     AddressAndLengthFormatIdentifier::new(3, 3).unwrap(),
@@ -571,9 +574,9 @@ macro_rules! upload_download_service {
 
             #[test]
             fn explicit_widths_reject_a_value_that_does_not_fit() {
-                // A declared width narrower than the value would silently truncate on the wire.
-                // Both of these are NRC 0x31 per Tables 444 and 449, and they name which
-                // parameter was at fault rather than collapsing to one length error.
+                // A declared width narrower than the value would silently truncate on the
+                // wire. Both of these are NRC 0x31 per Tables 444 and 449, and they name
+                // which parameter was at fault rather than collapsing to one length error.
                 let two_byte_address = AddressAndLengthFormatIdentifier::new(1, 2).unwrap();
                 assert!(matches!(
                     $req::new_with_alfid(
@@ -590,8 +593,9 @@ macro_rules! upload_download_service {
                     Err(Error::InvalidMemorySize(0x1_0000))
                 ));
 
-                // ...and the widths themselves must be ones Table H.1 permits. That check now
-                // lives on the format identifier, so it cannot be reached with a bad width.
+                // ...and the widths themselves must be ones Table H.1 permits. That check
+                // now lives on the format identifier, so it cannot be reached with a bad
+                // width.
                 assert!(AddressAndLengthFormatIdentifier::new(1, 0).is_err());
                 assert!(AddressAndLengthFormatIdentifier::new(1, 6).is_err());
                 assert!(AddressAndLengthFormatIdentifier::new(5, 1).is_err());
@@ -599,10 +603,11 @@ macro_rules! upload_download_service {
 
             #[test]
             fn both_constructors_reject_an_over_wide_address_the_same_way() {
-                // These were independent code paths that disagreed: the same over-wide address
-                // produced InvalidMemoryAddress from `new` and IncorrectMessageLengthOrInvalidFormat
-                // from the explicit-width constructor -- NRC 0x31 versus 0x13 for one input.
-                // `new` now derives its widths and delegates, so there is one decision.
+                // These were independent code paths that disagreed: the same over-wide
+                // address produced InvalidMemoryAddress from `new` and
+                // IncorrectMessageLengthOrInvalidFormat from the explicit-width constructor
+                // -- NRC 0x31 versus 0x13 for one input. `new` now derives its widths and
+                // delegates, so there is one decision.
                 let too_wide = 0x1_0000_0000_0000u64;
                 let widest = AddressAndLengthFormatIdentifier::new(4, 5).unwrap();
                 assert!(matches!(
@@ -619,8 +624,8 @@ macro_rules! upload_download_service {
             fn the_widest_legal_address_and_size_round_trip() {
                 // Annex H Table H.1 permits a 4-byte memorySize and a 5-byte memoryAddress
                 // (ALFID 0x45), which `new` derives for these values. The decoder used to
-                // reject both widths, so the crate could not read back its own output for any
-                // transfer above 16 MB or to an address above 4 GB.
+                // reject both widths, so the crate could not read back its own output for
+                // any transfer above 16 MB or to an address above 4 GB.
                 let req =
                     $req::new(DataFormatIdentifier::NONE, 0xFF_FFFF_FFFF, 0xFFFF_FFFF).unwrap();
                 let mut buf = [0u8; 16];
@@ -654,11 +659,12 @@ macro_rules! upload_download_service {
 
             #[test]
             fn a_reserved_length_nibble_is_zeroed_on_re_encode() {
-                // ISO 14229-1:2020 Tables 443 and 448 both give the lengthFormatIdentifier the
-                // range 0x00 to 0xF0 and state that bits 3 to 0 are "reserved by document, to be
-                // set to '0'" -- "the lower nibble shall be set to '0'". So `74 25 08 00` is a
-                // malformed byte, not a value to preserve: the block length is still read from
-                // the high nibble, but re-encoding emits the conformant `74 20 08 00`.
+                // ISO 14229-1:2020 Tables 443 and 448 both give the lengthFormatIdentifier
+                // the range 0x00 to 0xF0 and state that bits 3 to 0 are "reserved by
+                // document, to be set to '0'" -- "the lower nibble shall be set to '0'". So
+                // `74 25 08 00` is a malformed byte, not a value to preserve: the block
+                // length is still read from the high nibble, but re-encoding emits the
+                // conformant `74 20 08 00`.
                 let resp = <$resp as Decode>::decode_exact(&[0x25, 0x08, 0x00]).unwrap();
                 assert_eq!(resp.max_number_of_block_length(), &[0x08, 0x00]);
 
@@ -692,12 +698,11 @@ macro_rules! upload_download_service {
 
             #[test]
             fn data_format_identifier_is_readable_off_a_decoded_request() {
-                // A server has to act on the compression/encryption methods it was asked for.
-                // All fields are private (the width nibbles must stay in sync with the values),
-                // so without the getter the DFI was write-only: constructible but unreadable
-                // after a decode.
-                // Wire: DFI=0x21 (compression 2, encryption 1), ALFID=0x12 (size 1, addr 2),
-                // addr=0xBEEF, size=0x10
+                // A server has to act on the compression/encryption methods it was asked
+                // for. All fields are private (the width nibbles must stay in sync with the
+                // values), so without the getter the DFI was write-only: constructible but
+                // unreadable after a decode. Wire: DFI=0x21 (compression 2, encryption 1),
+                // ALFID=0x12 (size 1, addr 2), addr=0xBEEF, size=0x10
                 let wire = [0x21, 0x12, 0xBE, 0xEF, 0x10];
                 let req = <$req as Decode>::decode_exact(&wire).unwrap();
                 let dfi = req.data_format_identifier();

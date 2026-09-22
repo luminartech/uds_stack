@@ -44,24 +44,57 @@ class OverlongLinesAreReported(unittest.TestCase):
     """The case that motivated this check: a doc comment `cargo fmt` will not touch."""
 
     def test_a_long_doc_comment_is_caught(self) -> None:
-        text = "/// " + "x" * 100 + "\n"
+        text = "/// " + "word " * 25 + "\n"
         found = violations("src/lib.rs", text, 92)
         self.assertEqual(len(found), 1)
-        number, width, _line = found[0]
-        self.assertEqual((number, width), (1, 104))
+        number, _width, _line = found[0]
+        self.assertEqual(number, 1)
 
     def test_a_line_exactly_at_the_limit_passes(self) -> None:
         """The limit is inclusive, as rustfmt's is."""
         self.assertEqual(violations("src/lib.rs", "x" * 92 + "\n", 92), [])
 
     def test_line_numbers_are_one_based(self) -> None:
-        text = "fine\n" + "y" * 93 + "\nfine\n"
+        text = "fine\n// " + "word " * 25 + "\nfine\n"
         self.assertEqual([number for number, _, _ in violations("f.rs", text, 92)], [2])
 
     def test_every_offender_is_reported_not_just_the_first(self) -> None:
         """A report that stopped at the first would hide the rest behind one fix."""
-        text = "a" * 93 + "\n" + "b" * 94 + "\n"
+        text = "// " + "alpha " * 25 + "\n// " + "beta " * 25 + "\n"
         self.assertEqual(len(violations("f.rs", text, 92)), 2)
+
+
+class ExemptionsAreHonoured(unittest.TestCase):
+    """What this check deliberately does not report, and why each would be wrong to.
+
+    Each of these was reported before the check was narrowed, and each asked for a change
+    that would damage what it touched rather than tidy it.
+    """
+
+    def test_a_code_line_is_not_reported(self) -> None:
+        """Rustfmt owns code. One it left long is one it could not wrap."""
+        text = '    cite: "' + "Table 61 - CommunicationControl " * 4 + '",\n'
+        self.assertEqual(violations("tests/spec.rs", text, 92), [])
+
+    def test_a_markdown_table_row_is_not_reported(self) -> None:
+        """Wrapping a row stops its columns aligning and its cells parsing."""
+        text = "/// | 1 | " + "cell " * 30 + "| **0** |\n"
+        self.assertEqual(violations("src/lib.rs", text, 92), [])
+
+    def test_a_banner_separator_is_not_reported(self) -> None:
+        """`////` is an ordinary comment in Rust, not a doc comment."""
+        text = "/" * 40 + " - Request - " + "/" * 60 + "\n"
+        self.assertEqual(violations("src/lib.rs", text, 92), [])
+
+    def test_a_line_with_nothing_to_break_at_is_not_reported(self) -> None:
+        """A bare URL or one long intra-doc link has no wrap point."""
+        text = "/// https://example.invalid/" + "segment/" * 12 + "\n"
+        self.assertEqual(violations("src/lib.rs", text, 92), [])
+
+    def test_a_plain_comment_is_still_reported(self) -> None:
+        """Narrowing to comments must not narrow to *doc* comments."""
+        text = "// " + "word " * 25 + "\n"
+        self.assertEqual(len(violations("src/lib.rs", text, 92)), 1)
 
     def test_width_is_counted_in_characters_not_bytes(self) -> None:
         """An em dash is one column. Counting bytes would flag prose that fits."""

@@ -396,8 +396,8 @@ mod response {
         let (result, _) = <EcuResetResponse as Decode>::decode(&bytes).unwrap();
         assert_eq!(result, resp);
 
-        // The encoded bytes themselves, not just their count: without this the two halves of
-        // the test are disconnected and swapping the two written bytes goes unnoticed.
+        // The encoded bytes themselves, not just their count: without this the two halves
+        // of the test are disconnected and swapping the two written bytes goes unnoticed.
         assert_eq!(&buffer[..written], &bytes);
         assert_eq!(written, 2);
         assert_eq!(written, resp.encoded_size().unwrap());
@@ -407,8 +407,8 @@ mod response {
     #[test]
     fn a_reset_type_without_a_power_down_time_encodes_one_byte() {
         // ISO 14229-1:2020 Table 35 marks powerDownTime `C`, present only when the
-        // sub-function is enableRapidPowerShutDown (0x04). Table 39's positive-response flow
-        // example for hardReset is two bytes on the wire: `51 01`.
+        // sub-function is enableRapidPowerShutDown (0x04). Table 39's positive-response
+        // flow example for hardReset is two bytes on the wire: `51 01`.
         let resp = EcuResetResponse::new(ResetType::HardReset);
         assert_eq!(resp.power_down_time, None);
 
@@ -422,9 +422,9 @@ mod response {
 
     #[test]
     fn a_response_without_a_power_down_time_round_trips_unchanged() {
-        // Decoding and re-encoding must not invent a powerDownTime byte. This used to append
-        // a spurious 0x00, so any proxy that decoded and re-encoded ECU traffic rewrote every
-        // positive response except enableRapidPowerShutDown's.
+        // Decoding and re-encoding must not invent a powerDownTime byte. This used to
+        // append a spurious 0x00, so any proxy that decoded and re-encoded ECU traffic
+        // rewrote every positive response except enableRapidPowerShutDown's.
         for wire in [[0x51, 0x01].as_slice(), [0x51, 0x04, 0x20].as_slice()] {
             let (resp, _) = crate::Response::decode(wire).unwrap();
             let mut buf = [0u8; 8];

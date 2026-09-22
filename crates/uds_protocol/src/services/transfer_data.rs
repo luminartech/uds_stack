@@ -22,10 +22,9 @@ const TRANSFER_DATA_NEGATIVE_RESPONSE_CODES: [NegativeResponseCode; 6] = [
 /// [`RequestDownloadResponse`](crate::RequestDownloadResponse) or `RequestUploadResponse`
 /// message to the client
 ///
-/// Step 2: The client shall send many [`TransferDataRequest`] messages written in blocks
-///     to the server with a max number of bytes equal to `MNROB_B`# from the `RequestDownloadResponse` message
-///    74  .. 20   .. 00 81
-///   RSID .. LFID .. `MNROB_B`#
+/// Step 2: The client shall send many [`TransferDataRequest`] messages written in blocks to
+/// the server with a max number of bytes equal to `MNROB_B`# from the
+/// `RequestDownloadResponse` message 74 .. 20 .. 00 81 RSID .. LFID .. `MNROB_B`#
 ///
 /// Step 2 Response: The server sends a [`TransferDataResponse`] message confirming the
 /// block sequence

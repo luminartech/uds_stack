@@ -146,8 +146,8 @@ where
                         // connection; callers observe that through the stream ending.
                         break;
                     }
-                    // Once there is information in the Response/Read stream we'll do work on it
-                    // and send it along to the receiver on the other end
+                    // Once there is information in the Response/Read stream we'll do work
+                    // on it and send it along to the receiver on the other end
                     //
                     result = socket_read_stream.next() => {
                         match result {
@@ -177,7 +177,8 @@ where
                                             "The server may be closing the connection due to overload."
                                         ), e);
                                     }
-                                    // Either way the socket is unusable; exit the read loop.
+                                    // Either way the socket is unusable; exit the read
+                                    // loop.
                                     break;
                                 }
                                 error!("Error decoding message: {:?}", e.to_string());

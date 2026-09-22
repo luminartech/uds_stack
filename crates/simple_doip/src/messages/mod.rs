@@ -651,7 +651,8 @@ mod tests {
             DiagnosticAckCode::RoutingConfirmationAck,
             &[0x10u8, 0x02][..],
         );
-        // 5 fixed bytes (two 2-byte addresses + 1 ack-code byte) + 2 previous-message bytes.
+        // 5 fixed bytes (two 2-byte addresses + 1 ack-code byte) + 2 previous-message
+        // bytes.
         assert_eq!(message.header.payload_length, 7);
 
         let mut buf = [0u8; 64];

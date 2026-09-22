@@ -356,8 +356,8 @@ impl UdsServiceType {
             | Self::SecurityAccess
             | Self::TesterPresent => Some(true),
             // Services with no sub-function. Several lead with an enumerated parameter
-            // (`transmissionMode`, `modeOfOperation`, `controlOptionRecord`) that ISO does not
-            // label a sub-function, so bit 7 of that byte is data rather than a SPRMIB.
+            // (`transmissionMode`, `modeOfOperation`, `controlOptionRecord`) that ISO does
+            // not label a sub-function, so bit 7 of that byte is data rather than a SPRMIB.
             Self::ClearDiagnosticInfo
             | Self::InputOutputControlByIdentifier
             | Self::ReadDataByIdentifier
@@ -502,9 +502,9 @@ mod test {
 
     #[test]
     fn the_response_sid_is_the_request_sid_with_bit_6_set() {
-        // ISO 14229-1 derives every positive response SID by adding 0x40 to the request SID.
-        // Checking the rule as well as the table catches a single mistyped entry above, which a
-        // table compared only against itself would not.
+        // ISO 14229-1 derives every positive response SID by adding 0x40 to the request
+        // SID. Checking the rule as well as the table catches a single mistyped entry
+        // above, which a table compared only against itself would not.
         for &(service, request_sid, response_sid, _) in SERVICES {
             assert_eq!(
                 response_sid,
@@ -516,9 +516,10 @@ mod test {
 
     #[test]
     fn the_two_services_without_a_request_sid_say_so() {
-        // Both have no request SID and return 0x7F, which is not a legal request SID -- it is the
-        // negative-response SID. Callers needing lossless round-tripping of an unmodeled service
-        // must use `Request::Other`, so this is pinned rather than left to be discovered.
+        // Both have no request SID and return 0x7F, which is not a legal request SID -- it
+        // is the negative-response SID. Callers needing lossless round-tripping of an
+        // unmodeled service must use `Request::Other`, so this is pinned rather than left
+        // to be discovered.
         assert_eq!(
             UdsServiceType::to_request_sid(UdsServiceType::NegativeResponse),
             0x7F
@@ -535,10 +536,11 @@ mod test {
 
     #[test]
     fn every_service_reports_the_sub_function_iso_gives_it() {
-        // The fourth column is an independent statement of the standard, not something derived
-        // from `has_sub_function` -- so a mistyped arm in the implementation fails here rather
-        // than agreeing with itself. Only the 12 services with a sub-function can carry a
-        // SPRMIB, which is what `Request::is_positive_response_suppressed` depends on.
+        // The fourth column is an independent statement of the standard, not something
+        // derived from `has_sub_function` -- so a mistyped arm in the implementation fails
+        // here rather than agreeing with itself. Only the 12 services with a sub-function
+        // can carry a SPRMIB, which is what `Request::is_positive_response_suppressed`
+        // depends on.
         for &(service, request_sid, _, has_sub_function) in SERVICES {
             assert_eq!(
                 service.has_sub_function(),
@@ -550,12 +552,12 @@ mod test {
 
     #[test]
     fn the_variants_that_are_not_a_2020_request_service_report_no_sub_function() {
-        // None of these three is a request service in the edition this crate targets, so "does
-        // it have a sub-function" has no answer.
+        // None of these three is a request service in the edition this crate targets, so
+        // "does it have a sub-function" has no answer.
         //
-        // `UnsupportedDiagnosticService` is the one that matters most: it is where every SID ISO
-        // does not assign lands, and returning `None` there is what lets a caller tell a
-        // vendor-specific service apart from one that genuinely has no sub-function.
+        // `UnsupportedDiagnosticService` is the one that matters most: it is where every
+        // SID ISO does not assign lands, and returning `None` there is what lets a caller
+        // tell a vendor-specific service apart from one that genuinely has no sub-function.
         assert_eq!(UdsServiceType::NegativeResponse.has_sub_function(), None);
         assert_eq!(
             UdsServiceType::UnsupportedDiagnosticService.has_sub_function(),
@@ -566,8 +568,8 @@ mod test {
             None,
             "0x40 is unassigned"
         );
-        // 0x83 is enumerated -- the variant exists so a 2013-era byte round-trips -- but the
-        // 2020 edition withdrew the service, so this crate has no basis for an answer.
+        // 0x83 is enumerated -- the variant exists so a 2013-era byte round-trips -- but
+        // the 2020 edition withdrew the service, so this crate has no basis for an answer.
         assert_eq!(
             UdsServiceType::AccessTimingParameters.has_sub_function(),
             None
@@ -576,9 +578,10 @@ mod test {
 
     #[test]
     fn every_unassigned_byte_classifies_as_unsupported() {
-        // The conversions are total: no byte panics, and anything outside the table above lands
-        // on `UnsupportedDiagnosticService` rather than being silently mapped to a real service.
-        // Written with `any` rather than collecting, so this compiles without `alloc`.
+        // The conversions are total: no byte panics, and anything outside the table above
+        // lands on `UnsupportedDiagnosticService` rather than being silently mapped to a
+        // real service. Written with `any` rather than collecting, so this compiles without
+        // `alloc`.
         let is_request_sid = |b: u8| SERVICES.iter().any(|&(_, r, _, _)| r == b);
         let is_response_sid =
             |b: u8| b == 0x7F || SERVICES.iter().any(|&(_, _, s, _)| s == b);
