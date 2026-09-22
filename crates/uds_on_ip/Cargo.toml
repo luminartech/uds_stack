@@ -16,11 +16,11 @@ authors = [
 exclude = ["legacy/", "docs/", ".github/"]
 
 [dependencies]
-# Path deps during the prototype. Swap to registry versions once the stack
-# publishes; see ARCHITECTURE.md 8.4.
-simple_doip = { path = "../simple_doip", default-features = false }
-uds_protocol = { path = "../uds_protocol", default-features = false }
-uds_session = { path = "../uds_session", default-features = false }
+# Versions live in the workspace root's [workspace.dependencies]; this crate
+# just points `path` at its siblings for the workspace build.
+simple_doip = { workspace = true }
+uds_protocol = { workspace = true }
+uds_session = { workspace = true }
 
 # The seam this crate sits below. uds_services declares UdsTransport and owns
 # TransportEvent; this crate implements the first and returns the second, so
@@ -28,14 +28,14 @@ uds_session = { path = "../uds_session", default-features = false }
 # runs this way and only this way — uds_services never names a transport
 # (UDSSVC_ARCH_0002), which is what keeps a binding additive at the application.
 # It has no feature table, so nothing below forwards to it.
-uds_services = { path = "../uds_services", default-features = false }
+uds_services = { workspace = true }
 
 # automotive-wire-codec is deliberately NOT a direct dependency. Its `Encode`
 # and `Decode` are re-exported by simple_doip::messages, which is the crate
 # this one is layered on, so the codec vocabulary arrives through the layer
 # below rather than around it.
 
-thiserror = { version = "2", default-features = false }
+thiserror = { workspace = true }
 
 [features]
 # No runtime is named anywhere. An `async fn` implies neither std nor an

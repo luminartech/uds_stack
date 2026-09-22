@@ -8,7 +8,7 @@ edition = "2024"
 cargo-fuzz = true
 
 [dependencies]
-automotive-wire-codec = { path = "../../../automotive_wire_format", default-features = false }
+automotive-wire-codec = { version = "0.4", default-features = false }
 libfuzzer-sys = "0.4"
 uds_protocol = { path = ".." }
 
@@ -27,5 +27,8 @@ name = "fuzz_roundtrip"
 path = "fuzz_targets/fuzz_roundtrip.rs"
 doc = false
 
+# Its own workspace: the fuzz crate must not be built by, or share a lockfile
+# with, the library it fuzzes. Without this, cargo absorbs it into the stack
+# workspace, where it is not a member, and refuses to resolve anything.
 [workspace]
 members = ["."]

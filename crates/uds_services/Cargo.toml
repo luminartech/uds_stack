@@ -14,14 +14,14 @@ publish = false                                  # pre-implementation
 [dependencies]
 # L1 message codec. This crate dispatches over uds_protocol's message types and
 # never re-encodes them itself.
-uds_protocol = { path = "../uds_protocol", default-features = false }
+uds_protocol = { workspace = true }
 
 # ISO 14229-2 session layer. This crate owns a Server<PEERS> by value and drives
 # it (UDSSVC_ARCH_0040), and speaks its vocabulary on the transport seam.
-uds_session = { path = "../uds_session", default-features = false }
+uds_session = { workspace = true }
 
 # The I/O vocabulary for the whole stack. Sink is what a handler writes into.
-automotive-wire-codec = { path = "../../automotive_wire_format", default-features = false }
+automotive-wire-codec = { workspace = true }
 
 # No [features] table. This crate is no_std and allocation-free in every
 # configuration, and nothing in src/ reads a cfg — `alloc` and `std` only forwarded to

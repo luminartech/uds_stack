@@ -26,27 +26,27 @@ exclude = [
 all-features = true
 
 [dependencies]
-automotive-wire-codec = { path = "../../automotive_wire_format" }
-strum = { version = "0.27", default-features = false, features = ["derive"] }
-thiserror = { version = "2", default-features = false }
-tracing = { version = "0.1", default-features = false, optional = true }
+automotive-wire-codec = { workspace = true }
+strum = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true, optional = true }
 # std-only, all optional
-async-trait = { version = "0.1", optional = true }
-bytes = { version = "1", optional = true }
-futures = { version = "0.3", optional = true }
-tokio = { version = "1", optional = true, features = [
+async-trait = { workspace = true, optional = true }
+bytes = { workspace = true, optional = true }
+futures = { workspace = true, optional = true }
+tokio = { workspace = true, optional = true, features = [
     "macros",
     "rt",
     "rt-multi-thread",
     "time",
 ] }
-tokio-util = { version = "0.7", optional = true, features = ["net", "codec"] }
+tokio-util = { workspace = true, optional = true }
 
 [dev-dependencies]
-anyhow = "1"
-proptest = "1"
-tokio = { version = "1", features = ["macros", "rt-multi-thread", "net", "io-util", "time"] }
-tracing-subscriber = { version = "0.3", features = ["fmt"] }
+anyhow = { workspace = true }
+proptest = { workspace = true }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "net", "io-util", "time"] }
+tracing-subscriber = { workspace = true }
 
 [features]
 default = []

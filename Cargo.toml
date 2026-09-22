@@ -1,0 +1,52 @@
+# Cargo.toml
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+
+# Shared dependency versions. Declared once so a bump is one edit, and so the five
+# crates cannot silently drift onto different majors of the same library.
+#
+# The inter-crate entries carry BOTH `path` and `version`. `path` is what makes a
+# workspace build use the source next door; `version` is what a published crate's
+# consumer resolves from crates.io. Cargo strips `path` when packaging, so omitting
+# `version` would publish a dependency with no version requirement, which the registry
+# rejects.
+[workspace.dependencies]
+uds_protocol = { path = "crates/uds_protocol", version = "0.1.0", default-features = false }
+uds_session = { path = "crates/uds_session", version = "0.1.0", default-features = false }
+uds_services = { path = "crates/uds_services", version = "0.0.0", default-features = false }
+simple_doip = { path = "crates/simple_doip", version = "0.6.0", default-features = false }
+
+# External. `automotive-wire-codec` is deliberately NOT a workspace member: it serves
+# simple_someip as well and is released on its own cadence.
+automotive-wire-codec = { version = "0.4", default-features = false }
+bitmask-enum = "2"
+thiserror = { version = "2", default-features = false }
+strum = { version = "0.27", default-features = false, features = ["derive"] }
+tracing = { version = "0.1", default-features = false }
+async-trait = "0.1"
+bytes = "1"
+futures = "0.3"
+tokio = "1"
+tokio-util = { version = "0.7", features = ["net", "codec"] }
+serde = { version = "1", default-features = false, features = ["derive"] }
+utoipa = "5"
+clap = { version = "4", features = ["derive"] }
+
+# dev-dependencies
+anyhow = "1"
+proptest = "1"
+serde_json = "1"
+tracing-subscriber = { version = "0.3", features = ["fmt"] }
+
+# TEMPORARY -- REMOVE BEFORE THE FIRST PUSH TO A PUBLIC REMOTE.
+#
+# automotive-wire-codec 0.4.0 is not yet on crates.io; its release PR is open.
+# This patch points the workspace at a local checkout so the stack can be built
+# and tested against the real 0.4 Sink before that lands. It refers to a path
+# outside this repository, so a clone of this repo cannot use it and CI will
+# fail on it. Delete this whole block the moment 0.4.0 publishes; the
+# [workspace.dependencies] entry above is already the correct final form and
+# needs no change.
+[patch.crates-io]
+automotive-wire-codec = { path = "../../automotive_wire_format" }
