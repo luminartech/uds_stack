@@ -79,7 +79,7 @@
 //!
 //! The one exception is narrow and forced by the standard: clause 8 keys TCP
 //! connection handling on two specific service identifiers. See
-//! [`profile::service_ids`].
+//! `profile::service_ids`.
 
 #![cfg_attr(not(feature = "std"), no_std)]
 #![forbid(unsafe_code)]

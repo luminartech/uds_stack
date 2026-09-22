@@ -2,7 +2,7 @@
 //!
 //! [`DoIpTransport`] implements [`uds_services::UdsTransport`], which is the
 //! whole of what this crate owes the stack. The trait and its
-//! [`TransportEvent`](uds_services::TransportEvent) arrive from `uds_services`
+//! [`TransportEvent`] arrive from `uds_services`
 //! rather than being mirrored here: a mirror is two vocabularies for one seam,
 //! and the two drifted apart within a day of being written.
 //!
@@ -133,20 +133,20 @@ impl<S> UdsTransport for DoIpTransport<S> {
     /// # What the connection owes afterwards
     ///
     /// The message's first octet decides it, via
-    /// [`after_sending`](crate::profile::after_sending), and both ISO 14229-5
+    /// `after_sending`, and both ISO 14229-5
     /// clause 8 connection requirements come from that one read.
     ///
     /// A client sending `DiagnosticSessionControl` or `ECUReset` arms
-    /// [`ConnectionAction::ExpectClose`], so the close REQ 7.8 and REQ 7.10
+    /// `ConnectionAction::ExpectClose`, so the close REQ 7.8 and REQ 7.10
     /// prescribe is reported to the driver as expected rather than as a fault.
     /// A server sending a *positive response* to either arms
-    /// [`ConnectionAction::InitiateClose`]: REQ 7.9 and REQ 7.11 require the
+    /// `ConnectionAction::InitiateClose`: REQ 7.9 and REQ 7.11 require the
     /// server itself to close, after the response and before executing the
     /// service, so this transport asks the connection to close once the send
     /// completes.
     ///
     /// The driver is told, and never asked to work either out — see
-    /// [`after_sending`](crate::profile::after_sending) for why the decision
+    /// `after_sending` for why the decision
     /// lands in this crate rather than above or below it.
     ///
     /// # Errors
@@ -165,7 +165,7 @@ impl<S> UdsTransport for DoIpTransport<S> {
     }
 
     /// The next inbound event, or
-    /// [`TransportEvent::Deadline`](uds_services::TransportEvent::Deadline)
+    /// [`TransportEvent::Deadline`]
     /// when `deadline` passes first.
     ///
     /// An inbound payload is written into `buffer` and reported as the subslice
@@ -177,7 +177,7 @@ impl<S> UdsTransport for DoIpTransport<S> {
     /// # A message longer than `buffer`
     ///
     /// Reported as
-    /// [`TransportEvent::DataTooLong`](uds_services::TransportEvent::DataTooLong),
+    /// [`TransportEvent::DataTooLong`],
     /// never as a `DataInd` whose data happens to fill `buffer`. The caller must
     /// be able to tell a whole message from the front of a longer one: the first
     /// is dispatchable and the second is only classifiable.

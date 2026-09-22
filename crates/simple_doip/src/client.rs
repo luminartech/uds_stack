@@ -175,7 +175,7 @@ where
                     .await
                     .map_err(|_| Error::RoutingActivationFailed)
                     .inspect_err(|e| {
-                        debug!("Failed to send routing activation request: {e}")
+                        debug!("Failed to send routing activation request: {e}");
                     })
                     .inspect(|()| trace!("Routing activation request sent successfully"))?;
                 let res =

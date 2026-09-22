@@ -39,7 +39,7 @@ pub const fn to_logical(addr: Address) -> simple_doip::LogicalAddress {
 
 /// ISO 13400-2 logical address to ISO 14229-2 `S_TA`.
 ///
-/// The inverse of [`to_logical`], and the direction [`classify`] takes: an
+/// The inverse of [`to_logical`], and the direction `classify` takes: an
 /// inbound diagnostic message carries the responder's logical address, which
 /// becomes the `S_AI[SA]` the driver needs to tell functional responses apart.
 #[must_use]
