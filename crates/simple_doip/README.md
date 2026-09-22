@@ -134,8 +134,8 @@ used in this crate.
 ## Contributing
 
 Pull requests, bug reports and questions are welcome — see
-[`CONTRIBUTING.md`](CONTRIBUTING.md). Security reports go through GitHub's
-private vulnerability reporting; see [`SECURITY.md`](SECURITY.md).
+[`CONTRIBUTING.md`](https://github.com/luminartech/uds_stack/blob/main/CONTRIBUTING.md). Security reports go through GitHub's
+private vulnerability reporting; see [`SECURITY.md`](https://github.com/luminartech/uds_stack/blob/main/SECURITY.md).
 
 ## License
 
