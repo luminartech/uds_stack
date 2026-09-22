@@ -10,6 +10,7 @@ edition = "2024"
 # Neither licence grants any right in the ISO standards the requirements cite, which remain
 # ISO's. See "Relationship to the standards" in README.md.
 license = "MIT OR Apache-2.0"
+readme = "README.md"
 
 [dependencies]
 

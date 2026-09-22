@@ -13,7 +13,7 @@ authors = [
     "Zachary Heylmun <zachary_heylmun@microvision.com>",
     "Justin Kovacich <justin_kovacich@microvision.com>",
 ]
-exclude = ["legacy/", "docs/", ".github/"]
+exclude = [".github/"]
 
 [dependencies]
 # Versions live in the workspace root's [workspace.dependencies]; this crate
