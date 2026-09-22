@@ -263,6 +263,12 @@ where
     ///
     /// # Errors
     /// Returns an [`Error`] if the socket is not currently bound
+    #[expect(
+        clippy::unwrap_used,
+        reason = "declared in this method's `# Panics` section; the inner task owns \
+                  the other end of both channels and outlives this call. Returning \
+                  these as `Error` instead is an API change, and is the gap to close."
+    )]
     pub async fn unbind_socket(&mut self) -> Result<(), Error> {
         let (response, message) = ControlMessage::create_unbind_socket_message();
         self.control_sender.send(message).await.unwrap();

@@ -16,6 +16,18 @@
 //!
 //! A schema that lies is worse than a verbose one, so these are checked, not eyeballed.
 
+// Test code. `unwrap`, `expect` and `panic` are the failure mechanism here, and a
+// test that indexes a known-length vector reads better than one that does not. The
+// workspace lint standard in the root Cargo.toml reaches this target too -- an
+// integration test is its own crate, so lib.rs cannot speak for it -- which is why
+// the relaxation is stated here rather than left implicit.
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::indexing_slicing,
+    clippy::arithmetic_side_effects
+)]
 #![cfg(all(feature = "utoipa", feature = "serde"))]
 // utoipa's `OpenApi` derive expands to `iter().for_each(..)`, so this lint fires on
 // generated code that this file cannot change.

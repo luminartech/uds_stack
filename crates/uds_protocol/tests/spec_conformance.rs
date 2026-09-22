@@ -19,6 +19,19 @@
 //! This is an integration test, so it sees the crate as a downstream user does: anything it
 //! needs must be reachable and constructible through the public API.
 
+// Test code. `unwrap`, `expect` and `panic` are the failure mechanism here, and a
+// test that indexes a known-length vector reads better than one that does not. The
+// workspace lint standard in the root Cargo.toml reaches this target too -- an
+// integration test is its own crate, so lib.rs cannot speak for it -- which is why
+// the relaxation is stated here rather than left implicit.
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::indexing_slicing,
+    clippy::arithmetic_side_effects
+)]
+
 use uds_protocol::{Decode, Encode, Request, Response};
 
 /// A frame quoted from the standard, with the table it came from.

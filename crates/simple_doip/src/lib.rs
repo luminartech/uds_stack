@@ -1,3 +1,18 @@
+// Derogations from the workspace lint standard in the root Cargo.toml. Each is a
+// gap to close, not a decision that the lint is wrong here.
+//
+// The defensive three: a zero-copy framer indexes the receive buffer and computes
+// payload offsets on every path, and this crate predates the standard. 29 sites in
+// production code as of this writing.
+#![allow(
+    clippy::indexing_slicing,
+    clippy::arithmetic_side_effects,
+    clippy::as_conversions
+)]
+// Panic freedom holds in this crate's production code and is enforced there; its
+// test modules predate the standard and use `unwrap` as test code ordinarily does
+// (49 sites). Scoped to `test`, so the production build stays strict.
+#![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used, clippy::panic))]
 //! # Simple `DoIP`
 //!
 //! An implementation of Diagnostics over IP (`DoIP`), the vehicle-diagnostics transport

@@ -1,3 +1,19 @@
+//! A `DoIP` server that echoes diagnostic messages back to the sender.
+//!
+//! Run with `cargo run --example echo_server --features server`; pair it with the
+//! `simple_client` example.
+
+// Example code, kept close to what a reader would write: the error handling is
+// deliberately blunt so the DoIP calls stay legible. See the crate's own sources for
+// the standard the library holds itself to.
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::indexing_slicing,
+    clippy::arithmetic_side_effects
+)]
+
 use async_trait::async_trait;
 use simple_doip::{
     Error,

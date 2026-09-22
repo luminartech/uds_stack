@@ -18,6 +18,7 @@ Checked:
   * no crate carries its own CONTRIBUTING / SECURITY / CODE_OF_CONDUCT -- those
     are the repository's, and a per-crate copy would go stale unread
   * every crate manifest declares the same SPDX expression
+  * every crate inherits the workspace lint standard rather than declaring its own
   * the root pair exists and is not empty
 """
 
@@ -30,6 +31,11 @@ LICENCES = ("LICENSE-MIT", "LICENSE-APACHE")
 SPDX = 'license = "MIT OR Apache-2.0"'
 # Shared at the repository root; a per-crate copy is the defect, not the absence.
 NOT_PER_CRATE = ("CONTRIBUTING.md", "SECURITY.md", "CODE_OF_CONDUCT.md")
+# Cargo rejects a manifest that inherits `[workspace.lints]` and also adds to it, so a
+# local `[lints.*]` table is not an extension of the standard -- it is a replacement for
+# it, and a silent one. A crate that needs more or less says so as a crate-root
+# attribute in its own lib.rs, where a reader opening the file sees it.
+INHERITS_LINTS = "[lints]\nworkspace = true"
 
 
 def check(root: Path) -> list[str]:
@@ -73,6 +79,17 @@ def check(root: Path) -> list[str]:
         manifest = (crate / "Cargo.toml").read_text(encoding="utf-8")
         if SPDX not in manifest:
             problems.append(f"{crate.name}/Cargo.toml: expected `{SPDX}`")
+        if INHERITS_LINTS not in manifest:
+            problems.append(
+                f"{crate.name}/Cargo.toml: must inherit the workspace lint standard "
+                f"with `[lints]` / `workspace = true`"
+            )
+        elif "[lints." in manifest:
+            problems.append(
+                f"{crate.name}/Cargo.toml: declares its own [lints.*] table, which "
+                f"replaces the workspace standard instead of extending it; put the "
+                f"difference in lib.rs as a crate-root attribute with a reason"
+            )
 
     return problems
 
@@ -85,7 +102,10 @@ def main(argv: list[str]) -> int:
     if problems:
         print(f"\n{len(problems)} governance problem(s)", file=sys.stderr)
         return 1
-    print("governance files shared: licences symlinked, no per-crate copies")
+    print(
+        "governance files shared: licences symlinked, no per-crate copies, "
+        "one lint standard"
+    )
     return 0
 
 

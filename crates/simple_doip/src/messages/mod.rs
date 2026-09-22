@@ -48,6 +48,12 @@ use crate::LogicalAddress;
 /// Panics if the payload cannot be sized, or if its encoded size exceeds `u32::MAX`.
 /// Neither is reachable for a well-formed `DoIP` message: every payload type has a
 /// computable size, and the wire format caps payload length at `u32::MAX` by construction.
+#[expect(
+    clippy::expect_used,
+    reason = "declared in this function's `# Panics` section, and unreachable for a \
+              well-formed message: every payload type has a computable size and the \
+              wire format caps payload length at u32::MAX by construction."
+)]
 fn payload_len(value: &impl Encode<Error = MessageError>) -> u32 {
     u32::try_from(
         value

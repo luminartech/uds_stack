@@ -1,3 +1,10 @@
+// Above the workspace standard, and specific to this crate: a wildcard arm is how a
+// variant gets silently discarded, and mapping::DoIpEvent has two cases that would
+// go that way -- Periodic and Closed have no TransportEvent to become. Denying the
+// wildcard means a match over an enum must say what it does with every case, so the
+// hole is written down in code rather than remembered. Not in the workspace table
+// because the other four crates have 46 wildcard arms between them.
+#![deny(clippy::wildcard_enum_match_arm)]
 //! # UDS on Internet Protocol
 //!
 //! An implementation of **ISO 14229-5:2022 (`UDSonIP`)** — the application

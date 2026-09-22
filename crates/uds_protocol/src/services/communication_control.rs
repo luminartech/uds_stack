@@ -311,9 +311,12 @@ impl TryFrom<u8> for CommunicationType {
             0x00 => Ok(Self::IsoSaeReserved),
             0x01 => Ok(Self::Normal),
             0x02 => Ok(CommunicationType::NetworkManagement),
-            0x03 => Ok(CommunicationType::NormalAndNetworkManagement),
-            // `MESSAGE_TYPE_MASK` keeps only two bits, so no other value can reach here.
-            _ => unreachable!(),
+            // `MESSAGE_TYPE_MASK` is 0b11, so the three arms above and this one are
+            // exhaustive: 0x03 is the only value left. Written as the catch-all rather
+            // than as `0x03` plus an `unreachable!()`, so there is no panic path here
+            // at all -- the match is on a masked integer, not an enum, so no new value
+            // can appear later and be swallowed by it.
+            _ => Ok(CommunicationType::NormalAndNetworkManagement),
         }
     }
 }

@@ -38,3 +38,49 @@ anyhow = "1"
 proptest = "1"
 serde_json = "1"
 tracing-subscriber = { version = "0.3", features = ["fmt"] }
+
+# One quality standard for every crate here, declared once. A crate opts in with
+# `[lints] workspace = true`, and Cargo forbids a crate from inheriting this table
+# *and* adding to it -- "cannot override `workspace.lints` in `lints`" -- so this is
+# the whole policy, and a crate that needs more or less says so as a crate-root
+# attribute in its own lib.rs, where a reader opening the file sees it. Each such
+# derogation carries a reason and a count, so the gap is reportable rather than tacit.
+#
+# Declared here rather than as inner attributes so the lints apply to every target --
+# lib, tests, examples, benches -- instead of only to the crate root. A guard rail
+# that stops at the test boundary is not a guard rail.
+[workspace.lints.rust]
+# `forbid`, not `deny`: deny can be switched off locally with an `allow`, forbid
+# cannot, which is the point. Scope it honestly -- this forbids `unsafe` in these
+# crates' own sources. Dependencies, `core` included, are unaffected and are covered
+# separately by dependency review.
+unsafe_code = "forbid"
+missing_docs = "deny"
+missing_debug_implementations = "deny"
+
+[workspace.lints.clippy]
+# Negative priority so the specific lints below can override members of the group.
+pedantic = { level = "deny", priority = -1 }
+
+# --- Panic freedom ---------------------------------------------------------------
+# A panic in a diagnostic stack is an unhandled failure in a safety-related
+# component, and every byte these crates decode is attacker-supplied. `deny` rather
+# than `forbid`: a local `allow` carrying a reviewed justification is a legitimate
+# outcome, silently reaching for `unwrap` is not. `todo` is denied for the same
+# reason it is expected at each stub site -- the attribute is the record that a body
+# is outstanding, and it stops being free the moment the lint is off.
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+unreachable = "deny"
+todo = "deny"
+unimplemented = "deny"
+
+# --- Defensive -------------------------------------------------------------------
+# Buffer offsets and message lengths are this stack's arithmetic, and the same
+# sources build for a 32-bit bare-metal target where a silently truncating cast is a
+# portability defect host tests will not catch. A panicking index on wire-derived
+# data is a denial of service.
+indexing_slicing = "deny"
+arithmetic_side_effects = "deny"
+as_conversions = "deny"

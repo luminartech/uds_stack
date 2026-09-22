@@ -52,3 +52,6 @@ clap = { workspace = true, optional = true }
 proptest = { workspace = true }
 # Only used by the integration tests that check `serde` cannot bypass a type's validation.
 serde_json = { workspace = true }
+
+[lints]
+workspace = true

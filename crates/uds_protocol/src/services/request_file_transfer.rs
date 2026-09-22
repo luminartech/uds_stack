@@ -867,6 +867,11 @@ impl<'a> Decode<'a> for RequestFileTransferRequest<'a> {
                     FileOperationMode::AddFile => Self::AddFile(name, dfi, size),
                     FileOperationMode::ReplaceFile => Self::ReplaceFile(name, dfi, size),
                     FileOperationMode::ResumeFile => Self::ResumeFile(name, dfi, size),
+                    // The outer arm admits only the three above. Kept as a panic
+                    // rather than folded into one of them: a variant added to the
+                    // outer pattern later would otherwise decode as the wrong file
+                    // operation, silently, on wire data.
+                    #[expect(clippy::unreachable, reason = "narrowed by the outer arm")]
                     _ => unreachable!(),
                 };
                 Ok((value, rest))
@@ -943,6 +948,9 @@ impl<'a> Decode<'a> for RequestFileTransferResponse<'a> {
                 let value = match mode {
                     FileOperationMode::AddFile => Self::AddFile(mode, sent, dfi),
                     FileOperationMode::ReplaceFile => Self::ReplaceFile(mode, sent, dfi),
+                    // As above: narrowed by the outer arm, and a silent fallback would
+                    // mis-decode a variant added later.
+                    #[expect(clippy::unreachable, reason = "narrowed by the outer arm")]
                     _ => unreachable!(),
                 };
                 Ok((value, rest))

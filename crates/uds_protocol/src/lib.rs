@@ -1,5 +1,29 @@
 #![doc = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/README.md"))]
-#![warn(clippy::pedantic, missing_docs)]
+// Derogations from the workspace lint standard in the root Cargo.toml. Each is a
+// gap to close, not a decision that the lint is wrong here.
+//
+// The defensive three: a zero-copy decoder indexes borrowed slices and computes
+// offsets on every path, and this crate predates the standard. 162 sites in
+// production code as of this writing; closing it means `get()?` and checked
+// arithmetic throughout the decode paths, which is its own change.
+#![allow(
+    clippy::indexing_slicing,
+    clippy::arithmetic_side_effects,
+    clippy::as_conversions
+)]
+// Panic freedom holds in this crate's production code and is enforced there. Its
+// test modules are older than the standard and use `unwrap` the way test code
+// ordinarily does -- 281 sites, where a panic *is* the failure mechanism. Scoped to
+// `test` so the production build stays strict.
+#![cfg_attr(
+    test,
+    allow(
+        clippy::unwrap_used,
+        clippy::expect_used,
+        clippy::panic,
+        clippy::unreachable
+    )
+)]
 #![cfg_attr(not(feature = "std"), no_std)]
 
 #[cfg(feature = "alloc")]

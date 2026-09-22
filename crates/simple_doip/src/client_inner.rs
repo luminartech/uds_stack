@@ -407,15 +407,20 @@ where
                 match received_message.payload {
                     OwnedPayload::AliveCheckRequest => {
                         trace!("Received Alive Check Request");
-                        let _ = self
-                            .tcp_data_socket
-                            .as_mut()
-                            .unwrap()
-                            .send(OwnedMessage::alive_check_response(
-                                self.client_options.protocol_version,
-                                self.client_options.client_logical_address,
-                            ))
-                            .await;
+                        // Built before the socket is borrowed: the response reads
+                        // `client_options`, and `as_mut` holds `self` for the body.
+                        let alive_check_response = OwnedMessage::alive_check_response(
+                            self.client_options.protocol_version,
+                            self.client_options.client_logical_address,
+                        );
+                        // Every other access to this field in this file guards with
+                        // `if let`/`is_none`; this one unwrapped. The socket can be
+                        // taken between receiving a message and handling it, and the
+                        // send result was discarded either way, so the guard costs
+                        // nothing and removes the panic.
+                        if let Some(socket) = self.tcp_data_socket.as_mut() {
+                            let _ = socket.send(alive_check_response).await;
+                        }
                     }
                     OwnedPayload::DiagnosticMessageAck(ref ack) => {
                         // Handle AwaitAck - complete immediately on ACK
@@ -578,7 +583,12 @@ where
                             *run = false;
                             break;
                         }
-                        debug!("Received control message: {:?}", ctrl_opt.as_ref().unwrap());
+                        // `is_none` above has already broken out, so this always
+                        // logs; `if let` rather than `unwrap` keeps it that way
+                        // without a panic path.
+                        if let Some(control_message) = ctrl_opt.as_ref() {
+                            debug!("Received control message: {control_message:?}");
+                        }
                         // A request may still be pending here: the caller can stop awaiting
                         // one (`tokio::time::timeout`, `tokio::select!`, or the
                         // deliberately recoverable routing-activation timeout in

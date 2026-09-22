@@ -34,31 +34,5 @@ automotive-wire-codec = { workspace = true }
 # named (UDSSVC_ARCH_0030) — an `async fn` implies neither std nor an executor, so a
 # bare-metal target stays reachable.
 
-[lints.rust]
-unsafe_code = "forbid"
-missing_docs = "deny"
-missing_debug_implementations = "deny"
-
-[lints.clippy]
-pedantic = { level = "deny", priority = -1 }
-
-# --- Panic freedom -----------------------------------------------------------------
-# A panic in a diagnostic server is an unhandled failure in a safety-related component.
-# `deny` rather than `forbid`: a local `allow` carrying a reviewed justification is a
-# legitimate outcome, silently reaching for `unwrap` is not. `todo` is denied for the
-# same reason it is allowed at each stub site — the allow is the record that a body is
-# outstanding, and it stops being free the moment the lint is off.
-unwrap_used = "deny"
-expect_used = "deny"
-panic = "deny"
-unreachable = "deny"
-todo = "deny"
-unimplemented = "deny"
-indexing_slicing = "deny"
-
-# --- Arithmetic and conversions ----------------------------------------------------
-# Buffer offsets and response lengths are this crate's arithmetic, and the same source
-# builds for a 32-bit target where a silently truncating cast is a portability defect
-# host tests will not catch.
-arithmetic_side_effects = "deny"
-as_conversions = "deny"
+[lints]
+workspace = true

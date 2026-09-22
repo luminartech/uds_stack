@@ -1,3 +1,19 @@
+//! A `DoIP` client that dials `127.0.0.1:13400` and sends one diagnostic message.
+//!
+//! Run with `cargo run --example simple_client --features client`, against the
+//! `echo_server` example.
+
+// Example code, kept close to what a reader would write: the error handling is
+// deliberately blunt so the DoIP calls stay legible. See the crate's own sources for
+// the standard the library holds itself to.
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::indexing_slicing,
+    clippy::arithmetic_side_effects
+)]
+
 use simple_doip::{
     TCP_PORT, TESTER_LOGICAL_ADDRESS,
     client::{Client, ClientOptions},

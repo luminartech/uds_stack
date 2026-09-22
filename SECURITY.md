@@ -48,8 +48,20 @@ panic, an out-of-bounds read, an unbounded allocation, a decode that accepts a
 frame it should reject, a state machine that can be driven into an
 unrecoverable state, or a hang reachable from the wire.
 
-Panics are worth reporting even where they look benign. `uds_session`,
-`uds_services` and `uds_on_ip` deny the panicking constructs outright, because
-a panic in a diagnostic server is an unhandled failure in a safety-related
-component — so one reachable from the wire is a defect regardless of how it is
-triggered.
+Panics are worth reporting even where they look benign. Every crate here denies
+the panicking constructs — `unwrap`, `expect`, `panic`, `unreachable`, `todo`,
+`unimplemented` — in production code, from one `[workspace.lints]` table, and
+forbids `unsafe` outright. A panic in a diagnostic stack is an unhandled failure
+in a safety-related component, so one reachable from the wire is a defect
+regardless of how it is triggered.
+
+Where a panic survives, it is a written-down exception rather than an oversight:
+each carries a `#[expect(…, reason = …)]` naming what makes it unreachable, and
+the few that are reachable are declared in their function's `# Panics` section.
+A report that shows one of those reasons to be wrong is exactly the kind that is
+most useful.
+
+Two crates, `uds_protocol` and `simple_doip`, still allow slice indexing and
+unchecked arithmetic in production code; both predate the standard, and
+`CONTRIBUTING.md` records the counts. A panicking index reachable from
+attacker-supplied bytes is in scope there as anywhere.

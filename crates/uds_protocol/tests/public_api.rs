@@ -5,6 +5,19 @@
 //! the defining crate a `#[non_exhaustive]` struct literal compiles fine, so a type that is
 //! impossible for anyone else to build still looks constructible from there.
 
+// Test code. `unwrap`, `expect` and `panic` are the failure mechanism here, and a
+// test that indexes a known-length vector reads better than one that does not. The
+// workspace lint standard in the root Cargo.toml reaches this target too -- an
+// integration test is its own crate, so lib.rs cannot speak for it -- which is why
+// the relaxation is stated here rather than left implicit.
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::indexing_slicing,
+    clippy::arithmetic_side_effects
+)]
+
 use uds_protocol::{
     DirSizePayload, DtcFaultDetectionCounterRecord, DtcFormatIdentifier, DtcRecord,
     FileSizePayload, NamePayload, PositionPayload, SentDataPayload, SizePayload,

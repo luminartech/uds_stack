@@ -6,6 +6,17 @@
 //! touches the `core`-only API surface of `simple_doip`. It compiles cleanly
 //! with `cargo build --example bare_metal_codec --no-default-features`.
 
+// Example code, kept close to what a reader would write: the error handling is
+// deliberately blunt so the DoIP calls stay legible. See the crate's own sources for
+// the standard the library holds itself to.
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::indexing_slicing,
+    clippy::arithmetic_side_effects
+)]
+
 use automotive_wire_codec::SliceSink;
 use simple_doip::messages::{
     ActivationTypeCode, Encode, Message, Payload, ProtocolVersion,

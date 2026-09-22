@@ -14,7 +14,10 @@ from pathlib import Path
 
 from check_governance import LICENCES, check
 
-MANIFEST = '[package]\nname = "c"\nlicense = "MIT OR Apache-2.0"\n'
+MANIFEST = (
+    '[package]\nname = "c"\nlicense = "MIT OR Apache-2.0"\n'
+    "\n[lints]\nworkspace = true\n"
+)
 
 
 def workspace(tmp: Path, crates: tuple[str, ...] = ("alpha", "beta")) -> Path:
@@ -79,9 +82,25 @@ class CheckGovernance(unittest.TestCase):
 
     def test_divergent_spdx_is_rejected(self) -> None:
         (self.root / "crates" / "alpha" / "Cargo.toml").write_text(
-            '[package]\nname = "c"\nlicense = "Apache-2.0"\n', encoding="utf-8"
+            '[package]\nname = "c"\nlicense = "Apache-2.0"\n'
+            "\n[lints]\nworkspace = true\n",
+            encoding="utf-8",
         )
         self.assert_rejects("expected `license =")
+
+    def test_crate_not_inheriting_the_lint_standard_is_rejected(self) -> None:
+        (self.root / "crates" / "alpha" / "Cargo.toml").write_text(
+            '[package]\nname = "c"\nlicense = "MIT OR Apache-2.0"\n', encoding="utf-8"
+        )
+        self.assert_rejects("must inherit the workspace lint standard")
+
+    def test_crate_with_its_own_lints_table_is_rejected(self) -> None:
+        # Cargo would reject this manifest outright; the check names the reason and
+        # points at the remedy rather than leaving a bare parse error.
+        (self.root / "crates" / "beta" / "Cargo.toml").write_text(
+            MANIFEST + '\n[lints.clippy]\nunwrap_used = "deny"\n', encoding="utf-8"
+        )
+        self.assert_rejects("replaces the workspace standard")
 
     def test_empty_root_licence_is_rejected(self) -> None:
         (self.root / "LICENSE-APACHE").write_text("   \n", encoding="utf-8")

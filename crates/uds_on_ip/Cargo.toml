@@ -45,38 +45,5 @@ default = []
 alloc = ["simple_doip/alloc", "uds_protocol/alloc"]
 std = ["alloc", "thiserror/std", "simple_doip/std", "uds_protocol/std"]
 
-[lints.rust]
-unsafe_code = "forbid"
-missing_docs = "deny"
-missing_debug_implementations = "deny"
-
-[lints.clippy]
-pedantic = { level = "deny", priority = -1 }
-# A wildcard arm is how a variant gets silently discarded, and this crate has
-# two cases that would go that way if it were allowed: mapping::DoIpEvent's
-# Periodic and Closed have no TransportEvent to become. Denying the wildcard
-# means a match over an enum must say what it does with every case, so the
-# hole has to be written down in code rather than remembered.
-wildcard_enum_match_arm = "deny"
-
-# --- Panic freedom -----------------------------------------------------------------
-# A panic in a diagnostic transport is an unhandled failure in a safety-related
-# component, and this crate sits on the wire: every byte it touches is
-# attacker-supplied. `deny` rather than `forbid`, so a local `allow` carrying a
-# reviewed justification stays a legitimate outcome. `todo` is denied for the same reason it
-# is expected at each stub site -- the attribute is the record that a body is
-# outstanding, and it stops being free the moment the lint is off.
-unwrap_used = "deny"
-expect_used = "deny"
-panic = "deny"
-unreachable = "deny"
-todo = "deny"
-unimplemented = "deny"
-indexing_slicing = "deny"
-
-# --- Arithmetic and conversions ----------------------------------------------------
-# Buffer offsets and A_PDU lengths are this crate's arithmetic, and the same source
-# builds for a 32-bit bare-metal target where a silently truncating cast is a
-# portability defect host tests will not catch.
-arithmetic_side_effects = "deny"
-as_conversions = "deny"
+[lints]
+workspace = true

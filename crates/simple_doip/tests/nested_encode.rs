@@ -1,5 +1,19 @@
 //! The embedded-server TX hot path: encode a `DoIP` header + diagnostic payload into ONE
 //! stack buffer, no staging buffer, using `encoded_size` to pre-size the header.
+
+// Test code. `unwrap`, `expect` and `panic` are the failure mechanism here, and a
+// test that indexes a known-length golden vector reads better than one that does
+// not. The workspace lint standard in the root Cargo.toml reaches this target too --
+// an integration test is its own crate, so lib.rs cannot speak for it -- which is why
+// the relaxation is stated here rather than left implicit.
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::indexing_slicing,
+    clippy::arithmetic_side_effects
+)]
+
 use automotive_wire_codec::{InsufficientBuffer, SliceSink, WriteError};
 use simple_doip::messages::{
     DiagnosticMessage, Encode, Header, MessageError, Payload, PayloadType, ProtocolVersion,

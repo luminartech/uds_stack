@@ -71,3 +71,6 @@ required-features = ["client"]
 [[example]]
 name = "echo_server"
 required-features = ["server"]
+
+[lints]
+workspace = true

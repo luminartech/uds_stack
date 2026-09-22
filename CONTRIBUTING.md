@@ -75,14 +75,29 @@ the boundary is wrong and the change belongs elsewhere. Each seam is declared
 by the crate that calls through it, so every Cargo edge runs from implementor
 to declarer.
 
-**Panic freedom is enforced where it matters.** `uds_session`, `uds_services`
-and `uds_on_ip` deny `unwrap`, `expect`, `panic`, `unreachable`, `todo`,
-`indexing_slicing` and silent arithmetic. A panic in a diagnostic server is an
-unhandled failure in a safety-related component. A local `allow` carrying a
-reviewed justification is a legitimate outcome; reaching for `unwrap` silently
-is not.
+**One lint standard, declared once.** `[workspace.lints]` in the root
+`Cargo.toml` holds it, and every crate opts in with `[lints] workspace = true`.
+It denies `unwrap`, `expect`, `panic`, `unreachable`, `todo`, `unimplemented`,
+`indexing_slicing`, silent arithmetic and `as` casts, denies `clippy::pedantic`,
+and **forbids `unsafe`** — forbid rather than deny, so it cannot be switched off
+locally. A panic in a diagnostic stack is an unhandled failure in a
+safety-related component, and every byte these crates decode comes off a wire.
 
-**`unsafe` is forbidden**, not merely denied, in those same three crates.
+Cargo will not let a crate inherit that table and add to it, so the table is the
+whole policy. A crate that needs to differ says so as a crate-root attribute in
+its own `lib.rs`, carrying a reason — visible in the file a reader opens first,
+rather than buried in a manifest. Two such derogations exist today, both
+recorded there:
+
+- `uds_protocol` and `simple_doip` allow `indexing_slicing`, silent arithmetic
+  and `as` casts. A zero-copy decoder indexes borrowed slices and computes
+  offsets on every path, and both crates predate the standard: 162 and 29
+  production sites respectively. These are gaps to close, not exemptions.
+- The same two relax panic freedom **in test code only** — `#![cfg_attr(test, allow(…))]`, so production builds stay strict. Integration tests and examples
+  are separate crates, so each states its own relaxation at the top of the file.
+
+A local `allow` or `expect` carrying a reviewed justification is a legitimate
+outcome anywhere; reaching for `unwrap` silently is not.
 
 **Comments carry the reasoning.** Much of this codebase explains *why* a thing
 is the way it is, including the rejected alternative. That is deliberate — the
