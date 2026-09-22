@@ -129,7 +129,8 @@ impl<Conn> Inner<Conn>
 where
     Conn: crate::connection::Connector + 'static + Send + Sync,
 {
-    /// Spawns the inner client to run in the background and returns the send and receive channels
+    /// Spawns the inner client to run in the background and returns the send and receive
+    /// channels
     pub fn spawn(
         client_options: ClientOptions,
     ) -> (ControlSender, UpdateReceiver<MessageError>) {
@@ -212,7 +213,8 @@ where
 
     /// Handle the [`Inner::active_request`] that was set in the [`Inner::run`] loop.
     ///
-    /// The `response` is a oneshot channel that is used to (generally) send the response back to the facade client
+    /// The `response` is a oneshot channel that is used to (generally) send the response
+    /// back to the facade client
     ///
     /// ### Diagnostic Acks:
     /// * will not be sent to the user
@@ -394,7 +396,8 @@ where
         self.await_response_deadline = None;
     }
 
-    /// Process a message received from the socket. Returns `true` if the run loop should exit.
+    /// Process a message received from the socket. Returns `true` if the run loop should
+    /// exit.
     async fn process_received_message(
         &mut self,
         message: Result<OwnedMessage, Error>,

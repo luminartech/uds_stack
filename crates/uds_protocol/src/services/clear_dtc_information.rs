@@ -30,8 +30,9 @@ impl Encode for ClearDiagnosticInfoResponse {
 impl<'a> Decode<'a> for ClearDiagnosticInfoResponse {
     type Error = crate::Error;
 
-    /// Consumes zero bytes and returns the full buffer as the remainder.
-    /// `decode_exact` at the call site (in `Response::decode`) enforces that no trailing bytes follow the SID.
+    /// Consumes zero bytes and returns the full buffer as the remainder. `decode_exact` at
+    /// the call site (in `Response::decode`) enforces that no trailing bytes follow the
+    /// SID.
     fn decode(buf: &'a [u8]) -> Result<(Self, &'a [u8]), crate::Error> {
         Ok((Self, buf))
     }
@@ -56,8 +57,8 @@ pub struct ClearDiagnosticInfoRequest {
     /// Addresses a user-defined DTC memory, when the client is targeting one.
     ///
     /// `None` is the ordinary case and the only form in ISO 14229-1:2013: the parameter is
-    /// marked `U` (user option) in ISO 14229-1:2020 Table 296, so it is absent from the wire
-    /// unless the client is addressing user-defined DTC memory.
+    /// marked `U` (user option) in ISO 14229-1:2020 Table 296, so it is absent from the
+    /// wire unless the client is addressing user-defined DTC memory.
     pub memory_selection: Option<u8>,
 }
 

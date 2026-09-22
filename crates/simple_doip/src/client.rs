@@ -41,7 +41,8 @@ pub struct ClientOptions {
     pub server_logical_address: LogicalAddress,
     /// (Logical address) Valid range: 0x0001 - 0x0DFF
     pub server_physical_address: LogicalAddress,
-    /// Local ip address to bind the TCP and UDP sockets to, e.g. `0.0.0.0`. The port is randomly chosen.
+    /// Local ip address to bind the TCP and UDP sockets to, e.g. `0.0.0.0`. The port is
+    /// randomly chosen.
     pub client_address: IpAddr,
     /// Valid range: 0x0E00 - 0x0FFF
     pub client_logical_address: LogicalAddress,
@@ -98,7 +99,8 @@ pub enum AddressType {
 /// The client is the main entry point for the user to interact with the `DoIP` protocol.
 ///
 /// It handles the connection to the server, and sends and receives messages, silently
-/// handling `DoIP` acknowledgements and other protocol details that the user doesn't need to worry about.
+/// handling `DoIP` acknowledgements and other protocol details that the user doesn't need
+/// to worry about.
 #[derive(Debug)]
 pub struct Client<Conn = connection::ConnectorSocket> {
     /// The connection configuration this client was created with (server
@@ -116,8 +118,8 @@ impl<Conn> Client<Conn>
 where
     Conn: connection::Connector + 'static + Sync + Send,
 {
-    /// Create a `DoIP` connection, and automatically send a routing activation request if the client options specify it
-    /// The target port defaults to [`crate::TCP_PORT`].
+    /// Create a `DoIP` connection, and automatically send a routing activation request if
+    /// the client options specify it The target port defaults to [`crate::TCP_PORT`].
     ///
     /// # Errors
     /// Returns an [`Error`] if the socket cannot be bound or routing activation fails
@@ -266,7 +268,8 @@ where
         response.await.unwrap()
     }
 
-    /// Returns an Option of a Response if there was one in flight when the client or server disconnected
+    /// Returns an Option of a Response if there was one in flight when the client or server
+    /// disconnected
     ///
     /// # Errors
     /// Returns an [`Error`] if the socket cannot be re-bound
@@ -303,9 +306,9 @@ where
 
     /// Send a diagnostic message and wait for DoIP-level ACK only.
     ///
-    /// Does NOT wait for the diagnostic response - use `receive_diagnostic_response()` for that.
-    /// This is the primary send method for UDS communication, allowing proper timeout handling
-    /// at the UDS layer (including NRC 0x78 Response Pending scenarios).
+    /// Does NOT wait for the diagnostic response - use `receive_diagnostic_response()` for
+    /// that. This is the primary send method for UDS communication, allowing proper timeout
+    /// handling at the UDS layer (including NRC 0x78 Response Pending scenarios).
     ///
     /// # Errors
     /// Returns an [`Error`] if the socket is not bound, the message cannot be sent,

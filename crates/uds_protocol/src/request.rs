@@ -68,13 +68,13 @@ pub enum Request<'a> {
 
 /// # Remainder
 ///
-/// The returned remainder is **always empty**. A UDS frame is not self-delimiting — its length
-/// comes from the transport (ISO-TP, `DoIP`, ...), not from the message — so one buffer is exactly
-/// one frame, and every payload is decoded with `decode_exact`. This means `decode` behaves as
-/// `decode_exact` despite the streaming shape of the [`Decode`] contract: do **not** feed it
-/// concatenated frames expecting it to consume one at a time, and note that
-/// [`DecodeIter`](crate::DecodeIter) over such a buffer would treat the whole thing as a single
-/// frame. Split frames at the transport layer before calling this.
+/// The returned remainder is **always empty**. A UDS frame is not self-delimiting — its
+/// length comes from the transport (ISO-TP, `DoIP`, ...), not from the message — so one
+/// buffer is exactly one frame, and every payload is decoded with `decode_exact`. This
+/// means `decode` behaves as `decode_exact` despite the streaming shape of the [`Decode`]
+/// contract: do **not** feed it concatenated frames expecting it to consume one at a time,
+/// and note that [`DecodeIter`](crate::DecodeIter) over such a buffer would treat the whole
+/// thing as a single frame. Split frames at the transport layer before calling this.
 impl<'a> Decode<'a> for Request<'a> {
     type Error = crate::Error;
 
@@ -184,21 +184,21 @@ impl Encode for Request<'_> {
 impl Request<'_> {
     /// Whether the positive response for this request is suppressed (SPRMIB).
     ///
-    /// Only services ISO 14229-1 gives a sub-function can suppress a positive response, because
-    /// the suppressPosRspMsgIndicationBit is bit 7 of that sub-function byte. For a service with
-    /// no sub-function the answer is a definite `Some(false)`.
+    /// Only services ISO 14229-1 gives a sub-function can suppress a positive response,
+    /// because the suppressPosRspMsgIndicationBit is bit 7 of that sub-function byte. For a
+    /// service with no sub-function the answer is a definite `Some(false)`.
     ///
     /// # `None` means the question has no answer, not that it was not asked
     ///
     /// Returns `None` in exactly three situations, all of which are genuinely unanswerable
     /// rather than merely unmodeled:
     ///
-    /// - The service identifier is not one ISO 14229-1 assigns — the vendor-specific case. The
-    ///   crate has no basis for an answer, and a caller who needs one has to supply it from the
-    ///   application that originated the request.
-    /// - The service has a sub-function but the payload is empty, so the byte holding the SPRMIB
-    ///   is not present. Such a frame is malformed for its service; either way there is no bit
-    ///   to report.
+    /// - The service identifier is not one ISO 14229-1 assigns — the vendor-specific case.
+    ///   The crate has no basis for an answer, and a caller who needs one has to supply it
+    ///   from the application that originated the request.
+    /// - The service has a sub-function but the payload is empty, so the byte holding the
+    ///   SPRMIB is not present. Such a frame is malformed for its service; either way there
+    ///   is no bit to report.
     /// - The service identifier is `0x83`, whose service the 2020 edition withdrew. See
     ///   [`UdsServiceType::has_sub_function`] for why that answer is deferred to the caller
     ///   rather than taken from the 2013 edition.
@@ -211,14 +211,15 @@ impl Request<'_> {
     ///
     /// # Why this is `Option` when [`Request::allowed_nack_codes`] is not
     ///
-    /// `allowed_nack_codes` reports "unknown" as an empty slice and documents it, which works
-    /// because no service has an empty table of listed codes — the sentinel cannot be confused
-    /// with a real answer. `false` has no such property: fourteen services genuinely have no
-    /// sub-function, so a bare `bool` cannot distinguish them from a service the crate knows
-    /// nothing about. That distinction has teeth at a layer boundary. ISO 14229-2 clause 10.3
-    /// gates `tP3_Client_Phys` on this bit, and whether a response is expected decides whether
-    /// `tP_Client` starts at all — so answering `false` for a fire-and-forget vendor request
-    /// costs three transmissions of a request nobody wanted answered, per Table 9 retries.
+    /// `allowed_nack_codes` reports "unknown" as an empty slice and documents it, which
+    /// works because no service has an empty table of listed codes — the sentinel cannot be
+    /// confused with a real answer. `false` has no such property: fourteen services
+    /// genuinely have no sub-function, so a bare `bool` cannot distinguish them from a
+    /// service the crate knows nothing about. That distinction has teeth at a layer
+    /// boundary. ISO 14229-2 clause 10.3 gates `tP3_Client_Phys` on this bit, and whether a
+    /// response is expected decides whether `tP_Client` starts at all — so answering
+    /// `false` for a fire-and-forget vendor request costs three transmissions of a request
+    /// nobody wanted answered, per Table 9 retries.
     #[must_use]
     pub fn is_positive_response_suppressed(&self) -> Option<bool> {
         match self {
@@ -259,22 +260,22 @@ impl Request<'_> {
     ///
     /// # This is a floor, not a ceiling — do not use it as a validation whitelist
     ///
-    /// Clause 9.4: the Annex A.1 codes "shall be used **in addition to** the negative response
-    /// codes specified in each service description", and A.1 itself says a server "may also
-    /// utilise additional and applicable negative response codes … as defined by the vehicle
-    /// manufacturer". A.1 deliberately keeps the generally-supported codes out of the
-    /// per-service tables and says so per code — including `0x78`
+    /// Clause 9.4: the Annex A.1 codes "shall be used **in addition to** the negative
+    /// response codes specified in each service description", and A.1 itself says a server
+    /// "may also utilise additional and applicable negative response codes … as defined by
+    /// the vehicle manufacturer". A.1 deliberately keeps the generally-supported codes out
+    /// of the per-service tables and says so per code — including `0x78`
     /// [`RequestCorrectlyReceivedResponsePending`](NegativeResponseCode::RequestCorrectlyReceivedResponsePending),
-    /// which appears in **none** of these tables and is one of the most common codes in real
-    /// traffic. A client that rejected any NRC absent from this slice would reject every
-    /// `ResponsePending` it ever saw.
+    /// which appears in **none** of these tables and is one of the most common codes in
+    /// real traffic. A client that rejected any NRC absent from this slice would reject
+    /// every `ResponsePending` it ever saw.
     ///
     /// Read it as "the codes the standard tabulates for this service", which is useful for
     /// building a tester UI or a conformance report, and not as the set a server may send.
     ///
-    /// Returns an empty slice for [`Request::Other`], which covers services the crate does not
-    /// model. That means "the NRC set is unknown", not "no codes apply" — consult ISO 14229-1
-    /// for those services.
+    /// Returns an empty slice for [`Request::Other`], which covers services the crate does
+    /// not model. That means "the NRC set is unknown", not "no codes apply" — consult ISO
+    /// 14229-1 for those services.
     #[must_use]
     pub fn allowed_nack_codes(&self) -> &'static [NegativeResponseCode] {
         match self {
@@ -445,22 +446,24 @@ mod tests {
         assert_eq!(&buf[..written], &wire);
     }
 
-    /// One minimal-but-valid frame per modeled service, paired with the NRC table that service
-    /// must dispatch to.
+    /// One minimal-but-valid frame per modeled service, paired with the NRC table that
+    /// service must dispatch to.
     ///
     /// Shared by `allowed_nack_codes_dispatches_for_every_modeled_variant` and
-    /// `every_modeled_variant_agrees_with_the_sub_function_table` so the two cannot drift apart.
-    /// A function rather than a `const`, because `allowed_nack_codes` is not a `const fn`.
+    /// `every_modeled_variant_agrees_with_the_sub_function_table` so the two cannot drift
+    /// apart. A function rather than a `const`, because `allowed_nack_codes` is not a
+    /// `const fn`.
     ///
-    /// Every service that has a sub-function has bit 7 of that byte SET. That is load-bearing
-    /// for the sub-function assertion: with the bit clear every service answers `Some(false)`,
-    /// so a flipped table entry would go unnoticed. Setting it changes neither which service a
-    /// frame decodes to nor its NRC table, so the NRC assertions are indifferent to it.
+    /// Every service that has a sub-function has bit 7 of that byte SET. That is
+    /// load-bearing for the sub-function assertion: with the bit clear every service
+    /// answers `Some(false)`, so a flipped table entry would go unnoticed. Setting it
+    /// changes neither which service a frame decodes to nor its NRC table, so the NRC
+    /// assertions are indifferent to it.
     ///
-    /// Two pairs are deliberately indistinguishable, and that is correct rather than a gap: ISO
-    /// gives `CommunicationControl` and `ControlDTCSetting` the same four codes, and Tables 444
-    /// and 449 give `RequestDownload` and `RequestUpload` the same six. Swapping either pair's
-    /// rows is unobservable because the answer is the same.
+    /// Two pairs are deliberately indistinguishable, and that is correct rather than a gap:
+    /// ISO gives `CommunicationControl` and `ControlDTCSetting` the same four codes, and
+    /// Tables 444 and 449 give `RequestDownload` and `RequestUpload` the same six. Swapping
+    /// either pair's rows is unobservable because the answer is the same.
     fn modeled_frames() -> [(&'static [u8], &'static [NegativeResponseCode]); 16] {
         [
             // ClearDiagnosticInfo, no sub-function

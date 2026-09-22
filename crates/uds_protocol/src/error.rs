@@ -17,19 +17,23 @@ pub enum Error {
     /// Corresponds to NRC 0x13 (`incorrectMessageLengthOrInvalidFormat`).
     #[error("Insufficient data: {0}")]
     InsufficientData(Incomplete),
-    /// The session-type byte is not a valid [`DiagnosticSessionType`](crate::DiagnosticSessionType).
+    /// The session-type byte is not a valid
+    /// [`DiagnosticSessionType`](crate::DiagnosticSessionType).
     #[error("Invalid diagnostic session type: {0}")]
     InvalidDiagnosticSessionType(u8),
     /// The reset-type byte is not a valid [`ResetType`](crate::ResetType).
     #[error("Invalid ECU reset type: {0}")]
     InvalidEcuResetType(u8),
-    /// The security-access–type byte is not a valid [`SecurityAccessType`](crate::SecurityAccessType).
+    /// The security-access–type byte is not a valid
+    /// [`SecurityAccessType`](crate::SecurityAccessType).
     #[error("Invalid Security Access Type: {0}")]
     InvalidSecurityAccessType(u8),
-    /// The communication-control–type byte is not a valid [`CommunicationControlType`](crate::CommunicationControlType).
+    /// The communication-control–type byte is not a valid
+    /// [`CommunicationControlType`](crate::CommunicationControlType).
     #[error("Invalid Communication Control Type: {0}")]
     InvalidCommunicationControlType(u8),
-    /// The communication-type byte is not a valid [`CommunicationType`](crate::CommunicationType).
+    /// The communication-type byte is not a valid
+    /// [`CommunicationType`](crate::CommunicationType).
     #[error("Invalid Communication Type: {0}")]
     InvalidCommunicationType(u8),
     /// The tester-present–type byte is not valid.
@@ -53,8 +57,8 @@ pub enum Error {
     /// The memory address value is out of the valid range.
     #[error("Invalid Memory Address: {0}")]
     InvalidMemoryAddress(u64),
-    /// The memory size does not fit the width the `addressAndLengthFormatIdentifier` declares
-    /// for it, so encoding it would truncate the value on the wire.
+    /// The memory size does not fit the width the `addressAndLengthFormatIdentifier`
+    /// declares for it, so encoding it would truncate the value on the wire.
     ///
     /// Tables 444 and 449 put a `memorySize` that "is not valid" on NRC 0x31, like
     /// [`Error::InvalidMemoryAddress`].
@@ -62,9 +66,10 @@ pub enum Error {
     InvalidMemorySize(u32),
     /// The `addressAndLengthFormatIdentifier` byte declares a width ISO does not permit.
     ///
-    /// ISO 14229-1:2020 Annex H Table H.1 marks the high nibble (`memorySize`) applicable for
-    /// 1 to 4 bytes and the low nibble (`memoryAddress`) for 1 to 5; a zero nibble or anything
-    /// wider is "not applicable". Tables 444 and 449 both put this on NRC 0x31, not 0x13.
+    /// ISO 14229-1:2020 Annex H Table H.1 marks the high nibble (`memorySize`) applicable
+    /// for 1 to 4 bytes and the low nibble (`memoryAddress`) for 1 to 5; a zero nibble or
+    /// anything wider is "not applicable". Tables 444 and 449 both put this on NRC 0x31,
+    /// not 0x13.
     #[error("Invalid addressAndLengthFormatIdentifier: {0:#04X}")]
     InvalidAddressAndLengthFormatIdentifier(u8),
     /// A `u32` did not fit the three bytes of a DTC (i.e. exceeded `0x00FF_FFFF`).
@@ -81,7 +86,8 @@ pub enum Error {
     /// The `ReadDTCInformation` sub-function byte is not valid.
     #[error("Invalid DTC Subfunction Type: {0}")]
     InvalidDtcSubfunctionType(u8),
-    /// The routine-control sub-function byte is not a valid [`RoutineControlSubFunction`](crate::RoutineControlSubFunction).
+    /// The routine-control sub-function byte is not a valid
+    /// [`RoutineControlSubFunction`](crate::RoutineControlSubFunction).
     #[error("Invalid Routine Control Sub-Function: {0}")]
     InvalidRoutineControlSubFunction(u8),
     /// The DTC-setting byte is not a valid [`DtcSettingType`](crate::DtcSettingType) value.
@@ -111,40 +117,42 @@ impl Error {
     ///
     /// # Classification
     ///
-    /// This is a **default**, covering the lane ISO 14229-1 actually mandates — clause 8.7.5's
-    /// pseudo-code and the "shall" rows of Annex A.1. Clause 8.7.2 notes that "a specific NRC
-    /// is not guaranteed for all possible test pattern sequences", and several outcomes in
-    /// Tables 4 to 7 are specified only as "NRC = XX", so a server is free to answer
-    /// differently where its own tables allow:
+    /// This is a **default**, covering the lane ISO 14229-1 actually mandates — clause
+    /// 8.7.5's pseudo-code and the "shall" rows of Annex A.1. Clause 8.7.2 notes that "a
+    /// specific NRC is not guaranteed for all possible test pattern sequences", and several
+    /// outcomes in Tables 4 to 7 are specified only as "NRC = XX", so a server is free to
+    /// answer differently where its own tables allow:
     ///
-    /// - **`0x13` `incorrectMessageLengthOrInvalidFormat`** — the frame itself is malformed:
-    ///   too short, too long, or a declared width that does not fit.
+    /// - **`0x13` `incorrectMessageLengthOrInvalidFormat`** — the frame itself is
+    ///   malformed: too short, too long, or a declared width that does not fit.
     /// - **`0x12` `subFunctionNotSupported`** — the *sub-function* byte is not a value this
     ///   service defines.
     ///
-    ///   Only two services reject a reserved sub-function at decode and so produce this code
-    ///   themselves: `0x31` `RoutineControl` (Table 426 defines no manufacturer range, so
-    ///   anything outside `0x01`-`0x03` is invalid) and `0x85` `ControlDTCSetting`.
+    /// Only two services reject a reserved sub-function at decode and so produce this code
+    /// themselves: `0x31` `RoutineControl` (Table 426 defines no manufacturer range, so
+    /// anything outside `0x01`-`0x03` is invalid) and `0x85` `ControlDTCSetting`.
     ///
-    ///   The others — `0x10`, `0x11`, `0x19`, `0x27`, `0x28`, `0x3E` — model the whole
-    ///   `0x00..=0x7F` space, so a reserved byte decodes into an `IsoSaeReserved`-style variant
-    ///   and round-trips unchanged rather than failing. That is deliberate: it lets a server see
-    ///   the byte it was actually sent. **Answering `0x12` for those is the server's job**, not
-    ///   this mapping's: match on the sub-function and use
-    ///   [`NegativeResponseCode::SubFunctionNotSupported`] for a value you do not implement.
-    /// - **`0x31` `requestOutOfRange`** — a *parameter* (not a sub-function) carries a value
-    ///   outside its permitted range. Note that `communicationType` is a parameter of
-    ///   `CommunicationControl`, not its sub-function, so it lands here rather than on `0x12`.
+    /// The others — `0x10`, `0x11`, `0x19`, `0x27`, `0x28`, `0x3E` — model the whole
+    /// `0x00..=0x7F` space, so a reserved byte decodes into an `IsoSaeReserved`-style
+    /// variant and round-trips unchanged rather than failing. That is deliberate: it lets a
+    /// server see the byte it was actually sent. **Answering `0x12` for those is the
+    /// server's job**, not this mapping's: match on the sub-function and use
+    /// [`NegativeResponseCode::SubFunctionNotSupported`] for a value you do not implement.
+    /// - **`0x31` `requestOutOfRange`** — a *parameter* (not a sub-function) carries a
+    ///   value outside its permitted range. Note that `communicationType` is a parameter of
+    ///   `CommunicationControl`, not its sub-function, so it lands here rather than on
+    ///   `0x12`.
     ///
     /// Two codes this mapping deliberately never returns:
     ///
-    /// - **`0x10` `generalReject`** — Annex A.1 says it "shall only be implemented in the server
-    ///   if none of the negative response codes defined in this document meet the needs of the
-    ///   implementation. At no means shall this NRC be a general replacement". It also appears in
-    ///   none of the per-service NRC tables, so no service's `allowed_nack_codes` lists it.
+    /// - **`0x10` `generalReject`** — Annex A.1 says it "shall only be implemented in the
+    ///   server if none of the negative response codes defined in this document meet the
+    ///   needs of the implementation. At no means shall this NRC be a general replacement".
+    ///   It also appears in none of the per-service NRC tables, so no service's
+    ///   `allowed_nack_codes` lists it.
     /// - **`0x11` `serviceNotSupported`** — an unrecognised SID does not fail to decode; it
-    ///   becomes [`Request::Other`](crate::Request::Other) so a server can see the byte. Answering
-    ///   `0x11` is therefore the server's call, on a SID it does not implement.
+    ///   becomes [`Request::Other`](crate::Request::Other) so a server can see the byte.
+    ///   Answering `0x11` is therefore the server's call, on a SID it does not implement.
     ///
     /// Every code this does return is a legal NRC to put on the wire: never
     /// [`NegativeResponseCode::PositiveResponse`] and never a reserved value.
@@ -229,9 +237,9 @@ mod nrc_mapping_tests {
     use super::*;
     use crate::NegativeResponseCode;
 
-    /// Every variant, with the NRC byte a server should send back. Grouped by the ISO 14229-1
-    /// classification the mapping implements: 0x13 for length/format, 0x12 for an unsupported
-    /// sub-function byte, 0x31 for an in-range-but-unsupported parameter value.
+    /// Every variant, with the NRC byte a server should send back. Grouped by the ISO
+    /// 14229-1 classification the mapping implements: 0x13 for length/format, 0x12 for an
+    /// unsupported sub-function byte, 0x31 for an in-range-but-unsupported parameter value.
     fn cases() -> impl Iterator<Item = (Error, u8, &'static str)> {
         [
             // --- 0x13 incorrectMessageLengthOrInvalidFormat: the frame is malformed ---

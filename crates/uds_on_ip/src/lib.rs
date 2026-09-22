@@ -58,14 +58,13 @@
 //!
 //! ## Status
 //!
-//! **Prototype.** The public API is unstable and most bodies are
-//! unimplemented — this crate's `impl` is the first real implementation of
-//! `UdsTransport`, so the seam's shape is attested by one fake transport in
-//! `uds_services` and nothing else. Known gaps are recorded in
-//! `ARCHITECTURE.md` §9, which ships with the package, and each one is also
+//! **Prototype.** The public API is unstable and most bodies are unimplemented — this
+//! crate's `impl` is the first real implementation of `UdsTransport`, so the seam's shape
+//! is attested by one fake transport in `uds_services` and nothing else. Known gaps are
+//! recorded in `ARCHITECTURE.md` §9, which ships with the package, and each one is also
 //! named at the item it affects — see
-//! [`UdsTransport::next_event`](uds_services::UdsTransport::next_event)'s missing socket bound and
-//! [`mapping::PERIODIC_RESPONSE_PAYLOAD_TYPE`]'s unreachable payload type.
+//! [`UdsTransport::next_event`](uds_services::UdsTransport::next_event)'s missing socket
+//! bound and [`mapping::PERIODIC_RESPONSE_PAYLOAD_TYPE`]'s unreachable payload type.
 //!
 //! ## What this crate deliberately does not do
 //!

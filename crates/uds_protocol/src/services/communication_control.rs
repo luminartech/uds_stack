@@ -3,12 +3,13 @@ use crate::shared::SuppressablePositiveResponse;
 use crate::{Decode, Encode, Error, Incomplete, NegativeResponseCode};
 use automotive_wire_codec::{write_bytes, write_u8, write_u16_be};
 
-/// `CommunicationControlType` is used to specify the type of communication behavior to be modified
+/// `CommunicationControlType` is used to specify the type of communication behavior to be
+/// modified
 ///
 /// *Note*:
 ///
-/// Conversions from `u8` to `CommunicationControlType` are fallible and will return an [`Error`] if the
-/// Suppress Positive Response bit is set.
+/// Conversions from `u8` to `CommunicationControlType` are fallible and will return an
+/// [`Error`] if the Suppress Positive Response bit is set.
 #[cfg_attr(feature = "serde", derive(serde::Deserialize, serde::Serialize))]
 #[cfg_attr(feature = "serde", serde(try_from = "u8", into = "u8"))]
 #[cfg_attr(feature = "clap", derive(clap::ValueEnum))]
@@ -18,17 +19,17 @@ pub enum CommunicationControlType {
     /// This value indicates that the reception and transmission of messages
     /// shall be enabled for the specified [`CommunicationType`]
     EnableRxAndTx,
-    /// This value indicates that the reception of messages shall be enabled
-    /// and the transmission of messages shall be disabled for the specified [`CommunicationType`]
+    /// This value indicates that the reception of messages shall be enabled and the
+    /// transmission of messages shall be disabled for the specified [`CommunicationType`]
     EnableRxAndDisableTx,
-    /// This value indicates that the reception of messages shall be disabled
-    /// and the transmission of messages shall be enabled for the specified [`CommunicationType`]
+    /// This value indicates that the reception of messages shall be disabled and the
+    /// transmission of messages shall be enabled for the specified [`CommunicationType`]
     DisableRxAndEnableTx,
     /// This value indicates that the reception and transmission of messages
     /// shall be disabled for the specified [`CommunicationType`]
     DisableRxAndTx,
-    /// This value indicates that the reception of messages shall be enabled
-    /// and the transmission of messages shall be disabled for the specified [`CommunicationType`]
+    /// This value indicates that the reception of messages shall be enabled and the
+    /// transmission of messages shall be disabled for the specified [`CommunicationType`]
     /// Additionally, enhanced address information shall be included in the request
     EnableRxAndDisableTxWithEnhancedAddressInfo,
     /// This value indicates that the reception and transmission of messages
@@ -62,9 +63,9 @@ impl CommunicationControlType {
     /// The raw sub-function byte, without the SPRMIB bit.
     ///
     /// `const` so [`CommunicationControlRequest::new`] and
-    /// [`new_with_node_id`](CommunicationControlRequest::new_with_node_id) can be `const` too:
-    /// they need the byte for their error payload, and `u8::from` is a trait method, which is
-    /// not callable in a `const fn` on stable.
+    /// [`new_with_node_id`](CommunicationControlRequest::new_with_node_id) can be `const`
+    /// too: they need the byte for their error payload, and `u8::from` is a trait method,
+    /// which is not callable in a `const fn` on stable.
     #[must_use]
     pub const fn value(&self) -> u8 {
         match self {
@@ -196,15 +197,16 @@ mod communication_control_type_tests {
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 #[non_exhaustive]
 pub enum SubnetNumber {
-    /// `0x0` — apply to the receiving node, including communication to all connected networks.
+    /// `0x0` — apply to the receiving node, including communication to all connected
+    /// networks.
     ///
     /// The default, and what a request that does not target a particular subnet carries.
     #[default]
     AllConnectedNetworks,
     /// `0x1`-`0xE` — apply to the specific subnet identified by this number.
     ///
-    /// Construct through [`SubnetNumber::try_from`] so the value is range-checked and cannot
-    /// collide with the other two variants.
+    /// Construct through [`SubnetNumber::try_from`] so the value is range-checked and
+    /// cannot collide with the other two variants.
     #[non_exhaustive]
     Specific(u8),
     /// `0xF` — apply to the network the request was received on.
@@ -244,17 +246,19 @@ impl TryFrom<u8> for SubnetNumber {
     }
 }
 
-/// `CommunicationType` is used to specify the type of communication behavior to be modified.
+/// `CommunicationType` is used to specify the type of communication behavior to be
+/// modified.
 ///
-/// This is the low nibble (bits 1-0) of the `communicationType` byte; the high nibble is the
-/// [`SubnetNumber`]. Bits 3-2 are `ISOSAEReserved` and must be zero.
+/// This is the low nibble (bits 1-0) of the `communicationType` byte; the high nibble is
+/// the [`SubnetNumber`]. Bits 3-2 are `ISOSAEReserved` and must be zero.
 ///
 /// Note:
 ///
-/// Conversions from `u8` to `CommunicationType` are fallible and will return an [`Error`] if the value is not a valid `CommunicationType`
+/// Conversions from `u8` to `CommunicationType` are fallible and will return an [`Error`]
+/// if the value is not a valid `CommunicationType`
 ///
-/// Serializes as its variant name (`"Normal"`), not as a number — unlike the other single-byte
-/// types in this crate.
+/// Serializes as its variant name (`"Normal"`), not as a number — unlike the other
+/// single-byte types in this crate.
 //
 // That is deliberate, and the reason belongs here rather than in the rustdoc, because utoipa
 // publishes the rustdoc as the schema description. There is nothing to smuggle: the four variants
@@ -291,8 +295,9 @@ impl From<CommunicationType> for u8 {
 impl TryFrom<u8> for CommunicationType {
     type Error = Error;
 
-    /// Reads bits 1-0 of a `communicationType` byte, rejecting a byte whose reserved bits 3-2
-    /// are set. Use [`SubnetNumber::try_from`] on the high nibble for the rest of the byte.
+    /// Reads bits 1-0 of a `communicationType` byte, rejecting a byte whose reserved bits
+    /// 3-2 are set. Use [`SubnetNumber::try_from`] on the high nibble for the rest of the
+    /// byte.
     ///
     /// # Errors
     /// Returns [`Error::InvalidCommunicationType`] if bits 3-2 are non-zero, which Annex B
@@ -399,9 +404,9 @@ const COMMUNICATION_CONTROL_NEGATIVE_RESPONSE_CODES: [NegativeResponseCode; 4] =
 pub struct CommunicationControlRequest {
     /// Whether the server should suppress a positive response (SPRMIB).
     ///
-    /// Public because it carries no invariant with the other fields: it occupies bit 7 of the
-    /// sub-function byte and is fused onto `control_type` only at the wire boundary. The
-    /// remaining fields stay private because `node_id` must be present exactly when
+    /// Public because it carries no invariant with the other fields: it occupies bit 7 of
+    /// the sub-function byte and is fused onto `control_type` only at the wire boundary.
+    /// The remaining fields stay private because `node_id` must be present exactly when
     /// `control_type` is an enhanced-address variant.
     pub suppress_positive_response: bool,
     control_type: CommunicationControlType,
@@ -460,8 +465,8 @@ impl CommunicationControlRequest {
 
     /// The requested [`CommunicationControlType`].
     ///
-    /// Private field with a getter, not a public field: `node_id` must be present exactly when
-    /// this is an enhanced-address variant, so the two are set together through
+    /// Private field with a getter, not a public field: `node_id` must be present exactly
+    /// when this is an enhanced-address variant, so the two are set together through
     /// [`new`](Self::new) / [`new_with_node_id`](Self::new_with_node_id).
     #[must_use]
     pub const fn control_type(&self) -> CommunicationControlType {
@@ -470,9 +475,9 @@ impl CommunicationControlRequest {
 
     /// Target a particular subnet instead of all connected networks.
     ///
-    /// Offered as a builder rather than a fourth constructor: the subnet is independent of the
-    /// `control_type`/`node_id` pairing, so folding it into the constructors would double them
-    /// without adding a rule to enforce.
+    /// Offered as a builder rather than a fourth constructor: the subnet is independent of
+    /// the `control_type`/`node_id` pairing, so folding it into the constructors would
+    /// double them without adding a rule to enforce.
     #[must_use]
     pub const fn with_subnet(mut self, subnet: SubnetNumber) -> Self {
         self.subnet = subnet;
@@ -488,7 +493,8 @@ impl CommunicationControlRequest {
         self.communication_type
     }
 
-    /// Which network the control applies to — the high nibble of the `communicationType` byte.
+    /// Which network the control applies to — the high nibble of the `communicationType`
+    /// byte.
     #[must_use]
     pub const fn subnet(&self) -> SubnetNumber {
         self.subnet
@@ -844,8 +850,8 @@ mod response {
 /// A `CommunicationControl` (0x28) request.
 ///
 /// `node_id` must be present exactly when `control_type` is one of the two enhanced-address
-/// variants (`0x04`, `0x05`) and absent otherwise; a payload that breaks that rule is rejected
-/// rather than encoded into a frame this crate's own decoder would refuse.
+/// variants (`0x04`, `0x05`) and absent otherwise; a payload that breaks that rule is
+/// rejected rather than encoded into a frame this crate's own decoder would refuse.
 ///
 /// This doc comment is the published schema description for `CommunicationControlRequest`,
 /// because its hand-written `PartialSchema` delegates here.
@@ -910,10 +916,10 @@ impl utoipa::ToSchema for CommunicationControlRequest {
 
     /// Register the child schemas this one `$ref`s.
     ///
-    /// `ToSchema::schemas` defaults to a no-op, and the derive is what normally overrides it. A
-    /// hand-written impl that only implements `schema()` therefore emits `$ref`s to types the
-    /// document never defines, which every client generator either rejects or degrades to an
-    /// untyped object -- strictly worse than the derived schema it replaced.
+    /// `ToSchema::schemas` defaults to a no-op, and the derive is what normally overrides
+    /// it. A hand-written impl that only implements `schema()` therefore emits `$ref`s to
+    /// types the document never defines, which every client generator either rejects or
+    /// degrades to an untyped object -- strictly worse than the derived schema it replaced.
     fn schemas(
         schemas: &mut Vec<(
             String,

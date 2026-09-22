@@ -17,9 +17,9 @@ pub struct NegativeResponse {
     /// Raw echoed request-service byte from the wire, preserved verbatim.
     ///
     /// Private, unlike the public data-bag fields on most response types: it is a raw byte
-    /// whose typed meaning is derived ([`request_service`](Self::request_service)), and the two
-    /// constructors deliberately offer different guarantees — [`new`](Self::new) takes a typed
-    /// service, [`new_with_sid`](Self::new_with_sid) takes the byte.
+    /// whose typed meaning is derived ([`request_service`](Self::request_service)), and the
+    /// two constructors deliberately offer different guarantees — [`new`](Self::new) takes
+    /// a typed service, [`new_with_sid`](Self::new_with_sid) takes the byte.
     request_service_sid: u8,
     /// The negative response code indicating why the request failed.
     nrc: NegativeResponseCode,
@@ -29,10 +29,10 @@ impl NegativeResponse {
     /// Create a new `NegativeResponse` for a modeled request service.
     ///
     /// Note that [`UdsServiceType::UnsupportedDiagnosticService`] and
-    /// [`UdsServiceType::NegativeResponse`] have no request SID and both echo `0x7F`. To NACK a
-    /// service byte the crate does not model — the `sid` of a
-    /// [`Request::Other`](crate::Request::Other) — use [`new_with_sid`](Self::new_with_sid) so
-    /// the original byte is echoed.
+    /// [`UdsServiceType::NegativeResponse`] have no request SID and both echo `0x7F`. To
+    /// NACK a service byte the crate does not model — the `sid` of a
+    /// [`Request::Other`](crate::Request::Other) — use [`new_with_sid`](Self::new_with_sid)
+    /// so the original byte is echoed.
     #[must_use]
     pub const fn new(request_service: UdsServiceType, nrc: NegativeResponseCode) -> Self {
         Self {
@@ -65,8 +65,9 @@ impl NegativeResponse {
     /// The service that triggered this negative response, as a typed [`UdsServiceType`].
     ///
     /// An unmodeled/reserved echoed byte maps to
-    /// [`UdsServiceType::UnsupportedDiagnosticService`]; the original byte remains available
-    /// from [`request_service_sid`](Self::request_service_sid) and is what gets re-encoded.
+    /// [`UdsServiceType::UnsupportedDiagnosticService`]; the original byte remains
+    /// available from [`request_service_sid`](Self::request_service_sid) and is what gets
+    /// re-encoded.
     #[must_use]
     pub const fn request_service(&self) -> UdsServiceType {
         UdsServiceType::from_request_sid(self.request_service_sid)

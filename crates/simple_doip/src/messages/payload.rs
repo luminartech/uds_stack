@@ -26,9 +26,8 @@ pub enum Payload<'a> {
     /// UDS/diagnostic payload between tester and ECU, addressed by source and
     /// target logical address.
     DiagnosticMessage(DiagnosticMessage<'a>),
-    /// Acknowledgement of a diagnostic message. Carries either a positive or a
-    /// negative acknowledgement, determined by its
-    /// [`ack_code`](DiagnosticMessageAck::ack_code) (see
+    /// Acknowledgement of a diagnostic message. Carries either a positive or a negative
+    /// acknowledgement, determined by its [`ack_code`](DiagnosticMessageAck::ack_code) (see
     /// [`DiagnosticAckCode::is_negative_ack`](crate::messages::DiagnosticAckCode::is_negative_ack)).
     ///
     /// # Known limitation
@@ -64,8 +63,9 @@ pub enum Payload<'a> {
     /// (`PayloadType::RoutingActivationResponse`, 0x0006), granting or denying
     /// diagnostic access on the connection.
     RoutingActivationResponse(RoutingActivationResponse),
-    /// Vehicle announcement / vehicle identification response (`PayloadType::VehicleAnnouncement`,
-    /// 0x0004). Shares the [`VehicleIdentificationResponse`] wire format.
+    /// Vehicle announcement / vehicle identification response
+    /// (`PayloadType::VehicleAnnouncement`, 0x0004). Shares the
+    /// [`VehicleIdentificationResponse`] wire format.
     VehicleAnnouncement(VehicleIdentificationResponse),
     /// Request for vehicle identification, in any of its three addressing forms
     /// (`PayloadType::VehicleIdentificationRequest` 0x0001,
@@ -114,8 +114,9 @@ pub enum OwnedPayload {
     RoutingActivationRequest(RoutingActivationRequest),
     /// Owned mirror of [`Payload::RoutingActivationResponse`].
     RoutingActivationResponse(RoutingActivationResponse),
-    /// Vehicle announcement / vehicle identification response (`PayloadType::VehicleAnnouncement`,
-    /// 0x0004). Shares the [`VehicleIdentificationResponse`] wire format.
+    /// Vehicle announcement / vehicle identification response
+    /// (`PayloadType::VehicleAnnouncement`, 0x0004). Shares the
+    /// [`VehicleIdentificationResponse`] wire format.
     VehicleAnnouncement(VehicleIdentificationResponse),
     /// Owned mirror of [`Payload::VehicleIdentificationRequest`].
     VehicleIdentificationRequest,

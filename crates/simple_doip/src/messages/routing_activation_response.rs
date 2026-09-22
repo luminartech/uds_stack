@@ -16,13 +16,16 @@ pub enum RoutingActivationResponseCode {
     /// Routing activation denied due to unknown source address.
     ///  * Do not activate routing and close this `TCP_DATA` socket.
     DeniedUnknownSourceAddress = 0x00,
-    /// Routing activation denied because all concurrently supported `TCP_DATA` sockets are registered and active.
+    /// Routing activation denied because all concurrently supported `TCP_DATA` sockets are
+    /// registered and active.
     /// * Do not activate routing and close this `TCP_DATA` socket.
     DeniedAllTcpSocketsRegisteredAndActive = 0x01,
-    /// Routing activation denied because the SA received is different from the table connection entry on the already activated `TCP_DATA` socket.
+    /// Routing activation denied because the SA received is different from the table
+    /// connection entry on the already activated `TCP_DATA` socket.
     /// * Do not activate routing and close this `TCP_DATA` socket.
     DeniedSourceAddressAlreadyActivated = 0x02,
-    /// Routing activation denied because the SA is already registered and active on a different `TCP_DATA` socket.
+    /// Routing activation denied because the SA is already registered and active on a
+    /// different `TCP_DATA` socket.
     /// * Do not activate routing and close this `TCP_DATA` socket.
     DeniedSourceAddressAlreadyRegistered = 0x03,
     /// Routing activation denied due to missing authentication.
@@ -34,7 +37,8 @@ pub enum RoutingActivationResponseCode {
     /// Routing activation denied due to unsupported routing activation type.
     /// * Do not activate routing and close this `TCP_DATA` socket.
     DeniedUnsupportedRoutingActivationType = 0x06,
-    /// Routing activation denied because the specified activation type requires a secure TLS `TCP_DATA` socket.
+    /// Routing activation denied because the specified activation type requires a secure
+    /// TLS `TCP_DATA` socket.
     /// * Do not activate routing and close this (non TLS) `TCP_DATA` socket.
     DeniedEncryptedConnectionViaTLSRequired = 0x07,
     /// Reserved for future use.

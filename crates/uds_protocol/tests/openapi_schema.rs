@@ -1,16 +1,18 @@
 //! Checks the generated `OpenAPI` document against what `serde` actually does.
 //!
-//! The `utoipa` half of this crate is hand-written for every type whose serialized form is a
-//! single protocol byte, and for the four composite requests that deserialize through a repr. Three
-//! defects shipped in that code because nothing here asserted anything about it:
+//! The `utoipa` half of this crate is hand-written for every type whose serialized form is
+//! a single protocol byte, and for the four composite requests that deserialize through a
+//! repr. Three defects shipped in that code because nothing here asserted anything about
+//! it:
 //!
-//! - the document had four dangling `$ref`s, where the derive it replaced had none, because a
-//!   hand-written `ToSchema` must forward `schemas()` and none of them did;
-//! - two schema descriptions were implementation notes rather than API documentation, one of them
-//!   naming a module-private type, and one had lost its verb because utoipa's derive silently
-//!   drops `#[doc = concat!(..)]`;
+//! - the document had four dangling `$ref`s, where the derive it replaced had none, because
+//!   a hand-written `ToSchema` must forward `schemas()` and none of them did;
+//! - two schema descriptions were implementation notes rather than API documentation, one
+//!   of them naming a module-private type, and one had lost its verb because utoipa's
+//!   derive silently drops `#[doc = concat!(..)]`;
 //! - every byte schema advertised `0..=2^31` while its deserializer rejected anything above
-//!   `0x7F`, or `0x0F`, so a generated client would emit an `i32` and get a runtime rejection.
+//!   `0x7F`, or `0x0F`, so a generated client would emit an `i32` and get a runtime
+//!   rejection.
 //!
 //! A schema that lies is worse than a verbose one, so these are checked, not eyeballed.
 
@@ -97,8 +99,9 @@ fn the_document_has_no_dangling_refs() {
 
 /// `maximum` on each byte schema must be the largest byte `serde` actually accepts.
 ///
-/// This is the assertion that keeps the two from drifting: it does not hard-code a bound, it
-/// discovers it by deserializing all 256 bytes and compares that to what the schema advertises.
+/// This is the assertion that keeps the two from drifting: it does not hard-code a bound,
+/// it discovers it by deserializing all 256 bytes and compares that to what the schema
+/// advertises.
 macro_rules! assert_schema_bound_matches_serde {
     ($ty:ty, $name:literal) => {{
         let accepted: Vec<u8> = (0u8..=0xFF)

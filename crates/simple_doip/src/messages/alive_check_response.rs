@@ -11,7 +11,8 @@ use super::traits::{Decode, Encode};
 /// Typical use is to wait for a request from the server
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct AliveCheckResponse {
-    /// Contains the logical address of the client `DoIP` entity that is currently active on this `TCP_DATA` socket.
+    /// Contains the logical address of the client `DoIP` entity that is currently active on
+    /// this `TCP_DATA` socket.
     pub source_address: LogicalAddress,
 }
 

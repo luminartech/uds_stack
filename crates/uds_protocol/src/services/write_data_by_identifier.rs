@@ -26,9 +26,9 @@ pub struct WriteDataByIdentifierRequest<'d> {
     pub identifier: u16,
     /// The opaque data record written after the identifier.
     ///
-    /// Private because it carries an invariant: ISO 14229-1:2020 Table 277 marks `dataRecord`
-    /// byte #1 mandatory, so an empty record encodes to a frame this crate's own decoder
-    /// rejects. Read it back with [`WriteDataByIdentifierRequest::data`].
+    /// Private because it carries an invariant: ISO 14229-1:2020 Table 277 marks
+    /// `dataRecord` byte #1 mandatory, so an empty record encodes to a frame this crate's
+    /// own decoder rejects. Read it back with [`WriteDataByIdentifierRequest::data`].
     #[cfg_attr(
         feature = "serde",
         serde(borrow, deserialize_with = "crate::shared::bounded::non_empty_bytes")
@@ -41,9 +41,9 @@ impl<'d> WriteDataByIdentifierRequest<'d> {
     ///
     /// # Errors
     /// Returns [`Error::IncorrectMessageLengthOrInvalidFormat`] if `data` is empty. ISO
-    /// 14229-1:2020 Table 277 marks the first `dataRecord` byte mandatory, so a request with
-    /// no data record is malformed — and would encode to a frame this crate's own decoder
-    /// rejects.
+    /// 14229-1:2020 Table 277 marks the first `dataRecord` byte mandatory, so a request
+    /// with no data record is malformed — and would encode to a frame this crate's own
+    /// decoder rejects.
     pub const fn new(identifier: u16, data: &'d [u8]) -> Result<Self, Error> {
         if data.is_empty() {
             return Err(Error::IncorrectMessageLengthOrInvalidFormat);

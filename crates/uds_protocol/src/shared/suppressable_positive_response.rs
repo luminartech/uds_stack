@@ -1,5 +1,7 @@
-//! UDS uses a bit mask called the Suppress Positive Response Message Indication Bit (SPRMIB) to indicate if a positive response message should be suppressed.
-//! This module provides a generic implementation of the Suppress Positive Response Message Indication Bit (SPRMIB) for UDS subfunction enumerations.
+//! UDS uses a bit mask called the Suppress Positive Response Message Indication Bit
+//! (SPRMIB) to indicate if a positive response message should be suppressed. This module
+//! provides a generic implementation of the Suppress Positive Response Message Indication
+//! Bit (SPRMIB) for UDS subfunction enumerations.
 use crate::Error;
 
 /// Suppress Positive Response Message Indication Bit
@@ -10,9 +12,9 @@ pub(crate) const SPRMIB_VALUE_MASK: u8 = 0x7F;
 /// Split a sub-function byte into its SPRMIB flag and its value bits.
 ///
 /// For sub-function enumerations that implement `TryFrom<u8>`, prefer
-/// [`SuppressablePositiveResponse`], which carries both halves as one value. This is for the
-/// services whose sub-function byte does not by itself determine the variant, because the
-/// variant also depends on the parameter bytes that follow it (`ReadDTCInformation`).
+/// [`SuppressablePositiveResponse`], which carries both halves as one value. This is for
+/// the services whose sub-function byte does not by itself determine the variant, because
+/// the variant also depends on the parameter bytes that follow it (`ReadDTCInformation`).
 pub(crate) const fn split_sprmib(byte: u8) -> (bool, u8) {
     (byte & SPRMIB == SPRMIB, byte & SPRMIB_VALUE_MASK)
 }
@@ -26,8 +28,9 @@ pub(crate) const fn fuse_sprmib(suppress_positive_response: bool, value: u8) -> 
     }
 }
 
-/// `SuppressablePositiveResponse` is used to encapsulate subfunction enumerations that can also encode the response suppression bit.
-/// This eliminates bit masking logic from a number of subfunction enumerations.
+/// `SuppressablePositiveResponse` is used to encapsulate subfunction enumerations that can
+/// also encode the response suppression bit. This eliminates bit masking logic from a
+/// number of subfunction enumerations.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct SuppressablePositiveResponse<T: TryFrom<u8> + Into<u8> + Copy> {
     suppress_positive_response: bool,
@@ -35,7 +38,8 @@ pub(crate) struct SuppressablePositiveResponse<T: TryFrom<u8> + Into<u8> + Copy>
 }
 
 impl<T: TryFrom<u8> + Into<u8> + Copy> SuppressablePositiveResponse<T> {
-    /// Returns a new `SuppressablePositiveResponse` with the given value and suppression flag
+    /// Returns a new `SuppressablePositiveResponse` with the given value and suppression
+    /// flag
     pub const fn new(suppress_positive_response: bool, value: T) -> Self {
         Self {
             suppress_positive_response,

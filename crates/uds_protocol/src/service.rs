@@ -10,40 +10,49 @@
 pub enum UdsServiceType {
     // ========================================================================
     // Diagnostics and Communications Management
-    /// UDS uses different session types which can be changed using "Diagnostic Session Control".
-    /// Different services are available depending on which session is active.
-    /// "Default Session" is the initial session type.
-    ///  Other session types are defined, but may not be implemented depending on the device:
+    /// UDS uses different session types which can be changed using "Diagnostic Session
+    /// Control". Different services are available depending on which session is active.
+    /// "Default Session" is the initial session type. Other session types are defined, but
+    /// may not be implemented depending on the device:
     ///
     /// - 0x01 "Default Session" used for basic uds
     /// - 0x02 "Programming Session" used to upload software.
-    /// - 0x03 "Extended Diagnostic Session" used to unlock additional diagnostic functions, such as the adjustment of sensors.
-    /// - 0x04 "Safety system diagnostic session" used to test all safety-critical diagnostic functions, such as airbag tests.
+    /// - 0x03 "Extended Diagnostic Session" used to unlock additional diagnostic functions,
+    ///   such as the adjustment of sensors.
+    /// - 0x04 "Safety system diagnostic session" used to test all safety-critical
+    ///   diagnostic functions, such as airbag tests.
     ///
-    /// In addition, there are reserved session identifiers that can be defined for vehicle manufacturers and vehicle suppliers specific use.
+    /// In addition, there are reserved session identifiers that can be defined for vehicle
+    /// manufacturers and vehicle suppliers specific use.
     DiagnosticSessionControl,
-    /// The service "ECU reset" is used to restart the control unit (ECU).
-    /// Depending on the control unit hardware and implementation, different forms of reset can be used:
+    /// The service "ECU reset" is used to restart the control unit (ECU). Depending on the
+    /// control unit hardware and implementation, different forms of reset can be used:
     ///
     /// - "Hard Reset" simulates a shutdown of the power supply.
     /// - "key off on Reset" simulates the drain and turn on the ignition with the key.
-    /// - Soft Reset" allows the initialization of certain program units and their storage structures.
+    /// - Soft Reset" allows the initialization of certain program units and their storage
+    ///   structures.
     ///
-    /// Again, there are reserved values that can be defined for vehicle manufacturers and vehicle suppliers specific use.
+    /// Again, there are reserved values that can be defined for vehicle manufacturers and
+    /// vehicle suppliers specific use.
     EcuReset,
-    /// Security check is available to enable the most security-critical uds.
-    /// For this purpose a "Seed" is generated and sent to the client by the control unit.
-    /// From this "Seed" the client has to compute a "Key" and send it back to the control unit to unlock the security-critical uds.
+    /// Security check is available to enable the most security-critical uds. For this
+    /// purpose a "Seed" is generated and sent to the client by the control unit. From this
+    /// "Seed" the client has to compute a "Key" and send it back to the control unit to
+    /// unlock the security-critical uds.
     SecurityAccess,
-    /// With this service, both the sending and receiving of messages can be turned off in the control unit.
+    /// With this service, both the sending and receiving of messages can be turned off in
+    /// the control unit.
     CommunicationControl,
-    /// An update (2020) of the standard added this service to provide a standardized approach to more modern methods of authentication than are permitted by the Security Access (0x27) service,
-    /// including bidirectional authentication with PKI-based Certificate Exchange.
+    /// An update (2020) of the standard added this service to provide a standardized
+    /// approach to more modern methods of authentication than are permitted by the Security
+    /// Access (0x27) service, including bidirectional authentication with PKI-based
+    /// Certificate Exchange.
     Authentication,
-    /// If no communication is exchanged with the client for a long time,
-    /// the control unit automatically exits the current session and returns to the "Default Session".
-    /// It might even go to sleep mode.
-    /// This service is to signal to the device that the client is still present.
+    /// If no communication is exchanged with the client for a long time, the control unit
+    /// automatically exits the current session and returns to the "Default Session". It
+    /// might even go to sleep mode. This service is to signal to the device that the client
+    /// is still present.
     TesterPresent,
     /// In the communication between the controllers and the client,
     /// certain timing must be preserved.
@@ -52,8 +61,8 @@ pub enum UdsServiceType {
     /// These timings can be read and changed through this service.
     ///
     /// Defined in ISO 14229-1:2013 and **removed in the 2020 edition**, which this crate
-    /// otherwise targets. The variant is retained so a 2013-era `0x83`/`0xC3` byte round-trips
-    /// as itself rather than becoming an unrecognized
+    /// otherwise targets. The variant is retained so a 2013-era `0x83`/`0xC3` byte
+    /// round-trips as itself rather than becoming an unrecognized
     /// [`Request::Other`](crate::Request::Other); no request or response type models it.
     AccessTimingParameters,
     /// Transmit data using a security sub-layer (ISO 15764).
@@ -71,19 +80,21 @@ pub enum UdsServiceType {
     // ========================================================================
     // Data Transmission
     /// With this service, it is possible to retrieve one or more values of a control unit.
-    /// This can be information of all kinds and of different lengths such as part numbers or the software version.
+    /// This can be information of all kinds and of different lengths such as part numbers
+    /// or the software version.
     ReadDataByIdentifier,
-    /// Read data from the physical memory at the provided address.
-    /// This function can be used by a testing tool to read the internal behavior of the software.
+    /// Read data from the physical memory at the provided address. This function can be
+    /// used by a testing tool to read the internal behavior of the software.
     ReadMemoryByAddress,
     /// Read the scaling information of a data record identified by a DID.
     ReadScalingDataByIdentifier,
     /// With this service, values are sent periodically by a ecu.
     /// The values to be sent must only use the "Dynamically Defined Data Identifier".
     ReadDataByIdentifierPeriodic,
-    /// This service offers the possibility of a fix for a device specified Data Identifier (DID) pool to configure another Data Identifier.
-    /// This is usually a combination of parts of different DIDs or simply a concatenation of complete DIDs.
-    /// The requested data may be configured or grouped in the following manner:
+    /// This service offers the possibility of a fix for a device specified Data Identifier
+    /// (DID) pool to configure another Data Identifier. This is usually a combination of
+    /// parts of different DIDs or simply a concatenation of complete DIDs. The requested
+    /// data may be configured or grouped in the following manner:
     ///
     /// - Source DID, position, length (in bytes), Sub-Function Byte: defineByIdentifier
     /// - Memory address length (in bytes), Sub-Function Byte: defineByMemoryAddress
@@ -114,27 +125,30 @@ pub enum UdsServiceType {
     RoutineControl,
     // ========================================================================
     // Upload / Download
-    /// Downloading new software or other data into the control unit is initiated using the "Request Download".
-    /// Here, the location and size of the data is specified.
-    /// In response, the controller specifies how large the data packets can be.
+    /// Downloading new software or other data into the control unit is initiated using the
+    /// "Request Download". Here, the location and size of the data is specified. In
+    /// response, the controller specifies how large the data packets can be.
     RequestDownload,
     /// Request the transfer of data from the ECU to the tester.
     /// The location and size must be specified.
     /// The size of the data blocks are specified by the tester.
     RequestUpload,
-    /// For the actual transmission of data, the service "Transfer Data" is used
-    /// This service is used for both uploading and downloading data.
-    /// The transfer direction is established in advance by the service "Request Download" or "Upload Request".
-    /// This service should try to send packets at maximum length, as specified in previous uds.
-    /// If the data set is larger than the maximum, the "Transfer Data" service must be used several times in succession until all data has arrived.
+    /// For the actual transmission of data, the service "Transfer Data" is used This
+    /// service is used for both uploading and downloading data. The transfer direction is
+    /// established in advance by the service "Request Download" or "Upload Request". This
+    /// service should try to send packets at maximum length, as specified in previous uds.
+    /// If the data set is larger than the maximum, the "Transfer Data" service must be used
+    /// several times in succession until all data has arrived.
     TransferData,
-    /// A data transmission can be 'completed' when using the "Transfer Exit" service.
-    /// This service is used for comparison between the control unit and the tester.
-    /// When it is running, a control unit can answer negatively on this request to stop a data transfer request.
-    /// This will be used when the amount of data (set in "Request Download" or "Upload Request") has not been transferred.
+    /// A data transmission can be 'completed' when using the "Transfer Exit" service. This
+    /// service is used for comparison between the control unit and the tester. When it is
+    /// running, a control unit can answer negatively on this request to stop a data
+    /// transfer request. This will be used when the amount of data (set in "Request
+    /// Download" or "Upload Request") has not been transferred.
     RequestTransferExit,
-    /// This service is used to initiate a file download from the client to the server or upload from the server to the client.
-    /// Additionally information about the file system are available by this service.
+    /// This service is used to initiate a file download from the client to the server or
+    /// upload from the server to the client. Additionally information about the file system
+    /// are available by this service.
     RequestFileTransfer,
     /// This response is given when a service request could not be performed,
     /// for example a request for an unsupported Data Identifier.
@@ -300,8 +314,9 @@ impl UdsServiceType {
         }
     }
 
-    /// Whether ISO 14229-1 gives this service a sub-function byte, and therefore whether its
-    /// request can carry a suppressPosRspMsgIndicationBit (SPRMIB) in bit 7 of that byte.
+    /// Whether ISO 14229-1 gives this service a sub-function byte, and therefore whether
+    /// its request can carry a suppressPosRspMsgIndicationBit (SPRMIB) in bit 7 of that
+    /// byte.
     ///
     /// This is a fact about the standard rather than about this crate's coverage, so it is
     /// answered for all 26 services the 2020 edition defines and not only the 16 this crate
@@ -314,15 +329,16 @@ impl UdsServiceType {
     /// [`Request::is_positive_response_suppressed`](crate::Request::is_positive_response_suppressed)
     /// returning an `Option`:
     ///
-    /// - [`UdsServiceType::UnsupportedDiagnosticService`], where every SID ISO 14229-1 does not
-    ///   assign lands — including the vendor-specific range. This is the case that matters in
-    ///   practice.
+    /// - [`UdsServiceType::UnsupportedDiagnosticService`], where every SID ISO 14229-1 does
+    ///   not assign lands — including the vendor-specific range. This is the case that
+    ///   matters in practice.
     /// - [`UdsServiceType::NegativeResponse`], which is not a request service at all.
-    /// - [`UdsServiceType::AccessTimingParameters`]. The 2020 edition, which this crate targets,
-    ///   withdrew the service; the variant is retained only so a pre-2020 `0x83`/`0xC3` byte
-    ///   round-trips as itself. Whether an earlier edition gave it a sub-function is not a fact
-    ///   this table draws from — every other entry is checked against the 2020 text alone — so
-    ///   the answer is deferred to the caller rather than asserted here.
+    /// - [`UdsServiceType::AccessTimingParameters`]. The 2020 edition, which this crate
+    ///   targets, withdrew the service; the variant is retained only so a pre-2020
+    ///   `0x83`/`0xC3` byte round-trips as itself. Whether an earlier edition gave it a
+    ///   sub-function is not a fact this table draws from — every other entry is checked
+    ///   against the 2020 text alone — so the answer is deferred to the caller rather than
+    ///   asserted here.
     #[must_use]
     pub const fn has_sub_function(self) -> Option<bool> {
         match self {
@@ -374,13 +390,13 @@ impl core::fmt::Display for UdsServiceType {
 mod test {
     use super::*;
 
-    /// Every service this crate models, paired with its request and response SID, and whether
-    /// ISO 14229-1 gives it a sub-function byte.
+    /// Every service this crate models, paired with its request and response SID, and
+    /// whether ISO 14229-1 gives it a sub-function byte.
     ///
     /// Written out rather than derived from the conversions, so the table is an independent
-    /// statement of what ISO 14229-1 assigns and a transposed pair fails instead of agreeing
-    /// with itself. `NegativeResponse` and `UnsupportedDiagnosticService` are absent because
-    /// neither has a request SID; both are covered by
+    /// statement of what ISO 14229-1 assigns and a transposed pair fails instead of
+    /// agreeing with itself. `NegativeResponse` and `UnsupportedDiagnosticService` are
+    /// absent because neither has a request SID; both are covered by
     /// `the_variants_that_are_not_a_2020_request_service_report_no_sub_function`.
     const SERVICES: &[(UdsServiceType, u8, u8, Option<bool>)] = &[
         (

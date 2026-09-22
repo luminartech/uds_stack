@@ -2,7 +2,8 @@
 
 /// C.1 DID - Diagnostic Data Identifier specified in ISO 14229-1
 ///
-/// The identifiers listed here are defined and should be implemented by the vehicle manufacturer/system supplier.
+/// The identifiers listed here are defined and should be implemented by the vehicle
+/// manufacturer/system supplier.
 #[cfg_attr(feature = "serde", derive(serde::Deserialize, serde::Serialize))]
 #[cfg_attr(feature = "utoipa", derive(utoipa::ToSchema))]
 #[cfg_attr(feature = "clap", derive(clap::ValueEnum))]
@@ -24,7 +25,8 @@ pub enum UdsIdentifier {
     /// Network configuration data for tractor-trailer application (`0xF000–0xF00F`).
     #[cfg_attr(feature = "clap", clap(skip))]
     NetworkConfigDataForTractorTrailer(u16),
-    /// Identification option vehicle-manufacturer–specific (`0xF100–0xF17F`, `0xF1A0–0xF1EF`).
+    /// Identification option vehicle-manufacturer–specific (`0xF100–0xF17F`,
+    /// `0xF1A0–0xF1EF`).
     #[cfg_attr(feature = "clap", clap(skip))]
     IdentificationOptionVehicleManufacturerSpecific(u16),
     /// Identification option system-supplier–specific (`0xF1F0–0xF1FF`).
@@ -85,16 +87,18 @@ pub enum UdsIdentifier {
     VehicleManufacturerEcuSoftwareVersionNumber,
     /// System supplier identifier (`0xF18A`).
     SystemSupplierIdentifier,
-    /// This value shall be used to reference the ECU (server) manufacturing date. Record data content and format shall be
-    /// unsigned numeric, ASCII or BCD, and shall be ordered as Year, Month, Day.
+    /// This value shall be used to reference the ECU (server) manufacturing date. Record
+    /// data content and format shall be unsigned numeric, ASCII or BCD, and shall be
+    /// ordered as Year, Month, Day.
     EcuManufacturingData,
     /// Get the serial number of the ECU, format shall be server specific.
     EcuSerialNumber,
     /// Request the supported functional units of the ECU.
     SupportedFunctionalUnits,
-    /// This value shall be used to reference the vehicle manufacturer order number for a kit (assembled parts bought as a whole for
-    /// production e.g. cockpit), when the spare part number designates only the server (e.g. for aftersales). The record data content and
-    /// format shall be server specific and defined by the vehicle manufacturer.
+    /// This value shall be used to reference the vehicle manufacturer order number for a
+    /// kit (assembled parts bought as a whole for production e.g. cockpit), when the spare
+    /// part number designates only the server (e.g. for aftersales). The record data
+    /// content and format shall be server specific and defined by the vehicle manufacturer.
     VehicleManufacturerKitAssemblyPartNumber,
     /// See 14229-1 C.1 for details on Regulation X information.
     /// Recursive ASCII string
@@ -297,7 +301,8 @@ impl core::fmt::Debug for UdsIdentifier {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[non_exhaustive]
 pub enum UdsRoutineIdentifier {
-    /// ISO/SAE reserved routine identifier (`0x0000–0x00FF`, `0xE300–0xEFFF`, `0xFF02–0xFFFF`).
+    /// ISO/SAE reserved routine identifier (`0x0000–0x00FF`, `0xE300–0xEFFF`,
+    /// `0xFF02–0xFFFF`).
     IsoSaeReserved(u16),
     /// Represent Tachograph test result values
     ///
@@ -341,7 +346,8 @@ pub enum UdsRoutineIdentifier {
     CheckProgrammingDependencies,
 }
 
-/// We know all values for the Routine Identifier, so we can implement `From<u16>` for `UdsRoutineIdentifier`
+/// We know all values for the Routine Identifier, so we can implement `From<u16>` for
+/// `UdsRoutineIdentifier`
 impl From<u16> for UdsRoutineIdentifier {
     fn from(value: u16) -> Self {
         match value {

@@ -3,7 +3,8 @@ use automotive_wire_codec::{read_u8, write_u8};
 use super::message_error::MessageError;
 use super::traits::{Decode, Encode};
 
-///Identifies whether or not the vehicle is in diagnostic power mode and ready to perform reliable diagnostics.
+/// Identifies whether or not the vehicle is in diagnostic power mode and ready to perform
+/// reliable diagnostics.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[repr(u8)]
 pub enum DiagnosticPowerModeCode {

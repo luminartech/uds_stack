@@ -7,10 +7,10 @@ use automotive_wire_codec::{write_bytes, write_u8};
 /// (`0x00..=0x7F`).
 ///
 /// A request fuses the suppress-positive-response flag into bit 7 of this byte at the wire
-/// boundary, so a level with bit 7 already set would be ambiguous. Constraining construction
-/// here makes that collision unrepresentable rather than something to catch at encode time.
-/// Serializes as the wire byte and validates on the way back in, so `serde` cannot construct a
-/// level `new` would have rejected.
+/// boundary, so a level with bit 7 already set would be ambiguous. Constraining
+/// construction here makes that collision unrepresentable rather than something to catch at
+/// encode time. Serializes as the wire byte and validates on the way back in, so `serde`
+/// cannot construct a level `new` would have rejected.
 #[cfg_attr(feature = "serde", derive(serde::Deserialize, serde::Serialize))]
 #[cfg_attr(feature = "utoipa", derive(utoipa::ToSchema))]
 #[cfg_attr(feature = "serde", serde(try_from = "u8", into = "u8"))]
@@ -61,8 +61,8 @@ impl From<SecurityAccessLevel> for u8 {
 ///
 /// *Note*:
 ///
-/// Conversions from `u8` to `SecurityAccessType` are fallible and will return an [`Error`] if the
-/// Suppress Positive Response bit is set.
+/// Conversions from `u8` to `SecurityAccessType` are fallible and will return an [`Error`]
+/// if the Suppress Positive Response bit is set.
 #[cfg_attr(feature = "serde", derive(serde::Deserialize, serde::Serialize))]
 #[cfg_attr(feature = "serde", serde(try_from = "u8", into = "u8"))]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -254,12 +254,11 @@ const SECURITY_ACCESS_NEGATIVE_RESPONSE_CODES: [NegativeResponseCode; 8] = [
 ///
 /// ## Send Key
 ///
-/// When sending a key, the request data represents the key to be sent.
-/// After receiving a seed,
-/// the client must calculate the corresponding key and send it to the server.
-/// The server will then validate the key and respond with a positive or negative response.
-/// Successful verification of the key will result in the server unlocking the requested security level.
-/// Suppressing a positive response to this request is allowed.
+/// When sending a key, the request data represents the key to be sent. After receiving a
+/// seed, the client must calculate the corresponding key and send it to the server. The
+/// server will then validate the key and respond with a positive or negative response.
+/// Successful verification of the key will result in the server unlocking the requested
+/// security level. Suppressing a positive response to this request is allowed.
 ///
 /// Zero-alloc request for security access. Borrows from the caller.
 #[cfg_attr(feature = "serde", derive(serde::Deserialize, serde::Serialize))]

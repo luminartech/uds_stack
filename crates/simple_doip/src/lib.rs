@@ -106,21 +106,25 @@ pub const TESTER_LOGICAL_ADDRESS: LogicalAddress = LogicalAddress(0xE400);
 
 // DoIP timing and communication parameters
 
-/// Initial inactivity timeout in seconds for TCP connections directly after a `TCP_DATA` socket is established. Timeout is 2 seconds.
+/// Initial inactivity timeout in seconds for TCP connections directly after a `TCP_DATA`
+/// socket is established. Timeout is 2 seconds.
 ///
-/// Must complete routing activation within this time otherwise the socket is closed by the `DoIP` entity
+/// Must complete routing activation within this time otherwise the socket is closed by the
+/// `DoIP` entity
 pub const TCP_TIMEOUT_INITIAL_INACTIVITY: Duration = Duration::from_secs(2);
 
 /// General inactivity timeout for TCP connections. Timeout is 300 seconds (5 minutes).
 ///
-/// If no data is sent or received for this duration, the connection is closed by the `DoIP` entity
+/// If no data is sent or received for this duration, the connection is closed by the `DoIP`
+/// entity
 pub const TCP_TIMEOUT_GENERAL_INACTIVITY: Duration = Duration::from_secs(300);
 
-/// Alive check for the maximum amount of time an entity waits for an alive check response after having
-/// made an alive check request. Timeout is 5 seconds.
+/// Alive check for the maximum amount of time an entity waits for an alive check response
+/// after having made an alive check request. Timeout is 5 seconds.
 pub const TCP_TIMEOUT_ALIVE_CHECK: Duration = Duration::from_secs(5);
 
-/// Time between receipt of the last byte of a `DoIP` Diagnostic Message and transmission of the ACK or NACK.
+/// Time between receipt of the last byte of a `DoIP` Diagnostic Message and transmission of
+/// the ACK or NACK.
 ///
 /// This is a performance requirement on the **entity emitting the ACK**, not a
 /// deadline for a tester waiting on one. Do not use it to time out a send:
@@ -130,7 +134,8 @@ pub const TCP_TIMEOUT_ALIVE_CHECK: Duration = Duration::from_secs(5);
 /// governs when a message may be considered lost.
 pub const TIMEOUT_DIAGNOSTIC_MESSAGE_INITIAL: Duration = Duration::from_millis(50);
 
-/// After the timeout has elapsed, the request or response is considered to be lost and the request may be repeated
+/// After the timeout has elapsed, the request or response is considered to be lost and the
+/// request may be repeated
 ///
 /// Ref: `A_DoIP_Diagnostic_Message`
 pub const TIMEOUT_DIAGNOSTIC_MESSAGE_RESPONSE: Duration = Duration::from_secs(2);

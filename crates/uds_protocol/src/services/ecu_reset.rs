@@ -23,36 +23,42 @@ pub enum ResetType {
     #[cfg_attr(feature = "clap", clap(skip))]
     #[non_exhaustive]
     IsoSaeReserved(u8),
-    /// This `SubFunction` identifies a "hard reset" condition which simulates the power-on/start-up sequence
-    /// typically performed after a server has been previously disconnected from its power supply (i.e. battery).
-    /// The performed action is implementation specific and not defined by the spec.
-    /// It might result in the re-initialization of both volatile memory and non-volatile memory locations to predetermined values.
+    /// This `SubFunction` identifies a "hard reset" condition which simulates the
+    /// power-on/start-up sequence typically performed after a server has been previously
+    /// disconnected from its power supply (i.e. battery). The performed action is
+    /// implementation specific and not defined by the spec. It might result in the
+    /// re-initialization of both volatile memory and non-volatile memory locations to
+    /// predetermined values.
     HardReset,
-    /// This `SubFunction` identifies a condition similar to the driver turning the ignition key off and back on.
-    /// This reset condition should simulate a key-off-on sequence (i.e. interrupting the switched power supply).
-    /// The performed action is implementation specific and not defined by the spec.
-    /// Typically the values of non-volatile mmemory locations are preserved;
-    /// volatile memory will be initialized.
+    /// This `SubFunction` identifies a condition similar to the driver turning the ignition
+    /// key off and back on. This reset condition should simulate a key-off-on sequence
+    /// (i.e. interrupting the switched power supply). The performed action is
+    /// implementation specific and not defined by the spec. Typically the values of
+    /// non-volatile mmemory locations are preserved; volatile memory will be initialized.
     KeyOffOnReset,
-    /// This `SubFunction` identifies a "soft reset" condition, which causes the server to immediately restart the application program if applicable.
-    /// The performed action is implementation specific and not defined by the spec.
-    /// A typical action is to restart the application without reinitializing of previously applied configuration data,
+    /// This `SubFunction` identifies a "soft reset" condition, which causes the server to
+    /// immediately restart the application program if applicable. The performed action is
+    /// implementation specific and not defined by the spec. A typical action is to restart
+    /// the application without reinitializing of previously applied configuration data,
     /// adaptive factors and other long-term adjustments.
     SoftReset,
-    /// This `SubFunction` applies to ECUs which are not ignition powered but battery powered only.
-    /// Therefore a shutdown forces the sleep mode rather than a power off.
-    /// Sleep means power off but still ready for wake-up (battery powered).
-    /// The intention of the `SubFunction` is to reduce the stand-by time of an ECU after ignition is turned into the off position.
-    /// This value requests the server to enable and perform a "rapid powershut down" function.
-    /// The server shall execute the function immediately once the "key/ignition" is switched off.
-    /// While the server executes the power down function,
-    /// it shall transition either directly or after a defined stand-by-time to sleep mode.
-    /// If the client requires a response message and the server is already prepared to execute the "rapid power shutdown" function,
-    /// the server shall send the positive response message prior to the start of the "rapid power shut down" function.
-    /// The next occurrence of a "key on" or "ignition on" signal terminates the "rapid power shut down" function.
-    /// **NOTE** This `SubFunction` is only applicable to a server supporting a stand-by-mode.
+    /// This `SubFunction` applies to ECUs which are not ignition powered but battery
+    /// powered only. Therefore a shutdown forces the sleep mode rather than a power off.
+    /// Sleep means power off but still ready for wake-up (battery powered). The intention
+    /// of the `SubFunction` is to reduce the stand-by time of an ECU after ignition is
+    /// turned into the off position. This value requests the server to enable and perform a
+    /// "rapid powershut down" function. The server shall execute the function immediately
+    /// once the "key/ignition" is switched off. While the server executes the power down
+    /// function, it shall transition either directly or after a defined stand-by-time to
+    /// sleep mode. If the client requires a response message and the server is already
+    /// prepared to execute the "rapid power shutdown" function, the server shall send the
+    /// positive response message prior to the start of the "rapid power shut down"
+    /// function. The next occurrence of a "key on" or "ignition on" signal terminates the
+    /// "rapid power shut down" function. **NOTE** This `SubFunction` is only applicable to
+    /// a server supporting a stand-by-mode.
     EnableRapidPowerShutDown,
-    /// This `SubFunction` requests the server to disable the previously enabled "rapid power shut down" function.
+    /// This `SubFunction` requests the server to disable the previously enabled "rapid
+    /// power shut down" function.
     DisableRapidPowerShutDown,
     /// Reserved for use by vehicle manufacturers.
     ///
@@ -256,16 +262,16 @@ impl<'a> Decode<'a> for EcuResetRequest {
 pub struct EcuResetResponse {
     /// The reset type echoed from the request.
     pub reset_type: ResetType,
-    /// Minimum stand-by time the server will remain in the power-down sequence, at one second
-    /// per count.
+    /// Minimum stand-by time the server will remain in the power-down sequence, at one
+    /// second per count.
     ///
-    /// `0x00`-`0xFE` are 0 to 254 seconds; `0xFF` indicates a failure or that the time is not
-    /// available (ISO 14229-1:2020 Table 36).
+    /// `0x00`-`0xFE` are 0 to 254 seconds; `0xFF` indicates a failure or that the time is
+    /// not available (ISO 14229-1:2020 Table 36).
     ///
-    /// `None` means the byte is absent from the wire, which is the ordinary case: the parameter
-    /// is marked `C` (conditional) in Table 35 and is present only when `reset_type` is
-    /// [`ResetType::EnableRapidPowerShutDown`]. `None` is therefore distinct from `Some(0)`,
-    /// which is a server reporting zero seconds.
+    /// `None` means the byte is absent from the wire, which is the ordinary case: the
+    /// parameter is marked `C` (conditional) in Table 35 and is present only when
+    /// `reset_type` is [`ResetType::EnableRapidPowerShutDown`]. `None` is therefore
+    /// distinct from `Some(0)`, which is a server reporting zero seconds.
     pub power_down_time: Option<u8>,
 }
 
@@ -318,8 +324,8 @@ impl<'a> Decode<'a> for EcuResetResponse {
     /// `powerDownTime` (ISO 14229-1:2020 Table 35, `Cvt` = `C`).
     ///
     /// Presence is taken from the wire rather than inferred from `resetType`, so a response
-    /// from a server that sends the byte outside `enableRapidPowerShutDown` still round-trips
-    /// unchanged.
+    /// from a server that sends the byte outside `enableRapidPowerShutDown` still
+    /// round-trips unchanged.
     fn decode(buf: &'a [u8]) -> Result<(Self, &'a [u8]), Error> {
         let [reset_type, rest @ ..] = buf else {
             return Err(Error::InsufficientData(Incomplete {

@@ -33,10 +33,10 @@ pub enum Response<'a> {
     /// Unlike the request (a self-delimiting list of 2-byte DIDs, parsed by
     /// [`ReadDataByIdentifierRequest::dids`](crate::ReadDataByIdentifierRequest::dids)),
     /// this response is left opaque **by design**: each data record's length is defined by
-    /// the ECU's configuration for that DID and is *not* present on the wire, so the library
-    /// cannot split it into `(DID, value)` pairs. Parse it caller-side once you know each
-    /// DID's record length — read the 2-byte big-endian DID, take the application-defined
-    /// number of data bytes, then repeat on the remainder.
+    /// the ECU's configuration for that DID and is *not* present on the wire, so the
+    /// library cannot split it into `(DID, value)` pairs. Parse it caller-side once you
+    /// know each DID's record length — read the 2-byte big-endian DID, take the
+    /// application-defined number of data bytes, then repeat on the remainder.
     ReadDataByIdentifier(ReadDataByIdentifierResponse<'a>),
     /// Positive response to `ReadDTCInformation` with lazy iterators.
     ReadDtcInfo(ReadDtcInfoResponse<'a>),
@@ -72,13 +72,13 @@ pub enum Response<'a> {
 
 /// # Remainder
 ///
-/// The returned remainder is **always empty**. A UDS frame is not self-delimiting — its length
-/// comes from the transport (ISO-TP, `DoIP`, ...), not from the message — so one buffer is exactly
-/// one frame, and every payload is decoded with `decode_exact`. This means `decode` behaves as
-/// `decode_exact` despite the streaming shape of the [`Decode`] contract: do **not** feed it
-/// concatenated frames expecting it to consume one at a time, and note that
-/// [`DecodeIter`](crate::DecodeIter) over such a buffer would treat the whole thing as a single
-/// frame. Split frames at the transport layer before calling this.
+/// The returned remainder is **always empty**. A UDS frame is not self-delimiting — its
+/// length comes from the transport (ISO-TP, `DoIP`, ...), not from the message — so one
+/// buffer is exactly one frame, and every payload is decoded with `decode_exact`. This
+/// means `decode` behaves as `decode_exact` despite the streaming shape of the [`Decode`]
+/// contract: do **not** feed it concatenated frames expecting it to consume one at a time,
+/// and note that [`DecodeIter`](crate::DecodeIter) over such a buffer would treat the whole
+/// thing as a single frame. Split frames at the transport layer before calling this.
 impl<'a> Decode<'a> for Response<'a> {
     type Error = crate::Error;
 
@@ -156,8 +156,9 @@ impl<'a> Decode<'a> for Response<'a> {
 impl Response<'_> {
     /// The [`UdsServiceType`] this response frame addresses.
     ///
-    /// For `NegativeResponse` this returns [`UdsServiceType::NegativeResponse`] (the frame's
-    /// own type); the *failed* request service is `NegativeResponse::request_service()`.
+    /// For `NegativeResponse` this returns [`UdsServiceType::NegativeResponse`] (the
+    /// frame's own type); the *failed* request service is
+    /// `NegativeResponse::request_service()`.
     #[must_use]
     pub fn service(&self) -> UdsServiceType {
         match self {

@@ -1,8 +1,8 @@
 //! Checks the public API from outside the crate.
 //!
-//! An integration test is a separate crate, so `#[non_exhaustive]` applies here exactly as it
-//! does for a downstream user. Inline `#[cfg(test)]` modules cannot check this: inside the
-//! defining crate a `#[non_exhaustive]` struct literal compiles fine, so a type that is
+//! An integration test is a separate crate, so `#[non_exhaustive]` applies here exactly as
+//! it does for a downstream user. Inline `#[cfg(test)]` modules cannot check this: inside
+//! the defining crate a `#[non_exhaustive]` struct literal compiles fine, so a type that is
 //! impossible for anyone else to build still looks constructible from there.
 
 use uds_protocol::{
@@ -199,8 +199,8 @@ fn a_reserved_variant_cannot_alias_a_named_one() {
 }
 
 /// A `derive(Deserialize)` ignores field visibility and range checks, so it is a second,
-/// unvalidated constructor for every type whose invariant lives in its constructor. These check
-/// that deserializing cannot build a value `new`/`try_from` would have rejected.
+/// unvalidated constructor for every type whose invariant lives in its constructor. These
+/// check that deserializing cannot build a value `new`/`try_from` would have rejected.
 #[cfg(feature = "serde")]
 mod serde_cannot_bypass_validation {
     #[test]

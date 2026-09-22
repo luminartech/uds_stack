@@ -23,7 +23,8 @@ const NO_SUBFUNCTION_VALUE: u8 = 0x00;
 #[cfg_attr(feature = "serde", serde(try_from = "u8", into = "u8"))]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum ZeroSubFunction {
-    /// Request and response. Indicates that no value beside the SPR Message Indication Bit is supported by this service.
+    /// Request and response. Indicates that no value beside the SPR Message Indication Bit
+    /// is supported by this service.
     NoSubFunctionSupported,
     /// Request only.
     IsoSaeReserved(u8),
@@ -73,8 +74,8 @@ pub struct TesterPresentRequest {
     pub suppress_positive_response: bool,
     /// The sub-function byte with SPRMIB stripped. `TesterPresent` defines only the zero
     /// sub-function, so conformant traffic always carries `0x00`; this is kept private so a
-    /// caller cannot mint a reserved value, but is retained on decode so that a reserved byte
-    /// re-encodes unchanged. Read it back with [`TesterPresentRequest::sub_function`].
+    /// caller cannot mint a reserved value, but is retained on decode so that a reserved
+    /// byte re-encodes unchanged. Read it back with [`TesterPresentRequest::sub_function`].
     ///
     /// Serialized as `sub_function`: a byte in `0x00..=0x7F`.
     //
@@ -102,8 +103,9 @@ impl TesterPresentRequest {
     /// The sub-function byte, with the SPRMIB bit stripped.
     ///
     /// `0x00` for conformant traffic. `0x01..=0x7F` is reserved by ISO/SAE: the value is
-    /// retained rather than normalized so it re-encodes unchanged, and so a server can report
-    /// [`NegativeResponseCode::SubFunctionNotSupported`] against the byte it actually received.
+    /// retained rather than normalized so it re-encodes unchanged, and so a server can
+    /// report [`NegativeResponseCode::SubFunctionNotSupported`] against the byte it
+    /// actually received.
     #[must_use]
     pub const fn sub_function(&self) -> u8 {
         self.zero_sub_function.value()
@@ -182,8 +184,8 @@ impl TesterPresentResponse {
         }
     }
 
-    /// The sub-function byte echoed by the server. `0x00` for conformant traffic; a reserved
-    /// `0x01..=0x7F` value is retained verbatim, mirroring
+    /// The sub-function byte echoed by the server. `0x00` for conformant traffic; a
+    /// reserved `0x01..=0x7F` value is retained verbatim, mirroring
     /// [`TesterPresentRequest::sub_function`].
     #[must_use]
     pub const fn sub_function(&self) -> u8 {

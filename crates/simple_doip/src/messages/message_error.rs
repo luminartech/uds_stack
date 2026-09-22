@@ -89,10 +89,10 @@ pub enum MessageError {
     /// framing itself succeeded, only the body was longer than expected.
     #[error(transparent)]
     TrailingBytes(#[from] TrailingBytes),
-    /// A [`Sink`](automotive_wire_codec::Sink) write failed while encoding a
-    /// message (e.g. [`WriteError::Insufficient`](automotive_wire_codec::WriteError::Insufficient)
-    /// from an undersized stack buffer). Recoverable on the TX side: the caller
-    /// can retry with a larger buffer.
+    /// A [`Sink`](automotive_wire_codec::Sink) write failed while encoding a message (e.g.
+    /// [`WriteError::Insufficient`](automotive_wire_codec::WriteError::Insufficient) from
+    /// an undersized stack buffer). Recoverable on the TX side: the caller can retry with a
+    /// larger buffer.
     #[error(transparent)]
     Io(#[from] automotive_wire_codec::WriteError),
     /// Full `std::io::Error` from the tokio/codec layer, preserving the OS error detail

@@ -1,13 +1,15 @@
-//! The `DiagnosticSessionControl` service is used to enable different diagnostic sessions in the server.
-//! A diagnostic session enables a specific set of diagnostic services and/or functionality in the server.
-//! This service provides the capability that the server can report data link layer specific parameter
-//! values valid for the enabled diagnostic session (e.g. timing parameter values).
-//! The user of this document shall define the exact set of services and/or functionality enabled in each diagnostic session.
-//! There shall always be exactly one diagnostic session active in a server.
-//! A server shall always start the default diagnostic session when powered up.
-//! If no other diagnostic session is started, then the default diagnostic session shall be running as long as the server is powered.
-//! A server shall be capable of providing diagnostic functionality under normal operating conditions,
-//! as well as in other operation conditions defined by the vehicle manufacturer (e.g. limp home operation condition).
+//! The `DiagnosticSessionControl` service is used to enable different diagnostic sessions
+//! in the server. A diagnostic session enables a specific set of diagnostic services and/or
+//! functionality in the server. This service provides the capability that the server can
+//! report data link layer specific parameter values valid for the enabled diagnostic
+//! session (e.g. timing parameter values). The user of this document shall define the exact
+//! set of services and/or functionality enabled in each diagnostic session. There shall
+//! always be exactly one diagnostic session active in a server. A server shall always start
+//! the default diagnostic session when powered up. If no other diagnostic session is
+//! started, then the default diagnostic session shall be running as long as the server is
+//! powered. A server shall be capable of providing diagnostic functionality under normal
+//! operating conditions, as well as in other operation conditions defined by the vehicle
+//! manufacturer (e.g. limp home operation condition).
 
 use crate::shared::SuppressablePositiveResponse;
 use crate::{Decode, Encode, Error, Incomplete, NegativeResponseCode};
@@ -17,8 +19,8 @@ use automotive_wire_codec::{write_u8, write_u16_be};
 ///
 /// *Note*:
 ///
-/// Conversions from `u8` to `DiagnosticSessionType` are fallible and will return an [`Error`] if the
-/// Suppress Positive Response bit is set.
+/// Conversions from `u8` to `DiagnosticSessionType` are fallible and will return an
+/// [`Error`] if the Suppress Positive Response bit is set.
 #[cfg_attr(feature = "serde", derive(serde::Deserialize, serde::Serialize))]
 #[cfg_attr(feature = "utoipa", derive(utoipa::ToSchema))]
 #[cfg_attr(feature = "clap", derive(clap::ValueEnum))]
@@ -27,7 +29,8 @@ use automotive_wire_codec::{write_u8, write_u16_be};
 pub enum DiagnosticSessionType {
     /// This value is reserved by the ISO 14229-1 Specification
     ///
-    /// Construct through [`DiagnosticSessionType::try_from`] so the raw byte is range-checked and can never collide with the SPRMIB bit.
+    /// Construct through [`DiagnosticSessionType::try_from`] so the raw byte is
+    /// range-checked and can never collide with the SPRMIB bit.
     #[cfg_attr(feature = "clap", clap(skip))]
     #[non_exhaustive]
     IsoSaeReserved(u8),
@@ -37,23 +40,28 @@ pub enum DiagnosticSessionType {
     /// - Any security authorization is revoked
     /// - This session is initialized on startup
     DefaultSession,
-    /// The `ProgrammingSession` (0x02) enables services required to support writing server memory
+    /// The `ProgrammingSession` (0x02) enables services required to support writing server
+    /// memory
     /// - Upon timeout the server shall return to the `DefaultSession`
     /// - Success response may be sent before or after session is actually entered
     ProgrammingSession,
-    /// The `ExtendedDiagnosticSession` (0x03) enables additional diagnostics functionality which can modify server behavior
+    /// The `ExtendedDiagnosticSession` (0x03) enables additional diagnostics functionality
+    /// which can modify server behavior
     ExtendedDiagnosticSession,
-    /// The `SafetySystemDiagnosticSession` (0x04) enables diagnostics functionality for safety systems
+    /// The `SafetySystemDiagnosticSession` (0x04) enables diagnostics functionality for
+    /// safety systems
     SafetySystemDiagnosticSession,
     /// Value reserved for use by vehicle manufacturers
     ///
-    /// Construct through [`DiagnosticSessionType::try_from`] so the raw byte is range-checked and can never collide with the SPRMIB bit.
+    /// Construct through [`DiagnosticSessionType::try_from`] so the raw byte is
+    /// range-checked and can never collide with the SPRMIB bit.
     #[cfg_attr(feature = "clap", clap(skip))]
     #[non_exhaustive]
     VehicleManufacturerSpecificSession(u8),
     /// Value reserved for use by system suppliers
     ///
-    /// Construct through [`DiagnosticSessionType::try_from`] so the raw byte is range-checked and can never collide with the SPRMIB bit.
+    /// Construct through [`DiagnosticSessionType::try_from`] so the raw byte is
+    /// range-checked and can never collide with the SPRMIB bit.
     #[cfg_attr(feature = "clap", clap(skip))]
     #[non_exhaustive]
     SystemSupplierSpecificSession(u8),
@@ -251,9 +259,9 @@ pub struct DiagnosticSessionControlResponse {
     /// [`NegativeResponseCode::RequestCorrectlyReceivedResponsePending`], at **10 ms per
     /// count**.
     ///
-    /// Multiply by 10 to get milliseconds: Table 29 gives this parameter a resolution of 10 ms,
-    /// so the stored value is milliseconds ÷ 10 and the maximum is 655 350 ms. Reading it as a
-    /// raw millisecond count under-waits by a factor of ten.
+    /// Multiply by 10 to get milliseconds: Table 29 gives this parameter a resolution of 10
+    /// ms, so the stored value is milliseconds ÷ 10 and the maximum is 655 350 ms. Reading
+    /// it as a raw millisecond count under-waits by a factor of ten.
     pub p2_star_server_max: u16,
 }
 

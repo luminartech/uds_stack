@@ -16,17 +16,18 @@ pub enum DtcSettingType {
     On,
     /// Disable DTC status-bit updates.
     Off,
-    /// Reserved for use by vehicle manufacturers (`0x40`-`0x5F`, ISO 14229-1:2020 Table 128).
+    /// Reserved for use by vehicle manufacturers (`0x40`-`0x5F`, ISO 14229-1:2020 Table
+    /// 128).
     ///
-    /// Construct through [`DtcSettingType::try_from`] so the raw byte is range-checked and can
-    /// never collide with the SPRMIB bit.
+    /// Construct through [`DtcSettingType::try_from`] so the raw byte is range-checked and
+    /// can never collide with the SPRMIB bit.
     #[cfg_attr(feature = "clap", clap(skip))]
     #[non_exhaustive]
     VehicleManufacturerSpecific(u8),
     /// Reserved for use by system suppliers (`0x60`-`0x7E`, ISO 14229-1:2020 Table 128).
     ///
-    /// Construct through [`DtcSettingType::try_from`] so the raw byte is range-checked and can
-    /// never collide with the SPRMIB bit.
+    /// Construct through [`DtcSettingType::try_from`] so the raw byte is range-checked and
+    /// can never collide with the SPRMIB bit.
     #[cfg_attr(feature = "clap", clap(skip))]
     #[non_exhaustive]
     SystemSupplierSpecific(u8),
@@ -46,8 +47,8 @@ impl From<DtcSettingType> for u8 {
 impl TryFrom<u8> for DtcSettingType {
     type Error = Error;
 
-    /// ISO 14229-1:2020 Table 128 defines `0x01`/`0x02` and two manufacturer-defined ranges,
-    /// and reserves `0x00`, `0x03`-`0x3F` and `0x7F`.
+    /// ISO 14229-1:2020 Table 128 defines `0x01`/`0x02` and two manufacturer-defined
+    /// ranges, and reserves `0x00`, `0x03`-`0x3F` and `0x7F`.
     ///
     /// # Errors
     /// Returns [`Error::InvalidDtcSetting`] for a reserved value, which maps to
@@ -76,9 +77,10 @@ pub struct ControlDtcSettingRequest<'d> {
     /// Optional `DTCSettingControlOptionRecord`, empty when absent.
     ///
     /// Marked `U` (user option) in ISO 14229-1:2020 Table 127. Table 129 describes it as
-    /// vehicle-manufacturer specific data qualifying the request — for example a list of the
-    /// DTCs to turn on or off — and Table 132 reserves
-    /// [`NegativeResponseCode::RequestOutOfRange`] for a server that detects an error in it.
+    /// vehicle-manufacturer specific data qualifying the request — for example a list of
+    /// the DTCs to turn on or off — and Table 132 reserves
+    /// [`NegativeResponseCode::RequestOutOfRange`] for a server that detects an error in
+    /// it.
     #[cfg_attr(feature = "serde", serde(borrow))]
     pub option_record: &'d [u8],
 }
@@ -103,7 +105,8 @@ impl<'d> ControlDtcSettingRequest<'d> {
 
     /// Create a request carrying a `DTCSettingControlOptionRecord`.
     ///
-    /// The record's contents are vehicle-manufacturer specific (ISO 14229-1:2020 Table 129).
+    /// The record's contents are vehicle-manufacturer specific (ISO 14229-1:2020 Table
+    /// 129).
     #[must_use]
     pub const fn new_with_option_record(
         suppress_positive_response: bool,
@@ -145,8 +148,8 @@ impl<'a> Decode<'a> for ControlDtcSettingRequest<'a> {
     type Error = crate::Error;
 
     /// The sub-function byte is mandatory; everything after it is the optional
-    /// `DTCSettingControlOptionRecord` (ISO 14229-1:2020 Table 127, `Cvt` = `U`), whose length
-    /// is not on the wire — the record runs to the end of the message.
+    /// `DTCSettingControlOptionRecord` (ISO 14229-1:2020 Table 127, `Cvt` = `U`), whose
+    /// length is not on the wire — the record runs to the end of the message.
     fn decode(buf: &'a [u8]) -> Result<(Self, &'a [u8]), Error> {
         let [sub_function, option_record @ ..] = buf else {
             return Err(Error::InsufficientData(Incomplete {

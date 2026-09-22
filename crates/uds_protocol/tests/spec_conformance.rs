@@ -1,19 +1,20 @@
 //! Round-trips the message-flow example byte sequences printed in ISO 14229-1:2020.
 //!
-//! Every frame below is quoted from a numbered example table in the standard, which gives these
-//! tests an oracle the rest of the suite does not have: the bytes come from the document rather
-//! than from the crate.
+//! Every frame below is quoted from a numbered example table in the standard, which gives
+//! these tests an oracle the rest of the suite does not have: the bytes come from the
+//! document rather than from the crate.
 //!
-//! **What that does and does not buy.** It catches two things a round-trip against the crate's
-//! own output cannot: a legal frame the crate *rejects* (a missing mandatory
-//! `DTCFormatIdentifier`, a `MemorySelection` byte read from the wrong sub-functions), and an
-//! encode/decode pair that disagree with each other (a `powerDownTime` written unconditionally,
-//! so `51 01` re-encoded as `51 01 00`).
+//! **What that does and does not buy.** It catches two things a round-trip against the
+//! crate's own output cannot: a legal frame the crate *rejects* (a missing mandatory
+//! `DTCFormatIdentifier`, a `MemorySelection` byte read from the wrong sub-functions), and
+//! an encode/decode pair that disagree with each other (a `powerDownTime` written
+//! unconditionally, so `51 01` re-encoded as `51 01 00`).
 //!
 //! It does **not** verify field *meaning*. If `encode` and `decode` share a misreading
-//! symmetrically — two same-width adjacent fields transposed in both directions, say — the bytes
-//! still round-trip and every test here passes. Only an assertion on the decoded *value* catches
-//! that, which is the unit tests' job. Do not read a green run here as "the layout is right".
+//! symmetrically — two same-width adjacent fields transposed in both directions, say — the
+//! bytes still round-trip and every test here passes. Only an assertion on the decoded
+//! *value* catches that, which is the unit tests' job. Do not read a green run here as "the
+//! layout is right".
 //!
 //! This is an integration test, so it sees the crate as a downstream user does: anything it
 //! needs must be reachable and constructible through the public API.

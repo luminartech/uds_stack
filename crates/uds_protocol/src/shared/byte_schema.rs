@@ -1,23 +1,24 @@
 //! `OpenAPI` schemas for the types that serialize as a single protocol byte.
 //!
 //! Several public types are one wire byte with a range invariant. Their `serde` impls go
-//! through `u8` (via `serde(try_from = "u8", into = "u8")` or `serde(from = "u8", into = "u8")`)
-//! so that deserializing cannot build a value their constructor would reject. A derived
-//! `ToSchema` would still describe the Rust shape — an object with nibble properties, or a
-//! `oneOf` over variant names — and so disagree with what `serde` actually reads and writes.
-//! These impls keep the two in step.
+//! through `u8` (via `serde(try_from = "u8", into = "u8")` or `serde(from = "u8", into =
+//! "u8")`) so that deserializing cannot build a value their constructor would reject. A
+//! derived `ToSchema` would still describe the Rust shape — an object with nibble
+//! properties, or a `oneOf` over variant names — and so disagree with what `serde` actually
+//! reads and writes. These impls keep the two in step.
 //!
-//! Each schema carries the actual accepted range rather than `u8`'s bare
-//! `{"type": "integer", "minimum": 0}`. Delegating to `<u8 as PartialSchema>` advertised
-//! `0..=2^31`, so a generated client emitted an `i32` and discovered the real bound as a runtime
-//! rejection. The whole reason these types exist is that their bytes have ranges; the schema is
-//! the one place that has to say so.
+//! Each schema carries the actual accepted range rather than `u8`'s bare `{"type":
+//! "integer", "minimum": 0}`. Delegating to `<u8 as PartialSchema>` advertised `0..=2^31`,
+//! so a generated client emitted an `i32` and discovered the real bound as a runtime
+//! rejection. The whole reason these types exist is that their bytes have ranges; the
+//! schema is the one place that has to say so.
 
 /// Implement `PartialSchema`/`ToSchema` for a type whose serialized form is a single `u8`.
 ///
-/// `max` is the largest byte the type's own `serde` entry point accepts, so the schema and the
-/// deserializer cannot drift; `description` is the published schema description and must spell out
-/// any gaps, because `minimum`/`maximum` alone cannot express a non-contiguous set.
+/// `max` is the largest byte the type's own `serde` entry point accepts, so the schema and
+/// the deserializer cannot drift; `description` is the published schema description and
+/// must spell out any gaps, because `minimum`/`maximum` alone cannot express a
+/// non-contiguous set.
 macro_rules! byte_schema {
     ($($ty:ident { max: $max:expr, description: $desc:literal }),* $(,)?) => {
         $(

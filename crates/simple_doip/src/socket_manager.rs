@@ -24,8 +24,8 @@ use tracing::{debug, error, info, trace};
 /// There is only one socket manager per client.
 #[derive(Debug)]
 pub(crate) struct SocketManager<Conn> {
-    /// Receiver used to receive messages from the socket
-    /// This is the channel that the socket manager uses to send messages back up to the client
+    /// Receiver used to receive messages from the socket This is the channel that the
+    /// socket manager uses to send messages back up to the client
     receiver: mpsc::Receiver<Result<OwnedMessage, MessageError>>,
     /// Sender used to send messages to the socket
     sender: mpsc::Sender<OwnedMessage>,

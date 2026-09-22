@@ -1,7 +1,9 @@
-//! Routine Control (0x31) Service is used to perform functions on the ECU that may not be covered by other services.
+//! Routine Control (0x31) Service is used to perform functions on the ECU that may not be
+//! covered by other services.
 //!
-//! It can also be used to check the ECU's health, erase memory, or other custom manufacturer/supplier routines.
-//! However, some routines may have side effects or require certain preconditions to be met.
+//! It can also be used to check the ECU's health, erase memory, or other custom
+//! manufacturer/supplier routines. However, some routines may have side effects or require
+//! certain preconditions to be met.
 use crate::shared::SuppressablePositiveResponse;
 use crate::{Decode, Encode, Error, Incomplete, NegativeResponseCode};
 use automotive_wire_codec::{write_bytes, write_u8, write_u16_be};
@@ -13,15 +15,18 @@ use automotive_wire_codec::{write_bytes, write_u8, write_u16_be};
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[non_exhaustive]
 pub enum RoutineControlSubFunction {
-    /// Routine will be started sometime between completion of the `StartRoutine` request and the completion of the 1st response message
-    /// which indicates that the routine has already been performed, or is in progress
+    /// Routine will be started sometime between completion of the `StartRoutine` request
+    /// and the completion of the 1st response message which indicates that the routine has
+    /// already been performed, or is in progress
     ///
-    /// It might be necessary to switch the server to a specific Diagnostic Session via [`crate::DiagnosticSessionControlRequest`] before starting the routine,
-    /// or unlock the server using [`crate::SecurityAccessRequest`] before starting the routine.
+    /// It might be necessary to switch the server to a specific Diagnostic Session via
+    /// [`crate::DiagnosticSessionControlRequest`] before starting the routine, or unlock
+    /// the server using [`crate::SecurityAccessRequest`] before starting the routine.
     StartRoutine,
 
-    /// The server routine shall be stopped in the server's memory sometime between the completion of the `StopRoutine` request and the completion of the 1st response message
-    /// which indicates that the routine has already been stopped, or is in progress
+    /// The server routine shall be stopped in the server's memory sometime between the
+    /// completion of the `StopRoutine` request and the completion of the 1st response
+    /// message which indicates that the routine has already been stopped, or is in progress
     StopRoutine,
 
     /// Request results for the specified routineIdentifier
@@ -41,13 +46,13 @@ impl From<RoutineControlSubFunction> for u8 {
 impl TryFrom<u8> for RoutineControlSubFunction {
     type Error = Error;
 
-    /// ISO 14229-1:2020 Table 426 defines `0x01`-`0x03` and reserves everything else, with no
-    /// vehicle-manufacturer or system-supplier range — so unlike most sub-function enums in
-    /// this crate there is nothing legitimate to model beyond the three named values.
+    /// ISO 14229-1:2020 Table 426 defines `0x01`-`0x03` and reserves everything else, with
+    /// no vehicle-manufacturer or system-supplier range — so unlike most sub-function enums
+    /// in this crate there is nothing legitimate to model beyond the three named values.
     ///
     /// # Errors
-    /// Returns [`Error::InvalidRoutineControlSubFunction`] for any other value, which maps to
-    /// [`NegativeResponseCode::SubFunctionNotSupported`] as Table 430 requires.
+    /// Returns [`Error::InvalidRoutineControlSubFunction`] for any other value, which maps
+    /// to [`NegativeResponseCode::SubFunctionNotSupported`] as Table 430 requires.
     fn try_from(value: u8) -> Result<Self, Self::Error> {
         match value {
             0x01 => Ok(RoutineControlSubFunction::StartRoutine),
@@ -68,7 +73,8 @@ const ROUTINE_CONTROL_NEGATIVE_RESPONSE_CODES: [NegativeResponseCode; 7] = [
     NegativeResponseCode::GeneralProgrammingFailure,
 ];
 
-/// Used by a client to execute a defined sequence of events and obtain any relevant results.
+/// Used by a client to execute a defined sequence of events and obtain any relevant
+/// results.
 ///
 /// The 2-byte big-endian routine identifier is decoded into a typed `u16`, followed by
 /// optional routine input parameters in `option_record`.
@@ -164,21 +170,23 @@ impl<'a> Decode<'a> for RoutineControlRequest<'a> {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[non_exhaustive]
 pub struct RoutineControlResponse<'d> {
-    /// The routine control operation echoed from the request (start, stop, or request results).
+    /// The routine control operation echoed from the request (start, stop, or request
+    /// results).
     pub sub_function: RoutineControlSubFunction,
     /// The 16-bit routine identifier echoed from the request.
     pub routine_id: u16,
     /// Everything the server sent after the routine identifier — bytes `#5` onward of
     /// ISO 14229-1:2020 Table 428. May be empty.
     ///
-    /// Note that this is **not** only the `routineStatusRecord`. Table 428 places an optional
-    /// `routineInfo` byte at `#5`, immediately before the status record, and whether it is
-    /// present is vehicle-manufacturer defined — nothing on the wire distinguishes the two
-    /// layouts, so this crate cannot split them for you. If the server you are talking to sends
-    /// `routineInfo`, it is the first byte here and the status record starts at index 1.
+    /// Note that this is **not** only the `routineStatusRecord`. Table 428 places an
+    /// optional `routineInfo` byte at `#5`, immediately before the status record, and
+    /// whether it is present is vehicle-manufacturer defined — nothing on the wire
+    /// distinguishes the two layouts, so this crate cannot split them for you. If the
+    /// server you are talking to sends `routineInfo`, it is the first byte here and the
+    /// status record starts at index 1.
     ///
-    /// `routineInfo` itself is vehicle-manufacturer specific (Table 429); it exists so generic
-    /// test equipment can handle all implemented routines uniformly.
+    /// `routineInfo` itself is vehicle-manufacturer specific (Table 429); it exists so
+    /// generic test equipment can handle all implemented routines uniformly.
     #[cfg_attr(feature = "serde", serde(borrow))]
     pub status_record: &'d [u8],
 }

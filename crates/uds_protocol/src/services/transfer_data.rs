@@ -18,18 +18,23 @@ const TRANSFER_DATA_NEGATIVE_RESPONSE_CODES: [NegativeResponseCode; 6] = [
 ///     34 .. 11  .. 33   .. 60 20 00 .. 00 FF FF << -- Bytes sent by the client
 ///    RID .. DFI .. ALFID .. `MA_B`#   .. `UCMS_B`#
 ///
-/// Step 1 Response: The server sends a [`RequestDownloadResponse`](crate::RequestDownloadResponse) or `RequestUploadResponse` message to the client
+/// Step 1 Response: The server sends a
+/// [`RequestDownloadResponse`](crate::RequestDownloadResponse) or `RequestUploadResponse`
+/// message to the client
 ///
 /// Step 2: The client shall send many [`TransferDataRequest`] messages written in blocks
 ///     to the server with a max number of bytes equal to `MNROB_B`# from the `RequestDownloadResponse` message
 ///    74  .. 20   .. 00 81
 ///   RSID .. LFID .. `MNROB_B`#
 ///
-/// Step 2 Response: The server sends a [`TransferDataResponse`] message confirming the block sequence
+/// Step 2 Response: The server sends a [`TransferDataResponse`] message confirming the
+/// block sequence
 ///
-/// Step 3: The client sends a [`crate::UdsServiceType::RequestTransferExit`] message to the server (SID 0x37)
+/// Step 3: The client sends a [`crate::UdsServiceType::RequestTransferExit`] message to the
+/// server (SID 0x37)
 ///
-/// Step 3 Response: The server sends a [`crate::UdsServiceType::RequestTransferExit`] response message to the client (RID 0x77)
+/// Step 3 Response: The server sends a [`crate::UdsServiceType::RequestTransferExit`]
+/// response message to the client (RID 0x77)
 ///
 /// Zero-alloc request to transfer data. Borrows from the caller.
 #[cfg_attr(feature = "serde", derive(serde::Deserialize, serde::Serialize))]

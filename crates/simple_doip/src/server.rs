@@ -170,7 +170,8 @@ pub trait ServerConnectionHandler {
     // These functions *may* be overridden to provide custom behavior
     // Default functionality is very simplistic and may not be suitable for production use
 
-    /// Respond to an Identification request with the identity parameters provided by the trait implementer
+    /// Respond to an Identification request with the identity parameters provided by the
+    /// trait implementer
     ///
     /// # Errors
     /// Returns an [`Error`] if the identification response cannot be constructed
@@ -187,9 +188,9 @@ pub trait ServerConnectionHandler {
             vin_gid_sync_status: VinGidSyncStatus::Synchronized,
         })
     }
-    /// Identify vehicle by Entity ID (EID).
-    /// Since the request includes the entity ID, my understanding is that only the vehicle in question should respond.
-    /// The default implementation returns none if the request is not directed to the server in question
+    /// Identify vehicle by Entity ID (EID). Since the request includes the entity ID, my
+    /// understanding is that only the vehicle in question should respond. The default
+    /// implementation returns none if the request is not directed to the server in question
     ///
     /// # Errors
     /// Returns an [`Error`] if the identification response cannot be constructed
@@ -214,9 +215,10 @@ pub trait ServerConnectionHandler {
         }
     }
 
-    /// Identify vehicle by Vehicle Identification Number (VIN).
-    /// Since the request includes the VIN, my understanding is that only the vehicle in question should respond.
-    /// The default implementation returns none if the request is not directed to the server in question
+    /// Identify vehicle by Vehicle Identification Number (VIN). Since the request includes
+    /// the VIN, my understanding is that only the vehicle in question should respond. The
+    /// default implementation returns none if the request is not directed to the server in
+    /// question
     ///
     /// # Errors
     /// Returns an [`Error`] if the identification response cannot be constructed
