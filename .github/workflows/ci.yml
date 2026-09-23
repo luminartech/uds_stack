@@ -53,10 +53,21 @@ jobs:
     with:
       # Restrict publishing/release-plz to the canonical repo so a fork never publishes.
       publish-repository: luminartech/uds_stack
-      # release-plz.toml already carries per-crate publish flags and namespaced tags for
-      # this workspace, so let release-plz own versioning, changelogs, tags and publish --
-      # matching the pre-merge uds_protocol and simple_doip callers.
-      use-release-plz: true
+      # HOLD. Nothing is released until the stack's functionality has been verified. These
+      # two inputs gate every job in rust-ci.yml that can publish, tag or cut a GitHub
+      # release: release-plz-pr and release-plz-release run only with use-release-plz, and
+      # the tag-gated release job only with publish-crate. With both off, a push to main
+      # runs the checks and nothing else, whatever secrets the repository holds.
+      #
+      # The hold lives here, not in release-plz.toml, because release-plz's own switch
+      # (`release = false`) turns "nothing to release" into an error that fails both
+      # release jobs on every push.
+      #
+      # Lifting it is its own reviewed pull request: set use-release-plz to true (leave
+      # publish-crate false; release-plz owns publishing) and add each crate's changelog
+      # entry for the release. Merging that PR publishes all five crates.
+      use-release-plz: false
+      publish-crate: false
 
       # The root Cargo.toml is a virtual manifest with no [package], so there is no
       # rust-version for the msrv job to read by default (it would fail: "No msrv input
