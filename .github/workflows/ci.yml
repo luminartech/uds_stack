@@ -78,18 +78,19 @@ jobs:
       # needs. This matches the previous hand-rolled msrv job's choice.
       msrv: '1.88'
 
-      # Replaced by the `publish-dry-run` job at the bottom of this file. rust-ci.yml's
-      # dry run takes one `package` and passes it to a single `--package`, which cannot
-      # name the two published crates (cargo rejects `a,b` as a package name), and the
-      # whole workspace cannot be dry-run while uds_services is `publish = false`, because
-      # uds_on_ip depends on it.
-      run-publish-dry-run: false
+      # Empty: the whole workspace. The same input scopes both cargo-semver-checks and the
+      # PR publish dry run. For the dry run, the whole workspace is the only scope that
+      # works: a bare `cargo publish --dry-run` at this virtual root packages all five
+      # crates together, which is how the in-workspace `^0.7.0` requirements resolve before
+      # any of them is on crates.io. A single crate cannot be dry-run on its own here, and
+      # a list cannot be passed at all -- rust-ci.yml hands the value to one `--package`,
+      # and cargo rejects `a,b` as a package name.
+      package: ''
 
-      # Off, and the failure it reports is real. uds_protocol's `feat!: migrate to
-      # automotive-wire-codec 0.4 Sink` removed `Error::IoError`, a breaking change against
-      # 0.1.0 on crates.io, while the crate still says 0.1.0. The version that answers it
-      # is the stack's first lockstep release, not a uds_protocol bump on its own; re-enable
-      # once that release is on crates.io, so every crate has a baseline to diff against.
+      # Off until 0.7.0 is on crates.io. uds_session, uds_services and uds_on_ip have no
+      # published baseline to diff against. Re-enable, with `package` still empty,
+      # in the first change after 0.7.0 is published, so every later release is checked
+      # across the whole stack.
       run-semver-checks: false
 
       # This workspace's proptest suites are `proptest!` blocks inside lib code, not a
@@ -210,26 +211,3 @@ jobs:
           name: fuzz-artifacts-simple_doip
           path: crates/simple_doip/fuzz/artifacts/
           retention-days: 30
-
-  # ===================================================================================
-  # Publish Dry Run (hand-rolled: the reusable one cannot name two crates)
-  # ===================================================================================
-  # Mirrors rust-ci.yml's publish-dry-run job -- pull requests only, read-only, no
-  # registry token -- but over the two crates that are on crates.io, packaged together
-  # with one `-p` each. See run-publish-dry-run above for why the reusable job is off.
-  publish-dry-run:
-    name: Publish Dry Run (uds_protocol, simple_doip)
-    if: ${{ github.event_name == 'pull_request' }}
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          persist-credentials: false
-      - uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master 2026-07-14
-        with:
-          toolchain: stable
-      - uses: Swatinem/rust-cache@v2
-      - name: Publish (dry run)
-        run: cargo publish --dry-run --locked -p uds_protocol -p simple_doip
