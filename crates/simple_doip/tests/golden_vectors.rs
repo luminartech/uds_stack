@@ -6,6 +6,10 @@
 //! Verify mode (the normal mode; the fixtures in `tests/golden/` are frozen):
 //!   cargo test --test `golden_vectors`
 
+// Not under Miri. Every test here reads a fixture from `tests/golden/`, and Miri's
+// isolation refuses the `open`. Nothing is lost by skipping it: these tests compare bytes
+// against a file, and the encode paths they exercise run under Miri through the lib tests.
+#![cfg(not(miri))]
 // Test code. `unwrap`, `expect` and `panic` are the failure mechanism here, and a
 // test that indexes a known-length golden vector reads better than one that does
 // not. The workspace lint standard in the root Cargo.toml reaches this target too --
