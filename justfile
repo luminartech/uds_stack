@@ -31,8 +31,10 @@ docs:
 # Not part of any check. This is how the set is meant to be read: rendered, with the
 # diagrams drawn, the generated ones clickable, and the tables resolved.
 #
-# Needs the `plantuml` command on PATH -- `brew install plantuml`, or the apt package. It
-# is a Java program and cannot be pinned in uv.lock; `just doctor` checks for it.
+# Needs the `plantuml` command on PATH -- `brew install plantuml` -- or $PLANTUML set to
+# a command such as `java -jar plantuml.jar`. Not the Ubuntu apt package: it is years
+# behind and rejects the architecture diagrams' syntax. docs.yml pins the release CI
+# uses. It is a Java program and cannot be pinned in uv.lock; `just doctor` checks for it.
 [doc("Build browsable HTML documentation")]
 html:
     uv run --frozen sphinx-build -b html -W -q docs {{ build_dir }}/html
@@ -150,10 +152,14 @@ clean:
 doctor:
     #!/usr/bin/env bash
     set -euo pipefail
-    if command -v plantuml > /dev/null; then
+    if [[ -n "${PLANTUML:-}" ]]; then
+        # conf.py prefers $PLANTUML over the PATH, so check what it will actually run.
+        echo "plantuml: \$PLANTUML = $PLANTUML"
+        $PLANTUML -version | head -n 1
+    elif command -v plantuml > /dev/null; then
         echo "plantuml: $(command -v plantuml)"
         plantuml -version | head -n 1
     else
-        echo "plantuml: MISSING — install it with 'brew install plantuml' or 'apt install plantuml'" >&2
+        echo "plantuml: MISSING — 'brew install plantuml', or set PLANTUML to 'java -jar <plantuml.jar>' using the release docs.yml pins (the apt package is too old)" >&2
         exit 1
     fi

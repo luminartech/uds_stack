@@ -33,8 +33,30 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      # PlantUML is a Java program invoked as a subprocess; it cannot live in uv.lock.
-      - run: sudo apt-get update && sudo apt-get install -y plantuml
+      # PlantUML is a Java program invoked as a subprocess; it cannot live in uv.lock, so
+      # it is pinned here instead: one release, checked against its sha256. Not the apt
+      # package: Ubuntu's is 1.2020.2, six years behind, and rejects syntax the
+      # architecture diagrams use ("Cannot find if", "Syntax Error?"). The version matches
+      # what `brew install plantuml` gives a developer, so a local build and this one
+      # render the same diagrams. Graphviz is still needed: PlantUML lays out every
+      # non-sequence diagram with `dot`. conf.py reads the command from $PLANTUML.
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+      - name: Install the PlantUML renderer
+        env:
+          PLANTUML_VERSION: 1.2026.8
+          PLANTUML_SHA256: 5e1ecfa8ecd32c90b03bbf3b1eb6f020943f98ab0fcf4032be31a0002ee2c462
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends --yes graphviz
+          jar="$RUNNER_TEMP/plantuml-$PLANTUML_VERSION.jar"
+          curl --fail --silent --show-error --location --output "$jar" \
+            "https://github.com/plantuml/plantuml/releases/download/v$PLANTUML_VERSION/plantuml-$PLANTUML_VERSION.jar"
+          echo "$PLANTUML_SHA256  $jar" | sha256sum --check --strict
+          echo "PLANTUML=java -jar $jar" >> "$GITHUB_ENV"
+          java -jar "$jar" -version | head -n 1
       - uses: astral-sh/setup-uv@v5
         with:
           enable-cache: true
