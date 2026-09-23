@@ -63,7 +63,9 @@ or a bare-metal driver is additive rather than built in.
 
 ## Status
 
-**Alpha (`0.2.0-alpha.1`), not yet published.** The public API shape is
+**Alpha, not yet published** (it releases in lockstep with the rest of the
+stack, at 0.7.0, once the stack's functionality has been verified). The public
+API shape is
 settled — `DoIpTransport<S>` implements `uds_services::UdsTransport` — but the
 transport method bodies are still `todo!()`: sending a message
 (`t_data_req`), reading the next event (`next_event`), and reading the clock

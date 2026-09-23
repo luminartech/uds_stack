@@ -701,9 +701,12 @@ until its dependencies do.
 | `automotive-wire-codec` | 0.4.0 | — |
 | `uds_protocol` | 0.1.0 | — |
 | `simple_doip` | 0.6.0 | — |
-| `uds_session` | unpublished | Publication not yet attempted |
-| `uds_services` | unpublished | Pre-implementation; `publish = false` |
-| `uds_on_ip` | unpublished | `uds_session`, `uds_services` |
+| `uds_session` | unpublished | Releases with the stack at 0.7.0 |
+| `uds_services` | unpublished | Releases with the stack at 0.7.0 |
+| `uds_on_ip` | unpublished | `uds_session`, `uds_services`; releases with the stack at 0.7.0 |
+
+The stack releases in lockstep, so the three unpublished crates are published
+together, in dependency order, `uds_on_ip` last.
 
 ## 9. Gap analysis
 

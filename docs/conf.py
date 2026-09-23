@@ -25,12 +25,12 @@ copyright = "2026, MicroVision"  # noqa: A001 - Sphinx requires this name
 # `version`, and a consumer pins to that key through needs_external_needs. Each per-crate
 # set previously used its crate's version, which worked because each set held one crate.
 #
-# This set holds five crates at five different versions, so no crate version can serve.
-# The documentation set therefore carries its own version, incremented when the *schema*
-# below changes -- the need types, the ID scheme, the required fields, the link types --
-# because that is what a consumer pinning to this key actually depends on. It is not a
-# release number for any crate and must never be made to track one: that two crates also
-# sit at 0.1.0 today is a coincidence, and this number will not follow them when they move.
+# This set holds five crates. They now share one release version, but that is still the
+# wrong key: it moves on every release, and a consumer pinning to this key depends on the
+# *schema* below -- the need types, the ID scheme, the required fields, the link types --
+# not on the release. The documentation set therefore carries its own version, incremented
+# only when the schema changes. It is not the stack's release number and must never be
+# made to track it.
 release = "0.1.0"
 version = "0.1.0"
 

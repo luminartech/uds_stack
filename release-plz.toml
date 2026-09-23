@@ -1,33 +1,46 @@
-# Workspace mode. Each package versions and releases on its own cadence: the five crates
-# sit at five different versions and two are already on crates.io at versions a unified
-# scheme could not reproduce. A single workspace version would force a lockstep release
-# and would misreport what changed in any given one.
+# Lockstep. The five crates are one stack and release as one: every release publishes all
+# five at the same version, which lives once, in the root Cargo.toml's [workspace.package].
+# A shared field rather than release-plz's `version_group`, because a version group only
+# moves the members that changed, and an untouched member would be left behind.
+#
+# Releases are currently HELD in .github/workflows/ci.yml (`use-release-plz: false`), not
+# here. A workspace-level `release = false` looks like the natural hold, but release-plz
+# treats "no releasable package" as an error, which would fail both release jobs on every
+# push to main.
 [workspace]
-# Each package keeps the changelog that arrived with it from its own repository.
+# Each crate keeps its own changelog; that is what a crates.io or docs.rs reader of one
+# crate sees.
 changelog_update = true
-git_release_enable = true
-# Tags are namespaced by crate, matching the tag scheme the history import used.
-git_tag_name = "{{ package }}/v{{ version }}"
 
-[[package]]
-name = "uds_protocol"
-publish = true
+# One tag and one GitHub release per version, both on the anchor package below, never one
+# per crate.
+git_tag_enable = false
+git_release_enable = false
 
-[[package]]
-name = "uds_session"
-publish = true
-
-[[package]]
-name = "simple_doip"
-publish = true
-
+# The anchor. release-plz releases packages one at a time in dependency order and tags each
+# as soon as it is published, so the tag has to sit on the crate that is always published
+# last, or `v<version>` could exist over a partial release. uds_on_ip is the only crate
+# that depends on all four others. That is publish order, not architecture: it depends on
+# uds_services because it implements uds_services' transport trait.
 [[package]]
 name = "uds_on_ip"
-publish = true
+git_tag_enable = true
+git_tag_name = "v{{ version }}"
+git_release_enable = true
+# The release is the stack's, so it is named for the stack. release-plz only exposes the
+# releasing package's changelog, so the anchor's entry goes under its own heading rather
+# than reading as the notes for all five.
+git_release_name = "uds_stack v{{ version }}"
+git_release_body = """
+All five crates released together at {{ version }}:
+[uds_protocol](https://crates.io/crates/uds_protocol/{{ version }}),
+[uds_session](https://crates.io/crates/uds_session/{{ version }}),
+[uds_services](https://crates.io/crates/uds_services/{{ version }}),
+[simple_doip](https://crates.io/crates/simple_doip/{{ version }}),
+[uds_on_ip](https://crates.io/crates/uds_on_ip/{{ version }}).
+Each crate's CHANGELOG.md has its own entry for this version.
 
-# Pre-implementation; Cargo.toml also carries `publish = false`. Stated here too so a
-# release run cannot be talked into it by a manifest edit alone.
-[[package]]
-name = "uds_services"
-publish = false
-release = false
+## uds_on_ip
+
+{{ changelog }}
+"""

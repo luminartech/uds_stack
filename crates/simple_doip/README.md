@@ -34,10 +34,10 @@ concerns, and this crate has no dependency on any of them.
 
 ## Status
 
-Published at 0.6.0. See the
+Released in lockstep with the rest of the stack, at one shared version; 0.7.0
+is not released yet, and 0.6.0 is the last release on crates.io. See the
 [workspace README](https://github.com/luminartech/uds_stack#status) for where
-the other crates in the stack stand — versions are independent, and a release
-of one says nothing about the others.
+the other crates in the stack stand.
 
 ## Scope and limitations
 

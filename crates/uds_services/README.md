@@ -20,8 +20,9 @@ This crate never depends on a binding: the Cargo edge runs the other way.
 
 ## Status
 
-**Pre-implementation, version 0.0.0, not published** (`publish = false` in
-`Cargo.toml`). See the
+**Pre-implementation, not yet published.** It releases in lockstep with the rest
+of the stack, at 0.7.0, once the stack's functionality has been verified. See
+the
 [workspace README](https://github.com/luminartech/uds_stack#status) for how
 that compares to the rest of the stack.
 
@@ -151,6 +152,3 @@ Security reports go through GitHub's private vulnerability reporting; see
 
 Licensed under either of [MIT](LICENSE-MIT) or [Apache-2.0](LICENSE-APACHE)
 at your option. Both files are the workspace's, shared by every crate here.
-
-This crate is not published to crates.io (`publish = false`) while it remains
-pre-implementation.
