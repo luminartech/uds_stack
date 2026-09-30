@@ -64,8 +64,14 @@ jobs:
       # release jobs on every push.
       #
       # Lifting it is its own reviewed pull request: set use-release-plz to true (leave
-      # publish-crate false; release-plz owns publishing) and add each crate's changelog
-      # entry for the release. Merging that PR publishes all five crates.
+      # publish-crate false; release-plz owns publishing), add each crate's changelog entry
+      # for the release, delete the hand-rolled `release-pr` job at the bottom of this file
+      # (rust-ci.yml's own release-plz-pr replaces it), and add the release-plz App as the
+      # bypass actor in .github/rulesets/release-tags.json, or it cannot push the release
+      # tag. Merging that PR publishes all five crates.
+      #
+      # The release PR is not held: `release-pr` keeps it current on every push to main,
+      # so the release that lifting the hold would publish is always visible for review.
       use-release-plz: false
       publish-crate: false
 
@@ -211,3 +217,55 @@ jobs:
           name: fuzz-artifacts-simple_doip
           path: crates/simple_doip/fuzz/artifacts/
           retention-days: 30
+
+  # ===================================================================================
+  # Release PR (hand-rolled: the reusable one cannot run while releases are held)
+  # ===================================================================================
+  # rust-ci.yml has one switch for both release-plz jobs. use-release-plz turns on the
+  # release PR and the release together, and the release publishes every version not
+  # yet on crates.io, so the first push to main would publish 0.7.0. This job is
+  # rust-ci.yml's release-plz-pr alone: it opens and updates the release PR and never
+  # publishes, tags or cuts a GitHub release. It has no registry token to do so.
+  #
+  # The App token is required, not preferred. A pull request opened with github.token
+  # triggers no workflows, so the release PR would have no checks and could never
+  # pass the rules on main. Without the App's secrets this job fails rather than
+  # opening one.
+  release-pr:
+    name: Release PR
+    if: >-
+      ${{
+        github.event_name == 'push'
+        && github.ref == 'refs/heads/main'
+        && github.repository == 'luminartech/uds_stack'
+      }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    concurrency:
+      group: release-pr
+      cancel-in-progress: false
+    steps:
+      - name: Mint release-plz App token
+        id: app-token
+        uses: actions/create-github-app-token@v3
+        with:
+          app-id: ${{ secrets.RELEASE_PLZ_APP_ID }}
+          private-key: ${{ secrets.RELEASE_PLZ_APP_PRIVATE_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
+      # release-plz pushes the release PR's branch with the checked-out credentials, so
+      # this checkout persists them.
+      - uses: actions/checkout@v7 # zizmor: ignore[artipacked]
+        with:
+          fetch-depth: 0
+          token: ${{ steps.app-token.outputs.token }}
+      - uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master 2026-07-14
+        with:
+          toolchain: stable
+      - name: Run release-plz release-pr
+        uses: release-plz/action@v0.5
+        with:
+          command: release-pr
+        env:
+          GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
