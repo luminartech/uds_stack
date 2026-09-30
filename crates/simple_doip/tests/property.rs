@@ -14,6 +14,10 @@
 //! against the pre-`no_std` `write`/`read` API that 0.2.0 removed. The
 //! properties are his; the calls are rewritten for `Encode`/`Decode`.
 
+// Not under Miri. The suite passes there, but Miri interprets every generated case, and
+// it takes about 45 minutes against seconds natively. The lib tests cover the same
+// encode and decode paths under Miri.
+#![cfg(not(miri))]
 // Test code. `unwrap`, `expect` and `panic` are the failure mechanism here, and a
 // test that indexes a known-length golden vector reads better than one that does
 // not. The workspace lint standard in the root Cargo.toml reaches this target too --
