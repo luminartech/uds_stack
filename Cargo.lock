@@ -609,7 +609,7 @@ dependencies = [
 
 [[package]]
 name = "simple_doip"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -836,7 +836,7 @@ dependencies = [
 
 [[package]]
 name = "uds_protocol"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "automotive-wire-codec",
  "bitmask-enum",

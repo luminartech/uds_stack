@@ -11,6 +11,37 @@ This file was reconstructed from the commit and pull-request history when the
 crate was prepared for publication, so entries before that point describe what
 changed rather than what was announced at the time.
 
+## [0.7.0](https://github.com/luminartech/uds_stack/compare/simple_doip/v0.6.0...simple_doip/v0.7.0) - 2026-09-30
+
+### Added
+
+- make the stack a cargo workspace
+- [**breaking**] migrate to automotive-wire-codec 0.4 Sink
+
+### Fixed
+
+- satisfy the checks the shared workflow runs that the local one did not
+- *(tests)* track awc's InsufficientBuffer.needed -> needed_at_least rename
+
+### Other
+
+- *(simple_doip)* keep the fixture and property suites off Miri
+- one lint standard for the workspace, and the gaps written down
+- make the shared licence and governance files hold, and enforce it
+- correct the crate scopes the READMEs still state from before the split
+- repoint what the reorganisation left pointing at the old repositories
+- rewrite the crate READMEs as one set
+- one licence text, symlinked into each crate
+- give the repository a front door
+- *(simple_doip)* cut ARCHITECTURE.md down to what is currently true
+- depend on the published automotive-wire-codec 0.4.0
+- one pipeline over the workspace
+- rewrap the remaining comments, and scope the width check to what it is for
+- rewrap doc comments to 92 columns
+- restore the line-width hook to rust sources, and clear the hook backlog
+- reformat the whole workspace to 92 columns
+- one deny, release-plz, renovate and pre-commit config
+
 ## [0.6.0] — 2026-09-10
 
 ### Added

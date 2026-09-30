@@ -1,0 +1,293 @@
+# Changelog
+
+All notable changes to this project will be documented in this file.
+
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [Unreleased]
+
+## [0.1.0](https://github.com/luminartech/uds_stack/releases/tag/uds_session/v0.1.0) - 2026-09-30
+
+### Added
+
+- make the stack a cargo workspace
+- [**breaking**] report a cause with the content its requirement states
+- [**breaking**] let a channel take its reload pair as one parameter
+- [**breaking**] hold the client's keep-alive mode in the type
+- default Client's responder-table size to zero
+- widen the kind-agnostic client methods to impl Into<ChannelId>
+- add Reloads::value_for to map a ChannelReload to its value
+- [**breaking**] reach set_physical_parameter and add a functional-mode reload setter
+- implement Display and Error for Rejection
+- [**breaking**] reject a physical channel's s3_client that disagrees with keep-alive mode
+- [**breaking**] carry a channel's kind in its identity
+- [**breaking**] make a channel's kind agree with its opening method by construction
+- [**breaking**] supply the client's storage by value, split by channel kind
+- [**breaking**] supply the server's association storage by value
+- add the client surface
+- add the server surface
+- add the reaction drain
+- add rejection reports as a cause set
+- add the protocol parameter types
+- add service results and role-split message classification
+- add the addressing vocabulary and peer identity
+- add the timebase types
+- record clause locators on transcribed requirements
+- add the library crate with its lint guard rails
+- add requirement set and its linting
+
+### Fixed
+
+- keep a withdrawn channel's handle from naming a later channel
+- [**breaking**] close SResult and drop the timeout it was not owed
+- [**breaking**] close the enums the requirement set closes
+- [**breaking**] drain a Reaction by borrowing it, not by consuming it
+- generate Cause, its bits and its rendering from one list
+- retire Cause::Malformed as unreachable dead vocabulary
+- correct open-questions citation from UDSS_LLR_0004 to UDSS_LLR_0005
+- correct three requirements to what by-value storage actually does
+- name every UDSS_LLR_0030 bullet in its discharge sentence
+- widen the caller's-act sweep the first pass missed
+- correct SessionTimeout, t_data_ind and Cause to match state actually kept
+- correct the client storage doc's declaration-order claim
+- drain the reaction shape example with by_ref, not while-let
+- remove Copy and Clone derives from Causes iterator
+- give the spacing timer the timer model's vocabulary
+- scope the four per-channel closed lists to the storage's lifetime
+- count the caller's acts, close 0072's exhaustiveness and widen the keep-alive marker
+- restore 0182's dropped spacing limb and cite the right Figure 17 keys
+- scope the session-fact exclusion and warrant 0159's non-default reading
+- declare the per-service reading of footnote b and mend two exclusions
+- restore the warrants the client response timing trim cut
+- repair the server session timer's warrants and its reading of Table 9
+- let a rejected input carry the expiry indications it accompanies
+- break the responder-table entry circularity
+- end the service on a failed response-pending transmission
+- state the client's request endings in 0151, stop the timer on a failed completion and tidy the client documents
+- close the service interface's gaps on caller acts, malformed forms and role rejections
+- guard the completion-report stop on the request in progress and align the server documents
+- define controlling-client equality, scope the keep-alive rejection to transmission, and tidy the server wording
+- source 0109 from Table 6 and rest the OBD abort on 0189's addressing match
+- use the controlling client's defined identity everywhere and leave indication order open
+- close the second fidelity review's findings on the server session timer
+- close the adversarial review's findings on the server session timer
+- close the fidelity review's findings on the server session timer
+- close whole-branch review gaps in the server session timer rework
+- say what the bypass keep-alive requirement leaves to the response timer
+- say which distinction the server session timer's stop ignores
+- qualify the server session timer's stop and tidy the rebuilt document
+- say in 0183's body that the abandoned association stays outstanding
+- state the abandoned-association exception in 0153 and align the error-handling cross-references
+- say what a reset leaves outstanding and where the repeat count lives
+- keep the repeated keep-alive marked and complete the declared widenings in client error handling
+- record every start-of-message and every rejection cause in client error handling
+- derive the repeat count's advance and justify the live-exchange block in client error handling
+- close whole-branch review gaps in client error handling
+- state what a failed reception leaves in the responder table
+- source 0176's per-channel narrowing from Table 7
+- place the spacing timer in the channel's storage
+- state the physical keep-alive rejection's condition and values correctly
+- close the whole-branch review's findings on client request spacing
+- drop the undefined mode-change input from 0162
+- source the client session timer warrants and correct 0162's reading of 0138
+- place the session timer's storage where withdrawal can reach it
+- correct the warrants and citations the second fidelity review found in the client session timer
+- fix the keep-alive mode at creation and close the client session timer's undefined cases
+- declare the early keep-alive restart and correct the figure keys in the client session timer
+- close the whole-branch review's findings on the client session timer
+- define identity equality across address extensions and close the channel withdrawal and parameter-set gaps
+- place the responder table in the channel's storage and source 0152's parameter-change clauses
+- define channel storage withdrawal and duplicate addressing in UDSS_LLR_0151
+- put the source address in the channel identity and the physical pairing rule in 0140
+- say how a channel comes to exist and what its storage records
+- complete the sources and orderings the fidelity review found in the client response window
+- close the final review's findings on the client response window
+- scope the open start-of-message fact in UDSS_LLR_0151 to physical channels
+- hold the open start-of-message with the timer and phrase the enhanced window on the channel
+- require a successful reception for the solicited final response bullets
+- condition the response window on the channel, the first indication and the result
+- follow the standard's pending list for the enhanced reload value
+- scope the expected response count to the client's request
+- close review gaps in client response timing requirements
+- make the request's endpoint addressing-aware
+- align the enhanced window to the standard's primitives
+- let a request state how many responses it expects
+- scope the response-window stop to the request in progress and make the spacing arithmetic overflow-safe
+- match the request in progress by addressing and declare the response-window readings
+- list the inputs each role rejects and state the spacing arithmetic exactly
+- let a new request replace the one in progress and drop the guard 0133 makes unreachable
+- introduce the server's request in progress and match confirmations by addressing
+- state the response timer's initial state and define the request in progress
+- say that only a running timer expires and cover timers an expiry action starts
+- settle when a timer first expires, when a parameter must exist, and what T_Data.req carries
+- cite 7.6 for the confirmation's identification rule in UDSS_LLR_0140
+- fix the timer vocabulary, the timestamp rule and T_Data.conf's parameters in the service interface
+- stop naming a single user of T_DataSOM.ind in UDSS_LLR_0121
+- stop demanding a classification kind UDSS_LLR_0134 cannot supply
+- close two tS3_Server defects a third review found
+- disable the session timer when the server returns to the default session
+- drop the S_Length deviation, which the standard does not support
+- resolve the contradictions a scoped re-review found
+- close the gaps an independent review found in the service interface
+- pin setup-uv to an exact version, since it publishes no v10 tag
+- widen validate-needs and sphinx-needs hook files: patterns to catch stray .md
+- address README review findings
+
+### Other
+
+- one lint standard for the workspace, and the gaps written down
+- make the shared licence and governance files hold, and enforce it
+- correct the crate scopes the READMEs still state from before the split
+- repoint what the reorganisation left pointing at the old repositories
+- rewrite the crate READMEs as one set
+- one licence text, symlinked into each crate
+- give every crate a readme field, and drop a stale exclude
+- one pipeline over the workspace
+- one deny, release-plz, renovate and pre-commit config
+- [**breaking**] give every public item exactly one path
+- let an interface discharge UDSS_LLR_0123's first limb by construction
+- let an interface discharge UDSS_LLR_0035 and UDSS_LLR_0069 by construction
+- enforce max_width on the lines rustfmt leaves alone
+- cut the drain's design history from its rustdoc
+- [**breaking**] rename the KeepAlive trait to KeepAliveMode
+- [**breaking**] storage is moved into the instance, never duplicated
+- state what UDSS_LLR_0011 forbids, not more
+- let an interface discharge UDSS_LLR_0152 by construction
+- record Reaction's delivery limit as an accepted decision
+- sweep the surface's remaining stale and unearned prose
+- bring the surface's own account of itself up to date
+- name the caller's act rather than the storage mechanism
+- state UDSS_LLR_0071's own discharge-by-construction sentence
+- make the public surface's requirement citations complete and accurate
+- name all six of UDSS_LLR_0030's inputs and drop 0072's misscoped sentence
+- record that an interface may discharge seven rejections by construction
+- declare the 92-column limit to rustfmt instead of leaving it unenforced
+- state how the public surface discharges its requirements
+- disambiguate the two response-timing indication titles
+- drop the Rationale label from the three requirements that cite a clause
+- bring the index descriptions and the state inventory up to date
+- close two unstated outcomes and qualify two overstated claims
+- rewrap the requirement set to its 92-column width
+- repair the trim's dangling antecedents and orphaned clauses
+- correct eight citations and one term
+- repair two citations the trim falsified
+- trim the service interface document
+- trim the client response timing document
+- trim the client session timer document
+- trim the client request spacing document
+- trim the client error handling document
+- trim the server response timing document
+- trim the server session timer document
+- trim the timer model, the document Task 27 never reached
+- state the retransmission prohibition as Table 10 states it
+- correct the ID-permanence claim and three presentation defects
+- rewrap the initial-state note
+- renumber the requirement set in document order
+- drop the retired identifier from the initial-state note
+- restore three preamble warrants
+- trim the client error handling preamble to what the requirements do not say
+- trim the client session timer preamble to what the requirements do not say
+- trim the server response timing preamble to what the requirements do not say
+- trim the service interface preamble to what the requirements do not say
+- trim the client request spacing preamble to what the requirements do not say
+- trim the client response timing preamble to what the requirements do not say
+- correct the closed-list warrant and two trim artefacts
+- trim the client response timing rationales to warrant and ruling
+- trim the client session timer rationales to warrant and ruling
+- trim the client error handling rationales to warrant and ruling
+- trim the client request spacing rationales to warrant and ruling
+- trim the timer model rationales to warrant and ruling
+- restore three warrants the trim cut too close
+- trim the server response timing rationales to warrant and ruling
+- trim the server session timer rationales to warrant and ruling
+- trim the service interface rationales to warrant and ruling
+- name the server's service in progress as 10.1.4.1 does
+- state the architectural properties the set relies on
+- let the caller learn when a timer could next expire
+- split the final three bundled requirements
+- split the sans-io boundary requirements in two each
+- separate the server session timer effects from their non-effects
+- separate the unconfirmed and spacing limbs of response-pending transmission
+- split the enhanced reload value into three requirements
+- split the channel reset into four requirements
+- split message classification and its association into eight requirements
+- split the protocol parameter and role requirements into eight
+- split message classification values into eight requirements
+- split the transport protocol data units into seven requirements
+- separate what a rejection does from what its report carries
+- split the responder table into four requirements
+- split the client's session timer state and spacing timer into ten requirements
+- split the three state-and-changer-list bundles into nine requirements
+- split the server's request in progress into nine requirements
+- split the client's channel and response timer into twelve requirements
+- state peer identity and the start-of-message pairing once, in the service interface
+- give the timer model its own document and split 0114 into eight requirements
+- declare the same-client limitation of the addressing match, the transport confirmation assumption and the client's storage asymmetry, and drop the session identifier
+- complete the open-questions inventory and align tags and the completion-report rationale
+- settle what the server session timer rework answered
+- exclude the marked keep-alive from the response timer and retarget the initial-state precedent
+- rebuild the server session timer around its state, the bypass keep-alive and session hand-over
+- state rejection and expiry ordering once in the service interface
+- let the server's caller mark the bypass keep-alive and any service select a session
+- indicate every failed reception and settle the error handling cycle's open questions
+- let the caller reset a channel and release a keep-alive
+- finish receiving responses in progress before the next functional request
+- count and cap the client's repeats under Table 9
+- point the client documents at the request spacing rules
+- point the client documents at the request spacing rules
+- reject a request while the channel's spacing timer is active
+- start the spacing timer on a confirmed request
+- add the client request spacing document with its spacing timer
+- record what the client session timer cycle settled and left open
+- specify the physical keep-alive of the client session timer
+- specify the functional keep-alive of the client session timer
+- add the client session timer document with its keep-alive modes and state
+- let a request classification mark the client's keep-alive TesterPresent
+- settle the pairing, pending-list and failed-reception questions
+- report a responder the table has no room for
+- keep a table of responders on each functional channel
+- define the logical communication channel and the ends of the wait
+- state what T_DataSOM.ind carries and how a completion is paired to it
+- settle what the client response timing cycle answered
+- indicate the client's response timeout to the application
+- state that a wait-ending input is processed while still in progress
+- phrase the request's endpoint on classification, not message membership
+- separate the request in progress from the timer's running state
+- specify the client's enhanced response window
+- correct five defects in response timer stopping conditions
+- close and extend the client's response window
+- open the client's response window on a confirmed request
+- specify the client's response timer and its reload parameters
+- frame the client response timing document
+- record the keep-alive defect against both requirements it touches
+- record the conflicts the response timing cycle left open
+- space consecutive response-pending messages and define rejection
+- specify the enhanced response window and its expiry
+- specify the server's response window and when it closes
+- frame the server response timing document and its exclusions
+- record who controls the session after one non-default session replaces another
+- record the open questions the review left unsettled
+- specify message classification at the service interface
+- specify the session layer service primitive parameters
+- specify the session layer parameter mappings
+- specify the session layer service primitives
+- bind the session layer service primitives to a sans-io implementation
+- record the Pages prerequisite this workflow cannot satisfy itself
+- describe the export's consumer by what it does, not who it is
+- say precisely what is open here and what is sold separately
+- licence the crate and requirement set under MIT or Apache-2.0
+- state the requirement set's relationship to the cited standards
+- document the build commands CI actually runs
+- correct the justfile's claim that the repository has no CI
+- pin sphinx-hextra to an exact version
+- stop publishing the requirement sources alongside the site
+- add a justfile capturing the requirement build commands
+- gate the docs build on pull requests and stop shipping a dead permalink
+- Add a theme for the pages
+- publish the requirement set to GitHub Pages
+- retire the assumption-of-use type
+- convert documentation sources to reStructuredText
+- add README outline
+- ignore python bytecode and the sdd workspace
+- add uv-managed docs environment and shared quality hooks

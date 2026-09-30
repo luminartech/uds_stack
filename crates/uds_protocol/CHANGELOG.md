@@ -9,6 +9,34 @@ pre-1.0 crates).
 
 ## [Unreleased]
 
+## [0.2.0](https://github.com/luminartech/uds_stack/compare/uds_protocol/v0.1.0...uds_protocol/v0.2.0) - 2026-09-30
+
+### Added
+
+- make the stack a cargo workspace
+- [**breaking**] migrate to automotive-wire-codec 0.4 Sink
+
+### Fixed
+
+- satisfy the checks the shared workflow runs that the local one did not
+- track awc's InsufficientBuffer.needed -> needed_at_least rename
+
+### Other
+
+- one lint standard for the workspace, and the gaps written down
+- make the shared licence and governance files hold, and enforce it
+- correct the crate scopes the READMEs still state from before the split
+- repoint what the reorganisation left pointing at the old repositories
+- rewrite the crate READMEs as one set
+- one licence text, symlinked into each crate
+- give every crate a readme field, and drop a stale exclude
+- depend on the published automotive-wire-codec 0.4.0
+- one pipeline over the workspace
+- rewrap the remaining comments, and scope the width check to what it is for
+- rewrap doc comments to 92 columns
+- reformat the whole workspace to 92 columns
+- one deny, release-plz, renovate and pre-commit config
+
 ## [0.1.0](https://github.com/luminartech/uds_protocol/compare/v0.0.2...v0.1.0) - 2026-08-10
 
 ### Added

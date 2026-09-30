@@ -12,10 +12,10 @@ members = ["crates/*"]
 # `version` would publish a dependency with no version requirement, which the registry
 # rejects.
 [workspace.dependencies]
-uds_protocol = { path = "crates/uds_protocol", version = "0.1.0", default-features = false }
+uds_protocol = { path = "crates/uds_protocol", version = "0.2.0", default-features = false }
 uds_session = { path = "crates/uds_session", version = "0.1.0", default-features = false }
 uds_services = { path = "crates/uds_services", version = "0.0.0", default-features = false }
-simple_doip = { path = "crates/simple_doip", version = "0.6.0", default-features = false }
+simple_doip = { path = "crates/simple_doip", version = "0.7.0", default-features = false }
 
 # External. `automotive-wire-codec` is deliberately NOT a workspace member: it serves
 # simple_someip as well and is released on its own cadence.
