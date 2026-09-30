@@ -229,8 +229,9 @@ jobs:
   #
   # The App token is required, not preferred. A pull request opened with github.token
   # triggers no workflows, so the release PR would have no checks and could never
-  # pass the rules on main. Without the App's secrets this job fails rather than
-  # opening one.
+  # pass the rules on main. Until the App's secrets exist, the job does nothing and
+  # says so in a notice, rather than opening a PR that can never merge or failing
+  # every push to main.
   release-pr:
     name: Release PR
     if: >-
@@ -245,9 +246,17 @@ jobs:
     concurrency:
       group: release-pr
       cancel-in-progress: false
+    env:
+      HAS_RELEASE_PLZ_APP: ${{ secrets.RELEASE_PLZ_APP_ID != '' && secrets.RELEASE_PLZ_APP_PRIVATE_KEY != '' }}
     steps:
+      - name: Skip without the release-plz App
+        if: ${{ env.HAS_RELEASE_PLZ_APP != 'true' }}
+        run: >-
+          echo "::notice title=Release PR not updated::RELEASE_PLZ_APP_ID and
+          RELEASE_PLZ_APP_PRIVATE_KEY are not set, so the release PR was left as it is."
       - name: Mint release-plz App token
         id: app-token
+        if: ${{ env.HAS_RELEASE_PLZ_APP == 'true' }}
         uses: actions/create-github-app-token@v3
         with:
           app-id: ${{ secrets.RELEASE_PLZ_APP_ID }}
@@ -257,13 +266,16 @@ jobs:
       # release-plz pushes the release PR's branch with the checked-out credentials, so
       # this checkout persists them.
       - uses: actions/checkout@v7 # zizmor: ignore[artipacked]
+        if: ${{ env.HAS_RELEASE_PLZ_APP == 'true' }}
         with:
           fetch-depth: 0
           token: ${{ steps.app-token.outputs.token }}
       - uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master 2026-07-14
+        if: ${{ env.HAS_RELEASE_PLZ_APP == 'true' }}
         with:
           toolchain: stable
       - name: Run release-plz release-pr
+        if: ${{ env.HAS_RELEASE_PLZ_APP == 'true' }}
         uses: release-plz/action@v0.5
         with:
           command: release-pr
