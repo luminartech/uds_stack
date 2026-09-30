@@ -1,6 +1,6 @@
 [package]
 name = "uds_services"
-version = "0.0.0"
+version.workspace = true
 edition = "2024"
 rust-version = "1.88"
 description = "ISO 14229-1 behaviour: typed UDS service dispatch over caller-defined identifiers, and the clause 8.7 server response implementation rules"
@@ -9,7 +9,6 @@ repository = "https://github.com/luminartech/uds_stack"
 readme = "README.md"
 keywords = ["uds", "iso14229", "automotive", "diagnostics", "no-std"]
 categories = ["no-std", "embedded", "network-programming"]
-publish = false                                  # pre-implementation
 
 [dependencies]
 # L1 message codec. This crate dispatches over uds_protocol's message types and

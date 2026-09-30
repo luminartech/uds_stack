@@ -66,8 +66,11 @@ $ pre-commit install
 A hook enforces the format, and `release-plz` derives changelogs and version
 bumps from it, so `fix:` and `feat:` are load-bearing rather than decorative.
 
-**Crate versions are independent.** A release of one crate says nothing about
-the others, and tags are namespaced per crate — `uds_protocol/v0.1.0`.
+**The crates release in lockstep.** There is one version, `[workspace.package]`
+in the root `Cargo.toml`, which every crate inherits; every release publishes all
+five at it and is tagged once, `v<version>`. A crate's own `CHANGELOG.md` says what
+changed in that crate. The `<crate>/v<version>` tags in the history are from before
+the consolidation.
 
 **A crate's scope is decided by which standard specifies the behaviour**, not
 by convenience. If a change would make a crate read a standard it does not own,

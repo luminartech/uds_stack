@@ -1,6 +1,6 @@
 [package]
 name = "uds_session"
-version = "0.1.0"
+version.workspace = true
 edition = "2024"
 rust-version = "1.88"
 description = "ISO 14229-2 session layer: a transport-agnostic, no_std, sans-io state machine for the client and server roles"

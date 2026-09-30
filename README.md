@@ -36,17 +36,23 @@ edge runs from implementor to declarer.
 ## Status
 
 Under active development, and honest about it: the crates are at different
-maturities and not all of them are published.
+maturities.
 
-| Crate          | Version       | Where it stands                                                                            |
-| -------------- | ------------- | ------------------------------------------------------------------------------------------ |
-| `uds_protocol` | 0.1.0         | Implemented. [Published](https://crates.io/crates/uds_protocol).                           |
-| `simple_doip`  | 0.6.0         | Implemented. [Published](https://crates.io/crates/simple_doip).                            |
-| `uds_session`  | 0.1.0         | Pre-implementation: the public surface is complete, the bodies are `todo!()`. Unpublished. |
-| `uds_on_ip`    | 0.2.0-alpha.1 | Alpha: the API shape is settled, the transport bodies are `todo!()`. Unpublished.          |
-| `uds_services` | 0.0.0         | Pre-implementation. `publish = false`.                                                     |
+| Crate          | Where it stands                                                               |
+| -------------- | ----------------------------------------------------------------------------- |
+| `uds_protocol` | Implemented.                                                                  |
+| `simple_doip`  | Implemented.                                                                  |
+| `uds_session`  | Pre-implementation: the public surface is complete, the bodies are `todo!()`. |
+| `uds_on_ip`    | Alpha: the API shape is settled, the transport bodies are `todo!()`.          |
+| `uds_services` | Pre-implementation.                                                           |
 
-Versions are independent. A release of one crate says nothing about the others.
+The five crates release in lockstep: one version for the whole stack, every
+crate published at it together, one `v<version>` tag. The stack is at 0.7.0,
+and 0.7.0 is not released yet; it will be once the stack's functionality has
+been verified. Until then, the last releases on crates.io are the standalone
+ones from before the consolidation:
+[`uds_protocol` 0.1.0](https://crates.io/crates/uds_protocol/0.1.0) and
+[`simple_doip` 0.6.0](https://crates.io/crates/simple_doip/0.6.0).
 
 ## Documentation
 

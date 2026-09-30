@@ -3,6 +3,12 @@
 resolver = "3"
 members = ["crates/*"]
 
+# The stack's version. The five crates release in lockstep, so the version is declared once
+# and every crate inherits it with `version.workspace = true`; release-plz bumps this line
+# and all five move together. See release-plz.toml.
+[workspace.package]
+version = "0.7.0"
+
 # Shared dependency versions. Declared once so a bump is one edit, and so the five
 # crates cannot silently drift onto different majors of the same library.
 #
@@ -10,12 +16,12 @@ members = ["crates/*"]
 # workspace build use the source next door; `version` is what a published crate's
 # consumer resolves from crates.io. Cargo strips `path` when packaging, so omitting
 # `version` would publish a dependency with no version requirement, which the registry
-# rejects.
+# rejects. Their `version` is always the workspace version above; release-plz updates both.
 [workspace.dependencies]
-uds_protocol = { path = "crates/uds_protocol", version = "0.1.0", default-features = false }
-uds_session = { path = "crates/uds_session", version = "0.1.0", default-features = false }
-uds_services = { path = "crates/uds_services", version = "0.0.0", default-features = false }
-simple_doip = { path = "crates/simple_doip", version = "0.6.0", default-features = false }
+uds_protocol = { path = "crates/uds_protocol", version = "0.7.0", default-features = false }
+uds_session = { path = "crates/uds_session", version = "0.7.0", default-features = false }
+uds_services = { path = "crates/uds_services", version = "0.7.0", default-features = false }
+simple_doip = { path = "crates/simple_doip", version = "0.7.0", default-features = false }
 
 # External. `automotive-wire-codec` is deliberately NOT a workspace member: it serves
 # simple_someip as well and is released on its own cadence.

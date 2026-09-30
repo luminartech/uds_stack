@@ -161,8 +161,9 @@ release of `automotive-wire-codec` is a breaking change for `uds_protocol` as we
 
 ## Status
 
-Published at 0.1.0. Under active development, and versioned independently of
-the rest of the stack — see the
+Under active development. Released in lockstep with the rest of the stack, at
+one shared version; 0.7.0 is not released yet, and 0.1.0 is the last release on
+crates.io. See the
 [workspace README](https://github.com/luminartech/uds_stack#status) for where
 the other crates stand. The service coverage table above is the honest measure
 of what is implemented today; a request without a checkmark decodes as

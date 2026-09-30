@@ -1,6 +1,6 @@
 [package]
 name = "uds_on_ip"
-version = "0.2.0-alpha.1"
+version.workspace = true
 edition = "2024"
 rust-version = "1.88"
 description = "UDS on Internet Protocol (ISO 14229-5): the UDSonIP application profile and the transport mapping onto DoIP"
