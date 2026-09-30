@@ -35,9 +35,14 @@ squashed commit.
 
 ## `release-tags.json`
 
-Nobody can create, move or delete a `v*` tag. release-plz tags each release on
-`uds_on_ip` (see `release-plz.toml`), and a tag over a partial or rewritten release
-would misstate what is on crates.io.
+Nobody can create, move or delete a `v*` tag.
+
+The stack has one version, not one per crate. All five crates release in lockstep at the
+version in the root `Cargo.toml`, so a release is one `v<version>` tag, and there are no
+per-crate tags to protect. The tag is the stack's, but release-plz creates it while
+publishing `uds_on_ip`, the crate that is always published last (see `release-plz.toml`).
+A `v*` tag therefore appears only once all five crates are on crates.io, and a tag over a
+partial or rewritten release would misstate what is there.
 
 It has no bypass while releases are held. Lifting the hold adds the release-plz GitHub
 App as the one bypass actor (`{"actor_type": "Integration", "actor_id": <app id>, "bypass_mode": "always"}`),
