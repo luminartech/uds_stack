@@ -164,6 +164,15 @@ Decode
    pipeline are already settled before the pipeline runs. This changes where 0x13 is
    produced, not whether it is — see ``UDSSVC_ARCH_0007``.
 
+   **A request with no service identifier is complete without a response.** ISO
+   14229-1:2020 8.7.5's pseudo-code begins ``SWITCH (A_PDU.A_Data.A_PCI.SI)``: an A_PDU
+   with no service identifier has no arm, so the standard does not model the case, and a
+   negative response's ``SIDRQ`` would have nothing to echo. The pipeline's first check is
+   therefore the empty request, which settles as silence; the driver still reports its
+   completion to the session layer (``UDSS_LLR_0074``), because the request's reception
+   stopped ``tS3_Server`` under ``UDSS_LLR_0087`` and only the completion report restarts
+   it. This is a declared reading, recorded here with its citation.
+
 Mandatory preconditions
 -----------------------
 
