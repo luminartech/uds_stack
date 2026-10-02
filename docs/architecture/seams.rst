@@ -122,14 +122,8 @@ Request context
    nodes of Figures 5 and 6 and the suppression rules of clause 8.7.5 read, this crate
    already holds.
 
-   **One thing is not yet wired, and is recorded so it is not mistaken for settled.** The
-   internal pipeline takes the triple where it needs it — ``UDSSVC_ARCH_0009``'s suppression
-   predicate is a function of a code and an ``Ai``. But the assembled entry point,
-   ``ServiceSet::dispatch``, currently takes only the request bytes and the sink: the driver
-   holds the ``Ai`` and does not hand it over. Nothing depends on that yet, because the
-   pipeline behind ``dispatch`` is ``UDSSVC_ARCH_0042``'s pass and is ``todo!()`` — but the
-   parameter has to appear before rule 1 can be evaluated, and this element is the one that
-   says so.
+   ``ServiceSet::dispatch`` takes the triple, beside the state ``UDSSVC_ARCH_0035`` keeps
+   and the request bytes; the driver hands over the ``Ai`` it drained.
 
    Rationale: the pipeline is a function of the request and its addressing, so every clause
    8.7 rule is testable without a network, a clock or a session layer. That property was
@@ -250,15 +244,15 @@ Outcome
    argument above. The three cases still have to be distinguishable, and the loop still has
    to act on them differently — it simply does so without a public type.
 
-   **How the three cases are spelled is worth stating, because they are not one enum.** The
-   distinction is carried by a ``Result`` whose success type has two variants: *responded*
-   and *silent* are the ``Ok`` cases, and the failure is the ``Err``. So the three remain
-   three, and the shape says which one is exceptional — a negative response is written bytes
-   and arrives as *responded*, exactly as ``UDSSVC_ARCH_0009``'s argument requires, while
-   only a sink failure reaches the ``Err`` branch a caller might learn to ignore. The
-   internal ``Outcome`` is that ``Ok`` type inside the pipeline; ``Responded`` is the one
-   the assembled ``ServiceSet::dispatch`` returns, and it is public only because the trait
-   an application's assembly implements has to name it. An application still writes neither.
+   **How the cases are spelled.** ``dispatch`` returns ``Responded`` — *responded* or
+   *suppressed*, each carrying the session a ``DiagnosticSessionControl`` selected — and
+   no ``Result``. The ``Err`` arm this element once prescribed for the sink's failure is
+   empty: the sink has one failure, a refused write, and ``UDSSVC_ARCH_0017`` makes that
+   failure ``responseTooLong`` (0x14), written bytes like any other negative response. The
+   third case, "something went wrong", has no remaining member once the sink's bound
+   cannot refuse the negative response itself. A negative response is therefore never in
+   an ``Err`` branch a caller could learn to ignore, which is what this element's
+   rationale asked for.
 
    Genuine transport failures are the binding's concern, reach this crate as a ``DataConf``
    carrying an ``SResult``, and never reach a handler.
@@ -328,10 +322,17 @@ Response sink
    not know, but the negative response code is a clause 8.7 outcome that is nobody else's.
    ``embedded-io`` leaves this crate's dependency list entirely.
 
-   **Unbuilt, and stated as such.** The bound exists — ``ResponseSink`` holds it and
-   rejects a write past it — but nothing maps the rejection to 0x14, because the pipeline
-   that would do the mapping is ``UDSSVC_ARCH_0042``'s pass and is ``todo!()`` today. This
-   element describes the arrangement, not behaviour the crate has.
+   **The bound is never below three bytes.** ISO 14229-1 fixes a negative response at
+   three bytes; a peer that cannot receive three bytes cannot take part in UDS at all, so
+   a bound below that is not one the protocol admits and is raised to it. The pipeline's
+   own ``7F <sid> <nrc>`` is therefore never refused. A handler's refused write is
+   recorded by the sink and read by the pipeline after the handler returns; the handler
+   itself ignores the write's result, there being nothing it could add.
+
+   **Built for the stages that exist.** ``ResponseSink`` holds the bound and rejects a
+   write past it, and the pipeline's settle step maps the rejection to 0x14 after
+   rewinding the sink. The services without a pipeline stage settle 0x11 and never reach
+   that mapping.
 
    **This element's account of that failure type has now been wrong three times, and the
    count is the point.** The versions, in order:

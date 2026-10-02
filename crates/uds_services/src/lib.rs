@@ -26,9 +26,12 @@
 //!
 //! # Status
 //!
-//! **API stub.** The public surface is complete; behaviour is not. Every entry
-//! point is `todo!()` and carries the architecture element it will satisfy.
-//! `tests/composition.rs` assembles a server against the whole surface.
+//! The server role runs end to end over any `UdsTransport` (see
+//! `tests/end_to_end.rs`) for the services with a pipeline stage:
+//! `ReadDataByIdentifier`, `DiagnosticSessionControl` and `TesterPresent`. A
+//! listed service without a stage answers `serviceNotSupported`. The client's
+//! entry points are `todo!()` and carry the architecture element each will
+//! satisfy. `tests/composition.rs` assembles a server against the whole surface.
 //!
 //! # Scope
 //!

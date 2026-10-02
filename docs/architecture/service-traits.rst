@@ -108,7 +108,7 @@ The traits
       uds_server! {
           Ecu: ReadDataByIdentifier, SecurityAccess, DataTransfer;
           transport = DoIpTransport<TcpSocket>,
-          channels = 4,
+          peers = 4,
       }
 
    A service absent from the list is not supported, and a request naming it settles with
@@ -242,7 +242,7 @@ Protocol state
       uds_server! {
           Ecu: ReadDataByIdentifier, SecurityAccess, DataTransfer;
           transport = DoIpTransport<TcpSocket>,
-          channels = 4,
+          peers = 4,
       }
 
    Rationale: ``UDSSVC_ARCH_0034`` puts protocol concerns in the stack, and a block sequence
@@ -294,7 +294,7 @@ Protocol state
 
    **Sizing is declared, not allocated.** ``UDSSVC_ARCH_0017`` forbids allocation, so the
    per-channel table is a const-generic array whose length the assembly states. A deployment
-   that supports one tester writes ``channels = 1`` and pays for one.
+   that supports one tester writes ``peers = 1`` and pays for one.
 
    **That choice is now forced rather than preferred, and the reason is worth recording
    because this element argued it the weaker way.** It used to say that caller-supplied
@@ -311,20 +311,15 @@ Protocol state
    the only one the composition admits. The lifetime-and-borrow cost stands as an
    observation, not as the reason.
 
-   **A real gap, stated plainly: ``channels = N`` is captured and never used.** The macro
-   parses it and the expansion discards it. It had a consumer once — the association table
-   was this crate's to size — and lost it when associations moved into
-   ``uds_session::Server<PEERS>``, taken by value with its own const parameter. An
-   application therefore states its peer count twice: once as ``channels = N`` in the
-   assembly, where nothing reads it, and once as the third parameter of
-   ``Server<A, T, PEERS>``, which is what actually sizes the association array. Nothing
-   makes the two agree, and no diagnostic fires when they disagree. The intended consumer,
-   this element's own per-channel authentication table keyed on ``A_SA``, **is not built**:
-   there is no table, no keying and no per-channel state of any kind in the crate as it
-   stands. The clause 10.6.4 obligation above is therefore a design this element records and
-   not behaviour the crate has. Closing it means either the macro emitting the
-   ``Server<A, T, N>`` alias from ``channels`` so the count is stated once, or the parameter
-   going away until the table that wanted it exists.
+   **Where the state lives, and why the application cannot reach it.** The assembly
+   takes ``peers = N`` and emits the ``Server<A, T, N>`` alias from it, so the count is
+   stated once. The protocol state is ``uds_services::State``, a type this crate declares
+   with private fields; ``uds_server!`` only *names* it as ``ServiceSet::State``, because
+   the macro expands in the application's crate and a struct declared there could keep
+   nothing private from it. ``Server`` holds the state in a private field and passes it to
+   ``dispatch`` and to the two session hooks the macro emits. The per-channel
+   authentication table this element describes is still not built; nothing in scope
+   needs it yet.
 
    What this element does **not** settle is what happens to this state on a session
    transition. ISO 14229-1:2020 10.2 requires a return to ``defaultSession`` to relock
