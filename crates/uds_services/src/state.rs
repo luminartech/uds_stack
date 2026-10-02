@@ -12,7 +12,27 @@ use uds_protocol::DiagnosticSessionType;
 ///
 /// Sealed, so the only implementor is [`State`]; `INITIAL` rather than `EMPTY` because
 /// the initial state is not zero — it is `defaultSession`.
-pub trait ProtocolState: crate::sealed::Sealed + core::fmt::Debug {
+///
+/// The seal is this module's own, not [`crate::sealed`]'s. That one has to be nameable
+/// from the application's crate, because `uds_server!` implements [`crate::ServiceSet`]
+/// there; nothing outside this crate implements `ProtocolState` — the macro only names
+/// [`State`] — so this seal can be one no other crate can reach, and a hand-written
+/// state cannot slip past ``UDSSVC_ARCH_0035``.
+///
+/// Implementing it from outside this crate does not compile, even through the crate-wide
+/// seal the macro uses:
+///
+/// ```compile_fail,E0277
+/// use uds_services::ProtocolState;
+///
+/// #[derive(Debug)]
+/// struct Mine;
+/// impl uds_services::sealed::Sealed for Mine {}
+/// impl ProtocolState for Mine {
+///     const INITIAL: Self = Mine;
+/// }
+/// ```
+pub trait ProtocolState: private::Sealed + core::fmt::Debug {
     /// The state at power-up: ISO 14229-1:2020 clause 9.2's default session.
     const INITIAL: Self;
 }
@@ -25,7 +45,14 @@ pub struct State {
     session: DiagnosticSessionType,
 }
 
-impl crate::sealed::Sealed for State {}
+/// The seal on [`ProtocolState`]: public in a private module, so no other crate can name
+/// it and none can implement it.
+mod private {
+    /// Implemented by [`super::State`] alone.
+    pub trait Sealed {}
+}
+
+impl private::Sealed for State {}
 
 impl ProtocolState for State {
     const INITIAL: Self = Self {
