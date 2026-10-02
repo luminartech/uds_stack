@@ -27,10 +27,9 @@
 //!
 //! # Status
 //!
-//! The public surface is complete; behaviour is not. Every entry point is `todo!()` and
-//! carries the requirements it will satisfy in its documentation. Requirements are
-//! authored before the code that satisfies them — the ordering is evidence that cannot be
-//! reconstructed afterwards.
+//! The server role is implemented and tested against its requirements in
+//! `tests/server_behaviour.rs`. The client role's public surface is complete; its bodies
+//! are `todo!()` and carry the requirements they will satisfy.
 //!
 //! # How the surface discharges its requirements
 //!

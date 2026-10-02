@@ -320,7 +320,6 @@ mod indication {
     /// ``UDSS_LLR_0092`` — a failed reception from the controlling client, while the
     /// timer is stopped and no service is in progress, restarts `tS3_Server`.
     #[test]
-    #[ignore = "needs Task 6: t_data_som_ind"]
     fn a_reception_error_restarts_a_stopped_session_timer() {
         let mut s = server();
         enter_non_default(&mut s, Timestamp(0));
@@ -615,5 +614,93 @@ mod transmission {
             SResult::Transport(TransportError(9)),
         ));
         assert_eq!(s.next_deadline(), Some(Timestamp(6_045)));
+    }
+}
+
+mod completion {
+    use super::*;
+
+    /// ``UDSS_LLR_0074``, ``UDSS_LLR_0115``, ``UDSS_LLR_0089`` — a completion report for
+    /// a request answering the service in progress stops `tP2_Server` and, from the
+    /// controlling client in a non-default session, restarts `tS3_Server`. No output.
+    #[test]
+    fn a_completion_report_restarts_the_session_timer() {
+        let mut s = server();
+        enter_non_default(&mut s, Timestamp(0));
+        let (_, _) = outputs(s.t_data_ind(
+            Timestamp(1_000),
+            ai(TESTER, ECU),
+            &[0x3E, 0x80],
+            SResult::Ok,
+            ServerRx::Request { session: None },
+        ));
+        let (out, ok) = outputs(s.completion_report(
+            Timestamp(1_010),
+            ai(TESTER, ECU),
+            ServerRx::Request { session: None },
+        ));
+        assert!(ok.is_ok());
+        assert_eq!(out[0], None);
+        assert_eq!(s.next_deadline(), Some(Timestamp(6_010)));
+    }
+
+    /// ``UDSS_LLR_0086`` — a completed request selecting a non-default session, with no
+    /// response, enters the session and starts the timer.
+    #[test]
+    fn a_suppressed_session_selection_enters_the_session() {
+        let mut s = server();
+        let (_, _) = outputs(s.t_data_ind(
+            Timestamp(0),
+            ai(TESTER, ECU),
+            &[0x10, 0x83],
+            SResult::Ok,
+            ServerRx::Request {
+                session: Some(SessionSelection::NonDefault),
+            },
+        ));
+        let (_, _) = outputs(s.completion_report(
+            Timestamp(5),
+            ai(TESTER, ECU),
+            ServerRx::Request {
+                session: Some(SessionSelection::NonDefault),
+            },
+        ));
+        assert_eq!(s.next_deadline(), Some(Timestamp(5_005)));
+        let (out, _) = outputs(s.tick(Timestamp(5_005)));
+        assert_eq!(
+            out[0],
+            Some(ServerOutput::SessionTimeout {
+                client: peer(TESTER)
+            })
+        );
+    }
+
+    /// ``UDSS_LLR_0096`` — a keep-alive completion report changes nothing.
+    #[test]
+    fn a_keep_alive_completion_changes_nothing() {
+        let mut s = server();
+        enter_non_default(&mut s, Timestamp(0));
+        let (_, _) = outputs(s.completion_report(
+            Timestamp(100),
+            ai(TESTER, ECU),
+            ServerRx::KeepAlive,
+        ));
+        assert_eq!(s.next_deadline(), Some(Timestamp(5_000)));
+    }
+
+    /// ``UDSS_LLR_0038``, ``UDSS_LLR_0087`` — a start-of-message is not forwarded, and
+    /// from the controlling client it stops `tS3_Server`.
+    #[test]
+    fn a_start_of_message_stops_the_session_timer_silently() {
+        let mut s = server();
+        enter_non_default(&mut s, Timestamp(0));
+        let (out, ok) = outputs(s.t_data_som_ind(
+            Timestamp(100),
+            ai(TESTER, ECU),
+            ServerRx::Request { session: None },
+        ));
+        assert!(ok.is_ok());
+        assert_eq!(out[0], None);
+        assert_eq!(s.next_deadline(), None);
     }
 }

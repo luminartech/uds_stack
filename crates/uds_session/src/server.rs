@@ -350,31 +350,47 @@ impl<const A: usize> Server<A> {
     /// A message has started arriving.
     ///
     /// ``UDSS_LLR_0023`` — addressing and no data, length or result.
-    /// ``UDSS_LLR_0038`` keeps it inside the session layer; it is never forwarded.
-    /// ``UDSS_LLR_0030`` bars a server from receiving a response, which [`ServerRx`]
-    /// cannot express, and from an indication naming a channel, which this signature has
-    /// no parameter for.
+    /// ``UDSS_LLR_0038`` keeps it inside the session layer; it is never forwarded, and
+    /// the reaction carries no output of its own. A request not marked keep-alive from
+    /// the controlling client stops `tS3_Server` (``UDSS_LLR_0087``); one marked
+    /// keep-alive changes nothing (``UDSS_LLR_0096``). It begins no service in progress
+    /// (``UDSS_LLR_0107``), and the server keeps no start-of-message state of its own:
+    /// ``UDSS_LLR_0045`` gives that to the client alone. ``UDSS_LLR_0030`` bars a server
+    /// from receiving a response, which [`ServerRx`] cannot express, and from an
+    /// indication naming a channel, which this signature has no parameter for.
     pub fn t_data_som_ind(
         &mut self,
         now: Timestamp,
         ai: Ai,
         class: ServerRx,
     ) -> ServerReaction<'_, 'static, A> {
-        #[allow(
-            clippy::todo,
-            reason = "API stub; behaviour lands with its requirement"
-        )]
-        {
-            todo!("UDSS_LLR_0023, 0045: {now:?} {ai:?} {class:?}")
+        self.expire(now);
+        // UDSS_LLR_0087; a keep-alive start-of-message changes nothing (UDSS_LLR_0096).
+        // The server keeps no start-of-message state: UDSS_LLR_0045 gives that to the
+        // client alone.
+        if matches!(class, ServerRx::Request { .. }) && self.is_controlling(ai.source()) {
+            self.stop_s3();
         }
+        Reaction::new(self, [None, None], Ok(())) // UDSS_LLR_0038 — never forwarded
     }
 
     /// A message has finished arriving.
     ///
-    /// ``UDSS_LLR_0036`` indicates it to the application; ``UDSS_LLR_0058`` states the
-    /// kind required on a failed reception addressed to a server. ``UDSS_LLR_0030`` bars a
-    /// server from receiving a response, which [`ServerRx`] cannot express, and from an
-    /// indication naming a channel, which this signature has no parameter for.
+    /// ``UDSS_LLR_0036`` indicates it to the application, successful or not;
+    /// ``UDSS_LLR_0058`` states the kind required on a failed reception addressed to a
+    /// server. A request received successfully becomes the service in progress
+    /// (``UDSS_LLR_0107``, ``UDSS_LLR_0108``) and starts `tP2_Server` with
+    /// `tP2_Server_Max` (``UDSS_LLR_0113``). From the controlling client it stops
+    /// `tS3_Server` (``UDSS_LLR_0087``); from any other client, or in the default
+    /// session, it leaves the timer alone (``UDSS_LLR_0097``, ``UDSS_LLR_0099``). A
+    /// keep-alive received successfully reloads a running `tS3_Server` where it comes
+    /// from the controlling client (``UDSS_LLR_0095``) and otherwise changes nothing
+    /// (``UDSS_LLR_0096``). A failed reception of a request from the controlling client
+    /// restarts a stopped `tS3_Server` where no service is in progress
+    /// (``UDSS_LLR_0092``); a failed keep-alive changes nothing (``UDSS_LLR_0096``).
+    /// ``UDSS_LLR_0030`` bars a server from receiving a response, which [`ServerRx`]
+    /// cannot express, and from an indication naming a channel, which this signature has
+    /// no parameter for.
     pub fn t_data_ind<'d>(
         &mut self,
         now: Timestamp,
@@ -526,19 +542,44 @@ impl<const A: usize> Server<A> {
     /// message is transmitted in that case, so without this input the session layer
     /// cannot detect it and a suppressed-response request in a non-default session would
     /// never restart the timer.
+    ///
+    /// `ai` is the request's addressing. A report for a request not marked keep-alive
+    /// that answers the service in progress ends it (``UDSS_LLR_0109``) and with it stops
+    /// `tP2_Server` (``UDSS_LLR_0115``). A request selecting a non-default session enters
+    /// it with the requester as controlling client and starts `tS3_Server`
+    /// (``UDSS_LLR_0086``); one selecting the default session enters the default session
+    /// (``UDSS_LLR_0098``); any other, from the controlling client, restarts `tS3_Server`
+    /// (``UDSS_LLR_0089``). A keep-alive report changes nothing (``UDSS_LLR_0096``). The
+    /// reaction carries no output of its own.
     pub fn completion_report(
         &mut self,
         now: Timestamp,
         ai: Ai,
         class: ServerRx,
     ) -> ServerReaction<'_, 'static, A> {
-        #[allow(
-            clippy::todo,
-            reason = "API stub; behaviour lands with its requirement"
-        )]
-        {
-            todo!("UDSS_LLR_0074: {now:?} {ai:?} {class:?}")
+        self.expire(now);
+        let from = ai.source();
+        if let ServerRx::Request { session } = class {
+            if self.answers(from) {
+                self.service = None; // UDSS_LLR_0109, and 0115: its tP2 goes with it.
+            }
+            match session {
+                Some(SessionSelection::NonDefault) => {
+                    self.enter_non_default(now, from); // UDSS_LLR_0086
+                }
+                Some(SessionSelection::Default) => {
+                    self.session = Session::Default; // UDSS_LLR_0098
+                }
+                None => {
+                    // UDSS_LLR_0089
+                    if self.is_controlling(from) {
+                        self.restart_s3(now);
+                    }
+                }
+            }
         }
+        // UDSS_LLR_0096 for KeepAlive; UDSS_LLR_0074 — no output in any case.
+        Reaction::new(self, [None, None], Ok(()))
     }
 
     /// Supply a timestamp on its own.
