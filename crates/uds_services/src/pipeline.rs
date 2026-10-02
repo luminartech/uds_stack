@@ -60,8 +60,22 @@ pub enum Stage<'a> {
     Empty,
 }
 
-/// ``UDSSVC_ARCH_0005`` (decode → 0x13; unmodelled → 0x11) and ``UDSSVC_ARCH_0006``
-/// checks 1 and 3. Check 2, authentication, is unconditionally true (architecture open
+/// The common stages, in ISO 14229-1:2020 8.7.2 Figure 5's order (``UDSSVC_ARCH_0006``):
+///
+/// 1. No service identifier at all: [`Stage::Empty`] (``UDSSVC_ARCH_0005``'s declared
+///    reading — the standard does not model the case).
+/// 2. Service identifier supported? An unmodelled byte, or a service the assembly list
+///    does not name, settles `serviceNotSupported` (0x11).
+/// 3. Supported in the active session? Table 23's refusals settle
+///    `serviceNotSupportedInActiveSession` (0x7F).
+/// 4. Only then the service-specific check, where length and format live: a decode
+///    failure settles `incorrectMessageLengthOrInvalidFormat` (0x13)
+///    (``UDSSVC_ARCH_0005``).
+///
+/// Clause 8.7.5's pseudo-code agrees: its outer `SWITCH` on the service identifier falls
+/// to `DEFAULT: responseCode = SNS` before any `message_length` test, so a malformed
+/// request for a service this server lacks is 0x11, not 0x13. Figure 5's authentication
+/// check (0x34), between 2 and 3, is unconditionally true here (architecture open
 /// question 4); the security precondition (0x33) joins with security state.
 #[doc(hidden)]
 #[must_use]
@@ -73,17 +87,9 @@ pub fn begin<'a, F: Fn(UdsServiceType) -> bool>(
     let Some((&sid, _)) = request.split_first() else {
         return Stage::Empty;
     };
-    let Ok((decoded, [])) = Request::decode(request) else {
-        return Stage::Settle {
-            sid,
-            nrc: NegativeResponseCode::IncorrectMessageLengthOrInvalidFormat,
-        };
-    };
-    let service = match decoded {
-        Request::Other { .. } => UdsServiceType::UnsupportedDiagnosticService,
-        ref other => other.service(),
-    };
-    if !supports(service) {
+    let service = UdsServiceType::from_request_sid(sid);
+    if matches!(service, UdsServiceType::UnsupportedDiagnosticService) || !supports(service)
+    {
         return Stage::Settle {
             sid,
             nrc: NegativeResponseCode::ServiceNotSupported,
@@ -95,9 +101,21 @@ pub fn begin<'a, F: Fn(UdsServiceType) -> bool>(
             nrc: NegativeResponseCode::ServiceNotSupportedInActiveSession,
         };
     }
-    Stage::Proceed {
-        sid,
-        request: decoded,
+    match Request::decode(request) {
+        // A service `uds_protocol` names but does not model has no stage either: 0x11,
+        // as for an unmodelled byte, and never 0x13 for a request that may be well formed.
+        Ok((Request::Other { .. }, _)) => Stage::Settle {
+            sid,
+            nrc: NegativeResponseCode::ServiceNotSupported,
+        },
+        Ok((decoded, [])) => Stage::Proceed {
+            sid,
+            request: decoded,
+        },
+        Ok(_) | Err(_) => Stage::Settle {
+            sid,
+            nrc: NegativeResponseCode::IncorrectMessageLengthOrInvalidFormat,
+        },
     }
 }
 
@@ -568,6 +586,49 @@ mod tests {
             Stage::Settle {
                 sid: 0x27,
                 nrc: N::ServiceNotSupportedInActiveSession
+            }
+        ));
+    }
+
+    /// ``UDSSVC_ARCH_0006``, Figure 5 and clause 8.7.5 — support is checked before
+    /// decoding: a malformed request for a service the list does not name is 0x11, not
+    /// 0x13.
+    #[test]
+    fn a_malformed_request_for_an_unlisted_service_settles_0x11() {
+        let st = begin(&State::INITIAL, &[0x3E], supports_rdbi);
+        assert!(matches!(
+            st,
+            Stage::Settle {
+                sid: 0x3E,
+                nrc: N::ServiceNotSupported
+            }
+        ));
+    }
+
+    /// ``UDSSVC_ARCH_0006`` check 3 precedes decoding: a malformed request for a Table 23
+    /// service in the default session is 0x7F, not 0x13.
+    #[test]
+    fn a_malformed_request_refused_in_the_default_session_settles_0x7f() {
+        let st = begin(&State::INITIAL, &[0x27], |s| matches!(s, U::SecurityAccess));
+        assert!(matches!(
+            st,
+            Stage::Settle {
+                sid: 0x27,
+                nrc: N::ServiceNotSupportedInActiveSession
+            }
+        ));
+    }
+
+    /// ``UDSSVC_ARCH_0005`` — a listed service allowed in the session reaches the
+    /// decode, and a malformed request for it is 0x13.
+    #[test]
+    fn a_malformed_request_for_a_listed_allowed_service_settles_0x13() {
+        let st = begin(&State::INITIAL, &[0x3E], |s| matches!(s, U::TesterPresent));
+        assert!(matches!(
+            st,
+            Stage::Settle {
+                sid: 0x3E,
+                nrc: N::IncorrectMessageLengthOrInvalidFormat
             }
         ));
     }

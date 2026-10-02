@@ -238,8 +238,8 @@ impl<A: ServiceSet, T: UdsTransport, const PEERS: usize> Server<A, T, PEERS> {
 
 /// The `DiagnosticSessionControl` response in flight: its session takes effect on the
 /// `Confirm` that reports it sent (spec §3.2; ``UDSS_LLR_0085``). One slot: a server
-/// answers one request at a time (``UDSS_LLR_0108``), so one selecting response is in
-/// flight at most.
+/// answers one request at a time (``UDSS_LLR_0108``), so with one peer one selecting
+/// response is in flight at most.
 ///
 /// **Milestone 1 is safe for `peers = 1` only.** A server answers one request at a time,
 /// but a response awaiting its confirmation is no longer the request in progress: with a

@@ -389,7 +389,7 @@ macro_rules! __uds_stage {
 /// uds_server! {
 ///     Ecu: ReadDataByIdentifier, DataTransfer;
 ///     transport = DoIpTransport,
-///     peers = 4,
+///     peers = 1,
 ///     server = EcuServer,
 /// }
 ///
