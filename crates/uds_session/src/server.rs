@@ -492,7 +492,9 @@ impl<const A: usize> Server<A> {
     /// (``UDSS_LLR_0085``, ``UDSS_LLR_0088``, ``UDSS_LLR_0093``, ``UDSS_LLR_0098``) and,
     /// only where the service in progress submitted the transmission it confirms
     /// (``UDSS_LLR_0109``), on that service and its response timer (``UDSS_LLR_0110``,
-    /// ``UDSS_LLR_0116``).
+    /// ``UDSS_LLR_0116``). A confirmation that a later request from the controlling client
+    /// overtook restarts no `tS3_Server`: that request's stop is the later event
+    /// (``UDSS_LLR_0088``, ``UDSS_LLR_0093``).
     pub fn t_data_conf(
         &mut self,
         now: Timestamp,
@@ -515,6 +517,10 @@ impl<const A: usize> Server<A> {
         // UDSS_LLR_0109 — a replaced service's confirmation frees its slot and acts on
         // the session below, and leaves the service that replaced it alone.
         let answers = self.answers(sent);
+        // UDSS_LLR_0088, 0093 — a later request from `to` is in progress: its 0087 stop
+        // came after this response completed, so this confirmation restarts nothing.
+        let superseded = !answers && self.serves(to);
+        let restarts_s3 = self.is_controlling(to) && !superseded;
         let ok = result == SResult::Ok;
         match class {
             ServerTx::ResponsePending => {
@@ -532,7 +538,7 @@ impl<const A: usize> Server<A> {
                         self.service = None; // UDSS_LLR_0109
                     }
                 }
-                if !ok && self.is_controlling(to) {
+                if !ok && restarts_s3 {
                     // UDSS_LLR_0093 — "a failed transmission of a response-pending message
                     // restarts the timer as Table 10 states".
                     self.restart_s3(now);
@@ -560,13 +566,13 @@ impl<const A: usize> Server<A> {
                     }
                     (true, None) => {
                         // UDSS_LLR_0088
-                        if self.is_controlling(to) {
+                        if restarts_s3 {
                             self.restart_s3(now);
                         }
                     }
                     (false, _) => {
                         // UDSS_LLR_0093; 0094 — nothing is retransmitted.
-                        if self.is_controlling(to) {
+                        if restarts_s3 {
                             self.restart_s3(now);
                         }
                     }
