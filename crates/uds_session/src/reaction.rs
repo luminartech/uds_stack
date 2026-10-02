@@ -62,6 +62,7 @@ pub trait Drain<'d, O>: Sealed {
 ///     s3_server: 5_000,
 ///     p2_server_max: 50,
 ///     p2_star_server_max: 5_000,
+///     response_pending_lead: 0,
 /// };
 /// let mut server = Server::new([Association::EMPTY; 1], params);
 /// assert!(handle(server.tick(Timestamp(0))).is_ok());

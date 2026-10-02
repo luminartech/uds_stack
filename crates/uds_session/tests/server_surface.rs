@@ -16,6 +16,7 @@ fn a_server_is_created_from_caller_storage_and_three_parameters() {
             s3_server: 5_000,
             p2_server_max: 50,
             p2_star_server_max: 5_000,
+            response_pending_lead: 0,
         },
     );
 }

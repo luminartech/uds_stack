@@ -10,6 +10,13 @@ const PARAMS: ServerParams = ServerParams {
     s3_server: 5_000,
     p2_server_max: 50,
     p2_star_server_max: 5_000,
+    response_pending_lead: 0,
+};
+
+/// [`PARAMS`] with a response-pending lead of 10 ms (``UDSS_LLR_0186``).
+const PARAMS_LEAD: ServerParams = ServerParams {
+    response_pending_lead: 10,
+    ..PARAMS
 };
 
 fn server() -> Server<2> {
@@ -701,5 +708,123 @@ mod completion {
         assert!(ok.is_ok());
         assert_eq!(out[0], None);
         assert_eq!(s.next_deadline(), None);
+    }
+}
+
+mod lead {
+    use super::*;
+    use uds_session::ServerParameter;
+
+    fn server_with(params: ServerParams) -> Server<2> {
+        Server::new([Association::EMPTY, Association::EMPTY], params)
+    }
+
+    fn request(s: &mut Server<2>, now: Timestamp) {
+        let (_, ok) = outputs(s.t_data_ind(
+            now,
+            ai(TESTER, ECU),
+            &[0x22, 0xF1, 0x90],
+            SResult::Ok,
+            ServerRx::Request { session: None },
+        ));
+        assert!(ok.is_ok());
+    }
+
+    fn overrun(loaded: ServerReload) -> ServerOutput<'static> {
+        ServerOutput::ResponseOverrun {
+            sa: Address(TESTER),
+            ae: None,
+            loaded,
+        }
+    }
+
+    const PENDING: [u8; 3] = [0x7F, 0x22, 0x78];
+
+    /// ``UDSS_LLR_0117``, ``UDSS_LLR_0186`` — the overrun of `tP2_Server_Max` is
+    /// indicated the lead before the window closes, and still names that window.
+    #[test]
+    fn the_default_overrun_is_indicated_the_lead_early() {
+        let mut s = server_with(PARAMS_LEAD);
+        request(&mut s, Timestamp(0));
+        assert_eq!(s.next_deadline(), Some(Timestamp(40)));
+        let (out, ok) = outputs(s.tick(Timestamp(39)));
+        assert!(ok.is_ok());
+        assert_eq!(out[0], None);
+        let (out, ok) = outputs(s.tick(Timestamp(40)));
+        assert!(ok.is_ok());
+        assert_eq!(out[0], Some(overrun(ServerReload::P2)));
+        assert_eq!(out[1], None);
+        assert_eq!(s.next_deadline(), None);
+        // The response-pending message sent on the indication goes out within the window.
+        let (_, ok) = outputs(s.s_data_req(
+            Timestamp(40),
+            ai(ECU, TESTER),
+            &PENDING,
+            ServerTx::ResponsePending,
+        ));
+        assert!(ok.is_ok());
+    }
+
+    /// ``UDSS_LLR_0116``, ``UDSS_LLR_0186`` — the enhanced window a confirmed
+    /// response-pending message opens is indicated the same lead early, at an instant
+    /// ``UDSS_LLR_0119`` admits the next one.
+    #[test]
+    fn the_enhanced_overrun_is_indicated_the_lead_early() {
+        let mut s = server_with(PARAMS_LEAD);
+        request(&mut s, Timestamp(0));
+        let (_, ok) = outputs(s.s_data_req(
+            Timestamp(30),
+            ai(ECU, TESTER),
+            &PENDING,
+            ServerTx::ResponsePending,
+        ));
+        assert!(ok.is_ok());
+        let (_, ok) = outputs(s.t_data_conf(Timestamp(35), ai(ECU, TESTER), SResult::Ok));
+        assert!(ok.is_ok());
+        assert_eq!(s.next_deadline(), Some(Timestamp(35 + 5_000 - 10)));
+        let (out, _) = outputs(s.tick(Timestamp(5_024)));
+        assert_eq!(out[0], None);
+        let (out, _) = outputs(s.tick(Timestamp(5_025)));
+        assert_eq!(out[0], Some(overrun(ServerReload::P2Star)));
+        let (_, ok) = outputs(s.s_data_req(
+            Timestamp(5_025),
+            ai(ECU, TESTER),
+            &PENDING,
+            ServerTx::ResponsePending,
+        ));
+        assert!(ok.is_ok());
+    }
+
+    /// ``UDSS_LLR_0186`` — a lead not less than `tP2_Server_Max` saturates: the overrun
+    /// is indicated on the first timestamp supplied after the request, never before it.
+    #[test]
+    fn a_lead_not_less_than_the_window_indicates_on_the_first_tick() {
+        let params = ServerParams {
+            response_pending_lead: 50,
+            ..PARAMS
+        };
+        assert!(!params.is_well_formed());
+        let mut s = server_with(params);
+        request(&mut s, Timestamp(100));
+        assert_eq!(s.next_deadline(), Some(Timestamp(100)));
+        let (out, _) = outputs(s.tick(Timestamp(100)));
+        assert_eq!(out[0], Some(overrun(ServerReload::P2)));
+    }
+
+    /// ``UDSS_LLR_0043``, ``UDSS_LLR_0186`` — the lead is taken when the window opens,
+    /// so setting it again moves no window already open.
+    #[test]
+    fn a_lead_change_does_not_move_an_open_window() {
+        let mut s = server_with(PARAMS_LEAD);
+        request(&mut s, Timestamp(0));
+        let (_, ok) = outputs(
+            s.set_parameter(Timestamp(5), ServerParameter::ResponsePendingLead(30)),
+        );
+        assert!(ok.is_ok());
+        assert_eq!(s.next_deadline(), Some(Timestamp(40)));
+        let (out, _) = outputs(s.tick(Timestamp(40)));
+        assert_eq!(out[0], Some(overrun(ServerReload::P2)));
+        request(&mut s, Timestamp(60));
+        assert_eq!(s.next_deadline(), Some(Timestamp(80)));
     }
 }

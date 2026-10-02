@@ -128,6 +128,7 @@ const PARAMS: ServerParams = ServerParams {
     s3_server: 5_000,
     p2_server_max: 50,
     p2_star_server_max: 5_000,
+    response_pending_lead: 0,
 };
 
 #[allow(clippy::panic, reason = "a test harness for futures that never pend")]

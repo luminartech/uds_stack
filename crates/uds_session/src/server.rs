@@ -67,14 +67,16 @@ impl Session {
 }
 
 /// ``UDSS_LLR_0104`` — the service in progress, its response-pending anchor, and
-/// ``UDSS_LLR_0101``'s `tP2_Server` with the parameter it carries. The timer lives here
-/// because ``UDSS_LLR_0113``–``0117`` only ever run it for a service in progress.
+/// ``UDSS_LLR_0101``'s `tP2_Server` with the parameter it carries and the lead of
+/// ``UDSS_LLR_0186`` taken with it. The timer lives here because ``UDSS_LLR_0113``–``0117``
+/// only ever run it for a service in progress.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct InProgress {
     peer: PeerIdentity,
     anchor: Option<Timestamp>,
     p2: Timer,
     loaded: ServerReload,
+    lead: u32,
 }
 
 /// What a server produces for the caller to retrieve.
@@ -123,10 +125,13 @@ pub enum ServerOutput<'d> {
         /// ``UDSS_LLR_0044``.
         client: PeerIdentity,
     },
-    /// `tP2_Server` expired with no response transmitted.
+    /// `tP2_Server` is about to expire with no response transmitted.
     ///
     /// ``UDSS_LLR_0117`` — an overrun the session layer can observe and cannot correct,
     /// so it reports and the application acts. ISO 14229-2 states no session layer action.
+    /// It is delivered the response-pending lead of ``UDSS_LLR_0186`` before the window
+    /// closes, so that a response-pending message sent on it goes out within the window;
+    /// with a lead of zero, at the close.
     ResponseOverrun {
         /// The `S_AI[SA]` of the service in progress, per ``UDSS_LLR_0104``.
         sa: Address,
@@ -162,9 +167,11 @@ impl<const A: usize> Server<A> {
     ///
     /// ``UDSS_LLR_0032`` — creation supplies the association storage of
     /// ``UDSS_LLR_0059`` and the `tS3_Server`, `tP2_Server_Max` and `tP2*_Server_Max`
-    /// parameters of ``UDSS_LLR_0042``, which have no defaults. The storage is supplied
-    /// by value: ``UDSS_LLR_0004`` forbids allocation and the number of peers is a
-    /// property of the deployment, so the caller sizes it as `A` and hands it over.
+    /// parameters of ``UDSS_LLR_0042``, which have no defaults, with the response-pending
+    /// lead of ``UDSS_LLR_0186``. The lead's bounds are not checked here, so that this
+    /// stays infallible; [`ServerParams::is_well_formed`] states them. The storage is
+    /// supplied by value: ``UDSS_LLR_0004`` forbids allocation and the number of peers is
+    /// a property of the deployment, so the caller sizes it as `A` and hands it over.
     /// ``UDSS_LLR_0008`` is satisfied in both its branches at once — the caller supplies
     /// the storage, and it then lives in the instance. `A` is the capacity
     /// ``UDSS_LLR_0062`` rejects against.
@@ -179,6 +186,7 @@ impl<const A: usize> Server<A> {
     ///     s3_server: 5_000,
     ///     p2_server_max: 50,
     ///     p2_star_server_max: 5_000,
+    ///     response_pending_lead: 0,
     /// };
     /// let _mute = Server::<0>::new([], params);
     /// ```
@@ -196,7 +204,8 @@ impl<const A: usize> Server<A> {
     }
 
     /// ``UDSS_LLR_0081`` — act on every expiry the timestamp causes before the input.
-    /// Sweeps the previous input's unreported snapshots first.
+    /// Sweeps the previous input's unreported snapshots first. `tP2_Server` is read the
+    /// service's lead ahead of its expiry (``UDSS_LLR_0117``, ``UDSS_LLR_0186``).
     fn expire(&mut self, now: Timestamp) {
         self.s3_expiry = None;
         self.p2_expiry = None;
@@ -208,9 +217,10 @@ impl<const A: usize> Server<A> {
             self.session = Session::Default;
         }
         if let Some(service) = self.service.as_mut()
-            && service.p2.expired(now, Expiry::Reaches)
+            && service.p2.expired_by(now, service.lead, Expiry::Reaches)
         {
-            // UDSS_LLR_0117 — stop, and report the service and the parameter.
+            // UDSS_LLR_0117 — stop, and report the service and the parameter; 0186 is
+            // the lead, the timer itself still loaded with the whole window.
             self.p2_expiry = Some((service.peer, service.loaded));
             service.p2.stop();
         }
@@ -251,12 +261,8 @@ impl<const A: usize> Server<A> {
     }
 
     /// ``UDSS_LLR_0119`` — ⌈3 × `tP2*_Server_Max` / 10⌉ in integer arithmetic.
-    fn spacing(&self) -> u32 {
-        let p = self.params.p2_star_server_max;
-        let q = p / 10;
-        let r = p % 10;
-        q.saturating_mul(3)
-            .saturating_add(r.saturating_mul(3).saturating_add(9) / 10)
+    const fn spacing(&self) -> u32 {
+        self.params.response_pending_spacing()
     }
 
     /// Every cause ``UDSS_LLR_0016`` requires the report to state, over `&self`.
@@ -312,6 +318,9 @@ impl<const A: usize> Server<A> {
             ServerParameter::S3Server(v) => self.params.s3_server = v,
             ServerParameter::P2ServerMax(v) => self.params.p2_server_max = v,
             ServerParameter::P2StarServerMax(v) => self.params.p2_star_server_max = v,
+            ServerParameter::ResponsePendingLead(v) => {
+                self.params.response_pending_lead = v;
+            }
         }
         Reaction::new(self, [None, None], Ok(()))
     }
@@ -427,6 +436,7 @@ impl<const A: usize> Server<A> {
                     anchor: None,
                     p2,
                     loaded: ServerReload::P2,
+                    lead: self.params.response_pending_lead, // UDSS_LLR_0186
                 });
                 // UDSS_LLR_0087; UDSS_LLR_0097 and 0099 are the cases that fall through.
                 if self.is_controlling(from) {
@@ -496,6 +506,7 @@ impl<const A: usize> Server<A> {
                             s.anchor = Some(now);
                             s.p2.start(now, self.params.p2_star_server_max);
                             s.loaded = ServerReload::P2Star;
+                            s.lead = self.params.response_pending_lead; // 0186
                         }
                     } else {
                         self.service = None; // UDSS_LLR_0109
@@ -602,7 +613,8 @@ impl<const A: usize> Server<A> {
     /// ``UDSS_LLR_0010`` — a timestamp accompanies every other input "and also supplied
     /// on its own". This is that input; the standard names no primitive for it.
     /// ``UDSS_LLR_0079`` makes expiry evaluated only when a timestamp is supplied, so
-    /// this is how a timer that has run out is noticed when nothing else is happening.
+    /// this is how a timer that has run out is noticed when nothing else is happening —
+    /// `tP2_Server` the response-pending lead before it runs out (``UDSS_LLR_0186``).
     pub fn tick(&mut self, now: Timestamp) -> ServerReaction<'_, 'static, A> {
         self.expire(now);
         Reaction::new(self, [None, None], Ok(()))
@@ -613,14 +625,18 @@ impl<const A: usize> Server<A> {
     /// ``UDSS_LLR_0080`` — `None` where no timer is running. This is a query the caller
     /// reads for itself, not an output in ``UDSS_LLR_0011``'s sense, which is why it
     /// takes `&self` and produces no reaction. Without it a caller can only poll, which
-    /// rounds every timing decision to its tick period.
+    /// rounds every timing decision to its tick period. For `tP2_Server` it is the
+    /// instant ``UDSS_LLR_0117`` indicates the overrun, the response-pending lead of
+    /// ``UDSS_LLR_0186`` before the window closes.
     #[must_use]
     pub fn next_deadline(&self) -> Option<Timestamp> {
         let s3 = match self.session {
             Session::NonDefault { s3, .. } => s3.deadline(Expiry::Reaches),
             Session::Default => None,
         };
-        let p2 = self.service.and_then(|s| s.p2.deadline(Expiry::Reaches));
+        let p2 = self
+            .service
+            .and_then(|s| s.p2.deadline_by(s.lead, Expiry::Reaches));
         match (s3, p2) {
             (Some(a), Some(b)) => Some(earlier(a, b)),
             (a, b) => a.or(b),

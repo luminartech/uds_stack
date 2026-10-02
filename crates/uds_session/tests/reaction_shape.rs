@@ -6,6 +6,7 @@ const PARAMS: ServerParams = ServerParams {
     s3_server: 5_000,
     p2_server_max: 50,
     p2_star_server_max: 5_000,
+    response_pending_lead: 0,
 };
 
 /// ``UDSS_LLR_0011`` — outputs are drained by the caller, never pushed.
