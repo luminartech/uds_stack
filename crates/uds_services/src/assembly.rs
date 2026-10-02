@@ -253,6 +253,31 @@ macro_rules! __uds_sub_function {
     ($self:ident, $service:ident, $value:ident, $svc:ident) => {};
 }
 
+/// Figure 6's per-session sub-function check for one listed service
+/// (``UDSSVC_ARCH_0007`` row 4): an early `return` from the per-session closure
+/// `pipeline::begin` is handed, where `$service` is this one. The pipeline asks it only
+/// after `__uds_sub_function`'s closure accepted the sub-function, and settles 0x7E on a
+/// `false`; this routes the question to the application and decides nothing.
+/// `TesterPresent` emits nothing — its zero sub-function is its only one (clause 10.7)
+/// and Table 23 allows the service in every session — and neither does a service without
+/// a stage, so both reach the closure's fall-through `true`.
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __uds_sub_function_in_session {
+    (
+        $self:ident,
+        $service:ident,
+        $value:ident,
+        $active:ident,
+        DiagnosticSessionControl
+    ) => {
+        if ::core::matches!($service, $crate::UdsServiceType::DiagnosticSessionControl) {
+            return $crate::pipeline::session_supported_from($self, $value, $active);
+        }
+    };
+    ($self:ident, $service:ident, $value:ident, $active:ident, $svc:ident) => {};
+}
+
 /// One match arm per listed service, routing its decoded request to its stage. A listed
 /// service with no stage yet hits the wildcard, which emits nothing; the request then
 /// reaches the fall-through after every arm in `dispatch`, which settles 0x11. That is
@@ -305,6 +330,19 @@ macro_rules! __uds_stage {
 ///
 /// The emitted `dispatch` only routes: `pipeline::begin`, then the listed service's
 /// stage, then `pipeline::settle`. Every clause 8.7 decision is the pipeline's.
+///
+/// **Figure 6's sub-function questions are each service trait's pair** — a "supported
+/// ever" lookup and a "supported in the active session" lookup, each typed in that
+/// service's own sub-function (``UDSSVC_ARCH_0007`` rows 2 and 4). `dispatch` hands both
+/// to `pipeline::begin` as closures that route to the listed service's trait, and the
+/// pipeline decides 0x12 versus 0x7E. Today the pair is [`supports`] and
+/// [`supported_from`] on `DiagnosticSessionControl`; `TesterPresent` has none, because
+/// its only sub-function is available everywhere. Each other sub-function-bearing service
+/// (`EcuReset`, `CommunicationControl`, `ControlDtcSetting`, `SecurityAccess`, …) gains
+/// the same pair, in its own sub-function type, when its stage lands.
+///
+/// [`supports`]: crate::DiagnosticSessionControl::supports
+/// [`supported_from`]: crate::DiagnosticSessionControl::supported_from
 ///
 /// **Milestone-1 limit:** only `ReadDataByIdentifier`, `DiagnosticSessionControl` and
 /// `TesterPresent` have stages. Any other listed service is accepted by the list (so it
@@ -512,11 +550,24 @@ macro_rules! uds_server {
                         $( $crate::__uds_sub_function!(self, service, value, $svc); )+
                         true
                     };
+                    // Unused likewise in an assembly without `DiagnosticSessionControl`,
+                    // whose `begin` never reaches it: the service is then unsupported at
+                    // Figure 5 and its request never enters Figure 6.
+                    #[allow(unused_variables, reason = "used only by some assemblies")]
+                    let in_session = |service: $crate::UdsServiceType,
+                                      value: u8,
+                                      active: $crate::DiagnosticSessionType| {
+                        $( $crate::__uds_sub_function_in_session!(
+                            self, service, value, active, $svc
+                        ); )+
+                        true
+                    };
                     let (sid, decoded) = match $crate::pipeline::begin(
                         state,
                         request,
                         |s| <Self as $crate::ServiceSet>::supports(self, s),
                         sub_function,
+                        in_session,
                     ) {
                         $crate::pipeline::Stage::Empty => {
                             return $crate::Responded::Suppressed { session: None };

@@ -68,12 +68,17 @@ pub enum Stage<'a> {
 ///    does not name, settles `serviceNotSupported` (0x11).
 /// 3. Supported in the active session? Table 23's refusals settle
 ///    `serviceNotSupportedInActiveSession` (0x7F).
-/// 4. For a service with a sub-function, other than 0x31, Figure 6's sub-function check
-///    (``UDSSVC_ARCH_0007``): a sub-function `sub_function_supported` refuses settles
-///    `subFunctionNotSupported` (0x12). It reads the byte after the service identifier,
-///    with `suppressPosRspMsgIndicationBit` stripped, before any exact-length test, so a
-///    trailing byte cannot turn 0x12 into 0x13. A request with no such byte fails Figure
-///    6's minimum-length check, which the decode in 5 settles.
+/// 4. For a service with a sub-function, other than 0x31, Figure 6's sub-function checks
+///    (``UDSSVC_ARCH_0007``), in its order: a sub-function `sub_function_supported`
+///    refuses settles `subFunctionNotSupported` (0x12) (row 2); one it accepts but
+///    `supported_in_session` refuses for the active session settles
+///    `subFunctionNotSupportedInActiveSession` (0x7E) (row 4). Asking row 4 only after
+///    row 2 accepted is what keeps Annex A's rule that 0x7E is sent only for a
+///    sub-function supported in another session. Both read the byte after the service
+///    identifier, with `suppressPosRspMsgIndicationBit` stripped, before any exact-length
+///    test, so a trailing byte cannot turn 0x12 or 0x7E into 0x13. A request with no such
+///    byte fails Figure 6's minimum-length check, which the decode in 5 settles. Row 3,
+///    authentication (0x34), is unconditionally true, as in Figure 5.
 /// 5. Only then the service-specific check, where length and format live: a decode
 ///    failure settles `incorrectMessageLengthOrInvalidFormat` (0x13)
 ///    (``UDSSVC_ARCH_0005``).
@@ -87,15 +92,17 @@ pub enum Stage<'a> {
 /// precondition (0x33) joins with security state.
 #[doc(hidden)]
 #[must_use]
-pub fn begin<'a, F, G>(
+pub fn begin<'a, F, G, H>(
     state: &State,
     request: &'a [u8],
     supports: F,
     sub_function_supported: G,
+    supported_in_session: H,
 ) -> Stage<'a>
 where
     F: Fn(UdsServiceType) -> bool,
     G: Fn(UdsServiceType, u8) -> bool,
+    H: Fn(UdsServiceType, u8, DiagnosticSessionType) -> bool,
 {
     let Some((&sid, parameters)) = request.split_first() else {
         return Stage::Empty;
@@ -116,12 +123,20 @@ where
     }
     if enters_sub_function_stage(service)
         && let Some(&byte) = parameters.first()
-        && !sub_function_supported(service, byte & SUB_FUNCTION_VALUE)
     {
-        return Stage::Settle {
-            sid,
-            nrc: NegativeResponseCode::SubFunctionNotSupported,
-        };
+        let value = byte & SUB_FUNCTION_VALUE;
+        if !sub_function_supported(service, value) {
+            return Stage::Settle {
+                sid,
+                nrc: NegativeResponseCode::SubFunctionNotSupported,
+            };
+        }
+        if !supported_in_session(service, value, state.session()) {
+            return Stage::Settle {
+                sid,
+                nrc: NegativeResponseCode::SubFunctionNotSupportedInActiveSession,
+            };
+        }
     }
     match Request::decode(request) {
         // A service `uds_protocol` names but does not model has no stage either: 0x11,
@@ -156,11 +171,27 @@ const fn enters_sub_function_stage(service: UdsServiceType) -> bool {
 
 /// ISO 14229-1:2020 clause 10.2 — whether `DiagnosticSessionControl`'s sub-function
 /// `value` (suppress bit stripped) names a session the application supports.
-/// [`begin`]'s sub-function check for that service.
+/// [`begin`]'s "supported ever" check for that service (``UDSSVC_ARCH_0007`` row 2).
 #[doc(hidden)]
 #[must_use]
 pub fn session_supported<A: DiagnosticSessionControl>(services: &A, value: u8) -> bool {
     DiagnosticSessionType::try_from(value).is_ok_and(|session| services.supports(session))
+}
+
+/// ISO 14229-1:2020 clause 10.2 — whether the application lets the session
+/// `DiagnosticSessionControl`'s sub-function `value` (suppress bit stripped) names be
+/// entered from `active`. [`begin`]'s "supported in active session" check for that
+/// service (``UDSSVC_ARCH_0007`` row 4), asked only after [`session_supported`] accepted
+/// `value`.
+#[doc(hidden)]
+#[must_use]
+pub fn session_supported_from<A: DiagnosticSessionControl>(
+    services: &A,
+    value: u8,
+    active: DiagnosticSessionType,
+) -> bool {
+    DiagnosticSessionType::try_from(value)
+        .is_ok_and(|session| services.supported_from(session, active))
 }
 
 /// ISO 14229-1:2020 clause 10.7 — whether `TesterPresent`'s sub-function `value`
@@ -315,9 +346,10 @@ pub async fn read_data_by_identifier<A: ReadDataByIdentifier>(
 }
 
 /// ISO 14229-1:2020 clause 10.2 — `DiagnosticSessionControl`'s own stage
-/// (``UDSSVC_ARCH_0035``): an unsupported session is `subFunctionNotSupported` (0x12);
-/// otherwise the positive response carries the session and the application's timing,
-/// and the session is selected.
+/// (``UDSSVC_ARCH_0035``): the positive response carries the session and the
+/// application's timing, and the session is selected. Whether the session is supported
+/// at all (0x12) and from the active one (0x7E) was settled by [`begin`] before the
+/// request was decoded, so it is not asked again here.
 ///
 /// Table 29 fixes the timing's wire form, and [`SessionTiming`](crate::SessionTiming)'s
 /// milliseconds are converted to it here:
@@ -333,9 +365,6 @@ pub fn diagnostic_session_control<A: DiagnosticSessionControl>(
     out: &mut ResponseSink<'_>,
 ) -> Result<Option<DiagnosticSessionType>, NegativeResponseCode> {
     let session = request.session_type;
-    if !services.supports(session) {
-        return Err(NegativeResponseCode::SubFunctionNotSupported);
-    }
     let timing = services.timing(session);
     let p2 = u16::try_from(timing.p2_server_max).unwrap_or(u16::MAX);
     let p2_star = u16::try_from(timing.p2_star_server_max.div_ceil(10)).unwrap_or(u16::MAX);
@@ -370,8 +399,8 @@ pub fn tester_present<A: TesterPresent>(
 #[allow(clippy::panic, reason = "a test harness for futures that never pend")]
 mod tests {
     use super::{
-        Settling, Stage, allowed_in_session, begin, session_supported, settle, suppresses,
-        zero_sub_function,
+        Settling, Stage, allowed_in_session, begin, session_supported,
+        session_supported_from, settle, suppresses, zero_sub_function,
     };
     use crate::state::{ProtocolState, State};
     use crate::{Responded, ResponseSink};
@@ -431,7 +460,15 @@ mod tests {
     impl crate::DiagnosticSessionControl for Ecu {
         const MAX_RESPONSE_LEN: usize = 0;
         fn supports(&self, s: S) -> bool {
-            matches!(s, S::DefaultSession | S::ExtendedDiagnosticSession)
+            matches!(
+                s,
+                S::DefaultSession | S::ProgrammingSession | S::ExtendedDiagnosticSession
+            )
+        }
+        /// Programming is entered only from Extended; every other session from any.
+        fn supported_from(&self, s: S, active: S) -> bool {
+            !matches!(s, S::ProgrammingSession)
+                || matches!(active, S::ExtendedDiagnosticSession)
         }
         fn timing(&self, _s: S) -> crate::SessionTiming {
             crate::SessionTiming {
@@ -508,26 +545,14 @@ mod tests {
         assert_eq!(out.written_bytes(), &[0x50, 0x03, 0x00, 0x32, 0x01, 0xF4]);
     }
 
-    /// Clause 10.2 Figure 11 — an unsupported session is 0x12.
-    #[test]
-    fn dsc_refuses_an_unsupported_session() {
-        let mut buf = [0_u8; 8];
-        let mut out = ResponseSink::new(&mut buf, None);
-        let req = uds_protocol::DiagnosticSessionControlRequest::new(
-            false,
-            S::ProgrammingSession,
-        );
-        assert_eq!(
-            super::diagnostic_session_control(&mut Ecu, &req, &mut out),
-            Err(N::SubFunctionNotSupported)
-        );
-    }
-
     /// An application whose timing Table 29's wire form cannot carry exactly.
     struct Odd;
     impl crate::DiagnosticSessionControl for Odd {
         const MAX_RESPONSE_LEN: usize = 0;
         fn supports(&self, _s: S) -> bool {
+            true
+        }
+        fn supported_from(&self, _s: S, _active: S) -> bool {
             true
         }
         fn timing(&self, _s: S) -> crate::SessionTiming {
@@ -623,11 +648,28 @@ mod tests {
         }
     }
 
+    /// The per-session check `uds_server!` emits for the same assembly:
+    /// `DiagnosticSessionControl` asks the application; `TesterPresent`'s zero
+    /// sub-function is available in every session (clause 10.7; Table 23), so it falls
+    /// through.
+    fn ecu_in_session(service: U, value: u8, active: S) -> bool {
+        match service {
+            U::DiagnosticSessionControl => session_supported_from(&Ecu, value, active),
+            _ => true,
+        }
+    }
+
     /// ``UDSSVC_ARCH_0005`` — an empty request is the pipeline's, and is `Empty`.
     #[test]
     fn an_empty_request_is_empty() {
         assert!(matches!(
-            begin(&State::INITIAL, &[], supports_rdbi, ecu_sub_function),
+            begin(
+                &State::INITIAL,
+                &[],
+                supports_rdbi,
+                ecu_sub_function,
+                ecu_in_session
+            ),
             Stage::Empty
         ));
     }
@@ -640,6 +682,7 @@ mod tests {
             &[0x22, 0xF1],
             supports_rdbi,
             ecu_sub_function,
+            ecu_in_session,
         );
         assert!(matches!(
             st,
@@ -659,6 +702,7 @@ mod tests {
             &[0x3E, 0x00],
             supports_rdbi,
             ecu_sub_function,
+            ecu_in_session,
         );
         assert!(matches!(
             st,
@@ -672,6 +716,7 @@ mod tests {
             &[0xBA, 0x00],
             supports_rdbi,
             ecu_sub_function,
+            ecu_in_session,
         );
         assert!(matches!(
             st,
@@ -706,6 +751,7 @@ mod tests {
             &[0x27, 0x01],
             |s| matches!(s, U::SecurityAccess),
             ecu_sub_function,
+            ecu_in_session,
         );
         assert!(matches!(
             st,
@@ -721,7 +767,13 @@ mod tests {
     /// 0x13.
     #[test]
     fn a_malformed_request_for_an_unlisted_service_settles_0x11() {
-        let st = begin(&State::INITIAL, &[0x3E], supports_rdbi, ecu_sub_function);
+        let st = begin(
+            &State::INITIAL,
+            &[0x3E],
+            supports_rdbi,
+            ecu_sub_function,
+            ecu_in_session,
+        );
         assert!(matches!(
             st,
             Stage::Settle {
@@ -740,6 +792,7 @@ mod tests {
             &[0x27],
             |s| matches!(s, U::SecurityAccess),
             ecu_sub_function,
+            ecu_in_session,
         );
         assert!(matches!(
             st,
@@ -759,6 +812,7 @@ mod tests {
             &[0x3E],
             |s| matches!(s, U::TesterPresent),
             ecu_sub_function,
+            ecu_in_session,
         );
         assert!(matches!(
             st,
@@ -777,6 +831,7 @@ mod tests {
             &[0x22, 0xF1, 0x90],
             supports_rdbi,
             ecu_sub_function,
+            ecu_in_session,
         );
         assert!(matches!(st, Stage::Proceed { sid: 0x22, .. }));
     }
@@ -798,9 +853,15 @@ mod tests {
             (&[0x3E, 0x05, 0x00][..], 0x3E),
             (&[0x3E, 0x85, 0x00][..], 0x3E),
             (&[0x10, 0x05, 0x00][..], 0x10),
-            (&[0x10, 0x02, 0x00][..], 0x10),
+            (&[0x10, 0x04, 0x00][..], 0x10),
         ] {
-            let st = begin(&State::INITIAL, request, supports_ecu, ecu_sub_function);
+            let st = begin(
+                &State::INITIAL,
+                request,
+                supports_ecu,
+                ecu_sub_function,
+                ecu_in_session,
+            );
             assert!(
                 matches!(
                     st,
@@ -816,7 +877,13 @@ mod tests {
     #[test]
     fn a_supported_sub_function_with_a_trailing_byte_settles_0x13() {
         for request in [&[0x3E, 0x80, 0x00][..], &[0x10, 0x03, 0x00][..]] {
-            let st = begin(&State::INITIAL, request, supports_ecu, ecu_sub_function);
+            let st = begin(
+                &State::INITIAL,
+                request,
+                supports_ecu,
+                ecu_sub_function,
+                ecu_in_session,
+            );
             assert!(
                 matches!(
                     st,
@@ -834,7 +901,13 @@ mod tests {
     #[test]
     fn a_good_sub_function_request_proceeds() {
         for request in [&[0x3E, 0x00][..], &[0x3E, 0x80][..], &[0x10, 0x03][..]] {
-            let st = begin(&State::INITIAL, request, supports_ecu, ecu_sub_function);
+            let st = begin(
+                &State::INITIAL,
+                request,
+                supports_ecu,
+                ecu_sub_function,
+                ecu_in_session,
+            );
             assert!(
                 matches!(st, Stage::Proceed { .. }),
                 "{request:02X?}: {st:?}"
@@ -852,6 +925,7 @@ mod tests {
             &[0x22, 0xF1, 0x90, 0x00],
             supports_ecu,
             |_, _| false,
+            |_, _, _| false,
         );
         assert!(matches!(
             st,
@@ -871,6 +945,7 @@ mod tests {
             &[0x31, 0x01, 0xFF, 0x00],
             |s| matches!(s, U::RoutineControl),
             |_, _| false,
+            |_, _, _| false,
         );
         assert!(!matches!(
             st,
@@ -879,6 +954,157 @@ mod tests {
                 ..
             }
         ));
+    }
+
+    fn in_session(session: S) -> State {
+        let mut state = State::INITIAL;
+        state.set_session(session);
+        state
+    }
+
+    /// ``UDSSVC_ARCH_0007`` row 2 — a session the application never supports is 0x12,
+    /// and row 4 is not reached: a check refusing every session-from pair does not turn
+    /// it into 0x7E.
+    #[test]
+    fn a_session_never_supported_settles_0x12() {
+        let st = begin(
+            &State::INITIAL,
+            &[0x10, 0x04],
+            supports_ecu,
+            ecu_sub_function,
+            |_, _, _| false,
+        );
+        assert!(
+            matches!(
+                st,
+                Stage::Settle {
+                    sid: 0x10,
+                    nrc: N::SubFunctionNotSupported
+                }
+            ),
+            "{st:?}"
+        );
+    }
+
+    /// ``UDSSVC_ARCH_0007`` row 4 — a session supported, but not from the active one,
+    /// is 0x7E (Figure 6; Annex A), with or without the suppress bit, and before the
+    /// exact-length test, so a trailing byte does not turn it into 0x13.
+    #[test]
+    fn a_session_not_supported_from_the_active_one_settles_0x7e() {
+        for request in [
+            &[0x10, 0x02][..],
+            &[0x10, 0x82][..],
+            &[0x10, 0x02, 0x00][..],
+        ] {
+            let st = begin(
+                &State::INITIAL,
+                request,
+                supports_ecu,
+                ecu_sub_function,
+                ecu_in_session,
+            );
+            assert!(
+                matches!(
+                    st,
+                    Stage::Settle {
+                        sid: 0x10,
+                        nrc: N::SubFunctionNotSupportedInActiveSession
+                    }
+                ),
+                "{request:02X?}: {st:?}"
+            );
+        }
+    }
+
+    /// ``UDSSVC_ARCH_0007`` rows 2 and 4 both pass: the same `10 02` proceeds from the
+    /// session the application allows it from, and the active session is the one read.
+    #[test]
+    fn a_session_supported_from_the_active_one_proceeds() {
+        let st = begin(
+            &in_session(S::ExtendedDiagnosticSession),
+            &[0x10, 0x02],
+            supports_ecu,
+            ecu_sub_function,
+            ecu_in_session,
+        );
+        assert!(matches!(st, Stage::Proceed { sid: 0x10, .. }), "{st:?}");
+        let st = begin(
+            &in_session(S::ProgrammingSession),
+            &[0x10, 0x02],
+            supports_ecu,
+            ecu_sub_function,
+            ecu_in_session,
+        );
+        assert!(
+            matches!(
+                st,
+                Stage::Settle {
+                    nrc: N::SubFunctionNotSupportedInActiveSession,
+                    ..
+                }
+            ),
+            "{st:?}"
+        );
+    }
+
+    /// Annex A — 0x7E "shall only be used when the requested `SubFunction` is known to be
+    /// supported in another session, otherwise 0x12 shall be used". A reserved session
+    /// byte is 0x12 even where the per-session check would refuse it.
+    #[test]
+    fn a_reserved_session_byte_settles_0x12_not_0x7e() {
+        for byte in [0x00, 0x05, 0x7F] {
+            let request = [0x10, byte];
+            let st = begin(
+                &in_session(S::ExtendedDiagnosticSession),
+                &request,
+                supports_ecu,
+                ecu_sub_function,
+                |_, _, _| false,
+            );
+            assert!(
+                matches!(
+                    st,
+                    Stage::Settle {
+                        sid: 0x10,
+                        nrc: N::SubFunctionNotSupported
+                    }
+                ),
+                "10 {byte:02X}: {st:?}"
+            );
+        }
+    }
+
+    /// `TesterPresent`'s zero sub-function proceeds in every session: clause 10.7 makes it
+    /// the service's only one and Table 23 allows the service in every session, so row 4
+    /// has nothing to refuse.
+    #[test]
+    fn tester_present_is_supported_in_every_session() {
+        for session in [S::DefaultSession, S::ExtendedDiagnosticSession] {
+            let st = begin(
+                &in_session(session),
+                &[0x3E, 0x00],
+                supports_ecu,
+                ecu_sub_function,
+                ecu_in_session,
+            );
+            assert!(matches!(st, Stage::Proceed { sid: 0x3E, .. }), "{st:?}");
+        }
+    }
+
+    /// ``UDSSVC_ARCH_0009`` rule 1 — a 0x7E settled for a functionally addressed request
+    /// is silenced; physically addressed it is written `7F 10 7E`.
+    #[test]
+    fn a_functional_0x7e_is_silenced() {
+        let mut buf = [0_u8; 8];
+        let mut out = ResponseSink::new(&mut buf, None);
+        let no = AtomicBool::new(false);
+        let code = N::SubFunctionNotSupportedInActiveSession;
+        let r = settle(ai(TaType::Functional), sid(0x10), &no, Err(code), &mut out);
+        assert_eq!(r, Responded::Suppressed { session: None });
+        assert_eq!(out.written_bytes(), &[0_u8; 0]);
+        let r = settle(ai(TaType::Physical), sid(0x10), &no, Err(code), &mut out);
+        assert_eq!(r, Responded::Yes { session: None });
+        assert_eq!(out.written_bytes(), &[0x7F, 0x10, 0x7E]);
     }
 
     /// ``UDSSVC_ARCH_0009`` rule 1 — clause 8.7.5 silences exactly five negative
