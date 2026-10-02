@@ -427,7 +427,7 @@ mod tests {
         // SID 0x2E, DID 0xF190, one data byte 0x01
         let wire = [0x2E, 0xF1, 0x90, 0x01];
         let (req, rest) = Request::decode(&wire).unwrap();
-        assert!(rest.is_empty());
+        assert_eq!(rest, [0u8; 0]);
         assert!(matches!(req, Request::WriteDataByIdentifier(_)));
         let mut buf = [0u8; 8];
         let written =
@@ -441,7 +441,7 @@ mod tests {
         // SID 0x31, sub 0x81 (StartRoutine + SPRMIB), RID 0xFF00, param 0xAA
         let wire = [0x31, 0x81, 0xFF, 0x00, 0xAA];
         let (req, rest) = Request::decode(&wire).unwrap();
-        assert!(rest.is_empty());
+        assert_eq!(rest, [0u8; 0]);
         assert_eq!(req.is_positive_response_suppressed(), Some(true));
         let mut buf = [0u8; 8];
         let written =
@@ -630,7 +630,7 @@ mod tests {
         // table for it. An empty slice says "unknown", not "none apply".
         let (req, _) = Request::decode(&[0x23, 0xAA]).unwrap();
         assert!(matches!(req, Request::Other { .. }));
-        assert!(req.allowed_nack_codes().is_empty());
+        assert_eq!(req.allowed_nack_codes(), []);
     }
 
     #[test]
@@ -638,7 +638,7 @@ mod tests {
         // 0x23 = ReadMemoryByAddress, enumerated but not modeled.
         let frame = [0x23, 0xAA, 0xBB];
         let (req, rest) = Request::decode(&frame).unwrap();
-        assert!(rest.is_empty());
+        assert_eq!(rest, [0u8; 0]);
         match req {
             Request::Other { sid, data } => {
                 assert_eq!(sid, 0x23);
@@ -658,7 +658,7 @@ mod tests {
         // 0x40 is not in the ISO request table; it must survive a decode→encode round-trip.
         let frame = [0x40, 0xAA, 0xBB];
         let (req, rest) = Request::decode(&frame).unwrap();
-        assert!(rest.is_empty());
+        assert_eq!(rest, [0u8; 0]);
         match req {
             Request::Other { sid, data } => {
                 assert_eq!(sid, 0x40);

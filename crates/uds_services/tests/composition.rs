@@ -1,9 +1,9 @@
 //! Does the design fit together?
 //!
-//! Every body in this crate is `todo!()`, so nothing here calls one. What is proven is
-//! composition: that an application can implement the traits, that `uds_server!` folds its
-//! declared maxima into buffer lengths, and that the result constructs in a `static`
-//! without a stack temporary.
+//! What is proven is composition: that an application can implement the traits, that
+//! `uds_server!` folds its declared maxima into buffer lengths, that the result
+//! constructs in a `static` without a stack temporary and can be stepped there, and that
+//! the `dispatch` it emits routes a request through the pipeline.
 
 #![allow(
     clippy::unused_async_trait_impl,
@@ -12,16 +12,19 @@
               in test code"
 )]
 
+use static_cell::ConstStaticCell;
 use uds_protocol::NegativeResponseCode as Nrc;
+use uds_services::pipeline::settle;
 use uds_services::{
     Address, Ai, Answer, ClearDiagnosticInformation, ClientSet, ClientStorage,
     CommunicationControl, CommunicationControlType, CommunicationType, DataIdentifier,
-    DataTransfer, DtcReportKind, DtcStatusMask, FunctionalGroupIdentifier, KeyVerdict,
-    Mtype, PhysicalKeepAlive, ReadDataByIdentifier, ReadDtcInfoSubFunction,
-    ReadDtcInformation, RecordError, Reloads, Response, ResponseSink, SecurityAccess,
-    SecurityLevel, SecurityPolicy, ServerParams, ServiceSet, Sink, Storage, SubnetNumber,
-    TaType, TesterPresent, Timestamp, TransferRequest, TransportEvent, UdsServiceType,
-    UdsTransport, uds_client, uds_server,
+    DataTransfer, DiagnosticSessionType, DtcReportKind, DtcStatusMask,
+    FunctionalGroupIdentifier, KeyVerdict, Mtype, PhysicalKeepAlive, ReadDataByIdentifier,
+    ReadDtcInfoSubFunction, ReadDtcInformation, RecordError, Reloads, Response,
+    ResponseSink, SecurityAccess, SecurityLevel, SecurityPolicy, ServerParams, ServiceSet,
+    SessionTiming, SessionTransition, Sink, Storage, SubnetNumber, TaType, TesterPresent,
+    Timestamp, TransferRequest, TransportEvent, UdsServiceType, UdsTransport, uds_client,
+    uds_server,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -198,6 +201,33 @@ impl SecurityAccess for Ecu {
     }
 }
 
+// Named by path: `ServiceSet` is in scope, and both traits have a `supports`.
+impl uds_services::DiagnosticSessionControl for Ecu {
+    const MAX_RESPONSE_LEN: usize = 0;
+    fn supports(&self, session: DiagnosticSessionType) -> bool {
+        matches!(
+            session,
+            DiagnosticSessionType::DefaultSession
+                | DiagnosticSessionType::ProgrammingSession
+                | DiagnosticSessionType::ExtendedDiagnosticSession
+        )
+    }
+    fn supported_from(
+        &self,
+        _session: DiagnosticSessionType,
+        _active: DiagnosticSessionType,
+    ) -> bool {
+        true
+    }
+    fn timing(&self, _s: DiagnosticSessionType) -> SessionTiming {
+        SessionTiming {
+            p2_server_max: 50,
+            p2_star_server_max: 5_000,
+        }
+    }
+    fn on_transition(&mut self, _t: SessionTransition, _relocked: bool) {}
+}
+
 #[derive(Debug)]
 struct FakeTransport;
 
@@ -229,9 +259,10 @@ impl UdsTransport for FakeTransport {
 
 uds_server! {
     Ecu: ReadDataByIdentifier, SecurityAccess, DataTransfer, ReadDtcInformation,
-         ClearDiagnosticInformation, CommunicationControl, TesterPresent;
+         ClearDiagnosticInformation, CommunicationControl, TesterPresent,
+         DiagnosticSessionControl;
     transport = FakeTransport,
-    peers = 4,
+    peers = 1,
     server = EcuServer,
 }
 
@@ -239,11 +270,19 @@ const PARAMS: ServerParams = ServerParams {
     s3_server: 5_000,
     p2_server_max: 50,
     p2_star_server_max: 5_000,
+    response_pending_lead: 0,
 };
 
 /// The construction that matters: a multi-kilobyte server in a `static`, built in place
 /// with no stack temporary. This is what `Storage::EMPTY` being an associated const buys.
-static SERVER: EcuServer = EcuServer::new(Ecu::new(), FakeTransport, PARAMS);
+/// The cell is what makes it steppable: it hands out the one `&'static mut` that
+/// `Server::step` needs, where a plain `static` would be read-only.
+static SERVER: ConstStaticCell<EcuServer> = ConstStaticCell::new(EcuServer::new(
+    Ecu::new(),
+    FakeTransport,
+    Address(0x0E00),
+    PARAMS,
+));
 
 /// The in-flight buffer is dominated by `TransferData` — the same constant the server
 /// must advertise as `maxNumberOfBlockLength`. The response buffer is dominated by a
@@ -332,10 +371,15 @@ fn the_tester_present_exception_is_admitted_only_when_functionally_addressed() {
     assert!(!ecu.is_concurrent_exception(&[0x22, 0xF1, 0x90], ai(TaType::Functional)));
 }
 
-/// Referencing the static is what forces the const evaluation to run.
+/// The in-place server is usable, not only constructible: the cell yields the
+/// `&'static mut`, and one `step` through it completes (the fake reports a deadline,
+/// which the driver ticks).
 #[test]
-fn the_server_constructs_in_a_static() {
-    assert!(!core::ptr::addr_of!(SERVER).is_null());
+fn the_server_in_a_static_can_be_stepped() {
+    let server: &'static mut EcuServer = SERVER.take();
+    let mut step = core::pin::pin!(server.step());
+    let mut cx = core::task::Context::from_waker(core::task::Waker::noop());
+    assert_eq!(step.as_mut().poll(&mut cx), core::task::Poll::Ready(Ok(())));
 }
 
 /// The handler seam speaks `uds_protocol`'s vocabulary, so a sub-function is a named
@@ -481,4 +525,67 @@ async fn read_the_vin_from_every_server(tester: &mut Tester) -> Result<(), ()> {
         }
     }
     Ok(())
+}
+
+#[allow(clippy::panic, reason = "a test harness for futures that never pend")]
+fn block_on<F: core::future::Future>(f: F) -> F::Output {
+    let waker = core::task::Waker::noop();
+    let mut cx = core::task::Context::from_waker(waker);
+    let mut f = core::pin::pin!(f);
+    match f.as_mut().poll(&mut cx) {
+        core::task::Poll::Ready(v) => v,
+        core::task::Poll::Pending => panic!("milestone-1 handlers never pend"),
+    }
+}
+
+/// ``UDSSVC_ARCH_0004`` through the assembled entry point: a read answers positively.
+#[test]
+fn the_assembled_dispatch_answers_a_read() {
+    let mut ecu = Ecu::new();
+    let mut state = <<Ecu as ServiceSet>::State as uds_services::ProtocolState>::INITIAL;
+    let mut buf = [0_u8; 32];
+    let mut out = ResponseSink::new(&mut buf, None);
+    let ai = Ai {
+        mtype: Mtype::Diag,
+        sa: Address(0x0E80),
+        ta: Address(0x10),
+        ta_type: TaType::Physical,
+    };
+    let unsettled = block_on(ecu.dispatch(&mut state, ai, &[0x22, 0xF4, 0x0D], &mut out));
+    let r = settle(ai, unsettled, false, &mut out);
+    assert_eq!(r, uds_services::Responded::Yes { session: None });
+    assert_eq!(out.written_bytes(), &[0x62, 0xF4, 0x0D, 0x40]);
+}
+
+/// A listed service whose stage is not yet written, and an unlisted one, both settle
+/// 0x11 — physically; functionally they are silenced (``UDSSVC_ARCH_0009`` rule 1).
+#[test]
+fn unsupported_services_settle_0x11_or_silence() {
+    let mut ecu = Ecu::new();
+    let mut state = <<Ecu as ServiceSet>::State as uds_services::ProtocolState>::INITIAL;
+    let mut buf = [0_u8; 32];
+    let mut out = ResponseSink::new(&mut buf, None);
+    let phys = Ai {
+        mtype: Mtype::Diag,
+        sa: Address(0x0E80),
+        ta: Address(0x10),
+        ta_type: TaType::Physical,
+    };
+    let unsettled = block_on(ecu.dispatch(&mut state, phys, &[0x11, 0x01], &mut out));
+    let r = settle(phys, unsettled, false, &mut out);
+    assert_eq!(r, uds_services::Responded::Yes { session: None });
+    assert_eq!(out.written_bytes(), &[0x7F, 0x11, 0x11]);
+    // Listed, so `begin` passes it; no stage, so the fall-through settles it.
+    let request = [0x14, 0xFF, 0xFF, 0xFF];
+    let unsettled = block_on(ecu.dispatch(&mut state, phys, &request, &mut out));
+    let r = settle(phys, unsettled, false, &mut out);
+    assert_eq!(r, uds_services::Responded::Yes { session: None });
+    assert_eq!(out.written_bytes(), &[0x7F, 0x14, 0x11]);
+    let func = Ai {
+        ta_type: TaType::Functional,
+        ..phys
+    };
+    let unsettled = block_on(ecu.dispatch(&mut state, func, &[0x11, 0x01], &mut out));
+    let r = settle(func, unsettled, false, &mut out);
+    assert_eq!(r, uds_services::Responded::Suppressed { session: None });
 }

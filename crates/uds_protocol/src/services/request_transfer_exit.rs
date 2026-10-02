@@ -107,7 +107,7 @@ mod tests {
             assert_eq!(&buf[..n], rec);
             let (d, rest) =
                 <RequestTransferExitRequest as Decode>::decode(&buf[..n]).unwrap();
-            assert!(rest.is_empty());
+            assert_eq!(rest, [0u8; 0]);
             assert_eq!(d.parameter_record, rec);
             assert_encode_size_agrees(&req);
         }

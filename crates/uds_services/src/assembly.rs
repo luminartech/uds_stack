@@ -216,6 +216,95 @@ macro_rules! __uds_may_pend {
     };
 }
 
+/// Emits the body of the two session hooks: a call to `on_transition` where the
+/// assembly lists `DiagnosticSessionControl`, nothing otherwise. Used once per listed
+/// service, so the call appears at most once.
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __uds_session_hook {
+    ($self:ident, $transition:expr, DiagnosticSessionControl) => {
+        <Self as $crate::DiagnosticSessionControl>::on_transition(
+            $self,
+            $transition,
+            false,
+        );
+    };
+    ($self:ident, $transition:expr, $svc:ident) => {};
+}
+
+/// Figure 6's sub-function check for one listed service (``UDSSVC_ARCH_0007``): an early
+/// `return` from the closure `pipeline::begin` is handed, where `$service` is this one.
+/// Only a service with a stage decides its sub-function; any other listed service emits
+/// nothing, and the closure's fall-through `true` passes the request on to the decode
+/// and to the 0x11 its missing stage settles.
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __uds_sub_function {
+    ($self:ident, $service:ident, $value:ident, DiagnosticSessionControl) => {
+        if ::core::matches!($service, $crate::UdsServiceType::DiagnosticSessionControl) {
+            return $crate::pipeline::session_supported($self, $value);
+        }
+    };
+    ($self:ident, $service:ident, $value:ident, TesterPresent) => {
+        if ::core::matches!($service, $crate::UdsServiceType::TesterPresent) {
+            return $crate::pipeline::zero_sub_function($value);
+        }
+    };
+    ($self:ident, $service:ident, $value:ident, $svc:ident) => {};
+}
+
+/// Figure 6's per-session sub-function check for one listed service
+/// (``UDSSVC_ARCH_0007`` row 4): an early `return` from the per-session closure
+/// `pipeline::begin` is handed, where `$service` is this one. The pipeline asks it only
+/// after `__uds_sub_function`'s closure accepted the sub-function, and settles 0x7E on a
+/// `false`; this routes the question to the application and decides nothing.
+/// `TesterPresent` emits nothing — its zero sub-function is its only one (clause 10.7)
+/// and Table 23 allows the service in every session — and neither does a service without
+/// a stage, so both reach the closure's fall-through `true`.
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __uds_sub_function_in_session {
+    (
+        $self:ident,
+        $service:ident,
+        $value:ident,
+        $active:ident,
+        DiagnosticSessionControl
+    ) => {
+        if ::core::matches!($service, $crate::UdsServiceType::DiagnosticSessionControl) {
+            return $crate::pipeline::session_supported_from($self, $value, $active);
+        }
+    };
+    ($self:ident, $service:ident, $value:ident, $active:ident, $svc:ident) => {};
+}
+
+/// One match arm per listed service, routing its decoded request to its stage. A listed
+/// service with no stage yet hits the wildcard, which emits nothing; the request then
+/// reaches the fall-through after every arm in `dispatch`, an outcome of 0x11 that the
+/// driver settles. That is the milestone-1 limit, and it makes "listed but unimplemented"
+/// visible on the wire rather than a panic. The RDBI stage awaits (its handler does); the
+/// other two are plain calls.
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __uds_stage {
+    ($self:ident, $out:ident, $req:ident, ReadDataByIdentifier) => {
+        if let $crate::Request::ReadDataByIdentifier(ref r) = $req {
+            return $crate::pipeline::read_data_by_identifier($self, r, $out).await;
+        }
+    };
+    ($self:ident, $out:ident, $req:ident, DiagnosticSessionControl) => {
+        if let $crate::Request::DiagnosticSessionControl(ref r) = $req {
+            return $crate::pipeline::diagnostic_session_control($self, r, $out);
+        }
+    };
+    ($self:ident, $out:ident, $req:ident, TesterPresent) => {
+        if let $crate::Request::TesterPresent(_) = $req {
+            return $crate::pipeline::tester_present($self, $out);
+        }
+    };
+    ($self:ident, $out:ident, $req:ident, $svc:ident) => {};
+}
+
 /// Assemble a server from the services it implements.
 ///
 /// ``UDSSVC_ARCH_0013``, ``UDSSVC_ARCH_0035``.
@@ -227,6 +316,42 @@ macro_rules! __uds_may_pend {
 /// `peers = N` sizes the association array of the `uds_session::Server<N>` the driver
 /// owns, and `server = Name` is the alias it is reached through — the macro emits
 /// `type Name = Server<Ecu, Transport, N>`, so the count is written once, where it acts.
+///
+/// **Milestone 1 accepts `peers = 1` only**, and any other count fails to compile. The
+/// driver keeps one slot for a `DiagnosticSessionControl` response awaiting its
+/// confirmation, and with a second tester that tester's selecting response could
+/// overwrite the slot while the first is still unconfirmed, so the first session would
+/// never be applied. With no peer at all, no response could ever be sent.
+///
+/// The assembly also fails to compile where the response buffer, or the transport's
+/// [`MAX_PDU`](crate::UdsTransport::MAX_PDU), is shorter than
+/// [`ResponseSink::MIN_BOUND`](crate::ResponseSink::MIN_BOUND), because a negative
+/// response would then not fit.
+///
+/// The emitted `dispatch` only routes: `pipeline::begin`, then the listed service's
+/// stage, and it returns what they left as an [`Unsettled`](crate::Unsettled). It calls
+/// `pipeline::settle` nowhere; the driver does, once the handler has finished
+/// (``UDSSVC_ARCH_0016``). Every clause 8.7 decision is the pipeline's.
+///
+/// **Figure 6's sub-function questions are each service trait's pair** — a "supported
+/// ever" lookup and a "supported in the active session" lookup, each typed in that
+/// service's own sub-function (``UDSSVC_ARCH_0007`` rows 2 and 4). `dispatch` hands both
+/// to `pipeline::begin` as closures that route to the listed service's trait, and the
+/// pipeline decides 0x12 versus 0x7E. Today the pair is [`supports`] and
+/// [`supported_from`] on `DiagnosticSessionControl`; `TesterPresent` has none, because
+/// its only sub-function is available everywhere. Each other sub-function-bearing service
+/// (`EcuReset`, `CommunicationControl`, `ControlDtcSetting`, `SecurityAccess`, …) gains
+/// the same pair, in its own sub-function type, when its stage lands.
+///
+/// [`supports`]: crate::DiagnosticSessionControl::supports
+/// [`supported_from`]: crate::DiagnosticSessionControl::supported_from
+///
+/// **Milestone-1 limit:** only `ReadDataByIdentifier`, `DiagnosticSessionControl` and
+/// `TesterPresent` have stages. Any other listed service is accepted by the list (so it
+/// is not refused by the support check) but has no stage to run. One that carries a
+/// `SubFunction` passes the support check's row 2 and reaches the decode, then settles
+/// `serviceNotSupported` (0x11), or `incorrectMessageLengthOrInvalidFormat` (0x13) if
+/// the request does not decode — visible on the wire rather than a panic.
 ///
 /// The syntax is `Ecu: ..; transport = T, ..` rather than `Ecu over T: ..` because
 /// `$ty:ty` cannot be followed by a bare identifier — the legal followers are
@@ -245,11 +370,12 @@ macro_rules! __uds_may_pend {
 ///
 /// ```
 /// # use uds_services::{
-/// #     Ai, DataIdentifier, DataTransfer, ReadDataByIdentifier, RecordError, Reloads,
-/// #     ResponseSink, ServerParams, ServiceSet, Storage, Timestamp, TransferRequest,
-/// #     TransportEvent, UdsTransport, uds_server,
+/// #     Address, Ai, DataIdentifier, DataTransfer, ReadDataByIdentifier, RecordError,
+/// #     Reloads, ResponseSink, ServerParams, ServiceSet, Storage, Timestamp,
+/// #     TransferRequest, TransportEvent, UdsTransport, uds_server,
 /// # };
 /// # use uds_protocol::NegativeResponseCode as Nrc;
+/// use static_cell::ConstStaticCell;
 /// #
 /// # #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 /// # enum Did { VehicleSpeed, VinNumber }
@@ -329,22 +455,34 @@ macro_rules! __uds_may_pend {
 /// #     s3_server: 5_000,
 /// #     p2_server_max: 50,
 /// #     p2_star_server_max: 5_000,
+/// #     response_pending_lead: 0,
 /// # };
 /// uds_server! {
 ///     Ecu: ReadDataByIdentifier, DataTransfer;
 ///     transport = DoIpTransport,
-///     peers = 4,
+///     peers = 1,
 ///     server = EcuServer,
 /// }
 ///
-/// // Constructed in place: no stack temporary holds the buffers on the way in.
-/// static SERVER: EcuServer = EcuServer::new(Ecu::new(), DoIpTransport, PARAMS);
+/// // Constructed in place: no stack temporary holds the buffers on the way in. The cell
+/// // hands out the `&'static mut` that `step` needs, once.
+/// static SERVER: ConstStaticCell<EcuServer> = ConstStaticCell::new(EcuServer::new(
+///     Ecu::new(),
+///     DoIpTransport,
+///     Address(0x0E00),
+///     PARAMS,
+/// ));
+///
+/// let server: &'static mut EcuServer = SERVER.take();
+/// // One step, polled by hand here; an executor's task would `server.run().await`.
+/// let mut step = core::pin::pin!(server.step());
+/// let mut cx = core::task::Context::from_waker(core::task::Waker::noop());
+/// assert!(step.as_mut().poll(&mut cx).is_ready());
 ///
 /// let mut store = <<Ecu as ServiceSet>::Store as Storage>::EMPTY;
 /// let buffers = store.split();
 /// assert_eq!(buffers.in_flight.len(), 1_026);
 /// assert_eq!(buffers.response.len(), 77);
-/// # let _ = &SERVER;
 /// ```
 #[macro_export]
 macro_rules! uds_server {
@@ -376,31 +514,105 @@ macro_rules! uds_server {
             // busyRepeatRequest from its service identifier alone -- so this buffer need
             // only be wide enough to read that identifier and reject what follows.
             const CONCURRENT: usize = 8;
+            // A negative response always fits only if the buffer under the sink holds
+            // one; `ResponseSink::new` can raise its bound to the floor but not past the
+            // buffer.
+            const _: () = ::core::assert!(
+                <$transport as $crate::UdsTransport>::MAX_PDU
+                    >= $crate::ResponseSink::MIN_BOUND,
+                "the transport's MAX_PDU cannot carry a negative response",
+            );
+            const _: () = ::core::assert!(
+                RESPONSE >= $crate::ResponseSink::MIN_BOUND,
+                "the response buffer cannot hold a negative response",
+            );
+            // Milestone 1 keeps one slot for a selecting response awaiting confirmation,
+            // so a second peer could overwrite it; zero peers can never answer.
+            const _: () = ::core::assert!(
+                { $peers } == 1,
+                "milestone 1 supports `peers = 1` only",
+            );
 
             impl $crate::sealed::Sealed for $ty {}
 
             impl $crate::ServiceSet for $ty {
                 type Store = $crate::Store<IN_FLIGHT, CONCURRENT, RESPONSE>;
 
+                type State = $crate::State;
+
                 async fn dispatch(
                     &mut self,
+                    state: &mut Self::State,
+                    // The driver settles, and it is `settle` that reads the addressing.
+                    _ai: $crate::Ai,
                     request: &[u8],
                     out: &mut $crate::ResponseSink<'_>,
-                ) -> ::core::result::Result<
-                    $crate::Responded,
-                    ::uds_protocol::NegativeResponseCode,
-                > {
-                    #[allow(
-                        clippy::todo,
-                        reason = "API stub; behaviour lands with its element"
-                    )]
-                    {
-                        todo!(
-                            "UDSSVC_ARCH_0004 pipeline: {} bytes, {} written",
-                            request.len(),
-                            out.written()
+                ) -> $crate::Unsettled {
+                    // Unused in an assembly listing neither service that decides a
+                    // sub-function, where every arm of the helper expands to nothing.
+                    #[allow(unused_variables, reason = "used only by some assemblies")]
+                    let sub_function = |service: $crate::UdsServiceType, value: u8| {
+                        $( $crate::__uds_sub_function!(self, service, value, $svc); )+
+                        true
+                    };
+                    // Unused likewise in an assembly without `DiagnosticSessionControl`,
+                    // whose `begin` never reaches it: the service is then unsupported at
+                    // Figure 5 and its request never enters Figure 6.
+                    #[allow(unused_variables, reason = "used only by some assemblies")]
+                    let in_session = |service: $crate::UdsServiceType,
+                                      value: u8,
+                                      active: $crate::DiagnosticSessionType| {
+                        $( $crate::__uds_sub_function_in_session!(
+                            self, service, value, active, $svc
+                        ); )+
+                        true
+                    };
+                    let (sid, decoded) = match $crate::pipeline::begin(
+                        state,
+                        request,
+                        |s| <Self as $crate::ServiceSet>::supports(self, s),
+                        sub_function,
+                        in_session,
+                    ) {
+                        $crate::pipeline::Stage::Empty => {
+                            return $crate::Unsettled::empty();
+                        }
+                        $crate::pipeline::Stage::Settle { sid, nrc } => {
+                            return $crate::Unsettled::refused(sid, nrc);
+                        }
+                        $crate::pipeline::Stage::Proceed { sid, request } => (sid, request),
+                    };
+                    let settling = $crate::pipeline::Settling {
+                        sid,
+                        suppress_bit: decoded
+                            .is_positive_response_suppressed()
+                            .unwrap_or(false),
+                    };
+                    let outcome = async {
+                        $( $crate::__uds_stage!(self, out, decoded, $svc); )+
+                        ::core::result::Result::Err(
+                            $crate::NegativeResponseCode::ServiceNotSupported,
                         )
                     }
+                    .await;
+                    $crate::Unsettled::handled(settling, outcome)
+                }
+
+                fn session_timed_out(&mut self, state: &mut Self::State) {
+                    let transition = $crate::pipeline::transition(
+                        state,
+                        $crate::DiagnosticSessionType::DefaultSession,
+                    );
+                    $( $crate::__uds_session_hook!(self, transition, $svc); )+
+                }
+
+                fn session_confirmed(
+                    &mut self,
+                    state: &mut Self::State,
+                    selected: $crate::DiagnosticSessionType,
+                ) {
+                    let transition = $crate::pipeline::transition(state, selected);
+                    $( $crate::__uds_session_hook!(self, transition, $svc); )+
                 }
 
                 fn supports(&self, service: $crate::UdsServiceType) -> bool {

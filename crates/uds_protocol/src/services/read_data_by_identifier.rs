@@ -191,7 +191,7 @@ mod test {
         let (req, rest) =
             <ReadDataByIdentifierRequest as Decode>::decode(&[0xF1, 0x90, 0xF1, 0x86])
                 .unwrap();
-        assert!(rest.is_empty());
+        assert_eq!(rest, [0u8; 0]);
         // Iterate without alloc (no_std-friendly): pull items directly.
         let mut it = req.dids();
         assert_eq!(it.next(), Some(0xF190));
@@ -229,7 +229,7 @@ mod test {
         let raw = [0xF1, 0x90, 0x01, 0x02];
         let (resp, remaining) =
             <ReadDataByIdentifierResponse as Decode>::decode(&raw).unwrap();
-        assert!(remaining.is_empty());
+        assert_eq!(remaining, [0u8; 0]);
         assert_eq!(resp.records, &raw);
         let mut buf = [0u8; 8];
         let n = Encode::encode(&resp, &mut automotive_wire_codec::SliceSink::new(&mut buf))

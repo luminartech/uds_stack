@@ -149,6 +149,10 @@ pub trait SecurityAccess {
     /// # Errors
     ///
     /// The [`NegativeResponseCode`] where a seed cannot be produced.
+    ///
+    /// A refused write to `out` needs no handling: the sink records the refusal and the
+    /// pipeline answers `responseTooLong` (0x14) in place of the response, so the write's
+    /// `Result` may be discarded. See [`ResponseSink`].
     fn seed(
         &mut self,
         level: SecurityLevel,

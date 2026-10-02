@@ -29,18 +29,18 @@ Overview
       @startuml
       left to right direction
       rectangle "bytes" as B
-      rectangle "decode" as D
       rectangle "preconditions" as P
       rectangle "sub-function" as SF
+      rectangle "decode" as D
       rectangle "data parameters" as DP
       rectangle "handler" as H
       rectangle "suppression gate" as G
-      rectangle "Responded\nor Suppress" as O
+      rectangle "Responded\nor Suppressed" as O
 
-      B -> D
-      D -> P
+      B -> P
       P -> SF
-      SF -> DP
+      SF -> D
+      D -> DP
       DP -> H
       D -[#C0392B]-> G : settles
       P -[#C0392B]-> G : settles
@@ -76,36 +76,36 @@ rather than merely the code path.
 
    @startuml
    start
-   :decode with uds_protocol;
-   if (decodes?) then (no)
-     :0x13; <<negative>>
+   if (service identifier modelled?) then (no)
+     :0x11; <<negative>>
    else (yes)
-     if (service identifier modelled?) then (no)
+     if (service implemented?) then (no)
        :0x11; <<negative>>
      else (yes)
-       if (service implemented?) then (no)
-         :0x11; <<negative>>
+       if (authenticated?\nnot evaluated, open question 4) then (no)
+         :0x34; <<negative>>
        else (yes)
-         if (authenticated?) then (no)
-           :0x34; <<negative>>
+         if (supported in active session?) then (no)
+           :0x7F; <<negative>>
          else (yes)
-           if (supported in active session?) then (no)
-             :0x7F; <<negative>>
-           else (yes)
-             if (has SubFunction, and not SID 0x31?) then (yes)
-               if (SubFunction supported?) then (no)
-                 :0x12; <<negative>>
+           if (has SubFunction, and not SID 0x31?) then (yes)
+             if (SubFunction supported?) then (no)
+               :0x12; <<negative>>
+             else (yes)
+               if (SubFunction in active session?) then (no)
+                 :0x7E; <<negative>>
                else (yes)
-                 if (SubFunction in active session?) then (no)
-                   :0x7E; <<negative>>
-                 else (yes)
-                   :SubFunction accepted;
-                 endif
+                 :SubFunction accepted;
                endif
-             else (no)
-               :no SubFunction, or SID 0x31:
-               Table 6 or Table 7 applies;
              endif
+           else (no)
+             :no SubFunction, or SID 0x31:
+             Table 6 or Table 7 applies;
+           endif
+           :decode with uds_protocol;
+           if (decodes?) then (no)
+             :0x13; <<negative>>
+           else (yes)
              if (any data parameter supported?) then (none)
                :0x31; <<negative>>
              else (at least 1)
@@ -144,13 +144,15 @@ Decode
    :origin: derived
    :tags: dispatch; uds_protocol
 
-   Rationale: 0x13 is a clause 8.7 outcome, but message length and format are properties of the
-   encoding, which is ``uds_protocol``'s. So ``uds_protocol`` *detects* and this crate
+   Rationale: 0x13 is a clause 8.7 outcome, but message length and format are properties of
+   the encoding, which is ``uds_protocol``'s. So ``uds_protocol`` *detects* and this crate
    *maps*: neither re-derives the other's work, and there is exactly one place that knows
-   the wire format. The first stage decodes the request bytes with ``uds_protocol``. A
-   decode failure settles the request with ``incorrectMessageLengthOrInvalidFormat``
-   (0x13). A request that decodes to ``uds_protocol``'s unmodelled-service variant settles
-   with ``serviceNotSupported`` (0x11), not with 0x13.
+   the wire format. The request bytes are decoded with ``uds_protocol`` once Figure 5's
+   support and session checks have passed (``UDSSVC_ARCH_0006``): decoding is the
+   service-specific check, where Figure 5 places length and format. A decode failure
+   settles the request with ``incorrectMessageLengthOrInvalidFormat`` (0x13). A request
+   that decodes to ``uds_protocol``'s unmodelled-service variant settles with
+   ``serviceNotSupported`` (0x11), not with 0x13.
 
    The unmodelled-service carve-out is the part that is easy to get wrong. ``uds_protocol``
    represents a service identifier it does not model as a variant carrying the raw service
@@ -159,10 +161,25 @@ Decode
    the server has no implementation for that service identifier, which is 0x11. Mapping it
    to 0x13 would report a malformed request to a client that sent a valid one.
 
-   A consequence worth naming: because ``uds_protocol`` validates each service's own
-   payload during decode, several of the length checks Figure 6 places *inside* the
-   pipeline are already settled before the pipeline runs. This changes where 0x13 is
-   produced, not whether it is — see ``UDSSVC_ARCH_0007``.
+   A service identifier that names no service at all never reaches the decode: the support
+   check reads the service byte alone and settles it 0x11 first, as ISO 14229-1:2020
+   8.7.5's pseudo-code does — its outer ``SWITCH`` on the service identifier falls to
+   ``DEFAULT: responseCode = SNS`` before any ``message_length`` test. So a malformed
+   request for a service this server lacks is 0x11, and one for a service refused in the
+   active session is 0x7F; 0x13 is produced only for a service that passed both. Because
+   ``uds_protocol`` validates each service's own payload during decode, Figure 6's
+   minimum-length check is settled by that same decode. Figure 6's sub-function check
+   reads the sub-function byte alone and runs before the decode, so a supported
+   sub-function's exact length is tested only after it — see ``UDSSVC_ARCH_0007``.
+
+   **A request with no service identifier is complete without a response.** ISO
+   14229-1:2020 8.7.5's pseudo-code begins ``SWITCH (A_PDU.A_Data.A_PCI.SI)``: an A_PDU
+   with no service identifier has no arm, so the standard does not model the case, and a
+   negative response's ``SIDRQ`` would have nothing to echo. The pipeline's first check is
+   therefore the empty request, which settles as silence; the driver still reports its
+   completion to the session layer (``UDSS_LLR_0074``), because the request's reception
+   stopped ``tS3_Server`` under ``UDSS_LLR_0087`` and only the completion report restarts
+   it. This is a declared reading, recorded here with its citation.
 
 Mandatory preconditions
 -----------------------
@@ -203,10 +220,21 @@ Mandatory preconditions
    Figure 5 places three optional checks and two manufacturer/supplier-specific hooks
    around this sequence; they are ``UDSSVC_ARCH_0011``.
 
-   **Check 3 is partly fixed by the standard, and this crate answers the fixed part.** Clause
-   10.2's Table 23 states, for each service it lists, whether it is available in the
-   ``defaultSession``. Twelve rows carry an unqualified **"not applicable"**, and those twelve
-   are not a policy an integrator chooses:
+   **The implemented order is Figure 5's, literally:** the empty request
+   (``UDSSVC_ARCH_0005``'s declared reading), then check 1, then check 3, then — for a
+   service with a SubFunction parameter other than 0x31 — Figure 6's sub-function checks
+   (``UDSSVC_ARCH_0007``: supported ever, 0x12, then supported in the active session,
+   0x7E), then the decode that settles 0x13 (``UDSSVC_ARCH_0005``). Nothing is decoded
+   until the service is known to be supported and allowed in the active session, so 0x13
+   never pre-empts 0x11 or 0x7F, and a trailing byte never pre-empts 0x12 or 0x7E.
+   Check 2, authentication (0x34), and the security precondition (0x33) are not
+   evaluated yet: authentication is architecture open question 4, and security joins with
+   security state.
+
+   **Check 3 is partly fixed by the standard, and this crate answers the fixed part.**
+   Clause 10.2's Table 23 states, for each service it lists, whether it is available in the
+   ``defaultSession``. Twelve rows carry an unqualified **"not applicable"**, and those
+   twelve are not a policy an integrator chooses:
 
    ``SecurityAccess`` (0x27), ``CommunicationControl`` (0x28), ``SecuredDataTransmission``
    (0x84), ``ControlDTCSetting`` (0x85), ``LinkControl`` (0x87),
@@ -227,7 +255,8 @@ Mandatory preconditions
         - a — implementation specific whether it is also allowed during the defaultSession
       * - ``ReadDataByIdentifier`` (0x22), ``ReadScalingDataByIdentifier`` (0x24),
           ``WriteDataByIdentifier`` (0x2E)
-        - b — secured dataIdentifiers require ``SecurityAccess``, hence a non-default session
+        - b — secured dataIdentifiers require ``SecurityAccess``, hence a non-default
+          session
       * - ``ReadMemoryByAddress`` (0x23), ``WriteMemoryByAddress`` (0x3D)
         - c — secured memory areas, likewise
       * - ``DynamicallyDefineDataIdentifier`` (0x2C)
@@ -240,19 +269,20 @@ Mandatory preconditions
    application's declaration otherwise. ``UDSSVC_ARCH_0013``'s assembly list already names
    every supported service, so the fixed half needs no new input from anyone.
 
-   This follows ``UDSSVC_ARCH_0034`` rather than preference: the standard fixes the twelve, so
-   the twelve are implemented here; the standard defers the five, so the five are delegated. A
-   server answering a ``RequestDownload`` in the ``defaultSession`` is not exercising a choice,
-   it is failing a check nobody asked it to make. An earlier version of this element made the
-   whole check application-declared.
+   This follows ``UDSSVC_ARCH_0034`` rather than preference: the standard fixes the twelve,
+   so the twelve are implemented here; the standard defers the five, so the five are
+   delegated. A server answering a ``RequestDownload`` in the ``defaultSession`` is not
+   exercising a choice, it is failing a check nobody asked it to make. An earlier version of
+   this element made the whole check application-declared.
 
-   **What it costs**, stated because it is the first place this crate overrides an integrator
-   rather than merely constraining one: a vehicle programme whose own session matrix disagrees
-   with Table 23 on one of the twelve will find this crate refusing the request. Table 23 is
-   normative and the refusal is correct, but whether an escape hatch is owed — and if so
-   whether it is per service or whole-table — is not settled here. Note also that four of the
-   twelve (0x2A, 0x2F, 0x87, 0x84) have no ``uds_protocol`` message type, so a third of the
-   rule is unreachable for the reason ``UDSSVC_ARCH_0038`` records at the end.
+   **What it costs**, stated because it is the first place this crate overrides an
+   integrator rather than merely constraining one: a vehicle programme whose own session
+   matrix disagrees with Table 23 on one of the twelve will find this crate refusing the
+   request. Table 23 is normative and the refusal is correct, but whether an escape hatch is
+   owed — and if so whether it is per service or whole-table — is not settled here. Note
+   also that four of the twelve (0x2A, 0x2F, 0x87, 0x84) have no ``uds_protocol`` message
+   type, so a third of the rule is unreachable for the reason ``UDSSVC_ARCH_0038`` records
+   at the end.
 
    Two orderings here are worth stating explicitly, because both are counter-intuitive and
    both are observable. Figure 5 is an image in the markdown conversion of the standard and
@@ -291,19 +321,70 @@ Mandatory preconditions
       * - 1
         - Minimum length (service identifier + SubFunction)
         - 0x13
-        - Largely settled during decode; see ``UDSSVC_ARCH_0005``
+        - A request with no SubFunction byte is settled by the decode, which runs after
+          row 2; see ``UDSSVC_ARCH_0005``
       * - 2
         - SubFunction supported ever for this service identifier?
         - 0x12
-        -
+        - Read from the SubFunction byte, ``suppressPosRspMsgIndicationBit`` stripped,
+          before any exact-length test: a trailing byte after an unsupported
+          SubFunction is 0x12, not 0x13
       * - 3
         - Authentication check OK?
         - 0x34
-        - Figure 6 repeats it at sub-function granularity
+        - Figure 6 repeats it at sub-function granularity. Not evaluated:
+          authentication is architecture open question 4
       * - 4
         - SubFunction supported in the active session?
         - 0x7E
-        -
+        - Asked only after row 2 accepted, so 0x7E is sent only for a SubFunction
+          "known to be supported in another session" (Annex A); read from the same
+          stripped byte, before any exact-length test
+
+   The service's exact-length check is its service-specific check, after this stage:
+   ISO 14229-1:2020 8.7.5's pseudo-code tests ``message_length`` only inside a supported
+   sub-function's arm, and its ``DEFAULT: responseCode = SFNS`` precedes every such test.
+   Row 3 is not evaluated yet: authentication is architecture open question 4, so it is
+   unconditionally true, as Figure 5's authentication check is.
+
+   **Row 2 is decided only for a service that has a stage** (``DiagnosticSessionControl``,
+   ``TesterPresent``). A listed service that carries a SubFunction but has no stage yet
+   passes row 2 and reaches the decode: it is then answered 0x11 through the wildcard, or
+   0x13 if the request does not decode. The macro documentation records the same rule.
+
+   **Rows 2 and 4 are each service trait's pair.** Whether a SubFunction is supported
+   ever, and whether from the active session, are deployment facts — which sessions a
+   server offers, and which it can be entered from — so the application states them, in
+   the service's own typed SubFunction, and the pipeline decides the code. Annex A says
+   0x7E "shall be supported by each diagnostic service with a SubFunction parameter",
+   so every such trait carries both lookups once it has a stage:
+
+   .. list-table::
+      :header-rows: 1
+      :widths: 26 37 37
+
+      * - Service
+        - Row 2 (0x12)
+        - Row 4 (0x7E)
+      * - ``DiagnosticSessionControl``
+        - ``supports(session)``
+        - ``supported_from(session, active)``, with no default body: an application that
+          restricts no transition says so by returning ``true``
+      * - ``TesterPresent``
+        - fixed: only ``zeroSubFunction``
+        - fixed: always. ``zeroSubFunction`` is the service's only SubFunction (clause
+          10.7) and Table 23 allows the service in every session, so there is nothing
+          deployment-specific to ask and the trait carries no lookup
+      * - ``EcuReset``, ``CommunicationControl``, ``ControlDTCSetting``,
+          ``SecurityAccess`` and the other SubFunction-bearing services
+        - gains a ``supports``-shaped lookup when its stage lands
+        - gains a ``supported_from``-shaped lookup, in its own SubFunction type, with it
+
+   ``uds_server!`` hands ``pipeline::begin`` one closure per row; each routes the
+   question to the listed service's trait and decides nothing (``UDSSVC_ARCH_0013``).
+   ``pipeline::begin`` asks row 4 only once row 2 has accepted, and a SubFunction value
+   that names nothing the service defines — a reserved session byte — is row 2's
+   0x12 and never 0x7E.
 
    Figure 6 then places a sub-function security check (0x33) and a request-sequence check
    (0x24) in its optional column; both are ``UDSSVC_ARCH_0011``.
@@ -368,9 +449,9 @@ Data parameters
    write it — would answer a request naming an identifier twice with one record, and be
    non-conformant.
 
-   The same clause gives the server one limit it may impose: "the server may limit the number
-   of dataIdentifiers that can be simultaneously requested as agreed upon by the vehicle
-   manufacturer and system supplier". That is a per-server constant of the kind
+   The same clause gives the server one limit it may impose: "the server may limit the
+   number of dataIdentifiers that can be simultaneously requested as agreed upon by the
+   vehicle manufacturer and system supplier". That is a per-server constant of the kind
    ``UDSSVC_ARCH_0033`` already collects on a service trait, and nothing in the set declares
    it yet. Exceeding it is a ``requestOutOfRange`` (0x31) by the same path as an unsupported
    identifier.
@@ -420,9 +501,9 @@ Suppression
          requirement for responses with NRCs SNS, SFNS, SNSIAS, SFNSIAS and ROOR on
          functionally addressed requests.**
 
-      Tables 4 and 5 carry only "independent of the suppressPosRspMsgIndicationBit value", so
-      a reading taken from them alone gets rule 3 half right — which is the failure mode this
-      rule exists to prevent.
+      Tables 4 and 5 carry only "independent of the suppressPosRspMsgIndicationBit value",
+      so a reading taken from them alone gets rule 3 half right — which is the failure mode
+      this rule exists to prevent.
 
    .. uml::
       :align: center
@@ -476,9 +557,11 @@ Suppression
    least one data parameter were all supported is still answered negatively, because that
    answer is specific to this server rather than a report of non-participation.
 
-   Rule 3 reads a fact the pipeline owns rather than an input it is given.
+   Rule 3 reads a fact this crate owns rather than an input it is given.
    ``UDSSVC_ARCH_0032`` makes this crate the originator of a response-pending, so the gate
-   consults whether *this dispatch* offered one across ``UDSSVC_ARCH_0031``'s seam.
+   consults whether one was offered for *this request* across ``UDSSVC_ARCH_0031``'s seam.
+   The driver makes that offer, so the driver evaluates the gate: it calls the pipeline's
+   ``settle`` with the answer once the handler has finished (``UDSSVC_ARCH_0016``).
 
    **The gate reads "offered and accepted", where clause 8.7.5 writes "sent", and the
    divergence is deliberate.** A submission the session layer refuses is not a send, and the
@@ -489,10 +572,9 @@ Suppression
    ``UDSS_LLR_0062`` refuse a submission for a duplicated or exhausted transmission
    association, which can catch the *first* offer for a request with nothing yet sent.
 
-   What remains is the accepted submission whose transmission later fails.
-   ``UDSS_LLR_0110`` has such a transmission never reach the data link, so the client saw no
-   response-pending and is still waiting out ``tP2``, where an unsuppressed final response is
-   harmless.
+   What remains is the accepted submission whose transmission later fails. ``UDSS_LLR_0110``
+   has such a transmission never reach the data link, so the client saw no response-pending
+   and is still waiting out ``tP2``, where an unsuppressed final response is harmless.
 
    The asymmetry settles the rest. Treating an accepted offer as sent can cost one message a
    waiting client accepts; treating a sent response-pending as unsent produces silence where
@@ -558,9 +640,9 @@ Suppression
 
    REQ 5.6's own case is discharged without a check at all. Figure 5's first mandatory
    condition settles an unsupported service at 0x11 in the precondition stage, so no handler
-   runs and ``UDSSVC_ARCH_0031``'s ``due`` never fires for one; and a service the server does
-   not implement has no trait impl from which ``MAY_RESPOND_PENDING`` could be read. Clause
-   8.7's own ordering satisfies it twice over.
+   runs and ``UDSSVC_ARCH_0031``'s ``due`` never fires for one; and a service the server
+   does not implement has no trait impl from which ``MAY_RESPOND_PENDING`` could be read.
+   Clause 8.7's own ordering satisfies it twice over.
 
    The bytes are this crate's for the reason ``UDSSVC_ARCH_0010`` already gives: a
    response-pending is a negative response — ``0x7F``, the echoed service identifier,
@@ -609,19 +691,19 @@ The service-specific check
    inference from silence** — ``UDSSVC_ARCH_0001`` holds that a clause with no seam and no
    implementation is unbuilt, not out of scope. Until it is built, ``UDSSVC_ARCH_0004``'s
    pipeline ends at the handler and a handler returns "a code of its own choosing", which
-   means the per-service order is the application's to get right. That is the arrangement this
-   crate exists to remove, and it is temporary.
+   means the per-service order is the application's to get right. That is the arrangement
+   this crate exists to remove, and it is temporary.
 
-   What is not yet designed is the seam. A service trait would have to express its evaluation
-   order in a form the dispatcher can apply, and the candidates differ sharply in cost: a
-   declared sequence of predicates per trait, a fixed set of typed pre-handler hooks per
-   service, or generated code per figure. Choosing between them wants more than one figure
-   read in full, which is a pass of its own.
+   What is not yet designed is the seam. A service trait would have to express its
+   evaluation order in a form the dispatcher can apply, and the candidates differ sharply in
+   cost: a declared sequence of predicates per trait, a fixed set of typed pre-handler hooks
+   per service, or generated code per figure. Choosing between them wants more than one
+   figure read in full, which is a pass of its own.
 
-   Rationale for recording it now rather than then: four services are in the first slice, and
-   their figures are small enough to carry in the handler contract meanwhile. The cost of not
-   recording it is that the gap reads as a decision — the set would appear to have concluded
-   that per-service ordering is the application's, which it has not.
+   Rationale for recording it now rather than then: four services are in the first slice,
+   and their figures are small enough to carry in the handler contract meanwhile. The cost
+   of not recording it is that the gap reads as a decision — the set would appear to have
+   concluded that per-service ordering is the application's, which it has not.
 
    An earlier version of this set had no element here at all, and none of ``not-owned``,
    ``UDSSVC_ARCH_0001``'s in-scope list or :doc:`open-questions` mentioned these figures.
@@ -697,21 +779,21 @@ Extension points
    requires 0x21, and no amount of care inside the check itself fixes that.
 
    The two hooks in Figure 5 are distinct and differently placed — one **manufacturer**, one
-   **supplier** — and an earlier version of this element gave them a single row reading "Figure
-   5 has two such hooks". They are separated above because a caller attaching a check to the
-   wrong one of them gets the wrong precedence against the service-identifier and security
-   checks between them.
+   **supplier** — and an earlier version of this element gave them a single row reading
+   "Figure 5 has two such hooks". They are separated above because a caller attaching a
+   check to the wrong one of them gets the wrong precedence against the service-identifier
+   and security checks between them.
 
    **A transcription trap in the source, recorded so it is not re-derived.** The two figures
-   draw these hooks with *opposite polarity*: Figure 5's nodes ask "failure detected?" and take
-   the NRC exit on **YES**, while Figure 6's asks a check question and takes the NRC exit on
-   **NO**. The behaviour is the same; only the drawing differs. Whoever authors the requirement
-   should read the figure rather than copy this table.
+   draw these hooks with *opposite polarity*: Figure 5's nodes ask "failure detected?" and
+   take the NRC exit on **YES**, while Figure 6's asks a check question and takes the NRC
+   exit on **NO**. The behaviour is the same; only the drawing differs. Whoever authors the
+   requirement should read the figure rather than copy this table.
 
-   Figure 5's busy check also carries a Key note narrowing it: the request "cannot be accepted
-   because another diagnostic task is already requested and in progress **by a different
-   client**". That is narrower than "the server is busy", and it is a per-channel question
-   under ``UDSSVC_ARCH_0035`` rather than a global one.
+   Figure 5's busy check also carries a Key note narrowing it: the request "cannot be
+   accepted because another diagnostic task is already requested and in progress **by a
+   different client**". That is narrower than "the server is busy", and it is a per-channel
+   question under ``UDSSVC_ARCH_0035`` rather than a global one.
 
    Clause 8.7.2 carries a note that, given the choices available across these figures, a
    specific negative response code is not guaranteed for every possible test-pattern
@@ -747,16 +829,17 @@ outside that range and start the default session, unless a programming session i
 Two details of that wording matter to where the line falls, and both were missing from an
 earlier version of this passage.
 
-**The second exception is conditional.** The clause opens "**If a server supports services in
-the range of 0x00 to 0x0F** receives diagnostic requests in the range of 0x00 to 0x0F …". The
-whole rule is predicated on the server implementing something in that range — which is a fact
-``UDSSVC_ARCH_0013``'s assembly list holds and a byte-level driver cannot see. That
+**The second exception is conditional.** The clause opens "**If a server supports services
+in the range of 0x00 to 0x0F** receives diagnostic requests in the range of 0x00 to 0x0F …".
+The whole rule is predicated on the server implementing something in that range — which is a
+fact ``UDSSVC_ARCH_0013``'s assembly list holds and a byte-level driver cannot see. That
 strengthens the proposed split rather than complicating it: classification needs what this
 crate knows.
 
 **Occupancy ends on silence too.** The instance is held "until the request message is
-processed (with final response sent **or application call without response**)", so an
-``Outcome::Suppress`` releases it exactly as a transmitted response does. A driver that
+processed (with final response sent **or application call without response**)", so a
+``Responded::Suppressed``, which the driver reaches by settling the dispatch outcome
+(``UDSSVC_ARCH_0016``), releases it exactly as a transmitted response does. A driver that
 released the instance only on a transmission would deadlock on the silence clause 8.7
 requires.
 

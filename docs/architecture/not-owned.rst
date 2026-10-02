@@ -106,7 +106,7 @@ which is a clause 8.7 fact this crate already computes.
 
    L -> S : tick(now)
    S --> L : a reaction
-   loop drain with Iterator::by_ref
+   loop drain with Reaction::outputs()
      S --> L : ServerOutput::ResponseOverrun
    end
    L -> S : finish()
@@ -114,7 +114,7 @@ which is a clause 8.7 fact this crate already computes.
    V --> L : yes — service implemented\nand MAY_RESPOND_PENDING
    L -> S : s_data_req(now, ai, [7F, sid, 78],\nServerTx::ResponsePending)
    S --> L : a reaction
-   loop drain with Iterator::by_ref
+   loop drain with Reaction::outputs()
      S --> L : ServerOutput::Transmit { ai, data }
      L -> I : t_data_req(ai, data)
      I -> T : 0x78
@@ -128,7 +128,7 @@ which is a clause 8.7 fact this crate already computes.
    V --> L : Responded::Yes
    deactivate V
    L -> S : s_data_req(now, ai, response bytes,\nServerTx::FinalResponse)
-   loop drain with Iterator::by_ref
+   loop drain with Reaction::outputs()
      S --> L : ServerOutput::Transmit { ai, data }
      L -> I : t_data_req(ai, data)
      I -> T : final response
@@ -147,8 +147,8 @@ response-pending it would have prompted is never sent. ``UDSSVC_ARCH_0016``'s as
 handler seam is what makes that achievable — the handler yields at its await points and the
 loop keeps draining.
 
-An earlier version of this diagram had a binding driver calling a ``due()`` on this crate and
-receiving an ``offer()`` back. Both were seams to a component that no longer exists; see
+An earlier version of this diagram had a binding driver calling a ``due()`` on this crate
+and receiving an ``offer()`` back. Both were seams to a component that no longer exists; see
 ``UDSSVC_ARCH_0031``.
 
 What the layer below declines
