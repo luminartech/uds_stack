@@ -51,7 +51,9 @@ enum Ev {
     /// An indication arriving with the clock already at `now` — the coinciding case.
     IndAt(u32, TaType, &'static [u8]),
     Conf(SResult),
-    /// Advance the clock; `next_event` reports `Deadline`.
+    /// Advance the clock. `next_event` reports `Deadline` only if that reaches the deadline
+    /// the driver asked for; otherwise the time passes with nothing to report, and the
+    /// next step is taken, as a real transport would go on waiting.
     At(u32),
 }
 
@@ -72,6 +74,14 @@ struct Scripted {
     sent_count: usize,
     /// The addressing of the latest transmission.
     sent_ai: Option<Ai>,
+    /// How many `Deadline`s were reported: one per `At` that reached the driver's deadline.
+    deadlines: usize,
+}
+
+/// Whether `now` has reached `deadline` on the wrapping clock (``UDSS_LLR_0019``): the
+/// modular difference lies in the lower half of the range.
+fn reached(now: Timestamp, deadline: Timestamp) -> bool {
+    now.interval_since(deadline) <= u32::MAX / 2
 }
 
 impl Scripted {
@@ -93,6 +103,7 @@ impl Scripted {
             sent_after: [0; MAX_SENT],
             sent_count: 0,
             sent_ai: None,
+            deadlines: 0,
         }
     }
     fn sent(&self, i: usize) -> &[u8] {
@@ -119,10 +130,11 @@ impl Scripted {
         *after = self.cursor;
         self.sent_count = self.sent_count.wrapping_add(1);
     }
-    fn advance<'b>(&mut self, buffer: &'b mut [u8]) -> Result<TransportEvent<'b>, ()> {
-        // The one error this transport returns: the script is exhausted.
-        let ev = self.script.get(self.cursor).copied().flatten().ok_or(())?;
-        self.cursor = self.cursor.wrapping_add(1);
+    fn advance<'b>(
+        &mut self,
+        buffer: &'b mut [u8],
+        deadline: Option<Timestamp>,
+    ) -> Result<TransportEvent<'b>, ()> {
         let ind = |buffer: &'b mut [u8], ta_type, bytes: &[u8]| {
             let Some((head, _)) = buffer.split_at_mut_checked(bytes.len()) else {
                 panic!("indication {bytes:02X?} does not fit the driver's buffer");
@@ -133,19 +145,29 @@ impl Scripted {
                 data: head,
             })
         };
-        match ev {
-            Ev::Ind(ta_type, bytes) => ind(buffer, ta_type, bytes),
-            Ev::IndAt(t, ta_type, bytes) => {
-                self.now = t;
-                ind(buffer, ta_type, bytes)
-            }
-            Ev::Conf(result) => Ok(TransportEvent::DataConf {
-                ai: to_tester(),
-                result,
-            }),
-            Ev::At(t) => {
-                self.now = t;
-                Ok(TransportEvent::Deadline)
+        loop {
+            // The one error this transport returns: the script is exhausted.
+            let ev = self.script.get(self.cursor).copied().flatten().ok_or(())?;
+            self.cursor = self.cursor.wrapping_add(1);
+            match ev {
+                Ev::Ind(ta_type, bytes) => return ind(buffer, ta_type, bytes),
+                Ev::IndAt(t, ta_type, bytes) => {
+                    self.now = t;
+                    return ind(buffer, ta_type, bytes);
+                }
+                Ev::Conf(result) => {
+                    return Ok(TransportEvent::DataConf {
+                        ai: to_tester(),
+                        result,
+                    });
+                }
+                Ev::At(t) => {
+                    self.now = t;
+                    if deadline.is_some_and(|d| reached(Timestamp(t), d)) {
+                        self.deadlines = self.deadlines.wrapping_add(1);
+                        return Ok(TransportEvent::Deadline);
+                    }
+                }
             }
         }
     }
@@ -168,11 +190,16 @@ impl UdsTransport for Scripted {
     fn next_event<'b>(
         &mut self,
         buffer: &'b mut [u8],
-        _deadline: Option<Timestamp>,
+        deadline: Option<Timestamp>,
     ) -> impl Future<Output = Result<TransportEvent<'b>, ()>> {
         let mut parts = Some((self, buffer));
         poll_fn(move |_| {
-            Poll::Ready(parts.take().ok_or(()).and_then(|(t, b)| t.advance(b)))
+            Poll::Ready(
+                parts
+                    .take()
+                    .ok_or(())
+                    .and_then(|(t, b)| t.advance(b, deadline)),
+            )
         })
     }
     fn outbound_max(&self) -> Option<usize> {
@@ -230,6 +257,8 @@ struct Ecu {
     n: usize,
     /// How many times the next `read` pends before answering.
     slow: u8,
+    /// What the next `read` answers once it has pended: its record, or this code.
+    refuse: Option<Nrc>,
 }
 impl Ecu {
     const fn new() -> Self {
@@ -237,6 +266,7 @@ impl Ecu {
             transitions: [None; 4],
             n: 0,
             slow: 0,
+            refuse: None,
         }
     }
 }
@@ -247,6 +277,9 @@ impl ReadDataByIdentifier for Ecu {
     async fn read(&mut self, _did: Did, out: &mut ResponseSink<'_>) -> Result<(), Nrc> {
         let pends = core::mem::take(&mut self.slow);
         PendN(pends).await;
+        if let Some(code) = self.refuse.take() {
+            return Err(code);
+        }
         out.write_all(&[0x40]).map_err(|_| Nrc::ResponseTooLong)
     }
 }
@@ -494,6 +527,8 @@ fn a_slow_handler_gets_a_response_pending_then_its_answer() {
     assert_eq!(s.transport().sent(0), &[0x7F, 0x22, 0x78]);
     assert_eq!(s.transport().sent(1), &[0x62, 0xF4, 0x0D, 0x40]);
     assert_eq!(s.transport().sent_count, 2);
+    // The driver asked for tP2_Server's deadline, and At(50) reached it.
+    assert_eq!(s.transport().deadlines, 1);
 }
 
 /// ``UDSS_LLR_0061`` — the handler pends once, so the driver sees the deadline and sends
@@ -528,29 +563,51 @@ fn a_final_response_after_a_pending_whose_confirmation_is_late_is_still_delivere
 }
 
 /// ``UDSSVC_ARCH_0009`` rule 3 — after a sent 0x78, a functionally addressed request whose
-/// stage settles one of the five silenced codes is answered anyway.
+/// stage settles one of the five silenced codes is answered anyway. The handler pends past
+/// `tP2_Server` and then refuses with `requestOutOfRange` (0x31), which rule 1 alone would
+/// silence: the tester, having seen `7F 22 78`, gets `7F 22 31` rather than waiting out
+/// `P2*_Client` for nothing (clause 8.7.5).
 #[test]
 fn a_sent_response_pending_overrides_functional_silence() {
     let mut ecu = Ecu::new();
     ecu.slow = 2;
+    ecu.refuse = Some(Nrc::RequestOutOfRange);
     let mut s = EcuServer::new(
         ecu,
         Scripted::new(&[
-            // second DID unknown: skipped, still positive
-            Ev::Ind(TaType::Functional, &[0x22, 0xF4, 0x0D, 0x00, 0x01]),
-            Ev::At(50),
-            Ev::Conf(SResult::Ok),
-            Ev::Conf(SResult::Ok),
+            Ev::Ind(TaType::Functional, &[0x22, 0xF4, 0x0D]),
+            Ev::At(50),            // tP2_Server reached: 0x78 goes out
+            Ev::Conf(SResult::Ok), // its confirmation, consumed mid-handler
+            Ev::Conf(SResult::Ok), // the final response's confirmation
         ]),
         ECU,
         PARAMS,
     );
     run(&mut s);
-    assert_eq!(s.transport().sent(0), &[0x7F, 0x22, 0x78]);
-    assert_eq!(s.transport().sent(1), &[0x62, 0xF4, 0x0D, 0x40]);
+    let t = s.transport();
+    assert_eq!(t.sent_count, 2);
+    assert_eq!(t.sent(0), &[0x7F, 0x22, 0x78]);
+    assert_eq!(t.sent(1), &[0x7F, 0x22, 0x31]);
     // UDSS_LLR_0051 — sent from the ECU's own address, not the functional group's.
-    let ai = s.transport().sent_ai.unwrap();
+    let ai = t.sent_ai.unwrap();
     assert_eq!((ai.sa, ai.ta, ai.ta_type), (ECU, TESTER, TaType::Physical));
+}
+
+/// Rule 1 without rule 3: the same refusal, functionally addressed, from a handler that
+/// answers within `tP2_Server`, is silenced. Beside the test above, this is what shows
+/// the 0x78 is what lifted the silence.
+#[test]
+fn without_a_response_pending_the_functional_refusal_is_silent() {
+    let mut ecu = Ecu::new();
+    ecu.refuse = Some(Nrc::RequestOutOfRange);
+    let mut s = EcuServer::new(
+        ecu,
+        Scripted::new(&[Ev::Ind(TaType::Functional, &[0x22, 0xF4, 0x0D])]),
+        ECU,
+        PARAMS,
+    );
+    run(&mut s);
+    assert_eq!(s.transport().sent_count, 0);
 }
 
 #[test]
@@ -573,6 +630,7 @@ fn a_session_change_takes_effect_on_confirmation_and_times_out() {
     assert_eq!(t.sent(0), &[0x50, 0x03, 0x00, 0x32, 0x01, 0xF4]);
     assert_eq!(t.sent(1), &[0x7F, 0x27, 0x11]); // allowed in extended; listed, no stage
     assert_eq!(t.sent(2), &[0x7F, 0x27, 0x7F]); // Table 23 refuses it in default
+    assert_eq!(t.deadlines, 1); // tS3_Server's, reached at 5100
     assert_eq!(
         s.services().transitions,
         [
@@ -634,6 +692,8 @@ fn a_suppressed_keep_alive_restarts_the_session_timer() {
     let mut before = keep_alive_server(8_999);
     run(&mut before);
     assert_eq!(before.transport().sent_count, 1); // the 3E 80 was suppressed
+    // The driver's deadline is tS3_Server's 9000, which 8999 does not reach.
+    assert_eq!(before.transport().deadlines, 0);
     assert_eq!(
         before.services().transitions.get(1).copied().flatten(),
         None
@@ -642,6 +702,7 @@ fn a_suppressed_keep_alive_restarts_the_session_timer() {
     let mut at = keep_alive_server(9_000);
     run(&mut at);
     assert_eq!(at.transport().sent_count, 1);
+    assert_eq!(at.transport().deadlines, 1);
     assert_eq!(
         at.services().transitions.get(1).copied().flatten(),
         Some(SessionTransition::NonDefaultToDefault)
