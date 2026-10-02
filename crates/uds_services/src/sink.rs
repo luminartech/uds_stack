@@ -8,10 +8,17 @@ use automotive_wire_codec::{InsufficientBuffer, Sink, WriteError};
 
 /// A bounded writer over this crate's response buffer.
 ///
-/// The bound is `min(buffer.len(), outbound_max)`. Both terms are this crate's, so
-/// nothing is fabricated and nothing is asked of a layer that does not know it —
-/// which is what ``UDSSVC_ARCH_0017`` requires after ISO 13400-2:2019 Table 11 made
-/// *Max. data size* optional.
+/// The bound is `min(buffer.len(), max(outbound_max, 3))` — see [`Self::MIN_BOUND`].
+/// Both terms are this crate's, so nothing is fabricated and nothing is asked of a layer
+/// that does not know it — which is what ``UDSSVC_ARCH_0017`` requires after
+/// ISO 13400-2:2019 Table 11 made *Max. data size* optional.
+///
+/// The floor is three bytes because a negative response, `7F <sid> <nrc>`, is exactly that
+/// long and must always fit. A write that would cross the bound is refused whole, and the
+/// sink records the refusal before returning the error, so it is not lost if a handler
+/// ignores the result. Such a refusal means the response was too long, not that nothing
+/// was written; the pipeline reads it after the handler returns and answers
+/// `responseTooLong` (0x14) in place of the partial response.
 ///
 /// The bound is not a field. [`Self::new`] truncates the buffer to it, so "written never
 /// exceeds the limit, which never exceeds the buffer" is one slice length rather than an
@@ -40,17 +47,56 @@ use automotive_wire_codec::{InsufficientBuffer, Sink, WriteError};
 pub struct ResponseSink<'a> {
     buffer: &'a mut [u8],
     written: usize,
+    refused: bool,
 }
 
 impl<'a> ResponseSink<'a> {
-    /// A sink over `buffer`, bounded also by the peer's advertisement where it made one.
+    /// The smallest message the protocol admits: a negative response, `7F <sid> <nrc>`.
+    pub const MIN_BOUND: usize = 3;
+
+    /// A sink over `buffer`, bounded at the peer's `outbound_max` where one is advertised,
+    /// but never below three bytes: a peer that cannot receive a negative response cannot
+    /// take part in UDS at all, so a bound below [`Self::MIN_BOUND`] is raised to it. The
+    /// buffer itself is still the hard limit.
     #[must_use]
     pub fn new(buffer: &'a mut [u8], outbound_max: Option<usize>) -> Self {
-        let limit = outbound_max.map_or(buffer.len(), |max| max.min(buffer.len()));
+        let limit = outbound_max.map_or(buffer.len(), |max| {
+            max.max(Self::MIN_BOUND).min(buffer.len())
+        });
         let buffer = buffer
             .split_at_mut_checked(limit)
             .map_or(&mut [][..], |(within, _beyond)| within);
-        Self { buffer, written: 0 }
+        Self {
+            buffer,
+            written: 0,
+            refused: false,
+        }
+    }
+
+    /// Whether any write was refused since creation or the last rewind.
+    ///
+    /// ``UDSSVC_ARCH_0017`` — the pipeline reads this after the handler returns and
+    /// settles `responseTooLong` (0x14). A handler ignores `write_all`'s result; the
+    /// refusal is recorded here and decided there.
+    #[must_use]
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "consumed by the pipeline's settle (Task 10)")
+    )]
+    pub(crate) const fn refused(&self) -> bool {
+        self.refused
+    }
+
+    /// Discard everything written and clear the refusal, so a negative response can
+    /// replace a partial positive one. Crate-private: a handler that could rewind could
+    /// erase the identifier the pipeline wrote ahead of it and return `Ok`.
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "consumed by the pipeline's settle (Task 10)")
+    )]
+    pub(crate) fn rewind(&mut self) {
+        self.written = 0;
+        self.refused = false;
     }
 
     /// How many bytes the handler has written.
@@ -85,9 +131,11 @@ impl Sink for ResponseSink<'_> {
             }))
         };
         let Some(end) = self.written.checked_add(bytes.len()) else {
+            self.refused = true;
             return insufficient(usize::MAX);
         };
         let Some(room) = self.buffer.get_mut(self.written..end) else {
+            self.refused = true;
             return insufficient(end);
         };
         room.copy_from_slice(bytes);
@@ -174,5 +222,34 @@ mod tests {
         let mut sink = ResponseSink::new(&mut buf, None);
         assert!(sink.write_all(&[0; 5]).is_err());
         assert_eq!(sink.written(), 0);
+    }
+
+    /// Spec §3.3 — ISO 14229-1 fixes a negative response at three bytes, so a bound
+    /// below three is not one the protocol admits: it is raised to three.
+    #[test]
+    fn the_bound_is_never_below_three_bytes() {
+        let mut buffer = [0_u8; 8];
+        let sink = ResponseSink::new(&mut buffer, Some(1));
+        assert_eq!(sink.remaining(), 3);
+        let mut tiny = [0_u8; 2];
+        let sink = ResponseSink::new(&mut tiny, Some(1));
+        assert_eq!(sink.remaining(), 2); // the buffer itself is the hard limit
+    }
+
+    /// ``UDSSVC_ARCH_0017`` — a refused write is recorded for the pipeline to read; the
+    /// handler need not report it. Rewinding discards everything written.
+    #[test]
+    fn a_refused_write_is_recorded_and_rewind_discards() {
+        let mut buffer = [0_u8; 4];
+        let mut sink = ResponseSink::new(&mut buffer, None);
+        assert!(!sink.refused());
+        let _ = sink.write_all(&[1, 2, 3]);
+        let _ = sink.write_all(&[4, 5]);
+        assert!(sink.refused());
+        assert_eq!(sink.written(), 3);
+        sink.rewind();
+        assert_eq!(sink.written(), 0);
+        assert!(!sink.refused());
+        assert_eq!(sink.remaining(), 4);
     }
 }
