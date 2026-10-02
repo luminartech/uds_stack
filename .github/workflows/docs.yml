@@ -3,8 +3,8 @@
 # re-resolve.
 #
 # The `needs` job also builds the browsable HTML and hands it to `deploy`, which
-# publishes it to GitHub Pages. Builds on every pull request and every push to main;
-# deploys from main alone. A pull request build is a gate, not a preview: GitHub Pages
+# publishes it to GitHub Pages. Builds on every pull request, merge queue entry and push to
+# main; deploys from main alone. A pull request build is a gate, not a preview: GitHub Pages
 # serves one site per repository, so reviewers read the rendered set locally instead.
 name: Docs
 
@@ -12,6 +12,9 @@ on:
   push:
     branches: [main]
   pull_request:
+  # `needs` is required on main, so it has to report on the merge queue's commit too.
+  # The deploy job's ref guard keeps a queue run from publishing.
+  merge_group:
   # So the site can be republished without an empty commit, e.g. after changing a Pages
   # setting or re-running a failed deployment. A dispatch against any other ref builds
   # and stops, because the deploy job below is guarded on the ref rather than the event.

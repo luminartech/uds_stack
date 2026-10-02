@@ -5,24 +5,31 @@
 # title - not the individual commits in the branch - is what lands on main and
 # feeds release-plz's changelog.
 name: PR Lint
+#
+# Both checks are required on main, and a required check has to report on the merge
+# queue's commit too, or the queue waits on it forever. There is no PR body or label to
+# read there, and the title was checked before the PR was queued, so on merge_group both
+# jobs skip, and a skipped job satisfies a required check.
 on:
   pull_request:
     types: [opened, edited, reopened, synchronize, labeled, unlabeled]
+  merge_group:
 
 permissions:
   pull-requests: read
 
 concurrency:
-  group: pr-lint-${{ github.head_ref }}
+  # head_ref is empty on merge_group; run_id keeps queue runs from cancelling each other.
+  group: pr-lint-${{ github.head_ref || github.run_id }}
   cancel-in-progress: true
 
 jobs:
   # release-plz's own PRs (branch prefix "release-plz-") are machine-generated and
-  # don't follow the human PR template - skip both lints for them.
+  # don't follow the human PR template - skip both lints for them, and on merge_group.
   pr-title-lint:
     name: PR Title Lint
     runs-on: ubuntu-latest
-    if: ${{ !startsWith(github.head_ref, 'release-plz-') }}
+    if: ${{ github.event_name == 'pull_request' && !startsWith(github.head_ref, 'release-plz-') }}
     steps:
       - uses: amannn/action-semantic-pull-request@48f256284bd46cdaab1048c3721360e808335d50 # v6.1.1
         env:
@@ -59,7 +66,7 @@ jobs:
   pr-description-lint:
     name: PR Description Lint
     runs-on: ubuntu-latest
-    if: ${{ !startsWith(github.head_ref, 'release-plz-') }}
+    if: ${{ github.event_name == 'pull_request' && !startsWith(github.head_ref, 'release-plz-') }}
     steps:
       - uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         with:
