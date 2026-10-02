@@ -221,7 +221,7 @@ Request context
 Outcome
 -------
 
-.. arch:: Dispatch is asynchronous and reports an outcome; only sink failures are errors
+.. arch:: Dispatch is asynchronous and cannot fail: a sink refusal is a response, not an error
    :id: UDSSVC_ARCH_0016
    :depends_on: UDSSVC_ARCH_0009; UDSSVC_ARCH_0030
    :status: draft
@@ -233,26 +233,28 @@ Outcome
    would put the most common non-trivial path through the crate into the ``Err`` branch,
    and callers would learn to ignore errors. Dispatch instead reports whether a response
    was written and should be transmitted, or whether nothing is to be sent. A negative
-   response is the first of those, not an error. The error type is the sink's own.
+   response is the first of those, not an error, and dispatch has no error type at all.
 
    Silence must be a distinguishable outcome rather than "wrote nothing", because the loop
-   has to tell "clause 8.7 requires no response" apart from "the handler produced an empty
-   response" apart from "something went wrong". Only the first is a reason not to transmit.
-
-   **``Outcome`` is ``pub(crate)``**, for the reason ``UDSSVC_ARCH_0018`` gives: dispatch
-   reports to the driver loop in this crate, not across a seam. That does not weaken the
-   argument above. The three cases still have to be distinguishable, and the loop still has
-   to act on them differently — it simply does so without a public type.
+   has to tell "clause 8.7 requires no response" apart from a response that was written.
+   Only the first is a reason not to transmit.
 
    **How the cases are spelled.** ``dispatch`` returns ``Responded`` — *responded* or
    *suppressed*, each carrying the session a ``DiagnosticSessionControl`` selected — and
-   no ``Result``. The ``Err`` arm this element once prescribed for the sink's failure is
-   empty: the sink has one failure, a refused write, and ``UDSSVC_ARCH_0017`` makes that
-   failure ``responseTooLong`` (0x14), written bytes like any other negative response. The
-   third case, "something went wrong", has no remaining member once the sink's bound
-   cannot refuse the negative response itself. A negative response is therefore never in
-   an ``Err`` branch a caller could learn to ignore, which is what this element's
-   rationale asked for.
+   no ``Result``, so the driver's loop has two outcomes, not three. The ``Err`` arm this
+   element once prescribed for the sink's failure is empty: the sink has one failure, a
+   refused write, and a handler that writes too much sets the sink's refusal bit, which
+   the pipeline's ``settle`` turns into ``responseTooLong`` (0x14) after ``rewind``,
+   written bytes like any other negative response (``UDSSVC_ARCH_0017``).
+   ``ResponseSink::MIN_BOUND`` of three bytes guarantees that negative response fits. The
+   once-separate case, "something went wrong", has no remaining member. A negative
+   response is therefore never in an ``Err`` branch a caller could learn to ignore, which
+   is what this element's rationale asked for.
+
+   **``Outcome`` is ``pub(crate)``**, for the reason ``UDSSVC_ARCH_0018`` gives: dispatch
+   reports to the driver loop in this crate, not across a seam. ``Responded`` is public
+   only because the trait an application's assembly implements has to name it; an
+   application writes neither.
 
    Genuine transport failures are the binding's concern, reach this crate as a ``DataConf``
    carrying an ``SResult``, and never reach a handler.
