@@ -124,8 +124,11 @@ pub trait ServiceSet: crate::sealed::Sealed {
     /// state, with no transport, clock or session layer involved. ``UDSSVC_ARCH_0015`` is
     /// why `ai` is here. `pending_sent` is ``UDSSVC_ARCH_0009`` rule 3's input: whether a
     /// `requestCorrectlyReceivedResponsePending` already went out for this request, in
-    /// which case nothing suppresses the final response. A `Cell`, because the driver
-    /// learns that while this future holds the sink.
+    /// which case nothing suppresses the final response. A shared reference, because the
+    /// driver learns that while this future is live and a shared reference is the one
+    /// thing that can coexist with it; an [`AtomicBool`](core::sync::atomic::AtomicBool)
+    /// rather than a `Cell`, because it must be `Sync` for the driver's `step` future to
+    /// stay `Send`.
     ///
     /// # Arguments
     ///
@@ -141,7 +144,7 @@ pub trait ServiceSet: crate::sealed::Sealed {
         ai: Ai,
         request: &[u8],
         out: &mut ResponseSink<'_>,
-        pending_sent: &core::cell::Cell<bool>,
+        pending_sent: &core::sync::atomic::AtomicBool,
     ) -> impl core::future::Future<Output = Responded>;
 
     /// `tS3_Server` expired: return to the default session and tell the application.

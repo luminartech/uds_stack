@@ -441,7 +441,7 @@ macro_rules! uds_server {
                     ai: $crate::Ai,
                     request: &[u8],
                     out: &mut $crate::ResponseSink<'_>,
-                    pending_sent: &::core::cell::Cell<bool>,
+                    pending_sent: &::core::sync::atomic::AtomicBool,
                 ) -> $crate::Responded {
                     let (sid, decoded) = match $crate::pipeline::begin(
                         state,

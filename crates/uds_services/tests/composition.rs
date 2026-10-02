@@ -529,7 +529,7 @@ fn the_assembled_dispatch_answers_a_read() {
         ta: Address(0x10),
         ta_type: TaType::Physical,
     };
-    let no = core::cell::Cell::new(false);
+    let no = core::sync::atomic::AtomicBool::new(false);
     let r = block_on(ecu.dispatch(&mut state, ai, &[0x22, 0xF4, 0x0D], &mut out, &no));
     assert_eq!(r, uds_services::Responded::Yes { session: None });
     assert_eq!(out.written_bytes(), &[0x62, 0xF4, 0x0D, 0x40]);
@@ -549,7 +549,7 @@ fn unsupported_services_settle_0x11_or_silence() {
         ta: Address(0x10),
         ta_type: TaType::Physical,
     };
-    let no = core::cell::Cell::new(false);
+    let no = core::sync::atomic::AtomicBool::new(false);
     let r = block_on(ecu.dispatch(&mut state, phys, &[0x11, 0x01], &mut out, &no));
     assert_eq!(r, uds_services::Responded::Yes { session: None });
     assert_eq!(out.written_bytes(), &[0x7F, 0x11, 0x11]);
