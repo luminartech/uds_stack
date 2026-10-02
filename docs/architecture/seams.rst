@@ -221,7 +221,7 @@ Request context
 Outcome
 -------
 
-.. arch:: Dispatch is asynchronous and cannot fail: a sink refusal is a response, not an error
+.. arch:: Dispatch is asynchronous and returns its outcome unsettled; the driver settles it
    :id: UDSSVC_ARCH_0016
    :depends_on: UDSSVC_ARCH_0009; UDSSVC_ARCH_0030
    :status: draft
@@ -231,15 +231,21 @@ Outcome
    Rationale: a negative response is a normal, specified outcome of clause 8.7 expressed in the
    written bytes — a server answering 0x11 has succeeded at its job. Typing it as an error
    would put the most common non-trivial path through the crate into the ``Err`` branch,
-   and callers would learn to ignore errors. Dispatch instead reports whether a response
-   was written and should be transmitted, or whether nothing is to be sent. A negative
-   response is the first of those, not an error, and dispatch has no error type at all.
+   and callers would learn to ignore errors. Dispatch, once its outcome is settled,
+   instead reports whether a response was written and should be transmitted, or whether
+   nothing is to be sent. A negative response is the first of those, not an error, and
+   neither dispatch nor settlement has an error type at all; a sink refusal is a response
+   too (0x14), not an error.
 
    Silence must be a distinguishable outcome rather than "wrote nothing", because the loop
    has to tell "clause 8.7 requires no response" apart from a response that was written.
    Only the first is a reason not to transmit.
 
-   **How the cases are spelled.** ``dispatch`` returns ``Responded`` — *responded* or
+   **How the cases are spelled.** ``dispatch`` returns the handler's outcome *unsettled*,
+   as ``Unsettled``, and the driver applies clause 8.7's last stages to it: once the
+   handler future has completed and before the response is submitted, it calls the
+   pipeline's ``settle``, which applies "response fits" (``UDSSVC_ARCH_0017``) and
+   ``UDSSVC_ARCH_0009``'s rules 1–3 and yields ``Responded`` — *responded* or
    *suppressed*, each carrying the session a ``DiagnosticSessionControl`` selected — and
    no ``Result``, so the driver's loop has two outcomes, not three. The ``Err`` arm this
    element once prescribed for the sink's failure is empty: the sink has one failure, a
@@ -253,10 +259,19 @@ Outcome
    response is therefore never in an ``Err`` branch a caller could learn to ignore, which
    is what this element's rationale asked for.
 
+   **The driver settles, not dispatch, because rule 3's input is known only to the
+   driver.** Whether a response-pending for this request was accepted for transmission is
+   learned in the driver's loop while the handler runs (``UDSSVC_ARCH_0031``,
+   ``UDSSVC_ARCH_0032``), and it is final only once the handler has finished. Settled
+   inside the handler's future, that fact would have to be shared with the future while
+   it is live; settled by the driver afterwards, it is a plain value passed once, and
+   ``uds_server!``'s emitted ``dispatch`` routes and decides nothing.
+
    **``Responded`` is the whole report**, and no other outcome type stands behind it.
    Dispatch reports to the driver loop in this crate, not across a seam, for the reason
-   ``UDSSVC_ARCH_0018`` gives. ``Responded`` is public only because the trait an
-   application's assembly implements has to name it; an application never writes one.
+   ``UDSSVC_ARCH_0018`` gives. ``Unsettled`` and ``Responded`` are public only because
+   the trait an application's assembly implements has to name the first and the driver's
+   tests the second; an application never writes either.
 
    Genuine transport failures are the binding's concern, reach this crate as a ``DataConf``
    carrying an ``SResult``, and never reach a handler.

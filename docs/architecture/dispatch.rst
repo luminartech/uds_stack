@@ -550,9 +550,11 @@ Suppression
    least one data parameter were all supported is still answered negatively, because that
    answer is specific to this server rather than a report of non-participation.
 
-   Rule 3 reads a fact the pipeline owns rather than an input it is given.
+   Rule 3 reads a fact this crate owns rather than an input it is given.
    ``UDSSVC_ARCH_0032`` makes this crate the originator of a response-pending, so the gate
-   consults whether *this dispatch* offered one across ``UDSSVC_ARCH_0031``'s seam.
+   consults whether one was offered for *this request* across ``UDSSVC_ARCH_0031``'s seam.
+   The driver makes that offer, so the driver evaluates the gate: it calls the pipeline's
+   ``settle`` with the answer once the handler has finished (``UDSSVC_ARCH_0016``).
 
    **The gate reads "offered and accepted", where clause 8.7.5 writes "sent", and the
    divergence is deliberate.** A submission the session layer refuses is not a send, and the
