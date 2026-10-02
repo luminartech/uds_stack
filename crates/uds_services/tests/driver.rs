@@ -4,7 +4,7 @@
 //! invoked inside this crate, because the helper macros it calls through `$crate::` are
 //! themselves macro-expanded `macro_export` macros, which rustc refuses to resolve by an
 //! absolute path from their defining crate. The full scripted transport is
-//! `end_to_end.rs`'s; these are the cases small enough to need none.
+//! `end_to_end.rs`'s; these are the cases that need a fixture of their own.
 
 use uds_services::{
     Address, Ai, DiagnosticSessionType as S, Mtype, NegativeResponseCode as Nrc, Reloads,
@@ -143,8 +143,267 @@ fn block_on<F: core::future::Future>(f: F) -> F::Output {
 /// on: `step` returns `Ok`, not an error and not a panic.
 #[test]
 fn a_spurious_confirmation_is_survived() {
-    let mut server = Srv::new(Ecu, Spurious { done: false }, PARAMS);
+    let mut server = Srv::new(Ecu, Spurious { done: false }, Address(0x10), PARAMS);
     assert_eq!(block_on(server.step()), Ok(()));
     assert!(server.transport().done);
     assert_eq!(block_on(server.step()), Err(()));
+}
+
+const ECU: Address = Address(0x10);
+const TESTER: Address = Address(0x0E80);
+const OTHER_TESTER: Address = Address(0x0E81);
+
+/// A request from `tester` to the ECU, physically addressed.
+const fn request_from(tester: Address) -> Ai {
+    Ai {
+        mtype: Mtype::Diag,
+        sa: tester,
+        ta: ECU,
+        ta_type: TaType::Physical,
+    }
+}
+
+/// A response from the ECU to `tester`: what the driver submits, and what its
+/// confirmation carries.
+const fn response_to(tester: Address) -> Ai {
+    Ai {
+        mtype: Mtype::Diag,
+        sa: ECU,
+        ta: tester,
+        ta_type: TaType::Physical,
+    }
+}
+
+/// One scripted step of [`Script`].
+#[derive(Debug, Clone, Copy)]
+enum Step {
+    /// A request arrives.
+    Ind(Ai, &'static [u8]),
+    /// A transmission to this addressing is confirmed sent.
+    Conf(Ai),
+    /// The clock advances to this instant and the deadline is reported.
+    At(u32),
+}
+
+const STEPS: usize = 8;
+const FRAMES: usize = 4;
+const FRAME: usize = 8;
+
+/// A transport that plays a fixed script and records what was sent, and to whom.
+#[derive(Debug)]
+struct Script {
+    steps: [Option<Step>; STEPS],
+    cursor: usize,
+    now: u32,
+    sent: [(Option<Ai>, [u8; FRAME], usize); FRAMES],
+    sent_count: usize,
+}
+
+impl Script {
+    fn new(script: &[Step]) -> Self {
+        let mut steps = [None; STEPS];
+        for (slot, step) in steps.iter_mut().zip(script) {
+            *slot = Some(*step);
+        }
+        Self {
+            steps,
+            cursor: 0,
+            now: 0,
+            sent: [(None, [0; FRAME], 0); FRAMES],
+            sent_count: 0,
+        }
+    }
+
+    /// Transmission `i`: its addressing and its bytes.
+    fn sent(&self, i: usize) -> (Option<Ai>, &[u8]) {
+        self.sent.get(i).map_or((None, &[][..]), |(ai, buf, n)| {
+            (*ai, buf.get(..*n).unwrap_or(&[]))
+        })
+    }
+
+    /// The next step, or the one error this transport returns: the script is exhausted.
+    fn advance<'b>(&mut self, buffer: &'b mut [u8]) -> Result<TransportEvent<'b>, ()> {
+        let step = self.steps.get(self.cursor).copied().flatten().ok_or(())?;
+        self.cursor = self.cursor.wrapping_add(1);
+        match step {
+            Step::Ind(ai, bytes) => {
+                let (head, _) = buffer.split_at_mut_checked(bytes.len()).ok_or(())?;
+                head.copy_from_slice(bytes);
+                Ok(TransportEvent::DataInd { ai, data: head })
+            }
+            Step::Conf(ai) => Ok(TransportEvent::DataConf {
+                ai,
+                result: SResult::Ok,
+            }),
+            Step::At(t) => {
+                self.now = t;
+                Ok(TransportEvent::Deadline)
+            }
+        }
+    }
+}
+
+impl UdsTransport for Script {
+    type Error = ();
+    fn t_data_req(
+        &mut self,
+        ai: Ai,
+        data: &[u8],
+    ) -> impl core::future::Future<Output = Result<(), ()>> {
+        // A frame that does not fit is recorded with no bytes, so a test comparing them
+        // fails rather than passing on a truncation.
+        if let Some((slot_ai, buf, n)) = self.sent.get_mut(self.sent_count) {
+            *slot_ai = Some(ai);
+            if let Some(head) = buf.get_mut(..data.len()) {
+                head.copy_from_slice(data);
+                *n = data.len();
+            }
+        }
+        self.sent_count = self.sent_count.wrapping_add(1);
+        core::future::ready(Ok(()))
+    }
+    // Lazy, as `end_to_end.rs`'s is: the driver drops this future unpolled whenever the
+    // handler wins its `select2`, and a step taken on creation would then be lost.
+    fn next_event<'b>(
+        &mut self,
+        buffer: &'b mut [u8],
+        _deadline: Option<Timestamp>,
+    ) -> impl core::future::Future<Output = Result<TransportEvent<'b>, ()>> {
+        let mut parts = Some((self, buffer));
+        core::future::poll_fn(move |_| {
+            core::task::Poll::Ready(parts.take().ok_or(()).and_then(|(t, b)| t.advance(b)))
+        })
+    }
+    fn outbound_max(&self) -> Option<usize> {
+        None
+    }
+    fn channel_timing(&self) -> Reloads {
+        Reloads {
+            default_reload: 50,
+            enhanced_reload: 5_000,
+        }
+    }
+    fn now(&self) -> Timestamp {
+        Timestamp(self.now)
+    }
+}
+
+/// Pends `self.0` times before completing, waking itself each time.
+#[derive(Debug)]
+struct PendN(u8);
+
+impl core::future::Future for PendN {
+    type Output = ();
+    fn poll(
+        mut self: core::pin::Pin<&mut Self>,
+        cx: &mut core::task::Context<'_>,
+    ) -> core::task::Poll<()> {
+        if self.0 == 0 {
+            return core::task::Poll::Ready(());
+        }
+        self.0 = self.0.saturating_sub(1);
+        cx.waker().wake_by_ref();
+        core::task::Poll::Pending
+    }
+}
+
+/// An application whose one service may be slow and never admits a response-pending.
+#[derive(Debug)]
+struct Slow {
+    /// How many times the next `read` pends before answering.
+    pends: u8,
+}
+
+impl uds_services::ReadDataByIdentifier for Slow {
+    type Did = Did;
+    const MAY_RESPOND_PENDING: bool = false;
+    const MAX_DIDS_PER_REQUEST: usize = 1;
+    async fn read(&mut self, _did: Did, out: &mut ResponseSink<'_>) -> Result<(), Nrc> {
+        PendN(core::mem::take(&mut self.pends)).await;
+        out.write_all(&[0x40]).map_err(|_| Nrc::ResponseTooLong)
+    }
+}
+
+uds_server! {
+    Slow: ReadDataByIdentifier;
+    transport = Script,
+    peers = 1,
+    server = SlowSrv,
+}
+
+/// Step until the transport errors, which it does only once the script is exhausted.
+/// Bounded, so a driver that stopped consuming the script fails rather than hangs.
+fn run(server: &mut SlowSrv) {
+    let waker = core::task::Waker::noop();
+    let mut cx = core::task::Context::from_waker(waker);
+    for _ in 0..STEPS {
+        let mut step = core::pin::pin!(server.step());
+        let mut result = None;
+        for _ in 0..16 {
+            if let core::task::Poll::Ready(r) = step.as_mut().poll(&mut cx) {
+                result = Some(r);
+                break;
+            }
+        }
+        if result != Some(Ok(())) {
+            break;
+        }
+    }
+}
+
+const READ: &[u8] = &[0x22, 0xF4, 0x0D];
+const POSITIVE: &[u8] = &[0x62, 0xF4, 0x0D, 0x40];
+
+/// ``UDSSVC_ARCH_0032`` — a 0x78 is admissible only where `may_respond_pending` says so,
+/// and the driver does not decide. A slow handler of a service declaring
+/// `MAY_RESPOND_PENDING = false` overruns `tP2_Server` and gets no response-pending: the
+/// tester sees only the final response.
+///
+/// Here rather than in `end_to_end.rs`: that fixture's only slow handler is its
+/// `ReadDataByIdentifier`, whose 0x78 its other tests rely on, and the services it can
+/// set the constant false on (`SecurityAccess`, `TesterPresent`) have no stage that can
+/// pend.
+#[test]
+fn a_service_that_may_not_pend_gets_no_response_pending() {
+    let mut server = SlowSrv::new(
+        Slow { pends: 1 },
+        Script::new(&[
+            Step::Ind(request_from(TESTER), READ),
+            Step::At(50), // tP2_Server reached, mid-handler
+            Step::Conf(response_to(TESTER)),
+        ]),
+        ECU,
+        PARAMS,
+    );
+    run(&mut server);
+    let t = server.transport();
+    assert_eq!(t.cursor, 3, "the script was not consumed");
+    assert_eq!(t.sent_count, 1);
+    assert_eq!(t.sent(0), (Some(response_to(TESTER)), POSITIVE));
+}
+
+/// ``UDSS_LLR_0062`` — a final response refused because no association is free is waited
+/// out and resubmitted once. One association: the first tester's response is still
+/// unconfirmed when the second tester's request is answered, so that answer is refused
+/// until the first confirmation frees the association, which is any confirmation and not
+/// the refused addressing's own.
+#[test]
+fn a_final_response_refused_for_want_of_an_association_is_still_delivered() {
+    let mut server = SlowSrv::new(
+        Slow { pends: 0 },
+        Script::new(&[
+            Step::Ind(request_from(TESTER), READ),
+            Step::Ind(request_from(OTHER_TESTER), READ),
+            Step::Conf(response_to(TESTER)), // frees the one association
+            Step::Conf(response_to(OTHER_TESTER)),
+        ]),
+        ECU,
+        PARAMS,
+    );
+    run(&mut server);
+    let t = server.transport();
+    assert_eq!(t.cursor, 4, "the script was not consumed");
+    assert_eq!(t.sent_count, 2);
+    assert_eq!(t.sent(0), (Some(response_to(TESTER)), POSITIVE));
+    assert_eq!(t.sent(1), (Some(response_to(OTHER_TESTER)), POSITIVE));
 }
