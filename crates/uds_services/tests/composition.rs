@@ -553,6 +553,11 @@ fn unsupported_services_settle_0x11_or_silence() {
     let r = block_on(ecu.dispatch(&mut state, phys, &[0x11, 0x01], &mut out, &no));
     assert_eq!(r, uds_services::Responded::Yes { session: None });
     assert_eq!(out.written_bytes(), &[0x7F, 0x11, 0x11]);
+    // Listed, so `begin` passes it; no stage, so the fall-through settles it.
+    let r =
+        block_on(ecu.dispatch(&mut state, phys, &[0x14, 0xFF, 0xFF, 0xFF], &mut out, &no));
+    assert_eq!(r, uds_services::Responded::Yes { session: None });
+    assert_eq!(out.written_bytes(), &[0x7F, 0x14, 0x11]);
     let func = Ai {
         ta_type: TaType::Functional,
         ..phys
