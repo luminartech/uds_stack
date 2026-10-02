@@ -313,7 +313,7 @@ mod request {
         let crate::Request::ControlDtcSetting(inner) = req else {
             panic!("expected a ControlDtcSetting request");
         };
-        assert!(inner.option_record.is_empty());
+        assert_eq!(inner.option_record, [0u8; 0]);
 
         let mut buf = [0u8; 8];
         let written = req.encode_to_slice(&mut buf).unwrap();
@@ -330,7 +330,7 @@ mod request {
 
     #[test]
     fn exposes_allowed_nack_codes() {
-        assert!(!ControlDtcSettingRequest::allowed_nack_codes().is_empty());
+        assert_ne!(ControlDtcSettingRequest::allowed_nack_codes(), []);
         assert!(
             ControlDtcSettingRequest::allowed_nack_codes()
                 .contains(&NegativeResponseCode::RequestOutOfRange)

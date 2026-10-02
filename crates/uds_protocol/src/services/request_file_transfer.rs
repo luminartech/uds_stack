@@ -1042,7 +1042,7 @@ mod request_tests {
                 .unwrap();
         assert_eq!(written, n.encoded_size().unwrap());
         let (decoded, rest) = NamePayload::decode(&buf[..written]).unwrap();
-        assert!(rest.is_empty());
+        assert_eq!(rest, [0u8; 0]);
         assert_eq!(decoded, n);
         assert_encode_size_agrees(&n);
     }
@@ -1056,7 +1056,7 @@ mod request_tests {
                 .unwrap();
         assert_eq!(written, s.encoded_size().unwrap());
         let (decoded, rest) = SizePayload::decode(&buf[..written]).unwrap();
-        assert!(rest.is_empty());
+        assert_eq!(rest, [0u8; 0]);
         assert_eq!(decoded, s);
         assert_encode_size_agrees(&s);
     }
@@ -1149,7 +1149,7 @@ mod request_tests {
                 .unwrap();
         assert_eq!(written, req.encoded_size().unwrap());
         let (decoded, rest) = RequestFileTransferRequest::decode(&buf[..written]).unwrap();
-        assert!(rest.is_empty());
+        assert_eq!(rest, [0u8; 0]);
         assert_eq!(decoded, req);
         assert_encode_size_agrees(&req);
     }
@@ -1164,7 +1164,7 @@ mod request_tests {
                 .unwrap();
         assert_eq!(written, req.encoded_size().unwrap());
         let (decoded, rest) = RequestFileTransferRequest::decode(&buf[..written]).unwrap();
-        assert!(rest.is_empty());
+        assert_eq!(rest, [0u8; 0]);
         assert_eq!(decoded, req);
         assert_encode_size_agrees(&req);
     }
@@ -1182,7 +1182,7 @@ mod request_tests {
                 .unwrap();
         assert_eq!(written, req.encoded_size().unwrap());
         let (decoded, rest) = RequestFileTransferRequest::decode(&buf[..written]).unwrap();
-        assert!(rest.is_empty());
+        assert_eq!(rest, [0u8; 0]);
         assert_eq!(decoded, req);
         assert_encode_size_agrees(&req);
     }
@@ -1242,7 +1242,7 @@ mod response_tests {
         assert_eq!(written, resp.encoded_size().unwrap());
         let (decoded, remaining) =
             RequestFileTransferResponse::decode(&buf[..written]).unwrap();
-        assert!(remaining.is_empty());
+        assert_eq!(remaining, [0u8; 0]);
         assert_eq!(decoded, resp);
         assert_encode_size_agrees(&resp);
     }

@@ -51,7 +51,7 @@ fn a_fixed_size_payload_with_an_overlong_declared_length_still_round_trips() {
 
     let encoded = encode(&message);
     let (reparsed, rest) = Message::decode(&encoded).expect("re-decode must succeed");
-    assert!(rest.is_empty());
+    assert_eq!(rest, []);
     assert_eq!(
         reparsed.header.payload_length, 1,
         "the encoded frame declares the length its payload actually occupies"
@@ -71,7 +71,7 @@ fn a_unit_payload_with_a_nonzero_declared_length_still_round_trips() {
     let encoded = encode(&message);
     assert_eq!(encoded.len(), 8, "a unit payload encodes to a bare header");
     let (reparsed, rest) = Message::decode(&encoded).expect("re-decode must succeed");
-    assert!(rest.is_empty());
+    assert_eq!(rest, []);
     assert_eq!(reparsed.header.payload_length, 0);
     assert_eq!(
         reparsed.header.payload_type,
@@ -86,6 +86,6 @@ fn a_unit_payload_with_a_nonzero_declared_length_still_round_trips() {
 fn a_well_formed_frame_encodes_to_the_bytes_it_came_from() {
     let framed: [u8; 9] = [0x02, 0xFD, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x03];
     let (message, rest) = Message::decode(&framed).expect("decode");
-    assert!(rest.is_empty());
+    assert_eq!(rest, []);
     assert_eq!(encode(&message), framed);
 }
