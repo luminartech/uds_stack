@@ -64,8 +64,7 @@ impl uds_services::DiagnosticSessionControl for Ecu {
     fn on_transition(&mut self, _t: SessionTransition, _r: bool) {}
 }
 
-/// A transport that confirms a transmission the server never made.
-/// (Review focus 2.)
+/// A transport that confirms a transmission the server never made (``UDSS_LLR_0063``).
 #[derive(Debug)]
 struct Spurious {
     done: bool,
@@ -248,11 +247,8 @@ impl Script {
                 }
                 Step::At(t) => {
                     self.now = t;
-                    // Reached on the wrapping clock (UDSS_LLR_0019): the modular
-                    // difference lies in the lower half of the range.
-                    if deadline
-                        .is_some_and(|d| Timestamp(t).interval_since(d) <= u32::MAX / 2)
-                    {
+                    // The comparison the seam doc prescribes, right across the wrap.
+                    if deadline.is_some_and(|d| Timestamp(t).has_reached(d)) {
                         self.deadlines = self.deadlines.wrapping_add(1);
                         return Ok(TransportEvent::Deadline);
                     }

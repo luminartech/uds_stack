@@ -333,6 +333,7 @@ macro_rules! __uds_stage {
 /// #     TransferRequest, TransportEvent, UdsTransport, uds_server,
 /// # };
 /// # use uds_protocol::NegativeResponseCode as Nrc;
+/// use static_cell::ConstStaticCell;
 /// #
 /// # #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 /// # enum Did { VehicleSpeed, VinNumber }
@@ -420,15 +421,25 @@ macro_rules! __uds_stage {
 ///     server = EcuServer,
 /// }
 ///
-/// // Constructed in place: no stack temporary holds the buffers on the way in.
-/// static SERVER: EcuServer =
-///     EcuServer::new(Ecu::new(), DoIpTransport, Address(0x0E00), PARAMS);
+/// // Constructed in place: no stack temporary holds the buffers on the way in. The cell
+/// // hands out the `&'static mut` that `step` needs, once.
+/// static SERVER: ConstStaticCell<EcuServer> = ConstStaticCell::new(EcuServer::new(
+///     Ecu::new(),
+///     DoIpTransport,
+///     Address(0x0E00),
+///     PARAMS,
+/// ));
+///
+/// let server: &'static mut EcuServer = SERVER.take();
+/// // One step, polled by hand here; an executor's task would `server.run().await`.
+/// let mut step = core::pin::pin!(server.step());
+/// let mut cx = core::task::Context::from_waker(core::task::Waker::noop());
+/// assert!(step.as_mut().poll(&mut cx).is_ready());
 ///
 /// let mut store = <<Ecu as ServiceSet>::Store as Storage>::EMPTY;
 /// let buffers = store.split();
 /// assert_eq!(buffers.in_flight.len(), 1_026);
 /// assert_eq!(buffers.response.len(), 77);
-/// # let _ = &SERVER;
 /// ```
 #[macro_export]
 macro_rules! uds_server {

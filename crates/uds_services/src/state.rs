@@ -33,7 +33,7 @@ use uds_protocol::DiagnosticSessionType;
 /// }
 /// ```
 pub trait ProtocolState: private::Sealed + core::fmt::Debug {
-    /// The state at power-up: ISO 14229-1:2020 clause 9.2's default session.
+    /// The state at power-up: ISO 14229-1:2020 clause 10.2.1's default session.
     const INITIAL: Self;
 }
 
@@ -77,7 +77,7 @@ mod tests {
     use super::{ProtocolState, State};
     use uds_protocol::DiagnosticSessionType;
 
-    /// ISO 14229-1:2020 9.2 — a server powers up in the default session.
+    /// ISO 14229-1:2020 10.2.1 — a server powers up in the default session.
     #[test]
     fn the_initial_state_is_the_default_session() {
         let s = State::INITIAL;

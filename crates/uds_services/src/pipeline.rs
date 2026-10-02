@@ -56,7 +56,7 @@ pub enum Stage<'a> {
         /// The code the request settled with.
         nrc: NegativeResponseCode,
     },
-    /// No service identifier at all (spec §3.3): complete, with no response.
+    /// No service identifier at all (``UDSSVC_ARCH_0005``): complete, with no response.
     Empty,
 }
 
@@ -345,7 +345,7 @@ pub fn diagnostic_session_control<A: DiagnosticSessionControl>(
     Ok(Some(session))
 }
 
-/// ISO 14229-1:2020 clause 10.6 — `TesterPresent`'s own stage (``UDSSVC_ARCH_0004``).
+/// ISO 14229-1:2020 clause 10.7 — `TesterPresent`'s own stage (``UDSSVC_ARCH_0004``).
 ///
 /// A sub-function other than `zeroSubFunction` (`0x01..=0x7F` with the suppress bit
 /// stripped, ISO/SAE reserved) is `subFunctionNotSupported` (0x12), and the application
@@ -468,7 +468,7 @@ mod tests {
     }
 
     /// Clause 11.2 — unsupported identifiers are skipped; none supported is 0x31; too
-    /// many is 0x13. (Review focus 4.)
+    /// many is 0x13.
     #[test]
     fn rdbi_partial_none_and_too_many() {
         let mut buf = [0_u8; 32];
@@ -554,7 +554,7 @@ mod tests {
         assert_eq!(out.written_bytes(), &[0x50, 0x03, 0xFF, 0xFF, 0x01, 0xF5]);
     }
 
-    /// Clause 10.6 — `TesterPresent` answers `7E 00` and tells the application.
+    /// Clause 10.7 — `TesterPresent` answers `7E 00` and tells the application.
     #[test]
     fn tester_present_answers_and_notifies() {
         let mut buf = [0_u8; 4];
@@ -573,7 +573,7 @@ mod tests {
         req
     }
 
-    /// Clause 10.6 — a reserved sub-function is 0x12 with nothing written; `3E 00` and
+    /// Clause 10.7 — a reserved sub-function is 0x12 with nothing written; `3E 00` and
     /// `3E 80` (suppress bit set, sub-function zero) both answer `7E 00`.
     #[test]
     fn tester_present_refuses_a_reserved_sub_function() {
@@ -623,7 +623,7 @@ mod tests {
         }
     }
 
-    /// Spec §3.3 — an empty request is the pipeline's, and is `Empty`.
+    /// ``UDSSVC_ARCH_0005`` — an empty request is the pipeline's, and is `Empty`.
     #[test]
     fn an_empty_request_is_empty() {
         assert!(matches!(

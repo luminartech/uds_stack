@@ -152,7 +152,7 @@ pub struct Server<const A: usize> {
     session: Session,
     service: Option<InProgress>,
     /// Expiry snapshots: taken at the instant of expiry, because the expiry itself
-    /// discards the facts the indication names (spec §2.1).
+    /// discards the facts the indication names (``UDSS_LLR_0100``, ``UDSS_LLR_0117``).
     s3_expiry: Option<PeerIdentity>,
     p2_expiry: Option<(PeerIdentity, ServerReload)>,
 }
@@ -196,7 +196,7 @@ impl<const A: usize> Server<A> {
     }
 
     /// ``UDSS_LLR_0081`` — act on every expiry the timestamp causes before the input.
-    /// Sweeps the previous input's unreported snapshots first (spec §2.1 item 5).
+    /// Sweeps the previous input's unreported snapshots first.
     fn expire(&mut self, now: Timestamp) {
         self.s3_expiry = None;
         self.p2_expiry = None;

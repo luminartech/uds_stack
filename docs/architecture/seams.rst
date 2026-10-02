@@ -246,15 +246,17 @@ Outcome
    refused write, and a handler that writes too much sets the sink's refusal bit, which
    the pipeline's ``settle`` turns into ``responseTooLong`` (0x14) after ``rewind``,
    written bytes like any other negative response (``UDSSVC_ARCH_0017``).
-   ``ResponseSink::MIN_BOUND`` of three bytes guarantees that negative response fits. The
+   ``ResponseSink::MIN_BOUND`` guarantees that negative response fits: the sink's bound is
+   never below it, and ``uds_server!`` rejects at compile time a response buffer, or a
+   transport ``MAX_PDU``, shorter than it. The
    once-separate case, "something went wrong", has no remaining member. A negative
    response is therefore never in an ``Err`` branch a caller could learn to ignore, which
    is what this element's rationale asked for.
 
-   **``Outcome`` is ``pub(crate)``**, for the reason ``UDSSVC_ARCH_0018`` gives: dispatch
-   reports to the driver loop in this crate, not across a seam. ``Responded`` is public
-   only because the trait an application's assembly implements has to name it; an
-   application writes neither.
+   **``Responded`` is the whole report**, and no other outcome type stands behind it.
+   Dispatch reports to the driver loop in this crate, not across a seam, for the reason
+   ``UDSSVC_ARCH_0018`` gives. ``Responded`` is public only because the trait an
+   application's assembly implements has to name it; an application never writes one.
 
    Genuine transport failures are the binding's concern, reach this crate as a ``DataConf``
    carrying an ``SResult``, and never reach a handler.
@@ -584,8 +586,9 @@ There is no handler seam
    Two things that used to cross this seam are now internal, and are named here because their
    elements still describe them as though they crossed something: ``Ctx``
    (``UDSSVC_ARCH_0015``) is the dispatch pipeline's input, constructed here from the session
-   layer's indication; ``Outcome`` (``UDSSVC_ARCH_0016``) is what dispatch reports to the loop
-   around it. Neither is a public type by necessity, and neither is a seam.
+   layer's indication; ``Responded`` (``UDSSVC_ARCH_0016``) is what dispatch reports to the
+   loop around it. Neither is a seam: ``Responded`` is public only because the assembly's
+   trait names it.
 
    **What this does not change** is the pipeline's shape. ``UDSSVC_ARCH_0004`` is still a pure
    function of a request and its context, still testable without a transport, a clock or a

@@ -30,7 +30,9 @@ macro_rules! causes {
     ) => {
         /// Why an input was rejected.
         ///
-        /// One variant per rejecting requirement that remains expressible. The
+        /// One variant per rejecting requirement limb that remains expressible —
+        /// ``UDSS_LLR_0185``'s two limbs are two variants, because they call for
+        /// different actions. The
         /// requirements this crate's types discharge by construction —
         /// ``UDSS_LLR_0027`` (second limb), ``UDSS_LLR_0030``, ``UDSS_LLR_0031``,
         /// ``UDSS_LLR_0054``, ``UDSS_LLR_0066``, ``UDSS_LLR_0067``, ``UDSS_LLR_0068``,
@@ -38,9 +40,9 @@ macro_rules! causes {
         /// and part of ``UDSS_LLR_0134`` — have no variant here, because an input that
         /// triggers them cannot be written.
         ///
-        /// Exhaustive. The set is one variant per rejecting requirement, so it is closed
-        /// by the requirement set; no requirement here states an open enumeration, and
-        /// only ``UDSS_LLR_0010`` and ``UDSS_LLR_0012`` do so anywhere in the set. A
+        /// Exhaustive. The set is one variant per rejecting requirement limb, so it is
+        /// closed by the requirement set; no requirement here states an open enumeration,
+        /// and only ``UDSS_LLR_0010`` and ``UDSS_LLR_0012`` do so anywhere in the set. A
         /// cause can appear only by a requirement changing, and a caller whose match then
         /// fails to compile is being told exactly that — which a wildcard arm would
         /// swallow.

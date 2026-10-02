@@ -36,12 +36,10 @@ pub enum ChannelReload {
 /// least whole millisecond not less than three tenths of `p2_star_server_max`, read as
 /// that parameter stands at the time, so a parameter for it could only disagree.
 ///
-/// **The values a `DiagnosticSessionControl` positive response advertises must equal
-/// these, for the session it selects.** `uds_services` composes that response from its
-/// application's `DiagnosticSessionControl::timing`, and these are what the timers
-/// enforce, so the two have separate sources and nothing reconciles them. Milestone 1
-/// does not apply the confirmed session's timing through [`Server::set_parameter`];
-/// that is a follow-up.
+/// These are what the timers enforce. A `DiagnosticSessionControl` positive response
+/// advertises `P2Server_max` and `P2*Server_max` (ISO 14229-1:2020 Table 29); keeping the
+/// advertised values equal to these is the obligation of whatever composes that response,
+/// and [`Server::set_parameter`] is how a caller changes them afterwards.
 ///
 /// [`Server::set_parameter`]: crate::Server::set_parameter
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

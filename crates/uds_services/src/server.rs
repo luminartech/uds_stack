@@ -54,21 +54,37 @@ pub struct Server<A: ServiceSet, T: UdsTransport, const PEERS: usize> {
 impl<A: ServiceSet, T: UdsTransport, const PEERS: usize> Server<A, T, PEERS> {
     /// Assemble a server.
     ///
-    /// A `const fn`, which is load-bearing: the storage is inline and can be several
-    /// kilobytes, so a runtime constructor would build a stack temporary before the move
-    /// and a small-stack target could not hold it. `static SERVER: EcuServer =
-    /// EcuServer::new(..)` constructs in place, which is what
-    /// [`Storage::EMPTY`] being an associated const buys.
+    /// A `const fn`, so a server can be built in place, in a `static` initialiser, rather
+    /// than on the stack: the storage is inline and can be several kilobytes, which a
+    /// small-stack target could not hold as a temporary. [`Storage::EMPTY`] being an
+    /// associated const is what allows it.
+    ///
+    /// [`Self::step`] takes `&mut self`, so the `static` has to yield a `&'static mut`
+    /// once. `static_cell::ConstStaticCell::new(EcuServer::new(..))` and its `take()` do
+    /// that without a stack temporary, as [`crate::uds_server`]'s example shows. A plain
+    /// `static SERVER: EcuServer` lands in read-only memory and can never be stepped, and
+    /// `StaticCell::init(EcuServer::new(..))` builds the value on the stack before moving
+    /// it. In a `ConstStaticCell` the server lives in initialised data, so its initial
+    /// image, buffers included, is also stored in flash.
     ///
     /// The driver builds its own session, so an application never names `uds_session`.
     ///
     /// `PEERS` must be 1, checked at compile time: milestone 1 keeps one slot for a
     /// selecting response awaiting its confirmation (see [`crate::uds_server`]).
     ///
-    /// `own` is the address every response is sent from: its `S_SA`, which
-    /// ``UDSS_LLR_0051`` makes the sending entity's. It is not derived from the request,
-    /// because a functionally addressed request's `S_TA` is the functional group address,
-    /// and a response sent from that address would not say which server answered.
+    /// # Arguments
+    ///
+    /// * `services` - the application's assembled [`ServiceSet`], whose handlers answer
+    ///   requests
+    /// * `transport` - the [`UdsTransport`] the server receives requests from and sends
+    ///   responses through
+    /// * `own` - the [`Address`] every response is sent from: its `S_SA`, which
+    ///   ``UDSS_LLR_0051`` makes the sending entity's. It is not derived from the request,
+    ///   because a functionally addressed request's `S_TA` is the functional group
+    ///   address, and a response sent from that address would not say which server
+    ///   answered.
+    /// * `params` - the session layer's [`ServerParams`]: `tS3_Server`, `P2Server_max`
+    ///   and `P2*Server_max`, which the server enforces
     pub const fn new(
         services: A,
         transport: T,
@@ -101,12 +117,13 @@ impl<A: ServiceSet, T: UdsTransport, const PEERS: usize> Server<A, T, PEERS> {
 
     /// Handle one transport event.
     ///
-    /// **An `Err` is terminal for this server instance** (``UDSSVC_ARCH_0040``,
+    /// **An `Err` is terminal for this server instance** (``UDSSVC_ARCH_0040``, a
     /// milestone-1 limit). A transport error unwinds through the drains with `?`, so a
     /// session-hook decision a drain already recorded — a `tS3_Server` expiry, a
     /// confirmed session — may not have been applied, and the application's state and
-    /// the session layer may disagree afterwards. The caller recreates the server rather
-    /// than calling `step` again.
+    /// the session layer may disagree afterwards. Do not call `step` on this instance
+    /// again. Nothing here recovers it in place: the transport and the services cannot be
+    /// taken back out of it.
     ///
     /// # Errors
     ///
@@ -230,6 +247,13 @@ impl<A: ServiceSet, T: UdsTransport, const PEERS: usize> Server<A, T, PEERS> {
 
     /// Run until the transport fails.
     ///
+    /// **The `Err` this returns is terminal for this server instance**
+    /// (``UDSSVC_ARCH_0040``, a milestone-1 limit), as an `Err` from [`Self::step`] is: a
+    /// session-hook decision already recorded may not have been applied, so the
+    /// application's state and the session layer may disagree afterwards. Do not call
+    /// `run` or `step` on this instance again. Nothing here recovers it in place: the
+    /// transport and the services cannot be taken back out of it.
+    ///
     /// # Errors
     ///
     /// Whatever [`Self::step`] returned.
@@ -241,7 +265,7 @@ impl<A: ServiceSet, T: UdsTransport, const PEERS: usize> Server<A, T, PEERS> {
 }
 
 /// The `DiagnosticSessionControl` response in flight: its session takes effect on the
-/// `Confirm` that reports it sent (spec §3.2; ``UDSS_LLR_0085``). One slot: a server
+/// `Confirm` that reports it sent (``UDSS_LLR_0085``). One slot: a server
 /// answers one request at a time (``UDSS_LLR_0108``), so with one peer one selecting
 /// response is in flight at most.
 ///
@@ -269,8 +293,7 @@ struct Pending {
 /// Physically addressed whatever the request was: a server answers the one client that
 /// asked, so a response to a functional request is a physical message to that client.
 /// That is an observation the requirement set relies on, not a clause of
-/// ISO 14229-2:2021 9.6 (`docs/requirements/llr-service-interface.rst`, the channel
-/// requirement's rationale).
+/// ISO 14229-2:2021 9.6 (``UDSS_LLR_0026``'s rationale).
 const fn reply_address(own: Address, request: Ai) -> Ai {
     Ai {
         sa: own,
@@ -337,7 +360,8 @@ struct Drained<'d> {
     deferred: Deferred,
 }
 
-/// The one place every session output is handled (spec §3.4). Every reaction, from every
+/// The one place every session output is handled (``UDSSVC_ARCH_0040``). Every reaction,
+/// from every
 /// input, passes through here, because an expiry can surface from any of them. Acts on
 /// what needs only the transport and the pending record; records the rest.
 ///
@@ -369,7 +393,8 @@ async fn drain<'d, T: UdsTransport, const PEERS: usize>(
             } => found.indication = Some((ai, data)),
             ServerOutput::Confirm { ai, result } => {
                 // Only the selecting response's own confirmation settles the slot; a
-                // failed one clears it and leaves the session where it was (spec §3.2).
+                // failed one clears it and leaves the session where it was
+                // (``UDSS_LLR_0085`` acts on a successful transmission only).
                 if let Some(p) = *pending
                     && p.ai == ai
                 {
