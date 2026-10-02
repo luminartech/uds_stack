@@ -85,13 +85,13 @@ The traits
    ``async fn read<S: Sink>``; both are gone, the first with the rename recorded in
    ``UDSSVC_ARCH_0013`` and the second with the de-genericisation in ``UDSSVC_ARCH_0017``.
 
-   Rationale: a server's vocabulary must stay local to the services it actually supports: a server
-   with no routines must not have to name a routine-identifier type, and a server
+   Rationale: a server's vocabulary must stay local to the services it actually supports: a
+   server with no routines must not have to name a routine-identifier type, and a server
    supporting one service must not carry the vocabulary of all of them. Per-service traits
-   deliver this directly, because each trait's associated types exist only where that
-   trait is implemented. They also keep each service independently testable and make the
-   surface discoverable — "implement ``ReadDataByIdentifier``" is a thing a reader can look
-   up, where "override method 9 of 16" is not.
+   deliver this directly, because each trait's associated types exist only where that trait
+   is implemented. They also keep each service independently testable and make the surface
+   discoverable — "implement ``ReadDataByIdentifier``" is a thing a reader can look up,
+   where "override method 9 of 16" is not.
 
 .. arch:: Assembly is explicit, and the macro is the crate's const evaluator
    :id: UDSSVC_ARCH_0013
@@ -114,11 +114,11 @@ The traits
    A service absent from the list is not supported, and a request naming it settles with
    ``serviceNotSupported`` (0x11) by the path in ``UDSSVC_ARCH_0006``.
 
-   Rationale: Rust cannot ask whether a type implements a trait, so a generic dispatcher over
-   ``S: ServiceSet`` has no way to discover which per-service traits ``S`` implements. An
-   assembly step resolves this directly: the list is declared once, and the dispatch match
-   is generated from it — rather than the application writing that service-identifier match
-   itself, which is precisely the clause 8.7 machinery this crate exists to own.
+   Rationale: Rust cannot ask whether a type implements a trait, so a generic dispatcher
+   over ``S: ServiceSet`` has no way to discover which per-service traits ``S`` implements.
+   An assembly step resolves this directly: the list is declared once, and the dispatch
+   match is generated from it — rather than the application writing that service-identifier
+   match itself, which is precisely the clause 8.7 machinery this crate exists to own.
 
    **The load-bearing reason assembly is a macro is const evaluation, not explicitness**,
    and this element understated it for as long as it named only the dispatch match. An
@@ -247,8 +247,8 @@ Protocol state
       }
 
    Rationale: ``UDSSVC_ARCH_0034`` puts protocol concerns in the stack, and a block sequence
-   counter is protocol bookkeeping by any reading — no application should reimplement it, and
-   an application that cannot name it cannot corrupt it. Putting the state behind the
+   counter is protocol bookkeeping by any reading — no application should reimplement it,
+   and an application that cannot name it cannot corrupt it. Putting the state behind the
    assembly rather than in the application's own type is what makes that true: the generated
    server composes the application type, and the protocol state is a private field of the
    composition.
@@ -273,10 +273,10 @@ Protocol state
           settings." (10.6.4)
 
    Annex J corroborates the keying without being the authority for it. It is informative, so
-   it obliges nothing, but it is where clause 8.7.6 sends a reader asking how multiple clients
-   are handled, and its J.2 recommends that "a unique Address Information should be assigned
-   to each communication participant to allow the detection of different clients" — which is
-   ``A_SA``, used for exactly this purpose.
+   it obliges nothing, but it is where clause 8.7.6 sends a reader asking how multiple
+   clients are handled, and its J.2 recommends that "a unique Address Information should be
+   assigned to each communication participant to allow the detection of different clients" —
+   which is ``A_SA``, used for exactly this purpose.
 
    Those two clauses rule in opposite directions on the same question, so a design that
    collapses them is wrong whichever way it collapses.
@@ -312,18 +312,18 @@ Protocol state
    the only one the composition admits. The lifetime-and-borrow cost stands as an
    observation, not as the reason.
 
-   **Where the state lives, and why the application cannot reach it.** The assembly
-   takes ``peers = N`` and emits the ``Server<A, T, N>`` alias from it, so the count is
-   stated once. Milestone 1 admits ``peers = 1`` only, and both the macro and
-   ``Server::new`` reject any other count at compile time: the driver keeps one slot for a
-   selecting ``DiagnosticSessionControl`` response awaiting its confirmation, and a second
-   peer's response could overwrite it. The protocol state is ``uds_services::State``, a type
-   this crate declares with private fields; ``uds_server!`` only *names* it as ``ServiceSet::State``, because
-   the macro expands in the application's crate and a struct declared there could keep
-   nothing private from it. ``Server`` holds the state in a private field and passes it to
-   ``dispatch`` and to the two session hooks the macro emits. The per-channel
-   authentication table this element describes is still not built; nothing in scope
-   needs it yet.
+   **Where the state lives, and why the application cannot reach it.** The assembly takes
+   ``peers = N`` and emits the ``Server<A, T, N>`` alias from it, so the count is stated
+   once. Milestone 1 admits ``peers = 1`` only, and both the macro and ``Server::new``
+   reject any other count at compile time: the driver keeps one slot for a selecting
+   ``DiagnosticSessionControl`` response awaiting its confirmation, and a second peer's
+   response could overwrite it. The protocol state is ``uds_services::State``, a type this
+   crate declares with private fields; ``uds_server!`` only *names* it as
+   ``ServiceSet::State``, because the macro expands in the application's crate and a struct
+   declared there could keep nothing private from it. ``Server`` holds the state in a
+   private field and passes it to ``dispatch`` and to the two session hooks the macro emits.
+   The per-channel authentication table this element describes is still not built; nothing
+   in scope needs it yet.
 
    What this element does **not** settle is what happens to this state on a session
    transition. ISO 14229-1:2020 10.2 requires a return to ``defaultSession`` to relock
@@ -374,20 +374,21 @@ Protocol state
    **A repeated block is not an error, and the two directions differ.** Clause 15.4.4
    attaches the same sentence to both 0x24 and 0x73: "the repetition of a ``TransferData``
    request message with a ``blockSequenceCounter`` equal to the one included in the previous
-   ``TransferData`` request message shall be accepted by the server." Clause 15.4.1 says what
-   accepting means, and it is not the same on each side. A repeated **download** block is
-   answered positively "without writing the data once again into its memory" — so the
+   ``TransferData`` request message shall be accepted by the server." Clause 15.4.1 says
+   what accepting means, and it is not the same on each side. A repeated **download** block
+   is answered positively "without writing the data once again into its memory" — so the
    handler is **not** called, and this crate replays the previous response. A repeated
    **upload** block is answered by "accessing the previously provided data once again" — so
-   the handler **is** called again. A design that treats repetition uniformly is wrong in one
-   direction whichever uniform choice it makes.
+   the handler **is** called again. A design that treats repetition uniformly is wrong in
+   one direction whichever uniform choice it makes.
 
-   **What the application supplies**, and nothing more: whether the ``dataFormatIdentifier``,
-   ``addressAndLengthFormatIdentifier`` and memory range are acceptable (0x31), whether a
-   fault condition blocks the transfer (0x70), the ``maxNumberOfBlockLength`` it will accept,
-   the bytes themselves, and any finalisation failure at exit (0x72). Each is a property of
-   one ECU. None of the sequencing is reachable from the handler, so no application can
-   answer 0x73 where 0x24 is required, or accept a second transfer while one is live.
+   **What the application supplies**, and nothing more: whether the
+   ``dataFormatIdentifier``, ``addressAndLengthFormatIdentifier`` and memory range are
+   acceptable (0x31), whether a fault condition blocks the transfer (0x70), the
+   ``maxNumberOfBlockLength`` it will accept, the bytes themselves, and any finalisation
+   failure at exit (0x72). Each is a property of one ECU. None of the sequencing is
+   reachable from the handler, so no application can answer 0x73 where 0x24 is required, or
+   accept a second transfer while one is live.
 
    **``maxNumberOfBlockLength`` is an associated const, not a value a handler returns**, and
    the change removes a disagreement rather than saving a parameter. Clause 14.2 obliges the
@@ -415,15 +416,16 @@ Protocol state
 
    This element is the first instance of ``UDSSVC_ARCH_0035`` and is what tests it: the
    state is created at assembly, reached only by the dispatcher, and sized without
-   allocation — a transfer is one live instance per server, so it needs no per-channel table.
+   allocation — a transfer is one live instance per server, so it needs no per-channel
+   table.
 
-   **One reading is flagged rather than assumed.** Clause 15.5.4 gives ``RequestTransferExit``
-   0x24 on two conditions, the second being "the programming process is not completed". Read
-   here as the transfer's own completion — fewer bytes transferred than the active
-   ``memorySize`` — which is knowable from this state. If it instead means clause 17's
-   programming process, the condition belongs to a layer this crate does not yet have, and
-   the element changes. It is worth settling against a reviewer who has run a programming
-   sequence in anger.
+   **One reading is flagged rather than assumed.** Clause 15.5.4 gives
+   ``RequestTransferExit`` 0x24 on two conditions, the second being "the programming process
+   is not completed". Read here as the transfer's own completion — fewer bytes transferred
+   than the active ``memorySize`` — which is knowable from this state. If it instead means
+   clause 17's programming process, the condition belongs to a layer this crate does not yet
+   have, and the element changes. It is worth settling against a reviewer who has run a
+   programming sequence in anger.
 
 .. arch:: The security access sequence is a state machine this crate owns
    :id: UDSSVC_ARCH_0037
@@ -464,20 +466,20 @@ Protocol state
       D --> C : 10. sendKey outcome in D\nkey OK → lock current, unlock xx\nkey NOK → 0x35 / 0x36 — seed discarded
       @enduml
 
-   **The restart rule is the chart's shape, and an earlier draft had it wrong.** Clause
-   10.4 states that "an invalid key shall require the client to start over from the beginning
+   **The restart rule is the chart's shape, and an earlier draft had it wrong.** Clause 10.4
+   states that "an invalid key shall require the client to start over from the beginning
    with a SecurityAccess 'requestSeed' message as specified in Annex I", and Figure I.1
    implements it as topology rather than as a note: transition 9 leaves state B for state
    **A**, and transition 10 leaves state D for state **C**, on *every* ``sendKey`` outcome
-   including the failures. So **a failed key discards the stored seed**, and the client cannot
-   try a second key against it — it must ask for a new one.
+   including the failures. So **a failed key discards the stored seed**, and the client
+   cannot try a second key against it — it must ask for a new one.
 
-   An earlier version of this element drew those two transitions as self-loops, which left the
-   seed live and let a client retry keys against it indefinitely. That is the behaviour the
-   restart rule exists to prevent, and it was reachable because the element was written from
-   Table I.2 without Figure I.1, which is an image in the markdown conversion of the standard.
-   ``UDSSVC_ARCH_0034`` had quoted the restart rule correctly all along; the chart contradicted
-   it.
+   An earlier version of this element drew those two transitions as self-loops, which left
+   the seed live and let a client retry keys against it indefinitely. That is the behaviour
+   the restart rule exists to prevent, and it was reachable because the element was written
+   from Table I.2 without Figure I.1, which is an image in the markdown conversion of the
+   standard. ``UDSSVC_ARCH_0034`` had quoted the restart rule correctly all along; the chart
+   contradicted it.
 
    **Five rules this crate enforces that an application would have to rediscover.**
 
@@ -533,9 +535,9 @@ Protocol state
    *The seed policy.* Table I.1 defines ``Static_Seed``: true means a stored seed is re-used
    when the same level's seed is requested again, false means a fresh seed is generated each
    time. It governs transitions 5, 7 and 10, including the "if ``Static_Seed = True`` then
-   clear generated seed for SubFunction ``xx``" action that follows a successful unlock. Table
-   I.1 also fixes the fallback: "if ``Delay_Timer`` and ``Att_Cnt`` are not supported, a random
-   seed shall always be used", so a deployment that declines both loses the choice.
+   clear generated seed for SubFunction ``xx``" action that follows a successful unlock.
+   Table I.1 also fixes the fallback: "if ``Delay_Timer`` and ``Att_Cnt`` are not supported,
+   a random seed shall always be used", so a deployment that declines both loses the choice.
 
    **What the application supplies, and why the split falls here rather than elsewhere.**
    Annex I Table I.1 marks ``Delay_Timer``, ``Att_Cnt_Limit`` and ``Static_Seed`` as
@@ -544,16 +546,16 @@ Protocol state
    a verdict on a key, the limit, the delay duration, and whether either is supported.
 
    It also supplies a **verdict on the optional pre-conditions** Table I.2 conditions
-   transitions 4 and 7 on, whose failure is ``conditionsNotCorrect`` (0x22). Like the seed and
-   the key, what constitutes a satisfied pre-condition is the vehicle manufacturer's.
+   transitions 4 and 7 on, whose failure is ``conditionsNotCorrect`` (0x22). Like the seed
+   and the key, what constitutes a satisfied pre-condition is the vehicle manufacturer's.
 
    It also supplies the **storage**, and that one is forced by this crate's own shape rather
-   than by the annex. Annex I writes persistence as "store ``Att_Cnt`` in non-volatile memory
-   **(if applicable)**" throughout, and Table I.1 makes ``Delay_Timer`` and ``Att_Cnt`` support
-   optional and vehicle-manufacturer selected — so the standard obliges no storage at all. The
-   argument is simply that this crate *has* none: it has no non-volatile memory and no clock,
-   so wherever a deployment does persist a counter or time a delay, it cannot be here. It
-   keeps the arithmetic and hands over the result:
+   than by the annex. Annex I writes persistence as "store ``Att_Cnt`` in non-volatile
+   memory **(if applicable)**" throughout, and Table I.1 makes ``Delay_Timer`` and
+   ``Att_Cnt`` support optional and vehicle-manufacturer selected — so the standard obliges
+   no storage at all. The argument is simply that this crate *has* none: it has no
+   non-volatile memory and no clock, so wherever a deployment does persist a counter or time
+   a delay, it cannot be here. It keeps the arithmetic and hands over the result:
 
    .. code-block:: rust
 
@@ -571,8 +573,8 @@ Protocol state
    required, because it is not asked which to send.
 
    An earlier version of this element argued the storage seam from "Annex I requires
-   ``Att_Cnt`` to be stored in non-volatile memory", which the annex does not say. The seam is
-   unchanged; the reason for it is.
+   ``Att_Cnt`` to be stored in non-volatile memory", which the annex does not say. The seam
+   is unchanged; the reason for it is.
 
    ``Att_Cnt`` is **per level**, not per server: Table I.1 states that "when implemented, a
    separate counter is required for each individual security level". The unlocked level is
@@ -588,16 +590,16 @@ Protocol state
       mangles the table and drops the figure entirely. Both were recovered from the licensed
       PDF with ``pdftotext -layout``, and Figure I.1 was read as an image.
 
-      Outcome: the four rules this element already stated are **confirmed verbatim**, and the
-      state chart's *topology* was wrong — transitions 9 and 10, corrected above. That is
-      precisely the part the earlier warning said had not been read, which is the argument for
-      writing such warnings at all.
+      Outcome: the four rules this element already stated are **confirmed verbatim**, and
+      the state chart's *topology* was wrong — transitions 9 and 10, corrected above. That
+      is precisely the part the earlier warning said had not been read, which is the
+      argument for writing such warnings at all.
 
       One correction to that warning's own claims. ``Att_Cnt = 0++`` is **in the standard**,
-      in Table I.2 transition 10's at-limit branch; transition 9's equivalent branch does not
-      carry it. It is a defect in ISO 14229-1:2020 rather than an artefact of the conversion,
-      and it is read here as redundant with the ``Att_Cnt = Att_Cnt_Limit`` assignment beside
-      it. Worth confirming against a later corrigendum if one exists.
+      in Table I.2 transition 10's at-limit branch; transition 9's equivalent branch does
+      not carry it. It is a defect in ISO 14229-1:2020 rather than an artefact of the
+      conversion, and it is read here as redundant with the ``Att_Cnt = Att_Cnt_Limit``
+      assignment beside it. Worth confirming against a later corrigendum if one exists.
 
 .. arch:: A session transition is classified here and applied to configuration state
    :id: UDSSVC_ARCH_0038
@@ -612,8 +614,9 @@ Protocol state
    event registration, an active output control. Clause 10.2 specifies what a diagnostic
    session transition does to every one of them, and it does not do the same thing to each.
 
-   The four classes are Figure 7's Key notes 1 to 4. An earlier version of this element cited
-   them as "Figure 6 Key", which is clause 8.7.3.1's SubFunction figure and has no such notes.
+   The four classes are Figure 7's Key notes 1 to 4. An earlier version of this element
+   cited them as "Figure 6 Key", which is clause 8.7.3.1's SubFunction figure and has no
+   such notes.
 
    .. list-table:: Clause 10.2's four transition classes
       :header-rows: 1
@@ -807,10 +810,10 @@ whole point of them, and it is the thing a list of signatures does not show:
           .read_data_by_identifier(Address(0x0E80), &[MyDid::VehicleSpeed])
           .await?;
 
-   Rationale: ISO 14229-1 fixes identifier *ranges* and a small set of standardised values, not the
-   catalogue: data and routine identifiers are vehicle-manufacturer or system-supplier
-   specific, so the library cannot own those enumerations without either being wrong or
-   being a ``u16``.
+   Rationale: ISO 14229-1 fixes identifier *ranges* and a small set of standardised values,
+   not the catalogue: data and routine identifiers are vehicle-manufacturer or
+   system-supplier specific, so the library cannot own those enumerations without either
+   being wrong or being a ``u16``.
 
    Making ``from_u16`` fallible is what wires the identifier set into clause 8.7. A
    requested identifier the application's type cannot represent is an unsupported data

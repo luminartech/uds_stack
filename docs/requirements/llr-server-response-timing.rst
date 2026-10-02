@@ -565,9 +565,10 @@ Enhanced response timing
 
    When the elapsed time since the ``tP2_Server`` timer was last started reaches the value
    it was loaded with less the response-pending lead of ``UDSS_LLR_0186``, the server shall
-   stop the timer and deliver a response-timing indication to the application. The indication shall state which of ``tP2_Server_Max`` and
-   ``tP2*_Server_Max`` the timer was carrying, and the ``S_AI[SA]`` and, where ``S_Mtype``
-   carries one, the ``S_AI[AE]`` of the service in progress under ``UDSS_LLR_0104``.
+   stop the timer and deliver a response-timing indication to the application. The
+   indication shall state which of ``tP2_Server_Max`` and ``tP2*_Server_Max`` the timer was
+   carrying, and the ``S_AI[SA]`` and, where ``S_Mtype`` carries one, the ``S_AI[AE]`` of
+   the service in progress under ``UDSS_LLR_0104``.
 
    Rationale: ISO 14229-2:2021 specifies ``tP2_Server`` as a performance requirement on the
    server's application and states no session layer action on its expiry. The session layer
