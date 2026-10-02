@@ -312,7 +312,7 @@ impl SecurityAccess for Ecu {
 uds_server! {
     Ecu: ReadDataByIdentifier, DiagnosticSessionControl, TesterPresent, SecurityAccess;
     transport = Scripted,
-    peers = 2,
+    peers = 1,
     server = EcuServer,
 }
 
@@ -401,6 +401,34 @@ fn a_malformed_request_for_an_unlisted_service_is_0x11_and_silent_when_functiona
     assert_eq!(t.sent(0), &[0x7F, 0x11, 0x11]);
     // Sent after the physical indication, so the functional one was answered by nothing.
     assert_eq!(t.sent_after.first(), Some(&2));
+}
+
+/// ``UDSSVC_ARCH_0007`` — Figure 6 checks the sub-function (0x12) before the exact
+/// length (0x13), as clause 8.7.5's pseudo-code does. A reserved `TesterPresent`
+/// sub-function with a trailing byte is 0x12: silenced when functionally addressed,
+/// `7F 3E 12` when physically addressed. An unsupported session with a trailing byte is
+/// `7F 10 12` likewise.
+#[test]
+fn an_unsupported_sub_function_with_a_trailing_byte_is_0x12_not_0x13() {
+    let mut s = EcuServer::new(
+        Ecu::new(),
+        Scripted::new(&[
+            Ev::Ind(TaType::Functional, &[0x3E, 0x05, 0x00]),
+            Ev::Ind(TaType::Physical, &[0x3E, 0x05, 0x00]),
+            Ev::Conf(SResult::Ok),
+            Ev::Ind(TaType::Physical, &[0x10, 0x05, 0x00]),
+            Ev::Conf(SResult::Ok),
+        ]),
+        ECU,
+        PARAMS,
+    );
+    run(&mut s);
+    let t = s.transport();
+    assert_eq!(t.sent_count, 2);
+    assert_eq!(t.sent(0), &[0x7F, 0x3E, 0x12]);
+    // Sent after the physical indication, so the functional one was answered by nothing.
+    assert_eq!(t.sent_after.first(), Some(&2));
+    assert_eq!(t.sent(1), &[0x7F, 0x10, 0x12]);
 }
 
 #[test]

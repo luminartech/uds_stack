@@ -253,7 +253,7 @@ uds_server! {
          ClearDiagnosticInformation, CommunicationControl, TesterPresent,
          DiagnosticSessionControl;
     transport = FakeTransport,
-    peers = 4,
+    peers = 1,
     server = EcuServer,
 }
 
