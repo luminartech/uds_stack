@@ -167,9 +167,10 @@ Decode
    ``DEFAULT: responseCode = SNS`` before any ``message_length`` test. So a malformed
    request for a service this server lacks is 0x11, and one for a service refused in the
    active session is 0x7F; 0x13 is produced only for a service that passed both. Because
-   ``uds_protocol`` validates each service's own payload during decode, Figure 6's length
-   check is settled by that same decode, in its place in the order — see
-   ``UDSSVC_ARCH_0007``.
+   ``uds_protocol`` validates each service's own payload during decode, Figure 6's
+   minimum-length check is settled by that same decode. Figure 6's sub-function check
+   reads the sub-function byte alone and runs before the decode, so a supported
+   sub-function's exact length is tested only after it — see ``UDSSVC_ARCH_0007``.
 
    **A request with no service identifier is complete without a response.** ISO
    14229-1:2020 8.7.5's pseudo-code begins ``SWITCH (A_PDU.A_Data.A_PCI.SI)``: an A_PDU
@@ -220,10 +221,12 @@ Mandatory preconditions
    around this sequence; they are ``UDSSVC_ARCH_0011``.
 
    **The implemented order is Figure 5's, literally:** the empty request
-   (``UDSSVC_ARCH_0005``'s declared reading), then check 1, then check 3, then the decode
-   that settles 0x13 (``UDSSVC_ARCH_0005``). Nothing is decoded until the service is known
-   to be supported and allowed in the active session, so 0x13 never pre-empts 0x11 or
-   0x7F. Check 2, authentication (0x34), and the security precondition (0x33) are not
+   (``UDSSVC_ARCH_0005``'s declared reading), then check 1, then check 3, then — for a
+   service with a SubFunction parameter other than 0x31 — Figure 6's sub-function check
+   (``UDSSVC_ARCH_0007``), then the decode that settles 0x13 (``UDSSVC_ARCH_0005``).
+   Nothing is decoded until the service is known to be supported and allowed in the
+   active session, so 0x13 never pre-empts 0x11 or 0x7F, and a trailing byte never
+   pre-empts 0x12. Check 2, authentication (0x34), and the security precondition (0x33) are not
    evaluated yet: authentication is architecture open question 4, and security joins with
    security state.
 
@@ -315,12 +318,14 @@ Mandatory preconditions
       * - 1
         - Minimum length (service identifier + SubFunction)
         - 0x13
-        - Settled by the decode, which runs after the mandatory preconditions; see
-          ``UDSSVC_ARCH_0005``
+        - A request with no SubFunction byte is settled by the decode, which runs after
+          row 2; see ``UDSSVC_ARCH_0005``
       * - 2
         - SubFunction supported ever for this service identifier?
         - 0x12
-        -
+        - Read from the SubFunction byte, ``suppressPosRspMsgIndicationBit`` stripped,
+          before any exact-length test: a trailing byte after an unsupported
+          SubFunction is 0x12, not 0x13
       * - 3
         - Authentication check OK?
         - 0x34
@@ -329,6 +334,12 @@ Mandatory preconditions
         - SubFunction supported in the active session?
         - 0x7E
         -
+
+   The service's exact-length check is its service-specific check, after this stage:
+   ISO 14229-1:2020 8.7.5's pseudo-code tests ``message_length`` only inside a supported
+   sub-function's arm, and its ``DEFAULT: responseCode = SFNS`` precedes every such test.
+   Rows 3 and 4 are not evaluated yet: authentication is architecture open question 4,
+   and no service trait with a stage declares sub-function support per session.
 
    Figure 6 then places a sub-function security check (0x33) and a request-sequence check
    (0x24) in its optional column; both are ``UDSSVC_ARCH_0011``.

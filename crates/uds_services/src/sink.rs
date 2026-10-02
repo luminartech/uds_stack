@@ -8,17 +8,19 @@ use automotive_wire_codec::{InsufficientBuffer, Sink, WriteError};
 
 /// A bounded writer over this crate's response buffer.
 ///
-/// The bound is `min(buffer.len(), max(outbound_max, 3))` — see [`Self::MIN_BOUND`].
-/// Both terms are this crate's, so nothing is fabricated and nothing is asked of a layer
-/// that does not know it — which is what ``UDSSVC_ARCH_0017`` requires after
-/// ISO 13400-2:2019 Table 11 made *Max. data size* optional.
+/// The bound is the peer's `outbound_max`, raised to at least [`Self::MIN_BOUND`] and
+/// capped at the buffer's length. Both terms are this crate's, so nothing is fabricated
+/// and nothing is asked of a layer that does not know it — which is what
+/// ``UDSSVC_ARCH_0017`` requires after ISO 13400-2:2019 Table 11 made *Max. data size*
+/// optional.
 ///
-/// The floor is three bytes because a negative response, `7F <sid> <nrc>`, is exactly that
-/// long and must always fit. A write that would cross the bound is refused whole, and the
-/// sink records the refusal before returning the error, so it is not lost if a handler
-/// ignores the result. Such a refusal means the response was too long, not that nothing
-/// was written; the pipeline reads it after the handler returns and answers
-/// `responseTooLong` (0x14) in place of the partial response.
+/// The floor is there because a negative response must always fit; [`crate::uds_server`]
+/// rejects at compile time an assembly whose response buffer is shorter than it. A write
+/// that would cross the bound is refused whole, and the sink records the refusal before
+/// returning the error, so it is not lost if a handler ignores the result. Such a refusal
+/// means the response was too long, not that nothing was written; the pipeline reads it
+/// after the handler returns and answers `responseTooLong` (0x14) in place of the partial
+/// response.
 ///
 /// The bound is not a field. [`Self::new`] truncates the buffer to it, so "written never
 /// exceeds the limit, which never exceeds the buffer" is one slice length rather than an
@@ -54,10 +56,10 @@ impl<'a> ResponseSink<'a> {
     /// The smallest message the protocol admits: a negative response, `7F <sid> <nrc>`.
     pub const MIN_BOUND: usize = 3;
 
-    /// A sink over `buffer`, bounded at the peer's `outbound_max` where one is advertised,
-    /// but never below three bytes: a peer that cannot receive a negative response cannot
-    /// take part in UDS at all, so a bound below [`Self::MIN_BOUND`] is raised to it. The
-    /// buffer itself is still the hard limit.
+    /// A sink over `buffer`, bounded at the peer's `outbound_max` where one is advertised.
+    /// A peer that cannot receive a negative response cannot take part in UDS at all, so
+    /// an `outbound_max` below [`Self::MIN_BOUND`] is raised to it. The buffer itself is
+    /// still the hard limit.
     #[must_use]
     pub fn new(buffer: &'a mut [u8], outbound_max: Option<usize>) -> Self {
         let limit = outbound_max.map_or(buffer.len(), |max| {

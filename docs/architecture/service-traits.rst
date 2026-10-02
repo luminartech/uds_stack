@@ -108,7 +108,7 @@ The traits
       uds_server! {
           Ecu: ReadDataByIdentifier, SecurityAccess, DataTransfer;
           transport = DoIpTransport<TcpSocket>,
-          peers = 4,
+          peers = 1,
       }
 
    A service absent from the list is not supported, and a request naming it settles with
@@ -242,7 +242,7 @@ Protocol state
       uds_server! {
           Ecu: ReadDataByIdentifier, SecurityAccess, DataTransfer;
           transport = DoIpTransport<TcpSocket>,
-          peers = 4,
+          peers = 1,
       }
 
    Rationale: ``UDSSVC_ARCH_0034`` puts protocol concerns in the stack, and a block sequence
@@ -313,7 +313,10 @@ Protocol state
 
    **Where the state lives, and why the application cannot reach it.** The assembly
    takes ``peers = N`` and emits the ``Server<A, T, N>`` alias from it, so the count is
-   stated once. The protocol state is ``uds_services::State``, a type this crate declares
+   stated once. Milestone 1 admits ``peers = 1`` only, and both the macro and
+   ``Server::new`` reject any other count at compile time: the driver keeps one slot for a
+   selecting ``DiagnosticSessionControl`` response awaiting its confirmation, and a second
+   peer's response could overwrite it. The protocol state is ``uds_services::State``, a type this crate declares
    with private fields; ``uds_server!`` only *names* it as ``ServiceSet::State``, because
    the macro expands in the application's crate and a struct declared there could keep
    nothing private from it. ``Server`` holds the state in a private field and passes it to

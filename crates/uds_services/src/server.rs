@@ -62,6 +62,9 @@ impl<A: ServiceSet, T: UdsTransport, const PEERS: usize> Server<A, T, PEERS> {
     ///
     /// The driver builds its own session, so an application never names `uds_session`.
     ///
+    /// `PEERS` must be 1, checked at compile time: milestone 1 keeps one slot for a
+    /// selecting response awaiting its confirmation (see [`crate::uds_server`]).
+    ///
     /// `own` is the address every response is sent from: its `S_SA`, which
     /// ``UDSS_LLR_0051`` makes the sending entity's. It is not derived from the request,
     /// because a functionally addressed request's `S_TA` is the functional group address,
@@ -72,6 +75,7 @@ impl<A: ServiceSet, T: UdsTransport, const PEERS: usize> Server<A, T, PEERS> {
         own: Address,
         params: ServerParams,
     ) -> Self {
+        const { assert!(PEERS == 1, "milestone 1 supports `PEERS = 1` only") };
         Self {
             services,
             store: <A::Store as Storage>::EMPTY,
@@ -241,11 +245,12 @@ impl<A: ServiceSet, T: UdsTransport, const PEERS: usize> Server<A, T, PEERS> {
 /// answers one request at a time (``UDSS_LLR_0108``), so with one peer one selecting
 /// response is in flight at most.
 ///
-/// **Milestone 1 is safe for `peers = 1` only.** A server answers one request at a time,
-/// but a response awaiting its confirmation is no longer the request in progress: with a
-/// second tester, that tester's selecting response can be accepted while the first is
-/// still unconfirmed, and it overwrites this slot. The first confirmation then matches
-/// nothing and its session is never applied.
+/// **Milestone 1 accepts `peers = 1` only** ([`Server::new`] fails to compile for any
+/// other `PEERS`). A server answers one request at a time, but a response awaiting its
+/// confirmation is no longer the request in progress: with a second tester, that
+/// tester's selecting response could be accepted while the first is still unconfirmed,
+/// and it would overwrite this slot. The first confirmation would then match nothing and
+/// its session would never be applied.
 #[derive(Debug, Clone, Copy)]
 struct Pending {
     /// The response's addressing, exactly as submitted: `t_data_conf` matches by it.

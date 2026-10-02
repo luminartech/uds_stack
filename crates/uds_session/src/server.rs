@@ -168,8 +168,23 @@ impl<const A: usize> Server<A> {
     /// ``UDSS_LLR_0008`` is satisfied in both its branches at once — the caller supplies
     /// the storage, and it then lives in the instance. `A` is the capacity
     /// ``UDSS_LLR_0062`` rejects against.
+    ///
+    /// `A` is at least one, checked at compile time: with no association every
+    /// `s_data_req` is refused ``UDSS_LLR_0062``'s way, so the server could never answer.
+    ///
+    /// ```compile_fail,E0080
+    /// use uds_session::{Server, ServerParams};
+    ///
+    /// let params = ServerParams {
+    ///     s3_server: 5_000,
+    ///     p2_server_max: 50,
+    ///     p2_star_server_max: 5_000,
+    /// };
+    /// let _mute = Server::<0>::new([], params);
+    /// ```
     #[must_use]
     pub const fn new(associations: [Association; A], params: ServerParams) -> Self {
+        const { assert!(A >= 1, "a server needs at least one association") };
         Self {
             associations,
             params,
