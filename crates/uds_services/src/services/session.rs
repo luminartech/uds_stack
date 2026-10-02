@@ -28,15 +28,20 @@ pub struct SessionTiming {
 ///
 /// **No `MAY_RESPOND_PENDING`**, unlike the services in ``UDSSVC_ARCH_0033``. A
 /// response-pending is what the driver sends while it is still awaiting a handler, and
-/// nothing here is awaited: [`Self::supports`] and [`Self::timing`] are lookups the
-/// pipeline makes before composing the response, and [`Self::on_transition`] runs after
-/// that response has gone out. There is no window in which a 0x78 could come due, so the
-/// constant would have had one possible value and no effect.
+/// nothing here is awaited: [`Self::supports`], [`Self::supported_from`] and
+/// [`Self::timing`] are lookups the pipeline makes before composing the response, and
+/// [`Self::on_transition`] runs after that response has gone out. There is no window in
+/// which a 0x78 could come due, so the constant would have had one possible value and no
+/// effect.
 pub trait DiagnosticSessionControl {
     /// The longest positive response beyond the mandatory four timing bytes.
     const MAX_RESPONSE_LEN: usize;
 
-    /// Whether this server supports `session`.
+    /// Whether this server supports `session` at all, from whichever session.
+    ///
+    /// ISO 14229-1:2020 8.7.3.1 Figure 6, "`SubFunction` supported ever for the SID?" —
+    /// ``UDSSVC_ARCH_0007`` row 2. A `false` settles the request
+    /// `subFunctionNotSupported` (0x12) before [`Self::supported_from`] is asked.
     ///
     /// # Arguments
     ///
@@ -44,6 +49,29 @@ pub trait DiagnosticSessionControl {
     ///   reserved and manufacturer-specific variants carry the raw byte for a server
     ///   that defines its own.
     fn supports(&self, session: DiagnosticSessionType) -> bool;
+
+    /// Whether `session` may be entered from `active`.
+    ///
+    /// ISO 14229-1:2020 8.7.3.1 Figure 6, "`SubFunction` supported in active session
+    /// for the SID?" — ``UDSSVC_ARCH_0007`` row 4. Asked only for a `session` that
+    /// [`Self::supports`] accepted, so a `false` here is always "supported, but not from
+    /// this session": the pipeline settles it `subFunctionNotSupportedInActiveSession`
+    /// (0x7E), which Annex A reserves for a sub-function "known to be supported in
+    /// another session". A `session` this server never supports is 0x12, however this
+    /// answers.
+    ///
+    /// No default: the table of which session is reachable from which is the
+    /// application's to state. A server that restricts no transition returns `true`.
+    ///
+    /// # Arguments
+    ///
+    /// * `session` - the session being requested; see [`DiagnosticSessionType`].
+    /// * `active` - the session the server is in when the request arrives.
+    fn supported_from(
+        &self,
+        session: DiagnosticSessionType,
+        active: DiagnosticSessionType,
+    ) -> bool;
 
     /// The `P2` pair to advertise for `session`.
     ///
@@ -108,6 +136,15 @@ pub trait EcuReset {
 /// the driver is never awaiting it when a deadline passes and no 0x78 can become due.
 /// Which is as well — a server too busy to answer the message whose only purpose is to
 /// say it is still there has a larger problem than a response-pending.
+///
+/// **No sub-function lookups**, unlike [`DiagnosticSessionControl`]'s
+/// [`supports`](DiagnosticSessionControl::supports) and
+/// [`supported_from`](DiagnosticSessionControl::supported_from). The service's only
+/// sub-function is `zeroSubFunction`, which ISO 14229-1:2020 clause 10.7 makes mandatory,
+/// and clause 10.2's Table 23 makes the service available in the default and every
+/// non-default session. So Figure 6's "supported ever" and "supported in active session"
+/// (``UDSSVC_ARCH_0007`` rows 2 and 4) have nothing deployment-specific to ask: the
+/// pipeline answers row 2 from the byte, and row 4 is always yes.
 pub trait TesterPresent {
     /// Called on each accepted `TesterPresent`.
     fn on_tester_present(&mut self);
@@ -193,6 +230,14 @@ mod tests {
                     | DiagnosticSessionType::ProgrammingSession
                     | DiagnosticSessionType::ExtendedDiagnosticSession
             )
+        }
+        fn supported_from(
+            &self,
+            session: DiagnosticSessionType,
+            active: DiagnosticSessionType,
+        ) -> bool {
+            !matches!(session, DiagnosticSessionType::ProgrammingSession)
+                || matches!(active, DiagnosticSessionType::ExtendedDiagnosticSession)
         }
         fn timing(&self, _s: DiagnosticSessionType) -> SessionTiming {
             SessionTiming {

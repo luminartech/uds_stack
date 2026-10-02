@@ -280,7 +280,16 @@ impl ReadDataByIdentifier for Ecu {
 impl DiagnosticSessionControl for Ecu {
     const MAX_RESPONSE_LEN: usize = 0;
     fn supports(&self, s: S) -> bool {
-        matches!(s, S::DefaultSession | S::ExtendedDiagnosticSession)
+        matches!(
+            s,
+            S::DefaultSession | S::ProgrammingSession | S::ExtendedDiagnosticSession
+        )
+    }
+    /// Programming is entered only from Extended (so `10 02` from Default is 0x7E);
+    /// every other session from any.
+    fn supported_from(&self, s: S, active: S) -> bool {
+        !matches!(s, S::ProgrammingSession)
+            || matches!(active, S::ExtendedDiagnosticSession)
     }
     fn timing(&self, _s: S) -> SessionTiming {
         SessionTiming {
@@ -456,6 +465,46 @@ fn an_unsupported_sub_function_with_a_trailing_byte_is_0x12_not_0x13() {
     // Sent after the physical indication, so the functional one was answered by nothing.
     assert_eq!(t.sent_after.first(), Some(&2));
     assert_eq!(t.sent(1), &[0x7F, 0x10, 0x12]);
+}
+
+/// ``UDSSVC_ARCH_0007`` row 4 — Figure 6's "`SubFunction` supported in active session?"
+/// answered by `DiagnosticSessionControl::supported_from`. `Ecu` supports Programming
+/// only from Extended: `10 02` in Default is `7F 10 7E` physically and silent
+/// functionally (``UDSSVC_ARCH_0009`` rule 1); once `10 03` is confirmed, the same `10 02`
+/// is answered `50 02` and the session is entered.
+#[test]
+fn a_session_supported_only_from_another_is_0x7e_until_that_one_is_active() {
+    let mut s = EcuServer::new(
+        Ecu::new(),
+        Scripted::new(&[
+            Ev::Ind(TaType::Functional, &[0x10, 0x02]),
+            Ev::Ind(TaType::Physical, &[0x10, 0x02]),
+            Ev::Conf(SResult::Ok),
+            Ev::Ind(TaType::Physical, &[0x10, 0x03]),
+            Ev::Conf(SResult::Ok), // confirms 50 03 ...: extended now
+            Ev::Ind(TaType::Physical, &[0x10, 0x02]),
+            Ev::Conf(SResult::Ok), // confirms 50 02 ...: programming now
+        ]),
+        ECU,
+        PARAMS,
+    );
+    run(&mut s);
+    let t = s.transport();
+    assert_eq!(t.sent_count, 3);
+    assert_eq!(t.sent(0), &[0x7F, 0x10, 0x7E]);
+    // Sent after the physical indication, so the functional one was answered by nothing.
+    assert_eq!(t.sent_after.first(), Some(&2));
+    assert_eq!(t.sent(1), &[0x50, 0x03, 0x00, 0x32, 0x01, 0xF4]);
+    assert_eq!(t.sent(2), &[0x50, 0x02, 0x00, 0x32, 0x01, 0xF4]);
+    assert_eq!(
+        s.services().transitions,
+        [
+            Some(SessionTransition::DefaultToNonDefault),
+            Some(SessionTransition::NonDefaultToNonDefault),
+            None,
+            None,
+        ]
+    );
 }
 
 #[test]

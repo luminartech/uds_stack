@@ -211,6 +211,13 @@ impl uds_services::DiagnosticSessionControl for Ecu {
                 | DiagnosticSessionType::ExtendedDiagnosticSession
         )
     }
+    fn supported_from(
+        &self,
+        _session: DiagnosticSessionType,
+        _active: DiagnosticSessionType,
+    ) -> bool {
+        true
+    }
     fn timing(&self, _s: DiagnosticSessionType) -> SessionTiming {
         SessionTiming {
             p2_server_max: 50,
