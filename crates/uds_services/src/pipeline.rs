@@ -272,15 +272,21 @@ pub fn diagnostic_session_control<A: DiagnosticSessionControl>(
     Ok(Some(session))
 }
 
-/// ISO 14229-1:2020 clause 10.6 — `TesterPresent`'s own stage (``UDSSVC_ARCH_0004``):
-/// the application is told, and the positive response is `7E 00`. Whether it is sent is
-/// the suppress bit's, read by `settle`.
+/// ISO 14229-1:2020 clause 10.6 — `TesterPresent`'s own stage (``UDSSVC_ARCH_0004``).
+///
+/// A sub-function other than `zeroSubFunction` (`0x01..=0x7F` with the suppress bit
+/// stripped, ISO/SAE reserved) is `subFunctionNotSupported` (0x12), and the application
+/// is not told. Otherwise the application is told and the positive response is `7E 00`;
+/// whether it is sent is the suppress bit's, read by `settle`.
 #[doc(hidden)]
 pub fn tester_present<A: TesterPresent>(
     services: &mut A,
-    _request: &TesterPresentRequest,
+    request: &TesterPresentRequest,
     out: &mut ResponseSink<'_>,
 ) -> Result<Option<DiagnosticSessionType>, NegativeResponseCode> {
+    if request.sub_function() != 0x00 {
+        return Err(NegativeResponseCode::SubFunctionNotSupported);
+    }
     services.on_tester_present();
     let _ = out.write_all(&[0x7E]);
     let _ = uds_protocol::TesterPresentResponse::new().encode(out);
@@ -449,6 +455,35 @@ mod tests {
         let req = uds_protocol::TesterPresentRequest::new(true);
         assert_eq!(super::tester_present(&mut Ecu, &req, &mut out), Ok(None));
         assert_eq!(out.written_bytes(), &[0x7E, 0x00]);
+    }
+
+    fn decode_tester_present(byte: u8) -> uds_protocol::TesterPresentRequest {
+        let Ok((req, [])) =
+            <uds_protocol::TesterPresentRequest as uds_protocol::Decode>::decode(&[byte])
+        else {
+            panic!("3E {byte:02X} decodes");
+        };
+        req
+    }
+
+    /// Clause 10.6 — a reserved sub-function is 0x12 with nothing written; `3E 00` and
+    /// `3E 80` (suppress bit set, sub-function zero) both answer `7E 00`.
+    #[test]
+    fn tester_present_refuses_a_reserved_sub_function() {
+        let mut buf = [0_u8; 4];
+        let mut out = ResponseSink::new(&mut buf, None);
+        let req = decode_tester_present(0x05);
+        assert_eq!(
+            super::tester_present(&mut Ecu, &req, &mut out),
+            Err(N::SubFunctionNotSupported)
+        );
+        assert_eq!(out.written_bytes(), &[0_u8; 0]);
+        for byte in [0x00, 0x80] {
+            out.rewind();
+            let req = decode_tester_present(byte);
+            assert_eq!(super::tester_present(&mut Ecu, &req, &mut out), Ok(None));
+            assert_eq!(out.written_bytes(), &[0x7E, 0x00], "3E {byte:02X}");
+        }
     }
 
     fn ai(ta_type: TaType) -> Ai {
