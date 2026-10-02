@@ -427,7 +427,7 @@ seams earn their keep.
    L -> V : dispatch(request bytes, sink)
    activate V
 
-   V -> V : decode, preconditions,\nsub-function, data parameters
+   V -> V : preconditions, decode,\nsub-function, data parameters
    V -> H : typed handler call (awaited)
    activate H
    H --> V : Ok, or a negative response code
