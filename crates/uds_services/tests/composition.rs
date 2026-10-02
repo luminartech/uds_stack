@@ -265,7 +265,8 @@ const PARAMS: ServerParams = ServerParams {
 
 /// The construction that matters: a multi-kilobyte server in a `static`, built in place
 /// with no stack temporary. This is what `Storage::EMPTY` being an associated const buys.
-static SERVER: EcuServer = EcuServer::new(Ecu::new(), FakeTransport, PARAMS);
+static SERVER: EcuServer =
+    EcuServer::new(Ecu::new(), FakeTransport, Address(0x0E00), PARAMS);
 
 /// The in-flight buffer is dominated by `TransferData` — the same constant the server
 /// must advertise as `maxNumberOfBlockLength`. The response buffer is dominated by a

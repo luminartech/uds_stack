@@ -19,11 +19,11 @@ use crate::transport::{TransportEvent, UdsTransport};
 use core::future::Future;
 use core::pin::Pin;
 use core::sync::atomic::{AtomicBool, Ordering};
-use uds_protocol::DiagnosticSessionType;
+use uds_protocol::{DiagnosticSessionType, UdsServiceType};
 pub use uds_session::ServerParams;
 use uds_session::{
-    Ai, Association, Cause, Rejection, SResult, Server as SessionServer, ServerOutput,
-    ServerRx, ServerTx, SessionSelection, Solicitation, TaType, Timestamp,
+    Address, Ai, Association, Cause, Rejection, SResult, Server as SessionServer,
+    ServerOutput, ServerRx, ServerTx, SessionSelection, Solicitation, TaType, Timestamp,
 };
 
 /// The UDS server: an application's services, its storage, a session layer and a
@@ -45,6 +45,8 @@ pub struct Server<A: ServiceSet, T: UdsTransport, const PEERS: usize> {
     state: A::State,
     session: SessionServer<PEERS>,
     transport: T,
+    /// The address every response is sent from (its `S_SA`, ``UDSS_LLR_0051``).
+    own: Address,
     /// The `DiagnosticSessionControl` response awaiting its confirmation, if any.
     pending: Option<Pending>,
 }
@@ -59,13 +61,24 @@ impl<A: ServiceSet, T: UdsTransport, const PEERS: usize> Server<A, T, PEERS> {
     /// [`Storage::EMPTY`] being an associated const buys.
     ///
     /// The driver builds its own session, so an application never names `uds_session`.
-    pub const fn new(services: A, transport: T, params: ServerParams) -> Self {
+    ///
+    /// `own` is the address every response is sent from: its `S_SA`, which
+    /// ``UDSS_LLR_0051`` makes the sending entity's. It is not derived from the request,
+    /// because a functionally addressed request's `S_TA` is the functional group address,
+    /// and a response sent from that address would not say which server answered.
+    pub const fn new(
+        services: A,
+        transport: T,
+        own: Address,
+        params: ServerParams,
+    ) -> Self {
         Self {
             services,
             store: <A::Store as Storage>::EMPTY,
             state: <A::State as ProtocolState>::INITIAL,
             session: SessionServer::new([Association::EMPTY; PEERS], params),
             transport,
+            own,
             pending: None,
         }
     }
@@ -83,6 +96,13 @@ impl<A: ServiceSet, T: UdsTransport, const PEERS: usize> Server<A, T, PEERS> {
     }
 
     /// Handle one transport event.
+    ///
+    /// **An `Err` is terminal for this server instance** (``UDSSVC_ARCH_0040``,
+    /// milestone-1 limit). A transport error unwinds through the drains with `?`, so a
+    /// session-hook decision a drain already recorded — a `tS3_Server` expiry, a
+    /// confirmed session — may not have been applied, and the application's state and
+    /// the session layer may disagree afterwards. The caller recreates the server rather
+    /// than calling `step` again.
     ///
     /// # Errors
     ///
@@ -147,10 +167,16 @@ impl<A: ServiceSet, T: UdsTransport, const PEERS: usize> Server<A, T, PEERS> {
         // (ISO 14229-1:2020 Table 21, SIDRQ). An empty request is the pipeline's to
         // settle, and settles without pending, so the 0 is never transmitted.
         let sid = request.first().copied().unwrap_or(0);
+        // UDSSVC_ARCH_0032 — whether 0x78 is admissible is the service's to say, never the
+        // driver's. Resolved before dispatch, which holds `&mut services` until it settles.
+        let may_pend = self
+            .services
+            .may_respond_pending(UdsServiceType::from_request_sid(sid));
         let serving = Serving {
             ai,
-            reply_to: reply_address(ai),
+            reply_to: reply_address(self.own, ai),
             sid,
+            may_pend,
         };
 
         let mut sink = ResponseSink::new(response, outbound_max);
@@ -214,6 +240,12 @@ impl<A: ServiceSet, T: UdsTransport, const PEERS: usize> Server<A, T, PEERS> {
 /// `Confirm` that reports it sent (spec §3.2; ``UDSS_LLR_0085``). One slot: a server
 /// answers one request at a time (``UDSS_LLR_0108``), so one selecting response is in
 /// flight at most.
+///
+/// **Milestone 1 is safe for `peers = 1` only.** A server answers one request at a time,
+/// but a response awaiting its confirmation is no longer the request in progress: with a
+/// second tester, that tester's selecting response can be accepted while the first is
+/// still unconfirmed, and it overwrites this slot. The first confirmation then matches
+/// nothing and its session is never applied.
 #[derive(Debug, Clone, Copy)]
 struct Pending {
     /// The response's addressing, exactly as submitted: `t_data_conf` matches by it.
@@ -226,14 +258,17 @@ struct Pending {
 /// back the other way. The exact `Ai` `s_data_req` registers, and so the one the
 /// response's `DataConf` must carry to match it.
 ///
+/// Sent from `own`, never from the request's `S_TA`: for a functional request that is
+/// the group address, and ``UDSS_LLR_0051`` makes `S_SA` the sending entity's address.
+///
 /// Physically addressed whatever the request was: a server answers the one client that
 /// asked, so a response to a functional request is a physical message to that client.
 /// That is an observation the requirement set relies on, not a clause of
 /// ISO 14229-2:2021 9.6 (`docs/requirements/llr-service-interface.rst`, the channel
 /// requirement's rationale).
-const fn reply_address(request: Ai) -> Ai {
+const fn reply_address(own: Address, request: Ai) -> Ai {
     Ai {
-        sa: request.ta,
+        sa: own,
         ta: request.sa,
         ta_type: TaType::Physical,
         ..request
@@ -319,6 +354,8 @@ async fn drain<'d, T: UdsTransport, const PEERS: usize>(
     };
     for out in reaction.outputs() {
         match out {
+            // milestone-1 limit: an `Err` here drops what this drain recorded; see
+            // `Server::step`'s doc.
             ServerOutput::Transmit { ai, data } => transport.t_data_req(ai, data).await?,
             ServerOutput::Indicate {
                 ai,
@@ -374,6 +411,9 @@ struct Serving {
     reply_to: Ai,
     /// The request's service identifier, which a negative response echoes.
     sid: u8,
+    /// ``UDSSVC_ARCH_0032`` — whether the service admits a 0x78 at all, as
+    /// `ServiceSet::may_respond_pending` reported it.
+    may_pend: bool,
 }
 
 /// Poll the handler to completion, answering what the transport delivers meanwhile.
@@ -403,8 +443,19 @@ async fn serve<H: Future<Output = Responded>, T: UdsTransport, const PEERS: usiz
         };
         match event {
             Either::Left(done) => return Ok((done, deferred)),
+            Either::Right(Ok(TransportEvent::Deadline)) if !serving.may_pend => {
+                // UDSSVC_ARCH_0032 — the service admits no 0x78, so an overrun is drained
+                // as any tick is and nothing is submitted or recorded for `settle`.
+                let now = transport.now();
+                let reaction = session.tick(now);
+                // milestone-1 limit: see `Server::step`'s doc on `Err`.
+                let d = drain(reaction, transport, pending).await?;
+                deferred = deferred.merge(d.deferred);
+                deadline = session.next_deadline();
+            }
             Either::Right(Ok(TransportEvent::Deadline)) => {
                 let now = transport.now();
+                // milestone-1 limit: see `Server::step`'s doc on `Err`.
                 let o = answer_overrun(
                     session,
                     transport,
@@ -427,6 +478,7 @@ async fn serve<H: Future<Output = Responded>, T: UdsTransport, const PEERS: usiz
                 // and opens the enhanced window (UDSS_LLR_0116).
                 let now = transport.now();
                 let reaction = session.t_data_conf(now, ai, result);
+                // milestone-1 limit: see `Server::step`'s doc on `Err`.
                 let d = drain(reaction, transport, pending).await?;
                 deferred = deferred.merge(d.deferred);
                 deadline = session.next_deadline();
@@ -465,12 +517,13 @@ async fn serve<H: Future<Output = Responded>, T: UdsTransport, const PEERS: usiz
 /// A free function rather than a method because `response` borrows the server's store.
 /// Returns what the application must hear about, for the caller to [`apply`].
 ///
-/// A final response refused under ``UDSS_LLR_0061`` is waited out and resubmitted once.
-/// That refusal is reachable: [`select2`] lets the handler win a tie, so a handler can
-/// finish after a 0x78 was accepted and before that 0x78's `DataConf` was drained.
-/// A refusal for any other cause loses the response. The tester has had at most a
-/// 0x78, and the service stays in progress until its timer runs out. That is a
-/// milestone-1 limit; nothing retries it.
+/// A final response refused under ``UDSS_LLR_0061`` or ``UDSS_LLR_0062`` is waited out
+/// and resubmitted once. The first is reachable because [`select2`] lets the handler win
+/// a tie, so a handler can finish after a 0x78 was accepted and before that 0x78's
+/// `DataConf` was drained; the second wherever every association is still awaiting a
+/// confirmation. A refusal for any other cause loses the response. The tester has had
+/// at most a 0x78, and the service stays in progress until its timer runs out. That is
+/// a milestone-1 limit; nothing retries it.
 async fn answer<T: UdsTransport, const PEERS: usize>(
     session: &mut SessionServer<PEERS>,
     transport: &mut T,
@@ -488,12 +541,20 @@ async fn answer<T: UdsTransport, const PEERS: usize>(
     };
     let now = transport.now();
     let reaction = final_response(session, now, serving.reply_to, response, selected);
+    // milestone-1 limit: an `Err` at any `?` below drops what was recorded; see
+    // `Server::step`'s doc.
     let mut d = drain(reaction, transport, pending).await?;
     let mut deferred = d.deferred;
-    if d.rejected
-        .is_some_and(|r| r.contains(Cause::AssociationOutstanding))
-    {
-        let waited = await_confirmation(session, transport, pending, concurrent, serving);
+    let awaited = match d.rejected {
+        // UDSS_LLR_0061 — only `reply_to`'s own confirmation frees its addressing.
+        Some(r) if r.contains(Cause::AssociationOutstanding) => Some(Awaited::Reply),
+        // UDSS_LLR_0062 — any confirmation frees an association.
+        Some(r) if r.contains(Cause::NoAssociationFree) => Some(Awaited::Any),
+        _ => None,
+    };
+    if let Some(awaited) = awaited {
+        let waited =
+            await_confirmation(session, transport, pending, concurrent, serving, awaited);
         let Some(waited) = waited.await? else {
             // The link closed first: reported as the mid-handler close is, `Suppressed`.
             let closed = complete(session, transport, pending, serving.ai, None).await?;
@@ -518,8 +579,8 @@ async fn answer<T: UdsTransport, const PEERS: usize>(
             }
         }
         // UDSSVC_ARCH_0040 — a milestone-1 limit: a final response refused for any
-        // cause but an outstanding association (or refused again after waiting one
-        // out) is lost, with no retry. See `answer`'s doc.
+        // cause but an outstanding or unavailable association (or refused again after
+        // waiting one out) is lost, with no retry. See `answer`'s doc.
         Some(_refused) => {}
     }
     Ok(deferred)
@@ -569,19 +630,37 @@ async fn complete<T: UdsTransport, const PEERS: usize>(
     }))
 }
 
-/// Wait for the transmission outstanding on `serving.reply_to` to be confirmed, so the
-/// final response ``UDSS_LLR_0061`` refused can be resubmitted.
+/// Which confirmation [`await_confirmation`] waits for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Awaited {
+    /// ``UDSS_LLR_0061`` — the one for `serving.reply_to`, the addressing refused.
+    Reply,
+    /// ``UDSS_LLR_0062`` — any accepted one, since any frees an association.
+    Any,
+}
+
+/// Wait for a transmission outstanding to be confirmed, so the final response
+/// ``UDSS_LLR_0061`` or ``UDSS_LLR_0062`` refused can be resubmitted.
 ///
 /// Each event takes the path it takes mid-handler: a `DataConf` reaches `t_data_conf`,
 /// a deadline reaches [`answer_overrun`], and anything else re-arms the deadline.
-/// Returns what the drains recorded once a `DataConf` for `reply_to` has been drained,
-/// or `None` where the link closed first.
+/// Returns what the drains recorded once the awaited `DataConf` has been drained and
+/// accepted — `serving.reply_to`'s for [`Awaited::Reply`], any for [`Awaited::Any`] — or
+/// `None` where the link closed first.
+///
+/// **Unbounded** (milestone-1 limit, ``UDSSVC_ARCH_0040``). The wait ends on the awaited
+/// `DataConf`, a `Closed`, or a transport error, and on nothing else: a transport that
+/// never confirms stalls the driver here. That is the assumption of use
+/// [`UdsTransport`] states, a `DataConf` for every accepted `t_data_req`. Indications
+/// arriving meanwhile are dropped, not answered `busyRepeatRequest` (architecture open
+/// question 1).
 async fn await_confirmation<T: UdsTransport, const PEERS: usize>(
     session: &mut SessionServer<PEERS>,
     transport: &mut T,
     pending: &mut Option<Pending>,
     concurrent: &mut [u8],
     serving: Serving,
+    awaited: Awaited,
 ) -> Result<Option<Deferred>, T::Error> {
     let mut deferred = Deferred::NONE;
     loop {
@@ -592,7 +671,8 @@ async fn await_confirmation<T: UdsTransport, const PEERS: usize>(
                 let reaction = session.t_data_conf(now, ai, result);
                 let d = drain(reaction, transport, pending).await?;
                 deferred = deferred.merge(d.deferred);
-                if ai == serving.reply_to && d.rejected.is_none() {
+                let matches = awaited == Awaited::Any || ai == serving.reply_to;
+                if matches && d.rejected.is_none() {
                     return Ok(Some(deferred));
                 }
             }

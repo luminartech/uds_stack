@@ -296,9 +296,9 @@ macro_rules! __uds_stage {
 ///
 /// ```
 /// # use uds_services::{
-/// #     Ai, DataIdentifier, DataTransfer, ReadDataByIdentifier, RecordError, Reloads,
-/// #     ResponseSink, ServerParams, ServiceSet, Storage, Timestamp, TransferRequest,
-/// #     TransportEvent, UdsTransport, uds_server,
+/// #     Address, Ai, DataIdentifier, DataTransfer, ReadDataByIdentifier, RecordError,
+/// #     Reloads, ResponseSink, ServerParams, ServiceSet, Storage, Timestamp,
+/// #     TransferRequest, TransportEvent, UdsTransport, uds_server,
 /// # };
 /// # use uds_protocol::NegativeResponseCode as Nrc;
 /// #
@@ -389,7 +389,8 @@ macro_rules! __uds_stage {
 /// }
 ///
 /// // Constructed in place: no stack temporary holds the buffers on the way in.
-/// static SERVER: EcuServer = EcuServer::new(Ecu::new(), DoIpTransport, PARAMS);
+/// static SERVER: EcuServer =
+///     EcuServer::new(Ecu::new(), DoIpTransport, Address(0x0E00), PARAMS);
 ///
 /// let mut store = <<Ecu as ServiceSet>::Store as Storage>::EMPTY;
 /// let buffers = store.split();

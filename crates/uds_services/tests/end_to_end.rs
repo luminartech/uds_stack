@@ -20,12 +20,18 @@ use uds_session::TransportError;
 
 const TESTER: Address = Address(0x0E80);
 const ECU: Address = Address(0x0010);
+/// The functional group address a functional request is sent to: never the ECU's own,
+/// so a response sent from the request's `S_TA` would be caught.
+const FUNCTIONAL: Address = Address(0xE400);
 
 fn from_tester(ta_type: TaType) -> Ai {
     Ai {
         mtype: Mtype::Diag,
         sa: TESTER,
-        ta: ECU,
+        ta: match ta_type {
+            TaType::Physical => ECU,
+            TaType::Functional => FUNCTIONAL,
+        },
         ta_type,
     }
 }
@@ -64,6 +70,8 @@ struct Scripted {
     /// For each transmission, how many script steps had been consumed when it was made.
     sent_after: [usize; MAX_SENT],
     sent_count: usize,
+    /// The addressing of the latest transmission.
+    sent_ai: Option<Ai>,
 }
 
 impl Scripted {
@@ -84,6 +92,7 @@ impl Scripted {
             sent: [([0; MAX_FRAME], 0); MAX_SENT],
             sent_after: [0; MAX_SENT],
             sent_count: 0,
+            sent_ai: None,
         }
     }
     fn sent(&self, i: usize) -> &[u8] {
@@ -152,6 +161,7 @@ impl UdsTransport for Scripted {
     type Error = ();
     fn t_data_req(&mut self, ai: Ai, data: &[u8]) -> impl Future<Output = Result<(), ()>> {
         assert_eq!(ai, to_tester(), "responses go back to the tester");
+        self.sent_ai = Some(ai);
         self.record(data);
         ready(Ok(()))
     }
@@ -345,6 +355,7 @@ fn a_physical_read_is_answered() {
             Ev::Ind(TaType::Physical, &[0x22, 0xF4, 0x0D]),
             Ev::Conf(SResult::Ok),
         ]),
+        ECU,
         PARAMS,
     );
     run(&mut s);
@@ -360,6 +371,7 @@ fn an_unsupported_sid_gets_0x11_and_an_empty_request_nothing() {
             Ev::Conf(SResult::Ok),
             Ev::Ind(TaType::Physical, &[]),
         ]),
+        ECU,
         PARAMS,
     );
     run(&mut s);
@@ -372,6 +384,7 @@ fn a_short_read_gets_0x13() {
     let mut s = EcuServer::new(
         Ecu::new(),
         Scripted::new(&[Ev::Ind(TaType::Physical, &[0x22, 0xF4])]),
+        ECU,
         PARAMS,
     );
     run(&mut s);
@@ -383,6 +396,7 @@ fn a_functional_unsupported_did_is_silent() {
     let mut s = EcuServer::new(
         Ecu::new(),
         Scripted::new(&[Ev::Ind(TaType::Functional, &[0x22, 0x00, 0x01])]),
+        ECU,
         PARAMS,
     );
     run(&mut s);
@@ -400,6 +414,7 @@ fn a_second_request_is_accepted_after_the_first_is_confirmed() {
             Ev::Ind(TaType::Physical, read),
             Ev::Conf(SResult::Ok),
         ]),
+        ECU,
         PARAMS,
     );
     run(&mut s);
@@ -420,6 +435,7 @@ fn a_slow_handler_gets_a_response_pending_then_its_answer() {
             Ev::Conf(SResult::Ok), // its confirmation, consumed mid-handler
             Ev::Conf(SResult::Ok), // the final response's confirmation
         ]),
+        ECU,
         PARAMS,
     );
     run(&mut s);
@@ -447,6 +463,7 @@ fn a_final_response_after_a_pending_whose_confirmation_is_late_is_still_delivere
             Ev::Conf(SResult::Ok), // the 0x78's confirmation, drained after the handler
             Ev::Conf(SResult::Ok), // the final response's confirmation
         ]),
+        ECU,
         PARAMS,
     );
     run(&mut s);
@@ -473,11 +490,15 @@ fn a_sent_response_pending_overrides_functional_silence() {
             Ev::Conf(SResult::Ok),
             Ev::Conf(SResult::Ok),
         ]),
+        ECU,
         PARAMS,
     );
     run(&mut s);
     assert_eq!(s.transport().sent(0), &[0x7F, 0x22, 0x78]);
     assert_eq!(s.transport().sent(1), &[0x62, 0xF4, 0x0D, 0x40]);
+    // UDSS_LLR_0051 — sent from the ECU's own address, not the functional group's.
+    let ai = s.transport().sent_ai.unwrap();
+    assert_eq!((ai.sa, ai.ta, ai.ta_type), (ECU, TESTER, TaType::Physical));
 }
 
 #[test]
@@ -492,6 +513,7 @@ fn a_session_change_takes_effect_on_confirmation_and_times_out() {
             Ev::At(5_100), // past tS3_Server: default again
             Ev::Ind(TaType::Physical, &[0x27, 0x01]),
         ]),
+        ECU,
         PARAMS,
     );
     run(&mut s);
@@ -518,6 +540,7 @@ fn a_suppressed_session_change_enters_the_session() {
             Ev::Ind(TaType::Physical, &[0x10, 0x83]),
             Ev::Ind(TaType::Physical, &[0x27, 0x01]),
         ]),
+        ECU,
         PARAMS,
     );
     run(&mut s);
@@ -541,6 +564,7 @@ fn keep_alive_server(tail: u32) -> EcuServer {
             Ev::IndAt(4_000, TaType::Physical, &[0x3E, 0x80]),
             Ev::At(tail),
         ]),
+        ECU,
         PARAMS,
     )
 }
@@ -583,6 +607,7 @@ fn a_timeout_coinciding_with_a_request_is_reported_first() {
             Ev::Conf(SResult::Ok),
             Ev::IndAt(5_000, TaType::Physical, &[0x27, 0x01]),
         ]),
+        ECU,
         PARAMS,
     );
     run(&mut s);
@@ -604,6 +629,7 @@ fn a_failed_session_response_selects_nothing() {
             Ev::Conf(SResult::Transport(TransportError(1))),
             Ev::Ind(TaType::Physical, &[0x27, 0x01]),
         ]),
+        ECU,
         PARAMS,
     );
     run(&mut s);
@@ -616,7 +642,7 @@ fn a_failed_session_response_selects_nothing() {
 #[test]
 fn the_step_future_is_send_and_its_size_is_known() {
     fn assert_send<F: Send>(_: &F) {}
-    let mut s = EcuServer::new(Ecu::new(), Scripted::new(&[]), PARAMS);
+    let mut s = EcuServer::new(Ecu::new(), Scripted::new(&[]), ECU, PARAMS);
     let fut = s.step();
     assert_send(&fut);
     let size = core::mem::size_of_val(&fut);
