@@ -271,7 +271,7 @@ mod read_dtc_info_request_encode_tests {
                 0x01
             )
         );
-        assert!(rest.is_empty());
+        assert_eq!(rest, [0u8; 0]);
 
         let mut buf = [0u8; 8];
         let written =
@@ -361,7 +361,7 @@ mod read_dtc_info_request_encode_tests {
 
     #[test]
     fn exposes_allowed_nack_codes() {
-        assert!(!ReadDtcInfoRequest::allowed_nack_codes().is_empty());
+        assert_ne!(ReadDtcInfoRequest::allowed_nack_codes(), []);
         assert!(
             ReadDtcInfoRequest::allowed_nack_codes()
                 .contains(&NegativeResponseCode::RequestOutOfRange)

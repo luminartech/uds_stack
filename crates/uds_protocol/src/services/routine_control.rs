@@ -324,7 +324,7 @@ mod test {
             .unwrap();
         assert_eq!(&buf[..n], &[0x81, 0xFF, 0x00, 0xAA]); // 0x81 = StartRoutine | SPRMIB
         let (d, rest) = <RoutineControlRequest as Decode>::decode(&buf[..n]).unwrap();
-        assert!(rest.is_empty());
+        assert_eq!(rest, [0u8; 0]);
         assert!(d.suppress_positive_response);
         assert_eq!(d.sub_function, RoutineControlSubFunction::StartRoutine);
         assert_eq!(d.routine_id, 0xFF00);
@@ -365,7 +365,7 @@ mod test {
 
     #[test]
     fn exposes_allowed_nack_codes() {
-        assert!(!RoutineControlRequest::allowed_nack_codes().is_empty());
+        assert_ne!(RoutineControlRequest::allowed_nack_codes(), []);
         assert!(
             RoutineControlRequest::allowed_nack_codes()
                 .contains(&NegativeResponseCode::SecurityAccessDenied)

@@ -690,7 +690,10 @@ mod tests {
         assert_eq!(entity.on_tcp_rx(&diag), TcpVerdict::Close);
 
         let cap = capture();
-        assert!(cap.uds_requests.is_empty());
+        assert_eq!(
+            cap.uds_requests,
+            alloc::vec::Vec::<alloc::vec::Vec<u8>>::new()
+        );
         assert_eq!(cap.tcp.len(), 1);
         let (header, _payload) = decode_single(&cap.tcp[0]);
         assert_eq!(

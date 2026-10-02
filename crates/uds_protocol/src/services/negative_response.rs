@@ -169,7 +169,7 @@ mod tests {
         // decode -> encode verbatim (it previously normalized to 0x7F).
         let wire = [0x40, 0x12];
         let (nr, rest) = <NegativeResponse as Decode>::decode(&wire).unwrap();
-        assert!(rest.is_empty());
+        assert_eq!(rest, [0u8; 0]);
         assert_eq!(nr.request_service_sid(), 0x40);
         assert_eq!(nr.request_service(), UdsServiceType::from_request_sid(0x40));
         let mut buf = [0u8; 2];

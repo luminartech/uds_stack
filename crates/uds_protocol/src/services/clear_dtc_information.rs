@@ -177,7 +177,7 @@ mod request {
             <ClearDiagnosticInfoRequest as Decode>::decode(&[0xFF, 0xFF, 0xFF]).unwrap();
         assert_eq!(req.memory_selection, None);
         assert_eq!(req.group_of_dtc, CLEAR_ALL_DTCS);
-        assert!(rest.is_empty());
+        assert_eq!(rest, [0u8; 0]);
     }
 
     #[test]
@@ -198,7 +198,7 @@ mod request {
                 .unwrap();
         assert_eq!(req.memory_selection, Some(0x2A));
         assert_eq!(req.group_of_dtc, DtcRecord::try_from(0x01_0203).unwrap());
-        assert!(rest.is_empty());
+        assert_eq!(rest, [0u8; 0]);
     }
 
     #[test]
@@ -267,6 +267,6 @@ mod response {
         let (decoded, remaining) =
             <ClearDiagnosticInfoResponse as Decode>::decode(&buf[..0]).unwrap();
         assert_eq!(decoded, resp);
-        assert!(remaining.is_empty());
+        assert_eq!(remaining, [0u8; 0]);
     }
 }
