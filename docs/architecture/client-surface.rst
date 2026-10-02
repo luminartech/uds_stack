@@ -158,7 +158,7 @@ The elements
    timeout, and a timeout is a fault. Suppression is not a fault: the client asked for it,
    or clause 8.7 required it.
 
-   This mirrors ``Outcome::Suppress`` on the server side (``UDSSVC_ARCH_0016``), and it is
+   This mirrors ``Responded::Suppressed`` on the server side (``UDSSVC_ARCH_0016``), and it is
    the same distinction the binding already draws — its completion type separates a
    response arriving from a request being transmitted with no response expected.
 

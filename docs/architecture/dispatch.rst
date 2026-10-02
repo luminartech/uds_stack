@@ -35,7 +35,7 @@ Overview
       rectangle "data parameters" as DP
       rectangle "handler" as H
       rectangle "suppression gate" as G
-      rectangle "Responded\nor Suppress" as O
+      rectangle "Responded\nor Suppressed" as O
 
       B -> P
       P -> SF
@@ -82,7 +82,7 @@ rather than merely the code path.
      if (service implemented?) then (no)
        :0x11; <<negative>>
      else (yes)
-       if (authenticated?) then (no)
+       if (authenticated?\nnot evaluated, open question 4) then (no)
          :0x34; <<negative>>
        else (yes)
          if (supported in active session?) then (no)
@@ -144,8 +144,8 @@ Decode
    :origin: derived
    :tags: dispatch; uds_protocol
 
-   Rationale: 0x13 is a clause 8.7 outcome, but message length and format are properties of the
-   encoding, which is ``uds_protocol``'s. So ``uds_protocol`` *detects* and this crate
+   Rationale: 0x13 is a clause 8.7 outcome, but message length and format are properties of
+   the encoding, which is ``uds_protocol``'s. So ``uds_protocol`` *detects* and this crate
    *maps*: neither re-derives the other's work, and there is exactly one place that knows
    the wire format. The request bytes are decoded with ``uds_protocol`` once Figure 5's
    support and session checks have passed (``UDSSVC_ARCH_0006``): decoding is the
@@ -344,6 +344,11 @@ Mandatory preconditions
    sub-function's arm, and its ``DEFAULT: responseCode = SFNS`` precedes every such test.
    Row 3 is not evaluated yet: authentication is architecture open question 4, so it is
    unconditionally true, as Figure 5's authentication check is.
+
+   **Row 2 is decided only for a service that has a stage** (``DiagnosticSessionControl``,
+   ``TesterPresent``). A listed service that carries a SubFunction but has no stage yet
+   passes row 2 and reaches the decode: it is then answered 0x11 through the wildcard, or
+   0x13 if the request does not decode. The macro documentation records the same rule.
 
    **Rows 2 and 4 are each service trait's pair.** Whether a SubFunction is supported
    ever, and whether from the active session, are deployment facts — which sessions a
@@ -831,8 +836,9 @@ strengthens the proposed split rather than complicating it: classification needs
 crate knows.
 
 **Occupancy ends on silence too.** The instance is held "until the request message is
-processed (with final response sent **or application call without response**)", so an
-``Outcome::Suppress`` releases it exactly as a transmitted response does. A driver that
+processed (with final response sent **or application call without response**)", so a
+``Responded::Suppressed``, which the driver reaches by settling the dispatch outcome
+(``UDSSVC_ARCH_0016``), releases it exactly as a transmitted response does. A driver that
 released the instance only on a transmission would deadlock on the silence clause 8.7
 requires.
 

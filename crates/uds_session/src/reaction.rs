@@ -110,7 +110,9 @@ impl<'s, 'd, O, S: Drain<'d, O>, T> Reaction<'s, 'd, O, S, T> {
     /// The outputs this input produced, in the order ``UDSS_LLR_0081`` requires:
     /// expiry indications first, then the input's own.
     ///
-    /// ``UDSS_LLR_0011`` — the caller retrieves them; nothing is pushed.
+    /// ``UDSS_LLR_0011`` — the caller retrieves them; nothing is pushed. A drain that is
+    /// not iterated discards them.
+    #[must_use = "the session's outputs are lost unless the drain is iterated"]
     pub fn outputs(&mut self) -> Outputs<'_, 'd, O, S> {
         Outputs {
             session: &mut *self.session,

@@ -495,12 +495,12 @@ nothing else.
 (``UDSSVC_ARCH_0040``). An input does not return one output: it returns a *reaction*, which
 the driver drains through ``Reaction::outputs()`` and then consumes with ``finish()``, whose
 value is that input's verdict — and a refused submission is exactly what
-``UDSSVC_ARCH_0009``'s suppression gate needs to know about. And ``t_data_req`` is called from **inside** the drain
-rather than after it, because every ``Transmit`` must reach the transport, not only the last
+``UDSSVC_ARCH_0009``'s suppression gate needs to know about. And ``t_data_req`` is called
+from **inside** the drain rather than after it, because every ``Transmit`` must reach the transport, not only the last
 one.
 
 An earlier version of this diagram had a binding in the driving position, handing this crate
-bytes and a ``Ctx`` read from ``uds_session``, and taking an ``Outcome`` back. That component
+bytes and a ``Ctx`` read from ``uds_session``, and taking a ``Responded`` back. That component
 does not exist.
 
 The final ``alt`` is not error handling. Both branches are specified outcomes of clause

@@ -317,8 +317,8 @@ Protocol state
    stated once. Milestone 1 admits ``peers = 1`` only, and both the macro and
    ``Server::new`` reject any other count at compile time: the driver keeps one slot for a
    selecting ``DiagnosticSessionControl`` response awaiting its confirmation, and a second
-   peer's response could overwrite it. The protocol state is ``uds_services::State``, a type this crate declares
-   with private fields; ``uds_server!`` only *names* it as ``ServiceSet::State``, because
+   peer's response could overwrite it. The protocol state is ``uds_services::State``, a type
+   this crate declares with private fields; ``uds_server!`` only *names* it as ``ServiceSet::State``, because
    the macro expands in the application's crate and a struct declared there could keep
    nothing private from it. ``Server`` holds the state in a private field and passes it to
    ``dispatch`` and to the two session hooks the macro emits. The per-channel

@@ -172,9 +172,12 @@ pub use services::{
 pub use uds_protocol::{
     CLEAR_ALL_DTCS, CommunicationControlType, CommunicationType, DiagnosticSessionType,
     DtcRecord, DtcSettingType, DtcStatusMask, FileOperationMode, FunctionalGroupIdentifier,
-    NegativeResponseCode, ReadDtcInfoSubFunction, Request, ResetType, SubnetNumber,
-    UdsServiceType,
+    NegativeResponseCode, ReadDtcInfoSubFunction, ResetType, SubnetNumber, UdsServiceType,
 };
+
+/// Re-exported only so `uds_server!`'s expansion can name it; not part of the API.
+#[doc(hidden)]
+pub use uds_protocol::Request;
 
 #[doc(hidden)]
 pub mod sealed;

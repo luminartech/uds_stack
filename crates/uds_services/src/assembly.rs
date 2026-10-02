@@ -298,8 +298,8 @@ macro_rules! __uds_stage {
         }
     };
     ($self:ident, $out:ident, $req:ident, TesterPresent) => {
-        if let $crate::Request::TesterPresent(ref r) = $req {
-            return $crate::pipeline::tester_present($self, r, $out);
+        if let $crate::Request::TesterPresent(_) = $req {
+            return $crate::pipeline::tester_present($self, $out);
         }
     };
     ($self:ident, $out:ident, $req:ident, $svc:ident) => {};
