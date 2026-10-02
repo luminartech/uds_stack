@@ -11,14 +11,17 @@ use crate::time::Timestamp;
 
 /// Which reading of ``UDSS_LLR_0077`` a timer takes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "read by the server bodies of Task 3")
-)]
 pub(crate) enum Expiry {
     /// Expires when the elapsed time reaches the loaded value.
     Reaches,
     /// Expires only once the elapsed time strictly exceeds the loaded value.
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "no server timer expires on exceeds; tP_Client of UDSS_LLR_0148 does"
+        )
+    )]
     Exceeds,
 }
 
@@ -34,10 +37,6 @@ struct Running {
     loaded: u32,
 }
 
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "read by the server bodies of Task 3")
-)]
 impl Timer {
     /// Not running. ``UDSS_LLR_0083`` and ``UDSS_LLR_0102`` start every timer here.
     pub(crate) const STOPPED: Self = Self { running: None };
@@ -53,11 +52,22 @@ impl Timer {
         self.running = None;
     }
 
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "read by the server bodies of Task 4")
+    )]
     pub(crate) const fn is_running(&self) -> bool {
         self.running.is_some()
     }
 
     /// The value loaded at the last start, while running (``UDSS_LLR_0101`` reads it).
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "no milestone-1 caller; the server keeps its reload"
+        )
+    )]
     pub(crate) fn loaded(&self) -> Option<u32> {
         self.running.map(|r| r.loaded)
     }

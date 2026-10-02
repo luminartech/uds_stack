@@ -13,6 +13,14 @@ use crate::params::{ServerParameter, ServerParams, ServerReload};
 use crate::reaction::Reaction;
 use crate::result::SResult;
 use crate::time::Timestamp;
+use crate::timer::{Expiry, Timer};
+
+/// One transmission between its `S_Data.req` and its `T_Data.conf`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Outstanding {
+    ai: Ai,
+    class: ServerTx,
+}
 
 /// One slot of the association storage ``UDSS_LLR_0059`` requires.
 ///
@@ -21,20 +29,41 @@ use crate::time::Timestamp;
 /// request until the confirmation. ``UDSS_LLR_0060`` permits at most one outstanding per
 /// addressing; ``UDSS_LLR_0062`` rejects a request for which none is free, so the array's
 /// length is the server's capacity.
+///
 /// Storage is moved into the instance, never duplicated: a copy of an outstanding
-/// association is an association the session layer does not know it has. `Copy` and
-/// equality are deliberately absent for that reason, and the array is built from
-/// [`Association::EMPTY`] rather than from a copy.
+/// association is an association the session layer does not know it has, which is why
+/// `Copy` and equality are absent and the array is built from [`Association::EMPTY`].
 #[derive(Debug)]
 pub struct Association {
-    _reserved: (),
+    #[expect(dead_code, reason = "read by the association bodies of Task 5")]
+    slot: Option<Outstanding>,
 }
 
 impl Association {
     /// A free slot.
     ///
     /// ``UDSS_LLR_0064`` — no association is outstanding on initialisation.
-    pub const EMPTY: Self = Self { _reserved: () };
+    pub const EMPTY: Self = Self { slot: None };
+}
+
+/// ``UDSS_LLR_0082`` — the session fact, and while non-default the controlling client and
+/// the one `tS3_Server`. The timer lives here because ``UDSS_LLR_0099`` disables it in the
+/// default session: there is no timer to hold while `Default`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Session {
+    Default,
+    NonDefault { client: PeerIdentity, s3: Timer },
+}
+
+/// ``UDSS_LLR_0104`` — the service in progress, its response-pending anchor, and
+/// ``UDSS_LLR_0101``'s `tP2_Server` with the parameter it carries. The timer lives here
+/// because ``UDSS_LLR_0113``–``0117`` only ever run it for a service in progress.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct InProgress {
+    peer: PeerIdentity,
+    anchor: Option<Timestamp>,
+    p2: Timer,
+    loaded: ServerReload,
 }
 
 /// What a server produces for the caller to retrieve.
@@ -107,8 +136,15 @@ pub type ServerReaction<'s, 'd, const A: usize, T = ()> =
 /// nothing is retained anywhere else between inputs.
 #[derive(Debug)]
 pub struct Server<const A: usize> {
-    _associations: [Association; A],
-    _params: ServerParams,
+    #[expect(dead_code, reason = "read by the association bodies of Task 5")]
+    associations: [Association; A],
+    params: ServerParams,
+    session: Session,
+    service: Option<InProgress>,
+    /// Expiry snapshots: taken at the instant of expiry, because the expiry itself
+    /// discards the facts the indication names (spec §2.1).
+    s3_expiry: Option<PeerIdentity>,
+    p2_expiry: Option<(PeerIdentity, ServerReload)>,
 }
 
 impl<const A: usize> Server<A> {
@@ -125,9 +161,66 @@ impl<const A: usize> Server<A> {
     #[must_use]
     pub const fn new(associations: [Association; A], params: ServerParams) -> Self {
         Self {
-            _associations: associations,
-            _params: params,
+            associations,
+            params,
+            session: Session::Default,
+            service: None,
+            s3_expiry: None,
+            p2_expiry: None,
         }
+    }
+
+    /// ``UDSS_LLR_0081`` — act on every expiry the timestamp causes before the input.
+    /// Sweeps the previous input's unreported snapshots first (spec §2.1 item 5).
+    fn expire(&mut self, now: Timestamp) {
+        self.s3_expiry = None;
+        self.p2_expiry = None;
+        if let Session::NonDefault { client, s3 } = self.session
+            && s3.expired(now, Expiry::Reaches)
+        {
+            // UDSS_LLR_0100
+            self.s3_expiry = Some(client);
+            self.session = Session::Default;
+        }
+        if let Some(service) = self.service.as_mut()
+            && service.p2.expired(now, Expiry::Reaches)
+        {
+            // UDSS_LLR_0117 — stop, and report the service and the parameter.
+            self.p2_expiry = Some((service.peer, service.loaded));
+            service.p2.stop();
+        }
+    }
+
+    /// ``UDSS_LLR_0082`` — whether `peer` is the controlling client.
+    #[expect(dead_code, reason = "used by the bodies of Tasks 4-6")]
+    fn is_controlling(&self, peer: PeerIdentity) -> bool {
+        matches!(self.session, Session::NonDefault { client, .. } if client == peer)
+    }
+
+    /// Start, or restart, `tS3_Server` — a no-op in the default session
+    /// (``UDSS_LLR_0099``), which the type makes the only possible outcome.
+    #[expect(dead_code, reason = "used by the bodies of Tasks 4-6")]
+    fn restart_s3(&mut self, now: Timestamp) {
+        if let Session::NonDefault { s3, .. } = &mut self.session {
+            s3.start(now, self.params.s3_server);
+        }
+    }
+
+    /// Stop `tS3_Server` — likewise a no-op in the default session.
+    #[expect(dead_code, reason = "used by the bodies of Tasks 4-6")]
+    fn stop_s3(&mut self) {
+        if let Session::NonDefault { s3, .. } = &mut self.session {
+            s3.stop();
+        }
+    }
+
+    /// Enter a non-default session controlled by `client`, `tS3_Server` started
+    /// (``UDSS_LLR_0085``, ``UDSS_LLR_0086``).
+    #[expect(dead_code, reason = "used by the bodies of Tasks 4-6")]
+    fn enter_non_default(&mut self, now: Timestamp, client: PeerIdentity) {
+        let mut s3 = Timer::STOPPED;
+        s3.start(now, self.params.s3_server);
+        self.session = Session::NonDefault { client, s3 };
     }
 
     /// Set a protocol parameter.
@@ -270,7 +363,7 @@ impl<const A: usize> Server<A> {
     /// ``UDSS_LLR_0079`` makes expiry evaluated only when a timestamp is supplied, so
     /// this is how a timer that has run out is noticed when nothing else is happening.
     pub fn tick(&mut self, now: Timestamp) -> ServerReaction<'_, 'static, A> {
-        let _ = now;
+        self.expire(now);
         Reaction::new(self, [None, None], Ok(()))
     }
 
@@ -282,7 +375,25 @@ impl<const A: usize> Server<A> {
     /// rounds every timing decision to its tick period.
     #[must_use]
     pub fn next_deadline(&self) -> Option<Timestamp> {
-        None
+        let s3 = match self.session {
+            Session::NonDefault { s3, .. } => s3.deadline(Expiry::Reaches),
+            Session::Default => None,
+        };
+        let p2 = self.service.and_then(|s| s.p2.deadline(Expiry::Reaches));
+        match (s3, p2) {
+            (Some(a), Some(b)) => Some(earlier(a, b)),
+            (a, b) => a.or(b),
+        }
+    }
+}
+
+/// The earlier of two wrapping timestamps (``UDSS_LLR_0019``): `a` is earlier when the
+/// modular difference `a - b` lands in the upper half of the range.
+fn earlier(a: Timestamp, b: Timestamp) -> Timestamp {
+    if a.0.wrapping_sub(b.0) > u32::MAX / 2 {
+        a
+    } else {
+        b
     }
 }
 
@@ -290,6 +401,33 @@ impl<const A: usize> crate::sealed::Sealed for Server<A> {}
 
 impl<'d, const A: usize> crate::reaction::Drain<'d, ServerOutput<'d>> for Server<A> {
     fn next_expiry(&mut self) -> Option<ServerOutput<'d>> {
-        None // replaced in Task 3
+        if let Some(client) = self.s3_expiry.take() {
+            return Some(ServerOutput::SessionTimeout { client });
+        }
+        self.p2_expiry
+            .take()
+            .map(|(peer, loaded)| ServerOutput::ResponseOverrun {
+                sa: peer.address,
+                ae: peer.extension,
+                loaded,
+            })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::earlier;
+    use crate::time::Timestamp;
+
+    /// ``UDSS_LLR_0019`` — the earlier deadline is chosen by modular distance, so one
+    /// just past the wrap is later than one just before it.
+    #[test]
+    fn the_earlier_deadline_is_chosen_across_the_wrap() {
+        assert_eq!(earlier(Timestamp(10), Timestamp(20)), Timestamp(10));
+        assert_eq!(earlier(Timestamp(20), Timestamp(10)), Timestamp(10));
+        let before = Timestamp(u32::MAX - 5);
+        let after = Timestamp(5);
+        assert_eq!(earlier(before, after), before);
+        assert_eq!(earlier(after, before), before);
     }
 }
