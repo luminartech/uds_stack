@@ -1,4 +1,4 @@
-//! Milestone 1's "done when" (spec §3), through `Server::step` over a scripted transport.
+//! The server end to end, through `Server::step` over a scripted transport.
 
 #![allow(
     clippy::unwrap_used,
@@ -76,12 +76,6 @@ struct Scripted {
     sent_ai: Option<Ai>,
     /// How many `Deadline`s were reported: one per `At` that reached the driver's deadline.
     deadlines: usize,
-}
-
-/// Whether `now` has reached `deadline` on the wrapping clock (``UDSS_LLR_0019``): the
-/// modular difference lies in the lower half of the range.
-fn reached(now: Timestamp, deadline: Timestamp) -> bool {
-    now.interval_since(deadline) <= u32::MAX / 2
 }
 
 impl Scripted {
@@ -163,7 +157,7 @@ impl Scripted {
                 }
                 Ev::At(t) => {
                     self.now = t;
-                    if deadline.is_some_and(|d| reached(Timestamp(t), d)) {
+                    if deadline.is_some_and(|d| Timestamp(t).has_reached(d)) {
                         self.deadlines = self.deadlines.wrapping_add(1);
                         return Ok(TransportEvent::Deadline);
                     }
@@ -731,7 +725,7 @@ fn a_timeout_coinciding_with_a_request_is_reported_first() {
     assert_eq!(s.transport().sent(1), &[0x7F, 0x27, 0x7F]);
 }
 
-/// Review focus 5 — a failed transmission of the session response changes nothing: the
+/// ``UDSS_LLR_0085`` — a failed transmission of the session response changes nothing: the
 /// server is still in the default session, and the application was not told otherwise.
 #[test]
 fn a_failed_session_response_selects_nothing() {
@@ -750,7 +744,7 @@ fn a_failed_session_response_selects_nothing() {
     assert_eq!(s.transport().sent(1), &[0x7F, 0x27, 0x7F]);
 }
 
-/// Spec §3.5 — the driver's future is `Send` for a `Send` transport and service set, and
+/// The driver's future is `Send` for a `Send` transport and service set, and
 /// its size is reported so a bare-metal stack budget has a number.
 #[test]
 fn the_step_future_is_send_and_its_size_is_known() {

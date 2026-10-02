@@ -29,6 +29,10 @@ pub trait ReadDataByIdentifier {
     /// The [`NegativeResponseCode`] for an identifier that is known but currently
     /// unreadable. One this application does not define never reaches here:
     /// [`DataIdentifier::from_u16`] returning `None` produces `requestOutOfRange` (0x31).
+    ///
+    /// A refused write to `out` needs no handling: the sink records the refusal and the
+    /// pipeline answers `responseTooLong` (0x14) in place of the response, so the write's
+    /// `Result` may be discarded. See [`ResponseSink`].
     fn read(
         &mut self,
         did: Self::Did,

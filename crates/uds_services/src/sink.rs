@@ -218,8 +218,8 @@ mod tests {
         assert_eq!(sink.written(), 0);
     }
 
-    /// Spec §3.3 — ISO 14229-1 fixes a negative response at three bytes, so a bound
-    /// below three is not one the protocol admits: it is raised to three.
+    /// ``UDSSVC_ARCH_0017`` — ISO 14229-1 fixes a negative response at three bytes, so a
+    /// bound below three is not one the protocol admits: it is raised to three.
     #[test]
     fn the_bound_is_never_below_three_bytes() {
         let mut buffer = [0_u8; 8];

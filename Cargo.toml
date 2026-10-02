@@ -41,6 +41,7 @@ clap = { version = "4", features = ["derive"] }
 
 # dev-dependencies
 anyhow = "1"
+static_cell = "2"
 proptest = "1"
 serde_json = "1"
 tracing-subscriber = { version = "0.3", features = ["fmt"] }

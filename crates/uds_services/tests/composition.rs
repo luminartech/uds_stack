@@ -2,8 +2,8 @@
 //!
 //! What is proven is composition: that an application can implement the traits, that
 //! `uds_server!` folds its declared maxima into buffer lengths, that the result
-//! constructs in a `static` without a stack temporary, and that the `dispatch` it emits
-//! routes a request through the pipeline.
+//! constructs in a `static` without a stack temporary and can be stepped there, and that
+//! the `dispatch` it emits routes a request through the pipeline.
 
 #![allow(
     clippy::unused_async_trait_impl,
@@ -12,6 +12,7 @@
               in test code"
 )]
 
+use static_cell::ConstStaticCell;
 use uds_protocol::NegativeResponseCode as Nrc;
 use uds_services::{
     Address, Ai, Answer, ClearDiagnosticInformation, ClientSet, ClientStorage,
@@ -265,8 +266,14 @@ const PARAMS: ServerParams = ServerParams {
 
 /// The construction that matters: a multi-kilobyte server in a `static`, built in place
 /// with no stack temporary. This is what `Storage::EMPTY` being an associated const buys.
-static SERVER: EcuServer =
-    EcuServer::new(Ecu::new(), FakeTransport, Address(0x0E00), PARAMS);
+/// The cell is what makes it steppable: it hands out the one `&'static mut` that
+/// `Server::step` needs, where a plain `static` would be read-only.
+static SERVER: ConstStaticCell<EcuServer> = ConstStaticCell::new(EcuServer::new(
+    Ecu::new(),
+    FakeTransport,
+    Address(0x0E00),
+    PARAMS,
+));
 
 /// The in-flight buffer is dominated by `TransferData` — the same constant the server
 /// must advertise as `maxNumberOfBlockLength`. The response buffer is dominated by a
@@ -355,10 +362,15 @@ fn the_tester_present_exception_is_admitted_only_when_functionally_addressed() {
     assert!(!ecu.is_concurrent_exception(&[0x22, 0xF1, 0x90], ai(TaType::Functional)));
 }
 
-/// Referencing the static is what forces the const evaluation to run.
+/// The in-place server is usable, not only constructible: the cell yields the
+/// `&'static mut`, and one `step` through it completes (the fake reports a deadline,
+/// which the driver ticks).
 #[test]
-fn the_server_constructs_in_a_static() {
-    assert!(!core::ptr::addr_of!(SERVER).is_null());
+fn the_server_in_a_static_can_be_stepped() {
+    let server: &'static mut EcuServer = SERVER.take();
+    let mut step = core::pin::pin!(server.step());
+    let mut cx = core::task::Context::from_waker(core::task::Waker::noop());
+    assert_eq!(step.as_mut().poll(&mut cx), core::task::Poll::Ready(Ok(())));
 }
 
 /// The handler seam speaks `uds_protocol`'s vocabulary, so a sub-function is a named

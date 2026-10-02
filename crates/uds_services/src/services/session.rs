@@ -47,11 +47,17 @@ pub trait DiagnosticSessionControl {
 
     /// The `P2` pair to advertise for `session`.
     ///
-    /// **Must equal the session layer's [`ServerParams`](crate::ServerParams) for
-    /// `session`.** The response advertises these, and the session layer enforces its
-    /// own parameters, so the two have separate sources. Milestone 1 does not apply the
-    /// confirmed session's timing to the session layer (`set_parameter`); that is a
-    /// follow-up.
+    /// **Must return, for every session, the `p2_server_max` and `p2_star_server_max` of
+    /// the [`ServerParams`](crate::ServerParams) passed to
+    /// [`Server::new`](crate::Server::new)**, with `p2_star_server_max` a multiple of
+    /// 10 ms and `p2_server_max` at most `u16::MAX`. The response advertises these, and
+    /// the server enforces the `ServerParams` it was given for every session, so the two
+    /// have separate sources and nothing reconciles them. ISO 14229-1:2020 Table 29 sends
+    /// `P2Server_max` in 1 ms units and `P2*Server_max` in 10 ms units, each in two
+    /// bytes, so a value outside that form is advertised rounded up (P2*) or clamped to
+    /// `u16::MAX`, and then differs from the one enforced. Milestone 1 has no per-session
+    /// timing: the confirmed session's values are not applied to the session layer; that
+    /// is a follow-up.
     ///
     /// # Arguments
     ///
@@ -81,6 +87,10 @@ pub trait EcuReset {
     /// # Errors
     ///
     /// The [`NegativeResponseCode`] for an unsupported or impermissible reset.
+    ///
+    /// A refused write to `out` needs no handling: the sink records the refusal and the
+    /// pipeline answers `responseTooLong` (0x14) in place of the response, so the write's
+    /// `Result` may be discarded. See [`ResponseSink`].
     fn reset(
         &mut self,
         kind: ResetType,

@@ -117,10 +117,10 @@ pub enum TransportEvent<'b> {
 ///   is dropped must not be lost: it is delivered by a later call.
 /// - **Every accepted [`Self::t_data_req`] is followed by exactly one
 ///   [`TransportEvent::DataConf`] for the same [`Ai`]**, including a failed one when the
-///   connection closes before the transmission completed. This is the assumption of use
-///   `docs/requirements/llr-server-response-timing.rst` records, that the transport
-///   reports a `T_Data.conf` for every `T_Data.req`: an association whose confirmation
-///   never arrives has no server exit (``UDSS_LLR_0060``), and the driver waits on it.
+///   connection closes before the transmission completed. That a transport reports a
+///   `T_Data.conf` for every `T_Data.req` is an assumption of use: an association whose
+///   confirmation never arrives has no server exit (``UDSS_LLR_0060``), and the driver
+///   waits on it.
 pub trait UdsTransport {
     /// What this transport's failures are. Never interpreted by this crate.
     ///
@@ -157,10 +157,16 @@ pub trait UdsTransport {
     /// The event borrows `buffer`, not the transport, so `&mut self` is released when the
     /// returned future completes and the driver may transmit while the request is live.
     /// A message is reported as the subslice it occupies; there is no length to overstate.
-    /// `deadline` is
-    /// `uds_session::Server::next_deadline`'s value passed through untouched —
-    /// `Timestamp` carries `UDSS_LLR_0019`'s modular arithmetic, so neither side of
-    /// this seam computes an interval.
+    ///
+    /// `deadline` is `uds_session::Server::next_deadline`'s value passed through
+    /// untouched, and the transport is the side that compares it with the clock. The
+    /// clock wraps (``UDSS_LLR_0019``), so the comparison is
+    /// [`now.has_reached(deadline)`](Timestamp::has_reached) and the time left to wait
+    /// is [`now.until(deadline)`](Timestamp::until); never `now >= deadline`, whose
+    /// derived order is wrong either side of the wrap and either spins or misses the
+    /// deadline by 49.7 days. The deadline may already have been reached when this is
+    /// called, and `until` is then zero. `None` means no timer is running: wait for an
+    /// event alone.
     ///
     /// A driver serving a request offers only its small concurrent buffer, so
     /// [`TransportEvent::DataTooLong`] is the normal outcome there rather than a fault.

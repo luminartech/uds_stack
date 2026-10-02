@@ -275,7 +275,6 @@ mod indication {
     }
 
     /// ``UDSS_LLR_0097`` — a request from another client leaves `tS3_Server` alone.
-    /// (Review focus 1.)
     #[test]
     fn a_request_from_another_client_does_not_touch_the_session_timer() {
         let mut s = server();
@@ -447,7 +446,7 @@ mod transmission {
     }
 
     /// ``UDSS_LLR_0063`` — a confirmation matching no association is rejected and changes
-    /// nothing. (Review focus 2.)
+    /// nothing.
     #[test]
     fn an_unmatched_confirmation_is_rejected() {
         let mut s = server();

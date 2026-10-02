@@ -27,6 +27,10 @@ pub trait RoutineControl {
     ///
     /// The [`NegativeResponseCode`], including `subFunctionNotSupported` (0x12) where
     /// this routine cannot be started — a decision no other service's handler makes.
+    ///
+    /// A refused write to `out` needs no handling: the sink records the refusal and the
+    /// pipeline answers `responseTooLong` (0x14) in place of the response, so the write's
+    /// `Result` may be discarded. See [`ResponseSink`].
     fn start(
         &mut self,
         routine: Self::Rid,
@@ -39,6 +43,10 @@ pub trait RoutineControl {
     /// # Errors
     ///
     /// The [`NegativeResponseCode`], including 0x12 where this routine cannot be stopped.
+    ///
+    /// A refused write to `out` needs no handling: the sink records the refusal and the
+    /// pipeline answers `responseTooLong` (0x14) in place of the response, so the write's
+    /// `Result` may be discarded. See [`ResponseSink`].
     fn stop(
         &mut self,
         routine: Self::Rid,
@@ -51,6 +59,10 @@ pub trait RoutineControl {
     /// # Errors
     ///
     /// The [`NegativeResponseCode`], including 0x12 where this routine reports none.
+    ///
+    /// A refused write to `out` needs no handling: the sink records the refusal and the
+    /// pipeline answers `responseTooLong` (0x14) in place of the response, so the write's
+    /// `Result` may be discarded. See [`ResponseSink`].
     fn results(
         &mut self,
         routine: Self::Rid,

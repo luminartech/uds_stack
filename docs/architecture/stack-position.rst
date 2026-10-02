@@ -268,8 +268,8 @@ Scope
    **What "drains its outputs" means concretely**, since this element asserted the loop's
    existence before the contract on the other side of it was fixed. ``uds_session`` does not
    offer a ``poll()`` returning one output at a time. Each input — ``t_data_ind``,
-   ``s_data_req``, ``tick`` — returns a *reaction*: an iterator over that input's outputs,
-   which the driver drains with ``Iterator::by_ref`` and then closes with ``finish()``,
+   ``s_data_req``, ``tick`` — returns a *reaction* over that input's outputs, which the
+   driver drains through ``Reaction::outputs()`` and then closes with ``finish()``,
    whose return value is the input's verdict. Drain, then finish; the two are not
    interchangeable and neither is optional, because the outputs are what must reach the
    transport and the verdict is what says whether a submission was accepted at all
@@ -304,10 +304,34 @@ Scope
       ``&mut transport`` to send. Without the inner scope the response-pending cannot be
       transmitted while the thing that detected the deadline is still alive.
 
-   The loop body is consequently long and is not split into helpers. That is deliberate:
-   the four properties above are properties of *one* borrow order, and a helper taking
-   ``&mut self.session`` and ``&mut self.transport`` across a call boundary is precisely
-   what the scoping exists to avoid.
+   The loop is split into helpers — ``drain``, ``serve``, ``answer``, ``complete``,
+   ``await_confirmation`` and ``answer_overrun`` — that are free functions over disjoint
+   borrows, never methods on the server. Each takes the session layer, the transport and
+   the pending session selection as separate ``&mut`` parameters, so they stay borrows of
+   distinct fields while the handler future holds ``&mut services`` and ``&mut state``.
+   A helper taking ``&mut self`` would merge them into one borrow, and the four properties
+   above, which are properties of *one* borrow order, would no longer hold.
+
+   **Three milestone-1 limits of the driver**, stated here because the code cites this
+   element for them:
+
+   * **A transport error is terminal for the server instance.** It unwinds through the
+     drains with ``?``, so a session-hook decision a drain had already recorded — a
+     ``tS3_Server`` expiry, a confirmed session — may not have been applied, and the
+     consuming application's session state and the session layer's may disagree from then
+     on. The instance is not to be stepped again. This crate offers no way to recover it
+     in place: the transport and the services cannot be taken back out of it. Carrying the
+     recorded decisions across the error, so that stepping again is correct, is the
+     follow-up that retires this limit.
+   * **Waiting out a refused final response is unbounded.** A final response refused
+     because its association, or every association, still awaits a confirmation is
+     resubmitted once that confirmation arrives. The wait ends on the confirmation, a
+     ``Closed`` or a transport error and on nothing else, which rests on the transport's
+     assumption of use that every accepted ``t_data_req`` is confirmed
+     (``UDSS_LLR_0060``).
+   * **A final response refused for any other cause, or refused again after that wait,
+     is lost.** Nothing retries it; the tester has had at most a 0x78, and the service
+     stays in progress until its timer runs out.
 
    What this costs is honesty about the server side's shape. The dispatch pipeline of
    ``UDSSVC_ARCH_0004`` remains a pure function of a request and its context, and is still
@@ -419,7 +443,7 @@ seams earn their keep.
    activate L
    L -> S : t_data_ind(now, ai, bytes, ..)
    S --> L : a reaction (an iterator\nover this input's outputs)
-   loop drain with Iterator::by_ref
+   loop drain through outputs()
      S --> L : ServerOutput::Indicate { ai, data }
    end
    L -> S : finish()
@@ -439,7 +463,7 @@ seams earn their keep.
    alt Responded::Yes
      L -> S : s_data_req(now, ai, response bytes, ..)
      S --> L : a reaction
-     loop drain with Iterator::by_ref
+     loop drain through outputs()
        S --> L : ServerOutput::Transmit { ai, data }
        L -> I : t_data_req(ai, data)
        I -> D : response bytes
@@ -462,9 +486,9 @@ nothing else.
 
 **Two details of the drain are drawn deliberately, because both are load-bearing**
 (``UDSSVC_ARCH_0040``). An input does not return one output: it returns a *reaction*, which
-the driver drains with ``Iterator::by_ref`` and then consumes with ``finish()``, whose value
-is that input's verdict — and a refused submission is exactly what ``UDSSVC_ARCH_0009``'s
-suppression gate needs to know about. And ``t_data_req`` is called from **inside** the drain
+the driver drains through ``Reaction::outputs()`` and then consumes with ``finish()``, whose
+value is that input's verdict — and a refused submission is exactly what
+``UDSSVC_ARCH_0009``'s suppression gate needs to know about. And ``t_data_req`` is called from **inside** the drain
 rather than after it, because every ``Transmit`` must reach the transport, not only the last
 one.
 

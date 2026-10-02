@@ -99,8 +99,37 @@ pub use state::{ProtocolState, State};
 ///
 /// [`Encode`] is the reason that matters beyond convenience. `uds_protocol`'s types
 /// encode *into* a [`Sink`], and [`ResponseSink`] is one — so a handler writes
-/// `DtcRecord::new(0xC0, 0x01, 0x23).encode(out)?` rather than assembling the bytes by
+/// `DtcRecord::new(0xC0, 0x01, 0x23).encode(out)` rather than assembling the bytes by
 /// hand, and the length cannot disagree with the value.
+///
+/// A handler discards the write's `Result`. A refused write is recorded by the sink, and
+/// the pipeline answers `responseTooLong` (0x14) in its place, so it needs no handling;
+/// there is no `From` conversion to a [`NegativeResponseCode`] for `?` to use either.
+///
+/// ```
+/// use uds_services::{
+///     DtcRecord, DtcReportKind, Encode, NegativeResponseCode, ReadDtcInfoSubFunction,
+///     ReadDtcInformation, ResponseSink,
+/// };
+///
+/// struct Ecu;
+///
+/// impl ReadDtcInformation for Ecu {
+///     const MAY_RESPOND_PENDING: bool = false;
+///     const MAX_DTCS: usize = 1;
+///     const REPORTS: &'static [DtcReportKind] = &[DtcReportKind::DtcList];
+///
+///     async fn read_dtc_information(
+///         &mut self,
+///         _request: ReadDtcInfoSubFunction,
+///         out: &mut ResponseSink<'_>,
+///     ) -> Result<(), NegativeResponseCode> {
+///         // A refusal is the sink's to record and the pipeline's to answer.
+///         let _ = DtcRecord::new(0xC0, 0x01, 0x23).encode(out);
+///         Ok(())
+///     }
+/// }
+/// ```
 pub use automotive_wire_codec::{Encode, InsufficientBuffer, Sink, WriteError};
 
 pub mod transport;

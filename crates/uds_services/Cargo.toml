@@ -33,5 +33,11 @@ automotive-wire-codec = { workspace = true }
 # named (UDSSVC_ARCH_0030) — an `async fn` implies neither std nor an executor, so a
 # bare-metal target stays reachable.
 
+[dev-dependencies]
+# The in-place `static` pattern the docs prescribe for a server: `ConstStaticCell`
+# yields the `&'static mut` that `Server::step` needs without a stack temporary. A
+# dev-dependency only, for the doctest and the composition test that show it.
+static_cell = { workspace = true }
+
 [lints]
 workspace = true

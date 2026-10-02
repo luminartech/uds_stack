@@ -152,11 +152,23 @@ pub trait ServiceSet: crate::sealed::Sealed {
     /// ``UDSS_LLR_0100`` reports the expiry; ``UDSSVC_ARCH_0038`` has the application
     /// told through `DiagnosticSessionControl::on_transition`. Emitted by the assembly,
     /// because only it knows whether that service is implemented; a no-op where it is not.
+    ///
+    /// # Arguments
+    ///
+    /// * `state` - the [`ProtocolState`] of this assembly, held by [`crate::Server`],
+    ///   whose session returns to
+    ///   [`DefaultSession`](DiagnosticSessionType::DefaultSession)
     fn session_timed_out(&mut self, state: &mut Self::State);
 
     /// A response selecting `selected` was confirmed sent: enter it and tell the
     /// application. ``UDSS_LLR_0085``/``0086`` is the moment; ``UDSSVC_ARCH_0038`` the
     /// call. Emitted by the assembly, as [`Self::session_timed_out`] is.
+    ///
+    /// # Arguments
+    ///
+    /// * `state` - the [`ProtocolState`] of this assembly, held by [`crate::Server`],
+    ///   whose session becomes `selected`
+    /// * `selected` - the [`DiagnosticSessionType`] the confirmed response selected
     fn session_confirmed(
         &mut self,
         state: &mut Self::State,
