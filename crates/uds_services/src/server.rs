@@ -754,7 +754,6 @@ async fn answer_overrun<T: UdsTransport, const PEERS: usize>(
 mod tests {
     use super::Deferred;
     use uds_protocol::DiagnosticSessionType as S;
-    use uds_session::ServerParams;
 
     const TIMEOUT: Deferred = Deferred {
         timed_out: true,
@@ -795,22 +794,5 @@ mod tests {
             confirm(S::ExtendedDiagnosticSession).merge(confirm(S::DefaultSession));
         assert!(!merged.timed_out);
         assert_eq!(merged.confirmed, Some(S::DefaultSession));
-    }
-
-    /// The driver holds a `uds_session::Server<PEERS>`, and an associated const of a
-    /// generic parameter cannot be a const generic argument — the same
-    /// `generic_const_exprs` wall the buffers hit. So `PEERS` is a parameter of this
-    /// type, supplied by `uds_server!`'s `peers = N` through the alias it emits.
-    ///
-    /// The real construction is `tests/composition.rs`; here only the params shape is
-    /// asserted, because a concrete `ServiceSet` does not exist yet in this crate.
-    #[test]
-    fn the_session_parameters_have_no_spacing() {
-        const PARAMS: ServerParams = ServerParams {
-            s3_server: 5_000,
-            p2_server_max: 50,
-            p2_star_server_max: 5_000,
-        };
-        assert_eq!(PARAMS.p2_server_max, 50);
     }
 }

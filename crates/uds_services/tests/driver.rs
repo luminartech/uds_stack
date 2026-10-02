@@ -181,7 +181,8 @@ enum Step {
     Ind(Ai, &'static [u8]),
     /// A transmission to this addressing is confirmed sent.
     Conf(Ai),
-    /// The clock advances to this instant and the deadline is reported.
+    /// The clock advances to this instant. The deadline is reported only if that reaches
+    /// the one the driver asked for; otherwise the next step is taken.
     At(u32),
 }
 
@@ -197,6 +198,8 @@ struct Script {
     now: u32,
     sent: [(Option<Ai>, [u8; FRAME], usize); FRAMES],
     sent_count: usize,
+    /// How many `Deadline`s were reported.
+    deadlines: usize,
 }
 
 impl Script {
@@ -211,6 +214,7 @@ impl Script {
             now: 0,
             sent: [(None, [0; FRAME], 0); FRAMES],
             sent_count: 0,
+            deadlines: 0,
         }
     }
 
@@ -222,22 +226,37 @@ impl Script {
     }
 
     /// The next step, or the one error this transport returns: the script is exhausted.
-    fn advance<'b>(&mut self, buffer: &'b mut [u8]) -> Result<TransportEvent<'b>, ()> {
-        let step = self.steps.get(self.cursor).copied().flatten().ok_or(())?;
-        self.cursor = self.cursor.wrapping_add(1);
-        match step {
-            Step::Ind(ai, bytes) => {
-                let (head, _) = buffer.split_at_mut_checked(bytes.len()).ok_or(())?;
-                head.copy_from_slice(bytes);
-                Ok(TransportEvent::DataInd { ai, data: head })
-            }
-            Step::Conf(ai) => Ok(TransportEvent::DataConf {
-                ai,
-                result: SResult::Ok,
-            }),
-            Step::At(t) => {
-                self.now = t;
-                Ok(TransportEvent::Deadline)
+    fn advance<'b>(
+        &mut self,
+        buffer: &'b mut [u8],
+        deadline: Option<Timestamp>,
+    ) -> Result<TransportEvent<'b>, ()> {
+        loop {
+            let step = self.steps.get(self.cursor).copied().flatten().ok_or(())?;
+            self.cursor = self.cursor.wrapping_add(1);
+            match step {
+                Step::Ind(ai, bytes) => {
+                    let (head, _) = buffer.split_at_mut_checked(bytes.len()).ok_or(())?;
+                    head.copy_from_slice(bytes);
+                    return Ok(TransportEvent::DataInd { ai, data: head });
+                }
+                Step::Conf(ai) => {
+                    return Ok(TransportEvent::DataConf {
+                        ai,
+                        result: SResult::Ok,
+                    });
+                }
+                Step::At(t) => {
+                    self.now = t;
+                    // Reached on the wrapping clock (UDSS_LLR_0019): the modular
+                    // difference lies in the lower half of the range.
+                    if deadline
+                        .is_some_and(|d| Timestamp(t).interval_since(d) <= u32::MAX / 2)
+                    {
+                        self.deadlines = self.deadlines.wrapping_add(1);
+                        return Ok(TransportEvent::Deadline);
+                    }
+                }
             }
         }
     }
@@ -267,11 +286,16 @@ impl UdsTransport for Script {
     fn next_event<'b>(
         &mut self,
         buffer: &'b mut [u8],
-        _deadline: Option<Timestamp>,
+        deadline: Option<Timestamp>,
     ) -> impl core::future::Future<Output = Result<TransportEvent<'b>, ()>> {
         let mut parts = Some((self, buffer));
         core::future::poll_fn(move |_| {
-            core::task::Poll::Ready(parts.take().ok_or(()).and_then(|(t, b)| t.advance(b)))
+            core::task::Poll::Ready(
+                parts
+                    .take()
+                    .ok_or(())
+                    .and_then(|(t, b)| t.advance(b, deadline)),
+            )
         })
     }
     fn outbound_max(&self) -> Option<usize> {
@@ -378,6 +402,8 @@ fn a_service_that_may_not_pend_gets_no_response_pending() {
     run(&mut server);
     let t = server.transport();
     assert_eq!(t.cursor, 3, "the script was not consumed");
+    // tP2_Server's deadline was asked for and reached, and still no 0x78 went out.
+    assert_eq!(t.deadlines, 1);
     assert_eq!(t.sent_count, 1);
     assert_eq!(t.sent(0), (Some(response_to(TESTER)), POSITIVE));
 }
@@ -433,6 +459,8 @@ fn a_service_that_may_not_pend_gets_no_response_pending_while_a_response_waits()
     run(&mut server);
     let t = server.transport();
     assert_eq!(t.cursor, 5, "the script was not consumed");
+    // The second request's tP2_Server deadline was asked for during the wait.
+    assert_eq!(t.deadlines, 1);
     assert_eq!(t.sent_count, 2);
     assert_eq!(t.sent(0), (Some(response_to(TESTER)), POSITIVE));
     assert_eq!(t.sent(1), (Some(response_to(OTHER_TESTER)), POSITIVE));
