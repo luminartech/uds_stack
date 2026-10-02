@@ -23,7 +23,7 @@ use uds_protocol::DiagnosticSessionType;
 pub use uds_session::ServerParams;
 use uds_session::{
     Ai, Association, Cause, Rejection, SResult, Server as SessionServer, ServerOutput,
-    ServerRx, ServerTx, SessionSelection, Solicitation, Timestamp,
+    ServerRx, ServerTx, SessionSelection, Solicitation, TaType, Timestamp,
 };
 
 /// The UDS server: an application's services, its storage, a session layer and a
@@ -223,10 +223,15 @@ struct Pending {
 /// Where a response to `request` goes: the request went tester -> ECU, the response goes
 /// back the other way. The exact `Ai` `s_data_req` registers, and so the one the
 /// response's `DataConf` must carry to match it.
+///
+/// Physically addressed whatever the request was: a server answers the one client that
+/// asked, so a response to a functional request is a physical message to that client
+/// (`docs/requirements/llr-client-response-timing.rst`, on ISO 14229-2:2021 9.6).
 const fn reply_address(request: Ai) -> Ai {
     Ai {
         sa: request.ta,
         ta: request.sa,
+        ta_type: TaType::Physical,
         ..request
     }
 }
