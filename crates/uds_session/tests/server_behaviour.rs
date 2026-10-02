@@ -203,9 +203,10 @@ mod indication {
             failed,
             ServerRx::Request { session: None },
         ));
-        assert!(
-            matches!(out[0], Some(ServerOutput::Indicate { result, .. }) if result == failed)
-        );
+        assert!(matches!(
+            out[0],
+            Some(ServerOutput::Indicate { result, .. }) if result == failed
+        ));
     }
 
     /// ``UDSS_LLR_0113`` — a successful request starts `tP2_Server` with `tP2_Server_Max`;

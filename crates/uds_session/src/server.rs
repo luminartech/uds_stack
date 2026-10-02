@@ -55,6 +55,17 @@ enum Session {
     NonDefault { client: PeerIdentity, s3: Timer },
 }
 
+impl Session {
+    /// Whether `tS3_Server` is running; `None` in the default session, which has no
+    /// timer (``UDSS_LLR_0099``).
+    const fn s3_running(self) -> Option<bool> {
+        match self {
+            Self::NonDefault { s3, .. } => Some(s3.is_running()),
+            Self::Default => None,
+        }
+    }
+}
+
 /// ``UDSS_LLR_0104`` — the service in progress, its response-pending anchor, and
 /// ``UDSS_LLR_0101``'s `tP2_Server` with the parameter it carries. The timer lives here
 /// because ``UDSS_LLR_0113``–``0117`` only ever run it for a service in progress.
@@ -321,14 +332,15 @@ impl<const A: usize> Server<A> {
             (SResult::Ok, ServerRx::KeepAlive) => {
                 // UDSS_LLR_0095 — only a *running* timer is reloaded; UDSS_LLR_0096
                 // otherwise.
-                let running = matches!(self.session, Session::NonDefault { s3, .. } if s3.is_running());
+                let running = self.session.s3_running() == Some(true);
                 if running && self.is_controlling(from) {
                     self.restart_s3(now);
                 }
             }
             (SResult::Transport(_), ServerRx::Request { .. }) => {
-                // UDSS_LLR_0092 — all three limbs of its guard.
-                let stopped = matches!(self.session, Session::NonDefault { s3, .. } if !s3.is_running());
+                // UDSS_LLR_0092 — a non-default session with tS3_Server stopped, a
+                // request from the controlling client, and no service in progress.
+                let stopped = self.session.s3_running() == Some(false);
                 if stopped && self.is_controlling(from) && self.service.is_none() {
                     self.restart_s3(now);
                 }
