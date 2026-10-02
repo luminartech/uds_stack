@@ -232,6 +232,32 @@ macro_rules! __uds_session_hook {
     ($self:ident, $transition:expr, $svc:ident) => {};
 }
 
+/// One match arm per listed service, routing its decoded request to its stage. A listed
+/// service with no stage yet falls through to the wildcard and settles 0x11, which is the
+/// milestone-1 limit and is what makes "listed but unimplemented" visible on the wire
+/// rather than a panic. The RDBI stage awaits (its handler does); the other two are
+/// plain calls.
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __uds_stage {
+    ($self:ident, $out:ident, $req:ident, ReadDataByIdentifier) => {
+        if let $crate::Request::ReadDataByIdentifier(ref r) = $req {
+            return $crate::pipeline::read_data_by_identifier($self, r, $out).await;
+        }
+    };
+    ($self:ident, $out:ident, $req:ident, DiagnosticSessionControl) => {
+        if let $crate::Request::DiagnosticSessionControl(ref r) = $req {
+            return $crate::pipeline::diagnostic_session_control($self, r, $out);
+        }
+    };
+    ($self:ident, $out:ident, $req:ident, TesterPresent) => {
+        if let $crate::Request::TesterPresent(ref r) = $req {
+            return $crate::pipeline::tester_present($self, r, $out);
+        }
+    };
+    ($self:ident, $out:ident, $req:ident, $svc:ident) => {};
+}
+
 /// Assemble a server from the services it implements.
 ///
 /// ``UDSSVC_ARCH_0013``, ``UDSSVC_ARCH_0035``.
@@ -243,6 +269,14 @@ macro_rules! __uds_session_hook {
 /// `peers = N` sizes the association array of the `uds_session::Server<N>` the driver
 /// owns, and `server = Name` is the alias it is reached through — the macro emits
 /// `type Name = Server<Ecu, Transport, N>`, so the count is written once, where it acts.
+///
+/// The emitted `dispatch` only routes: `pipeline::begin`, then the listed service's
+/// stage, then `pipeline::settle`. Every clause 8.7 decision is the pipeline's.
+///
+/// **Milestone-1 limit:** only `ReadDataByIdentifier`, `DiagnosticSessionControl` and
+/// `TesterPresent` have stages. Any other listed service is accepted by the list (so it
+/// is not refused by the support check) but has no stage to run, and settles
+/// `serviceNotSupported` (0x11) — visible on the wire rather than a panic.
 ///
 /// The syntax is `Ecu: ..; transport = T, ..` rather than `Ecu over T: ..` because
 /// `$ty:ty` cannot be followed by a bare identifier — the legal followers are
@@ -408,8 +442,39 @@ macro_rules! uds_server {
                     out: &mut $crate::ResponseSink<'_>,
                     pending_sent: &::core::cell::Cell<bool>,
                 ) -> $crate::Responded {
-                    let _ = (state, ai, pending_sent);
-                    $crate::pipeline::dispatch_stub(request, out)
+                    let (sid, decoded) = match $crate::pipeline::begin(
+                        state,
+                        request,
+                        |s| <Self as $crate::ServiceSet>::supports(self, s),
+                    ) {
+                        $crate::pipeline::Stage::Empty => {
+                            return $crate::Responded::Suppressed { session: None };
+                        }
+                        $crate::pipeline::Stage::Settle { sid, nrc } => {
+                            let settling =
+                                $crate::pipeline::Settling { sid, suppress_bit: false };
+                            return $crate::pipeline::settle(
+                                ai,
+                                settling,
+                                pending_sent,
+                                Err(nrc),
+                                out,
+                            );
+                        }
+                        $crate::pipeline::Stage::Proceed { sid, request } => (sid, request),
+                    };
+                    let settling = $crate::pipeline::Settling {
+                        sid,
+                        suppress_bit: decoded
+                            .is_positive_response_suppressed()
+                            .unwrap_or(false),
+                    };
+                    let outcome = async {
+                        $( $crate::__uds_stage!(self, out, decoded, $svc); )+
+                        Err($crate::NegativeResponseCode::ServiceNotSupported)
+                    }
+                    .await;
+                    $crate::pipeline::settle(ai, settling, pending_sent, outcome, out)
                 }
 
                 fn session_timed_out(&mut self, state: &mut Self::State) {
