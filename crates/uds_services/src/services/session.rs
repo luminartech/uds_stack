@@ -47,6 +47,12 @@ pub trait DiagnosticSessionControl {
 
     /// The `P2` pair to advertise for `session`.
     ///
+    /// **Must equal the session layer's [`ServerParams`](crate::ServerParams) for
+    /// `session`.** The response advertises these, and the session layer enforces its
+    /// own parameters, so the two have separate sources. Milestone 1 does not apply the
+    /// confirmed session's timing to the session layer (`set_parameter`); that is a
+    /// follow-up.
+    ///
     /// # Arguments
     ///
     /// * `session` - the session being entered; see [`DiagnosticSessionType`].

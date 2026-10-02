@@ -29,8 +29,8 @@ fn a_server_is_created_from_caller_storage_and_three_parameters() {
 #[allow(dead_code, reason = "type-checked, never run")]
 fn every_server_entry_point(server: &mut Server<4>, payload: &[u8]) {
     // ``UDSS_LLR_0080`` — a query the caller reads for itself, taking `&self`, not an
-    // output in ``UDSS_LLR_0011``'s sense. It is `todo!()`, so it is type-checked here
-    // rather than called from a running test.
+    // output in ``UDSS_LLR_0011``'s sense. Type-checked here; `server_behaviour.rs`
+    // exercises what it returns.
     let _: Option<Timestamp> = server.next_deadline();
 
     let now = Timestamp(0);

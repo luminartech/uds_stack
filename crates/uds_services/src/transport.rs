@@ -109,6 +109,18 @@ pub enum TransportEvent<'b> {
 /// the caller's. ``UDSSVC_ARCH_0041`` for the time: a transport that can report an
 /// inbound event *or* a timer expiry already measures time, so asking it for the clock
 /// adds no capability and avoids two implementors holding two timebases.
+///
+/// Two obligations the signatures cannot state, both of which the driver relies on:
+///
+/// - **[`Self::next_event`] is cancel-safe.** The driver races it against the handler
+///   and drops the losing future, often unpolled. A message partly read when the future
+///   is dropped must not be lost: it is delivered by a later call.
+/// - **Every accepted [`Self::t_data_req`] is followed by exactly one
+///   [`TransportEvent::DataConf`] for the same [`Ai`]**, including a failed one when the
+///   connection closes before the transmission completed. This is the assumption of use
+///   `docs/requirements/llr-server-response-timing.rst` records, that the transport
+///   reports a `T_Data.conf` for every `T_Data.req`: an association whose confirmation
+///   never arrives has no server exit (``UDSS_LLR_0060``), and the driver waits on it.
 pub trait UdsTransport {
     /// What this transport's failures are. Never interpreted by this crate.
     ///
@@ -126,6 +138,9 @@ pub trait UdsTransport {
     const MAX_PDU: usize = usize::MAX;
 
     /// `T_Data.req` — hand a `T_PDU` to the transport.
+    ///
+    /// An `Ok` is an acceptance, and obliges exactly one [`TransportEvent::DataConf`]
+    /// for `ai` later — failed, where the connection closed first. See the trait's doc.
     ///
     /// # Errors
     ///
@@ -149,6 +164,11 @@ pub trait UdsTransport {
     ///
     /// A driver serving a request offers only its small concurrent buffer, so
     /// [`TransportEvent::DataTooLong`] is the normal outcome there rather than a fault.
+    ///
+    /// **Cancel-safe.** The driver drops this future, often unpolled, whenever the
+    /// handler it races wins. Dropping it must lose nothing: a message partly read is
+    /// kept and delivered by a later call, and a future that consumed input on creation
+    /// rather than on its first poll would lose that input.
     ///
     /// # Errors
     ///

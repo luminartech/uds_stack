@@ -35,6 +35,15 @@ pub enum ChannelReload {
 /// ``UDSS_LLR_0119`` derives the minimum spacing between response-pending messages as the
 /// least whole millisecond not less than three tenths of `p2_star_server_max`, read as
 /// that parameter stands at the time, so a parameter for it could only disagree.
+///
+/// **The values a `DiagnosticSessionControl` positive response advertises must equal
+/// these, for the session it selects.** `uds_services` composes that response from its
+/// application's `DiagnosticSessionControl::timing`, and these are what the timers
+/// enforce, so the two have separate sources and nothing reconciles them. Milestone 1
+/// does not apply the confirmed session's timing through [`Server::set_parameter`];
+/// that is a follow-up.
+///
+/// [`Server::set_parameter`]: crate::Server::set_parameter
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ServerParams {
     /// `tS3_Server` — how long a non-default session survives without a request.

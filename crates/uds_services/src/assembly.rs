@@ -271,6 +271,11 @@ macro_rules! __uds_stage {
 /// owns, and `server = Name` is the alias it is reached through — the macro emits
 /// `type Name = Server<Ecu, Transport, N>`, so the count is written once, where it acts.
 ///
+/// **Milestone 1 is safe for `peers = 1` only.** The driver keeps one slot for a
+/// `DiagnosticSessionControl` response awaiting its confirmation, and with a second
+/// tester that tester's selecting response can overwrite the slot while the first is
+/// still unconfirmed, so the first session is never applied.
+///
 /// The emitted `dispatch` only routes: `pipeline::begin`, then the listed service's
 /// stage, then `pipeline::settle`. Every clause 8.7 decision is the pipeline's.
 ///
