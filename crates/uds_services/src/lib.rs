@@ -146,7 +146,5 @@ pub use uds_protocol::{
 #[doc(hidden)]
 pub mod sealed;
 
-mod dispatch;
-
 #[doc(hidden)]
 pub mod pipeline;
