@@ -15,109 +15,124 @@
 //! ordering a property of the type rather than of the caller's discipline.
 
 use crate::rejection::Rejection;
+use crate::sealed::Sealed;
 use core::marker::PhantomData;
+
+/// What a session role yields when its expiry snapshots are drained.
+///
+/// ``UDSS_LLR_0081`` — every indication an expiry produced precedes the input's own
+/// outputs, so a [`Reaction`] asks its session for these first. Sealed: the only
+/// implementors are [`crate::Server`] and [`crate::Client`], which is what
+/// ``UDSS_LLR_0011`` requires of a trait in a public bound.
+pub trait Drain<'d, O>: Sealed {
+    /// The next unreported expiry indication, taken from its slot; `None` when there is
+    /// none left.
+    fn next_expiry(&mut self) -> Option<O>;
+}
 
 /// The outputs of one input, and its outcome.
 ///
-/// `'s` borrows the session, `'d` the input's payload, `O` is the role's output type and
-/// `T` what acceptance yields — [`crate::PhysicalChannelId`] for `open_physical_channel`,
-/// [`crate::FunctionalChannelId`] for `open_functional_channel`, `()` elsewhere.
+/// `'s` borrows the session `S`, `'d` the input's payload, `O` is the role's output type
+/// and `T` what acceptance yields — [`crate::PhysicalChannelId`] for
+/// `open_physical_channel`, [`crate::FunctionalChannelId`] for `open_functional_channel`,
+/// `()` elsewhere. `S` is a type parameter rather than a trait object so that the
+/// reaction keeps `Send`, the covariance of `'d`, and `Debug` for free.
 ///
 /// Dropping a `Reaction` without draining it discards outputs the application needed,
-/// which is why the type is `#[must_use]`.
+/// which is why the type is `#[must_use]`. Expiry indications not drained are swept at
+/// the session's next input.
 ///
 /// # Draining
 ///
-/// Drain through [`Reaction::outputs`], then consume:
+/// Drain through [`Reaction::outputs`], then consume with [`Reaction::finish`]:
 ///
 /// ```
-/// use uds_session::{Reaction, Rejection};
+/// use uds_session::{
+///     Association, Rejection, Server, ServerParams, ServerReaction, Timestamp,
+/// };
 ///
-/// fn handle(mut reaction: Reaction<'_, '_, u8>) -> Result<(), Rejection> {
+/// fn handle(mut reaction: ServerReaction<'_, '_, 1>) -> Result<(), Rejection> {
 ///     for output in reaction.outputs() {
 ///         let _ = output; // handle each output, in order
 ///     }
 ///     reaction.finish()
 /// }
+///
+/// let params = ServerParams {
+///     s3_server: 5_000,
+///     p2_server_max: 50,
+///     p2_star_server_max: 5_000,
+/// };
+/// let mut server = Server::new([Association::EMPTY; 1], params);
+/// assert!(handle(server.tick(Timestamp(0))).is_ok());
 /// ```
 ///
 /// [`Reaction::outputs`] borrows rather than consuming, so the reaction survives the loop
 /// and [`Reaction::finish`] stays reachable afterwards. `Reaction` is deliberately not an
-/// [`Iterator`] itself, so `for output in reaction` does not compile: it would move the
-/// reaction into the loop and leave the outcome unreadable.
-///
-/// What the type does not enforce is that [`Reaction::finish`] is called at all — a
-/// reaction that is drained and then dropped is accepted. ``UDSS_LLR_0081`` fixes the
-/// order between the expiry indications and the report, so the outputs cannot be made to
-/// arrive through the report instead, which is what enforcing the call would take.
+/// [`Iterator`] itself, so `for output in reaction` does not compile.
 #[must_use = "an undrained reaction discards the outputs this input produced"]
 #[derive(Debug)]
-pub struct Reaction<'s, 'd, O, T = ()> {
+pub struct Reaction<'s, 'd, O, S: Drain<'d, O>, T = ()> {
+    session: &'s mut S,
+    own: [Option<O>; 2],
     outcome: Result<T, Rejection>,
-    session: PhantomData<&'s mut ()>,
     payload: PhantomData<&'d [u8]>,
-    output: PhantomData<fn() -> O>,
 }
 
-impl<O, T> Reaction<'_, '_, O, T> {
+impl<'s, 'd, O, S: Drain<'d, O>, T> Reaction<'s, 'd, O, S, T> {
+    /// Built by the role's input methods, never by a caller.
+    pub(crate) fn new(
+        session: &'s mut S,
+        own: [Option<O>; 2],
+        outcome: Result<T, Rejection>,
+    ) -> Self {
+        Self {
+            session,
+            own,
+            outcome,
+            payload: PhantomData,
+        }
+    }
+
     /// Whether the input was accepted, and what acceptance yielded.
     ///
-    /// ``UDSS_LLR_0016`` — the report states every cause that held and the content each
-    /// rejecting requirement asked for. Consuming `self` is what enforces
-    /// ``UDSS_LLR_0081``'s ordering.
-    ///
-    /// `finish` may be called without draining first, in which case the undrained outputs
-    /// are discarded along with `self`. The type enforces only the *ordering*
-    /// ``UDSS_LLR_0081`` requires between expiry indications and the report, not that
-    /// every output is actually delivered to the caller.
+    /// ``UDSS_LLR_0016`` — the report states every cause that held. Consuming `self` is
+    /// what enforces ``UDSS_LLR_0081``'s ordering.
     ///
     /// # Errors
     ///
     /// Returns the [`Rejection`] report if the input was rejected.
-    #[allow(
-        clippy::missing_const_for_fn,
-        reason = "not const once the drain holds state"
-    )]
     pub fn finish(self) -> Result<T, Rejection> {
         self.outcome
     }
 
-    /// The outputs this input produced, in the order ``UDSS_LLR_0081`` requires.
+    /// The outputs this input produced, in the order ``UDSS_LLR_0081`` requires:
+    /// expiry indications first, then the input's own.
     ///
-    /// ``UDSS_LLR_0011`` — the caller retrieves them; nothing is pushed. The iterator
-    /// borrows the reaction, so draining does not consume it and
-    /// [`Reaction::finish`] remains reachable afterwards. See `# Draining`.
-    pub fn outputs(&mut self) -> Outputs<'_, O> {
+    /// ``UDSS_LLR_0011`` — the caller retrieves them; nothing is pushed.
+    pub fn outputs(&mut self) -> Outputs<'_, 'd, O, S> {
         Outputs {
-            reaction: PhantomData,
-            output: PhantomData,
+            session: &mut *self.session,
+            own: &mut self.own,
+            payload: PhantomData,
         }
     }
 }
 
 /// The outputs of one input. Created by [`Reaction::outputs`].
-///
-/// ``UDSS_LLR_0081`` — every indication an expiry produced comes first, then the input's
-/// own outputs. Dropping this before it is exhausted discards the rest.
 #[derive(Debug)]
-pub struct Outputs<'r, O> {
-    reaction: PhantomData<&'r mut ()>,
-    output: PhantomData<fn() -> O>,
+pub struct Outputs<'r, 'd, O, S: Drain<'d, O>> {
+    session: &'r mut S,
+    own: &'r mut [Option<O>; 2],
+    payload: PhantomData<&'d [u8]>,
 }
 
-impl<O> Iterator for Outputs<'_, O> {
+impl<'d, O, S: Drain<'d, O>> Iterator for Outputs<'_, 'd, O, S> {
     type Item = O;
 
     fn next(&mut self) -> Option<O> {
-        #[allow(
-            clippy::todo,
-            reason = "API stub; behaviour lands with its requirement"
-        )]
-        {
-            todo!(
-                "outputs are generated from session state; see UDSS_LLR_0081 for \
-                 their order"
-            )
-        }
+        self.session
+            .next_expiry()
+            .or_else(|| self.own.iter_mut().find_map(Option::take))
     }
 }

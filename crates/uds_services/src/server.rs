@@ -237,8 +237,8 @@ impl<A: ServiceSet, T: UdsTransport, const PEERS: usize> Server<A, T, PEERS> {
 /// reach the transport. The reaction borrows the session and `t_data_req` borrows the
 /// transport, which is why they arrive as two arguments rather than as one `&mut self` —
 /// disjoint fields are disjoint borrows only while nothing has merged them.
-async fn transmit_all<T: UdsTransport>(
-    mut reaction: uds_session::Reaction<'_, '_, ServerOutput<'_>>,
+async fn transmit_all<T: UdsTransport, const PEERS: usize>(
+    mut reaction: uds_session::ServerReaction<'_, '_, PEERS>,
     transport: &mut T,
 ) -> Result<(), T::Error> {
     for out in reaction.outputs() {
