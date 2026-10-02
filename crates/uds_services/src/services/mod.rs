@@ -17,9 +17,10 @@
 //! neither is ever awaited, so no response-pending can come due and the constant would
 //! have had one possible value and no effect.
 
+use crate::state::ProtocolState;
 use crate::storage::Storage;
 use crate::{Ai, ResponseSink};
-use uds_protocol::{NegativeResponseCode, UdsServiceType};
+use uds_protocol::{DiagnosticSessionType, UdsServiceType};
 
 pub mod data;
 pub mod dtc;
@@ -38,17 +39,36 @@ pub use session::{
 };
 pub use transfer::{DataTransfer, TransferRequest};
 
-/// Whether clause 8.7 requires a response to be transmitted.
+/// What clause 8.7 decided, and which session the response selected.
 ///
-/// ``UDSSVC_ARCH_0016``.
+/// ``UDSSVC_ARCH_0016`` — a negative response is written bytes and arrives as
+/// [`Responded::Yes`]; silence is a distinguishable outcome because only it is a reason
+/// not to transmit. The session rides on both arms because a suppressed
+/// `DiagnosticSessionControl` still changes session, through the completion report
+/// (``UDSS_LLR_0086``, ``UDSS_LLR_0098``).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Responded {
     /// Bytes were written and are to be transmitted.
-    Yes,
-    /// Clause 8.7 requires no response — a suppressed positive response, or a
-    /// functionally addressed request whose code is one of the five
-    /// ``UDSSVC_ARCH_0009`` silences.
-    Suppressed,
+    Yes {
+        /// The session a positive `DiagnosticSessionControl` response selected.
+        session: Option<DiagnosticSessionType>,
+    },
+    /// Clause 8.7 requires no response; the request is nonetheless complete, and the
+    /// driver reports its completion to the session layer (``UDSS_LLR_0074``).
+    Suppressed {
+        /// The session a suppressed `DiagnosticSessionControl` selected.
+        session: Option<DiagnosticSessionType>,
+    },
+}
+
+impl Responded {
+    /// The selected session, whichever arm.
+    #[must_use]
+    pub const fn session(self) -> Option<DiagnosticSessionType> {
+        match self {
+            Self::Yes { session } | Self::Suppressed { session } => session,
+        }
+    }
 }
 
 /// A change of diagnostic session, classified.
@@ -68,6 +88,21 @@ pub enum SessionTransition {
     NonDefaultToDefault,
 }
 
+impl SessionTransition {
+    /// Which of Figure 7's four transitions `from` → `to` is.
+    #[must_use]
+    pub const fn classify(from: DiagnosticSessionType, to: DiagnosticSessionType) -> Self {
+        let from_default = matches!(from, DiagnosticSessionType::DefaultSession);
+        let to_default = matches!(to, DiagnosticSessionType::DefaultSession);
+        match (from_default, to_default) {
+            (true, true) => Self::DefaultToDefault,
+            (true, false) => Self::DefaultToNonDefault,
+            (false, false) => Self::NonDefaultToNonDefault,
+            (false, true) => Self::NonDefaultToDefault,
+        }
+    }
+}
+
 /// One application's assembled service implementations.
 ///
 /// ``UDSSVC_ARCH_0013`` — implemented by [`crate::uds_server`], never by hand.
@@ -80,19 +115,50 @@ pub trait ServiceSet: crate::sealed::Sealed {
     /// The storage whose sizes were derived from this application's declared maxima.
     type Store: Storage;
 
+    /// The protocol state this assembly keeps. ``UDSSVC_ARCH_0035``.
+    type State: ProtocolState;
+
     /// Run the clause 8.7 pipeline for `request` and write any response into `out`.
     ///
-    /// ``UDSSVC_ARCH_0004`` — a function of the request and its addressing, with no
-    /// transport, clock or session layer involved.
+    /// ``UDSSVC_ARCH_0004`` — a function of the request, its addressing and this crate's
+    /// state, with no transport, clock or session layer involved. ``UDSSVC_ARCH_0015`` is
+    /// why `ai` is here. `pending_sent` is ``UDSSVC_ARCH_0009`` rule 3's input: whether a
+    /// `requestCorrectlyReceivedResponsePending` already went out for this request, in
+    /// which case nothing suppresses the final response. A `Cell`, because the driver
+    /// learns that while this future holds the sink.
     ///
-    /// # Errors
+    /// # Arguments
     ///
-    /// The [`NegativeResponseCode`] clause 8.7 selected.
+    /// * `state` - the [`ProtocolState`] of this assembly, held by [`crate::Server`]
+    /// * `ai` - the [`Ai`] the driver drained with the request
+    /// * `request` - the request bytes, service identifier first
+    /// * `out` - the [`ResponseSink`] the response is written into
+    /// * `pending_sent` - set by the driver when a 0x78 for this request is accepted
+    ///   for transmission, possibly while this future is live; read at settlement
     fn dispatch(
         &mut self,
+        state: &mut Self::State,
+        ai: Ai,
         request: &[u8],
         out: &mut ResponseSink<'_>,
-    ) -> impl core::future::Future<Output = Result<Responded, NegativeResponseCode>>;
+        pending_sent: &core::cell::Cell<bool>,
+    ) -> impl core::future::Future<Output = Responded>;
+
+    /// `tS3_Server` expired: return to the default session and tell the application.
+    ///
+    /// ``UDSS_LLR_0100`` reports the expiry; ``UDSSVC_ARCH_0038`` has the application
+    /// told through `DiagnosticSessionControl::on_transition`. Emitted by the assembly,
+    /// because only it knows whether that service is implemented; a no-op where it is not.
+    fn session_timed_out(&mut self, state: &mut Self::State);
+
+    /// A response selecting `selected` was confirmed sent: enter it and tell the
+    /// application. ``UDSS_LLR_0085``/``0086`` is the moment; ``UDSSVC_ARCH_0038`` the
+    /// call. Emitted by the assembly, as [`Self::session_timed_out`] is.
+    fn session_confirmed(
+        &mut self,
+        state: &mut Self::State,
+        selected: DiagnosticSessionType,
+    );
 
     /// Whether this server implements `service` at all.
     ///
@@ -136,6 +202,9 @@ mod tests {
     /// driver guessing which, and this test is what fails if someone replaces it.
     #[test]
     fn silence_and_an_empty_response_are_different_outcomes() {
-        assert_ne!(Responded::Yes, Responded::Suppressed);
+        assert_ne!(
+            Responded::Yes { session: None },
+            Responded::Suppressed { session: None }
+        );
     }
 }

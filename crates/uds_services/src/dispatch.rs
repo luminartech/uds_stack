@@ -16,23 +16,6 @@
 use uds_protocol::NegativeResponseCode;
 use uds_session::{Ai, TaType};
 
-/// What the pipeline decided.
-///
-/// ``UDSSVC_ARCH_0016`` — silence must be distinguishable from an empty response, because
-/// the loop has to tell "clause 8.7 requires no response" from "the handler produced an
-/// empty one", and only the first is a reason not to transmit.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-#[allow(
-    dead_code,
-    reason = "the pipeline that reads it is UDSSVC_ARCH_0042's pass"
-)]
-pub(crate) enum Outcome {
-    /// Bytes were written and are to be transmitted.
-    Responded,
-    /// Clause 8.7 requires no response.
-    Silent,
-}
-
 /// Whether `code` is silenced for a request addressed this way.
 ///
 /// ``UDSSVC_ARCH_0009`` rule 1. ISO 14229-1:2020 clause 8.7.5 suppresses exactly five

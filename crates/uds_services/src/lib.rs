@@ -85,6 +85,9 @@ pub use storage::{Buffers, ClientBuffers, ClientStorage, ClientStore, Storage, S
 pub mod sink;
 pub use sink::ResponseSink;
 
+pub mod state;
+pub use state::{ProtocolState, State};
+
 /// The write vocabulary a handler needs to use a [`ResponseSink`].
 ///
 /// [`Sink`] is re-exported because `write_all` is one of its methods: without the trait
@@ -144,3 +147,6 @@ pub use uds_protocol::{
 pub mod sealed;
 
 mod dispatch;
+
+#[doc(hidden)]
+pub mod pipeline;

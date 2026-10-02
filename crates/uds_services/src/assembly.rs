@@ -216,6 +216,22 @@ macro_rules! __uds_may_pend {
     };
 }
 
+/// Emits the body of the two session hooks: a call to `on_transition` where the
+/// assembly lists `DiagnosticSessionControl`, nothing otherwise. Used once per listed
+/// service, so the call appears at most once.
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __uds_session_hook {
+    ($self:ident, $transition:expr, DiagnosticSessionControl) => {
+        <Self as $crate::DiagnosticSessionControl>::on_transition(
+            $self,
+            $transition,
+            false,
+        );
+    };
+    ($self:ident, $transition:expr, $svc:ident) => {};
+}
+
 /// Assemble a server from the services it implements.
 ///
 /// ``UDSSVC_ARCH_0013``, ``UDSSVC_ARCH_0035``.
@@ -382,25 +398,35 @@ macro_rules! uds_server {
             impl $crate::ServiceSet for $ty {
                 type Store = $crate::Store<IN_FLIGHT, CONCURRENT, RESPONSE>;
 
+                type State = $crate::State;
+
                 async fn dispatch(
                     &mut self,
+                    state: &mut Self::State,
+                    ai: $crate::Ai,
                     request: &[u8],
                     out: &mut $crate::ResponseSink<'_>,
-                ) -> ::core::result::Result<
-                    $crate::Responded,
-                    ::uds_protocol::NegativeResponseCode,
-                > {
-                    #[allow(
-                        clippy::todo,
-                        reason = "API stub; behaviour lands with its element"
-                    )]
-                    {
-                        todo!(
-                            "UDSSVC_ARCH_0004 pipeline: {} bytes, {} written",
-                            request.len(),
-                            out.written()
-                        )
-                    }
+                    pending_sent: &::core::cell::Cell<bool>,
+                ) -> $crate::Responded {
+                    let _ = (state, ai, pending_sent);
+                    $crate::pipeline::dispatch_stub(request, out)
+                }
+
+                fn session_timed_out(&mut self, state: &mut Self::State) {
+                    let transition = $crate::pipeline::transition(
+                        state,
+                        $crate::DiagnosticSessionType::DefaultSession,
+                    );
+                    $( $crate::__uds_session_hook!(self, transition, $svc); )+
+                }
+
+                fn session_confirmed(
+                    &mut self,
+                    state: &mut Self::State,
+                    selected: $crate::DiagnosticSessionType,
+                ) {
+                    let transition = $crate::pipeline::transition(state, selected);
+                    $( $crate::__uds_session_hook!(self, transition, $svc); )+
                 }
 
                 fn supports(&self, service: $crate::UdsServiceType) -> bool {

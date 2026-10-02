@@ -13,6 +13,7 @@
 use crate::ResponseSink;
 use crate::select::{Either, select2};
 use crate::services::{Responded, ServiceSet};
+use crate::state::ProtocolState;
 use crate::storage::{Buffers, Storage};
 use crate::transport::{TransportEvent, UdsTransport};
 pub use uds_session::ServerParams;
@@ -37,6 +38,7 @@ use uds_session::{
 pub struct Server<A: ServiceSet, T: UdsTransport, const PEERS: usize> {
     services: A,
     store: A::Store,
+    state: A::State,
     session: SessionServer<PEERS>,
     transport: T,
 }
@@ -55,6 +57,7 @@ impl<A: ServiceSet, T: UdsTransport, const PEERS: usize> Server<A, T, PEERS> {
         Self {
             services,
             store: <A::Store as Storage>::EMPTY,
+            state: <A::State as ProtocolState>::INITIAL,
             session: SessionServer::new([Association::EMPTY; PEERS], params),
             transport,
         }
@@ -143,13 +146,23 @@ impl<A: ServiceSet, T: UdsTransport, const PEERS: usize> Server<A, T, PEERS> {
         };
 
         let mut sink = ResponseSink::new(response, outbound_max);
+        // UDSSVC_ARCH_0009 rule 3's input, fresh for this request. A local rather than a
+        // field: a `Cell` is not `Sync`, and as a field it would make every `Server`
+        // unusable as the `static` that `new` exists to construct in place.
+        let pending_sent = core::cell::Cell::new(false);
         let pending_deadline = self.session.next_deadline();
 
         // Two scopes, because `pin!` binds to the enclosing block: `handler` is scoped so
         // it drops before `sink` is read, and `waiting` is scoped per iteration so it
         // drops before the 0x78 path needs `&mut transport`.
         let outcome = {
-            let mut handler = core::pin::pin!(self.services.dispatch(request, &mut sink));
+            let mut handler = core::pin::pin!(self.services.dispatch(
+                &mut self.state,
+                ai,
+                request,
+                &mut sink,
+                &pending_sent
+            ));
             let mut deadline = pending_deadline;
             // A loop over `handler.as_mut()`, not a one-shot: a plain
             // `select2(handler, waiting)` drops the handler the moment the deadline wins,
@@ -185,7 +198,7 @@ impl<A: ServiceSet, T: UdsTransport, const PEERS: usize> Server<A, T, PEERS> {
                         // none could be sent. Distinguishing them is the pipeline's, and
                         // the pipeline is `todo!()`.
                         let _ = expected;
-                        break Ok(Responded::Suppressed);
+                        break Responded::Suppressed { session: None };
                     }
                     Either::Right(Ok(_concurrent)) => {
                         // Elided: a concurrent message that is not one of clause
@@ -202,7 +215,7 @@ impl<A: ServiceSet, T: UdsTransport, const PEERS: usize> Server<A, T, PEERS> {
             }
         };
 
-        if !matches!(outcome, Ok(Responded::Yes)) {
+        if !matches!(outcome, Responded::Yes { .. }) {
             return Ok(());
         }
 
