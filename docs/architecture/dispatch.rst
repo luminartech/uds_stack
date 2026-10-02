@@ -222,11 +222,12 @@ Mandatory preconditions
 
    **The implemented order is Figure 5's, literally:** the empty request
    (``UDSSVC_ARCH_0005``'s declared reading), then check 1, then check 3, then — for a
-   service with a SubFunction parameter other than 0x31 — Figure 6's sub-function check
-   (``UDSSVC_ARCH_0007``), then the decode that settles 0x13 (``UDSSVC_ARCH_0005``).
-   Nothing is decoded until the service is known to be supported and allowed in the
-   active session, so 0x13 never pre-empts 0x11 or 0x7F, and a trailing byte never
-   pre-empts 0x12. Check 2, authentication (0x34), and the security precondition (0x33) are not
+   service with a SubFunction parameter other than 0x31 — Figure 6's sub-function checks
+   (``UDSSVC_ARCH_0007``: supported ever, 0x12, then supported in the active session,
+   0x7E), then the decode that settles 0x13 (``UDSSVC_ARCH_0005``). Nothing is decoded
+   until the service is known to be supported and allowed in the active session, so 0x13
+   never pre-empts 0x11 or 0x7F, and a trailing byte never pre-empts 0x12 or 0x7E.
+   Check 2, authentication (0x34), and the security precondition (0x33) are not
    evaluated yet: authentication is architecture open question 4, and security joins with
    security state.
 
@@ -329,17 +330,54 @@ Mandatory preconditions
       * - 3
         - Authentication check OK?
         - 0x34
-        - Figure 6 repeats it at sub-function granularity
+        - Figure 6 repeats it at sub-function granularity. Not evaluated:
+          authentication is architecture open question 4
       * - 4
         - SubFunction supported in the active session?
         - 0x7E
-        -
+        - Asked only after row 2 accepted, so 0x7E is sent only for a SubFunction
+          "known to be supported in another session" (Annex A); read from the same
+          stripped byte, before any exact-length test
 
    The service's exact-length check is its service-specific check, after this stage:
    ISO 14229-1:2020 8.7.5's pseudo-code tests ``message_length`` only inside a supported
    sub-function's arm, and its ``DEFAULT: responseCode = SFNS`` precedes every such test.
-   Rows 3 and 4 are not evaluated yet: authentication is architecture open question 4,
-   and no service trait with a stage declares sub-function support per session.
+   Row 3 is not evaluated yet: authentication is architecture open question 4, so it is
+   unconditionally true, as Figure 5's authentication check is.
+
+   **Rows 2 and 4 are each service trait's pair.** Whether a SubFunction is supported
+   ever, and whether from the active session, are deployment facts — which sessions a
+   server offers, and which it can be entered from — so the application states them, in
+   the service's own typed SubFunction, and the pipeline decides the code. Annex A says
+   0x7E "shall be supported by each diagnostic service with a SubFunction parameter",
+   so every such trait carries both lookups once it has a stage:
+
+   .. list-table::
+      :header-rows: 1
+      :widths: 26 37 37
+
+      * - Service
+        - Row 2 (0x12)
+        - Row 4 (0x7E)
+      * - ``DiagnosticSessionControl``
+        - ``supports(session)``
+        - ``supported_from(session, active)``, with no default body: an application that
+          restricts no transition says so by returning ``true``
+      * - ``TesterPresent``
+        - fixed: only ``zeroSubFunction``
+        - fixed: always. ``zeroSubFunction`` is the service's only SubFunction (clause
+          10.7) and Table 23 allows the service in every session, so there is nothing
+          deployment-specific to ask and the trait carries no lookup
+      * - ``EcuReset``, ``CommunicationControl``, ``ControlDTCSetting``,
+          ``SecurityAccess`` and the other SubFunction-bearing services
+        - gains a ``supports``-shaped lookup when its stage lands
+        - gains a ``supported_from``-shaped lookup, in its own SubFunction type, with it
+
+   ``uds_server!`` hands ``pipeline::begin`` one closure per row; each routes the
+   question to the listed service's trait and decides nothing (``UDSSVC_ARCH_0013``).
+   ``pipeline::begin`` asks row 4 only once row 2 has accepted, and a SubFunction value
+   that names nothing the service defines — a reserved session byte — is row 2's
+   0x12 and never 0x7E.
 
    Figure 6 then places a sub-function security check (0x33) and a request-sequence check
    (0x24) in its optional column; both are ``UDSSVC_ARCH_0011``.
