@@ -200,7 +200,8 @@ impl<A: ServiceSet, T: UdsTransport, const PEERS: usize> Server<A, T, PEERS> {
         // settle, and settles without pending, so the 0 is never transmitted.
         let sid = request.first().copied().unwrap_or(0);
         // UDSSVC_ARCH_0032 — whether 0x78 is admissible is the service's to say, never the
-        // driver's. Resolved before dispatch, which holds `&mut services` until it settles.
+        // driver's. Resolved before dispatch, which holds `&mut services` until it
+        // completes.
         let may_pend = self
             .services
             .may_respond_pending(UdsServiceType::from_request_sid(sid));
@@ -374,9 +375,8 @@ struct Drained<'d> {
 }
 
 /// The one place every session output is handled (``UDSSVC_ARCH_0040``). Every reaction,
-/// from every
-/// input, passes through here, because an expiry can surface from any of them. Acts on
-/// what needs only the transport and the pending record; records the rest.
+/// from every input, passes through here, because an expiry can surface from any of
+/// them. Acts on what needs only the transport and the pending record; records the rest.
 ///
 /// Inside the drain, not after it: a reaction may yield several `Transmit`s and all of
 /// them must reach the transport. The reaction borrows the session and `t_data_req`
