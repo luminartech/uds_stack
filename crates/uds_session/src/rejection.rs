@@ -150,7 +150,6 @@ pub struct Rejection {
 
 impl Rejection {
     /// A report stating one cause.
-    #[allow(dead_code)]
     pub(crate) const fn new(cause: Cause) -> Self {
         Self {
             causes: 1u16 << cause.bit(),
@@ -159,7 +158,6 @@ impl Rejection {
     }
 
     /// The same report, also stating `cause`.
-    #[allow(dead_code)]
     pub(crate) const fn with(self, cause: Cause) -> Self {
         Self {
             causes: self.causes | (1u16 << cause.bit()),

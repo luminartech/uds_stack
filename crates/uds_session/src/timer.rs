@@ -56,18 +56,6 @@ impl Timer {
         self.running.is_some()
     }
 
-    /// The value loaded at the last start, while running (``UDSS_LLR_0101`` reads it).
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "no milestone-1 caller; the server keeps its reload"
-        )
-    )]
-    pub(crate) fn loaded(&self) -> Option<u32> {
-        self.running.map(|r| r.loaded)
-    }
-
     /// Whether a timestamp of `now` expires this timer (``UDSS_LLR_0077``).
     pub(crate) fn expired(&self, now: Timestamp, rule: Expiry) -> bool {
         self.running.is_some_and(|r| {
@@ -137,9 +125,9 @@ mod tests {
         let mut t = Timer::STOPPED;
         t.start(Timestamp(0), 50);
         t.start(Timestamp(10), 5);
-        assert_eq!(t.loaded(), Some(5));
+        assert_eq!(t.deadline(Expiry::Reaches), Some(Timestamp(15)));
         assert!(t.expired(Timestamp(15), Expiry::Reaches));
         t.stop();
-        assert_eq!(t.loaded(), None);
+        assert_eq!(t.deadline(Expiry::Reaches), None);
     }
 }

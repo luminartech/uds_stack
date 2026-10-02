@@ -86,7 +86,6 @@ mod expiry {
     /// ``UDSS_LLR_0100`` — at `tS3_Server` the session ends, the timer is disabled, the
     /// controlling client is discarded, and the indication names that client.
     #[test]
-    #[ignore = "enter_non_default needs s_data_req and t_data_conf (Task 5)"]
     fn session_timeout_returns_to_default_and_names_the_client() {
         let mut s = server();
         enter_non_default(&mut s, Timestamp(0));
@@ -111,7 +110,6 @@ mod expiry {
     /// input is processed in the state the expiry left: the request arriving at the
     /// timeout is answered in the default session.
     #[test]
-    #[ignore = "enter_non_default needs s_data_req and t_data_conf (Task 5)"]
     fn an_expiry_precedes_the_input_that_carried_the_timestamp() {
         let mut s = server();
         enter_non_default(&mut s, Timestamp(0));
@@ -159,7 +157,6 @@ mod expiry {
     /// ``UDSS_LLR_0019`` — a session timer started near the wrap expires past it, and the
     /// deadline is reported as the wrapped value.
     #[test]
-    #[ignore = "enter_non_default needs s_data_req and t_data_conf (Task 5)"]
     fn the_session_timer_runs_across_the_wrap() {
         let mut s = server();
         enter_non_default(&mut s, Timestamp(u32::MAX - 999));
@@ -168,6 +165,43 @@ mod expiry {
         assert_eq!(out[0], None);
         let (out, _) = outputs(s.tick(Timestamp(4_000)));
         assert!(matches!(out[0], Some(ServerOutput::SessionTimeout { .. })));
+    }
+
+    /// ``UDSS_LLR_0081`` — both timers expiring at one timestamp are both acted on before
+    /// the input, and the drain yields the session timeout first. Both run at once only
+    /// for a service another client began (``UDSS_LLR_0097``): the controlling client's
+    /// own request stops `tS3_Server` (``UDSS_LLR_0087``).
+    #[test]
+    fn both_timers_expiring_on_one_tick_report_session_timeout_first() {
+        let mut s = server();
+        enter_non_default(&mut s, Timestamp(0)); // tS3 due at 5000
+        let (_, ok) = outputs(s.t_data_ind(
+            Timestamp(4_950),
+            ai(OTHER_TESTER, ECU),
+            &[0x22, 0xF1, 0x90],
+            SResult::Ok,
+            ServerRx::Request { session: None },
+        )); // tP2 due at 5000
+        assert!(ok.is_ok());
+        assert_eq!(s.next_deadline(), Some(Timestamp(5_000)));
+        let (out, ok) = outputs(s.tick(Timestamp(5_000)));
+        assert!(ok.is_ok());
+        assert_eq!(
+            out,
+            [
+                Some(ServerOutput::SessionTimeout {
+                    client: peer(TESTER)
+                }),
+                Some(ServerOutput::ResponseOverrun {
+                    sa: Address(OTHER_TESTER),
+                    ae: None,
+                    loaded: ServerReload::P2,
+                }),
+                None,
+                None,
+            ]
+        );
+        assert_eq!(s.next_deadline(), None);
     }
 }
 
@@ -226,7 +260,6 @@ mod indication {
 
     /// ``UDSS_LLR_0087`` — a request from the controlling client stops `tS3_Server`.
     #[test]
-    #[ignore = "needs Task 5: s_data_req/t_data_conf"]
     fn a_request_from_the_controlling_client_stops_the_session_timer() {
         let mut s = server();
         enter_non_default(&mut s, Timestamp(0));
@@ -244,7 +277,6 @@ mod indication {
     /// ``UDSS_LLR_0097`` — a request from another client leaves `tS3_Server` alone.
     /// (Review focus 1.)
     #[test]
-    #[ignore = "needs Task 5: s_data_req/t_data_conf"]
     fn a_request_from_another_client_does_not_touch_the_session_timer() {
         let mut s = server();
         enter_non_default(&mut s, Timestamp(0));
@@ -264,7 +296,6 @@ mod indication {
     /// ``UDSS_LLR_0095`` — a keep-alive from the controlling client reloads a running
     /// `tS3_Server`; ``UDSS_LLR_0096`` — one from another client changes nothing.
     #[test]
-    #[ignore = "needs Task 5: s_data_req/t_data_conf"]
     fn a_keep_alive_reloads_the_running_session_timer() {
         let mut s = server();
         enter_non_default(&mut s, Timestamp(0));
@@ -289,7 +320,7 @@ mod indication {
     /// ``UDSS_LLR_0092`` — a failed reception from the controlling client, while the
     /// timer is stopped and no service is in progress, restarts `tS3_Server`.
     #[test]
-    #[ignore = "needs Task 5: s_data_req/t_data_conf; Task 6: t_data_som_ind"]
+    #[ignore = "needs Task 6: t_data_som_ind"]
     fn a_reception_error_restarts_a_stopped_session_timer() {
         let mut s = server();
         enter_non_default(&mut s, Timestamp(0));
@@ -337,5 +368,252 @@ mod indication {
             ServerRx::Request { session: None },
         ));
         assert_eq!(s.next_deadline(), Some(Timestamp(560)));
+    }
+}
+
+mod transmission {
+    use super::*;
+    use uds_session::{Cause, TransportError};
+
+    fn request_in_progress(s: &mut Server<2>, now: Timestamp) {
+        let (_, ok) = outputs(s.t_data_ind(
+            now,
+            ai(TESTER, ECU),
+            &[0x22, 0xF1, 0x90],
+            SResult::Ok,
+            ServerRx::Request { session: None },
+        ));
+        assert!(ok.is_ok());
+    }
+
+    const FINAL: ServerTx = ServerTx::FinalResponse {
+        solicitation: Solicitation::Solicited,
+        session: None,
+    };
+
+    /// ``UDSS_LLR_0033``, ``UDSS_LLR_0024`` — a request becomes a `Transmit` of the same
+    /// bytes to the same addressing.
+    #[test]
+    fn a_request_is_transmitted_as_given() {
+        let mut s = server();
+        request_in_progress(&mut s, Timestamp(0));
+        let data = [0x62, 0xF1, 0x90, 0x01];
+        let (out, ok) = outputs(s.s_data_req(Timestamp(5), ai(ECU, TESTER), &data, FINAL));
+        assert!(ok.is_ok());
+        assert_eq!(
+            out[0],
+            Some(ServerOutput::Transmit {
+                ai: ai(ECU, TESTER),
+                data: &data,
+            })
+        );
+    }
+
+    /// ``UDSS_LLR_0114`` — passing the solicited final response to the transport stops
+    /// `tP2_Server`.
+    #[test]
+    fn a_final_response_stops_the_response_timer() {
+        let mut s = server();
+        request_in_progress(&mut s, Timestamp(0));
+        let (_, _) = outputs(s.s_data_req(Timestamp(5), ai(ECU, TESTER), &[0x62], FINAL));
+        assert_eq!(s.next_deadline(), None);
+    }
+
+    /// ``UDSS_LLR_0061`` — a request duplicating an outstanding association is rejected;
+    /// ``UDSS_LLR_0015`` — and changes nothing: the first association is still matched.
+    #[test]
+    fn a_duplicate_outstanding_request_is_rejected() {
+        let mut s = server();
+        request_in_progress(&mut s, Timestamp(0));
+        let (_, ok) = outputs(s.s_data_req(Timestamp(5), ai(ECU, TESTER), &[0x62], FINAL));
+        assert!(ok.is_ok());
+        let (out, err) =
+            outputs(s.s_data_req(Timestamp(6), ai(ECU, TESTER), &[0x62], FINAL));
+        assert_eq!(out[0], None);
+        assert!(err.is_err_and(|r| r.contains(Cause::AssociationOutstanding)));
+        let (_, ok) = outputs(s.t_data_conf(Timestamp(7), ai(ECU, TESTER), SResult::Ok));
+        assert!(ok.is_ok());
+    }
+
+    /// ``UDSS_LLR_0062`` — no free association rejects; a server sized for two peers
+    /// refuses the third outstanding transmission.
+    #[test]
+    fn no_free_association_is_rejected() {
+        let mut s = server();
+        let (_, a) = outputs(s.s_data_req(Timestamp(0), ai(ECU, 0x0E80), &[0x62], FINAL));
+        let (_, b) = outputs(s.s_data_req(Timestamp(0), ai(ECU, 0x0E81), &[0x62], FINAL));
+        let (_, c) = outputs(s.s_data_req(Timestamp(0), ai(ECU, 0x0E82), &[0x62], FINAL));
+        assert!(a.is_ok() && b.is_ok());
+        assert!(c.is_err_and(|r| r.contains(Cause::NoAssociationFree)));
+    }
+
+    /// ``UDSS_LLR_0063`` — a confirmation matching no association is rejected and changes
+    /// nothing. (Review focus 2.)
+    #[test]
+    fn an_unmatched_confirmation_is_rejected() {
+        let mut s = server();
+        let (out, err) = outputs(s.t_data_conf(Timestamp(0), ai(ECU, TESTER), SResult::Ok));
+        assert_eq!(out[0], None);
+        assert!(err.is_err_and(|r| r.contains(Cause::NoMatchingAssociation)));
+        assert_eq!(s.next_deadline(), None);
+    }
+
+    /// ``UDSS_LLR_0037``, ``UDSS_LLR_0039``, ``UDSS_LLR_0059`` — the confirmation is
+    /// matched by addressing, forwarded, and frees the association.
+    #[test]
+    fn a_confirmation_is_forwarded_and_frees_the_association() {
+        let mut s = server();
+        request_in_progress(&mut s, Timestamp(0));
+        let (_, _) = outputs(s.s_data_req(Timestamp(5), ai(ECU, TESTER), &[0x62], FINAL));
+        let (out, ok) = outputs(s.t_data_conf(Timestamp(9), ai(ECU, TESTER), SResult::Ok));
+        assert!(ok.is_ok());
+        assert_eq!(
+            out[0],
+            Some(ServerOutput::Confirm {
+                ai: ai(ECU, TESTER),
+                result: SResult::Ok,
+            })
+        );
+        let (_, ok) = outputs(s.s_data_req(Timestamp(10), ai(ECU, TESTER), &[0x62], FINAL));
+        assert!(ok.is_ok());
+    }
+
+    /// ``UDSS_LLR_0085`` — a confirmed solicited positive response selecting a
+    /// non-default session enters it, records the client and starts `tS3_Server`;
+    /// ``UDSS_LLR_0088`` — a later confirmed final response restarts it.
+    #[test]
+    fn a_confirmed_session_selection_starts_the_session_timer() {
+        let mut s = server();
+        enter_non_default(&mut s, Timestamp(0));
+        assert_eq!(s.next_deadline(), Some(Timestamp(5_000)));
+        request_in_progress(&mut s, Timestamp(1_000));
+        let (_, _) =
+            outputs(s.s_data_req(Timestamp(1_005), ai(ECU, TESTER), &[0x62], FINAL));
+        let (_, _) = outputs(s.t_data_conf(Timestamp(1_010), ai(ECU, TESTER), SResult::Ok));
+        assert_eq!(s.next_deadline(), Some(Timestamp(6_010)));
+    }
+
+    /// ``UDSS_LLR_0098`` — a confirmed response selecting the default session leaves the
+    /// non-default one and disables `tS3_Server`.
+    #[test]
+    fn a_confirmed_default_selection_disables_the_session_timer() {
+        let mut s = server();
+        enter_non_default(&mut s, Timestamp(0));
+        request_in_progress(&mut s, Timestamp(1_000));
+        let (_, _) = outputs(s.s_data_req(
+            Timestamp(1_005),
+            ai(ECU, TESTER),
+            &[0x50, 0x01, 0, 50, 1, 244],
+            ServerTx::FinalResponse {
+                solicitation: Solicitation::Solicited,
+                session: Some(SessionSelection::Default),
+            },
+        ));
+        let (_, _) = outputs(s.t_data_conf(Timestamp(1_010), ai(ECU, TESTER), SResult::Ok));
+        assert_eq!(s.next_deadline(), None);
+    }
+
+    /// ``UDSS_LLR_0093`` — a failed final response to the controlling client restarts
+    /// `tS3_Server`; the session selection it carried does not take effect.
+    #[test]
+    fn a_failed_response_restarts_the_session_timer_and_selects_nothing() {
+        let mut s = server();
+        enter_non_default(&mut s, Timestamp(0));
+        request_in_progress(&mut s, Timestamp(1_000));
+        let (_, _) = outputs(s.s_data_req(
+            Timestamp(1_005),
+            ai(ECU, TESTER),
+            &[0x50, 0x01],
+            ServerTx::FinalResponse {
+                solicitation: Solicitation::Solicited,
+                session: Some(SessionSelection::Default),
+            },
+        ));
+        let (_, _) = outputs(s.t_data_conf(
+            Timestamp(1_010),
+            ai(ECU, TESTER),
+            SResult::Transport(TransportError(3)),
+        ));
+        assert_eq!(s.next_deadline(), Some(Timestamp(6_010)));
+    }
+
+    /// ``UDSS_LLR_0116``, ``UDSS_LLR_0110``, ``UDSS_LLR_0090`` — a confirmed
+    /// response-pending opens the enhanced window, sets the anchor, and does not restart
+    /// `tS3_Server`.
+    #[test]
+    fn a_confirmed_response_pending_opens_the_enhanced_window() {
+        let mut s = server();
+        enter_non_default(&mut s, Timestamp(0));
+        request_in_progress(&mut s, Timestamp(1_000)); // stops tS3, starts tP2 at 1050
+        let (_, ok) = outputs(s.s_data_req(
+            Timestamp(1_040),
+            ai(ECU, TESTER),
+            &[0x7F, 0x22, 0x78],
+            ServerTx::ResponsePending,
+        ));
+        assert!(ok.is_ok());
+        assert_eq!(s.next_deadline(), None); // tP2 stopped at the T_Data.req (0114)
+        let (_, _) = outputs(s.t_data_conf(Timestamp(1_045), ai(ECU, TESTER), SResult::Ok));
+        assert_eq!(s.next_deadline(), Some(Timestamp(6_045))); // tP2* = 5000, tS3 stopped
+    }
+
+    /// ``UDSS_LLR_0118`` — a second response-pending while the first is unconfirmed is
+    /// rejected; ``UDSS_LLR_0119`` — one inside the minimum spacing after the
+    /// confirmation is rejected. Spacing is ⌈3 × 5000 / 10⌉ = 1500.
+    #[test]
+    fn response_pending_messages_are_spaced() {
+        let mut s = server();
+        request_in_progress(&mut s, Timestamp(0));
+        let rp = [0x7F, 0x22, 0x78];
+        let (_, ok) = outputs(s.s_data_req(
+            Timestamp(40),
+            ai(ECU, TESTER),
+            &rp,
+            ServerTx::ResponsePending,
+        ));
+        assert!(ok.is_ok());
+        let (_, err) = outputs(s.s_data_req(
+            Timestamp(41),
+            ai(ECU, TESTER),
+            &rp,
+            ServerTx::ResponsePending,
+        ));
+        assert!(err.is_err_and(|r| r.contains(Cause::ResponsePendingUnconfirmed)));
+        let (_, _) = outputs(s.t_data_conf(Timestamp(45), ai(ECU, TESTER), SResult::Ok));
+        let (_, err) = outputs(s.s_data_req(
+            Timestamp(1_544),
+            ai(ECU, TESTER),
+            &rp,
+            ServerTx::ResponsePending,
+        ));
+        assert!(err.is_err_and(|r| r.contains(Cause::ResponsePendingTooSoon)));
+        let (_, ok) = outputs(s.s_data_req(
+            Timestamp(1_545),
+            ai(ECU, TESTER),
+            &rp,
+            ServerTx::ResponsePending,
+        ));
+        assert!(ok.is_ok());
+    }
+
+    /// ``UDSS_LLR_0093`` (second limb) — a failed response-pending to the controlling
+    /// client restarts `tS3_Server`; without it the session would be pinned open forever.
+    #[test]
+    fn a_failed_response_pending_restarts_the_session_timer() {
+        let mut s = server();
+        enter_non_default(&mut s, Timestamp(0));
+        request_in_progress(&mut s, Timestamp(1_000)); // tS3 stopped by the request
+        let (_, _) = outputs(s.s_data_req(
+            Timestamp(1_040),
+            ai(ECU, TESTER),
+            &[0x7F, 0x22, 0x78],
+            ServerTx::ResponsePending,
+        ));
+        let (_, _) = outputs(s.t_data_conf(
+            Timestamp(1_045),
+            ai(ECU, TESTER),
+            SResult::Transport(TransportError(9)),
+        ));
+        assert_eq!(s.next_deadline(), Some(Timestamp(6_045)));
     }
 }

@@ -8,9 +8,10 @@
 //! omitted satisfies the requirement without a check.
 
 use crate::addressing::{Address, AddressExtension, Ai, PeerIdentity};
-use crate::classification::{ServerRx, ServerTx};
+use crate::classification::{ServerRx, ServerTx, SessionSelection, Solicitation};
 use crate::params::{ServerParameter, ServerParams, ServerReload};
 use crate::reaction::Reaction;
+use crate::rejection::{Cause, Rejection};
 use crate::result::SResult;
 use crate::time::Timestamp;
 use crate::timer::{Expiry, Timer};
@@ -35,7 +36,6 @@ struct Outstanding {
 /// `Copy` and equality are absent and the array is built from [`Association::EMPTY`].
 #[derive(Debug)]
 pub struct Association {
-    #[expect(dead_code, reason = "read by the association bodies of Task 5")]
     slot: Option<Outstanding>,
 }
 
@@ -147,7 +147,6 @@ pub type ServerReaction<'s, 'd, const A: usize, T = ()> =
 /// nothing is retained anywhere else between inputs.
 #[derive(Debug)]
 pub struct Server<const A: usize> {
-    #[expect(dead_code, reason = "read by the association bodies of Task 5")]
     associations: [Association; A],
     params: ServerParams,
     session: Session,
@@ -224,11 +223,61 @@ impl<const A: usize> Server<A> {
 
     /// Enter a non-default session controlled by `client`, `tS3_Server` started
     /// (``UDSS_LLR_0085``, ``UDSS_LLR_0086``).
-    #[expect(dead_code, reason = "used by the bodies of Tasks 4-6")]
     fn enter_non_default(&mut self, now: Timestamp, client: PeerIdentity) {
         let mut s3 = Timer::STOPPED;
         s3.start(now, self.params.s3_server);
         self.session = Session::NonDefault { client, s3 };
+    }
+
+    /// ``UDSS_LLR_0106`` — whether a transmission to `target` answers the service in
+    /// progress.
+    fn answers(&self, target: PeerIdentity) -> bool {
+        self.service.is_some_and(|s| s.peer == target)
+    }
+
+    /// ``UDSS_LLR_0119`` — ⌈3 × `tP2*_Server_Max` / 10⌉ in integer arithmetic.
+    fn spacing(&self) -> u32 {
+        let p = self.params.p2_star_server_max;
+        let q = p / 10;
+        let r = p % 10;
+        q.saturating_mul(3)
+            .saturating_add(r.saturating_mul(3).saturating_add(9) / 10)
+    }
+
+    /// Every cause ``UDSS_LLR_0016`` requires the report to state, over `&self`.
+    fn validate_req(
+        &self,
+        now: Timestamp,
+        ai: Ai,
+        class: ServerTx,
+    ) -> Result<(), Rejection> {
+        let mut causes: Option<Rejection> = None;
+        let mut add = |c: Cause| {
+            causes = Some(causes.map_or(Rejection::new(c), |r| r.with(c)));
+        };
+        let mut outstanding = self.associations.iter().filter_map(|a| a.slot);
+        if outstanding.clone().any(|o| o.ai == ai) {
+            add(Cause::AssociationOutstanding); // UDSS_LLR_0061
+        }
+        if self.associations.iter().all(|a| a.slot.is_some()) {
+            add(Cause::NoAssociationFree); // UDSS_LLR_0062
+        }
+        if class == ServerTx::ResponsePending && self.answers(ai.target()) {
+            let unconfirmed = outstanding.any(|o| {
+                o.class == ServerTx::ResponsePending && o.ai.target() == ai.target()
+            });
+            if unconfirmed {
+                add(Cause::ResponsePendingUnconfirmed); // UDSS_LLR_0118
+            }
+            let too_soon = self
+                .service
+                .and_then(|s| s.anchor)
+                .is_some_and(|t| now.interval_since(t) < self.spacing());
+            if too_soon {
+                add(Cause::ResponsePendingTooSoon); // UDSS_LLR_0119
+            }
+        }
+        causes.map_or(Ok(()), Err)
     }
 
     /// Set a protocol parameter.
@@ -255,9 +304,14 @@ impl<const A: usize> Server<A> {
     /// Request transmission of a response.
     ///
     /// ``UDSS_LLR_0033``. ``UDSS_LLR_0054`` rejects a length differing from the data
-    /// supplied, which passing a slice discharges. ``UDSS_LLR_0118`` and
+    /// supplied, which passing a slice discharges. ``UDSS_LLR_0061`` and
+    /// ``UDSS_LLR_0062`` reject a request whose addressing already has a transmission
+    /// outstanding or for which no association is free; ``UDSS_LLR_0118`` and
     /// ``UDSS_LLR_0119`` reject a response-pending message that is unconfirmed or too
-    /// soon.
+    /// soon. One report states every cause that held (``UDSS_LLR_0016``). Otherwise the
+    /// request takes an association (``UDSS_LLR_0059``), stops `tP2_Server` where it
+    /// answers the service in progress (``UDSS_LLR_0114``), and is passed on as a
+    /// `T_Data.req`.
     pub fn s_data_req<'d>(
         &mut self,
         now: Timestamp,
@@ -265,13 +319,32 @@ impl<const A: usize> Server<A> {
         data: &'d [u8],
         class: ServerTx,
     ) -> ServerReaction<'_, 'd, A> {
-        #[allow(
-            clippy::todo,
-            reason = "API stub; behaviour lands with its requirement"
-        )]
-        {
-            todo!("UDSS_LLR_0033: {now:?} {ai:?} {} {class:?}", data.len())
+        self.expire(now);
+        if let Err(rejection) = self.validate_req(now, ai, class) {
+            return Reaction::new(self, [None, None], Err(rejection)); // UDSS_LLR_0015
         }
+        // UDSS_LLR_0059 — take a free association.
+        if let Some(free) = self.associations.iter_mut().find(|a| a.slot.is_none()) {
+            free.slot = Some(Outstanding { ai, class });
+        }
+        // UDSS_LLR_0114
+        let stops_p2 = match class {
+            ServerTx::ResponsePending => true,
+            ServerTx::FinalResponse { solicitation, .. } => {
+                solicitation == Solicitation::Solicited
+            }
+        };
+        if stops_p2
+            && self.answers(ai.target())
+            && let Some(service) = self.service.as_mut()
+        {
+            service.p2.stop();
+        }
+        Reaction::new(
+            self,
+            [Some(ServerOutput::Transmit { ai, data }), None],
+            Ok(()),
+        )
     }
 
     /// A message has started arriving.
@@ -359,19 +432,91 @@ impl<const A: usize> Server<A> {
     /// ``UDSS_LLR_0025`` — addressing and a result. ``UDSS_LLR_0059`` matches it to the
     /// outstanding association by addressing, and ``UDSS_LLR_0063`` rejects one matching
     /// none. ``UDSS_LLR_0039`` forwards it to the application as an `S_Data.conf`.
+    /// Matching frees the association, and the confirmation acts on the response timer
+    /// (``UDSS_LLR_0110``, ``UDSS_LLR_0116``), the service in progress
+    /// (``UDSS_LLR_0109``) and the session (``UDSS_LLR_0085``, ``UDSS_LLR_0088``,
+    /// ``UDSS_LLR_0093``, ``UDSS_LLR_0098``).
     pub fn t_data_conf(
         &mut self,
         now: Timestamp,
         ai: Ai,
         result: SResult,
     ) -> ServerReaction<'_, 'static, A> {
-        #[allow(
-            clippy::todo,
-            reason = "API stub; behaviour lands with its requirement"
-        )]
-        {
-            todo!("UDSS_LLR_0025, 0059: {now:?} {ai:?} {result:?}")
+        self.expire(now);
+        // UDSS_LLR_0059 / 0063 — match by addressing, S_Mtype included, and free the
+        // slot in the same expression: there is no "found but empty" branch to defend.
+        let Some(Outstanding { class, .. }) = self
+            .associations
+            .iter_mut()
+            .find_map(|a| a.slot.take_if(|o| o.ai == ai))
+        else {
+            let rejection = Rejection::new(Cause::NoMatchingAssociation);
+            return Reaction::new(self, [None, None], Err(rejection));
+        };
+        let to = ai.target();
+        let answers = self.answers(to);
+        let ok = result == SResult::Ok;
+        match class {
+            ServerTx::ResponsePending => {
+                if answers {
+                    if ok {
+                        // UDSS_LLR_0110, 0116; 0090 leaves tS3 alone.
+                        if let Some(s) = self.service.as_mut() {
+                            s.anchor = Some(now);
+                            s.p2.start(now, self.params.p2_star_server_max);
+                            s.loaded = ServerReload::P2Star;
+                        }
+                    } else {
+                        self.service = None; // UDSS_LLR_0109
+                    }
+                }
+                if !ok && self.is_controlling(to) {
+                    // UDSS_LLR_0093 — "a failed transmission of a response-pending message
+                    // restarts the timer as Table 10 states".
+                    self.restart_s3(now);
+                }
+            }
+            ServerTx::FinalResponse {
+                solicitation: Solicitation::Unsolicited,
+                ..
+            } => {
+                // UDSS_LLR_0091 — nothing to tS3; and no service is answered.
+            }
+            ServerTx::FinalResponse {
+                solicitation: Solicitation::Solicited,
+                session,
+            } => {
+                if answers {
+                    self.service = None; // UDSS_LLR_0109
+                }
+                match (ok, session) {
+                    (true, Some(SessionSelection::NonDefault)) => {
+                        self.enter_non_default(now, to); // UDSS_LLR_0085
+                    }
+                    (true, Some(SessionSelection::Default)) => {
+                        self.session = Session::Default; // UDSS_LLR_0098
+                    }
+                    (true, None) => {
+                        // UDSS_LLR_0088
+                        if self.is_controlling(to) {
+                            self.restart_s3(now);
+                        }
+                    }
+                    (false, _) => {
+                        // UDSS_LLR_0093; 0094 — nothing is retransmitted.
+                        if self.is_controlling(to) {
+                            self.restart_s3(now);
+                        }
+                    }
+                }
+            }
         }
+        // UDSS_LLR_0037, 0039
+        Reaction::new(
+            self,
+            [Some(ServerOutput::Confirm { ai, result }), None],
+            Ok(()),
+        )
     }
 
     /// Report that a received request is handled and no response will be transmitted.
