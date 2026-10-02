@@ -1,9 +1,9 @@
 //! Does the design fit together?
 //!
-//! Every body in this crate is `todo!()`, so nothing here calls one. What is proven is
-//! composition: that an application can implement the traits, that `uds_server!` folds its
-//! declared maxima into buffer lengths, and that the result constructs in a `static`
-//! without a stack temporary.
+//! What is proven is composition: that an application can implement the traits, that
+//! `uds_server!` folds its declared maxima into buffer lengths, that the result
+//! constructs in a `static` without a stack temporary, and that the `dispatch` it emits
+//! routes a request through the pipeline.
 
 #![allow(
     clippy::unused_async_trait_impl,
@@ -16,12 +16,13 @@ use uds_protocol::NegativeResponseCode as Nrc;
 use uds_services::{
     Address, Ai, Answer, ClearDiagnosticInformation, ClientSet, ClientStorage,
     CommunicationControl, CommunicationControlType, CommunicationType, DataIdentifier,
-    DataTransfer, DtcReportKind, DtcStatusMask, FunctionalGroupIdentifier, KeyVerdict,
-    Mtype, PhysicalKeepAlive, ReadDataByIdentifier, ReadDtcInfoSubFunction,
-    ReadDtcInformation, RecordError, Reloads, Response, ResponseSink, SecurityAccess,
-    SecurityLevel, SecurityPolicy, ServerParams, ServiceSet, Sink, Storage, SubnetNumber,
-    TaType, TesterPresent, Timestamp, TransferRequest, TransportEvent, UdsServiceType,
-    UdsTransport, uds_client, uds_server,
+    DataTransfer, DiagnosticSessionType, DtcReportKind, DtcStatusMask,
+    FunctionalGroupIdentifier, KeyVerdict, Mtype, PhysicalKeepAlive, ReadDataByIdentifier,
+    ReadDtcInfoSubFunction, ReadDtcInformation, RecordError, Reloads, Response,
+    ResponseSink, SecurityAccess, SecurityLevel, SecurityPolicy, ServerParams, ServiceSet,
+    SessionTiming, SessionTransition, Sink, Storage, SubnetNumber, TaType, TesterPresent,
+    Timestamp, TransferRequest, TransportEvent, UdsServiceType, UdsTransport, uds_client,
+    uds_server,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -198,6 +199,26 @@ impl SecurityAccess for Ecu {
     }
 }
 
+// Named by path: `ServiceSet` is in scope, and both traits have a `supports`.
+impl uds_services::DiagnosticSessionControl for Ecu {
+    const MAX_RESPONSE_LEN: usize = 0;
+    fn supports(&self, session: DiagnosticSessionType) -> bool {
+        matches!(
+            session,
+            DiagnosticSessionType::DefaultSession
+                | DiagnosticSessionType::ProgrammingSession
+                | DiagnosticSessionType::ExtendedDiagnosticSession
+        )
+    }
+    fn timing(&self, _s: DiagnosticSessionType) -> SessionTiming {
+        SessionTiming {
+            p2_server_max: 50,
+            p2_star_server_max: 5_000,
+        }
+    }
+    fn on_transition(&mut self, _t: SessionTransition, _relocked: bool) {}
+}
+
 #[derive(Debug)]
 struct FakeTransport;
 
@@ -229,7 +250,8 @@ impl UdsTransport for FakeTransport {
 
 uds_server! {
     Ecu: ReadDataByIdentifier, SecurityAccess, DataTransfer, ReadDtcInformation,
-         ClearDiagnosticInformation, CommunicationControl, TesterPresent;
+         ClearDiagnosticInformation, CommunicationControl, TesterPresent,
+         DiagnosticSessionControl;
     transport = FakeTransport,
     peers = 4,
     server = EcuServer,
@@ -481,4 +503,60 @@ async fn read_the_vin_from_every_server(tester: &mut Tester) -> Result<(), ()> {
         }
     }
     Ok(())
+}
+
+#[allow(clippy::panic, reason = "a test harness for futures that never pend")]
+fn block_on<F: core::future::Future>(f: F) -> F::Output {
+    let waker = core::task::Waker::noop();
+    let mut cx = core::task::Context::from_waker(waker);
+    let mut f = core::pin::pin!(f);
+    match f.as_mut().poll(&mut cx) {
+        core::task::Poll::Ready(v) => v,
+        core::task::Poll::Pending => panic!("milestone-1 handlers never pend"),
+    }
+}
+
+/// ``UDSSVC_ARCH_0004`` through the assembled entry point: a read answers positively.
+#[test]
+fn the_assembled_dispatch_answers_a_read() {
+    let mut ecu = Ecu::new();
+    let mut state = <<Ecu as ServiceSet>::State as uds_services::ProtocolState>::INITIAL;
+    let mut buf = [0_u8; 32];
+    let mut out = ResponseSink::new(&mut buf, None);
+    let ai = Ai {
+        mtype: Mtype::Diag,
+        sa: Address(0x0E80),
+        ta: Address(0x10),
+        ta_type: TaType::Physical,
+    };
+    let no = core::cell::Cell::new(false);
+    let r = block_on(ecu.dispatch(&mut state, ai, &[0x22, 0xF4, 0x0D], &mut out, &no));
+    assert_eq!(r, uds_services::Responded::Yes { session: None });
+    assert_eq!(out.written_bytes(), &[0x62, 0xF4, 0x0D, 0x40]);
+}
+
+/// A listed service whose stage is not yet written, and an unlisted one, both settle
+/// 0x11 — physically; functionally they are silenced (``UDSSVC_ARCH_0009`` rule 1).
+#[test]
+fn unsupported_services_settle_0x11_or_silence() {
+    let mut ecu = Ecu::new();
+    let mut state = <<Ecu as ServiceSet>::State as uds_services::ProtocolState>::INITIAL;
+    let mut buf = [0_u8; 32];
+    let mut out = ResponseSink::new(&mut buf, None);
+    let phys = Ai {
+        mtype: Mtype::Diag,
+        sa: Address(0x0E80),
+        ta: Address(0x10),
+        ta_type: TaType::Physical,
+    };
+    let no = core::cell::Cell::new(false);
+    let r = block_on(ecu.dispatch(&mut state, phys, &[0x11, 0x01], &mut out, &no));
+    assert_eq!(r, uds_services::Responded::Yes { session: None });
+    assert_eq!(out.written_bytes(), &[0x7F, 0x11, 0x11]);
+    let func = Ai {
+        ta_type: TaType::Functional,
+        ..phys
+    };
+    let r = block_on(ecu.dispatch(&mut state, func, &[0x11, 0x01], &mut out, &no));
+    assert_eq!(r, uds_services::Responded::Suppressed { session: None });
 }

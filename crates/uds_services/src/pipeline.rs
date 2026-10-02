@@ -38,16 +38,6 @@ pub fn transition(state: &mut State, to: DiagnosticSessionType) -> SessionTransi
     SessionTransition::classify(from, to)
 }
 
-/// Placeholder until Task 12 routes `dispatch` here. ``UDSSVC_ARCH_0004``.
-///
-/// Not `async`, as the pipeline it stands in for is: it awaits nothing, and
-/// `clippy::unused_async` refuses an `async fn` that does not.
-#[doc(hidden)]
-#[must_use]
-pub const fn dispatch_stub(_request: &[u8], _out: &mut ResponseSink<'_>) -> Responded {
-    Responded::Suppressed { session: None }
-}
-
 /// Where the common stages left the request.
 #[doc(hidden)]
 #[derive(Debug)]
