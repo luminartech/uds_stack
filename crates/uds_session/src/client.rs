@@ -108,19 +108,23 @@ impl<const R: usize> FunctionalSlot<R> {
 
 /// Identifies a physical channel of this client.
 ///
-/// ``UDSS_LLR_0121`` — returned when the caller opens one, valid until it is withdrawn.
-/// `PHYS` indexes from zero independently of `FUNC`, so this carries no ordering across
-/// the two arrays; `PartialOrd` and `Ord` are not derived, since nothing needs them.
+/// ``UDSS_LLR_0121`` — returned when the caller opens one, valid until it is withdrawn,
+/// and never reissued: ids come from one client-wide counter, so a withdrawn channel's
+/// handle identifies no later one. The value is private and has no accessor, which is a
+/// promise: nothing about it is meaningful to a caller. `PartialOrd`/`Ord` are not
+/// derived, since nothing needs them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct PhysicalChannelId(u16);
+pub struct PhysicalChannelId(u32);
 
 /// Identifies a functional channel of this client.
 ///
-/// ``UDSS_LLR_0121`` — returned when the caller opens one, valid until it is withdrawn.
-/// `FUNC` indexes from zero independently of `PHYS`, so this carries no ordering across
-/// the two arrays; `PartialOrd` and `Ord` are not derived, since nothing needs them.
+/// ``UDSS_LLR_0121`` — returned when the caller opens one, valid until it is withdrawn,
+/// and never reissued: ids come from one client-wide counter, so a withdrawn channel's
+/// handle identifies no later one. The value is private and has no accessor, which is a
+/// promise: nothing about it is meaningful to a caller. `PartialOrd`/`Ord` are not
+/// derived, since nothing needs them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct FunctionalChannelId(u16);
+pub struct FunctionalChannelId(u32);
 
 /// Identifies a channel of either kind.
 ///
@@ -335,6 +339,10 @@ pub struct Client<
     _physical: [PhysicalSlot; PHYS],
     _functional: [FunctionalSlot<R>; FUNC],
     _keep_alive: K,
+    /// ``UDSS_LLR_0121``, ``UDSS_LLR_0185`` — the next handle to issue; `checked_add` on
+    /// it failing is the second limb's rejection.
+    #[expect(dead_code, reason = "read by open_*_channel in milestone 2")]
+    next_id: u32,
 }
 
 impl<K: KeepAliveMode, const PHYS: usize, const FUNC: usize, const R: usize>
@@ -360,6 +368,7 @@ impl<K: KeepAliveMode, const PHYS: usize, const FUNC: usize, const R: usize>
             _physical: physical,
             _functional: functional,
             _keep_alive: keep_alive,
+            next_id: 0,
         }
     }
 

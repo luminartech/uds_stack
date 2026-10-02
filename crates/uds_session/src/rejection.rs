@@ -135,6 +135,13 @@ causes! {
     RepeatCountSpent = 9 => "the repeat count is spent",
     /// ``UDSS_LLR_0178`` — a functional channel has not finished receiving.
     ResponseStillArriving = 10 => "a response is still arriving",
+    /// ``UDSS_LLR_0185`` (first limb) — an open with no free slot of the channel's kind.
+    /// Withdrawing a channel frees one.
+    NoChannelSlotFree = 11 => "no channel slot of that kind is free",
+    /// ``UDSS_LLR_0185`` (second limb) — every handle the client can issue has been
+    /// issued. ``UDSS_LLR_0121`` forbids reissue, so the client cannot open a channel
+    /// again; it is recovered by creating the client anew.
+    ChannelHandlesSpent = 12 => "every channel handle has been issued",
 }
 
 /// Why an input was refused, and what the refusing requirement asked the report to carry.
