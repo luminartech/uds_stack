@@ -22,8 +22,8 @@ use core::pin::Pin;
 use uds_protocol::DiagnosticSessionType;
 pub use uds_session::ServerParams;
 use uds_session::{
-    Ai, Association, Rejection, SResult, Server as SessionServer, ServerOutput, ServerRx,
-    ServerTx, SessionSelection, Solicitation, Timestamp,
+    Ai, Association, Cause, Rejection, SResult, Server as SessionServer, ServerOutput,
+    ServerRx, ServerTx, SessionSelection, Solicitation, Timestamp,
 };
 
 /// The UDS server: an application's services, its storage, a session layer and a
@@ -147,7 +147,11 @@ impl<A: ServiceSet, T: UdsTransport, const PEERS: usize> Server<A, T, PEERS> {
         // (ISO 14229-1:2020 Table 21, SIDRQ). An empty request is the pipeline's to
         // settle, and settles without pending, so the 0 is never transmitted.
         let sid = request.first().copied().unwrap_or(0);
-        let reply_to = reply_address(ai);
+        let serving = Serving {
+            ai,
+            reply_to: reply_address(ai),
+            sid,
+        };
 
         let mut sink = ResponseSink::new(response, outbound_max);
         // UDSSVC_ARCH_0009 rule 3's input, fresh for this request. A local rather than a
@@ -164,7 +168,6 @@ impl<A: ServiceSet, T: UdsTransport, const PEERS: usize> Server<A, T, PEERS> {
                 &mut sink,
                 &pending_sent,
             ));
-            let serving = Serving { reply_to, sid };
             serve(
                 handler,
                 &mut self.session,
@@ -183,8 +186,9 @@ impl<A: ServiceSet, T: UdsTransport, const PEERS: usize> Server<A, T, PEERS> {
             &mut self.session,
             &mut self.transport,
             &mut self.pending,
+            &mut concurrent[..],
             outcome,
-            ai,
+            serving,
             sink.written_bytes(),
         )
         .await?;
@@ -252,11 +256,21 @@ impl Deferred {
         confirmed: None,
     };
 
-    /// Both records, the later confirmation winning.
+    /// Both records, in arrival order: `self` was recorded first.
+    ///
+    /// A later timeout clears an earlier confirmation. [`apply`] runs the timeout before
+    /// the confirmation, so keeping both would leave the application in the confirmed
+    /// session while the session layer, which expired it afterwards, is in the default
+    /// one. A later confirmation after an earlier timeout keeps both, which is already
+    /// the order `apply` runs them in; of two confirmations the later wins.
     fn merge(self, later: Self) -> Self {
         Self {
             timed_out: self.timed_out || later.timed_out,
-            confirmed: later.confirmed.or(self.confirmed),
+            confirmed: if later.timed_out {
+                later.confirmed
+            } else {
+                later.confirmed.or(self.confirmed)
+            },
         }
     }
 }
@@ -325,9 +339,14 @@ async fn drain<'d, T: UdsTransport, const PEERS: usize>(
     Ok(found)
 }
 
-/// Act on what a drain recorded, in the order the outputs arrived: the timeout first
-/// (``UDSS_LLR_0081`` put it first), then a confirmation. The only caller of the
-/// session hooks.
+/// Act on what a drain recorded: the timeout, then the confirmation. The only caller of
+/// the session hooks.
+///
+/// That fixed order is the arrival order. Within one drain, ``UDSS_LLR_0081`` puts the
+/// expiry snapshots ahead of the input's own outputs, so a `SessionTimeout` always
+/// precedes the `Confirm` beside it. Across drains, [`Deferred::merge`] drops a
+/// confirmation that a later timeout overtook, so whatever survives to here is a
+/// timeout followed by a confirmation, or only one of them.
 fn apply<A: ServiceSet>(services: &mut A, state: &mut A::State, d: Deferred) {
     if d.timed_out {
         services.session_timed_out(state);
@@ -337,9 +356,11 @@ fn apply<A: ServiceSet>(services: &mut A, state: &mut A::State, d: Deferred) {
     }
 }
 
-/// The request in progress, as a response-pending answers it.
+/// The request in progress, as its responses and its completion report name it.
 #[derive(Debug, Clone, Copy)]
 struct Serving {
+    /// The request's addressing, which its completion report names.
+    ai: Ai,
     /// The request's addressing, swapped: where its responses go.
     reply_to: Ai,
     /// The request's service identifier, which a negative response echoes.
@@ -434,60 +455,153 @@ async fn serve<H: Future<Output = Responded>, T: UdsTransport, const PEERS: usiz
 ///
 /// A free function rather than a method because `response` borrows the server's store.
 /// Returns what the application must hear about, for the caller to [`apply`].
+///
+/// A final response refused under ``UDSS_LLR_0061`` is waited out and resubmitted once.
+/// That refusal is reachable: [`select2`] lets the handler win a tie, so a handler can
+/// finish after a 0x78 was accepted and before that 0x78's `DataConf` was drained.
+/// A refusal for any other cause loses the response. The tester has had at most a
+/// 0x78, and the service stays in progress until its timer runs out. That is a
+/// milestone-1 limit; nothing retries it.
 async fn answer<T: UdsTransport, const PEERS: usize>(
     session: &mut SessionServer<PEERS>,
     transport: &mut T,
     pending: &mut Option<Pending>,
+    concurrent: &mut [u8],
     outcome: Responded,
-    ai: Ai,
+    serving: Serving,
     response: &[u8],
 ) -> Result<Deferred, T::Error> {
-    let reply_to = reply_address(ai);
-    let now = transport.now();
-    let reaction = match outcome {
-        Responded::Yes { session: selected } => session.s_data_req(
-            now,
-            reply_to,
-            response,
-            ServerTx::FinalResponse {
-                solicitation: Solicitation::Solicited,
-                session: selected.map(selection_of),
-            },
-        ),
-        // UDSS_LLR_0074 — a suppressed request is still complete.
-        Responded::Suppressed { session: selected } => session.completion_report(
-            now,
-            ai,
-            ServerRx::Request {
-                session: selected.map(selection_of),
-            },
-        ),
+    let selected = match outcome {
+        Responded::Yes { session: selected } => selected,
+        Responded::Suppressed { session: selected } => {
+            return complete(session, transport, pending, serving.ai, selected).await;
+        }
     };
-    let d = drain(reaction, transport, pending).await?;
+    let now = transport.now();
+    let reaction = final_response(session, now, serving.reply_to, response, selected);
+    let mut d = drain(reaction, transport, pending).await?;
     let mut deferred = d.deferred;
-    match outcome {
+    if d.rejected
+        .is_some_and(|r| r.contains(Cause::AssociationOutstanding))
+    {
+        let waited = await_confirmation(session, transport, pending, concurrent, serving);
+        let Some(waited) = waited.await? else {
+            // The link closed first: reported as the mid-handler close is, `Suppressed`.
+            let closed = complete(session, transport, pending, serving.ai, None).await?;
+            return Ok(deferred.merge(closed));
+        };
+        deferred = deferred.merge(waited);
+        let now = transport.now();
+        let reaction = final_response(session, now, serving.reply_to, response, selected);
+        d = drain(reaction, transport, pending).await?;
+        deferred = deferred.merge(d.deferred);
+    }
+    match d.rejected {
         // Recorded only once the submission is accepted, so a refused response never
         // leaves a pending selection behind, and never disturbs one already in
         // flight. `reply_to` is the association `t_data_conf` will match.
-        Responded::Yes {
-            session: Some(selected),
-        } if d.rejected.is_none() => {
-            *pending = Some(Pending {
-                ai: reply_to,
-                selected,
-            });
+        None => {
+            if let Some(selected) = selected {
+                *pending = Some(Pending {
+                    ai: serving.reply_to,
+                    selected,
+                });
+            }
         }
-        Responded::Yes { .. } => {}
-        // UDSS_LLR_0086 / 0098 — the completion report is the moment, so the
-        // selection follows whatever the report's own drain recorded.
-        Responded::Suppressed { session } => {
-            deferred = deferred.merge(Deferred {
-                timed_out: false,
-                confirmed: session,
-            });
-        }
+        // UDSSVC_ARCH_0040 — a milestone-1 limit: a final response refused for any
+        // cause but an outstanding association (or refused again after waiting one
+        // out) is lost, with no retry. See `answer`'s doc.
+        Some(_refused) => {}
     }
     Ok(deferred)
+}
+
+/// The final response's submission, built in one place because [`answer`] may make it
+/// twice.
+fn final_response<'s, 'd, const PEERS: usize>(
+    session: &'s mut SessionServer<PEERS>,
+    now: Timestamp,
+    reply_to: Ai,
+    response: &'d [u8],
+    selected: Option<DiagnosticSessionType>,
+) -> uds_session::ServerReaction<'s, 'd, PEERS> {
+    session.s_data_req(
+        now,
+        reply_to,
+        response,
+        ServerTx::FinalResponse {
+            solicitation: Solicitation::Solicited,
+            session: selected.map(selection_of),
+        },
+    )
+}
+
+/// ``UDSS_LLR_0074`` — report a request complete with no response, and with it the
+/// selection it made.
+///
+/// ``UDSS_LLR_0086`` / ``0098`` — the completion report is the moment, so the selection
+/// follows whatever the report's own drain recorded.
+async fn complete<T: UdsTransport, const PEERS: usize>(
+    session: &mut SessionServer<PEERS>,
+    transport: &mut T,
+    pending: &mut Option<Pending>,
+    ai: Ai,
+    selected: Option<DiagnosticSessionType>,
+) -> Result<Deferred, T::Error> {
+    let now = transport.now();
+    let class = ServerRx::Request {
+        session: selected.map(selection_of),
+    };
+    let reaction = session.completion_report(now, ai, class);
+    let d = drain(reaction, transport, pending).await?;
+    Ok(d.deferred.merge(Deferred {
+        timed_out: false,
+        confirmed: selected,
+    }))
+}
+
+/// Wait for the transmission outstanding on `serving.reply_to` to be confirmed, so the
+/// final response ``UDSS_LLR_0061`` refused can be resubmitted.
+///
+/// Each event takes the path it takes mid-handler: a `DataConf` reaches `t_data_conf`,
+/// a deadline reaches [`answer_overrun`], and anything else re-arms the deadline.
+/// Returns what the drains recorded once a `DataConf` for `reply_to` has been drained,
+/// or `None` where the link closed first.
+async fn await_confirmation<T: UdsTransport, const PEERS: usize>(
+    session: &mut SessionServer<PEERS>,
+    transport: &mut T,
+    pending: &mut Option<Pending>,
+    concurrent: &mut [u8],
+    serving: Serving,
+) -> Result<Option<Deferred>, T::Error> {
+    let mut deferred = Deferred::NONE;
+    loop {
+        let deadline = session.next_deadline();
+        match transport.next_event(concurrent, deadline).await? {
+            TransportEvent::DataConf { ai, result } => {
+                let now = transport.now();
+                let reaction = session.t_data_conf(now, ai, result);
+                let d = drain(reaction, transport, pending).await?;
+                deferred = deferred.merge(d.deferred);
+                if ai == serving.reply_to && d.rejected.is_none() {
+                    return Ok(Some(deferred));
+                }
+            }
+            TransportEvent::Deadline => {
+                // The handler has settled, so whether a 0x78 goes out no longer
+                // reaches `settle`; only what the drains recorded is kept.
+                let now = transport.now();
+                let (reply_to, sid) = (serving.reply_to, serving.sid);
+                let o = answer_overrun(session, transport, pending, now, reply_to, sid);
+                deferred = deferred.merge(o.await?.deferred);
+            }
+            TransportEvent::Closed { .. } => return Ok(None),
+            // As mid-handler: the 0x21 these owe is architecture open question 1.
+            TransportEvent::DataInd { .. }
+            | TransportEvent::DataTooLong { .. }
+            | TransportEvent::Periodic { .. } => {}
+        }
+    }
 }
 
 /// What `answer_overrun` learned: whether a 0x78 was accepted for transmission, and what
@@ -533,7 +647,50 @@ async fn answer_overrun<T: UdsTransport, const PEERS: usize>(
 
 #[cfg(test)]
 mod tests {
+    use super::Deferred;
+    use uds_protocol::DiagnosticSessionType as S;
     use uds_session::ServerParams;
+
+    const TIMEOUT: Deferred = Deferred {
+        timed_out: true,
+        confirmed: None,
+    };
+
+    const fn confirm(session: S) -> Deferred {
+        Deferred {
+            timed_out: false,
+            confirmed: Some(session),
+        }
+    }
+
+    /// A confirmation recorded mid-handler and then overtaken by a `tS3_Server` expiry
+    /// is dropped. `apply` runs the timeout first, so keeping it would leave the
+    /// application in the confirmed session while the session layer is in the default
+    /// one.
+    #[test]
+    fn a_later_timeout_clears_an_earlier_confirmation() {
+        let merged = confirm(S::ExtendedDiagnosticSession).merge(TIMEOUT);
+        assert!(merged.timed_out);
+        assert_eq!(merged.confirmed, None);
+    }
+
+    /// A confirmation after a timeout keeps both, and `apply`'s fixed order is then
+    /// their arrival order.
+    #[test]
+    fn a_later_confirmation_after_a_timeout_keeps_both() {
+        let merged = TIMEOUT.merge(confirm(S::ExtendedDiagnosticSession));
+        assert!(merged.timed_out);
+        assert_eq!(merged.confirmed, Some(S::ExtendedDiagnosticSession));
+    }
+
+    /// Of two confirmations, the later is the session in force.
+    #[test]
+    fn of_two_confirmations_the_later_wins() {
+        let merged =
+            confirm(S::ExtendedDiagnosticSession).merge(confirm(S::DefaultSession));
+        assert!(!merged.timed_out);
+        assert_eq!(merged.confirmed, Some(S::DefaultSession));
+    }
 
     /// The driver holds a `uds_session::Server<PEERS>`, and an associated const of a
     /// generic parameter cannot be a const generic argument — the same
