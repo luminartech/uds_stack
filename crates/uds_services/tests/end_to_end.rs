@@ -379,6 +379,30 @@ fn an_unsupported_sid_gets_0x11_and_an_empty_request_nothing() {
     assert_eq!(s.transport().sent_count, 1);
 }
 
+/// ``UDSSVC_ARCH_0006`` — support is checked before decoding (Figure 5, clause 8.7.5),
+/// so a malformed `ECUReset` (no sub-function), which `Ecu` does not list, settles 0x11
+/// and not 0x13. Functionally addressed, 0x11 is one of the five silenced codes; the
+/// same bytes physically addressed are answered `7F 11 11`.
+#[test]
+fn a_malformed_request_for_an_unlisted_service_is_0x11_and_silent_when_functional() {
+    let mut s = EcuServer::new(
+        Ecu::new(),
+        Scripted::new(&[
+            Ev::Ind(TaType::Functional, &[0x11]),
+            Ev::Ind(TaType::Physical, &[0x11]),
+            Ev::Conf(SResult::Ok),
+        ]),
+        ECU,
+        PARAMS,
+    );
+    run(&mut s);
+    let t = s.transport();
+    assert_eq!(t.sent_count, 1);
+    assert_eq!(t.sent(0), &[0x7F, 0x11, 0x11]);
+    // Sent after the physical indication, so the functional one was answered by nothing.
+    assert_eq!(t.sent_after.first(), Some(&2));
+}
+
 #[test]
 fn a_short_read_gets_0x13() {
     let mut s = EcuServer::new(
