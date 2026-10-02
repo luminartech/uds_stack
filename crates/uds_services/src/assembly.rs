@@ -233,8 +233,9 @@ macro_rules! __uds_session_hook {
 }
 
 /// One match arm per listed service, routing its decoded request to its stage. A listed
-/// service with no stage yet falls through to the wildcard and settles 0x11, which is the
-/// milestone-1 limit and is what makes "listed but unimplemented" visible on the wire
+/// service with no stage yet hits the wildcard, which emits nothing; the request then
+/// reaches the fall-through after every arm in `dispatch`, which settles 0x11. That is
+/// the milestone-1 limit, and it makes "listed but unimplemented" visible on the wire
 /// rather than a panic. The RDBI stage awaits (its handler does); the other two are
 /// plain calls.
 #[doc(hidden)]
@@ -471,7 +472,9 @@ macro_rules! uds_server {
                     };
                     let outcome = async {
                         $( $crate::__uds_stage!(self, out, decoded, $svc); )+
-                        Err($crate::NegativeResponseCode::ServiceNotSupported)
+                        ::core::result::Result::Err(
+                            $crate::NegativeResponseCode::ServiceNotSupported,
+                        )
                     }
                     .await;
                     $crate::pipeline::settle(ai, settling, pending_sent, outcome, out)
