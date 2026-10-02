@@ -26,7 +26,6 @@ fn ai(sa: u16, ta: u16) -> Ai {
 }
 
 const TESTER: u16 = 0x0E80;
-#[expect(dead_code, reason = "used by the tests of Task 4")]
 const OTHER_TESTER: u16 = 0x0E81;
 const ECU: u16 = 0x0010;
 
@@ -134,7 +133,6 @@ mod expiry {
     /// ``UDSS_LLR_0117`` — at `tP2_Server` the timer stops and the indication names the
     /// service in progress and the parameter the timer carried.
     #[test]
-    #[ignore = "starting tP2_Server needs the t_data_ind body (Task 4)"]
     fn response_overrun_names_the_service_and_the_reload() {
         let mut s = server();
         let (_, ok) = outputs(s.t_data_ind(
@@ -170,5 +168,173 @@ mod expiry {
         assert_eq!(out[0], None);
         let (out, _) = outputs(s.tick(Timestamp(4_000)));
         assert!(matches!(out[0], Some(ServerOutput::SessionTimeout { .. })));
+    }
+}
+
+mod indication {
+    use super::*;
+
+    /// ``UDSS_LLR_0036`` — both outcomes of a reception are indicated.
+    #[test]
+    fn every_reception_is_indicated() {
+        let mut s = server();
+        let data = [0x22, 0xF1, 0x90];
+        let (out, ok) = outputs(s.t_data_ind(
+            Timestamp(0),
+            ai(TESTER, ECU),
+            &data,
+            SResult::Ok,
+            ServerRx::Request { session: None },
+        ));
+        assert!(ok.is_ok());
+        assert_eq!(
+            out[0],
+            Some(ServerOutput::Indicate {
+                ai: ai(TESTER, ECU),
+                data: &data,
+                result: SResult::Ok,
+            })
+        );
+        let failed = SResult::Transport(uds_session::TransportError(1));
+        let (out, _) = outputs(s.t_data_ind(
+            Timestamp(1),
+            ai(TESTER, ECU),
+            &[],
+            failed,
+            ServerRx::Request { session: None },
+        ));
+        assert!(
+            matches!(out[0], Some(ServerOutput::Indicate { result, .. }) if result == failed)
+        );
+    }
+
+    /// ``UDSS_LLR_0113`` — a successful request starts `tP2_Server` with `tP2_Server_Max`;
+    /// ``UDSS_LLR_0099`` — in the default session no request starts `tS3_Server`.
+    #[test]
+    fn a_request_starts_the_response_timer_only() {
+        let mut s = server();
+        let (_, _) = outputs(s.t_data_ind(
+            Timestamp(100),
+            ai(TESTER, ECU),
+            &[0x3E, 0x00],
+            SResult::Ok,
+            ServerRx::Request { session: None },
+        ));
+        assert_eq!(s.next_deadline(), Some(Timestamp(150)));
+    }
+
+    /// ``UDSS_LLR_0087`` — a request from the controlling client stops `tS3_Server`.
+    #[test]
+    #[ignore = "needs Task 5: s_data_req/t_data_conf"]
+    fn a_request_from_the_controlling_client_stops_the_session_timer() {
+        let mut s = server();
+        enter_non_default(&mut s, Timestamp(0));
+        let (_, _) = outputs(s.t_data_ind(
+            Timestamp(1_000),
+            ai(TESTER, ECU),
+            &[0x22, 0xF1, 0x90],
+            SResult::Ok,
+            ServerRx::Request { session: None },
+        ));
+        // Only tP2_Server is running now.
+        assert_eq!(s.next_deadline(), Some(Timestamp(1_050)));
+    }
+
+    /// ``UDSS_LLR_0097`` — a request from another client leaves `tS3_Server` alone.
+    /// (Review focus 1.)
+    #[test]
+    #[ignore = "needs Task 5: s_data_req/t_data_conf"]
+    fn a_request_from_another_client_does_not_touch_the_session_timer() {
+        let mut s = server();
+        enter_non_default(&mut s, Timestamp(0));
+        let (_, _) = outputs(s.t_data_ind(
+            Timestamp(1_000),
+            ai(OTHER_TESTER, ECU),
+            &[0x22, 0xF1, 0x90],
+            SResult::Ok,
+            ServerRx::Request { session: None },
+        ));
+        // tP2 at 1050 would be earlier than tS3 at 5000 — so check tS3 directly by ticking
+        // past tP2 and seeing the session still times out at 5000.
+        let (_, _) = outputs(s.tick(Timestamp(1_050)));
+        assert_eq!(s.next_deadline(), Some(Timestamp(5_000)));
+    }
+
+    /// ``UDSS_LLR_0095`` — a keep-alive from the controlling client reloads a running
+    /// `tS3_Server`; ``UDSS_LLR_0096`` — one from another client changes nothing.
+    #[test]
+    #[ignore = "needs Task 5: s_data_req/t_data_conf"]
+    fn a_keep_alive_reloads_the_running_session_timer() {
+        let mut s = server();
+        enter_non_default(&mut s, Timestamp(0));
+        let (_, _) = outputs(s.t_data_ind(
+            Timestamp(2_000),
+            ai(TESTER, ECU),
+            &[0x3E, 0x80],
+            SResult::Ok,
+            ServerRx::KeepAlive,
+        ));
+        assert_eq!(s.next_deadline(), Some(Timestamp(7_000)));
+        let (_, _) = outputs(s.t_data_ind(
+            Timestamp(3_000),
+            ai(OTHER_TESTER, ECU),
+            &[0x3E, 0x80],
+            SResult::Ok,
+            ServerRx::KeepAlive,
+        ));
+        assert_eq!(s.next_deadline(), Some(Timestamp(7_000)));
+    }
+
+    /// ``UDSS_LLR_0092`` — a failed reception from the controlling client, while the
+    /// timer is stopped and no service is in progress, restarts `tS3_Server`.
+    #[test]
+    #[ignore = "needs Task 5: s_data_req/t_data_conf; Task 6: t_data_som_ind"]
+    fn a_reception_error_restarts_a_stopped_session_timer() {
+        let mut s = server();
+        enter_non_default(&mut s, Timestamp(0));
+        // Stop the timer with a start-of-message, which begins no service (UDSS_LLR_0107).
+        let (_, _) = outputs(s.t_data_som_ind(
+            Timestamp(1_000),
+            ai(TESTER, ECU),
+            ServerRx::Request { session: None },
+        ));
+        assert_eq!(s.next_deadline(), None);
+        let (_, _) = outputs(s.t_data_ind(
+            Timestamp(1_100),
+            ai(TESTER, ECU),
+            &[],
+            SResult::Transport(uds_session::TransportError(2)),
+            ServerRx::Request { session: None },
+        ));
+        assert_eq!(s.next_deadline(), Some(Timestamp(6_100)));
+    }
+
+    /// ``UDSS_LLR_0043``, ``UDSS_LLR_0076`` — a parameter change affects only timers
+    /// started afterwards.
+    #[test]
+    fn a_parameter_change_does_not_move_a_running_timer() {
+        let mut s = server();
+        let (_, _) = outputs(s.t_data_ind(
+            Timestamp(0),
+            ai(TESTER, ECU),
+            &[0x22, 0xF1, 0x90],
+            SResult::Ok,
+            ServerRx::Request { session: None },
+        ));
+        let (_, ok) = outputs(s.set_parameter(
+            Timestamp(10),
+            uds_session::ServerParameter::P2ServerMax(500),
+        ));
+        assert!(ok.is_ok());
+        assert_eq!(s.next_deadline(), Some(Timestamp(50)));
+        let (_, _) = outputs(s.tick(Timestamp(50)));
+        let (_, _) = outputs(s.t_data_ind(
+            Timestamp(60),
+            ai(TESTER, ECU),
+            &[0x22, 0xF1, 0x90],
+            SResult::Ok,
+            ServerRx::Request { session: None },
+        ));
+        assert_eq!(s.next_deadline(), Some(Timestamp(560)));
     }
 }
