@@ -89,6 +89,7 @@ mod rejection;
 mod result;
 mod server;
 mod time;
+mod timer;
 
 pub use addressing::{
     Address, AddressExtension, Ai, ChannelAddressing, Mtype, PeerIdentity, TaType,
