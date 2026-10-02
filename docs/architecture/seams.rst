@@ -520,9 +520,12 @@ The transport seam
    flows, so an expected close is a step in a prescribed sequence and not a failure. Typing
    it as an error would put a conformant flow into the branch ``UDSSVC_ARCH_0016`` argues
    callers learn to ignore — the same mistake, one seam lower. It carries whether the close
-   was expected and nothing more, because the driver's decision is binary: reconnect and
-   repeat routing activation, or fail the exchange. A transport with no connections never
-   emits it, exactly as one that never truncates never emits ``DataTooLong``.
+   was expected and nothing more, and that is informational: re-establishing the connection
+   is never this crate's. ISO 13400-2:2019 REQ 8.DoIP-144 puts the routing activation
+   request on the client entity, so a server is reconnected *to* and never reconnects, and
+   a client's own reconnection is its transport's business below this seam. A transport
+   with no connections never emits it, exactly as one that never truncates never emits
+   ``DataTooLong``.
 
    Rationale: this crate calls out to a transport, so this crate declares what it calls. The
    trait is a transport's whole obligation to the stack: carry bytes in both directions, say how
