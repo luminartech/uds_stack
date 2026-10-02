@@ -6,6 +6,8 @@
 //! a running timer expires. ``UDSS_LLR_0079`` — expiry is evaluated only when a timestamp
 //! is supplied, which is why nothing here reads a clock. ``UDSS_LLR_0080`` — the deadline
 //! is the first timestamp at which a supplied timestamp would expire the timer.
+//! ``UDSS_LLR_0186`` — a reading may be taken a lead ahead of the expiry, without
+//! changing what the timer was loaded with.
 
 use crate::time::Timestamp;
 
@@ -58,11 +60,23 @@ impl Timer {
 
     /// Whether a timestamp of `now` expires this timer (``UDSS_LLR_0077``).
     pub(crate) fn expired(&self, now: Timestamp, rule: Expiry) -> bool {
+        self.expired_by(now, 0, rule)
+    }
+
+    /// Whether a timestamp of `now` falls `lead` milliseconds or less before this timer's
+    /// expiry: [`Timer::expired`] against the loaded value less `lead`, saturating at
+    /// zero, so a `lead` not less than the loaded value is met at the start.
+    ///
+    /// ``UDSS_LLR_0117`` with ``UDSS_LLR_0186``. The timer stays loaded with the full
+    /// value (``UDSS_LLR_0076``): the lead is applied where the timer is read, so the
+    /// window the requirement names and the instant it is reported at stay distinct.
+    pub(crate) fn expired_by(&self, now: Timestamp, lead: u32, rule: Expiry) -> bool {
         self.running.is_some_and(|r| {
             let elapsed = now.interval_since(r.start);
+            let at = r.loaded.saturating_sub(lead);
             match rule {
-                Expiry::Reaches => elapsed >= r.loaded,
-                Expiry::Exceeds => elapsed > r.loaded,
+                Expiry::Reaches => elapsed >= at,
+                Expiry::Exceeds => elapsed > at,
             }
         })
     }
@@ -72,8 +86,15 @@ impl Timer {
     /// millisecond past the boundary: reporting the boundary itself makes a caller that
     /// wakes exactly then tick, find nothing, and spin until the clock advances.
     pub(crate) fn deadline(&self, rule: Expiry) -> Option<Timestamp> {
+        self.deadline_by(0, rule)
+    }
+
+    /// The first timestamp at which [`Timer::expired_by`] with the same `lead` would
+    /// hold, or `None` while stopped: [`Timer::deadline`] moved `lead` milliseconds
+    /// earlier, but never before the start.
+    pub(crate) fn deadline_by(&self, lead: u32, rule: Expiry) -> Option<Timestamp> {
         self.running.map(|r| {
-            let at = r.start.0.wrapping_add(r.loaded);
+            let at = r.start.0.wrapping_add(r.loaded.saturating_sub(lead));
             Timestamp(match rule {
                 Expiry::Reaches => at,
                 Expiry::Exceeds => at.wrapping_add(1),
@@ -129,5 +150,43 @@ mod tests {
         assert!(t.expired(Timestamp(15), Expiry::Reaches));
         t.stop();
         assert_eq!(t.deadline(Expiry::Reaches), None);
+    }
+
+    /// ``UDSS_LLR_0186`` — a lead moves the expiry earlier by its own length, across the
+    /// timestamp wrap (``UDSS_LLR_0019``), without changing the loaded value.
+    #[test]
+    fn a_lead_expires_the_timer_early_across_the_wrap() {
+        let mut t = Timer::STOPPED;
+        t.start(Timestamp(u32::MAX - 9), 50);
+        // Loaded 50 from MAX-9: expiry at 40; a lead of 10 brings it to 30.
+        assert!(!t.expired_by(Timestamp(29), 10, Expiry::Reaches));
+        assert!(t.expired_by(Timestamp(30), 10, Expiry::Reaches));
+        assert!(!t.expired_by(Timestamp(30), 10, Expiry::Exceeds));
+        assert!(t.expired_by(Timestamp(31), 10, Expiry::Exceeds));
+        assert_eq!(t.deadline_by(10, Expiry::Reaches), Some(Timestamp(30)));
+        assert_eq!(t.deadline_by(10, Expiry::Exceeds), Some(Timestamp(31)));
+        // A lead of zero is the plain timer.
+        assert_eq!(
+            t.deadline_by(0, Expiry::Reaches),
+            t.deadline(Expiry::Reaches)
+        );
+        assert!(!t.expired(Timestamp(39), Expiry::Reaches));
+        assert!(t.expired(Timestamp(40), Expiry::Reaches));
+    }
+
+    /// ``UDSS_LLR_0186`` — a lead not less than the loaded value saturates: the timer is
+    /// met at its start, never before it.
+    #[test]
+    fn a_lead_past_the_loaded_value_saturates_at_the_start() {
+        let mut t = Timer::STOPPED;
+        t.start(Timestamp(u32::MAX), 50);
+        assert!(t.expired_by(Timestamp(u32::MAX), 50, Expiry::Reaches));
+        assert!(t.expired_by(Timestamp(u32::MAX), u32::MAX, Expiry::Reaches));
+        assert_eq!(
+            t.deadline_by(u32::MAX, Expiry::Reaches),
+            Some(Timestamp(u32::MAX))
+        );
+        assert!(!Timer::STOPPED.expired_by(Timestamp(0), 10, Expiry::Reaches));
+        assert_eq!(Timer::STOPPED.deadline_by(10, Expiry::Reaches), None);
     }
 }

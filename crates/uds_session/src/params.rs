@@ -50,6 +50,67 @@ pub struct ServerParams {
     pub p2_server_max: u32,
     /// `tP2*_Server_Max` — the enhanced response window.
     pub p2_star_server_max: u32,
+    /// How long before `tP2_Server` closes its overrun is indicated (``UDSS_LLR_0186``):
+    /// the server's own latency from that indication to a response-pending message
+    /// leaving, the server-side counterpart of a client's `ΔP2`.
+    ///
+    /// ISO 14229-2:2021 9.2 Table 3 makes `tP2_Server` and `tP2*_Server` performance
+    /// requirements, and 10.1.3 Figure 11 note d has the response-pending message sent
+    /// "within `tP2_Server`"; Table 7 runs the server's timer "to ensure that subsequent
+    /// … 78 are transmitted prior to the expired `tP2*_Server`". An indication at the
+    /// boundary leaves the message to go out after it, so ``UDSS_LLR_0117`` delivers it
+    /// this much earlier. The timer is still loaded with the full window
+    /// (``UDSS_LLR_0113``, ``UDSS_LLR_0116``), and the overrun names that window.
+    ///
+    /// Zero indicates at the boundary itself. The value is taken when the window opens,
+    /// so a change moves no window already open (``UDSS_LLR_0043``). A lead not less than
+    /// `p2_server_max` indicates every overrun on the first timestamp after the request,
+    /// and one above seven tenths of `p2_star_server_max` indicates the enhanced overrun
+    /// before ``UDSS_LLR_0119`` admits the next response-pending message;
+    /// [`ServerParams::is_well_formed`] checks both.
+    pub response_pending_lead: u32,
+}
+
+impl ServerParams {
+    /// Whether the response-pending lead fits both windows (``UDSS_LLR_0186``).
+    ///
+    /// It must be less than `p2_server_max`, so that the overrun of the default window is
+    /// not indicated on the request's own reception, and no more than `p2_star_server_max`
+    /// less ``UDSS_LLR_0119``'s spacing — ⌊0,7 × `p2_star_server_max`⌋ — so that the
+    /// enhanced overrun is indicated when a further response-pending message is
+    /// admissible. Construction does not check this: [`crate::Server::new`] is a `const
+    /// fn` used in `static`s and stays infallible, so an assembly asserts it where its
+    /// parameters are fixed.
+    ///
+    /// ```
+    /// use uds_session::ServerParams;
+    ///
+    /// const PARAMS: ServerParams = ServerParams {
+    ///     s3_server: 5_000,
+    ///     p2_server_max: 50,
+    ///     p2_star_server_max: 5_000,
+    ///     response_pending_lead: 10,
+    /// };
+    /// const { assert!(PARAMS.is_well_formed()) };
+    /// ```
+    #[must_use]
+    pub const fn is_well_formed(&self) -> bool {
+        let lead = self.response_pending_lead;
+        let enhanced = self
+            .p2_star_server_max
+            .saturating_sub(self.response_pending_spacing());
+        lead < self.p2_server_max && lead <= enhanced
+    }
+
+    /// ``UDSS_LLR_0119`` — ⌈3 × `tP2*_Server_Max` / 10⌉ in integer arithmetic, from the
+    /// parameter as it stands.
+    pub(crate) const fn response_pending_spacing(&self) -> u32 {
+        let p = self.p2_star_server_max;
+        let q = p / 10;
+        let r = p % 10;
+        q.saturating_mul(3)
+            .saturating_add(r.saturating_mul(3).saturating_add(9) / 10)
+    }
 }
 
 /// One server parameter, for setting it again.
@@ -70,6 +131,8 @@ pub enum ServerParameter {
     P2ServerMax(u32),
     /// `tP2*_Server_Max`.
     P2StarServerMax(u32),
+    /// The response-pending lead of ``UDSS_LLR_0186``.
+    ResponsePendingLead(u32),
 }
 
 /// The `tP_Client` reload pair a transport dictates.
@@ -178,15 +241,37 @@ mod tests {
     }
 
     /// ``UDSS_LLR_0119`` derives the response-pending spacing from `tP2*_Server_Max`
-    /// rather than taking a parameter, so `ServerParams` has three fields and not four.
+    /// rather than taking a parameter, so `ServerParams` has no field for it.
     #[test]
     fn the_server_has_no_spacing_parameter() {
         let p = ServerParams {
             s3_server: 5_000,
             p2_server_max: 50,
             p2_star_server_max: 5_000,
+            response_pending_lead: 0,
         };
         assert_eq!(p.p2_star_server_max, 5_000);
+    }
+
+    /// ``UDSS_LLR_0186`` — the lead must be less than `tP2_Server_Max` and no more than
+    /// `tP2*_Server_Max` less ``UDSS_LLR_0119``'s spacing.
+    #[test]
+    fn the_lead_is_bounded_by_both_windows() {
+        let with =
+            |p2_server_max, p2_star_server_max, response_pending_lead| ServerParams {
+                s3_server: 5_000,
+                p2_server_max,
+                p2_star_server_max,
+                response_pending_lead,
+            };
+        assert!(with(50, 5_000, 0).is_well_formed());
+        assert!(with(50, 5_000, 49).is_well_formed());
+        assert!(!with(50, 5_000, 50).is_well_formed());
+        // Spacing of 5001 is 1501, so the lead may be at most 3500.
+        assert!(with(5_000, 5_001, 3_500).is_well_formed());
+        assert!(!with(5_000, 5_001, 3_501).is_well_formed());
+        assert!(!with(0, 5_000, 0).is_well_formed());
+        assert!(!with(u32::MAX, u32::MAX, u32::MAX).is_well_formed());
     }
 
     /// ``UDSS_LLR_0132`` makes the reloads a pair a transport dictates together, so a

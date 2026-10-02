@@ -453,6 +453,7 @@ macro_rules! __uds_stage {
 /// #     s3_server: 5_000,
 /// #     p2_server_max: 50,
 /// #     p2_star_server_max: 5_000,
+/// #     response_pending_lead: 0,
 /// # };
 /// uds_server! {
 ///     Ecu: ReadDataByIdentifier, DataTransfer;

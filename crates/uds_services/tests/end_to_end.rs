@@ -383,6 +383,7 @@ const PARAMS: ServerParams = ServerParams {
     s3_server: 5_000,
     p2_server_max: 50,
     p2_star_server_max: 5_000,
+    response_pending_lead: 0,
 };
 
 /// Poll to completion with a no-op waker; every future here is ready within a bounded
@@ -599,6 +600,38 @@ fn a_slow_handler_gets_a_response_pending_then_its_answer() {
     assert_eq!(s.transport().sent_count, 2);
     // The driver asked for tP2_Server's deadline, and At(50) reached it.
     assert_eq!(s.transport().deadlines, 1);
+}
+
+/// ``UDSS_LLR_0186`` — with a response-pending lead of 10 ms the driver is woken for
+/// `tP2_Server` at 40, not 50, so the 0x78 goes out within the window: `At(39)` passes
+/// silently and `At(40)` is the deadline. The final response still follows.
+#[test]
+fn a_response_pending_lead_sends_the_0x78_within_the_window() {
+    let mut ecu = Ecu::new();
+    ecu.slow = 2;
+    let mut s = EcuServer::new(
+        ecu,
+        Scripted::new(&[
+            Ev::Ind(TaType::Physical, &[0x22, 0xF4, 0x0D]),
+            Ev::At(39),            // short of the deadline: nothing to report
+            Ev::At(40),            // tP2_Server less the lead: 0x78 goes out
+            Ev::Conf(SResult::Ok), // its confirmation, consumed mid-handler
+            Ev::Conf(SResult::Ok), // the final response's confirmation
+        ]),
+        ECU,
+        ServerParams {
+            response_pending_lead: 10,
+            ..PARAMS
+        },
+    );
+    run(&mut s);
+    let t = s.transport();
+    assert_eq!(t.sent(0), &[0x7F, 0x22, 0x78]);
+    // Sent once the indication, At(39) and At(40) had been consumed.
+    assert_eq!(t.sent_after.first(), Some(&3));
+    assert_eq!(t.sent(1), &[0x62, 0xF4, 0x0D, 0x40]);
+    assert_eq!(t.sent_count, 2);
+    assert_eq!(t.deadlines, 1);
 }
 
 /// ``UDSS_LLR_0061`` — the handler pends once, so the driver sees the deadline and sends
