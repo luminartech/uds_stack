@@ -1,38 +1,37 @@
-//! Compile-time checks on the reaction drain's shape.
-//!
-//! These functions are never called. Type-checking them is the test: if the signatures
-//! stop fitting together, the crate stops building.
+//! The reaction drain's shape and its two documented properties.
 
-use uds_session::{Reaction, Rejection};
+use uds_session::{Association, Server, ServerParams, ServerReaction, Timestamp};
+
+const PARAMS: ServerParams = ServerParams {
+    s3_server: 5_000,
+    p2_server_max: 50,
+    p2_star_server_max: 5_000,
+};
 
 /// ``UDSS_LLR_0011`` — outputs are drained by the caller, never pushed.
-/// ``UDSS_LLR_0081`` — `finish` consumes the drain, so a rejection report cannot be
-/// read before the expiry indications that must precede it.
-///
-/// The output type is a placeholder here: this task owns `Reaction`'s shape, and the
-/// role output types arrive with their roles. `tests/server_surface.rs` exercises the
-/// same drain over `ServerOutput`.
-#[allow(dead_code, reason = "type-checked, never run; see the module comment")]
-fn a_reaction_is_drained_then_finished(
-    mut r: Reaction<'_, '_, u8>,
-) -> Result<(), Rejection> {
+/// ``UDSS_LLR_0081`` — `finish` consumes the drain.
+fn drained_then_finished(mut r: ServerReaction<'_, '_, 1>) -> bool {
     for _output in r.outputs() {}
-    r.finish()
+    r.finish().is_ok()
 }
 
-/// The drain borrows, so the reaction outlives it and can be drained more than once
-/// before the outcome is read. What must not compile is a drain that *consumes* the
-/// reaction: `for _ in r {}` used to, and silently discarded the report.
-#[allow(dead_code, reason = "type-checked, never run; see the module comment")]
-fn draining_twice_still_reaches_the_outcome(
-    mut r: Reaction<'_, '_, u8>,
-) -> Result<(), Rejection> {
-    for _output in r.outputs() {}
-    for _output in r.outputs() {}
-    r.finish()
-}
-
+/// A `tick` on a fresh server expires nothing and is accepted; draining it twice yields
+/// nothing more, and the outcome is still reachable afterwards.
 #[test]
-fn the_shape_compiles() {
-    // The assertion is the build itself.
+fn a_fresh_tick_is_empty_and_accepted() {
+    let mut server = Server::new([Association::EMPTY; 1], PARAMS);
+    let mut r = server.tick(Timestamp(0));
+    assert_eq!(r.outputs().count(), 0);
+    assert_eq!(r.outputs().count(), 0);
+    assert!(r.finish().is_ok());
+    let r = server.tick(Timestamp(1));
+    assert!(drained_then_finished(r));
+}
+
+/// Finishing without draining is accepted; the session is usable afterwards.
+#[test]
+fn finish_without_draining_is_accepted() {
+    let mut server = Server::new([Association::EMPTY; 1], PARAMS);
+    assert!(server.tick(Timestamp(0)).finish().is_ok());
+    assert_eq!(server.next_deadline(), None);
 }

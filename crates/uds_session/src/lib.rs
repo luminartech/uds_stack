@@ -42,10 +42,11 @@
 //!
 //! - **``UDSS_LLR_0011``** — outputs are retrieved, not pushed. Nothing here delivers an
 //!   output through a callback, handler or caller-supplied trait implementation: no public
-//!   type takes a trait object or a function, storage is supplied by value for the same
-//!   reason, and the one trait a caller can name — [`KeepAliveMode`], which selects a
-//!   [`Client`]'s mode and carries no output — is sealed, so no implementation of it can
-//!   be the caller's. Every input returns a [`Reaction`] the caller drains.
+//!   type takes a caller-supplied trait object or function, and the one trait in a public
+//!   bound, [`Drain`], is sealed. Storage is supplied by value for the same reason, and
+//!   the one other trait a caller can name — [`KeepAliveMode`], which selects a
+//!   [`Client`]'s mode and carries no output — is sealed too, so no implementation of it
+//!   can be the caller's. Every input returns a [`Reaction`] the caller drains.
 //! - **``UDSS_LLR_0013``** — no payload is retained. No type here holds an owned buffer.
 //! - **``UDSS_LLR_0014``** — an output refers to caller-owned data. [`ServerOutput`] and
 //!   [`ClientOutput`] borrow `&'d [u8]` from the input that supplied it, and the
@@ -87,6 +88,7 @@ mod params;
 mod reaction;
 mod rejection;
 mod result;
+mod sealed;
 mod server;
 mod time;
 mod timer;

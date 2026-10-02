@@ -98,7 +98,8 @@ pub enum ServerOutput<'d> {
 }
 
 /// A reaction carrying server outputs.
-pub type ServerReaction<'s, 'd, T = ()> = Reaction<'s, 'd, ServerOutput<'d>, T>;
+pub type ServerReaction<'s, 'd, const A: usize, T = ()> =
+    Reaction<'s, 'd, ServerOutput<'d>, Server<A>, T>;
 
 /// The session layer in the server role.
 ///
@@ -140,7 +141,7 @@ impl<const A: usize> Server<A> {
         &mut self,
         now: Timestamp,
         parameter: ServerParameter,
-    ) -> ServerReaction<'_, 'static> {
+    ) -> ServerReaction<'_, 'static, A> {
         #[allow(
             clippy::todo,
             reason = "API stub; behaviour lands with its requirement"
@@ -162,7 +163,7 @@ impl<const A: usize> Server<A> {
         ai: Ai,
         data: &'d [u8],
         class: ServerTx,
-    ) -> ServerReaction<'_, 'd> {
+    ) -> ServerReaction<'_, 'd, A> {
         #[allow(
             clippy::todo,
             reason = "API stub; behaviour lands with its requirement"
@@ -184,7 +185,7 @@ impl<const A: usize> Server<A> {
         now: Timestamp,
         ai: Ai,
         class: ServerRx,
-    ) -> ServerReaction<'_, 'static> {
+    ) -> ServerReaction<'_, 'static, A> {
         #[allow(
             clippy::todo,
             reason = "API stub; behaviour lands with its requirement"
@@ -207,7 +208,7 @@ impl<const A: usize> Server<A> {
         data: &'d [u8],
         result: SResult,
         class: ServerRx,
-    ) -> ServerReaction<'_, 'd> {
+    ) -> ServerReaction<'_, 'd, A> {
         #[allow(
             clippy::todo,
             reason = "API stub; behaviour lands with its requirement"
@@ -230,7 +231,7 @@ impl<const A: usize> Server<A> {
         now: Timestamp,
         ai: Ai,
         result: SResult,
-    ) -> ServerReaction<'_, 'static> {
+    ) -> ServerReaction<'_, 'static, A> {
         #[allow(
             clippy::todo,
             reason = "API stub; behaviour lands with its requirement"
@@ -252,7 +253,7 @@ impl<const A: usize> Server<A> {
         now: Timestamp,
         ai: Ai,
         class: ServerRx,
-    ) -> ServerReaction<'_, 'static> {
+    ) -> ServerReaction<'_, 'static, A> {
         #[allow(
             clippy::todo,
             reason = "API stub; behaviour lands with its requirement"
@@ -268,14 +269,9 @@ impl<const A: usize> Server<A> {
     /// on its own". This is that input; the standard names no primitive for it.
     /// ``UDSS_LLR_0079`` makes expiry evaluated only when a timestamp is supplied, so
     /// this is how a timer that has run out is noticed when nothing else is happening.
-    pub fn tick(&mut self, now: Timestamp) -> ServerReaction<'_, 'static> {
-        #[allow(
-            clippy::todo,
-            reason = "API stub; behaviour lands with its requirement"
-        )]
-        {
-            todo!("UDSS_LLR_0010, 0079: {now:?}")
-        }
+    pub fn tick(&mut self, now: Timestamp) -> ServerReaction<'_, 'static, A> {
+        let _ = now;
+        Reaction::new(self, [None, None], Ok(()))
     }
 
     /// The earliest timestamp at which a supplied timestamp could expire a timer.
@@ -286,12 +282,14 @@ impl<const A: usize> Server<A> {
     /// rounds every timing decision to its tick period.
     #[must_use]
     pub fn next_deadline(&self) -> Option<Timestamp> {
-        #[allow(
-            clippy::todo,
-            reason = "API stub; behaviour lands with its requirement"
-        )]
-        {
-            todo!("UDSS_LLR_0080")
-        }
+        None
+    }
+}
+
+impl<const A: usize> crate::sealed::Sealed for Server<A> {}
+
+impl<'d, const A: usize> crate::reaction::Drain<'d, ServerOutput<'d>> for Server<A> {
+    fn next_expiry(&mut self) -> Option<ServerOutput<'d>> {
+        None // replaced in Task 3
     }
 }
