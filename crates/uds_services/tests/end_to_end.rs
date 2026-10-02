@@ -564,19 +564,14 @@ fn a_failed_session_response_selects_nothing() {
     assert_eq!(s.transport().sent(1), &[0x7F, 0x27, 0x7F]);
 }
 
-/// Spec §3.5 — the driver's future's size is reported so a bare-metal stack budget has a
-/// number.
-///
-/// Spec §3.5 also asks for an `assert_send` on this future; it does not hold, and the
-/// assertion is withheld rather than the driver changed. `Server::step` keeps
-/// `UDSSVC_ARCH_0009` rule 3's input as a `Cell<bool>` local (`pending_sent`, a local
-/// so that `Server` stays `Sync` and usable as a `static`) and holds `&Cell<bool>`
-/// across the handler's and the transport's `.await`s in `serve`. `Cell` is not `Sync`,
-/// so `&Cell<bool>` is not `Send`, and neither is the future.
+/// Spec §3.5 — the driver's future is `Send` for a `Send` transport and service set, and
+/// its size is reported so a bare-metal stack budget has a number.
 #[test]
-fn the_step_future_size_is_known() {
+fn the_step_future_is_send_and_its_size_is_known() {
+    fn assert_send<F: Send>(_: &F) {}
     let mut s = EcuServer::new(Ecu::new(), Scripted::new(&[]), PARAMS);
     let fut = s.step();
+    assert_send(&fut);
     let size = core::mem::size_of_val(&fut);
     assert!(size < 4_096, "step future is {size} bytes");
 }

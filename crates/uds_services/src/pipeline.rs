@@ -17,7 +17,7 @@ use crate::{
 };
 use crate::{Responded, ResponseSink};
 use automotive_wire_codec::Sink;
-use core::cell::Cell;
+use core::sync::atomic::{AtomicBool, Ordering};
 use uds_protocol::{
     Decode, DiagnosticSessionType, Encode, NegativeResponse, NegativeResponseCode, Request,
     UdsServiceType,
@@ -165,17 +165,20 @@ pub struct Settling {
 /// suppression gate (``UDSSVC_ARCH_0009``). Writes a negative response itself; the
 /// handler's bytes, if any, are discarded by rewinding. `pending_sent` is read here, at
 /// the moment of settlement, which is what lets a 0x78 sent while the handler ran lift
-/// both suppressions (rule 3).
+/// both suppressions (rule 3). An atomic rather than a `Cell`: the driver sets it through
+/// a shared reference while the handler future is live, and that reference must be
+/// `Sync` for the driver's `step` future to stay `Send`. One writer and one reader in
+/// one task, so `Relaxed` suffices.
 #[doc(hidden)]
 pub fn settle(
     ai: Ai,
     settling: Settling,
-    pending_sent: &Cell<bool>,
+    pending_sent: &AtomicBool,
     outcome: Result<Option<DiagnosticSessionType>, NegativeResponseCode>,
     out: &mut ResponseSink<'_>,
 ) -> Responded {
     let Settling { sid, suppress_bit } = settling;
-    let pending_sent = pending_sent.get();
+    let pending_sent = pending_sent.load(Ordering::Relaxed);
     let outcome = if out.refused() {
         Err(NegativeResponseCode::ResponseTooLong)
     } else {
@@ -290,7 +293,7 @@ mod tests {
     use crate::state::{ProtocolState, State};
     use crate::{Responded, ResponseSink};
     use automotive_wire_codec::Sink;
-    use core::cell::Cell;
+    use core::sync::atomic::AtomicBool;
     use uds_protocol::NegativeResponseCode as N;
     use uds_protocol::{DiagnosticSessionType as S, UdsServiceType as U};
     use uds_session::{Address, Ai, Mtype, TaType};
@@ -615,7 +618,7 @@ mod tests {
         let mut buf = [0_u8; 8];
         let mut out = ResponseSink::new(&mut buf, None);
         let _ = out.write_all(&[0x62, 0xF1]);
-        let no = Cell::new(false);
+        let no = AtomicBool::new(false);
         let r = settle(
             ai(TaType::Physical),
             sid(0x22),
@@ -632,7 +635,7 @@ mod tests {
     fn functional_silence_is_overridden_by_a_sent_response_pending() {
         let mut buf = [0_u8; 8];
         let mut out = ResponseSink::new(&mut buf, None);
-        let no = Cell::new(false);
+        let no = AtomicBool::new(false);
         let r = settle(
             ai(TaType::Functional),
             sid(0x22),
@@ -641,7 +644,7 @@ mod tests {
             &mut out,
         );
         assert_eq!(r, Responded::Suppressed { session: None });
-        let yes = Cell::new(true);
+        let yes = AtomicBool::new(true);
         let r = settle(
             ai(TaType::Functional),
             sid(0x22),
@@ -658,7 +661,7 @@ mod tests {
         let mut buf = [0_u8; 8];
         let mut out = ResponseSink::new(&mut buf, None);
         let _ = out.write_all(&[0x50, 0x03, 0, 50, 1, 244]);
-        let no = Cell::new(false);
+        let no = AtomicBool::new(false);
         let bit = Settling {
             sid: 0x10,
             suppress_bit: true,
@@ -692,7 +695,7 @@ mod tests {
         let mut buf = [0_u8; 4];
         let mut out = ResponseSink::new(&mut buf, None);
         let _ = out.write_all(&[0x62, 0xF1, 0x90, 1, 2]);
-        let no = Cell::new(false);
+        let no = AtomicBool::new(false);
         let r = settle(ai(TaType::Physical), sid(0x22), &no, Ok(None), &mut out);
         assert_eq!(r, Responded::Yes { session: None });
         assert_eq!(out.written_bytes(), &[0x7F, 0x22, 0x14]);

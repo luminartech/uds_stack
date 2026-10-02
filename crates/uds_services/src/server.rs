@@ -16,9 +16,9 @@ use crate::services::{Responded, ServiceSet};
 use crate::state::ProtocolState;
 use crate::storage::{Buffers, Storage};
 use crate::transport::{TransportEvent, UdsTransport};
-use core::cell::Cell;
 use core::future::Future;
 use core::pin::Pin;
+use core::sync::atomic::{AtomicBool, Ordering};
 use uds_protocol::DiagnosticSessionType;
 pub use uds_session::ServerParams;
 use uds_session::{
@@ -154,10 +154,12 @@ impl<A: ServiceSet, T: UdsTransport, const PEERS: usize> Server<A, T, PEERS> {
         };
 
         let mut sink = ResponseSink::new(response, outbound_max);
-        // UDSSVC_ARCH_0009 rule 3's input, fresh for this request. A local rather than a
-        // field: a `Cell` is not `Sync`, and as a field it would make every `Server`
-        // unusable as the `static` that `new` exists to construct in place.
-        let pending_sent = Cell::new(false);
+        // UDSSVC_ARCH_0009 rule 3's input, fresh for this request, so a local rather
+        // than a field. The driver learns the answer while the handler future is live,
+        // and a shared reference is the one thing that can coexist with that future; an
+        // atomic rather than a `Cell`, because that reference is held across `.await`
+        // and must be `Sync` for this future to stay `Send`.
+        let pending_sent = AtomicBool::new(false);
         // Scoped, because `pin!` binds to the enclosing block: `handler` drops before
         // `sink` is read.
         let (outcome, deferred) = {
@@ -385,7 +387,7 @@ async fn serve<H: Future<Output = Responded>, T: UdsTransport, const PEERS: usiz
     pending: &mut Option<Pending>,
     concurrent: &mut [u8],
     serving: Serving,
-    pending_sent: &Cell<bool>,
+    pending_sent: &AtomicBool,
 ) -> Result<(Responded, Deferred), T::Error> {
     let mut deferred = Deferred::NONE;
     let mut deadline = session.next_deadline();
@@ -413,7 +415,7 @@ async fn serve<H: Future<Output = Responded>, T: UdsTransport, const PEERS: usiz
                 if o.sent_pending {
                     // UDSSVC_ARCH_0009 rule 3 — read by `settle` when the handler
                     // settles, which may be after this instant.
-                    pending_sent.set(true);
+                    pending_sent.store(true, Ordering::Relaxed);
                 }
                 deferred = deferred.merge(o.deferred);
                 deadline = session.next_deadline();
