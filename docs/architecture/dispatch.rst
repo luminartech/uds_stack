@@ -231,10 +231,10 @@ Mandatory preconditions
    evaluated yet: authentication is architecture open question 4, and security joins with
    security state.
 
-   **Check 3 is partly fixed by the standard, and this crate answers the fixed part.** Clause
-   10.2's Table 23 states, for each service it lists, whether it is available in the
-   ``defaultSession``. Twelve rows carry an unqualified **"not applicable"**, and those twelve
-   are not a policy an integrator chooses:
+   **Check 3 is partly fixed by the standard, and this crate answers the fixed part.**
+   Clause 10.2's Table 23 states, for each service it lists, whether it is available in the
+   ``defaultSession``. Twelve rows carry an unqualified **"not applicable"**, and those
+   twelve are not a policy an integrator chooses:
 
    ``SecurityAccess`` (0x27), ``CommunicationControl`` (0x28), ``SecuredDataTransmission``
    (0x84), ``ControlDTCSetting`` (0x85), ``LinkControl`` (0x87),
@@ -255,7 +255,8 @@ Mandatory preconditions
         - a — implementation specific whether it is also allowed during the defaultSession
       * - ``ReadDataByIdentifier`` (0x22), ``ReadScalingDataByIdentifier`` (0x24),
           ``WriteDataByIdentifier`` (0x2E)
-        - b — secured dataIdentifiers require ``SecurityAccess``, hence a non-default session
+        - b — secured dataIdentifiers require ``SecurityAccess``, hence a non-default
+          session
       * - ``ReadMemoryByAddress`` (0x23), ``WriteMemoryByAddress`` (0x3D)
         - c — secured memory areas, likewise
       * - ``DynamicallyDefineDataIdentifier`` (0x2C)
@@ -268,19 +269,20 @@ Mandatory preconditions
    application's declaration otherwise. ``UDSSVC_ARCH_0013``'s assembly list already names
    every supported service, so the fixed half needs no new input from anyone.
 
-   This follows ``UDSSVC_ARCH_0034`` rather than preference: the standard fixes the twelve, so
-   the twelve are implemented here; the standard defers the five, so the five are delegated. A
-   server answering a ``RequestDownload`` in the ``defaultSession`` is not exercising a choice,
-   it is failing a check nobody asked it to make. An earlier version of this element made the
-   whole check application-declared.
+   This follows ``UDSSVC_ARCH_0034`` rather than preference: the standard fixes the twelve,
+   so the twelve are implemented here; the standard defers the five, so the five are
+   delegated. A server answering a ``RequestDownload`` in the ``defaultSession`` is not
+   exercising a choice, it is failing a check nobody asked it to make. An earlier version of
+   this element made the whole check application-declared.
 
-   **What it costs**, stated because it is the first place this crate overrides an integrator
-   rather than merely constraining one: a vehicle programme whose own session matrix disagrees
-   with Table 23 on one of the twelve will find this crate refusing the request. Table 23 is
-   normative and the refusal is correct, but whether an escape hatch is owed — and if so
-   whether it is per service or whole-table — is not settled here. Note also that four of the
-   twelve (0x2A, 0x2F, 0x87, 0x84) have no ``uds_protocol`` message type, so a third of the
-   rule is unreachable for the reason ``UDSSVC_ARCH_0038`` records at the end.
+   **What it costs**, stated because it is the first place this crate overrides an
+   integrator rather than merely constraining one: a vehicle programme whose own session
+   matrix disagrees with Table 23 on one of the twelve will find this crate refusing the
+   request. Table 23 is normative and the refusal is correct, but whether an escape hatch is
+   owed — and if so whether it is per service or whole-table — is not settled here. Note
+   also that four of the twelve (0x2A, 0x2F, 0x87, 0x84) have no ``uds_protocol`` message
+   type, so a third of the rule is unreachable for the reason ``UDSSVC_ARCH_0038`` records
+   at the end.
 
    Two orderings here are worth stating explicitly, because both are counter-intuitive and
    both are observable. Figure 5 is an image in the markdown conversion of the standard and
@@ -447,9 +449,9 @@ Data parameters
    write it — would answer a request naming an identifier twice with one record, and be
    non-conformant.
 
-   The same clause gives the server one limit it may impose: "the server may limit the number
-   of dataIdentifiers that can be simultaneously requested as agreed upon by the vehicle
-   manufacturer and system supplier". That is a per-server constant of the kind
+   The same clause gives the server one limit it may impose: "the server may limit the
+   number of dataIdentifiers that can be simultaneously requested as agreed upon by the
+   vehicle manufacturer and system supplier". That is a per-server constant of the kind
    ``UDSSVC_ARCH_0033`` already collects on a service trait, and nothing in the set declares
    it yet. Exceeding it is a ``requestOutOfRange`` (0x31) by the same path as an unsupported
    identifier.
@@ -499,9 +501,9 @@ Suppression
          requirement for responses with NRCs SNS, SFNS, SNSIAS, SFNSIAS and ROOR on
          functionally addressed requests.**
 
-      Tables 4 and 5 carry only "independent of the suppressPosRspMsgIndicationBit value", so
-      a reading taken from them alone gets rule 3 half right — which is the failure mode this
-      rule exists to prevent.
+      Tables 4 and 5 carry only "independent of the suppressPosRspMsgIndicationBit value",
+      so a reading taken from them alone gets rule 3 half right — which is the failure mode
+      this rule exists to prevent.
 
    .. uml::
       :align: center
@@ -570,10 +572,9 @@ Suppression
    ``UDSS_LLR_0062`` refuse a submission for a duplicated or exhausted transmission
    association, which can catch the *first* offer for a request with nothing yet sent.
 
-   What remains is the accepted submission whose transmission later fails.
-   ``UDSS_LLR_0110`` has such a transmission never reach the data link, so the client saw no
-   response-pending and is still waiting out ``tP2``, where an unsuppressed final response is
-   harmless.
+   What remains is the accepted submission whose transmission later fails. ``UDSS_LLR_0110``
+   has such a transmission never reach the data link, so the client saw no response-pending
+   and is still waiting out ``tP2``, where an unsuppressed final response is harmless.
 
    The asymmetry settles the rest. Treating an accepted offer as sent can cost one message a
    waiting client accepts; treating a sent response-pending as unsent produces silence where
@@ -639,9 +640,9 @@ Suppression
 
    REQ 5.6's own case is discharged without a check at all. Figure 5's first mandatory
    condition settles an unsupported service at 0x11 in the precondition stage, so no handler
-   runs and ``UDSSVC_ARCH_0031``'s ``due`` never fires for one; and a service the server does
-   not implement has no trait impl from which ``MAY_RESPOND_PENDING`` could be read. Clause
-   8.7's own ordering satisfies it twice over.
+   runs and ``UDSSVC_ARCH_0031``'s ``due`` never fires for one; and a service the server
+   does not implement has no trait impl from which ``MAY_RESPOND_PENDING`` could be read.
+   Clause 8.7's own ordering satisfies it twice over.
 
    The bytes are this crate's for the reason ``UDSSVC_ARCH_0010`` already gives: a
    response-pending is a negative response — ``0x7F``, the echoed service identifier,
@@ -690,19 +691,19 @@ The service-specific check
    inference from silence** — ``UDSSVC_ARCH_0001`` holds that a clause with no seam and no
    implementation is unbuilt, not out of scope. Until it is built, ``UDSSVC_ARCH_0004``'s
    pipeline ends at the handler and a handler returns "a code of its own choosing", which
-   means the per-service order is the application's to get right. That is the arrangement this
-   crate exists to remove, and it is temporary.
+   means the per-service order is the application's to get right. That is the arrangement
+   this crate exists to remove, and it is temporary.
 
-   What is not yet designed is the seam. A service trait would have to express its evaluation
-   order in a form the dispatcher can apply, and the candidates differ sharply in cost: a
-   declared sequence of predicates per trait, a fixed set of typed pre-handler hooks per
-   service, or generated code per figure. Choosing between them wants more than one figure
-   read in full, which is a pass of its own.
+   What is not yet designed is the seam. A service trait would have to express its
+   evaluation order in a form the dispatcher can apply, and the candidates differ sharply in
+   cost: a declared sequence of predicates per trait, a fixed set of typed pre-handler hooks
+   per service, or generated code per figure. Choosing between them wants more than one
+   figure read in full, which is a pass of its own.
 
-   Rationale for recording it now rather than then: four services are in the first slice, and
-   their figures are small enough to carry in the handler contract meanwhile. The cost of not
-   recording it is that the gap reads as a decision — the set would appear to have concluded
-   that per-service ordering is the application's, which it has not.
+   Rationale for recording it now rather than then: four services are in the first slice,
+   and their figures are small enough to carry in the handler contract meanwhile. The cost
+   of not recording it is that the gap reads as a decision — the set would appear to have
+   concluded that per-service ordering is the application's, which it has not.
 
    An earlier version of this set had no element here at all, and none of ``not-owned``,
    ``UDSSVC_ARCH_0001``'s in-scope list or :doc:`open-questions` mentioned these figures.
@@ -778,21 +779,21 @@ Extension points
    requires 0x21, and no amount of care inside the check itself fixes that.
 
    The two hooks in Figure 5 are distinct and differently placed — one **manufacturer**, one
-   **supplier** — and an earlier version of this element gave them a single row reading "Figure
-   5 has two such hooks". They are separated above because a caller attaching a check to the
-   wrong one of them gets the wrong precedence against the service-identifier and security
-   checks between them.
+   **supplier** — and an earlier version of this element gave them a single row reading
+   "Figure 5 has two such hooks". They are separated above because a caller attaching a
+   check to the wrong one of them gets the wrong precedence against the service-identifier
+   and security checks between them.
 
    **A transcription trap in the source, recorded so it is not re-derived.** The two figures
-   draw these hooks with *opposite polarity*: Figure 5's nodes ask "failure detected?" and take
-   the NRC exit on **YES**, while Figure 6's asks a check question and takes the NRC exit on
-   **NO**. The behaviour is the same; only the drawing differs. Whoever authors the requirement
-   should read the figure rather than copy this table.
+   draw these hooks with *opposite polarity*: Figure 5's nodes ask "failure detected?" and
+   take the NRC exit on **YES**, while Figure 6's asks a check question and takes the NRC
+   exit on **NO**. The behaviour is the same; only the drawing differs. Whoever authors the
+   requirement should read the figure rather than copy this table.
 
-   Figure 5's busy check also carries a Key note narrowing it: the request "cannot be accepted
-   because another diagnostic task is already requested and in progress **by a different
-   client**". That is narrower than "the server is busy", and it is a per-channel question
-   under ``UDSSVC_ARCH_0035`` rather than a global one.
+   Figure 5's busy check also carries a Key note narrowing it: the request "cannot be
+   accepted because another diagnostic task is already requested and in progress **by a
+   different client**". That is narrower than "the server is busy", and it is a per-channel
+   question under ``UDSSVC_ARCH_0035`` rather than a global one.
 
    Clause 8.7.2 carries a note that, given the choices available across these figures, a
    specific negative response code is not guaranteed for every possible test-pattern
@@ -828,10 +829,10 @@ outside that range and start the default session, unless a programming session i
 Two details of that wording matter to where the line falls, and both were missing from an
 earlier version of this passage.
 
-**The second exception is conditional.** The clause opens "**If a server supports services in
-the range of 0x00 to 0x0F** receives diagnostic requests in the range of 0x00 to 0x0F …". The
-whole rule is predicated on the server implementing something in that range — which is a fact
-``UDSSVC_ARCH_0013``'s assembly list holds and a byte-level driver cannot see. That
+**The second exception is conditional.** The clause opens "**If a server supports services
+in the range of 0x00 to 0x0F** receives diagnostic requests in the range of 0x00 to 0x0F …".
+The whole rule is predicated on the server implementing something in that range — which is a
+fact ``UDSSVC_ARCH_0013``'s assembly list holds and a byte-level driver cannot see. That
 strengthens the proposed split rather than complicating it: classification needs what this
 crate knows.
 

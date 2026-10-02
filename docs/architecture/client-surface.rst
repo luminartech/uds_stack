@@ -118,13 +118,13 @@ The elements
    :origin: derived
    :tags: client; addressing
 
-   Rationale: a functional request reaches every server on the bus, so zero or more may answer — and
-   by ``UDSSVC_ARCH_0009``, the servers that do not support it answer with silence. There
-   is no single response to return, so typing one would force the API to lie about the
-   common case. A functionally addressed request is instead typed as a sequence of zero or
-   more responses, each carrying the source address of the server that produced it, and the
-   sequence is *lending*: a response borrows the receive buffer and is valid only until the
-   next is taken.
+   Rationale: a functional request reaches every server on the bus, so zero or more may
+   answer — and by ``UDSSVC_ARCH_0009``, the servers that do not support it answer with
+   silence. There is no single response to return, so typing one would force the API to lie
+   about the common case. A functionally addressed request is instead typed as a sequence of
+   zero or more responses, each carrying the source address of the server that produced it,
+   and the sequence is *lending*: a response borrows the receive buffer and is valid only
+   until the next is taken.
 
    The source address is what makes the sequence usable. ``uds_on_ip``'s indication
    records that for a functionally addressed request each responding server sets its own
@@ -158,8 +158,8 @@ The elements
    timeout, and a timeout is a fault. Suppression is not a fault: the client asked for it,
    or clause 8.7 required it.
 
-   This mirrors ``Responded::Suppressed`` on the server side (``UDSSVC_ARCH_0016``), and it is
-   the same distinction the binding already draws — its completion type separates a
+   This mirrors ``Responded::Suppressed`` on the server side (``UDSSVC_ARCH_0016``), and it
+   is the same distinction the binding already draws — its completion type separates a
    response arriving from a request being transmitted with no response expected.
 
 .. arch:: One identifier vocabulary serves both roles
@@ -169,12 +169,12 @@ The elements
    :origin: derived
    :tags: client; identifiers
 
-   Rationale: a vehicle programme writes one identifier catalogue and builds both an ECU and a tester
-   against it. Two types for one catalogue means two places to add an identifier and no way
-   for the compiler to notice when only one of them was updated. The identifier types an
-   application defines are therefore the same types used to implement its server handlers
-   and to issue its client requests: there is not a server-side identifier type and a
-   client-side one.
+   Rationale: a vehicle programme writes one identifier catalogue and builds both an ECU and
+   a tester against it. Two types for one catalogue means two places to add an identifier
+   and no way for the compiler to notice when only one of them was updated. The identifier
+   types an application defines are therefore the same types used to implement its server
+   handlers and to issue its client requests: there is not a server-side identifier type and
+   a client-side one.
 
    The consequence for the API is a real constraint rather than a nicety: an identifier
    type cannot be an associated type of a *server* trait alone, because client code that
@@ -205,21 +205,21 @@ Two layers
       // layer: one call, over any transport
       let value = client.read(&[MyDid::VehicleSpeed]).await?;
 
-   Rationale: everything below this crate is asynchronous. ``simple_doip``'s ``client`` and ``server``
-   features both require its ``codec`` feature, which requires ``std`` and tokio;
+   Rationale: everything below this crate is asynchronous. ``simple_doip``'s ``client`` and
+   ``server`` features both require its ``codec`` feature, which requires ``std`` and tokio;
    ``uds_on_ip``'s ``client`` and ``server`` features each imply ``std`` and tokio in turn.
    A typed client that did not await would therefore hand the application a buffer, make it
    call the binding, and hand back the bytes, which is precisely what ``UDSSVC_ARCH_0020``
    says a client application never does.
 
    **Why the server needs no equivalent and the client does.** A server *responds*, so the
-   awaiting belongs to the loop that read the request: ``UDSSVC_ARCH_0040``'s driver holds the
-   handler future and drives it. ``UDSSVC_ARCH_0016`` makes that handler asynchronous for a
-   reason of its own — a handler outrunning ``tP2_Server`` must yield so the loop can submit a
-   ``0x78`` (``UDSSVC_ARCH_0031``) while it runs — but the server still needs no *layer* over
-   it, because nothing is being joined. A client *initiates*, so something must await, and
-   if it is not this crate it is the application. The asymmetry is in the direction of
-   control, not in the design.
+   awaiting belongs to the loop that read the request: ``UDSSVC_ARCH_0040``'s driver holds
+   the handler future and drives it. ``UDSSVC_ARCH_0016`` makes that handler asynchronous
+   for a reason of its own — a handler outrunning ``tP2_Server`` must yield so the loop can
+   submit a ``0x78`` (``UDSSVC_ARCH_0031``) while it runs — but the server still needs no
+   *layer* over it, because nothing is being joined. A client *initiates*, so something must
+   await, and if it is not this crate it is the application. The asymmetry is in the
+   direction of control, not in the design.
 
    An earlier version of this passage said the driver "invokes a synchronous handler, and
    the inversion costs nothing". That was the design before ``UDSSVC_ARCH_0016``, and it

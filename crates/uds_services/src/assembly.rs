@@ -348,8 +348,10 @@ macro_rules! __uds_stage {
 ///
 /// **Milestone-1 limit:** only `ReadDataByIdentifier`, `DiagnosticSessionControl` and
 /// `TesterPresent` have stages. Any other listed service is accepted by the list (so it
-/// is not refused by the support check) but has no stage to run, and settles
-/// `serviceNotSupported` (0x11) — visible on the wire rather than a panic.
+/// is not refused by the support check) but has no stage to run. One that carries a
+/// `SubFunction` passes the support check's row 2 and reaches the decode, then settles
+/// `serviceNotSupported` (0x11), or `incorrectMessageLengthOrInvalidFormat` (0x13) if
+/// the request does not decode — visible on the wire rather than a panic.
 ///
 /// The syntax is `Ecu: ..; transport = T, ..` rather than `Ecu over T: ..` because
 /// `$ty:ty` cannot be followed by a bare identifier — the legal followers are

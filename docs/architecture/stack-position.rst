@@ -54,8 +54,8 @@ Where this crate sits, what it depends on, and what a transport swap replaces.
    @enduml
 
 ``uds_session`` is drawn to the side of this crate rather than under a binding, because
-``UDSSVC_ARCH_0040`` has this crate own the ``Session`` instance: it supplies every input and
-drains every action. A binding never touches it.
+``UDSSVC_ARCH_0040`` has this crate own the ``Session`` instance: it supplies every input
+and drains every action. A binding never touches it.
 
 ``uds_protocol`` is drawn to one side with dashed edges because it is not a layer: it is
 the message vocabulary this crate and both bindings speak. Nothing is above or below it.
@@ -364,17 +364,17 @@ Dependencies
    a feature.
 
    Rationale: a typed server must follow its application to any transport unchanged, so a
-   binding cannot appear in this crate's dependency list in any form. It does not need to: this
-   crate declares ``UDSSVC_ARCH_0029``'s ``UdsTransport`` and a binding implements it, so the
-   Cargo edge points from the binding to here and ``uds_on_can`` becomes additive with no change
-   here at all.
+   binding cannot appear in this crate's dependency list in any form. It does not need to:
+   this crate declares ``UDSSVC_ARCH_0029``'s ``UdsTransport`` and a binding implements it,
+   so the Cargo edge points from the binding to here and ``uds_on_can`` becomes additive
+   with no change here at all.
 
-   **An intermediate version had these seams declared by ``uds_session``**, on the ground that
-   ISO 14229-2 specifies the application-facing service interface. Right about the document,
-   wrong about the component — that interface is between the session layer and *this crate*, so
-   with ``UDSSVC_ARCH_0040`` there is no third party for it to sit between. ``uds_session``
-   declares no outward trait at all now. The dependency on it stands for the ISO 14229-2
-   vocabulary and the state machine this crate drives.
+   **An intermediate version had these seams declared by ``uds_session``**, on the ground
+   that ISO 14229-2 specifies the application-facing service interface. Right about the
+   document, wrong about the component — that interface is between the session layer and
+   *this crate*, so with ``UDSSVC_ARCH_0040`` there is no third party for it to sit between.
+   ``uds_session`` declares no outward trait at all now. The dependency on it stands for the
+   ISO 14229-2 vocabulary and the state machine this crate drives.
 
    **An earlier version of this element forbade depending on ``uds_session``**, on the
    ground that it was private and would make this crate unpublishable, and took session and
@@ -395,17 +395,18 @@ Dependencies
    :origin: derived
    :tags: scope; transport
 
-   Rationale: a ``ReadDataByIdentifier`` handler that knows how to fetch an identifier has nothing to
-   say about IP, so the ergonomic layer — the part consuming-application authors actually touch —
-   must be free to follow a server to CAN unchanged. It is, because no binding appears here in
-   any form: this crate declares the single seam (``UDSSVC_ARCH_0029``) and a binding implements
-   it. Adding ``uds_on_can`` changes nothing in this crate and requires no feature.
+   Rationale: a ``ReadDataByIdentifier`` handler that knows how to fetch an identifier has
+   nothing to say about IP, so the ergonomic layer — the part consuming-application authors
+   actually touch — must be free to follow a server to CAN unchanged. It is, because no
+   binding appears here in any form: this crate declares the single seam
+   (``UDSSVC_ARCH_0029``) and a binding implements it. Adding ``uds_on_can`` changes nothing
+   in this crate and requires no feature.
 
    **"Binding" now means a transport implementation**, not a host for a driver. Under
    ``UDSSVC_ARCH_0040`` a binding supplies framing, connection setup, routing activation and
-   vehicle identification, implements ``UdsTransport``, and contains no run loop and no notion
-   of a service. Earlier versions of this element used the word for a component that also drove
-   the stack.
+   vehicle identification, implements ``UdsTransport``, and contains no run loop and no
+   notion of a service. Earlier versions of this element used the word for a component that
+   also drove the stack.
 
    **An earlier version of this element gave each binding a Cargo feature** —
    ``doip = ["dep:uds_on_ip"]`` and a ``docan`` beside it — each pulling in that binding and
@@ -487,21 +488,21 @@ seams earn their keep.
 The box is the point. Everything between the transport handing up an event and the transport
 being handed bytes back is inside this crate: it reads the transport, turns the session
 layer's crank, dispatches, and transmits. Nothing calls into it, which is
-``UDSSVC_ARCH_0018``, and session state never arrives as a parameter because this crate holds
-it (``UDSSVC_ARCH_0035``) — which is why ``dispatch`` takes the request bytes and a sink and
-nothing else.
+``UDSSVC_ARCH_0018``, and session state never arrives as a parameter because this crate
+holds it (``UDSSVC_ARCH_0035``) — which is why ``dispatch`` takes the request bytes and a
+sink and nothing else.
 
 **Two details of the drain are drawn deliberately, because both are load-bearing**
 (``UDSSVC_ARCH_0040``). An input does not return one output: it returns a *reaction*, which
 the driver drains through ``Reaction::outputs()`` and then consumes with ``finish()``, whose
 value is that input's verdict — and a refused submission is exactly what
 ``UDSSVC_ARCH_0009``'s suppression gate needs to know about. And ``t_data_req`` is called
-from **inside** the drain rather than after it, because every ``Transmit`` must reach the transport, not only the last
-one.
+from **inside** the drain rather than after it, because every ``Transmit`` must reach the
+transport, not only the last one.
 
 An earlier version of this diagram had a binding in the driving position, handing this crate
-bytes and a ``Ctx`` read from ``uds_session``, and taking a ``Responded`` back. That component
-does not exist.
+bytes and a ``Ctx`` read from ``uds_session``, and taking a ``Responded`` back. That
+component does not exist.
 
 The final ``alt`` is not error handling. Both branches are specified outcomes of clause
 8.7. Which one applies depends on the addressing mode, which arrives on ``Ctx``, and on
@@ -515,11 +516,11 @@ inspecting the request bytes would reveal.
    :origin: derived
    :tags: scope; dependencies; async
 
-   Rationale: the layers below are already asynchronous and not optionally so: ``simple_doip``'s
-   ``client`` and ``server`` features each require its ``codec`` feature, which requires
-   ``std`` and tokio; ``uds_on_ip``'s ``client`` and ``server`` each imply ``std`` and
-   tokio in turn. A configuration with no executor cannot reach a transport, so this crate
-   is not designed around one.
+   Rationale: the layers below are already asynchronous and not optionally so:
+   ``simple_doip``'s ``client`` and ``server`` features each require its ``codec`` feature,
+   which requires ``std`` and tokio; ``uds_on_ip``'s ``client`` and ``server`` each imply
+   ``std`` and tokio in turn. A configuration with no executor cannot reach a transport, so
+   this crate is not designed around one.
 
    Every deployment of this stack is assumed to have an async executor available — tokio
    on a host, ``embassy`` or equivalent on an embedded target. This crate exposes
@@ -529,11 +530,10 @@ inspecting the request bytes would reveal.
    and still carry no ``std`` requirement and no executor dependency of its own — which is
    what keeps ``UDSSVC_ARCH_0027``'s embedded build possible.
 
-   What this assumption *buys* is recorded where it is spent:
-   ``UDSSVC_ARCH_0016`` on the server side, where an asynchronous handler lets this crate's own
-   loop keep draining session actions while a slow handler runs, and
-   ``UDSSVC_ARCH_0028`` on the client side, where awaiting is what makes one typed call
-   possible instead of three.
+   What this assumption *buys* is recorded where it is spent: ``UDSSVC_ARCH_0016`` on the
+   server side, where an asynchronous handler lets this crate's own loop keep draining
+   session actions while a slow handler runs, and ``UDSSVC_ARCH_0028`` on the client side,
+   where awaiting is what makes one typed call possible instead of three.
 
 One graph, and it is worth saying so
 ------------------------------------
@@ -541,8 +541,8 @@ One graph, and it is worth saying so
 This page used to carry a section warning that the layering diagram and the Cargo dependency
 graph were different shapes, and that confusing them was the most common way to misread the
 stack. Under ``UDSSVC_ARCH_0040`` they are the same shape, and the warning is retired rather
-than deleted because the arrangement it described was deliberate and is worth knowing was left
-behind.
+than deleted because the arrangement it described was deliberate and is worth knowing was
+left behind.
 
 .. uml::
    :align: center
@@ -565,12 +565,13 @@ behind.
    @enduml
 
 A caller and its callee are still opposite ends of one Cargo edge — ``uds_services`` calls
-``uds_on_ip`` and ``uds_on_ip`` names ``uds_services`` — which is the ordinary trait-inversion
-shape, not a peculiarity of this stack. What has gone is the case where *neither* crate named
-the other and both met at an interface owned by a third crate below them both.
+``uds_on_ip`` and ``uds_on_ip`` names ``uds_services`` — which is the ordinary
+trait-inversion shape, not a peculiarity of this stack. What has gone is the case where
+*neither* crate named the other and both met at an interface owned by a third crate below
+them both.
 
 The retired arrangement, for the record: ``uds_on_ip`` called ``uds_services`` across a
 ``RequestHandler`` that ``uds_session`` declared, so the caller and the callee met at an
 interface owned by a crate below both of them, and neither named the other in its manifest.
-That followed from a binding hosting the driver. ``UDSSVC_ARCH_0018`` records why nothing calls
-into this crate now, and ``UDSSVC_ARCH_0029`` why the one seam below it is its own.
+That followed from a binding hosting the driver. ``UDSSVC_ARCH_0018`` records why nothing
+calls into this crate now, and ``UDSSVC_ARCH_0029`` why the one seam below it is its own.

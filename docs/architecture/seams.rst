@@ -3,8 +3,8 @@ The seams
 
 What crosses each boundary of this crate, and who owns what on either side.
 
-**Three seams, and this crate declares two of them.** ``UDSSVC_ARCH_0040`` made this crate the
-driver, which settles who declares what by settling who calls whom:
+**Three seams, and this crate declares two of them.** ``UDSSVC_ARCH_0040`` made this crate
+the driver, which settles who declares what by settling who calls whom:
 
 .. list-table::
    :header-rows: 1
@@ -27,32 +27,32 @@ driver, which settles who declares what by settling who calls whom:
      - this crate's own buffer
      - ``UDSSVC_ARCH_0017``
 
-The rule behind it is the one this page has given since the seams moved: **a seam is declared
-by whoever the design makes responsible for it**, which for a driver means the interfaces above
-and below are both its own. The sink is the exception and stays ``awc``'s, because an I/O
-vocabulary shared by five crates belongs to none of them.
+The rule behind it is the one this page has given since the seams moved: **a seam is
+declared by whoever the design makes responsible for it**, which for a driver means the
+interfaces above and below are both its own. The sink is the exception and stays ``awc``'s,
+because an I/O vocabulary shared by five crates belongs to none of them.
 
 **Two earlier arrangements are recorded rather than deleted, because each is more plausible
 than what replaced it.**
 
 The first held that *"whoever is called declares the interface"* — the byte seam declared by
-the binding because the binding calls in, the transport seam declared here because this crate
-calls out. Tidy, and wrong about the first half: a seam carrying an addressing triple, bytes, a
-sink and a responder is not transport-shaped, so every binding would have declared the same
-trait separately.
+the binding because the binding calls in, the transport seam declared here because this
+crate calls out. Tidy, and wrong about the first half: a seam carrying an addressing triple,
+bytes, a sink and a responder is not transport-shaped, so every binding would have declared
+the same trait separately.
 
-The second replaced it with *"ownership follows the specifying document"*, and moved five seams
-into ``uds_session`` on the ground that ISO 14229-2 specifies both interfaces of the session
-layer. That was right about the document and wrong about the component. ISO 14229-2 names its
-service user as the ISO 14229-1 layer — this crate — so there was never a third party between
-them for those interfaces to sit between. Once ``UDSSVC_ARCH_0040`` collapsed the service user
-and the driver into one, four of the five seams stopped having two sides: ``RequestHandler``,
-``PendingResponder`` and ``DiagnosticClient`` had nobody left to call them, and ``Ctx`` stopped
-crossing a boundary at all. ``uds_session`` declares none of them now, and says so in its own
-brief.
+The second replaced it with *"ownership follows the specifying document"*, and moved five
+seams into ``uds_session`` on the ground that ISO 14229-2 specifies both interfaces of the
+session layer. That was right about the document and wrong about the component. ISO 14229-2
+names its service user as the ISO 14229-1 layer — this crate — so there was never a third
+party between them for those interfaces to sit between. Once ``UDSSVC_ARCH_0040`` collapsed
+the service user and the driver into one, four of the five seams stopped having two sides:
+``RequestHandler``, ``PendingResponder`` and ``DiagnosticClient`` had nobody left to call
+them, and ``Ctx`` stopped crossing a boundary at all. ``uds_session`` declares none of them
+now, and says so in its own brief.
 
-What survived that collapse is a library of ISO 14229-2 types and one state machine, which this
-crate drives. ``uds_session`` declares no outward trait and calls nothing.
+What survived that collapse is a library of ISO 14229-2 types and one state machine, which
+this crate drives. ``uds_session`` declares no outward trait and calls nothing.
 
 .. uml::
    :align: center
@@ -203,19 +203,19 @@ Request context
    it, so a by-value field would be stale at the only instant it is consulted.
 
    **Peer identity comes with the triple, and it is needed.** ISO 14229-1:2020 10.6.4
-   requires that "an authenticated state shall be linked to a certain diagnostic channel" and
-   that "multiple clients can be handled on multiple channels with different authentication
-   settings", so ``UDSSVC_ARCH_0035``'s per-channel state cannot be keyed without the source
-   address. An earlier draft of this element excluded peer identity altogether and offered a
-   security-access attempt counter as the example of state an application should key for
-   itself — wrong twice over: clause 10.4 makes security access server-global, so it needs no
-   key, and ``UDSSVC_ARCH_0034`` puts the counter in the stack rather than in the
-   application.
+   requires that "an authenticated state shall be linked to a certain diagnostic channel"
+   and that "multiple clients can be handled on multiple channels with different
+   authentication settings", so ``UDSSVC_ARCH_0035``'s per-channel state cannot be keyed
+   without the source address. An earlier draft of this element excluded peer identity
+   altogether and offered a security-access attempt counter as the example of state an
+   application should key for itself — wrong twice over: clause 10.4 makes security access
+   server-global, so it needs no key, and ``UDSSVC_ARCH_0034`` puts the counter in the stack
+   rather than in the application.
 
    Taking ``Ai`` whole also settles ISO 14229-1 clause 7.4.1, which makes ``A_SA``, ``A_TA``
    and ``A_TA_Type`` mandatory parameters of every application layer service primitive. All
-   three are present. The set argued about this for some time as though it were a question of
-   what clause 8.7 reads; it was a question of which vocabulary the seam speaks, and it
+   three are present. The set argued about this for some time as though it were a question
+   of what clause 8.7 reads; it was a question of which vocabulary the seam speaks, and it
    dissolved when the vocabulary moved to the crate that owns ISO 14229-2.
 
 Outcome
@@ -228,10 +228,10 @@ Outcome
    :origin: derived
    :tags: seam; outcome; async
 
-   Rationale: a negative response is a normal, specified outcome of clause 8.7 expressed in the
-   written bytes — a server answering 0x11 has succeeded at its job. Typing it as an error
-   would put the most common non-trivial path through the crate into the ``Err`` branch,
-   and callers would learn to ignore errors. Dispatch, once its outcome is settled,
+   Rationale: a negative response is a normal, specified outcome of clause 8.7 expressed in
+   the written bytes — a server answering 0x11 has succeeded at its job. Typing it as an
+   error would put the most common non-trivial path through the crate into the ``Err``
+   branch, and callers would learn to ignore errors. Dispatch, once its outcome is settled,
    instead reports whether a response was written and should be transmitted, or whether
    nothing is to be sent. A negative response is the first of those, not an error, and
    neither dispatch nor settlement has an error type at all; a sink refusal is a response
@@ -301,16 +301,16 @@ Response sink
    :origin: derived
    :tags: seam; no_std
 
-   Rationale: allocation-freedom cannot be retrofitted, because the signatures that make an API
-   alloc-free are the ones callers depend on: adding it later is a breaking change to every
-   handler in every application. A handler therefore writes its response into an
+   Rationale: allocation-freedom cannot be retrofitted, because the signatures that make an
+   API alloc-free are the ones callers depend on: adding it later is a breaking change to
+   every handler in every application. A handler therefore writes its response into an
    ``automotive_wire_codec::Sink`` it is handed, rather than returning an owned response. No
-   public type carries a ``Vec`` or a ``String``, and the crate builds under ``no_std`` without
-   ``alloc``.
+   public type carries a ``Vec`` or a ``String``, and the crate builds under ``no_std``
+   without ``alloc``.
 
-   **The sink is this crate's**, which is a change of owner rather than of design. It was the
-   binding driver's while the driver lived there; ``UDSSVC_ARCH_0040`` moved the driver here, so
-   the buffer a response is assembled in is this crate's to hold and to bound.
+   **The sink is this crate's**, which is a change of owner rather than of design. It was
+   the binding driver's while the driver lived there; ``UDSSVC_ARCH_0040`` moved the driver
+   here, so the buffer a response is assembled in is this crate's to hold and to bound.
 
    **Where the storage comes from is now settled, and this element left it open.** It used
    to say that a caller-supplied buffer and one sized at assembly alongside
@@ -386,8 +386,9 @@ Response sink
    apply**, in which case 0x14 is unreachable and a response is limited only by the sink the
    caller supplied; that is a correct outcome, not a degraded one. And where a bound does
    exist, **whose it is** — this server's or the peer's — is the transport's question to
-   answer, not this crate's. What must not happen is a fabricated default, which would make a
-   conformant server truncate valid responses in order to produce an NRC nothing asked for.
+   answer, not this crate's. What must not happen is a fabricated default, which would make
+   a conformant server truncate valid responses in order to produce an NRC nothing asked
+   for.
 
    The sink is a **concrete type, ``ResponseSink``** — neither ``dyn`` nor generic — and
    that too is a change this element should record rather than quietly adopt. It said the
@@ -545,15 +546,15 @@ The transport seam
    ``DataTooLong``.
 
    Rationale: this crate calls out to a transport, so this crate declares what it calls. The
-   trait is a transport's whole obligation to the stack: carry bytes in both directions, say how
-   large a payload it will take, say what timing it dictates, and tell the time. It carries no
-   notion of a service, a data identifier or a negative response code, which is what keeps a
-   binding from needing to understand UDS.
+   trait is a transport's whole obligation to the stack: carry bytes in both directions, say
+   how large a payload it will take, say what timing it dictates, and tell the time. It
+   carries no notion of a service, a data identifier or a negative response code, which is
+   what keeps a binding from needing to understand UDS.
 
-   **It serves both roles, and that is a change from what it replaced.** The client's exchanges
-   and the server's inbound requests are the same bytes on the same transport; only what this
-   crate does with them differs. A separate client trait would have obliged a binding to
-   implement two interfaces to the same socket.
+   **It serves both roles, and that is a change from what it replaced.** The client's
+   exchanges and the server's inbound requests are the same bytes on the same transport;
+   only what this crate does with them differs. A separate client trait would have obliged a
+   binding to implement two interfaces to the same socket.
 
    The asynchrony is ``UDSSVC_ARCH_0030``'s: the trait is ``async`` and the runtime is the
    caller's, so this crate still depends on no executor.
@@ -563,15 +564,15 @@ The transport seam
 
    It first declared ``UdsTransport`` here, argued as the exact inverse of a byte seam the
    binding declared — that symmetry was real and rested on a premise that did not survive.
-   It then moved to ``uds_session`` as ``DiagnosticClient``, on the ground that an ISO 14229-2
-   service primitive belongs to ISO 14229-2's crate. That reasoning was sound about the
-   *document* and wrong about the *component*: ISO 14229-2 names its service user as the
-   ISO 14229-1 layer, so with ``UDSSVC_ARCH_0040`` making this crate both the service user and
-   the driver, ``DiagnosticClient`` had no caller on the other side. It is back, and it is one
-   trait rather than two.
+   It then moved to ``uds_session`` as ``DiagnosticClient``, on the ground that an ISO
+   14229-2 service primitive belongs to ISO 14229-2's crate. That reasoning was sound about
+   the *document* and wrong about the *component*: ISO 14229-2 names its service user as the
+   ISO 14229-1 layer, so with ``UDSSVC_ARCH_0040`` making this crate both the service user
+   and the driver, ``DiagnosticClient`` had no caller on the other side. It is back, and it
+   is one trait rather than two.
 
-   The functional case that justified splitting the old client trait into two methods survives
-   as a property of this crate's client surface rather than of the transport.
+   The functional case that justified splitting the old client trait into two methods
+   survives as a property of this crate's client surface rather than of the transport.
    ``UDSSVC_ARCH_0022``'s lending sequence is assembled here, from however many ``DataInd``
    events arrive before the window closes; a transport reports each one and counts nothing.
 
@@ -590,25 +591,25 @@ There is no handler seam
    transport, submits it to the ``uds_session::Session`` it owns, takes the resulting
    ``S_Data.ind``, and calls its own dispatch pipeline. Every step of that is internal.
 
-   Rationale: recorded as an element rather than as an omission, because a handler seam is the
-   single most likely thing to be re-proposed here. Two full design cycles produced one — first
-   declared by each binding, then declared by ``uds_session`` as ``RequestHandler`` — and both
-   followed from the same unexamined premise: that something below this crate turns the crank
-   and calls upward. Nothing does. ISO 14229-2 defines an interface between the session layer
-   and its service user and names that user as the ISO 14229-1 layer, so a crank-turning third
-   party is a component no standard describes.
+   Rationale: recorded as an element rather than as an omission, because a handler seam is
+   the single most likely thing to be re-proposed here. Two full design cycles produced one
+   — first declared by each binding, then declared by ``uds_session`` as ``RequestHandler``
+   — and both followed from the same unexamined premise: that something below this crate
+   turns the crank and calls upward. Nothing does. ISO 14229-2 defines an interface between
+   the session layer and its service user and names that user as the ISO 14229-1 layer, so a
+   crank-turning third party is a component no standard describes.
 
-   Two things that used to cross this seam are now internal, and are named here because their
-   elements still describe them as though they crossed something: ``Ctx``
-   (``UDSSVC_ARCH_0015``) is the dispatch pipeline's input, constructed here from the session
-   layer's indication; ``Responded`` (``UDSSVC_ARCH_0016``) is what dispatch reports to the
-   loop around it. Neither is a seam: ``Responded`` is public only because the assembly's
-   trait names it.
+   Two things that used to cross this seam are now internal, and are named here because
+   their elements still describe them as though they crossed something: ``Ctx``
+   (``UDSSVC_ARCH_0015``) is the dispatch pipeline's input, constructed here from the
+   session layer's indication; ``Responded`` (``UDSSVC_ARCH_0016``) is what dispatch reports
+   to the loop around it. Neither is a seam: ``Responded`` is public only because the
+   assembly's trait names it.
 
-   **What this does not change** is the pipeline's shape. ``UDSSVC_ARCH_0004`` is still a pure
-   function of a request and its context, still testable without a transport, a clock or a
-   session layer. Removing the seam removed a trait, not a boundary — the boundary is still
-   there, it is just not a public one.
+   **What this does not change** is the pipeline's shape. ``UDSSVC_ARCH_0004`` is still a
+   pure function of a request and its context, still testable without a transport, a clock
+   or a session layer. Removing the seam removed a trait, not a boundary — the boundary is
+   still there, it is just not a public one.
 
 Response-pending
 ----------------
@@ -622,20 +623,21 @@ Response-pending
 
    When ``UDSSVC_ARCH_0032`` decides a ``requestCorrectlyReceivedResponsePending`` (0x78) is
    admissible and composes its three octets, they go out the way every other response does:
-   submitted to the ``uds_session::Session`` this crate owns as an ordinary ``S_Data.req``, and
-   transmitted through ``UDSSVC_ARCH_0029``'s transport when the resulting action is drained.
-   There is no separate interface and nothing new in anyone's surface.
+   submitted to the ``uds_session::Session`` this crate owns as an ordinary ``S_Data.req``,
+   and transmitted through ``UDSSVC_ARCH_0029``'s transport when the resulting action is
+   drained. There is no separate interface and nothing new in anyone's surface.
 
    The moment is known the same way. ``uds_session`` reports the ``tP2_Server`` overrun
-   (``UDSS_LLR_0117``) as one of the outputs the driver already drains, so dispatch learns that
-   a response-pending is due from the loop it is already running, not from a trait it is
-   handed. It reports the overrun ``response_pending_lead`` before the window closes
+   (``UDSS_LLR_0117``) as one of the outputs the driver already drains, so dispatch learns
+   that a response-pending is due from the loop it is already running, not from a trait it
+   is handed. It reports the overrun ``response_pending_lead`` before the window closes
    (``UDSS_LLR_0186``), so the 0x78 is issued within it.
 
-   Rationale: the decision and the bytes are this crate's (``UDSSVC_ARCH_0032``) and so is the
-   transport (``UDSSVC_ARCH_0029``), so nothing crosses a crate boundary and a seam would have
-   two sides in the same crate. What remains true, and is what this element is really about, is
-   the **division of labour with the session layer** — unchanged by the seam's removal:
+   Rationale: the decision and the bytes are this crate's (``UDSSVC_ARCH_0032``) and so is
+   the transport (``UDSSVC_ARCH_0029``), so nothing crosses a crate boundary and a seam
+   would have two sides in the same crate. What remains true, and is what this element is
+   really about, is the **division of labour with the session layer** — unchanged by the
+   seam's removal:
 
    .. list-table::
       :header-rows: 1
@@ -646,34 +648,34 @@ Response-pending
       * - *Whether* a 0x78 is admissible, and *what* bytes it is
         - *When* one is due, whether a submission is accepted, and how often one may repeat
 
-   The session layer's constraints are where they always were and are the reason a submission
-   can be refused: it rejects one while a predecessor is unconfirmed (``UDSS_LLR_0118``), spaces
-   consecutive ones (``UDSS_LLR_0119``), refuses a duplicated or exhausted transmission
-   association (``UDSS_LLR_0061``, ``UDSS_LLR_0062``), and anchors on a confirmed transmission
-   (``UDSS_LLR_0110``). A refusal is reported synchronously, at the moment of submission, which
-   is what ``UDSSVC_ARCH_0009``'s gate needs: a refused submission is not a send, so the
-   suppression override must not fire on it.
+   The session layer's constraints are where they always were and are the reason a
+   submission can be refused: it rejects one while a predecessor is unconfirmed
+   (``UDSS_LLR_0118``), spaces consecutive ones (``UDSS_LLR_0119``), refuses a duplicated or
+   exhausted transmission association (``UDSS_LLR_0061``, ``UDSS_LLR_0062``), and anchors on
+   a confirmed transmission (``UDSS_LLR_0110``). A refusal is reported synchronously, at the
+   moment of submission, which is what ``UDSSVC_ARCH_0009``'s gate needs: a refused
+   submission is not a send, so the suppression override must not fire on it.
 
    **An earlier version of this element declared a ``PendingResponder`` trait** with a
-   cancel-safe ``due()`` and an ``offer()`` returning ``bool``, declared by ``uds_session`` and
-   implemented by a binding's driver. It described a seam between this crate and a component
-   that no longer exists. Two of its arguments survive intact and are worth keeping, because
-   both were arrived at rather than assumed:
+   cancel-safe ``due()`` and an ``offer()`` returning ``bool``, declared by ``uds_session``
+   and implemented by a binding's driver. It described a seam between this crate and a
+   component that no longer exists. Two of its arguments survive intact and are worth
+   keeping, because both were arrived at rather than assumed:
 
    * **Submission and confirmation are two moments, not one.** ``UDSS_LLR_0114`` stops
      ``tP2_Server`` at the ``T_Data.req`` and ``UDSS_LLR_0110`` anchors spacing at the
-     ``T_Data.conf``. Dispatch must not wait for the second, or a slow handler stalls for the
-     duration of a transmission — the opposite of what ``UDSSVC_ARCH_0016``'s asynchronous seam
-     buys.
+     ``T_Data.conf``. Dispatch must not wait for the second, or a slow handler stalls for
+     the duration of a transmission — the opposite of what ``UDSSVC_ARCH_0016``'s
+     asynchronous seam buys.
    * **Refusal and failure are different answers.** A synchronous refusal means nothing was
-     sent. An accepted submission whose transmission later fails is reported asynchronously as
-     a ``T_Data.conf`` and is absorbed by the loop; ``UDSS_LLR_0110`` has such a transmission
-     never reach the data link, so the client saw no response-pending and an unsuppressed final
-     response is harmless.
+     sent. An accepted submission whose transmission later fails is reported asynchronously
+     as a ``T_Data.conf`` and is absorbed by the loop; ``UDSS_LLR_0110`` has such a
+     transmission never reach the data link, so the client saw no response-pending and an
+     unsuppressed final response is harmless.
 
    The asymmetry that follows is ``UDSSVC_ARCH_0009``'s to state: treating an accepted
-   submission as sent can cost one message a waiting client accepts, while treating a sent one
-   as unsent produces silence where the standard requires a final response.
+   submission as sent can cost one message a waiting client accepts, while treating a sent
+   one as unsent produces silence where the standard requires a final response.
 
 Clock
 -----
@@ -688,8 +690,8 @@ Clock
    Driving ``uds_session`` requires time: it is sans-io and evaluates a timer's expiry only
    when a timestamp is supplied (``UDSS_LLR_0017``). So ``UDSSVC_ARCH_0040``'s loop needs to
    know what time it is, and needs to wake when something is due. **Both come from the
-   transport, which is asked for them as part of the seam it already implements.** This crate
-   declares no clock trait and ships no clock implementation.
+   transport, which is asked for them as part of the seam it already implements.** This
+   crate declares no clock trait and ships no clock implementation.
 
    Two obligations, and the second is not new:
 
@@ -700,23 +702,23 @@ Clock
    Rationale: a transport that can report an inbound event *or* a timer expiry, whichever
    comes first, already measures time — that capability is what the seam asks for, not
    something added to it. A separate ``Clock`` trait would therefore not supply a capability
-   the transport lacks; it would duplicate one the transport must already have, and admit two
-   implementors holding two time bases that have to agree silently. That is the arrangement
-   ``UDSSVC_ARCH_0002`` refuses for session state, for the same reason: two things tracking one
-   fact is how they come to disagree.
+   the transport lacks; it would duplicate one the transport must already have, and admit
+   two implementors holding two time bases that have to agree silently. That is the
+   arrangement ``UDSSVC_ARCH_0002`` refuses for session state, for the same reason: two
+   things tracking one fact is how they come to disagree.
 
-   It is also where the platform integration already is. Whoever writes a transport is already
-   reaching for sockets and an executor on that target; asking the same implementor for the
-   clock adds no new platform surface, while a second trait would be a second thing every
-   target has to satisfy.
+   It is also where the platform integration already is. Whoever writes a transport is
+   already reaching for sockets and an executor on that target; asking the same implementor
+   for the clock adds no new platform surface, while a second trait would be a second thing
+   every target has to satisfy.
 
    **The seam carries a deadline, and the argument that it should carry a duration is
    retired.** That argument was this element's longest and is kept on the record because it
    was correct about everything except the type. It ran: a deadline in wrapping ``u32``
    space is ambiguous on its own, since ``5`` is either a moment just past or one roughly 49
    days away and only a reference point separates them; this crate holds both values — the
-   deadline ``uds_session`` reports under ``UDSS_LLR_0080`` and the ``now_ms`` it just read —
-   so it should compute the interval here, once, by the modular subtraction
+   deadline ``uds_session`` reports under ``UDSS_LLR_0080`` and the ``now_ms`` it just read
+   — so it should compute the interval here, once, by the modular subtraction
    ``UDSS_LLR_0019`` already specifies, and pass a number that cannot be misread. Handing
    the transport a raw deadline would otherwise oblige every implementor to rederive that
    arithmetic identically, which is the same objection whichever side of the seam holds the
@@ -738,27 +740,28 @@ Clock
    The ambiguity the old argument identified was real. It was a property of ``u32``, and the
    fix was to stop using one.
 
-   **An earlier version of this element declared a ``Clock`` trait here**, with ``now_ms`` and
-   an ``async sleep(ms)``, and shipped a tokio-backed implementation behind a feature. Two
-   things retire it. ``sleep`` was redundant: the driver never sleeps independently of waiting
-   for input, so the transport's own "next event or timeout" call already *is* the wait, and
-   the clock contributes exactly one method rather than two. And the shipped implementation
-   was the only reason this crate would have carried an optional runtime dependency — with the
-   clock on the transport, ``uds_on_ip`` supplies it and this crate ships nothing.
+   **An earlier version of this element declared a ``Clock`` trait here**, with ``now_ms``
+   and an ``async sleep(ms)``, and shipped a tokio-backed implementation behind a feature.
+   Two things retire it. ``sleep`` was redundant: the driver never sleeps independently of
+   waiting for input, so the transport's own "next event or timeout" call already *is* the
+   wait, and the clock contributes exactly one method rather than two. And the shipped
+   implementation was the only reason this crate would have carried an optional runtime
+   dependency — with the clock on the transport, ``uds_on_ip`` supplies it and this crate
+   ships nothing.
 
    That last point is worth recording because it reverses a change the briefs had queued.
-   ``UDSSVC_ARCH_0030`` states that this crate depends on no runtime crate; the retired element
-   required it amended to "none in the default or ``no_std`` build, with an optional runtime
-   behind a feature". **No amendment is owed.** ``UDSSVC_ARCH_0030`` stands as written, in every
-   build, which is a stronger claim than the amendment would have left.
+   ``UDSSVC_ARCH_0030`` states that this crate depends on no runtime crate; the retired
+   element required it amended to "none in the default or ``no_std`` build, with an optional
+   runtime behind a feature". **No amendment is owed.** ``UDSSVC_ARCH_0030`` stands as
+   written, in every build, which is a stronger claim than the amendment would have left.
 
    The reason a clock is a seam at all is unchanged, and is ``UDSS_LLR_0017``'s: reading one
-   directly would make every timing rule in the stack untestable except in real time. Taking it
-   across a seam keeps a test able to advance time by returning larger numbers — and taking it
-   across *this* seam is better for that than a separate trait would have been, because one
-   fake supplies the events and the time together and cannot make them disagree.
+   directly would make every timing rule in the stack untestable except in real time. Taking
+   it across a seam keeps a test able to advance time by returning larger numbers — and
+   taking it across *this* seam is better for that than a separate trait would have been,
+   because one fake supplies the events and the time together and cannot make them disagree.
 
    The cost, stated rather than discovered: "can tell the time" is now coupled to "is a
-   transport", so a deployment driving the stack over a channel it would not otherwise model as
-   a transport still implements ``now``. Given the seam already demands a deadline, that is
-   not a new burden.
+   transport", so a deployment driving the stack over a channel it would not otherwise model
+   as a transport still implements ``now``. Given the seam already demands a deadline, that
+   is not a new burden.

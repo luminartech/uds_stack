@@ -147,8 +147,8 @@ response-pending it would have prompted is never sent. ``UDSSVC_ARCH_0016``'s as
 handler seam is what makes that achievable — the handler yields at its await points and the
 loop keeps draining.
 
-An earlier version of this diagram had a binding driver calling a ``due()`` on this crate and
-receiving an ``offer()`` back. Both were seams to a component that no longer exists; see
+An earlier version of this diagram had a binding driver calling a ``due()`` on this crate
+and receiving an ``offer()`` back. Both were seams to a component that no longer exists; see
 ``UDSSVC_ARCH_0031``.
 
 What the layer below declines
