@@ -56,6 +56,8 @@ const MAX_FRAME: usize = 32;
 #[derive(Debug)]
 struct Scripted {
     script: [Option<Ev>; MAX_STEPS],
+    /// How many steps the script has; [`run`] checks every one was consumed.
+    len: usize,
     cursor: usize,
     now: u32,
     sent: [([u8; MAX_FRAME], usize); MAX_SENT],
@@ -66,12 +68,17 @@ struct Scripted {
 
 impl Scripted {
     fn new(script: &[Ev]) -> Self {
+        assert!(
+            script.len() <= MAX_STEPS,
+            "script has more than {MAX_STEPS} steps"
+        );
         let mut s = [None; MAX_STEPS];
         for (slot, ev) in s.iter_mut().zip(script) {
             *slot = Some(*ev);
         }
         Self {
             script: s,
+            len: script.len(),
             cursor: 0,
             now: 0,
             sent: [([0; MAX_FRAME], 0); MAX_SENT],
@@ -85,19 +92,32 @@ impl Scripted {
             .and_then(|(buf, n)| buf.get(..*n))
             .unwrap_or(&[])
     }
-    fn record(&mut self, data: &[u8]) -> Result<(), ()> {
-        let (buf, n) = self.sent.get_mut(self.sent_count).ok_or(())?;
-        buf.get_mut(..data.len()).ok_or(())?.copy_from_slice(data);
+    /// Record a transmission. Panics rather than erring on overflow: [`run`] reads every
+    /// transport error as the end of the script, so an error here would end a run
+    /// silently and hide the transmission that caused it.
+    fn record(&mut self, data: &[u8]) {
+        let index = self.sent_count;
+        let Some(((buf, n), after)) =
+            self.sent.get_mut(index).zip(self.sent_after.get_mut(index))
+        else {
+            panic!("transmission {index} ({data:02X?}) exceeds the {MAX_SENT} recorded");
+        };
+        let Some(head) = buf.get_mut(..data.len()) else {
+            panic!("transmission {index} ({data:02X?}) exceeds {MAX_FRAME} bytes");
+        };
+        head.copy_from_slice(data);
         *n = data.len();
-        *self.sent_after.get_mut(self.sent_count).ok_or(())? = self.cursor;
+        *after = self.cursor;
         self.sent_count = self.sent_count.wrapping_add(1);
-        Ok(())
     }
     fn advance<'b>(&mut self, buffer: &'b mut [u8]) -> Result<TransportEvent<'b>, ()> {
+        // The one error this transport returns: the script is exhausted.
         let ev = self.script.get(self.cursor).copied().flatten().ok_or(())?;
         self.cursor = self.cursor.wrapping_add(1);
         let ind = |buffer: &'b mut [u8], ta_type, bytes: &[u8]| {
-            let (head, _) = buffer.split_at_mut_checked(bytes.len()).ok_or(())?;
+            let Some((head, _)) = buffer.split_at_mut_checked(bytes.len()) else {
+                panic!("indication {bytes:02X?} does not fit the driver's buffer");
+            };
             head.copy_from_slice(bytes);
             Ok(TransportEvent::DataInd {
                 ai: from_tester(ta_type),
@@ -132,7 +152,8 @@ impl UdsTransport for Scripted {
     type Error = ();
     fn t_data_req(&mut self, ai: Ai, data: &[u8]) -> impl Future<Output = Result<(), ()>> {
         assert_eq!(ai, to_tester(), "responses go back to the tester");
-        ready(self.record(data))
+        self.record(data);
+        ready(Ok(()))
     }
     fn next_event<'b>(
         &mut self,
@@ -175,7 +196,7 @@ impl DataIdentifier for Did {
     }
 }
 
-/// Pends `0.0` times before completing, waking itself each time.
+/// Pends `self.0` times before completing, waking itself each time.
 #[derive(Debug)]
 struct PendN(u8);
 impl Future for PendN {
@@ -305,9 +326,15 @@ fn block_on<F: Future>(f: F) -> F::Output {
     panic!("future did not complete in 64 polls");
 }
 
-/// Run until the script is exhausted (the transport then errors).
+/// Run until the transport errors, which it does only once the script is exhausted, and
+/// check that it was: a step left unconsumed means the driver stopped early.
 fn run(server: &mut EcuServer) {
     while block_on(server.step()).is_ok() {}
+    let t = server.transport();
+    assert_eq!(
+        t.cursor, t.len,
+        "the run ended with script steps unconsumed"
+    );
 }
 
 #[test]
@@ -502,25 +529,45 @@ fn a_suppressed_session_change_enters_the_session() {
     );
 }
 
-/// Without the completion report the request's arrival would leave `tS3_Server` stopped
-/// forever; with it, the session times out 5000 ms after the keep-alive completed.
-#[test]
-fn a_suppressed_keep_alive_restarts_the_session_timer() {
-    let mut s = EcuServer::new(
+/// The keep-alive script, up to and including `tail` — the instant the clock is last
+/// advanced to.
+fn keep_alive_server(tail: u32) -> EcuServer {
+    EcuServer::new(
         Ecu::new(),
         Scripted::new(&[
             Ev::Ind(TaType::Physical, &[0x10, 0x03]),
+            // Extended: tS3_Server runs from 0 and, unless stopped, expires at 5000.
             Ev::Conf(SResult::Ok),
             Ev::IndAt(4_000, TaType::Physical, &[0x3E, 0x80]),
-            Ev::At(8_000),
-            Ev::At(9_100),
+            Ev::At(tail),
         ]),
         PARAMS,
-    );
-    run(&mut s);
-    assert_eq!(s.transport().sent_count, 1); // the 3E 80 was suppressed
+    )
+}
+
+/// The suppressed `3E 80` at 4000 ms stopped `tS3_Server` on arrival and its completion
+/// report restarted it at 4000 ms, so the session expires at exactly 9000 ms. That is
+/// pinned from both sides, by two runs of the same script:
+/// - The first run ends at 8999 ms with no expiry. A timer never stopped would have
+///   expired at 5000 ms, and one restarted any earlier than 4000 ms would have expired
+///   before 8999 ms.
+/// - The second run ends at 9000 ms, and the expiry has been reported. A timer stopped and
+///   never restarted would never expire.
+#[test]
+fn a_suppressed_keep_alive_restarts_the_session_timer() {
+    let mut before = keep_alive_server(8_999);
+    run(&mut before);
+    assert_eq!(before.transport().sent_count, 1); // the 3E 80 was suppressed
     assert_eq!(
-        s.services().transitions.get(1).copied().flatten(),
+        before.services().transitions.get(1).copied().flatten(),
+        None
+    );
+
+    let mut at = keep_alive_server(9_000);
+    run(&mut at);
+    assert_eq!(at.transport().sent_count, 1);
+    assert_eq!(
+        at.services().transitions.get(1).copied().flatten(),
         Some(SessionTransition::NonDefaultToDefault)
     );
 }

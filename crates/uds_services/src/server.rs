@@ -227,8 +227,10 @@ struct Pending {
 /// response's `DataConf` must carry to match it.
 ///
 /// Physically addressed whatever the request was: a server answers the one client that
-/// asked, so a response to a functional request is a physical message to that client
-/// (`docs/requirements/llr-client-response-timing.rst`, on ISO 14229-2:2021 9.6).
+/// asked, so a response to a functional request is a physical message to that client.
+/// That is an observation the requirement set relies on, not a clause of
+/// ISO 14229-2:2021 9.6 (`docs/requirements/llr-service-interface.rst`, the channel
+/// requirement's rationale).
 const fn reply_address(request: Ai) -> Ai {
     Ai {
         sa: request.ta,
