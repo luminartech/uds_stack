@@ -29,18 +29,18 @@ Overview
       @startuml
       left to right direction
       rectangle "bytes" as B
-      rectangle "decode" as D
       rectangle "preconditions" as P
       rectangle "sub-function" as SF
+      rectangle "decode" as D
       rectangle "data parameters" as DP
       rectangle "handler" as H
       rectangle "suppression gate" as G
       rectangle "Responded\nor Suppress" as O
 
       B -> P
-      P -> D
-      D -> SF
-      SF -> DP
+      P -> SF
+      SF -> D
+      D -> DP
       DP -> H
       D -[#C0392B]-> G : settles
       P -[#C0392B]-> G : settles
@@ -88,24 +88,24 @@ rather than merely the code path.
          if (supported in active session?) then (no)
            :0x7F; <<negative>>
          else (yes)
+           if (has SubFunction, and not SID 0x31?) then (yes)
+             if (SubFunction supported?) then (no)
+               :0x12; <<negative>>
+             else (yes)
+               if (SubFunction in active session?) then (no)
+                 :0x7E; <<negative>>
+               else (yes)
+                 :SubFunction accepted;
+               endif
+             endif
+           else (no)
+             :no SubFunction, or SID 0x31:
+             Table 6 or Table 7 applies;
+           endif
            :decode with uds_protocol;
            if (decodes?) then (no)
              :0x13; <<negative>>
            else (yes)
-             if (has SubFunction, and not SID 0x31?) then (yes)
-               if (SubFunction supported?) then (no)
-                 :0x12; <<negative>>
-               else (yes)
-                 if (SubFunction in active session?) then (no)
-                   :0x7E; <<negative>>
-                 else (yes)
-                   :SubFunction accepted;
-                 endif
-               endif
-             else (no)
-               :no SubFunction, or SID 0x31:
-               Table 6 or Table 7 applies;
-             endif
              if (any data parameter supported?) then (none)
                :0x31; <<negative>>
              else (at least 1)

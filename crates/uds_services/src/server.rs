@@ -125,6 +125,17 @@ impl<A: ServiceSet, T: UdsTransport, const PEERS: usize> Server<A, T, PEERS> {
     /// again. Nothing here recovers it in place: the transport and the services cannot be
     /// taken back out of it.
     ///
+    /// # Cancel safety
+    ///
+    /// The returned future is **not** cancel-safe: drop it only between `step` calls.
+    /// Dropped at any await other than the transport's `next_event`, it leaves the
+    /// instance in the state the terminal-`Err` paragraph above describes — outputs
+    /// drained but not applied, a `Pending` slot cleared without its confirmation
+    /// applied, a handler dropped with its association still outstanding — and
+    /// `uds_services::State` may disagree with the session layer. Tracked in
+    /// `luminartech/uds_stack#19` (<https://github.com/luminartech/uds_stack/issues/19>),
+    /// together with recovery after an `Err`.
+    ///
     /// # Errors
     ///
     /// [`UdsTransport::Error`] where the transport failed. A negative response is not an
@@ -253,6 +264,13 @@ impl<A: ServiceSet, T: UdsTransport, const PEERS: usize> Server<A, T, PEERS> {
     /// application's state and the session layer may disagree afterwards. Do not call
     /// `run` or `step` on this instance again. Nothing here recovers it in place: the
     /// transport and the services cannot be taken back out of it.
+    ///
+    /// # Cancel safety
+    ///
+    /// Not cancel-safe, for the reason [`Self::step`] is not: dropping this future drops
+    /// a `step` future, and not necessarily at the transport's `next_event`. See
+    /// `step`'s `# Cancel safety` section, which also names the tracking issue,
+    /// `luminartech/uds_stack#19`. To stop between events, drive `step` in your own loop.
     ///
     /// # Errors
     ///
