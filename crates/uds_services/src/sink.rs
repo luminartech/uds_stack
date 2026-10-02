@@ -79,10 +79,6 @@ impl<'a> ResponseSink<'a> {
     /// settles `responseTooLong` (0x14). A handler ignores `write_all`'s result; the
     /// refusal is recorded here and decided there.
     #[must_use]
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "consumed by the pipeline's settle (Task 10)")
-    )]
     pub(crate) const fn refused(&self) -> bool {
         self.refused
     }
@@ -90,10 +86,6 @@ impl<'a> ResponseSink<'a> {
     /// Discard everything written and clear the refusal, so a negative response can
     /// replace a partial positive one. Crate-private: a handler that could rewind could
     /// erase the identifier the pipeline wrote ahead of it and return `Ok`.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "consumed by the pipeline's settle (Task 10)")
-    )]
     pub(crate) fn rewind(&mut self) {
         self.written = 0;
         self.refused = false;
