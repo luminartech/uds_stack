@@ -407,3 +407,33 @@ fn a_final_response_refused_for_want_of_an_association_is_still_delivered() {
     assert_eq!(t.sent(0), (Some(response_to(TESTER)), POSITIVE));
     assert_eq!(t.sent(1), (Some(response_to(OTHER_TESTER)), POSITIVE));
 }
+
+/// ``UDSSVC_ARCH_0032`` while a refused final response is waited out: `tP2_Server`
+/// passes during the wait, and a service declaring `MAY_RESPOND_PENDING = false` still
+/// gets no response-pending. The deadline is drained, and the final response follows the
+/// confirmation that frees the association.
+///
+/// This exercises the guarded arm but cannot tell it from the unguarded one on the wire:
+/// a `MAY_RESPOND_PENDING = false` service never sends a 0x78, so the wait is reachable
+/// only through `NoAssociationFree`, which would refuse a 0x78 submitted then as well.
+#[test]
+fn a_service_that_may_not_pend_gets_no_response_pending_while_a_response_waits() {
+    let mut server = SlowSrv::new(
+        Slow { pends: 0 },
+        Script::new(&[
+            Step::Ind(request_from(TESTER), READ),
+            Step::Ind(request_from(OTHER_TESTER), READ),
+            Step::At(50), // the second request's tP2_Server, mid-wait
+            Step::Conf(response_to(TESTER)),
+            Step::Conf(response_to(OTHER_TESTER)),
+        ]),
+        ECU,
+        PARAMS,
+    );
+    run(&mut server);
+    let t = server.transport();
+    assert_eq!(t.cursor, 5, "the script was not consumed");
+    assert_eq!(t.sent_count, 2);
+    assert_eq!(t.sent(0), (Some(response_to(TESTER)), POSITIVE));
+    assert_eq!(t.sent(1), (Some(response_to(OTHER_TESTER)), POSITIVE));
+}

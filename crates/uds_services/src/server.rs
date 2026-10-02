@@ -643,7 +643,9 @@ enum Awaited {
 /// ``UDSS_LLR_0061`` or ``UDSS_LLR_0062`` refused can be resubmitted.
 ///
 /// Each event takes the path it takes mid-handler: a `DataConf` reaches `t_data_conf`,
-/// a deadline reaches [`answer_overrun`], and anything else re-arms the deadline.
+/// a deadline reaches [`answer_overrun`] where the service admits a 0x78
+/// (``UDSSVC_ARCH_0032``) and is only drained where it does not, and anything else
+/// re-arms the deadline.
 /// Returns what the drains recorded once the awaited `DataConf` has been drained and
 /// accepted — `serving.reply_to`'s for [`Awaited::Reply`], any for [`Awaited::Any`] — or
 /// `None` where the link closed first.
@@ -675,6 +677,15 @@ async fn await_confirmation<T: UdsTransport, const PEERS: usize>(
                 if matches && d.rejected.is_none() {
                     return Ok(Some(deferred));
                 }
+            }
+            TransportEvent::Deadline if !serving.may_pend => {
+                // UDSSVC_ARCH_0032 — as in `serve`: the service admits no 0x78, so the
+                // tick is drained and nothing is submitted.
+                let now = transport.now();
+                let reaction = session.tick(now);
+                // milestone-1 limit: see `Server::step`'s doc on `Err`.
+                let d = drain(reaction, transport, pending).await?;
+                deferred = deferred.merge(d.deferred);
             }
             TransportEvent::Deadline => {
                 // The handler has settled, so whether a 0x78 goes out no longer
