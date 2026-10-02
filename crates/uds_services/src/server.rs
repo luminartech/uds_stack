@@ -16,10 +16,14 @@ use crate::services::{Responded, ServiceSet};
 use crate::state::ProtocolState;
 use crate::storage::{Buffers, Storage};
 use crate::transport::{TransportEvent, UdsTransport};
+use core::cell::Cell;
+use core::future::Future;
+use core::pin::Pin;
+use uds_protocol::DiagnosticSessionType;
 pub use uds_session::ServerParams;
 use uds_session::{
-    Ai, Association, SResult, Server as SessionServer, ServerOutput, ServerRx, ServerTx,
-    Solicitation,
+    Ai, Association, Rejection, SResult, Server as SessionServer, ServerOutput, ServerRx,
+    ServerTx, SessionSelection, Solicitation, Timestamp,
 };
 
 /// The UDS server: an application's services, its storage, a session layer and a
@@ -41,6 +45,8 @@ pub struct Server<A: ServiceSet, T: UdsTransport, const PEERS: usize> {
     state: A::State,
     session: SessionServer<PEERS>,
     transport: T,
+    /// The `DiagnosticSessionControl` response awaiting its confirmation, if any.
+    pending: Option<Pending>,
 }
 
 impl<A: ServiceSet, T: UdsTransport, const PEERS: usize> Server<A, T, PEERS> {
@@ -60,12 +66,20 @@ impl<A: ServiceSet, T: UdsTransport, const PEERS: usize> Server<A, T, PEERS> {
             state: <A::State as ProtocolState>::INITIAL,
             session: SessionServer::new([Association::EMPTY; PEERS], params),
             transport,
+            pending: None,
         }
     }
 
     /// The application's services, for whatever it needs them for between events.
     pub fn services(&mut self) -> &mut A {
         &mut self.services
+    }
+
+    /// The transport, for inspection between events — the counterpart of
+    /// [`Self::services`].
+    #[must_use]
+    pub fn transport(&self) -> &T {
+        &self.transport
     }
 
     /// Handle one transport event.
@@ -80,156 +94,102 @@ impl<A: ServiceSet, T: UdsTransport, const PEERS: usize> Server<A, T, PEERS> {
             concurrent,
             response,
         } = self.store.split();
-
         let deadline = self.session.next_deadline();
-
         let ev = self
             .transport
             .next_event(&mut in_flight[..], deadline)
             .await?;
-        let TransportEvent::DataInd {
-            ai,
-            data: request_bytes,
-        } = ev
-        else {
-            // Everything that is not a request is dropped here, and each case is owed
-            // something this stub does not yet do: a DataTooLong at this point exceeds
-            // this entity's own MDS and owes busyRepeatRequest or 0x13; a DataConf must
-            // reach uds_session's t_data_conf; a Deadline outside a handler must reach
-            // tick(); Periodic and Closed have no handler at all. Listed in this task's
-            // report as elided behaviour, not implemented here.
-            return Ok(());
-        };
-
         // Sampled here, not earlier: `outbound_max` and `now` take `&self`, but a live
         // `next_event` future refuses even shared access, so both have to be read after
-        // that await returns. It is also what makes a peer limit learned during the
-        // exchange that delivered this request apply to its response. `now()` is called
-        // once per input handed to uds_session, three times in this body, matching its
-        // "a timestamp accompanies every input".
+        // that await returns. A timestamp accompanies every input handed to uds_session.
         let now = self.transport.now();
+        let (ai, request_bytes) = match ev {
+            TransportEvent::DataInd { ai, data } => (ai, data),
+            TransportEvent::DataConf { ai, result } => {
+                // UDSS_LLR_0063 — one matching no association is rejected by the session
+                // layer; the drain reads the verdict and nothing changes.
+                let reaction = self.session.t_data_conf(now, ai, result);
+                let d = drain(reaction, &mut self.transport, &mut self.pending).await?;
+                apply(&mut self.services, &mut self.state, d.deferred);
+                return Ok(());
+            }
+            TransportEvent::Deadline => {
+                let reaction = self.session.tick(now);
+                let d = drain(reaction, &mut self.transport, &mut self.pending).await?;
+                apply(&mut self.services, &mut self.state, d.deferred);
+                return Ok(());
+            }
+            // Elided: a DataTooLong here exceeds this entity's own MDS and owes 0x21 or
+            // 0x13 (architecture open question 1); Periodic has no consumer; a Closed
+            // outside a handler ends nothing here.
+            TransportEvent::DataTooLong { .. }
+            | TransportEvent::Periodic { .. }
+            | TransportEvent::Closed { .. } => return Ok(()),
+        };
+
         let outbound_max = self.transport.outbound_max();
-        let mut indication = None;
-        let mut reaction = self.session.t_data_ind(
+        let reaction = self.session.t_data_ind(
             now,
             ai,
             request_bytes,
             SResult::Ok,
             ServerRx::Request { session: None },
         );
-        // The `Indicate` is taken out of the drain before `finish()`: a `ServerOutput<'d>`
-        // outlives the reaction that yielded it, which is what lets dispatch run with
-        // `&mut session` free. Required, or the 0x78 window does not exist.
-        for out in reaction.outputs() {
-            if let ServerOutput::Indicate {
-                ai,
-                data,
-                result: SResult::Ok,
-            } = out
-            {
-                indication = Some((ai, data));
-            }
-        }
-        let _ = reaction.finish();
-        let Some((ai, request)) = indication else {
+        // The drain hands the `Indicate` back: a `ServerOutput<'d>` outlives the reaction
+        // that yielded it, which is what lets dispatch run with `&mut session` free.
+        // Required, or the 0x78 window does not exist.
+        let d = drain(reaction, &mut self.transport, &mut self.pending).await?;
+        apply(&mut self.services, &mut self.state, d.deferred);
+        let Some((ai, request)) = d.indication else {
             return Ok(());
         };
         // The byte is kept as received because a negative response echoes it
-        // (ISO 14229-1:2020 Table 21, SIDRQ), and `UdsServiceType::to_request_sid` maps
-        // every value it does not model back to 0x7F.
-        //
-        // Elided: an empty request carries no service identifier, so clause 8.7's first
-        // check cannot run on it and it owes incorrectMessageLengthOrInvalidFormat
-        // (0x13). Dropping it is this stub's behaviour, not the intended one.
-        let Some(sid) = request.first().copied() else {
-            return Ok(());
-        };
+        // (ISO 14229-1:2020 Table 21, SIDRQ). An empty request is the pipeline's to
+        // settle, and settles without pending, so the 0 is never transmitted.
+        let sid = request.first().copied().unwrap_or(0);
+        let reply_to = reply_address(ai);
 
         let mut sink = ResponseSink::new(response, outbound_max);
         // UDSSVC_ARCH_0009 rule 3's input, fresh for this request. A local rather than a
         // field: a `Cell` is not `Sync`, and as a field it would make every `Server`
         // unusable as the `static` that `new` exists to construct in place.
-        let pending_sent = core::cell::Cell::new(false);
-        let pending_deadline = self.session.next_deadline();
-
-        // Two scopes, because `pin!` binds to the enclosing block: `handler` is scoped so
-        // it drops before `sink` is read, and `waiting` is scoped per iteration so it
-        // drops before the 0x78 path needs `&mut transport`.
-        let outcome = {
-            let mut handler = core::pin::pin!(self.services.dispatch(
+        let pending_sent = Cell::new(false);
+        // Scoped, because `pin!` binds to the enclosing block: `handler` drops before
+        // `sink` is read.
+        let (outcome, deferred) = {
+            let handler = core::pin::pin!(self.services.dispatch(
                 &mut self.state,
                 ai,
                 request,
                 &mut sink,
-                &pending_sent
+                &pending_sent,
             ));
-            let mut deadline = pending_deadline;
-            // A loop over `handler.as_mut()`, not a one-shot: a plain
-            // `select2(handler, waiting)` drops the handler the moment the deadline wins,
-            // which is the opposite of what a response-pending is for.
-            loop {
-                let event = {
-                    let waiting = core::pin::pin!(
-                        self.transport.next_event(&mut concurrent[..], deadline)
-                    );
-                    select2(handler.as_mut(), waiting).await
-                };
-                match event {
-                    Either::Left(done) => break done,
-                    Either::Right(Ok(TransportEvent::Deadline)) => {
-                        answer_overrun(&mut self.session, &mut self.transport, ai, sid)
-                            .await?;
-                        deadline = self.session.next_deadline();
-                    }
-                    Either::Right(Ok(TransportEvent::Closed { expected })) => {
-                        // The exchange is over either way: a server does not reconnect
-                        // (ISO 13400-2 REQ 8.DoIP-144 puts routing activation on the
-                        // client), so there is nothing to do but stop.
-                        //
-                        // A close reaching *this* arm is never REQ 7.9's or 7.11's. Those
-                        // follow a positive response, and nothing positive has been sent
-                        // yet -- the only thing this loop hands to `t_data_req` is
-                        // `answer_overrun`'s response-pending, whose first octet is 0x7F.
-                        // So `expected` needs no examination here; a mid-handler close is
-                        // a dropped link or a tester leaving early.
-                        //
-                        // Elided: which is why reporting it as `Suppressed` is wrong. That
-                        // says clause 8.7 required no response, where the truth is that
-                        // none could be sent. Distinguishing them is the pipeline's, and
-                        // the pipeline is `todo!()`.
-                        let _ = expected;
-                        break Responded::Suppressed { session: None };
-                    }
-                    Either::Right(Ok(_concurrent)) => {
-                        // Elided: a concurrent message that is not one of clause
-                        // 8.7.6's two exceptions (ServiceSet::is_concurrent_exception)
-                        // owes busyRepeatRequest (0x21), not silence — acting on the
-                        // classification is open question 1. A DataTooLong here is
-                        // occupancy of the concurrent buffer and owes 0x21 too, and
-                        // must never lower the advertised MDS. Neither is done today;
-                        // this arm only re-arms the deadline.
-                        deadline = self.session.next_deadline();
-                    }
-                    Either::Right(Err(e)) => return Err(e),
-                }
-            }
+            let serving = Serving { reply_to, sid };
+            serve(
+                handler,
+                &mut self.session,
+                &mut self.transport,
+                &mut self.pending,
+                &mut concurrent[..],
+                serving,
+                &pending_sent,
+            )
+            .await?
         };
+        // Recorded mid-handler, applied now that `&mut services`/`&mut state` are free.
+        apply(&mut self.services, &mut self.state, deferred);
 
-        if !matches!(outcome, Responded::Yes { .. }) {
-            return Ok(());
-        }
-
-        let now = self.transport.now();
-        let reaction = self.session.s_data_req(
-            now,
+        let deferred = answer(
+            &mut self.session,
+            &mut self.transport,
+            &mut self.pending,
+            outcome,
             ai,
             sink.written_bytes(),
-            ServerTx::FinalResponse {
-                solicitation: Solicitation::Solicited,
-                session: None,
-            },
-        );
-        transmit_all(reaction, &mut self.transport).await
+        )
+        .await?;
+        apply(&mut self.services, &mut self.state, deferred);
+        Ok(())
     }
 
     /// Run until the transport fails.
@@ -244,48 +204,331 @@ impl<A: ServiceSet, T: UdsTransport, const PEERS: usize> Server<A, T, PEERS> {
     }
 }
 
-/// Drain a reaction, sending every `Transmit` it yields.
-///
-/// Inside the drain, not after it: a reaction may yield several and all of them must
-/// reach the transport. The reaction borrows the session and `t_data_req` borrows the
-/// transport, which is why they arrive as two arguments rather than as one `&mut self` —
-/// disjoint fields are disjoint borrows only while nothing has merged them.
-async fn transmit_all<T: UdsTransport, const PEERS: usize>(
-    mut reaction: uds_session::ServerReaction<'_, '_, PEERS>,
-    transport: &mut T,
-) -> Result<(), T::Error> {
-    for out in reaction.outputs() {
-        if let ServerOutput::Transmit { ai, data } = out {
-            transport.t_data_req(ai, data).await?;
+/// The `DiagnosticSessionControl` response in flight: its session takes effect on the
+/// `Confirm` that reports it sent (spec §3.2; ``UDSS_LLR_0085``). One slot: a server
+/// answers one request at a time (``UDSS_LLR_0108``), so one selecting response is in
+/// flight at most.
+#[derive(Debug, Clone, Copy)]
+struct Pending {
+    /// The response's addressing, exactly as submitted: `t_data_conf` matches by it.
+    ai: Ai,
+    /// The session the response selected.
+    selected: DiagnosticSessionType,
+}
+
+/// Where a response to `request` goes: the request went tester -> ECU, the response goes
+/// back the other way. The exact `Ai` `s_data_req` registers, and so the one the
+/// response's `DataConf` must carry to match it.
+const fn reply_address(request: Ai) -> Ai {
+    Ai {
+        sa: request.ta,
+        ta: request.sa,
+        ..request
+    }
+}
+
+/// ``UDSS_LLR_0073`` — the session layer learns only default/non-default.
+fn selection_of(session: DiagnosticSessionType) -> SessionSelection {
+    if matches!(session, DiagnosticSessionType::DefaultSession) {
+        SessionSelection::Default
+    } else {
+        SessionSelection::NonDefault
+    }
+}
+
+/// What a drain found that the application must hear about, applied by [`apply`] where
+/// `&mut services`/`&mut state` are free.
+#[derive(Debug, Clone, Copy)]
+struct Deferred {
+    /// `tS3_Server` expired (``UDSS_LLR_0100``).
+    timed_out: bool,
+    /// A selecting response was confirmed sent, or its suppression completed.
+    confirmed: Option<DiagnosticSessionType>,
+}
+
+impl Deferred {
+    const NONE: Self = Self {
+        timed_out: false,
+        confirmed: None,
+    };
+
+    /// Both records, the later confirmation winning.
+    fn merge(self, later: Self) -> Self {
+        Self {
+            timed_out: self.timed_out || later.timed_out,
+            confirmed: later.confirmed.or(self.confirmed),
         }
     }
-    let _ = reaction.finish();
-    Ok(())
+}
+
+/// What one drain found, beyond what it already acted on.
+#[derive(Debug)]
+struct Drained<'d> {
+    /// A request received successfully.
+    indication: Option<(Ai, &'d [u8])>,
+    /// ``UDSS_LLR_0117`` — `tP2_Server` expired with no response transmitted.
+    overran: bool,
+    /// The reaction's verdict, where the input was refused.
+    rejected: Option<Rejection>,
+    /// What the application must hear about.
+    deferred: Deferred,
+}
+
+/// The one place every session output is handled (spec §3.4). Every reaction, from every
+/// input, passes through here, because an expiry can surface from any of them. Acts on
+/// what needs only the transport and the pending record; records the rest.
+///
+/// Inside the drain, not after it: a reaction may yield several `Transmit`s and all of
+/// them must reach the transport. The reaction borrows the session and `t_data_req`
+/// borrows the transport, which is why they arrive as separate arguments rather than as
+/// one `&mut self` — disjoint fields are disjoint borrows only while nothing has merged
+/// them.
+async fn drain<'d, T: UdsTransport, const PEERS: usize>(
+    mut reaction: uds_session::ServerReaction<'_, 'd, PEERS>,
+    transport: &mut T,
+    pending: &mut Option<Pending>,
+) -> Result<Drained<'d>, T::Error> {
+    let mut found = Drained {
+        indication: None,
+        overran: false,
+        rejected: None,
+        deferred: Deferred::NONE,
+    };
+    for out in reaction.outputs() {
+        match out {
+            ServerOutput::Transmit { ai, data } => transport.t_data_req(ai, data).await?,
+            ServerOutput::Indicate {
+                ai,
+                data,
+                result: SResult::Ok,
+            } => found.indication = Some((ai, data)),
+            ServerOutput::Confirm { ai, result } => {
+                // Only the selecting response's own confirmation settles the slot; a
+                // failed one clears it and leaves the session where it was (spec §3.2).
+                if let Some(p) = *pending
+                    && p.ai == ai
+                {
+                    *pending = None;
+                    if result == SResult::Ok {
+                        found.deferred.confirmed = Some(p.selected);
+                    }
+                }
+            }
+            ServerOutput::SessionTimeout { .. } => found.deferred.timed_out = true,
+            ServerOutput::ResponseOverrun { .. } => found.overran = true,
+            // A failed reception's `Indicate`, whose data means nothing (UDSS_LLR_0035),
+            // and whatever else UDSS_LLR_0012's open enumeration adds.
+            _ => {}
+        }
+    }
+    found.rejected = reaction.finish().err();
+    Ok(found)
+}
+
+/// Act on what a drain recorded, in the order the outputs arrived: the timeout first
+/// (``UDSS_LLR_0081`` put it first), then a confirmation. The only caller of the
+/// session hooks.
+fn apply<A: ServiceSet>(services: &mut A, state: &mut A::State, d: Deferred) {
+    if d.timed_out {
+        services.session_timed_out(state);
+    }
+    if let Some(selected) = d.confirmed {
+        services.session_confirmed(state, selected);
+    }
+}
+
+/// The request in progress, as a response-pending answers it.
+#[derive(Debug, Clone, Copy)]
+struct Serving {
+    /// The request's addressing, swapped: where its responses go.
+    reply_to: Ai,
+    /// The request's service identifier, which a negative response echoes.
+    sid: u8,
+}
+
+/// Poll the handler to completion, answering what the transport delivers meanwhile.
+///
+/// Returns the handler's outcome and what the drains it made recorded for the
+/// application, which waits until the handler releases `&mut services`/`&mut state`.
+/// `waiting` is scoped per iteration so it drops before the 0x78 path needs
+/// `&mut transport`.
+async fn serve<H: Future<Output = Responded>, T: UdsTransport, const PEERS: usize>(
+    mut handler: Pin<&mut H>,
+    session: &mut SessionServer<PEERS>,
+    transport: &mut T,
+    pending: &mut Option<Pending>,
+    concurrent: &mut [u8],
+    serving: Serving,
+    pending_sent: &Cell<bool>,
+) -> Result<(Responded, Deferred), T::Error> {
+    let mut deferred = Deferred::NONE;
+    let mut deadline = session.next_deadline();
+    // A loop over `handler.as_mut()`, not a one-shot: a plain
+    // `select2(handler, waiting)` drops the handler the moment the deadline wins,
+    // which is the opposite of what a response-pending is for.
+    loop {
+        let event = {
+            let waiting = core::pin::pin!(transport.next_event(concurrent, deadline));
+            select2(handler.as_mut(), waiting).await
+        };
+        match event {
+            Either::Left(done) => return Ok((done, deferred)),
+            Either::Right(Ok(TransportEvent::Deadline)) => {
+                let now = transport.now();
+                let o = answer_overrun(
+                    session,
+                    transport,
+                    pending,
+                    now,
+                    serving.reply_to,
+                    serving.sid,
+                )
+                .await?;
+                if o.sent_pending {
+                    // UDSSVC_ARCH_0009 rule 3 — read by `settle` when the handler
+                    // settles, which may be after this instant.
+                    pending_sent.set(true);
+                }
+                deferred = deferred.merge(o.deferred);
+                deadline = session.next_deadline();
+            }
+            Either::Right(Ok(TransportEvent::DataConf { ai, result })) => {
+                // The 0x78's confirmation, or any other: it frees its association
+                // and opens the enhanced window (UDSS_LLR_0116).
+                let now = transport.now();
+                let reaction = session.t_data_conf(now, ai, result);
+                let d = drain(reaction, transport, pending).await?;
+                deferred = deferred.merge(d.deferred);
+                deadline = session.next_deadline();
+            }
+            Either::Right(Ok(TransportEvent::Closed { expected })) => {
+                // The exchange is over either way: a server does not reconnect
+                // (ISO 13400-2 REQ 8.DoIP-144 puts routing activation on the
+                // client). A close reaching *this* arm is never REQ 7.9's or
+                // 7.11's — those follow a positive response, and nothing positive
+                // has been sent yet — so `expected` needs no examination here.
+                //
+                // Elided: reporting it as `Suppressed` submits a completion report
+                // for a request the server did not complete, where the truth is
+                // that no response could be sent. Milestone 3 distinguishes them.
+                let _ = expected;
+                return Ok((Responded::Suppressed { session: None }, deferred));
+            }
+            Either::Right(Ok(_concurrent)) => {
+                // Elided: a concurrent message that is not one of clause
+                // 8.7.6's two exceptions (ServiceSet::is_concurrent_exception)
+                // owes busyRepeatRequest (0x21), not silence — acting on the
+                // classification is open question 1. A DataTooLong here is
+                // occupancy of the concurrent buffer and owes 0x21 too, and
+                // must never lower the advertised MDS. Periodic has no consumer.
+                // This arm only re-arms the deadline.
+                deadline = session.next_deadline();
+            }
+            Either::Right(Err(e)) => return Err(e),
+        }
+    }
+}
+
+/// Submit the handler's outcome: a final response, or the completion report a
+/// suppressed request owes.
+///
+/// A free function rather than a method because `response` borrows the server's store.
+/// Returns what the application must hear about, for the caller to [`apply`].
+async fn answer<T: UdsTransport, const PEERS: usize>(
+    session: &mut SessionServer<PEERS>,
+    transport: &mut T,
+    pending: &mut Option<Pending>,
+    outcome: Responded,
+    ai: Ai,
+    response: &[u8],
+) -> Result<Deferred, T::Error> {
+    let reply_to = reply_address(ai);
+    let now = transport.now();
+    let reaction = match outcome {
+        Responded::Yes { session: selected } => session.s_data_req(
+            now,
+            reply_to,
+            response,
+            ServerTx::FinalResponse {
+                solicitation: Solicitation::Solicited,
+                session: selected.map(selection_of),
+            },
+        ),
+        // UDSS_LLR_0074 — a suppressed request is still complete.
+        Responded::Suppressed { session: selected } => session.completion_report(
+            now,
+            ai,
+            ServerRx::Request {
+                session: selected.map(selection_of),
+            },
+        ),
+    };
+    let d = drain(reaction, transport, pending).await?;
+    let mut deferred = d.deferred;
+    match outcome {
+        // Recorded only once the submission is accepted, so a refused response never
+        // leaves a pending selection behind, and never disturbs one already in
+        // flight. `reply_to` is the association `t_data_conf` will match.
+        Responded::Yes {
+            session: Some(selected),
+        } if d.rejected.is_none() => {
+            *pending = Some(Pending {
+                ai: reply_to,
+                selected,
+            });
+        }
+        Responded::Yes { .. } => {}
+        // UDSS_LLR_0086 / 0098 — the completion report is the moment, so the
+        // selection follows whatever the report's own drain recorded.
+        Responded::Suppressed { session } => {
+            deferred = deferred.merge(Deferred {
+                timed_out: false,
+                confirmed: session,
+            });
+        }
+    }
+    Ok(deferred)
+}
+
+/// What `answer_overrun` learned: whether a 0x78 was accepted for transmission, and what
+/// its drains recorded.
+#[derive(Debug, Clone, Copy)]
+struct Overrun {
+    /// The 0x78 was accepted by `s_data_req` (``UDSSVC_ARCH_0009`` rule 3).
+    sent_pending: bool,
+    /// What the tick's and the submission's drains recorded.
+    deferred: Deferred,
 }
 
 /// Answer `requestCorrectlyReceivedResponsePending` (0x78) if one has come due.
 ///
-/// ``UDSSVC_ARCH_0031``. The deadline passing is not itself the overrun: the session
-/// layer is ticked and `UDSS_LLR_0117`'s `ResponseOverrun` is the output that says a 0x78
-/// is owed. A deadline that passed for any other reason produces no message.
+/// ``UDSSVC_ARCH_0031``/``0032`` — the deadline passing is not itself the overrun: the
+/// session layer is ticked and ``UDSS_LLR_0117``'s `ResponseOverrun` is the output that
+/// says a 0x78 is owed. It is an ordinary transmission, and whether it was *accepted* is
+/// the verdict ``UDSSVC_ARCH_0009`` rule 3 reads.
 async fn answer_overrun<T: UdsTransport, const PEERS: usize>(
     session: &mut SessionServer<PEERS>,
     transport: &mut T,
-    ai: Ai,
+    pending: &mut Option<Pending>,
+    now: Timestamp,
+    reply_to: Ai,
     sid: u8,
-) -> Result<(), T::Error> {
-    let now = transport.now();
-    let mut tick = session.tick(now);
-    let overran = tick
-        .outputs()
-        .any(|out| matches!(out, ServerOutput::ResponseOverrun { .. }));
-    let _ = tick.finish();
-    if !overran {
-        return Ok(());
+) -> Result<Overrun, T::Error> {
+    let tick = session.tick(now);
+    let first = drain(tick, transport, pending).await?;
+    if !first.overran {
+        return Ok(Overrun {
+            sent_pending: false,
+            deferred: first.deferred,
+        });
     }
-    let pending = [0x7F_u8, sid, 0x78];
-    let reaction = session.s_data_req(now, ai, &pending, ServerTx::ResponsePending);
-    transmit_all(reaction, transport).await
+    let bytes = [0x7F_u8, sid, 0x78];
+    let reaction = session.s_data_req(now, reply_to, &bytes, ServerTx::ResponsePending);
+    let second = drain(reaction, transport, pending).await?;
+    Ok(Overrun {
+        sent_pending: second.rejected.is_none(),
+        deferred: first.deferred.merge(second.deferred),
+    })
 }
 
 #[cfg(test)]
