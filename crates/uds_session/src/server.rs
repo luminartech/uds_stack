@@ -192,14 +192,12 @@ impl<const A: usize> Server<A> {
     }
 
     /// ``UDSS_LLR_0082`` — whether `peer` is the controlling client.
-    #[expect(dead_code, reason = "used by the bodies of Tasks 4-6")]
     fn is_controlling(&self, peer: PeerIdentity) -> bool {
         matches!(self.session, Session::NonDefault { client, .. } if client == peer)
     }
 
     /// Start, or restart, `tS3_Server` — a no-op in the default session
     /// (``UDSS_LLR_0099``), which the type makes the only possible outcome.
-    #[expect(dead_code, reason = "used by the bodies of Tasks 4-6")]
     fn restart_s3(&mut self, now: Timestamp) {
         if let Session::NonDefault { s3, .. } = &mut self.session {
             s3.start(now, self.params.s3_server);
@@ -207,7 +205,6 @@ impl<const A: usize> Server<A> {
     }
 
     /// Stop `tS3_Server` — likewise a no-op in the default session.
-    #[expect(dead_code, reason = "used by the bodies of Tasks 4-6")]
     fn stop_s3(&mut self) {
         if let Session::NonDefault { s3, .. } = &mut self.session {
             s3.stop();
@@ -235,13 +232,13 @@ impl<const A: usize> Server<A> {
         now: Timestamp,
         parameter: ServerParameter,
     ) -> ServerReaction<'_, 'static, A> {
-        #[allow(
-            clippy::todo,
-            reason = "API stub; behaviour lands with its requirement"
-        )]
-        {
-            todo!("UDSS_LLR_0040, 0043: {now:?} {parameter:?}")
+        self.expire(now);
+        match parameter {
+            ServerParameter::S3Server(v) => self.params.s3_server = v,
+            ServerParameter::P2ServerMax(v) => self.params.p2_server_max = v,
+            ServerParameter::P2StarServerMax(v) => self.params.p2_star_server_max = v,
         }
+        Reaction::new(self, [None, None], Ok(()))
     }
 
     /// Request transmission of a response.
@@ -302,16 +299,47 @@ impl<const A: usize> Server<A> {
         result: SResult,
         class: ServerRx,
     ) -> ServerReaction<'_, 'd, A> {
-        #[allow(
-            clippy::todo,
-            reason = "API stub; behaviour lands with its requirement"
-        )]
-        {
-            todo!(
-                "UDSS_LLR_0036: {now:?} {ai:?} {} {result:?} {class:?}",
-                data.len()
-            )
+        self.expire(now);
+        let from = ai.source();
+        match (result, class) {
+            (SResult::Ok, ServerRx::Request { .. }) => {
+                // UDSS_LLR_0107 / 0108: this request is now the service in progress, and
+                // UDSS_LLR_0113: its tP2_Server starts with tP2_Server_Max.
+                let mut p2 = Timer::STOPPED;
+                p2.start(now, self.params.p2_server_max);
+                self.service = Some(InProgress {
+                    peer: from,
+                    anchor: None,
+                    p2,
+                    loaded: ServerReload::P2,
+                });
+                // UDSS_LLR_0087; UDSS_LLR_0097 and 0099 are the cases that fall through.
+                if self.is_controlling(from) {
+                    self.stop_s3();
+                }
+            }
+            (SResult::Ok, ServerRx::KeepAlive) => {
+                // UDSS_LLR_0095 — only a *running* timer is reloaded; UDSS_LLR_0096
+                // otherwise.
+                let running = matches!(self.session, Session::NonDefault { s3, .. } if s3.is_running());
+                if running && self.is_controlling(from) {
+                    self.restart_s3(now);
+                }
+            }
+            (SResult::Transport(_), ServerRx::Request { .. }) => {
+                // UDSS_LLR_0092 — all three limbs of its guard.
+                let stopped = matches!(self.session, Session::NonDefault { s3, .. } if !s3.is_running());
+                if stopped && self.is_controlling(from) && self.service.is_none() {
+                    self.restart_s3(now);
+                }
+            }
+            (SResult::Transport(_), ServerRx::KeepAlive) => {
+                // UDSS_LLR_0096 — changes nothing.
+            }
         }
+        // UDSS_LLR_0036
+        let indicate = ServerOutput::Indicate { ai, data, result };
+        Reaction::new(self, [Some(indicate), None], Ok(()))
     }
 
     /// A transmission has completed.

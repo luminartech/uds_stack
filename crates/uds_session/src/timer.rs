@@ -52,10 +52,6 @@ impl Timer {
         self.running = None;
     }
 
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "read by the server bodies of Task 4")
-    )]
     pub(crate) const fn is_running(&self) -> bool {
         self.running.is_some()
     }
