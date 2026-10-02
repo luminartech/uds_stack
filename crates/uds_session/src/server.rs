@@ -77,6 +77,10 @@ struct InProgress {
     p2: Timer,
     loaded: ServerReload,
     lead: u32,
+    /// The transmission this service submitted that is still unconfirmed: the only one
+    /// whose `T_Data.conf` answers it (``UDSS_LLR_0109``). `None` for a service that
+    /// replaced another (``UDSS_LLR_0108``), so its predecessor's confirmation does not.
+    outstanding: Option<Outstanding>,
 }
 
 /// What a server produces for the caller to retrieve.
@@ -254,10 +258,17 @@ impl<const A: usize> Server<A> {
         self.session = Session::NonDefault { client, s3 };
     }
 
-    /// ``UDSS_LLR_0106`` — whether a transmission to `target` answers the service in
-    /// progress.
-    fn answers(&self, target: PeerIdentity) -> bool {
-        self.service.is_some_and(|s| s.peer == target)
+    /// ``UDSS_LLR_0106`` — whether an input addressing `peer` answers the service in
+    /// progress: a submission to it, or a completion report from it.
+    fn serves(&self, peer: PeerIdentity) -> bool {
+        self.service.is_some_and(|s| s.peer == peer)
+    }
+
+    /// ``UDSS_LLR_0109`` — whether the confirmation of `sent` answers the service in
+    /// progress: only where that service submitted it. Addressing alone would match a
+    /// replaced service's response (``UDSS_LLR_0108``) to the one that replaced it.
+    fn answers(&self, sent: Outstanding) -> bool {
+        self.service.is_some_and(|s| s.outstanding == Some(sent))
     }
 
     /// ``UDSS_LLR_0119`` — ⌈3 × `tP2*_Server_Max` / 10⌉ in integer arithmetic.
@@ -283,7 +294,7 @@ impl<const A: usize> Server<A> {
         if self.associations.iter().all(|a| a.slot.is_some()) {
             add(Cause::NoAssociationFree); // UDSS_LLR_0062
         }
-        if class == ServerTx::ResponsePending && self.answers(ai.target()) {
+        if class == ServerTx::ResponsePending && self.serves(ai.target()) {
             let unconfirmed = outstanding.any(|o| {
                 o.class == ServerTx::ResponsePending && o.ai.target() == ai.target()
             });
@@ -334,7 +345,8 @@ impl<const A: usize> Server<A> {
     /// ``UDSS_LLR_0119`` reject a response-pending message that is unconfirmed or too
     /// soon. One report states every cause that held (``UDSS_LLR_0016``). Otherwise the
     /// request takes an association (``UDSS_LLR_0059``), stops `tP2_Server` where it
-    /// answers the service in progress (``UDSS_LLR_0114``), and is passed on as a
+    /// answers the service in progress (``UDSS_LLR_0114``), being then the transmission
+    /// whose confirmation answers that service (``UDSS_LLR_0109``), and is passed on as a
     /// `T_Data.req`.
     pub fn s_data_req<'d>(
         &mut self,
@@ -348,8 +360,9 @@ impl<const A: usize> Server<A> {
             return Reaction::new(self, [None, None], Err(rejection)); // UDSS_LLR_0015
         }
         // UDSS_LLR_0059 — take a free association.
+        let sent = Outstanding { ai, class };
         if let Some(free) = self.associations.iter_mut().find(|a| a.slot.is_none()) {
-            free.slot = Some(Outstanding { ai, class });
+            free.slot = Some(sent);
         }
         // UDSS_LLR_0114
         let stops_p2 = match class {
@@ -359,10 +372,11 @@ impl<const A: usize> Server<A> {
             }
         };
         if stops_p2
-            && self.answers(ai.target())
+            && self.serves(ai.target())
             && let Some(service) = self.service.as_mut()
         {
             service.p2.stop();
+            service.outstanding = Some(sent); // UDSS_LLR_0109: its conf answers this one
         }
         Reaction::new(
             self,
@@ -437,6 +451,7 @@ impl<const A: usize> Server<A> {
                     p2,
                     loaded: ServerReload::P2,
                     lead: self.params.response_pending_lead, // UDSS_LLR_0186
+                    outstanding: None, // UDSS_LLR_0109: no predecessor's conf answers it
                 });
                 // UDSS_LLR_0087; UDSS_LLR_0097 and 0099 are the cases that fall through.
                 if self.is_controlling(from) {
@@ -473,10 +488,11 @@ impl<const A: usize> Server<A> {
     /// ``UDSS_LLR_0025`` — addressing and a result. ``UDSS_LLR_0059`` matches it to the
     /// outstanding association by addressing, and ``UDSS_LLR_0063`` rejects one matching
     /// none. ``UDSS_LLR_0039`` forwards it to the application as an `S_Data.conf`.
-    /// Matching frees the association, and the confirmation acts on the response timer
-    /// (``UDSS_LLR_0110``, ``UDSS_LLR_0116``), the service in progress
-    /// (``UDSS_LLR_0109``) and the session (``UDSS_LLR_0085``, ``UDSS_LLR_0088``,
-    /// ``UDSS_LLR_0093``, ``UDSS_LLR_0098``).
+    /// Matching frees the association, and the confirmation acts on the session
+    /// (``UDSS_LLR_0085``, ``UDSS_LLR_0088``, ``UDSS_LLR_0093``, ``UDSS_LLR_0098``) and,
+    /// only where the service in progress submitted the transmission it confirms
+    /// (``UDSS_LLR_0109``), on that service and its response timer (``UDSS_LLR_0110``,
+    /// ``UDSS_LLR_0116``).
     pub fn t_data_conf(
         &mut self,
         now: Timestamp,
@@ -486,7 +502,7 @@ impl<const A: usize> Server<A> {
         self.expire(now);
         // UDSS_LLR_0059 / 0063 — match by addressing, S_Mtype included, and free the
         // slot in the same expression: there is no "found but empty" branch to defend.
-        let Some(Outstanding { class, .. }) = self
+        let Some(sent) = self
             .associations
             .iter_mut()
             .find_map(|a| a.slot.take_if(|o| o.ai == ai))
@@ -494,8 +510,11 @@ impl<const A: usize> Server<A> {
             let rejection = Rejection::new(Cause::NoMatchingAssociation);
             return Reaction::new(self, [None, None], Err(rejection));
         };
+        let class = sent.class;
         let to = ai.target();
-        let answers = self.answers(to);
+        // UDSS_LLR_0109 — a replaced service's confirmation frees its slot and acts on
+        // the session below, and leaves the service that replaced it alone.
+        let answers = self.answers(sent);
         let ok = result == SResult::Ok;
         match class {
             ServerTx::ResponsePending => {
@@ -503,6 +522,7 @@ impl<const A: usize> Server<A> {
                     if ok {
                         // UDSS_LLR_0110, 0116; 0090 leaves tS3 alone.
                         if let Some(s) = self.service.as_mut() {
+                            s.outstanding = None;
                             s.anchor = Some(now);
                             s.p2.start(now, self.params.p2_star_server_max);
                             s.loaded = ServerReload::P2Star;
@@ -586,7 +606,7 @@ impl<const A: usize> Server<A> {
         self.expire(now);
         let from = ai.source();
         if let ServerRx::Request { session } = class {
-            if self.answers(from) {
+            if self.serves(from) {
                 self.service = None; // UDSS_LLR_0109, and 0115: its tP2 goes with it.
             }
             match session {
