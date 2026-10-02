@@ -12,12 +12,18 @@
 
 use crate::services::SessionTransition;
 use crate::state::State;
+use crate::{
+    DataIdentifier, DiagnosticSessionControl, ReadDataByIdentifier, TesterPresent,
+};
 use crate::{Responded, ResponseSink};
 use automotive_wire_codec::Sink;
 use core::cell::Cell;
 use uds_protocol::{
     Decode, DiagnosticSessionType, Encode, NegativeResponse, NegativeResponseCode, Request,
     UdsServiceType,
+};
+use uds_protocol::{
+    DiagnosticSessionControlRequest, ReadDataByIdentifierRequest, TesterPresentRequest,
 };
 use uds_session::{Ai, TaType};
 
@@ -210,7 +216,79 @@ pub fn settle(
     }
 }
 
+/// ISO 14229-1:2020 clause 11.2 — `ReadDataByIdentifier`'s own stage
+/// (``UDSSVC_ARCH_0008``).
+///
+/// Identifiers the application does not define are skipped; if none is defined the
+/// request is `requestOutOfRange` (0x31); more than `MAX_DIDS_PER_REQUEST` is
+/// `incorrectMessageLengthOrInvalidFormat` (0x13). The pipeline writes each identifier;
+/// the handler writes its record.
+#[doc(hidden)]
+pub async fn read_data_by_identifier<A: ReadDataByIdentifier>(
+    services: &mut A,
+    request: &ReadDataByIdentifierRequest<'_>,
+    out: &mut ResponseSink<'_>,
+) -> Result<Option<DiagnosticSessionType>, NegativeResponseCode> {
+    if request.dids().count() > A::MAX_DIDS_PER_REQUEST {
+        return Err(NegativeResponseCode::IncorrectMessageLengthOrInvalidFormat);
+    }
+    let _ = out.write_all(&[0x62]);
+    let mut any = false;
+    for raw in request.dids() {
+        let Some(did) = <A::Did as DataIdentifier>::from_u16(raw) else {
+            continue;
+        };
+        any = true;
+        let _ = out.write_all(&raw.to_be_bytes());
+        services.read(did, out).await?;
+    }
+    if any {
+        Ok(None)
+    } else {
+        Err(NegativeResponseCode::RequestOutOfRange)
+    }
+}
+
+/// ISO 14229-1:2020 clause 10.2 — `DiagnosticSessionControl`'s own stage
+/// (``UDSSVC_ARCH_0035``): an unsupported session is `subFunctionNotSupported` (0x12);
+/// otherwise the positive response carries the session and the application's timing,
+/// `P2*` in 10 ms units (Table 29), and the session is selected.
+#[doc(hidden)]
+pub fn diagnostic_session_control<A: DiagnosticSessionControl>(
+    services: &mut A,
+    request: &DiagnosticSessionControlRequest,
+    out: &mut ResponseSink<'_>,
+) -> Result<Option<DiagnosticSessionType>, NegativeResponseCode> {
+    let session = request.session_type;
+    if !services.supports(session) {
+        return Err(NegativeResponseCode::SubFunctionNotSupported);
+    }
+    let timing = services.timing(session);
+    let p2 = u16::try_from(timing.p2_server_max).unwrap_or(u16::MAX);
+    let p2_star = u16::try_from(timing.p2_star_server_max / 10).unwrap_or(u16::MAX);
+    let _ = out.write_all(&[0x50]);
+    let _ = uds_protocol::DiagnosticSessionControlResponse::new(session, p2, p2_star)
+        .encode(out);
+    Ok(Some(session))
+}
+
+/// ISO 14229-1:2020 clause 10.6 — `TesterPresent`'s own stage (``UDSSVC_ARCH_0004``):
+/// the application is told, and the positive response is `7E 00`. Whether it is sent is
+/// the suppress bit's, read by `settle`.
+#[doc(hidden)]
+pub fn tester_present<A: TesterPresent>(
+    services: &mut A,
+    _request: &TesterPresentRequest,
+    out: &mut ResponseSink<'_>,
+) -> Result<Option<DiagnosticSessionType>, NegativeResponseCode> {
+    services.on_tester_present();
+    let _ = out.write_all(&[0x7E]);
+    let _ = uds_protocol::TesterPresentResponse::new().encode(out);
+    Ok(None)
+}
+
 #[cfg(test)]
+#[allow(clippy::panic, reason = "a test harness for futures that never pend")]
 mod tests {
     use super::{Settling, Stage, allowed_in_session, begin, settle, suppresses};
     use crate::state::{ProtocolState, State};
@@ -220,6 +298,158 @@ mod tests {
     use uds_protocol::NegativeResponseCode as N;
     use uds_protocol::{DiagnosticSessionType as S, UdsServiceType as U};
     use uds_session::{Address, Ai, Mtype, TaType};
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    enum Did {
+        Speed,
+        Vin,
+    }
+    impl crate::DataIdentifier for Did {
+        const MAX_RECORD_LEN: usize = 17;
+        fn as_u16(self) -> u16 {
+            match self {
+                Self::Speed => 0xF40D,
+                Self::Vin => 0xF190,
+            }
+        }
+        fn from_u16(v: u16) -> Option<Self> {
+            match v {
+                0xF40D => Some(Self::Speed),
+                0xF190 => Some(Self::Vin),
+                _ => None,
+            }
+        }
+        fn split_record(self, buf: &[u8]) -> Result<(&[u8], &[u8]), crate::RecordError> {
+            buf.split_at_checked(match self {
+                Self::Speed => 1,
+                Self::Vin => 17,
+            })
+            .ok_or(crate::RecordError::Short)
+        }
+    }
+    struct Ecu;
+    impl crate::ReadDataByIdentifier for Ecu {
+        type Did = Did;
+        const MAY_RESPOND_PENDING: bool = false;
+        const MAX_DIDS_PER_REQUEST: usize = 2;
+        // A plain `fn` returning a ready future: an `async fn` with no `.await` is
+        // `clippy::unused_async_trait_impl`, which pedantic denies.
+        fn read(
+            &mut self,
+            did: Did,
+            out: &mut ResponseSink<'_>,
+        ) -> impl core::future::Future<Output = Result<(), N>> {
+            let _ = match did {
+                Did::Speed => out.write_all(&[0x40]),
+                Did::Vin => out.write_all(&[0x11; 17]),
+            };
+            core::future::ready(Ok(()))
+        }
+    }
+    impl crate::DiagnosticSessionControl for Ecu {
+        const MAX_RESPONSE_LEN: usize = 0;
+        fn supports(&self, s: S) -> bool {
+            matches!(s, S::DefaultSession | S::ExtendedDiagnosticSession)
+        }
+        fn timing(&self, _s: S) -> crate::SessionTiming {
+            crate::SessionTiming {
+                p2_server_max: 50,
+                p2_star_server_max: 5_000,
+            }
+        }
+        fn on_transition(&mut self, _t: crate::SessionTransition, _r: bool) {}
+    }
+    impl crate::TesterPresent for Ecu {
+        fn on_tester_present(&mut self) {}
+    }
+
+    fn block_on<F: core::future::Future>(f: F) -> F::Output {
+        // The handlers never await anything, so one poll completes them.
+        let waker = core::task::Waker::noop();
+        let mut cx = core::task::Context::from_waker(waker);
+        let mut f = core::pin::pin!(f);
+        match f.as_mut().poll(&mut cx) {
+            core::task::Poll::Ready(v) => v,
+            core::task::Poll::Pending => panic!("a milestone-1 handler never pends"),
+        }
+    }
+
+    /// Clause 11.2 — a supported identifier's record follows its identifier.
+    #[test]
+    fn rdbi_writes_identifier_then_record() {
+        let mut buf = [0_u8; 32];
+        let mut out = ResponseSink::new(&mut buf, None);
+        let req = uds_protocol::ReadDataByIdentifierRequest::new(&[0xF40D]);
+        let r = block_on(super::read_data_by_identifier(&mut Ecu, &req, &mut out));
+        assert_eq!(r, Ok(None));
+        assert_eq!(out.written_bytes(), &[0x62, 0xF4, 0x0D, 0x40]);
+    }
+
+    /// Clause 11.2 — unsupported identifiers are skipped; none supported is 0x31; too
+    /// many is 0x13. (Review focus 4.)
+    #[test]
+    fn rdbi_partial_none_and_too_many() {
+        let mut buf = [0_u8; 32];
+        let mut out = ResponseSink::new(&mut buf, None);
+        let req = uds_protocol::ReadDataByIdentifierRequest::new(&[0x0001, 0xF40D]);
+        assert_eq!(
+            block_on(super::read_data_by_identifier(&mut Ecu, &req, &mut out)),
+            Ok(None)
+        );
+        assert_eq!(out.written_bytes(), &[0x62, 0xF4, 0x0D, 0x40]);
+        out.rewind();
+        let req = uds_protocol::ReadDataByIdentifierRequest::new(&[0x0001]);
+        assert_eq!(
+            block_on(super::read_data_by_identifier(&mut Ecu, &req, &mut out)),
+            Err(N::RequestOutOfRange)
+        );
+        out.rewind();
+        let req = uds_protocol::ReadDataByIdentifierRequest::new(&[0xF40D, 0xF190, 0xF40D]);
+        assert_eq!(
+            block_on(super::read_data_by_identifier(&mut Ecu, &req, &mut out)),
+            Err(N::IncorrectMessageLengthOrInvalidFormat)
+        );
+    }
+
+    /// Clause 10.2 — the positive response carries the session and its timing, P2* in
+    /// 10 ms units, and selects the session.
+    #[test]
+    fn dsc_writes_timing_and_selects_the_session() {
+        let mut buf = [0_u8; 8];
+        let mut out = ResponseSink::new(&mut buf, None);
+        let req = uds_protocol::DiagnosticSessionControlRequest::new(
+            false,
+            S::ExtendedDiagnosticSession,
+        );
+        let r = super::diagnostic_session_control(&mut Ecu, &req, &mut out);
+        assert_eq!(r, Ok(Some(S::ExtendedDiagnosticSession)));
+        assert_eq!(out.written_bytes(), &[0x50, 0x03, 0x00, 0x32, 0x01, 0xF4]);
+    }
+
+    /// Clause 10.2 Figure 11 — an unsupported session is 0x12.
+    #[test]
+    fn dsc_refuses_an_unsupported_session() {
+        let mut buf = [0_u8; 8];
+        let mut out = ResponseSink::new(&mut buf, None);
+        let req = uds_protocol::DiagnosticSessionControlRequest::new(
+            false,
+            S::ProgrammingSession,
+        );
+        assert_eq!(
+            super::diagnostic_session_control(&mut Ecu, &req, &mut out),
+            Err(N::SubFunctionNotSupported)
+        );
+    }
+
+    /// Clause 10.6 — `TesterPresent` answers `7E 00` and tells the application.
+    #[test]
+    fn tester_present_answers_and_notifies() {
+        let mut buf = [0_u8; 4];
+        let mut out = ResponseSink::new(&mut buf, None);
+        let req = uds_protocol::TesterPresentRequest::new(true);
+        assert_eq!(super::tester_present(&mut Ecu, &req, &mut out), Ok(None));
+        assert_eq!(out.written_bytes(), &[0x7E, 0x00]);
+    }
 
     fn ai(ta_type: TaType) -> Ai {
         Ai {
