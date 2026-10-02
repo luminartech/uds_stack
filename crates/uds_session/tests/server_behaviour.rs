@@ -623,6 +623,142 @@ mod transmission {
     }
 }
 
+/// ``UDSS_LLR_0108``, ``UDSS_LLR_0109`` — a request from the same tester arriving before
+/// the previous response's `T_Data.conf`, which ISO 14229-2:2021 10.3 lets the client
+/// send, replaces the service in progress; that confirmation then answers nothing.
+mod overlap {
+    use super::*;
+    use uds_session::Cause;
+
+    const FINAL: ServerTx = ServerTx::FinalResponse {
+        solicitation: Solicitation::Solicited,
+        session: None,
+    };
+    const PENDING: [u8; 3] = [0x7F, 0x22, 0x78];
+
+    fn request(s: &mut Server<2>, now: Timestamp) {
+        let (_, ok) = outputs(s.t_data_ind(
+            now,
+            ai(TESTER, ECU),
+            &[0x22, 0xF1, 0x90],
+            SResult::Ok,
+            ServerRx::Request { session: None },
+        ));
+        assert!(ok.is_ok());
+    }
+
+    fn submit(s: &mut Server<2>, now: Timestamp, class: ServerTx) -> Result<(), Rejection> {
+        let data: &[u8] = match class {
+            ServerTx::ResponsePending => &PENDING,
+            ServerTx::FinalResponse { .. } => &[0x62, 0xF1, 0x90, 0x01],
+        };
+        outputs(s.s_data_req(now, ai(ECU, TESTER), data, class)).1
+    }
+
+    fn confirm(s: &mut Server<2>, now: Timestamp) {
+        let (out, ok) = outputs(s.t_data_conf(now, ai(ECU, TESTER), SResult::Ok));
+        assert!(ok.is_ok());
+        assert!(matches!(out[0], Some(ServerOutput::Confirm { .. })));
+    }
+
+    fn overrun(loaded: ServerReload) -> ServerOutput<'static> {
+        ServerOutput::ResponseOverrun {
+            sa: Address(TESTER),
+            ae: None,
+            loaded,
+        }
+    }
+
+    /// The first response's confirmation, arriving after the second request, leaves the
+    /// second its `tP2_Server`: the deadline still names it and the overrun is reported.
+    #[test]
+    fn a_predecessors_confirmation_leaves_the_response_timer_running() {
+        let mut s = server();
+        request(&mut s, Timestamp(0));
+        assert!(submit(&mut s, Timestamp(5), FINAL).is_ok());
+        request(&mut s, Timestamp(10)); // tP2_Server due at 60
+        confirm(&mut s, Timestamp(20));
+        assert_eq!(s.next_deadline(), Some(Timestamp(60)));
+        let (out, ok) = outputs(s.tick(Timestamp(60)));
+        assert!(ok.is_ok());
+        assert_eq!(out[0], Some(overrun(ServerReload::P2)));
+        assert_eq!(out[1], None);
+    }
+
+    /// ``UDSS_LLR_0110``, ``UDSS_LLR_0116`` — the first request's response-pending
+    /// confirmation neither opens the enhanced window for the second nor sets its
+    /// anchor: the overrun names `tP2_Server_Max`, and a response-pending message sent
+    /// on it is not refused as too soon (``UDSS_LLR_0119``).
+    #[test]
+    fn a_predecessors_pending_confirmation_opens_no_window() {
+        let mut s = server();
+        request(&mut s, Timestamp(0));
+        assert!(submit(&mut s, Timestamp(40), ServerTx::ResponsePending).is_ok());
+        request(&mut s, Timestamp(45)); // tP2_Server due at 95
+        confirm(&mut s, Timestamp(46));
+        assert_eq!(s.next_deadline(), Some(Timestamp(95)));
+        let (out, _) = outputs(s.tick(Timestamp(95)));
+        assert_eq!(out[0], Some(overrun(ServerReload::P2)));
+        assert!(submit(&mut s, Timestamp(95), ServerTx::ResponsePending).is_ok());
+    }
+
+    /// ``UDSS_LLR_0059`` — the confirmation still frees its association: the second
+    /// request's response, refused while the first was outstanding (``UDSS_LLR_0061``),
+    /// is accepted after it.
+    #[test]
+    fn a_predecessors_confirmation_still_frees_its_association() {
+        let mut s = server();
+        request(&mut s, Timestamp(0));
+        assert!(submit(&mut s, Timestamp(5), FINAL).is_ok());
+        request(&mut s, Timestamp(10));
+        let refused = submit(&mut s, Timestamp(15), FINAL);
+        assert!(refused.is_err_and(|r| r.contains(Cause::AssociationOutstanding)));
+        confirm(&mut s, Timestamp(20));
+        assert!(submit(&mut s, Timestamp(25), FINAL).is_ok());
+        assert_eq!(s.next_deadline(), None); // UDSS_LLR_0114 — the second's own response
+    }
+
+    /// ``UDSS_LLR_0088`` — the confirmation still acts on the session by its addressing:
+    /// a final response to the controlling client restarts `tS3_Server`, while the
+    /// second request keeps its `tP2_Server`.
+    #[test]
+    fn a_predecessors_confirmation_still_restarts_the_session_timer() {
+        let mut s = server();
+        enter_non_default(&mut s, Timestamp(0));
+        request(&mut s, Timestamp(1_000)); // stops tS3_Server (UDSS_LLR_0087)
+        assert!(submit(&mut s, Timestamp(1_005), FINAL).is_ok());
+        request(&mut s, Timestamp(1_010)); // tP2_Server due at 1060
+        confirm(&mut s, Timestamp(1_020)); // tS3_Server restarted: due at 6020
+        assert_eq!(s.next_deadline(), Some(Timestamp(1_060)));
+        let (out, _) = outputs(s.tick(Timestamp(1_060)));
+        assert_eq!(out[0], Some(overrun(ServerReload::P2)));
+        assert_eq!(s.next_deadline(), Some(Timestamp(6_020)));
+    }
+
+    /// The inverse: once the first response's confirmation is in, the second request's
+    /// own confirmations answer it — its response-pending confirmation opens the enhanced
+    /// window and sets the anchor (``UDSS_LLR_0110``, ``UDSS_LLR_0116``), and its final
+    /// response's ends it (``UDSS_LLR_0109``), so the anchor goes and a response-pending
+    /// message inside the spacing is no longer refused (``UDSS_LLR_0119``).
+    #[test]
+    fn the_services_own_confirmation_still_answers_it() {
+        let mut s = server();
+        request(&mut s, Timestamp(0));
+        assert!(submit(&mut s, Timestamp(5), FINAL).is_ok());
+        request(&mut s, Timestamp(10));
+        confirm(&mut s, Timestamp(20));
+        assert!(submit(&mut s, Timestamp(30), ServerTx::ResponsePending).is_ok());
+        confirm(&mut s, Timestamp(35));
+        assert_eq!(s.next_deadline(), Some(Timestamp(5_035)));
+        let too_soon = submit(&mut s, Timestamp(36), ServerTx::ResponsePending);
+        assert!(too_soon.is_err_and(|r| r.contains(Cause::ResponsePendingTooSoon)));
+        assert!(submit(&mut s, Timestamp(40), FINAL).is_ok());
+        assert_eq!(s.next_deadline(), None);
+        confirm(&mut s, Timestamp(45));
+        assert!(submit(&mut s, Timestamp(50), ServerTx::ResponsePending).is_ok());
+    }
+}
+
 mod completion {
     use super::*;
 

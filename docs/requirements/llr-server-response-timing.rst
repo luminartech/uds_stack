@@ -240,20 +240,22 @@ The response window
    addressing under ``UDSS_LLR_0074``. Without the match the aborted request's confirmation
    would end the new request or widen its window.
 
-   ISO 14229-1:2020 8.7.6 does not say which client sends the OBD-range request. Where it
-   is another client the match is exact. Where it is the same client and a response of the
-   aborted request is unconfirmed under ``UDSS_LLR_0112``, that confirmation is read as the
-   new request's, setting its anchor under ``UDSS_LLR_0110`` and opening its enhanced
-   window under ``UDSS_LLR_0116``; that is a declared limitation of matching by addressing.
-   Two ordinary requests from one client are outside the assumption of use of one request
-   at a time.
+   ISO 14229-1:2020 8.7.6 does not say which client sends the OBD-range request. Where it is
+   another client the match is exact. Where it is the same client and a response of the
+   aborted request is unconfirmed under ``UDSS_LLR_0112``, matching by addressing alone
+   would read that confirmation as the new request's; ``UDSS_LLR_0109`` closes that case for
+   a confirmation, which answers the service in progress only where that service submitted
+   the transmission it confirms. Two ordinary requests from one client are outside the
+   assumption of use of one request at a time.
 
    The match also presumes the caller supplies a ``T_Data.conf`` before any ``T_Data.ind``
    the transport received after that transmission completed, an assumption of use the
    service interface document records: ISO 14229-2:2021 10.3 lets the client send its next
-   request on complete reception of the response, before the server's confirmation need
-   have arrived, and a caller that delivered the indication first would have the earlier
-   request's confirmation end the later request.
+   request on complete reception of the response, before the server's confirmation need have
+   arrived. A request received before that confirmation keeps its window, because
+   ``UDSS_LLR_0109`` does not let the earlier request's confirmation answer it; the
+   confirmation still acts on ``tS3_Server`` by its addressing, as ``UDSS_LLR_0114``
+   declares.
 
 .. llr:: A service becomes in progress on its successful reception
    :id: UDSS_LLR_0107
@@ -312,7 +314,12 @@ The response window
    outcome, successful or not, of the transmission of a solicited final response, on
    ``T_Data.conf`` answering it and reporting an unsuccessful transmission of a
    response-pending message, and on a completion report of ``UDSS_LLR_0074`` answering it
-   for a request not marked ``keep-alive``; when it ceases, the anchor shall be cleared.
+   for a request not marked ``keep-alive``; when it ceases, the anchor shall be cleared. A
+   ``T_Data.conf`` answers the service in progress only where that service submitted the
+   transmission being confirmed, meaning that the ``S_Data.req`` whose association
+   ``UDSS_LLR_0059`` matches to the confirmation was accepted while that service was in
+   progress and answered it under ``UDSS_LLR_0106``; this is what a confirmation answering
+   the service in progress means throughout this document.
 
    Rationale: ISO 14229-2:2021 10.1.4.1 Figure 12 key k places the end at the completion of
    the transmission of the final response, or at the completion of the action where no
@@ -351,6 +358,22 @@ The response window
    service is in progress, on the per-service reading of footnote b that ``UDSS_LLR_0104``
    declares.
 
+   A confirmation answers only the service that submitted the transmission because
+   addressing alone does not tell two requests from one tester apart. ISO 14229-2:2021 9.2
+   REQ 5.19 has a server process a new request immediately after the ``T_Data.conf`` of the
+   previous response, and 10.3 lets the client send that request on complete reception of
+   the response, so the new request and the old confirmation can overlap by exactly that
+   window. In it the sequence is: a request; its final response passed to the transport; the
+   tester's next request received, which replaces the service in progress under
+   ``UDSS_LLR_0108`` and starts its ``tP2_Server``; then the first response's
+   ``T_Data.conf``. Matched by addressing, that confirmation would end the second request
+   here and with it stop its ``tP2_Server``, so ``UDSS_LLR_0117`` would report no overrun
+   and no response-pending message would be sent however slowly the second request was
+   handled. A service that replaced another has submitted nothing, so no confirmation
+   answers it until its own response is passed to the transport. The earlier confirmation
+   still frees its association under ``UDSS_LLR_0059`` and still acts on ``tS3_Server`` by
+   its addressing and classification, the asymmetry ``UDSS_LLR_0114`` declares.
+
 .. llr:: The anchor is set on a confirmed response-pending transmission
    :id: UDSS_LLR_0110
    :status: draft
@@ -362,6 +385,9 @@ The response window
    While a service is in progress, the anchor shall be set to the timestamp of a
    ``T_Data.conf`` answering it and reporting the successful transmission of a
    response-pending message.
+
+   A confirmation answers the service in progress here as ``UDSS_LLR_0109`` defines it: only
+   where that service submitted the response-pending message being confirmed.
 
    Rationale: ``UDSS_LLR_0119`` measures the minimum spacing between consecutive
    response-pending messages from the confirmation of the preceding one, so that
@@ -475,6 +501,9 @@ The response window
    goes to the controlling client, still restarts ``tS3_Server`` under ``UDSS_LLR_0088`` as
    Table 6 states, its server having answered that client.
 
+   A response answering the service in progress so is the transmission whose confirmation
+   answers that service under ``UDSS_LLR_0109``; no other confirmation does.
+
 .. llr:: The response timer stops on completion of a request with no response
    :id: UDSS_LLR_0115
    :status: draft
@@ -529,6 +558,9 @@ Enhanced response timing
    and answering the service in progress under ``UDSS_LLR_0106``, the server shall start the
    ``tP2_Server`` timer loaded with the ``tP2*_Server_Max`` protocol parameter.
 
+   The confirmation answers the service in progress as ``UDSS_LLR_0109`` defines it: only
+   where that service submitted the response-pending message being confirmed.
+
    Table 3 defines ``tP2*_Server`` as the performance requirement for the server to start
    its response message after the transmission of a response-pending message, indicated via
    ``T_Data.conf``. Figure 8 and Figure 11 both start the timer at that confirmation with
@@ -540,15 +572,15 @@ Enhanced response timing
    response-pending message is still unconfirmed, and without the guard the confirmation
    would restart the timer for a service that is over and ``UDSS_LLR_0117`` would report an
    overrun that never happened. The guard is exact for a next request from another client,
-   whose confirmations ``UDSS_LLR_0106`` tells apart by addressing; for a next request from
-   the same client it does not hold, and the confirmation opens the enhanced window for the
-   new request, the limitation ``UDSS_LLR_0106`` declares. The other way a service could
-   end before the confirmation, a final response passed to the transport first, cannot
-   arise: ``UDSS_LLR_0061`` rejects an ``S_Data.req`` to an addressing with a transmission
-   outstanding, and the final response and the pending message of one request share their
-   addressing. The confirmation must answer the service in progress for the reason
-   ``UDSS_LLR_0106`` gives: after a replacement, the aborted request's response-pending
-   confirmation would otherwise open the enhanced window for a request it never served.
+   whose confirmations ``UDSS_LLR_0106`` tells apart by addressing, and for a next request
+   from the same client, which under ``UDSS_LLR_0109`` submitted no transmission the late
+   confirmation could answer. The other way a service could end before the confirmation, a
+   final response passed to the transport first, cannot arise: ``UDSS_LLR_0061`` rejects an
+   ``S_Data.req`` to an addressing with a transmission outstanding, and the final response
+   and the pending message of one request share their addressing. The confirmation must
+   answer the service in progress for the reason ``UDSS_LLR_0106`` gives: after a
+   replacement, the aborted request's response-pending confirmation would otherwise open the
+   enhanced window for a request it never served.
 
    A failed response-pending transmission opens no window. Table 3's "transmission of a
    negative response message (indicated via ``T_Data.conf``)" is read as the transmission

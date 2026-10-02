@@ -665,6 +665,47 @@ fn a_final_response_after_a_pending_whose_confirmation_is_late_is_still_delivere
     assert_eq!(t.sent_after.get(1), Some(&3));
 }
 
+/// ``UDSS_LLR_0108``, ``UDSS_LLR_0109`` — a slow request from the same tester whose
+/// indication precedes the previous response's confirmation keeps its `tP2_Server`, so
+/// it still gets its `7F 22 78` and then its answer.
+///
+/// `3E 00` is answered at once and `7E 00` left unconfirmed; the slow read arrives at
+/// 10 ms, so its `tP2_Server` runs to 60 ms. `7E 00`'s `DataConf` arrives mid-handler:
+/// it frees the one association (`peers = 1`) and answers nothing, so the deadline the
+/// handler is raced against is still 60 ms. It is scripted before that deadline because
+/// the 0x78 shares `7E 00`'s addressing and ``UDSS_LLR_0061`` would refuse it while
+/// `7E 00` was outstanding; likewise, had it come after the read finished, the final
+/// response would have waited for it in `await_confirmation`. The handler pends three
+/// times — the late confirmation, the deadline, the 0x78's confirmation — and its
+/// final response is accepted at once.
+#[test]
+fn a_request_before_the_previous_confirmation_keeps_its_response_timer() {
+    let mut ecu = Ecu::new();
+    ecu.slow = 3;
+    let mut s = EcuServer::new(
+        ecu,
+        Scripted::new(&[
+            Ev::Ind(TaType::Physical, &[0x3E, 0x00]), // 7E 00 submitted, unconfirmed
+            Ev::IndAt(10, TaType::Physical, &[0x22, 0xF4, 0x0D]), // pends three times
+            Ev::Conf(SResult::Ok), // confirms 7E 00, mid-handler: tP2_Server still runs
+            Ev::At(60),            // the read's tP2_Server reached: 0x78 goes out
+            Ev::Conf(SResult::Ok), // the 0x78's confirmation, mid-handler
+            Ev::Conf(SResult::Ok), // the final response's confirmation
+        ]),
+        ECU,
+        PARAMS,
+    );
+    run(&mut s);
+    let t = s.transport();
+    assert_eq!(t.sent_count, 3);
+    assert_eq!(t.sent(0), &[0x7E, 0x00]);
+    assert_eq!(t.sent(1), &[0x7F, 0x22, 0x78]);
+    // Sent once the deadline was consumed, after the late confirmation.
+    assert_eq!(t.sent_after.get(1), Some(&4));
+    assert_eq!(t.sent(2), &[0x62, 0xF4, 0x0D, 0x40]);
+    assert_eq!(t.deadlines, 1); // the read's tP2_Server, reached at 60
+}
+
 /// ``UDSSVC_ARCH_0009`` rule 3 — after a sent 0x78, a functionally addressed request whose
 /// stage settles one of the five silenced codes is answered anyway. The handler pends past
 /// `tP2_Server` and then refuses with `requestOutOfRange` (0x31), which rule 1 alone would
