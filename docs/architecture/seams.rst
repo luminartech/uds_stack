@@ -629,7 +629,8 @@ Response-pending
    The moment is known the same way. ``uds_session`` reports the ``tP2_Server`` overrun
    (``UDSS_LLR_0117``) as one of the outputs the driver already drains, so dispatch learns that
    a response-pending is due from the loop it is already running, not from a trait it is
-   handed.
+   handed. It reports the overrun ``response_pending_lead`` before the window closes
+   (``UDSS_LLR_0186``), so the 0x78 is issued within it.
 
    Rationale: the decision and the bytes are this crate's (``UDSSVC_ARCH_0032``) and so is the
    transport (``UDSSVC_ARCH_0029``), so nothing crosses a crate boundary and a seam would have
