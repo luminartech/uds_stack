@@ -41,7 +41,13 @@ One assumption of use falls on the order in which the caller supplies inputs, an
 recorded in the qualification repository: a ``T_Data.conf`` is supplied before any
 ``T_DataSOM.ind`` or ``T_Data.ind`` the transport received after the confirmed transmission
 completed. A transport reports the two in that order, and a caller draining one queue
-before the other is what the assumption forbids.
+before the other is what the assumption forbids. A transmission completes here when the
+transport can report it, and the assumption does not order a confirmation before an
+indication of a message the transport received before then: ISO 14229-2:2021 10.3 lets the
+client send its next request on complete reception of the response, which
+ISO 14229-2:2021 9.2 REQ 5.19 does not exclude, so that request can be indicated before the
+previous response is confirmed. ``UDSS_LLR_0088``, ``UDSS_LLR_0093`` and ``UDSS_LLR_0109``
+state what the server does with that overlap.
 
 .. llr:: The session layer performs no I/O
    :id: UDSS_LLR_0001

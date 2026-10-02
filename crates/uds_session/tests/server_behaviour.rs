@@ -628,7 +628,7 @@ mod transmission {
 /// send, replaces the service in progress; that confirmation then answers nothing.
 mod overlap {
     use super::*;
-    use uds_session::Cause;
+    use uds_session::{Cause, TransportError};
 
     const FINAL: ServerTx = ServerTx::FinalResponse {
         solicitation: Solicitation::Solicited,
@@ -718,21 +718,85 @@ mod overlap {
         assert_eq!(s.next_deadline(), None); // UDSS_LLR_0114 — the second's own response
     }
 
-    /// ``UDSS_LLR_0088`` — the confirmation still acts on the session by its addressing:
-    /// a final response to the controlling client restarts `tS3_Server`, while the
-    /// second request keeps its `tP2_Server`.
+    /// ``UDSS_LLR_0088`` — the confirmation arrives after the second request stopped
+    /// `tS3_Server` (``UDSS_LLR_0087``), so it restarts nothing: the second request keeps
+    /// its `tP2_Server` and the session timer stays stopped until that request's own final
+    /// response is confirmed, which restarts it as usual.
     #[test]
-    fn a_predecessors_confirmation_still_restarts_the_session_timer() {
+    fn a_predecessors_confirmation_leaves_the_session_timer_stopped() {
         let mut s = server();
         enter_non_default(&mut s, Timestamp(0));
         request(&mut s, Timestamp(1_000)); // stops tS3_Server (UDSS_LLR_0087)
         assert!(submit(&mut s, Timestamp(1_005), FINAL).is_ok());
         request(&mut s, Timestamp(1_010)); // tP2_Server due at 1060
-        confirm(&mut s, Timestamp(1_020)); // tS3_Server restarted: due at 6020
+        confirm(&mut s, Timestamp(1_020)); // tS3_Server stays stopped
         assert_eq!(s.next_deadline(), Some(Timestamp(1_060)));
         let (out, _) = outputs(s.tick(Timestamp(1_060)));
         assert_eq!(out[0], Some(overrun(ServerReload::P2)));
+        assert_eq!(s.next_deadline(), None);
+        let (out, _) = outputs(s.tick(Timestamp(6_020))); // the old restart's expiry
+        assert_eq!(out[0], None);
+        assert!(submit(&mut s, Timestamp(6_030), FINAL).is_ok());
+        confirm(&mut s, Timestamp(6_040)); // the second request's own: restarts tS3
+        assert_eq!(s.next_deadline(), Some(Timestamp(11_040)));
+    }
+
+    /// ``UDSS_LLR_0093`` — likewise a failed final response confirmed after the second
+    /// request: Table 10's stop was that request's, and the timer stays stopped.
+    #[test]
+    fn a_predecessors_failed_confirmation_leaves_the_session_timer_stopped() {
+        let mut s = server();
+        enter_non_default(&mut s, Timestamp(0));
+        request(&mut s, Timestamp(1_000));
+        assert!(submit(&mut s, Timestamp(1_005), FINAL).is_ok());
+        request(&mut s, Timestamp(1_010)); // tP2_Server due at 1060
+        let failed = SResult::Transport(TransportError(3));
+        let (_, ok) = outputs(s.t_data_conf(Timestamp(1_020), ai(ECU, TESTER), failed));
+        assert!(ok.is_ok());
+        assert_eq!(s.next_deadline(), Some(Timestamp(1_060)));
+        let (out, _) = outputs(s.tick(Timestamp(1_060)));
+        assert_eq!(out[0], Some(overrun(ServerReload::P2)));
+        assert_eq!(s.next_deadline(), None);
+    }
+
+    /// ``UDSS_LLR_0088``, ``UDSS_LLR_0097`` — where the second request came from another
+    /// client it never stopped `tS3_Server`, so the controlling client's confirmation
+    /// still restarts it.
+    #[test]
+    fn a_confirmation_overtaken_by_another_clients_request_restarts_the_session_timer() {
+        let mut s = server();
+        enter_non_default(&mut s, Timestamp(0));
+        request(&mut s, Timestamp(1_000)); // stops tS3_Server (UDSS_LLR_0087)
+        assert!(submit(&mut s, Timestamp(1_005), FINAL).is_ok());
+        let (_, ok) = outputs(s.t_data_ind(
+            Timestamp(1_010),
+            ai(OTHER_TESTER, ECU),
+            &[0x22, 0xF1, 0x90],
+            SResult::Ok,
+            ServerRx::Request { session: None },
+        )); // OTHER_TESTER's tP2_Server due at 1060; tS3_Server untouched
+        assert!(ok.is_ok());
+        confirm(&mut s, Timestamp(1_020)); // tS3_Server restarted: due at 6020
+        assert_eq!(s.next_deadline(), Some(Timestamp(1_060)));
+        let (out, _) = outputs(s.tick(Timestamp(1_060)));
+        let other = ServerOutput::ResponseOverrun {
+            sa: Address(OTHER_TESTER),
+            ae: None,
+            loaded: ServerReload::P2,
+        };
+        assert_eq!(out[0], Some(other));
         assert_eq!(s.next_deadline(), Some(Timestamp(6_020)));
+    }
+
+    /// ``UDSS_LLR_0088`` — with no service in progress a confirmed final response to the
+    /// controlling client restarts `tS3_Server`, as before.
+    #[test]
+    fn a_confirmation_with_no_service_in_progress_restarts_the_session_timer() {
+        let mut s = server();
+        enter_non_default(&mut s, Timestamp(0)); // tS3_Server due at 5000
+        assert!(submit(&mut s, Timestamp(1_000), FINAL).is_ok());
+        confirm(&mut s, Timestamp(1_010));
+        assert_eq!(s.next_deadline(), Some(Timestamp(6_010)));
     }
 
     /// The inverse: once the first response's confirmation is in, the second request's

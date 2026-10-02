@@ -230,7 +230,8 @@ The response window
    target being ``S_AI[TA]`` of an ``S_Data.req``, of the ``T_Data.req`` ``UDSS_LLR_0033``
    produces from it and of a ``T_Data.conf`` as ``UDSS_LLR_0047`` maps it, and the
    ``S_AI[SA]`` of the addressing information a completion report of ``UDSS_LLR_0074``
-   carries.
+   carries. For a ``T_Data.conf`` the match is necessary and not sufficient:
+   ``UDSS_LLR_0109`` narrows it to the transmission the service in progress submitted.
 
    Rationale: a request replaced under ``UDSS_LLR_0108`` may have a response-pending or
    final response on the wire when the aborting request arrives, so what ends the service
@@ -253,9 +254,9 @@ The response window
    service interface document records: ISO 14229-2:2021 10.3 lets the client send its next
    request on complete reception of the response, before the server's confirmation need have
    arrived. A request received before that confirmation keeps its window, because
-   ``UDSS_LLR_0109`` does not let the earlier request's confirmation answer it; the
-   confirmation still acts on ``tS3_Server`` by its addressing, as ``UDSS_LLR_0114``
-   declares.
+   ``UDSS_LLR_0109`` does not let the earlier request's confirmation answer it, and keeps
+   ``tS3_Server`` stopped, because ``UDSS_LLR_0088`` and ``UDSS_LLR_0093`` do not let that
+   confirmation restart it while the request is in progress.
 
 .. llr:: A service becomes in progress on its successful reception
    :id: UDSS_LLR_0107
@@ -318,7 +319,7 @@ The response window
    ``T_Data.conf`` answers the service in progress only where that service submitted the
    transmission being confirmed, meaning that the ``S_Data.req`` whose association
    ``UDSS_LLR_0059`` matches to the confirmation was accepted while that service was in
-   progress and answered it under ``UDSS_LLR_0106``; this is what a confirmation answering
+   progress and answered it under ``UDSS_LLR_0114``; this is what a confirmation answering
    the service in progress means throughout this document.
 
    Rationale: ISO 14229-2:2021 10.1.4.1 Figure 12 key k places the end at the completion of
@@ -371,8 +372,10 @@ The response window
    and no response-pending message would be sent however slowly the second request was
    handled. A service that replaced another has submitted nothing, so no confirmation
    answers it until its own response is passed to the transport. The earlier confirmation
-   still frees its association under ``UDSS_LLR_0059`` and still acts on ``tS3_Server`` by
-   its addressing and classification, the asymmetry ``UDSS_LLR_0114`` declares.
+   still frees its association under ``UDSS_LLR_0059``. It does not restart
+   ``tS3_Server`` where the request that replaced its service came from the controlling
+   client, ``UDSS_LLR_0088`` and ``UDSS_LLR_0093`` reading that request's stop as the later
+   event, and restarts it as before where that request came from another client.
 
 .. llr:: The anchor is set on a confirmed response-pending transmission
    :id: UDSS_LLR_0110
@@ -499,7 +502,11 @@ The response window
    :doc:`llr-server-session-timer` act on a confirmation or a completion report by its
    addressing and classification, so the aborted request's late final response, where it
    goes to the controlling client, still restarts ``tS3_Server`` under ``UDSS_LLR_0088`` as
-   Table 6 states, its server having answered that client.
+   Table 6 states, its server having answered that client. The one exception is
+   ``UDSS_LLR_0088``'s own and concerns the order of events, not this match: a final
+   response submitted before a later request from the controlling client was received, and
+   confirmed after it, restarts nothing while that request is in progress, its stop under
+   ``UDSS_LLR_0087`` being the later event.
 
    A response answering the service in progress so is the transmission whose confirmation
    answers that service under ``UDSS_LLR_0109``; no other confirmation does.
