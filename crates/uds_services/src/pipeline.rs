@@ -15,9 +15,8 @@ use crate::state::State;
 use crate::{
     DataIdentifier, DiagnosticSessionControl, ReadDataByIdentifier, TesterPresent,
 };
-use crate::{Responded, ResponseSink};
+use crate::{Responded, ResponseSink, Unsettled};
 use automotive_wire_codec::Sink;
-use core::sync::atomic::{AtomicBool, Ordering};
 use uds_protocol::{
     Decode, DiagnosticSessionType, Encode, NegativeResponse, NegativeResponseCode, Request,
     UdsServiceType,
@@ -255,7 +254,7 @@ pub const fn suppresses(code: NegativeResponseCode, ai: Ai) -> bool {
 /// What `settle` needs to know about the request: the service byte a negative response
 /// echoes, and whether the request asked for its positive response to be suppressed.
 #[doc(hidden)]
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Settling {
     /// `SIDRQ` — the request's service identifier, echoed by a negative response.
     pub sid: u8,
@@ -265,22 +264,24 @@ pub struct Settling {
 
 /// The last two stages: "response fits" (``UDSSVC_ARCH_0017`` → 0x14) and the
 /// suppression gate (``UDSSVC_ARCH_0009``). Writes a negative response itself; the
-/// handler's bytes, if any, are discarded by rewinding. `pending_sent` is read here, at
-/// the moment of settlement, which is what lets a 0x78 sent while the handler ran lift
-/// both suppressions (rule 3). An atomic rather than a `Cell`: the driver sets it through
-/// a shared reference while the handler future is live, and that reference must be
-/// `Sync` for the driver's `step` future to stay `Send`. One writer and one reader in
-/// one task, so `Relaxed` suffices.
+/// handler's bytes, if any, are discarded by rewinding.
+///
+/// Called by the driver once the handler future has completed and before the response is
+/// submitted, never by the emitted `dispatch`: `pending_sent`, rule 3's input, is the
+/// driver's to know (see [`Unsettled`]). It is whether a 0x78 for this request was
+/// accepted for transmission while the handler ran, and it lifts both suppressions.
 #[doc(hidden)]
 pub fn settle(
     ai: Ai,
-    settling: Settling,
-    pending_sent: &AtomicBool,
-    outcome: Result<Option<DiagnosticSessionType>, NegativeResponseCode>,
+    unsettled: Unsettled,
+    pending_sent: bool,
     out: &mut ResponseSink<'_>,
 ) -> Responded {
+    // ``UDSSVC_ARCH_0005`` — no service identifier: complete, and no rule reaches it.
+    let Some((settling, outcome)) = unsettled.parts() else {
+        return Responded::Suppressed { session: None };
+    };
     let Settling { sid, suppress_bit } = settling;
-    let pending_sent = pending_sent.load(Ordering::Relaxed);
     let outcome = if out.refused() {
         Err(NegativeResponseCode::ResponseTooLong)
     } else {
@@ -403,9 +404,8 @@ mod tests {
         session_supported_from, settle, suppresses, zero_sub_function,
     };
     use crate::state::{ProtocolState, State};
-    use crate::{Responded, ResponseSink};
+    use crate::{Responded, ResponseSink, Unsettled};
     use automotive_wire_codec::Sink;
-    use core::sync::atomic::AtomicBool;
     use uds_protocol::NegativeResponseCode as N;
     use uds_protocol::{DiagnosticSessionType as S, UdsServiceType as U};
     use uds_session::{Address, Ai, Mtype, TaType};
@@ -1097,12 +1097,21 @@ mod tests {
     fn a_functional_0x7e_is_silenced() {
         let mut buf = [0_u8; 8];
         let mut out = ResponseSink::new(&mut buf, None);
-        let no = AtomicBool::new(false);
         let code = N::SubFunctionNotSupportedInActiveSession;
-        let r = settle(ai(TaType::Functional), sid(0x10), &no, Err(code), &mut out);
+        let r = settle(
+            ai(TaType::Functional),
+            Unsettled::handled(sid(0x10), Err(code)),
+            false,
+            &mut out,
+        );
         assert_eq!(r, Responded::Suppressed { session: None });
         assert_eq!(out.written_bytes(), &[0_u8; 0]);
-        let r = settle(ai(TaType::Physical), sid(0x10), &no, Err(code), &mut out);
+        let r = settle(
+            ai(TaType::Physical),
+            Unsettled::handled(sid(0x10), Err(code)),
+            false,
+            &mut out,
+        );
         assert_eq!(r, Responded::Yes { session: None });
         assert_eq!(out.written_bytes(), &[0x7F, 0x10, 0x7E]);
     }
@@ -1146,12 +1155,10 @@ mod tests {
         let mut buf = [0_u8; 8];
         let mut out = ResponseSink::new(&mut buf, None);
         let _ = out.write_all(&[0x62, 0xF1]);
-        let no = AtomicBool::new(false);
         let r = settle(
             ai(TaType::Physical),
-            sid(0x22),
-            &no,
-            Err(N::RequestOutOfRange),
+            Unsettled::handled(sid(0x22), Err(N::RequestOutOfRange)),
+            false,
             &mut out,
         );
         assert_eq!(r, Responded::Yes { session: None });
@@ -1163,21 +1170,17 @@ mod tests {
     fn functional_silence_is_overridden_by_a_sent_response_pending() {
         let mut buf = [0_u8; 8];
         let mut out = ResponseSink::new(&mut buf, None);
-        let no = AtomicBool::new(false);
         let r = settle(
             ai(TaType::Functional),
-            sid(0x22),
-            &no,
-            Err(N::RequestOutOfRange),
+            Unsettled::handled(sid(0x22), Err(N::RequestOutOfRange)),
+            false,
             &mut out,
         );
         assert_eq!(r, Responded::Suppressed { session: None });
-        let yes = AtomicBool::new(true);
         let r = settle(
             ai(TaType::Functional),
-            sid(0x22),
-            &yes,
-            Err(N::RequestOutOfRange),
+            Unsettled::handled(sid(0x22), Err(N::RequestOutOfRange)),
+            true,
             &mut out,
         );
         assert_eq!(r, Responded::Yes { session: None });
@@ -1189,16 +1192,14 @@ mod tests {
         let mut buf = [0_u8; 8];
         let mut out = ResponseSink::new(&mut buf, None);
         let _ = out.write_all(&[0x50, 0x03, 0, 50, 1, 244]);
-        let no = AtomicBool::new(false);
         let bit = Settling {
             sid: 0x10,
             suppress_bit: true,
         };
         let r = settle(
             ai(TaType::Physical),
-            bit,
-            &no,
-            Ok(Some(S::ExtendedDiagnosticSession)),
+            Unsettled::handled(bit, Ok(Some(S::ExtendedDiagnosticSession))),
+            false,
             &mut out,
         );
         assert_eq!(
@@ -1209,9 +1210,8 @@ mod tests {
         );
         let r = settle(
             ai(TaType::Physical),
-            bit,
-            &no,
-            Err(N::SubFunctionNotSupported),
+            Unsettled::handled(bit, Err(N::SubFunctionNotSupported)),
+            false,
             &mut out,
         );
         assert_eq!(r, Responded::Yes { session: None });
@@ -1223,9 +1223,72 @@ mod tests {
         let mut buf = [0_u8; 4];
         let mut out = ResponseSink::new(&mut buf, None);
         let _ = out.write_all(&[0x62, 0xF1, 0x90, 1, 2]);
-        let no = AtomicBool::new(false);
-        let r = settle(ai(TaType::Physical), sid(0x22), &no, Ok(None), &mut out);
+        let r = settle(
+            ai(TaType::Physical),
+            Unsettled::handled(sid(0x22), Ok(None)),
+            false,
+            &mut out,
+        );
         assert_eq!(r, Responded::Yes { session: None });
         assert_eq!(out.written_bytes(), &[0x7F, 0x22, 0x14]);
+    }
+
+    /// `settle`: rule 3 on the positive path — after a sent 0x78 the suppress bit no
+    /// longer silences, and the session still rides on the response.
+    #[test]
+    fn a_sent_response_pending_overrides_the_suppress_bit() {
+        let mut buf = [0_u8; 8];
+        let mut out = ResponseSink::new(&mut buf, None);
+        let _ = out.write_all(&[0x50, 0x03, 0, 50, 1, 244]);
+        let bit = Settling {
+            sid: 0x10,
+            suppress_bit: true,
+        };
+        let outcome = Ok(Some(S::ExtendedDiagnosticSession));
+        let r = settle(
+            ai(TaType::Physical),
+            Unsettled::handled(bit, outcome),
+            true,
+            &mut out,
+        );
+        assert_eq!(
+            r,
+            Responded::Yes {
+                session: Some(S::ExtendedDiagnosticSession)
+            }
+        );
+        assert_eq!(out.written_bytes(), &[0x50, 0x03, 0, 50, 1, 244]);
+    }
+
+    /// ``UDSSVC_ARCH_0005`` — a request with no service identifier is complete with no
+    /// response, and no rule reaches it: not even a sent 0x78 makes it answer.
+    #[test]
+    fn an_empty_request_settles_silent_whatever_was_sent() {
+        let mut buf = [0_u8; 4];
+        let mut out = ResponseSink::new(&mut buf, None);
+        for pending_sent in [false, true] {
+            let r = settle(
+                ai(TaType::Physical),
+                Unsettled::empty(),
+                pending_sent,
+                &mut out,
+            );
+            assert_eq!(r, Responded::Suppressed { session: None });
+            assert_eq!(out.written_bytes(), &[0_u8; 0]);
+        }
+    }
+
+    /// A code the common stages settled is a negative outcome with no suppress bit:
+    /// silenced functionally under rule 1, written physically.
+    #[test]
+    fn a_refusal_from_begin_settles_as_a_negative_outcome() {
+        let mut buf = [0_u8; 4];
+        let mut out = ResponseSink::new(&mut buf, None);
+        let refused = Unsettled::refused(0x11, N::ServiceNotSupported);
+        let r = settle(ai(TaType::Functional), refused, false, &mut out);
+        assert_eq!(r, Responded::Suppressed { session: None });
+        let r = settle(ai(TaType::Physical), refused, false, &mut out);
+        assert_eq!(r, Responded::Yes { session: None });
+        assert_eq!(out.written_bytes(), &[0x7F, 0x11, 0x11]);
     }
 }

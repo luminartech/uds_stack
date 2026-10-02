@@ -280,10 +280,10 @@ macro_rules! __uds_sub_function_in_session {
 
 /// One match arm per listed service, routing its decoded request to its stage. A listed
 /// service with no stage yet hits the wildcard, which emits nothing; the request then
-/// reaches the fall-through after every arm in `dispatch`, which settles 0x11. That is
-/// the milestone-1 limit, and it makes "listed but unimplemented" visible on the wire
-/// rather than a panic. The RDBI stage awaits (its handler does); the other two are
-/// plain calls.
+/// reaches the fall-through after every arm in `dispatch`, an outcome of 0x11 that the
+/// driver settles. That is the milestone-1 limit, and it makes "listed but unimplemented"
+/// visible on the wire rather than a panic. The RDBI stage awaits (its handler does); the
+/// other two are plain calls.
 #[doc(hidden)]
 #[macro_export]
 macro_rules! __uds_stage {
@@ -329,7 +329,9 @@ macro_rules! __uds_stage {
 /// response would then not fit.
 ///
 /// The emitted `dispatch` only routes: `pipeline::begin`, then the listed service's
-/// stage, then `pipeline::settle`. Every clause 8.7 decision is the pipeline's.
+/// stage, and it returns what they left as an [`Unsettled`](crate::Unsettled). It calls
+/// `pipeline::settle` nowhere; the driver does, once the handler has finished
+/// (``UDSSVC_ARCH_0016``). Every clause 8.7 decision is the pipeline's.
 ///
 /// **Figure 6's sub-function questions are each service trait's pair** — a "supported
 /// ever" lookup and a "supported in the active session" lookup, each typed in that
@@ -538,11 +540,11 @@ macro_rules! uds_server {
                 async fn dispatch(
                     &mut self,
                     state: &mut Self::State,
-                    ai: $crate::Ai,
+                    // The driver settles, and it is `settle` that reads the addressing.
+                    _ai: $crate::Ai,
                     request: &[u8],
                     out: &mut $crate::ResponseSink<'_>,
-                    pending_sent: &::core::sync::atomic::AtomicBool,
-                ) -> $crate::Responded {
+                ) -> $crate::Unsettled {
                     // Unused in an assembly listing neither service that decides a
                     // sub-function, where every arm of the helper expands to nothing.
                     #[allow(unused_variables, reason = "used only by some assemblies")]
@@ -570,18 +572,10 @@ macro_rules! uds_server {
                         in_session,
                     ) {
                         $crate::pipeline::Stage::Empty => {
-                            return $crate::Responded::Suppressed { session: None };
+                            return $crate::Unsettled::empty();
                         }
                         $crate::pipeline::Stage::Settle { sid, nrc } => {
-                            let settling =
-                                $crate::pipeline::Settling { sid, suppress_bit: false };
-                            return $crate::pipeline::settle(
-                                ai,
-                                settling,
-                                pending_sent,
-                                Err(nrc),
-                                out,
-                            );
+                            return $crate::Unsettled::refused(sid, nrc);
                         }
                         $crate::pipeline::Stage::Proceed { sid, request } => (sid, request),
                     };
@@ -598,7 +592,7 @@ macro_rules! uds_server {
                         )
                     }
                     .await;
-                    $crate::pipeline::settle(ai, settling, pending_sent, outcome, out)
+                    $crate::Unsettled::handled(settling, outcome)
                 }
 
                 fn session_timed_out(&mut self, state: &mut Self::State) {

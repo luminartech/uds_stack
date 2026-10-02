@@ -14,6 +14,7 @@
 
 use static_cell::ConstStaticCell;
 use uds_protocol::NegativeResponseCode as Nrc;
+use uds_services::pipeline::settle;
 use uds_services::{
     Address, Ai, Answer, ClearDiagnosticInformation, ClientSet, ClientStorage,
     CommunicationControl, CommunicationControlType, CommunicationType, DataIdentifier,
@@ -549,8 +550,8 @@ fn the_assembled_dispatch_answers_a_read() {
         ta: Address(0x10),
         ta_type: TaType::Physical,
     };
-    let no = core::sync::atomic::AtomicBool::new(false);
-    let r = block_on(ecu.dispatch(&mut state, ai, &[0x22, 0xF4, 0x0D], &mut out, &no));
+    let unsettled = block_on(ecu.dispatch(&mut state, ai, &[0x22, 0xF4, 0x0D], &mut out));
+    let r = settle(ai, unsettled, false, &mut out);
     assert_eq!(r, uds_services::Responded::Yes { session: None });
     assert_eq!(out.written_bytes(), &[0x62, 0xF4, 0x0D, 0x40]);
 }
@@ -569,19 +570,21 @@ fn unsupported_services_settle_0x11_or_silence() {
         ta: Address(0x10),
         ta_type: TaType::Physical,
     };
-    let no = core::sync::atomic::AtomicBool::new(false);
-    let r = block_on(ecu.dispatch(&mut state, phys, &[0x11, 0x01], &mut out, &no));
+    let unsettled = block_on(ecu.dispatch(&mut state, phys, &[0x11, 0x01], &mut out));
+    let r = settle(phys, unsettled, false, &mut out);
     assert_eq!(r, uds_services::Responded::Yes { session: None });
     assert_eq!(out.written_bytes(), &[0x7F, 0x11, 0x11]);
     // Listed, so `begin` passes it; no stage, so the fall-through settles it.
-    let r =
-        block_on(ecu.dispatch(&mut state, phys, &[0x14, 0xFF, 0xFF, 0xFF], &mut out, &no));
+    let request = [0x14, 0xFF, 0xFF, 0xFF];
+    let unsettled = block_on(ecu.dispatch(&mut state, phys, &request, &mut out));
+    let r = settle(phys, unsettled, false, &mut out);
     assert_eq!(r, uds_services::Responded::Yes { session: None });
     assert_eq!(out.written_bytes(), &[0x7F, 0x14, 0x11]);
     let func = Ai {
         ta_type: TaType::Functional,
         ..phys
     };
-    let r = block_on(ecu.dispatch(&mut state, func, &[0x11, 0x01], &mut out, &no));
+    let unsettled = block_on(ecu.dispatch(&mut state, func, &[0x11, 0x01], &mut out));
+    let r = settle(func, unsettled, false, &mut out);
     assert_eq!(r, uds_services::Responded::Suppressed { session: None });
 }

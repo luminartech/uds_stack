@@ -10,15 +10,15 @@
 //! component no standard describes, and it is the component that went a full design cycle
 //! with no owner.
 
-use crate::ResponseSink;
+use crate::pipeline::settle;
 use crate::select::{Either, select2};
 use crate::services::{Responded, ServiceSet};
 use crate::state::ProtocolState;
 use crate::storage::{Buffers, Storage};
 use crate::transport::{TransportEvent, UdsTransport};
+use crate::{ResponseSink, Unsettled};
 use core::future::Future;
 use core::pin::Pin;
-use core::sync::atomic::{AtomicBool, Ordering};
 use uds_protocol::{DiagnosticSessionType, UdsServiceType};
 pub use uds_session::ServerParams;
 use uds_session::{
@@ -212,21 +212,14 @@ impl<A: ServiceSet, T: UdsTransport, const PEERS: usize> Server<A, T, PEERS> {
         };
 
         let mut sink = ResponseSink::new(response, outbound_max);
-        // UDSSVC_ARCH_0009 rule 3's input, fresh for this request, so a local rather
-        // than a field. The driver learns the answer while the handler future is live,
-        // and a shared reference is the one thing that can coexist with that future; an
-        // atomic rather than a `Cell`, because that reference is held across `.await`
-        // and must be `Sync` for this future to stay `Send`.
-        let pending_sent = AtomicBool::new(false);
         // Scoped, because `pin!` binds to the enclosing block: `handler` drops before
-        // `sink` is read.
-        let (outcome, deferred) = {
+        // `sink` is settled and read.
+        let served = {
             let handler = core::pin::pin!(self.services.dispatch(
                 &mut self.state,
                 ai,
                 request,
                 &mut sink,
-                &pending_sent,
             ));
             serve(
                 handler,
@@ -235,12 +228,14 @@ impl<A: ServiceSet, T: UdsTransport, const PEERS: usize> Server<A, T, PEERS> {
                 &mut self.pending,
                 &mut concurrent[..],
                 serving,
-                &pending_sent,
             )
             .await?
         };
         // Recorded mid-handler, applied now that `&mut services`/`&mut state` are free.
-        apply(&mut self.services, &mut self.state, deferred);
+        apply(&mut self.services, &mut self.state, served.deferred);
+        // UDSSVC_ARCH_0016 — the driver settles: rule 3's input is final only now that
+        // the handler has finished, and only this loop knows it.
+        let outcome = settle(ai, served.unsettled, served.pending_sent, &mut sink);
 
         let deferred = answer(
             &mut self.session,
@@ -464,22 +459,35 @@ struct Serving {
     may_pend: bool,
 }
 
+/// What [`serve`] hands back once the handler has finished, for the caller to settle.
+#[derive(Debug, Clone, Copy)]
+struct Served {
+    /// The handler's outcome, before clause 8.7's last stages.
+    unsettled: Unsettled,
+    /// ``UDSSVC_ARCH_0009`` rule 3's input: a 0x78 for this request was accepted for
+    /// transmission while the handler ran.
+    pending_sent: bool,
+    /// What the drains made meanwhile recorded for the application.
+    deferred: Deferred,
+}
+
 /// Poll the handler to completion, answering what the transport delivers meanwhile.
 ///
-/// Returns the handler's outcome and what the drains it made recorded for the
-/// application, which waits until the handler releases `&mut services`/`&mut state`.
-/// `waiting` is scoped per iteration so it drops before the 0x78 path needs
-/// `&mut transport`.
-async fn serve<H: Future<Output = Responded>, T: UdsTransport, const PEERS: usize>(
+/// Returns the handler's [`Unsettled`] outcome, whether a 0x78 was accepted meanwhile,
+/// and what the drains recorded for the application, which waits until the handler
+/// releases `&mut services`/`&mut state`. The caller settles: the handler future holds
+/// the sink until it drops. `waiting` is scoped per iteration so it drops before the
+/// 0x78 path needs `&mut transport`.
+async fn serve<H: Future<Output = Unsettled>, T: UdsTransport, const PEERS: usize>(
     mut handler: Pin<&mut H>,
     session: &mut SessionServer<PEERS>,
     transport: &mut T,
     pending: &mut Option<Pending>,
     concurrent: &mut [u8],
     serving: Serving,
-    pending_sent: &AtomicBool,
-) -> Result<(Responded, Deferred), T::Error> {
+) -> Result<Served, T::Error> {
     let mut deferred = Deferred::NONE;
+    let mut pending_sent = false;
     let mut deadline = session.next_deadline();
     // A loop over `handler.as_mut()`, not a one-shot: a plain
     // `select2(handler, waiting)` drops the handler the moment the deadline wins,
@@ -490,10 +498,16 @@ async fn serve<H: Future<Output = Responded>, T: UdsTransport, const PEERS: usiz
             select2(handler.as_mut(), waiting).await
         };
         match event {
-            Either::Left(done) => return Ok((done, deferred)),
+            Either::Left(unsettled) => {
+                return Ok(Served {
+                    unsettled,
+                    pending_sent,
+                    deferred,
+                });
+            }
             Either::Right(Ok(TransportEvent::Deadline)) if !serving.may_pend => {
                 // UDSSVC_ARCH_0032 — the service admits no 0x78, so an overrun is drained
-                // as any tick is and nothing is submitted or recorded for `settle`.
+                // as any tick is, nothing is submitted and `pending_sent` stays false.
                 let now = transport.now();
                 let reaction = session.tick(now);
                 // milestone-1 limit: see `Server::step`'s doc on `Err`.
@@ -513,11 +527,9 @@ async fn serve<H: Future<Output = Responded>, T: UdsTransport, const PEERS: usiz
                     serving.sid,
                 )
                 .await?;
-                if o.sent_pending {
-                    // UDSSVC_ARCH_0009 rule 3 — read by `settle` when the handler
-                    // settles, which may be after this instant.
-                    pending_sent.store(true, Ordering::Relaxed);
-                }
+                // UDSSVC_ARCH_0009 rule 3 — kept for `settle`, which runs once the
+                // handler has finished. Never cleared: one accepted 0x78 is enough.
+                pending_sent |= o.sent_pending;
                 deferred = deferred.merge(o.deferred);
                 deadline = session.next_deadline();
             }
@@ -541,8 +553,15 @@ async fn serve<H: Future<Output = Responded>, T: UdsTransport, const PEERS: usiz
                 // Elided: reporting it as `Suppressed` submits a completion report
                 // for a request the server did not complete, where the truth is
                 // that no response could be sent. Milestone 3 distinguishes them.
+                // Handed back as `Unsettled::empty`, which `settle` reports
+                // `Suppressed { session: None }` whatever `pending_sent` says, and
+                // without touching the sink: the abandoned handler's bytes stay unsent.
                 let _ = expected;
-                return Ok((Responded::Suppressed { session: None }, deferred));
+                return Ok(Served {
+                    unsettled: Unsettled::empty(),
+                    pending_sent,
+                    deferred,
+                });
             }
             Either::Right(Ok(_concurrent)) => {
                 // Elided: a concurrent message that is not one of clause
@@ -736,8 +755,8 @@ async fn await_confirmation<T: UdsTransport, const PEERS: usize>(
                 deferred = deferred.merge(d.deferred);
             }
             TransportEvent::Deadline => {
-                // The handler has settled, so whether a 0x78 goes out no longer
-                // reaches `settle`; only what the drains recorded is kept.
+                // The handler's outcome is already settled, so whether a 0x78 goes out
+                // no longer reaches `settle`; only what the drains recorded is kept.
                 let now = transport.now();
                 let (reply_to, sid) = (serving.reply_to, serving.sid);
                 let o = answer_overrun(session, transport, pending, now, reply_to, sid);

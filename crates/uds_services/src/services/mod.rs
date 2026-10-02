@@ -17,10 +17,11 @@
 //! neither is ever awaited, so no response-pending can come due and the constant would
 //! have had one possible value and no effect.
 
+use crate::pipeline::Settling;
 use crate::state::ProtocolState;
 use crate::storage::Storage;
 use crate::{Ai, ResponseSink};
-use uds_protocol::{DiagnosticSessionType, UdsServiceType};
+use uds_protocol::{DiagnosticSessionType, NegativeResponseCode, UdsServiceType};
 
 pub mod data;
 pub mod dtc;
@@ -67,6 +68,97 @@ impl Responded {
     pub const fn session(self) -> Option<DiagnosticSessionType> {
         match self {
             Self::Yes { session } | Self::Suppressed { session } => session,
+        }
+    }
+}
+
+/// What a request's handler left, before clause 8.7's last stages have run.
+///
+/// ``UDSSVC_ARCH_0016`` — [`ServiceSet::dispatch`] returns this, and the driver hands it
+/// to the pipeline's `settle`, which applies "response fits" (``UDSSVC_ARCH_0017``) and
+/// ``UDSSVC_ARCH_0009``'s three suppression rules and yields the [`Responded`] the driver
+/// acts on. **The driver settles, not `dispatch`, because rule 3's input is known only to
+/// the driver**: whether a `requestCorrectlyReceivedResponsePending` (0x78) for this
+/// request was accepted for transmission is learned in the driver's loop while the
+/// handler runs, and it is final only once the handler has finished. Settling after the
+/// handler future completes reads it then, as a plain `bool`, with nothing shared between
+/// the handler and the loop.
+///
+/// Public only because the trait an application's assembly implements names it; an
+/// application never builds or reads one. Its fields are private and its constructors
+/// hidden, for [`crate::uds_server`]'s emitted `dispatch` alone, which decides nothing:
+/// it records which of three shapes the request took — no service identifier
+/// (``UDSSVC_ARCH_0005``), a code the common stages settled, or a service stage's outcome.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Unsettled(Shape);
+
+/// The three ways a request reaches settlement.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Shape {
+    /// No service identifier at all (``UDSSVC_ARCH_0005``): complete, with no response,
+    /// whatever else is true.
+    Empty,
+    /// The common stages settled a code before any handler ran; its request carries no
+    /// suppress bit the pipeline reads.
+    Refused {
+        /// `SIDRQ`, echoed by the negative response.
+        sid: u8,
+        /// The code the common stages settled.
+        nrc: NegativeResponseCode,
+    },
+    /// The service's own stage ran.
+    Handled {
+        /// The service byte and the suppress bit.
+        settling: Settling,
+        /// What the stage returned: the selected session, or a code.
+        outcome: Result<Option<DiagnosticSessionType>, NegativeResponseCode>,
+    },
+}
+
+impl Unsettled {
+    /// A request with no service identifier: `settle` reports it [`Responded::Suppressed`]
+    /// with no session, as it does a link closed mid-handler.
+    #[doc(hidden)]
+    #[must_use]
+    pub const fn empty() -> Self {
+        Self(Shape::Empty)
+    }
+
+    /// A request the common stages of `pipeline::begin` settled with `nrc`.
+    #[doc(hidden)]
+    #[must_use]
+    pub const fn refused(sid: u8, nrc: NegativeResponseCode) -> Self {
+        Self(Shape::Refused { sid, nrc })
+    }
+
+    /// A request whose service stage returned `outcome`.
+    #[doc(hidden)]
+    #[must_use]
+    pub const fn handled(
+        settling: Settling,
+        outcome: Result<Option<DiagnosticSessionType>, NegativeResponseCode>,
+    ) -> Self {
+        Self(Shape::Handled { settling, outcome })
+    }
+
+    /// What `settle` reads: `None` for [`Self::empty`], otherwise the request's
+    /// [`Settling`] and its outcome, a refusal being an `Err` with no suppress bit.
+    pub(crate) const fn parts(
+        self,
+    ) -> Option<(
+        Settling,
+        Result<Option<DiagnosticSessionType>, NegativeResponseCode>,
+    )> {
+        match self.0 {
+            Shape::Empty => None,
+            Shape::Refused { sid, nrc } => Some((
+                Settling {
+                    sid,
+                    suppress_bit: false,
+                },
+                Err(nrc),
+            )),
+            Shape::Handled { settling, outcome } => Some((settling, outcome)),
         }
     }
 }
@@ -118,34 +210,28 @@ pub trait ServiceSet: crate::sealed::Sealed {
     /// The protocol state this assembly keeps. ``UDSSVC_ARCH_0035``.
     type State: ProtocolState;
 
-    /// Run the clause 8.7 pipeline for `request` and write any response into `out`.
+    /// Run the clause 8.7 pipeline for `request` up to its last stages, writing any
+    /// response into `out`, and return the handler's outcome [`Unsettled`].
     ///
     /// ``UDSSVC_ARCH_0004`` — a function of the request, its addressing and this crate's
     /// state, with no transport, clock or session layer involved. ``UDSSVC_ARCH_0015`` is
-    /// why `ai` is here. `pending_sent` is ``UDSSVC_ARCH_0009`` rule 3's input: whether a
-    /// `requestCorrectlyReceivedResponsePending` already went out for this request, in
-    /// which case nothing suppresses the final response. A shared reference, because the
-    /// driver learns that while this future is live and a shared reference is the one
-    /// thing that can coexist with it; an [`AtomicBool`](core::sync::atomic::AtomicBool)
-    /// rather than a `Cell`, because it must be `Sync` for the driver's `step` future to
-    /// stay `Send`.
+    /// why `ai` is here. ``UDSSVC_ARCH_0016`` — the driver, not this future, settles the
+    /// result: see [`Unsettled`] for why.
     ///
     /// # Arguments
     ///
     /// * `state` - the [`ProtocolState`] of this assembly, held by [`crate::Server`]
     /// * `ai` - the [`Ai`] the driver drained with the request
     /// * `request` - the request bytes, service identifier first
-    /// * `out` - the [`ResponseSink`] the response is written into
-    /// * `pending_sent` - set by the driver when a 0x78 for this request is accepted
-    ///   for transmission, possibly while this future is live; read at settlement
+    /// * `out` - the [`ResponseSink`] the response is written into, and that the driver
+    ///   settles once this future completes
     fn dispatch(
         &mut self,
         state: &mut Self::State,
         ai: Ai,
         request: &[u8],
         out: &mut ResponseSink<'_>,
-        pending_sent: &core::sync::atomic::AtomicBool,
-    ) -> impl core::future::Future<Output = Responded>;
+    ) -> impl core::future::Future<Output = Unsettled>;
 
     /// `tS3_Server` expired: return to the default session and tell the application.
     ///

@@ -155,7 +155,7 @@ pub use services::{
     DiagnosticSessionControl, DtcReportKind, EcuReset, KeyVerdict, ReadDataByIdentifier,
     ReadDtcInformation, Responded, RoutineControl, SecurityAccess, SecurityLevel,
     SecurityPolicy, ServiceSet, SessionTiming, SessionTransition, TesterPresent,
-    TransferRequest, WriteDataByIdentifier,
+    TransferRequest, Unsettled, WriteDataByIdentifier,
 };
 
 /// The protocol vocabulary this crate's handler signatures are written in.
