@@ -37,9 +37,9 @@ Overview
       rectangle "suppression gate" as G
       rectangle "Responded\nor Suppress" as O
 
-      B -> D
-      D -> P
-      P -> SF
+      B -> P
+      P -> D
+      D -> SF
       SF -> DP
       DP -> H
       D -[#C0392B]-> G : settles
@@ -76,21 +76,21 @@ rather than merely the code path.
 
    @startuml
    start
-   :decode with uds_protocol;
-   if (decodes?) then (no)
-     :0x13; <<negative>>
+   if (service identifier modelled?) then (no)
+     :0x11; <<negative>>
    else (yes)
-     if (service identifier modelled?) then (no)
+     if (service implemented?) then (no)
        :0x11; <<negative>>
      else (yes)
-       if (service implemented?) then (no)
-         :0x11; <<negative>>
+       if (authenticated?) then (no)
+         :0x34; <<negative>>
        else (yes)
-         if (authenticated?) then (no)
-           :0x34; <<negative>>
+         if (supported in active session?) then (no)
+           :0x7F; <<negative>>
          else (yes)
-           if (supported in active session?) then (no)
-             :0x7F; <<negative>>
+           :decode with uds_protocol;
+           if (decodes?) then (no)
+             :0x13; <<negative>>
            else (yes)
              if (has SubFunction, and not SID 0x31?) then (yes)
                if (SubFunction supported?) then (no)
@@ -147,10 +147,12 @@ Decode
    Rationale: 0x13 is a clause 8.7 outcome, but message length and format are properties of the
    encoding, which is ``uds_protocol``'s. So ``uds_protocol`` *detects* and this crate
    *maps*: neither re-derives the other's work, and there is exactly one place that knows
-   the wire format. The first stage decodes the request bytes with ``uds_protocol``. A
-   decode failure settles the request with ``incorrectMessageLengthOrInvalidFormat``
-   (0x13). A request that decodes to ``uds_protocol``'s unmodelled-service variant settles
-   with ``serviceNotSupported`` (0x11), not with 0x13.
+   the wire format. The request bytes are decoded with ``uds_protocol`` once Figure 5's
+   support and session checks have passed (``UDSSVC_ARCH_0006``): decoding is the
+   service-specific check, where Figure 5 places length and format. A decode failure
+   settles the request with ``incorrectMessageLengthOrInvalidFormat`` (0x13). A request
+   that decodes to ``uds_protocol``'s unmodelled-service variant settles with
+   ``serviceNotSupported`` (0x11), not with 0x13.
 
    The unmodelled-service carve-out is the part that is easy to get wrong. ``uds_protocol``
    represents a service identifier it does not model as a variant carrying the raw service
@@ -159,10 +161,15 @@ Decode
    the server has no implementation for that service identifier, which is 0x11. Mapping it
    to 0x13 would report a malformed request to a client that sent a valid one.
 
-   A consequence worth naming: because ``uds_protocol`` validates each service's own
-   payload during decode, several of the length checks Figure 6 places *inside* the
-   pipeline are already settled before the pipeline runs. This changes where 0x13 is
-   produced, not whether it is — see ``UDSSVC_ARCH_0007``.
+   A service identifier that names no service at all never reaches the decode: the support
+   check reads the service byte alone and settles it 0x11 first, as ISO 14229-1:2020
+   8.7.5's pseudo-code does — its outer ``SWITCH`` on the service identifier falls to
+   ``DEFAULT: responseCode = SNS`` before any ``message_length`` test. So a malformed
+   request for a service this server lacks is 0x11, and one for a service refused in the
+   active session is 0x7F; 0x13 is produced only for a service that passed both. Because
+   ``uds_protocol`` validates each service's own payload during decode, Figure 6's length
+   check is settled by that same decode, in its place in the order — see
+   ``UDSSVC_ARCH_0007``.
 
    **A request with no service identifier is complete without a response.** ISO
    14229-1:2020 8.7.5's pseudo-code begins ``SWITCH (A_PDU.A_Data.A_PCI.SI)``: an A_PDU
@@ -211,6 +218,14 @@ Mandatory preconditions
 
    Figure 5 places three optional checks and two manufacturer/supplier-specific hooks
    around this sequence; they are ``UDSSVC_ARCH_0011``.
+
+   **The implemented order is Figure 5's, literally:** the empty request
+   (``UDSSVC_ARCH_0005``'s declared reading), then check 1, then check 3, then the decode
+   that settles 0x13 (``UDSSVC_ARCH_0005``). Nothing is decoded until the service is known
+   to be supported and allowed in the active session, so 0x13 never pre-empts 0x11 or
+   0x7F. Check 2, authentication (0x34), and the security precondition (0x33) are not
+   evaluated yet: authentication is architecture open question 4, and security joins with
+   security state.
 
    **Check 3 is partly fixed by the standard, and this crate answers the fixed part.** Clause
    10.2's Table 23 states, for each service it lists, whether it is available in the
@@ -300,7 +315,8 @@ Mandatory preconditions
       * - 1
         - Minimum length (service identifier + SubFunction)
         - 0x13
-        - Largely settled during decode; see ``UDSSVC_ARCH_0005``
+        - Settled by the decode, which runs after the mandatory preconditions; see
+          ``UDSSVC_ARCH_0005``
       * - 2
         - SubFunction supported ever for this service identifier?
         - 0x12
