@@ -57,9 +57,31 @@ impl Timestamp {
     }
 }
 
+/// The earlier of two wrapping timestamps (``UDSS_LLR_0019``): `a` is earlier when the
+/// modular difference `a - b` lands in the upper half of the range.
+pub(crate) const fn earlier(a: Timestamp, b: Timestamp) -> Timestamp {
+    if a.0.wrapping_sub(b.0) > u32::MAX / 2 {
+        a
+    } else {
+        b
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::Timestamp;
+    use super::{Timestamp, earlier};
+
+    /// ``UDSS_LLR_0019`` — the earlier deadline is chosen by modular distance, so one
+    /// just past the wrap is later than one just before it.
+    #[test]
+    fn the_earlier_deadline_is_chosen_across_the_wrap() {
+        assert_eq!(earlier(Timestamp(10), Timestamp(20)), Timestamp(10));
+        assert_eq!(earlier(Timestamp(20), Timestamp(10)), Timestamp(10));
+        let before = Timestamp(u32::MAX - 5);
+        let after = Timestamp(5);
+        assert_eq!(earlier(before, after), before);
+        assert_eq!(earlier(after, before), before);
+    }
 
     /// ``UDSS_LLR_0019`` — the interval is the modular difference.
     #[test]

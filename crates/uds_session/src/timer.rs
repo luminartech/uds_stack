@@ -25,13 +25,6 @@ pub(crate) struct Reaches;
 
 /// Expires only once the elapsed time strictly exceeds the loaded value.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "no server timer expires on exceeds; tP_Client of UDSS_LLR_0148 does"
-    )
-)]
 pub(crate) struct Exceeds;
 
 impl Rule for Reaches {

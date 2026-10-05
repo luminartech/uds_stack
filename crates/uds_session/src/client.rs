@@ -42,11 +42,16 @@
 //! ```
 
 use crate::addressing::{Address, AddressExtension, Ai, ChannelAddressing, TaType};
-use crate::classification::{ClientRx, ClientTx};
+use crate::classification::{ClientRx, ClientTx, ExpectedResponses};
+use crate::keep_alive::{
+    FunctionalKeepAlive, KeepAliveMode, PhysicalKeepAlive, PhysicalSession,
+};
 use crate::params::{ChannelParameter, ChannelParams, ChannelReload};
 use crate::reaction::Reaction;
+use crate::rejection::{Cause, Rejection};
 use crate::result::SResult;
-use crate::time::Timestamp;
+use crate::time::{Timestamp, earlier};
+use crate::timer::{Exceeds, Timer};
 
 /// One entry of a functional channel's responder table.
 ///
@@ -75,14 +80,22 @@ impl ResponderSlot {
 /// `tS3_Client` timer and session fact of ``UDSS_LLR_0151``.
 ///
 /// It holds no responder table: ``UDSS_LLR_0139`` gives one to functional channels alone.
+/// `K` is the client's keep-alive mode: in [`FunctionalKeepAlive`] the slot holds no
+/// keep-alive state, and in [`PhysicalKeepAlive`] it holds the channel's own `tS3_Client`
+/// timer, reload and session fact. [`PhysicalSlot::EMPTY`] infers `K` from the client it
+/// is supplied to, so a caller names it only where they annotate the type.
 #[derive(Debug)]
-pub struct PhysicalSlot {
-    _reserved: (),
+pub struct PhysicalSlot<K: KeepAliveMode> {
+    channel: Option<Physical<K>>,
+    timed_out: Option<TimedOut>,
 }
 
-impl PhysicalSlot {
+impl<K: KeepAliveMode> PhysicalSlot<K> {
     /// A slot holding no channel.
-    pub const EMPTY: Self = Self { _reserved: () };
+    pub const EMPTY: Self = Self {
+        channel: None,
+        timed_out: None,
+    };
 }
 
 /// One functional channel's storage, with room for `R` responders.
@@ -94,7 +107,9 @@ impl PhysicalSlot {
 /// capacity is the number of entries this storage holds — `R`.
 #[derive(Debug)]
 pub struct FunctionalSlot<const R: usize> {
+    channel: Option<Channel>,
     _responders: [ResponderSlot; R],
+    timed_out: Option<TimedOut>,
 }
 
 impl<const R: usize> FunctionalSlot<R> {
@@ -102,7 +117,9 @@ impl<const R: usize> FunctionalSlot<R> {
     ///
     /// ``UDSS_LLR_0142`` — a channel's responder table holds no entry when it is opened.
     pub const EMPTY: Self = Self {
+        channel: None,
         _responders: [ResponderSlot::EMPTY; R],
+        timed_out: None,
     };
 }
 
@@ -164,69 +181,88 @@ impl From<FunctionalChannelId> for ChannelId {
     }
 }
 
-/// How the client keeps servers alive.
-///
-/// ``UDSS_LLR_0149`` — one of two modes, fixed when the instance is created, changed by
-/// no input. The mode selects which state ``UDSS_LLR_0150`` or ``UDSS_LLR_0151``
-/// requires, and which of ``UDSS_LLR_0155`` to ``UDSS_LLR_0163`` and ``UDSS_LLR_0184``
-/// act.
-///
-/// It is a type parameter of [`Client`] rather than a value inside it because
-/// ``UDSS_LLR_0149`` settles it at creation and nothing afterwards can move it. Holding it
-/// in the type is what lets ``UDSS_LLR_0152`` be satisfied without a check: the methods
-/// that supply a `tS3_Client` reload exist only on the mode that gives one a meaning, so
-/// none of that requirement's three disagreements can be written.
-///
-/// The trait is sealed. A mode is not an extension point — the standard names two — and
-/// ``UDSS_LLR_0011`` forbids the session layer to deliver an output through a
-/// caller-supplied trait implementation, which sealing keeps true of every trait here.
-pub trait KeepAliveMode: crate::sealed::Sealed + core::fmt::Debug {}
-
-/// Functional keep-alive: one `TesterPresent` for the client, functionally addressed.
-///
-/// ``UDSS_LLR_0150`` — a single `tS3_Client` timer and a single keeping-alive fact for
-/// the instance, with the single reload of ``UDSS_LLR_0152``. ISO 14229-2:2021 9.6 Table 8
-/// allots one timer here, so this value is fixed in size; it is caller-supplied all the
-/// same, because ``UDSS_LLR_0008`` puts every fact the client holds in the caller's
-/// storage and a fact with nothing left to size is no exception.
-/// Storage is moved into the instance, never duplicated — see [`crate::Association`]. A
-/// copy of this is a second `tS3_Client` timer, which ``UDSS_LLR_0150`` gives the client
-/// exactly one of.
-#[derive(Debug)]
-pub struct FunctionalKeepAlive {
-    _s3_client: u32,
+/// One open channel's state, of either kind (``UDSS_LLR_0126``).
+#[derive(Debug, Clone, Copy)]
+struct Channel {
+    id: u32,
+    ai: Ai,
+    params: ChannelParams,
+    /// `tP_Client` — ``UDSS_LLR_0120``, ``UDSS_LLR_0148``.
+    response: Timer<Exceeds>,
+    loaded: ChannelReload,
+    /// ``UDSS_LLR_0059``, ``UDSS_LLR_0060`` — the one association a channel holds.
+    sent: Option<Sent>,
 }
 
-impl FunctionalKeepAlive {
-    /// The initial state, with the client-wide `tS3_Client` reload.
-    ///
-    /// ``UDSS_LLR_0153`` — no session is kept alive and the timer is not running.
-    /// ``UDSS_LLR_0152`` — `s3_client` must cover the longest path among every server the
-    /// functional address reaches. [`Client::set_keep_alive_reload`] sets it again.
-    #[must_use]
-    pub const fn new(s3_client: u32) -> Self {
+#[derive(Debug, Clone, Copy)]
+struct Sent {
+    class: ClientTx,
+}
+
+/// An expired `tP_Client`, kept in the slot rather than the channel so that a withdrawal
+/// at the same timestamp still indicates it (``UDSS_LLR_0081``).
+#[derive(Debug, Clone, Copy)]
+struct TimedOut {
+    ai: Ai,
+    loaded: ChannelReload,
+}
+
+impl Channel {
+    /// ``UDSS_LLR_0127``, ``UDSS_LLR_0167`` — no request, no association, no timer.
+    const fn opened(id: u32, ai: Ai, params: ChannelParams) -> Self {
         Self {
-            _s3_client: s3_client,
+            id,
+            ai,
+            params,
+            response: Timer::STOPPED,
+            loaded: ChannelReload::Default,
+            sent: None,
         }
+    }
+
+    /// The handle naming this channel; its kind is its `TAtype` (``UDSS_LLR_0049``).
+    const fn handle(&self) -> ChannelId {
+        match self.ai.ta_type {
+            TaType::Physical => ChannelId::Physical(PhysicalChannelId(self.id)),
+            TaType::Functional => ChannelId::Functional(FunctionalChannelId(self.id)),
+        }
+    }
+
+    /// ``UDSS_LLR_0148`` — stop an exceeded `tP_Client` and say what it timed.
+    fn expire(&mut self, now: Timestamp) -> Option<TimedOut> {
+        if !self.response.expired(now) {
+            return None;
+        }
+        self.response.stop();
+        Some(TimedOut {
+            ai: self.ai,
+            loaded: self.loaded,
+        })
+    }
+
+    /// ``UDSS_LLR_0043`` — a running timer keeps the value it was loaded with
+    /// (``UDSS_LLR_0076``).
+    const fn set(&mut self, parameter: ChannelParameter) {
+        match parameter {
+            ChannelParameter::Reloads(reloads) => self.params.reloads = reloads,
+            ChannelParameter::DefaultReload(v) => self.params.reloads.default_reload = v,
+            ChannelParameter::EnhancedReload(v) => self.params.reloads.enhanced_reload = v,
+            ChannelParameter::Spacing(v) => self.params.spacing = v,
+        }
+    }
+
+    fn deadline(&self) -> Option<Timestamp> {
+        self.response.deadline()
     }
 }
 
-impl crate::sealed::Sealed for FunctionalKeepAlive {}
-impl KeepAliveMode for FunctionalKeepAlive {}
-
-/// Physical keep-alive: a `TesterPresent` per physical channel, physically addressed.
-///
-/// ``UDSS_LLR_0151`` — the timer and session fact live in each physical channel's own
-/// storage, and ``UDSS_LLR_0152`` gives each physical channel its own reload, supplied at
-/// [`Client::open_physical_channel`]. Nothing is client-wide, so this mode carries no
-/// value at all.
-/// It holds nothing, but it is still moved rather than copied, so that a keep-alive mode
-/// reaches [`Client::new`] the same way in both modes — see [`crate::Association`].
 #[derive(Debug)]
-pub struct PhysicalKeepAlive;
+struct Physical<K: KeepAliveMode> {
+    core: Channel,
+    keep_alive: K::Channel,
+}
 
-impl crate::sealed::Sealed for PhysicalKeepAlive {}
-impl KeepAliveMode for PhysicalKeepAlive {}
+const NO_SUCH_CHANNEL: Rejection = Rejection::new(Cause::NoSuchChannel);
 
 /// What a client produces for the caller to retrieve.
 ///
@@ -336,12 +372,11 @@ pub struct Client<
     const FUNC: usize,
     const R: usize = 0,
 > {
-    _physical: [PhysicalSlot; PHYS],
-    _functional: [FunctionalSlot<R>; FUNC],
-    _keep_alive: K,
+    physical: [PhysicalSlot<K>; PHYS],
+    functional: [FunctionalSlot<R>; FUNC],
+    keep_alive: K,
     /// ``UDSS_LLR_0121``, ``UDSS_LLR_0185`` — the next handle to issue; `checked_add` on
     /// it failing is the second limb's rejection.
-    #[expect(dead_code, reason = "read by open_*_channel in milestone 2")]
     next_id: u32,
 }
 
@@ -360,16 +395,110 @@ impl<K: KeepAliveMode, const PHYS: usize, const FUNC: usize, const R: usize>
     /// the life of the instance, as ``UDSS_LLR_0149`` requires.
     #[must_use]
     pub const fn new(
-        physical: [PhysicalSlot; PHYS],
+        physical: [PhysicalSlot<K>; PHYS],
         functional: [FunctionalSlot<R>; FUNC],
         keep_alive: K,
     ) -> Self {
         Self {
-            _physical: physical,
-            _functional: functional,
-            _keep_alive: keep_alive,
+            physical,
+            functional,
+            keep_alive,
             next_id: 0,
         }
+    }
+
+    /// ``UDSS_LLR_0081`` — act on every expiry the timestamp causes before the input,
+    /// sweeping the previous input's unreported snapshots.
+    fn expire(&mut self, now: Timestamp) {
+        for slot in &mut self.physical {
+            slot.timed_out = slot.channel.as_mut().and_then(|p| p.core.expire(now));
+        }
+        for slot in &mut self.functional {
+            slot.timed_out = slot.channel.as_mut().and_then(|c| c.expire(now));
+        }
+    }
+
+    fn channels(&self) -> impl Iterator<Item = &Channel> {
+        let physical = self.physical.iter().filter_map(|s| s.channel.as_ref());
+        let functional = self.functional.iter().filter_map(|s| s.channel.as_ref());
+        physical.map(|p| &p.core).chain(functional)
+    }
+
+    fn channels_mut(&mut self) -> impl Iterator<Item = &mut Channel> {
+        let physical = self.physical.iter_mut().filter_map(|s| s.channel.as_mut());
+        let functional = self
+            .functional
+            .iter_mut()
+            .filter_map(|s| s.channel.as_mut());
+        physical.map(|p| &mut p.core).chain(functional)
+    }
+
+    fn channel_mut(&mut self, id: ChannelId) -> Option<&mut Channel> {
+        self.channels_mut().find(|c| c.handle() == id)
+    }
+
+    /// ``UDSS_LLR_0122`` and ``UDSS_LLR_0185``, every cause stated (``UDSS_LLR_0016``).
+    fn validate_open(&self, ai: Ai, free: bool) -> Result<(), Rejection> {
+        let mut causes: Option<Rejection> = None;
+        let mut add = |c: Cause| {
+            causes = Some(causes.map_or(Rejection::new(c), |r| r.with(c)));
+        };
+        if self.channels().any(|c| c.ai == ai) {
+            add(Cause::DuplicateChannelAddressing); // UDSS_LLR_0122
+        }
+        if !free {
+            add(Cause::NoChannelSlotFree); // UDSS_LLR_0185
+        }
+        if self.next_id.checked_add(1).is_none() {
+            add(Cause::ChannelHandlesSpent); // UDSS_LLR_0185
+        }
+        causes.map_or(Ok(()), Err)
+    }
+
+    /// ``UDSS_LLR_0121`` — the next handle, never reissued. [`Client::validate_open`]
+    /// has already refused an open with none left.
+    const fn issue(&mut self) -> u32 {
+        let id = self.next_id;
+        self.next_id = id.saturating_add(1);
+        id
+    }
+
+    fn open_physical(
+        &mut self,
+        now: Timestamp,
+        addressing: ChannelAddressing,
+        params: ChannelParams,
+        keep_alive: K::Channel,
+    ) -> ClientReaction<'_, 'static, K, PHYS, FUNC, R, PhysicalChannelId> {
+        let ai = addressing.with_ta_type(TaType::Physical);
+        self.expire(now);
+        let free = self.physical.iter().any(|s| s.channel.is_none());
+        let outcome = self.validate_open(ai, free).map(|()| {
+            let id = self.issue();
+            if let Some(slot) = self.physical.iter_mut().find(|s| s.channel.is_none()) {
+                slot.channel = Some(Physical {
+                    core: Channel::opened(id, ai, params),
+                    keep_alive,
+                });
+            }
+            PhysicalChannelId(id)
+        });
+        Reaction::new(self, [None, None], outcome)
+    }
+
+    /// ``UDSS_LLR_0123`` and ``UDSS_LLR_0061``, every cause stated (``UDSS_LLR_0016``).
+    fn validate_req(&self, ai: Ai) -> Result<(), Rejection> {
+        let Some(channel) = self.channels().find(|c| c.ai == ai) else {
+            return Err(NO_SUCH_CHANNEL); // UDSS_LLR_0123
+        };
+        let mut causes: Option<Rejection> = None;
+        let mut add = |c: Cause| {
+            causes = Some(causes.map_or(Rejection::new(c), |r| r.with(c)));
+        };
+        if channel.sent.is_some() {
+            add(Cause::AssociationOutstanding); // UDSS_LLR_0061
+        }
+        causes.map_or(Ok(()), Err)
     }
 
     /// Open a functional channel.
@@ -389,13 +518,16 @@ impl<K: KeepAliveMode, const PHYS: usize, const FUNC: usize, const R: usize>
         params: ChannelParams,
     ) -> ClientReaction<'_, 'static, K, PHYS, FUNC, R, FunctionalChannelId> {
         let ai = addressing.with_ta_type(TaType::Functional);
-        #[allow(
-            clippy::todo,
-            reason = "API stub; behaviour lands with its requirement"
-        )]
-        {
-            todo!("UDSS_LLR_0121, 0122, 0139, 0042: {now:?} {ai:?} {params:?}")
-        }
+        self.expire(now);
+        let free = self.functional.iter().any(|s| s.channel.is_none());
+        let outcome = self.validate_open(ai, free).map(|()| {
+            let id = self.issue();
+            if let Some(slot) = self.functional.iter_mut().find(|s| s.channel.is_none()) {
+                slot.channel = Some(Channel::opened(id, ai, params));
+            }
+            FunctionalChannelId(id)
+        });
+        Reaction::new(self, [None, None], outcome)
     }
 
     /// Withdraw a channel, which discards it.
@@ -411,13 +543,26 @@ impl<K: KeepAliveMode, const PHYS: usize, const FUNC: usize, const R: usize>
         channel: impl Into<ChannelId>,
     ) -> ClientReaction<'_, 'static, K, PHYS, FUNC, R> {
         let channel = channel.into();
-        #[allow(
-            clippy::todo,
-            reason = "API stub; behaviour lands with its requirement"
-        )]
+        self.expire(now);
+        let physical = self.physical.iter_mut().find(|s| {
+            s.channel
+                .as_ref()
+                .is_some_and(|p| p.core.handle() == channel)
+        });
+        let outcome = if let Some(slot) = physical {
+            slot.channel = None; // UDSS_LLR_0125
+            Ok(())
+        } else if let Some(slot) = self
+            .functional
+            .iter_mut()
+            .find(|s| s.channel.as_ref().is_some_and(|c| c.handle() == channel))
         {
-            todo!("UDSS_LLR_0124, 0125: {now:?} {channel:?}")
-        }
+            slot.channel = None; // UDSS_LLR_0125
+            Ok(())
+        } else {
+            Err(NO_SUCH_CHANNEL) // UDSS_LLR_0124
+        };
+        Reaction::new(self, [None, None], outcome)
     }
 
     /// Set a physical channel's protocol parameter.
@@ -433,13 +578,15 @@ impl<K: KeepAliveMode, const PHYS: usize, const FUNC: usize, const R: usize>
         channel: PhysicalChannelId,
         parameter: ChannelParameter,
     ) -> ClientReaction<'_, 'static, K, PHYS, FUNC, R> {
-        #[allow(
-            clippy::todo,
-            reason = "API stub; behaviour lands with its requirement"
-        )]
-        {
-            todo!("UDSS_LLR_0043, 0134: {now:?} {channel:?} {parameter:?}")
-        }
+        self.expire(now);
+        let outcome = match self.channel_mut(channel.into()) {
+            Some(c) => {
+                c.set(parameter);
+                Ok(())
+            }
+            None => Err(NO_SUCH_CHANNEL), // UDSS_LLR_0134
+        };
+        Reaction::new(self, [None, None], outcome)
     }
 
     /// Set a functional channel's protocol parameter.
@@ -454,13 +601,15 @@ impl<K: KeepAliveMode, const PHYS: usize, const FUNC: usize, const R: usize>
         channel: FunctionalChannelId,
         parameter: ChannelParameter,
     ) -> ClientReaction<'_, 'static, K, PHYS, FUNC, R> {
-        #[allow(
-            clippy::todo,
-            reason = "API stub; behaviour lands with its requirement"
-        )]
-        {
-            todo!("UDSS_LLR_0043, 0134: {now:?} {channel:?} {parameter:?}")
-        }
+        self.expire(now);
+        let outcome = match self.channel_mut(channel.into()) {
+            Some(c) => {
+                c.set(parameter);
+                Ok(())
+            }
+            None => Err(NO_SUCH_CHANNEL), // UDSS_LLR_0134
+        };
+        Reaction::new(self, [None, None], outcome)
     }
 
     /// Reset a channel.
@@ -523,16 +672,19 @@ impl<K: KeepAliveMode, const PHYS: usize, const FUNC: usize, const R: usize>
         data: &'d [u8],
         class: ClientTx,
     ) -> ClientReaction<'_, 'd, K, PHYS, FUNC, R> {
-        #[allow(
-            clippy::todo,
-            reason = "API stub; behaviour lands with its requirement"
-        )]
-        {
-            todo!(
-                "UDSS_LLR_0033, 0123: {now:?} {ai:?} {} {class:?}",
-                data.len()
-            )
+        self.expire(now);
+        if let Err(rejection) = self.validate_req(ai) {
+            return Reaction::new(self, [None, None], Err(rejection)); // UDSS_LLR_0015
         }
+        let transmit = self.channels_mut().find(|c| c.ai == ai).map(|c| {
+            c.sent = Some(Sent { class }); // UDSS_LLR_0059
+            ClientOutput::Transmit {
+                channel: c.handle(),
+                ai,
+                data,
+            }
+        });
+        Reaction::new(self, [transmit, None], Ok(()))
     }
 
     /// A message has started arriving.
@@ -610,13 +762,27 @@ impl<K: KeepAliveMode, const PHYS: usize, const FUNC: usize, const R: usize>
         ai: Ai,
         result: SResult,
     ) -> ClientReaction<'_, 'static, K, PHYS, FUNC, R> {
-        #[allow(
-            clippy::todo,
-            reason = "API stub; behaviour lands with its requirement"
-        )]
+        self.expire(now);
+        let Some(channel) = self.channels_mut().find(|c| c.ai == ai && c.sent.is_some())
+        else {
+            let rejection = Rejection::new(Cause::NoMatchingAssociation);
+            return Reaction::new(self, [None, None], Err(rejection)); // UDSS_LLR_0063
+        };
+        if let Some(Sent { class }) = channel.sent.take()
+            && result == SResult::Ok
+            && class.expected() != ExpectedResponses::None
         {
-            todo!("UDSS_LLR_0025, 0059, 0063: {now:?} {ai:?} {result:?}")
+            // UDSS_LLR_0135, UDSS_LLR_0128
+            channel
+                .response
+                .start(now, channel.params.reloads.default_reload);
+            channel.loaded = ChannelReload::Default;
         }
+        Reaction::new(
+            self,
+            [Some(ClientOutput::Confirm { ai, result }), None],
+            Ok(()),
+        )
     }
 
     /// Supply a timestamp on its own.
@@ -626,13 +792,8 @@ impl<K: KeepAliveMode, const PHYS: usize, const FUNC: usize, const R: usize>
         &mut self,
         now: Timestamp,
     ) -> ClientReaction<'_, 'static, K, PHYS, FUNC, R> {
-        #[allow(
-            clippy::todo,
-            reason = "API stub; behaviour lands with its requirement"
-        )]
-        {
-            todo!("UDSS_LLR_0010, 0079: {now:?}")
-        }
+        self.expire(now);
+        Reaction::new(self, [None, None], Ok(()))
     }
 
     /// The earliest timestamp at which a supplied timestamp could expire a timer.
@@ -643,13 +804,9 @@ impl<K: KeepAliveMode, const PHYS: usize, const FUNC: usize, const R: usize>
     /// ``UDSS_LLR_0150``, which belongs to no channel and which ``UDSS_LLR_0156`` expires.
     #[must_use]
     pub fn next_deadline(&self) -> Option<Timestamp> {
-        #[allow(
-            clippy::todo,
-            reason = "API stub; behaviour lands with its requirement"
-        )]
-        {
-            todo!("UDSS_LLR_0080")
-        }
+        self.channels()
+            .filter_map(Channel::deadline)
+            .reduce(earlier)
     }
 }
 
@@ -678,14 +835,7 @@ impl<const PHYS: usize, const FUNC: usize, const R: usize>
         params: ChannelParams,
     ) -> ClientReaction<'_, 'static, FunctionalKeepAlive, PHYS, FUNC, R, PhysicalChannelId>
     {
-        let ai = addressing.with_ta_type(TaType::Physical);
-        #[allow(
-            clippy::todo,
-            reason = "API stub; behaviour lands with its requirement"
-        )]
-        {
-            todo!("UDSS_LLR_0121, 0122, 0042: {now:?} {ai:?} {params:?}")
-        }
+        self.open_physical(now, addressing, params, ())
     }
 
     /// Set the client-wide `tS3_Client` reload.
@@ -703,13 +853,9 @@ impl<const PHYS: usize, const FUNC: usize, const R: usize>
         now: Timestamp,
         s3_client: u32,
     ) -> ClientReaction<'_, 'static, FunctionalKeepAlive, PHYS, FUNC, R> {
-        #[allow(
-            clippy::todo,
-            reason = "API stub; behaviour lands with its requirement"
-        )]
-        {
-            todo!("UDSS_LLR_0040, 0042, 0043, 0152: {now:?} {s3_client:?}")
-        }
+        self.expire(now);
+        self.keep_alive.reload = s3_client; // UDSS_LLR_0152
+        Reaction::new(self, [None, None], Ok(()))
     }
 }
 
@@ -734,16 +880,8 @@ impl<const PHYS: usize, const FUNC: usize, const R: usize>
         s3_client: u32,
     ) -> ClientReaction<'_, 'static, PhysicalKeepAlive, PHYS, FUNC, R, PhysicalChannelId>
     {
-        let ai = addressing.with_ta_type(TaType::Physical);
-        #[allow(
-            clippy::todo,
-            reason = "API stub; behaviour lands with its requirement"
-        )]
-        {
-            todo!(
-                "UDSS_LLR_0121, 0122, 0042, 0152: {now:?} {ai:?} {params:?} {s3_client:?}"
-            )
-        }
+        let session = PhysicalSession::new(s3_client); // UDSS_LLR_0151, UDSS_LLR_0152
+        self.open_physical(now, addressing, params, session)
     }
 
     /// Set a physical channel's `tS3_Client` reload.
@@ -759,13 +897,20 @@ impl<const PHYS: usize, const FUNC: usize, const R: usize>
         channel: PhysicalChannelId,
         s3_client: u32,
     ) -> ClientReaction<'_, 'static, PhysicalKeepAlive, PHYS, FUNC, R> {
-        #[allow(
-            clippy::todo,
-            reason = "API stub; behaviour lands with its requirement"
-        )]
-        {
-            todo!("UDSS_LLR_0043, 0134, 0152: {now:?} {channel:?} {s3_client:?}")
-        }
+        self.expire(now);
+        let named = self
+            .physical
+            .iter_mut()
+            .filter_map(|s| s.channel.as_mut())
+            .find(|p| p.core.handle() == ChannelId::Physical(channel));
+        let outcome = match named {
+            Some(p) => {
+                p.keep_alive.reload = s3_client; // UDSS_LLR_0152
+                Ok(())
+            }
+            None => Err(NO_SUCH_CHANNEL), // UDSS_LLR_0134
+        };
+        Reaction::new(self, [None, None], outcome)
     }
 }
 
@@ -778,6 +923,50 @@ impl<'d, K: KeepAliveMode, const PHYS: usize, const FUNC: usize, const R: usize>
     crate::reaction::Drain<'d, ClientOutput<'d>> for Client<K, PHYS, FUNC, R>
 {
     fn next_expiry(&mut self) -> Option<ClientOutput<'d>> {
-        None // the client role's expiries land with milestone 2
+        let physical = self.physical.iter_mut().map(|s| &mut s.timed_out);
+        let functional = self.functional.iter_mut().map(|s| &mut s.timed_out);
+        physical.chain(functional).find_map(Option::take).map(|t| {
+            ClientOutput::ResponseTimeout {
+                ai: t.ai,
+                loaded: t.loaded,
+            }
+        })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Client, PhysicalSlot};
+    use crate::addressing::{Address, ChannelAddressing, Mtype};
+    use crate::keep_alive::FunctionalKeepAlive;
+    use crate::params::{ChannelParams, Reloads};
+    use crate::rejection::Cause;
+    use crate::time::Timestamp;
+
+    /// ``UDSS_LLR_0185`` (second limb) — once the last handle is issued, no open
+    /// succeeds, even with a slot free, and the report says the handles are spent, not
+    /// the slots.
+    #[test]
+    fn an_open_with_every_handle_issued_is_rejected() {
+        let mut c: Client<FunctionalKeepAlive, 1, 0> =
+            Client::new([PhysicalSlot::EMPTY], [], FunctionalKeepAlive::new(2_000));
+        c.next_id = u32::MAX;
+        let addressing = ChannelAddressing {
+            mtype: Mtype::Diag,
+            sa: Address(0x0E80),
+            ta: Address(0x0010),
+        };
+        let params = ChannelParams {
+            reloads: Reloads {
+                default_reload: 50,
+                enhanced_reload: 5_000,
+            },
+            spacing: 60,
+        };
+        let r = c
+            .open_physical_channel(Timestamp(0), addressing, params)
+            .finish();
+        assert!(r.is_err_and(|e| e.contains(Cause::ChannelHandlesSpent)
+            && !e.contains(Cause::NoChannelSlotFree)));
     }
 }

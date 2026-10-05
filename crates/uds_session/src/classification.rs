@@ -98,6 +98,14 @@ impl ClientTx {
             Self::Request { session, .. } => session,
         }
     }
+
+    /// How many responses the message expects (``UDSS_LLR_0065``), whichever kind it is.
+    #[must_use]
+    pub const fn expected(self) -> ExpectedResponses {
+        match self {
+            Self::KeepAlive { expected } | Self::Request { expected, .. } => expected,
+        }
+    }
 }
 
 /// What a server asks to transmit.
@@ -191,6 +199,21 @@ mod tests {
         assert_eq!(one.exact(), Some(NonZeroU16::MIN));
         assert_eq!(ExpectedResponses::None.exact(), None);
         assert_eq!(ExpectedResponses::Unknown.exact(), None);
+    }
+
+    /// ``UDSS_LLR_0065`` — both kinds of client message state their expected responses.
+    #[test]
+    fn either_kind_states_its_expected_responses() {
+        let ka = ClientTx::KeepAlive {
+            expected: ExpectedResponses::None,
+        };
+        assert_eq!(ka.expected(), ExpectedResponses::None);
+        let request = ClientTx::Request {
+            expected: ExpectedResponses::Unknown,
+            repeat: true,
+            session: None,
+        };
+        assert_eq!(request.expected(), ExpectedResponses::Unknown);
     }
 
     /// ``UDSS_LLR_0065`` — a request classification may state keep-alive or repeat, and

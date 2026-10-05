@@ -83,6 +83,7 @@
 mod addressing;
 mod classification;
 mod client;
+mod keep_alive;
 mod params;
 mod reaction;
 mod rejection;
@@ -100,10 +101,10 @@ pub use classification::{
     Solicitation,
 };
 pub use client::{
-    ChannelId, Client, ClientOutput, ClientReaction, FunctionalChannelId,
-    FunctionalKeepAlive, FunctionalSlot, KeepAliveMode, PhysicalChannelId,
-    PhysicalKeepAlive, PhysicalSlot, ResponderSlot,
+    ChannelId, Client, ClientOutput, ClientReaction, FunctionalChannelId, FunctionalSlot,
+    PhysicalChannelId, PhysicalSlot, ResponderSlot,
 };
+pub use keep_alive::{FunctionalKeepAlive, KeepAliveMode, PhysicalKeepAlive};
 pub use params::{
     ChannelParameter, ChannelParams, ChannelReload, Reloads, ServerParameter, ServerParams,
     ServerReload,
