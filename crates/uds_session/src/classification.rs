@@ -131,6 +131,15 @@ pub enum ServerTx {
     /// while the minimum spacing has not elapsed. The session layer never composes one:
     /// that is the application layer's, per this set's preamble.
     ResponsePending,
+    /// A negative response whose code is `busyRepeatRequest`, refusing a request that
+    /// ISO 14229-1:2020 8.7.6 kept out of the service in progress and that was never
+    /// indicated as a request.
+    ///
+    /// ``UDSS_LLR_0187`` — it takes an association and answers no service: it stops no
+    /// `tP2_Server`, and its confirmation changes neither the service in progress nor
+    /// `tS3_Server`. A handler answering the service in progress with that code sends a
+    /// [`Self::FinalResponse`] instead.
+    BusyRepeatRequest,
 }
 
 /// What a client receives.
