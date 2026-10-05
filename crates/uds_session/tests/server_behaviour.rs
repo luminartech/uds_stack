@@ -759,6 +759,56 @@ mod overlap {
         assert_eq!(s.next_deadline(), None);
     }
 
+    /// ``UDSS_LLR_0085`` — a session-selecting response confirmed after the requester's
+    /// next request arrived enters the session and records the client, but leaves
+    /// `tS3_Server` stopped: that request was received in the default session, so no
+    /// ``UDSS_LLR_0087`` stop followed, and started here the timer would run through it.
+    /// It starts at the request's own completion (``UDSS_LLR_0088``).
+    #[test]
+    fn a_selection_confirmed_after_the_next_request_leaves_the_session_timer_stopped() {
+        let mut s = server();
+        let (_, ok) = outputs(s.t_data_ind(
+            Timestamp(0),
+            ai(TESTER, ECU),
+            &[0x10, 0x03],
+            SResult::Ok,
+            ServerRx::Request { session: None },
+        ));
+        assert!(ok.is_ok());
+        let selecting = ServerTx::FinalResponse {
+            solicitation: Solicitation::Solicited,
+            session: Some(SessionSelection::NonDefault),
+        };
+        let rsp = ai(ECU, TESTER);
+        let (_, ok) = outputs(s.s_data_req(
+            Timestamp(0),
+            rsp,
+            &[0x50, 0x03, 0, 50, 1, 244],
+            selecting,
+        ));
+        assert!(ok.is_ok());
+        request(&mut s, Timestamp(10)); // tP2_Server due at 60
+        confirm(&mut s, Timestamp(20)); // extended, TESTER controlling, tS3 stopped
+        assert_eq!(s.next_deadline(), Some(Timestamp(60)));
+        let (out, _) = outputs(s.tick(Timestamp(60)));
+        assert_eq!(out[0], Some(overrun(ServerReload::P2)));
+        assert!(submit(&mut s, Timestamp(60), ServerTx::ResponsePending).is_ok());
+        confirm(&mut s, Timestamp(60)); // tP2*_Server due at 5060
+        assert_eq!(s.next_deadline(), Some(Timestamp(5_060)));
+        let (out, _) = outputs(s.tick(Timestamp(5_020))); // the started timer's expiry
+        assert_eq!(out[0], None);
+        assert!(submit(&mut s, Timestamp(5_030), FINAL).is_ok());
+        confirm(&mut s, Timestamp(5_040)); // the request's own: tS3 starts
+        assert_eq!(s.next_deadline(), Some(Timestamp(10_040)));
+        let (out, _) = outputs(s.tick(Timestamp(10_040)));
+        assert_eq!(
+            out[0],
+            Some(ServerOutput::SessionTimeout {
+                client: peer(TESTER)
+            })
+        );
+    }
+
     /// ``UDSS_LLR_0088``, ``UDSS_LLR_0097`` — where the second request came from another
     /// client it never stopped `tS3_Server`, so the controlling client's confirmation
     /// still restarts it.

@@ -760,6 +760,57 @@ fn a_late_confirmation_does_not_restart_the_session_timer_during_the_next_reques
     );
 }
 
+/// ``UDSS_LLR_0085`` — a slow request whose indication precedes the confirmation of the
+/// `DiagnosticSessionControl` response before it keeps the session it selected through a
+/// service longer than `tS3_Server`.
+///
+/// `10 03` at 0 ms is answered and `50 03` left unconfirmed; the slow read arrives at
+/// 10 ms, in the default session, so no ``UDSS_LLR_0087`` stop follows. `50 03`'s
+/// `DataConf` arrives mid-handler and enters Extended with `tS3_Server` stopped: were it
+/// started, the session would expire at 5010 ms, before the read's second 0x78 at 5060 ms.
+/// The application hears the transition once, and `27 01` afterwards is still answered in
+/// Extended.
+#[test]
+fn a_late_selection_confirmation_does_not_start_the_session_timer_during_the_next_request()
+{
+    let mut ecu = Ecu::new();
+    ecu.slow = 5;
+    let mut s = EcuServer::new(
+        ecu,
+        Scripted::new(&[
+            Ev::Ind(TaType::Physical, &[0x10, 0x03]), // 50 03, unconfirmed
+            Ev::IndAt(10, TaType::Physical, &[0x22, 0xF4, 0x0D]), // pends five times
+            Ev::Conf(SResult::Ok), // confirms 50 03, mid-handler: extended, tS3 stopped
+            Ev::At(60),            // the read's tP2_Server reached: 0x78 goes out
+            Ev::Conf(SResult::Ok), // its confirmation: tP2*_Server due at 5060
+            Ev::At(5_060),         // tP2*_Server reached: a second 0x78
+            Ev::Conf(SResult::Ok), // its confirmation
+            Ev::Conf(SResult::Ok), // the final response's: tS3 started
+            Ev::Ind(TaType::Physical, &[0x27, 0x01]),
+        ]),
+        ECU,
+        PARAMS,
+    );
+    run(&mut s);
+    let t = s.transport();
+    assert_eq!(t.sent_count, 5);
+    assert_eq!(t.sent(0), &[0x50, 0x03, 0x00, 0x32, 0x01, 0xF4]);
+    assert_eq!(t.sent(1), &[0x7F, 0x22, 0x78]);
+    assert_eq!(t.sent(2), &[0x7F, 0x22, 0x78]);
+    assert_eq!(t.sent(3), &[0x62, 0xF4, 0x0D, 0x40]);
+    assert_eq!(t.sent(4), &[0x7F, 0x27, 0x11]); // allowed in extended; listed, no stage
+    assert_eq!(t.deadlines, 2); // the read's tP2_Server and tP2*_Server only
+    assert_eq!(
+        s.services().transitions,
+        [
+            Some(SessionTransition::DefaultToNonDefault),
+            None,
+            None,
+            None,
+        ]
+    );
+}
+
 /// ``UDSSVC_ARCH_0009`` rule 3 — after a sent 0x78, a functionally addressed request whose
 /// stage settles one of the five silenced codes is answered anyway. The handler pends past
 /// `tP2_Server` and then refuses with `requestOutOfRange` (0x31), which rule 1 alone would

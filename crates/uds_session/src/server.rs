@@ -494,7 +494,9 @@ impl<const A: usize> Server<A> {
     /// (``UDSS_LLR_0109``), on that service and its response timer (``UDSS_LLR_0110``,
     /// ``UDSS_LLR_0116``). A confirmation that a later request from the controlling client
     /// overtook restarts no `tS3_Server`: that request's stop is the later event
-    /// (``UDSS_LLR_0088``, ``UDSS_LLR_0093``).
+    /// (``UDSS_LLR_0088``, ``UDSS_LLR_0093``). One selecting a non-default session that a
+    /// later request from the requester overtook enters it with `tS3_Server` stopped
+    /// (``UDSS_LLR_0085``).
     pub fn t_data_conf(
         &mut self,
         now: Timestamp,
@@ -560,6 +562,12 @@ impl<const A: usize> Server<A> {
                 match (ok, session) {
                     (true, Some(SessionSelection::NonDefault)) => {
                         self.enter_non_default(now, to); // UDSS_LLR_0085
+                        if superseded {
+                            // UDSS_LLR_0085 — the later request restarts tS3 at its
+                            // own completion (0088, 0089); started now, it would run
+                            // through it.
+                            self.stop_s3();
+                        }
                     }
                     (true, Some(SessionSelection::Default)) => {
                         self.session = Session::Default; // UDSS_LLR_0098

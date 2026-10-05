@@ -375,7 +375,9 @@ The response window
    still frees its association under ``UDSS_LLR_0059``. It does not restart
    ``tS3_Server`` where the request that replaced its service came from the controlling
    client, ``UDSS_LLR_0088`` and ``UDSS_LLR_0093`` reading that request's stop as the later
-   event, and restarts it as before where that request came from another client.
+   event, and restarts it as before where that request came from another client. One
+   selecting a non-default session enters it with the timer stopped where that request came
+   from the requester (``UDSS_LLR_0085``).
 
 .. llr:: The anchor is set on a confirmed response-pending transmission
    :id: UDSS_LLR_0110
@@ -506,7 +508,8 @@ The response window
    ``UDSS_LLR_0088``'s own and concerns the order of events, not this match: a final
    response submitted before a later request from the controlling client was received, and
    confirmed after it, restarts nothing while that request is in progress, its stop under
-   ``UDSS_LLR_0087`` being the later event.
+   ``UDSS_LLR_0087`` being the later event. ``UDSS_LLR_0085`` carries the same exception
+   for a response selecting a non-default session.
 
    A response answering the service in progress so is the transmission whose confirmation
    answers that service under ``UDSS_LLR_0109``; no other confirmation does.

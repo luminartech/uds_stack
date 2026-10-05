@@ -173,7 +173,25 @@ The timer's state
    whose classification selects a non-default session, the server shall be in a non-default
    session, shall record as the controlling client the client identified by the
    confirmation's ``S_AI[TA]`` and, where ``S_Mtype`` carries one, its ``S_AI[AE]``, and
-   shall start ``tS3_Server``.
+   shall start ``tS3_Server``, except where a later request from that client is in progress,
+   in which case the timer shall stay stopped. A later request is in progress where a service
+   is in progress under ``UDSS_LLR_0104`` for a request from that client and the confirmation
+   does not answer it under ``UDSS_LLR_0109``.
+
+   The later-request exception is ``UDSS_LLR_0088``'s and holds for the same reason, with
+   one more step. ISO 14229-2:2021 10.3 lets the client send its next request on complete
+   reception of the response, so that request can reach the session layer before this
+   confirmation. It was then received in the session the selection is leaving, often the
+   default session, where ``UDSS_LLR_0087`` had no timer to stop, so nothing after this
+   confirmation stops the timer before that request completes. Started here, it would run
+   through the request. ``UDSS_LLR_0090`` leaves it alone on that request's response-pending
+   confirmations, and ``UDSS_LLR_0100`` acts on the expiry whatever is in progress, so a
+   request pending longer than ``tS3_Server``, such as an erase following
+   ``DiagnosticSessionControl``, would return the server to the default session mid-service
+   while the client believes the selected session is active. With the exception the session
+   is entered and the client recorded, and the timer starts at that request's own completion
+   under ``UDSS_LLR_0088`` or ``UDSS_LLR_0089``, as though the selection's confirmation had
+   come first and the request's ``UDSS_LLR_0087`` stop had followed it.
 
    The solicitation qualifier is ``UDSS_LLR_0088``'s and is here for that requirement's
    reason: an unsolicited positive response carrying a session selection would otherwise put
