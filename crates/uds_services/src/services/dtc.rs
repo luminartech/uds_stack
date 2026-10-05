@@ -1,9 +1,7 @@
 //! Stored data transmission — ISO 14229-1:2020 clause 12.
 
 use crate::ResponseSink;
-use uds_protocol::{
-    FunctionalGroupIdentifier, NegativeResponseCode, ReadDtcInfoSubFunction,
-};
+use uds_protocol::{DtcRecord, NegativeResponseCode, ReadDtcInfoSubFunction};
 
 /// Which shape of `ReadDTCInformation` response a report type produces.
 ///
@@ -112,24 +110,32 @@ pub trait ReadDtcInformation {
 }
 
 /// `ClearDiagnosticInformation` (0x14).
+///
+/// ISO 14229-1:2020 clause 12.2, Figure 28 — the pipeline settles a request that is not
+/// four or five bytes (0x13); every other check is the handler's.
 pub trait ClearDiagnosticInformation {
     /// ``UDSSVC_ARCH_0033`` — clearing stored data is frequently slow enough to need one.
     const MAY_RESPOND_PENDING: bool;
 
     /// Clear the DTCs `group` selects, optionally restricted to one memory.
     ///
+    /// Clause 12.2.1: the positive response is owed even where no DTC is stored.
+    ///
     /// # Arguments
     ///
-    /// * `group` - which DTCs to clear; see [`FunctionalGroupIdentifier`] and
-    ///   [`CLEAR_ALL_DTCS`](uds_protocol::CLEAR_ALL_DTCS).
+    /// * `group` - the `groupOfDTC`: a group of DTCs or a single one (Annex D.1); see
+    ///   [`DtcRecord`] and [`CLEAR_ALL_DTCS`](uds_protocol::CLEAR_ALL_DTCS).
     /// * `memory_selection` - the `MemorySelection` byte, where the request carried one.
     ///
     /// # Errors
     ///
-    /// The [`NegativeResponseCode`] for an unknown group or a clear that failed.
+    /// The [`NegativeResponseCode`], in Figure 28's order: `requestOutOfRange` (0x31) for
+    /// an unsupported `memory_selection` or `group`, `conditionsNotCorrect` (0x22) where
+    /// the server cannot clear, and `generalProgrammingFailure` (0x72) where the clear
+    /// failed.
     fn clear(
         &mut self,
-        group: FunctionalGroupIdentifier,
+        group: DtcRecord,
         memory_selection: Option<u8>,
     ) -> impl core::future::Future<Output = Result<(), NegativeResponseCode>>;
 }

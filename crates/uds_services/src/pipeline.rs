@@ -13,16 +13,16 @@
 use crate::services::SessionTransition;
 use crate::state::State;
 use crate::{
-    CommunicationControl, ControlDtcSetting, DataIdentifier, DiagnosticSessionControl,
-    EcuReset, KeyVerdict, ReadDataByIdentifier, RecordError, SecurityAccess, SecurityLevel,
-    SecurityPolicy, TesterPresent, WriteDataByIdentifier,
+    ClearDiagnosticInformation, CommunicationControl, ControlDtcSetting, DataIdentifier,
+    DiagnosticSessionControl, EcuReset, KeyVerdict, ReadDataByIdentifier, RecordError,
+    SecurityAccess, SecurityLevel, SecurityPolicy, TesterPresent, WriteDataByIdentifier,
 };
 use crate::{Responded, ResponseSink, Unsettled};
 use automotive_wire_codec::Sink;
 use uds_protocol::{
-    CommunicationControlRequest, CommunicationControlType, ControlDtcSettingRequest,
-    DiagnosticSessionControlRequest, DtcSettingType, EcuResetRequest,
-    ReadDataByIdentifierRequest, ResetType, SecurityAccessRequest,
+    ClearDiagnosticInfoRequest, CommunicationControlRequest, CommunicationControlType,
+    ControlDtcSettingRequest, DiagnosticSessionControlRequest, DtcSettingType,
+    EcuResetRequest, ReadDataByIdentifierRequest, ResetType, SecurityAccessRequest,
     WriteDataByIdentifierRequest,
 };
 use uds_protocol::{
@@ -577,6 +577,23 @@ pub async fn write_data_by_identifier<A: WriteDataByIdentifier>(
     services.write(did, record).await?;
     let _ = out.write_all(&[0x6E]);
     let _ = out.write_all(&request.identifier.to_be_bytes());
+    Ok(None)
+}
+
+/// ISO 14229-1:2020 clause 12.2 — `ClearDiagnosticInformation`'s own stage. A request
+/// that is not `groupOfDTC` and an optional `MemorySelection` was settled 0x13 by its
+/// decode (Figure 28); the handler's verdict decides the rest, and the positive response
+/// is `54` alone (Table 298).
+#[doc(hidden)]
+pub async fn clear_diagnostic_information<A: ClearDiagnosticInformation>(
+    services: &mut A,
+    request: &ClearDiagnosticInfoRequest,
+    out: &mut ResponseSink<'_>,
+) -> Result<Option<DiagnosticSessionType>, NegativeResponseCode> {
+    services
+        .clear(request.group_of_dtc, request.memory_selection)
+        .await?;
+    let _ = out.write_all(&[0x54]);
     Ok(None)
 }
 

@@ -18,13 +18,12 @@ use uds_services::pipeline::settle;
 use uds_services::{
     Address, Ai, Answer, ClearDiagnosticInformation, ClientSet, ClientStorage,
     CommunicationControl, CommunicationControlType, CommunicationType, DataIdentifier,
-    DataTransfer, DiagnosticSessionType, DtcReportKind, DtcStatusMask,
-    FunctionalGroupIdentifier, KeyVerdict, Mtype, PhysicalKeepAlive, ReadDataByIdentifier,
-    ReadDtcInfoSubFunction, ReadDtcInformation, Received, RecordError, Reloads, Response,
-    ResponseSink, SecurityAccess, SecurityLevel, SecurityPolicy, ServerParams, ServiceSet,
-    SessionTiming, SessionTransition, Sink, Storage, SubnetNumber, TaType, TesterPresent,
-    Timestamp, TransferRequest, TransportEvent, UdsServiceType, UdsTransport, uds_client,
-    uds_server,
+    DataTransfer, DiagnosticSessionType, DtcRecord, DtcReportKind, DtcStatusMask,
+    KeyVerdict, Mtype, PhysicalKeepAlive, ReadDataByIdentifier, ReadDtcInfoSubFunction,
+    ReadDtcInformation, Received, RecordError, Reloads, Response, ResponseSink,
+    SecurityAccess, SecurityLevel, SecurityPolicy, ServerParams, ServiceSet, SessionTiming,
+    SessionTransition, Sink, Storage, SubnetNumber, TaType, TesterPresent, Timestamp,
+    TransferRequest, TransportEvent, UdsServiceType, UdsTransport, uds_client, uds_server,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -106,12 +105,14 @@ impl ClearDiagnosticInformation for Ecu {
     const MAY_RESPOND_PENDING: bool = true;
     async fn clear(
         &mut self,
-        group: FunctionalGroupIdentifier,
+        group: DtcRecord,
         _memory_selection: Option<u8>,
     ) -> Result<(), Nrc> {
-        match group {
-            FunctionalGroupIdentifier::EmissionsSystemGroup => Ok(()),
-            _ => Err(Nrc::RequestOutOfRange),
+        // Annex D.1's emissions-related group is the only one this server clears.
+        if group == DtcRecord::new(0xFF, 0xFF, 0x33) {
+            Ok(())
+        } else {
+            Err(Nrc::RequestOutOfRange)
         }
     }
 }
@@ -469,7 +470,7 @@ fn the_handler_seam_is_typed_not_byte_shaped() {
     );
 
     let cleared = poll_once(core::pin::pin!(
-        ecu.clear(FunctionalGroupIdentifier::EmissionsSystemGroup, None)
+        ecu.clear(DtcRecord::new(0xFF, 0xFF, 0x33), None)
     ));
     assert_eq!(cleared, Some(Ok(())));
 }
@@ -610,8 +611,9 @@ fn the_assembled_dispatch_answers_a_read() {
     assert_eq!(out.written_bytes(), &[0x62, 0xF4, 0x0D, 0x40]);
 }
 
-/// A listed service whose stage is not yet written, and an unlisted one, both settle
-/// 0x11 — physically; functionally they are silenced (``UDSSVC_ARCH_0009`` rule 1).
+/// A listed service whose stage is not yet written (`DataTransfer`), and an unlisted one,
+/// both settle 0x11 — physically; functionally they are silenced (``UDSSVC_ARCH_0009``
+/// rule 1).
 #[test]
 fn unsupported_services_settle_0x11_or_silence() {
     let mut ecu = Ecu::new();
@@ -629,13 +631,19 @@ fn unsupported_services_settle_0x11_or_silence() {
     let r = settle(phys, unsettled, false, &mut out);
     assert_eq!(r, uds_services::Responded::Yes { session: None });
     assert_eq!(out.written_bytes(), &[0x7F, 0x11, 0x11]);
-    // Listed, so `begin` passes it; no stage, so the fall-through settles it.
-    let request = [0x14, 0xFF, 0xFF, 0xFF];
+    // Listed, so `begin` passes it; no stage, so the fall-through settles it. Table 23
+    // refuses the transfer services in the default session, so it is asked from another.
+    let mut extended = <<Ecu as ServiceSet>::State as uds_services::ProtocolState>::INITIAL;
+    ecu.session_confirmed(
+        &mut extended,
+        DiagnosticSessionType::ExtendedDiagnosticSession,
+    );
+    let request = [0x36, 0x01, 0xAA];
     let unsettled =
-        block_on(ecu.dispatch(&mut state, phys, Received::Whole(&request), &mut out));
+        block_on(ecu.dispatch(&mut extended, phys, Received::Whole(&request), &mut out));
     let r = settle(phys, unsettled, false, &mut out);
     assert_eq!(r, uds_services::Responded::Yes { session: None });
-    assert_eq!(out.written_bytes(), &[0x7F, 0x14, 0x11]);
+    assert_eq!(out.written_bytes(), &[0x7F, 0x36, 0x11]);
     let func = Ai {
         ta_type: TaType::Functional,
         ..phys

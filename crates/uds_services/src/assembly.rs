@@ -411,6 +411,11 @@ macro_rules! __uds_stage {
                 .await;
         }
     };
+    ($self:ident, $state:ident, $out:ident, $req:ident, ClearDiagnosticInformation) => {
+        if let $crate::Request::ClearDiagnosticInfo(ref r) = $req {
+            return $crate::pipeline::clear_diagnostic_information($self, r, $out).await;
+        }
+    };
     ($self:ident, $state:ident, $out:ident, $req:ident, $svc:ident) => {};
 }
 

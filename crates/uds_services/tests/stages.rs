@@ -10,12 +10,12 @@
 use uds_protocol::NegativeResponseCode as Nrc;
 use uds_services::pipeline::settle;
 use uds_services::{
-    Address, Ai, CommunicationControl, CommunicationControlType, CommunicationType,
-    ControlDtcSetting, DataIdentifier, DiagnosticSessionType as S, DtcSettingType,
-    EcuReset, KeyVerdict, Mtype, ProtocolState, RecordError, ResetType, Responded,
-    ResponseSink, SecurityAccess, SecurityLevel, SecurityPolicy, ServiceSet, SessionTiming,
-    SessionTransition, Sink, SubnetNumber, TaType, TesterPresent, WriteDataByIdentifier,
-    uds_server,
+    Address, Ai, ClearDiagnosticInformation, CommunicationControl,
+    CommunicationControlType, CommunicationType, ControlDtcSetting, DataIdentifier,
+    DiagnosticSessionType as S, DtcRecord, DtcSettingType, EcuReset, KeyVerdict, Mtype,
+    ProtocolState, RecordError, ResetType, Responded, ResponseSink, SecurityAccess,
+    SecurityLevel, SecurityPolicy, ServiceSet, SessionTiming, SessionTransition, Sink,
+    SubnetNumber, TaType, TesterPresent, WriteDataByIdentifier, uds_server,
 };
 
 /// The test server's data identifiers.
@@ -91,6 +91,8 @@ struct Ecu {
     )>,
     /// What `WriteDataByIdentifier` last stored.
     written: Option<(Did, Vec<u8>)>,
+    /// What `ClearDiagnosticInformation` last cleared.
+    cleared: Option<(DtcRecord, Option<u8>)>,
     /// The `DTCSettingType` `ControlDtcSetting` last applied.
     dtc_setting: Option<DtcSettingType>,
 }
@@ -240,6 +242,31 @@ fn key_of(level: SecurityLevel) -> [u8; 2] {
     seed_of(level).wrapping_neg().to_be_bytes()
 }
 
+/// Clears every group, the emissions-related group `FFFF33` (Annex D.1), and DTC
+/// `012345`; memory `00` is the only user-defined DTC memory.
+impl ClearDiagnosticInformation for Ecu {
+    const MAY_RESPOND_PENDING: bool = true;
+    async fn clear(&mut self, group: DtcRecord, memory: Option<u8>) -> Result<(), Nrc> {
+        if memory.is_some_and(|m| m != 0x00) {
+            return Err(Nrc::RequestOutOfRange);
+        }
+        if ![
+            uds_services::CLEAR_ALL_DTCS,
+            DtcRecord::new(0xFF, 0xFF, 0x33),
+            DtcRecord::new(0x01, 0x23, 0x45),
+        ]
+        .contains(&group)
+        {
+            return Err(Nrc::RequestOutOfRange);
+        }
+        if core::mem::take(&mut self.refuse) {
+            return Err(Nrc::ConditionsNotCorrect);
+        }
+        self.cleared = Some((group, memory));
+        Ok(())
+    }
+}
+
 impl WriteDataByIdentifier for Ecu {
     type Did = Did;
     const MAY_RESPOND_PENDING: bool = false;
@@ -372,7 +399,8 @@ impl uds_services::UdsTransport for NoTransport {
 
 uds_server! {
     Ecu: DiagnosticSessionControl, TesterPresent, EcuReset, SecurityAccess,
-         CommunicationControl, ControlDtcSetting, WriteDataByIdentifier;
+         CommunicationControl, ControlDtcSetting, WriteDataByIdentifier,
+         ClearDiagnosticInformation;
     transport = NoTransport,
     peers = 1,
     server = EcuServer,
@@ -1313,5 +1341,72 @@ fn wdbi_the_positive_response_echoes_the_identifier() {
     assert_eq!(
         exchange(&mut ecu, &mut state, &[0x2E, 0x01, 0x01, 0x03]).as_deref(),
         Some(&[0x6E, 0x01, 0x01][..])
+    );
+}
+
+// --- ClearDiagnosticInformation (0x14), ISO 14229-1:2020 clause 12.2 -------------------
+
+/// Figure 28, key 1 — a request that is neither four bytes nor five is 0x13, and the
+/// handler is not asked.
+#[test]
+fn clear_dtc_a_wrong_length_is_0x13() {
+    let mut ecu = Ecu::default();
+    let mut state = State::INITIAL;
+    for request in [
+        &[0x14][..],
+        &[0x14, 0xFF, 0xFF][..],
+        &[0x14, 0xFF, 0xFF, 0xFF, 0x00, 0x00][..],
+    ] {
+        assert_eq!(
+            exchange(&mut ecu, &mut state, request).as_deref(),
+            Some(&[0x7F, 0x14, 0x13][..]),
+            "{request:02X?}"
+        );
+    }
+    assert_eq!(ecu.cleared, None);
+}
+
+/// Figure 28 and clause 12.2.4 — an unsupported `MemorySelection` or `groupOfDTC` is the
+/// handler's 0x31, and its 0x22 where it cannot clear.
+#[test]
+fn clear_dtc_the_handler_refusals_are_its_codes() {
+    let mut ecu = Ecu::default();
+    let mut state = State::INITIAL;
+    for request in [
+        &[0x14, 0xFF, 0xFF, 0xFF, 0x01][..],
+        &[0x14, 0xFF, 0xFF, 0xD0][..],
+    ] {
+        assert_eq!(
+            exchange(&mut ecu, &mut state, request).as_deref(),
+            Some(&[0x7F, 0x14, 0x31][..]),
+            "{request:02X?}"
+        );
+    }
+    ecu.refuse = true;
+    assert_eq!(
+        exchange(&mut ecu, &mut state, &[0x14, 0xFF, 0xFF, 0xFF]).as_deref(),
+        Some(&[0x7F, 0x14, 0x22][..])
+    );
+    assert_eq!(ecu.cleared, None);
+}
+
+/// Clause 12.2.5, Tables 300-301 — the emissions-related group is cleared in the default
+/// session and answered `54`; a single DTC, and a user-defined memory, reach the handler.
+#[test]
+fn clear_dtc_the_positive_response_is_0x54() {
+    let mut ecu = Ecu::default();
+    let mut state = State::INITIAL;
+    assert_eq!(
+        exchange(&mut ecu, &mut state, &[0x14, 0xFF, 0xFF, 0x33]).as_deref(),
+        Some(&[0x54][..])
+    );
+    assert_eq!(ecu.cleared, Some((DtcRecord::new(0xFF, 0xFF, 0x33), None)));
+    assert_eq!(
+        exchange(&mut ecu, &mut state, &[0x14, 0x01, 0x23, 0x45, 0x00]).as_deref(),
+        Some(&[0x54][..])
+    );
+    assert_eq!(
+        ecu.cleared,
+        Some((DtcRecord::new(0x01, 0x23, 0x45), Some(0x00)))
     );
 }
