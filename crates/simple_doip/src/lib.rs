@@ -65,7 +65,7 @@ pub mod bare_metal_entity;
 pub mod logical_address;
 pub mod messages;
 pub mod wire;
-pub use logical_address::LogicalAddress;
+pub use logical_address::{LogicalAddress, TaType};
 mod framer;
 pub use framer::{RawFrame, try_frame};
 
