@@ -41,8 +41,10 @@
 //! # let _ = client;
 //! ```
 
-use crate::addressing::{Address, AddressExtension, Ai, ChannelAddressing, TaType};
-use crate::classification::{ClientRx, ClientTx, ExpectedResponses};
+use crate::addressing::{
+    Address, AddressExtension, Ai, ChannelAddressing, PeerIdentity, TaType,
+};
+use crate::classification::{ClientRx, ClientTx, ExpectedResponses, Solicitation};
 use crate::keep_alive::{
     FunctionalKeepAlive, KeepAliveMode, PhysicalKeepAlive, PhysicalSession,
 };
@@ -62,12 +64,19 @@ use crate::timer::{Exceeds, Timer};
 /// Storage is moved into the instance, never duplicated — see [`crate::Association`].
 #[derive(Debug)]
 pub struct ResponderSlot {
-    _reserved: (),
+    entry: Option<Responder>,
 }
 
 impl ResponderSlot {
     /// A free entry.
-    pub const EMPTY: Self = Self { _reserved: () };
+    pub const EMPTY: Self = Self { entry: None };
+}
+
+#[derive(Debug, Clone, Copy)]
+struct Responder {
+    peer: PeerIdentity,
+    som_open: bool,
+    pending: bool,
 }
 
 /// One physical channel's storage.
@@ -108,7 +117,7 @@ impl<K: KeepAliveMode> PhysicalSlot<K> {
 #[derive(Debug)]
 pub struct FunctionalSlot<const R: usize> {
     channel: Option<Channel>,
-    _responders: [ResponderSlot; R],
+    responders: [ResponderSlot; R],
     timed_out: Option<TimedOut>,
 }
 
@@ -118,7 +127,7 @@ impl<const R: usize> FunctionalSlot<R> {
     /// ``UDSS_LLR_0142`` — a channel's responder table holds no entry when it is opened.
     pub const EMPTY: Self = Self {
         channel: None,
-        _responders: [ResponderSlot::EMPTY; R],
+        responders: [ResponderSlot::EMPTY; R],
         timed_out: None,
     };
 }
@@ -192,6 +201,16 @@ struct Channel {
     loaded: ChannelReload,
     /// ``UDSS_LLR_0059``, ``UDSS_LLR_0060`` — the one association a channel holds.
     sent: Option<Sent>,
+    /// ``UDSS_LLR_0128`` — apart from `response`, which a response-pending
+    /// start-of-message stops without ending the request.
+    request: Option<InProgress>,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct InProgress {
+    class: ClientTx,
+    /// ``UDSS_LLR_0138`` — solicited final responses since the confirmation.
+    received: u16,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -217,6 +236,7 @@ impl Channel {
             response: Timer::STOPPED,
             loaded: ChannelReload::Default,
             sent: None,
+            request: None,
         }
     }
 
@@ -228,12 +248,13 @@ impl Channel {
         }
     }
 
-    /// ``UDSS_LLR_0148`` — stop an exceeded `tP_Client` and say what it timed.
+    /// ``UDSS_LLR_0148`` — stop an exceeded `tP_Client`, ending the request
+    /// (``UDSS_LLR_0128``), and say what it timed.
     fn expire(&mut self, now: Timestamp) -> Option<TimedOut> {
         if !self.response.expired(now) {
             return None;
         }
-        self.response.stop();
+        self.close();
         Some(TimedOut {
             ai: self.ai,
             loaded: self.loaded,
@@ -254,12 +275,229 @@ impl Channel {
     fn deadline(&self) -> Option<Timestamp> {
         self.response.deadline()
     }
+
+    /// ``UDSS_LLR_0128`` — the request ends and its window with it.
+    fn close(&mut self) {
+        self.response.stop();
+        self.request = None;
+    }
+
+    fn restart(&mut self, now: Timestamp, which: ChannelReload) {
+        self.response
+            .start(now, self.params.reloads.value_for(which));
+        self.loaded = which;
+    }
+
+    /// ``UDSS_LLR_0138`` — count one solicited final response; whether it is the last
+    /// the request expects.
+    fn completes_count(&mut self) -> bool {
+        self.request.as_mut().is_some_and(|r| {
+            r.received = r.received.saturating_add(1);
+            r.class
+                .expected()
+                .exact()
+                .is_some_and(|n| n.get() == r.received)
+        })
+    }
+}
+
+const fn solicited_final(class: ClientRx) -> bool {
+    matches!(
+        class,
+        ClientRx::FinalResponse {
+            solicitation: Solicitation::Solicited,
+            ..
+        }
+    )
 }
 
 #[derive(Debug)]
 struct Physical<K: KeepAliveMode> {
     core: Channel,
+    /// ``UDSS_LLR_0045``, ``UDSS_LLR_0126`` — the channel's peer, not recorded.
+    som_open: bool,
     keep_alive: K::Channel,
+}
+
+impl<K: KeepAliveMode> Physical<K> {
+    /// ``UDSS_LLR_0136`` at a start-of-message.
+    fn on_som(&mut self, class: ClientRx) {
+        self.som_open = true; // UDSS_LLR_0045
+        if self.core.request.is_none() {
+            return;
+        }
+        if solicited_final(class) {
+            self.core.close();
+        } else if class == ClientRx::ResponsePending {
+            self.core.response.stop();
+        }
+    }
+
+    /// ``UDSS_LLR_0136`` and ``UDSS_LLR_0144`` at a completed message.
+    fn on_ind(&mut self, now: Timestamp, result: SResult, class: Option<ClientRx>) {
+        let first = !self.som_open;
+        self.som_open = false; // UDSS_LLR_0045, UDSS_LLR_0130
+        if self.core.request.is_none() {
+            return;
+        }
+        match (result, class) {
+            (SResult::Transport(_), _) => self.core.close(),
+            (SResult::Ok, Some(c)) if first && solicited_final(c) => self.core.close(),
+            (SResult::Ok, Some(ClientRx::ResponsePending)) => {
+                self.core.restart(now, ChannelReload::Enhanced);
+            }
+            (SResult::Ok, _) => {}
+        }
+    }
+}
+
+impl<const R: usize> FunctionalSlot<R> {
+    fn entry(&mut self, peer: PeerIdentity) -> Option<&mut Responder> {
+        self.responders
+            .iter_mut()
+            .filter_map(|r| r.entry.as_mut())
+            .find(|e| e.peer == peer)
+    }
+
+    /// ``UDSS_LLR_0140`` — the responder's entry, created where it has none and one is
+    /// free; `None` is ``UDSS_LLR_0143``'s full table.
+    fn entry_or_insert(&mut self, peer: PeerIdentity) -> Option<&mut Responder> {
+        let at = self
+            .responders
+            .iter()
+            .position(|r| r.entry.is_some_and(|e| e.peer == peer))
+            .or_else(|| self.responders.iter().position(|r| r.entry.is_none()))?;
+        self.responders.get_mut(at).map(|r| {
+            r.entry.get_or_insert(Responder {
+                peer,
+                som_open: false,
+                pending: false,
+            })
+        })
+    }
+
+    /// ``UDSS_LLR_0140`` — an entry holding neither fact is released.
+    fn release_idle(&mut self) {
+        for r in &mut self.responders {
+            if r.entry.is_some_and(|e| !e.som_open && !e.pending) {
+                r.entry = None;
+            }
+        }
+    }
+
+    /// ``UDSS_LLR_0141`` — at the end of the request every pending fact clears.
+    fn end_request(&mut self) {
+        for e in self.responders.iter_mut().filter_map(|r| r.entry.as_mut()) {
+            e.pending = false;
+        }
+        self.release_idle();
+    }
+
+    /// ``UDSS_LLR_0145``.
+    fn reload_in_force(&self) -> ChannelReload {
+        if self
+            .responders
+            .iter()
+            .any(|r| r.entry.is_some_and(|e| e.pending))
+        {
+            ChannelReload::Enhanced
+        } else {
+            ChannelReload::Default
+        }
+    }
+
+    fn in_progress(&self) -> bool {
+        self.channel.as_ref().is_some_and(|c| c.request.is_some())
+    }
+
+    /// ``UDSS_LLR_0137`` at a start-of-message; whether the table had no room
+    /// (``UDSS_LLR_0143``).
+    fn on_som(&mut self, now: Timestamp, peer: PeerIdentity, class: ClientRx) -> bool {
+        let full = match self.entry_or_insert(peer) {
+            Some(e) => {
+                e.pending = false; // UDSS_LLR_0146
+                e.som_open = true; // UDSS_LLR_0045
+                false
+            }
+            None => true,
+        };
+        let restarts = solicited_final(class) || class == ClientRx::ResponsePending;
+        let in_force = self.reload_in_force(); // UDSS_LLR_0147: after the clear
+        if let Some(channel) = self.channel.as_mut()
+            && channel.request.is_some()
+            && restarts
+        {
+            channel.restart(now, in_force);
+        }
+        full
+    }
+
+    /// ``UDSS_LLR_0137``, ``UDSS_LLR_0138``, ``UDSS_LLR_0144`` and ``UDSS_LLR_0146`` at
+    /// a completed message; whether the table had no room (``UDSS_LLR_0143``).
+    fn on_ind(
+        &mut self,
+        now: Timestamp,
+        peer: PeerIdentity,
+        result: SResult,
+        class: Option<ClientRx>,
+    ) -> bool {
+        let first = self.entry(peer).is_none_or(|e| {
+            let first = !e.som_open;
+            e.som_open = false; // UDSS_LLR_0045
+            if first {
+                e.pending = false; // UDSS_LLR_0146
+            }
+            first
+        });
+        let pending = result == SResult::Ok && class == Some(ClientRx::ResponsePending);
+        let full = pending
+            && self.in_progress()
+            && match self.entry_or_insert(peer) {
+                Some(e) => {
+                    e.pending = true; // UDSS_LLR_0146, UDSS_LLR_0147
+                    false
+                }
+                None => true,
+            };
+        let in_force = self.reload_in_force();
+        let mut ends = false;
+        if let Some(channel) = self.channel.as_mut()
+            && channel.request.is_some()
+        {
+            match (result, class) {
+                (SResult::Transport(_), _) => ends = true, // UDSS_LLR_0137
+                (SResult::Ok, Some(c)) if solicited_final(c) => {
+                    if channel.completes_count() {
+                        ends = true; // UDSS_LLR_0138
+                    } else if first {
+                        channel.restart(now, in_force); // UDSS_LLR_0137
+                    }
+                }
+                (SResult::Ok, Some(ClientRx::ResponsePending)) => {
+                    channel.restart(now, ChannelReload::Enhanced); // UDSS_LLR_0144
+                }
+                (SResult::Ok, _) => {}
+            }
+            if ends {
+                channel.close(); // UDSS_LLR_0128
+            }
+        }
+        if ends {
+            self.end_request();
+        } else {
+            self.release_idle();
+        }
+        full
+    }
+}
+
+/// ``UDSS_LLR_0143`` — the responder `ai` came from had no room in `channel`'s table.
+const fn capacity(channel: FunctionalChannelId, ai: Ai) -> ClientOutput<'static> {
+    ClientOutput::Capacity {
+        channel,
+        sa: ai.sa,
+        ae: ai.mtype.address_extension(),
+    }
 }
 
 const NO_SUCH_CHANNEL: Rejection = Rejection::new(Cause::NoSuchChannel);
@@ -415,6 +653,9 @@ impl<K: KeepAliveMode, const PHYS: usize, const FUNC: usize, const R: usize>
         }
         for slot in &mut self.functional {
             slot.timed_out = slot.channel.as_mut().and_then(|c| c.expire(now));
+            if slot.timed_out.is_some() {
+                slot.end_request(); // UDSS_LLR_0141
+            }
         }
     }
 
@@ -435,6 +676,42 @@ impl<K: KeepAliveMode, const PHYS: usize, const FUNC: usize, const R: usize>
 
     fn channel_mut(&mut self, id: ChannelId) -> Option<&mut Channel> {
         self.channels_mut().find(|c| c.handle() == id)
+    }
+
+    fn physical_mut(&mut self, id: PhysicalChannelId) -> Option<&mut Physical<K>> {
+        self.physical
+            .iter_mut()
+            .filter_map(|s| s.channel.as_mut())
+            .find(|p| p.core.id == id.0)
+    }
+
+    fn functional_mut(
+        &mut self,
+        id: FunctionalChannelId,
+    ) -> Option<&mut FunctionalSlot<R>> {
+        self.functional
+            .iter_mut()
+            .find(|s| s.channel.as_ref().is_some_and(|c| c.id == id.0))
+    }
+
+    /// ``UDSS_LLR_0027`` and ``UDSS_LLR_0069``, every cause stated (``UDSS_LLR_0016``).
+    fn validate_ind(
+        &self,
+        channel: ChannelId,
+        result: SResult,
+        class: Option<ClientRx>,
+    ) -> Result<(), Rejection> {
+        let mut causes: Option<Rejection> = None;
+        let mut add = |c: Cause| {
+            causes = Some(causes.map_or(Rejection::new(c), |r| r.with(c)));
+        };
+        if !self.channels().any(|c| c.handle() == channel) {
+            add(Cause::NoSuchChannel); // UDSS_LLR_0027
+        }
+        if result == SResult::Ok && class.is_none() {
+            add(Cause::KindRequired); // UDSS_LLR_0069
+        }
+        causes.map_or(Ok(()), Err)
     }
 
     /// ``UDSS_LLR_0122`` and ``UDSS_LLR_0185``, every cause stated (``UDSS_LLR_0016``).
@@ -478,6 +755,7 @@ impl<K: KeepAliveMode, const PHYS: usize, const FUNC: usize, const R: usize>
             if let Some(slot) = self.physical.iter_mut().find(|s| s.channel.is_none()) {
                 slot.channel = Some(Physical {
                     core: Channel::opened(id, ai, params),
+                    som_open: false, // UDSS_LLR_0127
                     keep_alive,
                 });
             }
@@ -524,6 +802,7 @@ impl<K: KeepAliveMode, const PHYS: usize, const FUNC: usize, const R: usize>
             let id = self.issue();
             if let Some(slot) = self.functional.iter_mut().find(|s| s.channel.is_none()) {
                 slot.channel = Some(Channel::opened(id, ai, params));
+                slot.responders = [ResponderSlot::EMPTY; R]; // UDSS_LLR_0142
             }
             FunctionalChannelId(id)
         });
@@ -704,13 +983,23 @@ impl<K: KeepAliveMode, const PHYS: usize, const FUNC: usize, const R: usize>
         class: ClientRx,
     ) -> ClientReaction<'_, 'static, K, PHYS, FUNC, R> {
         let channel = channel.into();
-        #[allow(
-            clippy::todo,
-            reason = "API stub; behaviour lands with its requirement"
-        )]
-        {
-            todo!("UDSS_LLR_0023, 0026, 0136: {now:?} {channel:?} {ai:?} {class:?}")
+        self.expire(now);
+        if let Err(rejection) = self.validate_ind(channel, SResult::Ok, Some(class)) {
+            return Reaction::new(self, [None, None], Err(rejection)); // UDSS_LLR_0015
         }
+        let capacity = match channel {
+            ChannelId::Physical(id) => {
+                if let Some(p) = self.physical_mut(id) {
+                    p.on_som(class);
+                }
+                None
+            }
+            ChannelId::Functional(id) => self
+                .functional_mut(id)
+                .is_some_and(|s| s.on_som(now, ai.source(), class))
+                .then(|| capacity(id, ai)),
+        };
+        Reaction::new(self, [capacity, None], Ok(())) // UDSS_LLR_0038
     }
 
     /// A message has finished arriving.
@@ -737,17 +1026,30 @@ impl<K: KeepAliveMode, const PHYS: usize, const FUNC: usize, const R: usize>
         class: Option<ClientRx>,
     ) -> ClientReaction<'_, 'd, K, PHYS, FUNC, R> {
         let channel = channel.into();
-        #[allow(
-            clippy::todo,
-            reason = "API stub; behaviour lands with its requirement"
-        )]
-        {
-            todo!(
-                "UDSS_LLR_0036, 0045, 0058, 0069: {now:?} {channel:?} {ai:?} {} {result:?} \
-                 {class:?}",
-                data.len()
-            )
+        self.expire(now);
+        if let Err(rejection) = self.validate_ind(channel, result, class) {
+            return Reaction::new(self, [None, None], Err(rejection)); // UDSS_LLR_0015
         }
+        let capacity = match channel {
+            ChannelId::Physical(id) => {
+                if let Some(p) = self.physical_mut(id) {
+                    p.on_ind(now, result, class);
+                }
+                None
+            }
+            ChannelId::Functional(id) => self
+                .functional_mut(id)
+                .is_some_and(|s| s.on_ind(now, ai.source(), result, class))
+                .then(|| capacity(id, ai)),
+        };
+        // UDSS_LLR_0036; UDSS_LLR_0143 puts the capacity indication first.
+        let indicate = ClientOutput::Indicate {
+            channel,
+            ai,
+            data,
+            result,
+        };
+        Reaction::new(self, [capacity, Some(indicate)], Ok(()))
     }
 
     /// A transmission has completed.
@@ -773,10 +1075,8 @@ impl<K: KeepAliveMode, const PHYS: usize, const FUNC: usize, const R: usize>
             && class.expected() != ExpectedResponses::None
         {
             // UDSS_LLR_0135, UDSS_LLR_0128
-            channel
-                .response
-                .start(now, channel.params.reloads.default_reload);
-            channel.loaded = ChannelReload::Default;
+            channel.restart(now, ChannelReload::Default);
+            channel.request = Some(InProgress { class, received: 0 });
         }
         Reaction::new(
             self,
@@ -898,12 +1198,7 @@ impl<const PHYS: usize, const FUNC: usize, const R: usize>
         s3_client: u32,
     ) -> ClientReaction<'_, 'static, PhysicalKeepAlive, PHYS, FUNC, R> {
         self.expire(now);
-        let named = self
-            .physical
-            .iter_mut()
-            .filter_map(|s| s.channel.as_mut())
-            .find(|p| p.core.handle() == ChannelId::Physical(channel));
-        let outcome = match named {
+        let outcome = match self.physical_mut(channel) {
             Some(p) => {
                 p.keep_alive.reload = s3_client; // UDSS_LLR_0152
                 Ok(())

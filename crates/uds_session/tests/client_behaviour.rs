@@ -64,6 +64,16 @@ fn phys(ta: u16) -> Ai {
     req(ta, TaType::Physical)
 }
 
+/// A response from `sa` to the tester.
+fn rsp(sa: u16) -> Ai {
+    Ai {
+        mtype: Mtype::Diag,
+        sa: Address(sa),
+        ta: Address(TESTER),
+        ta_type: TaType::Physical,
+    }
+}
+
 fn func() -> Ai {
     req(FUNCTIONAL, TaType::Functional)
 }
@@ -78,13 +88,17 @@ const fn request(expected: ExpectedResponses) -> ClientTx {
 
 const UNKNOWN: ClientTx = request(ExpectedResponses::Unknown);
 const NO_RESPONSE: ClientTx = request(ExpectedResponses::None);
-#[allow(dead_code, reason = "used by the response tests")]
 const ONE: ExpectedResponses = ExpectedResponses::Exactly(NonZeroU16::MIN);
-#[allow(dead_code, reason = "used by the response tests")]
 const SOLICITED: ClientRx = ClientRx::FinalResponse {
     solicitation: Solicitation::Solicited,
     session: None,
 };
+const UNSOLICITED: ClientRx = ClientRx::FinalResponse {
+    solicitation: Solicitation::Unsolicited,
+    session: None,
+};
+const PENDING: ClientRx = ClientRx::ResponsePending;
+const FAILED: SResult = SResult::Transport(TransportError(1));
 
 const NOTHING: [Option<ClientOutput<'static>>; 6] = [None; 6];
 
@@ -144,6 +158,47 @@ fn exchange<K: KeepAliveMode, const P: usize, const F: usize, const R: usize>(
     assert_eq!(sent, Ok(()));
     let (_, confirmed) = outputs(c.t_data_conf(now, ai, SResult::Ok));
     assert_eq!(confirmed, Ok(()));
+}
+
+/// A completed message from `sa` on `channel`, accepted; its outputs.
+fn ind<K: KeepAliveMode, const P: usize, const F: usize, const R: usize>(
+    c: &mut Client<K, P, F, R>,
+    now: Timestamp,
+    channel: impl Into<ChannelId>,
+    sa: u16,
+    result: SResult,
+    class: Option<ClientRx>,
+) -> [Option<ClientOutput<'static>>; 6] {
+    let (out, accepted) =
+        outputs(c.t_data_ind(now, channel, rsp(sa), &DATA, result, class));
+    assert_eq!(accepted, Ok(()));
+    out
+}
+
+/// A started message from `sa` on `channel`, accepted; its outputs.
+fn som<K: KeepAliveMode, const P: usize, const F: usize, const R: usize>(
+    c: &mut Client<K, P, F, R>,
+    now: Timestamp,
+    channel: impl Into<ChannelId>,
+    sa: u16,
+    class: ClientRx,
+) -> [Option<ClientOutput<'static>>; 6] {
+    let (out, accepted) = outputs(c.t_data_som_ind(now, channel, rsp(sa), class));
+    assert_eq!(accepted, Ok(()));
+    out
+}
+
+fn indicate(
+    channel: impl Into<ChannelId>,
+    sa: u16,
+    result: SResult,
+) -> ClientOutput<'static> {
+    ClientOutput::Indicate {
+        channel: channel.into(),
+        ai: rsp(sa),
+        data: &DATA,
+        result,
+    }
 }
 
 const fn timeout(ai: Ai, loaded: ChannelReload) -> ClientOutput<'static> {
@@ -426,7 +481,7 @@ mod request {
         open_phys(&mut c, Timestamp(0), ECU);
         let (_, sent) = outputs(c.s_data_req(Timestamp(0), phys(ECU), &DATA, UNKNOWN));
         assert_eq!(sent, Ok(()));
-        let failed = SResult::Transport(TransportError(1));
+        let failed = FAILED;
         let (out, confirmed) = outputs(c.t_data_conf(Timestamp(0), phys(ECU), failed));
         assert_eq!(
             out,
@@ -597,5 +652,435 @@ mod expiry {
             outputs(c.tick(Timestamp(6))).0,
             only(timeout(phys(ECU), ChannelReload::Default))
         );
+    }
+}
+
+mod physical_window {
+    use super::*;
+
+    fn exchanged(now: Timestamp) -> (Tester, PhysicalChannelId) {
+        let mut c = tester();
+        let id = open_phys(&mut c, now, ECU);
+        exchange(&mut c, now, phys(ECU), UNKNOWN);
+        (c, id)
+    }
+
+    /// ``UDSS_LLR_0038``, ``UDSS_LLR_0023`` — a start-of-message is never forwarded.
+    #[test]
+    fn a_start_of_message_is_not_forwarded() {
+        let (mut c, id) = exchanged(Timestamp(0));
+        assert_eq!(som(&mut c, Timestamp(10), id, ECU, SOLICITED), NOTHING);
+    }
+
+    /// ``UDSS_LLR_0136``, ``UDSS_LLR_0128`` — a solicited final response's
+    /// start-of-message ends the request and stops `tP_Client`.
+    #[test]
+    fn a_solicited_final_start_of_message_closes_the_window() {
+        let (mut c, id) = exchanged(Timestamp(0));
+        som(&mut c, Timestamp(10), id, ECU, SOLICITED);
+        assert_eq!(c.next_deadline(), None);
+        assert_eq!(outputs(c.tick(Timestamp(100))).0, NOTHING);
+    }
+
+    /// ``UDSS_LLR_0136``, ``UDSS_LLR_0045``, ``UDSS_LLR_0036`` — so does a solicited
+    /// final response arriving whole, which is indicated.
+    #[test]
+    fn a_solicited_final_single_frame_closes_the_window() {
+        let (mut c, id) = exchanged(Timestamp(0));
+        let out = ind(&mut c, Timestamp(10), id, ECU, SResult::Ok, Some(SOLICITED));
+        assert_eq!(out, only(indicate(id, ECU, SResult::Ok)));
+        assert_eq!(c.next_deadline(), None);
+    }
+
+    /// ``UDSS_LLR_0136`` — an unsolicited response leaves the window as it was.
+    #[test]
+    fn an_unsolicited_response_leaves_the_window_open() {
+        let (mut c, id) = exchanged(Timestamp(0));
+        ind(
+            &mut c,
+            Timestamp(10),
+            id,
+            ECU,
+            SResult::Ok,
+            Some(UNSOLICITED),
+        );
+        assert_eq!(c.next_deadline(), Some(Timestamp(51)));
+    }
+
+    /// ``UDSS_LLR_0136``, ``UDSS_LLR_0128`` — a response-pending start-of-message stops
+    /// the timer but the request stays in progress, so its completion restarts it.
+    #[test]
+    fn a_response_pending_start_stops_the_timer_but_not_the_request() {
+        let (mut c, id) = exchanged(Timestamp(0));
+        som(&mut c, Timestamp(10), id, ECU, PENDING);
+        assert_eq!(c.next_deadline(), None);
+        ind(&mut c, Timestamp(20), id, ECU, SResult::Ok, Some(PENDING));
+        assert_eq!(c.next_deadline(), Some(Timestamp(5_021)));
+    }
+
+    /// ``UDSS_LLR_0144`` — a response-pending message restarts `tP_Client` with the
+    /// enhanced reload, and its expiry says so.
+    #[test]
+    fn a_response_pending_message_opens_the_enhanced_window() {
+        let (mut c, id) = exchanged(Timestamp(0));
+        ind(&mut c, Timestamp(10), id, ECU, SResult::Ok, Some(PENDING));
+        assert_eq!(c.next_deadline(), Some(Timestamp(5_011)));
+        assert_eq!(outputs(c.tick(Timestamp(5_010))).0, NOTHING);
+        assert_eq!(
+            outputs(c.tick(Timestamp(5_011))).0,
+            only(timeout(phys(ECU), ChannelReload::Enhanced))
+        );
+    }
+
+    /// ``UDSS_LLR_0136``, ``UDSS_LLR_0128`` — a failed reception ends the request and is
+    /// indicated.
+    #[test]
+    fn a_failed_reception_closes_the_window() {
+        let (mut c, id) = exchanged(Timestamp(0));
+        let out = ind(&mut c, Timestamp(10), id, ECU, FAILED, None);
+        assert_eq!(out, only(indicate(id, ECU, FAILED)));
+        assert_eq!(c.next_deadline(), None);
+    }
+
+    /// ``UDSS_LLR_0144`` — only a successful response-pending message opens the
+    /// enhanced window; a failed one ends the request like any failed reception.
+    #[test]
+    fn a_failed_response_pending_reception_opens_no_enhanced_window() {
+        let (mut c, id) = exchanged(Timestamp(0));
+        ind(&mut c, Timestamp(10), id, ECU, FAILED, Some(PENDING));
+        assert_eq!(c.next_deadline(), None);
+    }
+
+    /// ``UDSS_LLR_0130``, ``UDSS_LLR_0045`` — a completion pairs with the
+    /// start-of-message it ends, even once that start's request is over, so it is not a
+    /// first indication for the request now in progress.
+    #[test]
+    fn a_completion_after_the_window_closed_is_still_paired() {
+        let (mut c, id) = exchanged(Timestamp(0));
+        som(&mut c, Timestamp(10), id, ECU, SOLICITED);
+        exchange(&mut c, Timestamp(20), phys(ECU), UNKNOWN);
+        ind(&mut c, Timestamp(30), id, ECU, SResult::Ok, Some(SOLICITED));
+        assert_eq!(c.next_deadline(), Some(Timestamp(71)));
+    }
+
+    /// ``UDSS_LLR_0069``, ``UDSS_LLR_0015`` — a successful reception must state its
+    /// kind; one that does not is refused and nothing is indicated.
+    #[test]
+    fn a_successful_reception_stating_no_kind_is_rejected() {
+        let (mut c, id) = exchanged(Timestamp(0));
+        let (out, ok) =
+            outputs(c.t_data_ind(Timestamp(10), id, rsp(ECU), &DATA, SResult::Ok, None));
+        assert_eq!(out, NOTHING);
+        assert!(rejected(ok, Cause::KindRequired));
+        assert_eq!(c.next_deadline(), Some(Timestamp(51)));
+    }
+
+    /// ``UDSS_LLR_0058`` — a failed reception may omit the kind.
+    #[test]
+    fn a_failed_reception_may_state_no_kind() {
+        let (mut c, id) = exchanged(Timestamp(0));
+        ind(&mut c, Timestamp(10), id, ECU, FAILED, None);
+    }
+
+    /// ``UDSS_LLR_0027`` — an indication naming no channel the client has is refused.
+    #[test]
+    fn an_indication_naming_no_channel_is_rejected() {
+        let (mut c, id) = exchanged(Timestamp(0));
+        assert_eq!(outputs(c.withdraw_channel(Timestamp(1), id)).1, Ok(()));
+        let (out, ok) = outputs(c.t_data_ind(
+            Timestamp(10),
+            id,
+            rsp(ECU),
+            &DATA,
+            SResult::Ok,
+            Some(SOLICITED),
+        ));
+        assert_eq!(out, NOTHING);
+        assert!(rejected(ok, Cause::NoSuchChannel));
+        let (out, ok) = outputs(c.t_data_som_ind(Timestamp(10), id, rsp(ECU), SOLICITED));
+        assert_eq!(out, NOTHING);
+        assert!(rejected(ok, Cause::NoSuchChannel));
+    }
+
+    /// ``UDSS_LLR_0016`` — one report states a missing channel and a missing kind.
+    #[test]
+    fn one_report_states_a_missing_channel_and_a_missing_kind() {
+        let (mut c, id) = exchanged(Timestamp(0));
+        assert_eq!(outputs(c.withdraw_channel(Timestamp(1), id)).1, Ok(()));
+        let (_, ok) =
+            outputs(c.t_data_ind(Timestamp(10), id, rsp(ECU), &DATA, SResult::Ok, None));
+        assert!(rejected(ok, Cause::NoSuchChannel));
+        assert!(rejected(ok, Cause::KindRequired));
+    }
+
+    /// ``UDSS_LLR_0028``, ``UDSS_LLR_0026`` — the channel the caller names is the one
+    /// acted on; it is not checked against the addressing.
+    #[test]
+    fn the_channel_named_is_trusted() {
+        let (mut c, id) = exchanged(Timestamp(0));
+        ind(
+            &mut c,
+            Timestamp(10),
+            id,
+            ECU_2,
+            SResult::Ok,
+            Some(SOLICITED),
+        );
+        assert_eq!(c.next_deadline(), None);
+    }
+
+    /// ``UDSS_LLR_0129``, ``UDSS_LLR_0136`` — a response with no request in progress is
+    /// indicated and acts on no timer.
+    #[test]
+    fn a_response_arriving_with_no_request_acts_on_no_timer() {
+        let mut c = tester();
+        let id = open_phys(&mut c, Timestamp(0), ECU);
+        let out = ind(&mut c, Timestamp(10), id, ECU, SResult::Ok, Some(SOLICITED));
+        assert_eq!(out, only(indicate(id, ECU, SResult::Ok)));
+        assert_eq!(c.next_deadline(), None);
+    }
+}
+
+mod functional_window {
+    use super::*;
+
+    const ECU_3: u16 = 0x0012;
+
+    fn exchanged(now: Timestamp, class: ClientTx) -> (Tester, FunctionalChannelId) {
+        let mut c = tester();
+        let id = open_func(&mut c, now);
+        exchange(&mut c, now, func(), class);
+        (c, id)
+    }
+
+    const fn exactly(n: u16) -> ClientTx {
+        match NonZeroU16::new(n) {
+            Some(n) => request(ExpectedResponses::Exactly(n)),
+            None => NO_RESPONSE,
+        }
+    }
+
+    fn capacity(channel: FunctionalChannelId, sa: u16) -> ClientOutput<'static> {
+        ClientOutput::Capacity {
+            channel,
+            sa: Address(sa),
+            ae: None,
+        }
+    }
+
+    /// ``UDSS_LLR_0137`` — a response restarts a functional window rather than closing
+    /// it, since other servers may still answer.
+    #[test]
+    fn a_response_restarts_the_functional_window() {
+        let (mut c, id) = exchanged(Timestamp(0), UNKNOWN);
+        ind(&mut c, Timestamp(30), id, ECU, SResult::Ok, Some(SOLICITED));
+        assert_eq!(c.next_deadline(), Some(Timestamp(81)));
+    }
+
+    /// ``UDSS_LLR_0137``, ``UDSS_LLR_0128`` — a failed reception closes it.
+    #[test]
+    fn a_failed_reception_closes_the_functional_window() {
+        let (mut c, id) = exchanged(Timestamp(0), UNKNOWN);
+        let out = ind(&mut c, Timestamp(10), id, ECU, FAILED, None);
+        assert_eq!(out, only(indicate(id, ECU, FAILED)));
+        assert_eq!(c.next_deadline(), None);
+    }
+
+    /// ``UDSS_LLR_0138`` — the response that completes an exact count closes the
+    /// window silently.
+    #[test]
+    fn the_last_expected_response_closes_the_window() {
+        let (mut c, id) = exchanged(Timestamp(0), exactly(2));
+        ind(&mut c, Timestamp(10), id, ECU, SResult::Ok, Some(SOLICITED));
+        assert_eq!(c.next_deadline(), Some(Timestamp(61)));
+        ind(
+            &mut c,
+            Timestamp(20),
+            id,
+            ECU_2,
+            SResult::Ok,
+            Some(SOLICITED),
+        );
+        assert_eq!(c.next_deadline(), None);
+        assert_eq!(outputs(c.tick(Timestamp(1_000))).0, NOTHING);
+    }
+
+    /// ``UDSS_LLR_0138``, ``UDSS_LLR_0137`` — an unsolicited response neither counts nor
+    /// restarts the window.
+    #[test]
+    fn an_unsolicited_response_is_not_counted() {
+        let (mut c, id) = exchanged(Timestamp(0), request(ONE));
+        ind(
+            &mut c,
+            Timestamp(10),
+            id,
+            ECU,
+            SResult::Ok,
+            Some(UNSOLICITED),
+        );
+        assert_eq!(c.next_deadline(), Some(Timestamp(51)));
+        ind(&mut c, Timestamp(20), id, ECU, SResult::Ok, Some(SOLICITED));
+        assert_eq!(c.next_deadline(), None);
+    }
+
+    /// ``UDSS_LLR_0137`` — a response-pending start-of-message restarts a functional
+    /// window, where on a physical channel it stops it.
+    #[test]
+    fn a_response_pending_start_restarts_rather_than_stops() {
+        let (mut c, id) = exchanged(Timestamp(0), UNKNOWN);
+        som(&mut c, Timestamp(10), id, ECU, PENDING);
+        assert_eq!(c.next_deadline(), Some(Timestamp(61)));
+    }
+
+    /// ``UDSS_LLR_0145``, ``UDSS_LLR_0146``, ``UDSS_LLR_0144`` — while one responder's
+    /// response-pending message is outstanding, another's response restarts the window
+    /// with the enhanced reload.
+    #[test]
+    fn a_responders_response_pending_puts_the_enhanced_reload_in_force() {
+        let (mut c, id) = exchanged(Timestamp(0), UNKNOWN);
+        ind(&mut c, Timestamp(10), id, ECU, SResult::Ok, Some(PENDING));
+        assert_eq!(c.next_deadline(), Some(Timestamp(5_011)));
+        som(&mut c, Timestamp(20), id, ECU_2, SOLICITED);
+        assert_eq!(c.next_deadline(), Some(Timestamp(5_021)));
+    }
+
+    /// ``UDSS_LLR_0146``, ``UDSS_LLR_0147`` — the responder's next message ends its
+    /// pending fact before the reload in force is read.
+    #[test]
+    fn its_next_message_ends_the_pending_fact_before_the_reload_is_read() {
+        let (mut c, id) = exchanged(Timestamp(0), UNKNOWN);
+        ind(&mut c, Timestamp(10), id, ECU, SResult::Ok, Some(PENDING));
+        som(&mut c, Timestamp(20), id, ECU, SOLICITED);
+        assert_eq!(c.next_deadline(), Some(Timestamp(71)));
+    }
+
+    /// ``UDSS_LLR_0147`` — a further response-pending message ends the first and records
+    /// itself, and the record stands.
+    #[test]
+    fn a_repeated_response_pending_message_stays_outstanding() {
+        let (mut c, id) = exchanged(Timestamp(0), UNKNOWN);
+        ind(&mut c, Timestamp(10), id, ECU, SResult::Ok, Some(PENDING));
+        ind(&mut c, Timestamp(20), id, ECU, SResult::Ok, Some(PENDING));
+        assert_eq!(c.next_deadline(), Some(Timestamp(5_021)));
+        som(&mut c, Timestamp(30), id, ECU_2, SOLICITED);
+        assert_eq!(c.next_deadline(), Some(Timestamp(5_031)));
+    }
+
+    /// ``UDSS_LLR_0045``, ``UDSS_LLR_0139`` — interleaved multi-frame responses pair by
+    /// responder, so neither completion is a first indication.
+    #[test]
+    fn interleaved_multi_frame_responses_pair_by_responder() {
+        let (mut c, id) = exchanged(Timestamp(0), UNKNOWN);
+        som(&mut c, Timestamp(10), id, ECU, SOLICITED);
+        assert_eq!(c.next_deadline(), Some(Timestamp(61)));
+        som(&mut c, Timestamp(20), id, ECU_2, SOLICITED);
+        assert_eq!(c.next_deadline(), Some(Timestamp(71)));
+        ind(&mut c, Timestamp(30), id, ECU, SResult::Ok, Some(SOLICITED));
+        assert_eq!(c.next_deadline(), Some(Timestamp(71)));
+        ind(
+            &mut c,
+            Timestamp(40),
+            id,
+            ECU_2,
+            SResult::Ok,
+            Some(SOLICITED),
+        );
+        assert_eq!(c.next_deadline(), Some(Timestamp(71)));
+    }
+
+    /// ``UDSS_LLR_0143`` — a response-pending message from a responder the full table
+    /// has no room for is reported, ahead of its indication.
+    #[test]
+    fn a_responder_beyond_capacity_is_reported_before_its_indication() {
+        let (mut c, id) = exchanged(Timestamp(0), UNKNOWN);
+        som(&mut c, Timestamp(10), id, ECU, SOLICITED);
+        som(&mut c, Timestamp(10), id, ECU_2, SOLICITED);
+        let out = ind(&mut c, Timestamp(20), id, ECU_3, SResult::Ok, Some(PENDING));
+        assert_eq!(
+            out,
+            [
+                Some(capacity(id, ECU_3)),
+                Some(indicate(id, ECU_3, SResult::Ok)),
+                None,
+                None,
+                None,
+                None,
+            ]
+        );
+    }
+
+    /// ``UDSS_LLR_0143`` — an untracked responder's start-of-message is reported and is a
+    /// first indication, and so is its completion.
+    #[test]
+    fn an_untracked_responders_completion_is_a_first_indication() {
+        let (mut c, id) = exchanged(Timestamp(0), UNKNOWN);
+        som(&mut c, Timestamp(10), id, ECU, SOLICITED);
+        som(&mut c, Timestamp(10), id, ECU_2, SOLICITED);
+        let out = som(&mut c, Timestamp(20), id, ECU_3, SOLICITED);
+        assert_eq!(out, only(capacity(id, ECU_3)));
+        assert_eq!(c.next_deadline(), Some(Timestamp(71)));
+        let out = ind(
+            &mut c,
+            Timestamp(30),
+            id,
+            ECU_3,
+            SResult::Ok,
+            Some(SOLICITED),
+        );
+        assert_eq!(out, only(indicate(id, ECU_3, SResult::Ok)));
+        assert_eq!(c.next_deadline(), Some(Timestamp(81)));
+    }
+
+    /// ``UDSS_LLR_0141`` — when the request ends, pending facts clear and entries whose
+    /// start-of-message is open stay until completed.
+    #[test]
+    fn at_the_end_of_the_request_pending_facts_clear_and_open_entries_stay() {
+        let (mut c, id) = exchanged(Timestamp(0), UNKNOWN);
+        ind(&mut c, Timestamp(10), id, ECU, SResult::Ok, Some(PENDING));
+        som(&mut c, Timestamp(20), id, ECU_2, SOLICITED);
+        assert_eq!(c.next_deadline(), Some(Timestamp(5_021)));
+        assert_eq!(
+            outputs(c.tick(Timestamp(5_021))).0,
+            only(timeout(func(), ChannelReload::Enhanced))
+        );
+        ind(
+            &mut c,
+            Timestamp(5_030),
+            id,
+            ECU_2,
+            SResult::Ok,
+            Some(SOLICITED),
+        );
+        exchange(&mut c, Timestamp(5_100), func(), UNKNOWN);
+        assert_eq!(c.next_deadline(), Some(Timestamp(5_151)));
+        som(&mut c, Timestamp(5_110), id, ECU, SOLICITED);
+        assert_eq!(c.next_deadline(), Some(Timestamp(5_161)));
+    }
+
+    /// ``UDSS_LLR_0142`` — a functional channel opens with an empty table, whatever the
+    /// slot's last channel left in it.
+    #[test]
+    fn a_fresh_functional_channel_has_an_empty_table() {
+        let (mut c, old) = exchanged(Timestamp(0), UNKNOWN);
+        som(&mut c, Timestamp(10), old, ECU, SOLICITED);
+        som(&mut c, Timestamp(10), old, ECU_2, SOLICITED);
+        assert_eq!(outputs(c.withdraw_channel(Timestamp(20), old)).1, Ok(()));
+        let id = open_func(&mut c, Timestamp(20));
+        assert_eq!(som(&mut c, Timestamp(30), id, ECU, SOLICITED), NOTHING);
+        assert_eq!(som(&mut c, Timestamp(30), id, ECU_2, SOLICITED), NOTHING);
+        assert_eq!(
+            som(&mut c, Timestamp(30), id, ECU_3, SOLICITED),
+            only(capacity(id, ECU_3))
+        );
+    }
+
+    /// ``UDSS_LLR_0139`` — a physical channel keeps no table, so it has none to fill.
+    #[test]
+    fn a_physical_channel_reports_no_capacity() {
+        let mut c = tester();
+        let id = open_phys(&mut c, Timestamp(0), ECU);
+        for sa in [ECU, ECU_2, ECU_3, 0x0013] {
+            assert_eq!(som(&mut c, Timestamp(10), id, sa, SOLICITED), NOTHING);
+        }
     }
 }
