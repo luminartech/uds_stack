@@ -105,20 +105,6 @@ pub const UDP_DISCOVERY_PORT: u16 = 13400;
 /// TLS support yet.
 pub const TCP_TLS_PORT: u16 = 3496;
 
-/// An example logical address constant of uncertain provenance.
-///
-/// Despite its name, this value is used exactly once in this repository — by
-/// `examples/simple_client.rs`, which assigns it to `server_logical_address`,
-/// i.e. the **ECU** side rather than the tester side. No test references it.
-///
-/// This value is **not** mandated by ISO 13400-2 — a tester's logical address is
-/// assigned per-deployment from the range
-/// [`LogicalAddress::MIN_CLIENT_ADDRESS`]..=[`LogicalAddress::MAX_CLIENT_ADDRESS`]
-/// (`0x0E00`-`0x0FFF`), and `0xE400` falls outside that range, so it is
-/// inconsistent with the tester role its name implies. Callers should supply
-/// their own deployment-specific addresses rather than relying on this constant.
-pub const TESTER_LOGICAL_ADDRESS: LogicalAddress = LogicalAddress(0xE400);
-
 // DoIP timing and communication parameters
 
 /// Initial inactivity timeout in seconds for TCP connections directly after a `TCP_DATA`

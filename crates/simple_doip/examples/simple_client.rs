@@ -15,7 +15,7 @@
 )]
 
 use simple_doip::{
-    TCP_PORT, TESTER_LOGICAL_ADDRESS,
+    TCP_PORT,
     client::{Client, ClientOptions},
     connection::ConnectorSocket,
     logical_address::LogicalAddress,
@@ -38,10 +38,10 @@ async fn main() -> anyhow::Result<()> {
 
     let custom_options = ClientOptions {
         server_address: SocketAddr::from((local_server, TCP_PORT)),
-        server_logical_address: TESTER_LOGICAL_ADDRESS,
+        server_logical_address: LogicalAddress(0x0001),
         server_physical_address: LogicalAddress(0x4010),
         client_address: IpAddr::from([0, 0, 0, 0]),
-        client_logical_address: LogicalAddress(0x0E01),
+        client_logical_address: LogicalAddress(0x0E00),
         protocol_version: ProtocolVersion::V2012,
         diagnostic_message_timeout: simple_doip::TIMEOUT_DIAGNOSTIC_MESSAGE_RESPONSE,
         routing_activation_options: Some(simple_doip::client::RoutingActivationOptions {
