@@ -2,7 +2,7 @@
 name = "simple_doip"
 version.workspace = true
 edition = "2024"
-rust-version = "1.88"
+rust-version.workspace = true
 description = "An ISO 13400-2 (DoIP) implementation with a no_std, zero-copy protocol core and optional async client and server"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/luminartech/uds_stack"

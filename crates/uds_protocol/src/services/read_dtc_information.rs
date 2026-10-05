@@ -1065,7 +1065,7 @@ impl<'a> ReadDtcInfoResponse<'a> {
 /// verbatim — so the iterators keep their `Result` item type and their
 /// one-error-then-terminate behaviour.
 fn whole_records(raw: &[u8], record_len: usize) -> Result<&[u8], Error> {
-    if raw.len() % record_len == 0 {
+    if raw.len().is_multiple_of(record_len) {
         Ok(raw)
     } else {
         Err(Error::IncorrectMessageLengthOrInvalidFormat)

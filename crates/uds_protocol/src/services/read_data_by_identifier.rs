@@ -153,7 +153,7 @@ impl<'a> Decode<'a> for ReadDataByIdentifierRequest<'a> {
     type Error = crate::Error;
 
     fn decode(buf: &'a [u8]) -> Result<(Self, &'a [u8]), Error> {
-        if buf.is_empty() || buf.len() % 2 != 0 {
+        if buf.is_empty() || !buf.len().is_multiple_of(2) {
             return Err(Error::IncorrectMessageLengthOrInvalidFormat);
         }
         Ok((

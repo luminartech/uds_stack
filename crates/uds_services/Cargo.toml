@@ -2,7 +2,7 @@
 name = "uds_services"
 version.workspace = true
 edition = "2024"
-rust-version = "1.88"
+rust-version.workspace = true
 description = "ISO 14229-1 behaviour: typed UDS service dispatch over caller-defined identifiers, and the clause 8.7 server response implementation rules"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/luminartech/uds_stack"

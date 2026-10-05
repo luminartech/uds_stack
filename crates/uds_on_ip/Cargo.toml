@@ -2,7 +2,7 @@
 name = "uds_on_ip"
 version.workspace = true
 edition = "2024"
-rust-version = "1.88"
+rust-version.workspace = true
 description = "UDS on Internet Protocol (ISO 14229-5): the UDSonIP application profile and the transport mapping onto DoIP"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/luminartech/uds_stack"
