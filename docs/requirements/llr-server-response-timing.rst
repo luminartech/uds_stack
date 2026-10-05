@@ -300,14 +300,17 @@ The response window
 
    The requirement governs the requests a caller indicates, not every request a transport
    delivers. ISO 14229-1:2020 8.7.6 has any other received message occupy the protocol
-   instance until processed, so a caller enforcing that rule indicates no request while a
-   service is in progress: it answers one with a ``busy refusal`` under ``UDSS_LLR_0187``,
-   which leaves the service in progress and its window untouched, and it indicates the
-   keep-alive TesterPresent as ``keep-alive``, which ``UDSS_LLR_0107`` excludes. What
-   remains for this requirement is the OBD-range request 8.7.6 has abort the active
-   service. ISO 14229-2:2021 10.3 Figure 18 key f, which shows a server ignoring such a
-   request, describes the hazard ``tP3_Client_Func`` exists to prevent rather than a rule
-   for the server.
+   instance until processed, so a caller enforcing that rule indicates no request while it
+   is still processing the service in progress: it answers one with a ``busy refusal``
+   under ``UDSS_LLR_0187``, which leaves the service in progress and its window untouched,
+   and it indicates the keep-alive TesterPresent as ``keep-alive``, which
+   ``UDSS_LLR_0107`` excludes. What remains for this requirement is a request received
+   once the final response has been submitted and before its confirmation, which
+   ISO 14229-2:2021 10.3 lets the client send and ``UDSS_LLR_0106`` and ``UDSS_LLR_0109``
+   provide for, and the OBD-range request 8.7.6 has abort the active service.
+   ISO 14229-2:2021 10.3 Figure 18 key f, which shows a server ignoring a request received
+   while it is handling another, describes the hazard ``tP3_Client_Func`` exists to
+   prevent rather than a rule for the server.
 
 .. llr:: A service ceases to be in progress
    :id: UDSS_LLR_0109

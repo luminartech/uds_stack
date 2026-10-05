@@ -720,13 +720,13 @@ fn a_message_too_long_for_the_concurrent_buffer_is_answered_busy() {
 }
 
 /// A request longer than the in-flight buffer, with no service in progress: that buffer
-/// holds the longest request any assembled service accepts, so ISO 14229-1:2020 Figure 5
-/// answers `incorrectMessageLengthOrInvalidFormat` (0x13) for a service this server
-/// implements and `serviceNotSupported` (0x11) for one it does not — not
-/// `busyRepeatRequest`, which would have the client repeat it forever. 0x11 to a
-/// functional request is suppressed (8.7.5).
+/// holds the longest request any assembled service accepts, so it is answered
+/// `incorrectMessageLengthOrInvalidFormat` (0x13) for a service this server implements and,
+/// ISO 14229-1:2020 Figure 5 checking the identifier first, `serviceNotSupported` (0x11)
+/// for one it does not — not `busyRepeatRequest`, which would have the client repeat it
+/// forever. 0x11 to a functional request is suppressed (8.7.5).
 #[test]
-fn a_request_too_long_for_any_service_is_refused_by_figure_5() {
+fn a_request_too_long_for_any_service_is_refused_0x11_or_0x13() {
     for (ai, request, expected) in [
         (
             request_from(TESTER),

@@ -1444,7 +1444,8 @@ means of recognising it to the implementation.
      positive response is suppressed, which ISO 14229-1:2020 8.7.6 defines as keep-alive
      logic to be handled by bypass logic;
    * ``final response``, a positive response, or a negative response whose response code
-     is not ``requestCorrectlyReceived-ResponsePending``;
+     is not ``requestCorrectlyReceived-ResponsePending`` and that is not a ``busy
+     refusal``;
    * ``response pending``, a negative response whose response code is
      ``requestCorrectlyReceived-ResponsePending``;
    * ``busy refusal``, a negative response whose response code is ``busyRepeatRequest``,

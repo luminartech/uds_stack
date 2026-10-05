@@ -1180,6 +1180,16 @@ mod busy {
             outputs(s.t_data_conf(Timestamp(4_001), ai(ECU, TESTER), SResult::Ok));
         assert!(ok.is_ok());
         assert_eq!(s.next_deadline(), Some(Timestamp(5_000)));
+
+        // In a service: the controlling client's request stopped tS3_Server
+        // (UDSS_LLR_0087), and the refusal's confirmation leaves it stopped, so only that
+        // service's tP2_Server is pending.
+        request(&mut s, Timestamp(4_100)); // tP2_Server due at 4_150
+        assert!(refuse(&mut s, Timestamp(4_110)).is_ok());
+        let (_, ok) =
+            outputs(s.t_data_conf(Timestamp(4_111), ai(ECU, TESTER), SResult::Ok));
+        assert!(ok.is_ok());
+        assert_eq!(s.next_deadline(), Some(Timestamp(4_150)));
     }
 
     /// ``UDSS_LLR_0061`` — it occupies the client's addressing: the service's response is

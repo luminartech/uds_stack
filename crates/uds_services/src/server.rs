@@ -50,6 +50,9 @@ pub struct Server<A: ServiceSet, T: UdsTransport, const PEERS: usize> {
     own: Address,
     /// The `DiagnosticSessionControl` response awaiting its confirmation, if any.
     pending: Option<Pending>,
+    /// The parameters the server was built with, against which each session's `P2` pair is
+    /// checked in debug builds.
+    params: ServerParams,
 }
 
 impl<A: ServiceSet, T: UdsTransport, const PEERS: usize> Server<A, T, PEERS> {
@@ -105,6 +108,7 @@ impl<A: ServiceSet, T: UdsTransport, const PEERS: usize> Server<A, T, PEERS> {
             transport,
             own,
             pending: None,
+            params,
         }
     }
 
@@ -192,6 +196,7 @@ impl<A: ServiceSet, T: UdsTransport, const PEERS: usize> Server<A, T, PEERS> {
             &mut self.session,
             &mut self.transport,
             &mut self.pending,
+            self.params,
             now,
         )
         .await?;
@@ -299,12 +304,16 @@ impl<A: ServiceSet, T: UdsTransport, const PEERS: usize> Server<A, T, PEERS> {
 /// running out at that instant returns to the default session before its pair is read.
 /// The parameters are then set at the same `now`, which can expire nothing further, and
 /// ``UDSS_LLR_0076`` leaves any window already open on the value it was loaded with.
+///
+/// A debug build panics where the pair leaves `params`' response-pending lead ill formed:
+/// the enhanced overrun would then come due before ``UDSS_LLR_0119`` admits its 0x78.
 async fn retime<A: ServiceSet, T: UdsTransport, const PEERS: usize>(
     services: &mut A,
     state: &mut A::State,
     session: &mut SessionServer<PEERS>,
     transport: &mut T,
     pending: &mut Option<Pending>,
+    params: ServerParams,
     now: Timestamp,
 ) -> Result<(), T::Error> {
     let tick = drain(session.tick(now), transport, pending).await?;
@@ -312,6 +321,16 @@ async fn retime<A: ServiceSet, T: UdsTransport, const PEERS: usize>(
     let Some(timing) = services.session_timing(state) else {
         return Ok(());
     };
+    debug_assert!(
+        ServerParams {
+            p2_server_max: timing.p2_server_max(),
+            p2_star_server_max: timing.p2_star_server_max(),
+            ..params
+        }
+        .is_well_formed(),
+        "DiagnosticSessionControl::timing returned a pair the response-pending lead does \
+         not fit (ServerParams::is_well_formed)",
+    );
     for parameter in [
         ServerParameter::P2ServerMax(timing.p2_server_max()),
         ServerParameter::P2StarServerMax(timing.p2_star_server_max()),
@@ -541,10 +560,14 @@ impl Served {
     }
 }
 
-/// The code for a request longer than the in-flight buffer: ISO 14229-1:2020 Figure 5
-/// checks the service identifier before the length, so `serviceNotSupported` (0x11) for
-/// one this server does not implement and `incorrectMessageLengthOrInvalidFormat` (0x13)
-/// otherwise, the buffer holding the longest request any assembled service accepts.
+/// The code for a request longer than the in-flight buffer, which holds the longest request
+/// any assembled service accepts: `serviceNotSupported` (0x11) for a service this server
+/// does not implement, ISO 14229-1:2020 Figure 5 checking the identifier first, and
+/// `incorrectMessageLengthOrInvalidFormat` (0x13) otherwise.
+///
+/// Figure 5 also checks the session (0x7F) and Figure 6 the sub-function (0x12, 0x7E)
+/// before the length, and those are not asked here: an over-long request that fails one
+/// of them is answered 0x13 where a well-formed one would get that code.
 fn too_long<A: ServiceSet>(services: &A, sid: u8) -> NegativeResponseCode {
     if services.supports(UdsServiceType::from_request_sid(sid)) {
         NegativeResponseCode::IncorrectMessageLengthOrInvalidFormat
