@@ -263,6 +263,11 @@ macro_rules! __uds_sub_function {
             return $crate::pipeline::zero_sub_function($value);
         }
     };
+    ($self:ident, $service:ident, $value:ident, EcuReset) => {
+        if ::core::matches!($service, $crate::UdsServiceType::EcuReset) {
+            return $crate::pipeline::reset_supported($self, $value);
+        }
+    };
     ($self:ident, $service:ident, $value:ident, $svc:ident) => {};
 }
 
@@ -288,6 +293,11 @@ macro_rules! __uds_sub_function_in_session {
             return $crate::pipeline::session_supported_from($self, $value, $active);
         }
     };
+    ($self:ident, $service:ident, $value:ident, $active:ident, EcuReset) => {
+        if ::core::matches!($service, $crate::UdsServiceType::EcuReset) {
+            return $crate::pipeline::reset_supported_in($self, $value, $active);
+        }
+    };
     ($self:ident, $service:ident, $value:ident, $active:ident, $svc:ident) => {};
 }
 
@@ -295,8 +305,8 @@ macro_rules! __uds_sub_function_in_session {
 /// service with no stage yet hits the wildcard, which emits nothing; the request then
 /// reaches the fall-through after every arm in `dispatch`, an outcome of 0x11 that the
 /// driver settles. That is the milestone-1 limit, and it makes "listed but unimplemented"
-/// visible on the wire rather than a panic. The RDBI stage awaits (its handler does); the
-/// other two are plain calls.
+/// visible on the wire rather than a panic. A stage whose handler is `async` is awaited;
+/// the others are plain calls.
 #[doc(hidden)]
 #[macro_export]
 macro_rules! __uds_stage {
@@ -313,6 +323,11 @@ macro_rules! __uds_stage {
     ($self:ident, $out:ident, $req:ident, TesterPresent) => {
         if let $crate::Request::TesterPresent(_) = $req {
             return $crate::pipeline::tester_present($self, $out);
+        }
+    };
+    ($self:ident, $out:ident, $req:ident, EcuReset) => {
+        if let $crate::Request::EcuReset(ref r) = $req {
+            return $crate::pipeline::ecu_reset($self, r, $out).await;
         }
     };
     ($self:ident, $out:ident, $req:ident, $svc:ident) => {};
@@ -351,20 +366,23 @@ macro_rules! __uds_stage {
 /// service's own sub-function (``UDSSVC_ARCH_0007`` rows 2 and 4). `dispatch` hands both
 /// to `pipeline::begin` as closures that route to the listed service's trait, and the
 /// pipeline decides 0x12 versus 0x7E. Today the pair is [`supports`] and
-/// [`supported_from`] on `DiagnosticSessionControl`; `TesterPresent` has none, because
-/// its only sub-function is available everywhere. Each other sub-function-bearing service
-/// (`EcuReset`, `CommunicationControl`, `ControlDtcSetting`, `SecurityAccess`, …) gains
-/// the same pair, in its own sub-function type, when its stage lands.
+/// [`supported_from`] on `DiagnosticSessionControl`, and [`EcuReset::supports`] and
+/// [`EcuReset::supported_in`]; `TesterPresent` has none, because its only sub-function is
+/// available everywhere. Each other sub-function-bearing service (`CommunicationControl`,
+/// `ControlDtcSetting`, `SecurityAccess`, …) gains the same pair, in its own sub-function
+/// type, when its stage lands.
 ///
 /// [`supports`]: crate::DiagnosticSessionControl::supports
 /// [`supported_from`]: crate::DiagnosticSessionControl::supported_from
+/// [`EcuReset::supports`]: crate::EcuReset::supports
+/// [`EcuReset::supported_in`]: crate::EcuReset::supported_in
 ///
-/// **Milestone-1 limit:** only `ReadDataByIdentifier`, `DiagnosticSessionControl` and
-/// `TesterPresent` have stages. Any other listed service is accepted by the list (so it
-/// is not refused by the support check) but has no stage to run. One that carries a
-/// `SubFunction` passes the support check's row 2 and reaches the decode, then settles
-/// `serviceNotSupported` (0x11), or `incorrectMessageLengthOrInvalidFormat` (0x13) if
-/// the request does not decode — visible on the wire rather than a panic.
+/// **Staging limit:** only `ReadDataByIdentifier`, `DiagnosticSessionControl`,
+/// `TesterPresent` and `EcuReset` have stages. Any other listed service is accepted by
+/// the list (so it is not refused by the support check) but has no stage to run. One
+/// that carries a `SubFunction` passes the support check's row 2 and reaches the decode,
+/// then settles `serviceNotSupported` (0x11), or `incorrectMessageLengthOrInvalidFormat`
+/// (0x13) if the request does not decode — visible on the wire rather than a panic.
 ///
 /// The syntax is `Ecu: ..; transport = T, ..` rather than `Ecu over T: ..` because
 /// `$ty:ty` cannot be followed by a bare identifier — the legal followers are

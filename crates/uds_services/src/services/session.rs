@@ -114,20 +114,58 @@ pub trait DiagnosticSessionControl {
 }
 
 /// `EcuReset` (0x11).
+///
+/// ISO 14229-1:2020 clause 10.3. The pipeline writes the positive response's service
+/// identifier and echoed `resetType`; [`Self::reset`] decides whether the reset is
+/// accepted and supplies the `powerDownTime` that follows.
 pub trait EcuReset {
     /// ``UDSSVC_ARCH_0033`` — a reset legitimately sets this.
     const MAY_RESPOND_PENDING: bool;
 
-    /// Perform `kind`, writing any `powerDownTime` into `out`.
+    /// Whether this server supports `kind` at all, in whichever session.
+    ///
+    /// ISO 14229-1:2020 8.7.3.1 Figure 6, "`SubFunction` supported ever for the SID?" —
+    /// ``UDSSVC_ARCH_0007`` row 2. A `false` settles the request
+    /// `subFunctionNotSupported` (0x12) before [`Self::supported_in`] is asked.
     ///
     /// # Arguments
     ///
-    /// * `kind` - the reset to perform; see [`ResetType`].
-    /// * `out` - where the `powerDownTime` byte goes, for the reset that carries one.
+    /// * `kind` - the reset requested; see [`ResetType`], whose reserved and specific
+    ///   variants carry the raw byte for a server that defines its own.
+    fn supports(&self, kind: ResetType) -> bool;
+
+    /// Whether `kind` is available in the `active` session.
+    ///
+    /// ISO 14229-1:2020 8.7.3.1 Figure 6, "`SubFunction` supported in active session
+    /// for the SID?" — ``UDSSVC_ARCH_0007`` row 4. Asked only for a `kind` that
+    /// [`Self::supports`] accepted, so a `false` settles the request
+    /// `subFunctionNotSupportedInActiveSession` (0x7E). A server that restricts no reset
+    /// to a session returns `true`.
+    ///
+    /// # Arguments
+    ///
+    /// * `kind` - the reset requested; see [`ResetType`].
+    /// * `active` - the session the server is in when the request arrives.
+    fn supported_in(&self, kind: ResetType, active: DiagnosticSessionType) -> bool;
+
+    /// Accept or refuse `kind`, writing any `powerDownTime` into `out`.
+    ///
+    /// **Must not perform the reset before returning.** ISO 14229-1:2020 clause 10.3.1
+    /// strongly recommends that the positive response is sent before the reset is
+    /// executed, and it is sent only after this returns `Ok`.
+    ///
+    /// # Arguments
+    ///
+    /// * `kind` - the reset requested, one [`Self::supports`] and [`Self::supported_in`]
+    ///   accepted; see [`ResetType`].
+    /// * `out` - where the `powerDownTime` byte goes, for
+    ///   [`ResetType::EnableRapidPowerShutDown`], the one reset whose response carries
+    ///   it (clause 10.3.3, Table 35); nothing is written for any other.
     ///
     /// # Errors
     ///
-    /// The [`NegativeResponseCode`] for an unsupported or impermissible reset.
+    /// The [`NegativeResponseCode`] for a reset whose criteria are not met:
+    /// `conditionsNotCorrect` (0x22) or `securityAccessDenied` (0x33), clause 10.3.4.
     ///
     /// A refused write to `out` needs no handling: the sink records the refusal and the
     /// pipeline answers `responseTooLong` (0x14) in place of the response, so the write's
@@ -263,6 +301,12 @@ mod tests {
 
     impl EcuReset for Ecu {
         const MAY_RESPOND_PENDING: bool = true;
+        fn supports(&self, _k: ResetType) -> bool {
+            true
+        }
+        fn supported_in(&self, _k: ResetType, _a: DiagnosticSessionType) -> bool {
+            true
+        }
         async fn reset(
             &mut self,
             _k: ResetType,
@@ -280,8 +324,14 @@ mod tests {
     fn the_application_receives_a_classified_transition() {
         let mut ecu = Ecu;
         ecu.on_transition(SessionTransition::NonDefaultToDefault, true);
-        assert!(ecu.supports(DiagnosticSessionType::ProgrammingSession));
-        assert!(!ecu.supports(DiagnosticSessionType::SafetySystemDiagnosticSession));
+        assert!(DiagnosticSessionControl::supports(
+            &ecu,
+            DiagnosticSessionType::ProgrammingSession
+        ));
+        assert!(!DiagnosticSessionControl::supports(
+            &ecu,
+            DiagnosticSessionType::SafetySystemDiagnosticSession
+        ));
     }
 
     /// P2 values are a property of the session being entered, so the application states

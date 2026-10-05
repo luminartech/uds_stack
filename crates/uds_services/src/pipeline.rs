@@ -13,7 +13,7 @@
 use crate::services::SessionTransition;
 use crate::state::State;
 use crate::{
-    DataIdentifier, DiagnosticSessionControl, ReadDataByIdentifier, TesterPresent,
+    DataIdentifier, DiagnosticSessionControl, EcuReset, ReadDataByIdentifier, TesterPresent,
 };
 use crate::{Responded, ResponseSink, Unsettled};
 use automotive_wire_codec::Sink;
@@ -21,7 +21,10 @@ use uds_protocol::{
     Decode, DiagnosticSessionType, Encode, NegativeResponse, NegativeResponseCode, Request,
     UdsServiceType,
 };
-use uds_protocol::{DiagnosticSessionControlRequest, ReadDataByIdentifierRequest};
+use uds_protocol::{
+    DiagnosticSessionControlRequest, EcuResetRequest, ReadDataByIdentifierRequest,
+    ResetType,
+};
 use uds_session::{Ai, TaType};
 
 /// Enter `to`, and say which of Figure 7's transitions that was (``UDSSVC_ARCH_0038``).
@@ -202,6 +205,29 @@ pub fn session_supported_from<A: DiagnosticSessionControl>(
         .is_ok_and(|session| services.supported_from(session, active))
 }
 
+/// ISO 14229-1:2020 clause 10.3 — whether `EcuReset`'s sub-function `value` (suppress
+/// bit stripped) names a reset the application supports. [`begin`]'s "supported ever"
+/// check for that service (``UDSSVC_ARCH_0007`` row 2).
+#[doc(hidden)]
+#[must_use]
+pub fn reset_supported<A: EcuReset>(services: &A, value: u8) -> bool {
+    ResetType::try_from(value).is_ok_and(|kind| services.supports(kind))
+}
+
+/// ISO 14229-1:2020 clause 10.3 — whether the reset `EcuReset`'s sub-function `value`
+/// (suppress bit stripped) names is available in `active`. [`begin`]'s "supported in
+/// active session" check for that service (``UDSSVC_ARCH_0007`` row 4), asked only after
+/// [`reset_supported`] accepted `value`.
+#[doc(hidden)]
+#[must_use]
+pub fn reset_supported_in<A: EcuReset>(
+    services: &A,
+    value: u8,
+    active: DiagnosticSessionType,
+) -> bool {
+    ResetType::try_from(value).is_ok_and(|kind| services.supported_in(kind, active))
+}
+
 /// ISO 14229-1:2020 clause 10.7 — whether `TesterPresent`'s sub-function `value`
 /// (suppress bit stripped) is `zeroSubFunction`, the only one the service defines.
 /// [`begin`]'s sub-function check for that service.
@@ -379,6 +405,23 @@ pub fn diagnostic_session_control<A: DiagnosticSessionControl>(
     )
     .encode(out);
     Ok(Some(session))
+}
+
+/// ISO 14229-1:2020 clause 10.3 — `EcuReset`'s own stage. Whether the reset is supported
+/// (0x12) and in the active session (0x7E) was settled by [`begin`], and the exact length
+/// (0x13) by its decode, so only the handler's verdict remains: the positive response is
+/// `51`, the echoed `resetType` (Table 35), then whatever `powerDownTime` the handler
+/// wrote. The reset itself is the application's, after that response.
+#[doc(hidden)]
+pub async fn ecu_reset<A: EcuReset>(
+    services: &mut A,
+    request: &EcuResetRequest,
+    out: &mut ResponseSink<'_>,
+) -> Result<Option<DiagnosticSessionType>, NegativeResponseCode> {
+    let kind = request.reset_type;
+    let _ = out.write_all(&[0x51, u8::from(kind)]);
+    services.reset(kind, out).await?;
+    Ok(None)
 }
 
 /// ISO 14229-1:2020 clause 10.7 — `TesterPresent`'s own stage (``UDSSVC_ARCH_0004``).
