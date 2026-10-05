@@ -341,9 +341,9 @@ fn response_pending_permission_follows_the_declaration() {
 }
 
 /// The one message clause 8.7.6 admits mid-service is a **functionally addressed**
-/// suppressed `TesterPresent`. The same bytes physically addressed are not admitted,
-/// which is the distinction the classifier could not draw while its only argument was
-/// the request.
+/// suppressed `TesterPresent`, `3E 80` exactly. The same bytes physically addressed are
+/// not admitted, which is the distinction the classifier could not draw while its only
+/// argument was the request.
 ///
 /// The 0x01 assertion covers the clause's other exception, a request in 0x00-0x0F. No
 /// server `uds_server!` can assemble reaches it — the lowest SID in `__uds_sids!` is
@@ -361,14 +361,18 @@ fn the_tester_present_exception_is_admitted_only_when_functionally_addressed() {
         }
     }
 
-    let ecu = Ecu::new();
-    assert!(ecu.is_concurrent_exception(&[0x3E, 0x80], ai(TaType::Functional)));
-    assert!(!ecu.is_concurrent_exception(&[0x3E, 0x80], ai(TaType::Physical)));
+    let admitted = <Ecu as ServiceSet>::is_concurrent_exception;
+    assert!(admitted(&[0x3E, 0x80], ai(TaType::Functional)));
+    assert!(!admitted(&[0x3E, 0x80], ai(TaType::Physical)));
     // Without the suppress bit it is an ordinary request either way.
-    assert!(!ecu.is_concurrent_exception(&[0x3E, 0x00], ai(TaType::Functional)));
+    assert!(!admitted(&[0x3E, 0x00], ai(TaType::Functional)));
+    // Clause 8.7.6 admits a *valid* TesterPresent: no other sub-function, no other length.
+    assert!(!admitted(&[0x3E, 0x81], ai(TaType::Functional)));
+    assert!(!admitted(&[0x3E, 0x80, 0x00], ai(TaType::Functional)));
+    assert!(!admitted(&[0x3E], ai(TaType::Functional)));
     // An OBD-range service identifier: no exception, because none is assemblable.
-    assert!(!ecu.is_concurrent_exception(&[0x01], ai(TaType::Functional)));
-    assert!(!ecu.is_concurrent_exception(&[0x22, 0xF1, 0x90], ai(TaType::Functional)));
+    assert!(!admitted(&[0x01], ai(TaType::Functional)));
+    assert!(!admitted(&[0x22, 0xF1, 0x90], ai(TaType::Functional)));
 }
 
 /// The in-place server is usable, not only constructible: the cell yields the

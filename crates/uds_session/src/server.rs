@@ -550,15 +550,14 @@ impl<const A: usize> Server<A> {
                     self.restart_s3(now);
                 }
             }
-            ServerTx::BusyRepeatRequest => {
-                // UDSS_LLR_0187 — freeing the association above is all it does.
-            }
-            ServerTx::FinalResponse {
+            // UDSS_LLR_0187 — freeing the association above is all a busy refusal's
+            // does; UDSS_LLR_0091 — an unsolicited one's touches no tS3 and answers no
+            // service.
+            ServerTx::BusyRepeatRequest
+            | ServerTx::FinalResponse {
                 solicitation: Solicitation::Unsolicited,
                 ..
-            } => {
-                // UDSS_LLR_0091 — nothing to tS3; and no service is answered.
-            }
+            } => {}
             ServerTx::FinalResponse {
                 solicitation: Solicitation::Solicited,
                 session,

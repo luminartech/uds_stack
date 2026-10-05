@@ -629,23 +629,9 @@ macro_rules! uds_server {
                     false
                 }
 
-                fn is_concurrent_exception(
-                    &self,
-                    request: &[u8],
-                    ai: $crate::Ai,
-                ) -> bool {
-                    match request.first() {
-                        // Clause 8.7.6's first exception is a functionally addressed
-                        // TesterPresent whose sub-function carries
-                        // suppressPosRspMsgIndication, which is bit 7 of that byte.
-                        // `get` rather than an index: this crate denies
-                        // indexing_slicing.
-                        Some(0x3E) => {
-                            ::core::matches!(ai.ta_type, $crate::TaType::Functional)
-                                && request.get(1).is_some_and(|sub| sub & 0x80 != 0)
-                        }
-                        _ => false,
-                    }
+                fn is_concurrent_exception(request: &[u8], ai: $crate::Ai) -> bool {
+                    ::core::matches!(ai.ta_type, $crate::TaType::Functional)
+                        && request == [0x3E, 0x80]
                 }
             }
         };

@@ -34,10 +34,6 @@ against ``UDSSVC_ARCH_0001``.
    * - A_PDU framing, TCP handling, DoIP negative acknowledgements
      - ``uds_on_ip``
      - ISO 14229-5
-   * - Occupying the diagnostic protocol instance
-     - unsettled
-     - Clause 8.7.6 describes a resource, not a dispatch — but the driver that would
-       hold it is now this crate's. See :doc:`open-questions`
    * - Establishing and configuring the link
      - the consuming application
      - Not portable across transports; ``UDSSVC_ARCH_0003``

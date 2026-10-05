@@ -277,11 +277,11 @@ pub trait ServiceSet: crate::sealed::Sealed {
     /// Whether `request`, addressed this way, may proceed while a service is already in
     /// progress.
     ///
-    /// True for a **functionally addressed** `TesterPresent` carrying
-    /// `suppressPosRspMsgIndication`, which clause 8.7.6 lets bypass the occupied
-    /// diagnostic protocol instance. The addressing is a parameter because that
-    /// condition turns on it and the bytes do not carry it; `ai` is the one the driver
-    /// drained from the transport event alongside `request`.
+    /// True for exactly the **functionally addressed** `TesterPresent` `3E 80`, the
+    /// "valid `TesterPresent` message with SPRMIB=true" that ISO 14229-1:2020 8.7.6 lets
+    /// bypass the occupied diagnostic protocol instance. The addressing is a parameter
+    /// because that condition turns on it and the bytes do not carry it; `ai` is the one
+    /// the driver drained from the transport event alongside `request`.
     ///
     /// Clause 8.7.6 admits a second exception — a request in `0x00`–`0x0F`, which aborts
     /// the active service — and no assembled server can meet it. That range is OBD
@@ -289,9 +289,11 @@ pub trait ServiceSet: crate::sealed::Sealed {
     /// assemble no service in it and the case cannot arise. Its absence here is coverage,
     /// not an omission.
     ///
-    /// Anything else arriving mid-service is occupancy and owes `busyRepeatRequest`
-    /// (0x21). *Acting* on a classification is open question 1.
-    fn is_concurrent_exception(&self, request: &[u8], ai: Ai) -> bool;
+    /// An associated function, because the driver asks while a handler holds the
+    /// services: the answer depends on the assembly, never on a handler's state.
+    /// [`crate::Server`] answers anything else arriving mid-service `busyRepeatRequest`
+    /// (0x21).
+    fn is_concurrent_exception(request: &[u8], ai: Ai) -> bool;
 }
 
 #[cfg(test)]
