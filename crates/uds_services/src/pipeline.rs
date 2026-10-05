@@ -13,14 +13,16 @@
 use crate::services::SessionTransition;
 use crate::state::State;
 use crate::{
-    ControlDtcSetting, DataIdentifier, DiagnosticSessionControl, EcuReset, KeyVerdict,
-    ReadDataByIdentifier, SecurityAccess, SecurityLevel, SecurityPolicy, TesterPresent,
+    CommunicationControl, ControlDtcSetting, DataIdentifier, DiagnosticSessionControl,
+    EcuReset, KeyVerdict, ReadDataByIdentifier, SecurityAccess, SecurityLevel,
+    SecurityPolicy, TesterPresent,
 };
 use crate::{Responded, ResponseSink, Unsettled};
 use automotive_wire_codec::Sink;
 use uds_protocol::{
-    ControlDtcSettingRequest, DiagnosticSessionControlRequest, DtcSettingType,
-    EcuResetRequest, ReadDataByIdentifierRequest, ResetType, SecurityAccessRequest,
+    CommunicationControlRequest, CommunicationControlType, ControlDtcSettingRequest,
+    DiagnosticSessionControlRequest, DtcSettingType, EcuResetRequest,
+    ReadDataByIdentifierRequest, ResetType, SecurityAccessRequest,
 };
 use uds_protocol::{
     Decode, DiagnosticSessionType, Encode, NegativeResponse, NegativeResponseCode, Request,
@@ -302,6 +304,45 @@ pub fn security_supported_in<A: SecurityAccess>(
     active: DiagnosticSessionType,
 ) -> bool {
     security_level(value).is_some_and(|level| services.supported_in(level, active))
+}
+
+/// ISO 14229-1:2020 clause 10.5 — whether `CommunicationControl`'s sub-function `value`
+/// (suppress bit stripped) names a `controlType` the application supports. [`begin`]'s
+/// "supported ever" check for that service (``UDSSVC_ARCH_0007`` row 2).
+#[doc(hidden)]
+#[must_use]
+pub fn control_type_supported<A: CommunicationControl>(services: &A, value: u8) -> bool {
+    CommunicationControlType::try_from(value).is_ok_and(|kind| services.supports(kind))
+}
+
+/// ISO 14229-1:2020 clause 10.5 — whether the `controlType` `CommunicationControl`'s
+/// sub-function `value` (suppress bit stripped) names is available in `active`.
+/// [`begin`]'s "supported in active session" check for that service (``UDSSVC_ARCH_0007``
+/// row 4), asked only after [`control_type_supported`] accepted `value`.
+#[doc(hidden)]
+#[must_use]
+pub fn control_type_supported_in<A: CommunicationControl>(
+    services: &A,
+    value: u8,
+    active: DiagnosticSessionType,
+) -> bool {
+    CommunicationControlType::try_from(value)
+        .is_ok_and(|kind| services.supported_in(kind, active))
+}
+
+/// ISO 14229-1:2020 clause 10.5 — the level the `controlType` `CommunicationControl`'s
+/// sub-function `value` (suppress bit stripped) names requires unlocked. [`begin`]'s
+/// sub-function security check for that service, asked only after
+/// [`control_type_supported_in`] accepted `value`.
+#[doc(hidden)]
+#[must_use]
+pub fn control_type_required_level<A: CommunicationControl>(
+    services: &A,
+    value: u8,
+) -> Option<SecurityLevel> {
+    CommunicationControlType::try_from(value)
+        .ok()
+        .and_then(|kind| services.required_level(kind))
 }
 
 /// ISO 14229-1:2020 clause 10.8 — whether `ControlDTCSetting`'s sub-function `value`
@@ -674,6 +715,31 @@ fn failed_attempt<A: SecurityAccess>(
         services.start_delay(level);
     }
     NegativeResponseCode::ExceedNumberOfAttempts
+}
+
+/// ISO 14229-1:2020 clause 10.5 — `CommunicationControl`'s own stage. Whether the
+/// `controlType` is supported (0x12), in the active session (0x7E) and unlocked (0x33)
+/// was settled by [`begin`], and the exact length, with `nodeIdentificationNumber`
+/// present exactly for the enhanced-address variants, by its decode (0x13). The handler's
+/// verdict decides the rest, and the positive response is `68` and the echoed
+/// `controlType` (Table 56).
+#[doc(hidden)]
+pub async fn communication_control<A: CommunicationControl>(
+    services: &mut A,
+    request: &CommunicationControlRequest,
+    out: &mut ResponseSink<'_>,
+) -> Result<Option<DiagnosticSessionType>, NegativeResponseCode> {
+    let control_type = request.control_type();
+    services
+        .control(
+            control_type,
+            request.communication_type(),
+            request.subnet(),
+            request.node_id(),
+        )
+        .await?;
+    let _ = out.write_all(&[0x68, u8::from(control_type)]);
+    Ok(None)
 }
 
 /// ISO 14229-1:2020 clause 10.8 — `ControlDTCSetting`'s own stage. Whether the setting

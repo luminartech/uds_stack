@@ -219,23 +219,80 @@ pub trait CommunicationControl {
     /// ``UDSSVC_ARCH_0033``.
     const MAY_RESPOND_PENDING: bool;
 
-    /// Apply `control_type` to `communication_type` on `node`.
+    /// Whether this server supports `control_type` at all, in whichever session.
+    ///
+    /// ISO 14229-1:2020 8.7.3.1 Figure 6, "`SubFunction` supported ever for the SID?" —
+    /// ``UDSSVC_ARCH_0007`` row 2. A `false` settles the request
+    /// `subFunctionNotSupported` (0x12) before [`Self::supported_in`] is asked.
+    ///
+    /// # Arguments
+    ///
+    /// * `control_type` - the `controlType` requested; see [`CommunicationControlType`],
+    ///   whose reserved and specific variants carry the raw byte.
+    fn supports(&self, control_type: CommunicationControlType) -> bool;
+
+    /// Whether `control_type` is available in the `active` session.
+    ///
+    /// ISO 14229-1:2020 8.7.3.1 Figure 6, "`SubFunction` supported in active session
+    /// for the SID?" — ``UDSSVC_ARCH_0007`` row 4. Asked only for a `control_type` that
+    /// [`Self::supports`] accepted, so a `false` settles the request
+    /// `subFunctionNotSupportedInActiveSession` (0x7E). The default session never reaches
+    /// here: Table 23 refuses the service there with 0x7F.
+    ///
+    /// # Arguments
+    ///
+    /// * `control_type` - the `controlType` requested; see [`CommunicationControlType`].
+    /// * `active` - the session the server is in when the request arrives; see
+    ///   [`DiagnosticSessionType`].
+    fn supported_in(
+        &self,
+        control_type: CommunicationControlType,
+        active: DiagnosticSessionType,
+    ) -> bool;
+
+    /// The security level `control_type` requires unlocked, or `None` where it requires
+    /// none.
+    ///
+    /// ISO 14229-1:2020 8.7.3.1 Figure 6, "`SubFunction` security check OK?" — asked only
+    /// for a `control_type` that [`Self::supported_in`] accepted. Where the level this
+    /// crate holds unlocked is not the one returned, the request settles
+    /// `securityAccessDenied` (0x33) without [`Self::control`] being asked.
+    ///
+    /// # Arguments
+    ///
+    /// * `control_type` - the `controlType` requested; see [`CommunicationControlType`].
+    fn required_level(
+        &self,
+        control_type: CommunicationControlType,
+    ) -> Option<SecurityLevel>;
+
+    /// Apply `control_type` to `communication_type` on `subnet`, or on the node `node_id`
+    /// names.
+    ///
+    /// Clause 10.5.1: the positive response is owed even where the requested state is
+    /// already in effect.
     ///
     /// # Arguments
     ///
     /// * `control_type` - what to do; see [`CommunicationControlType`].
     /// * `communication_type` - what it applies to; see [`CommunicationType`].
-    /// * `node` - which network it applies to; see [`SubnetNumber`], which distinguishes
+    /// * `subnet` - which network it applies to; see [`SubnetNumber`], which distinguishes
     ///   [`SubnetNumber::ReceivedOn`] from [`SubnetNumber::AllConnectedNetworks`].
+    /// * `node_id` - the `nodeIdentificationNumber`, present exactly where `control_type`
+    ///   is one of the enhanced-address variants (clause 10.5.2.3; see
+    ///   [`CommunicationControlType::is_extended_address_variant`]).
     ///
     /// # Errors
     ///
-    /// The [`NegativeResponseCode`] for an unsupported combination.
+    /// The [`NegativeResponseCode`] where the control cannot be applied, clause 10.5.4:
+    /// `conditionsNotCorrect` (0x22), or `requestOutOfRange` (0x31) for an error in
+    /// `communication_type` or `node_id`.
     fn control(
         &mut self,
         control_type: CommunicationControlType,
         communication_type: CommunicationType,
-        node: SubnetNumber,
+        subnet: SubnetNumber,
+        node_id: Option<u16>,
     ) -> impl core::future::Future<Output = Result<(), NegativeResponseCode>>;
 }
 

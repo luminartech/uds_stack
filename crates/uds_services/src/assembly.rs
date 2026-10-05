@@ -281,6 +281,11 @@ macro_rules! __uds_sub_function {
             return $crate::pipeline::dtc_setting_supported($self, $value);
         }
     };
+    ($self:ident, $service:ident, $value:ident, CommunicationControl) => {
+        if ::core::matches!($service, $crate::UdsServiceType::CommunicationControl) {
+            return $crate::pipeline::control_type_supported($self, $value);
+        }
+    };
     ($self:ident, $service:ident, $value:ident, $svc:ident) => {};
 }
 
@@ -321,6 +326,11 @@ macro_rules! __uds_sub_function_in_session {
             return $crate::pipeline::dtc_setting_supported_in($self, $value, $active);
         }
     };
+    ($self:ident, $service:ident, $value:ident, $active:ident, CommunicationControl) => {
+        if ::core::matches!($service, $crate::UdsServiceType::CommunicationControl) {
+            return $crate::pipeline::control_type_supported_in($self, $value, $active);
+        }
+    };
     ($self:ident, $service:ident, $value:ident, $active:ident, $svc:ident) => {};
 }
 
@@ -341,6 +351,11 @@ macro_rules! __uds_sub_function_security {
     ($self:ident, $service:ident, $value:ident, ControlDtcSetting) => {
         if ::core::matches!($service, $crate::UdsServiceType::ControlDtcSetting) {
             return $crate::pipeline::dtc_setting_required_level($self, $value);
+        }
+    };
+    ($self:ident, $service:ident, $value:ident, CommunicationControl) => {
+        if ::core::matches!($service, $crate::UdsServiceType::CommunicationControl) {
+            return $crate::pipeline::control_type_required_level($self, $value);
         }
     };
     ($self:ident, $service:ident, $value:ident, $svc:ident) => {};
@@ -383,6 +398,11 @@ macro_rules! __uds_stage {
     ($self:ident, $state:ident, $out:ident, $req:ident, ControlDtcSetting) => {
         if let $crate::Request::ControlDtcSetting(ref r) = $req {
             return $crate::pipeline::control_dtc_setting($self, r, $out).await;
+        }
+    };
+    ($self:ident, $state:ident, $out:ident, $req:ident, CommunicationControl) => {
+        if let $crate::Request::CommunicationControl(ref r) = $req {
+            return $crate::pipeline::communication_control($self, r, $out).await;
         }
     };
     ($self:ident, $state:ident, $out:ident, $req:ident, $svc:ident) => {};

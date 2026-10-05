@@ -124,14 +124,28 @@ impl TesterPresent for Ecu {
 
 impl CommunicationControl for Ecu {
     const MAY_RESPOND_PENDING: bool = false;
+    fn supports(&self, _c: CommunicationControlType) -> bool {
+        true
+    }
+    fn supported_in(
+        &self,
+        _c: CommunicationControlType,
+        _a: DiagnosticSessionType,
+    ) -> bool {
+        true
+    }
+    fn required_level(&self, _c: CommunicationControlType) -> Option<SecurityLevel> {
+        None
+    }
     // The two sub-function bytes are unrelated types, so they cannot be transposed.
     async fn control(
         &mut self,
         control_type: CommunicationControlType,
         communication_type: CommunicationType,
-        node: SubnetNumber,
+        subnet: SubnetNumber,
+        _node_id: Option<u16>,
     ) -> Result<(), Nrc> {
-        match (control_type, communication_type, node) {
+        match (control_type, communication_type, subnet) {
             (
                 CommunicationControlType::DisableRxAndTx,
                 CommunicationType::NetworkManagement,
@@ -439,6 +453,7 @@ fn the_handler_seam_is_typed_not_byte_shaped() {
         CommunicationControlType::DisableRxAndTx,
         CommunicationType::NetworkManagement,
         SubnetNumber::ReceivedOn,
+        None,
     )));
     assert_eq!(denied, Some(Err(Nrc::ConditionsNotCorrect)));
 

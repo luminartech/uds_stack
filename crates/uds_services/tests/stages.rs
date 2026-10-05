@@ -10,10 +10,11 @@
 use uds_protocol::NegativeResponseCode as Nrc;
 use uds_services::pipeline::settle;
 use uds_services::{
-    Address, Ai, ControlDtcSetting, DiagnosticSessionType as S, DtcSettingType, EcuReset,
-    KeyVerdict, Mtype, ProtocolState, ResetType, Responded, ResponseSink, SecurityAccess,
+    Address, Ai, CommunicationControl, CommunicationControlType, CommunicationType,
+    ControlDtcSetting, DiagnosticSessionType as S, DtcSettingType, EcuReset, KeyVerdict,
+    Mtype, ProtocolState, ResetType, Responded, ResponseSink, SecurityAccess,
     SecurityLevel, SecurityPolicy, ServiceSet, SessionTiming, SessionTransition, Sink,
-    TaType, TesterPresent, uds_server,
+    SubnetNumber, TaType, TesterPresent, uds_server,
 };
 
 #[derive(Debug, Default)]
@@ -34,6 +35,13 @@ struct Ecu {
     preconditions_unmet: bool,
     /// The `securityAccessDataRecord` the last seed was asked with.
     record: Vec<u8>,
+    /// What `CommunicationControl` last applied.
+    communication: Option<(
+        CommunicationControlType,
+        CommunicationType,
+        SubnetNumber,
+        Option<u16>,
+    )>,
     /// The `DTCSettingType` `ControlDtcSetting` last applied.
     dtc_setting: Option<DtcSettingType>,
 }
@@ -183,6 +191,44 @@ fn key_of(level: SecurityLevel) -> [u8; 2] {
     seed_of(level).wrapping_neg().to_be_bytes()
 }
 
+/// Every `controlType` but `disableRxAndEnableTx` (0x02): `enableRxAndTx...` with
+/// enhanced address information (0x05) is offered only in the programming session, and
+/// `disableRxAndTx` (0x03) requires level 0x03. Node `0xFFFF` is one this server does not
+/// know.
+impl CommunicationControl for Ecu {
+    const MAY_RESPOND_PENDING: bool = false;
+    fn supports(&self, kind: CommunicationControlType) -> bool {
+        matches!(u8::from(kind), 0x00 | 0x01 | 0x03 | 0x04 | 0x05)
+    }
+    fn supported_in(&self, kind: CommunicationControlType, active: S) -> bool {
+        u8::from(kind) != 0x05 || matches!(active, S::ProgrammingSession)
+    }
+    fn required_level(&self, kind: CommunicationControlType) -> Option<SecurityLevel> {
+        match kind {
+            CommunicationControlType::DisableRxAndTx => {
+                SecurityLevel::from_request_seed(0x03)
+            }
+            _ => None,
+        }
+    }
+    async fn control(
+        &mut self,
+        control_type: CommunicationControlType,
+        communication_type: CommunicationType,
+        subnet: SubnetNumber,
+        node_id: Option<u16>,
+    ) -> Result<(), Nrc> {
+        if core::mem::take(&mut self.refuse) {
+            return Err(Nrc::ConditionsNotCorrect);
+        }
+        if node_id == Some(0xFFFF) {
+            return Err(Nrc::RequestOutOfRange);
+        }
+        self.communication = Some((control_type, communication_type, subnet, node_id));
+        Ok(())
+    }
+}
+
 /// On, off, and two vehicle-manufacturer settings: `0x40`, offered only in the
 /// programming session, and `0x41`, which requires level 0x03. An option record of up to
 /// three bytes names DTCs, and `FF` names none this server has.
@@ -248,7 +294,7 @@ impl uds_services::UdsTransport for NoTransport {
 
 uds_server! {
     Ecu: DiagnosticSessionControl, TesterPresent, EcuReset, SecurityAccess,
-         ControlDtcSetting;
+         CommunicationControl, ControlDtcSetting;
     transport = NoTransport,
     peers = 1,
     server = EcuServer,
@@ -774,6 +820,159 @@ fn security_access_a_session_timeout_locks() {
     assert_eq!(
         exchange(&mut ecu, &mut state, &[0x27, 0x01]).as_deref(),
         Some(&[0x67, 0x01, 0x36, 0x57][..])
+    );
+}
+
+// --- CommunicationControl (0x28), ISO 14229-1:2020 clause 10.5 -------------------------
+
+/// Clause 10.2 Table 23 — the service is not applicable in the default session: 0x7F.
+#[test]
+fn communication_control_is_0x7f_in_the_default_session() {
+    let mut ecu = Ecu::default();
+    let mut state = State::INITIAL;
+    assert_eq!(
+        exchange(&mut ecu, &mut state, &[0x28, 0x00, 0x01]).as_deref(),
+        Some(&[0x7F, 0x28, 0x7F][..])
+    );
+}
+
+/// ``UDSSVC_ARCH_0007`` row 2, clause 10.5.4 — a `controlType` the server does not
+/// support, and a reserved one, are 0x12 before the length is checked, and the handler
+/// is not asked.
+#[test]
+fn communication_control_an_unsupported_control_type_is_0x12() {
+    let mut ecu = Ecu::default();
+    let mut state = extended(&mut ecu);
+    for request in [
+        &[0x28, 0x02, 0x01][..],
+        &[0x28, 0x06, 0x01][..],
+        &[0x28, 0x7F, 0x01][..],
+        &[0x28, 0x82][..],
+    ] {
+        assert_eq!(
+            exchange(&mut ecu, &mut state, request).as_deref(),
+            Some(&[0x7F, 0x28, 0x12][..]),
+            "{request:02X?}"
+        );
+    }
+    assert_eq!(ecu.communication, None);
+}
+
+/// ``UDSSVC_ARCH_0007`` row 4 — a `controlType` supported, but not in the active session,
+/// is 0x7E; it proceeds from the session that offers it.
+#[test]
+fn communication_control_a_control_type_not_offered_in_the_active_session_is_0x7e() {
+    let mut ecu = Ecu::default();
+    let mut state = extended(&mut ecu);
+    let request = [0x28, 0x05, 0x01, 0x00, 0x0A];
+    assert_eq!(
+        exchange(&mut ecu, &mut state, &request).as_deref(),
+        Some(&[0x7F, 0x28, 0x7E][..])
+    );
+    let mut state = in_session(&mut ecu, S::ProgrammingSession);
+    assert_eq!(
+        exchange(&mut ecu, &mut state, &request).as_deref(),
+        Some(&[0x68, 0x05][..])
+    );
+}
+
+/// Figure 6's sub-function security check — a `controlType` requiring a locked level is
+/// 0x33, and proceeds once that level is unlocked.
+#[test]
+fn communication_control_a_control_type_requiring_a_locked_level_is_0x33() {
+    let mut ecu = Ecu::default();
+    let mut state = extended(&mut ecu);
+    assert_eq!(
+        exchange(&mut ecu, &mut state, &[0x28, 0x03, 0x01]).as_deref(),
+        Some(&[0x7F, 0x28, 0x33][..])
+    );
+    let _ = exchange(&mut ecu, &mut state, &[0x27, 0x03]);
+    let _ = exchange(&mut ecu, &mut state, &[0x27, 0x04, 0xED, 0xCC]);
+    assert_eq!(
+        exchange(&mut ecu, &mut state, &[0x28, 0x03, 0x01]).as_deref(),
+        Some(&[0x68, 0x03][..])
+    );
+}
+
+/// Clause 10.5.2.1, Table 53 — `nodeIdentificationNumber` is present exactly for the
+/// enhanced-address `controlType`s: a missing one, a missing `communicationType`, or a
+/// trailing byte is 0x13.
+#[test]
+fn communication_control_a_wrong_length_is_0x13() {
+    let mut ecu = Ecu::default();
+    let mut state = extended(&mut ecu);
+    for request in [
+        &[0x28, 0x04, 0x01][..],
+        &[0x28, 0x04, 0x01, 0x00][..],
+        &[0x28, 0x00][..],
+        &[0x28, 0x00, 0x01, 0x00][..],
+        &[0x28, 0x04, 0x01, 0x00, 0x0A, 0x00][..],
+    ] {
+        assert_eq!(
+            exchange(&mut ecu, &mut state, request).as_deref(),
+            Some(&[0x7F, 0x28, 0x13][..]),
+            "{request:02X?}"
+        );
+    }
+    assert_eq!(ecu.communication, None);
+}
+
+/// Clause 10.5.4 — the handler's 0x31 for an error in `nodeIdentificationNumber`, and its
+/// 0x22 where it cannot switch the communication, are the response.
+#[test]
+fn communication_control_the_handler_refusals_are_its_codes() {
+    let mut ecu = Ecu::default();
+    let mut state = extended(&mut ecu);
+    assert_eq!(
+        exchange(&mut ecu, &mut state, &[0x28, 0x04, 0x01, 0xFF, 0xFF]).as_deref(),
+        Some(&[0x7F, 0x28, 0x31][..])
+    );
+    ecu.refuse = true;
+    assert_eq!(
+        exchange(&mut ecu, &mut state, &[0x28, 0x01, 0x02]).as_deref(),
+        Some(&[0x7F, 0x28, 0x22][..])
+    );
+    assert_eq!(ecu.communication, None);
+}
+
+/// Clause 10.5.5 and 10.5.6, Tables 59-62 — the positive response echoes the
+/// `controlType`; the handler receives the `communicationType`, the subnet from its high
+/// nibble, and the node only where the request carried one. The suppress bit silences
+/// the response.
+#[test]
+fn communication_control_the_positive_response_echoes_the_control_type() {
+    let mut ecu = Ecu::default();
+    let mut state = extended(&mut ecu);
+    assert_eq!(
+        exchange(&mut ecu, &mut state, &[0x28, 0x01, 0xF2]).as_deref(),
+        Some(&[0x68, 0x01][..])
+    );
+    assert_eq!(
+        ecu.communication,
+        Some((
+            CommunicationControlType::EnableRxAndDisableTx,
+            CommunicationType::NetworkManagement,
+            SubnetNumber::ReceivedOn,
+            None,
+        ))
+    );
+    assert_eq!(
+        exchange(&mut ecu, &mut state, &[0x28, 0x04, 0x01, 0x00, 0x0A]).as_deref(),
+        Some(&[0x68, 0x04][..])
+    );
+    assert_eq!(
+        ecu.communication,
+        Some((
+            CommunicationControlType::EnableRxAndDisableTxWithEnhancedAddressInfo,
+            CommunicationType::Normal,
+            SubnetNumber::AllConnectedNetworks,
+            Some(0x000A),
+        ))
+    );
+    assert_eq!(exchange(&mut ecu, &mut state, &[0x28, 0x80, 0x03]), None);
+    assert_eq!(
+        ecu.communication.map(|(kind, ..)| kind),
+        Some(CommunicationControlType::EnableRxAndTx)
     );
 }
 
