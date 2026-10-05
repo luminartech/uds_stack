@@ -1,13 +1,56 @@
 //! The client's keep-alive modes, ``UDSS_LLR_0149`` to ``UDSS_LLR_0163``.
 
-pub(crate) use role::PhysicalSession;
+use crate::classification::{ClientTx, SessionSelection};
+use crate::time::Timestamp;
+use crate::timer::{Reaches, Timer};
+
+pub(crate) use role::{Event, PhysicalSession, Site};
 
 mod role {
-    /// What a keep-alive mode keeps in each physical channel. Public in a private module,
-    /// so it can bound [`super::KeepAliveMode`] and no caller can name or implement it.
+    use crate::classification::{ClientRx, ClientTx};
+    use crate::time::Timestamp;
+
+    /// What a keep-alive mode keeps and does. Public in a private module, so it can bound
+    /// [`super::KeepAliveMode`] and no caller can name, call or implement it.
     pub trait Role: core::fmt::Debug {
         /// The mode's state in each physical channel's storage (``UDSS_LLR_0151``).
         type Channel: Copy + core::fmt::Debug;
+
+        /// Act on `event`, which happened at `site`.
+        fn on(&mut self, now: Timestamp, site: Site<'_, Self::Channel>, event: Event);
+
+        /// ``UDSS_LLR_0156`` — whether the client-wide keep-alive fell due at `now`.
+        fn expire(&mut self, now: Timestamp) -> bool;
+
+        /// ``UDSS_LLR_0162`` — whether `channel`'s keep-alive fell due at `now`.
+        fn expire_channel(channel: &mut Self::Channel, now: Timestamp) -> bool;
+
+        fn deadline(&self) -> Option<Timestamp>;
+
+        fn channel_deadline(channel: &Self::Channel) -> Option<Timestamp>;
+    }
+
+    /// The kind of channel an event happened on, with a physical channel's own state.
+    #[derive(Debug)]
+    pub enum Site<'a, C> {
+        Physical(&'a mut C),
+        Functional,
+    }
+
+    /// What the client tells its keep-alive mode.
+    #[derive(Debug, Clone, Copy)]
+    pub enum Event {
+        /// A request was handed to the transport (``UDSS_LLR_0160``).
+        Sent,
+        /// A transmission completed (``UDSS_LLR_0155`` to ``UDSS_LLR_0163``).
+        Confirmed { ok: bool, class: ClientTx },
+        /// A message was received (``UDSS_LLR_0159``, ``UDSS_LLR_0161``,
+        /// ``UDSS_LLR_0163``).
+        Received { ok: bool, class: Option<ClientRx> },
+        /// The window of a request marked keep-alive expired (``UDSS_LLR_0161``).
+        KeepAliveWindowExpired,
+        /// The caller released the keep-alive (``UDSS_LLR_0184``).
+        Released,
     }
 
     /// ``UDSS_LLR_0151`` — a physical channel's `tS3_Client`, its reload and its
@@ -63,6 +106,8 @@ pub trait KeepAliveMode: crate::sealed::Sealed + role::Role {}
 #[derive(Debug)]
 pub struct FunctionalKeepAlive {
     pub(crate) reload: u32,
+    s3: Timer<Reaches>,
+    keeping_alive: bool,
 }
 
 impl FunctionalKeepAlive {
@@ -73,7 +118,11 @@ impl FunctionalKeepAlive {
     /// functional address reaches. [`crate::Client::set_keep_alive_reload`] sets it again.
     #[must_use]
     pub const fn new(s3_client: u32) -> Self {
-        Self { reload: s3_client }
+        Self {
+            reload: s3_client,
+            s3: Timer::STOPPED,
+            keeping_alive: false,
+        }
     }
 }
 
@@ -82,6 +131,55 @@ impl KeepAliveMode for FunctionalKeepAlive {}
 
 impl role::Role for FunctionalKeepAlive {
     type Channel = ();
+
+    fn on(&mut self, now: Timestamp, site: Site<'_, ()>, event: Event) {
+        let functional = matches!(site, Site::Functional);
+        match event {
+            Event::Confirmed { ok: true, class } => {
+                let selects = class.session_selection();
+                if selects == Some(SessionSelection::NonDefault) && !self.s3.is_running() {
+                    self.keeping_alive = true; // UDSS_LLR_0155
+                    self.s3.start(now, self.reload);
+                }
+                if functional && self.keeping_alive {
+                    if matches!(class, ClientTx::KeepAlive { .. }) {
+                        self.s3.start(now, self.reload); // UDSS_LLR_0157
+                    } else if selects == Some(SessionSelection::Default) {
+                        self.release(); // UDSS_LLR_0158
+                    }
+                }
+            }
+            Event::Released if functional => self.release(), // UDSS_LLR_0184
+            _ => {}
+        }
+    }
+
+    fn expire(&mut self, now: Timestamp) -> bool {
+        let due = self.keeping_alive && self.s3.expired(now);
+        if due {
+            self.s3.stop(); // UDSS_LLR_0156
+        }
+        due
+    }
+
+    fn expire_channel((): &mut (), _: Timestamp) -> bool {
+        false
+    }
+
+    fn deadline(&self) -> Option<Timestamp> {
+        self.s3.deadline()
+    }
+
+    fn channel_deadline((): &()) -> Option<Timestamp> {
+        None
+    }
+}
+
+impl FunctionalKeepAlive {
+    fn release(&mut self) {
+        self.keeping_alive = false;
+        self.s3.stop();
+    }
 }
 
 /// Physical keep-alive: a `TesterPresent` per physical channel, physically addressed.
@@ -100,4 +198,22 @@ impl KeepAliveMode for PhysicalKeepAlive {}
 
 impl role::Role for PhysicalKeepAlive {
     type Channel = role::PhysicalSession;
+
+    fn on(&mut self, _: Timestamp, _: Site<'_, PhysicalSession>, _: Event) {}
+
+    fn expire(&mut self, _: Timestamp) -> bool {
+        false
+    }
+
+    fn expire_channel(_: &mut PhysicalSession, _: Timestamp) -> bool {
+        false
+    }
+
+    fn deadline(&self) -> Option<Timestamp> {
+        None
+    }
+
+    fn channel_deadline(_: &PhysicalSession) -> Option<Timestamp> {
+        None
+    }
 }

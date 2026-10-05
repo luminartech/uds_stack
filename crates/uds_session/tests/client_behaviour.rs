@@ -7,7 +7,7 @@ use uds_session::{
     ChannelReload, Client, ClientOutput, ClientReaction, ClientRx, ClientTx, Content,
     ExpectedResponses, FunctionalChannelId, FunctionalKeepAlive, FunctionalSlot,
     KeepAliveMode, Mtype, PhysicalChannelId, PhysicalSlot, Rejection, Reloads, SResult,
-    Solicitation, TaType, Timestamp, TransportError,
+    SessionSelection, Solicitation, TaType, Timestamp, TransportError,
 };
 
 const TESTER: u16 = 0x0E80;
@@ -1273,10 +1273,6 @@ mod error_handling {
         repeat: true,
         session: None,
     };
-    const KEEP_ALIVE: ClientTx = ClientTx::KeepAlive {
-        expected: ExpectedResponses::None,
-    };
-
     fn send(c: &mut Tester, now: u32, ai: Ai, class: ClientTx) -> Result<(), Rejection> {
         outputs(c.s_data_req(Timestamp(now), ai, &DATA, class)).1
     }
@@ -1536,5 +1532,209 @@ mod error_handling {
         let id = open_phys(&mut c, Timestamp(0), ECU);
         assert_eq!(outputs(c.withdraw_channel(Timestamp(0), id)).1, Ok(()));
         assert!(rejected(reset(&mut c, 10, id), Cause::NoSuchChannel));
+    }
+}
+
+/// A request selecting `session` and expecting no response.
+const fn select(session: SessionSelection) -> ClientTx {
+    ClientTx::Request {
+        expected: ExpectedResponses::None,
+        repeat: false,
+        session: Some(session),
+    }
+}
+
+const KEEP_ALIVE: ClientTx = ClientTx::KeepAlive {
+    expected: ExpectedResponses::None,
+};
+
+mod functional_keep_alive {
+    use super::*;
+
+    const DUE: ClientOutput<'static> = ClientOutput::KeepAliveDue { channel: None };
+
+    /// A tester kept alive from `now`, by a confirmed session change on a physical channel.
+    fn engaged(now: Timestamp) -> (Tester, PhysicalChannelId, FunctionalChannelId) {
+        let mut c = tester();
+        let p = open_phys(&mut c, now, ECU);
+        let f = open_func(&mut c, now);
+        exchange(&mut c, now, phys(ECU), select(SessionSelection::NonDefault));
+        (c, p, f)
+    }
+
+    fn tick(c: &mut Tester, now: u32) -> [Option<ClientOutput<'static>>; 6] {
+        outputs(c.tick(Timestamp(now))).0
+    }
+
+    /// ``UDSS_LLR_0155``, ``UDSS_LLR_0153``, ``UDSS_LLR_0156`` — a confirmed change to a
+    /// non-default session engages the keep-alive, which falls due after its reload.
+    #[test]
+    fn a_confirmed_session_change_engages_keep_alive() {
+        let (mut c, _, _) = engaged(Timestamp(0));
+        assert_eq!(tick(&mut c, 1_999), NOTHING);
+        assert_eq!(tick(&mut c, 2_000), only(DUE));
+    }
+
+    /// ``UDSS_LLR_0155``, ``UDSS_LLR_0080`` — so does one sent on a functional channel,
+    /// and the deadline is reported.
+    #[test]
+    fn a_functional_session_change_engages_it_too() {
+        let mut c = tester();
+        open_func(&mut c, Timestamp(0));
+        exchange(
+            &mut c,
+            Timestamp(0),
+            func(),
+            select(SessionSelection::NonDefault),
+        );
+        assert_eq!(tick(&mut c, 10), NOTHING);
+        assert_eq!(c.next_deadline(), Some(Timestamp(2_000)));
+        assert_eq!(tick(&mut c, 2_000), only(DUE));
+    }
+
+    /// ``UDSS_LLR_0155`` — a running keep-alive is not restarted by a further change.
+    #[test]
+    fn a_running_keep_alive_is_not_restarted_by_another_session_change() {
+        let (mut c, _, _) = engaged(Timestamp(0));
+        exchange(
+            &mut c,
+            Timestamp(1_000),
+            phys(ECU),
+            select(SessionSelection::NonDefault),
+        );
+        assert_eq!(tick(&mut c, 2_000), only(DUE));
+    }
+
+    /// ``UDSS_LLR_0155`` — a change whose transmission failed moved no server.
+    #[test]
+    fn a_failed_session_change_engages_nothing() {
+        let mut c = tester();
+        open_phys(&mut c, Timestamp(0), ECU);
+        let class = select(SessionSelection::NonDefault);
+        let (_, sent) = outputs(c.s_data_req(Timestamp(0), phys(ECU), &DATA, class));
+        assert_eq!(sent, Ok(()));
+        let (_, confirmed) = outputs(c.t_data_conf(Timestamp(0), phys(ECU), FAILED));
+        assert_eq!(confirmed, Ok(()));
+        assert_eq!(tick(&mut c, 10_000), NOTHING);
+    }
+
+    /// ``UDSS_LLR_0156`` — `tS3_Client` expires on reaching its value, and once.
+    #[test]
+    fn expiry_reaches_rather_than_exceeds() {
+        let (mut c, _, _) = engaged(Timestamp(0));
+        assert_eq!(tick(&mut c, 2_000), only(DUE));
+        assert_eq!(tick(&mut c, 2_001), NOTHING);
+        assert_eq!(c.next_deadline(), None);
+    }
+
+    /// ``UDSS_LLR_0157`` — the confirmed functional keep-alive starts the timer again.
+    #[test]
+    fn the_confirmed_keep_alive_restarts_the_timer() {
+        let (mut c, _, _) = engaged(Timestamp(0));
+        assert_eq!(tick(&mut c, 2_000), only(DUE));
+        exchange(&mut c, Timestamp(2_100), func(), KEEP_ALIVE);
+        assert_eq!(tick(&mut c, 4_099), NOTHING);
+        assert_eq!(tick(&mut c, 4_100), only(DUE));
+    }
+
+    /// ``UDSS_LLR_0157`` — so does one sent before the timer expired.
+    #[test]
+    fn an_early_keep_alive_restarts_it_too() {
+        let (mut c, _, _) = engaged(Timestamp(0));
+        exchange(&mut c, Timestamp(1_000), func(), KEEP_ALIVE);
+        assert_eq!(tick(&mut c, 2_000), NOTHING);
+        assert_eq!(tick(&mut c, 3_000), only(DUE));
+    }
+
+    /// ``UDSS_LLR_0157`` — a keep-alive on a physical channel reaches one server, so it
+    /// restarts nothing.
+    #[test]
+    fn a_physical_keep_alive_restarts_nothing() {
+        let (mut c, _, _) = engaged(Timestamp(0));
+        open_phys(&mut c, Timestamp(0), ECU_2);
+        exchange(&mut c, Timestamp(1_000), phys(ECU_2), KEEP_ALIVE);
+        assert_eq!(tick(&mut c, 2_000), only(DUE));
+    }
+
+    /// ``UDSS_LLR_0157`` — in the default session a keep-alive starts nothing.
+    #[test]
+    fn a_keep_alive_in_the_default_session_starts_nothing() {
+        let mut c = tester();
+        open_func(&mut c, Timestamp(0));
+        exchange(&mut c, Timestamp(0), func(), KEEP_ALIVE);
+        assert_eq!(tick(&mut c, 10_000), NOTHING);
+    }
+
+    /// ``UDSS_LLR_0158`` — a functional return to the default session disengages it.
+    #[test]
+    fn a_functional_return_to_default_disengages() {
+        let (mut c, _, _) = engaged(Timestamp(0));
+        exchange(
+            &mut c,
+            Timestamp(100),
+            func(),
+            select(SessionSelection::Default),
+        );
+        assert_eq!(tick(&mut c, 10_000), NOTHING);
+    }
+
+    /// ``UDSS_LLR_0158`` — a physical one does not: the others stay in session.
+    #[test]
+    fn a_physical_return_to_default_does_not() {
+        let (mut c, _, _) = engaged(Timestamp(0));
+        exchange(
+            &mut c,
+            Timestamp(100),
+            phys(ECU),
+            select(SessionSelection::Default),
+        );
+        assert_eq!(tick(&mut c, 2_000), only(DUE));
+    }
+
+    /// ``UDSS_LLR_0184`` — a release naming a functional channel disengages it silently.
+    #[test]
+    fn release_on_a_functional_channel_disengages() {
+        let (mut c, _, f) = engaged(Timestamp(0));
+        assert_eq!(
+            outputs(c.release_keep_alive(Timestamp(100), f)),
+            (NOTHING, Ok(()))
+        );
+        assert_eq!(tick(&mut c, 10_000), NOTHING);
+    }
+
+    /// ``UDSS_LLR_0184`` — one naming a physical channel changes nothing in this mode.
+    #[test]
+    fn release_on_a_physical_channel_changes_nothing_in_this_mode() {
+        let (mut c, p, _) = engaged(Timestamp(0));
+        assert_eq!(
+            outputs(c.release_keep_alive(Timestamp(100), p)),
+            (NOTHING, Ok(()))
+        );
+        assert_eq!(tick(&mut c, 2_000), only(DUE));
+    }
+
+    /// ``UDSS_LLR_0184`` — a release naming no channel the client has is refused.
+    #[test]
+    fn a_release_naming_no_channel_is_rejected() {
+        let (mut c, _, f) = engaged(Timestamp(0));
+        assert_eq!(outputs(c.withdraw_channel(Timestamp(10), f)).1, Ok(()));
+        let (out, released) = outputs(c.release_keep_alive(Timestamp(20), f));
+        assert_eq!(out, NOTHING);
+        assert!(rejected(released, Cause::NoSuchChannel));
+    }
+
+    /// ``UDSS_LLR_0152``, ``UDSS_LLR_0043``, ``UDSS_LLR_0076`` — a new reload applies
+    /// from the timer's next start.
+    #[test]
+    fn a_new_reload_applies_from_the_next_start() {
+        let (mut c, _, _) = engaged(Timestamp(0));
+        assert_eq!(
+            outputs(c.set_keep_alive_reload(Timestamp(10), 500)),
+            (NOTHING, Ok(()))
+        );
+        assert_eq!(tick(&mut c, 2_000), only(DUE));
+        exchange(&mut c, Timestamp(2_100), func(), KEEP_ALIVE);
+        assert_eq!(tick(&mut c, 2_599), NOTHING);
+        assert_eq!(tick(&mut c, 2_600), only(DUE));
     }
 }

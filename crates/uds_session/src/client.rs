@@ -46,7 +46,7 @@ use crate::addressing::{
 };
 use crate::classification::{ClientRx, ClientTx, ExpectedResponses, Solicitation};
 use crate::keep_alive::{
-    FunctionalKeepAlive, KeepAliveMode, PhysicalKeepAlive, PhysicalSession,
+    Event, FunctionalKeepAlive, KeepAliveMode, PhysicalKeepAlive, PhysicalSession, Site,
 };
 use crate::params::{ChannelParameter, ChannelParams, ChannelReload};
 use crate::reaction::Reaction;
@@ -651,6 +651,8 @@ pub struct Client<
     physical: [PhysicalSlot<K>; PHYS],
     functional: [FunctionalSlot<R>; FUNC],
     keep_alive: K,
+    /// ``UDSS_LLR_0156`` — the client-wide keep-alive fell due at this input's timestamp.
+    keep_alive_due: bool,
     /// ``UDSS_LLR_0121``, ``UDSS_LLR_0185`` — the next handle to issue; `checked_add` on
     /// it failing is the second limb's rejection.
     next_id: u32,
@@ -679,6 +681,7 @@ impl<K: KeepAliveMode, const PHYS: usize, const FUNC: usize, const R: usize>
             physical,
             functional,
             keep_alive,
+            keep_alive_due: false,
             next_id: 0,
         }
     }
@@ -695,6 +698,30 @@ impl<K: KeepAliveMode, const PHYS: usize, const FUNC: usize, const R: usize>
                 slot.end_request(); // UDSS_LLR_0141
             }
         }
+        self.keep_alive_due = self.keep_alive.expire(now);
+    }
+
+    /// Tell the keep-alive mode of `event` on `channel`.
+    fn keep_alive_on(&mut self, now: Timestamp, channel: ChannelId, event: Event) {
+        let Self {
+            physical,
+            keep_alive,
+            ..
+        } = self;
+        let site = match channel {
+            ChannelId::Physical(id) => {
+                let named = physical
+                    .iter_mut()
+                    .filter_map(|s| s.channel.as_mut())
+                    .find(|p| p.core.id == id.0);
+                match named {
+                    Some(p) => Site::Physical(&mut p.keep_alive),
+                    None => return,
+                }
+            }
+            ChannelId::Functional(_) => Site::Functional,
+        };
+        keep_alive.on(now, site, event);
     }
 
     fn channels(&self) -> impl Iterator<Item = &Channel> {
@@ -996,13 +1023,12 @@ impl<K: KeepAliveMode, const PHYS: usize, const FUNC: usize, const R: usize>
         channel: impl Into<ChannelId>,
     ) -> ClientReaction<'_, 'static, K, PHYS, FUNC, R> {
         let channel = channel.into();
-        #[allow(
-            clippy::todo,
-            reason = "API stub; behaviour lands with its requirement"
-        )]
-        {
-            todo!("UDSS_LLR_0184: {now:?} {channel:?}")
+        self.expire(now);
+        if !self.channels().any(|c| c.handle() == channel) {
+            return Reaction::new(self, [None, None], Err(NO_SUCH_CHANNEL)); // UDSS_LLR_0184
         }
+        self.keep_alive_on(now, channel, Event::Released);
+        Reaction::new(self, [None, None], Ok(()))
     }
 
     /// Request transmission of a request.
@@ -1036,6 +1062,9 @@ impl<K: KeepAliveMode, const PHYS: usize, const FUNC: usize, const R: usize>
                 data,
             }
         });
+        if let Some(ClientOutput::Transmit { channel, .. }) = transmit {
+            self.keep_alive_on(now, channel, Event::Sent);
+        }
         Reaction::new(self, [transmit, None], Ok(()))
     }
 
@@ -1122,6 +1151,8 @@ impl<K: KeepAliveMode, const PHYS: usize, const FUNC: usize, const R: usize>
             data,
             result,
         };
+        let ok = result == SResult::Ok;
+        self.keep_alive_on(now, channel, Event::Received { ok, class });
         Reaction::new(self, [capacity, Some(indicate)], Ok(()))
     }
 
@@ -1157,6 +1188,8 @@ impl<K: KeepAliveMode, const PHYS: usize, const FUNC: usize, const R: usize>
             channel.restart(now, ChannelReload::Default);
             channel.request = Some(InProgress { class, received: 0 });
         }
+        let handle = channel.handle();
+        self.keep_alive_on(now, handle, Event::Confirmed { ok, class }); // UDSS_LLR_0182
         Reaction::new(
             self,
             [Some(ClientOutput::Confirm { ai, result }), None],
@@ -1183,8 +1216,15 @@ impl<K: KeepAliveMode, const PHYS: usize, const FUNC: usize, const R: usize>
     /// ``UDSS_LLR_0150``, which belongs to no channel and which ``UDSS_LLR_0156`` expires.
     #[must_use]
     pub fn next_deadline(&self) -> Option<Timestamp> {
+        let physical = self
+            .physical
+            .iter()
+            .filter_map(|s| s.channel.as_ref())
+            .map(|p| K::channel_deadline(&p.keep_alive));
         self.channels()
             .flat_map(Channel::deadlines)
+            .chain(physical)
+            .chain([self.keep_alive.deadline()])
             .flatten()
             .reduce(earlier)
     }
@@ -1300,11 +1340,15 @@ impl<'d, K: KeepAliveMode, const PHYS: usize, const FUNC: usize, const R: usize>
     fn next_expiry(&mut self) -> Option<ClientOutput<'d>> {
         let physical = self.physical.iter_mut().map(|s| &mut s.timed_out);
         let functional = self.functional.iter_mut().map(|s| &mut s.timed_out);
-        physical.chain(functional).find_map(Option::take).map(|t| {
+        let timed_out = physical.chain(functional).find_map(Option::take).map(|t| {
             ClientOutput::ResponseTimeout {
                 ai: t.ai,
                 loaded: t.loaded,
             }
+        });
+        timed_out.or_else(|| {
+            core::mem::take(&mut self.keep_alive_due)
+                .then_some(ClientOutput::KeepAliveDue { channel: None })
         })
     }
 }
