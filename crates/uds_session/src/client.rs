@@ -50,10 +50,10 @@ use crate::keep_alive::{
 };
 use crate::params::{ChannelParameter, ChannelParams, ChannelReload};
 use crate::reaction::Reaction;
-use crate::rejection::{Cause, Rejection};
+use crate::rejection::{Cause, Content, Rejection};
 use crate::result::SResult;
 use crate::time::{Timestamp, earlier};
-use crate::timer::{Exceeds, Timer};
+use crate::timer::{Exceeds, Reaches, Timer};
 
 /// One entry of a functional channel's responder table.
 ///
@@ -204,6 +204,8 @@ struct Channel {
     /// ``UDSS_LLR_0128`` — apart from `response`, which a response-pending
     /// start-of-message stops without ending the request.
     request: Option<InProgress>,
+    /// ``UDSS_LLR_0164`` — `tP3_Client_Phys` or `tP3_Client_Func`.
+    spacing: Timer<Reaches>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -237,6 +239,7 @@ impl Channel {
             loaded: ChannelReload::Default,
             sent: None,
             request: None,
+            spacing: Timer::STOPPED,
         }
     }
 
@@ -251,6 +254,9 @@ impl Channel {
     /// ``UDSS_LLR_0148`` — stop an exceeded `tP_Client`, ending the request
     /// (``UDSS_LLR_0128``), and say what it timed.
     fn expire(&mut self, now: Timestamp) -> Option<TimedOut> {
+        if self.spacing.expired(now) {
+            self.spacing.stop(); // UDSS_LLR_0166, and nothing else
+        }
         if !self.response.expired(now) {
             return None;
         }
@@ -272,8 +278,8 @@ impl Channel {
         }
     }
 
-    fn deadline(&self) -> Option<Timestamp> {
-        self.response.deadline()
+    fn deadlines(&self) -> [Option<Timestamp>; 2] {
+        [self.response.deadline(), self.spacing.deadline()]
     }
 
     /// ``UDSS_LLR_0128`` — the request ends and its window with it.
@@ -765,7 +771,7 @@ impl<K: KeepAliveMode, const PHYS: usize, const FUNC: usize, const R: usize>
     }
 
     /// ``UDSS_LLR_0123`` and ``UDSS_LLR_0061``, every cause stated (``UDSS_LLR_0016``).
-    fn validate_req(&self, ai: Ai) -> Result<(), Rejection> {
+    fn validate_req(&self, now: Timestamp, ai: Ai) -> Result<(), Rejection> {
         let Some(channel) = self.channels().find(|c| c.ai == ai) else {
             return Err(NO_SUCH_CHANNEL); // UDSS_LLR_0123
         };
@@ -775,6 +781,12 @@ impl<K: KeepAliveMode, const PHYS: usize, const FUNC: usize, const R: usize>
         };
         if channel.sent.is_some() {
             add(Cause::AssociationOutstanding); // UDSS_LLR_0061
+        }
+        if let Some(remaining) = channel.spacing.remaining(now) {
+            // UDSS_LLR_0171, with UDSS_LLR_0172's time left
+            let spacing = Content::SpacingTimerRunning { remaining };
+            let first = Rejection::new(Cause::SpacingTimerRunning);
+            causes = Some(causes.unwrap_or(first).with_content(spacing));
         }
         causes.map_or(Ok(()), Err)
     }
@@ -952,7 +964,7 @@ impl<K: KeepAliveMode, const PHYS: usize, const FUNC: usize, const R: usize>
         class: ClientTx,
     ) -> ClientReaction<'_, 'd, K, PHYS, FUNC, R> {
         self.expire(now);
-        if let Err(rejection) = self.validate_req(ai) {
+        if let Err(rejection) = self.validate_req(now, ai) {
             return Reaction::new(self, [None, None], Err(rejection)); // UDSS_LLR_0015
         }
         let transmit = self.channels_mut().find(|c| c.ai == ai).map(|c| {
@@ -1065,15 +1077,21 @@ impl<K: KeepAliveMode, const PHYS: usize, const FUNC: usize, const R: usize>
         result: SResult,
     ) -> ClientReaction<'_, 'static, K, PHYS, FUNC, R> {
         self.expire(now);
-        let Some(channel) = self.channels_mut().find(|c| c.ai == ai && c.sent.is_some())
-        else {
+        let matched = self.channels_mut().find_map(|c| {
+            let sent = c.sent.take_if(|_| c.ai == ai)?; // UDSS_LLR_0059
+            Some((c, sent))
+        });
+        let Some((channel, Sent { class })) = matched else {
             let rejection = Rejection::new(Cause::NoMatchingAssociation);
             return Reaction::new(self, [None, None], Err(rejection)); // UDSS_LLR_0063
         };
-        if let Some(Sent { class }) = channel.sent.take()
-            && result == SResult::Ok
-            && class.expected() != ExpectedResponses::None
-        {
+        let ok = result == SResult::Ok;
+        let expects = class.expected() != ExpectedResponses::None;
+        // UDSS_LLR_0169 on a physical channel, UDSS_LLR_0170 on a functional one
+        if channel.ai.ta_type == TaType::Functional || !ok || !expects {
+            channel.spacing.start(now, channel.params.spacing);
+        }
+        if ok && expects {
             // UDSS_LLR_0135, UDSS_LLR_0128
             channel.restart(now, ChannelReload::Default);
             channel.request = Some(InProgress { class, received: 0 });
@@ -1105,7 +1123,8 @@ impl<K: KeepAliveMode, const PHYS: usize, const FUNC: usize, const R: usize>
     #[must_use]
     pub fn next_deadline(&self) -> Option<Timestamp> {
         self.channels()
-            .filter_map(Channel::deadline)
+            .flat_map(Channel::deadlines)
+            .flatten()
             .reduce(earlier)
     }
 }

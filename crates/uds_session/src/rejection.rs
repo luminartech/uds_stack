@@ -178,7 +178,6 @@ impl Rejection {
     ///
     /// ``UDSS_LLR_0016`` — the cause `content` belongs to is stated as well, since a
     /// report cannot carry content for a cause it does not state.
-    #[allow(dead_code)]
     pub(crate) const fn with_content(self, content: Content) -> Self {
         Self {
             causes: self.causes | (1u16 << content.cause().bit()),

@@ -95,6 +95,13 @@ impl<R: Rule> Timer<R> {
         })
     }
 
+    /// The loaded value less the time elapsed at `now`, or `None` while stopped
+    /// (``UDSS_LLR_0172``).
+    pub(crate) fn remaining(&self, now: Timestamp) -> Option<u32> {
+        self.running
+            .map(|r| r.loaded.saturating_sub(now.interval_since(r.start)))
+    }
+
     /// The first timestamp at which a supplied timestamp would expire this timer
     /// (``UDSS_LLR_0080``), or `None` while stopped. For a `Timer<Exceeds>` that is one
     /// millisecond past the boundary: reporting the boundary itself makes a caller that
@@ -161,6 +168,17 @@ mod tests {
             x.deadline()
                 .is_some_and(|d| x.expired(d) && !x.expired(before(d)))
         );
+    }
+
+    /// ``UDSS_LLR_0172`` — what is left is the loaded value less the time elapsed.
+    #[test]
+    fn remaining_counts_down_to_zero() {
+        let mut t = Timer::<Reaches>::STOPPED;
+        assert_eq!(t.remaining(Timestamp(0)), None);
+        t.start(Timestamp(u32::MAX - 9), 60);
+        assert_eq!(t.remaining(Timestamp(u32::MAX - 9)), Some(60));
+        assert_eq!(t.remaining(Timestamp(49)), Some(1));
+        assert_eq!(t.remaining(Timestamp(100)), Some(0));
     }
 
     /// ``UDSS_LLR_0019`` — a timer started before the wrap expires after it.

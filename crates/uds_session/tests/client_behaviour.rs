@@ -4,7 +4,7 @@ use core::num::NonZeroU16;
 
 use uds_session::{
     Address, Ai, Cause, ChannelAddressing, ChannelId, ChannelParameter, ChannelParams,
-    ChannelReload, Client, ClientOutput, ClientReaction, ClientRx, ClientTx,
+    ChannelReload, Client, ClientOutput, ClientReaction, ClientRx, ClientTx, Content,
     ExpectedResponses, FunctionalChannelId, FunctionalKeepAlive, FunctionalSlot,
     KeepAliveMode, Mtype, PhysicalChannelId, PhysicalSlot, Rejection, Reloads, SResult,
     Solicitation, TaType, Timestamp, TransportError,
@@ -22,7 +22,14 @@ const PHYS_PARAMS: ChannelParams = ChannelParams {
     reloads: RELOADS,
     spacing: 60,
 };
+/// A short `tP3_Client_Func`, so that the spacing every functional confirmation starts
+/// has expired by the next input of the response tests; the spacing tests use
+/// [`SPACED_FUNC`].
 const FUNC_PARAMS: ChannelParams = ChannelParams {
+    reloads: RELOADS,
+    spacing: 5,
+};
+const SPACED_FUNC: ChannelParams = ChannelParams {
     reloads: RELOADS,
     spacing: 70,
 };
@@ -139,12 +146,20 @@ fn open_phys<const P: usize, const F: usize, const R: usize>(
     clippy::panic,
     reason = "a test harness: a test cannot go on without the handle"
 )]
+fn open_func_with<K: KeepAliveMode, const P: usize, const F: usize, const R: usize>(
+    c: &mut Client<K, P, F, R>,
+    now: Timestamp,
+    params: ChannelParams,
+) -> FunctionalChannelId {
+    let (_, id) = outputs(c.open_functional_channel(now, to(FUNCTIONAL), params));
+    id.unwrap_or_else(|r| panic!("open failed: {r}"))
+}
+
 fn open_func<K: KeepAliveMode, const P: usize, const F: usize, const R: usize>(
     c: &mut Client<K, P, F, R>,
     now: Timestamp,
 ) -> FunctionalChannelId {
-    let (_, id) = outputs(c.open_functional_channel(now, to(FUNCTIONAL), FUNC_PARAMS));
-    id.unwrap_or_else(|r| panic!("open failed: {r}"))
+    open_func_with(c, now, FUNC_PARAMS)
 }
 
 /// Send and confirm one request at `now`; any response window opens from `now`.
@@ -1052,7 +1067,6 @@ mod functional_window {
             Some(SOLICITED),
         );
         exchange(&mut c, Timestamp(5_100), func(), UNKNOWN);
-        assert_eq!(c.next_deadline(), Some(Timestamp(5_151)));
         som(&mut c, Timestamp(5_110), id, ECU, SOLICITED);
         assert_eq!(c.next_deadline(), Some(Timestamp(5_161)));
     }
@@ -1082,5 +1096,171 @@ mod functional_window {
         for sa in [ECU, ECU_2, ECU_3, 0x0013] {
             assert_eq!(som(&mut c, Timestamp(10), id, sa, SOLICITED), NOTHING);
         }
+    }
+}
+
+mod spacing {
+    use super::*;
+
+    fn spaced_func(c: &mut Tester) -> FunctionalChannelId {
+        open_func_with(c, Timestamp(0), SPACED_FUNC)
+    }
+
+    fn remaining(outcome: Result<(), Rejection>) -> Option<u32> {
+        outcome
+            .err()?
+            .causes()
+            .find_map(|reported| match reported.content {
+                Some(Content::SpacingTimerRunning { remaining }) => Some(remaining),
+                _ => None,
+            })
+    }
+
+    fn send(c: &mut Tester, now: u32, ai: Ai, class: ClientTx) -> Result<(), Rejection> {
+        outputs(c.s_data_req(Timestamp(now), ai, &DATA, class)).1
+    }
+
+    /// ``UDSS_LLR_0169``, ``UDSS_LLR_0166``, ``UDSS_LLR_0171`` — a confirmed physical
+    /// request expecting no response starts the spacing timer, which refuses a request
+    /// until it reaches its value.
+    #[test]
+    fn a_confirmed_physical_request_needing_no_response_starts_spacing() {
+        let mut c = tester();
+        open_phys(&mut c, Timestamp(0), ECU);
+        exchange(&mut c, Timestamp(0), phys(ECU), NO_RESPONSE);
+        assert_eq!(c.next_deadline(), Some(Timestamp(60)));
+        let early = send(&mut c, 59, phys(ECU), UNKNOWN);
+        assert!(rejected(early, Cause::SpacingTimerRunning));
+        assert_eq!(remaining(early), Some(1));
+        assert_eq!(send(&mut c, 60, phys(ECU), UNKNOWN), Ok(()));
+    }
+
+    /// ``UDSS_LLR_0169`` — a physical request expecting a response starts none.
+    #[test]
+    fn a_physical_request_needing_a_response_starts_no_spacing() {
+        let mut c = tester();
+        let id = open_phys(&mut c, Timestamp(0), ECU);
+        exchange(&mut c, Timestamp(0), phys(ECU), UNKNOWN);
+        ind(&mut c, Timestamp(10), id, ECU, SResult::Ok, Some(SOLICITED));
+        assert_eq!(c.next_deadline(), None);
+        assert_eq!(send(&mut c, 11, phys(ECU), UNKNOWN), Ok(()));
+    }
+
+    /// ``UDSS_LLR_0169`` — a failed physical transmission starts it, whatever the
+    /// request expected.
+    #[test]
+    fn a_failed_physical_transmission_starts_spacing() {
+        let mut c = tester();
+        open_phys(&mut c, Timestamp(0), ECU);
+        assert_eq!(send(&mut c, 0, phys(ECU), UNKNOWN), Ok(()));
+        let (_, confirmed) = outputs(c.t_data_conf(Timestamp(0), phys(ECU), FAILED));
+        assert_eq!(confirmed, Ok(()));
+        assert_eq!(c.next_deadline(), Some(Timestamp(60)));
+    }
+
+    /// ``UDSS_LLR_0170``, ``UDSS_LLR_0172`` — every functional confirmation starts it,
+    /// and a refusal states the time left.
+    #[test]
+    fn any_functional_confirmation_starts_spacing() {
+        let mut c = tester();
+        spaced_func(&mut c);
+        exchange(&mut c, Timestamp(0), func(), UNKNOWN);
+        assert_eq!(c.next_deadline(), Some(Timestamp(51)));
+        assert_ne!(outputs(c.tick(Timestamp(51))).0, NOTHING);
+        assert_eq!(c.next_deadline(), Some(Timestamp(70)));
+        assert_eq!(remaining(send(&mut c, 52, func(), UNKNOWN)), Some(18));
+    }
+
+    /// ``UDSS_LLR_0170`` — a failed functional transmission starts it too.
+    #[test]
+    fn a_failed_functional_transmission_starts_spacing() {
+        let mut c = tester();
+        spaced_func(&mut c);
+        assert_eq!(send(&mut c, 0, func(), UNKNOWN), Ok(()));
+        let (_, confirmed) = outputs(c.t_data_conf(Timestamp(0), func(), FAILED));
+        assert_eq!(confirmed, Ok(()));
+        assert_eq!(c.next_deadline(), Some(Timestamp(70)));
+    }
+
+    /// ``UDSS_LLR_0172`` — the time left is the loaded value less the time elapsed, and
+    /// nothing is sent.
+    #[test]
+    fn the_rejection_states_the_time_remaining() {
+        let mut c = tester();
+        spaced_func(&mut c);
+        exchange(&mut c, Timestamp(0), func(), NO_RESPONSE);
+        let (out, refused) = outputs(c.s_data_req(Timestamp(25), func(), &DATA, UNKNOWN));
+        assert_eq!(out, NOTHING);
+        assert_eq!(remaining(refused), Some(45));
+    }
+
+    /// ``UDSS_LLR_0164``, ``UDSS_LLR_0171`` — the timer is the channel's own.
+    #[test]
+    fn the_spacing_timer_is_per_channel() {
+        let mut c = tester();
+        open_phys(&mut c, Timestamp(0), ECU);
+        open_phys(&mut c, Timestamp(0), ECU_2);
+        exchange(&mut c, Timestamp(0), phys(ECU), NO_RESPONSE);
+        assert_eq!(send(&mut c, 10, phys(ECU_2), UNKNOWN), Ok(()));
+    }
+
+    /// ``UDSS_LLR_0171`` — a keep-alive is a request like any other.
+    #[test]
+    fn a_keep_alive_is_spaced_like_any_request() {
+        let mut c = tester();
+        spaced_func(&mut c);
+        exchange(&mut c, Timestamp(0), func(), NO_RESPONSE);
+        let keep_alive = ClientTx::KeepAlive {
+            expected: ExpectedResponses::None,
+        };
+        assert!(rejected(
+            send(&mut c, 10, func(), keep_alive),
+            Cause::SpacingTimerRunning
+        ));
+    }
+
+    /// ``UDSS_LLR_0169`` — each confirmation starts the timer afresh.
+    #[test]
+    fn each_confirmation_starts_the_spacing_timer_afresh() {
+        let mut c = tester();
+        open_phys(&mut c, Timestamp(0), ECU);
+        exchange(&mut c, Timestamp(0), phys(ECU), NO_RESPONSE);
+        exchange(&mut c, Timestamp(60), phys(ECU), NO_RESPONSE);
+        assert_eq!(c.next_deadline(), Some(Timestamp(120)));
+    }
+
+    /// ``UDSS_LLR_0166``, ``UDSS_LLR_0168`` — the expiry stops the timer and does nothing
+    /// else.
+    #[test]
+    fn spacing_expiry_does_nothing_else() {
+        let mut c = tester();
+        open_phys(&mut c, Timestamp(0), ECU);
+        exchange(&mut c, Timestamp(0), phys(ECU), NO_RESPONSE);
+        assert_eq!(outputs(c.tick(Timestamp(60))).0, NOTHING);
+        assert_eq!(c.next_deadline(), None);
+    }
+
+    /// ``UDSS_LLR_0019`` — a spacing wait begun just before the wrap ends just after it.
+    #[test]
+    fn the_spacing_wait_runs_across_the_wrap() {
+        let mut c = tester();
+        let start = Timestamp(u32::MAX - 9);
+        open_phys(&mut c, start, ECU);
+        exchange(&mut c, start, phys(ECU), NO_RESPONSE);
+        assert_eq!(c.next_deadline(), Some(Timestamp(50)));
+        assert_eq!(remaining(send(&mut c, 49, phys(ECU), UNKNOWN)), Some(1));
+        assert_eq!(send(&mut c, 50, phys(ECU), UNKNOWN), Ok(()));
+    }
+
+    /// ``UDSS_LLR_0080``, ``UDSS_LLR_0019`` — of a deadline before the wrap and one after
+    /// it, the one before is reported, though it is the larger number.
+    #[test]
+    fn the_earlier_of_two_deadlines_is_reported_across_the_wrap() {
+        let mut c = tester();
+        open_phys(&mut c, Timestamp(0), ECU);
+        open_phys(&mut c, Timestamp(0), ECU_2);
+        exchange(&mut c, Timestamp(u32::MAX - 51), phys(ECU_2), UNKNOWN);
+        exchange(&mut c, Timestamp(u32::MAX - 10), phys(ECU), NO_RESPONSE);
+        assert_eq!(c.next_deadline(), Some(Timestamp(u32::MAX)));
     }
 }
