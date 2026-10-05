@@ -222,14 +222,14 @@ macro_rules! __uds_may_pend {
 #[doc(hidden)]
 #[macro_export]
 macro_rules! __uds_session_hook {
-    ($self:ident, $transition:expr, DiagnosticSessionControl) => {
+    ($self:ident, $entered:expr, DiagnosticSessionControl) => {
         <Self as $crate::DiagnosticSessionControl>::on_transition(
             $self,
-            $transition,
-            false,
+            $entered.transition,
+            $entered.security_relocked,
         );
     };
-    ($self:ident, $transition:expr, $svc:ident) => {};
+    ($self:ident, $entered:expr, $svc:ident) => {};
 }
 
 /// The `P2` pair of the session in force, for one listed service: only
@@ -268,6 +268,11 @@ macro_rules! __uds_sub_function {
             return $crate::pipeline::reset_supported($self, $value);
         }
     };
+    ($self:ident, $service:ident, $value:ident, SecurityAccess) => {
+        if ::core::matches!($service, $crate::UdsServiceType::SecurityAccess) {
+            return $crate::pipeline::security_supported($self, $value);
+        }
+    };
     ($self:ident, $service:ident, $value:ident, $svc:ident) => {};
 }
 
@@ -298,6 +303,11 @@ macro_rules! __uds_sub_function_in_session {
             return $crate::pipeline::reset_supported_in($self, $value, $active);
         }
     };
+    ($self:ident, $service:ident, $value:ident, $active:ident, SecurityAccess) => {
+        if ::core::matches!($service, $crate::UdsServiceType::SecurityAccess) {
+            return $crate::pipeline::security_supported_in($self, $value, $active);
+        }
+    };
     ($self:ident, $service:ident, $value:ident, $active:ident, $svc:ident) => {};
 }
 
@@ -310,27 +320,32 @@ macro_rules! __uds_sub_function_in_session {
 #[doc(hidden)]
 #[macro_export]
 macro_rules! __uds_stage {
-    ($self:ident, $out:ident, $req:ident, ReadDataByIdentifier) => {
+    ($self:ident, $state:ident, $out:ident, $req:ident, ReadDataByIdentifier) => {
         if let $crate::Request::ReadDataByIdentifier(ref r) = $req {
             return $crate::pipeline::read_data_by_identifier($self, r, $out).await;
         }
     };
-    ($self:ident, $out:ident, $req:ident, DiagnosticSessionControl) => {
+    ($self:ident, $state:ident, $out:ident, $req:ident, DiagnosticSessionControl) => {
         if let $crate::Request::DiagnosticSessionControl(ref r) = $req {
             return $crate::pipeline::diagnostic_session_control($self, r, $out);
         }
     };
-    ($self:ident, $out:ident, $req:ident, TesterPresent) => {
+    ($self:ident, $state:ident, $out:ident, $req:ident, TesterPresent) => {
         if let $crate::Request::TesterPresent(_) = $req {
             return $crate::pipeline::tester_present($self, $out);
         }
     };
-    ($self:ident, $out:ident, $req:ident, EcuReset) => {
+    ($self:ident, $state:ident, $out:ident, $req:ident, EcuReset) => {
         if let $crate::Request::EcuReset(ref r) = $req {
             return $crate::pipeline::ecu_reset($self, r, $out).await;
         }
     };
-    ($self:ident, $out:ident, $req:ident, $svc:ident) => {};
+    ($self:ident, $state:ident, $out:ident, $req:ident, SecurityAccess) => {
+        if let $crate::Request::SecurityAccess(ref r) = $req {
+            return $crate::pipeline::security_access($self, $state, r, $out).await;
+        }
+    };
+    ($self:ident, $state:ident, $out:ident, $req:ident, $svc:ident) => {};
 }
 
 /// Assemble a server from the services it implements.
@@ -366,23 +381,24 @@ macro_rules! __uds_stage {
 /// service's own sub-function (``UDSSVC_ARCH_0007`` rows 2 and 4). `dispatch` hands both
 /// to `pipeline::begin` as closures that route to the listed service's trait, and the
 /// pipeline decides 0x12 versus 0x7E. Today the pair is [`supports`] and
-/// [`supported_from`] on `DiagnosticSessionControl`, and [`EcuReset::supports`] and
-/// [`EcuReset::supported_in`]; `TesterPresent` has none, because its only sub-function is
-/// available everywhere. Each other sub-function-bearing service (`CommunicationControl`,
-/// `ControlDtcSetting`, `SecurityAccess`, …) gains the same pair, in its own sub-function
-/// type, when its stage lands.
+/// [`supported_from`] on `DiagnosticSessionControl`, and `supports` and `supported_in` on
+/// [`EcuReset`] and [`SecurityAccess`]; `TesterPresent` has none, because its only
+/// sub-function is available everywhere. Each other sub-function-bearing service
+/// (`CommunicationControl`, `ControlDtcSetting`, …) gains the same pair, in its own
+/// sub-function type, when its stage lands.
 ///
 /// [`supports`]: crate::DiagnosticSessionControl::supports
 /// [`supported_from`]: crate::DiagnosticSessionControl::supported_from
-/// [`EcuReset::supports`]: crate::EcuReset::supports
-/// [`EcuReset::supported_in`]: crate::EcuReset::supported_in
+/// [`EcuReset`]: crate::EcuReset
+/// [`SecurityAccess`]: crate::SecurityAccess
 ///
 /// **Staging limit:** only `ReadDataByIdentifier`, `DiagnosticSessionControl`,
-/// `TesterPresent` and `EcuReset` have stages. Any other listed service is accepted by
-/// the list (so it is not refused by the support check) but has no stage to run. One
-/// that carries a `SubFunction` passes the support check's row 2 and reaches the decode,
-/// then settles `serviceNotSupported` (0x11), or `incorrectMessageLengthOrInvalidFormat`
-/// (0x13) if the request does not decode — visible on the wire rather than a panic.
+/// `TesterPresent`, `EcuReset` and `SecurityAccess` have stages. Any other listed service
+/// is accepted by the list (so it is not refused by the support check) but has no stage
+/// to run. One that carries a `SubFunction` passes the support check's row 2 and reaches
+/// the decode, then settles `serviceNotSupported` (0x11), or
+/// `incorrectMessageLengthOrInvalidFormat` (0x13) if the request does not decode —
+/// visible on the wire rather than a panic.
 ///
 /// The syntax is `Ecu: ..; transport = T, ..` rather than `Ecu over T: ..` because
 /// `$ty:ty` cannot be followed by a bare identifier — the legal followers are
@@ -628,7 +644,7 @@ macro_rules! uds_server {
                             .unwrap_or(false),
                     };
                     let outcome = async {
-                        $( $crate::__uds_stage!(self, out, decoded, $svc); )+
+                        $( $crate::__uds_stage!(self, state, out, decoded, $svc); )+
                         ::core::result::Result::Err(
                             $crate::NegativeResponseCode::ServiceNotSupported,
                         )
@@ -638,11 +654,11 @@ macro_rules! uds_server {
                 }
 
                 fn session_timed_out(&mut self, state: &mut Self::State) {
-                    let transition = $crate::pipeline::transition(
+                    let entered = $crate::pipeline::transition(
                         state,
                         $crate::DiagnosticSessionType::DefaultSession,
                     );
-                    $( $crate::__uds_session_hook!(self, transition, $svc); )+
+                    $( $crate::__uds_session_hook!(self, entered, $svc); )+
                 }
 
                 fn session_confirmed(
@@ -650,8 +666,8 @@ macro_rules! uds_server {
                     state: &mut Self::State,
                     selected: $crate::DiagnosticSessionType,
                 ) {
-                    let transition = $crate::pipeline::transition(state, selected);
-                    $( $crate::__uds_session_hook!(self, transition, $svc); )+
+                    let entered = $crate::pipeline::transition(state, selected);
+                    $( $crate::__uds_session_hook!(self, entered, $svc); )+
                 }
 
                 #[allow(

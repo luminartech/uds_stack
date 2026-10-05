@@ -26,6 +26,9 @@ const FUNCTIONAL: Address = Address(0xE400);
 /// A second tester, which never controls the session: its requests leave `tS3_Server`
 /// running (``UDSS_LLR_0097``).
 const OTHER: Address = Address(0x0E81);
+/// The answer to `27 01` wherever Table 23 allows it: the fixture's seed, so a session
+/// probe reads as positive in a non-default session and 0x7F in the default one.
+const SEED: [u8; 6] = [0x67, 0x01, 0x01, 0x02, 0x03, 0x04];
 
 fn from(sa: Address, ta_type: TaType) -> Ai {
     Ai {
@@ -338,6 +341,12 @@ impl SecurityAccess for Ecu {
     const MAY_RESPOND_PENDING: bool = false;
     const MAX_SEED_LEN: usize = 4;
     const MAX_KEY_LEN: usize = 4;
+    fn supports(&self, _l: SecurityLevel) -> bool {
+        true
+    }
+    fn supported_in(&self, _l: SecurityLevel, _active: S) -> bool {
+        true
+    }
     fn policy(&self, _l: SecurityLevel) -> SecurityPolicy {
         SecurityPolicy::Counted {
             attempt_limit: 3,
@@ -747,7 +756,7 @@ fn a_late_confirmation_does_not_restart_the_session_timer_during_the_next_reques
     assert_eq!(t.sent(2), &[0x7F, 0x22, 0x78]);
     assert_eq!(t.sent(3), &[0x7F, 0x22, 0x78]);
     assert_eq!(t.sent(4), &[0x62, 0xF4, 0x0D, 0x40]);
-    assert_eq!(t.sent(5), &[0x7F, 0x27, 0x11]); // allowed in extended; listed, no stage
+    assert_eq!(t.sent(5), &SEED); // allowed in extended: the seed
     assert_eq!(t.deadlines, 2); // the read's tP2_Server and tP2*_Server only
     assert_eq!(
         s.services().transitions,
@@ -877,7 +886,7 @@ fn a_session_change_takes_effect_on_confirmation_and_times_out() {
     run(&mut s);
     let t = s.transport();
     assert_eq!(t.sent(0), &[0x50, 0x03, 0x00, 0x32, 0x01, 0xF4]);
-    assert_eq!(t.sent(1), &[0x7F, 0x27, 0x11]); // allowed in extended; listed, no stage
+    assert_eq!(t.sent(1), &SEED); // allowed in extended: the seed
     assert_eq!(t.sent(2), &[0x7F, 0x27, 0x7F]); // Table 23 refuses it in default
     assert_eq!(t.deadlines, 1); // tS3_Server's, reached at 5100
     assert_eq!(
@@ -904,7 +913,7 @@ fn a_suppressed_session_change_enters_the_session() {
     );
     run(&mut s);
     assert_eq!(s.transport().sent_count, 1);
-    assert_eq!(s.transport().sent(0), &[0x7F, 0x27, 0x11]); // in extended
+    assert_eq!(s.transport().sent(0), &SEED); // in extended
     assert_eq!(
         s.services().transitions.first().copied().flatten(),
         Some(SessionTransition::DefaultToNonDefault)
@@ -1084,7 +1093,7 @@ fn a_session_confirmation_during_a_handler_is_applied_once() {
     assert_eq!(t.sent_ai(1), Some(to(OTHER)));
     // Sent after the 50 03's confirmation was consumed, mid-handler.
     assert_eq!(t.sent_after.get(1), Some(&3));
-    assert_eq!(t.sent(2), &[0x7F, 0x27, 0x11]); // allowed in extended; listed, no stage
+    assert_eq!(t.sent(2), &SEED); // allowed in extended: the seed
     assert_eq!(
         s.services().transitions,
         [

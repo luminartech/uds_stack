@@ -161,6 +161,12 @@ impl SecurityAccess for Ecu {
     const MAY_RESPOND_PENDING: bool = false;
     const MAX_SEED_LEN: usize = 4;
     const MAX_KEY_LEN: usize = 4;
+    fn supports(&self, _l: SecurityLevel) -> bool {
+        true
+    }
+    fn supported_in(&self, _l: SecurityLevel, _active: DiagnosticSessionType) -> bool {
+        true
+    }
     fn policy(&self, _l: SecurityLevel) -> SecurityPolicy {
         SecurityPolicy::Counted {
             attempt_limit: 3,
@@ -315,17 +321,35 @@ fn the_buffers_are_derived_from_the_declared_maxima() {
 #[test]
 fn the_assembled_list_answers_service_supported() {
     let ecu = Ecu::new();
-    assert!(ecu.supports(UdsServiceType::ReadDataByIdentifier));
-    assert!(ecu.supports(UdsServiceType::SecurityAccess));
-    assert!(ecu.supports(UdsServiceType::TransferData));
-    assert!(ecu.supports(UdsServiceType::ReadDtcInfo));
-    assert!(ecu.supports(UdsServiceType::ClearDiagnosticInfo));
-    assert!(ecu.supports(UdsServiceType::CommunicationControl));
-    assert!(ecu.supports(UdsServiceType::TesterPresent));
-    assert!(!ecu.supports(UdsServiceType::WriteDataByIdentifier));
-    assert!(!ecu.supports(UdsServiceType::ControlDtcSetting));
+    assert!(ServiceSet::supports(
+        &ecu,
+        UdsServiceType::ReadDataByIdentifier
+    ));
+    assert!(ServiceSet::supports(&ecu, UdsServiceType::SecurityAccess));
+    assert!(ServiceSet::supports(&ecu, UdsServiceType::TransferData));
+    assert!(ServiceSet::supports(&ecu, UdsServiceType::ReadDtcInfo));
+    assert!(ServiceSet::supports(
+        &ecu,
+        UdsServiceType::ClearDiagnosticInfo
+    ));
+    assert!(ServiceSet::supports(
+        &ecu,
+        UdsServiceType::CommunicationControl
+    ));
+    assert!(ServiceSet::supports(&ecu, UdsServiceType::TesterPresent));
+    assert!(!ServiceSet::supports(
+        &ecu,
+        UdsServiceType::WriteDataByIdentifier
+    ));
+    assert!(!ServiceSet::supports(
+        &ecu,
+        UdsServiceType::ControlDtcSetting
+    ));
     // A byte naming no service at all resolves to one variant, which no list contains.
-    assert!(!ecu.supports(UdsServiceType::from_request_sid(0x01)));
+    assert!(!ServiceSet::supports(
+        &ecu,
+        UdsServiceType::from_request_sid(0x01)
+    ));
 }
 
 /// ``UDSSVC_ARCH_0033`` — Annex A permission is per service and declared.

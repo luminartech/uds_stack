@@ -14,7 +14,7 @@
 //! server that wants it cannot implement it.
 
 use crate::ResponseSink;
-use uds_protocol::NegativeResponseCode;
+use uds_protocol::{DiagnosticSessionType, NegativeResponseCode};
 
 /// How a level's attempts and delay are governed.
 ///
@@ -118,6 +118,33 @@ pub trait SecurityAccess {
     /// The longest key this server accepts.
     const MAX_KEY_LEN: usize;
 
+    /// Whether this server supports `level` at all, in whichever session.
+    ///
+    /// ISO 14229-1:2020 8.7.3.1 Figure 6, "`SubFunction` supported ever for the SID?" —
+    /// ``UDSSVC_ARCH_0007`` row 2, asked for the `requestSeed` and the `sendKey` of the
+    /// level alike. A `false` settles the request `subFunctionNotSupported` (0x12) before
+    /// [`Self::supported_in`] is asked.
+    ///
+    /// # Arguments
+    ///
+    /// * `level` - the level the sub-function names; see [`SecurityLevel`].
+    fn supports(&self, level: SecurityLevel) -> bool;
+
+    /// Whether `level` is available in the `active` session.
+    ///
+    /// ISO 14229-1:2020 8.7.3.1 Figure 6, "`SubFunction` supported in active session
+    /// for the SID?" — ``UDSSVC_ARCH_0007`` row 4. Asked only for a `level` that
+    /// [`Self::supports`] accepted, so a `false` settles the request
+    /// `subFunctionNotSupportedInActiveSession` (0x7E). The default session never reaches
+    /// here: Table 23 refuses the service there with 0x7F.
+    ///
+    /// # Arguments
+    ///
+    /// * `level` - the level the sub-function names; see [`SecurityLevel`].
+    /// * `active` - the session the server is in when the request arrives; see
+    ///   [`DiagnosticSessionType`].
+    fn supported_in(&self, level: SecurityLevel, active: DiagnosticSessionType) -> bool;
+
     /// How `level`'s attempts and delay are governed.
     fn policy(&self, level: SecurityLevel) -> SecurityPolicy;
 
@@ -144,11 +171,13 @@ pub trait SecurityAccess {
     ///
     /// Never called for an already-unlocked level: Figure I.1 transition 7 fixes that
     /// answer as an all-zero seed, and this crate supplies it, because it knows what is
-    /// unlocked and the application does not.
+    /// unlocked and the application does not. So the seed written here must not be all
+    /// zero: clause 10.4.1 forbids that for a locked level.
     ///
     /// # Errors
     ///
-    /// The [`NegativeResponseCode`] where a seed cannot be produced.
+    /// The [`NegativeResponseCode`] where a seed cannot be produced, such as
+    /// `conditionsNotCorrect` (0x22) where Annex I's optional pre-conditions are not met.
     ///
     /// A refused write to `out` needs no handling: the sink records the refusal and the
     /// pipeline answers `responseTooLong` (0x14) in place of the response, so the write's

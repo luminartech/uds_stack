@@ -13,7 +13,8 @@
 use crate::services::SessionTransition;
 use crate::state::State;
 use crate::{
-    DataIdentifier, DiagnosticSessionControl, EcuReset, ReadDataByIdentifier, TesterPresent,
+    DataIdentifier, DiagnosticSessionControl, EcuReset, KeyVerdict, ReadDataByIdentifier,
+    SecurityAccess, SecurityLevel, SecurityPolicy, TesterPresent,
 };
 use crate::{Responded, ResponseSink, Unsettled};
 use automotive_wire_codec::Sink;
@@ -23,19 +24,32 @@ use uds_protocol::{
 };
 use uds_protocol::{
     DiagnosticSessionControlRequest, EcuResetRequest, ReadDataByIdentifierRequest,
-    ResetType,
+    ResetType, SecurityAccessRequest,
 };
 use uds_session::{Ai, TaType};
 
-/// Enter `to`, and say which of Figure 7's transitions that was (``UDSSVC_ARCH_0038``).
-/// The one place the session field is written; the macro's hooks call this and nothing
-/// else, so `State`'s accessors stay crate-private and no clause 10.2 logic is emitted
-/// into the application's crate.
+/// What entering a session did, for `DiagnosticSessionControl::on_transition`.
 #[doc(hidden)]
-pub fn transition(state: &mut State, to: DiagnosticSessionType) -> SessionTransition {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Entered {
+    /// Which of Figure 7's transitions it was (``UDSSVC_ARCH_0038``).
+    pub transition: SessionTransition,
+    /// Whether it locked a security level that had been unlocked.
+    pub security_relocked: bool,
+}
+
+/// Enter `to`, locking every security level (ISO 14229-1:2020 Annex I transition 6), and
+/// say what that did. The one place the session field is written; the macro's hooks call
+/// this and nothing else, so `State`'s accessors stay crate-private and no clause 10.2
+/// logic is emitted into the application's crate.
+#[doc(hidden)]
+pub fn transition(state: &mut State, to: DiagnosticSessionType) -> Entered {
     let from = state.session();
     state.set_session(to);
-    SessionTransition::classify(from, to)
+    Entered {
+        transition: SessionTransition::classify(from, to),
+        security_relocked: state.lock(),
+    }
 }
 
 /// The `P2` pair of the session `state` is in, as `services` states it. Read through here
@@ -99,8 +113,9 @@ pub enum Stage<'a> {
 /// request for a service this server lacks is 0x11, not 0x13; and its inner `SWITCH` on
 /// the sub-function falls to `DEFAULT: responseCode = SFNS` before the length test of a
 /// supported sub-function's arm. Figure 5's authentication check (0x34), between 2 and 3,
-/// is unconditionally true here (architecture open question 4); the security
-/// precondition (0x33) joins with security state.
+/// is unconditionally true here (architecture open question 4). Figure 5's and Figure
+/// 6's optional security checks (0x33) are not evaluated: the unlocked level is held in
+/// [`State`], but no trait yet says which services or sub-functions require one.
 #[doc(hidden)]
 #[must_use]
 pub fn begin<'a, F, G, H>(
@@ -226,6 +241,40 @@ pub fn reset_supported_in<A: EcuReset>(
     active: DiagnosticSessionType,
 ) -> bool {
     ResetType::try_from(value).is_ok_and(|kind| services.supported_in(kind, active))
+}
+
+/// The level a `SecurityAccess` sub-function `value` (suppress bit stripped) names: its
+/// own for a `requestSeed`, its partner's for a `sendKey` (clause 10.4.2).
+const fn security_level(value: u8) -> Option<SecurityLevel> {
+    SecurityLevel::from_request_seed(if value.is_multiple_of(2) {
+        value.wrapping_sub(1)
+    } else {
+        value
+    })
+}
+
+/// ISO 14229-1:2020 clause 10.4 — whether `SecurityAccess`'s sub-function `value`
+/// (suppress bit stripped) is the `requestSeed` or `sendKey` of a level the application
+/// supports. [`begin`]'s "supported ever" check for that service (``UDSSVC_ARCH_0007``
+/// row 2).
+#[doc(hidden)]
+#[must_use]
+pub fn security_supported<A: SecurityAccess>(services: &A, value: u8) -> bool {
+    security_level(value).is_some_and(|level| services.supports(level))
+}
+
+/// ISO 14229-1:2020 clause 10.4 — whether the level `SecurityAccess`'s sub-function
+/// `value` (suppress bit stripped) names is available in `active`. [`begin`]'s "supported
+/// in active session" check for that service (``UDSSVC_ARCH_0007`` row 4), asked only
+/// after [`security_supported`] accepted `value`.
+#[doc(hidden)]
+#[must_use]
+pub fn security_supported_in<A: SecurityAccess>(
+    services: &A,
+    value: u8,
+    active: DiagnosticSessionType,
+) -> bool {
+    security_level(value).is_some_and(|level| services.supported_in(level, active))
 }
 
 /// ISO 14229-1:2020 clause 10.7 — whether `TesterPresent`'s sub-function `value`
@@ -422,6 +471,138 @@ pub async fn ecu_reset<A: EcuReset>(
     let _ = out.write_all(&[0x51, u8::from(kind)]);
     services.reset(kind, out).await?;
     Ok(None)
+}
+
+/// ISO 14229-1:2020 clause 10.4 and Annex I — `SecurityAccess`'s own stage
+/// (``UDSSVC_ARCH_0037``). Whether the level is supported (0x12) and in the active session
+/// (0x7E) was settled by [`begin`]; this runs Figure I.1 against `state`.
+///
+/// A `requestSeed`:
+///
+/// * carrying a `securityAccessDataRecord` is `incorrectMessageLengthOrInvalidFormat`
+///   (0x13): the trait takes none, so this server's request is two bytes;
+/// * for the unlocked level is answered with a zero seed of
+///   [`SecurityAccess::MAX_SEED_LEN`] bytes, discarding any seed awaiting a key
+///   (transitions 7 and 10);
+/// * while the level's delay runs is `requiredTimeDelayNotExpired` (0x37) (transition 4);
+/// * otherwise is answered with the application's seed, and its level becomes the one
+///   whose key is awaited (transitions 2, 5 and 8). A delay supported by the policy and
+///   no longer running has expired, so an attempt count at the limit is reset first.
+///
+/// A `sendKey` discards the awaited seed whatever its outcome (transitions 9 and 10), and
+/// is:
+///
+/// * `requestSequenceError` (0x24) where no seed awaits a key, or it is another level's;
+/// * `incorrectMessageLengthOrInvalidFormat` (0x13) for an empty key or one longer than
+///   [`SecurityAccess::MAX_KEY_LEN`];
+/// * on a valid key, positive: the level is unlocked, any other locked, and its attempt
+///   count reset (transitions 3 and 10);
+/// * on an invalid key, `invalidKey` (0x35), or `exceedNumberOfAttempts` (0x36) once
+///   `(Att_Cnt + 1) >= Att_Cnt_Limit`, which clamps the count at the limit and starts the
+///   delay where the policy keeps one (transitions 9 and 10).
+#[doc(hidden)]
+pub async fn security_access<A: SecurityAccess>(
+    services: &mut A,
+    state: &mut State,
+    request: &SecurityAccessRequest<'_>,
+    out: &mut ResponseSink<'_>,
+) -> Result<Option<DiagnosticSessionType>, NegativeResponseCode> {
+    let value = u8::from(request.access_type);
+    let Some(level) = security_level(value) else {
+        return Err(NegativeResponseCode::SubFunctionNotSupported);
+    };
+    if value == level.request_seed() {
+        request_seed(services, state, level, request.request_data, out).await?;
+    } else {
+        send_key(services, state, level, request.request_data, out).await?;
+    }
+    Ok(None)
+}
+
+async fn request_seed<A: SecurityAccess>(
+    services: &mut A,
+    state: &mut State,
+    level: SecurityLevel,
+    record: &[u8],
+    out: &mut ResponseSink<'_>,
+) -> Result<(), NegativeResponseCode> {
+    if !record.is_empty() {
+        return Err(NegativeResponseCode::IncorrectMessageLengthOrInvalidFormat);
+    }
+    let _ = out.write_all(&[0x67, level.request_seed()]);
+    if state.unlocked() == Some(level) {
+        state.take_seed();
+        for _ in 0..A::MAX_SEED_LEN {
+            let _ = out.write_all(&[0x00]);
+        }
+        return Ok(());
+    }
+    if services.delay_running(level) {
+        return Err(NegativeResponseCode::RequiredTimeDelayNotExpired);
+    }
+    if let SecurityPolicy::Counted {
+        attempt_limit,
+        delay_ms: Some(_),
+        ..
+    } = services.policy(level)
+        && services.load_attempts(level) >= attempt_limit
+    {
+        services.store_attempts(level, 0);
+    }
+    services.seed(level, out).await?;
+    state.seed_sent(level);
+    Ok(())
+}
+
+async fn send_key<A: SecurityAccess>(
+    services: &mut A,
+    state: &mut State,
+    level: SecurityLevel,
+    key: &[u8],
+    out: &mut ResponseSink<'_>,
+) -> Result<(), NegativeResponseCode> {
+    if state.take_seed() != Some(level) {
+        return Err(NegativeResponseCode::RequestSequenceError);
+    }
+    if key.is_empty() || key.len() > A::MAX_KEY_LEN {
+        return Err(NegativeResponseCode::IncorrectMessageLengthOrInvalidFormat);
+    }
+    let counted = matches!(services.policy(level), SecurityPolicy::Counted { .. });
+    match services.verify_key(level, key).await? {
+        KeyVerdict::Valid => {
+            if counted {
+                services.store_attempts(level, 0);
+            }
+            state.unlock(level);
+            let _ = out.write_all(&[0x67, level.send_key()]);
+            Ok(())
+        }
+        KeyVerdict::Invalid => Err(failed_attempt(services, level)),
+    }
+}
+
+fn failed_attempt<A: SecurityAccess>(
+    services: &mut A,
+    level: SecurityLevel,
+) -> NegativeResponseCode {
+    let SecurityPolicy::Counted {
+        attempt_limit,
+        delay_ms,
+        ..
+    } = services.policy(level)
+    else {
+        return NegativeResponseCode::InvalidKey;
+    };
+    let count = services.load_attempts(level);
+    if count.saturating_add(1) < attempt_limit {
+        services.store_attempts(level, count.saturating_add(1));
+        return NegativeResponseCode::InvalidKey;
+    }
+    services.store_attempts(level, attempt_limit);
+    if delay_ms.is_some() {
+        services.start_delay(level);
+    }
+    NegativeResponseCode::ExceedNumberOfAttempts
 }
 
 /// ISO 14229-1:2020 clause 10.7 — `TesterPresent`'s own stage (``UDSSVC_ARCH_0004``).
