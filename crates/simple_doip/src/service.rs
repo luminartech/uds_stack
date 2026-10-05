@@ -6,6 +6,11 @@
 //! addressing model of a target is a [`TaType`], derived from the address by
 //! [`LogicalAddress::default_ta_type`].
 //!
+//! [`DiagnosticEntity`] is a whole `DoIP` entity — every connection it has accepted —
+//! as the layer above drives it: events tagged with the [`ConnectionId`] they arrived
+//! on, requests routed by target address, and the close the diagnostic protocol
+//! prescribes. [`EntityConfig`] is what an entity is told about its testers.
+//!
 //! Nothing here performs I/O or names a socket, so implementing these traits over an
 //! application's own stack needs no dependency beyond this crate.
 
@@ -198,6 +203,292 @@ pub trait DiagnosticConnection {
     ) -> impl Future<Output = Result<ConnectionEvent<'b>, Self::Error>>;
 }
 
+/// One connection in a [`DiagnosticEntity`]'s connection table.
+///
+/// Names one connection from the event that first reports it until the
+/// [`EntityEvent::Closed`] reporting its end, or until [`DiagnosticEntity::close`] on it
+/// returns. After that the same value may name a connection accepted later.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct ConnectionId(u8);
+
+impl ConnectionId {
+    /// The connection in slot `index` of an entity's connection table.
+    ///
+    /// # Arguments
+    ///
+    /// * `index` - the slot, below the entity's maximum number of concurrent
+    ///   connections.
+    #[must_use]
+    pub const fn new(index: u8) -> Self {
+        Self(index)
+    }
+
+    /// The connection's slot in the entity's connection table, which is below the
+    /// entity's maximum number of concurrent connections.
+    #[must_use]
+    pub const fn index(self) -> usize {
+        self.0 as usize
+    }
+}
+
+/// What a [`DiagnosticEntity`] reports, or that the caller's deadline passed first.
+///
+/// [`ConnectionEvent`]'s variants, with the [`ConnectionId`] each arrived on wherever one
+/// did. **The lifetime is the caller's buffer, never the entity**, exactly as for
+/// [`ConnectionEvent`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum EntityEvent<'b> {
+    /// `DoIP_Data.indication` on `connection`; see [`ConnectionEvent::Indication`].
+    Indication {
+        /// The connection the message arrived on.
+        connection: ConnectionId,
+        /// The sender, the source address routing activation registered on
+        /// `connection`.
+        sa: LogicalAddress,
+        /// The target the sender addressed.
+        ta: LogicalAddress,
+        /// The target's addressing model:
+        /// [`ta.default_ta_type()`](LogicalAddress::default_ta_type).
+        ta_type: TaType,
+        /// The PDU, in the caller's buffer.
+        pdu: &'b [u8],
+    },
+    /// A diagnostic message longer than the caller's buffer; see
+    /// [`ConnectionEvent::IndicationTruncated`].
+    IndicationTruncated {
+        /// The connection the message arrived on.
+        connection: ConnectionId,
+        /// The sender, the source address routing activation registered on
+        /// `connection`.
+        sa: LogicalAddress,
+        /// The target the sender addressed.
+        ta: LogicalAddress,
+        /// The target's addressing model:
+        /// [`ta.default_ta_type()`](LogicalAddress::default_ta_type).
+        ta_type: TaType,
+        /// The leading bytes of the PDU that fit in the caller's buffer.
+        pdu: &'b [u8],
+        /// The whole PDU's length, from the message's header.
+        length: usize,
+    },
+    /// `DoIP_Data.confirm` for a [`DiagnosticEntity::request`]; see
+    /// [`ConnectionEvent::Confirm`].
+    ///
+    /// Carries no [`ConnectionId`]: a request whose target no connection registered was
+    /// carried by none, and is confirmed all the same.
+    Confirm {
+        /// The source address of the confirmed request: the entity's own.
+        sa: LogicalAddress,
+        /// The target address of the confirmed request.
+        ta: LogicalAddress,
+        /// The target addressing model of the confirmed request.
+        ta_type: TaType,
+        /// The outcome; [`DoIpResult::Ok`] where the request was written.
+        result: DoIpResult,
+    },
+    /// A valid message of a payload type this crate does not model; see
+    /// [`ConnectionEvent::Unmodelled`].
+    Unmodelled {
+        /// The connection the message arrived on.
+        connection: ConnectionId,
+        /// The message's payload type, as on the wire.
+        payload_type: u16,
+        /// The payload, in the caller's buffer.
+        data: &'b [u8],
+    },
+    /// `connection` closed other than by [`DiagnosticEntity::close`]: the tester closed
+    /// it, or the entity did on an error or a timeout.
+    ///
+    /// Reported only for a connection an earlier event named.
+    Closed {
+        /// The connection that closed.
+        connection: ConnectionId,
+    },
+    /// The caller's deadline passed before anything arrived.
+    Deadline,
+}
+
+/// A whole `DoIP` entity, as the layer above it drives it: every connection it has
+/// accepted, behind one event stream.
+///
+/// The entity runs its own socket handling — accepting connections, routing
+/// activation, alive checks and inactivity timeouts — inside [`Self::next_event`], and
+/// reports none of it. An event names a connection only once routing is active on it,
+/// so nothing arrives from a tester that has not activated routing.
+///
+/// # Obligations on implementors
+///
+/// [`DiagnosticConnection`]'s two, which the layer above relies on in the same way:
+///
+/// - **[`Self::next_event`] is cancel-safe**, on the same terms and at the same cost as
+///   [`DiagnosticConnection::next_event`]: a receive buffer per connection, and writes
+///   made inside `next_event` queued and flushed first by the next call.
+/// - **Every accepted [`Self::request`] is followed by exactly one
+///   [`EntityEvent::Confirm`]** with that request's addressing — including a request
+///   whose target no connection registered, confirmed with [`DoIpResult::NoSocket`],
+///   and one whose connection closed before it was written.
+///
+/// And one of its own: **the connection table changes only inside [`Self::next_event`]
+/// and [`Self::close`]**, so a [`ConnectionId`] the caller holds keeps naming its
+/// connection between the two calls that could end it.
+pub trait DiagnosticEntity {
+    /// What this entity's failures are. Never interpreted by the layer above, which can
+    /// only report it.
+    type Error: core::fmt::Debug;
+
+    /// `DoIP_Data.request`: send `pdu` to `ta` on the connection whose routing
+    /// activation registered `ta` (ISO 13400-2:2019 8.3.1).
+    ///
+    /// Routing activation registers each source address on one connection only, so
+    /// the target address alone chooses the connection. The source address is the
+    /// entity's own. Completion is reported by a later [`EntityEvent::Confirm`].
+    ///
+    /// # Arguments
+    ///
+    /// * `ta` - the target, a tester's source address.
+    /// * `ta_type` - the target's addressing model.
+    /// * `pdu` - the PDU to send.
+    ///
+    /// # Errors
+    ///
+    /// [`Self::Error`] where the request is not accepted; no confirm follows it. A
+    /// target no connection registered is not an error.
+    fn request(
+        &mut self,
+        ta: LogicalAddress,
+        ta_type: TaType,
+        pdu: &[u8],
+    ) -> impl Future<Output = Result<(), Self::Error>>;
+
+    /// The next event on any connection, written into `buf`, or
+    /// [`EntityEvent::Deadline`] if `deadline_ms` passes first.
+    ///
+    /// Cancel-safe; see the trait's obligations.
+    ///
+    /// # Arguments
+    ///
+    /// * `buf` - where a PDU is delivered; the event borrows it.
+    /// * `deadline_ms` - as for [`DiagnosticConnection::next_event`]. The entity's own
+    ///   timers run whatever it is.
+    ///
+    /// # Errors
+    ///
+    /// [`Self::Error`] where the entity as a whole fails. One connection failing is
+    /// an [`EntityEvent::Closed`], not an error.
+    fn next_event<'b>(
+        &mut self,
+        buf: &'b mut [u8],
+        deadline_ms: Option<u32>,
+    ) -> impl Future<Output = Result<EntityEvent<'b>, Self::Error>>;
+
+    /// Close `connection` in an orderly way, as ISO 14229-5:2022 REQ 7.9 and REQ 7.11
+    /// require of a server after a positive `DiagnosticSessionControl` or `ECUReset`
+    /// response.
+    ///
+    /// Everything requested on `connection` before this call is written first; the
+    /// future completes once the close has been sent. The connection then leaves the
+    /// table, no [`EntityEvent::Closed`] is reported for it, and a tester that wants to
+    /// continue arrives as a new connection. Closing a [`ConnectionId`] that names no
+    /// connection in the table — one that has already gone, or one the entity never
+    /// issued — does nothing.
+    ///
+    /// This is the only close the caller can ask for. A close on an error is the
+    /// entity's own decision, reported as [`EntityEvent::Closed`].
+    ///
+    /// # Arguments
+    ///
+    /// * `connection` - the connection to close.
+    ///
+    /// # Errors
+    ///
+    /// [`Self::Error`] where the entity fails while closing. The connection has left the
+    /// table either way.
+    fn close(
+        &mut self,
+        connection: ConnectionId,
+    ) -> impl Future<Output = Result<(), Self::Error>>;
+}
+
+/// A tester address an [`EntityConfig`] was given that is outside the client range,
+/// [`LogicalAddress::MIN_CLIENT_ADDRESS`]..=[`LogicalAddress::MAX_CLIENT_ADDRESS`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+#[error(
+    "{address} is not a tester address: ISO 13400-2 Table 13 gives testers 0x0E00-0x0FFF"
+)]
+pub struct NotATesterAddress {
+    /// The rejected address.
+    pub address: LogicalAddress,
+}
+
+/// What a `DoIP` entity is told about its testers.
+///
+/// `TESTERS` is how many tester source addresses may activate routing; a routing
+/// activation from any other is refused as an unknown source address.
+///
+/// # Examples
+///
+/// ```
+/// use simple_doip::LogicalAddress;
+/// use simple_doip::service::EntityConfig;
+///
+/// let config = EntityConfig::default();
+/// assert!(config.accepts(LogicalAddress(0x0E00)));
+/// assert!(!config.accepts(LogicalAddress(0x0E80)));
+///
+/// let config = EntityConfig::new([LogicalAddress(0x0E00), LogicalAddress(0x0E80)])?;
+/// assert!(config.accepts(LogicalAddress(0x0E80)));
+/// # Ok::<(), simple_doip::service::NotATesterAddress>(())
+/// ```
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct EntityConfig<const TESTERS: usize = 1> {
+    accepted_testers: [LogicalAddress; TESTERS],
+}
+
+impl<const TESTERS: usize> EntityConfig<TESTERS> {
+    /// A configuration accepting routing activation from `accepted_testers` only.
+    ///
+    /// # Arguments
+    ///
+    /// * `accepted_testers` - the tester source addresses that may activate routing.
+    ///
+    /// # Errors
+    ///
+    /// [`NotATesterAddress`] for the first of `accepted_testers` outside the client
+    /// range.
+    pub const fn new(
+        accepted_testers: [LogicalAddress; TESTERS],
+    ) -> Result<Self, NotATesterAddress> {
+        const { assert!(TESTERS > 0, "an entity must accept at least one tester") };
+        let mut i = 0;
+        while i < TESTERS {
+            let address = accepted_testers[i];
+            if address.0 < LogicalAddress::MIN_CLIENT_ADDRESS.0
+                || address.0 > LogicalAddress::MAX_CLIENT_ADDRESS.0
+            {
+                return Err(NotATesterAddress { address });
+            }
+            i += 1;
+        }
+        Ok(Self { accepted_testers })
+    }
+
+    /// Whether a tester with source address `sa` may activate routing.
+    #[must_use]
+    pub fn accepts(&self, sa: LogicalAddress) -> bool {
+        self.accepted_testers.contains(&sa)
+    }
+}
+
+impl Default for EntityConfig {
+    /// Accepts the one tester `0x0E00`.
+    fn default() -> Self {
+        Self {
+            accepted_testers: [LogicalAddress(0x0E00)],
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -278,6 +569,35 @@ mod tests {
                 ta_type: TaType::Physical,
                 result: DoIpResult::Ok,
             }
+        );
+    }
+
+    /// The sensor's configuration: routing activation from `0x0E00` and no other
+    /// tester.
+    #[test]
+    fn the_default_entity_accepts_tester_0e00_only() {
+        let config = EntityConfig::default();
+        assert!(config.accepts(LogicalAddress(0x0E00)));
+        assert!(!config.accepts(LogicalAddress(0x0E01)));
+        assert!(!config.accepts(LogicalAddress(0x0FFF)));
+    }
+
+    /// A functional group address, like the `0xE400` this crate once offered as a tester
+    /// address, is refused at construction, as is anything else outside the client
+    /// range at either edge.
+    #[test]
+    fn an_entity_config_refuses_an_address_outside_the_client_range() {
+        for address in [0xE400, 0x0DFF, 0x1000] {
+            assert_eq!(
+                EntityConfig::new([LogicalAddress(0x0E00), LogicalAddress(address)]),
+                Err(NotATesterAddress {
+                    address: LogicalAddress(address)
+                }),
+                "{address:#06X}"
+            );
+        }
+        assert!(
+            EntityConfig::new([LogicalAddress(0x0E00), LogicalAddress(0x0FFF)]).is_ok()
         );
     }
 }

@@ -42,7 +42,9 @@
 //! ## Where to start
 //!
 //! - **Writing against the connection service:** [`service`] holds ISO 13400-2's own
-//!   service vocabulary and the [`service::DiagnosticConnection`] trait, with no I/O.
+//!   service vocabulary, the [`service::DiagnosticConnection`] trait for one
+//!   connection and the [`service::DiagnosticEntity`] trait for a whole entity, with
+//!   no I/O.
 //! - **Bare metal / sans-io:** [`try_frame`] delimits a frame from a byte buffer without
 //!   owning any I/O resource; [`messages::Payload::decode`] then interprets the body.
 //!   See `examples/bare_metal_codec.rs`.
