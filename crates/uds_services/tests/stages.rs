@@ -10,17 +10,18 @@
 use uds_protocol::NegativeResponseCode as Nrc;
 use uds_services::pipeline::settle;
 use uds_services::{
-    Address, Ai, DiagnosticSessionType as S, EcuReset, KeyVerdict, Mtype, ProtocolState,
-    ResetType, Responded, ResponseSink, SecurityAccess, SecurityLevel, SecurityPolicy,
-    ServiceSet, SessionTiming, SessionTransition, Sink, TaType, TesterPresent, uds_server,
+    Address, Ai, ControlDtcSetting, DiagnosticSessionType as S, DtcSettingType, EcuReset,
+    KeyVerdict, Mtype, ProtocolState, ResetType, Responded, ResponseSink, SecurityAccess,
+    SecurityLevel, SecurityPolicy, ServiceSet, SessionTiming, SessionTransition, Sink,
+    TaType, TesterPresent, uds_server,
 };
 
 #[derive(Debug, Default)]
 struct Ecu {
     /// The reset `EcuReset::reset` last accepted.
     accepted: Option<ResetType>,
-    /// Makes the next reset fail its criteria.
-    refuse_reset: bool,
+    /// Makes the next handler that can refuse answer `conditionsNotCorrect` (0x22).
+    refuse: bool,
     /// Level 0x01's stored attempt count.
     attempts: u8,
     /// Whether level 0x01's delay is running.
@@ -33,6 +34,8 @@ struct Ecu {
     preconditions_unmet: bool,
     /// The `securityAccessDataRecord` the last seed was asked with.
     record: Vec<u8>,
+    /// The `DTCSettingType` `ControlDtcSetting` last applied.
+    dtc_setting: Option<DtcSettingType>,
 }
 
 impl uds_services::DiagnosticSessionControl for Ecu {
@@ -91,7 +94,7 @@ impl EcuReset for Ecu {
         kind: ResetType,
         out: &mut ResponseSink<'_>,
     ) -> Result<(), Nrc> {
-        if core::mem::take(&mut self.refuse_reset) {
+        if core::mem::take(&mut self.refuse) {
             return Err(Nrc::ConditionsNotCorrect);
         }
         if matches!(kind, ResetType::EnableRapidPowerShutDown) {
@@ -180,6 +183,40 @@ fn key_of(level: SecurityLevel) -> [u8; 2] {
     seed_of(level).wrapping_neg().to_be_bytes()
 }
 
+/// On, off, and two vehicle-manufacturer settings: `0x40`, offered only in the
+/// programming session, and `0x41`, which requires level 0x03. An option record of up to
+/// three bytes names DTCs, and `FF` names none this server has.
+impl ControlDtcSetting for Ecu {
+    const MAY_RESPOND_PENDING: bool = false;
+    const MAX_OPTION_RECORD_LEN: usize = 3;
+    fn supports(&self, setting: DtcSettingType) -> bool {
+        matches!(u8::from(setting), 0x01 | 0x02 | 0x40 | 0x41)
+    }
+    fn supported_in(&self, setting: DtcSettingType, active: S) -> bool {
+        u8::from(setting) != 0x40 || matches!(active, S::ProgrammingSession)
+    }
+    fn required_level(&self, setting: DtcSettingType) -> Option<SecurityLevel> {
+        match u8::from(setting) {
+            0x41 => SecurityLevel::from_request_seed(0x03),
+            _ => None,
+        }
+    }
+    async fn control_dtc_setting(
+        &mut self,
+        setting: DtcSettingType,
+        option_record: &[u8],
+    ) -> Result<(), Nrc> {
+        if core::mem::take(&mut self.refuse) {
+            return Err(Nrc::ConditionsNotCorrect);
+        }
+        if option_record.contains(&0xFF) {
+            return Err(Nrc::RequestOutOfRange);
+        }
+        self.dtc_setting = Some(setting);
+        Ok(())
+    }
+}
+
 #[derive(Debug)]
 struct NoTransport;
 
@@ -210,7 +247,8 @@ impl uds_services::UdsTransport for NoTransport {
 }
 
 uds_server! {
-    Ecu: DiagnosticSessionControl, TesterPresent, EcuReset, SecurityAccess;
+    Ecu: DiagnosticSessionControl, TesterPresent, EcuReset, SecurityAccess,
+         ControlDtcSetting;
     transport = NoTransport,
     peers = 1,
     server = EcuServer,
@@ -318,7 +356,7 @@ fn ecu_reset_a_trailing_byte_is_0x13() {
 #[test]
 fn ecu_reset_the_handler_refusal_is_its_code() {
     let mut ecu = Ecu {
-        refuse_reset: true,
+        refuse: true,
         ..Ecu::default()
     };
     let mut state = State::INITIAL;
@@ -737,4 +775,129 @@ fn security_access_a_session_timeout_locks() {
         exchange(&mut ecu, &mut state, &[0x27, 0x01]).as_deref(),
         Some(&[0x67, 0x01, 0x36, 0x57][..])
     );
+}
+
+// --- ControlDTCSetting (0x85), ISO 14229-1:2020 clause 10.8 ----------------------------
+
+/// Clause 10.2 Table 23 — the service is not applicable in the default session: 0x7F,
+/// before its sub-function is looked at.
+#[test]
+fn control_dtc_setting_is_0x7f_in_the_default_session() {
+    let mut ecu = Ecu::default();
+    let mut state = State::INITIAL;
+    for request in [&[0x85, 0x02][..], &[0x85, 0x00][..]] {
+        assert_eq!(
+            exchange(&mut ecu, &mut state, request).as_deref(),
+            Some(&[0x7F, 0x85, 0x7F][..]),
+            "{request:02X?}"
+        );
+    }
+}
+
+/// ``UDSSVC_ARCH_0007`` row 2, clause 10.8.4 — a reserved `DTCSettingType`, and a
+/// manufacturer one the server does not support, are 0x12, with or without an option
+/// record, and the handler is not asked.
+#[test]
+fn control_dtc_setting_an_unsupported_setting_is_0x12() {
+    let mut ecu = Ecu::default();
+    let mut state = extended(&mut ecu);
+    for request in [
+        &[0x85, 0x00][..],
+        &[0x85, 0x03][..],
+        &[0x85, 0x7F][..],
+        &[0x85, 0x42][..],
+        &[0x85, 0x83, 0x01, 0x02, 0x03, 0x04][..],
+    ] {
+        assert_eq!(
+            exchange(&mut ecu, &mut state, request).as_deref(),
+            Some(&[0x7F, 0x85, 0x12][..]),
+            "{request:02X?}"
+        );
+    }
+    assert_eq!(ecu.dtc_setting, None);
+}
+
+/// ``UDSSVC_ARCH_0007`` row 4 — a setting supported, but not in the active session, is
+/// 0x7E; it proceeds from the session that offers it.
+#[test]
+fn control_dtc_setting_a_setting_not_offered_in_the_active_session_is_0x7e() {
+    let mut ecu = Ecu::default();
+    let mut state = extended(&mut ecu);
+    assert_eq!(
+        exchange(&mut ecu, &mut state, &[0x85, 0x40]).as_deref(),
+        Some(&[0x7F, 0x85, 0x7E][..])
+    );
+    let mut state = in_session(&mut ecu, S::ProgrammingSession);
+    assert_eq!(
+        exchange(&mut ecu, &mut state, &[0x85, 0x40]).as_deref(),
+        Some(&[0xC5, 0x40][..])
+    );
+}
+
+/// Figure 6's sub-function security check — a setting requiring a locked level is 0x33,
+/// and proceeds once that level is unlocked.
+#[test]
+fn control_dtc_setting_a_setting_requiring_a_locked_level_is_0x33() {
+    let mut ecu = Ecu::default();
+    let mut state = extended(&mut ecu);
+    assert_eq!(
+        exchange(&mut ecu, &mut state, &[0x85, 0x41]).as_deref(),
+        Some(&[0x7F, 0x85, 0x33][..])
+    );
+    let _ = exchange(&mut ecu, &mut state, &[0x27, 0x03]);
+    let _ = exchange(&mut ecu, &mut state, &[0x27, 0x04, 0xED, 0xCC]);
+    assert_eq!(
+        exchange(&mut ecu, &mut state, &[0x85, 0x41]).as_deref(),
+        Some(&[0xC5, 0x41][..])
+    );
+}
+
+/// Clause 10.8.4 — an option record longer than `MAX_OPTION_RECORD_LEN` is 0x13, and
+/// the handler is not asked.
+#[test]
+fn control_dtc_setting_an_overlong_option_record_is_0x13() {
+    let mut ecu = Ecu::default();
+    let mut state = extended(&mut ecu);
+    assert_eq!(
+        exchange(&mut ecu, &mut state, &[0x85, 0x02, 0x01, 0x02, 0x03, 0x04]).as_deref(),
+        Some(&[0x7F, 0x85, 0x13][..])
+    );
+    assert_eq!(ecu.dtc_setting, None);
+}
+
+/// Clause 10.8.4 — the handler's 0x31 for an error in the option record, and its 0x22
+/// where it cannot perform the control, are the response.
+#[test]
+fn control_dtc_setting_the_handler_refusals_are_its_codes() {
+    let mut ecu = Ecu::default();
+    let mut state = extended(&mut ecu);
+    assert_eq!(
+        exchange(&mut ecu, &mut state, &[0x85, 0x02, 0xFF]).as_deref(),
+        Some(&[0x7F, 0x85, 0x31][..])
+    );
+    ecu.refuse = true;
+    assert_eq!(
+        exchange(&mut ecu, &mut state, &[0x85, 0x02]).as_deref(),
+        Some(&[0x7F, 0x85, 0x22][..])
+    );
+    assert_eq!(ecu.dtc_setting, None);
+}
+
+/// Clause 10.8.3, Table 130, and 10.8.5 — the positive response echoes the
+/// `DTCSettingType`, with or without an option record; the suppress bit silences it.
+#[test]
+fn control_dtc_setting_the_positive_response_echoes_the_setting() {
+    let mut ecu = Ecu::default();
+    let mut state = extended(&mut ecu);
+    assert_eq!(
+        exchange(&mut ecu, &mut state, &[0x85, 0x02]).as_deref(),
+        Some(&[0xC5, 0x02][..])
+    );
+    assert_eq!(ecu.dtc_setting, Some(DtcSettingType::Off));
+    assert_eq!(
+        exchange(&mut ecu, &mut state, &[0x85, 0x01, 0x12, 0x34, 0x56]).as_deref(),
+        Some(&[0xC5, 0x01][..])
+    );
+    assert_eq!(exchange(&mut ecu, &mut state, &[0x85, 0x82]), None);
+    assert_eq!(ecu.dtc_setting, Some(DtcSettingType::Off));
 }

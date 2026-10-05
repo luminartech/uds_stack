@@ -13,18 +13,18 @@
 use crate::services::SessionTransition;
 use crate::state::State;
 use crate::{
-    DataIdentifier, DiagnosticSessionControl, EcuReset, KeyVerdict, ReadDataByIdentifier,
-    SecurityAccess, SecurityLevel, SecurityPolicy, TesterPresent,
+    ControlDtcSetting, DataIdentifier, DiagnosticSessionControl, EcuReset, KeyVerdict,
+    ReadDataByIdentifier, SecurityAccess, SecurityLevel, SecurityPolicy, TesterPresent,
 };
 use crate::{Responded, ResponseSink, Unsettled};
 use automotive_wire_codec::Sink;
 use uds_protocol::{
-    Decode, DiagnosticSessionType, Encode, NegativeResponse, NegativeResponseCode, Request,
-    UdsServiceType,
+    ControlDtcSettingRequest, DiagnosticSessionControlRequest, DtcSettingType,
+    EcuResetRequest, ReadDataByIdentifierRequest, ResetType, SecurityAccessRequest,
 };
 use uds_protocol::{
-    DiagnosticSessionControlRequest, EcuResetRequest, ReadDataByIdentifierRequest,
-    ResetType, SecurityAccessRequest,
+    Decode, DiagnosticSessionType, Encode, NegativeResponse, NegativeResponseCode, Request,
+    UdsServiceType,
 };
 use uds_session::{Ai, TaType};
 
@@ -302,6 +302,45 @@ pub fn security_supported_in<A: SecurityAccess>(
     active: DiagnosticSessionType,
 ) -> bool {
     security_level(value).is_some_and(|level| services.supported_in(level, active))
+}
+
+/// ISO 14229-1:2020 clause 10.8 — whether `ControlDTCSetting`'s sub-function `value`
+/// (suppress bit stripped) names a `DTCSettingType` the application supports. [`begin`]'s
+/// "supported ever" check for that service (``UDSSVC_ARCH_0007`` row 2).
+#[doc(hidden)]
+#[must_use]
+pub fn dtc_setting_supported<A: ControlDtcSetting>(services: &A, value: u8) -> bool {
+    DtcSettingType::try_from(value).is_ok_and(|setting| services.supports(setting))
+}
+
+/// ISO 14229-1:2020 clause 10.8 — whether the `DTCSettingType` `ControlDTCSetting`'s
+/// sub-function `value` (suppress bit stripped) names is available in `active`.
+/// [`begin`]'s "supported in active session" check for that service (``UDSSVC_ARCH_0007``
+/// row 4), asked only after [`dtc_setting_supported`] accepted `value`.
+#[doc(hidden)]
+#[must_use]
+pub fn dtc_setting_supported_in<A: ControlDtcSetting>(
+    services: &A,
+    value: u8,
+    active: DiagnosticSessionType,
+) -> bool {
+    DtcSettingType::try_from(value)
+        .is_ok_and(|setting| services.supported_in(setting, active))
+}
+
+/// ISO 14229-1:2020 clause 10.8 — the level the `DTCSettingType` `ControlDTCSetting`'s
+/// sub-function `value` (suppress bit stripped) names requires unlocked. [`begin`]'s
+/// sub-function security check for that service, asked only after
+/// [`dtc_setting_supported_in`] accepted `value`.
+#[doc(hidden)]
+#[must_use]
+pub fn dtc_setting_required_level<A: ControlDtcSetting>(
+    services: &A,
+    value: u8,
+) -> Option<SecurityLevel> {
+    DtcSettingType::try_from(value)
+        .ok()
+        .and_then(|setting| services.required_level(setting))
 }
 
 /// ISO 14229-1:2020 clause 10.7 — whether `TesterPresent`'s sub-function `value`
@@ -635,6 +674,28 @@ fn failed_attempt<A: SecurityAccess>(
         services.start_delay(level);
     }
     NegativeResponseCode::ExceedNumberOfAttempts
+}
+
+/// ISO 14229-1:2020 clause 10.8 — `ControlDTCSetting`'s own stage. Whether the setting
+/// is supported (0x12), in the active session (0x7E) and unlocked (0x33) was settled by
+/// [`begin`]; a `DTCSettingControlOptionRecord` longer than
+/// [`ControlDtcSetting::MAX_OPTION_RECORD_LEN`] is `incorrectMessageLengthOrInvalidFormat`
+/// (0x13). Otherwise the handler's verdict decides, and the positive response is `C5` and
+/// the echoed `DTCSettingType` (Table 130).
+#[doc(hidden)]
+pub async fn control_dtc_setting<A: ControlDtcSetting>(
+    services: &mut A,
+    request: &ControlDtcSettingRequest<'_>,
+    out: &mut ResponseSink<'_>,
+) -> Result<Option<DiagnosticSessionType>, NegativeResponseCode> {
+    if request.option_record.len() > A::MAX_OPTION_RECORD_LEN {
+        return Err(NegativeResponseCode::IncorrectMessageLengthOrInvalidFormat);
+    }
+    services
+        .control_dtc_setting(request.setting, request.option_record)
+        .await?;
+    let _ = out.write_all(&[0xC5, u8::from(request.setting)]);
+    Ok(None)
 }
 
 /// ISO 14229-1:2020 clause 10.7 — `TesterPresent`'s own stage (``UDSSVC_ARCH_0004``).

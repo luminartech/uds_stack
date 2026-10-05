@@ -276,6 +276,11 @@ macro_rules! __uds_sub_function {
             return $crate::pipeline::security_supported($self, $value);
         }
     };
+    ($self:ident, $service:ident, $value:ident, ControlDtcSetting) => {
+        if ::core::matches!($service, $crate::UdsServiceType::ControlDtcSetting) {
+            return $crate::pipeline::dtc_setting_supported($self, $value);
+        }
+    };
     ($self:ident, $service:ident, $value:ident, $svc:ident) => {};
 }
 
@@ -311,6 +316,11 @@ macro_rules! __uds_sub_function_in_session {
             return $crate::pipeline::security_supported_in($self, $value, $active);
         }
     };
+    ($self:ident, $service:ident, $value:ident, $active:ident, ControlDtcSetting) => {
+        if ::core::matches!($service, $crate::UdsServiceType::ControlDtcSetting) {
+            return $crate::pipeline::dtc_setting_supported_in($self, $value, $active);
+        }
+    };
     ($self:ident, $service:ident, $value:ident, $active:ident, $svc:ident) => {};
 }
 
@@ -326,6 +336,11 @@ macro_rules! __uds_sub_function_security {
     ($self:ident, $service:ident, $value:ident, EcuReset) => {
         if ::core::matches!($service, $crate::UdsServiceType::EcuReset) {
             return $crate::pipeline::reset_required_level($self, $value);
+        }
+    };
+    ($self:ident, $service:ident, $value:ident, ControlDtcSetting) => {
+        if ::core::matches!($service, $crate::UdsServiceType::ControlDtcSetting) {
+            return $crate::pipeline::dtc_setting_required_level($self, $value);
         }
     };
     ($self:ident, $service:ident, $value:ident, $svc:ident) => {};
@@ -365,6 +380,11 @@ macro_rules! __uds_stage {
             return $crate::pipeline::security_access($self, $state, r, $out).await;
         }
     };
+    ($self:ident, $state:ident, $out:ident, $req:ident, ControlDtcSetting) => {
+        if let $crate::Request::ControlDtcSetting(ref r) = $req {
+            return $crate::pipeline::control_dtc_setting($self, r, $out).await;
+        }
+    };
     ($self:ident, $state:ident, $out:ident, $req:ident, $svc:ident) => {};
 }
 
@@ -396,34 +416,27 @@ macro_rules! __uds_stage {
 /// `pipeline::settle` nowhere; the driver does, once the handler has finished
 /// (``UDSSVC_ARCH_0016``). Every clause 8.7 decision is the pipeline's.
 ///
-/// **Figure 6's sub-function questions are each service trait's pair** — a "supported
-/// ever" lookup and a "supported in the active session" lookup, each typed in that
-/// service's own sub-function (``UDSSVC_ARCH_0007`` rows 2 and 4). `dispatch` hands both
-/// to `pipeline::begin` as closures that route to the listed service's trait, and the
-/// pipeline decides 0x12 versus 0x7E. Today the pair is [`supports`] and
-/// [`supported_from`] on `DiagnosticSessionControl`, and `supports` and `supported_in` on
-/// [`EcuReset`] and [`SecurityAccess`]; `TesterPresent` has none, because its only
-/// sub-function is available everywhere. Each other sub-function-bearing service
-/// (`CommunicationControl`, `ControlDtcSetting`, …) gains the same pair, in its own
-/// sub-function type, when its stage lands.
-///
-/// **Figure 6's sub-function security check is a third lookup**, `required_level`, on a
-/// service whose sub-functions can require an unlocked level: [`EcuReset`] today. The
-/// pipeline compares the level it names with the one this crate holds unlocked and
-/// settles `securityAccessDenied` (0x33), so no handler ever sees a locked request.
+/// **Figure 6's sub-function questions are each service trait's lookups** — a
+/// "supported ever" lookup, a "supported in the active session" lookup, and a
+/// "security check" lookup, each typed in that service's own sub-function
+/// (``UDSSVC_ARCH_0007`` rows 2 and 4, then Figure 6's optional 0x33). `dispatch` hands
+/// them to `pipeline::begin` as closures that route to the listed service's trait, and
+/// the pipeline decides 0x12, 0x7E or 0x33. On `DiagnosticSessionControl` the first two
+/// are [`supports`] and [`supported_from`] and there is no third; on every other staged
+/// service with a sub-function they are `supports`, `supported_in` and `required_level`,
+/// as on [`EcuReset`]. `SecurityAccess` has no `required_level`: it is the service that
+/// unlocks. `TesterPresent` has none of the three, because its only sub-function is
+/// available everywhere.
 ///
 /// [`supports`]: crate::DiagnosticSessionControl::supports
 /// [`supported_from`]: crate::DiagnosticSessionControl::supported_from
 /// [`EcuReset`]: crate::EcuReset
-/// [`SecurityAccess`]: crate::SecurityAccess
 ///
-/// **Staging limit:** only `ReadDataByIdentifier`, `DiagnosticSessionControl`,
-/// `TesterPresent`, `EcuReset` and `SecurityAccess` have stages. Any other listed service
-/// is accepted by the list (so it is not refused by the support check) but has no stage
-/// to run. One that carries a `SubFunction` passes the support check's row 2 and reaches
-/// the decode, then settles `serviceNotSupported` (0x11), or
-/// `incorrectMessageLengthOrInvalidFormat` (0x13) if the request does not decode —
-/// visible on the wire rather than a panic.
+/// **Staging limit:** a listed service with no stage is accepted by the list (so it is
+/// not refused by the support check) but has no stage to run. One that carries a
+/// `SubFunction` passes the support check's row 2 and reaches the decode, then settles
+/// `serviceNotSupported` (0x11), or `incorrectMessageLengthOrInvalidFormat` (0x13) if
+/// the request does not decode — visible on the wire rather than a panic.
 ///
 /// The syntax is `Ecu: ..; transport = T, ..` rather than `Ecu over T: ..` because
 /// `$ty:ty` cannot be followed by a bare identifier — the legal followers are

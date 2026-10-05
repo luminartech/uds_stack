@@ -246,13 +246,57 @@ pub trait ControlDtcSetting {
 
     /// The longest `DTCSettingControlOptionRecord` this server accepts.
     ///
-    /// Clause 10.7 leaves the record manufacturer-specific and gives it no fixed width,
-    /// so the ceiling is the application's to state — and stating it is what puts this
-    /// service's real contribution into the derived in-flight buffer rather than the
-    /// catch-all's six bytes.
+    /// Clause 10.8.2.3 leaves the record manufacturer-specific and gives it no fixed
+    /// width, so the ceiling is the application's to state — and stating it is what puts
+    /// this service's real contribution into the derived in-flight buffer rather than the
+    /// catch-all's six bytes. A longer record is `incorrectMessageLengthOrInvalidFormat`
+    /// (0x13) without [`Self::control_dtc_setting`] being asked.
     const MAX_OPTION_RECORD_LEN: usize;
 
+    /// Whether this server supports `setting` at all, in whichever session.
+    ///
+    /// ISO 14229-1:2020 8.7.3.1 Figure 6, "`SubFunction` supported ever for the SID?" —
+    /// ``UDSSVC_ARCH_0007`` row 2. A `false` settles the request
+    /// `subFunctionNotSupported` (0x12) before [`Self::supported_in`] is asked. A reserved
+    /// `DTCSettingType` is not a [`DtcSettingType`] and is 0x12 without being asked.
+    ///
+    /// # Arguments
+    ///
+    /// * `setting` - the `DTCSettingType` requested; see [`DtcSettingType`].
+    fn supports(&self, setting: DtcSettingType) -> bool;
+
+    /// Whether `setting` is available in the `active` session.
+    ///
+    /// ISO 14229-1:2020 8.7.3.1 Figure 6, "`SubFunction` supported in active session
+    /// for the SID?" — ``UDSSVC_ARCH_0007`` row 4. Asked only for a `setting` that
+    /// [`Self::supports`] accepted, so a `false` settles the request
+    /// `subFunctionNotSupportedInActiveSession` (0x7E). The default session never reaches
+    /// here: Table 23 refuses the service there with 0x7F.
+    ///
+    /// # Arguments
+    ///
+    /// * `setting` - the `DTCSettingType` requested; see [`DtcSettingType`].
+    /// * `active` - the session the server is in when the request arrives; see
+    ///   [`DiagnosticSessionType`].
+    fn supported_in(&self, setting: DtcSettingType, active: DiagnosticSessionType) -> bool;
+
+    /// The security level `setting` requires unlocked, or `None` where it requires none.
+    ///
+    /// ISO 14229-1:2020 8.7.3.1 Figure 6, "`SubFunction` security check OK?" — asked only
+    /// for a `setting` that [`Self::supported_in`] accepted. Where the level this crate
+    /// holds unlocked is not the one returned, the request settles
+    /// `securityAccessDenied` (0x33) without [`Self::control_dtc_setting`] being asked.
+    ///
+    /// # Arguments
+    ///
+    /// * `setting` - the `DTCSettingType` requested; see [`DtcSettingType`].
+    fn required_level(&self, setting: DtcSettingType) -> Option<SecurityLevel>;
+
     /// Apply `setting`, with the manufacturer-specific option record.
+    ///
+    /// Clause 10.8.1: the positive response is owed even where `setting` is already in
+    /// effect, and updating resumes on a transition to a session where this service is
+    /// not supported, which `DiagnosticSessionControl::on_transition` reports.
     ///
     /// # Arguments
     ///
@@ -262,7 +306,9 @@ pub trait ControlDtcSetting {
     ///
     /// # Errors
     ///
-    /// The [`NegativeResponseCode`] for an unsupported setting.
+    /// The [`NegativeResponseCode`] where the setting cannot be applied, clause 10.8.4:
+    /// `conditionsNotCorrect` (0x22), or `requestOutOfRange` (0x31) for an error in
+    /// `option_record`.
     fn control_dtc_setting(
         &mut self,
         setting: DtcSettingType,
