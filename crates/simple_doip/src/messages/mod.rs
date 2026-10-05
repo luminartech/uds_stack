@@ -762,10 +762,10 @@ mod tests {
     }
 }
 
-/// Gate A follow-up: lock the borrowed<->owned conversions (correct today only by
-/// inspection) and the owned/borrowed constructor header agreement as permanent
-/// regressions. Alloc-gated because `to_owned_payload`/`to_owned_message` and the
-/// `Owned*` constructors only exist under `feature = "alloc"`.
+/// The borrowed<->owned conversions and the owned/borrowed constructor header
+/// agreement, as permanent regressions. Alloc-gated because
+/// `to_owned_payload`/`to_owned_message` and the `Owned*` constructors only exist
+/// under `feature = "alloc"`.
 #[cfg(all(test, feature = "alloc"))]
 mod alloc_conversion_tests {
     use super::*;
