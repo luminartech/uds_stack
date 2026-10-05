@@ -1842,3 +1842,28 @@ fn routine_control_the_response_bound_counts_routine_info() {
     );
     assert_eq!(BOUND, [0x71, 0x03, 0x02, 0x01, 0x00, 0x5A].len());
 }
+
+/// Figure 30, "`SubFunction` supported for `routineIdentifier`?" — a reserved
+/// `routineControlType` is 0x12, but only after the identifier's 0x31 and 0x33 checks,
+/// and ahead of the option record's length.
+#[test]
+fn routine_control_a_reserved_control_type_is_0x12_after_the_routine_checks() {
+    let mut ecu = Ecu::default();
+    let mut state = extended(&mut ecu);
+    for (request, code) in [
+        (&[0x31, 0x04, 0x02, 0x01][..], 0x12),
+        (
+            &[0x31, 0x80, 0x02, 0x01, 0x01, 0x02, 0x03, 0x04, 0x05][..],
+            0x12,
+        ),
+        (&[0x31, 0x7F, 0x12, 0x34][..], 0x31),
+        (&[0x31, 0x00, 0xFF, 0x00][..], 0x33),
+    ] {
+        assert_eq!(
+            exchange(&mut ecu, &mut state, request).as_deref(),
+            Some(&[0x7F, 0x31, code][..]),
+            "{request:02X?}"
+        );
+    }
+    assert_eq!(ecu.started, None);
+}

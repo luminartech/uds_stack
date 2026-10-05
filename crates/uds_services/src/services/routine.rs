@@ -15,13 +15,14 @@ use uds_protocol::{DiagnosticSessionType, NegativeResponseCode};
 /// ISO 14229-1:2020 clause 14.2, Figure 30 — the pipeline settles, in order: a request
 /// shorter than its routine identifier (0x13), an identifier
 /// [`RoutineIdentifier::from_u16`] rejects or [`Self::supported_in`] refuses (0x31), a
-/// locked [`Self::required_level`] (0x33), and an option record longer than
-/// [`Self::MAX_OPTION_LEN`] (0x13). Only then is the sub-function's method asked, and
-/// Figure 30's remaining checks are its own: the sub-function supported for this routine
-/// (0x12), the record's length for this routine (0x13), conditions (0x22), the record's
-/// content (0x31) and the request sequence (0x24). Each method writes `routineInfo` and
-/// any `routineStatusRecord` into its `out`, after the `71`, the echoed
-/// `routineControlType` and the identifier the pipeline wrote (Table 428).
+/// locked [`Self::required_level`] (0x33), a `routineControlType` Table 426 reserves
+/// (0x12), and an option record longer than [`Self::MAX_OPTION_LEN`] (0x13). Only then
+/// is the sub-function's method asked, and Figure 30's remaining checks are its own: the
+/// sub-function supported for this routine (0x12), the record's length for this routine
+/// (0x13), conditions (0x22), the record's content (0x31) and the request sequence
+/// (0x24). Each method writes `routineInfo` and any `routineStatusRecord` into its `out`,
+/// after the `71`, the echoed `routineControlType` and the identifier the pipeline wrote
+/// (Table 428).
 pub trait RoutineControl {
     /// This application's routine identifier enumeration.
     type Rid: RoutineIdentifier;
