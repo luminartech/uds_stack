@@ -120,9 +120,9 @@ pub const TCP_TIMEOUT_INITIAL_INACTIVITY: Duration = Duration::from_secs(2);
 /// entity
 pub const TCP_TIMEOUT_GENERAL_INACTIVITY: Duration = Duration::from_secs(300);
 
-/// Alive check for the maximum amount of time an entity waits for an alive check response
-/// after having made an alive check request. Timeout is 5 seconds.
-pub const TCP_TIMEOUT_ALIVE_CHECK: Duration = Duration::from_secs(5);
+/// `T_TCP_Alive_Check`: how long an entity waits for an alive check response after
+/// writing an alive check request on a `TCP_DATA` socket (ISO 13400-2:2019 Table 12).
+pub const TCP_TIMEOUT_ALIVE_CHECK: Duration = Duration::from_millis(500);
 
 /// Time between receipt of the last byte of a `DoIP` Diagnostic Message and transmission of
 /// the ACK or NACK.
@@ -140,3 +140,14 @@ pub const TIMEOUT_DIAGNOSTIC_MESSAGE_INITIAL: Duration = Duration::from_millis(5
 ///
 /// Ref: `A_DoIP_Diagnostic_Message`
 pub const TIMEOUT_DIAGNOSTIC_MESSAGE_RESPONSE: Duration = Duration::from_secs(2);
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// ISO 13400-2:2019 Table 12: `T_TCP_Alive_Check` times out after 500 ms.
+    #[test]
+    fn alive_check_timeout_is_table_12s() {
+        assert_eq!(TCP_TIMEOUT_ALIVE_CHECK, Duration::from_millis(500));
+    }
+}
