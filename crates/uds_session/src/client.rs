@@ -97,6 +97,8 @@ struct Responder {
 pub struct PhysicalSlot<K: KeepAliveMode> {
     channel: Option<Physical<K>>,
     timed_out: Option<TimedOut>,
+    /// ``UDSS_LLR_0162`` — the channel's keep-alive fell due at this input's timestamp.
+    keep_alive_due: Option<PhysicalChannelId>,
 }
 
 impl<K: KeepAliveMode> PhysicalSlot<K> {
@@ -104,6 +106,7 @@ impl<K: KeepAliveMode> PhysicalSlot<K> {
     pub const EMPTY: Self = Self {
         channel: None,
         timed_out: None,
+        keep_alive_due: None,
     };
 }
 
@@ -690,7 +693,21 @@ impl<K: KeepAliveMode, const PHYS: usize, const FUNC: usize, const R: usize>
     /// sweeping the previous input's unreported snapshots.
     fn expire(&mut self, now: Timestamp) {
         for slot in &mut self.physical {
-            slot.timed_out = slot.channel.as_mut().and_then(|p| p.core.expire(now));
+            slot.timed_out = None;
+            slot.keep_alive_due = None;
+            let Some(p) = slot.channel.as_mut() else {
+                continue;
+            };
+            let class = p.core.request.map(|r| r.class);
+            slot.timed_out = p.core.expire(now);
+            if slot.timed_out.is_some() && matches!(class, Some(ClientTx::KeepAlive { .. }))
+            {
+                let site = Site::Physical(&mut p.keep_alive);
+                self.keep_alive.on(now, site, Event::KeepAliveWindowExpired); // UDSS_LLR_0161
+            }
+            if K::expire_channel(&mut p.keep_alive, now) {
+                slot.keep_alive_due = Some(PhysicalChannelId(p.core.id)); // UDSS_LLR_0162
+            }
         }
         for slot in &mut self.functional {
             slot.timed_out = slot.channel.as_mut().and_then(|c| c.expire(now));
@@ -1338,15 +1355,24 @@ impl<'d, K: KeepAliveMode, const PHYS: usize, const FUNC: usize, const R: usize>
     crate::reaction::Drain<'d, ClientOutput<'d>> for Client<K, PHYS, FUNC, R>
 {
     fn next_expiry(&mut self) -> Option<ClientOutput<'d>> {
-        let physical = self.physical.iter_mut().map(|s| &mut s.timed_out);
-        let functional = self.functional.iter_mut().map(|s| &mut s.timed_out);
-        let timed_out = physical.chain(functional).find_map(Option::take).map(|t| {
-            ClientOutput::ResponseTimeout {
-                ai: t.ai,
-                loaded: t.loaded,
-            }
+        let timeout = |t: TimedOut| ClientOutput::ResponseTimeout {
+            ai: t.ai,
+            loaded: t.loaded,
+        };
+        let physical = self.physical.iter_mut().find_map(|s| {
+            s.timed_out.take().map(timeout).or_else(|| {
+                let channel = s.keep_alive_due.take()?;
+                Some(ClientOutput::KeepAliveDue {
+                    channel: Some(channel),
+                })
+            })
         });
-        timed_out.or_else(|| {
+        let functional = || {
+            self.functional
+                .iter_mut()
+                .find_map(|s| s.timed_out.take().map(timeout))
+        };
+        physical.or_else(functional).or_else(|| {
             core::mem::take(&mut self.keep_alive_due)
                 .then_some(ClientOutput::KeepAliveDue { channel: None })
         })

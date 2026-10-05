@@ -1,6 +1,8 @@
 //! The client's keep-alive modes, ``UDSS_LLR_0149`` to ``UDSS_LLR_0163``.
 
-use crate::classification::{ClientTx, SessionSelection};
+use crate::classification::{
+    ClientRx, ClientTx, ExpectedResponses, SessionSelection, Solicitation,
+};
 use crate::time::Timestamp;
 use crate::timer::{Reaches, Timer};
 
@@ -56,7 +58,6 @@ mod role {
     /// ``UDSS_LLR_0151`` — a physical channel's `tS3_Client`, its reload and its
     /// session fact.
     #[derive(Debug, Clone, Copy)]
-    #[expect(dead_code, reason = "read when physical keep-alive starts tS3_Client")]
     pub struct PhysicalSession {
         pub(crate) reload: u32,
         pub(crate) s3: crate::timer::Timer<crate::timer::Reaches>,
@@ -64,6 +65,11 @@ mod role {
     }
 
     impl PhysicalSession {
+        pub(crate) fn leave(&mut self) {
+            self.in_session = false;
+            self.s3.stop();
+        }
+
         /// ``UDSS_LLR_0153`` — not in session, the timer stopped.
         pub(crate) const fn new(reload: u32) -> Self {
             Self {
@@ -199,21 +205,66 @@ impl KeepAliveMode for PhysicalKeepAlive {}
 impl role::Role for PhysicalKeepAlive {
     type Channel = role::PhysicalSession;
 
-    fn on(&mut self, _: Timestamp, _: Site<'_, PhysicalSession>, _: Event) {}
+    fn on(&mut self, now: Timestamp, site: Site<'_, PhysicalSession>, event: Event) {
+        let Site::Physical(s) = site else {
+            return; // UDSS_LLR_0149: a functional channel keeps nothing alive here
+        };
+        // Where the event completes an exchange, the session it leaves the server in.
+        let completed = match event {
+            Event::Confirmed { ok: false, .. }
+            | Event::Received { ok: false, .. }
+            | Event::KeepAliveWindowExpired => Some(None),
+            Event::Confirmed { ok: true, class }
+                if class.expected() == ExpectedResponses::None =>
+            {
+                Some(class.session_selection())
+            }
+            Event::Received {
+                ok: true,
+                class:
+                    Some(ClientRx::FinalResponse {
+                        solicitation: Solicitation::Solicited,
+                        session,
+                    }),
+            } => Some(session),
+            Event::Sent => {
+                s.s3.stop(); // UDSS_LLR_0160
+                None
+            }
+            Event::Released => {
+                s.leave(); // UDSS_LLR_0184
+                None
+            }
+            Event::Confirmed { .. } | Event::Received { .. } => None,
+        };
+        match (s.in_session, completed) {
+            (false, Some(Some(SessionSelection::NonDefault))) => {
+                s.in_session = true; // UDSS_LLR_0159
+                s.s3.start(now, s.reload);
+            }
+            (true, Some(Some(SessionSelection::Default))) => s.leave(), // UDSS_LLR_0163
+            (true, Some(_)) => s.s3.start(now, s.reload),               // UDSS_LLR_0161
+            _ => {}
+        }
+    }
 
     fn expire(&mut self, _: Timestamp) -> bool {
         false
     }
 
-    fn expire_channel(_: &mut PhysicalSession, _: Timestamp) -> bool {
-        false
+    fn expire_channel(s: &mut PhysicalSession, now: Timestamp) -> bool {
+        let due = s.in_session && s.s3.expired(now);
+        if due {
+            s.s3.stop(); // UDSS_LLR_0162
+        }
+        due
     }
 
     fn deadline(&self) -> Option<Timestamp> {
         None
     }
 
-    fn channel_deadline(_: &PhysicalSession) -> Option<Timestamp> {
-        None
+    fn channel_deadline(s: &PhysicalSession) -> Option<Timestamp> {
+        s.s3.deadline()
     }
 }

@@ -6,8 +6,8 @@ use uds_session::{
     Address, Ai, Cause, ChannelAddressing, ChannelId, ChannelParameter, ChannelParams,
     ChannelReload, Client, ClientOutput, ClientReaction, ClientRx, ClientTx, Content,
     ExpectedResponses, FunctionalChannelId, FunctionalKeepAlive, FunctionalSlot,
-    KeepAliveMode, Mtype, PhysicalChannelId, PhysicalSlot, Rejection, Reloads, SResult,
-    SessionSelection, Solicitation, TaType, Timestamp, TransportError,
+    KeepAliveMode, Mtype, PhysicalChannelId, PhysicalKeepAlive, PhysicalSlot, Rejection,
+    Reloads, SResult, SessionSelection, Solicitation, TaType, Timestamp, TransportError,
 };
 
 const TESTER: u16 = 0x0E80;
@@ -1736,5 +1736,317 @@ mod functional_keep_alive {
         exchange(&mut c, Timestamp(2_100), func(), KEEP_ALIVE);
         assert_eq!(tick(&mut c, 2_599), NOTHING);
         assert_eq!(tick(&mut c, 2_600), only(DUE));
+    }
+}
+
+mod physical_keep_alive {
+    use super::*;
+
+    type PhysTester = Client<PhysicalKeepAlive, 2, 0>;
+
+    fn phys_tester() -> PhysTester {
+        Client::new([PhysicalSlot::EMPTY; 2], [], PhysicalKeepAlive)
+    }
+
+    #[allow(
+        clippy::panic,
+        reason = "a test harness: a test cannot go on without the handle"
+    )]
+    fn open<const F: usize, const R: usize>(
+        c: &mut Client<PhysicalKeepAlive, 2, F, R>,
+        ta: u16,
+        s3_client: u32,
+    ) -> PhysicalChannelId {
+        let (_, id) =
+            outputs(c.open_physical_channel(Timestamp(0), to(ta), PHYS_PARAMS, s3_client));
+        id.unwrap_or_else(|r| panic!("open failed: {r}"))
+    }
+
+    /// A tester whose channel to [`ECU`] was moved into a non-default session at `0`.
+    fn engaged() -> (PhysTester, PhysicalChannelId) {
+        let mut c = phys_tester();
+        let id = open(&mut c, ECU, S3_CLIENT);
+        exchange(
+            &mut c,
+            Timestamp(0),
+            phys(ECU),
+            select(SessionSelection::NonDefault),
+        );
+        (c, id)
+    }
+
+    const fn due(id: PhysicalChannelId) -> ClientOutput<'static> {
+        ClientOutput::KeepAliveDue { channel: Some(id) }
+    }
+
+    const fn selected(session: Option<SessionSelection>) -> ClientRx {
+        ClientRx::FinalResponse {
+            solicitation: Solicitation::Solicited,
+            session,
+        }
+    }
+
+    fn tick(c: &mut PhysTester, now: u32) -> [Option<ClientOutput<'static>>; 6] {
+        outputs(c.tick(Timestamp(now))).0
+    }
+
+    fn send(c: &mut PhysTester, now: u32, class: ClientTx) {
+        let (_, sent) = outputs(c.s_data_req(Timestamp(now), phys(ECU), &DATA, class));
+        assert_eq!(sent, Ok(()));
+    }
+
+    fn confirm(c: &mut PhysTester, now: u32, result: SResult) {
+        let (_, confirmed) = outputs(c.t_data_conf(Timestamp(now), phys(ECU), result));
+        assert_eq!(confirmed, Ok(()));
+    }
+
+    /// ``UDSS_LLR_0159``, ``UDSS_LLR_0162`` — a confirmed session change expecting no
+    /// response engages the channel's keep-alive, which falls due naming the channel.
+    #[test]
+    fn a_confirmed_session_change_needing_no_response_engages() {
+        let (mut c, id) = engaged();
+        assert_eq!(tick(&mut c, 1_999), NOTHING);
+        assert_eq!(tick(&mut c, 2_000), only(due(id)));
+    }
+
+    /// ``UDSS_LLR_0159`` — one expecting a response engages it on that response.
+    #[test]
+    fn a_session_change_needing_a_response_engages_on_the_response() {
+        let mut c = phys_tester();
+        let id = open(&mut c, ECU, S3_CLIENT);
+        let class = ClientTx::Request {
+            expected: ExpectedResponses::Unknown,
+            repeat: false,
+            session: Some(SessionSelection::NonDefault),
+        };
+        exchange(&mut c, Timestamp(0), phys(ECU), class);
+        assert_eq!(c.next_deadline(), Some(Timestamp(51)));
+        let accepted = Some(selected(Some(SessionSelection::NonDefault)));
+        ind(&mut c, Timestamp(10), id, ECU, SResult::Ok, accepted);
+        assert_eq!(c.next_deadline(), Some(Timestamp(2_010)));
+    }
+
+    /// ``UDSS_LLR_0159`` — a response selecting no session moved no server.
+    #[test]
+    fn a_refused_session_change_engages_nothing() {
+        let mut c = phys_tester();
+        let id = open(&mut c, ECU, S3_CLIENT);
+        let class = ClientTx::Request {
+            expected: ExpectedResponses::Unknown,
+            repeat: false,
+            session: Some(SessionSelection::NonDefault),
+        };
+        exchange(&mut c, Timestamp(0), phys(ECU), class);
+        ind(
+            &mut c,
+            Timestamp(10),
+            id,
+            ECU,
+            SResult::Ok,
+            Some(selected(None)),
+        );
+        assert_eq!(c.next_deadline(), None);
+    }
+
+    /// ``UDSS_LLR_0160`` — any request on the channel stops its keep-alive.
+    #[test]
+    fn a_request_stops_the_keep_alive() {
+        let (mut c, _) = engaged();
+        send(&mut c, 100, UNKNOWN);
+        assert_eq!(c.next_deadline(), None);
+    }
+
+    /// ``UDSS_LLR_0161`` — a confirmed request expecting no response starts it again.
+    #[test]
+    fn a_confirmed_request_needing_no_response_restarts_it() {
+        let (mut c, id) = engaged();
+        send(&mut c, 100, NO_RESPONSE);
+        confirm(&mut c, 110, SResult::Ok);
+        assert_eq!(tick(&mut c, 2_109), NOTHING);
+        assert_eq!(tick(&mut c, 2_110), only(due(id)));
+    }
+
+    /// ``UDSS_LLR_0161`` — so does a failed transmission.
+    #[test]
+    fn a_failed_transmission_restarts_it() {
+        let (mut c, id) = engaged();
+        send(&mut c, 100, UNKNOWN);
+        confirm(&mut c, 110, FAILED);
+        assert_eq!(tick(&mut c, 2_110), only(due(id)));
+    }
+
+    /// ``UDSS_LLR_0161`` — and a solicited final response.
+    #[test]
+    fn a_solicited_final_response_restarts_it() {
+        let (mut c, id) = engaged();
+        exchange(&mut c, Timestamp(100), phys(ECU), UNKNOWN);
+        ind(
+            &mut c,
+            Timestamp(120),
+            id,
+            ECU,
+            SResult::Ok,
+            Some(SOLICITED),
+        );
+        assert_eq!(c.next_deadline(), Some(Timestamp(2_120)));
+    }
+
+    /// ``UDSS_LLR_0161`` — but not a response-pending message: the response is still
+    /// to come.
+    #[test]
+    fn a_response_pending_message_does_not() {
+        let (mut c, id) = engaged();
+        exchange(&mut c, Timestamp(100), phys(ECU), UNKNOWN);
+        ind(&mut c, Timestamp(110), id, ECU, SResult::Ok, Some(PENDING));
+        assert_eq!(c.next_deadline(), Some(Timestamp(5_111)));
+    }
+
+    /// ``UDSS_LLR_0161`` — a failed reception starts it again.
+    #[test]
+    fn a_failed_reception_restarts_it() {
+        let (mut c, id) = engaged();
+        exchange(&mut c, Timestamp(100), phys(ECU), UNKNOWN);
+        ind(&mut c, Timestamp(110), id, ECU, FAILED, None);
+        assert_eq!(c.next_deadline(), Some(Timestamp(2_110)));
+    }
+
+    /// ``UDSS_LLR_0161`` (fifth bullet) — the lost response to a keep-alive starts it
+    /// again, or no keep-alive would ever fall due.
+    #[test]
+    fn a_lost_keep_alive_response_restarts_it() {
+        let (mut c, id) = engaged();
+        assert_eq!(tick(&mut c, 2_000), only(due(id)));
+        send(
+            &mut c,
+            2_000,
+            ClientTx::KeepAlive {
+                expected: ExpectedResponses::Exactly(NonZeroU16::MIN),
+            },
+        );
+        confirm(&mut c, 2_001, SResult::Ok);
+        assert_eq!(
+            tick(&mut c, 2_052),
+            only(timeout(phys(ECU), ChannelReload::Default))
+        );
+        assert_eq!(c.next_deadline(), Some(Timestamp(4_052)));
+    }
+
+    /// ``UDSS_LLR_0161`` (fifth bullet) — a lost response to anything else does not.
+    #[test]
+    fn a_lost_ordinary_response_does_not() {
+        let (mut c, _) = engaged();
+        exchange(&mut c, Timestamp(100), phys(ECU), UNKNOWN);
+        assert_ne!(tick(&mut c, 151), NOTHING);
+        assert_eq!(c.next_deadline(), None);
+    }
+
+    /// ``UDSS_LLR_0163``, ``UDSS_LLR_0161`` — a confirmed return to the default session
+    /// disengages, and wins over the restart the same confirmation would cause.
+    #[test]
+    fn a_confirmed_return_to_default_disengages() {
+        let (mut c, _) = engaged();
+        exchange(
+            &mut c,
+            Timestamp(100),
+            phys(ECU),
+            select(SessionSelection::Default),
+        );
+        assert_eq!(c.next_deadline(), Some(Timestamp(160)));
+        assert_eq!(tick(&mut c, 160), NOTHING);
+        assert_eq!(c.next_deadline(), None);
+    }
+
+    /// ``UDSS_LLR_0163``, ``UDSS_LLR_0161`` — so does a received one.
+    #[test]
+    fn a_received_return_to_default_disengages() {
+        let (mut c, id) = engaged();
+        exchange(&mut c, Timestamp(100), phys(ECU), UNKNOWN);
+        let default = Some(selected(Some(SessionSelection::Default)));
+        ind(&mut c, Timestamp(120), id, ECU, SResult::Ok, default);
+        assert_eq!(c.next_deadline(), None);
+    }
+
+    /// ``UDSS_LLR_0184``, ``UDSS_LLR_0151`` — a release disengages the channel it names
+    /// and no other.
+    #[test]
+    fn release_disengages_the_named_channel_only() {
+        let (mut c, first) = engaged();
+        let second = open(&mut c, ECU_2, S3_CLIENT);
+        exchange(
+            &mut c,
+            Timestamp(0),
+            phys(ECU_2),
+            select(SessionSelection::NonDefault),
+        );
+        assert_eq!(
+            outputs(c.release_keep_alive(Timestamp(100), first)),
+            (NOTHING, Ok(()))
+        );
+        assert_eq!(tick(&mut c, 2_000), only(due(second)));
+    }
+
+    /// ``UDSS_LLR_0152``, ``UDSS_LLR_0151``, ``UDSS_LLR_0162`` — each channel has its own
+    /// reload, and each falls due naming itself.
+    #[test]
+    fn each_channel_has_its_own_reload() {
+        let (mut c, first) = engaged();
+        let second = open(&mut c, ECU_2, 3_000);
+        exchange(
+            &mut c,
+            Timestamp(0),
+            phys(ECU_2),
+            select(SessionSelection::NonDefault),
+        );
+        assert_eq!(tick(&mut c, 2_000), only(due(first)));
+        assert_eq!(tick(&mut c, 3_000), only(due(second)));
+    }
+
+    /// ``UDSS_LLR_0152``, ``UDSS_LLR_0043``, ``UDSS_LLR_0076`` — a new reload applies
+    /// from the timer's next start.
+    #[test]
+    fn a_new_channel_reload_applies_from_the_next_start() {
+        let (mut c, id) = engaged();
+        assert_eq!(
+            outputs(c.set_physical_s3_client(Timestamp(10), id, 500)),
+            (NOTHING, Ok(()))
+        );
+        assert_eq!(tick(&mut c, 2_000), only(due(id)));
+        send(&mut c, 2_100, NO_RESPONSE);
+        confirm(&mut c, 2_100, SResult::Ok);
+        assert_eq!(tick(&mut c, 2_599), NOTHING);
+        assert_eq!(tick(&mut c, 2_600), only(due(id)));
+    }
+
+    /// ``UDSS_LLR_0134`` — a reload setting naming no channel the client has is refused.
+    #[test]
+    fn a_setting_naming_no_channel_is_rejected() {
+        let (mut c, id) = engaged();
+        assert_eq!(outputs(c.withdraw_channel(Timestamp(10), id)).1, Ok(()));
+        let (out, set) = outputs(c.set_physical_s3_client(Timestamp(20), id, 500));
+        assert_eq!(out, NOTHING);
+        assert!(rejected(set, Cause::NoSuchChannel));
+    }
+
+    /// ``UDSS_LLR_0149`` — in this mode a functional channel engages nothing.
+    #[test]
+    fn functional_channels_engage_nothing_in_this_mode() {
+        let mut c: Client<PhysicalKeepAlive, 2, 1, 1> = Client::new(
+            [PhysicalSlot::EMPTY; 2],
+            [FunctionalSlot::EMPTY],
+            PhysicalKeepAlive,
+        );
+        let id = open_func(&mut c, Timestamp(0));
+        exchange(
+            &mut c,
+            Timestamp(0),
+            func(),
+            select(SessionSelection::NonDefault),
+        );
+        assert_eq!(
+            outputs(c.release_keep_alive(Timestamp(10), id)),
+            (NOTHING, Ok(()))
+        );
+        assert_eq!(outputs(c.tick(Timestamp(10_000))).0, NOTHING);
+        assert_eq!(c.next_deadline(), None);
     }
 }
