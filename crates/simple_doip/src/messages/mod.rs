@@ -9,9 +9,11 @@ pub use diagnostic_message::DiagnosticMessage;
 #[cfg(feature = "alloc")]
 pub use diagnostic_message::OwnedDiagnosticMessage;
 mod diagnostic_message_ack;
+pub use diagnostic_message_ack::{
+    DiagnosticAckCode, DiagnosticMessageAck, DiagnosticMessageNack, DiagnosticNackCode,
+};
 #[cfg(feature = "alloc")]
-pub use diagnostic_message_ack::OwnedDiagnosticMessageAck;
-pub use diagnostic_message_ack::{DiagnosticAckCode, DiagnosticMessageAck};
+pub use diagnostic_message_ack::{OwnedDiagnosticMessageAck, OwnedDiagnosticMessageNack};
 mod entity_status_response;
 pub use entity_status_response::{EntityStatusNodeType, EntityStatusResponse};
 mod header;
@@ -179,33 +181,23 @@ impl<'a> Message<'a> {
         }
     }
 
-    /// Construct a diagnostic message acknowledgement
-    ///
-    /// # Known limitation
-    /// The header is stamped with `PayloadType::DiagnosticMessagePositiveAcknowledge`
-    /// (0x8002) regardless of `ack_code`, so a negative
-    /// [`DiagnosticAckCode`] is currently emitted under the positive payload type
-    /// instead of `DiagnosticMessageNegativeAcknowledge` (0x8003). This is a known
-    /// open issue deferred to a follow-up change.
+    /// Construct a diagnostic message positive acknowledgement, with the
+    /// [`DiagnosticAckCode::RoutingConfirmationAck`] code.
     ///
     /// # Panics
-    /// Panics if `ack.encoded_size()` errors, or if the resulting size does not
-    /// fit in a `u32`. Neither is reachable here: `DiagnosticMessageAck::encoded_size`
-    /// is pure arithmetic over the struct's own fields (no I/O to fail), and its
-    /// result is far below `u32::MAX` for any `previous_message_data` slice that
-    /// can exist in memory.
+    /// Panics if the payload's encoded size does not fit in a `u32`, which no
+    /// `previous_message_data` slice that can exist in memory reaches.
     #[must_use]
     pub fn diagnostic_message_ack(
         protocol_version: ProtocolVersion,
         source_address: LogicalAddress,
         target_address: LogicalAddress,
-        ack_code: DiagnosticAckCode,
         previous_message_data: &'a [u8],
     ) -> Message<'a> {
         let ack = DiagnosticMessageAck {
             source_address,
             target_address,
-            ack_code,
+            ack_code: DiagnosticAckCode::RoutingConfirmationAck,
             previous_message_data,
         };
         let payload_size = payload_len(&ack);
@@ -216,6 +208,36 @@ impl<'a> Message<'a> {
                 payload_size,
             ),
             payload: Payload::DiagnosticMessageAck(ack),
+        }
+    }
+
+    /// Construct a diagnostic message negative acknowledgement.
+    ///
+    /// # Panics
+    /// Panics if the payload's encoded size does not fit in a `u32`, which no
+    /// `previous_message_data` slice that can exist in memory reaches.
+    #[must_use]
+    pub fn diagnostic_message_nack(
+        protocol_version: ProtocolVersion,
+        source_address: LogicalAddress,
+        target_address: LogicalAddress,
+        nack_code: DiagnosticNackCode,
+        previous_message_data: &'a [u8],
+    ) -> Message<'a> {
+        let nack = DiagnosticMessageNack {
+            source_address,
+            target_address,
+            nack_code,
+            previous_message_data,
+        };
+        let payload_size = payload_len(&nack);
+        Message {
+            header: Header::new(
+                protocol_version,
+                PayloadType::DiagnosticMessageNegativeAcknowledge,
+                payload_size,
+            ),
+            payload: Payload::DiagnosticMessageNack(nack),
         }
     }
 
@@ -460,33 +482,23 @@ impl OwnedMessage {
         }
     }
 
-    /// Construct a diagnostic message acknowledgement carrying owned data
-    ///
-    /// # Known limitation
-    /// The header is stamped with `PayloadType::DiagnosticMessagePositiveAcknowledge`
-    /// (0x8002) regardless of `ack_code`, so a negative
-    /// [`DiagnosticAckCode`] is currently emitted under the positive payload type
-    /// instead of `DiagnosticMessageNegativeAcknowledge` (0x8003). This is a known
-    /// open issue deferred to a follow-up change.
+    /// Construct a diagnostic message positive acknowledgement carrying owned data,
+    /// with the [`DiagnosticAckCode::RoutingConfirmationAck`] code.
     ///
     /// # Panics
-    /// Panics if `ack.as_ref().encoded_size()` errors, or if the resulting size
-    /// does not fit in a `u32`. Neither is reachable here: `encoded_size` is pure
-    /// arithmetic over the struct's own fields (no I/O to fail), and its result is
-    /// far below `u32::MAX` for any `previous_message_data` vector that can exist
-    /// in memory.
+    /// Panics if the payload's encoded size does not fit in a `u32`, which no
+    /// `previous_message_data` vector that can exist in memory reaches.
     #[must_use]
     pub fn diagnostic_message_ack(
         protocol_version: ProtocolVersion,
         source_address: LogicalAddress,
         target_address: LogicalAddress,
-        ack_code: DiagnosticAckCode,
         previous_message_data: alloc::vec::Vec<u8>,
     ) -> OwnedMessage {
         let ack = OwnedDiagnosticMessageAck {
             source_address,
             target_address,
-            ack_code,
+            ack_code: DiagnosticAckCode::RoutingConfirmationAck,
             previous_message_data,
         };
         let payload_size = payload_len(&ack.as_ref());
@@ -497,6 +509,36 @@ impl OwnedMessage {
                 payload_size,
             ),
             payload: OwnedPayload::DiagnosticMessageAck(ack),
+        }
+    }
+
+    /// Construct a diagnostic message negative acknowledgement carrying owned data.
+    ///
+    /// # Panics
+    /// Panics if the payload's encoded size does not fit in a `u32`, which no
+    /// `previous_message_data` vector that can exist in memory reaches.
+    #[must_use]
+    pub fn diagnostic_message_nack(
+        protocol_version: ProtocolVersion,
+        source_address: LogicalAddress,
+        target_address: LogicalAddress,
+        nack_code: DiagnosticNackCode,
+        previous_message_data: alloc::vec::Vec<u8>,
+    ) -> OwnedMessage {
+        let nack = OwnedDiagnosticMessageNack {
+            source_address,
+            target_address,
+            nack_code,
+            previous_message_data,
+        };
+        let payload_size = payload_len(&nack.as_ref());
+        OwnedMessage {
+            header: Header::new(
+                protocol_version,
+                PayloadType::DiagnosticMessageNegativeAcknowledge,
+                payload_size,
+            ),
+            payload: OwnedPayload::DiagnosticMessageNack(nack),
         }
     }
 
@@ -645,36 +687,46 @@ mod tests {
         assert_eq!(decoded, message);
     }
 
-    /// `Message::diagnostic_message_ack` (the borrowed constructor) had no test at all:
-    /// pin its header `payload_length` and round-trip it through `encode`/`try_frame`
-    /// the same way as the stack-buffer test above, without any `Vec`/`alloc`.
+    /// `Message::diagnostic_message_ack` and `diagnostic_message_nack`: pin each
+    /// header's `payload_length` and round-trip it through `encode`/`try_frame` the
+    /// same way as the stack-buffer test above, without any `Vec`/`alloc`.
     #[test]
-    fn test_diagnostic_message_ack_round_trip() {
-        let message: Message<'_> = Message::diagnostic_message_ack(
+    fn test_diagnostic_message_ack_and_nack_round_trip() {
+        let echoed = [0x10u8, 0x02];
+        let ack = Message::diagnostic_message_ack(
             ProtocolVersion::V2012,
             LogicalAddress(0x0E00),
             LogicalAddress(0x1000),
-            DiagnosticAckCode::RoutingConfirmationAck,
-            &[0x10u8, 0x02][..],
+            &echoed[..],
         );
-        // 5 fixed bytes (two 2-byte addresses + 1 ack-code byte) + 2 previous-message
-        // bytes.
-        assert_eq!(message.header.payload_length, 7);
+        let nack = Message::diagnostic_message_nack(
+            ProtocolVersion::V2012,
+            LogicalAddress(0x0E00),
+            LogicalAddress(0x1000),
+            DiagnosticNackCode::UnknownTargetAddress,
+            &echoed[..],
+        );
+        for message in [ack, nack] {
+            // 5 fixed bytes (two 2-byte addresses + 1 code byte) + 2 previous-message
+            // bytes.
+            assert_eq!(message.header.payload_length, 7);
 
-        let mut buf = [0u8; 64];
-        let written = {
-            let mut writer = SliceSink::new(&mut buf);
-            message.encode(&mut writer).unwrap()
-        };
+            let mut buf = [0u8; 64];
+            let written = {
+                let mut writer = SliceSink::new(&mut buf);
+                message.encode(&mut writer).unwrap()
+            };
 
-        let (frame, consumed) = crate::try_frame(&buf[..written]).unwrap().unwrap();
-        assert_eq!(consumed, written);
-        let payload = Payload::decode(frame.payload, frame.header.payload_type).unwrap();
-        let decoded = Message {
-            header: frame.header,
-            payload,
-        };
-        assert_eq!(decoded, message);
+            let (frame, consumed) = crate::try_frame(&buf[..written]).unwrap().unwrap();
+            assert_eq!(consumed, written);
+            let payload =
+                Payload::decode(frame.payload, frame.header.payload_type).unwrap();
+            let decoded = Message {
+                header: frame.header,
+                payload,
+            };
+            assert_eq!(decoded, message);
+        }
     }
 
     /// A routing activation response carrying `oem_specific` must set the header payload
@@ -719,9 +771,9 @@ mod alloc_conversion_tests {
     use super::*;
     use crate::messages::{
         AliveCheckResponse, DiagnosticAckCode, DiagnosticMessage, DiagnosticMessageAck,
-        DiagnosticPowerModeCode, EntityStatusNodeType, EntityStatusResponse,
-        FurtherActionRequired, NackCode, RoutingActivationResponseCode,
-        VehicleIdentificationResponse, VinGidSyncStatus,
+        DiagnosticMessageNack, DiagnosticNackCode, DiagnosticPowerModeCode,
+        EntityStatusNodeType, EntityStatusResponse, FurtherActionRequired, NackCode,
+        RoutingActivationResponseCode, VehicleIdentificationResponse, VinGidSyncStatus,
     };
     use alloc::vec::Vec;
 
@@ -748,10 +800,15 @@ mod alloc_conversion_tests {
             Payload::DiagnosticMessageAck(DiagnosticMessageAck {
                 source_address: LogicalAddress(0xFFFF),
                 target_address: LogicalAddress(0x0001),
-                ack_code: DiagnosticAckCode::TransportProtocolError,
+                ack_code: DiagnosticAckCode::RoutingConfirmationAck,
                 previous_message_data: &ack_data[..],
             }),
-            Payload::DiagnosticMessageNack,
+            Payload::DiagnosticMessageNack(DiagnosticMessageNack {
+                source_address: LogicalAddress(0xFFFF),
+                target_address: LogicalAddress(0x0001),
+                nack_code: DiagnosticNackCode::TransportProtocolError,
+                previous_message_data: &ack_data[..],
+            }),
             Payload::EntityStatusRequest,
             Payload::EntityStatusResponse(EntityStatusResponse {
                 node_type: EntityStatusNodeType::DoIPGateway,
@@ -842,6 +899,46 @@ mod alloc_conversion_tests {
         );
         assert_eq!(borrowed.header, owned.header);
         assert_eq!(borrowed.to_owned_message().as_ref().header, borrowed.header);
+
+        // diagnostic_message_ack and _nack: ISO 13400-2:2019 Table 17 gives them 0x8002
+        // and 0x8003.
+        let echoed = [0x10u8, 0x03];
+        let borrowed = Message::diagnostic_message_ack(
+            ProtocolVersion::V2012,
+            LogicalAddress(0x0001),
+            LogicalAddress(0x0E00),
+            &echoed[..],
+        );
+        let owned = OwnedMessage::diagnostic_message_ack(
+            ProtocolVersion::V2012,
+            LogicalAddress(0x0001),
+            LogicalAddress(0x0E00),
+            echoed.to_vec(),
+        );
+        assert_eq!(borrowed.header, owned.header);
+        assert_eq!(
+            borrowed.header.payload_type,
+            PayloadType::DiagnosticMessagePositiveAcknowledge
+        );
+        let borrowed = Message::diagnostic_message_nack(
+            ProtocolVersion::V2012,
+            LogicalAddress(0x0001),
+            LogicalAddress(0x0E00),
+            DiagnosticNackCode::UnknownTargetAddress,
+            &echoed[..],
+        );
+        let owned = OwnedMessage::diagnostic_message_nack(
+            ProtocolVersion::V2012,
+            LogicalAddress(0x0001),
+            LogicalAddress(0x0E00),
+            DiagnosticNackCode::UnknownTargetAddress,
+            echoed.to_vec(),
+        );
+        assert_eq!(borrowed.header, owned.header);
+        assert_eq!(
+            borrowed.header.payload_type,
+            PayloadType::DiagnosticMessageNegativeAcknowledge
+        );
 
         // routing_activation_request with a Some tail.
         let borrowed = Message::routing_activation_request(

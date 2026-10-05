@@ -52,7 +52,7 @@ async client/server:
 |---|---|---|---|
 | L0 (external) | — | byte-level `Decode`/`Encode` traits, `Incomplete`, `TrailingBytes`, `take` | `automotive-wire-codec` crate |
 | Borrowed core | *(none)* | `Message<'a>`, `Payload<'a>`, `Header`, `try_frame` | `src/messages/`, `src/framer.rs` |
-| Owned mirror | `alloc` | `OwnedMessage`, `OwnedPayload`, `OwnedDiagnosticMessage`, `OwnedDiagnosticMessageAck` | `src/messages/mod.rs`, `src/messages/payload.rs` |
+| Owned mirror | `alloc` | `OwnedMessage`, `OwnedPayload`, `OwnedDiagnosticMessage`, `OwnedDiagnosticMessageAck`, `OwnedDiagnosticMessageNack` | `src/messages/mod.rs`, `src/messages/payload.rs` |
 | std | `std` | `std::io::Error` interop (`MessageError::Std`), `std`-backed error traits | `src/messages/message_error.rs` |
 | Codec | `codec` | `MessageCodec`, a `tokio_util::codec` `Encoder`/`Decoder` | `src/message_codec.rs` |
 | Async client | `client` | `Client`, `Connector` (trait + `ConnectorSocket`) | `src/client.rs`, `src/client_inner.rs`, `src/socket_manager.rs`, `src/connection.rs` |
@@ -281,9 +281,10 @@ new code reading `active_request` must preserve the restore-on-mismatch shape.
 
 ### Tests and examples
 
-- `tests/golden_vectors.rs` + `tests/golden/` — 33 frozen hex fixtures of the
+- `tests/golden_vectors.rs` + `tests/golden/` — frozen hex fixtures of the
   exact encoded bytes of every wire type. **Do not regenerate them.** They
-  cover *bodies* only; they do not pin header payload types (see section 7.1).
+  cover bodies, plus whole frames where a constructor chooses the header
+  (the diagnostic message acknowledgements' `0x8002`/`0x8003`).
 - `tests/integration_test.rs` — real client-against-real-server over loopback TCP.
 - `tests/udp_identification.rs` — drives `Server::run_udp_responder` on a
   loopback `UdpSocket`.
@@ -299,35 +300,7 @@ new code reading `active_request` must preserve the restore-on-mismatch shape.
 
 None of this is scheduled; each is a decision for the crate's next owner.
 
-### 7.1 `diagnostic_message_ack` hardcodes the positive acknowledgement payload type
-
-`Message::diagnostic_message_ack` and `OwnedMessage::diagnostic_message_ack`
-(`src/messages/mod.rs`) take an `ack_code: DiagnosticAckCode`, store it
-correctly in the `DiagnosticMessageAck` body, but always build the header with
-`PayloadType::DiagnosticMessagePositiveAcknowledge` (0x8002), regardless of the
-code. Passing a negative `DiagnosticAckCode` produces a frame whose header
-announces a positive acknowledgement while its body carries a negative code.
-`PayloadType::DiagnosticMessageNegativeAcknowledge` (0x8003) exists and is
-never selected.
-
-This is deliberately deferred, not an oversight — it is documented as a
-"Known limitation" on both constructors and on `Payload::DiagnosticMessageAck`.
-The fix is not a one-line payload-type swap: `Payload::decode` maps `0x8003` to
-`Payload::DiagnosticMessageNack`, a unit variant carrying no body, so stamping
-`0x8003` into the header without also changing which variant carries the body
-would produce a frame this crate's own decoder cannot round-trip. Fixing this
-means deciding what `0x8003` decodes *to* first (e.g. giving
-`DiagnosticMessageNack` a body, or folding both codes into
-`DiagnosticMessageAck` distinguished by `ack_code`), then updating
-`client_inner.rs`'s match sites to follow.
-
-No test anywhere asserts an ack frame's `header.payload_type` — the existing
-negative-ack test checks the client's resulting `Error`, not the wire header.
-A fix should add that assertion and be treated as semver-relevant, since it is
-a wire-behavior change the frozen golden fixtures (which pin bodies, not
-headers) will not catch.
-
-### 7.2 `is_response` belongs on `PayloadType`, not `Message`
+### 7.1 `is_response` belongs on `PayloadType`, not `Message`
 
 `Message::is_response` (`src/messages/mod.rs`) reads only
 `self.header.payload_type` and never touches `self.payload` — it is a pure
@@ -337,7 +310,7 @@ constructing a `Message`, delete `OwnedMessage::is_response` (today a pure
 pass-through), and leave the one production call site
 (`Inner::process_received_message` in `client_inner.rs`) a one-line change.
 
-### 7.3 Three write-only fields
+### 7.2 Three write-only fields
 
 - **`SocketManager::session_id: u16`** (`src/socket_manager.rs`) — initialised
   to `0`, incremented on every `send`, never read anywhere in the crate. Dead
@@ -352,7 +325,7 @@ pass-through), and leave the one production call site
 
 Each should either be wired to something real or deleted.
 
-### 7.4 Other rough edges
+### 7.3 Other rough edges
 
 The README's **Scope and limitations** section names these for an integrator
 choosing the crate; the mechanics are here:

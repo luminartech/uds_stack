@@ -161,24 +161,16 @@ pub(crate) enum DoIpEvent<'a> {
         peer: Address,
         /// The acknowledgement's outcome.
         ///
-        /// Derived from the acknowledgement's **code**, never from its payload
-        /// type. The two disagree in practice: `simple_doip`'s
-        /// `Message::diagnostic_message_ack` stamps the positive payload type
-        /// (`0x8002`) into the header whatever the ack code says — its own
-        /// documented limitation — so reading the payload type would report a
-        /// rejection as an acceptance and start `tP_Client` for a message the
-        /// entity never accepted. ISO 13400-2 makes the code the authority
-        /// regardless of which crate is emitting.
+        /// Derived from which acknowledgement arrived: ISO 13400-2:2019 Table 17
+        /// gives the positive and negative acknowledgements their own payload
+        /// types, and Tables 24 and 26 their own codes, which `simple_doip`
+        /// decodes to separate variants.
         ///
-        /// A rejection cannot yet say why. `SResult::Transport` carries a
-        /// `TransportError(u16)` precisely so a lower layer's own code reaches
-        /// the driver unchanged, and there is nothing to put in it:
-        /// `Payload::decode` maps a received `0x8003` to a fieldless variant,
-        /// discarding the NACK code, both addresses and the echoed request
-        /// bytes. Every rejection therefore collapses to "the transport refused
-        /// it", where ISO 13400-2 distinguishes an unknown target address from
-        /// routing not activated from an out-of-memory entity — three failures a
-        /// tester acts on differently. Raised with `simple_doip` 2026-09-17.
+        /// A rejection does not yet say why. `SResult::Transport` carries a
+        /// `TransportError(u16)` so a lower layer's own code reaches the driver
+        /// unchanged, and `simple_doip` decodes a received `0x8003` with its
+        /// NACK code, both addresses and the echoed request bytes; carrying the
+        /// code into the result is this mapping's to do.
         result: SResult,
     },
     /// A periodic response (`DoIP` `0x8004`).
@@ -395,40 +387,6 @@ mod tests {
             Payload::decode(&[], periodic).is_err(),
             "an unmodelled payload type is an error below, so a conformant \
              periodic response must never be routed through Payload::decode",
-        );
-    }
-
-    /// A rejection is stamped with the *positive* payload type, so the ack code
-    /// is the only thing that may be read.
-    ///
-    /// `Message::diagnostic_message_ack` writes
-    /// `PayloadType::DiagnosticMessagePositiveAcknowledge` into the header
-    /// whatever the code says — `simple_doip`'s own documented limitation. This
-    /// pins it, because `DoIpEvent::Conf`'s rule depends on it being true: a
-    /// transport reading the payload type would report a rejection as an
-    /// acceptance and start `tP_Client` for a message the entity never
-    /// accepted.
-    ///
-    /// **When this test starts failing**, `simple_doip` has fixed it. Delete
-    /// the test; the rule it defends stays correct either way, because
-    /// ISO 13400-2 makes the code authoritative regardless.
-    #[test]
-    fn a_rejection_is_stamped_with_the_positive_payload_type() {
-        use simple_doip::messages::{DiagnosticAckCode, Message};
-
-        let rejected = Message::diagnostic_message_ack(
-            simple_doip::messages::ProtocolVersion::V2019,
-            simple_doip::LogicalAddress(0x0E80),
-            simple_doip::LogicalAddress(0x0E00),
-            DiagnosticAckCode::UnknownTargetAddress,
-            &[],
-        );
-
-        assert_eq!(
-            rejected.header.payload_type,
-            PayloadType::DiagnosticMessagePositiveAcknowledge,
-            "the header says positive for a rejection, so only the ack code \
-             may be read to derive an SResult",
         );
     }
 
