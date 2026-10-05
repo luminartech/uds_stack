@@ -14,7 +14,7 @@ use crate::reaction::Reaction;
 use crate::rejection::{Cause, Rejection};
 use crate::result::SResult;
 use crate::time::Timestamp;
-use crate::timer::{Expiry, Timer};
+use crate::timer::{Reaches, Timer};
 
 /// One transmission between its `S_Data.req` and its `T_Data.conf`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -52,7 +52,10 @@ impl Association {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Session {
     Default,
-    NonDefault { client: PeerIdentity, s3: Timer },
+    NonDefault {
+        client: PeerIdentity,
+        s3: Timer<Reaches>,
+    },
 }
 
 impl Session {
@@ -74,7 +77,7 @@ impl Session {
 struct InProgress {
     peer: PeerIdentity,
     anchor: Option<Timestamp>,
-    p2: Timer,
+    p2: Timer<Reaches>,
     loaded: ServerReload,
     lead: u32,
     /// The transmission this service submitted that is still unconfirmed: the only one
@@ -214,14 +217,14 @@ impl<const A: usize> Server<A> {
         self.s3_expiry = None;
         self.p2_expiry = None;
         if let Session::NonDefault { client, s3 } = self.session
-            && s3.expired(now, Expiry::Reaches)
+            && s3.expired(now)
         {
             // UDSS_LLR_0100
             self.s3_expiry = Some(client);
             self.session = Session::Default;
         }
         if let Some(service) = self.service.as_mut()
-            && service.p2.expired_by(now, service.lead, Expiry::Reaches)
+            && service.p2.expired_by(now, service.lead)
         {
             // UDSS_LLR_0117 — stop, and report the service and the parameter; 0186 is
             // the lead, the timer itself still loaded with the whole window.
@@ -665,12 +668,10 @@ impl<const A: usize> Server<A> {
     #[must_use]
     pub fn next_deadline(&self) -> Option<Timestamp> {
         let s3 = match self.session {
-            Session::NonDefault { s3, .. } => s3.deadline(Expiry::Reaches),
+            Session::NonDefault { s3, .. } => s3.deadline(),
             Session::Default => None,
         };
-        let p2 = self
-            .service
-            .and_then(|s| s.p2.deadline_by(s.lead, Expiry::Reaches));
+        let p2 = self.service.and_then(|s| s.p2.deadline_by(s.lead));
         match (s3, p2) {
             (Some(a), Some(b)) => Some(earlier(a, b)),
             (a, b) => a.or(b),
