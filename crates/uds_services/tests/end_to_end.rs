@@ -320,8 +320,8 @@ impl DiagnosticSessionControl for Ecu {
     }
     fn timing(&self, _s: S) -> SessionTiming {
         SessionTiming {
-            p2_server_max: 50,
-            p2_star_server_max: 5_000,
+            p2_server_max_ms: 50,
+            p2_star_server_max_10ms: 500,
         }
     }
     fn on_transition(&mut self, t: SessionTransition, _relocked: bool) {

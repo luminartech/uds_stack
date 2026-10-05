@@ -8,16 +8,31 @@ use uds_protocol::{
     NegativeResponseCode, ResetType, SubnetNumber,
 };
 
-/// The `P2` pair a session advertises in its `DiagnosticSessionControl` response.
+/// The `P2` pair a session advertises in its `DiagnosticSessionControl` response, and
+/// that [`crate::Server`] enforces while the session is in force.
 ///
 /// ISO 14229-1:2020 clause 10.2 — the positive response carries `P2Server_max` and
 /// `P2*Server_max` for the session being entered, so they are a property of the session.
+/// Held in Table 29's wire form, so every value is advertised exactly and the window
+/// enforced is the one advertised.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct SessionTiming {
-    /// `P2Server_max` in milliseconds.
-    pub p2_server_max: u32,
-    /// `P2*Server_max` in milliseconds.
-    pub p2_star_server_max: u32,
+    /// `P2Server_max`, in 1 ms units.
+    pub p2_server_max_ms: u16,
+    /// `P2*Server_max`, in 10 ms units.
+    pub p2_star_server_max_10ms: u16,
+}
+
+impl SessionTiming {
+    /// `P2Server_max` in milliseconds, the session layer's unit.
+    pub(crate) fn p2_server_max(self) -> u32 {
+        u32::from(self.p2_server_max_ms)
+    }
+
+    /// `P2*Server_max` in milliseconds, the session layer's unit.
+    pub(crate) fn p2_star_server_max(self) -> u32 {
+        u32::from(self.p2_star_server_max_10ms) * 10
+    }
 }
 
 /// `DiagnosticSessionControl` (0x10).
@@ -73,19 +88,16 @@ pub trait DiagnosticSessionControl {
         active: DiagnosticSessionType,
     ) -> bool;
 
-    /// The `P2` pair to advertise for `session`.
+    /// The `P2` pair `session` advertises and, while it is in force, the server enforces.
     ///
-    /// **Must return, for every session, the `p2_server_max` and `p2_star_server_max` of
-    /// the [`ServerParams`](crate::ServerParams) passed to
-    /// [`Server::new`](crate::Server::new)**, with `p2_star_server_max` a multiple of
-    /// 10 ms and `p2_server_max` at most `u16::MAX`. The response advertises these, and
-    /// the server enforces the `ServerParams` it was given for every session, so the two
-    /// have separate sources and nothing reconciles them. ISO 14229-1:2020 Table 29 sends
-    /// `P2Server_max` in 1 ms units and `P2*Server_max` in 10 ms units, each in two
-    /// bytes, so a value outside that form is advertised rounded up (P2*) or clamped to
-    /// `u16::MAX`, and then differs from the one enforced. Milestone 1 has no per-session
-    /// timing: the confirmed session's values are not applied to the session layer; that
-    /// is a follow-up.
+    /// Asked for the entered session when composing the positive response, and for the
+    /// session in force each time a request arrives: [`crate::Server`] loads the pair
+    /// into the session layer then, so the request's window is the one its session
+    /// advertised, and any session the server is in — the default one included — is
+    /// timed by this and not by the [`ServerParams`](crate::ServerParams) passed to
+    /// [`Server::new`](crate::Server::new). The returned pair must keep those params'
+    /// `response_pending_lead` well formed
+    /// ([`ServerParams::is_well_formed`](crate::ServerParams::is_well_formed)).
     ///
     /// # Arguments
     ///
@@ -241,8 +253,8 @@ mod tests {
         }
         fn timing(&self, _s: DiagnosticSessionType) -> SessionTiming {
             SessionTiming {
-                p2_server_max: 50,
-                p2_star_server_max: 5_000,
+                p2_server_max_ms: 50,
+                p2_star_server_max_10ms: 500,
             }
         }
         fn on_transition(&mut self, _t: SessionTransition, _relocked: bool) {}
@@ -272,10 +284,16 @@ mod tests {
     }
 
     /// P2 values are a property of the session being entered, so the application states
-    /// them and this crate composes the response.
+    /// them and this crate composes the response; the session layer reads them in
+    /// milliseconds, `P2*` being sent in tens of them.
     #[test]
     fn a_session_carries_its_own_timing() {
         let t = Ecu.timing(DiagnosticSessionType::ProgrammingSession);
-        assert_eq!((t.p2_server_max, t.p2_star_server_max), (50, 5_000));
+        assert_eq!((t.p2_server_max(), t.p2_star_server_max()), (50, 5_000));
+        let widest = SessionTiming {
+            p2_server_max_ms: u16::MAX,
+            p2_star_server_max_10ms: u16::MAX,
+        };
+        assert_eq!(widest.p2_star_server_max(), 655_350);
     }
 }

@@ -232,6 +232,19 @@ macro_rules! __uds_session_hook {
     ($self:ident, $transition:expr, $svc:ident) => {};
 }
 
+/// The `P2` pair of the session in force, for one listed service: only
+/// `DiagnosticSessionControl` states one, and any other listed service emits nothing.
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __uds_session_timing {
+    ($self:ident, $state:ident, DiagnosticSessionControl) => {
+        return ::core::option::Option::Some($crate::pipeline::session_timing(
+            $self, $state,
+        ));
+    };
+    ($self:ident, $state:ident, $svc:ident) => {};
+}
+
 /// Figure 6's sub-function check for one listed service (``UDSSVC_ARCH_0007``): an early
 /// `return` from the closure `pipeline::begin` is handed, where `$service` is this one.
 /// Only a service with a stage decides its sub-function; any other listed service emits
@@ -613,6 +626,18 @@ macro_rules! uds_server {
                 ) {
                     let transition = $crate::pipeline::transition(state, selected);
                     $( $crate::__uds_session_hook!(self, transition, $svc); )+
+                }
+
+                #[allow(
+                    unreachable_code,
+                    reason = "the arm emitted for DiagnosticSessionControl returns"
+                )]
+                fn session_timing(
+                    &self,
+                    state: &Self::State,
+                ) -> ::core::option::Option<$crate::SessionTiming> {
+                    $( $crate::__uds_session_timing!(self, state, $svc); )+
+                    ::core::option::Option::None
                 }
 
                 fn supports(&self, service: $crate::UdsServiceType) -> bool {

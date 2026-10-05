@@ -60,8 +60,8 @@ impl uds_services::DiagnosticSessionControl for Ecu {
     }
     fn timing(&self, _s: S) -> SessionTiming {
         SessionTiming {
-            p2_server_max: 50,
-            p2_star_server_max: 5_000,
+            p2_server_max_ms: 50,
+            p2_star_server_max_10ms: 500,
         }
     }
     fn on_transition(&mut self, _t: SessionTransition, _r: bool) {}
@@ -214,6 +214,8 @@ struct Script {
     cursor: usize,
     now: u32,
     sent: [(Option<Ai>, [u8; FRAME], usize); FRAMES],
+    /// The clock when each frame was sent.
+    sent_at: [u32; FRAMES],
     sent_count: usize,
     /// How many `Deadline`s were reported.
     deadlines: usize,
@@ -230,6 +232,7 @@ impl Script {
             cursor: 0,
             now: 0,
             sent: [(None, [0; FRAME], 0); FRAMES],
+            sent_at: [0; FRAMES],
             sent_count: 0,
             deadlines: 0,
         }
@@ -296,6 +299,9 @@ impl UdsTransport for Script {
     ) -> impl core::future::Future<Output = Result<(), ()>> {
         // A frame that does not fit is recorded with no bytes, so a test comparing them
         // fails rather than passing on a truncation.
+        if let Some(at) = self.sent_at.get_mut(self.sent_count) {
+            *at = self.now;
+        }
         if let Some((slot_ai, buf, n)) = self.sent.get_mut(self.sent_count) {
             *slot_ai = Some(ai);
             if let Some(head) = buf.get_mut(..data.len()) {
@@ -777,4 +783,86 @@ fn a_close_mid_handler_sends_nothing_and_the_server_carries_on() {
     assert_eq!(t.cursor, 4, "the script was not consumed");
     assert_eq!(t.sent_count, 1);
     assert_eq!(t.sent(0), (Some(response_to(TESTER)), POSITIVE));
+}
+
+/// An application whose sessions time differently: the default session as [`PARAMS`]
+/// does, the extended one with a wider `P2` and a narrower `P2*`.
+#[derive(Debug)]
+struct Timed {
+    /// How many times the next `read` pends before answering.
+    pends: u8,
+}
+
+impl uds_services::ReadDataByIdentifier for Timed {
+    type Did = Did;
+    const MAY_RESPOND_PENDING: bool = true;
+    const MAX_DIDS_PER_REQUEST: usize = 1;
+    async fn read(&mut self, _did: Did, out: &mut ResponseSink<'_>) -> Result<(), Nrc> {
+        PendN(core::mem::take(&mut self.pends)).await;
+        out.write_all(&[0x40]).map_err(|_| Nrc::ResponseTooLong)
+    }
+}
+
+impl uds_services::DiagnosticSessionControl for Timed {
+    const MAX_RESPONSE_LEN: usize = 0;
+    fn supports(&self, s: S) -> bool {
+        matches!(s, S::DefaultSession | S::ExtendedDiagnosticSession)
+    }
+    fn supported_from(&self, _s: S, _active: S) -> bool {
+        true
+    }
+    fn timing(&self, s: S) -> SessionTiming {
+        match s {
+            S::ExtendedDiagnosticSession => SessionTiming {
+                p2_server_max_ms: 100,
+                p2_star_server_max_10ms: 200,
+            },
+            _ => SessionTiming {
+                p2_server_max_ms: 50,
+                p2_star_server_max_10ms: 500,
+            },
+        }
+    }
+    fn on_transition(&mut self, _t: SessionTransition, _r: bool) {}
+}
+
+uds_server! {
+    Timed: ReadDataByIdentifier, DiagnosticSessionControl;
+    transport = Script,
+    peers = 1,
+    server = TimedSrv,
+}
+
+/// The pair a `DiagnosticSessionControl` response advertises is the pair enforced once
+/// its session is in force: the next request's `tP2_Server` runs the extended session's
+/// 100 ms, not [`PARAMS`]' 50 ms, and its enhanced window that session's 2000 ms, not
+/// 5000 ms. Each 0x78 goes out when its own session's window comes due.
+#[test]
+fn the_confirmed_sessions_advertised_timing_is_enforced() {
+    let mut server = TimedSrv::new(
+        Timed { pends: 3 },
+        Script::new(&[
+            Step::Ind(request_from(TESTER), &[0x10, 0x03]),
+            Step::Conf(response_to(TESTER)), // the extended session takes effect
+            Step::Ind(request_from(TESTER), READ),
+            Step::At(50),  // PARAMS' tP2_Server would end here, mid-handler
+            Step::At(100), // the extended session's does
+            Step::Conf(response_to(TESTER)), // the 0x78's: tP2*_Server starts
+            Step::At(2_100), // the extended session's tP2*_Server ends
+            Step::Conf(response_to(TESTER)), // the second 0x78's
+            Step::Conf(response_to(TESTER)), // the final response's
+        ]),
+        ECU,
+        PARAMS,
+    );
+    run!(&mut server);
+    let t = server.transport();
+    assert_eq!(t.cursor, 9, "the script was not consumed");
+    assert_eq!(t.sent_count, 4);
+    // Advertised: P2 100 ms, P2* 200 x 10 ms.
+    assert_eq!(t.sent(0).1, &[0x50, 0x03, 0x00, 0x64, 0x00, 0xC8]);
+    let pending = &[0x7F, 0x22, 0x78][..];
+    assert_eq!((t.sent(1).1, t.sent_at[1]), (pending, 100));
+    assert_eq!((t.sent(2).1, t.sent_at[2]), (pending, 2_100));
+    assert_eq!(t.sent(3).1, POSITIVE);
 }

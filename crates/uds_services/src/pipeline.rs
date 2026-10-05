@@ -35,6 +35,17 @@ pub fn transition(state: &mut State, to: DiagnosticSessionType) -> SessionTransi
     SessionTransition::classify(from, to)
 }
 
+/// The `P2` pair of the session `state` is in, as `services` states it. Read through here
+/// for the reason [`transition`] writes through here: `State`'s accessors stay
+/// crate-private.
+#[doc(hidden)]
+pub fn session_timing<A: DiagnosticSessionControl>(
+    services: &A,
+    state: &State,
+) -> crate::SessionTiming {
+    services.timing(state.session())
+}
+
 /// Where the common stages left the request.
 #[doc(hidden)]
 #[derive(Debug)]
@@ -350,13 +361,8 @@ pub async fn read_data_by_identifier<A: ReadDataByIdentifier>(
 /// at all (0x12) and from the active one (0x7E) was settled by [`begin`] before the
 /// request was decoded, so it is not asked again here.
 ///
-/// Table 29 fixes the timing's wire form, and [`SessionTiming`](crate::SessionTiming)'s
-/// milliseconds are converted to it here:
-///
-/// * `P2Server_max` is sent in 1 ms units, at most `u16::MAX`; a larger value is sent as
-///   `u16::MAX`.
-/// * `P2*Server_max` is sent in 10 ms units, rounded up, so the advertised window is never
-///   shorter than the one enforced; a count above `u16::MAX` is sent as `u16::MAX`.
+/// [`SessionTiming`](crate::SessionTiming) is held in Table 29's wire form, so it is sent
+/// as stated.
 #[doc(hidden)]
 pub fn diagnostic_session_control<A: DiagnosticSessionControl>(
     services: &mut A,
@@ -365,11 +371,13 @@ pub fn diagnostic_session_control<A: DiagnosticSessionControl>(
 ) -> Result<Option<DiagnosticSessionType>, NegativeResponseCode> {
     let session = request.session_type;
     let timing = services.timing(session);
-    let p2 = u16::try_from(timing.p2_server_max).unwrap_or(u16::MAX);
-    let p2_star = u16::try_from(timing.p2_star_server_max.div_ceil(10)).unwrap_or(u16::MAX);
     let _ = out.write_all(&[0x50]);
-    let _ = uds_protocol::DiagnosticSessionControlResponse::new(session, p2, p2_star)
-        .encode(out);
+    let _ = uds_protocol::DiagnosticSessionControlResponse::new(
+        session,
+        timing.p2_server_max_ms,
+        timing.p2_star_server_max_10ms,
+    )
+    .encode(out);
     Ok(Some(session))
 }
 
@@ -468,8 +476,8 @@ mod tests {
         }
         fn timing(&self, _s: S) -> crate::SessionTiming {
             crate::SessionTiming {
-                p2_server_max: 50,
-                p2_star_server_max: 5_000,
+                p2_server_max_ms: 50,
+                p2_star_server_max_10ms: 500,
             }
         }
         fn on_transition(&mut self, _t: crate::SessionTransition, _r: bool) {}
@@ -541,7 +549,7 @@ mod tests {
         assert_eq!(out.written_bytes(), &[0x50, 0x03, 0x00, 0x32, 0x01, 0xF4]);
     }
 
-    /// An application whose timing Table 29's wire form cannot carry exactly.
+    /// An application whose timing is the widest Table 29's wire form carries.
     struct Odd;
     impl crate::DiagnosticSessionControl for Odd {
         const MAX_RESPONSE_LEN: usize = 0;
@@ -553,17 +561,16 @@ mod tests {
         }
         fn timing(&self, _s: S) -> crate::SessionTiming {
             crate::SessionTiming {
-                p2_server_max: 70_000,
-                p2_star_server_max: 5_005,
+                p2_server_max_ms: u16::MAX,
+                p2_star_server_max_10ms: u16::MAX,
             }
         }
         fn on_transition(&mut self, _t: crate::SessionTransition, _r: bool) {}
     }
 
-    /// Table 29 — `P2*` is rounded up to the next 10 ms, never down, so 5005 ms is
-    /// advertised as 501 (5010 ms); a `P2` beyond `u16::MAX` is sent as `u16::MAX`.
+    /// Table 29 — the pair is sent as the application stated it, to the widest values.
     #[test]
-    fn dsc_rounds_p2_star_up_and_clamps_p2() {
+    fn dsc_sends_the_timing_as_stated() {
         let mut buf = [0_u8; 8];
         let mut out = ResponseSink::new(&mut buf, None);
         let req = uds_protocol::DiagnosticSessionControlRequest::new(
@@ -572,7 +579,7 @@ mod tests {
         );
         let r = super::diagnostic_session_control(&mut Odd, &req, &mut out);
         assert_eq!(r, Ok(Some(S::ExtendedDiagnosticSession)));
-        assert_eq!(out.written_bytes(), &[0x50, 0x03, 0xFF, 0xFF, 0x01, 0xF5]);
+        assert_eq!(out.written_bytes(), &[0x50, 0x03, 0xFF, 0xFF, 0xFF, 0xFF]);
     }
 
     /// Clause 10.7 — `TesterPresent` answers `7E 00` and tells the application.

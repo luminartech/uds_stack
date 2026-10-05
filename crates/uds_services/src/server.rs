@@ -23,7 +23,8 @@ use uds_protocol::{DiagnosticSessionType, NegativeResponseCode, UdsServiceType};
 pub use uds_session::ServerParams;
 use uds_session::{
     Address, Ai, Association, Cause, Rejection, SResult, Server as SessionServer,
-    ServerOutput, ServerRx, ServerTx, SessionSelection, Solicitation, TaType, Timestamp,
+    ServerOutput, ServerParameter, ServerRx, ServerTx, SessionSelection, Solicitation,
+    TaType, Timestamp,
 };
 
 /// The UDS server: an application's services, its storage, a session layer and a
@@ -83,8 +84,12 @@ impl<A: ServiceSet, T: UdsTransport, const PEERS: usize> Server<A, T, PEERS> {
     ///   because a functionally addressed request's `S_TA` is the functional group
     ///   address, and a response sent from that address would not say which server
     ///   answered.
-    /// * `params` - the session layer's [`ServerParams`]: `tS3_Server`, `P2Server_max`
-    ///   and `P2*Server_max`, which the server enforces
+    /// * `params` - the session layer's [`ServerParams`]: `tS3_Server` and the
+    ///   response-pending lead, which the server enforces, and the `P2Server_max` and
+    ///   `P2*Server_max` it enforces only where `services` has no
+    ///   `DiagnosticSessionControl`; otherwise each session's
+    ///   [`DiagnosticSessionControl::timing`](crate::DiagnosticSessionControl::timing)
+    ///   replaces them
     pub const fn new(
         services: A,
         transport: T,
@@ -181,6 +186,15 @@ impl<A: ServiceSet, T: UdsTransport, const PEERS: usize> Server<A, T, PEERS> {
         };
 
         let outbound_max = self.transport.outbound_max();
+        retime(
+            &mut self.services,
+            &mut self.state,
+            &mut self.session,
+            &mut self.transport,
+            &mut self.pending,
+            now,
+        )
+        .await?;
         let reaction = self.session.t_data_ind(
             now,
             ai,
@@ -276,6 +290,36 @@ impl<A: ServiceSet, T: UdsTransport, const PEERS: usize> Server<A, T, PEERS> {
             self.step().await?;
         }
     }
+}
+
+/// Load the `P2` pair of the session in force into the session layer, so the request about
+/// to be indicated at `now` opens the window its session advertised.
+///
+/// The session layer is ticked at `now` first and its expiries applied, so a `tS3_Server`
+/// running out at that instant returns to the default session before its pair is read.
+/// The parameters are then set at the same `now`, which can expire nothing further, and
+/// ``UDSS_LLR_0076`` leaves any window already open on the value it was loaded with.
+async fn retime<A: ServiceSet, T: UdsTransport, const PEERS: usize>(
+    services: &mut A,
+    state: &mut A::State,
+    session: &mut SessionServer<PEERS>,
+    transport: &mut T,
+    pending: &mut Option<Pending>,
+    now: Timestamp,
+) -> Result<(), T::Error> {
+    let tick = drain(session.tick(now), transport, pending).await?;
+    apply(services, state, tick.deferred);
+    let Some(timing) = services.session_timing(state) else {
+        return Ok(());
+    };
+    for parameter in [
+        ServerParameter::P2ServerMax(timing.p2_server_max()),
+        ServerParameter::P2StarServerMax(timing.p2_star_server_max()),
+    ] {
+        let d = drain(session.set_parameter(now, parameter), transport, pending).await?;
+        apply(services, state, d.deferred);
+    }
+    Ok(())
 }
 
 /// The `DiagnosticSessionControl` response in flight: its session takes effect on the

@@ -261,6 +261,18 @@ pub trait ServiceSet: crate::sealed::Sealed {
         selected: DiagnosticSessionType,
     );
 
+    /// The `P2` pair of the session `state` is in, which [`crate::Server`] enforces for
+    /// the next request.
+    ///
+    /// [`DiagnosticSessionControl::timing`] for that session, or `None` where the
+    /// assembly has no `DiagnosticSessionControl`: such a server never leaves the default
+    /// session, and the [`ServerParams`](crate::ServerParams) it was built with time it.
+    ///
+    /// # Arguments
+    ///
+    /// * `state` - the [`ProtocolState`] of this assembly, which holds the session in force
+    fn session_timing(&self, state: &Self::State) -> Option<SessionTiming>;
+
     /// Whether this server implements `service` at all.
     ///
     /// ``UDSSVC_ARCH_0006`` — Figure 5's first mandatory check, and the one only the
