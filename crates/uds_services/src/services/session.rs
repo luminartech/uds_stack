@@ -2,7 +2,7 @@
 //!
 //! ``UDSSVC_ARCH_0012`` — one trait per service.
 
-use crate::{ResponseSink, SessionTransition};
+use crate::{ResponseSink, SecurityLevel, SessionTransition};
 use uds_protocol::{
     CommunicationControlType, CommunicationType, DiagnosticSessionType, DtcSettingType,
     NegativeResponseCode, ResetType, SubnetNumber,
@@ -148,6 +148,18 @@ pub trait EcuReset {
     /// * `active` - the session the server is in when the request arrives.
     fn supported_in(&self, kind: ResetType, active: DiagnosticSessionType) -> bool;
 
+    /// The security level `kind` requires unlocked, or `None` where it requires none.
+    ///
+    /// ISO 14229-1:2020 8.7.3.1 Figure 6, "`SubFunction` security check OK?" — asked only
+    /// for a `kind` that [`Self::supported_in`] accepted. Where the level this crate holds
+    /// unlocked is not the one returned, the request settles `securityAccessDenied`
+    /// (0x33) without [`Self::reset`] being asked.
+    ///
+    /// # Arguments
+    ///
+    /// * `kind` - the reset requested; see [`ResetType`].
+    fn required_level(&self, kind: ResetType) -> Option<SecurityLevel>;
+
     /// Accept or refuse `kind`, writing any `powerDownTime` into `out`.
     ///
     /// **Must not perform the reset before returning.** ISO 14229-1:2020 clause 10.3.1
@@ -157,15 +169,16 @@ pub trait EcuReset {
     /// # Arguments
     ///
     /// * `kind` - the reset requested, one [`Self::supports`] and [`Self::supported_in`]
-    ///   accepted; see [`ResetType`].
+    ///   accepted and whose [`Self::required_level`] is unlocked; see [`ResetType`].
     /// * `out` - where the `powerDownTime` byte goes, for
     ///   [`ResetType::EnableRapidPowerShutDown`], the one reset whose response carries
     ///   it (clause 10.3.3, Table 35); nothing is written for any other.
     ///
     /// # Errors
     ///
-    /// The [`NegativeResponseCode`] for a reset whose criteria are not met:
-    /// `conditionsNotCorrect` (0x22) or `securityAccessDenied` (0x33), clause 10.3.4.
+    /// The [`NegativeResponseCode`] for a reset whose criteria are not met, such as
+    /// `conditionsNotCorrect` (0x22), clause 10.3.4. A locked level is
+    /// [`Self::required_level`]'s, not this method's.
     ///
     /// A refused write to `out` needs no handling: the sink records the refusal and the
     /// pipeline answers `responseTooLong` (0x14) in place of the response, so the write's
@@ -306,6 +319,9 @@ mod tests {
         }
         fn supported_in(&self, _k: ResetType, _a: DiagnosticSessionType) -> bool {
             true
+        }
+        fn required_level(&self, _k: ResetType) -> Option<crate::SecurityLevel> {
+            None
         }
         async fn reset(
             &mut self,

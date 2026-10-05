@@ -314,6 +314,23 @@ macro_rules! __uds_sub_function_in_session {
     ($self:ident, $service:ident, $value:ident, $active:ident, $svc:ident) => {};
 }
 
+/// Figure 6's sub-function security check for one listed service: an early `return` from
+/// the closure `pipeline::begin` is handed, where `$service` is this one, naming the level
+/// the sub-function requires unlocked. The pipeline asks it only after both
+/// `__uds_sub_function` and `__uds_sub_function_in_session` accepted, and settles 0x33
+/// where that level is not the unlocked one. A service whose sub-functions require no
+/// level emits nothing and reaches the closure's fall-through `None`.
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __uds_sub_function_security {
+    ($self:ident, $service:ident, $value:ident, EcuReset) => {
+        if ::core::matches!($service, $crate::UdsServiceType::EcuReset) {
+            return $crate::pipeline::reset_required_level($self, $value);
+        }
+    };
+    ($self:ident, $service:ident, $value:ident, $svc:ident) => {};
+}
+
 /// One match arm per listed service, routing its decoded request to its stage. A listed
 /// service with no stage yet hits the wildcard, which emits nothing; the request then
 /// reaches the fall-through after every arm in `dispatch`, an outcome of 0x11 that the
@@ -389,6 +406,11 @@ macro_rules! __uds_stage {
 /// sub-function is available everywhere. Each other sub-function-bearing service
 /// (`CommunicationControl`, `ControlDtcSetting`, …) gains the same pair, in its own
 /// sub-function type, when its stage lands.
+///
+/// **Figure 6's sub-function security check is a third lookup**, `required_level`, on a
+/// service whose sub-functions can require an unlocked level: [`EcuReset`] today. The
+/// pipeline compares the level it names with the one this crate holds unlocked and
+/// settles `securityAccessDenied` (0x33), so no handler ever sees a locked request.
 ///
 /// [`supports`]: crate::DiagnosticSessionControl::supports
 /// [`supported_from`]: crate::DiagnosticSessionControl::supported_from
@@ -617,12 +639,22 @@ macro_rules! uds_server {
                         ); )+
                         true
                     };
+                    // Unused likewise in an assembly listing no service whose
+                    // sub-functions can require a security level.
+                    #[allow(unused_variables, reason = "used only by some assemblies")]
+                    let required_level = |service: $crate::UdsServiceType, value: u8| {
+                        $( $crate::__uds_sub_function_security!(
+                            self, service, value, $svc
+                        ); )+
+                        ::core::option::Option::None
+                    };
                     let (sid, decoded) = match $crate::pipeline::begin(
                         state,
                         received.bytes(),
                         |s| <Self as $crate::ServiceSet>::supports(self, s),
                         sub_function,
                         in_session,
+                        required_level,
                     ) {
                         $crate::pipeline::Stage::Empty => {
                             return $crate::Unsettled::empty();

@@ -77,6 +77,15 @@ impl EcuReset for Ecu {
         !matches!(kind, ResetType::KeyOffOnReset)
             || matches!(active, S::ExtendedDiagnosticSession)
     }
+    /// A soft or key-off-on reset requires level 0x03 unlocked.
+    fn required_level(&self, kind: ResetType) -> Option<SecurityLevel> {
+        match kind {
+            ResetType::SoftReset | ResetType::KeyOffOnReset => {
+                SecurityLevel::from_request_seed(0x03)
+            }
+            _ => None,
+        }
+    }
     async fn reset(
         &mut self,
         kind: ResetType,
@@ -271,7 +280,9 @@ fn ecu_reset_an_unsupported_reset_type_is_0x12() {
 }
 
 /// ``UDSSVC_ARCH_0007`` row 4 — a reset supported, but not in the active session, is
-/// 0x7E; the same request proceeds from the session that offers it.
+/// 0x7E, ahead of Figure 6's security check though its level is locked too; the same
+/// request proceeds from the session that offers it, once the level it requires is
+/// unlocked.
 #[test]
 fn ecu_reset_a_reset_not_offered_in_the_active_session_is_0x7e() {
     let mut ecu = Ecu::default();
@@ -281,6 +292,8 @@ fn ecu_reset_a_reset_not_offered_in_the_active_session_is_0x7e() {
         Some(&[0x7F, 0x11, 0x7E][..])
     );
     let mut state = in_session(&mut ecu, S::ExtendedDiagnosticSession);
+    let _ = exchange(&mut ecu, &mut state, &[0x27, 0x03]);
+    let _ = exchange(&mut ecu, &mut state, &[0x27, 0x04, 0xED, 0xCC]);
     assert_eq!(
         exchange(&mut ecu, &mut state, &[0x11, 0x02]).as_deref(),
         Some(&[0x51, 0x02][..])
@@ -339,8 +352,48 @@ fn ecu_reset_the_positive_response_echoes_the_reset_type() {
 fn ecu_reset_the_suppress_bit_silences_the_positive_response() {
     let mut ecu = Ecu::default();
     let mut state = State::INITIAL;
-    assert_eq!(exchange(&mut ecu, &mut state, &[0x11, 0x83]), None);
-    assert_eq!(ecu.accepted, Some(ResetType::SoftReset));
+    assert_eq!(exchange(&mut ecu, &mut state, &[0x11, 0x81]), None);
+    assert_eq!(ecu.accepted, Some(ResetType::HardReset));
+}
+
+/// Figure 6's sub-function security check — a reset requiring a level that is locked is
+/// 0x33, even with a trailing byte, and the handler is not asked; once that level is
+/// unlocked the same reset proceeds.
+#[test]
+fn ecu_reset_a_reset_requiring_a_locked_level_is_0x33() {
+    let mut ecu = Ecu::default();
+    let mut state = in_session(&mut ecu, S::ExtendedDiagnosticSession);
+    for request in [
+        &[0x11, 0x03][..],
+        &[0x11, 0x83, 0x00][..],
+        &[0x11, 0x02][..],
+    ] {
+        assert_eq!(
+            exchange(&mut ecu, &mut state, request).as_deref(),
+            Some(&[0x7F, 0x11, 0x33][..]),
+            "{request:02X?}"
+        );
+    }
+    assert_eq!(ecu.accepted, None);
+    let _ = exchange(&mut ecu, &mut state, &[0x27, 0x03]);
+    let _ = exchange(&mut ecu, &mut state, &[0x27, 0x04, 0xED, 0xCC]);
+    assert_eq!(
+        exchange(&mut ecu, &mut state, &[0x11, 0x03]).as_deref(),
+        Some(&[0x51, 0x03][..])
+    );
+}
+
+/// Figure 6 — a reset requiring one level is 0x33 while another is unlocked.
+#[test]
+fn ecu_reset_another_unlocked_level_is_0x33() {
+    let mut ecu = Ecu::default();
+    let mut state = in_session(&mut ecu, S::ExtendedDiagnosticSession);
+    let _ = exchange(&mut ecu, &mut state, &[0x27, 0x01]);
+    let _ = exchange(&mut ecu, &mut state, &RIGHT_KEY);
+    assert_eq!(
+        exchange(&mut ecu, &mut state, &[0x11, 0x03]).as_deref(),
+        Some(&[0x7F, 0x11, 0x33][..])
+    );
 }
 
 // --- SecurityAccess (0x27), ISO 14229-1:2020 clause 10.4 and Annex I -------------------

@@ -99,11 +99,13 @@ pub enum Stage<'a> {
 ///    `supported_in_session` refuses for the active session settles
 ///    `subFunctionNotSupportedInActiveSession` (0x7E) (row 4). Asking row 4 only after
 ///    row 2 accepted is what keeps Annex A's rule that 0x7E is sent only for a
-///    sub-function supported in another session. Both read the byte after the service
+///    sub-function supported in another session. Then Figure 6's optional sub-function
+///    security check: where `required_level` names a level that [`State`] does not hold
+///    unlocked, `securityAccessDenied` (0x33). All three read the byte after the service
 ///    identifier, with `suppressPosRspMsgIndicationBit` stripped, before any exact-length
-///    test, so a trailing byte cannot turn 0x12 or 0x7E into 0x13. A request with no such
-///    byte fails Figure 6's minimum-length check, which the decode in 5 settles. Row 3,
-///    authentication (0x34), is unconditionally true, as in Figure 5.
+///    test, so a trailing byte cannot turn 0x12, 0x7E or 0x33 into 0x13. A request with no
+///    such byte fails Figure 6's minimum-length check, which the decode in 5 settles. Row
+///    3, authentication (0x34), is unconditionally true, as in Figure 5.
 /// 5. Only then the service-specific check, where length and format live: a decode
 ///    failure settles `incorrectMessageLengthOrInvalidFormat` (0x13)
 ///    (``UDSSVC_ARCH_0005``).
@@ -113,22 +115,25 @@ pub enum Stage<'a> {
 /// request for a service this server lacks is 0x11, not 0x13; and its inner `SWITCH` on
 /// the sub-function falls to `DEFAULT: responseCode = SFNS` before the length test of a
 /// supported sub-function's arm. Figure 5's authentication check (0x34), between 2 and 3,
-/// is unconditionally true here (architecture open question 4). Figure 5's and Figure
-/// 6's optional security checks (0x33) are not evaluated: the unlocked level is held in
-/// [`State`], but no trait yet says which services or sub-functions require one.
+/// is unconditionally true here (architecture open question 4). Figure 5's optional SID
+/// security check is not evaluated here: no service this crate stages requires a level
+/// for its service identifier alone, and a service whose requirement turns on an
+/// identifier in its data-parameters checks it in its own stage.
 #[doc(hidden)]
 #[must_use]
-pub fn begin<'a, F, G, H>(
+pub fn begin<'a, F, G, H, K>(
     state: &State,
     request: &'a [u8],
     supports: F,
     sub_function_supported: G,
     supported_in_session: H,
+    required_level: K,
 ) -> Stage<'a>
 where
     F: Fn(UdsServiceType) -> bool,
     G: Fn(UdsServiceType, u8) -> bool,
     H: Fn(UdsServiceType, u8, DiagnosticSessionType) -> bool,
+    K: Fn(UdsServiceType, u8) -> Option<SecurityLevel>,
 {
     let Some((&sid, parameters)) = request.split_first() else {
         return Stage::Empty;
@@ -163,6 +168,12 @@ where
                 nrc: NegativeResponseCode::SubFunctionNotSupportedInActiveSession,
             };
         }
+        if !unlocked(state, required_level(service, value)) {
+            return Stage::Settle {
+                sid,
+                nrc: NegativeResponseCode::SecurityAccessDenied,
+            };
+        }
     }
     match Request::decode(request) {
         // A service `uds_protocol` names but does not model has no stage either: 0x11,
@@ -180,6 +191,11 @@ where
             nrc: NegativeResponseCode::IncorrectMessageLengthOrInvalidFormat,
         },
     }
+}
+
+/// Whether `required`, where there is one, is the level `state` holds unlocked.
+fn unlocked(state: &State, required: Option<SecurityLevel>) -> bool {
+    required.is_none_or(|level| state.unlocked() == Some(level))
 }
 
 /// The sub-function's value bits: bit 7 of the byte is `suppressPosRspMsgIndicationBit`
@@ -241,6 +257,17 @@ pub fn reset_supported_in<A: EcuReset>(
     active: DiagnosticSessionType,
 ) -> bool {
     ResetType::try_from(value).is_ok_and(|kind| services.supported_in(kind, active))
+}
+
+/// ISO 14229-1:2020 clause 10.3 — the level the reset `EcuReset`'s sub-function `value`
+/// (suppress bit stripped) names requires unlocked. [`begin`]'s sub-function security
+/// check for that service, asked only after [`reset_supported_in`] accepted `value`.
+#[doc(hidden)]
+#[must_use]
+pub fn reset_required_level<A: EcuReset>(services: &A, value: u8) -> Option<SecurityLevel> {
+    ResetType::try_from(value)
+        .ok()
+        .and_then(|kind| services.required_level(kind))
 }
 
 /// The level a `SecurityAccess` sub-function `value` (suppress bit stripped) names: its
@@ -861,6 +888,11 @@ mod tests {
         }
     }
 
+    /// No sub-function of the test assembly requires a security level.
+    fn no_level(_service: U, _value: u8) -> Option<crate::SecurityLevel> {
+        None
+    }
+
     /// ``UDSSVC_ARCH_0005`` — an empty request is the pipeline's, and is `Empty`.
     #[test]
     fn an_empty_request_is_empty() {
@@ -870,7 +902,8 @@ mod tests {
                 &[],
                 supports_rdbi,
                 ecu_sub_function,
-                ecu_in_session
+                ecu_in_session,
+                no_level
             ),
             Stage::Empty
         ));
@@ -885,6 +918,7 @@ mod tests {
             supports_rdbi,
             ecu_sub_function,
             ecu_in_session,
+            no_level,
         );
         assert!(matches!(
             st,
@@ -905,6 +939,7 @@ mod tests {
             supports_rdbi,
             ecu_sub_function,
             ecu_in_session,
+            no_level,
         );
         assert!(matches!(
             st,
@@ -919,6 +954,7 @@ mod tests {
             supports_rdbi,
             ecu_sub_function,
             ecu_in_session,
+            no_level,
         );
         assert!(matches!(
             st,
@@ -954,6 +990,7 @@ mod tests {
             |s| matches!(s, U::SecurityAccess),
             ecu_sub_function,
             ecu_in_session,
+            no_level,
         );
         assert!(matches!(
             st,
@@ -975,6 +1012,7 @@ mod tests {
             supports_rdbi,
             ecu_sub_function,
             ecu_in_session,
+            no_level,
         );
         assert!(matches!(
             st,
@@ -995,6 +1033,7 @@ mod tests {
             |s| matches!(s, U::SecurityAccess),
             ecu_sub_function,
             ecu_in_session,
+            no_level,
         );
         assert!(matches!(
             st,
@@ -1015,6 +1054,7 @@ mod tests {
             |s| matches!(s, U::TesterPresent),
             ecu_sub_function,
             ecu_in_session,
+            no_level,
         );
         assert!(matches!(
             st,
@@ -1034,6 +1074,7 @@ mod tests {
             supports_rdbi,
             ecu_sub_function,
             ecu_in_session,
+            no_level,
         );
         assert!(matches!(st, Stage::Proceed { sid: 0x22, .. }));
     }
@@ -1063,6 +1104,7 @@ mod tests {
                 supports_ecu,
                 ecu_sub_function,
                 ecu_in_session,
+                no_level,
             );
             assert!(
                 matches!(
@@ -1085,6 +1127,7 @@ mod tests {
                 supports_ecu,
                 ecu_sub_function,
                 ecu_in_session,
+                no_level,
             );
             assert!(
                 matches!(
@@ -1109,6 +1152,7 @@ mod tests {
                 supports_ecu,
                 ecu_sub_function,
                 ecu_in_session,
+                no_level,
             );
             assert!(
                 matches!(st, Stage::Proceed { .. }),
@@ -1128,6 +1172,7 @@ mod tests {
             supports_ecu,
             |_, _| false,
             |_, _, _| false,
+            no_level,
         );
         assert!(matches!(
             st,
@@ -1148,6 +1193,7 @@ mod tests {
             |s| matches!(s, U::RoutineControl),
             |_, _| false,
             |_, _, _| false,
+            no_level,
         );
         assert!(!matches!(
             st,
@@ -1175,6 +1221,7 @@ mod tests {
             supports_ecu,
             ecu_sub_function,
             |_, _, _| false,
+            no_level,
         );
         assert!(
             matches!(
@@ -1204,6 +1251,7 @@ mod tests {
                 supports_ecu,
                 ecu_sub_function,
                 ecu_in_session,
+                no_level,
             );
             assert!(
                 matches!(
@@ -1228,6 +1276,7 @@ mod tests {
             supports_ecu,
             ecu_sub_function,
             ecu_in_session,
+            no_level,
         );
         assert!(matches!(st, Stage::Proceed { sid: 0x10, .. }), "{st:?}");
         let st = begin(
@@ -1236,6 +1285,7 @@ mod tests {
             supports_ecu,
             ecu_sub_function,
             ecu_in_session,
+            no_level,
         );
         assert!(
             matches!(
@@ -1262,6 +1312,7 @@ mod tests {
                 supports_ecu,
                 ecu_sub_function,
                 |_, _, _| false,
+                no_level,
             );
             assert!(
                 matches!(
@@ -1288,6 +1339,7 @@ mod tests {
                 supports_ecu,
                 ecu_sub_function,
                 ecu_in_session,
+                no_level,
             );
             assert!(matches!(st, Stage::Proceed { sid: 0x3E, .. }), "{st:?}");
         }
