@@ -31,6 +31,18 @@ pub enum RoutineControlSubFunction {
 
     /// Request results for the specified routineIdentifier
     RequestRoutineResults,
+
+    /// A `routineControlType` ISO 14229-1:2020 Table 426 reserves: `0x00` or `0x04`-`0x7F`.
+    ///
+    /// Decoded rather than rejected because Figure 30 answers it
+    /// `subFunctionNotSupported` (0x12) only after the routine identifier's checks
+    /// (`requestOutOfRange`, 0x31, and `securityAccessDenied`, 0x33), which a server can
+    /// make only on a request that decoded. Never has bit 7 set, and only decoding builds
+    /// it.
+    #[cfg_attr(feature = "clap", clap(skip))]
+    #[cfg_attr(feature = "serde", serde(skip_deserializing))]
+    #[non_exhaustive]
+    IsoSaeReserved(u8),
 }
 
 impl From<RoutineControlSubFunction> for u8 {
@@ -39,6 +51,7 @@ impl From<RoutineControlSubFunction> for u8 {
             RoutineControlSubFunction::StartRoutine => 0x01,
             RoutineControlSubFunction::StopRoutine => 0x02,
             RoutineControlSubFunction::RequestRoutineResults => 0x03,
+            RoutineControlSubFunction::IsoSaeReserved(value) => value,
         }
     }
 }
@@ -46,18 +59,19 @@ impl From<RoutineControlSubFunction> for u8 {
 impl TryFrom<u8> for RoutineControlSubFunction {
     type Error = Error;
 
-    /// ISO 14229-1:2020 Table 426 defines `0x01`-`0x03` and reserves everything else, with
-    /// no vehicle-manufacturer or system-supplier range — so unlike most sub-function enums
-    /// in this crate there is nothing legitimate to model beyond the three named values.
+    /// ISO 14229-1:2020 Table 426 defines `0x01`-`0x03` and reserves the rest of
+    /// `0x00`-`0x7F`, with no vehicle-manufacturer or system-supplier range; a reserved
+    /// value is [`IsoSaeReserved`](Self::IsoSaeReserved).
     ///
     /// # Errors
-    /// Returns [`Error::InvalidRoutineControlSubFunction`] for any other value, which maps
-    /// to [`NegativeResponseCode::SubFunctionNotSupported`] as Table 430 requires.
+    /// Returns [`Error::InvalidRoutineControlSubFunction`] for a value with bit 7 set: that
+    /// bit is the suppressPosRspMsgIndicationBit, not part of the `routineControlType`.
     fn try_from(value: u8) -> Result<Self, Self::Error> {
         match value {
             0x01 => Ok(RoutineControlSubFunction::StartRoutine),
             0x02 => Ok(RoutineControlSubFunction::StopRoutine),
             0x03 => Ok(RoutineControlSubFunction::RequestRoutineResults),
+            0x00 | 0x04..=0x7F => Ok(RoutineControlSubFunction::IsoSaeReserved(value)),
             _ => Err(Error::InvalidRoutineControlSubFunction(value)),
         }
     }
@@ -289,26 +303,38 @@ mod test {
     }
 
     #[test]
-    fn an_unsupported_sub_function_is_answered_with_sub_function_not_supported() {
+    fn a_reserved_sub_function_decodes_so_the_routine_checks_can_come_first() {
         // ISO 14229-1:2020 Table 426 defines only 0x01-0x03; 0x00 and 0x04-0x7F are
-        // ISOSAEReserved. Table 430 requires NRC 0x12 for a sub-function that "is either
-        // generally not supported or is not supported for the requested RoutineIdentifier".
-        // Reporting IncorrectMessageLengthOrInvalidFormat sent 0x13 instead, for a request
-        // whose length was perfectly correct -- and disagreed with ControlDTCSetting, the
-        // only other service that validates its sub-function.
+        // ISOSAEReserved. Figure 30 answers one 0x12, but only after the routine
+        // identifier's 0x31 and 0x33 checks, so the request has to decode: rejecting it
+        // here left a server no choice but to answer before those checks. It re-encodes
+        // to the byte it came from, with the suppress bit kept apart.
         for byte in [0x00u8, 0x04, 0x10, 0x7F] {
-            let err = crate::Request::decode(&[0x31, byte, 0xF0, 0x0F])
-                .expect_err("a reserved routineControlType must be rejected");
-            assert!(
-                matches!(err, Error::InvalidRoutineControlSubFunction(got) if got == byte),
-                "wrong error for sub-function {byte:#04X}: {err:?}"
-            );
+            let request = [byte | 0x80, 0xF0, 0x0F];
+            let (decoded, rest) = <RoutineControlRequest as Decode>::decode(&request)
+                .expect("a reserved routineControlType decodes");
+            assert_eq!(rest, [0_u8; 0]);
             assert_eq!(
-                err.negative_response_code(),
-                Some(NegativeResponseCode::SubFunctionNotSupported),
-                "wrong NRC for sub-function {byte:#04X}"
+                decoded.sub_function,
+                RoutineControlSubFunction::IsoSaeReserved(byte)
             );
+            assert!(decoded.suppress_positive_response);
+            assert_eq!(u8::from(decoded.sub_function), byte);
         }
+    }
+
+    #[test]
+    fn a_sub_function_byte_with_bit_7_is_answered_with_sub_function_not_supported() {
+        // Bit 7 is the suppressPosRspMsgIndicationBit, so it never names a
+        // routineControlType; `try_from` on a byte carrying it is the error, and the error
+        // maps to 0x12 as Table 430 requires.
+        let err =
+            RoutineControlSubFunction::try_from(0x81).expect_err("bit 7 is not a type");
+        assert!(matches!(err, Error::InvalidRoutineControlSubFunction(0x81)));
+        assert_eq!(
+            err.negative_response_code(),
+            Some(NegativeResponseCode::SubFunctionNotSupported)
+        );
     }
 
     #[test]
@@ -354,13 +380,6 @@ mod test {
         // A response with the SPRMIB bit set (0x81) is malformed and rejected.
         assert!(<RoutineControlResponse as Decode>::decode(&[0x81, 0xFF, 0x00]).is_err());
         assert_encode_size_agrees(&resp);
-    }
-
-    #[test]
-    fn decode_routine_control_request_rejects_reserved_subfunction() {
-        // 0x7F (low 7 bits = 0x7F) is a reserved routineControlType
-        let bytes = [0x7F, 0xFF, 0x00];
-        assert!(<RoutineControlRequest as Decode>::decode(&bytes).is_err());
     }
 
     #[test]
