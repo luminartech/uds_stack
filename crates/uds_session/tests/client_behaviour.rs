@@ -1417,7 +1417,54 @@ mod error_handling {
             SResult::Ok,
             Some(SOLICITED),
         );
+        let still_two = send(&mut c, 210, func(), REPEAT);
+        assert_eq!(still_two.map_err(|r| r.causes().count()), Err(1));
+        assert!(rejected(still_two, Cause::RepeatCountSpent));
         assert_eq!(send(&mut c, 210, func(), UNKNOWN), Ok(()));
+    }
+
+    /// ``UDSS_LLR_0010``, ``UDSS_LLR_0081`` — a reset at an expiry's timestamp still
+    /// indicates the expiry, though the reset ends the request silently.
+    #[test]
+    fn an_expiry_at_a_reset_is_still_indicated() {
+        let mut c = tester();
+        let id = open_phys(&mut c, Timestamp(0), ECU);
+        exchange(&mut c, Timestamp(0), phys(ECU), UNKNOWN);
+        let (out, outcome) = outputs(c.reset_channel(Timestamp(51), id));
+        assert_eq!(out, only(timeout(phys(ECU), ChannelReload::Default)));
+        assert_eq!(outcome, Ok(()));
+    }
+
+    /// ``UDSS_LLR_0121`` with ``UDSS_LLR_0027``, ``UDSS_LLR_0183`` and ``UDSS_LLR_0184`` —
+    /// a withdrawn functional channel's handle names nothing, though a channel was
+    /// reopened in its slot.
+    #[test]
+    fn a_stale_functional_handle_is_refused_by_every_input() {
+        let mut c = tester();
+        let stale = open_func(&mut c, Timestamp(0));
+        assert_eq!(outputs(c.withdraw_channel(Timestamp(0), stale)).1, Ok(()));
+        let fresh = open_func(&mut c, Timestamp(0));
+        let ind = outputs(c.t_data_ind(
+            Timestamp(1),
+            stale,
+            rsp(ECU),
+            &DATA,
+            SResult::Ok,
+            Some(SOLICITED),
+        ));
+        assert!(rejected(ind.1, Cause::NoSuchChannel));
+        let som = outputs(c.t_data_som_ind(Timestamp(1), stale, rsp(ECU), SOLICITED));
+        assert!(rejected(som.1, Cause::NoSuchChannel));
+        assert!(rejected(reset(&mut c, 1, stale), Cause::NoSuchChannel));
+        let released = outputs(c.release_keep_alive(Timestamp(1), stale)).1;
+        assert!(rejected(released, Cause::NoSuchChannel));
+        let set = outputs(c.set_functional_parameter(
+            Timestamp(1),
+            stale,
+            ChannelParameter::Spacing(10),
+        ));
+        assert!(rejected(set.1, Cause::NoSuchChannel));
+        assert_eq!(reset(&mut c, 1, fresh), Ok(()));
     }
 
     /// ``UDSS_LLR_0180``, ``UDSS_LLR_0128`` — a reset ends the request and its window
@@ -1983,6 +2030,16 @@ mod physical_keep_alive {
             (NOTHING, Ok(()))
         );
         assert_eq!(tick(&mut c, 2_000), only(due(second)));
+    }
+
+    /// ``UDSS_LLR_0010``, ``UDSS_LLR_0081`` — a withdrawal at the timestamp a channel's
+    /// keep-alive falls due still indicates it, naming the channel withdrawn.
+    #[test]
+    fn a_keep_alive_due_at_a_withdrawal_is_still_indicated() {
+        let (mut c, id) = engaged();
+        let (out, withdrawn) = outputs(c.withdraw_channel(Timestamp(2_000), id));
+        assert_eq!(out, only(due(id)));
+        assert_eq!(withdrawn, Ok(()));
     }
 
     /// ``UDSS_LLR_0152``, ``UDSS_LLR_0151``, ``UDSS_LLR_0162`` — each channel has its own
