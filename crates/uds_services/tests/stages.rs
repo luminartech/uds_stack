@@ -12,10 +12,12 @@ use uds_services::pipeline::settle;
 use uds_services::{
     Address, Ai, ClearDiagnosticInformation, CommunicationControl,
     CommunicationControlType, CommunicationType, ControlDtcSetting, DataIdentifier,
-    DiagnosticSessionType as S, DtcRecord, DtcSettingType, EcuReset, KeyVerdict, Mtype,
-    ProtocolState, RecordError, ResetType, Responded, ResponseSink, SecurityAccess,
-    SecurityLevel, SecurityPolicy, ServiceSet, SessionTiming, SessionTransition, Sink,
-    SubnetNumber, TaType, TesterPresent, WriteDataByIdentifier, uds_server,
+    DiagnosticSessionType as S, DtcRecord, DtcReportKind, DtcSettingType, DtcStatusMask,
+    EcuReset, KeyVerdict, Mtype, ProtocolState, ReadDtcInfoReportType,
+    ReadDtcInfoSubFunction, ReadDtcInformation, RecordError, ResetType, Responded,
+    ResponseSink, SecurityAccess, SecurityLevel, SecurityPolicy, ServiceSet, SessionTiming,
+    SessionTransition, Sink, SubnetNumber, TaType, TesterPresent, WriteDataByIdentifier,
+    uds_server,
 };
 
 /// The test server's data identifiers.
@@ -242,6 +244,78 @@ fn key_of(level: SecurityLevel) -> [u8; 2] {
     seed_of(level).wrapping_neg().to_be_bytes()
 }
 
+/// The three DTCs of clause 12.3.5.2's example, and its `DTCStatusAvailabilityMask`.
+const DTCS: [([u8; 3], u8); 3] = [
+    ([0x08, 0x05, 0x11], 0x24),
+    ([0x0A, 0x9B, 0x17], 0x26),
+    ([0x25, 0x22, 0x1F], 0x2F),
+];
+const AVAILABILITY: u8 = 0x2F;
+
+/// Reports `01`, `02`, `0A` and `19`: `reportSupportedDTC` (0x0A) only in the extended
+/// session, and the user-defined memory report (0x19) only with level 0x03 unlocked.
+impl ReadDtcInformation for Ecu {
+    const MAY_RESPOND_PENDING: bool = false;
+    const MAX_DTCS: usize = 3;
+    const REPORTS: &'static [DtcReportKind] =
+        &[DtcReportKind::Count, DtcReportKind::DtcList];
+    fn supports(&self, report: ReadDtcInfoReportType) -> bool {
+        matches!(u8::from(report), 0x01 | 0x02 | 0x0A | 0x19)
+    }
+    fn supported_in(&self, report: ReadDtcInfoReportType, active: S) -> bool {
+        !matches!(report, ReadDtcInfoReportType::ReportSupportedDtc)
+            || matches!(active, S::ExtendedDiagnosticSession)
+    }
+    fn required_level(&self, report: ReadDtcInfoReportType) -> Option<SecurityLevel> {
+        match u8::from(report) {
+            0x19 => SecurityLevel::from_request_seed(0x03),
+            _ => None,
+        }
+    }
+    async fn read_dtc_information(
+        &mut self,
+        request: ReadDtcInfoSubFunction,
+        out: &mut ResponseSink<'_>,
+    ) -> Result<(), Nrc> {
+        let matching = |mask: DtcStatusMask| {
+            DTCS.into_iter()
+                .filter(move |&(_, status)| status & u8::from(mask) != 0)
+        };
+        match request {
+            ReadDtcInfoSubFunction::ReportNumberOfDtcByStatusMask(mask) => {
+                let count = u16::try_from(matching(mask).count()).unwrap_or(u16::MAX);
+                let _ = out.write_all(&[AVAILABILITY, 0x01]);
+                let _ = out.write_all(&count.to_be_bytes());
+            }
+            ReadDtcInfoSubFunction::ReportDtcByStatusMask(mask) => {
+                let _ = out.write_all(&[AVAILABILITY]);
+                for (dtc, status) in matching(mask) {
+                    let _ = out.write_all(&dtc);
+                    let _ = out.write_all(&[status]);
+                }
+            }
+            ReadDtcInfoSubFunction::ReportSupportedDtc => {
+                let _ = out.write_all(&[AVAILABILITY]);
+            }
+            ReadDtcInfoSubFunction::ReportUserDefMemoryDtcExtDataRecordByDtcNumber(
+                dtc,
+                _,
+                memory,
+            ) => {
+                let bytes = [dtc.high_byte(), dtc.middle_byte(), dtc.low_byte()];
+                let Some((_, status)) = DTCS.into_iter().find(|&(d, _)| d == bytes) else {
+                    return Err(Nrc::RequestOutOfRange);
+                };
+                let _ = out.write_all(&[memory]);
+                let _ = out.write_all(&bytes);
+                let _ = out.write_all(&[status]);
+            }
+            _ => return Err(Nrc::SubFunctionNotSupported),
+        }
+        Ok(())
+    }
+}
+
 /// Clears every group, the emissions-related group `FFFF33` (Annex D.1), and DTC
 /// `012345`; memory `00` is the only user-defined DTC memory.
 impl ClearDiagnosticInformation for Ecu {
@@ -400,7 +474,7 @@ impl uds_services::UdsTransport for NoTransport {
 uds_server! {
     Ecu: DiagnosticSessionControl, TesterPresent, EcuReset, SecurityAccess,
          CommunicationControl, ControlDtcSetting, WriteDataByIdentifier,
-         ClearDiagnosticInformation;
+         ClearDiagnosticInformation, ReadDtcInformation;
     transport = NoTransport,
     peers = 1,
     server = EcuServer,
@@ -1409,4 +1483,126 @@ fn clear_dtc_the_positive_response_is_0x54() {
         ecu.cleared,
         Some((DtcRecord::new(0x01, 0x23, 0x45), Some(0x00)))
     );
+}
+
+// --- ReadDTCInformation (0x19), ISO 14229-1:2020 clause 12.3 ---------------------------
+
+/// ``UDSSVC_ARCH_0007`` row 2, clause 12.3.4 — a report type the server does not support,
+/// and a reserved one, are 0x12 whatever parameters follow, and the handler is not asked.
+#[test]
+fn read_dtc_an_unsupported_report_type_is_0x12() {
+    let mut ecu = Ecu::default();
+    let mut state = State::INITIAL;
+    for request in [
+        &[0x19, 0x03][..],
+        &[0x19, 0x04][..],
+        &[0x19, 0x00][..],
+        &[0x19, 0x1B, 0x00][..],
+        &[0x19, 0x7F][..],
+        &[0x19, 0x83, 0x00][..],
+    ] {
+        assert_eq!(
+            exchange(&mut ecu, &mut state, request).as_deref(),
+            Some(&[0x7F, 0x19, 0x12][..]),
+            "{request:02X?}"
+        );
+    }
+}
+
+/// ``UDSSVC_ARCH_0007`` row 4 — a report type supported, but not in the active session,
+/// is 0x7E; it proceeds from the session that offers it.
+#[test]
+fn read_dtc_a_report_type_not_offered_in_the_active_session_is_0x7e() {
+    let mut ecu = Ecu::default();
+    let mut state = State::INITIAL;
+    assert_eq!(
+        exchange(&mut ecu, &mut state, &[0x19, 0x0A]).as_deref(),
+        Some(&[0x7F, 0x19, 0x7E][..])
+    );
+    let mut state = extended(&mut ecu);
+    assert_eq!(
+        exchange(&mut ecu, &mut state, &[0x19, 0x0A]).as_deref(),
+        Some(&[0x59, 0x0A, AVAILABILITY][..])
+    );
+}
+
+/// Figure 6's sub-function security check — a report type requiring a locked level is
+/// 0x33, even with its parameters missing, and proceeds once that level is unlocked.
+#[test]
+fn read_dtc_a_report_type_requiring_a_locked_level_is_0x33() {
+    let mut ecu = Ecu::default();
+    let mut state = extended(&mut ecu);
+    for request in [
+        &[0x19, 0x19][..],
+        &[0x19, 0x19, 0x25, 0x22, 0x1F, 0xFF, 0x00][..],
+    ] {
+        assert_eq!(
+            exchange(&mut ecu, &mut state, request).as_deref(),
+            Some(&[0x7F, 0x19, 0x33][..]),
+            "{request:02X?}"
+        );
+    }
+    let mut state = unlocked_level_3(&mut ecu);
+    assert_eq!(
+        exchange(
+            &mut ecu,
+            &mut state,
+            &[0x19, 0x19, 0x25, 0x22, 0x1F, 0xFF, 0x00]
+        )
+        .as_deref(),
+        Some(&[0x59, 0x19, 0x00, 0x25, 0x22, 0x1F, 0x2F][..])
+    );
+}
+
+/// Clause 12.3.4 — a supported report type with a parameter missing, or followed by a
+/// trailing byte, is 0x13.
+#[test]
+fn read_dtc_a_wrong_length_is_0x13() {
+    let mut ecu = Ecu::default();
+    let mut state = State::INITIAL;
+    for request in [&[0x19, 0x01][..], &[0x19, 0x02, 0x08, 0x00][..]] {
+        assert_eq!(
+            exchange(&mut ecu, &mut state, request).as_deref(),
+            Some(&[0x7F, 0x19, 0x13][..]),
+            "{request:02X?}"
+        );
+    }
+}
+
+/// Clause 12.3.4 — a `DTCMaskRecord` the server does not recognise is the handler's 0x31.
+#[test]
+fn read_dtc_an_unknown_dtc_is_the_handler_0x31() {
+    let mut ecu = Ecu::default();
+    let mut state = unlocked_level_3(&mut ecu);
+    assert_eq!(
+        exchange(
+            &mut ecu,
+            &mut state,
+            &[0x19, 0x19, 0x12, 0x34, 0x56, 0xFF, 0x00]
+        )
+        .as_deref(),
+        Some(&[0x7F, 0x19, 0x31][..])
+    );
+}
+
+/// Clause 12.3.5.2, Tables 340-341 — the pipeline writes `59 01` and the handler the
+/// availability mask, format and count; a report by status mask lists the matching
+/// DTCs. The suppress bit silences the response.
+#[test]
+fn read_dtc_the_positive_response_follows_the_example() {
+    let mut ecu = Ecu::default();
+    let mut state = State::INITIAL;
+    assert_eq!(
+        exchange(&mut ecu, &mut state, &[0x19, 0x01, 0x08]).as_deref(),
+        Some(&[0x59, 0x01, 0x2F, 0x01, 0x00, 0x01][..])
+    );
+    assert_eq!(
+        exchange(&mut ecu, &mut state, &[0x19, 0x02, 0x02]).as_deref(),
+        Some(
+            &[
+                0x59, 0x02, 0x2F, 0x0A, 0x9B, 0x17, 0x26, 0x25, 0x22, 0x1F, 0x2F
+            ][..]
+        )
+    );
+    assert_eq!(exchange(&mut ecu, &mut state, &[0x19, 0x81, 0x08]), None);
 }

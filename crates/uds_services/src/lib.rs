@@ -108,8 +108,9 @@ pub use state::{ProtocolState, State};
 ///
 /// ```
 /// use uds_services::{
-///     DtcRecord, DtcReportKind, Encode, NegativeResponseCode, ReadDtcInfoSubFunction,
-///     ReadDtcInformation, ResponseSink,
+///     DiagnosticSessionType, DtcRecord, DtcReportKind, DtcStatusMask, Encode,
+///     NegativeResponseCode, ReadDtcInfoReportType, ReadDtcInfoSubFunction,
+///     ReadDtcInformation, ResponseSink, SecurityLevel,
 /// };
 ///
 /// struct Ecu;
@@ -119,13 +120,29 @@ pub use state::{ProtocolState, State};
 ///     const MAX_DTCS: usize = 1;
 ///     const REPORTS: &'static [DtcReportKind] = &[DtcReportKind::DtcList];
 ///
+///     fn supports(&self, report: ReadDtcInfoReportType) -> bool {
+///         matches!(report, ReadDtcInfoReportType::ReportDtcByStatusMask)
+///     }
+///     fn supported_in(
+///         &self,
+///         _report: ReadDtcInfoReportType,
+///         _active: DiagnosticSessionType,
+///     ) -> bool {
+///         true
+///     }
+///     fn required_level(&self, _r: ReadDtcInfoReportType) -> Option<SecurityLevel> {
+///         None
+///     }
+///
 ///     async fn read_dtc_information(
 ///         &mut self,
 ///         _request: ReadDtcInfoSubFunction,
 ///         out: &mut ResponseSink<'_>,
 ///     ) -> Result<(), NegativeResponseCode> {
 ///         // A refusal is the sink's to record and the pipeline's to answer.
+///         let _ = DtcStatusMask::from(0x09).encode(out);
 ///         let _ = DtcRecord::new(0xC0, 0x01, 0x23).encode(out);
+///         let _ = DtcStatusMask::from(0x09).encode(out);
 ///         Ok(())
 ///     }
 /// }
@@ -172,7 +189,8 @@ pub use services::{
 pub use uds_protocol::{
     CLEAR_ALL_DTCS, CommunicationControlType, CommunicationType, DiagnosticSessionType,
     DtcRecord, DtcSettingType, DtcStatusMask, FileOperationMode, FunctionalGroupIdentifier,
-    NegativeResponseCode, ReadDtcInfoSubFunction, ResetType, SubnetNumber, UdsServiceType,
+    NegativeResponseCode, ReadDtcInfoReportType, ReadDtcInfoSubFunction, ResetType,
+    SubnetNumber, UdsServiceType,
 };
 
 /// Re-exported only so `uds_server!`'s expansion can name it; not part of the API.

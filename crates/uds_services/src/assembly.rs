@@ -286,6 +286,11 @@ macro_rules! __uds_sub_function {
             return $crate::pipeline::control_type_supported($self, $value);
         }
     };
+    ($self:ident, $service:ident, $value:ident, ReadDtcInformation) => {
+        if ::core::matches!($service, $crate::UdsServiceType::ReadDtcInfo) {
+            return $crate::pipeline::report_type_supported($self, $value);
+        }
+    };
     ($self:ident, $service:ident, $value:ident, $svc:ident) => {};
 }
 
@@ -331,6 +336,11 @@ macro_rules! __uds_sub_function_in_session {
             return $crate::pipeline::control_type_supported_in($self, $value, $active);
         }
     };
+    ($self:ident, $service:ident, $value:ident, $active:ident, ReadDtcInformation) => {
+        if ::core::matches!($service, $crate::UdsServiceType::ReadDtcInfo) {
+            return $crate::pipeline::report_type_supported_in($self, $value, $active);
+        }
+    };
     ($self:ident, $service:ident, $value:ident, $active:ident, $svc:ident) => {};
 }
 
@@ -356,6 +366,11 @@ macro_rules! __uds_sub_function_security {
     ($self:ident, $service:ident, $value:ident, CommunicationControl) => {
         if ::core::matches!($service, $crate::UdsServiceType::CommunicationControl) {
             return $crate::pipeline::control_type_required_level($self, $value);
+        }
+    };
+    ($self:ident, $service:ident, $value:ident, ReadDtcInformation) => {
+        if ::core::matches!($service, $crate::UdsServiceType::ReadDtcInfo) {
+            return $crate::pipeline::report_type_required_level($self, $value);
         }
     };
     ($self:ident, $service:ident, $value:ident, $svc:ident) => {};
@@ -414,6 +429,11 @@ macro_rules! __uds_stage {
     ($self:ident, $state:ident, $out:ident, $req:ident, ClearDiagnosticInformation) => {
         if let $crate::Request::ClearDiagnosticInfo(ref r) = $req {
             return $crate::pipeline::clear_diagnostic_information($self, r, $out).await;
+        }
+    };
+    ($self:ident, $state:ident, $out:ident, $req:ident, ReadDtcInformation) => {
+        if let $crate::Request::ReadDtcInfo(ref r) = $req {
+            return $crate::pipeline::read_dtc_information($self, r, $out).await;
         }
     };
     ($self:ident, $state:ident, $out:ident, $req:ident, $svc:ident) => {};

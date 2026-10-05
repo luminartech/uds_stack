@@ -19,11 +19,12 @@ use uds_services::{
     Address, Ai, Answer, ClearDiagnosticInformation, ClientSet, ClientStorage,
     CommunicationControl, CommunicationControlType, CommunicationType, DataIdentifier,
     DataTransfer, DiagnosticSessionType, DtcRecord, DtcReportKind, DtcStatusMask,
-    KeyVerdict, Mtype, PhysicalKeepAlive, ReadDataByIdentifier, ReadDtcInfoSubFunction,
-    ReadDtcInformation, Received, RecordError, Reloads, Response, ResponseSink,
-    SecurityAccess, SecurityLevel, SecurityPolicy, ServerParams, ServiceSet, SessionTiming,
-    SessionTransition, Sink, Storage, SubnetNumber, TaType, TesterPresent, Timestamp,
-    TransferRequest, TransportEvent, UdsServiceType, UdsTransport, uds_client, uds_server,
+    KeyVerdict, Mtype, PhysicalKeepAlive, ReadDataByIdentifier, ReadDtcInfoReportType,
+    ReadDtcInfoSubFunction, ReadDtcInformation, Received, RecordError, Reloads, Response,
+    ResponseSink, SecurityAccess, SecurityLevel, SecurityPolicy, ServerParams, ServiceSet,
+    SessionTiming, SessionTransition, Sink, Storage, SubnetNumber, TaType, TesterPresent,
+    Timestamp, TransferRequest, TransportEvent, UdsServiceType, UdsTransport, uds_client,
+    uds_server,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -88,6 +89,15 @@ impl ReadDtcInformation for Ecu {
     const MAX_DTCS: usize = 10;
     const REPORTS: &'static [DtcReportKind] =
         &[DtcReportKind::DtcList, DtcReportKind::SeverityList];
+    fn supports(&self, _r: ReadDtcInfoReportType) -> bool {
+        true
+    }
+    fn supported_in(&self, _r: ReadDtcInfoReportType, _a: DiagnosticSessionType) -> bool {
+        true
+    }
+    fn required_level(&self, _r: ReadDtcInfoReportType) -> Option<SecurityLevel> {
+        None
+    }
     // No `parameters: &[u8]`: every report type's parameters ride on its variant.
     async fn read_dtc_information(
         &mut self,

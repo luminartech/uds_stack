@@ -1,7 +1,10 @@
 //! Stored data transmission — ISO 14229-1:2020 clause 12.
 
-use crate::ResponseSink;
-use uds_protocol::{DtcRecord, NegativeResponseCode, ReadDtcInfoSubFunction};
+use crate::{ResponseSink, SecurityLevel};
+use uds_protocol::{
+    DiagnosticSessionType, DtcRecord, NegativeResponseCode, ReadDtcInfoReportType,
+    ReadDtcInfoSubFunction,
+};
 
 /// Which shape of `ReadDTCInformation` response a report type produces.
 ///
@@ -28,8 +31,8 @@ pub enum DtcReportKind {
 }
 
 impl DtcReportKind {
-    /// Bytes this layout writes before its records, including the `0x59` service
-    /// identifier.
+    /// Bytes this layout puts before its records, including the `0x59` service
+    /// identifier and the sub-function echo the pipeline writes.
     #[must_use]
     pub const fn header_len(self) -> usize {
         match self {
@@ -54,11 +57,12 @@ impl DtcReportKind {
 /// `ReadDTCInformation` (0x19).
 ///
 /// Clause 12.3 defines more than twenty report types, and which of them a server
-/// implements is the application's. Each arrives decoded as a
-/// [`ReadDtcInfoSubFunction`], which carries that report type's own parameters — a
-/// status mask, a record number, a [`DtcRecord`](uds_protocol::DtcRecord) — so a
-/// handler matches on the report it was asked for rather than parsing the bytes behind
-/// it.
+/// implements is the application's. Figure 6's questions are asked of the report type
+/// alone, a [`ReadDtcInfoReportType`], before the request's parameters are decoded; the
+/// report then arrives decoded as a [`ReadDtcInfoSubFunction`], which carries that report
+/// type's own parameters — a status mask, a record number, a
+/// [`DtcRecord`] — so a handler matches on the report it was asked for rather than
+/// parsing the bytes behind it.
 pub trait ReadDtcInformation {
     /// ``UDSSVC_ARCH_0033``.
     const MAY_RESPOND_PENDING: bool;
@@ -79,25 +83,71 @@ pub trait ReadDtcInformation {
     /// application's to know.
     const REPORTS: &'static [DtcReportKind];
 
+    /// Whether this server supports `report` at all, in whichever session.
+    ///
+    /// ISO 14229-1:2020 8.7.3.1 Figure 6, "`SubFunction` supported ever for the SID?" —
+    /// ``UDSSVC_ARCH_0007`` row 2. A `false` settles the request
+    /// `subFunctionNotSupported` (0x12) before [`Self::supported_in`] is asked, and before
+    /// the request's parameters are decoded.
+    ///
+    /// # Arguments
+    ///
+    /// * `report` - the report type requested; see [`ReadDtcInfoReportType`], whose
+    ///   reserved variant carries the raw byte.
+    fn supports(&self, report: ReadDtcInfoReportType) -> bool;
+
+    /// Whether `report` is available in the `active` session.
+    ///
+    /// ISO 14229-1:2020 8.7.3.1 Figure 6, "`SubFunction` supported in active session
+    /// for the SID?" — ``UDSSVC_ARCH_0007`` row 4. Asked only for a `report` that
+    /// [`Self::supports`] accepted, so a `false` settles the request
+    /// `subFunctionNotSupportedInActiveSession` (0x7E).
+    ///
+    /// # Arguments
+    ///
+    /// * `report` - the report type requested; see [`ReadDtcInfoReportType`].
+    /// * `active` - the session the server is in when the request arrives; see
+    ///   [`DiagnosticSessionType`].
+    fn supported_in(
+        &self,
+        report: ReadDtcInfoReportType,
+        active: DiagnosticSessionType,
+    ) -> bool;
+
+    /// The security level `report` requires unlocked, or `None` where it requires none.
+    ///
+    /// ISO 14229-1:2020 8.7.3.1 Figure 6, "`SubFunction` security check OK?" — asked only
+    /// for a `report` that [`Self::supported_in`] accepted. Where the level this crate
+    /// holds unlocked is not the one returned, the request settles
+    /// `securityAccessDenied` (0x33) without [`Self::read_dtc_information`] being asked.
+    ///
+    /// # Arguments
+    ///
+    /// * `report` - the report type requested; see [`ReadDtcInfoReportType`].
+    fn required_level(&self, report: ReadDtcInfoReportType) -> Option<SecurityLevel>;
+
     /// Write the report `request` asks for into `out`.
     ///
     /// # Arguments
     ///
     /// * `request` - the report type and its parameters; see
-    ///   [`ReadDtcInfoSubFunction`]. There is no separate parameter slice: a report
-    ///   type's parameters are fixed-width and ride on its variant, so a malformed one
-    ///   is rejected with `incorrectMessageLengthOrInvalidFormat` (0x13) before it
-    ///   reaches here.
-    /// * `out` - where the report's **records** are written. The header the layout
-    ///   carries — the service identifier, the sub-function echo and the status
-    ///   availability mask — is written by the pipeline, as
-    ///   [`ReadDataByIdentifier::read`](crate::ReadDataByIdentifier::read)'s identifier
-    ///   is. That split is what makes [`DtcReportKind::header_len`] this crate's number
-    ///   to know.
+    ///   [`ReadDtcInfoSubFunction`], whose [`report_type`] [`Self::supports`] accepted.
+    ///   There is no separate parameter slice: a report type's parameters are
+    ///   fixed-width and ride on its variant, so a malformed one is rejected with
+    ///   `incorrectMessageLengthOrInvalidFormat` (0x13) before it reaches here.
+    /// * `out` - where the response is written after the `59` service identifier and
+    ///   the echoed report type, which the pipeline writes: everything else the layout
+    ///   carries, from the `DTCStatusAvailabilityMask` on, is the handler's. Clause 12.3.3
+    ///   gives each report type's layout; [`DtcReportKind::header_len`] counts the
+    ///   pipeline's two bytes with the rest of the header.
+    ///
+    /// [`report_type`]: ReadDtcInfoSubFunction::report_type
     ///
     /// # Errors
     ///
-    /// The [`NegativeResponseCode`] for a report type this server does not implement.
+    /// The [`NegativeResponseCode`] where the report cannot be given, clause 12.3.4:
+    /// `requestOutOfRange` (0x31) for a `DTCMaskRecord` the server does not recognise or
+    /// an invalid record number.
     ///
     /// A refused write to `out` needs no handling: the sink records the refusal and the
     /// pipeline answers `responseTooLong` (0x14) in place of the response, so the write's

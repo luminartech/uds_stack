@@ -14,16 +14,17 @@ use crate::services::SessionTransition;
 use crate::state::State;
 use crate::{
     ClearDiagnosticInformation, CommunicationControl, ControlDtcSetting, DataIdentifier,
-    DiagnosticSessionControl, EcuReset, KeyVerdict, ReadDataByIdentifier, RecordError,
-    SecurityAccess, SecurityLevel, SecurityPolicy, TesterPresent, WriteDataByIdentifier,
+    DiagnosticSessionControl, EcuReset, KeyVerdict, ReadDataByIdentifier,
+    ReadDtcInformation, RecordError, SecurityAccess, SecurityLevel, SecurityPolicy,
+    TesterPresent, WriteDataByIdentifier,
 };
 use crate::{Responded, ResponseSink, Unsettled};
 use automotive_wire_codec::Sink;
 use uds_protocol::{
     ClearDiagnosticInfoRequest, CommunicationControlRequest, CommunicationControlType,
     ControlDtcSettingRequest, DiagnosticSessionControlRequest, DtcSettingType,
-    EcuResetRequest, ReadDataByIdentifierRequest, ResetType, SecurityAccessRequest,
-    WriteDataByIdentifierRequest,
+    EcuResetRequest, ReadDataByIdentifierRequest, ReadDtcInfoReportType,
+    ReadDtcInfoRequest, ResetType, SecurityAccessRequest, WriteDataByIdentifierRequest,
 };
 use uds_protocol::{
     Decode, DiagnosticSessionType, Encode, NegativeResponse, NegativeResponseCode, Request,
@@ -385,6 +386,45 @@ pub fn dtc_setting_required_level<A: ControlDtcSetting>(
         .and_then(|setting| services.required_level(setting))
 }
 
+/// ISO 14229-1:2020 clause 12.3 — whether `ReadDTCInformation`'s sub-function `value`
+/// (suppress bit stripped) names a report type the application supports. [`begin`]'s
+/// "supported ever" check for that service (``UDSSVC_ARCH_0007`` row 2).
+#[doc(hidden)]
+#[must_use]
+pub fn report_type_supported<A: ReadDtcInformation>(services: &A, value: u8) -> bool {
+    ReadDtcInfoReportType::try_from(value).is_ok_and(|report| services.supports(report))
+}
+
+/// ISO 14229-1:2020 clause 12.3 — whether the report type `ReadDTCInformation`'s
+/// sub-function `value` (suppress bit stripped) names is available in `active`.
+/// [`begin`]'s "supported in active session" check for that service (``UDSSVC_ARCH_0007``
+/// row 4), asked only after [`report_type_supported`] accepted `value`.
+#[doc(hidden)]
+#[must_use]
+pub fn report_type_supported_in<A: ReadDtcInformation>(
+    services: &A,
+    value: u8,
+    active: DiagnosticSessionType,
+) -> bool {
+    ReadDtcInfoReportType::try_from(value)
+        .is_ok_and(|report| services.supported_in(report, active))
+}
+
+/// ISO 14229-1:2020 clause 12.3 — the level the report type `ReadDTCInformation`'s
+/// sub-function `value` (suppress bit stripped) names requires unlocked. [`begin`]'s
+/// sub-function security check for that service, asked only after
+/// [`report_type_supported_in`] accepted `value`.
+#[doc(hidden)]
+#[must_use]
+pub fn report_type_required_level<A: ReadDtcInformation>(
+    services: &A,
+    value: u8,
+) -> Option<SecurityLevel> {
+    ReadDtcInfoReportType::try_from(value)
+        .ok()
+        .and_then(|report| services.required_level(report))
+}
+
 /// ISO 14229-1:2020 clause 10.7 — whether `TesterPresent`'s sub-function `value`
 /// (suppress bit stripped) is `zeroSubFunction`, the only one the service defines.
 /// [`begin`]'s sub-function check for that service.
@@ -577,6 +617,24 @@ pub async fn write_data_by_identifier<A: WriteDataByIdentifier>(
     services.write(did, record).await?;
     let _ = out.write_all(&[0x6E]);
     let _ = out.write_all(&request.identifier.to_be_bytes());
+    Ok(None)
+}
+
+/// ISO 14229-1:2020 clause 12.3 — `ReadDTCInformation`'s own stage. Whether the report
+/// type is supported (0x12), in the active session (0x7E) and unlocked (0x33) was settled
+/// by [`begin`], and its parameters' exact length by the decode (0x13). The pipeline
+/// writes `59` and the echoed report type; the handler writes the rest of the layout
+/// (clause 12.3.3) and decides 0x31.
+#[doc(hidden)]
+pub async fn read_dtc_information<A: ReadDtcInformation>(
+    services: &mut A,
+    request: &ReadDtcInfoRequest,
+    out: &mut ResponseSink<'_>,
+) -> Result<Option<DiagnosticSessionType>, NegativeResponseCode> {
+    let _ = out.write_all(&[0x59, request.dtc_subfunction.value()]);
+    services
+        .read_dtc_information(request.dtc_subfunction, out)
+        .await?;
     Ok(None)
 }
 
