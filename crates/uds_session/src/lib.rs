@@ -27,9 +27,8 @@
 //!
 //! # Status
 //!
-//! The server role is implemented and tested against its requirements in
-//! `tests/server_behaviour.rs`. The client role's public surface is complete; its bodies
-//! are `todo!()` and carry the requirements they will satisfy.
+//! Both roles are implemented and tested against their requirements: the server in
+//! `tests/server_behaviour.rs`, the client in `tests/client_behaviour.rs`.
 //!
 //! # How the surface discharges its requirements
 //!

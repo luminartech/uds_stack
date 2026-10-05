@@ -28,7 +28,7 @@
 //! `R` sizes every functional channel's responder table alike. A client with no
 //! functional channels at all sets `FUNC` to `0`, pays no storage for one, and leaves `R`
 //! to its default of `0` rather than naming a table size that would mean nothing:
-//! `Client<2, 0>`.
+//! `Client<K, 2, 0>`.
 //!
 //! ```
 //! use uds_session::{Client, FunctionalKeepAlive, FunctionalSlot, PhysicalSlot};
@@ -702,8 +702,9 @@ impl<K: KeepAliveMode, const PHYS: usize, const FUNC: usize, const R: usize>
             slot.timed_out = p.core.expire(now);
             if slot.timed_out.is_some() && matches!(class, Some(ClientTx::KeepAlive { .. }))
             {
+                // UDSS_LLR_0161, fifth bullet
                 let site = Site::Physical(&mut p.keep_alive);
-                self.keep_alive.on(now, site, Event::KeepAliveWindowExpired); // UDSS_LLR_0161
+                self.keep_alive.on(now, site, Event::KeepAliveWindowExpired);
             }
             if K::expire_channel(&mut p.keep_alive, now) {
                 slot.keep_alive_due = Some(PhysicalChannelId(p.core.id)); // UDSS_LLR_0162
@@ -1216,7 +1217,11 @@ impl<K: KeepAliveMode, const PHYS: usize, const FUNC: usize, const R: usize>
 
     /// Supply a timestamp on its own.
     ///
-    /// ``UDSS_LLR_0010`` and ``UDSS_LLR_0079`` — see [`crate::Server::tick`].
+    /// ``UDSS_LLR_0010`` — a timestamp accompanies every other input and is also supplied
+    /// on its own; this is that input. ``UDSS_LLR_0079`` evaluates expiry only when a
+    /// timestamp is supplied, so this is how a `tP_Client`, spacing or `tS3_Client` timer
+    /// that has run out is noticed when nothing else is happening. Its only outputs are
+    /// the indications of the expiries it causes.
     pub fn tick(
         &mut self,
         now: Timestamp,
@@ -1227,10 +1232,14 @@ impl<K: KeepAliveMode, const PHYS: usize, const FUNC: usize, const R: usize>
 
     /// The earliest timestamp at which a supplied timestamp could expire a timer.
     ///
-    /// ``UDSS_LLR_0080`` — see [`crate::Server::next_deadline`]: the earliest deadline of
-    /// any timer currently running, on a client the response, spacing and session timers
-    /// of every channel, and, in functional keep-alive, the client-wide `tS3_Client` of
-    /// ``UDSS_LLR_0150``, which belongs to no channel and which ``UDSS_LLR_0156`` expires.
+    /// ``UDSS_LLR_0080`` — `None` where no timer is running; otherwise the earliest
+    /// deadline among every channel's response and spacing timers, each physical
+    /// channel's `tS3_Client` in physical keep-alive, and the client-wide `tS3_Client` of
+    /// ``UDSS_LLR_0150`` in functional keep-alive, chosen across the timestamp wrap
+    /// (``UDSS_LLR_0019``). `tP_Client` expires once its window is exceeded
+    /// (``UDSS_LLR_0148``), so its deadline is one millisecond past the window: a caller
+    /// supplying exactly this timestamp finds the expiry. Like the server's, this is a
+    /// query, not an output, and produces no reaction.
     #[must_use]
     pub fn next_deadline(&self) -> Option<Timestamp> {
         let physical = self

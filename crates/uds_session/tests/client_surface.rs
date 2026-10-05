@@ -40,7 +40,8 @@ fn physical_keep_alive_carries_no_client_wide_storage() {
 /// `ch_phys` and `ch_func` are taken as parameters, as `server_surface.rs` takes its stub
 /// values, rather than constructed here: neither id has a public constructor of its own,
 /// only the one [`Client::open_physical_channel`] and [`Client::open_functional_channel`]
-/// each return, and those methods are `todo!()`. Each flows to its own kind's setter
+/// each return, and a function that is type-checked and never run has no client to open
+/// one on. Each flows to its own kind's setter
 /// directly, and to the kind-agnostic methods directly as well: those take
 /// `impl Into<`[`ChannelId`]`>`, so both kinds pass without a widening step at the call.
 /// [`Client::reset_channel`] is passed a [`ChannelId`] itself, since the widened parameter
