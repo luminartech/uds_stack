@@ -206,6 +206,8 @@ struct Channel {
     request: Option<InProgress>,
     /// ``UDSS_LLR_0164`` — `tP3_Client_Phys` or `tP3_Client_Func`.
     spacing: Timer<Reaches>,
+    /// ``UDSS_LLR_0173``.
+    repeats: u8,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -218,6 +220,8 @@ struct InProgress {
 #[derive(Debug, Clone, Copy)]
 struct Sent {
     class: ClientTx,
+    /// ``UDSS_LLR_0180`` — its channel was reset while it was outstanding.
+    abandoned: bool,
 }
 
 /// An expired `tP_Client`, kept in the slot rather than the channel so that a withdrawal
@@ -240,6 +244,7 @@ impl Channel {
             sent: None,
             request: None,
             spacing: Timer::STOPPED,
+            repeats: 0,
         }
     }
 
@@ -280,6 +285,26 @@ impl Channel {
 
     fn deadlines(&self) -> [Option<Timestamp>; 2] {
         [self.response.deadline(), self.spacing.deadline()]
+    }
+
+    /// ``UDSS_LLR_0176`` — the count an accepted request leaves.
+    const fn count(&mut self, class: ClientTx) {
+        match class {
+            ClientTx::Request { repeat: false, .. } => self.repeats = 0,
+            ClientTx::Request { repeat: true, .. } => {
+                self.repeats = self.repeats.saturating_add(1);
+            }
+            ClientTx::KeepAlive { .. } => {}
+        }
+    }
+
+    /// ``UDSS_LLR_0180`` for the state every channel holds; the spacing timer runs on.
+    fn reset(&mut self) {
+        self.close();
+        if let Some(sent) = self.sent.as_mut() {
+            sent.abandoned = true;
+        }
+        self.repeats = 0;
     }
 
     /// ``UDSS_LLR_0128`` — the request ends and its window with it.
@@ -397,6 +422,13 @@ impl<const R: usize> FunctionalSlot<R> {
             e.pending = false;
         }
         self.release_idle();
+    }
+
+    /// ``UDSS_LLR_0178`` — some responder's start-of-message is open.
+    fn still_arriving(&self) -> bool {
+        self.responders
+            .iter()
+            .any(|r| r.entry.is_some_and(|e| e.som_open))
     }
 
     /// ``UDSS_LLR_0145``.
@@ -771,7 +803,12 @@ impl<K: KeepAliveMode, const PHYS: usize, const FUNC: usize, const R: usize>
     }
 
     /// ``UDSS_LLR_0123`` and ``UDSS_LLR_0061``, every cause stated (``UDSS_LLR_0016``).
-    fn validate_req(&self, now: Timestamp, ai: Ai) -> Result<(), Rejection> {
+    fn validate_req(
+        &self,
+        now: Timestamp,
+        ai: Ai,
+        class: ClientTx,
+    ) -> Result<(), Rejection> {
         let Some(channel) = self.channels().find(|c| c.ai == ai) else {
             return Err(NO_SUCH_CHANNEL); // UDSS_LLR_0123
         };
@@ -781,6 +818,17 @@ impl<K: KeepAliveMode, const PHYS: usize, const FUNC: usize, const R: usize>
         };
         if channel.sent.is_some() {
             add(Cause::AssociationOutstanding); // UDSS_LLR_0061
+        }
+        if matches!(class, ClientTx::Request { repeat: true, .. }) && channel.repeats >= 2 {
+            add(Cause::RepeatCountSpent); // UDSS_LLR_0177
+        }
+        let arriving = self
+            .functional
+            .iter()
+            .filter(|s| s.channel.as_ref().is_some_and(|c| c.ai == ai))
+            .any(FunctionalSlot::still_arriving);
+        if arriving {
+            add(Cause::ResponseStillArriving); // UDSS_LLR_0178
         }
         if let Some(remaining) = channel.spacing.remaining(now) {
             // UDSS_LLR_0171, with UDSS_LLR_0172's time left
@@ -918,13 +966,21 @@ impl<K: KeepAliveMode, const PHYS: usize, const FUNC: usize, const R: usize>
         channel: impl Into<ChannelId>,
     ) -> ClientReaction<'_, 'static, K, PHYS, FUNC, R> {
         let channel = channel.into();
-        #[allow(
-            clippy::todo,
-            reason = "API stub; behaviour lands with its requirement"
-        )]
-        {
-            todo!("UDSS_LLR_0180, 0183: {now:?} {channel:?}")
-        }
+        self.expire(now);
+        let found = match channel {
+            ChannelId::Physical(id) => self.physical_mut(id).map(|p| {
+                p.som_open = false;
+                p.core.reset();
+            }),
+            ChannelId::Functional(id) => self.functional_mut(id).map(|s| {
+                s.responders = [ResponderSlot::EMPTY; R];
+                if let Some(c) = s.channel.as_mut() {
+                    c.reset();
+                }
+            }),
+        };
+        let outcome = found.ok_or(NO_SUCH_CHANNEL); // UDSS_LLR_0183
+        Reaction::new(self, [None, None], outcome) // UDSS_LLR_0180: no output
     }
 
     /// Release a keep-alive.
@@ -964,11 +1020,16 @@ impl<K: KeepAliveMode, const PHYS: usize, const FUNC: usize, const R: usize>
         class: ClientTx,
     ) -> ClientReaction<'_, 'd, K, PHYS, FUNC, R> {
         self.expire(now);
-        if let Err(rejection) = self.validate_req(now, ai) {
+        if let Err(rejection) = self.validate_req(now, ai, class) {
             return Reaction::new(self, [None, None], Err(rejection)); // UDSS_LLR_0015
         }
         let transmit = self.channels_mut().find(|c| c.ai == ai).map(|c| {
-            c.sent = Some(Sent { class }); // UDSS_LLR_0059
+            // UDSS_LLR_0059
+            c.sent = Some(Sent {
+                class,
+                abandoned: false,
+            });
+            c.count(class); // UDSS_LLR_0176
             ClientOutput::Transmit {
                 channel: c.handle(),
                 ai,
@@ -1081,7 +1142,7 @@ impl<K: KeepAliveMode, const PHYS: usize, const FUNC: usize, const R: usize>
             let sent = c.sent.take_if(|_| c.ai == ai)?; // UDSS_LLR_0059
             Some((c, sent))
         });
-        let Some((channel, Sent { class })) = matched else {
+        let Some((channel, Sent { class, abandoned })) = matched else {
             let rejection = Rejection::new(Cause::NoMatchingAssociation);
             return Reaction::new(self, [None, None], Err(rejection)); // UDSS_LLR_0063
         };
@@ -1091,8 +1152,8 @@ impl<K: KeepAliveMode, const PHYS: usize, const FUNC: usize, const R: usize>
         if channel.ai.ta_type == TaType::Functional || !ok || !expects {
             channel.spacing.start(now, channel.params.spacing);
         }
-        if ok && expects {
-            // UDSS_LLR_0135, UDSS_LLR_0128
+        if ok && expects && !abandoned {
+            // UDSS_LLR_0135, UDSS_LLR_0128; UDSS_LLR_0182
             channel.restart(now, ChannelReload::Default);
             channel.request = Some(InProgress { class, received: 0 });
         }

@@ -1264,3 +1264,277 @@ mod spacing {
         assert_eq!(c.next_deadline(), Some(Timestamp(u32::MAX)));
     }
 }
+
+mod error_handling {
+    use super::*;
+
+    const REPEAT: ClientTx = ClientTx::Request {
+        expected: ExpectedResponses::Unknown,
+        repeat: true,
+        session: None,
+    };
+    const KEEP_ALIVE: ClientTx = ClientTx::KeepAlive {
+        expected: ExpectedResponses::None,
+    };
+
+    fn send(c: &mut Tester, now: u32, ai: Ai, class: ClientTx) -> Result<(), Rejection> {
+        outputs(c.s_data_req(Timestamp(now), ai, &DATA, class)).1
+    }
+
+    /// One transmission that failed: its confirmation starts the spacing timer and no
+    /// window, as a request the client goes on to repeat.
+    fn attempt(c: &mut Tester, now: u32, ai: Ai, class: ClientTx) -> Result<(), Rejection> {
+        send(c, now, ai, class)?;
+        outputs(c.t_data_conf(Timestamp(now), ai, FAILED)).1
+    }
+
+    fn reset(
+        c: &mut Tester,
+        now: u32,
+        channel: impl Into<ChannelId>,
+    ) -> Result<(), Rejection> {
+        let (out, outcome) = outputs(c.reset_channel(Timestamp(now), channel));
+        assert_eq!(out, NOTHING);
+        outcome
+    }
+
+    /// ``UDSS_LLR_0177``, ``UDSS_LLR_0176``, ``UDSS_LLR_0173``, ``UDSS_LLR_0174`` — two
+    /// repeats follow a request; a third is refused.
+    #[test]
+    fn a_third_repeat_is_rejected() {
+        let mut c = tester();
+        open_phys(&mut c, Timestamp(0), ECU);
+        assert_eq!(attempt(&mut c, 0, phys(ECU), UNKNOWN), Ok(()));
+        assert_eq!(attempt(&mut c, 60, phys(ECU), REPEAT), Ok(()));
+        assert_eq!(attempt(&mut c, 120, phys(ECU), REPEAT), Ok(()));
+        let third = send(&mut c, 180, phys(ECU), REPEAT);
+        assert!(rejected(third, Cause::RepeatCountSpent));
+    }
+
+    /// ``UDSS_LLR_0176`` — a request not marked repeat starts the count again.
+    #[test]
+    fn an_unmarked_request_resets_the_count() {
+        let mut c = tester();
+        open_phys(&mut c, Timestamp(0), ECU);
+        for (now, class) in [
+            (0, UNKNOWN),
+            (60, REPEAT),
+            (120, REPEAT),
+            (180, UNKNOWN),
+            (240, REPEAT),
+            (300, REPEAT),
+        ] {
+            assert_eq!(attempt(&mut c, now, phys(ECU), class), Ok(()));
+        }
+    }
+
+    /// ``UDSS_LLR_0176`` — a keep-alive leaves the count where it was.
+    #[test]
+    fn a_keep_alive_leaves_the_count_alone() {
+        let mut c = tester();
+        open_phys(&mut c, Timestamp(0), ECU);
+        for (now, class) in [(0, UNKNOWN), (60, REPEAT), (120, REPEAT), (180, KEEP_ALIVE)] {
+            assert_eq!(attempt(&mut c, now, phys(ECU), class), Ok(()));
+        }
+        let repeat = send(&mut c, 240, phys(ECU), REPEAT);
+        assert!(rejected(repeat, Cause::RepeatCountSpent));
+    }
+
+    /// ``UDSS_LLR_0176``, ``UDSS_LLR_0015`` — a refused repeat is not counted.
+    #[test]
+    fn a_rejected_repeat_is_not_counted() {
+        let mut c = tester();
+        open_phys(&mut c, Timestamp(0), ECU);
+        assert_eq!(attempt(&mut c, 0, phys(ECU), UNKNOWN), Ok(()));
+        let early = send(&mut c, 30, phys(ECU), REPEAT);
+        assert!(rejected(early, Cause::SpacingTimerRunning));
+        assert_eq!(attempt(&mut c, 60, phys(ECU), REPEAT), Ok(()));
+        assert_eq!(attempt(&mut c, 120, phys(ECU), REPEAT), Ok(()));
+    }
+
+    /// ``UDSS_LLR_0178``, ``UDSS_LLR_0141`` — after the window, a functional request
+    /// waits for every response still arriving.
+    #[test]
+    fn a_functional_request_waits_for_responses_still_arriving() {
+        let mut c = tester();
+        let id = open_func(&mut c, Timestamp(0));
+        exchange(&mut c, Timestamp(0), func(), UNKNOWN);
+        som(&mut c, Timestamp(10), id, ECU, SOLICITED);
+        assert_eq!(
+            outputs(c.tick(Timestamp(61))).0,
+            only(timeout(func(), ChannelReload::Default))
+        );
+        let waiting = send(&mut c, 200, func(), UNKNOWN);
+        assert!(rejected(waiting, Cause::ResponseStillArriving));
+        ind(
+            &mut c,
+            Timestamp(210),
+            id,
+            ECU,
+            SResult::Ok,
+            Some(SOLICITED),
+        );
+        assert_eq!(send(&mut c, 220, func(), UNKNOWN), Ok(()));
+    }
+
+    /// ``UDSS_LLR_0140``, ``UDSS_LLR_0178`` — a start-of-message arriving with no request
+    /// in progress creates an entry, which holds the next request back.
+    #[test]
+    fn a_start_of_message_after_the_window_creates_an_entry() {
+        let mut c = tester();
+        let id = open_func(&mut c, Timestamp(0));
+        exchange(&mut c, Timestamp(0), func(), UNKNOWN);
+        assert_ne!(outputs(c.tick(Timestamp(51))).0, NOTHING);
+        som(&mut c, Timestamp(60), id, ECU, SOLICITED);
+        let waiting = send(&mut c, 200, func(), UNKNOWN);
+        assert!(rejected(waiting, Cause::ResponseStillArriving));
+    }
+
+    /// ``UDSS_LLR_0179``, ``UDSS_LLR_0016``, ``UDSS_LLR_0015`` — a refused repeat states
+    /// every cause that held, and changes nothing.
+    #[test]
+    fn a_rejected_repeat_states_every_cause_and_changes_nothing() {
+        let mut c = tester();
+        let id = open_func_with(&mut c, Timestamp(0), SPACED_FUNC);
+        assert_eq!(attempt(&mut c, 0, func(), UNKNOWN), Ok(()));
+        assert_eq!(attempt(&mut c, 70, func(), REPEAT), Ok(()));
+        assert_eq!(attempt(&mut c, 140, func(), REPEAT), Ok(()));
+        som(&mut c, Timestamp(150), id, ECU, SOLICITED);
+        let before = c.next_deadline();
+        let (out, refused) = outputs(c.s_data_req(Timestamp(160), func(), &DATA, REPEAT));
+        assert_eq!(out, NOTHING);
+        assert!(rejected(refused, Cause::RepeatCountSpent));
+        assert!(rejected(refused, Cause::ResponseStillArriving));
+        assert_eq!(
+            refused
+                .err()
+                .map(|r| r.causes().filter_map(|c| c.content).count()),
+            Some(1)
+        );
+        assert!(rejected(refused, Cause::SpacingTimerRunning));
+        assert_eq!(c.next_deadline(), before);
+        ind(
+            &mut c,
+            Timestamp(170),
+            id,
+            ECU,
+            SResult::Ok,
+            Some(SOLICITED),
+        );
+        assert_eq!(send(&mut c, 210, func(), UNKNOWN), Ok(()));
+    }
+
+    /// ``UDSS_LLR_0180``, ``UDSS_LLR_0128`` — a reset ends the request and its window
+    /// without indicating anything.
+    #[test]
+    fn a_reset_ends_the_request_silently() {
+        let mut c = tester();
+        let id = open_phys(&mut c, Timestamp(0), ECU);
+        exchange(&mut c, Timestamp(0), phys(ECU), UNKNOWN);
+        assert_eq!(reset(&mut c, 10, id), Ok(()));
+        assert_eq!(c.next_deadline(), None);
+        assert_eq!(outputs(c.tick(Timestamp(100))).0, NOTHING);
+    }
+
+    /// ``UDSS_LLR_0180``, ``UDSS_LLR_0168`` — a reset leaves the spacing timer running.
+    #[test]
+    fn a_reset_leaves_the_spacing_timer_running() {
+        let mut c = tester();
+        let id = open_phys(&mut c, Timestamp(0), ECU);
+        exchange(&mut c, Timestamp(0), phys(ECU), NO_RESPONSE);
+        assert_eq!(reset(&mut c, 10, id), Ok(()));
+        let early = send(&mut c, 20, phys(ECU), UNKNOWN);
+        assert!(rejected(early, Cause::SpacingTimerRunning));
+    }
+
+    /// ``UDSS_LLR_0180`` — a reset zeroes the repeat count.
+    #[test]
+    fn a_reset_zeroes_the_repeat_count() {
+        let mut c = tester();
+        let id = open_phys(&mut c, Timestamp(0), ECU);
+        assert_eq!(attempt(&mut c, 0, phys(ECU), UNKNOWN), Ok(()));
+        assert_eq!(attempt(&mut c, 60, phys(ECU), REPEAT), Ok(()));
+        assert_eq!(attempt(&mut c, 120, phys(ECU), REPEAT), Ok(()));
+        assert_eq!(reset(&mut c, 150, id), Ok(()));
+        assert_eq!(attempt(&mut c, 180, phys(ECU), REPEAT), Ok(()));
+        assert_eq!(attempt(&mut c, 240, phys(ECU), REPEAT), Ok(()));
+    }
+
+    /// ``UDSS_LLR_0180``, ``UDSS_LLR_0130`` — a reset closes a physical channel's open
+    /// start-of-message, so the next completion is a first indication.
+    #[test]
+    fn a_reset_closes_the_open_start_of_message() {
+        let mut c = tester();
+        let id = open_phys(&mut c, Timestamp(0), ECU);
+        exchange(&mut c, Timestamp(0), phys(ECU), UNKNOWN);
+        som(&mut c, Timestamp(10), id, ECU, SOLICITED);
+        assert_eq!(reset(&mut c, 20, id), Ok(()));
+        exchange(&mut c, Timestamp(30), phys(ECU), UNKNOWN);
+        ind(&mut c, Timestamp(40), id, ECU, SResult::Ok, Some(SOLICITED));
+        assert_eq!(c.next_deadline(), None);
+    }
+
+    /// ``UDSS_LLR_0180`` — a reset releases every entry of a functional channel's table.
+    #[test]
+    fn a_reset_releases_every_responder_entry() {
+        let mut c = tester();
+        let id = open_func(&mut c, Timestamp(0));
+        exchange(&mut c, Timestamp(0), func(), UNKNOWN);
+        som(&mut c, Timestamp(10), id, ECU, SOLICITED);
+        assert_eq!(reset(&mut c, 20, id), Ok(()));
+        assert_eq!(send(&mut c, 30, func(), UNKNOWN), Ok(()));
+    }
+
+    /// ``UDSS_LLR_0181`` — an association the reset abandoned stays outstanding.
+    #[test]
+    fn an_abandoned_association_stays_outstanding() {
+        let mut c = tester();
+        let id = open_phys(&mut c, Timestamp(0), ECU);
+        assert_eq!(send(&mut c, 0, phys(ECU), UNKNOWN), Ok(()));
+        assert_eq!(reset(&mut c, 10, id), Ok(()));
+        let again = send(&mut c, 20, phys(ECU), UNKNOWN);
+        assert!(rejected(again, Cause::AssociationOutstanding));
+    }
+
+    /// ``UDSS_LLR_0182`` — its confirmation is forwarded and opens no window.
+    #[test]
+    fn an_abandoned_confirmation_is_forwarded_and_opens_no_window() {
+        let mut c = tester();
+        let id = open_phys(&mut c, Timestamp(0), ECU);
+        assert_eq!(send(&mut c, 0, phys(ECU), UNKNOWN), Ok(()));
+        assert_eq!(reset(&mut c, 10, id), Ok(()));
+        let (out, confirmed) =
+            outputs(c.t_data_conf(Timestamp(20), phys(ECU), SResult::Ok));
+        assert_eq!(
+            out,
+            only(ClientOutput::Confirm {
+                ai: phys(ECU),
+                result: SResult::Ok,
+            })
+        );
+        assert_eq!(confirmed, Ok(()));
+        assert_eq!(c.next_deadline(), None);
+    }
+
+    /// ``UDSS_LLR_0182``, ``UDSS_LLR_0169`` — and otherwise acts as it would have, so it
+    /// still starts the spacing timer.
+    #[test]
+    fn an_abandoned_confirmation_still_starts_spacing() {
+        let mut c = tester();
+        let id = open_phys(&mut c, Timestamp(0), ECU);
+        assert_eq!(send(&mut c, 0, phys(ECU), NO_RESPONSE), Ok(()));
+        assert_eq!(reset(&mut c, 10, id), Ok(()));
+        let (_, confirmed) = outputs(c.t_data_conf(Timestamp(20), phys(ECU), SResult::Ok));
+        assert_eq!(confirmed, Ok(()));
+        assert_eq!(c.next_deadline(), Some(Timestamp(80)));
+    }
+
+    /// ``UDSS_LLR_0183`` — a reset naming no channel the client has is refused.
+    #[test]
+    fn a_reset_naming_no_channel_is_rejected() {
+        let mut c = tester();
+        let id = open_phys(&mut c, Timestamp(0), ECU);
+        assert_eq!(outputs(c.withdraw_channel(Timestamp(0), id)).1, Ok(()));
+        assert!(rejected(reset(&mut c, 10, id), Cause::NoSuchChannel));
+    }
+}
