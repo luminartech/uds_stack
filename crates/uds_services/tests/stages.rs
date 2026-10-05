@@ -29,6 +29,10 @@ struct Ecu {
     delays_started: u8,
     /// The `security_relocked` of the last session transition.
     relocked: Option<bool>,
+    /// Makes Annex I's optional pre-conditions unmet.
+    preconditions_unmet: bool,
+    /// The `securityAccessDataRecord` the last seed was asked with.
+    record: Vec<u8>,
 }
 
 impl uds_services::DiagnosticSessionControl for Ecu {
@@ -91,16 +95,21 @@ impl EcuReset for Ecu {
 
 /// Level 0x01 counts attempts, three before a delay; level 0x03 counts none; level 0x05
 /// is offered only in the programming session. Each seed is fixed, and its key is the
-/// seed's two's complement (clause 10.4.5.1).
+/// seed's two's complement (clause 10.4.5.1). A `securityAccessDataRecord` of up to two
+/// bytes identifies the client, and only `0E 80` is a client this server knows.
 impl SecurityAccess for Ecu {
     const MAY_RESPOND_PENDING: bool = false;
     const MAX_SEED_LEN: usize = 2;
     const MAX_KEY_LEN: usize = 2;
+    const MAX_RECORD_LEN: usize = 2;
     fn supports(&self, level: SecurityLevel) -> bool {
         matches!(level.request_seed(), 0x01 | 0x03 | 0x05)
     }
     fn supported_in(&self, level: SecurityLevel, active: S) -> bool {
         level.request_seed() != 0x05 || matches!(active, S::ProgrammingSession)
+    }
+    fn preconditions_met(&self, _l: SecurityLevel) -> bool {
+        !self.preconditions_unmet
     }
     fn policy(&self, level: SecurityLevel) -> SecurityPolicy {
         match level.request_seed() {
@@ -128,8 +137,13 @@ impl SecurityAccess for Ecu {
     async fn seed(
         &mut self,
         level: SecurityLevel,
+        record: &[u8],
         out: &mut ResponseSink<'_>,
     ) -> Result<(), Nrc> {
+        if !matches!(record, [] | [0x0E, 0x80]) {
+            return Err(Nrc::RequestOutOfRange);
+        }
+        self.record = record.to_vec();
         let _ = out.write_all(&seed_of(level).to_be_bytes());
         Ok(())
     }
@@ -427,17 +441,18 @@ fn security_access_a_key_for_another_level_is_0x24_and_discards_the_seed() {
     );
 }
 
-/// Annex I transitions 4 and 9, clause 10.4.4 — this server takes no
-/// `securityAccessDataRecord`, so a `requestSeed` carrying one is 0x13; so is an empty
-/// key or one longer than `MAX_KEY_LEN`, and that `sendKey` still discards the seed.
+/// Annex I transitions 4 and 9, clause 10.4.4 — a `securityAccessDataRecord` longer than
+/// `MAX_RECORD_LEN` is 0x13 and the application is not asked; so is an empty key or one
+/// longer than `MAX_KEY_LEN`, and that `sendKey` still discards the seed.
 #[test]
 fn security_access_a_wrong_length_is_0x13() {
     let mut ecu = Ecu::default();
     let mut state = extended(&mut ecu);
     assert_eq!(
-        exchange(&mut ecu, &mut state, &[0x27, 0x01, 0xAA]).as_deref(),
+        exchange(&mut ecu, &mut state, &[0x27, 0x01, 0x0E, 0x80, 0x00]).as_deref(),
         Some(&[0x7F, 0x27, 0x13][..])
     );
+    assert_eq!(ecu.record, [0_u8; 0]);
     for request in [&[0x27, 0x02][..], &[0x27, 0x02, 0xC9, 0xA9, 0x00][..]] {
         let _ = exchange(&mut ecu, &mut state, &[0x27, 0x01]);
         assert_eq!(
@@ -450,6 +465,57 @@ fn security_access_a_wrong_length_is_0x13() {
             Some(&[0x7F, 0x27, 0x24][..])
         );
     }
+}
+
+/// Clause 10.4.2.3 and 10.4.4 — a `securityAccessDataRecord` reaches the application with
+/// the `requestSeed`, and one holding data it rejects is its 0x31, which sends no seed:
+/// from state A, the key that follows is 0x24.
+#[test]
+fn security_access_the_data_record_reaches_the_seed() {
+    let mut ecu = Ecu::default();
+    let mut state = extended(&mut ecu);
+    assert_eq!(
+        exchange(&mut ecu, &mut state, &[0x27, 0x01, 0x0F]).as_deref(),
+        Some(&[0x7F, 0x27, 0x31][..])
+    );
+    assert_eq!(
+        exchange(&mut ecu, &mut state, &RIGHT_KEY).as_deref(),
+        Some(&[0x7F, 0x27, 0x24][..])
+    );
+    assert_eq!(
+        exchange(&mut ecu, &mut state, &[0x27, 0x01, 0x0E, 0x80]).as_deref(),
+        Some(&[0x67, 0x01, 0x36, 0x57][..])
+    );
+    assert_eq!(ecu.record, [0x0E, 0x80]);
+}
+
+/// Annex I Table I.2 transition 4 — unmet optional pre-conditions are 0x22, ahead of the
+/// delay's 0x37; transition 7's zero seed is not reached either.
+#[test]
+fn security_access_unmet_preconditions_are_0x22_before_the_delay() {
+    let mut ecu = Ecu {
+        delay: true,
+        preconditions_unmet: true,
+        ..Ecu::default()
+    };
+    let mut state = extended(&mut ecu);
+    assert_eq!(
+        exchange(&mut ecu, &mut state, &[0x27, 0x01]).as_deref(),
+        Some(&[0x7F, 0x27, 0x22][..])
+    );
+    ecu.preconditions_unmet = false;
+    assert_eq!(
+        exchange(&mut ecu, &mut state, &[0x27, 0x01]).as_deref(),
+        Some(&[0x7F, 0x27, 0x37][..])
+    );
+    ecu.delay = false;
+    let _ = exchange(&mut ecu, &mut state, &[0x27, 0x01]);
+    let _ = exchange(&mut ecu, &mut state, &RIGHT_KEY);
+    ecu.preconditions_unmet = true;
+    assert_eq!(
+        exchange(&mut ecu, &mut state, &[0x27, 0x01]).as_deref(),
+        Some(&[0x7F, 0x27, 0x22][..])
+    );
 }
 
 /// Annex I transition 9 — a wrong key under the limit is 0x35, counts an attempt, and

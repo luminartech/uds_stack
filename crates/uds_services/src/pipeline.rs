@@ -477,14 +477,16 @@ pub async fn ecu_reset<A: EcuReset>(
 /// (``UDSSVC_ARCH_0037``). Whether the level is supported (0x12) and in the active session
 /// (0x7E) was settled by [`begin`]; this runs Figure I.1 against `state`.
 ///
-/// A `requestSeed`:
+/// A `requestSeed`, in Table I.2's order:
 ///
-/// * carrying a `securityAccessDataRecord` is `incorrectMessageLengthOrInvalidFormat`
-///   (0x13): the trait takes none, so this server's request is two bytes;
+/// * carrying a `securityAccessDataRecord` longer than
+///   [`SecurityAccess::MAX_RECORD_LEN`] is `incorrectMessageLengthOrInvalidFormat` (0x13);
+/// * where [`SecurityAccess::preconditions_met`] refuses is `conditionsNotCorrect` (0x22)
+///   (transition 4);
+/// * while the level's delay runs is `requiredTimeDelayNotExpired` (0x37) (transition 4);
 /// * for the unlocked level is answered with a zero seed of
 ///   [`SecurityAccess::MAX_SEED_LEN`] bytes, discarding any seed awaiting a key
 ///   (transitions 7 and 10);
-/// * while the level's delay runs is `requiredTimeDelayNotExpired` (0x37) (transition 4);
 /// * otherwise is answered with the application's seed, and its level becomes the one
 ///   whose key is awaited (transitions 2, 5 and 8). A delay supported by the policy and
 ///   no longer running has expired, so an attempt count at the limit is reset first.
@@ -526,8 +528,14 @@ async fn request_seed<A: SecurityAccess>(
     record: &[u8],
     out: &mut ResponseSink<'_>,
 ) -> Result<(), NegativeResponseCode> {
-    if !record.is_empty() {
+    if record.len() > A::MAX_RECORD_LEN {
         return Err(NegativeResponseCode::IncorrectMessageLengthOrInvalidFormat);
+    }
+    if !services.preconditions_met(level) {
+        return Err(NegativeResponseCode::ConditionsNotCorrect);
+    }
+    if services.delay_running(level) {
+        return Err(NegativeResponseCode::RequiredTimeDelayNotExpired);
     }
     let _ = out.write_all(&[0x67, level.request_seed()]);
     if state.unlocked() == Some(level) {
@@ -536,9 +544,6 @@ async fn request_seed<A: SecurityAccess>(
             let _ = out.write_all(&[0x00]);
         }
         return Ok(());
-    }
-    if services.delay_running(level) {
-        return Err(NegativeResponseCode::RequiredTimeDelayNotExpired);
     }
     if let SecurityPolicy::Counted {
         attempt_limit,
@@ -549,7 +554,7 @@ async fn request_seed<A: SecurityAccess>(
     {
         services.store_attempts(level, 0);
     }
-    services.seed(level, out).await?;
+    services.seed(level, record, out).await?;
     state.seed_sent(level);
     Ok(())
 }

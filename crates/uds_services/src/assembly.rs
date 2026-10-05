@@ -145,7 +145,10 @@ macro_rules! __uds_request_bound {
         4 + <$ty as $crate::RoutineControl>::MAX_OPTION_LEN
     };
     ($ty:ty, SecurityAccess) => {
-        2 + <$ty as $crate::SecurityAccess>::MAX_KEY_LEN
+        2 + $crate::assembly::max_of(&[
+            <$ty as $crate::SecurityAccess>::MAX_KEY_LEN,
+            <$ty as $crate::SecurityAccess>::MAX_RECORD_LEN,
+        ])
     };
     ($ty:ty, ControlDtcSetting) => {
         2 + <$ty as $crate::ControlDtcSetting>::MAX_OPTION_RECORD_LEN

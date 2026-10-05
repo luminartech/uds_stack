@@ -161,10 +161,14 @@ impl SecurityAccess for Ecu {
     const MAY_RESPOND_PENDING: bool = false;
     const MAX_SEED_LEN: usize = 4;
     const MAX_KEY_LEN: usize = 4;
+    const MAX_RECORD_LEN: usize = 0;
     fn supports(&self, _l: SecurityLevel) -> bool {
         true
     }
     fn supported_in(&self, _l: SecurityLevel, _active: DiagnosticSessionType) -> bool {
+        true
+    }
+    fn preconditions_met(&self, _l: SecurityLevel) -> bool {
         true
     }
     fn policy(&self, _l: SecurityLevel) -> SecurityPolicy {
@@ -189,6 +193,7 @@ impl SecurityAccess for Ecu {
     async fn seed(
         &mut self,
         _l: SecurityLevel,
+        _record: &[u8],
         out: &mut ResponseSink<'_>,
     ) -> Result<(), Nrc> {
         out.write_all(&[1, 2, 3, 4])

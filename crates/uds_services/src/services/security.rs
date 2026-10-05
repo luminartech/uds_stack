@@ -118,6 +118,14 @@ pub trait SecurityAccess {
     /// The longest key this server accepts.
     const MAX_KEY_LEN: usize;
 
+    /// The longest `securityAccessDataRecord` this server accepts with a `requestSeed`
+    /// (clause 10.4.2.3); zero where it takes none.
+    ///
+    /// A longer record is `incorrectMessageLengthOrInvalidFormat` (0x13) without
+    /// [`Self::seed`] being asked. Folded into the request buffer by
+    /// [`crate::uds_server`], as [`Self::MAX_KEY_LEN`] is.
+    const MAX_RECORD_LEN: usize;
+
     /// Whether this server supports `level` at all, in whichever session.
     ///
     /// ISO 14229-1:2020 8.7.3.1 Figure 6, "`SubFunction` supported ever for the SID?" —
@@ -148,6 +156,18 @@ pub trait SecurityAccess {
     /// How `level`'s attempts and delay are governed.
     fn policy(&self, level: SecurityLevel) -> SecurityPolicy;
 
+    /// Whether Annex I's optional pre-conditions for a `requestSeed` of `level` are met.
+    ///
+    /// ISO 14229-1:2020 Annex I, Table I.2 transition 4: a `false` is
+    /// `conditionsNotCorrect` (0x22), decided before the delay's
+    /// `requiredTimeDelayNotExpired` (0x37) and before an unlocked level's zero seed.
+    /// Return `true` where the server keeps none.
+    ///
+    /// # Arguments
+    ///
+    /// * `level` - the level the `requestSeed` names; see [`SecurityLevel`].
+    fn preconditions_met(&self, level: SecurityLevel) -> bool;
+
     /// The attempt count for `level`, as last stored.
     ///
     /// The application never computes one — it persists the number this crate hands it,
@@ -174,10 +194,19 @@ pub trait SecurityAccess {
     /// unlocked and the application does not. So the seed written here must not be all
     /// zero: clause 10.4.1 forbids that for a locked level.
     ///
+    /// # Arguments
+    ///
+    /// * `level` - the level the `requestSeed` names; see [`SecurityLevel`].
+    /// * `record` - the request's `securityAccessDataRecord`, empty where it carried
+    ///   none, and never longer than [`Self::MAX_RECORD_LEN`].
+    /// * `out` - where the seed is written, after the `67` and the echoed sub-function
+    ///   the pipeline wrote.
+    ///
     /// # Errors
     ///
     /// The [`NegativeResponseCode`] where a seed cannot be produced, such as
-    /// `conditionsNotCorrect` (0x22) where Annex I's optional pre-conditions are not met.
+    /// `requestOutOfRange` (0x31) for a `record` holding invalid data (clause 10.4.4).
+    /// Unmet pre-conditions are [`Self::preconditions_met`]'s, not this method's.
     ///
     /// A refused write to `out` needs no handling: the sink records the refusal and the
     /// pipeline answers `responseTooLong` (0x14) in place of the response, so the write's
@@ -185,6 +214,7 @@ pub trait SecurityAccess {
     fn seed(
         &mut self,
         level: SecurityLevel,
+        record: &[u8],
         out: &mut ResponseSink<'_>,
     ) -> impl core::future::Future<Output = Result<(), NegativeResponseCode>>;
 
