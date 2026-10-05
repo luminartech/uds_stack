@@ -27,9 +27,9 @@
 //! # Status
 //!
 //! The server role runs end to end over any `UdsTransport` (see
-//! `tests/end_to_end.rs`) for the services with a pipeline stage:
-//! `ReadDataByIdentifier`, `DiagnosticSessionControl` and `TesterPresent`. A
-//! listed service without a stage answers `serviceNotSupported`. The client's
+//! `tests/end_to_end.rs`), and every service trait but `DataTransfer` has a pipeline
+//! stage (see `tests/stages.rs`). A listed `DataTransfer` answers
+//! `serviceNotSupported`. The client's
 //! entry points are `todo!()` and carry the architecture element each will
 //! satisfy. `tests/composition.rs` assembles a server against the whole surface.
 //!

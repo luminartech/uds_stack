@@ -489,11 +489,11 @@ macro_rules! __uds_stage {
 /// [`supported_from`]: crate::DiagnosticSessionControl::supported_from
 /// [`EcuReset`]: crate::EcuReset
 ///
-/// **Staging limit:** a listed service with no stage is accepted by the list (so it is
-/// not refused by the support check) but has no stage to run. One that carries a
-/// `SubFunction` passes the support check's row 2 and reaches the decode, then settles
-/// `serviceNotSupported` (0x11), or `incorrectMessageLengthOrInvalidFormat` (0x13) if
-/// the request does not decode — visible on the wire rather than a panic.
+/// **Staging limit:** `DataTransfer` has no stage. Listed, it is accepted by the list
+/// (so it is not refused by the support check), and outside the default session, where
+/// Table 23 refuses it, its request reaches the decode and settles `serviceNotSupported`
+/// (0x11), or `incorrectMessageLengthOrInvalidFormat` (0x13) if it does not decode —
+/// visible on the wire rather than a panic.
 ///
 /// The syntax is `Ecu: ..; transport = T, ..` rather than `Ecu over T: ..` because
 /// `$ty:ty` cannot be followed by a bare identifier — the legal followers are

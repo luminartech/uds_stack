@@ -449,9 +449,8 @@ const POSITIVE: &[u8] = &[0x62, 0xF4, 0x0D, 0x40];
 /// tester sees only the final response.
 ///
 /// Here rather than in `end_to_end.rs`: that fixture's only slow handler is its
-/// `ReadDataByIdentifier`, whose 0x78 its other tests rely on, and the services it can
-/// set the constant false on (`SecurityAccess`, `TesterPresent`) have no stage that can
-/// pend.
+/// `ReadDataByIdentifier`, whose 0x78 its other tests rely on, and none of its other
+/// handlers pends.
 #[test]
 fn a_service_that_may_not_pend_gets_no_response_pending() {
     let mut server = SlowSrv::new(
