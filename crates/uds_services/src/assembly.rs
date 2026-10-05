@@ -492,7 +492,7 @@ macro_rules! __uds_stage {
 /// **Staging limit:** `DataTransfer` has no stage. Listed, it is accepted by the list
 /// (so it is not refused by the support check), and outside the default session, where
 /// Table 23 refuses it, its request reaches the decode and settles `serviceNotSupported`
-/// (0x11), or `incorrectMessageLengthOrInvalidFormat` (0x13) if it does not decode —
+/// (0x11), or the code `uds_protocol` assigns the failure if it does not decode —
 /// visible on the wire rather than a panic.
 ///
 /// The syntax is `Ecu: ..; transport = T, ..` rather than `Ecu over T: ..` because

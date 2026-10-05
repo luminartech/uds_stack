@@ -112,8 +112,9 @@ pub enum Stage<'a> {
 ///    such byte fails Figure 6's minimum-length check, which the decode in 5 settles. Row
 ///    3, authentication (0x34), is unconditionally true, as in Figure 5.
 /// 5. Only then the service-specific check, where length and format live: a decode
-///    failure settles `incorrectMessageLengthOrInvalidFormat` (0x13)
-///    (``UDSSVC_ARCH_0005``).
+///    failure settles the code `uds_protocol` assigns it, `requestOutOfRange` (0x31) for
+///    a parameter outside its range and otherwise `incorrectMessageLengthOrInvalidFormat`
+///    (0x13), as do bytes left over (``UDSSVC_ARCH_0005``).
 ///
 /// Clause 8.7.5's pseudo-code agrees: its outer `SWITCH` on the service identifier falls
 /// to `DEFAULT: responseCode = SNS` before any `message_length` test, so a malformed
@@ -191,9 +192,15 @@ where
             sid,
             request: decoded,
         },
-        Ok(_) | Err(_) => Stage::Settle {
+        Ok(_) => Stage::Settle {
             sid,
             nrc: NegativeResponseCode::IncorrectMessageLengthOrInvalidFormat,
+        },
+        Err(error) => Stage::Settle {
+            sid,
+            nrc: error
+                .negative_response_code()
+                .unwrap_or(NegativeResponseCode::IncorrectMessageLengthOrInvalidFormat),
         },
     }
 }

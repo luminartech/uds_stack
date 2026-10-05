@@ -136,7 +136,7 @@ decides whether its own answer is transmitted.
 Decode
 ------
 
-.. arch:: Decoding is delegated, and its failures map to 0x13
+.. arch:: Decoding is delegated, and its failures settle the code uds_protocol assigns
    :id: UDSSVC_ARCH_0005
    :part_of: UDSSVC_ARCH_0004
    :depends_on: UDSSVC_ARCH_0002
@@ -145,14 +145,19 @@ Decode
    :tags: dispatch; uds_protocol
 
    Rationale: 0x13 is a clause 8.7 outcome, but message length and format are properties of
-   the encoding, which is ``uds_protocol``'s. So ``uds_protocol`` *detects* and this crate
-   *maps*: neither re-derives the other's work, and there is exactly one place that knows
-   the wire format. The request bytes are decoded with ``uds_protocol`` once Figure 5's
-   support and session checks have passed (``UDSSVC_ARCH_0006``): decoding is the
-   service-specific check, where Figure 5 places length and format. A decode failure
-   settles the request with ``incorrectMessageLengthOrInvalidFormat`` (0x13). A request
-   that decodes to ``uds_protocol``'s unmodelled-service variant settles with
-   ``serviceNotSupported`` (0x11), not with 0x13.
+   the encoding, which is ``uds_protocol``'s. So ``uds_protocol`` *detects and classifies*
+   and this crate *settles*: neither re-derives the other's work, and there is exactly one
+   place that knows the wire format. The request bytes are decoded with ``uds_protocol``
+   once Figure 5's support and session checks have passed (``UDSSVC_ARCH_0006``):
+   decoding is the service-specific check, where Figure 5 places length and format. A
+   decode failure settles the request with the code ``uds_protocol`` assigns the failure
+   (``Error::negative_response_code``): ``incorrectMessageLengthOrInvalidFormat`` (0x13)
+   for a length or format fault, ``requestOutOfRange`` (0x31) for a parameter outside its
+   permitted range — a ``communicationType`` with its reserved bits set, for one (ISO
+   14229-1:2020 Annex B Table B.1, clause 10.5.4) — and 0x13 where it assigns none. A
+   request that decodes with bytes left over is 0x13. A request that decodes to
+   ``uds_protocol``'s unmodelled-service variant settles with ``serviceNotSupported``
+   (0x11), not with 0x13.
 
    The unmodelled-service carve-out is the part that is easy to get wrong. ``uds_protocol``
    represents a service identifier it does not model as a variant carrying the raw service
@@ -224,12 +229,14 @@ Mandatory preconditions
    (``UDSSVC_ARCH_0005``'s declared reading), then check 1, then check 3, then — for a
    service with a SubFunction parameter other than 0x31 — Figure 6's sub-function checks
    (``UDSSVC_ARCH_0007``: supported ever, 0x12, then supported in the active session,
-   0x7E), then the decode that settles 0x13 (``UDSSVC_ARCH_0005``). Nothing is decoded
-   until the service is known to be supported and allowed in the active session, so 0x13
-   never pre-empts 0x11 or 0x7F, and a trailing byte never pre-empts 0x12 or 0x7E.
-   Check 2, authentication (0x34), and the security precondition (0x33) are not
-   evaluated yet: authentication is architecture open question 4, and security joins with
-   security state.
+   0x7E, then the sub-function security check, 0x33), then the decode, whose failure
+   settles the code ``uds_protocol`` assigns it (``UDSSVC_ARCH_0005``). Nothing is decoded
+   until the service is known to be supported and allowed in the active session, so a
+   decode failure never pre-empts 0x11 or 0x7F, and a trailing byte never pre-empts 0x12,
+   0x7E or 0x33. Check 2, authentication (0x34), is not evaluated yet: it is architecture
+   open question 4. A service whose security requirement turns on an identifier in its
+   data-parameters (``WriteDataByIdentifier``, ``RoutineControl``) checks it in its own
+   stage, at the place its figure gives.
 
    **Check 3 is partly fixed by the standard, and this crate answers the fixed part.**
    Clause 10.2's Table 23 states, for each service it lists, whether it is available in the
@@ -347,10 +354,11 @@ Mandatory preconditions
    Row 3 is not evaluated yet: authentication is architecture open question 4, so it is
    unconditionally true, as Figure 5's authentication check is.
 
-   **Row 2 is decided only for a service that has a stage** (``DiagnosticSessionControl``,
-   ``TesterPresent``). A listed service that carries a SubFunction but has no stage yet
-   passes row 2 and reaches the decode: it is then answered 0x11 through the wildcard, or
-   0x13 if the request does not decode. The macro documentation records the same rule.
+   **Row 2 is decided only for a service that has a stage**, which is every service with
+   a SubFunction this crate has a trait for. A listed service that carries a SubFunction
+   but has no stage would pass row 2 and reach the decode: it would then be answered 0x11
+   through the wildcard, or the decode's code if the request does not decode. The macro
+   documentation records the same rule.
 
    **Rows 2 and 4 are each service trait's pair.** Whether a SubFunction is supported
    ever, and whether from the active session, are deployment facts — which sessions a
