@@ -14,8 +14,8 @@ use uds_services::{
     CommunicationControlType, CommunicationType, ControlDtcSetting, DataIdentifier,
     DiagnosticSessionType as S, DtcRecord, DtcReportKind, DtcSettingType, DtcStatusMask,
     EcuReset, KeyVerdict, Mtype, ProtocolState, ReadDtcInfoReportType,
-    ReadDtcInfoSubFunction, ReadDtcInformation, RecordError, ResetType, Responded,
-    ResponseSink, RoutineControl, RoutineControlSubFunction, RoutineIdentifier,
+    ReadDtcInfoSubFunction, ReadDtcInformation, Received, RecordError, ResetType,
+    Responded, ResponseSink, RoutineControl, RoutineControlSubFunction, RoutineIdentifier,
     SecurityAccess, SecurityLevel, SecurityPolicy, ServiceSet, SessionTiming,
     SessionTransition, Sink, SubnetNumber, TaType, TesterPresent, WriteDataByIdentifier,
     uds_server,
@@ -146,8 +146,8 @@ impl uds_services::DiagnosticSessionControl for Ecu {
     }
     fn timing(&self, _s: S) -> SessionTiming {
         SessionTiming {
-            p2_server_max: 50,
-            p2_star_server_max: 5_000,
+            p2_server_max_ms: 50,
+            p2_star_server_max_10ms: 500,
         }
     }
     fn on_transition(&mut self, _t: SessionTransition, relocked: bool) {
@@ -606,7 +606,8 @@ fn block_on<F: core::future::Future>(f: F) -> F::Output {
 fn exchange(ecu: &mut Ecu, state: &mut State, request: &[u8]) -> Option<Vec<u8>> {
     let mut buf = [0_u8; 64];
     let mut out = ResponseSink::new(&mut buf, None);
-    let unsettled = block_on(ecu.dispatch(state, PHYSICAL, request, &mut out));
+    let unsettled =
+        block_on(ecu.dispatch(state, PHYSICAL, Received::Whole(request), &mut out));
     match settle(PHYSICAL, unsettled, false, &mut out) {
         Responded::Yes { .. } => Some(out.written_bytes().to_vec()),
         Responded::Suppressed { .. } => None,

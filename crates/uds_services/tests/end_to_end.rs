@@ -812,7 +812,7 @@ fn a_late_selection_confirmation_does_not_start_the_session_timer_during_the_nex
     assert_eq!(t.sent(1), &[0x7F, 0x22, 0x78]);
     assert_eq!(t.sent(2), &[0x7F, 0x22, 0x78]);
     assert_eq!(t.sent(3), &[0x62, 0xF4, 0x0D, 0x40]);
-    assert_eq!(t.sent(4), &[0x7F, 0x27, 0x11]); // allowed in extended; listed, no stage
+    assert_eq!(t.sent(4), &SEED); // allowed in extended, so the seed
     assert_eq!(t.deadlines, 2); // the read's tP2_Server and tP2*_Server only
     assert_eq!(
         s.services().transitions,
