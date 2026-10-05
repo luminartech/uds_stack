@@ -41,6 +41,8 @@
 //!
 //! ## Where to start
 //!
+//! - **Writing against the connection service:** [`service`] holds ISO 13400-2's own
+//!   service vocabulary and the [`service::DiagnosticConnection`] trait, with no I/O.
 //! - **Bare metal / sans-io:** [`try_frame`] delimits a frame from a byte buffer without
 //!   owning any I/O resource; [`messages::Payload::decode`] then interprets the body.
 //!   See `examples/bare_metal_codec.rs`.
@@ -64,6 +66,7 @@ extern crate std;
 pub mod bare_metal_entity;
 pub mod logical_address;
 pub mod messages;
+pub mod service;
 pub mod wire;
 pub use logical_address::{LogicalAddress, TaType};
 mod framer;
