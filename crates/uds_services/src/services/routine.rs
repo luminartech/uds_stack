@@ -1,7 +1,9 @@
 //! Routine — ISO 14229-1:2020 clause 14.
 
 use crate::{ResponseSink, RoutineIdentifier, SecurityLevel};
-use uds_protocol::{DiagnosticSessionType, NegativeResponseCode};
+use uds_protocol::{
+    DiagnosticSessionType, NegativeResponseCode, RoutineControlSubFunction,
+};
 
 /// `RoutineControl` (0x31).
 ///
@@ -10,19 +12,22 @@ use uds_protocol::{DiagnosticSessionType, NegativeResponseCode};
 /// its routine identifier: whether `stopRoutine` is supported is a property of the
 /// routine, not of the service. **Three methods rather than one with a sub-function
 /// parameter**, so that asymmetry is visible in the type rather than documented. Settles
-/// open question 5.
+/// open question 5. Whether a routine supports a sub-function at all is nonetheless also a
+/// lookup, [`Self::supports`], because Figure 30 answers it before the option record's
+/// length is checked, and the pipeline must not hand a method a record longer than
+/// [`Self::MAX_OPTION_LEN`].
 ///
 /// ISO 14229-1:2020 clause 14.2, Figure 30 — the pipeline settles, in order: a request
 /// shorter than its routine identifier (0x13), an identifier
 /// [`RoutineIdentifier::from_u16`] rejects or [`Self::supported_in`] refuses (0x31), a
-/// locked [`Self::required_level`] (0x33), a `routineControlType` Table 426 reserves
-/// (0x12), and an option record longer than [`Self::MAX_OPTION_LEN`] (0x13). Only then
-/// is the sub-function's method asked, and Figure 30's remaining checks are its own: the
-/// sub-function supported for this routine (0x12), the record's length for this routine
-/// (0x13), conditions (0x22), the record's content (0x31) and the request sequence
-/// (0x24). Each method writes `routineInfo` and any `routineStatusRecord` into its `out`,
-/// after the `71`, the echoed `routineControlType` and the identifier the pipeline wrote
-/// (Table 428).
+/// locked [`Self::required_level`] (0x33), a `routineControlType` Table 426 reserves or
+/// [`Self::supports`] refuses for this routine (0x12), and an option record longer than
+/// [`Self::MAX_OPTION_LEN`] (0x13). Only then is the sub-function's method asked, and
+/// Figure 30's remaining checks are its own: the record's length for this routine (0x13),
+/// conditions (0x22), the record's content (0x31) and the request sequence (0x24). Each
+/// method writes `routineInfo` and any `routineStatusRecord` into its `out`, after the
+/// `71`, the echoed `routineControlType` and the identifier the pipeline wrote (Table
+/// 428).
 pub trait RoutineControl {
     /// This application's routine identifier enumeration.
     type Rid: RoutineIdentifier;
@@ -57,12 +62,27 @@ pub trait RoutineControl {
     /// * `routine` - the identifier the request names; see [`Self::Rid`].
     fn required_level(&self, routine: Self::Rid) -> Option<SecurityLevel>;
 
+    /// Whether `routine` supports `control` at all.
+    ///
+    /// Figure 30, "`SubFunction` supported for `routineIdentifier`?" — asked only for a
+    /// `routine` [`Self::supported_in`] accepted and whose [`Self::required_level`] is
+    /// unlocked, and only for `startRoutine`, `stopRoutine` and `requestRoutineResults`:
+    /// a reserved `routineControlType` is 0x12 without being asked. A `false` settles the
+    /// request `subFunctionNotSupported` (0x12) before the option record's length is
+    /// checked and without the matching method being asked.
+    ///
+    /// # Arguments
+    ///
+    /// * `routine` - the identifier the request names; see [`Self::Rid`].
+    /// * `control` - the `routineControlType` requested; see [`RoutineControlSubFunction`].
+    fn supports(&self, routine: Self::Rid, control: RoutineControlSubFunction) -> bool;
+
     /// `startRoutine` (0x01).
     ///
     /// # Errors
     ///
-    /// The [`NegativeResponseCode`], including `subFunctionNotSupported` (0x12) where
-    /// this routine cannot be started — a decision no other service's handler makes.
+    /// The [`NegativeResponseCode`] for a start [`Self::supports`] accepted but that
+    /// cannot be made: 0x13, 0x22, 0x24, 0x31 or 0x72 (clause 14.2.4).
     ///
     /// A refused write to `out` needs no handling: the sink records the refusal and the
     /// pipeline answers `responseTooLong` (0x14) in place of the response, so the write's
@@ -78,7 +98,7 @@ pub trait RoutineControl {
     ///
     /// # Errors
     ///
-    /// The [`NegativeResponseCode`], including 0x12 where this routine cannot be stopped.
+    /// The [`NegativeResponseCode`] for a stop that cannot be made, as for [`Self::start`].
     ///
     /// A refused write to `out` needs no handling: the sink records the refusal and the
     /// pipeline answers `responseTooLong` (0x14) in place of the response, so the write's
@@ -94,7 +114,8 @@ pub trait RoutineControl {
     ///
     /// # Errors
     ///
-    /// The [`NegativeResponseCode`], including 0x12 where this routine reports none.
+    /// The [`NegativeResponseCode`] where results cannot be given, as for [`Self::start`]:
+    /// `requestSequenceError` (0x24) where the routine has produced none.
     ///
     /// A refused write to `out` needs no handling: the sink records the refusal and the
     /// pipeline answers `responseTooLong` (0x14) in place of the response, so the write's
@@ -140,6 +161,16 @@ mod tests {
         fn required_level(&self, _r: Rid) -> Option<crate::SecurityLevel> {
             None
         }
+        fn supports(
+            &self,
+            _r: Rid,
+            control: uds_protocol::RoutineControlSubFunction,
+        ) -> bool {
+            !matches!(
+                control,
+                uds_protocol::RoutineControlSubFunction::StopRoutine
+            )
+        }
         async fn start(
             &mut self,
             _r: Rid,
@@ -168,9 +199,8 @@ mod tests {
 
     /// ``UDSSVC_ARCH_0007`` — Figure 5 excludes 0x31 from the centralised sub-function
     /// stage, because whether `stopRoutine` is supported is a property of the *routine*,
-    /// not of the service. Three separate methods make that asymmetry structural: a
-    /// routine that does not support stopping returns 0x12 from `stop` alone. Settles
-    /// open question 5.
+    /// not of the service. Three separate methods make that asymmetry structural, and
+    /// `supports` answers 0x12 for the pair. Settles open question 5.
     ///
     /// This is a trait-bound check and nothing more: it establishes that `start`, `stop`
     /// and `results` are each required, because the fixture above satisfies

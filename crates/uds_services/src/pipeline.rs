@@ -636,7 +636,8 @@ pub async fn write_data_by_identifier<A: WriteDataByIdentifier>(
 ///   `requestOutOfRange` (0x31);
 /// * a [`RoutineControl::required_level`] that `state` does not hold unlocked is
 ///   `securityAccessDenied` (0x33);
-/// * a `routineControlType` Table 426 reserves is `subFunctionNotSupported` (0x12);
+/// * a `routineControlType` Table 426 reserves, or one [`RoutineControl::supports`]
+///   refuses for this routine, is `subFunctionNotSupported` (0x12);
 /// * an option record longer than [`RoutineControl::MAX_OPTION_LEN`] is
 ///   `incorrectMessageLengthOrInvalidFormat` (0x13).
 ///
@@ -657,12 +658,14 @@ pub async fn routine_control<A: RoutineControl>(
     if !unlocked(state, services.required_level(routine)) {
         return Err(NegativeResponseCode::SecurityAccessDenied);
     }
+    let control = request.sub_function;
     if !matches!(
-        request.sub_function,
+        control,
         RoutineControlSubFunction::StartRoutine
             | RoutineControlSubFunction::StopRoutine
             | RoutineControlSubFunction::RequestRoutineResults
-    ) {
+    ) || !services.supports(routine, control)
+    {
         return Err(NegativeResponseCode::SubFunctionNotSupported);
     }
     let record = request.option_record;

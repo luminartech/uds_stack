@@ -190,7 +190,7 @@ pub use uds_protocol::{
     CLEAR_ALL_DTCS, CommunicationControlType, CommunicationType, DiagnosticSessionType,
     DtcRecord, DtcSettingType, DtcStatusMask, FileOperationMode, FunctionalGroupIdentifier,
     NegativeResponseCode, ReadDtcInfoReportType, ReadDtcInfoSubFunction, ResetType,
-    SubnetNumber, UdsServiceType,
+    RoutineControlSubFunction, SubnetNumber, UdsServiceType,
 };
 
 /// Re-exported only so `uds_server!`'s expansion can name it; not part of the API.

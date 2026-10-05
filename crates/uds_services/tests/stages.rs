@@ -15,9 +15,10 @@ use uds_services::{
     DiagnosticSessionType as S, DtcRecord, DtcReportKind, DtcSettingType, DtcStatusMask,
     EcuReset, KeyVerdict, Mtype, ProtocolState, ReadDtcInfoReportType,
     ReadDtcInfoSubFunction, ReadDtcInformation, RecordError, ResetType, Responded,
-    ResponseSink, RoutineControl, RoutineIdentifier, SecurityAccess, SecurityLevel,
-    SecurityPolicy, ServiceSet, SessionTiming, SessionTransition, Sink, SubnetNumber,
-    TaType, TesterPresent, WriteDataByIdentifier, uds_server,
+    ResponseSink, RoutineControl, RoutineControlSubFunction, RoutineIdentifier,
+    SecurityAccess, SecurityLevel, SecurityPolicy, ServiceSet, SessionTiming,
+    SessionTransition, Sink, SubnetNumber, TaType, TesterPresent, WriteDataByIdentifier,
+    uds_server,
 };
 
 /// The test server's data identifiers.
@@ -364,6 +365,15 @@ impl RoutineControl for Ecu {
             _ => None,
         }
     }
+    /// The self-test cannot be stopped; the others can only be started.
+    fn supports(&self, routine: Rid, control: RoutineControlSubFunction) -> bool {
+        match routine {
+            Rid::SelfTest => !matches!(control, RoutineControlSubFunction::StopRoutine),
+            Rid::EraseMemory | Rid::CheckProgramming => {
+                matches!(control, RoutineControlSubFunction::StartRoutine)
+            }
+        }
+    }
     async fn start(
         &mut self,
         routine: Rid,
@@ -384,6 +394,7 @@ impl RoutineControl for Ecu {
         let _ = out.write_all(&[0x00]);
         Ok(())
     }
+    /// Never asked: `supports` refuses every stop.
     async fn stop(
         &mut self,
         _routine: Rid,
@@ -1806,9 +1817,9 @@ fn routine_control_a_wrong_option_record_length_is_0x13() {
     assert_eq!(ecu.started, None);
 }
 
-/// Figure 30 and clause 14.2.4 — what is left is the routine's: 0x12 for a sub-function
-/// it does not support, 0x31 for an option record it rejects, 0x22 where it cannot run,
-/// and 0x24 for results never produced.
+/// Figure 30 and clause 14.2.4 — a sub-function the routine does not support is 0x12,
+/// from `supports`; what is left is the routine's: 0x31 for an option record it rejects,
+/// 0x22 where it cannot run, and 0x24 for results never produced.
 #[test]
 fn routine_control_the_routine_verdicts_are_its_codes() {
     let mut ecu = Ecu::default();
@@ -1888,4 +1899,33 @@ fn routine_control_a_reserved_control_type_is_0x12_after_the_routine_checks() {
         );
     }
     assert_eq!(ecu.started, None);
+}
+
+/// Figure 30 — "`SubFunction` supported for `routineIdentifier`?" precedes the total length
+/// check: a sub-function the routine does not support is 0x12 even with an option record
+/// longer than `MAX_OPTION_LEN`, and a supported one with that record is 0x13.
+#[test]
+fn routine_control_an_unsupported_sub_function_is_0x12_before_the_length_check() {
+    let mut ecu = Ecu::default();
+    let mut state = State::INITIAL;
+    for (request, code) in [
+        (
+            &[0x31, 0x02, 0x02, 0x01, 0x01, 0x02, 0x03, 0x04, 0x05][..],
+            0x12,
+        ),
+        (
+            &[0x31, 0x03, 0x02, 0x02, 0x01, 0x02, 0x03, 0x04, 0x05][..],
+            0x31,
+        ),
+        (
+            &[0x31, 0x01, 0x02, 0x01, 0x01, 0x02, 0x03, 0x04, 0x05][..],
+            0x13,
+        ),
+    ] {
+        assert_eq!(
+            exchange(&mut ecu, &mut state, request).as_deref(),
+            Some(&[0x7F, 0x31, code][..]),
+            "{request:02X?}"
+        );
+    }
 }
