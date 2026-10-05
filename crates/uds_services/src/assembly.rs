@@ -405,6 +405,12 @@ macro_rules! __uds_stage {
             return $crate::pipeline::communication_control($self, r, $out).await;
         }
     };
+    ($self:ident, $state:ident, $out:ident, $req:ident, WriteDataByIdentifier) => {
+        if let $crate::Request::WriteDataByIdentifier(ref r) = $req {
+            return $crate::pipeline::write_data_by_identifier($self, $state, r, $out)
+                .await;
+        }
+    };
     ($self:ident, $state:ident, $out:ident, $req:ident, $svc:ident) => {};
 }
 

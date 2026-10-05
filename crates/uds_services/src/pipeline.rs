@@ -14,8 +14,8 @@ use crate::services::SessionTransition;
 use crate::state::State;
 use crate::{
     CommunicationControl, ControlDtcSetting, DataIdentifier, DiagnosticSessionControl,
-    EcuReset, KeyVerdict, ReadDataByIdentifier, SecurityAccess, SecurityLevel,
-    SecurityPolicy, TesterPresent,
+    EcuReset, KeyVerdict, ReadDataByIdentifier, RecordError, SecurityAccess, SecurityLevel,
+    SecurityPolicy, TesterPresent, WriteDataByIdentifier,
 };
 use crate::{Responded, ResponseSink, Unsettled};
 use automotive_wire_codec::Sink;
@@ -23,6 +23,7 @@ use uds_protocol::{
     CommunicationControlRequest, CommunicationControlType, ControlDtcSettingRequest,
     DiagnosticSessionControlRequest, DtcSettingType, EcuResetRequest,
     ReadDataByIdentifierRequest, ResetType, SecurityAccessRequest,
+    WriteDataByIdentifierRequest,
 };
 use uds_protocol::{
     Decode, DiagnosticSessionType, Encode, NegativeResponse, NegativeResponseCode, Request,
@@ -535,6 +536,48 @@ pub async fn read_data_by_identifier<A: ReadDataByIdentifier>(
     } else {
         Err(NegativeResponseCode::RequestOutOfRange)
     }
+}
+
+/// ISO 14229-1:2020 clause 11.7 — `WriteDataByIdentifier`'s own stage, in Figure 26's
+/// order. The decode settled a request without a data record (0x13); then:
+///
+/// * an identifier the application does not define, or one
+///   [`WriteDataByIdentifier::writable_in`] refuses in the active session, is
+///   `requestOutOfRange` (0x31);
+/// * a record [`DataIdentifier::split_record`] finds short, or followed by further bytes,
+///   is `incorrectMessageLengthOrInvalidFormat` (0x13);
+/// * a [`WriteDataByIdentifier::required_level`] that `state` does not hold unlocked is
+///   `securityAccessDenied` (0x33);
+/// * a record `split_record` finds malformed is `requestOutOfRange` (0x31).
+///
+/// The handler's verdict decides the rest, and the positive response is `6E` and the
+/// echoed identifier (Table 279).
+#[doc(hidden)]
+pub async fn write_data_by_identifier<A: WriteDataByIdentifier>(
+    services: &mut A,
+    state: &State,
+    request: &WriteDataByIdentifierRequest<'_>,
+    out: &mut ResponseSink<'_>,
+) -> Result<Option<DiagnosticSessionType>, NegativeResponseCode> {
+    let Some(did) = <A::Did as DataIdentifier>::from_u16(request.identifier)
+        .filter(|&did| services.writable_in(did, state.session()))
+    else {
+        return Err(NegativeResponseCode::RequestOutOfRange);
+    };
+    let split = did.split_record(request.data());
+    if matches!(split, Err(RecordError::Short) | Ok((_, [_, ..]))) {
+        return Err(NegativeResponseCode::IncorrectMessageLengthOrInvalidFormat);
+    }
+    if !unlocked(state, services.required_level(did)) {
+        return Err(NegativeResponseCode::SecurityAccessDenied);
+    }
+    let Ok((record, _)) = split else {
+        return Err(NegativeResponseCode::RequestOutOfRange);
+    };
+    services.write(did, record).await?;
+    let _ = out.write_all(&[0x6E]);
+    let _ = out.write_all(&request.identifier.to_be_bytes());
+    Ok(None)
 }
 
 /// ISO 14229-1:2020 clause 10.2 — `DiagnosticSessionControl`'s own stage

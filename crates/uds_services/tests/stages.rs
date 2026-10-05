@@ -11,11 +11,58 @@ use uds_protocol::NegativeResponseCode as Nrc;
 use uds_services::pipeline::settle;
 use uds_services::{
     Address, Ai, CommunicationControl, CommunicationControlType, CommunicationType,
-    ControlDtcSetting, DiagnosticSessionType as S, DtcSettingType, EcuReset, KeyVerdict,
-    Mtype, ProtocolState, ResetType, Responded, ResponseSink, SecurityAccess,
-    SecurityLevel, SecurityPolicy, ServiceSet, SessionTiming, SessionTransition, Sink,
-    SubnetNumber, TaType, TesterPresent, uds_server,
+    ControlDtcSetting, DataIdentifier, DiagnosticSessionType as S, DtcSettingType,
+    EcuReset, KeyVerdict, Mtype, ProtocolState, RecordError, ResetType, Responded,
+    ResponseSink, SecurityAccess, SecurityLevel, SecurityPolicy, ServiceSet, SessionTiming,
+    SessionTransition, Sink, SubnetNumber, TaType, TesterPresent, WriteDataByIdentifier,
+    uds_server,
 };
+
+/// The test server's data identifiers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Did {
+    /// `F190`, 17 bytes, writable only in the extended session.
+    Vin,
+    /// `F40D`, one byte, read-only.
+    VehicleSpeed,
+    /// `0100`, two bytes, written only with level 0x03 unlocked.
+    Config,
+    /// `0101`, one byte, and only `00`-`03` is a valid mode.
+    Mode,
+}
+
+impl DataIdentifier for Did {
+    const MAX_RECORD_LEN: usize = 17;
+    fn as_u16(self) -> u16 {
+        match self {
+            Self::Vin => 0xF190,
+            Self::VehicleSpeed => 0xF40D,
+            Self::Config => 0x0100,
+            Self::Mode => 0x0101,
+        }
+    }
+    fn from_u16(value: u16) -> Option<Self> {
+        match value {
+            0xF190 => Some(Self::Vin),
+            0xF40D => Some(Self::VehicleSpeed),
+            0x0100 => Some(Self::Config),
+            0x0101 => Some(Self::Mode),
+            _ => None,
+        }
+    }
+    fn split_record(self, buf: &[u8]) -> Result<(&[u8], &[u8]), RecordError> {
+        let width = match self {
+            Self::Vin => 17,
+            Self::Config => 2,
+            Self::VehicleSpeed | Self::Mode => 1,
+        };
+        let (record, rest) = buf.split_at_checked(width).ok_or(RecordError::Short)?;
+        match (self, record) {
+            (Self::Mode, [mode]) if *mode > 0x03 => Err(RecordError::Malformed),
+            _ => Ok((record, rest)),
+        }
+    }
+}
 
 #[derive(Debug, Default)]
 struct Ecu {
@@ -42,6 +89,8 @@ struct Ecu {
         SubnetNumber,
         Option<u16>,
     )>,
+    /// What `WriteDataByIdentifier` last stored.
+    written: Option<(Did, Vec<u8>)>,
     /// The `DTCSettingType` `ControlDtcSetting` last applied.
     dtc_setting: Option<DtcSettingType>,
 }
@@ -191,6 +240,35 @@ fn key_of(level: SecurityLevel) -> [u8; 2] {
     seed_of(level).wrapping_neg().to_be_bytes()
 }
 
+impl WriteDataByIdentifier for Ecu {
+    type Did = Did;
+    const MAY_RESPOND_PENDING: bool = false;
+    fn writable_in(&self, did: Did, active: S) -> bool {
+        match did {
+            Did::Vin => matches!(active, S::ExtendedDiagnosticSession),
+            Did::VehicleSpeed => false,
+            Did::Config | Did::Mode => true,
+        }
+    }
+    fn required_level(&self, did: Did) -> Option<SecurityLevel> {
+        match did {
+            Did::Config => SecurityLevel::from_request_seed(0x03),
+            _ => None,
+        }
+    }
+    /// A `Config` of `FFFF` is a value this server rejects.
+    async fn write(&mut self, did: Did, record: &[u8]) -> Result<(), Nrc> {
+        if core::mem::take(&mut self.refuse) {
+            return Err(Nrc::ConditionsNotCorrect);
+        }
+        if matches!(did, Did::Config) && record == [0xFF, 0xFF] {
+            return Err(Nrc::RequestOutOfRange);
+        }
+        self.written = Some((did, record.to_vec()));
+        Ok(())
+    }
+}
+
 /// Every `controlType` but `disableRxAndEnableTx` (0x02): `enableRxAndTx...` with
 /// enhanced address information (0x05) is offered only in the programming session, and
 /// `disableRxAndTx` (0x03) requires level 0x03. Node `0xFFFF` is one this server does not
@@ -294,7 +372,7 @@ impl uds_services::UdsTransport for NoTransport {
 
 uds_server! {
     Ecu: DiagnosticSessionControl, TesterPresent, EcuReset, SecurityAccess,
-         CommunicationControl, ControlDtcSetting;
+         CommunicationControl, ControlDtcSetting, WriteDataByIdentifier;
     transport = NoTransport,
     peers = 1,
     server = EcuServer,
@@ -1099,4 +1177,141 @@ fn control_dtc_setting_the_positive_response_echoes_the_setting() {
     );
     assert_eq!(exchange(&mut ecu, &mut state, &[0x85, 0x82]), None);
     assert_eq!(ecu.dtc_setting, Some(DtcSettingType::Off));
+}
+
+// --- WriteDataByIdentifier (0x2E), ISO 14229-1:2020 clause 11.7 ------------------------
+
+/// Unlock level 0x03, from the extended session.
+fn unlocked_level_3(ecu: &mut Ecu) -> State {
+    let mut state = extended(ecu);
+    let _ = exchange(ecu, &mut state, &[0x27, 0x03]);
+    let _ = exchange(ecu, &mut state, &[0x27, 0x04, 0xED, 0xCC]);
+    state
+}
+
+/// Figure 26, key 1 — a request without a data record is 0x13, before the identifier is
+/// looked at.
+#[test]
+fn wdbi_a_request_without_a_record_is_0x13() {
+    let mut ecu = Ecu::default();
+    let mut state = State::INITIAL;
+    for request in [
+        &[0x2E, 0xF1, 0x90][..],
+        &[0x2E, 0x12, 0x34][..],
+        &[0x2E, 0xF1][..],
+    ] {
+        assert_eq!(
+            exchange(&mut ecu, &mut state, request).as_deref(),
+            Some(&[0x7F, 0x2E, 0x13][..]),
+            "{request:02X?}"
+        );
+    }
+}
+
+/// Figure 26, "DID supports service 2E in active session?", clause 11.7.4 — an identifier
+/// the server does not define, a read-only one, and one not writable in the active
+/// session are 0x31, before the record's length is checked.
+#[test]
+fn wdbi_an_identifier_not_writable_here_is_0x31() {
+    let mut ecu = Ecu::default();
+    let mut state = State::INITIAL;
+    for request in [
+        &[0x2E, 0x12, 0x34, 0x00][..],
+        &[0x2E, 0xF4, 0x0D, 0x40][..],
+        &[0x2E, 0xF4, 0x0D, 0x40, 0x41][..],
+        &[0x2E, 0xF1, 0x90, 0x00][..],
+    ] {
+        assert_eq!(
+            exchange(&mut ecu, &mut state, request).as_deref(),
+            Some(&[0x7F, 0x2E, 0x31][..]),
+            "{request:02X?}"
+        );
+    }
+    assert_eq!(ecu.written, None);
+}
+
+/// Figure 26, key 2 — a record shorter than the identifier's, or followed by more bytes,
+/// is 0x13, ahead of the security check.
+#[test]
+fn wdbi_a_record_of_the_wrong_length_is_0x13() {
+    let mut ecu = Ecu::default();
+    let mut state = extended(&mut ecu);
+    for request in [
+        &[0x2E, 0xF1, 0x90, 0x00, 0x01][..],
+        &[0x2E, 0x01, 0x01, 0x00, 0x00][..],
+        &[0x2E, 0x01, 0x00, 0x00][..],
+    ] {
+        assert_eq!(
+            exchange(&mut ecu, &mut state, request).as_deref(),
+            Some(&[0x7F, 0x2E, 0x13][..]),
+            "{request:02X?}"
+        );
+    }
+    assert_eq!(ecu.written, None);
+}
+
+/// Figure 26, "DID security check OK?" — an identifier whose level is locked is 0x33,
+/// before its value is checked; it is written once that level is unlocked.
+#[test]
+fn wdbi_an_identifier_requiring_a_locked_level_is_0x33() {
+    let mut ecu = Ecu::default();
+    let mut state = extended(&mut ecu);
+    for request in [
+        &[0x2E, 0x01, 0x00, 0x12, 0x34][..],
+        &[0x2E, 0x01, 0x00, 0xFF, 0xFF][..],
+    ] {
+        assert_eq!(
+            exchange(&mut ecu, &mut state, request).as_deref(),
+            Some(&[0x7F, 0x2E, 0x33][..]),
+            "{request:02X?}"
+        );
+    }
+    let mut state = unlocked_level_3(&mut ecu);
+    assert_eq!(
+        exchange(&mut ecu, &mut state, &[0x2E, 0x01, 0x00, 0x12, 0x34]).as_deref(),
+        Some(&[0x6E, 0x01, 0x00][..])
+    );
+    assert_eq!(ecu.written, Some((Did::Config, vec![0x12, 0x34])));
+}
+
+/// Figure 26, "Data record is valid?", clause 11.7.4 — a record `split_record` finds
+/// malformed is 0x31, and a value the handler rejects is its 0x31; the handler's 0x22 is
+/// the response where it cannot write.
+#[test]
+fn wdbi_an_invalid_record_is_0x31_and_the_handler_refusal_is_its_code() {
+    let mut ecu = Ecu::default();
+    let mut state = unlocked_level_3(&mut ecu);
+    assert_eq!(
+        exchange(&mut ecu, &mut state, &[0x2E, 0x01, 0x01, 0x04]).as_deref(),
+        Some(&[0x7F, 0x2E, 0x31][..])
+    );
+    assert_eq!(
+        exchange(&mut ecu, &mut state, &[0x2E, 0x01, 0x00, 0xFF, 0xFF]).as_deref(),
+        Some(&[0x7F, 0x2E, 0x31][..])
+    );
+    ecu.refuse = true;
+    assert_eq!(
+        exchange(&mut ecu, &mut state, &[0x2E, 0x01, 0x01, 0x02]).as_deref(),
+        Some(&[0x7F, 0x2E, 0x22][..])
+    );
+    assert_eq!(ecu.written, None);
+}
+
+/// Clause 11.7.5, Tables 282-283 — the VIN is written in the session that allows it, and
+/// the positive response echoes the identifier.
+#[test]
+fn wdbi_the_positive_response_echoes_the_identifier() {
+    let mut ecu = Ecu::default();
+    let mut state = extended(&mut ecu);
+    let mut request = vec![0x2E, 0xF1, 0x90];
+    request.extend_from_slice(b"W0L000043MB541326");
+    assert_eq!(
+        exchange(&mut ecu, &mut state, &request).as_deref(),
+        Some(&[0x6E, 0xF1, 0x90][..])
+    );
+    assert_eq!(ecu.written, Some((Did::Vin, b"W0L000043MB541326".to_vec())));
+    assert_eq!(
+        exchange(&mut ecu, &mut state, &[0x2E, 0x01, 0x01, 0x03]).as_deref(),
+        Some(&[0x6E, 0x01, 0x01][..])
+    );
 }
