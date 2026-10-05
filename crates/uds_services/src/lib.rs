@@ -153,7 +153,7 @@ pub mod services;
 pub use services::{
     ClearDiagnosticInformation, CommunicationControl, ControlDtcSetting, DataTransfer,
     DiagnosticSessionControl, DtcReportKind, EcuReset, KeyVerdict, ReadDataByIdentifier,
-    ReadDtcInformation, Responded, RoutineControl, SecurityAccess, SecurityLevel,
+    ReadDtcInformation, Received, Responded, RoutineControl, SecurityAccess, SecurityLevel,
     SecurityPolicy, ServiceSet, SessionTiming, SessionTransition, TesterPresent,
     TransferRequest, Unsettled, WriteDataByIdentifier,
 };

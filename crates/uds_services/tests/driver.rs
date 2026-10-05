@@ -719,50 +719,6 @@ fn a_message_too_long_for_the_concurrent_buffer_is_answered_busy() {
     assert_eq!(t.sent(1), (Some(response_to(TESTER)), POSITIVE));
 }
 
-/// A request longer than the in-flight buffer, with no service in progress: that buffer
-/// holds the longest request any assembled service accepts, so it is answered
-/// `incorrectMessageLengthOrInvalidFormat` (0x13) for a service this server implements and,
-/// ISO 14229-1:2020 Figure 5 checking the identifier first, `serviceNotSupported` (0x11)
-/// for one it does not — not `busyRepeatRequest`, which would have the client repeat it
-/// forever. 0x11 to a functional request is suppressed (8.7.5).
-#[test]
-fn a_request_too_long_for_any_service_is_refused_0x11_or_0x13() {
-    for (ai, request, expected) in [
-        (
-            request_from(TESTER),
-            &[0x22, 0xF4, 0x0D, 0xF4, 0x0E][..],
-            &[0x7F, 0x22, 0x13][..],
-        ),
-        (
-            request_from(TESTER),
-            &[0x2E, 0xF1, 0x90, 1, 2, 3, 4, 5, 6][..],
-            &[0x7F, 0x2E, 0x11][..],
-        ),
-        (
-            functional_from(TESTER),
-            &[0x2E, 0xF1, 0x90, 1, 2, 3, 4, 5, 6][..],
-            &[][..],
-        ),
-    ] {
-        let mut server = SlowSrv::new(
-            Slow { pends: 0 },
-            Script::new(&[Step::TooLong(ai, request), Step::Conf(response_to(TESTER))]),
-            ECU,
-            PARAMS,
-        );
-        run(&mut server);
-        let t = server.transport();
-        assert_eq!(
-            t.sent_count,
-            usize::from(!expected.is_empty()),
-            "{request:02X?}"
-        );
-        if !expected.is_empty() {
-            assert_eq!(t.sent(0), (Some(response_to(TESTER)), expected));
-        }
-    }
-}
-
 /// A link closed while a handler runs ends the request with nothing sent, the abandoned
 /// handler's bytes included, and the server goes on to answer the next request.
 #[test]
@@ -865,4 +821,75 @@ fn the_confirmed_sessions_advertised_timing_is_enforced() {
     assert_eq!((t.sent(1).1, t.sent_at[1]), (pending, 100));
     assert_eq!((t.sent(2).1, t.sent_at[2]), (pending, 2_100));
     assert_eq!(t.sent(3).1, POSITIVE);
+}
+
+/// A request longer than the in-flight buffer, with no service in progress, is checked as
+/// clause 8.7 checks any request, in ISO 14229-1:2020 Figure 5's and Figure 6's order:
+/// `serviceNotSupported` (0x11) for a service this server lacks, `subFunctionNotSupported`
+/// (0x12) for a sub-function it lacks, and only then
+/// `incorrectMessageLengthOrInvalidFormat` (0x13), that buffer holding the longest request
+/// any assembled service accepts. Never
+/// `busyRepeatRequest`, which would have the client repeat it forever. 0x11 and 0x12 to a
+/// functional request are suppressed (8.7.5).
+///
+/// `Timed`'s in-flight buffer is six bytes, `DiagnosticSessionControl`'s bound.
+#[test]
+fn a_request_too_long_for_any_service_is_refused_in_figure_5s_order() {
+    const NOT_SUPPORTED: &[u8] = &[0x2E, 0xF1, 0x90, 1, 2, 3, 4, 5, 6];
+    const NO_SUCH_SESSION: &[u8] = &[0x10, 0x05, 0, 0, 0, 0, 0];
+    const SESSION: &[u8] = &[0x10, 0x03, 0, 0, 0, 0, 0];
+    for (ai, request, expected) in [
+        (request_from(TESTER), SESSION, &[0x7F, 0x10, 0x13][..]),
+        (request_from(TESTER), NOT_SUPPORTED, &[0x7F, 0x2E, 0x11][..]),
+        (functional_from(TESTER), NOT_SUPPORTED, &[][..]),
+        (
+            request_from(TESTER),
+            NO_SUCH_SESSION,
+            &[0x7F, 0x10, 0x12][..],
+        ),
+        (functional_from(TESTER), NO_SUCH_SESSION, &[][..]),
+    ] {
+        let mut server = TimedSrv::new(
+            Timed { pends: 0 },
+            Script::new(&[Step::TooLong(ai, request), Step::Conf(response_to(TESTER))]),
+            ECU,
+            PARAMS,
+        );
+        run!(&mut server);
+        let t = server.transport();
+        assert_eq!(
+            t.sent_count,
+            usize::from(!expected.is_empty()),
+            "{request:02X?}"
+        );
+        if !expected.is_empty() {
+            assert_eq!(
+                t.sent(0),
+                (Some(response_to(TESTER)), expected),
+                "{request:02X?}"
+            );
+        }
+    }
+}
+
+/// What fit of an over-long request can itself be a whole request — `22 F4 0D`, `Slow`'s
+/// in-flight buffer being three bytes — and is still refused 0x13, never handled.
+#[test]
+fn an_over_long_request_whose_front_decodes_is_not_handled() {
+    let mut server = SlowSrv::new(
+        Slow { pends: 0 },
+        Script::new(&[
+            Step::TooLong(request_from(TESTER), &[0x22, 0xF4, 0x0D, 0xF4, 0x0E]),
+            Step::Conf(response_to(TESTER)),
+        ]),
+        ECU,
+        PARAMS,
+    );
+    run(&mut server);
+    let t = server.transport();
+    assert_eq!(t.sent_count, 1);
+    assert_eq!(
+        t.sent(0),
+        (Some(response_to(TESTER)), &[0x7F, 0x22, 0x13][..])
+    );
 }

@@ -16,7 +16,7 @@ use crate::services::{Responded, ServiceSet};
 use crate::state::ProtocolState;
 use crate::storage::{Buffers, Storage};
 use crate::transport::{TransportEvent, UdsTransport};
-use crate::{ResponseSink, Unsettled};
+use crate::{Received, ResponseSink, Unsettled};
 use core::future::Future;
 use core::pin::Pin;
 use uds_protocol::{DiagnosticSessionType, NegativeResponseCode, UdsServiceType};
@@ -164,11 +164,9 @@ impl<A: ServiceSet, T: UdsTransport, const PEERS: usize> Server<A, T, PEERS> {
         // `next_event` future refuses even shared access, so both have to be read after
         // that await returns. A timestamp accompanies every input handed to uds_session.
         let now = self.transport.now();
-        let (ai, request_bytes, truncated) = match ev {
-            TransportEvent::DataInd { ai, data } => (ai, data, false),
-            // Longer than the in-flight buffer, which `uds_server!` sizes to the longest
-            // request any assembled service accepts: answered below without a handler.
-            TransportEvent::DataTooLong { ai, data, .. } => (ai, data, true),
+        let (ai, received) = match ev {
+            TransportEvent::DataInd { ai, data } => (ai, Received::Whole(data)),
+            TransportEvent::DataTooLong { ai, data, .. } => (ai, Received::Truncated(data)),
             TransportEvent::DataConf { ai, result } => {
                 // UDSS_LLR_0063 — one matching no association is rejected by the session
                 // layer; the drain reads the verdict and nothing changes.
@@ -203,22 +201,21 @@ impl<A: ServiceSet, T: UdsTransport, const PEERS: usize> Server<A, T, PEERS> {
         let reaction = self.session.t_data_ind(
             now,
             ai,
-            request_bytes,
+            received.bytes(),
             SResult::Ok,
             ServerRx::Request { session: None },
         );
-        // The drain hands the `Indicate` back: a `ServerOutput<'d>` outlives the reaction
-        // that yielded it, which is what lets dispatch run with `&mut session` free.
-        // Required, or the 0x78 window does not exist.
+        // Dispatched only once indicated: the indication is what starts `tP2_Server`
+        // (UDSS_LLR_0113), without which the 0x78 window does not exist.
         let d = drain(reaction, &mut self.transport, &mut self.pending).await?;
         apply(&mut self.services, &mut self.state, d.deferred);
-        let Some((ai, request)) = d.indication else {
+        let Some((ai, _)) = d.indication else {
             return Ok(());
         };
         // The byte is kept as received because a negative response echoes it
         // (ISO 14229-1:2020 Table 21, SIDRQ). An empty request is the pipeline's to
         // settle, and settles without pending, so the 0 is never transmitted.
-        let sid = request.first().copied().unwrap_or(0);
+        let sid = received.bytes().first().copied().unwrap_or(0);
         // UDSSVC_ARCH_0032 — whether 0x78 is admissible is the service's to say, never the
         // driver's. Resolved before dispatch, which holds `&mut services` until it
         // completes.
@@ -234,15 +231,13 @@ impl<A: ServiceSet, T: UdsTransport, const PEERS: usize> Server<A, T, PEERS> {
         };
 
         let mut sink = ResponseSink::new(response, outbound_max);
-        let served = if truncated {
-            Served::at_once(Unsettled::refused(sid, too_long(&self.services, sid)))
-        } else {
-            // Scoped, because `pin!` binds to the enclosing block: `handler` drops before
-            // `sink` is settled and read.
+        // Scoped, because `pin!` binds to the enclosing block: `handler` drops before
+        // `sink` is settled and read.
+        let served = {
             let handler = core::pin::pin!(self.services.dispatch(
                 &mut self.state,
                 ai,
-                request,
+                received,
                 &mut sink,
             ));
             serve::<A, _, _, PEERS>(
@@ -547,33 +542,6 @@ struct Served {
     pending_sent: bool,
     /// What the drains made meanwhile recorded for the application.
     deferred: Deferred,
-}
-
-impl Served {
-    /// An outcome settled without running a handler, so nothing happened meanwhile.
-    const fn at_once(unsettled: Unsettled) -> Self {
-        Self {
-            ended: Ended::Finished(unsettled),
-            pending_sent: false,
-            deferred: Deferred::NONE,
-        }
-    }
-}
-
-/// The code for a request longer than the in-flight buffer, which holds the longest request
-/// any assembled service accepts: `serviceNotSupported` (0x11) for a service this server
-/// does not implement, ISO 14229-1:2020 Figure 5 checking the identifier first, and
-/// `incorrectMessageLengthOrInvalidFormat` (0x13) otherwise.
-///
-/// Figure 5 also checks the session (0x7F) and Figure 6 the sub-function (0x12, 0x7E)
-/// before the length, and those are not asked here: an over-long request that fails one
-/// of them is answered 0x13 where a well-formed one would get that code.
-fn too_long<A: ServiceSet>(services: &A, sid: u8) -> NegativeResponseCode {
-    if services.supports(UdsServiceType::from_request_sid(sid)) {
-        NegativeResponseCode::IncorrectMessageLengthOrInvalidFormat
-    } else {
-        NegativeResponseCode::ServiceNotSupported
-    }
 }
 
 /// Poll the handler to completion, answering what the transport delivers meanwhile.

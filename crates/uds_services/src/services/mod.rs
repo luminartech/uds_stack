@@ -195,6 +195,31 @@ impl SessionTransition {
     }
 }
 
+/// A request as the transport delivered it: whole, or only the front of a message longer
+/// than the buffer it was received into.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Received<'a> {
+    /// The whole request, service identifier first.
+    Whole(&'a [u8]),
+    /// What fit of a request longer than the in-flight buffer, service identifier first.
+    ///
+    /// [`crate::uds_server`] sizes that buffer to the longest request any assembled service
+    /// accepts, so such a request is never processed: it is checked as clause 8.7 checks
+    /// any request, and one that would pass every check before the length is refused
+    /// `incorrectMessageLengthOrInvalidFormat` (0x13).
+    Truncated(&'a [u8]),
+}
+
+impl<'a> Received<'a> {
+    /// The bytes received, service identifier first.
+    #[must_use]
+    pub const fn bytes(self) -> &'a [u8] {
+        match self {
+            Self::Whole(bytes) | Self::Truncated(bytes) => bytes,
+        }
+    }
+}
+
 /// One application's assembled service implementations.
 ///
 /// ``UDSSVC_ARCH_0013`` — implemented by [`crate::uds_server`], never by hand.
@@ -222,14 +247,15 @@ pub trait ServiceSet: crate::sealed::Sealed {
     ///
     /// * `state` - the [`ProtocolState`] of this assembly, held by [`crate::Server`]
     /// * `ai` - the [`Ai`] the driver drained with the request
-    /// * `request` - the request bytes, service identifier first
+    /// * `request` - the request, [`Received::Whole`] or [`Received::Truncated`]; only a
+    ///   whole one reaches a handler
     /// * `out` - the [`ResponseSink`] the response is written into, and that the driver
     ///   settles once this future completes
     fn dispatch(
         &mut self,
         state: &mut Self::State,
         ai: Ai,
-        request: &[u8],
+        request: Received<'_>,
         out: &mut ResponseSink<'_>,
     ) -> impl core::future::Future<Output = Unsettled>;
 

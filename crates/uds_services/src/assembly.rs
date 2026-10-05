@@ -558,7 +558,7 @@ macro_rules! uds_server {
                     state: &mut Self::State,
                     // The driver settles, and it is `settle` that reads the addressing.
                     _ai: $crate::Ai,
-                    request: &[u8],
+                    received: $crate::Received<'_>,
                     out: &mut $crate::ResponseSink<'_>,
                 ) -> $crate::Unsettled {
                     // Unused in an assembly listing neither service that decides a
@@ -582,7 +582,7 @@ macro_rules! uds_server {
                     };
                     let (sid, decoded) = match $crate::pipeline::begin(
                         state,
-                        request,
+                        received.bytes(),
                         |s| <Self as $crate::ServiceSet>::supports(self, s),
                         sub_function,
                         in_session,
@@ -592,6 +592,14 @@ macro_rules! uds_server {
                         }
                         $crate::pipeline::Stage::Settle { sid, nrc } => {
                             return $crate::Unsettled::refused(sid, nrc);
+                        }
+                        $crate::pipeline::Stage::Proceed { sid, .. }
+                            if ::core::matches!(received, $crate::Received::Truncated(_)) =>
+                        {
+                            return $crate::Unsettled::refused(
+                                sid,
+                                $crate::NegativeResponseCode::IncorrectMessageLengthOrInvalidFormat,
+                            );
                         }
                         $crate::pipeline::Stage::Proceed { sid, request } => (sid, request),
                     };

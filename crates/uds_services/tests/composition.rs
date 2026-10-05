@@ -20,7 +20,7 @@ use uds_services::{
     CommunicationControl, CommunicationControlType, CommunicationType, DataIdentifier,
     DataTransfer, DiagnosticSessionType, DtcReportKind, DtcStatusMask,
     FunctionalGroupIdentifier, KeyVerdict, Mtype, PhysicalKeepAlive, ReadDataByIdentifier,
-    ReadDtcInfoSubFunction, ReadDtcInformation, RecordError, Reloads, Response,
+    ReadDtcInfoSubFunction, ReadDtcInformation, Received, RecordError, Reloads, Response,
     ResponseSink, SecurityAccess, SecurityLevel, SecurityPolicy, ServerParams, ServiceSet,
     SessionTiming, SessionTransition, Sink, Storage, SubnetNumber, TaType, TesterPresent,
     Timestamp, TransferRequest, TransportEvent, UdsServiceType, UdsTransport, uds_client,
@@ -555,7 +555,12 @@ fn the_assembled_dispatch_answers_a_read() {
         ta: Address(0x10),
         ta_type: TaType::Physical,
     };
-    let unsettled = block_on(ecu.dispatch(&mut state, ai, &[0x22, 0xF4, 0x0D], &mut out));
+    let unsettled = block_on(ecu.dispatch(
+        &mut state,
+        ai,
+        Received::Whole(&[0x22, 0xF4, 0x0D]),
+        &mut out,
+    ));
     let r = settle(ai, unsettled, false, &mut out);
     assert_eq!(r, uds_services::Responded::Yes { session: None });
     assert_eq!(out.written_bytes(), &[0x62, 0xF4, 0x0D, 0x40]);
@@ -575,13 +580,15 @@ fn unsupported_services_settle_0x11_or_silence() {
         ta: Address(0x10),
         ta_type: TaType::Physical,
     };
-    let unsettled = block_on(ecu.dispatch(&mut state, phys, &[0x11, 0x01], &mut out));
+    let unsettled =
+        block_on(ecu.dispatch(&mut state, phys, Received::Whole(&[0x11, 0x01]), &mut out));
     let r = settle(phys, unsettled, false, &mut out);
     assert_eq!(r, uds_services::Responded::Yes { session: None });
     assert_eq!(out.written_bytes(), &[0x7F, 0x11, 0x11]);
     // Listed, so `begin` passes it; no stage, so the fall-through settles it.
     let request = [0x14, 0xFF, 0xFF, 0xFF];
-    let unsettled = block_on(ecu.dispatch(&mut state, phys, &request, &mut out));
+    let unsettled =
+        block_on(ecu.dispatch(&mut state, phys, Received::Whole(&request), &mut out));
     let r = settle(phys, unsettled, false, &mut out);
     assert_eq!(r, uds_services::Responded::Yes { session: None });
     assert_eq!(out.written_bytes(), &[0x7F, 0x14, 0x11]);
@@ -589,7 +596,8 @@ fn unsupported_services_settle_0x11_or_silence() {
         ta_type: TaType::Functional,
         ..phys
     };
-    let unsettled = block_on(ecu.dispatch(&mut state, func, &[0x11, 0x01], &mut out));
+    let unsettled =
+        block_on(ecu.dispatch(&mut state, func, Received::Whole(&[0x11, 0x01]), &mut out));
     let r = settle(func, unsettled, false, &mut out);
     assert_eq!(r, uds_services::Responded::Suppressed { session: None });
 }
