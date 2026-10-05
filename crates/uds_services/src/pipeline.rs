@@ -22,8 +22,8 @@ use crate::{Responded, ResponseSink, Unsettled};
 use automotive_wire_codec::Sink;
 use uds_protocol::{
     ClearDiagnosticInfoRequest, CommunicationControlRequest, CommunicationControlType,
-    ControlDtcSettingRequest, DiagnosticSessionControlRequest, DtcSettingType,
-    EcuResetRequest, ReadDataByIdentifierRequest, ReadDtcInfoReportType,
+    CommunicationType, ControlDtcSettingRequest, DiagnosticSessionControlRequest,
+    DtcSettingType, EcuResetRequest, ReadDataByIdentifierRequest, ReadDtcInfoReportType,
     ReadDtcInfoRequest, ResetType, RoutineControlRequest, RoutineControlSubFunction,
     SecurityAccessRequest, WriteDataByIdentifierRequest,
 };
@@ -902,8 +902,10 @@ fn failed_attempt<A: SecurityAccess>(
 /// ISO 14229-1:2020 clause 10.5 — `CommunicationControl`'s own stage. Whether the
 /// `controlType` is supported (0x12), in the active session (0x7E) and unlocked (0x33)
 /// was settled by [`begin`], and the exact length, with `nodeIdentificationNumber`
-/// present exactly for the enhanced-address variants, by its decode (0x13). The handler's
-/// verdict decides the rest, and the positive response is `68` and the echoed
+/// present exactly for the enhanced-address variants, by its decode (0x13), as was a
+/// `communicationType` with its reserved bits 3-2 set (0x31). One whose bits 1-0 are the
+/// value Annex B Table B.1 also reserves is `requestOutOfRange` (0x31) here. The
+/// handler's verdict decides the rest, and the positive response is `68` and the echoed
 /// `controlType` (Table 56).
 #[doc(hidden)]
 pub async fn communication_control<A: CommunicationControl>(
@@ -912,6 +914,12 @@ pub async fn communication_control<A: CommunicationControl>(
     out: &mut ResponseSink<'_>,
 ) -> Result<Option<DiagnosticSessionType>, NegativeResponseCode> {
     let control_type = request.control_type();
+    if matches!(
+        request.communication_type(),
+        CommunicationType::IsoSaeReserved
+    ) {
+        return Err(NegativeResponseCode::RequestOutOfRange);
+    }
     services
         .control(
             control_type,

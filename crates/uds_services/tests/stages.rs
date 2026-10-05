@@ -1188,13 +1188,18 @@ fn communication_control_a_wrong_length_is_0x13() {
 }
 
 /// ``UDSSVC_ARCH_0005``, clause 10.5.4 and Annex B Table B.1 — a `communicationType`
-/// with its reserved bits 3-2 set is an error in that parameter: 0x31, which
-/// `uds_protocol` assigns the decode failure, not 0x13, and the handler is not asked.
+/// with its reserved bits 3-2 set, or with the reserved value in bits 1-0, is an error in
+/// that parameter: 0x31, not 0x13, and the handler is not asked.
 #[test]
-fn communication_control_reserved_communication_type_bits_are_0x31() {
+fn communication_control_a_reserved_communication_type_is_0x31() {
     let mut ecu = Ecu::default();
     let mut state = extended(&mut ecu);
-    for request in [&[0x28, 0x00, 0x05][..], &[0x28, 0x04, 0x0D, 0x00, 0x0A][..]] {
+    for request in [
+        &[0x28, 0x00, 0x05][..],
+        &[0x28, 0x04, 0x0D, 0x00, 0x0A][..],
+        &[0x28, 0x01, 0x00][..],
+        &[0x28, 0x01, 0xF0][..],
+    ] {
         assert_eq!(
             exchange(&mut ecu, &mut state, request).as_deref(),
             Some(&[0x7F, 0x28, 0x31][..]),
