@@ -187,8 +187,9 @@ macro_rules! __uds_response_bound {
             6_usize
         }
     };
+    // The service identifier, the echoed type, the identifier and `routineInfo`.
     ($ty:ty, RoutineControl) => {
-        4 + <<$ty as $crate::RoutineControl>::Rid
+        5 + <<$ty as $crate::RoutineControl>::Rid
             as $crate::RoutineIdentifier>::MAX_STATUS_LEN
     };
     ($ty:ty, SecurityAccess) => {
@@ -434,6 +435,11 @@ macro_rules! __uds_stage {
     ($self:ident, $state:ident, $out:ident, $req:ident, ReadDtcInformation) => {
         if let $crate::Request::ReadDtcInfo(ref r) = $req {
             return $crate::pipeline::read_dtc_information($self, r, $out).await;
+        }
+    };
+    ($self:ident, $state:ident, $out:ident, $req:ident, RoutineControl) => {
+        if let $crate::Request::RoutineControl(ref r) = $req {
+            return $crate::pipeline::routine_control($self, $state, r, $out).await;
         }
     };
     ($self:ident, $state:ident, $out:ident, $req:ident, $svc:ident) => {};

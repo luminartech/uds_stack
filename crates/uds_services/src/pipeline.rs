@@ -15,8 +15,8 @@ use crate::state::State;
 use crate::{
     ClearDiagnosticInformation, CommunicationControl, ControlDtcSetting, DataIdentifier,
     DiagnosticSessionControl, EcuReset, KeyVerdict, ReadDataByIdentifier,
-    ReadDtcInformation, RecordError, SecurityAccess, SecurityLevel, SecurityPolicy,
-    TesterPresent, WriteDataByIdentifier,
+    ReadDtcInformation, RecordError, RoutineControl, RoutineIdentifier, SecurityAccess,
+    SecurityLevel, SecurityPolicy, TesterPresent, WriteDataByIdentifier,
 };
 use crate::{Responded, ResponseSink, Unsettled};
 use automotive_wire_codec::Sink;
@@ -24,7 +24,8 @@ use uds_protocol::{
     ClearDiagnosticInfoRequest, CommunicationControlRequest, CommunicationControlType,
     ControlDtcSettingRequest, DiagnosticSessionControlRequest, DtcSettingType,
     EcuResetRequest, ReadDataByIdentifierRequest, ReadDtcInfoReportType,
-    ReadDtcInfoRequest, ResetType, SecurityAccessRequest, WriteDataByIdentifierRequest,
+    ReadDtcInfoRequest, ResetType, RoutineControlRequest, RoutineControlSubFunction,
+    SecurityAccessRequest, WriteDataByIdentifierRequest,
 };
 use uds_protocol::{
     Decode, DiagnosticSessionType, Encode, NegativeResponse, NegativeResponseCode, Request,
@@ -617,6 +618,53 @@ pub async fn write_data_by_identifier<A: WriteDataByIdentifier>(
     services.write(did, record).await?;
     let _ = out.write_all(&[0x6E]);
     let _ = out.write_all(&request.identifier.to_be_bytes());
+    Ok(None)
+}
+
+/// ISO 14229-1:2020 clause 14.2 — `RoutineControl`'s own stage, in Figure 30's order.
+/// The decode settled a request shorter than its routine identifier (0x13); then:
+///
+/// * an identifier the application does not define, or one
+///   [`RoutineControl::supported_in`] refuses in the active session, is
+///   `requestOutOfRange` (0x31);
+/// * a [`RoutineControl::required_level`] that `state` does not hold unlocked is
+///   `securityAccessDenied` (0x33);
+/// * an option record longer than [`RoutineControl::MAX_OPTION_LEN`] is
+///   `incorrectMessageLengthOrInvalidFormat` (0x13).
+///
+/// The pipeline then writes `71`, the echoed `routineControlType` and the identifier, and
+/// the sub-function's own method writes the rest and decides Figure 30's remaining checks.
+#[doc(hidden)]
+pub async fn routine_control<A: RoutineControl>(
+    services: &mut A,
+    state: &State,
+    request: &RoutineControlRequest<'_>,
+    out: &mut ResponseSink<'_>,
+) -> Result<Option<DiagnosticSessionType>, NegativeResponseCode> {
+    let Some(routine) = <A::Rid as RoutineIdentifier>::from_u16(request.routine_id)
+        .filter(|&routine| services.supported_in(routine, state.session()))
+    else {
+        return Err(NegativeResponseCode::RequestOutOfRange);
+    };
+    if !unlocked(state, services.required_level(routine)) {
+        return Err(NegativeResponseCode::SecurityAccessDenied);
+    }
+    let record = request.option_record;
+    if record.len() > A::MAX_OPTION_LEN {
+        return Err(NegativeResponseCode::IncorrectMessageLengthOrInvalidFormat);
+    }
+    let _ = out.write_all(&[0x71, u8::from(request.sub_function)]);
+    let _ = out.write_all(&request.routine_id.to_be_bytes());
+    match request.sub_function {
+        RoutineControlSubFunction::StartRoutine => {
+            services.start(routine, record, out).await
+        }
+        RoutineControlSubFunction::StopRoutine => services.stop(routine, record, out).await,
+        RoutineControlSubFunction::RequestRoutineResults => {
+            services.results(routine, record, out).await
+        }
+        _ => Err(NegativeResponseCode::SubFunctionNotSupported),
+    }?;
     Ok(None)
 }
 

@@ -15,9 +15,9 @@ use uds_services::{
     DiagnosticSessionType as S, DtcRecord, DtcReportKind, DtcSettingType, DtcStatusMask,
     EcuReset, KeyVerdict, Mtype, ProtocolState, ReadDtcInfoReportType,
     ReadDtcInfoSubFunction, ReadDtcInformation, RecordError, ResetType, Responded,
-    ResponseSink, SecurityAccess, SecurityLevel, SecurityPolicy, ServiceSet, SessionTiming,
-    SessionTransition, Sink, SubnetNumber, TaType, TesterPresent, WriteDataByIdentifier,
-    uds_server,
+    ResponseSink, RoutineControl, RoutineIdentifier, SecurityAccess, SecurityLevel,
+    SecurityPolicy, ServiceSet, SessionTiming, SessionTransition, Sink, SubnetNumber,
+    TaType, TesterPresent, WriteDataByIdentifier, uds_server,
 };
 
 /// The test server's data identifiers.
@@ -66,6 +66,37 @@ impl DataIdentifier for Did {
     }
 }
 
+/// The test server's routines.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Rid {
+    /// `FF00`, started only with level 0x03 unlocked.
+    EraseMemory,
+    /// `0201`, started with a one-byte option record and then asked for results; it
+    /// cannot be stopped.
+    SelfTest,
+    /// `0202`, available only in the programming session.
+    CheckProgramming,
+}
+
+impl RoutineIdentifier for Rid {
+    const MAX_STATUS_LEN: usize = 1;
+    fn as_u16(self) -> u16 {
+        match self {
+            Self::EraseMemory => 0xFF00,
+            Self::SelfTest => 0x0201,
+            Self::CheckProgramming => 0x0202,
+        }
+    }
+    fn from_u16(value: u16) -> Option<Self> {
+        match value {
+            0xFF00 => Some(Self::EraseMemory),
+            0x0201 => Some(Self::SelfTest),
+            0x0202 => Some(Self::CheckProgramming),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Debug, Default)]
 struct Ecu {
     /// The reset `EcuReset::reset` last accepted.
@@ -93,6 +124,8 @@ struct Ecu {
     )>,
     /// What `WriteDataByIdentifier` last stored.
     written: Option<(Did, Vec<u8>)>,
+    /// The routine `RoutineControl` last started.
+    started: Option<Rid>,
     /// What `ClearDiagnosticInformation` last cleared.
     cleared: Option<(DtcRecord, Option<u8>)>,
     /// The `DTCSettingType` `ControlDtcSetting` last applied.
@@ -316,6 +349,63 @@ impl ReadDtcInformation for Ecu {
     }
 }
 
+/// `routineInfo` is `00` throughout; the self-test's result is `5A`. A self-test option
+/// record of `FF` is one it rejects.
+impl RoutineControl for Ecu {
+    type Rid = Rid;
+    const MAY_RESPOND_PENDING: bool = true;
+    const MAX_OPTION_LEN: usize = 4;
+    fn supported_in(&self, routine: Rid, active: S) -> bool {
+        !matches!(routine, Rid::CheckProgramming) || matches!(active, S::ProgrammingSession)
+    }
+    fn required_level(&self, routine: Rid) -> Option<SecurityLevel> {
+        match routine {
+            Rid::EraseMemory => SecurityLevel::from_request_seed(0x03),
+            _ => None,
+        }
+    }
+    async fn start(
+        &mut self,
+        routine: Rid,
+        record: &[u8],
+        out: &mut ResponseSink<'_>,
+    ) -> Result<(), Nrc> {
+        if matches!(routine, Rid::SelfTest) {
+            match record {
+                [0xFF] => return Err(Nrc::RequestOutOfRange),
+                [_] => {}
+                _ => return Err(Nrc::IncorrectMessageLengthOrInvalidFormat),
+            }
+        }
+        if core::mem::take(&mut self.refuse) {
+            return Err(Nrc::ConditionsNotCorrect);
+        }
+        self.started = Some(routine);
+        let _ = out.write_all(&[0x00]);
+        Ok(())
+    }
+    async fn stop(
+        &mut self,
+        _routine: Rid,
+        _record: &[u8],
+        _out: &mut ResponseSink<'_>,
+    ) -> Result<(), Nrc> {
+        Err(Nrc::SubFunctionNotSupported)
+    }
+    async fn results(
+        &mut self,
+        routine: Rid,
+        _record: &[u8],
+        out: &mut ResponseSink<'_>,
+    ) -> Result<(), Nrc> {
+        if self.started != Some(routine) {
+            return Err(Nrc::RequestSequenceError);
+        }
+        let _ = out.write_all(&[0x00, 0x5A]);
+        Ok(())
+    }
+}
+
 /// Clears every group, the emissions-related group `FFFF33` (Annex D.1), and DTC
 /// `012345`; memory `00` is the only user-defined DTC memory.
 impl ClearDiagnosticInformation for Ecu {
@@ -474,7 +564,7 @@ impl uds_services::UdsTransport for NoTransport {
 uds_server! {
     Ecu: DiagnosticSessionControl, TesterPresent, EcuReset, SecurityAccess,
          CommunicationControl, ControlDtcSetting, WriteDataByIdentifier,
-         ClearDiagnosticInformation, ReadDtcInformation;
+         ClearDiagnosticInformation, ReadDtcInformation, RoutineControl;
     transport = NoTransport,
     peers = 1,
     server = EcuServer,
@@ -1605,4 +1695,150 @@ fn read_dtc_the_positive_response_follows_the_example() {
         )
     );
     assert_eq!(exchange(&mut ecu, &mut state, &[0x19, 0x81, 0x08]), None);
+}
+
+// --- RoutineControl (0x31), ISO 14229-1:2020 clause 14.2 -------------------------------
+
+/// Figure 30, key 1 — a request shorter than its routine identifier is 0x13.
+#[test]
+fn routine_control_a_request_without_its_identifier_is_0x13() {
+    let mut ecu = Ecu::default();
+    let mut state = State::INITIAL;
+    for request in [&[0x31, 0x01][..], &[0x31, 0x01, 0x02][..]] {
+        assert_eq!(
+            exchange(&mut ecu, &mut state, request).as_deref(),
+            Some(&[0x7F, 0x31, 0x13][..]),
+            "{request:02X?}"
+        );
+    }
+}
+
+/// Figure 30, "RID supported in active session?", clause 14.2.4 — an identifier the
+/// server does not define, and one not available in the active session, are 0x31, before
+/// the security and length checks.
+#[test]
+fn routine_control_a_routine_not_available_here_is_0x31() {
+    let mut ecu = Ecu::default();
+    let mut state = extended(&mut ecu);
+    for request in [
+        &[0x31, 0x01, 0x12, 0x34][..],
+        &[0x31, 0x01, 0x02, 0x02][..],
+        &[0x31, 0x01, 0x02, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00][..],
+    ] {
+        assert_eq!(
+            exchange(&mut ecu, &mut state, request).as_deref(),
+            Some(&[0x7F, 0x31, 0x31][..]),
+            "{request:02X?}"
+        );
+    }
+    let mut state = in_session(&mut ecu, S::ProgrammingSession);
+    assert_eq!(
+        exchange(&mut ecu, &mut state, &[0x31, 0x01, 0x02, 0x02]).as_deref(),
+        Some(&[0x71, 0x01, 0x02, 0x02, 0x00][..])
+    );
+}
+
+/// Figure 30, "RID security check OK?" — a routine whose level is locked is 0x33, ahead
+/// of the length check and of any sub-function's verdict; it runs once that level is
+/// unlocked.
+#[test]
+fn routine_control_a_routine_requiring_a_locked_level_is_0x33() {
+    let mut ecu = Ecu::default();
+    let mut state = extended(&mut ecu);
+    for request in [
+        &[0x31, 0x01, 0xFF, 0x00][..],
+        &[0x31, 0x02, 0xFF, 0x00][..],
+        &[0x31, 0x01, 0xFF, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00][..],
+    ] {
+        assert_eq!(
+            exchange(&mut ecu, &mut state, request).as_deref(),
+            Some(&[0x7F, 0x31, 0x33][..]),
+            "{request:02X?}"
+        );
+    }
+    let mut state = unlocked_level_3(&mut ecu);
+    assert_eq!(
+        exchange(&mut ecu, &mut state, &[0x31, 0x01, 0xFF, 0x00]).as_deref(),
+        Some(&[0x71, 0x01, 0xFF, 0x00, 0x00][..])
+    );
+    assert_eq!(ecu.started, Some(Rid::EraseMemory));
+}
+
+/// Figure 30, key 2 — an option record longer than `MAX_OPTION_LEN` is 0x13 and no
+/// handler is asked; one of the wrong length for its routine is the handler's 0x13.
+#[test]
+fn routine_control_a_wrong_option_record_length_is_0x13() {
+    let mut ecu = Ecu::default();
+    let mut state = State::INITIAL;
+    for request in [
+        &[0x31, 0x01, 0x02, 0x01, 0x01, 0x02, 0x03, 0x04, 0x05][..],
+        &[0x31, 0x01, 0x02, 0x01][..],
+        &[0x31, 0x01, 0x02, 0x01, 0x01, 0x02][..],
+    ] {
+        assert_eq!(
+            exchange(&mut ecu, &mut state, request).as_deref(),
+            Some(&[0x7F, 0x31, 0x13][..]),
+            "{request:02X?}"
+        );
+    }
+    assert_eq!(ecu.started, None);
+}
+
+/// Figure 30 and clause 14.2.4 — what is left is the routine's: 0x12 for a sub-function
+/// it does not support, 0x31 for an option record it rejects, 0x22 where it cannot run,
+/// and 0x24 for results never produced.
+#[test]
+fn routine_control_the_routine_verdicts_are_its_codes() {
+    let mut ecu = Ecu::default();
+    let mut state = State::INITIAL;
+    for (request, code) in [
+        (&[0x31, 0x02, 0x02, 0x01][..], 0x12),
+        (&[0x31, 0x01, 0x02, 0x01, 0xFF][..], 0x31),
+        (&[0x31, 0x03, 0x02, 0x01][..], 0x24),
+    ] {
+        assert_eq!(
+            exchange(&mut ecu, &mut state, request).as_deref(),
+            Some(&[0x7F, 0x31, code][..]),
+            "{request:02X?}"
+        );
+    }
+    ecu.refuse = true;
+    assert_eq!(
+        exchange(&mut ecu, &mut state, &[0x31, 0x01, 0x02, 0x01, 0x07]).as_deref(),
+        Some(&[0x7F, 0x31, 0x22][..])
+    );
+    assert_eq!(ecu.started, None);
+}
+
+/// Clause 14.2.3, Table 428 — the positive response echoes the `routineControlType` and
+/// the identifier, then carries what the routine wrote; the suppress bit silences it.
+#[test]
+fn routine_control_the_positive_response_echoes_type_and_identifier() {
+    let mut ecu = Ecu::default();
+    let mut state = State::INITIAL;
+    assert_eq!(
+        exchange(&mut ecu, &mut state, &[0x31, 0x01, 0x02, 0x01, 0x07]).as_deref(),
+        Some(&[0x71, 0x01, 0x02, 0x01, 0x00][..])
+    );
+    assert_eq!(
+        exchange(&mut ecu, &mut state, &[0x31, 0x03, 0x02, 0x01]).as_deref(),
+        Some(&[0x71, 0x03, 0x02, 0x01, 0x00, 0x5A][..])
+    );
+    assert_eq!(
+        exchange(&mut ecu, &mut state, &[0x31, 0x83, 0x02, 0x01]),
+        None
+    );
+}
+
+/// Clause 14.2.3, Table 428 — the response buffer holds `71`, the echoed type, the
+/// identifier, `routineInfo` and the longest `routineStatusRecord`: the self-test's
+/// results fill it exactly.
+#[test]
+fn routine_control_the_response_bound_counts_routine_info() {
+    const BOUND: usize = uds_services::__uds_response_bound!(Ecu, RoutineControl);
+    assert_eq!(
+        BOUND,
+        1 + 1 + 2 + 1 + <Rid as RoutineIdentifier>::MAX_STATUS_LEN
+    );
+    assert_eq!(BOUND, [0x71, 0x03, 0x02, 0x01, 0x00, 0x5A].len());
 }

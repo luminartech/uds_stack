@@ -56,7 +56,8 @@ pub trait DataIdentifier: Copy + Eq {
 /// option and status records are the handler's to interpret, which is
 /// ``UDSSVC_ARCH_0007``'s consequence for service identifier 0x31.
 pub trait RoutineIdentifier: Copy + Eq {
-    /// The longest status record any variant returns.
+    /// The longest `routineStatusRecord` any variant returns, not counting the
+    /// `routineInfo` byte before it (ISO 14229-1:2020 Table 428).
     const MAX_STATUS_LEN: usize;
 
     /// The wire value.
