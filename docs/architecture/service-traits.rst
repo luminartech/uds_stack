@@ -263,14 +263,22 @@ Protocol state
         - Holds
         - Fixed by
       * - Server-global
-        - active security level, DTC setting, communication control, periodic schedules,
-          the transfer in progress
+        - active security level, periodic schedules, the transfer in progress
         - "Only one security level shall be active at any instant of time" (10.4)
       * - Per-channel
         - authentication state
         - "An authenticated state shall be linked to a certain diagnostic channel. Multiple
           clients can be handled on multiple channels with different authentication
           settings." (10.6.4)
+
+   **DTC setting and communication control are not in that list, though they are
+   server-global too.** Their state is the effect itself — DTC status updates stopped,
+   normal messages disabled — which the application performs and this crate cannot, so it
+   holds them, and resumes them on the transitions ``UDSSVC_ARCH_0038`` tabulates.
+   ``on_transition`` names the session entered so that it can: whether the service is
+   supported there is what clause 10.8.1 turns the resumption on, and a
+   ``SessionTransition`` alone cannot tell extended to programming from extended to
+   extended. An earlier draft listed both as crate-held, which nothing implemented.
 
    Annex J corroborates the keying without being the authority for it. It is informative, so
    it obliges nothing, but it is where clause 8.7.6 sends a reader asking how multiple
@@ -693,7 +701,8 @@ Protocol state
 
    Rationale: the classification is a pure function of the previous and next session values,
    which this crate has, and misclassifying it is the whole failure mode. So this crate
-   classifies and hands down the *class*, never the raw session values:
+   classifies and hands down the *class*, with the session entered beside it but never the
+   pair of raw values to classify:
 
    .. code-block:: rust
 
@@ -707,10 +716,20 @@ Protocol state
       /// Called after the positive response to DiagnosticSessionControl, and on
       /// session timeout. Also called with `security_relocked` when a transition
       /// relocked a level, so functionality gated on it can be dropped.
-      fn on_session_transition(&mut self, t: SessionTransition, security_relocked: bool);
+      fn on_transition(
+          &mut self,
+          t: SessionTransition,
+          entered: DiagnosticSessionType,
+          security_relocked: bool,
+      );
 
    An application receiving a classified transition cannot mistake a same-session re-entry
    for a no-op, which is what it would do given two session bytes and clause 10.2 to read.
+   The session entered is handed down too, because what a class owes can turn on it: the
+   ``ControlDTCSetting`` and ``CommunicationControl`` state an application holds resumes on
+   entering a session where the service is not supported, and an application that
+   programs from a bootloader must know that ``10 02`` was the session entered, not ``10
+   03``. Both are non-default to non-default.
    State this crate holds — the security level of ``UDSSVC_ARCH_0037``, the transfer of
    ``UDSSVC_ARCH_0036`` — it resets itself, without asking.
 
@@ -740,7 +759,7 @@ Protocol state
    stack cannot yet express, and answers both 0x11.
 
    Until those message types exist, the periodic and event columns are rules with nothing to
-   apply them to, and ``on_session_transition`` is the only route by which an application
+   apply them to, and ``on_transition`` is the only route by which an application
    holding that functionality can comply. The classification is authored now because it is
    the part that does not change when the message types arrive.
 

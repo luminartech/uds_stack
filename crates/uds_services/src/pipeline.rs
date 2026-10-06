@@ -38,6 +38,8 @@ use uds_session::{Ai, TaType};
 pub struct Entered {
     /// Which of Figure 7's transitions it was (``UDSSVC_ARCH_0038``).
     pub transition: SessionTransition,
+    /// The session entered.
+    pub session: DiagnosticSessionType,
     /// Whether it locked a security level that had been unlocked.
     pub security_relocked: bool,
 }
@@ -52,6 +54,7 @@ pub fn transition(state: &mut State, to: DiagnosticSessionType) -> Entered {
     state.set_session(to);
     Entered {
         transition: SessionTransition::classify(from, to),
+        session: to,
         security_relocked: state.lock(),
     }
 }
@@ -997,7 +1000,7 @@ mod tests {
                 p2_star_server_max_10ms: 500,
             }
         }
-        fn on_transition(&mut self, _t: crate::SessionTransition, _r: bool) {}
+        fn on_transition(&mut self, _t: crate::SessionTransition, _e: S, _r: bool) {}
     }
     impl crate::TesterPresent for Ecu {
         fn on_tester_present(&mut self) {}
@@ -1082,7 +1085,7 @@ mod tests {
                 p2_star_server_max_10ms: u16::MAX,
             }
         }
-        fn on_transition(&mut self, _t: crate::SessionTransition, _r: bool) {}
+        fn on_transition(&mut self, _t: crate::SessionTransition, _e: S, _r: bool) {}
     }
 
     /// Table 29 — the pair is sent as the application stated it, to the widest values.

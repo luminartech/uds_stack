@@ -245,7 +245,13 @@ impl uds_services::DiagnosticSessionControl for Ecu {
             p2_star_server_max_10ms: 500,
         }
     }
-    fn on_transition(&mut self, _t: SessionTransition, _relocked: bool) {}
+    fn on_transition(
+        &mut self,
+        _t: SessionTransition,
+        _entered: DiagnosticSessionType,
+        _relocked: bool,
+    ) {
+    }
 }
 
 #[derive(Debug)]

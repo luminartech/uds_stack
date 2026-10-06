@@ -64,7 +64,7 @@ impl uds_services::DiagnosticSessionControl for Ecu {
             p2_star_server_max_10ms: 500,
         }
     }
-    fn on_transition(&mut self, _t: SessionTransition, _r: bool) {}
+    fn on_transition(&mut self, _t: SessionTransition, _entered: S, _r: bool) {}
 }
 
 /// A transport that confirms a transmission the server never made (``UDSS_LLR_0063``).
@@ -783,7 +783,7 @@ impl uds_services::DiagnosticSessionControl for Timed {
             },
         }
     }
-    fn on_transition(&mut self, _t: SessionTransition, _r: bool) {}
+    fn on_transition(&mut self, _t: SessionTransition, _entered: S, _r: bool) {}
 }
 
 uds_server! {

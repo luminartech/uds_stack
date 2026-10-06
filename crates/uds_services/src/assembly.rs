@@ -230,6 +230,7 @@ macro_rules! __uds_session_hook {
         <Self as $crate::DiagnosticSessionControl>::on_transition(
             $self,
             $entered.transition,
+            $entered.session,
             $entered.security_relocked,
         );
     };

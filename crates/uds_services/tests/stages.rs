@@ -112,6 +112,8 @@ struct Ecu {
     delays_started: u8,
     /// The `security_relocked` of the last session transition.
     relocked: Option<bool>,
+    /// The session the last transition entered.
+    entered: Option<S>,
     /// Makes Annex I's optional pre-conditions unmet.
     preconditions_unmet: bool,
     /// The `securityAccessDataRecord` the last seed was asked with.
@@ -150,8 +152,9 @@ impl uds_services::DiagnosticSessionControl for Ecu {
             p2_star_server_max_10ms: 500,
         }
     }
-    fn on_transition(&mut self, _t: SessionTransition, relocked: bool) {
+    fn on_transition(&mut self, _t: SessionTransition, entered: S, relocked: bool) {
         self.relocked = Some(relocked);
+        self.entered = Some(entered);
     }
 }
 
@@ -2080,4 +2083,18 @@ fn routine_control_an_unsupported_sub_function_is_0x12_before_the_length_check()
             "{request:02X?}"
         );
     }
+}
+
+/// ``UDSSVC_ARCH_0038`` — `on_transition` names the session entered, which its
+/// `SessionTransition` cannot: extended to programming and extended to extended are both
+/// non-default to non-default, and a `tS3_Server` expiry enters the default session.
+#[test]
+fn on_transition_is_told_the_session_entered() {
+    let mut ecu = Ecu::default();
+    let mut state = extended(&mut ecu);
+    assert_eq!(ecu.entered, Some(S::ExtendedDiagnosticSession));
+    ecu.session_confirmed(&mut state, S::ProgrammingSession);
+    assert_eq!(ecu.entered, Some(S::ProgrammingSession));
+    ecu.session_timed_out(&mut state);
+    assert_eq!(ecu.entered, Some(S::DefaultSession));
 }

@@ -333,7 +333,7 @@ impl DiagnosticSessionControl for Ecu {
             p2_star_server_max_10ms: 500,
         }
     }
-    fn on_transition(&mut self, t: SessionTransition, _relocked: bool) {
+    fn on_transition(&mut self, t: SessionTransition, _entered: S, _relocked: bool) {
         if let Some(slot) = self.transitions.get_mut(self.n) {
             *slot = Some(t);
         }

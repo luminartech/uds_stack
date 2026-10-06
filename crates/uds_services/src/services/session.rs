@@ -107,10 +107,28 @@ pub trait DiagnosticSessionControl {
 
     /// Called after the positive response, and on `tS3_Server` expiry.
     ///
-    /// ``UDSSVC_ARCH_0038``. `security_relocked` is true where the transition relocked a
-    /// security level, so functionality gated on it can be dropped — clause 10.4 makes a
-    /// session change lock every level.
-    fn on_transition(&mut self, transition: SessionTransition, security_relocked: bool);
+    /// ``UDSSVC_ARCH_0038``. The application applies what clause 10.2 Figure 7 owes the
+    /// state it holds: `transition` says which of the four cases occurred, and `entered`
+    /// which session, because what a case owes can turn on it — `ControlDTCSetting` and
+    /// `CommunicationControl` state is the application's, and resumes on entering a
+    /// session where the service is not supported, and a session may run in other
+    /// software than the one now running (see [`Self::timing`]'s session).
+    ///
+    /// # Arguments
+    ///
+    /// * `transition` - which of Figure 7's transitions occurred; see
+    ///   [`SessionTransition`].
+    /// * `entered` - the session now in force; see [`DiagnosticSessionType`].
+    ///   [`DefaultSession`](DiagnosticSessionType::DefaultSession) on `tS3_Server` expiry.
+    /// * `security_relocked` - whether the transition relocked a security level, so
+    ///   functionality gated on it can be dropped: Annex I transition 6 makes a session
+    ///   change lock every level.
+    fn on_transition(
+        &mut self,
+        transition: SessionTransition,
+        entered: DiagnosticSessionType,
+        security_relocked: bool,
+    );
 }
 
 /// `EcuReset` (0x11).
@@ -217,7 +235,9 @@ pub trait CommunicationControl {
     /// names.
     ///
     /// Clause 10.5.1: the positive response is owed even where the requested state is
-    /// already in effect.
+    /// already in effect. Clause 10.2 Figure 7 resets it on a return to the default
+    /// session and leaves it on any other transition; that state is the application's to
+    /// reset, and `DiagnosticSessionControl::on_transition` tells it the session entered.
     ///
     /// # Arguments
     ///
@@ -281,7 +301,8 @@ pub trait ControlDtcSetting {
     ///
     /// Clause 10.8.1: the positive response is owed even where `setting` is already in
     /// effect, and updating resumes on a transition to a session where this service is
-    /// not supported, which `DiagnosticSessionControl::on_transition` reports.
+    /// not supported. That state is the application's to resume: it is told the session
+    /// entered by `DiagnosticSessionControl::on_transition`.
     ///
     /// # Arguments
     ///
@@ -340,7 +361,13 @@ mod tests {
                 p2_star_server_max_10ms: 500,
             }
         }
-        fn on_transition(&mut self, _t: SessionTransition, _relocked: bool) {}
+        fn on_transition(
+            &mut self,
+            _t: SessionTransition,
+            _entered: DiagnosticSessionType,
+            _relocked: bool,
+        ) {
+        }
     }
 
     impl EcuReset for Ecu {
@@ -364,7 +391,11 @@ mod tests {
     #[test]
     fn the_application_receives_a_classified_transition() {
         let mut ecu = Ecu;
-        ecu.on_transition(SessionTransition::NonDefaultToDefault, true);
+        ecu.on_transition(
+            SessionTransition::NonDefaultToDefault,
+            DiagnosticSessionType::DefaultSession,
+            true,
+        );
         assert!(DiagnosticSessionControl::supports(
             &ecu,
             DiagnosticSessionType::ProgrammingSession
