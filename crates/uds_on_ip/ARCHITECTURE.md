@@ -323,10 +323,11 @@ the seam with no I/O in it:
 - `DiagnosticConnection` — one connection, as a tester uses it. This crate's
   client role over it is not built yet.
 
-This transport's `MCTS` must be at least the entity's own: the transport
-remembers which tester arrived on which connection, so that it can close the
-right one, and reports a connection beyond its table as an error rather than
-leaving a close unmade.
+This transport's `MCTS` must be at least the entity's `CONNECTIONS`, the size of
+its connection table, reserve socket included (ISO 13400-2:2019 REQ 4.DoIP-002):
+the transport remembers which tester arrived on which connection, so that it can
+close the right one. `DoIpTransport::new` checks the two at compile time, so the
+mismatch cannot reach a running server.
 
 `deadline_ms` is deliberately not a UDS concept. It is `tP6_Client` arriving
 from ISO 14229-2 two layers above, and `simple_doip` must not learn what that

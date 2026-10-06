@@ -74,8 +74,10 @@ pub enum DoIpResult {
 /// subslice of the buffer passed to [`DiagnosticConnection::next_event`] that it
 /// occupies, so the connection is free to be used again while the PDU is still live —
 /// which is what lets a server answer the request it has just received.
+///
+/// Exhaustive: an event added later is a change every caller must handle, so it stops
+/// their build rather than reaching a wildcard arm.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[non_exhaustive]
 pub enum ConnectionEvent<'b> {
     /// `DoIP_Data.indication`: a diagnostic message arrived (ISO 13400-2:2019 8.3.3).
     ///
@@ -232,15 +234,14 @@ impl ConnectionId {
     ///
     /// # Arguments
     ///
-    /// * `index` - the slot, below the entity's maximum number of concurrent
-    ///   connections.
+    /// * `index` - the slot, below [`DiagnosticEntity::CONNECTIONS`].
     #[must_use]
     pub const fn new(index: u8) -> Self {
         Self(index)
     }
 
-    /// The connection's slot in the entity's connection table, which is below the
-    /// entity's maximum number of concurrent connections.
+    /// The connection's slot in the entity's connection table, which is below
+    /// [`DiagnosticEntity::CONNECTIONS`].
     #[must_use]
     pub const fn index(self) -> usize {
         self.0 as usize
@@ -251,9 +252,8 @@ impl ConnectionId {
 ///
 /// [`ConnectionEvent`]'s variants, with the [`ConnectionId`] each arrived on wherever one
 /// did. **The lifetime is the caller's buffer, never the entity**, exactly as for
-/// [`ConnectionEvent`].
+/// [`ConnectionEvent`]. Exhaustive, as [`ConnectionEvent`] is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[non_exhaustive]
 pub enum EntityEvent<'b> {
     /// `DoIP_Data.indication` on `connection`; see [`ConnectionEvent::Indication`].
     Indication {
@@ -358,6 +358,16 @@ pub trait DiagnosticEntity {
     /// What this entity's failures are. Never interpreted by the layer above, which can
     /// only report it.
     type Error: core::fmt::Debug;
+
+    /// The size of this entity's connection table: every [`ConnectionId`] it reports
+    /// has an index below it.
+    ///
+    /// Every `TCP_DATA` socket the entity supports counts, the reserve one included,
+    /// so a conformant entity serving `n` testers at once declares `n + 1`
+    /// (ISO 13400-2:2019 REQ 4.DoIP-002). Every established socket enters the
+    /// connection table (REQ 3.DoIP-127), and routing is activated on the reserve
+    /// socket when a tester returns without closing its old one (REQ 3.DoIP-092).
+    const CONNECTIONS: usize;
 
     /// `DoIP_Data.request`: send `pdu` to `ta` on the connection whose routing
     /// activation registered `ta` (ISO 13400-2:2019 8.3.1).

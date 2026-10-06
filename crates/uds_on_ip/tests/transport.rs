@@ -13,7 +13,6 @@
 mod support;
 
 use embassy_time::{Duration, MockDriver};
-use simple_doip::LogicalAddress;
 use simple_doip::service::{ConnectionId, DoIpResult};
 use support::{
     Fault, MockEntity, TESTER, Tester, Wire, block_on, exclusive_clock, poll_once_and_drop,
@@ -575,33 +574,6 @@ fn an_unmodelled_payload_is_passed_over() {
             ai: request_ai(),
             data: &[0x3E, 0x00],
         }
-    );
-}
-
-/// An entity with more connections than the transport's table is a configuration
-/// error, reported rather than leaving a tester's close unmade.
-#[test]
-fn a_connection_beyond_the_transports_table_is_an_error() {
-    let other = LogicalAddress(0x0E80);
-    let mut t: DoIpTransport<MockEntity<2>, 1> = DoIpTransport::new(
-        MockEntity::new([
-            Tester::Connects(other),
-            Tester::Connects(TESTER),
-            Tester::Sends(TESTER, vec![0x3E, 0x00]),
-        ]),
-        bench_reloads(),
-    );
-    let mut buffer = [0u8; 16];
-    let error = block_on(t.next_event(&mut buffer, None)).unwrap_err();
-    assert!(
-        matches!(
-            error,
-            Error::ConnectionOutsideTable {
-                connection,
-                capacity: 1,
-            } if connection == ConnectionId::new(1)
-        ),
-        "{error:?}"
     );
 }
 

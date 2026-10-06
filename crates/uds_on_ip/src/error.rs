@@ -13,8 +13,6 @@
 //! `ECUReset` flows, so an expected close arriving as an `Err` would have a
 //! driver treat a conformant flow as a failure.
 
-use simple_doip::service::ConnectionId;
-
 /// Errors raised by [`DoIpTransport`](crate::DoIpTransport), whose entity fails
 /// with `E`.
 #[derive(Debug, thiserror::Error)]
@@ -29,30 +27,11 @@ pub enum Error<E> {
     #[error(transparent)]
     Mapping(#[from] crate::mapping::MappingError),
 
-    /// The entity reported a connection beyond the transport's connection table:
-    /// the transport's `MCTS` is smaller than the entity's.
-    #[error(
-        "the DoIP entity reported connection {connection:?}, beyond a table of {capacity}"
-    )]
-    ConnectionOutsideTable {
-        /// The connection the entity reported.
-        connection: ConnectionId,
-        /// The transport's `MCTS`.
-        capacity: usize,
-    },
-
     /// The entity reported a PDU outside the buffer it was lent, breaking
     /// [`DiagnosticEntity::next_event`](simple_doip::service::DiagnosticEntity::next_event)'s
     /// contract.
     #[error("the DoIP entity reported a PDU outside the buffer it was lent")]
     PduOutsideBuffer,
-
-    /// The entity reported an
-    /// [`EntityEvent`](simple_doip::service::EntityEvent) this crate does not know.
-    /// It could have been a confirmation the driver waits on, so it is not
-    /// passed over.
-    #[error("the DoIP entity reported an event this transport does not know")]
-    UnknownEvent,
 }
 
 /// Compile-time proof that this crate's errors, and the upstream errors it

@@ -27,6 +27,7 @@ struct OpaqueEntity(core::marker::PhantomData<*const ()>);
 )]
 impl DiagnosticEntity for OpaqueEntity {
     type Error = ();
+    const CONNECTIONS: usize = 1;
     async fn request(
         &mut self,
         _ta: LogicalAddress,

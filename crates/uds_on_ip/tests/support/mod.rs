@@ -148,6 +148,7 @@ impl Future for YieldOnce {
 )]
 impl<const MCTS: usize> DiagnosticEntity for MockEntity<MCTS> {
     type Error = Fault;
+    const CONNECTIONS: usize = MCTS;
 
     async fn request(
         &mut self,

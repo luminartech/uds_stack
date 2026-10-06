@@ -12,7 +12,8 @@
 
 use crate::error::Error;
 use crate::mapping::{
-    Inbound, Unclassifiable, classify, from_logical, target_of, to_doip_ta_type, to_logical,
+    Inbound, PduOutsideBuffer, classify, from_logical, target_of, to_doip_ta_type,
+    to_logical,
 };
 use crate::profile::{ConnectionAction, after_sending};
 use simple_doip::LogicalAddress;
@@ -31,8 +32,8 @@ use uds_session::{Ai, Reloads, SResult, Timestamp};
 /// `MCTS` sizes the table in which the transport remembers which tester arrived
 /// on which connection, so that it can close the right one when
 /// ISO 14229-5:2022 REQ 7.9 or REQ 7.11 requires it. It must be at least the
-/// entity's own maximum number of concurrent connections; a connection beyond it
-/// is [`Error::ConnectionOutsideTable`].
+/// entity's [`DiagnosticEntity::CONNECTIONS`], which [`DoIpTransport::new`] checks
+/// at compile time.
 ///
 /// # The prescribed close
 ///
@@ -126,12 +127,13 @@ impl<E, const MCTS: usize> core::fmt::Debug for DoIpTransport<E, MCTS> {
     }
 }
 
-impl<E, const MCTS: usize> DoIpTransport<E, MCTS> {
+impl<E: DiagnosticEntity, const MCTS: usize> DoIpTransport<E, MCTS> {
     /// A transport over `entity`, loading the session layer's response timer
     /// with `reloads`.
     ///
     /// The peer's size bound starts unknown, because it is learned from the
-    /// peer's entity status response rather than assumed.
+    /// peer's entity status response rather than assumed. Does not compile
+    /// where `MCTS` is below [`DiagnosticEntity::CONNECTIONS`], or zero.
     ///
     /// # Arguments
     ///
@@ -140,9 +142,47 @@ impl<E, const MCTS: usize> DoIpTransport<E, MCTS> {
     /// * `reloads` - the `tP6` pair; see
     ///   [`profile::bench_reloads`](crate::profile::bench_reloads) for values
     ///   suitable for a bench, and why they are not suitable for a vehicle.
+    ///
+    /// # Examples
+    ///
+    /// An entity with two connections does not fit the default table of one:
+    ///
+    /// ```compile_fail
+    /// # use simple_doip::service::{ConnectionId, DiagnosticEntity, EntityEvent};
+    /// # use simple_doip::{LogicalAddress, TaType};
+    /// # use uds_on_ip::{DoIpTransport, profile::bench_reloads};
+    /// struct TwoSockets;
+    ///
+    /// impl DiagnosticEntity for TwoSockets {
+    ///     const CONNECTIONS: usize = 2;
+    ///     // ...
+    /// #   type Error = ();
+    /// #   async fn request(&mut self, _: LogicalAddress, _: TaType, _: &[u8]) -> Result<(), ()> {
+    /// #       Ok(())
+    /// #   }
+    /// #   async fn next_event<'b>(
+    /// #       &mut self,
+    /// #       _: &'b mut [u8],
+    /// #       _: Option<u32>,
+    /// #   ) -> Result<EntityEvent<'b>, ()> {
+    /// #       Ok(EntityEvent::Deadline)
+    /// #   }
+    /// #   async fn close(&mut self, _: ConnectionId) -> Result<(), ()> {
+    /// #       Ok(())
+    /// #   }
+    /// }
+    ///
+    /// let transport: DoIpTransport<TwoSockets> = DoIpTransport::new(TwoSockets, bench_reloads());
+    /// ```
     #[must_use]
     pub const fn new(entity: E, reloads: Reloads) -> Self {
         const { assert!(MCTS > 0, "a transport serves at least one connection") };
+        const {
+            assert!(
+                MCTS >= E::CONNECTIONS,
+                "MCTS is below the entity's connection table"
+            );
+        };
         Self {
             entity,
             reloads,
@@ -152,7 +192,9 @@ impl<E, const MCTS: usize> DoIpTransport<E, MCTS> {
             unreported: None,
         }
     }
+}
 
+impl<E, const MCTS: usize> DoIpTransport<E, MCTS> {
     /// The entity, for inspection between events.
     #[must_use]
     pub const fn entity(&self) -> &E {
@@ -177,15 +219,13 @@ impl<E, const MCTS: usize> DoIpTransport<E, MCTS> {
             .find(|tester| tester.address == address)
     }
 
-    fn register(
-        &mut self,
-        connection: ConnectionId,
-        address: LogicalAddress,
-    ) -> Result<(), ConnectionId> {
+    fn register(&mut self, connection: ConnectionId, address: LogicalAddress) {
         let index = connection.index();
-        let slot = self.testers.get(index).ok_or(connection)?;
+        let Some(slot) = self.testers.get(index) else {
+            return;
+        };
         if slot.is_some_and(|tester| tester.address == address) {
-            return Ok(());
+            return;
         }
         for (other, tester) in self.testers.iter_mut().enumerate() {
             if other == index || tester.is_some_and(|tester| tester.address == address) {
@@ -201,7 +241,6 @@ impl<E, const MCTS: usize> DoIpTransport<E, MCTS> {
                 requested: None,
             });
         }
-        Ok(())
     }
 
     fn forget(&mut self, connection: ConnectionId) -> Option<Tester> {
@@ -332,9 +371,8 @@ impl<E: DiagnosticEntity, const MCTS: usize> UdsTransport for DoIpTransport<E, M
     /// # Errors
     ///
     /// [`Error::Entity`] where the entity fails as a whole, and
-    /// [`Error::ConnectionOutsideTable`] or [`Error::PduOutsideBuffer`] where it
-    /// breaks its contract with this transport, and [`Error::UnknownEvent`] for an
-    /// event this transport does not know. Where it is the prescribed close
+    /// [`Error::PduOutsideBuffer`] where it reports a PDU outside `buffer`. Where it
+    /// is the prescribed close
     /// that fails, the confirmation the close held back is not lost: the next call
     /// reports it.
     async fn next_event<'b>(
@@ -355,10 +393,8 @@ impl<E: DiagnosticEntity, const MCTS: usize> UdsTransport for DoIpTransport<E, M
                 .next_event(&mut *buffer, deadline.map(|at| at.0))
                 .await
                 .map_err(Error::Entity)?;
-            let inbound = classify(event, buffer_start).map_err(|breach| match breach {
-                Unclassifiable::PduOutsideBuffer => Error::PduOutsideBuffer,
-                Unclassifiable::UnknownEvent => Error::UnknownEvent,
-            })?;
+            let inbound = classify(event, buffer_start)
+                .map_err(|PduOutsideBuffer| Error::PduOutsideBuffer)?;
             match inbound {
                 None => {}
                 Some(Inbound::Ind { connection, ai, at }) => {
@@ -384,11 +420,7 @@ impl<E: DiagnosticEntity, const MCTS: usize> UdsTransport for DoIpTransport<E, M
                 Some(Inbound::Deadline) => return Ok(TransportEvent::Deadline),
             }
         };
-        self.register(connection, to_logical(ai.sa))
-            .map_err(|connection| Error::ConnectionOutsideTable {
-                connection,
-                capacity: MCTS,
-            })?;
+        self.register(connection, to_logical(ai.sa));
         let buffer: &'b [u8] = buffer;
         let data = buffer.get(at).ok_or(Error::PduOutsideBuffer)?;
         Ok(match declared {
@@ -447,6 +479,7 @@ mod tests {
     )]
     impl DiagnosticEntity for Idle {
         type Error = core::convert::Infallible;
+        const CONNECTIONS: usize = 1;
         async fn request(
             &mut self,
             _ta: LogicalAddress,
@@ -468,9 +501,9 @@ mod tests {
     }
 
     /// A transport with tester `0x0E00` registered on connection 0.
-    fn serving_the_tester() -> DoIpTransport<()> {
-        let mut t = DoIpTransport::new((), bench_reloads());
-        assert_eq!(t.register(CONNECTION, TESTER), Ok(()));
+    fn serving_the_tester() -> DoIpTransport<Idle> {
+        let mut t = DoIpTransport::new(Idle, bench_reloads());
+        t.register(CONNECTION, TESTER);
         t
     }
 
@@ -598,11 +631,11 @@ mod tests {
     /// With two testers, each close goes to the connection its own tester arrived on.
     #[test]
     fn a_reset_response_closes_only_its_own_testers_connection() {
-        let mut t = DoIpTransport::<(), 2>::new((), bench_reloads());
+        let mut t = DoIpTransport::<Idle, 2>::new(Idle, bench_reloads());
         let other = LogicalAddress(0x0E80);
         let second = ConnectionId::new(1);
-        assert_eq!(t.register(CONNECTION, TESTER), Ok(()));
-        assert_eq!(t.register(second, other), Ok(()));
+        t.register(CONNECTION, TESTER);
+        t.register(second, other);
 
         t.record_send(other, &[0x51, 0x01], AfterSend::Continue);
         t.record_send(TESTER, &[0x62, 0xF1, 0x90, 0x00], AfterSend::Continue);
@@ -616,10 +649,10 @@ mod tests {
     /// close goes there.
     #[test]
     fn a_tester_reappearing_on_another_connection_is_closed_there() {
-        let mut t = DoIpTransport::<(), 2>::new((), bench_reloads());
+        let mut t = DoIpTransport::<Idle, 2>::new(Idle, bench_reloads());
         let second = ConnectionId::new(1);
-        assert_eq!(t.register(CONNECTION, TESTER), Ok(()));
-        assert_eq!(t.register(second, TESTER), Ok(()));
+        t.register(CONNECTION, TESTER);
+        t.register(second, TESTER);
 
         t.record_send(TESTER, &[0x51, 0x01], AfterSend::Continue);
         assert_eq!(t.record_confirm(TESTER, SResult::Ok), Some(second));
@@ -629,11 +662,15 @@ mod tests {
         );
     }
 
-    /// A connection beyond `MCTS` cannot be remembered, and says so.
+    /// A connection beyond the table, which only an entity breaking
+    /// [`DiagnosticEntity::CONNECTIONS`] reports, is not remembered, so nothing is
+    /// owed on it.
     #[test]
-    fn a_connection_beyond_the_table_is_refused() {
-        let mut t = DoIpTransport::<(), 1>::new((), bench_reloads());
+    fn a_connection_beyond_the_table_is_not_remembered() {
+        let mut t = DoIpTransport::<Idle, 1>::new(Idle, bench_reloads());
         let second = ConnectionId::new(1);
-        assert_eq!(t.register(second, TESTER), Err(second));
+        t.register(second, TESTER);
+        t.record_send(TESTER, &[0x51, 0x01], AfterSend::Continue);
+        assert_eq!(t.record_confirm(TESTER, SResult::Ok), None);
     }
 }

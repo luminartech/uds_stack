@@ -171,13 +171,9 @@ pub(crate) enum Inbound {
     Deadline,
 }
 
-/// An event an entity reported that breaks its contract with this crate, or that
-/// this crate cannot classify.
+/// An entity reported a PDU outside the buffer it was lent.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Unclassifiable {
-    PduOutsideBuffer,
-    UnknownEvent,
-}
+pub(crate) struct PduOutsideBuffer;
 
 /// Classify `event`, which borrows the buffer starting at address `buffer_start`.
 ///
@@ -187,7 +183,7 @@ pub(crate) enum Unclassifiable {
 pub(crate) fn classify(
     event: EntityEvent<'_>,
     buffer_start: usize,
-) -> Result<Option<Inbound>, Unclassifiable> {
+) -> Result<Option<Inbound>, PduOutsideBuffer> {
     let span = |pdu: &[u8]| {
         let start = pdu.as_ptr().addr().checked_sub(buffer_start)?;
         Some(start..start.checked_add(pdu.len())?)
@@ -202,7 +198,7 @@ pub(crate) fn classify(
         } => Inbound::Ind {
             connection,
             ai: ai(sa, ta, ta_type),
-            at: span(pdu).ok_or(Unclassifiable::PduOutsideBuffer)?,
+            at: span(pdu).ok_or(PduOutsideBuffer)?,
         },
         EntityEvent::IndicationTruncated {
             connection,
@@ -214,7 +210,7 @@ pub(crate) fn classify(
         } => Inbound::TooLong {
             connection,
             ai: ai(sa, ta, ta_type),
-            at: span(pdu).ok_or(Unclassifiable::PduOutsideBuffer)?,
+            at: span(pdu).ok_or(PduOutsideBuffer)?,
             declared: length,
         },
         EntityEvent::Confirm {
@@ -229,14 +225,13 @@ pub(crate) fn classify(
         EntityEvent::Closed { connection } => Inbound::Closed { connection },
         EntityEvent::Deadline => Inbound::Deadline,
         EntityEvent::Unmodelled { .. } => return Ok(None),
-        _ => return Err(Unclassifiable::UnknownEvent),
     }))
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
-        Inbound, MappingError, Unclassifiable, classify, from_doip_ta_type, s_result,
+        Inbound, MappingError, PduOutsideBuffer, classify, from_doip_ta_type, s_result,
         target_of, to_doip_ta_type,
     };
     use simple_doip::LogicalAddress;
@@ -428,9 +423,6 @@ mod tests {
             pdu: &elsewhere,
         };
         let after = elsewhere.as_ptr().addr().wrapping_add(1);
-        assert_eq!(
-            classify(event, after),
-            Err(Unclassifiable::PduOutsideBuffer)
-        );
+        assert_eq!(classify(event, after), Err(PduOutsideBuffer));
     }
 }
