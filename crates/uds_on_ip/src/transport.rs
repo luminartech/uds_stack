@@ -70,9 +70,8 @@ use uds_session::{Ai, Reloads, SResult, Timestamp};
 /// `critical_section::Mutex<core::cell::RefCell<..>>`, and the integrator
 /// supplies a `critical-section` implementation for the target.
 ///
-/// Time is `embassy-time`'s, read by this transport and by the entity alike, so
-/// the integrator links one `embassy-time` driver for the target — and, for an
-/// entity that waits on `embassy-time` timers, a timer queue.
+/// Time is the entity's: [`UdsTransport::now`] is [`DiagnosticEntity::now`], so a
+/// deadline the session layer computes means the same instant to the entity.
 pub struct DoIpTransport<E, const MCTS: usize = 1> {
     entity: E,
     reloads: Reloads,
@@ -165,6 +164,9 @@ impl<E: DiagnosticEntity, const MCTS: usize> DoIpTransport<E, MCTS> {
     /// #       _: &[u8],
     /// #   ) -> Result<(), ()> {
     /// #       Ok(())
+    /// #   }
+    /// #   fn now(&self) -> u32 {
+    /// #       0
     /// #   }
     /// #   async fn next_event<'b>(
     /// #       &mut self,
@@ -456,12 +458,11 @@ impl<E: DiagnosticEntity, const MCTS: usize> UdsTransport for DoIpTransport<E, M
         self.reloads
     }
 
-    /// `embassy-time`'s clock in milliseconds, truncated to 32 bits: the clock
-    /// [`simple_doip::service`]'s deadlines are on, so a deadline the session
-    /// layer computes from this reaches the entity unconverted.
+    /// [`DiagnosticEntity::now`]: the clock the entity's deadlines are on, so a
+    /// deadline the session layer computes from this reaches the entity
+    /// unconverted.
     fn now(&self) -> Timestamp {
-        let [b0, b1, b2, b3, ..] = embassy_time::Instant::now().as_millis().to_le_bytes();
-        Timestamp(u32::from_le_bytes([b0, b1, b2, b3]))
+        Timestamp(self.entity.now())
     }
 }
 
@@ -496,6 +497,9 @@ mod tests {
             _pdu: &[u8],
         ) -> Result<(), Self::Error> {
             Ok(())
+        }
+        fn now(&self) -> u32 {
+            0
         }
         async fn next_event<'b>(
             &mut self,

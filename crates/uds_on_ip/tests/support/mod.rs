@@ -3,14 +3,11 @@
 //!
 //! Copied from `simple_doip/tests/entity_mock.rs` and extended with what a transport
 //! test needs: a write that fails, a close that is cancelled once or fails, an unmodelled
-//! payload, and time. Time is `embassy-time`'s mock driver, the clock
-//! `simple_doip::service`'s deadlines are on: an idle entity runs the clock to the
-//! caller's deadline, and with no deadline has nothing left to do and says so.
+//! payload, and a clock. An idle entity runs its clock to the caller's deadline, and
+//! with no deadline has nothing left to do and says so.
 
 use std::collections::VecDeque;
-use std::sync::{Mutex, MutexGuard, PoisonError};
 
-use embassy_time::{Duration, Instant, MockDriver};
 use uds_session::Timestamp;
 
 use simple_doip::LogicalAddress;
@@ -72,6 +69,8 @@ pub struct MockEntity<const MCTS: usize> {
     pub fail_next_close: bool,
     /// Tester actions are reported before pending confirmations rather than after.
     pub confirms_last: bool,
+    /// The entity's clock, in milliseconds.
+    pub clock: u32,
 }
 
 impl<const MCTS: usize> MockEntity<MCTS> {
@@ -86,6 +85,7 @@ impl<const MCTS: usize> MockEntity<MCTS> {
             close_yields: false,
             fail_next_close: false,
             confirms_last: false,
+            clock: 0,
         }
     }
 
@@ -176,6 +176,10 @@ impl<const MCTS: usize> DiagnosticEntity for MockEntity<MCTS> {
         Ok(())
     }
 
+    fn now(&self) -> u32 {
+        self.clock
+    }
+
     async fn next_event<'b>(
         &mut self,
         buf: &'b mut [u8],
@@ -256,8 +260,8 @@ impl<const MCTS: usize> DiagnosticEntity for MockEntity<MCTS> {
             return Ok(confirm);
         }
         let deadline = deadline_ms.ok_or(Fault::Exhausted)?;
-        let wait = now().until(Timestamp(deadline));
-        MockDriver::get().advance(Duration::from_millis(u64::from(wait)));
+        let wait = Timestamp(self.clock).until(Timestamp(deadline));
+        self.clock = self.clock.wrapping_add(wait);
         Ok(EntityEvent::Deadline)
     }
 
@@ -276,21 +280,6 @@ impl<const MCTS: usize> DiagnosticEntity for MockEntity<MCTS> {
         }
         Ok(())
     }
-}
-
-/// The clock, as `UdsTransport::now` reads it.
-pub fn now() -> Timestamp {
-    let [b0, b1, b2, b3, ..] = Instant::now().as_millis().to_le_bytes();
-    Timestamp(u32::from_le_bytes([b0, b1, b2, b3]))
-}
-
-/// The mock clock, reset to zero and held for one test: it is global, and the tests in
-/// one binary run in parallel.
-pub fn exclusive_clock() -> MutexGuard<'static, ()> {
-    static CLOCK: Mutex<()> = Mutex::new(());
-    let guard = CLOCK.lock().unwrap_or_else(PoisonError::into_inner);
-    MockDriver::get().reset();
-    guard
 }
 
 /// Poll to completion with a no-op waker; every future here is ready within a bounded

@@ -13,7 +13,7 @@ mod support;
 use core::future::Future;
 use simple_doip::LogicalAddress;
 use simple_doip::service::ConnectionId;
-use support::{MockEntity, TESTER, Tester, Wire, block_on, exclusive_clock};
+use support::{MockEntity, TESTER, Tester, Wire, block_on};
 use uds_on_ip::DoIpTransport;
 use uds_on_ip::profile::bench_reloads;
 use uds_protocol::NegativeResponseCode as Nrc;
@@ -95,7 +95,6 @@ const PARAMS: ServerParams = ServerParams {
 /// tester A's connection closes, is still answered on B's connection.
 #[test]
 fn one_tester_leaving_leaves_the_other_testers_request_in_progress() {
-    let _clock = exclusive_clock();
     let mut s = EcuServer::new(
         Ecu::default(),
         DoIpTransport::new(

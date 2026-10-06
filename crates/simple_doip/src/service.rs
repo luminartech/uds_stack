@@ -16,12 +16,11 @@
 //!
 //! # Time
 //!
-//! Every deadline here is on one clock, `embassy-time`'s: an `embassy_time::Instant`
-//! in milliseconds (`Instant::as_millis`), truncated to 32 bits and wrapping. An
-//! implementor and its caller each read that clock directly, which is why neither
-//! trait reports the time, and why a deadline computed by the caller means the same
-//! instant to the implementor. An implementation whose timers run on any other clock
-//! does not meet these traits' contract.
+//! Every deadline here is on the implementor's own clock, which it reports as
+//! [`DiagnosticConnection::now`] or [`DiagnosticEntity::now`]: milliseconds,
+//! truncated to 32 bits and wrapping. The caller computes its deadlines from that
+//! reading, so a deadline means the same instant to the implementor whatever clock
+//! it runs on, and nothing here names a time source.
 
 use core::future::Future;
 
@@ -198,6 +197,10 @@ pub trait DiagnosticConnection {
         pdu: &[u8],
     ) -> impl Future<Output = Result<(), Self::Error>>;
 
+    /// The current time on the clock `deadline_ms` is on: milliseconds, truncated to
+    /// 32 bits and wrapping.
+    fn now(&self) -> u32;
+
     /// The next event, written into `buf`, or [`ConnectionEvent::Deadline`] if
     /// `deadline_ms` passes first.
     ///
@@ -206,10 +209,8 @@ pub trait DiagnosticConnection {
     /// # Arguments
     ///
     /// * `buf` - where a PDU is delivered; the event borrows it.
-    /// * `deadline_ms` - when to stop waiting, on the clock this module's time is
-    ///   read from: `embassy-time`'s, in milliseconds, truncated to 32 bits and
-    ///   wrapping. It may already have
-    ///   passed. `None` waits for an event alone.
+    /// * `deadline_ms` - when to stop waiting, on [`Self::now`]'s clock. It may
+    ///   already have passed. `None` waits for an event alone.
     ///
     /// # Errors
     ///
@@ -397,6 +398,10 @@ pub trait DiagnosticEntity {
         pdu: &[u8],
     ) -> impl Future<Output = Result<(), Self::Error>>;
 
+    /// The current time on the clock `deadline_ms` is on: milliseconds, truncated to
+    /// 32 bits and wrapping.
+    fn now(&self) -> u32;
+
     /// The next event on any connection, written into `buf`, or
     /// [`EntityEvent::Deadline`] if `deadline_ms` passes first.
     ///
@@ -405,7 +410,8 @@ pub trait DiagnosticEntity {
     /// # Arguments
     ///
     /// * `buf` - where a PDU is delivered; the event borrows it.
-    /// * `deadline_ms` - as for [`DiagnosticConnection::next_event`]. The entity's own
+    /// * `deadline_ms` - when to stop waiting, on [`Self::now`]'s clock. It may
+    ///   already have passed. `None` waits for an event alone. The entity's own
     ///   timers run whatever it is.
     ///
     /// # Errors
@@ -559,6 +565,10 @@ mod tests {
             self.sent_len = pdu.len();
             self.confirm = Some((ta, ta_type));
             Ok(())
+        }
+
+        fn now(&self) -> u32 {
+            0
         }
 
         async fn next_event<'b>(

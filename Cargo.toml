@@ -43,14 +43,10 @@ tokio-util = { version = "0.7", features = ["net", "codec"] }
 serde = { version = "1", default-features = false, features = ["derive"] }
 utoipa = "5"
 clap = { version = "4", features = ["derive"] }
-# The stack's one clock (simple_doip::service's contract). A time abstraction, not a
-# runtime: the integrator links a time driver for the target.
-embassy-time = "0.5"
 
 # dev-dependencies
 anyhow = "1"
 static_cell = "2"
-critical-section = "1"
 proptest = "1"
 serde_json = "1"
 tracing-subscriber = { version = "0.3", features = ["fmt"] }

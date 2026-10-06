@@ -110,6 +110,10 @@ impl<const MCTS: usize> DiagnosticEntity for MockEntity<MCTS> {
         Ok(())
     }
 
+    fn now(&self) -> u32 {
+        0
+    }
+
     async fn next_event<'b>(
         &mut self,
         buf: &'b mut [u8],

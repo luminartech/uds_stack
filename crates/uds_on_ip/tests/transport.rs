@@ -12,11 +12,8 @@
 #[allow(dead_code, reason = "each test binary uses part of the shared mock")]
 mod support;
 
-use embassy_time::{Duration, MockDriver};
 use simple_doip::service::{ConnectionId, DoIpResult};
-use support::{
-    Fault, MockEntity, TESTER, Tester, Wire, block_on, exclusive_clock, poll_once_and_drop,
-};
+use support::{Fault, MockEntity, TESTER, Tester, Wire, block_on, poll_once_and_drop};
 use uds_on_ip::profile::bench_reloads;
 use uds_on_ip::{DoIpTransport, Error};
 use uds_services::{
@@ -620,12 +617,11 @@ fn a_remote_message_type_is_refused_before_the_entity() {
     );
 }
 
-/// `now()` is `embassy-time`'s milliseconds truncated to 32 bits, so it wraps where
-/// `Timestamp` is typed to wrap.
+/// `now()` is the entity's clock, which the entity's deadlines are on.
 #[test]
-fn now_is_the_low_32_bits_of_embassy_times_milliseconds() {
-    let _clock = exclusive_clock();
-    MockDriver::get().advance(Duration::from_millis((1_u64 << 32) + 7));
-    let t = transport([]);
-    assert_eq!(t.now(), Timestamp(7));
+fn now_reads_the_entity_clock() {
+    let mut entity = MockEntity::new([]);
+    entity.clock = 0xFFFF_FFF0;
+    let t: Transport = DoIpTransport::new(entity, bench_reloads());
+    assert_eq!(t.now(), Timestamp(0xFFFF_FFF0));
 }

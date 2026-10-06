@@ -1,5 +1,5 @@
 //! A `uds_server!` server end to end over `DoIpTransport` and a socket-free
-//! `DiagnosticEntity`, on `embassy-time`'s mock clock.
+//! `DiagnosticEntity`, on the mock entity's clock.
 
 #![allow(
     clippy::unwrap_used,
@@ -13,14 +13,15 @@ mod support;
 
 use core::future::Future;
 use simple_doip::service::ConnectionId;
-use support::{MockEntity, TESTER, Tester, Wire, block_on, exclusive_clock, now};
+use support::{MockEntity, TESTER, Tester, Wire, block_on};
 use uds_on_ip::DoIpTransport;
 use uds_on_ip::profile::bench_reloads;
 use uds_protocol::NegativeResponseCode as Nrc;
 use uds_services::{
     Access, Address, DataIdentifier, DiagnosticSessionControl, DiagnosticSessionType as S,
     EcuReset, ReadDataByIdentifier, RecordError, ResetType, ResponseSink, ServerParams,
-    SessionTiming, SessionTransition, Sessions, Sink, TesterPresent, uds_server,
+    SessionTiming, SessionTransition, Sessions, Sink, TesterPresent, UdsTransport,
+    uds_server,
 };
 
 const ECU: Address = Address(0x0001);
@@ -191,7 +192,6 @@ fn wire(server: &EcuServer) -> &[Wire] {
 /// confirmed (ISO 14229-5:2022 REQ 4.3 Table 4).
 #[test]
 fn a_physical_read_is_answered() {
-    let _clock = exclusive_clock();
     let mut s = server([
         Tester::Connects(TESTER),
         Tester::Sends(TESTER, vec![0x22, 0xF4, 0x0D]),
@@ -208,7 +208,6 @@ fn a_physical_read_is_answered() {
 /// `incorrectMessageLengthOrInvalidFormat`.
 #[test]
 fn a_request_longer_than_the_server_accepts_is_refused_not_served_as_a_fragment() {
-    let _clock = exclusive_clock();
     let mut long = vec![0x22];
     long.extend([0xF4, 0x0D].repeat(100));
     let mut s = server([Tester::Connects(TESTER), Tester::Sends(TESTER, long)]);
@@ -233,7 +232,6 @@ fn a_request_longer_than_the_server_accepts_is_refused_not_served_as_a_fragment(
 /// (`UDSS_LLR_0100`).
 #[test]
 fn a_session_change_keeps_the_connection_and_times_out_on_the_transports_clock() {
-    let _clock = exclusive_clock();
     let mut s = server([
         Tester::Connects(TESTER),
         Tester::Sends(TESTER, vec![0x10, 0x03]),
@@ -254,7 +252,7 @@ fn a_session_change_keeps_the_connection_and_times_out_on_the_transports_clock()
         ]
     );
     assert_eq!(
-        now().0,
+        s.transport().now().0,
         5_000,
         "tS3_Server expired on the clock it was set by"
     );
@@ -265,7 +263,6 @@ fn a_session_change_keeps_the_connection_and_times_out_on_the_transports_clock()
 /// extended.
 #[test]
 fn a_tester_stays_connected_through_a_session_change() {
-    let _clock = exclusive_clock();
     let mut s = server([
         Tester::Connects(TESTER),
         Tester::Sends(TESTER, vec![0x10, 0x03]),
@@ -286,7 +283,6 @@ fn a_tester_stays_connected_through_a_session_change() {
 /// the final `51 01` is sent, then the connection is closed.
 #[test]
 fn a_reset_answered_pending_closes_the_connection_after_51_01() {
-    let _clock = exclusive_clock();
     let mut s = server([
         Tester::Connects(TESTER),
         Tester::Sends(TESTER, vec![0x11, 0x01]),
@@ -316,7 +312,6 @@ fn a_reset_answered_pending_closes_the_connection_after_51_01() {
 /// session it entered so it can jump. `50 03` on the way closes nothing.
 #[test]
 fn an_application_entering_its_bootloader_closes_the_connection_after_50_02() {
-    let _clock = exclusive_clock();
     let mut s = server_running(
         Software::Application,
         [
@@ -344,7 +339,6 @@ fn an_application_entering_its_bootloader_closes_the_connection_after_50_02() {
 /// connection, and `50 01` is sent, then the connection is closed.
 #[test]
 fn a_bootloader_returning_to_the_application_closes_the_connection_after_50_01() {
-    let _clock = exclusive_clock();
     let mut s = server_running(
         Software::Bootloader,
         [
@@ -372,7 +366,6 @@ fn a_bootloader_returning_to_the_application_closes_the_connection_after_50_01()
 /// connection that is gone.
 #[test]
 fn a_tester_leaving_mid_service_abandons_the_exchange() {
-    let _clock = exclusive_clock();
     let mut s = server([
         Tester::Connects(TESTER),
         Tester::Sends(TESTER, vec![0x22, 0xF4, 0x0D]),

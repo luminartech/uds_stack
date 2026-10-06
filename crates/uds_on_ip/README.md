@@ -71,8 +71,8 @@ settled — `DoIpTransport<E: DiagnosticEntity>` implements
 and responses map onto `DoIP_Data` (ISO 14229-5:2022 REQ 4.3, REQ 4.4), and the
 connection is closed after a positive `ECUReset` response (REQ 7.11) and after
 the positive `DiagnosticSessionControl` response to a session change the server
-says leaves its running software (REQ 7.9). The clock is `embassy-time`'s, so an integrator
-links an `embassy-time` driver. The client role is not built. See the
+says leaves its running software (REQ 7.9). Time is the `DoIP` entity's own clock, which it
+reports through `DiagnosticEntity::now`. The client role is not built. See the
 [workspace README](https://github.com/luminartech/uds_stack#status) for how
 this compares to the rest of the stack.
 

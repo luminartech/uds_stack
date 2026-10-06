@@ -37,6 +37,9 @@ impl DiagnosticEntity for OpaqueEntity {
     ) -> Result<(), ()> {
         Ok(())
     }
+    fn now(&self) -> u32 {
+        0
+    }
     async fn next_event<'b>(
         &mut self,
         _buf: &'b mut [u8],
