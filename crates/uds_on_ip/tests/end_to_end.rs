@@ -183,12 +183,13 @@ fn a_request_longer_than_the_server_accepts_is_refused_not_served_as_a_fragment(
     );
 }
 
-/// ISO 14229-5:2022 REQ 7.9: `10 03` is answered `50 03`, the connection is
-/// closed after that response is confirmed sent, and the session change executes
-/// on the confirmation. `tS3_Server` then runs on the transport's clock and
-/// returns the server to the default session (`UDSS_LLR_0100`).
+/// `10 03` is answered, the session change executes on the response's
+/// confirmation, and the connection stays: ISO 14229-5:2022 REQ 7.9 closes it only
+/// where the change disconnects, which this server has not said. `tS3_Server` then
+/// runs on the transport's clock and returns the server to the default session
+/// (`UDSS_LLR_0100`).
 #[test]
-fn a_session_change_is_answered_then_the_connection_closed_then_it_times_out() {
+fn a_session_change_keeps_the_connection_and_times_out_on_the_transports_clock() {
     let _clock = exclusive_clock();
     let mut s = server([
         Tester::Connects(TESTER),
@@ -197,10 +198,10 @@ fn a_session_change_is_answered_then_the_connection_closed_then_it_times_out() {
     run(&mut s);
     assert_eq!(
         wire(&s),
-        [
-            Wire::Data(CONNECTION, vec![0x50, 0x03, 0x00, 0x32, 0x01, 0xF4]),
-            Wire::Close(CONNECTION),
-        ]
+        [Wire::Data(
+            CONNECTION,
+            vec![0x50, 0x03, 0x00, 0x32, 0x01, 0xF4]
+        )]
     );
     assert_eq!(
         s.services().transitions,
@@ -216,17 +217,15 @@ fn a_session_change_is_answered_then_the_connection_closed_then_it_times_out() {
     );
 }
 
-/// REQ 7.8 and REQ 7.10 put reconnection on the tester; the session is the
-/// server's, not the connection's, so the tester returning on a new connection
-/// finds the extended session still active: programming, entered only from
-/// extended, is accepted, and closes the connection in turn.
+/// The tester stays on its connection through a session change: programming,
+/// entered only from extended, is accepted on the same connection that selected
+/// extended.
 #[test]
-fn a_tester_returning_after_the_close_finds_its_session() {
+fn a_tester_stays_connected_through_a_session_change() {
     let _clock = exclusive_clock();
     let mut s = server([
         Tester::Connects(TESTER),
         Tester::Sends(TESTER, vec![0x10, 0x03]),
-        Tester::Connects(TESTER),
         Tester::Sends(TESTER, vec![0x10, 0x02]),
     ]);
     run(&mut s);
@@ -234,9 +233,7 @@ fn a_tester_returning_after_the_close_finds_its_session() {
         wire(&s),
         [
             Wire::Data(CONNECTION, vec![0x50, 0x03, 0x00, 0x32, 0x01, 0xF4]),
-            Wire::Close(CONNECTION),
             Wire::Data(CONNECTION, vec![0x50, 0x02, 0x00, 0x32, 0x01, 0xF4]),
-            Wire::Close(CONNECTION),
         ]
     );
 }

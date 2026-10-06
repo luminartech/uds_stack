@@ -52,18 +52,25 @@ pub const fn bench_reloads() -> uds_session::Reloads {
 /// # Why this crate knows any service identifier at all
 ///
 /// `ARCHITECTURE.md` §13, invariant 5, states that `uds_on_ip` never learns
-/// what a service is. These two constants are the exception the standard itself forces, and
+/// what a service is. These constants are the exception the standard itself forces, and
 /// the exhaustive list of it.
 ///
 /// ISO 14229-5:2022 REQ 7.8–7.11 make TCP connection handling part of the
-/// `DiagnosticSessionControl` and `ECUReset` flows specifically: the server closes
-/// the connection after its positive response and before executing the service,
-/// and the client must establish a new connection *and repeat routing
-/// activation* before continuing. That is transport behaviour keyed on a
-/// service identifier, and clause 8 puts it in the IP profile rather than in
-/// ISO 14229-1.
+/// `DiagnosticSessionControl` and `ECUReset` flows specifically. REQ 7.11 is
+/// unconditional: the server closes the connection after every positive
+/// `ECUReset` response and before executing the reset. REQ 7.8 and REQ 7.10 have
+/// the client establish a new connection *and repeat routing activation* when
+/// one is closed. That is transport behaviour keyed on a service identifier,
+/// and clause 8 puts it in the IP profile rather than in ISO 14229-1.
 ///
-/// So the invariant is narrower than first written: this crate knows these two
+/// REQ 7.9's close after a positive `DiagnosticSessionControl` response is
+/// *conditional* — "if the TCP connection is disconnected due to a session
+/// change" — and what decides it is whether the server leaves the software it
+/// is running, which no octet carries. The positive response's identifier is
+/// therefore not here: that close is the server's to state, not this crate's
+/// to infer (`ARCHITECTURE.md` §9).
+///
+/// So the invariant is narrower than first written: this crate knows these three
 /// identifiers and nothing else. No sub-function, no data identifier, no
 /// routine identifier, no NRC policy.
 ///
@@ -95,10 +102,6 @@ pub(crate) mod service_ids {
     /// `ECUReset` (ISO 14229-5:2022 REQ 7.10, REQ 7.11).
     pub(crate) const ECU_RESET: u8 = UdsServiceType::EcuReset.to_request_sid();
 
-    /// The positive response to `DiagnosticSessionControl` (REQ 7.9).
-    pub(crate) const DIAGNOSTIC_SESSION_CONTROL_RESPONSE: u8 =
-        UdsServiceType::DiagnosticSessionControl.to_response_sid();
-
     /// The positive response to `ECUReset` (REQ 7.11).
     pub(crate) const ECU_RESET_RESPONSE: u8 = UdsServiceType::EcuReset.to_response_sid();
 }
@@ -106,10 +109,10 @@ pub(crate) mod service_ids {
 /// What ISO 14229-5 clause 8 requires of the connection once this message has
 /// been sent.
 ///
-/// Both requirements this carries are keyed on the same four octets, so one
-/// read of a message's first byte classifies either — and the request and
-/// response identifiers are disjoint, so no assumption about this transport's
-/// role is needed to tell them apart.
+/// Both requirements this carries are keyed on [`service_ids`], so one read of a
+/// message's first byte classifies either — and the request and response
+/// identifiers are disjoint, so no assumption about this transport's role is
+/// needed to tell them apart.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum ConnectionAction {
     /// Nothing follows. The connection continues to serve the session.
@@ -118,9 +121,9 @@ pub(crate) enum ConnectionAction {
     /// `ECUReset`, so the server will close and a close arriving now is
     /// prescribed rather than a fault.
     ExpectClose,
-    /// REQ 7.9, REQ 7.11 — a server sent a positive response to one of those
-    /// two services, and **must itself initiate** the close, after the response
-    /// and before executing the service.
+    /// REQ 7.11 — a server sent a positive `ECUReset` response, and **must
+    /// itself initiate** the close, after the response and before executing the
+    /// reset.
     InitiateClose,
 }
 
@@ -144,25 +147,24 @@ impl ConnectionAction {
 ///
 /// # Why this crate reads the octet, rather than being told
 ///
-/// REQ 7.9 and REQ 7.11 are ISO 14229-5 clause 8, which is this crate's scope.
-/// `uds_services` offered to pass the fact across the transport seam instead,
-/// and that would have moved the requirement rather than the plumbing: to set
-/// such a flag, a driver must know that clause 8 demands a close, which is
-/// knowledge ISO 14229-1 does not give it. `simple_doip` cannot decide it
-/// either — recognising a service identifier is exactly what `ARCHITECTURE.md`
-/// §13 invariant 2 forbids it.
+/// REQ 7.11 is ISO 14229-5 clause 8, which is this crate's scope. Passing the
+/// close across the transport seam would move the requirement rather than the
+/// plumbing: to set such a flag, a driver must know that clause 8 demands a
+/// close, which is knowledge ISO 14229-1 does not give it. `simple_doip` cannot
+/// decide it either — recognising a service identifier is exactly what
+/// `ARCHITECTURE.md` §13 invariant 2 forbids it.
 ///
-/// That leaves one home, and it is not a widening of what this crate knows:
-/// the identifiers are the same two clause 8 already forces, now in their
-/// response form as well, and each is derived from `uds_protocol`'s
-/// `UdsServiceType` rather than written here as a byte.
+/// REQ 7.9's condition is the other way round. Whether a session change leaves
+/// the software the server is running is a fact about the server, which only
+/// the server has, so it is the server's to state across the seam; clause 8
+/// then decides, here, what follows from it.
 ///
 /// # Why a close is classified, never predicted
 ///
 /// An earlier shape was `post_exchange(request_sid, response) -> PostExchange`,
 /// a public function returning `Continue` or `ReconnectAndReactivate` once an
 /// exchange finished. It had to answer a question clause 8 does not settle:
-/// REQ 7.9 and REQ 7.11 describe the close as following a *positive* response
+/// REQ 7.11 describes the close as following a *positive* response
 /// and say nothing about a negative one, so predicting a close meant guessing
 /// what a negative response implies.
 ///
@@ -177,7 +179,7 @@ impl ConnectionAction {
 /// `Continue`, and the final positive response that follows is what triggers
 /// the close. And a request carrying the suppress-positive-response bit
 /// produces no response at all, so nothing is sent, nothing is classified, and
-/// no close is triggered — which is what REQ 7.9 requires, since it keys on
+/// no close is triggered — which is what REQ 7.11 requires, since it keys on
 /// *having sent* a positive response.
 ///
 /// # The client half is deliberately not exact
@@ -196,8 +198,7 @@ pub(crate) const fn after_sending(first_octet: u8) -> ConnectionAction {
         service_ids::DIAGNOSTIC_SESSION_CONTROL | service_ids::ECU_RESET => {
             ConnectionAction::ExpectClose
         }
-        service_ids::DIAGNOSTIC_SESSION_CONTROL_RESPONSE
-        | service_ids::ECU_RESET_RESPONSE => ConnectionAction::InitiateClose,
+        service_ids::ECU_RESET_RESPONSE => ConnectionAction::InitiateClose,
         _ => ConnectionAction::Continue,
     }
 }
@@ -206,38 +207,43 @@ pub(crate) const fn after_sending(first_octet: u8) -> ConnectionAction {
 mod tests {
     use super::{ConnectionAction, after_sending, bench_reloads, service_ids};
 
-    /// The four octets clause 8 keys connection handling on, and what each
+    /// The three octets clause 8 keys connection handling on, and what each
     /// requires. Spelled out as literals rather than taken from `service_ids`,
     /// so the constants and the rule cannot drift together — if
     /// `uds_protocol`'s derivation ever moved, this fails rather than agreeing
     /// with itself.
     #[test]
-    fn clause_8_keys_on_four_octets() {
+    fn clause_8_keys_on_three_octets() {
         assert_eq!(service_ids::DIAGNOSTIC_SESSION_CONTROL, 0x10);
         assert_eq!(service_ids::ECU_RESET, 0x11);
-        assert_eq!(service_ids::DIAGNOSTIC_SESSION_CONTROL_RESPONSE, 0x50);
         assert_eq!(service_ids::ECU_RESET_RESPONSE, 0x51);
 
         assert_eq!(after_sending(0x10), ConnectionAction::ExpectClose);
         assert_eq!(after_sending(0x11), ConnectionAction::ExpectClose);
-        assert_eq!(after_sending(0x50), ConnectionAction::InitiateClose);
         assert_eq!(after_sending(0x51), ConnectionAction::InitiateClose);
+    }
+
+    /// ISO 14229-5:2022 REQ 7.9 closes after a positive `DiagnosticSessionControl`
+    /// response only if the session change disconnects, which the octet cannot
+    /// say: the server states it, so the octet alone owes nothing.
+    #[test]
+    fn a_positive_session_response_alone_owes_no_close() {
+        assert_eq!(after_sending(0x50), ConnectionAction::Continue);
     }
 
     /// Nothing else in the byte range means anything to this crate.
     ///
     /// The exhaustive half of the invariant that `uds_on_ip` never learns what
-    /// a service is: 252 of the 256 possible first octets are `Continue`, and
-    /// the four that are not are the ones the standard itself forces.
+    /// a service is: 253 of the 256 possible first octets are `Continue`, and
+    /// the three that are not are the ones the standard itself forces.
     ///
     /// Verified by watching it fail: adding `0x22` — `ReadDataByIdentifier`, an
     /// ordinary service with no connection handling — to `after_sending`'s arm
-    /// breaks this test, and `transport::tests::
-    /// what_the_connection_owes_is_replaced_by_every_send` with it.
+    /// breaks this test.
     #[test]
     fn every_other_octet_is_continue() {
         for octet in 0x00..=0xFF_u8 {
-            if matches!(octet, 0x10 | 0x11 | 0x50 | 0x51) {
+            if matches!(octet, 0x10 | 0x11 | 0x51) {
                 continue;
             }
             assert_eq!(
@@ -262,10 +268,7 @@ mod tests {
             service_ids::DIAGNOSTIC_SESSION_CONTROL,
             service_ids::ECU_RESET,
         ];
-        let responses = [
-            service_ids::DIAGNOSTIC_SESSION_CONTROL_RESPONSE,
-            service_ids::ECU_RESET_RESPONSE,
-        ];
+        let responses = [service_ids::ECU_RESET_RESPONSE];
         for request in requests {
             assert!(
                 !responses.contains(&request),

@@ -177,7 +177,7 @@ service-specific policy belongs here.
 
 The exception is narrow, forced, and exhaustively listed: clause 8 keys TCP
 connection handling on two service identifiers, `DiagnosticSessionControl` and
-`ECUReset`, in both their request and positive-response forms. That is not
+`ECUReset`, in their request forms, and on `ECUReset`'s positive response. That is not
 service *semantics* — it is a clause 8 rule that happens to be keyed on a
 service, and the identifiers themselves are derived from `uds_protocol`'s
 `UdsServiceType` rather than written here as bytes. See
@@ -223,6 +223,11 @@ question. Stating the rule once means the next one does not have to be.
 - **Close after a positive response** (REQ 7.9, 7.11) — `uds_on_ip` decides,
   `simple_doip` closes. Closing a TCP connection is an ISO 13400-2 mechanism;
   the rule that a close follows *this particular* response is ISO 14229-5's.
+  REQ 7.11's close follows every positive `ECUReset` response. REQ 7.9's
+  follows a positive `DiagnosticSessionControl` response only where the session
+  change disconnects — where the server leaves the software it is running, as
+  an application entering its bootloader does — and that fact is the server's
+  own, so the server states it and `uds_on_ip` decides what follows.
 - **Periodic responses** (REQ 7.16) — `simple_doip` delivers the bytes of a
   payload type it does not model, `uds_on_ip` interprets `0x8004`.
   ISO 13400-2:2019 stops at `0x8003`.
@@ -230,8 +235,11 @@ question. Stating the rule once means the next one does not have to be.
   `uds_session` runs the timer.
 
 The rule also says what must *not* happen. `uds_services` never decides when a
-connection closes: knowing that REQ 7.9 requires one is ISO 14229-5 knowledge,
-and a flag it set would carry the requirement, not just the plumbing. And
+connection closes: knowing that REQ 7.9 or 7.11 requires one is ISO 14229-5
+knowledge, and a "close" flag it set would carry the requirement, not just the
+plumbing. What it carries instead is the server's statement that it leaves its
+running software after this response — an ISO 14229-1 fact about the server,
+true on any transport, from which this crate derives REQ 7.9's close. And
 `simple_doip` never recognises a service identifier to decide it for itself —
 that is [§13](#13-invariants-to-preserve) invariant 2, already listed as
 violated and awaiting restoration.
@@ -293,7 +301,8 @@ getting them wrong first:
 reconnected *to* and never reconnects — ISO 13400-2 puts sending the routing
 activation request on the client entity — so a `reconnect()` would be a method
 the only existing driver must never call. A `close()` would require `uds_services` to
-know that REQ 7.9 demands one — see [§3.6](#36-when-and-what).
+know that REQ 7.9 demands one — see [§3.6](#36-when-and-what) for what it states
+instead.
 
 ### 4.2 Connection seam — `uds_on_ip` → `simple_doip`
 
@@ -462,7 +471,10 @@ re-establishing is `simple_doip`'s ([§3.6](#36-when-and-what)).
 **Server, session change or ECU reset.** The mirror image, and the direction
 that is easy to miss: REQ 7.9 and REQ 7.11 require the *server* to initiate the
 close, after sending the positive response and before executing the service.
-`uds_on_ip` recognises the response going out and asks the connection to close.
+`uds_on_ip` recognises a positive `ECUReset` response going out and, once it is
+confirmed sent, closes the connection before reporting the confirmation. For a
+session change it waits for the server to say the change disconnects
+([§9.2](#92-design-gaps-in-this-crate)).
 
 **Server, ordinary request.** A diagnostic message arrives, becomes
 `TransportEvent::DataInd`, and the driver offers it to the session layer, which
@@ -728,13 +740,16 @@ ships. It has been replaced rather than amended.
 
 ### 9.2 Design gaps in this crate
 
-- **REQ 7.9 is applied to every positive `DiagnosticSessionControl`
-  response.** The requirement is conditional — the close follows a positive
-  response "if the TCP connection is disconnected due to a session change", and
-  ISO 14229-5:2022 Figure 5 shows the switch to the programming session — but
-  this crate closes after every `0x50`, as the connection service design
-  settled. Whether a change to a session that keeps the connection should
-  close it is open.
+- **REQ 7.9's close is not yet made.** The requirement is conditional: the
+  close follows a positive `DiagnosticSessionControl` response "if the TCP
+  connection is disconnected due to a session change" (ISO 14229-5:2022 8.5.3;
+  Figure 5 shows the switch to the programming session), unlike REQ 7.11's
+  for `ECUReset`. What disconnects is the server leaving the software it is
+  running — ISO 14229-1:2020 10.2.2.2 lets the programming session run in boot
+  software, left by restarting the application — which only the server knows.
+  `uds_services` is to state it with the response, across the transport seam;
+  until it does, a positive `0x50` closes nothing, and an application entering
+  its bootloader drops the connection without the orderly close.
 - **REQ 7.17 has no home.** The periodic data record length bound is not checked
   anywhere. It was briefly a free function in `profile` that no caller was
   obliged to consult and no path could reach, and was deleted until there is a
@@ -842,9 +857,9 @@ one line rather than an argument about policy.
    listed as an invariant to restore, not one that holds.
 3. `uds_protocol` stays a codec — no dispatch, no policy, no session state.
 4. `uds_session` never learns its transport, and never reads a clock.
-5. `uds_on_ip` never learns what a service *is*. The two service identifiers
-   clause 8 keys connection handling on, in request and positive-response form,
-   are the exception the standard itself forces and the exhaustive list of it
+5. `uds_on_ip` never learns what a service *is*. The service identifiers
+   clause 8 keys connection handling on — `DiagnosticSessionControl` and
+   `ECUReset` requests, and `ECUReset`'s positive response — are the exception the standard itself forces and the exhaustive list of it
    ([§3.4](#34-uds_on_ip--iso-14229-5)).
 6. `uds_services` declares the transport seam and implements no transport, and
    nothing on that seam is shaped by one protocol. An earlier version of this

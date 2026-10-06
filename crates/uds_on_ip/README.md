@@ -53,8 +53,8 @@ and are used from there rather than redeclared here.
 
 The one exception is narrow and forced by the standard: clause 8 keys TCP
 connection handling on two specific service identifiers
-(`DiagnosticSessionControl` and `ECUReset`), so this crate recognises those two
-bytes and nothing else about them.
+(`DiagnosticSessionControl` and `ECUReset`), so this crate recognises those
+identifiers and nothing else about the services.
 
 It also names no async runtime. An `async fn` implies neither an executor nor
 `std`, but a runtime *dependency* would compromise the `no_std` build, so
@@ -69,8 +69,9 @@ API shape is
 settled — `DoIpTransport<E: DiagnosticEntity>` implements
 `uds_services::UdsTransport` — and the server role is implemented: requests
 and responses map onto `DoIP_Data` (ISO 14229-5:2022 REQ 4.3, REQ 4.4), and the
-connection is closed after a positive `DiagnosticSessionControl` or `ECUReset`
-response (REQ 7.9, REQ 7.11). The clock is `embassy-time`'s, so an integrator
+connection is closed after a positive `ECUReset` response (REQ 7.11). The close
+REQ 7.9 requires after a session change that disconnects waits on the server
+stating which changes do. The clock is `embassy-time`'s, so an integrator
 links an `embassy-time` driver. The client role is not built. See the
 [workspace README](https://github.com/luminartech/uds_stack#status) for how
 this compares to the rest of the stack.

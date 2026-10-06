@@ -134,14 +134,13 @@ fn a_response_is_sent_on_the_testers_connection_and_confirmed() {
     );
 }
 
-/// REQ 7.9: the server initiates the close after sending the positive
-/// `DiagnosticSessionControl` response. The close waits for the response's
-/// confirmation, and is made before that confirmation reaches the driver, which
-/// executes the session change on it.
+/// REQ 7.11: the server initiates the close after sending the positive `ECUReset`
+/// response. The close waits for the response's confirmation, and is made before
+/// that confirmation reaches the driver, which executes the reset on it.
 #[test]
-fn a_positive_session_response_closes_the_connection_after_its_confirmation() {
-    let mut t = indicated(&[0x10, 0x03]);
-    respond(&mut t, &[0x50, 0x03, 0x00, 0x32, 0x01, 0xF4]);
+fn a_positive_reset_response_closes_the_connection_after_its_confirmation() {
+    let mut t = indicated(&[0x11, 0x01]);
+    respond(&mut t, &[0x51, 0x01]);
     assert_eq!(
         t.entity().wire,
         [],
@@ -158,16 +157,16 @@ fn a_positive_session_response_closes_the_connection_after_its_confirmation() {
     assert_eq!(
         t.entity().wire,
         [
-            Wire::Data(CONNECTION, vec![0x50, 0x03, 0x00, 0x32, 0x01, 0xF4]),
+            Wire::Data(CONNECTION, vec![0x51, 0x01]),
             Wire::Close(CONNECTION),
         ]
     );
 }
 
-/// REQ 7.11: so does a positive `ECUReset` response; and the tester, back as a new
-/// connection after routing activation (REQ 7.10), is served without another close.
+/// The tester, back as a new connection after routing activation (REQ 7.10), is
+/// served without another close.
 #[test]
-fn a_positive_reset_response_closes_and_the_tester_returns_on_a_new_connection() {
+fn after_the_prescribed_close_the_tester_returns_on_a_new_connection() {
     let mut t = transport([
         Tester::Connects(TESTER),
         Tester::Sends(TESTER, vec![0x11, 0x01]),
@@ -195,15 +194,15 @@ fn a_positive_reset_response_closes_and_the_tester_returns_on_a_new_connection()
     );
 }
 
-/// REQ 7.9 keys the close on *sending* the positive response: one whose write fails
+/// REQ 7.11 keys the close on *sending* the positive response: one whose write fails
 /// closes nothing, and its failure reaches the driver as `DoIP_ERROR`'s
 /// `T_Result`.
 #[test]
 fn a_positive_response_that_fails_to_send_closes_nothing() {
-    let mut t = indicated_by(&[0x10, 0x03], |entity| {
+    let mut t = indicated_by(&[0x11, 0x01], |entity| {
         entity.fail_next_write = Some(DoIpResult::Error);
     });
-    respond(&mut t, &[0x50, 0x03, 0x00, 0x32, 0x01, 0xF4]);
+    respond(&mut t, &[0x51, 0x01]);
 
     assert_eq!(
         next(&mut t),
@@ -220,8 +219,8 @@ fn a_positive_response_that_fails_to_send_closes_nothing() {
 /// confirmation it holds back: the next call finishes both, once.
 #[test]
 fn a_close_dropped_unfinished_is_finished_by_the_next_call() {
-    let mut t = indicated_by(&[0x10, 0x03], |entity| entity.close_yields = true);
-    respond(&mut t, &[0x50, 0x03, 0x00, 0x32, 0x01, 0xF4]);
+    let mut t = indicated_by(&[0x11, 0x01], |entity| entity.close_yields = true);
+    respond(&mut t, &[0x51, 0x01]);
 
     let mut buffer = [0u8; 16];
     assert!(!poll_once_and_drop(t.next_event(&mut buffer, None)));
@@ -242,17 +241,17 @@ fn a_close_dropped_unfinished_is_finished_by_the_next_call() {
     assert_eq!(t.entity().wire.len(), 2);
 }
 
-/// A tester that closes its connection after the positive `DiagnosticSessionControl`
-/// response was requested and before it was confirmed is in the flow REQ 7.9
-/// prescribes: the close is expected. Its confirmation still arrives, and the
+/// A tester that closes its connection after the positive `ECUReset` response was
+/// requested and before it was confirmed is in the flow REQ 7.11 prescribes: the
+/// close is expected. Its confirmation still arrives, and the
 /// connection, already gone, is not closed again.
 #[test]
 fn a_tester_leaving_while_owed_the_prescribed_close_is_expected() {
-    let mut t = indicated_by(&[0x10, 0x03], |entity| {
+    let mut t = indicated_by(&[0x11, 0x01], |entity| {
         entity.confirms_last = true;
         entity.script.push_back(Tester::Leaves(TESTER));
     });
-    respond(&mut t, &[0x50, 0x03, 0x00, 0x32, 0x01, 0xF4]);
+    respond(&mut t, &[0x51, 0x01]);
 
     assert_eq!(next(&mut t), TransportEvent::Closed { expected: true });
     assert_eq!(
@@ -263,6 +262,29 @@ fn a_tester_leaving_while_owed_the_prescribed_close_is_expected() {
         }
     );
     assert!(!t.entity().wire.contains(&Wire::Close(CONNECTION)));
+}
+
+/// ISO 14229-5:2022 REQ 7.9 closes after a positive `DiagnosticSessionControl`
+/// response only where the session change disconnects, which the response's octets
+/// cannot say: by itself, `50 03` is sent and confirmed, and the connection stays.
+#[test]
+fn a_positive_session_response_keeps_the_connection() {
+    let mut t = indicated(&[0x10, 0x03]);
+    respond(&mut t, &[0x50, 0x03, 0x00, 0x32, 0x01, 0xF4]);
+    assert_eq!(
+        next(&mut t),
+        TransportEvent::DataConf {
+            ai: response_ai(),
+            result: SResult::Ok,
+        }
+    );
+    assert_eq!(
+        t.entity().wire,
+        [Wire::Data(
+            CONNECTION,
+            vec![0x50, 0x03, 0x00, 0x32, 0x01, 0xF4]
+        )]
+    );
 }
 
 /// A tester that leaves during an ordinary exchange is not in any flow the standard
