@@ -209,7 +209,9 @@ Scope
    manufacturer's discretion". So the sequence is this crate's and the application supplies
    a seed, a judgement on a key, and an attempt policy. An application that implements those
    three cannot get the ordering, the restart rule or the zero-seed probe wrong, because it
-   never sees them.
+   never sees them. One half of the zero-seed rule does reach it: the seed it writes for a
+   locked level must not be all zero, and since only it writes that seed, a debug build
+   checks what it wrote rather than trusting it.
 
    **Misuse-resistance is a design obligation, not a documentation one.** Where an error can
    be made unrepresentable it is, in preference to warning against it: ``UDSSVC_ARCH_0033``

@@ -116,6 +116,8 @@ struct Ecu {
     entered: Option<S>,
     /// Makes Annex I's optional pre-conditions unmet.
     preconditions_unmet: bool,
+    /// Makes `seed` write an all-zero seed, which clause 10.4.1 forbids.
+    zero_seed: bool,
     /// The `securityAccessDataRecord` the last seed was asked with.
     record: Vec<u8>,
     /// What `CommunicationControl` last applied.
@@ -271,7 +273,8 @@ impl SecurityAccess for Ecu {
             return Err(Nrc::RequestOutOfRange);
         }
         self.record = record.to_vec();
-        let _ = out.write_all(&seed_of(level).to_be_bytes());
+        let seed = if self.zero_seed { 0 } else { seed_of(level) };
+        let _ = out.write_all(&seed.to_be_bytes());
         Ok(())
     }
     async fn verify_key(
@@ -2105,4 +2108,19 @@ fn on_transition_is_told_the_session_entered() {
     assert_eq!(ecu.entered, Some(S::ProgrammingSession));
     ecu.session_timed_out(&mut state);
     assert_eq!(ecu.entered, Some(S::DefaultSession));
+}
+
+/// ISO 14229-1:2020 clause 10.4.1 — "the server shall never send an all zero seed for a
+/// given security level that is currently locked", because a client reads a zero seed as
+/// "unlocked". The application writes the seed, so a debug build checks it.
+#[test]
+#[cfg(debug_assertions)]
+#[should_panic(expected = "all-zero seed")]
+fn security_access_an_all_zero_seed_for_a_locked_level_panics_in_debug() {
+    let mut ecu = Ecu {
+        zero_seed: true,
+        ..Ecu::default()
+    };
+    let mut state = extended(&mut ecu);
+    let _ = exchange(&mut ecu, &mut state, &[0x27, 0x01]);
 }

@@ -126,6 +126,10 @@ pub trait SecurityAccess {
     const MAY_RESPOND_PENDING: bool;
 
     /// The longest seed this server issues.
+    ///
+    /// Also the width of the all-zero seed this crate answers a `requestSeed` with for the
+    /// level already unlocked (clause 10.4.1, Annex I transition 7): every level's zero
+    /// seed is this long, whatever the length of the seeds [`Self::seed`] writes for it.
     const MAX_SEED_LEN: usize;
 
     /// The longest key this server accepts.
@@ -204,7 +208,8 @@ pub trait SecurityAccess {
     /// Never called for an already-unlocked level: Figure I.1 transition 7 fixes that
     /// answer as an all-zero seed, and this crate supplies it, because it knows what is
     /// unlocked and the application does not. So the seed written here must not be all
-    /// zero: clause 10.4.1 forbids that for a locked level.
+    /// zero: clause 10.4.1 forbids that for a locked level, and a debug build panics on
+    /// one.
     ///
     /// Whether a repeated `requestSeed` gets the same seed is this method's to decide
     /// (Table I.1 `Static_Seed`, vehicle-manufacturer specific). A static seed is returned

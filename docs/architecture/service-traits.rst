@@ -531,7 +531,7 @@ Protocol state
    something the standard does not.
 
    *The zero seed.* A ``requestSeed`` for a level already unlocked is answered positively
-   with a seed of zero, and clause 10.4.2 adds that a server "shall never send an all zero
+   with a seed of zero, and clause 10.4.1 adds that a server "shall never send an all zero
    seed for a given security level that is currently locked". Clients use this to probe lock
    state, so an application that returned a real seed would break a client that is reading
    the standard correctly.

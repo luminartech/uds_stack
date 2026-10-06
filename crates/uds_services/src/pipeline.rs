@@ -732,6 +732,12 @@ async fn request_seed<A: SecurityAccess>(
         return Ok(());
     }
     services.seed(level, record, out).await?;
+    debug_assert!(
+        out.written_bytes()
+            .get(2..)
+            .is_none_or(|seed| seed.is_empty() || seed.iter().any(|&byte| byte != 0)),
+        "SecurityAccess::seed wrote an all-zero seed for a locked level (clause 10.4.1)"
+    );
     state.seed_sent(level);
     Ok(())
 }
