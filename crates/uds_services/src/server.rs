@@ -604,7 +604,7 @@ async fn serve<
                 // UDSSVC_ARCH_0009 rule 3 — kept for `settle`, which runs once the
                 // handler has finished. Never cleared: one accepted 0x78 is enough.
                 pending_sent |= o.sent_pending;
-                owed = o.owed;
+                owed |= o.owed;
                 deferred = deferred.merge(o.deferred);
             }
             Either::Right(Ok(TransportEvent::DataConf { ai, result })) => {
