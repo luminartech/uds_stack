@@ -728,10 +728,6 @@ ships. It has been replaced rather than amended.
 
 ### 9.2 Design gaps in this crate
 
-- **No clock.** `UdsTransport::now` is unimplemented: `DiagnosticEntity`
-  reads its `deadline_ms` against its own monotonic clock but offers no way
-  to read that clock, and the choice between asking the entity for it and
-  taking a clock parameter is open.
 - **REQ 7.9 is applied to every positive `DiagnosticSessionControl`
   response.** The requirement is conditional — the close follows a positive
   response "if the TCP connection is disconnected due to a session change", and

@@ -2,10 +2,16 @@
 //! sequence of tester actions.
 //!
 //! Copied from `simple_doip/tests/entity_mock.rs` and extended with what a transport
-//! test needs: a write that fails, a close that is cancelled once, and an unmodelled
-//! payload.
+//! test needs: a write that fails, a close that is cancelled once, an unmodelled
+//! payload, and time. Time is `embassy-time`'s mock driver, the clock
+//! `simple_doip::service`'s deadlines are on: an idle entity runs the clock to the
+//! caller's deadline, and with no deadline has nothing left to do and says so.
 
 use std::collections::VecDeque;
+use std::sync::{Mutex, MutexGuard, PoisonError};
+
+use embassy_time::{Duration, Instant, MockDriver};
+use uds_session::Timestamp;
 
 use simple_doip::LogicalAddress;
 use simple_doip::TaType;
@@ -21,6 +27,10 @@ pub enum Tester {
     SendsUnmodelled(LogicalAddress, u16, Vec<u8>),
     Leaves(LogicalAddress),
 }
+
+/// The script is spent and nothing is due: a run is over.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Exhausted;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Wire {
@@ -40,6 +50,8 @@ pub struct MockEntity<const MCTS: usize> {
     table: [Option<Slot>; MCTS],
     confirms: VecDeque<(LogicalAddress, TaType, DoIpResult)>,
     pub wire: Vec<Wire>,
+    /// Every PDU `request` accepted, whether or not a connection carried it.
+    pub requested: Vec<Vec<u8>>,
     /// The next write fails with this result instead of reaching the wire.
     pub fail_next_write: Option<DoIpResult>,
     /// The next `close` yields once before acting, so a caller can drop it unfinished.
@@ -55,6 +67,7 @@ impl<const MCTS: usize> MockEntity<MCTS> {
             table: core::array::from_fn(|_| None),
             confirms: VecDeque::new(),
             wire: Vec::new(),
+            requested: Vec::new(),
             fail_next_write: None,
             close_yields: false,
             confirms_last: false,
@@ -119,7 +132,7 @@ impl Future for YieldOnce {
     reason = "the mock has no sockets, so only a yielding close ever waits"
 )]
 impl<const MCTS: usize> DiagnosticEntity for MockEntity<MCTS> {
-    type Error = core::convert::Infallible;
+    type Error = Exhausted;
 
     async fn request(
         &mut self,
@@ -127,6 +140,7 @@ impl<const MCTS: usize> DiagnosticEntity for MockEntity<MCTS> {
         ta_type: TaType,
         pdu: &[u8],
     ) -> Result<(), Self::Error> {
+        self.requested.push(pdu.to_vec());
         match self.slot_of(ta) {
             Some(index) => self.table[index]
                 .as_mut()
@@ -141,7 +155,7 @@ impl<const MCTS: usize> DiagnosticEntity for MockEntity<MCTS> {
     async fn next_event<'b>(
         &mut self,
         buf: &'b mut [u8],
-        _deadline_ms: Option<u32>,
+        deadline_ms: Option<u32>,
     ) -> Result<EntityEvent<'b>, Self::Error> {
         for index in 0..MCTS {
             self.flush(index);
@@ -204,7 +218,13 @@ impl<const MCTS: usize> DiagnosticEntity for MockEntity<MCTS> {
                 }
             }
         }
-        Ok(self.confirm().unwrap_or(EntityEvent::Deadline))
+        if let Some(confirm) = self.confirm() {
+            return Ok(confirm);
+        }
+        let deadline = deadline_ms.ok_or(Exhausted)?;
+        let wait = now().until(Timestamp(deadline));
+        MockDriver::get().advance(Duration::from_millis(u64::from(wait)));
+        Ok(EntityEvent::Deadline)
     }
 
     async fn close(&mut self, connection: ConnectionId) -> Result<(), Self::Error> {
@@ -219,6 +239,21 @@ impl<const MCTS: usize> DiagnosticEntity for MockEntity<MCTS> {
         }
         Ok(())
     }
+}
+
+/// The clock, as `UdsTransport::now` reads it.
+pub fn now() -> Timestamp {
+    let [b0, b1, b2, b3, ..] = Instant::now().as_millis().to_le_bytes();
+    Timestamp(u32::from_le_bytes([b0, b1, b2, b3]))
+}
+
+/// The mock clock, reset to zero and held for one test: it is global, and the tests in
+/// one binary run in parallel.
+pub fn exclusive_clock() -> MutexGuard<'static, ()> {
+    static CLOCK: Mutex<()> = Mutex::new(());
+    let guard = CLOCK.lock().unwrap_or_else(PoisonError::into_inner);
+    MockDriver::get().reset();
+    guard
 }
 
 /// Poll to completion with a no-op waker; every future here is ready within a bounded

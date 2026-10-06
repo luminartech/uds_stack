@@ -36,6 +36,17 @@ uds_services = { workspace = true }
 
 thiserror = { workspace = true }
 
+# The clock UdsTransport::now reads, and the one simple_doip::service's deadlines are
+# on, so a deadline computed above means the same instant to the entity below. A time
+# abstraction rather than a runtime: it names no executor, and the integrator links
+# the time driver.
+embassy-time = { workspace = true }
+
+[dev-dependencies]
+# A deterministic clock for the tests, and the critical section its driver locks.
+embassy-time = { workspace = true, features = ["mock-driver"] }
+critical-section = { workspace = true, features = ["std"] }
+
 [features]
 # No runtime is named anywhere. An `async fn` implies neither std nor an
 # executor, so the default build is no_std and a bare-metal target — AURIX

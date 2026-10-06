@@ -9,12 +9,12 @@
     reason = "test harness: scripts are fixed and futures complete in bounded polls"
 )]
 
-#[allow(dead_code, reason = "shared with end_to_end.rs, which uses all of it")]
+#[allow(dead_code, reason = "each test binary uses part of the shared mock")]
 mod support;
 
 use simple_doip::LogicalAddress;
 use simple_doip::service::{ConnectionId, DoIpResult};
-use support::{MockEntity, TESTER, Tester, Wire, block_on, poll_once_and_drop};
+use support::{Exhausted, MockEntity, TESTER, Tester, Wire, block_on, poll_once_and_drop};
 use uds_on_ip::profile::bench_reloads;
 use uds_on_ip::{DoIpTransport, Error};
 use uds_services::{
@@ -370,5 +370,12 @@ fn a_remote_message_type_is_refused_before_the_entity() {
     };
     let error = block_on(t.t_data_req(remote, &[0x62], AfterSend::Continue)).unwrap_err();
     assert!(matches!(error, Error::Mapping(_)), "{error:?}");
-    assert_eq!(next(&mut t), TransportEvent::Deadline);
+    let mut buffer = [0u8; 16];
+    assert!(
+        matches!(
+            block_on(t.next_event(&mut buffer, None)),
+            Err(Error::Entity(Exhausted))
+        ),
+        "no confirmation follows a refused request"
+    );
 }

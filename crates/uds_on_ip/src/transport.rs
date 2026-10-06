@@ -52,9 +52,11 @@ use uds_session::{Ai, Reloads, SResult, Timestamp};
 /// `&'static mut` once, as `uds_services::Server::new` shows. Where anything
 /// else must reach it too — an interrupt handler, a second task — it lives in a
 /// `critical_section::Mutex<core::cell::RefCell<..>>`, and the integrator
-/// supplies a `critical-section` implementation for the target. An entity whose
-/// timers run on `embassy-time`, as `simple_doip`'s `connection` feature does,
-/// also needs the integrator's time driver and timer queue.
+/// supplies a `critical-section` implementation for the target.
+///
+/// Time is `embassy-time`'s, read by this transport and by the entity alike, so
+/// the integrator links one `embassy-time` driver for the target — and, for an
+/// entity that waits on `embassy-time` timers, a timer queue.
 pub struct DoIpTransport<E, const MCTS: usize = 1> {
     entity: E,
     reloads: Reloads,
@@ -341,15 +343,12 @@ impl<E: DiagnosticEntity, const MCTS: usize> UdsTransport for DoIpTransport<E, M
         self.reloads
     }
 
-    /// The current time.
-    #[expect(
-        clippy::todo,
-        reason = "unwritten body; the allow is the record that it is outstanding"
-    )]
+    /// `embassy-time`'s clock in milliseconds, truncated to 32 bits: the clock
+    /// [`simple_doip::service`]'s deadlines are on, so a deadline the session
+    /// layer computes from this reaches the entity unconverted.
     fn now(&self) -> Timestamp {
-        todo!(
-            "the clock is the W5 checkpoint: DiagnosticEntity::now_ms or a clock parameter"
-        )
+        let [b0, b1, b2, b3, ..] = embassy_time::Instant::now().as_millis().to_le_bytes();
+        Timestamp(u32::from_le_bytes([b0, b1, b2, b3]))
     }
 }
 
