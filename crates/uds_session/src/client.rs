@@ -698,16 +698,17 @@ impl<K: KeepAliveMode, const PHYS: usize, const FUNC: usize, const R: usize>
             let Some(p) = slot.channel.as_mut() else {
                 continue;
             };
+            if K::expire_channel(&mut p.keep_alive, now) {
+                slot.keep_alive_due = Some(PhysicalChannelId(p.core.id)); // UDSS_LLR_0162
+            }
             let class = p.core.request.map(|r| r.class);
             slot.timed_out = p.core.expire(now);
             if slot.timed_out.is_some() && matches!(class, Some(ClientTx::KeepAlive { .. }))
             {
-                // UDSS_LLR_0161, fifth bullet
+                // UDSS_LLR_0161, fifth bullet; UDSS_LLR_0079 leaves the restart to the
+                // next timestamp
                 let site = Site::Physical(&mut p.keep_alive);
                 self.keep_alive.on(now, site, Event::KeepAliveWindowExpired);
-            }
-            if K::expire_channel(&mut p.keep_alive, now) {
-                slot.keep_alive_due = Some(PhysicalChannelId(p.core.id)); // UDSS_LLR_0162
             }
         }
         for slot in &mut self.functional {

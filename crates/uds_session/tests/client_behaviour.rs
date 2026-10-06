@@ -1978,6 +1978,35 @@ mod physical_keep_alive {
         assert_eq!(c.next_deadline(), Some(Timestamp(4_052)));
     }
 
+    /// ``UDSS_LLR_0079`` — the `tS3_Client` that expiry starts falls due no earlier than
+    /// the next timestamp, even loaded with zero.
+    #[test]
+    fn a_keep_alive_restarted_by_an_expiry_waits_for_the_next_timestamp() {
+        let mut c = phys_tester();
+        let id = open(&mut c, ECU, 0);
+        exchange(
+            &mut c,
+            Timestamp(0),
+            phys(ECU),
+            select(SessionSelection::NonDefault),
+        );
+        assert_eq!(tick(&mut c, 1), only(due(id)));
+        send(
+            &mut c,
+            60,
+            ClientTx::KeepAlive {
+                expected: ExpectedResponses::Exactly(NonZeroU16::MIN),
+            },
+        );
+        confirm(&mut c, 60, SResult::Ok);
+        assert_eq!(
+            tick(&mut c, 111),
+            only(timeout(phys(ECU), ChannelReload::Default))
+        );
+        assert_eq!(c.next_deadline(), Some(Timestamp(111)));
+        assert_eq!(tick(&mut c, 112), only(due(id)));
+    }
+
     /// ``UDSS_LLR_0161`` (fifth bullet) — a lost response to anything else does not.
     #[test]
     fn a_lost_ordinary_response_does_not() {
