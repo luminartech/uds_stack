@@ -16,6 +16,9 @@ build_dir := "docs/_build"
 # stands in for AURIX TC4x, which rustup does not ship: no std, no alloc by default.
 embedded_target := "thumbv7em-none-eabihf"
 
+# The target CI's Miri job runs on; see `miri`.
+miri_target := "x86_64-unknown-linux-gnu"
+
 [doc("Show the available recipes")]
 default:
     @just --list
@@ -124,6 +127,22 @@ embedded:
     cargo build -p uds_on_ip    --target {{ embedded_target }} --no-default-features
     cargo build -p uds_protocol --target {{ embedded_target }} --no-default-features --features alloc
     cargo build -p uds_on_ip    --target {{ embedded_target }} --no-default-features --features alloc
+
+# CI's Miri job, run as rust-ci.yml runs it: default members and features, with proptest
+# told not to write regression files from inside the interpreter, which has no filesystem
+# access. Plain `cargo test` passes a leak or an out-of-bounds read that Miri fails, so a
+# change that only `check-all` has seen can still fail CI here. Not part of `check-all`:
+# it needs a nightly toolchain and takes several minutes.
+#
+# The target is CI's, on any host: Miri interprets rather than runs, so it needs no linker
+# for it, and a macOS host target would fail on tokio's `kqueue`, which Miri does not
+# emulate. Linux's `epoll` it does.
+[doc("Run the test suite under Miri, as CI does")]
+miri:
+    rustup toolchain install nightly --component miri --profile minimal --no-self-update
+    PROPTEST_DISABLE_FAILURE_PERSISTENCE=1 \
+        MIRIFLAGS="-Zmiri-env-forward=PROPTEST_DISABLE_FAILURE_PERSISTENCE" \
+        cargo +nightly miri test --target {{ miri_target }}
 
 # A guard rail is only verified by watching it fail, so each check in validate_needs.py is
 # demonstrated stopping something.
