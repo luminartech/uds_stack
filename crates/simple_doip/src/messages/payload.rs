@@ -1,7 +1,7 @@
 use crate::messages::{
-    AliveCheckResponse, DiagnosticMessage, DiagnosticMessageAck, DiagnosticPowerModeCode,
-    EntityStatusResponse, MessageError, PayloadType, RoutingActivationResponse,
-    VehicleIdentificationResponse,
+    AliveCheckResponse, DiagnosticMessage, DiagnosticMessageAck, DiagnosticMessageNack,
+    DiagnosticPowerModeCode, EntityStatusResponse, MessageError, PayloadType,
+    RoutingActivationResponse, VehicleIdentificationResponse,
 };
 
 use super::traits::{Decode, Encode};
@@ -26,22 +26,13 @@ pub enum Payload<'a> {
     /// UDS/diagnostic payload between tester and ECU, addressed by source and
     /// target logical address.
     DiagnosticMessage(DiagnosticMessage<'a>),
-    /// Acknowledgement of a diagnostic message. Carries either a positive or a negative
-    /// acknowledgement, determined by its [`ack_code`](DiagnosticMessageAck::ack_code) (see
-    /// [`DiagnosticAckCode::is_negative_ack`](crate::messages::DiagnosticAckCode::is_negative_ack)).
-    ///
-    /// # Known limitation
-    /// [`Message::diagnostic_message_ack`](crate::messages::Message::diagnostic_message_ack)
-    /// and its owned counterpart currently stamp the *positive* payload type
-    /// (`PayloadType::DiagnosticMessagePositiveAcknowledge`, 0x8002) into the
-    /// header regardless of the ack code, so a negative code is emitted under a
-    /// positive payload type. This is a known open issue deferred to a follow-up
-    /// change; do not rely on the header's payload type matching the ack code.
+    /// Positive acknowledgement of a diagnostic message
+    /// ([`PayloadType::DiagnosticMessagePositiveAcknowledge`]).
     DiagnosticMessageAck(DiagnosticMessageAck<'a>),
     /// Negative acknowledgement of a diagnostic message
-    /// (`PayloadType::DiagnosticMessageNegativeAcknowledge`, 0x8003): the message
-    /// was rejected (e.g. unknown target address, routing not activated).
-    DiagnosticMessageNack,
+    /// ([`PayloadType::DiagnosticMessageNegativeAcknowledge`]): it was rejected, and
+    /// why.
+    DiagnosticMessageNack(DiagnosticMessageNack<'a>),
     /// Request for the `DoIP` entity's status (`PayloadType::DoIPEntityStatusRequest`,
     /// 0x4001): how many diagnostic sockets are open versus the maximum supported.
     /// Carries no data.
@@ -102,8 +93,9 @@ pub enum OwnedPayload {
     /// Owned mirror of [`Payload::DiagnosticMessageAck`]; owns its trailing
     /// previous-diagnostic-data bytes instead of borrowing from an RX buffer.
     DiagnosticMessageAck(super::OwnedDiagnosticMessageAck),
-    /// Owned mirror of [`Payload::DiagnosticMessageNack`].
-    DiagnosticMessageNack,
+    /// Owned mirror of [`Payload::DiagnosticMessageNack`]; owns its trailing
+    /// previous-diagnostic-data bytes instead of borrowing from an RX buffer.
+    DiagnosticMessageNack(super::OwnedDiagnosticMessageNack),
     /// Owned mirror of [`Payload::EntityStatusRequest`].
     EntityStatusRequest,
     /// Owned mirror of [`Payload::EntityStatusResponse`].
@@ -141,7 +133,9 @@ impl Payload<'_> {
             Payload::DiagnosticMessageAck(ack) => {
                 OwnedPayload::DiagnosticMessageAck(ack.to_owned_message())
             }
-            Payload::DiagnosticMessageNack => OwnedPayload::DiagnosticMessageNack,
+            Payload::DiagnosticMessageNack(nack) => {
+                OwnedPayload::DiagnosticMessageNack(nack.to_owned_message())
+            }
             Payload::EntityStatusRequest => OwnedPayload::EntityStatusRequest,
             Payload::EntityStatusResponse(response) => {
                 OwnedPayload::EntityStatusResponse(*response)
@@ -185,7 +179,9 @@ impl OwnedPayload {
             OwnedPayload::DiagnosticMessageAck(ack) => {
                 Payload::DiagnosticMessageAck(ack.as_ref())
             }
-            OwnedPayload::DiagnosticMessageNack => Payload::DiagnosticMessageNack,
+            OwnedPayload::DiagnosticMessageNack(nack) => {
+                Payload::DiagnosticMessageNack(nack.as_ref())
+            }
             OwnedPayload::EntityStatusRequest => Payload::EntityStatusRequest,
             OwnedPayload::EntityStatusResponse(response) => {
                 Payload::EntityStatusResponse(*response)
@@ -252,7 +248,7 @@ impl<'a> Payload<'a> {
                 Self::DiagnosticMessageAck(DiagnosticMessageAck::decode(buf)?.0)
             }
             PayloadType::DiagnosticMessageNegativeAcknowledge => {
-                Self::DiagnosticMessageNack
+                Self::DiagnosticMessageNack(DiagnosticMessageNack::decode(buf)?.0)
             }
             // `DiagnosticPowerModeInfoRequest` has no dedicated `Payload` variant, and the
             // reserved ranges are not decodable. Return an error rather than panicking on
@@ -273,7 +269,6 @@ impl Encode for Payload<'_> {
         Ok(match self {
             Payload::DoIPNack(nack) => nack.encoded_size()?,
             Payload::AliveCheckRequest
-            | Payload::DiagnosticMessageNack
             | Payload::EntityStatusRequest
             | Payload::VehicleIdentificationRequest => 0,
             Payload::AliveCheckResponse(alive_check_response) => {
@@ -284,6 +279,9 @@ impl Encode for Payload<'_> {
             }
             Payload::DiagnosticMessageAck(diagnostic_message_ack) => {
                 diagnostic_message_ack.encoded_size()?
+            }
+            Payload::DiagnosticMessageNack(diagnostic_message_nack) => {
+                diagnostic_message_nack.encoded_size()?
             }
             Payload::EntityStatusResponse(entity_status_response) => {
                 entity_status_response.encoded_size()?
@@ -316,7 +314,6 @@ impl Encode for Payload<'_> {
         Ok(match self {
             Payload::DoIPNack(nack) => nack.encode(writer)?,
             Payload::AliveCheckRequest
-            | Payload::DiagnosticMessageNack
             | Payload::EntityStatusRequest
             | Payload::VehicleIdentificationRequest => 0,
             Payload::AliveCheckResponse(alive_check_response) => {
@@ -327,6 +324,9 @@ impl Encode for Payload<'_> {
             }
             Payload::DiagnosticMessageAck(diagnostic_message_ack) => {
                 diagnostic_message_ack.encode(writer)?
+            }
+            Payload::DiagnosticMessageNack(diagnostic_message_nack) => {
+                diagnostic_message_nack.encode(writer)?
             }
             Payload::EntityStatusResponse(entity_status_response) => {
                 entity_status_response.encode(writer)?
@@ -374,6 +374,41 @@ mod tests {
         assert!(matches!(
             result,
             Err(MessageError::UnsupportedPayloadType(_))
+        ));
+    }
+
+    /// ISO 13400-2:2019 Tables 24 and 26 give the positive and negative
+    /// acknowledgements separate code tables, so the payload type alone says which
+    /// one arrived and its code is read against that type's table: `0x00` under
+    /// `0x8003` is a reserved negative code, and `0x03` under `0x8002` a reserved
+    /// positive one.
+    #[test]
+    fn the_payload_type_decides_whether_an_acknowledgement_is_negative() {
+        use crate::messages::{
+            DiagnosticAckCode, DiagnosticMessageAck, DiagnosticMessageNack,
+            DiagnosticNackCode,
+        };
+        let body = |code| [0x00, 0x01, 0x0E, 0x00, code];
+
+        assert!(matches!(
+            Payload::decode(
+                &body(0x00),
+                PayloadType::DiagnosticMessageNegativeAcknowledge
+            ),
+            Ok(Payload::DiagnosticMessageNack(DiagnosticMessageNack {
+                nack_code: DiagnosticNackCode::Reserved(0x00),
+                ..
+            }))
+        ));
+        assert!(matches!(
+            Payload::decode(
+                &body(0x03),
+                PayloadType::DiagnosticMessagePositiveAcknowledge
+            ),
+            Ok(Payload::DiagnosticMessageAck(DiagnosticMessageAck {
+                ack_code: DiagnosticAckCode::Reserved(0x03),
+                ..
+            }))
         ));
     }
 

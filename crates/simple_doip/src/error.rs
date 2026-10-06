@@ -1,7 +1,7 @@
 use crate::{
     LogicalAddress,
     messages::{
-        DiagnosticAckCode, MessageError, NackCode, PayloadType,
+        DiagnosticNackCode, MessageError, NackCode, PayloadType,
         RoutingActivationResponseCode,
     },
 };
@@ -115,9 +115,9 @@ pub enum Error {
     /// is displaced by the new one rather than being dropped silently.
     #[error("Request superseded by a newer request on the same client")]
     RequestSuperseded,
-    /// The `DoIP` entity rejected a diagnostic message with a negative
-    /// `DiagnosticMessageAck`; the contained [`DiagnosticAckCode`] identifies the
-    /// reported reason.
+    /// The `DoIP` entity rejected a diagnostic message with a
+    /// [`DiagnosticMessageNack`](crate::messages::DiagnosticMessageNack); the
+    /// contained [`DiagnosticNackCode`] identifies the reported reason.
     #[error("Diagnostic message NACK: {0:?}")]
-    DiagnosticMessageNack(DiagnosticAckCode),
+    DiagnosticMessageNack(DiagnosticNackCode),
 }

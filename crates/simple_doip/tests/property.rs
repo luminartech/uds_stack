@@ -37,11 +37,11 @@ use simple_doip::{
     LogicalAddress,
     messages::{
         ActivationTypeCode, AliveCheckResponse, Decode, DiagnosticAckCode,
-        DiagnosticMessage, DiagnosticMessageAck, DiagnosticPowerModeCode, Encode,
-        EntityStatusNodeType, EntityStatusResponse, FurtherActionRequired, Header, Message,
-        MessageError, NackCode, Payload, PayloadType, ProtocolVersion,
-        RoutingActivationRequest, RoutingActivationResponse, RoutingActivationResponseCode,
-        VehicleIdentificationResponse, VinGidSyncStatus,
+        DiagnosticMessage, DiagnosticMessageAck, DiagnosticMessageNack, DiagnosticNackCode,
+        DiagnosticPowerModeCode, Encode, EntityStatusNodeType, EntityStatusResponse,
+        FurtherActionRequired, Header, Message, MessageError, NackCode, Payload,
+        PayloadType, ProtocolVersion, RoutingActivationRequest, RoutingActivationResponse,
+        RoutingActivationResponseCode, VehicleIdentificationResponse, VinGidSyncStatus,
     },
 };
 
@@ -84,6 +84,7 @@ macro_rules! byte_code_roundtrip {
 byte_code_roundtrip!(prop_protocol_version_roundtrip, ProtocolVersion);
 byte_code_roundtrip!(prop_activation_type_roundtrip, ActivationTypeCode);
 byte_code_roundtrip!(prop_diagnostic_ack_code_roundtrip, DiagnosticAckCode);
+byte_code_roundtrip!(prop_diagnostic_nack_code_roundtrip, DiagnosticNackCode);
 byte_code_roundtrip!(prop_entity_node_type_roundtrip, EntityStatusNodeType);
 byte_code_roundtrip!(prop_further_action_roundtrip, FurtherActionRequired);
 byte_code_roundtrip!(prop_nack_code_roundtrip, NackCode);
@@ -174,6 +175,25 @@ proptest! {
         let mut buf = [0u8; 128];
         let bytes = encode_to(&value, &mut buf);
         let parsed = DiagnosticMessageAck::decode_exact(bytes).expect("decode failed");
+        prop_assert_eq!(value, parsed);
+    }
+
+    #[test]
+    fn prop_diagnostic_message_nack_roundtrip(
+        source in any::<u16>(),
+        target in any::<u16>(),
+        nack_code in any::<u8>().prop_map(DiagnosticNackCode::from),
+        previous in prop::collection::vec(any::<u8>(), 0..64),
+    ) {
+        let value = DiagnosticMessageNack {
+            source_address: LogicalAddress(source),
+            target_address: LogicalAddress(target),
+            nack_code,
+            previous_message_data: &previous,
+        };
+        let mut buf = [0u8; 128];
+        let bytes = encode_to(&value, &mut buf);
+        let parsed = DiagnosticMessageNack::decode_exact(bytes).expect("decode failed");
         prop_assert_eq!(value, parsed);
     }
 

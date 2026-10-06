@@ -38,8 +38,8 @@ use simple_doip::{
     connection::Connector,
     message_codec::MessageCodec,
     messages::{
-        ActivationTypeCode, DiagnosticAckCode, DiagnosticMessage, Encode, OwnedMessage,
-        OwnedPayload, ProtocolVersion, RoutingActivationRequest,
+        ActivationTypeCode, DiagnosticAckCode, DiagnosticMessage, DiagnosticNackCode,
+        Encode, OwnedMessage, OwnedPayload, ProtocolVersion, RoutingActivationRequest,
         RoutingActivationResponseCode,
     },
     server::{ResponseWriter, Server, ServerConnectionHandler},
@@ -95,7 +95,6 @@ async fn send_positive_ack(
             handler.protocol_version(),
             handler.get_logical_address(),
             message.source_address,
-            DiagnosticAckCode::RoutingConfirmationAck,
             message.user_data.to_vec(),
         ))
         .await
@@ -726,9 +725,9 @@ async fn routing_activation_denial_surfaces_as_error() {
 /// A [`ServerConnectionHandler`] that answers a routing activation request with a
 /// *negative* diagnostic message ack.
 ///
-/// A negative ack is deliberate: `client_inner`'s `DiagnosticMessageAck` arm returns
-/// early for a *positive* ack ("waiting for full response"), so only a negative ack
-/// falls through to the `is_response` guard where the mismatch becomes a real error.
+/// A negative ack is deliberate: `client_inner` returns early for a *positive* ack
+/// ("waiting for full response"), so only a negative ack falls through to the
+/// `is_response` guard where the mismatch becomes a real error.
 struct NackingRoutingHandler;
 
 #[async_trait]
@@ -753,15 +752,11 @@ impl ServerConnectionHandler for NackingRoutingHandler {
         &self,
         request: &RoutingActivationRequest,
     ) -> Result<OwnedMessage, Error> {
-        assert!(
-            DiagnosticAckCode::UnknownTargetAddress.is_negative_ack(),
-            "this test is only meaningful with a genuinely negative ack code"
-        );
-        Ok(OwnedMessage::diagnostic_message_ack(
+        Ok(OwnedMessage::diagnostic_message_nack(
             self.protocol_version(),
             self.get_logical_address(),
             request.source_address,
-            DiagnosticAckCode::UnknownTargetAddress,
+            DiagnosticNackCode::UnknownTargetAddress,
             Vec::new(),
         ))
     }
@@ -1232,10 +1227,6 @@ async fn handler_can_emit_ack_then_response() {
     let first = read_message(&mut reader).await;
     match first.payload {
         OwnedPayload::DiagnosticMessageAck(ref ack) => {
-            // Assert the code, not just the variant: the ack payload type is
-            // hardcoded positive regardless of the code (ARCHITECTURE §7.1), so
-            // a variant-only check would pass on a negative ack too and would
-            // depend on that bug staying exactly as it is.
             assert_eq!(ack.ack_code, DiagnosticAckCode::RoutingConfirmationAck);
         }
         other => panic!("expected DiagnosticMessageAck first, got {other:?}"),
@@ -1564,7 +1555,6 @@ async fn answer_one_request_then_hang_up(listener: TcpListener) {
             ProtocolVersion::V2012,
             SERVER_LOGICAL_ADDRESS,
             tester,
-            DiagnosticAckCode::RoutingConfirmationAck,
             diagnostic.user_data.clone(),
         ))
         .await

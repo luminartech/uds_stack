@@ -30,9 +30,10 @@ use automotive_wire_codec::SliceSink;
 use simple_doip::LogicalAddress;
 use simple_doip::messages::{
     ActivationTypeCode, AliveCheckResponse, DiagnosticAckCode, DiagnosticMessage,
-    DiagnosticMessageAck, DiagnosticPowerModeCode, Encode, EntityStatusNodeType,
-    EntityStatusResponse, FurtherActionRequired, Header, MessageError, NackCode,
-    PayloadType, ProtocolVersion, RoutingActivationRequest, RoutingActivationResponse,
+    DiagnosticMessageAck, DiagnosticMessageNack, DiagnosticNackCode,
+    DiagnosticPowerModeCode, Encode, EntityStatusNodeType, EntityStatusResponse,
+    FurtherActionRequired, Header, Message, MessageError, NackCode, PayloadType,
+    ProtocolVersion, RoutingActivationRequest, RoutingActivationResponse,
     RoutingActivationResponseCode, VehicleIdentificationResponse, VinGidSyncStatus,
 };
 
@@ -244,19 +245,19 @@ fn golden_diagnostic_message_ack() {
     );
     check(
         "diag_ack_out_of_memory",
-        &DiagnosticMessageAck {
+        &DiagnosticMessageNack {
             source_address: LogicalAddress(0x1000),
             target_address: LogicalAddress(0x0E00),
-            ack_code: DiagnosticAckCode::OutOfMemory,
+            nack_code: DiagnosticNackCode::OutOfMemory,
             previous_message_data: &[0x10u8, 0x02][..],
         },
     );
     check(
         "diag_ack_transport_error",
-        &DiagnosticMessageAck {
+        &DiagnosticMessageNack {
             source_address: LogicalAddress(0xFFFF),
             target_address: LogicalAddress(0x0001),
-            ack_code: DiagnosticAckCode::TransportProtocolError,
+            nack_code: DiagnosticNackCode::TransportProtocolError,
             previous_message_data: &[0x3Eu8, 0x00, 0xAA][..],
         },
     );
@@ -401,6 +402,33 @@ fn golden_full_frames() {
             reserved_oem: [0, 0, 0, 0],
             oem_specific: Some([0xDE, 0xAD, 0xBE, 0xEF]),
         },
+    );
+}
+
+/// The diagnostic message acknowledgement constructors stamp the payload type of their
+/// own kind: ISO 13400-2:2019 Table 17 gives the positive acknowledgement `0x8002` and
+/// the negative `0x8003`, with the Table 23 and Table 25 bodies. The fixtures were
+/// written by hand from those tables, not captured from the encoder.
+#[test]
+fn golden_diagnostic_message_ack_frames() {
+    check(
+        "frame_diag_ack_positive",
+        &Message::diagnostic_message_ack(
+            ProtocolVersion::V2012,
+            LogicalAddress(0x0001),
+            LogicalAddress(0x0E00),
+            &[0x10u8, 0x03][..],
+        ),
+    );
+    check(
+        "frame_diag_nack_unknown_ta",
+        &Message::diagnostic_message_nack(
+            ProtocolVersion::V2012,
+            LogicalAddress(0x0001),
+            LogicalAddress(0x0E00),
+            DiagnosticNackCode::UnknownTargetAddress,
+            &[0x10u8, 0x03][..],
+        ),
     );
 }
 

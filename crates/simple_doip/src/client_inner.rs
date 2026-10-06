@@ -422,44 +422,32 @@ where
                             let _ = socket.send(alive_check_response).await;
                         }
                     }
-                    OwnedPayload::DiagnosticMessageAck(ref ack) => {
+                    OwnedPayload::DiagnosticMessageAck(_) => {
                         // Handle AwaitAck - complete immediately on ACK
                         if let Some(response) = self.take_await_ack() {
                             self.await_response_deadline = None;
-                            if ack.ack_code.is_positive_ack() {
-                                trace!("Received positive ACK, completing send");
-                                let _ = response.send(Ok(()));
-                            } else {
-                                trace!("Received negative ACK: {:?}", ack.ack_code);
-                                let _ = response
-                                    .send(Err(Error::DiagnosticMessageNack(ack.ack_code)));
-                            }
+                            trace!("Received positive ACK, completing send");
+                            let _ = response.send(Ok(()));
                             return false;
                         }
                         // For AwaitResponse, continue waiting for DiagnosticMessage
-                        if ack.ack_code.is_positive_ack() {
-                            trace!(
-                                "Received Diagnostic Message Ack, waiting for full response"
-                            );
+                        trace!(
+                            "Received Diagnostic Message Ack, waiting for full response"
+                        );
+                        return false;
+                    }
+                    OwnedPayload::DiagnosticMessageNack(ref nack) => {
+                        if let Some(response) = self.take_await_ack() {
+                            self.await_response_deadline = None;
+                            trace!("Received negative ACK: {:?}", nack.nack_code);
+                            let _ = response
+                                .send(Err(Error::DiagnosticMessageNack(nack.nack_code)));
                             return false;
                         }
-                        // Negative ACK while an AwaitResponse is pending. Despite
-                        // appearances this does NOT become an error today: for a
-                        // `ReceiveDiagnosticResponse` the pending request message is
-                        // `OwnedMessage::default()` (payload type `DiagnosticMessage`), and
-                        // `Message::is_response` accepts
-                        // `DiagnosticMessagePositiveAcknowledge` for it. Negative acks are
-                        // stamped `0x8002` too, because
-                        // `OwnedMessage::diagnostic_message_ack` hardcodes the positive
-                        // payload type - so the `is_response` guard below passes and the
+                        // Negative ACK while an AwaitResponse is pending. This does NOT
+                        // become an error: `Message::is_response` accepts both
+                        // acknowledgement payload types for a `DiagnosticMessage`, so the
                         // caller receives `Ok(..)` carrying a rejection.
-                        //
-                        // ENTANGLEMENT: this is downstream of the deliberately-deferred
-                        // `0x8002` hardcode (see ARCHITECTURE.md section 7.1). Whoever
-                        // fixes that hardcode changes this path: once negative acks carry
-                        // `0x8003`, `is_response` stops matching and the caller starts
-                        // seeing an error instead. Decide deliberately what a rejected
-                        // diagnostic message should surface as when making that change.
                     }
                     _ => trace!("Received message: {received_message:?}"),
                 }

@@ -41,6 +41,10 @@
 //!
 //! ## Where to start
 //!
+//! - **Writing against the connection service:** [`service`] holds ISO 13400-2's own
+//!   service vocabulary, the [`service::DiagnosticConnection`] trait for one
+//!   connection and the [`service::DiagnosticEntity`] trait for a whole entity, with
+//!   no I/O.
 //! - **Bare metal / sans-io:** [`try_frame`] delimits a frame from a byte buffer without
 //!   owning any I/O resource; [`messages::Payload::decode`] then interprets the body.
 //!   See `examples/bare_metal_codec.rs`.
@@ -64,8 +68,9 @@ extern crate std;
 pub mod bare_metal_entity;
 pub mod logical_address;
 pub mod messages;
+pub mod service;
 pub mod wire;
-pub use logical_address::LogicalAddress;
+pub use logical_address::{LogicalAddress, TaType};
 mod framer;
 pub use framer::{RawFrame, try_frame};
 
@@ -105,20 +110,6 @@ pub const UDP_DISCOVERY_PORT: u16 = 13400;
 /// TLS support yet.
 pub const TCP_TLS_PORT: u16 = 3496;
 
-/// An example logical address constant of uncertain provenance.
-///
-/// Despite its name, this value is used exactly once in this repository — by
-/// `examples/simple_client.rs`, which assigns it to `server_logical_address`,
-/// i.e. the **ECU** side rather than the tester side. No test references it.
-///
-/// This value is **not** mandated by ISO 13400-2 — a tester's logical address is
-/// assigned per-deployment from the range
-/// [`LogicalAddress::MIN_CLIENT_ADDRESS`]..=[`LogicalAddress::MAX_CLIENT_ADDRESS`]
-/// (`0x0E00`-`0x0FFF`), and `0xE400` falls outside that range, so it is
-/// inconsistent with the tester role its name implies. Callers should supply
-/// their own deployment-specific addresses rather than relying on this constant.
-pub const TESTER_LOGICAL_ADDRESS: LogicalAddress = LogicalAddress(0xE400);
-
 // DoIP timing and communication parameters
 
 /// Initial inactivity timeout in seconds for TCP connections directly after a `TCP_DATA`
@@ -134,9 +125,9 @@ pub const TCP_TIMEOUT_INITIAL_INACTIVITY: Duration = Duration::from_secs(2);
 /// entity
 pub const TCP_TIMEOUT_GENERAL_INACTIVITY: Duration = Duration::from_secs(300);
 
-/// Alive check for the maximum amount of time an entity waits for an alive check response
-/// after having made an alive check request. Timeout is 5 seconds.
-pub const TCP_TIMEOUT_ALIVE_CHECK: Duration = Duration::from_secs(5);
+/// `T_TCP_Alive_Check`: how long an entity waits for an alive check response after
+/// writing an alive check request on a `TCP_DATA` socket (ISO 13400-2:2019 Table 12).
+pub const TCP_TIMEOUT_ALIVE_CHECK: Duration = Duration::from_millis(500);
 
 /// Time between receipt of the last byte of a `DoIP` Diagnostic Message and transmission of
 /// the ACK or NACK.
@@ -154,3 +145,14 @@ pub const TIMEOUT_DIAGNOSTIC_MESSAGE_INITIAL: Duration = Duration::from_millis(5
 ///
 /// Ref: `A_DoIP_Diagnostic_Message`
 pub const TIMEOUT_DIAGNOSTIC_MESSAGE_RESPONSE: Duration = Duration::from_secs(2);
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// ISO 13400-2:2019 Table 12: `T_TCP_Alive_Check` times out after 500 ms.
+    #[test]
+    fn alive_check_timeout_is_table_12s() {
+        assert_eq!(TCP_TIMEOUT_ALIVE_CHECK, Duration::from_millis(500));
+    }
+}

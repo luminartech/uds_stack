@@ -19,7 +19,7 @@ use simple_doip::{
     Error,
     logical_address::LogicalAddress,
     messages::{
-        DiagnosticAckCode, DiagnosticMessage, OwnedMessage, RoutingActivationRequest,
+        DiagnosticMessage, OwnedMessage, RoutingActivationRequest,
         RoutingActivationResponseCode,
     },
     server::{ResponseWriter, Server, ServerConnectionHandler},
@@ -84,7 +84,6 @@ impl ServerConnectionHandler for ServerHandler {
                 self.protocol_version(),
                 message.target_address, // We are the target, so we answer as source
                 message.source_address, // ...back to the tester that asked
-                DiagnosticAckCode::RoutingConfirmationAck,
                 message.user_data.to_vec(),
             ))
             .await?;

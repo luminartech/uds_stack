@@ -442,12 +442,10 @@ attach to it, and turns a negative acknowledgement into a send *error* rather
 than a negative confirm. A session layer cannot then distinguish "the peer
 refused the message" from "the socket broke".
 
-The acknowledgement's outcome is read from its **ack code**, never from its
-payload type: `simple_doip`'s `diagnostic_message_ack` stamps the positive
-payload type into the header whatever the code says, so reading the type would
-report a rejection as an acceptance and start `tP_Client` for a message the
-entity never accepted. Pinned by
-`mapping::tests::a_rejection_is_stamped_with_the_positive_payload_type`.
+The acknowledgement's outcome is which acknowledgement arrived. ISO 13400-2:2019
+Table 17 gives the positive and negative acknowledgements their own payload
+types, and Tables 24 and 26 their own codes, so `simple_doip` decodes them to
+separate variants and a rejection cannot be read as an acceptance.
 
 An NRC `0x78` arriving at step 11 reloads the timer with the enhanced parameter
 rather than completing the request. That decision is `uds_session`'s; this crate
@@ -736,14 +734,6 @@ ships. It has been replaced rather than amended.
   invariant 2. The connection service must be reachable without that callback
   also being in play, or a server has two places to answer a request and no rule
   saying which wins.
-- **`0x8003` loses its body.** `Payload::decode` maps a received diagnostic
-  message negative acknowledgement to a fieldless variant, discarding the NACK
-  code, both addresses and the echoed request
-  (`simple_doip/src/messages/payload.rs`). Every rejection therefore reaches a
-  tester as "the transport refused it", where ISO 13400-2 distinguishes an
-  unknown target address from routing not activated from an out-of-memory
-  entity. This one cannot be routed around from here: the bytes are gone before
-  this crate sees them.
 
 ### 9.2 Design gaps in this crate
 

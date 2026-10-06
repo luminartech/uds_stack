@@ -23,9 +23,9 @@
 //! All methods must be called from a single context (no internal locking).
 
 use crate::messages::{
-    ActivationTypeCode, Decode, DiagnosticAckCode, DiagnosticMessage, Encode,
-    EntityStatusNodeType, EntityStatusResponse, FurtherActionRequired, Header, Message,
-    NackCode, Payload, PayloadType, ProtocolVersion, RoutingActivationRequest,
+    ActivationTypeCode, Decode, DiagnosticAckCode, DiagnosticMessage, DiagnosticNackCode,
+    Encode, EntityStatusNodeType, EntityStatusResponse, FurtherActionRequired, Header,
+    Message, NackCode, Payload, PayloadType, ProtocolVersion, RoutingActivationRequest,
     VehicleIdentificationResponse, VinGidSyncStatus,
 };
 use crate::{LogicalAddress, try_frame};
@@ -318,19 +318,32 @@ fn send_tcp_nack(cb: &Callbacks, tx: &mut [u8; TX_CAP], code: NackCode) {
     }
 }
 
-fn send_diag_ack(
-    s: &mut Session<'_>,
-    payload_type: PayloadType,
-    tester: u16,
-    code: DiagnosticAckCode,
-) {
+fn send_diag_ack(s: &mut Session<'_>, tester: u16) {
     let ack = crate::messages::DiagnosticMessageAck {
         source_address: LogicalAddress(s.own_address),
         target_address: LogicalAddress(tester),
-        ack_code: code,
+        ack_code: DiagnosticAckCode::RoutingConfirmationAck,
         previous_message_data: &[],
     };
-    if let Some(msg) = framed(payload_type, Payload::DiagnosticMessageAck(ack)) {
+    if let Some(msg) = framed(
+        PayloadType::DiagnosticMessagePositiveAcknowledge,
+        Payload::DiagnosticMessageAck(ack),
+    ) {
+        send_tcp_msg(&s.cb, s.tx_buf, &msg);
+    }
+}
+
+fn send_diag_nack(s: &mut Session<'_>, tester: u16, code: DiagnosticNackCode) {
+    let nack = crate::messages::DiagnosticMessageNack {
+        source_address: LogicalAddress(s.own_address),
+        target_address: LogicalAddress(tester),
+        nack_code: code,
+        previous_message_data: &[],
+    };
+    if let Some(msg) = framed(
+        PayloadType::DiagnosticMessageNegativeAcknowledge,
+        Payload::DiagnosticMessageNack(nack),
+    ) {
         send_tcp_msg(&s.cb, s.tx_buf, &msg);
     }
 }
@@ -385,39 +398,23 @@ fn handle_diagnostic_message(
     let Some(tester) = *s.active_tester else {
         // ISO 13400-2: a diagnostic message on a socket without routing
         // activation invalidates the connection.
-        send_diag_ack(
+        send_diag_nack(
             s,
-            PayloadType::DiagnosticMessageNegativeAcknowledge,
             dm.source_address.0,
-            DiagnosticAckCode::InvalidSourceAddress,
+            DiagnosticNackCode::InvalidSourceAddress,
         );
         return TcpVerdict::Close;
     };
     if dm.source_address.0 != tester {
-        send_diag_ack(
-            s,
-            PayloadType::DiagnosticMessageNegativeAcknowledge,
-            tester,
-            DiagnosticAckCode::InvalidSourceAddress,
-        );
+        send_diag_nack(s, tester, DiagnosticNackCode::InvalidSourceAddress);
         return TcpVerdict::Close;
     }
     if dm.target_address.0 != s.own_address {
-        send_diag_ack(
-            s,
-            PayloadType::DiagnosticMessageNegativeAcknowledge,
-            tester,
-            DiagnosticAckCode::UnknownTargetAddress,
-        );
+        send_diag_nack(s, tester, DiagnosticNackCode::UnknownTargetAddress);
         return TcpVerdict::KeepOpen;
     }
 
-    send_diag_ack(
-        s,
-        PayloadType::DiagnosticMessagePositiveAcknowledge,
-        tester,
-        DiagnosticAckCode::RoutingConfirmationAck,
-    );
+    send_diag_ack(s, tester);
 
     // `<= 0` means the dispatch produced no response; a negative return maps to
     // zero written bytes, which the guard below then skips.
