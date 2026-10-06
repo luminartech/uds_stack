@@ -7,9 +7,9 @@
 //! `end_to_end.rs`'s; these are the cases that need a fixture of their own.
 
 use uds_services::{
-    Address, Ai, DiagnosticSessionType as S, Mtype, NegativeResponseCode as Nrc, Reloads,
-    ResponseSink, SResult, ServerParams, SessionTiming, SessionTransition, Sink, TaType,
-    Timestamp, TransportEvent, UdsTransport, uds_server,
+    Address, AfterSend, Ai, DiagnosticSessionType as S, Mtype, NegativeResponseCode as Nrc,
+    Reloads, ResponseSink, SResult, ServerParams, SessionTiming, SessionTransition, Sink,
+    TaType, Timestamp, TransportEvent, UdsTransport, uds_server,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -58,13 +58,16 @@ impl uds_services::DiagnosticSessionControl for Ecu {
     fn supported_from(&self, _s: S, _active: S) -> bool {
         true
     }
+    fn leaves_running_software(&self, _s: S) -> bool {
+        false
+    }
     fn timing(&self, _s: S) -> SessionTiming {
         SessionTiming {
             p2_server_max_ms: 50,
             p2_star_server_max_10ms: 500,
         }
     }
-    fn on_transition(&mut self, _t: SessionTransition, _r: bool) {}
+    fn on_transition(&mut self, _t: SessionTransition, _entered: S, _r: bool) {}
 }
 
 /// A transport that confirms a transmission the server never made (``UDSS_LLR_0063``).
@@ -79,6 +82,7 @@ impl UdsTransport for Spurious {
         &mut self,
         _ai: Ai,
         _d: &[u8],
+        _after: AfterSend,
     ) -> impl core::future::Future<Output = Result<(), ()>> {
         core::future::ready(Ok(()))
     }
@@ -300,6 +304,7 @@ impl UdsTransport for Script {
         &mut self,
         ai: Ai,
         data: &[u8],
+        _after: AfterSend,
     ) -> impl core::future::Future<Output = Result<(), ()>> {
         // A frame that does not fit is recorded with no bytes, so a test comparing them
         // fails rather than passing on a truncation.
@@ -449,9 +454,8 @@ const POSITIVE: &[u8] = &[0x62, 0xF4, 0x0D, 0x40];
 /// tester sees only the final response.
 ///
 /// Here rather than in `end_to_end.rs`: that fixture's only slow handler is its
-/// `ReadDataByIdentifier`, whose 0x78 its other tests rely on, and the services it can
-/// set the constant false on (`SecurityAccess`, `TesterPresent`) have no stage that can
-/// pend.
+/// `ReadDataByIdentifier`, whose 0x78 its other tests rely on, and none of its other
+/// handlers pends.
 #[test]
 fn a_service_that_may_not_pend_gets_no_response_pending() {
     let mut server = SlowSrv::new(
@@ -772,6 +776,9 @@ impl uds_services::DiagnosticSessionControl for Timed {
     fn supported_from(&self, s: S, active: S) -> bool {
         !(s == S::ExtendedDiagnosticSession && active == S::ExtendedDiagnosticSession)
     }
+    fn leaves_running_software(&self, _s: S) -> bool {
+        false
+    }
     fn timing(&self, s: S) -> SessionTiming {
         match s {
             S::ExtendedDiagnosticSession => SessionTiming {
@@ -784,7 +791,7 @@ impl uds_services::DiagnosticSessionControl for Timed {
             },
         }
     }
-    fn on_transition(&mut self, _t: SessionTransition, _r: bool) {}
+    fn on_transition(&mut self, _t: SessionTransition, _entered: S, _r: bool) {}
 }
 
 uds_server! {

@@ -12,27 +12,51 @@
 
 use crate::services::SessionTransition;
 use crate::state::State;
+use crate::{Access, Responded, ResponseSink, Sessions, Unsettled};
 use crate::{
-    DataIdentifier, DiagnosticSessionControl, ReadDataByIdentifier, TesterPresent,
+    ClearDiagnosticInformation, CommunicationControl, ControlDtcSetting, DataIdentifier,
+    Delay, DiagnosticSessionControl, EcuReset, KeyVerdict, ReadDataByIdentifier,
+    ReadDtcInformation, RecordError, RoutineControl, RoutineIdentifier, SecurityAccess,
+    SecurityLevel, SecurityPolicy, TesterPresent, WriteDataByIdentifier,
 };
-use crate::{Responded, ResponseSink, Unsettled};
 use automotive_wire_codec::Sink;
+use uds_protocol::{
+    ClearDiagnosticInfoRequest, CommunicationControlRequest, CommunicationType,
+    ControlDtcSettingRequest, DiagnosticSessionControlRequest, EcuResetRequest,
+    ReadDataByIdentifierRequest, ReadDtcInfoRequest, RoutineControlRequest,
+    RoutineControlSubFunction, SecurityAccessRequest, WriteDataByIdentifierRequest,
+};
 use uds_protocol::{
     Decode, DiagnosticSessionType, Encode, NegativeResponse, NegativeResponseCode, Request,
     UdsServiceType,
 };
-use uds_protocol::{DiagnosticSessionControlRequest, ReadDataByIdentifierRequest};
 use uds_session::{Ai, TaType};
 
-/// Enter `to`, and say which of Figure 7's transitions that was (``UDSSVC_ARCH_0038``).
-/// The one place the session field is written; the macro's hooks call this and nothing
-/// else, so `State`'s accessors stay crate-private and no clause 10.2 logic is emitted
-/// into the application's crate.
+/// What entering a session did, for `DiagnosticSessionControl::on_transition`.
 #[doc(hidden)]
-pub fn transition(state: &mut State, to: DiagnosticSessionType) -> SessionTransition {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Entered {
+    /// Which of Figure 7's transitions it was (``UDSSVC_ARCH_0038``).
+    pub transition: SessionTransition,
+    /// The session entered.
+    pub session: DiagnosticSessionType,
+    /// Whether it locked a security level that had been unlocked.
+    pub security_relocked: bool,
+}
+
+/// Enter `to`, locking every security level (ISO 14229-1:2020 Annex I transition 6), and
+/// say what that did. The one place the session field is written; the macro's hooks call
+/// this and nothing else, so `State`'s accessors stay crate-private and no clause 10.2
+/// logic is emitted into the application's crate.
+#[doc(hidden)]
+pub fn transition(state: &mut State, to: DiagnosticSessionType) -> Entered {
     let from = state.session();
     state.set_session(to);
-    SessionTransition::classify(from, to)
+    Entered {
+        transition: SessionTransition::classify(from, to),
+        session: to,
+        security_relocked: state.lock(),
+    }
 }
 
 /// The `P2` pair of the session `state` is in, as `services` states it. Read through here
@@ -77,40 +101,42 @@ pub enum Stage<'a> {
 /// 3. Supported in the active session? Table 23's refusals settle
 ///    `serviceNotSupportedInActiveSession` (0x7F).
 /// 4. For a service with a sub-function, other than 0x31, Figure 6's sub-function checks
-///    (``UDSSVC_ARCH_0007``), in its order: a sub-function `sub_function_supported`
-///    refuses settles `subFunctionNotSupported` (0x12) (row 2); one it accepts but
-///    `supported_in_session` refuses for the active session settles
-///    `subFunctionNotSupportedInActiveSession` (0x7E) (row 4). Asking row 4 only after
-///    row 2 accepted is what keeps Annex A's rule that 0x7E is sent only for a
-///    sub-function supported in another session. Both read the byte after the service
-///    identifier, with `suppressPosRspMsgIndicationBit` stripped, before any exact-length
-///    test, so a trailing byte cannot turn 0x12 or 0x7E into 0x13. A request with no such
-///    byte fails Figure 6's minimum-length check, which the decode in 5 settles. Row 3,
+///    (``UDSSVC_ARCH_0007``), in its order, from the one [`Access`] `access` returns: no
+///    access settles `subFunctionNotSupported` (0x12) (row 2); an active session outside
+///    [`Access::sessions`] settles `subFunctionNotSupportedInActiveSession` (0x7E) (row
+///    4), so 0x7E is sent only for a sub-function supported somewhere, as Annex A
+///    requires; and none of [`Access::levels`] unlocked in [`State`] settles
+///    `securityAccessDenied` (0x33), Figure 6's optional sub-function security check.
+///    All three read the byte after the service identifier, with
+///    `suppressPosRspMsgIndicationBit` stripped, before any exact-length test, so a
+///    trailing byte cannot turn 0x12, 0x7E or 0x33 into 0x13. A request with no such byte
+///    fails Figure 6's minimum-length check, which the decode in 5 settles. Row 3,
 ///    authentication (0x34), is unconditionally true, as in Figure 5.
 /// 5. Only then the service-specific check, where length and format live: a decode
-///    failure settles `incorrectMessageLengthOrInvalidFormat` (0x13)
-///    (``UDSSVC_ARCH_0005``).
+///    failure settles the code `uds_protocol` assigns it, `requestOutOfRange` (0x31) for
+///    a parameter outside its range and otherwise `incorrectMessageLengthOrInvalidFormat`
+///    (0x13), as do bytes left over (``UDSSVC_ARCH_0005``).
 ///
 /// Clause 8.7.5's pseudo-code agrees: its outer `SWITCH` on the service identifier falls
 /// to `DEFAULT: responseCode = SNS` before any `message_length` test, so a malformed
 /// request for a service this server lacks is 0x11, not 0x13; and its inner `SWITCH` on
 /// the sub-function falls to `DEFAULT: responseCode = SFNS` before the length test of a
 /// supported sub-function's arm. Figure 5's authentication check (0x34), between 2 and 3,
-/// is unconditionally true here (architecture open question 4); the security
-/// precondition (0x33) joins with security state.
+/// is unconditionally true here (architecture open question 4). Figure 5's optional SID
+/// security check is not evaluated here: no service this crate stages requires a level
+/// for its service identifier alone, and a service whose requirement turns on an
+/// identifier in its data-parameters checks it in its own stage.
 #[doc(hidden)]
 #[must_use]
-pub fn begin<'a, F, G, H>(
+pub fn begin<'a, F, G>(
     state: &State,
     request: &'a [u8],
     supports: F,
-    sub_function_supported: G,
-    supported_in_session: H,
+    access: G,
 ) -> Stage<'a>
 where
     F: Fn(UdsServiceType) -> bool,
-    G: Fn(UdsServiceType, u8) -> bool,
-    H: Fn(UdsServiceType, u8, DiagnosticSessionType) -> bool,
+    G: Fn(UdsServiceType, u8, DiagnosticSessionType) -> Option<Access>,
 {
     let Some((&sid, parameters)) = request.split_first() else {
         return Stage::Empty;
@@ -132,17 +158,23 @@ where
     if enters_sub_function_stage(service)
         && let Some(&byte) = parameters.first()
     {
-        let value = byte & SUB_FUNCTION_VALUE;
-        if !sub_function_supported(service, value) {
+        let Some(access) = access(service, byte & SUB_FUNCTION_VALUE, state.session())
+        else {
             return Stage::Settle {
                 sid,
                 nrc: NegativeResponseCode::SubFunctionNotSupported,
             };
-        }
-        if !supported_in_session(service, value, state.session()) {
+        };
+        if !access.sessions().contains(state.session()) {
             return Stage::Settle {
                 sid,
                 nrc: NegativeResponseCode::SubFunctionNotSupportedInActiveSession,
+            };
+        }
+        if !access.admits(state.unlocked()) {
+            return Stage::Settle {
+                sid,
+                nrc: NegativeResponseCode::SecurityAccessDenied,
             };
         }
     }
@@ -157,9 +189,15 @@ where
             sid,
             request: decoded,
         },
-        Ok(_) | Err(_) => Stage::Settle {
+        Ok(_) => Stage::Settle {
             sid,
             nrc: NegativeResponseCode::IncorrectMessageLengthOrInvalidFormat,
+        },
+        Err(error) => Stage::Settle {
+            sid,
+            nrc: error
+                .negative_response_code()
+                .unwrap_or(NegativeResponseCode::IncorrectMessageLengthOrInvalidFormat),
         },
     }
 }
@@ -177,38 +215,75 @@ const fn enters_sub_function_stage(service: UdsServiceType) -> bool {
         && !matches!(service, UdsServiceType::RoutineControl)
 }
 
-/// ISO 14229-1:2020 clause 10.2 — whether `DiagnosticSessionControl`'s sub-function
-/// `value` (suppress bit stripped) names a session the application supports.
-/// [`begin`]'s "supported ever" check for that service (``UDSSVC_ARCH_0007`` row 2).
+/// ISO 14229-1:2020 8.7.3.1 Figure 6 — the [`Access`] of the sub-function `value`
+/// (suppress bit stripped) names, where `T`, the service's sub-function type, accepts the
+/// value and `access` has one for it. [`begin`]'s lookup for every service whose trait
+/// answers with an [`Access`] (``UDSSVC_ARCH_0007``).
 #[doc(hidden)]
-#[must_use]
-pub fn session_supported<A: DiagnosticSessionControl>(services: &A, value: u8) -> bool {
-    DiagnosticSessionType::try_from(value).is_ok_and(|session| services.supports(session))
+pub fn sub_function_access<T: TryFrom<u8>>(
+    value: u8,
+    access: impl FnOnce(T) -> Option<Access>,
+) -> Option<Access> {
+    T::try_from(value).ok().and_then(access)
 }
 
-/// ISO 14229-1:2020 clause 10.2 — whether the application lets the session
-/// `DiagnosticSessionControl`'s sub-function `value` (suppress bit stripped) names be
-/// entered from `active`. [`begin`]'s "supported in active session" check for that
-/// service (``UDSSVC_ARCH_0007`` row 4), asked only after [`session_supported`] accepted
-/// `value`.
+/// ISO 14229-1:2020 clause 10.2 — `DiagnosticSessionControl`'s lookups as [`begin`] asks
+/// them: no [`Access`] for a session the application does not support, and otherwise one
+/// available in `active` exactly where the session may be entered from it. No level is
+/// required: entering a session locks every level.
 #[doc(hidden)]
 #[must_use]
-pub fn session_supported_from<A: DiagnosticSessionControl>(
+pub fn session_access<A: DiagnosticSessionControl>(
     services: &A,
     value: u8,
     active: DiagnosticSessionType,
-) -> bool {
-    DiagnosticSessionType::try_from(value)
-        .is_ok_and(|session| services.supported_from(session, active))
+) -> Option<Access> {
+    let session = DiagnosticSessionType::try_from(value)
+        .ok()
+        .filter(|&session| services.supports(session))?;
+    let from = if services.supported_from(session, active) {
+        Sessions::NONE.with(active)
+    } else {
+        Sessions::NONE
+    };
+    Some(Access::new(from))
 }
 
-/// ISO 14229-1:2020 clause 10.7 — whether `TesterPresent`'s sub-function `value`
-/// (suppress bit stripped) is `zeroSubFunction`, the only one the service defines.
-/// [`begin`]'s sub-function check for that service.
+/// The level a `SecurityAccess` sub-function `value` (suppress bit stripped) names: its
+/// own for a `requestSeed`, its partner's for a `sendKey` (clause 10.4.2).
+const fn security_level(value: u8) -> Option<SecurityLevel> {
+    SecurityLevel::from_request_seed(if value.is_multiple_of(2) {
+        value.wrapping_sub(1)
+    } else {
+        value
+    })
+}
+
+/// ISO 14229-1:2020 clause 10.4 — `SecurityAccess`'s lookup as [`begin`] asks it: the
+/// sessions in which the level the sub-function `value` (suppress bit stripped) names is
+/// available, the `requestSeed` and `sendKey` alike, with no level required.
 #[doc(hidden)]
 #[must_use]
-pub const fn zero_sub_function(value: u8) -> bool {
-    value == 0x00
+pub fn security_access_sessions<A: SecurityAccess>(
+    services: &A,
+    value: u8,
+) -> Option<Access> {
+    security_level(value)
+        .and_then(|level| services.sessions(level))
+        .map(Access::new)
+}
+
+/// ISO 14229-1:2020 clause 10.7 — `TesterPresent`'s lookup as [`begin`] asks it:
+/// `zeroSubFunction`, the only one the service defines, is available in every session
+/// with no level required (Table 23).
+#[doc(hidden)]
+#[must_use]
+pub const fn zero_sub_function(value: u8) -> Option<Access> {
+    if value == 0x00 {
+        Some(Access::new(Sessions::ALL))
+    } else {
+        None
+    }
 }
 
 /// ISO 14229-1:2020 10.2 Table 23 — the twelve services "not applicable" in the default
@@ -355,6 +430,195 @@ pub async fn read_data_by_identifier<A: ReadDataByIdentifier>(
     }
 }
 
+/// ISO 14229-1:2020 clause 11.7, Figure 26 — the check `WriteDataByIdentifier` makes
+/// ahead of the record's length: an identifier the application does not define, or one
+/// [`WriteDataByIdentifier::access`] does not admit in the active session, is
+/// `requestOutOfRange` (0x31). Asked by [`write_data_by_identifier`], and by `dispatch`
+/// for a request too long to have been received whole, which is 0x13 only once this
+/// passes.
+///
+/// # Errors
+///
+/// `requestOutOfRange` (0x31), as above.
+#[doc(hidden)]
+pub fn writable_identifier<A: WriteDataByIdentifier>(
+    services: &A,
+    state: &State,
+    request: &WriteDataByIdentifierRequest<'_>,
+) -> Result<(A::Did, Access), NegativeResponseCode> {
+    <A::Did as DataIdentifier>::from_u16(request.identifier)
+        .and_then(|did| services.access(did).map(|access| (did, access)))
+        .filter(|(_, access)| access.sessions().contains(state.session()))
+        .ok_or(NegativeResponseCode::RequestOutOfRange)
+}
+
+/// ISO 14229-1:2020 clause 11.7 — `WriteDataByIdentifier`'s own stage, in Figure 26's
+/// order. The decode settled a request without a data record (0x13); then:
+///
+/// * [`writable_identifier`]'s check (0x31);
+/// * a record [`DataIdentifier::split_record`] finds short, or followed by further bytes,
+///   is `incorrectMessageLengthOrInvalidFormat` (0x13);
+/// * an identifier none of whose [`Access::levels`] `state` holds unlocked is
+///   `securityAccessDenied` (0x33);
+/// * a record `split_record` finds malformed is `requestOutOfRange` (0x31).
+///
+/// The handler's verdict decides the rest, and the positive response is `6E` and the
+/// echoed identifier (Table 279).
+#[doc(hidden)]
+pub async fn write_data_by_identifier<A: WriteDataByIdentifier>(
+    services: &mut A,
+    state: &State,
+    request: &WriteDataByIdentifierRequest<'_>,
+    out: &mut ResponseSink<'_>,
+) -> Result<Option<DiagnosticSessionType>, NegativeResponseCode> {
+    let (did, access) = writable_identifier(services, state, request)?;
+    let data = request.data();
+    let split = did.split_record(data);
+    if matches!(split, Err(RecordError::Short) | Ok((_, [_, ..])))
+        || matches!(split, Err(RecordError::Malformed { len }) if data.len() > len)
+    {
+        return Err(NegativeResponseCode::IncorrectMessageLengthOrInvalidFormat);
+    }
+    if !access.admits(state.unlocked()) {
+        return Err(NegativeResponseCode::SecurityAccessDenied);
+    }
+    let Ok((record, _)) = split else {
+        return Err(NegativeResponseCode::RequestOutOfRange);
+    };
+    services.write(did, record).await?;
+    let _ = out.write_all(&[0x6E]);
+    let _ = out.write_all(&request.identifier.to_be_bytes());
+    Ok(None)
+}
+
+/// The three `routineControlType`s Table 426 defines, each its own [`RoutineControl`]
+/// method.
+#[derive(Debug, Clone, Copy)]
+enum Routine {
+    Start,
+    Stop,
+    Results,
+}
+
+impl Routine {
+    const fn of(control: RoutineControlSubFunction) -> Option<Self> {
+        match control {
+            RoutineControlSubFunction::StartRoutine => Some(Self::Start),
+            RoutineControlSubFunction::StopRoutine => Some(Self::Stop),
+            RoutineControlSubFunction::RequestRoutineResults => Some(Self::Results),
+            _ => None,
+        }
+    }
+}
+
+/// ISO 14229-1:2020 clause 14.2, Figure 30 — the checks `RoutineControl` makes ahead of
+/// the option record's length, in order: an identifier the application does not define,
+/// or one [`RoutineControl::access`] does not admit in the active session, is
+/// `requestOutOfRange` (0x31); a routine none of whose [`Access::levels`] `state` holds
+/// unlocked is `securityAccessDenied` (0x33); and a `routineControlType` Table 426
+/// reserves, or one [`RoutineControl::supports`] refuses for this routine, is
+/// `subFunctionNotSupported` (0x12). Asked by [`routine_control`], and by `dispatch` for a
+/// request too long to have been received whole, which is 0x13 only once these pass.
+///
+/// # Errors
+///
+/// 0x31, 0x33 or 0x12, as above.
+#[doc(hidden)]
+pub fn admitted_routine<A: RoutineControl>(
+    services: &A,
+    state: &State,
+    request: &RoutineControlRequest<'_>,
+) -> Result<A::Rid, NegativeResponseCode> {
+    admitted(services, state, request).map(|(routine, _)| routine)
+}
+
+fn admitted<A: RoutineControl>(
+    services: &A,
+    state: &State,
+    request: &RoutineControlRequest<'_>,
+) -> Result<(A::Rid, Routine), NegativeResponseCode> {
+    let Some((routine, access)) =
+        <A::Rid as RoutineIdentifier>::from_u16(request.routine_id)
+            .and_then(|routine| services.access(routine).map(|access| (routine, access)))
+            .filter(|(_, access)| access.sessions().contains(state.session()))
+    else {
+        return Err(NegativeResponseCode::RequestOutOfRange);
+    };
+    if !access.admits(state.unlocked()) {
+        return Err(NegativeResponseCode::SecurityAccessDenied);
+    }
+    Routine::of(request.sub_function)
+        .filter(|_| services.supports(routine, request.sub_function))
+        .map(|method| (routine, method))
+        .ok_or(NegativeResponseCode::SubFunctionNotSupported)
+}
+
+/// ISO 14229-1:2020 clause 14.2 — `RoutineControl`'s own stage, in Figure 30's order.
+/// The decode settled a request shorter than its routine identifier (0x13); then:
+///
+/// * [`admitted_routine`]'s checks (0x31, 0x33, 0x12);
+/// * an option record longer than [`RoutineControl::MAX_OPTION_LEN`] is
+///   `incorrectMessageLengthOrInvalidFormat` (0x13).
+///
+/// The pipeline then writes `71`, the echoed `routineControlType` and the identifier, and
+/// the sub-function's own method writes the rest and decides Figure 30's remaining checks.
+#[doc(hidden)]
+pub async fn routine_control<A: RoutineControl>(
+    services: &mut A,
+    state: &State,
+    request: &RoutineControlRequest<'_>,
+    out: &mut ResponseSink<'_>,
+) -> Result<Option<DiagnosticSessionType>, NegativeResponseCode> {
+    let (routine, method) = admitted(services, state, request)?;
+    let record = request.option_record;
+    if record.len() > A::MAX_OPTION_LEN {
+        return Err(NegativeResponseCode::IncorrectMessageLengthOrInvalidFormat);
+    }
+    let _ = out.write_all(&[0x71, u8::from(request.sub_function)]);
+    let _ = out.write_all(&request.routine_id.to_be_bytes());
+    match method {
+        Routine::Start => services.start(routine, record, out).await,
+        Routine::Stop => services.stop(routine, record, out).await,
+        Routine::Results => services.results(routine, record, out).await,
+    }?;
+    Ok(None)
+}
+
+/// ISO 14229-1:2020 clause 12.3 — `ReadDTCInformation`'s own stage. Whether the report
+/// type is supported (0x12), in the active session (0x7E) and unlocked (0x33) was settled
+/// by [`begin`], and its parameters' exact length by the decode (0x13). The pipeline
+/// writes `59` and the echoed report type; the handler writes the rest of the layout
+/// (clause 12.3.3) and decides 0x31.
+#[doc(hidden)]
+pub async fn read_dtc_information<A: ReadDtcInformation>(
+    services: &mut A,
+    request: &ReadDtcInfoRequest,
+    out: &mut ResponseSink<'_>,
+) -> Result<Option<DiagnosticSessionType>, NegativeResponseCode> {
+    let _ = out.write_all(&[0x59, request.dtc_subfunction.value()]);
+    services
+        .read_dtc_information(request.dtc_subfunction, out)
+        .await?;
+    Ok(None)
+}
+
+/// ISO 14229-1:2020 clause 12.2 — `ClearDiagnosticInformation`'s own stage. A request
+/// that is not `groupOfDTC` and an optional `MemorySelection` was settled 0x13 by its
+/// decode (Figure 28); the handler's verdict decides the rest, and the positive response
+/// is `54` alone (Table 298).
+#[doc(hidden)]
+pub async fn clear_diagnostic_information<A: ClearDiagnosticInformation>(
+    services: &mut A,
+    request: &ClearDiagnosticInfoRequest,
+    out: &mut ResponseSink<'_>,
+) -> Result<Option<DiagnosticSessionType>, NegativeResponseCode> {
+    services
+        .clear(request.group_of_dtc, request.memory_selection)
+        .await?;
+    let _ = out.write_all(&[0x54]);
+    Ok(None)
+}
+
 /// ISO 14229-1:2020 clause 10.2 — `DiagnosticSessionControl`'s own stage
 /// (``UDSSVC_ARCH_0035``): the positive response carries the session and the
 /// application's timing, and the session is selected. Whether the session is supported
@@ -381,6 +645,304 @@ pub fn diagnostic_session_control<A: DiagnosticSessionControl>(
     Ok(Some(session))
 }
 
+/// ISO 14229-1:2020 clause 10.3 — `EcuReset`'s own stage. Whether the reset is supported
+/// (0x12) and in the active session (0x7E) was settled by [`begin`], and the exact length
+/// (0x13) by its decode, so only the handler's verdict remains: the positive response is
+/// `51`, the echoed `resetType` (Table 35), then whatever `powerDownTime` the handler
+/// wrote. The reset itself is the application's, after that response.
+#[doc(hidden)]
+pub async fn ecu_reset<A: EcuReset>(
+    services: &mut A,
+    request: &EcuResetRequest,
+    out: &mut ResponseSink<'_>,
+) -> Result<Option<DiagnosticSessionType>, NegativeResponseCode> {
+    let kind = request.reset_type;
+    let _ = out.write_all(&[0x51, u8::from(kind)]);
+    services.reset(kind, out).await?;
+    Ok(None)
+}
+
+/// ISO 14229-1:2020 clause 10.4 and Annex I — `SecurityAccess`'s own stage
+/// (``UDSSVC_ARCH_0037``). Whether the level is supported (0x12) and in the active session
+/// (0x7E) was settled by [`begin`]; this runs Figure I.1 against `state`.
+///
+/// A `requestSeed`, in Table I.2's order:
+///
+/// * carrying a `securityAccessDataRecord` longer than
+///   [`SecurityAccess::MAX_RECORD_LEN`] is `incorrectMessageLengthOrInvalidFormat` (0x13);
+/// * where [`SecurityAccess::preconditions_met`] refuses is `conditionsNotCorrect` (0x22)
+///   (transition 4);
+/// * while the level's delay runs is `requiredTimeDelayNotExpired` (0x37) (transition 4);
+/// * for the unlocked level is answered with a zero seed of
+///   [`SecurityAccess::MAX_SEED_LEN`] bytes, discarding any seed awaiting a key
+///   (transitions 7 and 10);
+/// * otherwise is answered with the application's seed, and its level becomes the one
+///   whose key is awaited (transitions 2, 5 and 8). A delay supported by the policy and
+///   no longer running has expired, so an attempt count at the limit is reset first.
+///
+/// A `sendKey` discards the awaited seed whatever its outcome (transitions 9 and 10), and
+/// is:
+///
+/// * `requestSequenceError` (0x24) where no seed awaits a key, or it is another level's;
+/// * `incorrectMessageLengthOrInvalidFormat` (0x13) for an empty key or one longer than
+///   [`SecurityAccess::MAX_KEY_LEN`];
+/// * on a valid key, positive: the level is unlocked, any other locked, and its attempt
+///   count reset (transitions 3 and 10);
+/// * on an invalid key, `invalidKey` (0x35), or `exceedNumberOfAttempts` (0x36) once
+///   `(Att_Cnt + 1) >= Att_Cnt_Limit`, which clamps the count at the limit and starts the
+///   delay where the policy keeps one (transitions 9 and 10).
+#[doc(hidden)]
+pub async fn security_access<A: SecurityAccess>(
+    services: &mut A,
+    state: &mut State,
+    request: &SecurityAccessRequest<'_>,
+    out: &mut ResponseSink<'_>,
+) -> Result<Option<DiagnosticSessionType>, NegativeResponseCode> {
+    let value = u8::from(request.access_type);
+    let Some(level) = security_level(value) else {
+        return Err(NegativeResponseCode::SubFunctionNotSupported);
+    };
+    if value == level.request_seed() {
+        request_seed(services, state, level, request.request_data, out).await?;
+    } else {
+        send_key(services, state, level, request.request_data, out).await?;
+    }
+    Ok(None)
+}
+
+/// ISO 14229-1:2020 8.7.3.1 Figure 6's request-sequence check (0x24, "e.g.
+/// SecurityAccess") and Annex I Table I.2 — the check `SecurityAccess` makes ahead of the
+/// request's length: a `sendKey` with no seed awaiting its level's key is
+/// `requestSequenceError` (0x24). Asked by `dispatch` for a request too long to be
+/// received whole, which is 0x13 only once this passes; [`security_access`] makes the same
+/// check for a whole one.
+///
+/// # Errors
+///
+/// `requestSequenceError` (0x24), as above.
+#[doc(hidden)]
+pub fn key_in_sequence(
+    state: &State,
+    request: &SecurityAccessRequest<'_>,
+) -> Result<(), NegativeResponseCode> {
+    let value = u8::from(request.access_type);
+    match security_level(value) {
+        Some(level) if value == level.send_key() && state.awaited() != Some(level) => {
+            Err(NegativeResponseCode::RequestSequenceError)
+        }
+        _ => Ok(()),
+    }
+}
+
+async fn request_seed<A: SecurityAccess>(
+    services: &mut A,
+    state: &mut State,
+    level: SecurityLevel,
+    record: &[u8],
+    out: &mut ResponseSink<'_>,
+) -> Result<(), NegativeResponseCode> {
+    if record.len() > A::MAX_RECORD_LEN {
+        return Err(NegativeResponseCode::IncorrectMessageLengthOrInvalidFormat);
+    }
+    if !services.preconditions_met(level) {
+        return Err(NegativeResponseCode::ConditionsNotCorrect);
+    }
+    if delay_owed(services, level) {
+        return Err(NegativeResponseCode::RequiredTimeDelayNotExpired);
+    }
+    let _ = out.write_all(&[0x67, level.request_seed()]);
+    if state.unlocked() == Some(level) {
+        state.take_seed();
+        for _ in 0..A::MAX_SEED_LEN {
+            let _ = out.write_all(&[0x00]);
+        }
+        return Ok(());
+    }
+    services.seed(level, record, out).await?;
+    debug_assert!(
+        out.refused()
+            || out
+                .written_bytes()
+                .get(2..)
+                .is_some_and(|seed| seed.iter().any(|&byte| byte != 0)),
+        "SecurityAccess::seed wrote an empty or all-zero seed for a locked level \
+         (clause 10.4.1)"
+    );
+    state.seed_sent(level);
+    Ok(())
+}
+
+/// Annex I — whether `level` owes a delay now: one is running, or none is and the
+/// stored attempt count is at the limit, which starts it (transition 1). An expired delay
+/// resets the count (Table I.2). False for a level whose policy keeps no delay.
+fn delay_owed<A: SecurityAccess>(services: &mut A, level: SecurityLevel) -> bool {
+    let SecurityPolicy::Counted {
+        attempt_limit,
+        delay_ms: Some(_),
+        ..
+    } = services.policy(level)
+    else {
+        return false;
+    };
+    match services.delay(level) {
+        Delay::Running => true,
+        Delay::Expired => {
+            services.store_attempts(level, 0);
+            false
+        }
+        Delay::Idle if services.load_attempts(level) >= attempt_limit.get() => {
+            services.start_delay(level);
+            true
+        }
+        Delay::Idle => false,
+    }
+}
+
+/// ISO 14229-1:2020 Annex I, Table I.2 transition 1 — at start-up, start the delay of
+/// every level `services` supports whose stored attempt count is at its limit, so a
+/// lockout outlives a restart that a RAM delay timer does not.
+#[doc(hidden)]
+pub fn security_start_up<A: SecurityAccess>(services: &mut A) {
+    for value in (0x01..0x7F).step_by(2) {
+        if let Some(level) = SecurityLevel::from_request_seed(value)
+            && services.sessions(level).is_some()
+        {
+            let _ = delay_owed(services, level);
+        }
+    }
+}
+
+async fn send_key<A: SecurityAccess>(
+    services: &mut A,
+    state: &mut State,
+    level: SecurityLevel,
+    key: &[u8],
+    out: &mut ResponseSink<'_>,
+) -> Result<(), NegativeResponseCode> {
+    if state.take_seed() != Some(level) {
+        return Err(NegativeResponseCode::RequestSequenceError);
+    }
+    if key.is_empty() || key.len() > A::MAX_KEY_LEN {
+        return Err(NegativeResponseCode::IncorrectMessageLengthOrInvalidFormat);
+    }
+    let counted = matches!(services.policy(level), SecurityPolicy::Counted { .. });
+    match services.verify_key(level, key).await? {
+        KeyVerdict::Valid => {
+            if counted {
+                services.store_attempts(level, 0);
+            }
+            state.unlock(level);
+            let _ = out.write_all(&[0x67, level.send_key()]);
+            Ok(())
+        }
+        KeyVerdict::Invalid => Err(failed_attempt(services, level)),
+    }
+}
+
+fn failed_attempt<A: SecurityAccess>(
+    services: &mut A,
+    level: SecurityLevel,
+) -> NegativeResponseCode {
+    let SecurityPolicy::Counted {
+        attempt_limit,
+        delay_ms,
+        ..
+    } = services.policy(level)
+    else {
+        return NegativeResponseCode::InvalidKey;
+    };
+    let count = services.load_attempts(level);
+    if count.saturating_add(1) < attempt_limit.get() {
+        services.store_attempts(level, count.saturating_add(1));
+        return NegativeResponseCode::InvalidKey;
+    }
+    services.store_attempts(level, attempt_limit.get());
+    if delay_ms.is_some() {
+        services.start_delay(level);
+    }
+    NegativeResponseCode::ExceedNumberOfAttempts
+}
+
+/// ISO 14229-1:2020 Annex I, Table I.2 transitions 9 and 10 — `unsettled`, having
+/// discarded the seed awaiting a key where a `SecurityAccess` request is answered
+/// negatively, whichever check refused it: the common stages, the length of a request too
+/// long to be received whole, the stage itself, or [`settle`]'s `responseTooLong` (0x14)
+/// for a response `out` refused, which leaves the tester without the seed. Any other
+/// request leaves the seed.
+#[doc(hidden)]
+#[must_use]
+pub fn discarding_seed(
+    state: &mut State,
+    out: &ResponseSink<'_>,
+    unsettled: Unsettled,
+) -> Unsettled {
+    if let Some((settling, outcome)) = unsettled.parts()
+        && (outcome.is_err() || out.refused())
+        && matches!(
+            UdsServiceType::from_request_sid(settling.sid),
+            UdsServiceType::SecurityAccess
+        )
+    {
+        state.take_seed();
+    }
+    unsettled
+}
+
+/// ISO 14229-1:2020 clause 10.5 — `CommunicationControl`'s own stage. Whether the
+/// `controlType` is supported (0x12), in the active session (0x7E) and unlocked (0x33)
+/// was settled by [`begin`], and the exact length, with `nodeIdentificationNumber`
+/// present exactly for the enhanced-address variants, by its decode (0x13). A
+/// `communicationType` Annex B Table B.1 reserves — bits 1-0 clear or bits 3-2 set — is
+/// `requestOutOfRange` (0x31) here, after that length check. The handler's verdict
+/// decides the rest, and the positive response is `68` and the echoed `controlType`
+/// (Table 56).
+#[doc(hidden)]
+pub async fn communication_control<A: CommunicationControl>(
+    services: &mut A,
+    request: &CommunicationControlRequest,
+    out: &mut ResponseSink<'_>,
+) -> Result<Option<DiagnosticSessionType>, NegativeResponseCode> {
+    let control_type = request.control_type();
+    if matches!(
+        request.communication_type(),
+        CommunicationType::IsoSaeReserved
+    ) {
+        return Err(NegativeResponseCode::RequestOutOfRange);
+    }
+    services
+        .control(
+            control_type,
+            request.communication_type(),
+            request.subnet(),
+            request.node_id(),
+        )
+        .await?;
+    let _ = out.write_all(&[0x68, u8::from(control_type)]);
+    Ok(None)
+}
+
+/// ISO 14229-1:2020 clause 10.8 — `ControlDTCSetting`'s own stage. Whether the setting
+/// is supported (0x12), in the active session (0x7E) and unlocked (0x33) was settled by
+/// [`begin`]; a `DTCSettingControlOptionRecord` longer than
+/// [`ControlDtcSetting::MAX_OPTION_RECORD_LEN`] is `incorrectMessageLengthOrInvalidFormat`
+/// (0x13). Otherwise the handler's verdict decides, and the positive response is `C5` and
+/// the echoed `DTCSettingType` (Table 130).
+#[doc(hidden)]
+pub async fn control_dtc_setting<A: ControlDtcSetting>(
+    services: &mut A,
+    request: &ControlDtcSettingRequest<'_>,
+    out: &mut ResponseSink<'_>,
+) -> Result<Option<DiagnosticSessionType>, NegativeResponseCode> {
+    if request.option_record.len() > A::MAX_OPTION_RECORD_LEN {
+        return Err(NegativeResponseCode::IncorrectMessageLengthOrInvalidFormat);
+    }
+    services
+        .control_dtc_setting(request.setting, request.option_record)
+        .await?;
+    let _ = out.write_all(&[0xC5, u8::from(request.setting)]);
+    Ok(None)
+}
+
 /// ISO 14229-1:2020 clause 10.7 — `TesterPresent`'s own stage (``UDSSVC_ARCH_0004``).
 ///
 /// A sub-function other than `zeroSubFunction` (`0x01..=0x7F` with the suppress bit
@@ -404,10 +966,11 @@ pub fn tester_present<A: TesterPresent>(
 #[allow(clippy::panic, reason = "a test harness for futures that never pend")]
 mod tests {
     use super::{
-        Settling, Stage, allowed_in_session, begin, session_supported,
-        session_supported_from, settle, suppresses, zero_sub_function,
+        Settling, Stage, allowed_in_session, begin, session_access, settle, suppresses,
+        zero_sub_function,
     };
     use crate::state::{ProtocolState, State};
+    use crate::{Access, Sessions};
     use crate::{Responded, ResponseSink, Unsettled};
     use automotive_wire_codec::Sink;
     use uds_protocol::NegativeResponseCode as N;
@@ -474,13 +1037,16 @@ mod tests {
             !matches!(s, S::ProgrammingSession)
                 || matches!(active, S::ExtendedDiagnosticSession)
         }
+        fn leaves_running_software(&self, _s: S) -> bool {
+            false
+        }
         fn timing(&self, _s: S) -> crate::SessionTiming {
             crate::SessionTiming {
                 p2_server_max_ms: 50,
                 p2_star_server_max_10ms: 500,
             }
         }
-        fn on_transition(&mut self, _t: crate::SessionTransition, _r: bool) {}
+        fn on_transition(&mut self, _t: crate::SessionTransition, _e: S, _r: bool) {}
     }
     impl crate::TesterPresent for Ecu {
         fn on_tester_present(&mut self) {}
@@ -559,13 +1125,16 @@ mod tests {
         fn supported_from(&self, _s: S, _active: S) -> bool {
             true
         }
+        fn leaves_running_software(&self, _s: S) -> bool {
+            false
+        }
         fn timing(&self, _s: S) -> crate::SessionTiming {
             crate::SessionTiming {
                 p2_server_max_ms: u16::MAX,
                 p2_star_server_max_10ms: u16::MAX,
             }
         }
-        fn on_transition(&mut self, _t: crate::SessionTransition, _r: bool) {}
+        fn on_transition(&mut self, _t: crate::SessionTransition, _e: S, _r: bool) {}
     }
 
     /// Table 29 — the pair is sent as the application stated it, to the widest values.
@@ -611,24 +1180,56 @@ mod tests {
         matches!(s, U::ReadDataByIdentifier)
     }
 
-    /// The sub-function check `uds_server!` emits for an assembly listing `Ecu`'s
-    /// services: each listed service with a stage answers for its own sub-function.
-    fn ecu_sub_function(service: U, value: u8) -> bool {
+    /// The lookup `uds_server!` emits for an assembly listing `Ecu`'s services: each
+    /// listed service with a stage answers for its own sub-function, and
+    /// `TesterPresent`'s zero sub-function is available in every session (clause 10.7;
+    /// Table 23). No sub-function of the test assembly requires a security level.
+    fn ecu_access(service: U, value: u8, active: S) -> Option<Access> {
         match service {
-            U::DiagnosticSessionControl => session_supported(&Ecu, value),
+            U::DiagnosticSessionControl => session_access(&Ecu, value, active),
             U::TesterPresent => zero_sub_function(value),
-            _ => true,
+            _ => Some(Access::new(Sessions::ALL)),
         }
     }
 
-    /// The per-session check `uds_server!` emits for the same assembly:
-    /// `DiagnosticSessionControl` asks the application; `TesterPresent`'s zero
-    /// sub-function is available in every session (clause 10.7; Table 23), so it falls
-    /// through.
-    fn ecu_in_session(service: U, value: u8, active: S) -> bool {
-        match service {
-            U::DiagnosticSessionControl => session_supported_from(&Ecu, value, active),
-            _ => true,
+    /// The same, refusing every session: what it supports is supported in none.
+    fn ecu_access_nowhere(service: U, value: u8, active: S) -> Option<Access> {
+        ecu_access(service, value, active).map(|_| Access::new(Sessions::NONE))
+    }
+
+    /// ISO 14229-1:2020 8.7.3.1 Figure 6, "`SubFunction` security check OK?" — a
+    /// sub-function that either of two levels unlocks, as an OEM and a supplier level
+    /// commonly share one, proceeds with either unlocked and is 0x33 with neither.
+    #[test]
+    #[allow(clippy::expect_used, reason = "the levels are odd requestSeed values")]
+    fn a_sub_function_any_of_its_levels_unlocks_proceeds() {
+        let level = |value| crate::SecurityLevel::from_request_seed(value).expect("odd");
+        let (oem, supplier) = (level(0x01), level(0x11));
+        let either = Access::new(Sessions::ALL)
+            .unlocked_by(crate::Levels::NONE.with(oem).with(supplier));
+        for (unlocked, nrc) in [
+            (Some(oem), None),
+            (Some(supplier), None),
+            (Some(level(0x03)), Some(N::SecurityAccessDenied)),
+            (None, Some(N::SecurityAccessDenied)),
+        ] {
+            let mut state = in_session(S::ExtendedDiagnosticSession);
+            if let Some(level) = unlocked {
+                state.unlock(level);
+            }
+            let st = begin(
+                &state,
+                &[0x11, 0x01],
+                |s| matches!(s, U::EcuReset),
+                |_, _, _| Some(either),
+            );
+            match nrc {
+                None => assert!(matches!(st, Stage::Proceed { sid: 0x11, .. }), "{st:?}"),
+                Some(nrc) => assert!(
+                    matches!(st, Stage::Settle { sid: 0x11, nrc: got } if got == nrc),
+                    "{unlocked:?}: {st:?}"
+                ),
+            }
         }
     }
 
@@ -636,13 +1237,7 @@ mod tests {
     #[test]
     fn an_empty_request_is_empty() {
         assert!(matches!(
-            begin(
-                &State::INITIAL,
-                &[],
-                supports_rdbi,
-                ecu_sub_function,
-                ecu_in_session
-            ),
+            begin(&State::INITIAL, &[], supports_rdbi, ecu_access),
             Stage::Empty
         ));
     }
@@ -650,13 +1245,7 @@ mod tests {
     /// ``UDSSVC_ARCH_0005`` — a decode failure settles 0x13 with the SID echoed.
     #[test]
     fn a_short_request_settles_0x13() {
-        let st = begin(
-            &State::INITIAL,
-            &[0x22, 0xF1],
-            supports_rdbi,
-            ecu_sub_function,
-            ecu_in_session,
-        );
+        let st = begin(&State::INITIAL, &[0x22, 0xF1], supports_rdbi, ecu_access);
         assert!(matches!(
             st,
             Stage::Settle {
@@ -670,13 +1259,7 @@ mod tests {
     /// SID settles 0x11, not 0x13.
     #[test]
     fn an_unsupported_service_settles_0x11() {
-        let st = begin(
-            &State::INITIAL,
-            &[0x3E, 0x00],
-            supports_rdbi,
-            ecu_sub_function,
-            ecu_in_session,
-        );
+        let st = begin(&State::INITIAL, &[0x3E, 0x00], supports_rdbi, ecu_access);
         assert!(matches!(
             st,
             Stage::Settle {
@@ -684,13 +1267,7 @@ mod tests {
                 nrc: N::ServiceNotSupported
             }
         ));
-        let st = begin(
-            &State::INITIAL,
-            &[0xBA, 0x00],
-            supports_rdbi,
-            ecu_sub_function,
-            ecu_in_session,
-        );
+        let st = begin(&State::INITIAL, &[0xBA, 0x00], supports_rdbi, ecu_access);
         assert!(matches!(
             st,
             Stage::Settle {
@@ -723,8 +1300,7 @@ mod tests {
             &state,
             &[0x27, 0x01],
             |s| matches!(s, U::SecurityAccess),
-            ecu_sub_function,
-            ecu_in_session,
+            ecu_access,
         );
         assert!(matches!(
             st,
@@ -740,13 +1316,7 @@ mod tests {
     /// 0x13.
     #[test]
     fn a_malformed_request_for_an_unlisted_service_settles_0x11() {
-        let st = begin(
-            &State::INITIAL,
-            &[0x3E],
-            supports_rdbi,
-            ecu_sub_function,
-            ecu_in_session,
-        );
+        let st = begin(&State::INITIAL, &[0x3E], supports_rdbi, ecu_access);
         assert!(matches!(
             st,
             Stage::Settle {
@@ -764,8 +1334,7 @@ mod tests {
             &State::INITIAL,
             &[0x27],
             |s| matches!(s, U::SecurityAccess),
-            ecu_sub_function,
-            ecu_in_session,
+            ecu_access,
         );
         assert!(matches!(
             st,
@@ -784,8 +1353,7 @@ mod tests {
             &State::INITIAL,
             &[0x3E],
             |s| matches!(s, U::TesterPresent),
-            ecu_sub_function,
-            ecu_in_session,
+            ecu_access,
         );
         assert!(matches!(
             st,
@@ -803,8 +1371,7 @@ mod tests {
             &State::INITIAL,
             &[0x22, 0xF1, 0x90],
             supports_rdbi,
-            ecu_sub_function,
-            ecu_in_session,
+            ecu_access,
         );
         assert!(matches!(st, Stage::Proceed { sid: 0x22, .. }));
     }
@@ -828,13 +1395,7 @@ mod tests {
             (&[0x10, 0x05, 0x00][..], 0x10),
             (&[0x10, 0x04, 0x00][..], 0x10),
         ] {
-            let st = begin(
-                &State::INITIAL,
-                request,
-                supports_ecu,
-                ecu_sub_function,
-                ecu_in_session,
-            );
+            let st = begin(&State::INITIAL, request, supports_ecu, ecu_access);
             assert!(
                 matches!(
                     st,
@@ -850,13 +1411,7 @@ mod tests {
     #[test]
     fn a_supported_sub_function_with_a_trailing_byte_settles_0x13() {
         for request in [&[0x3E, 0x80, 0x00][..], &[0x10, 0x03, 0x00][..]] {
-            let st = begin(
-                &State::INITIAL,
-                request,
-                supports_ecu,
-                ecu_sub_function,
-                ecu_in_session,
-            );
+            let st = begin(&State::INITIAL, request, supports_ecu, ecu_access);
             assert!(
                 matches!(
                     st,
@@ -874,13 +1429,7 @@ mod tests {
     #[test]
     fn a_good_sub_function_request_proceeds() {
         for request in [&[0x3E, 0x00][..], &[0x3E, 0x80][..], &[0x10, 0x03][..]] {
-            let st = begin(
-                &State::INITIAL,
-                request,
-                supports_ecu,
-                ecu_sub_function,
-                ecu_in_session,
-            );
+            let st = begin(&State::INITIAL, request, supports_ecu, ecu_access);
             assert!(
                 matches!(st, Stage::Proceed { .. }),
                 "{request:02X?}: {st:?}"
@@ -897,8 +1446,7 @@ mod tests {
             &State::INITIAL,
             &[0x22, 0xF1, 0x90, 0x00],
             supports_ecu,
-            |_, _| false,
-            |_, _, _| false,
+            |_, _, _| None,
         );
         assert!(matches!(
             st,
@@ -917,8 +1465,7 @@ mod tests {
             &State::INITIAL,
             &[0x31, 0x01, 0xFF, 0x00],
             |s| matches!(s, U::RoutineControl),
-            |_, _| false,
-            |_, _, _| false,
+            |_, _, _| None,
         );
         assert!(!matches!(
             st,
@@ -944,8 +1491,7 @@ mod tests {
             &State::INITIAL,
             &[0x10, 0x04],
             supports_ecu,
-            ecu_sub_function,
-            |_, _, _| false,
+            ecu_access_nowhere,
         );
         assert!(
             matches!(
@@ -969,13 +1515,7 @@ mod tests {
             &[0x10, 0x82][..],
             &[0x10, 0x02, 0x00][..],
         ] {
-            let st = begin(
-                &State::INITIAL,
-                request,
-                supports_ecu,
-                ecu_sub_function,
-                ecu_in_session,
-            );
+            let st = begin(&State::INITIAL, request, supports_ecu, ecu_access);
             assert!(
                 matches!(
                     st,
@@ -997,16 +1537,14 @@ mod tests {
             &in_session(S::ExtendedDiagnosticSession),
             &[0x10, 0x02],
             supports_ecu,
-            ecu_sub_function,
-            ecu_in_session,
+            ecu_access,
         );
         assert!(matches!(st, Stage::Proceed { sid: 0x10, .. }), "{st:?}");
         let st = begin(
             &in_session(S::ProgrammingSession),
             &[0x10, 0x02],
             supports_ecu,
-            ecu_sub_function,
-            ecu_in_session,
+            ecu_access,
         );
         assert!(
             matches!(
@@ -1031,8 +1569,7 @@ mod tests {
                 &in_session(S::ExtendedDiagnosticSession),
                 &request,
                 supports_ecu,
-                ecu_sub_function,
-                |_, _, _| false,
+                ecu_access_nowhere,
             );
             assert!(
                 matches!(
@@ -1057,8 +1594,7 @@ mod tests {
                 &in_session(session),
                 &[0x3E, 0x00],
                 supports_ecu,
-                ecu_sub_function,
-                ecu_in_session,
+                ecu_access,
             );
             assert!(matches!(st, Stage::Proceed { sid: 0x3E, .. }), "{st:?}");
         }

@@ -444,8 +444,9 @@ The transport seam
           /// Participates in UDSSVC_ARCH_0013's const fold.
           const MAX_PDU: usize = usize::MAX;
 
-          /// T_Data.req — hand a T_PDU to the transport.
-          async fn t_data_req(&mut self, ai: Ai, data: &[u8]) -> Result<(), Self::Error>;
+          /// T_Data.req — hand a T_PDU to the transport, and say what follows it.
+          async fn t_data_req(&mut self, ai: Ai, data: &[u8], after: AfterSend)
+              -> Result<(), Self::Error>;
 
           /// Fill `buffer` with the next inbound message, or return
           /// `TransportEvent::Deadline` when `deadline` passes first.
@@ -507,6 +508,22 @@ The transport seam
    driver reads ``outbound_max`` and never mentions ``inbound_max``, so a binding today has
    to invent the very value this paragraph says it would be told. Closing it needs a route
    for the crate to *state* the length — the fold knows it — not merely a method for asking.
+
+   *``t_data_req`` gained ``after: AfterSend``.* ISO 14229-5:2022 REQ 7.9 has a server
+   close its TCP connection after a ``DiagnosticSessionControl`` positive response *if* the
+   session change disconnects it, and what disconnects it is the server leaving the software
+   it runs
+   — an application jumping to its bootloader, a bootloader restarting the application
+   (ISO 14229-1:2020 10.2.2.2 Table 25). That is a property of the server, not of the
+   response's octets, so a transport cannot derive it and the server says it:
+   ``ServerLeaves`` on the one final positive response whose session
+   ``DiagnosticSessionControl::leaves_running_software``, ``Continue`` on everything else,
+   0x78 and negative responses included. An enum rather than a ``bool``, and transport-
+   neutral: a transport without connections ignores it, and this crate still names no
+   transport (``UDSSVC_ARCH_0002``). ``ECUReset`` is never flagged — REQ 7.11's close follows
+   *every* ``ECUReset`` positive response, so a ``DoIP`` transport keys it on ``0x51``
+   itself. A suppressed session change sends no response, so nothing carries the flag and
+   the connection drops unannounced; that is recorded at the method, with no mechanism.
 
    *``now_ms() -> u32`` became ``now() -> Timestamp``.* Same obligation, a type that carries
    ``UDSS_LLR_0019``'s modular arithmetic with it.

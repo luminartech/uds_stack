@@ -16,7 +16,7 @@ use crate::services::{Responded, ServiceSet};
 use crate::state::ProtocolState;
 use crate::storage::{Buffers, Storage};
 use crate::transport::{TransportEvent, UdsTransport};
-use crate::{Received, ResponseSink, Unsettled};
+use crate::{AfterSend, Received, ResponseSink, Unsettled};
 use core::future::Future;
 use core::pin::Pin;
 use uds_protocol::{DiagnosticSessionType, NegativeResponseCode, UdsServiceType};
@@ -53,6 +53,8 @@ pub struct Server<A: ServiceSet, T: UdsTransport, const PEERS: usize> {
     /// The parameters the server was built with, against which each session's `P2` pair is
     /// checked in debug builds.
     params: ServerParams,
+    /// Whether [`ServiceSet::start_up`] has run.
+    started: bool,
 }
 
 impl<A: ServiceSet, T: UdsTransport, const PEERS: usize> Server<A, T, PEERS> {
@@ -109,6 +111,7 @@ impl<A: ServiceSet, T: UdsTransport, const PEERS: usize> Server<A, T, PEERS> {
             own,
             pending: None,
             params,
+            started: false,
         }
     }
 
@@ -122,6 +125,13 @@ impl<A: ServiceSet, T: UdsTransport, const PEERS: usize> Server<A, T, PEERS> {
     #[must_use]
     pub fn transport(&self) -> &T {
         &self.transport
+    }
+
+    /// Run [`ServiceSet::start_up`] the first time it is called, and never again.
+    fn start_up(&mut self) {
+        if !core::mem::replace(&mut self.started, true) {
+            self.services.start_up(&mut self.state);
+        }
     }
 
     /// Handle one transport event.
@@ -150,6 +160,7 @@ impl<A: ServiceSet, T: UdsTransport, const PEERS: usize> Server<A, T, PEERS> {
     /// [`UdsTransport::Error`] where the transport failed. A negative response is not an
     /// error: it is a response, written into the sink.
     pub async fn step(&mut self) -> Result<(), T::Error> {
+        self.start_up();
         let Buffers {
             in_flight,
             concurrent,
@@ -171,13 +182,15 @@ impl<A: ServiceSet, T: UdsTransport, const PEERS: usize> Server<A, T, PEERS> {
                 // UDSS_LLR_0063 — one matching no association is rejected by the session
                 // layer; the drain reads the verdict and nothing changes.
                 let reaction = self.session.t_data_conf(now, ai, result);
-                let d = drain(reaction, &mut self.transport, &mut self.pending).await?;
+                let d =
+                    drain(reaction, &mut self.transport, &mut self.pending, None).await?;
                 apply(&mut self.services, &mut self.state, d.deferred);
                 return Ok(());
             }
             TransportEvent::Deadline => {
                 let reaction = self.session.tick(now);
-                let d = drain(reaction, &mut self.transport, &mut self.pending).await?;
+                let d =
+                    drain(reaction, &mut self.transport, &mut self.pending, None).await?;
                 apply(&mut self.services, &mut self.state, d.deferred);
                 return Ok(());
             }
@@ -207,7 +220,7 @@ impl<A: ServiceSet, T: UdsTransport, const PEERS: usize> Server<A, T, PEERS> {
         );
         // Dispatched only once indicated: the indication is what starts `tP2_Server`
         // (UDSS_LLR_0113), without which the 0x78 window does not exist.
-        let d = drain(reaction, &mut self.transport, &mut self.pending).await?;
+        let d = drain(reaction, &mut self.transport, &mut self.pending, None).await?;
         apply(&mut self.services, &mut self.state, d.deferred);
         let Some((ai, _)) = d.indication else {
             return Ok(());
@@ -216,19 +229,7 @@ impl<A: ServiceSet, T: UdsTransport, const PEERS: usize> Server<A, T, PEERS> {
         // (ISO 14229-1:2020 Table 21, SIDRQ). An empty request is the pipeline's to
         // settle, and settles without pending, so the 0 is never transmitted.
         let sid = received.bytes().first().copied().unwrap_or(0);
-        // UDSSVC_ARCH_0032 — whether 0x78 is admissible is the service's to say, never the
-        // driver's. Resolved before dispatch, which holds `&mut services` until it
-        // completes.
-        let may_pend = self
-            .services
-            .may_respond_pending(UdsServiceType::from_request_sid(sid));
-        let serving = Serving {
-            ai,
-            own: self.own,
-            reply_to: reply_address(self.own, ai),
-            sid,
-            may_pend,
-        };
+        let serving = Serving::new(&self.services, self.own, ai, sid);
 
         let mut sink = ResponseSink::new(response, outbound_max);
         // Scoped, because `pin!` binds to the enclosing block: `handler` drops before
@@ -252,6 +253,7 @@ impl<A: ServiceSet, T: UdsTransport, const PEERS: usize> Server<A, T, PEERS> {
         };
         // Recorded mid-handler, applied now that `&mut services`/`&mut state` are free.
         apply(&mut self.services, &mut self.state, served.deferred);
+        let serving = serving.leaving_if(&self.services, &served);
         let deferred = conclude::<A, _, PEERS>(
             &mut self.session,
             &mut self.transport,
@@ -311,7 +313,7 @@ async fn retime<A: ServiceSet, T: UdsTransport, const PEERS: usize>(
     params: ServerParams,
     now: Timestamp,
 ) -> Result<(), T::Error> {
-    let tick = drain(session.tick(now), transport, pending).await?;
+    let tick = drain(session.tick(now), transport, pending, None).await?;
     apply(services, state, tick.deferred);
     let Some(timing) = services.session_timing(state) else {
         return Ok(());
@@ -330,7 +332,13 @@ async fn retime<A: ServiceSet, T: UdsTransport, const PEERS: usize>(
         ServerParameter::P2ServerMax(timing.p2_server_max()),
         ServerParameter::P2StarServerMax(timing.p2_star_server_max()),
     ] {
-        let d = drain(session.set_parameter(now, parameter), transport, pending).await?;
+        let d = drain(
+            session.set_parameter(now, parameter),
+            transport,
+            pending,
+            None,
+        )
+        .await?;
         apply(services, state, d.deferred);
     }
     Ok(())
@@ -432,6 +440,19 @@ struct Drained<'d> {
     deferred: Deferred,
 }
 
+/// What follows a transmission: [`AfterSend::ServerLeaves`] for the final positive
+/// `DiagnosticSessionControl` response to `leaving`, and [`AfterSend::Continue`] for
+/// everything else — a 0x78 to the same addressing and a negative response included, as
+/// neither starts with the positive response identifier.
+fn after_send(leaving: Option<Ai>, ai: Ai, data: &[u8]) -> AfterSend {
+    let positive = UdsServiceType::DiagnosticSessionControl.to_response_sid();
+    if leaving == Some(ai) && data.first() == Some(&positive) {
+        AfterSend::ServerLeaves
+    } else {
+        AfterSend::Continue
+    }
+}
+
 /// The one place every session output is handled (``UDSSVC_ARCH_0040``). Every reaction,
 /// from every input, passes through here, because an expiry can surface from any of
 /// them. Acts on what needs only the transport and the pending record; records the rest.
@@ -445,6 +466,7 @@ async fn drain<'d, T: UdsTransport, const PEERS: usize>(
     mut reaction: uds_session::ServerReaction<'_, 'd, PEERS>,
     transport: &mut T,
     pending: &mut Option<Pending>,
+    leaving: Option<Ai>,
 ) -> Result<Drained<'d>, T::Error> {
     let mut found = Drained {
         indication: None,
@@ -456,7 +478,11 @@ async fn drain<'d, T: UdsTransport, const PEERS: usize>(
         match out {
             // milestone-1 limit: an `Err` here drops what this drain recorded; see
             // `Server::step`'s doc.
-            ServerOutput::Transmit { ai, data } => transport.t_data_req(ai, data).await?,
+            ServerOutput::Transmit { ai, data } => {
+                transport
+                    .t_data_req(ai, data, after_send(leaving, ai, data))
+                    .await?;
+            }
             ServerOutput::Indicate {
                 ai,
                 data,
@@ -521,6 +547,40 @@ struct Serving {
     /// ``UDSSVC_ARCH_0032`` — whether the service admits a 0x78 at all, as
     /// `ServiceSet::may_respond_pending` reported it.
     may_pend: bool,
+    /// `reply_to`, where the final positive response selects a session that
+    /// `ServiceSet::leaves_running_software`: the one message sent
+    /// [`AfterSend::ServerLeaves`]. Known once the handler has finished.
+    leaving: Option<Ai>,
+}
+
+impl Serving {
+    /// The request `ai` sent, its service identifier `sid`, before it is dispatched.
+    ///
+    /// ``UDSSVC_ARCH_0032`` — whether 0x78 is admissible is the service's to say, never
+    /// the driver's. Resolved before dispatch, which holds `&mut services` until it
+    /// completes.
+    fn new<A: ServiceSet>(services: &A, own: Address, ai: Ai, sid: u8) -> Self {
+        Self {
+            ai,
+            own,
+            reply_to: reply_address(own, ai),
+            sid,
+            may_pend: services.may_respond_pending(UdsServiceType::from_request_sid(sid)),
+            leaving: None,
+        }
+    }
+
+    /// The same, with [`Self::leaving`] set where `served` selects a session that
+    /// `services` leave the running software to enter.
+    fn leaving_if<A: ServiceSet>(self, services: &A, served: &Served) -> Self {
+        Self {
+            leaving: served
+                .selected()
+                .filter(|&selected| services.leaves_running_software(selected))
+                .map(|_| self.reply_to),
+            ..self
+        }
+    }
 }
 
 /// How the request's handling ended.
@@ -530,6 +590,18 @@ enum Ended {
     Finished(Unsettled),
     /// The link closed first: the handler was dropped and no response can be sent.
     Closed,
+}
+
+impl Served {
+    /// The session the handler's outcome selects, where it finished and selects one.
+    fn selected(&self) -> Option<DiagnosticSessionType> {
+        match self.ended {
+            Ended::Finished(unsettled) => unsettled
+                .parts()
+                .and_then(|(_, outcome)| outcome.ok().flatten()),
+            Ended::Closed => None,
+        }
+    }
 }
 
 /// What [`serve`] hands back once the handler has finished, for the caller to settle.
@@ -617,7 +689,7 @@ async fn serve<
                         // The 0x78's confirmation, or any other: it frees its association
                         // and opens the enhanced window (UDSS_LLR_0116).
                         let reaction = session.t_data_conf(now, ai, result);
-                        let d = drain(reaction, transport, pending).await?;
+                        let d = drain(reaction, transport, pending, None).await?;
                         deferred = deferred.merge(d.deferred);
                         if owed {
                             // UDSS_LLR_0061/0062 refused the 0x78 for want of the
@@ -669,7 +741,7 @@ async fn keep_alive<T: UdsTransport, const PEERS: usize>(
     data: &[u8],
 ) -> Result<Deferred, T::Error> {
     let reaction = session.t_data_ind(now, ai, data, SResult::Ok, ServerRx::KeepAlive);
-    Ok(drain(reaction, transport, pending).await?.deferred)
+    Ok(drain(reaction, transport, pending, None).await?.deferred)
 }
 
 /// ISO 14229-1:2020 8.7.6 — any other message arriving while a service is in progress
@@ -697,7 +769,7 @@ async fn refuse_busy<T: UdsTransport, const PEERS: usize>(
     let busy = [0x7F, sid, u8::from(NegativeResponseCode::BusyRepeatRequest)];
     let reply_to = reply_address(own, ai);
     let reaction = session.s_data_req(now, reply_to, &busy, ServerTx::BusyRepeatRequest);
-    Ok(drain(reaction, transport, pending).await?.deferred)
+    Ok(drain(reaction, transport, pending, None).await?.deferred)
 }
 
 /// End the request once its handling has: settle and answer it, or, where the link closed
@@ -759,7 +831,7 @@ async fn answer<A: ServiceSet, T: UdsTransport, const PEERS: usize>(
     let reaction = final_response(session, now, serving.reply_to, response, selected);
     // milestone-1 limit: an `Err` at any `?` below drops what was recorded; see
     // `Server::step`'s doc.
-    let mut d = drain(reaction, transport, pending).await?;
+    let mut d = drain(reaction, transport, pending, serving.leaving).await?;
     let mut deferred = d.deferred;
     let awaited = match d.rejected {
         // UDSS_LLR_0061 — only `reply_to`'s own confirmation frees its addressing.
@@ -780,7 +852,7 @@ async fn answer<A: ServiceSet, T: UdsTransport, const PEERS: usize>(
         deferred = deferred.merge(waited);
         let now = transport.now();
         let reaction = final_response(session, now, serving.reply_to, response, selected);
-        d = drain(reaction, transport, pending).await?;
+        d = drain(reaction, transport, pending, serving.leaving).await?;
         deferred = deferred.merge(d.deferred);
     }
     match d.rejected {
@@ -840,7 +912,7 @@ async fn complete<T: UdsTransport, const PEERS: usize>(
         session: selected.map(selection_of),
     };
     let reaction = session.completion_report(now, ai, class);
-    let d = drain(reaction, transport, pending).await?;
+    let d = drain(reaction, transport, pending, None).await?;
     Ok(d.deferred.merge(Deferred {
         timed_out: false,
         confirmed: selected,
@@ -895,7 +967,7 @@ async fn await_confirmation<A: ServiceSet, T: UdsTransport, const PEERS: usize>(
         match event {
             TransportEvent::DataConf { ai, result } => {
                 let reaction = session.t_data_conf(now, ai, result);
-                let d = drain(reaction, transport, pending).await?;
+                let d = drain(reaction, transport, pending, None).await?;
                 deferred = deferred.merge(d.deferred);
                 let matches = awaited == Awaited::Any || ai == serving.reply_to;
                 if matches && d.rejected.is_none() {
@@ -952,7 +1024,7 @@ async fn overrun_at<T: UdsTransport, const PEERS: usize>(
     if serving.may_pend {
         return answer_overrun(session, transport, pending, now, serving).await;
     }
-    let d = drain(session.tick(now), transport, pending).await?;
+    let d = drain(session.tick(now), transport, pending, None).await?;
     Ok(Overrun {
         sent_pending: false,
         owed: false,
@@ -974,7 +1046,7 @@ async fn answer_overrun<T: UdsTransport, const PEERS: usize>(
     serving: Serving,
 ) -> Result<Overrun, T::Error> {
     let tick = session.tick(now);
-    let first = drain(tick, transport, pending).await?;
+    let first = drain(tick, transport, pending, None).await?;
     if !first.overran {
         return Ok(Overrun {
             sent_pending: false,
@@ -1005,7 +1077,7 @@ async fn submit_pending<T: UdsTransport, const PEERS: usize>(
     let bytes = [0x7F_u8, serving.sid, 0x78];
     let reaction =
         session.s_data_req(now, serving.reply_to, &bytes, ServerTx::ResponsePending);
-    let d = drain(reaction, transport, pending).await?;
+    let d = drain(reaction, transport, pending, None).await?;
     Ok(Overrun {
         sent_pending: d.rejected.is_none(),
         owed: d.rejected.is_some_and(|r| {
@@ -1018,8 +1090,49 @@ async fn submit_pending<T: UdsTransport, const PEERS: usize>(
 
 #[cfg(test)]
 mod tests {
-    use super::Deferred;
+    use super::{Deferred, after_send};
+    use crate::AfterSend;
     use uds_protocol::DiagnosticSessionType as S;
+    use uds_session::{Address, Ai, Mtype, TaType};
+
+    const TO_TESTER: Ai = Ai {
+        mtype: Mtype::Diag,
+        sa: Address(0x0E00),
+        ta: Address(0x0E80),
+        ta_type: TaType::Physical,
+    };
+
+    /// ISO 14229-5:2022 REQ 7.9 closes the connection after the positive
+    /// `DiagnosticSessionControl` response of a session change that disconnects it, so
+    /// only that response to the leaving request's addressing is `ServerLeaves`: never the
+    /// 0x78 sharing that addressing, a negative response, another tester's response, or
+    /// anything sent while no session change leaves.
+    #[test]
+    fn only_the_leaving_positive_response_is_flagged() {
+        let other = Ai {
+            ta: Address(0x0E81),
+            ..TO_TESTER
+        };
+        let leaving = Some(TO_TESTER);
+        let positive = [0x50, 0x02, 0x00, 0x32, 0x01, 0xF4];
+        assert_eq!(
+            after_send(leaving, TO_TESTER, &positive),
+            AfterSend::ServerLeaves
+        );
+        for (ai, data) in [
+            (TO_TESTER, &[0x7F, 0x10, 0x78][..]),
+            (TO_TESTER, &[0x7F, 0x10, 0x22][..]),
+            (TO_TESTER, &[0x51, 0x01][..]),
+            (other, &positive[..]),
+        ] {
+            assert_eq!(
+                after_send(leaving, ai, data),
+                AfterSend::Continue,
+                "{data:02X?}"
+            );
+        }
+        assert_eq!(after_send(None, TO_TESTER, &positive), AfterSend::Continue);
+    }
 
     const TIMEOUT: Deferred = Deferred {
         timed_out: true,

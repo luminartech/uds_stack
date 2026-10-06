@@ -201,8 +201,9 @@ The traits
    **Two services do not carry it, and cannot.** A response-pending is what the driver
    sends while it is still awaiting a handler, so a service with nothing awaited has no
    window in which one could come due. ``TesterPresent``'s ``on_tester_present`` is
-   synchronous; ``DiagnosticSessionControl``'s ``supports``, ``supported_from`` and
-   ``timing`` are lookups the pipeline makes before composing the response, and its
+   synchronous; ``DiagnosticSessionControl``'s ``supports``, ``supported_from``,
+   ``timing`` and ``leaves_running_software`` are lookups made before the response is
+   composed or sent, and its
    ``on_transition`` runs after that response has gone out. On both, the constant would
    have had one possible value and no effect, and declaring it asked an application to
    answer a question with one answer.
@@ -263,14 +264,22 @@ Protocol state
         - Holds
         - Fixed by
       * - Server-global
-        - active security level, DTC setting, communication control, periodic schedules,
-          the transfer in progress
+        - active security level, periodic schedules, the transfer in progress
         - "Only one security level shall be active at any instant of time" (10.4)
       * - Per-channel
         - authentication state
         - "An authenticated state shall be linked to a certain diagnostic channel. Multiple
           clients can be handled on multiple channels with different authentication
           settings." (10.6.4)
+
+   **DTC setting and communication control are not in that list, though they are
+   server-global too.** Their state is the effect itself — DTC status updates stopped,
+   normal messages disabled — which the application performs and this crate cannot, so it
+   holds them, and resumes them on the transitions ``UDSSVC_ARCH_0038`` tabulates.
+   ``on_transition`` names the session entered so that it can: whether the service is
+   supported there is what clause 10.8.1 turns the resumption on, and a
+   ``SessionTransition`` alone cannot tell extended to programming from extended to
+   extended. An earlier draft listed both as crate-held, which nothing implemented.
 
    Annex J corroborates the keying without being the authority for it. It is informative, so
    it obliges nothing, but it is where clause 8.7.6 sends a reader asking how multiple
@@ -456,15 +465,23 @@ Protocol state
       A --> B : 2. requestSeed accepted\nseed stored, xx saved
       B --> C : 3. sendKey, yy == xx+1, key OK\nAtt_Cnt := 0, unlock xx
       A --> A : 4. 0x13 / 0x24 / 0x22 / 0x37\ndelay-timer expiry
-      B --> B : 5. a further requestSeed\n(Static_Seed governs)
-      D --> D : 5. a further requestSeed\n(Static_Seed governs)
+      B --> B : 5. a further requestSeed\n(Static_Seed governs; the application's)
+      D --> D : 5. a further requestSeed\n(Static_Seed governs; the application's)
       C --> A : 6. session change or timeout → lock
       D --> A : 6. session change or timeout → lock
       C --> C : 7. requestSeed for the unlocked level → zero seed\n0x13 / 0x22 / 0x37
       C --> D : 8. requestSeed for a level that is not unlocked
-      B --> A : 9. sendKey outcome in B\n0x35 / 0x36 / 0x24 / 0x13 — seed discarded
-      D --> C : 10. sendKey outcome in D\nkey OK → lock current, unlock xx\nkey NOK → 0x35 / 0x36 — seed discarded
+      B --> A : 9. sendKey outcome in B, or any refused request\n0x35 / 0x36 / 0x24 / 0x13 / general NRC — seed discarded
+      D --> C : 10. sendKey outcome in D, or any refused request\nkey OK → lock current, unlock xx\nkey NOK → 0x35 / 0x36, general NRC — seed discarded
       @enduml
+
+   **Any refused request discards the seed, not only a failed key.** Table I.2's rows for
+   transitions 9 and 10 include a ``requestSeed`` whose length is wrong (0x13) and "a
+   SecurityAccess request [that] results in a general negative response code" (8.7), so in
+   state B or D every ``SecurityAccess`` request answered negatively leaves the seed
+   discarded, whichever check refused it — Figure 6's 0x12 and 0x7E included, and a request
+   too long to be received whole. ``uds_server!``'s ``dispatch`` applies it once, to its
+   result, rather than in each check.
 
    **The restart rule is the chart's shape, and an earlier draft had it wrong.** Clause 10.4
    states that "an invalid key shall require the client to start over from the beginning
@@ -481,7 +498,7 @@ Protocol state
    standard. ``UDSSVC_ARCH_0034`` had quoted the restart rule correctly all along; the chart
    contradicted it.
 
-   **Five rules this crate enforces that an application would have to rediscover.**
+   **Five rules an application would have to rediscover, four of which this crate enforces.**
 
    *The paired sub-function.* Clause 10.4.2 makes ``requestSeed`` the odd values and
    ``sendKey`` the even, with a fixed relationship — level 0x01 pairs with 0x02, 0x03 with
@@ -515,7 +532,7 @@ Protocol state
    something the standard does not.
 
    *The zero seed.* A ``requestSeed`` for a level already unlocked is answered positively
-   with a seed of zero, and clause 10.4.2 adds that a server "shall never send an all zero
+   with a seed of zero, and clause 10.4.1 adds that a server "shall never send an all zero
    seed for a given security level that is currently locked". Clients use this to probe lock
    state, so an application that returned a real seed would break a client that is reading
    the standard correctly.
@@ -532,12 +549,21 @@ Protocol state
    that the at-limit action is ``Att_Cnt = Att_Cnt_Limit`` — a **clamp**, not a further
    increment — so a counter that is already at the limit does not run away.
 
-   *The seed policy.* Table I.1 defines ``Static_Seed``: true means a stored seed is re-used
-   when the same level's seed is requested again, false means a fresh seed is generated each
-   time. It governs transitions 5, 7 and 10, including the "if ``Static_Seed = True`` then
-   clear generated seed for SubFunction ``xx``" action that follows a successful unlock.
-   Table I.1 also fixes the fallback: "if ``Delay_Timer`` and ``Att_Cnt`` are not supported,
-   a random seed shall always be used", so a deployment that declines both loses the choice.
+   *The seed policy is the application's.* Table I.1 defines ``Static_Seed``: true means a
+   stored seed is re-used when the same level's seed is requested again, false means a
+   fresh seed is generated each time. It governs transitions 5, 7 and 10, including the "if
+   ``Static_Seed = True`` then clear generated seed for SubFunction ``xx``" action that
+   follows a successful unlock. Table I.1 also fixes the fallback: "if ``Delay_Timer`` and
+   ``Att_Cnt`` are not supported, a random seed shall always be used", so a deployment that
+   declines both loses the choice.
+
+   It is the one rule here this crate does not enforce, because the seed's bytes are the
+   application's and this crate keeps none: ``State`` is not generic, and holding a seed
+   would make it so. An earlier draft carried ``static_seed`` on ``SecurityPolicy`` and read
+   it nowhere. The obligation is ``SecurityAccess::seed``'s contract instead: a static seed
+   is returned again until ``verify_key`` reports the level's key valid, and under
+   ``RandomSeedOnly`` every seed is fresh. The application sees the unlock that clears a
+   static seed, because the verdict that causes it is its own.
 
    **What the application supplies, and why the split falls here rather than elsewhere.**
    Annex I Table I.1 marks ``Delay_Timer``, ``Att_Cnt_Limit`` and ``Static_Seed`` as
@@ -563,12 +589,23 @@ Protocol state
       fn attempts(&self, level: u8) -> u8;
       /// Store the count this crate computed. The application never computes one.
       fn store_attempts(&mut self, level: u8, count: u8);
-      /// Whether a delay is running for `level`.
-      fn delay_running(&self, level: u8) -> bool;
+      /// The delay timer's state for `level`: running, expired since last asked, or idle.
+      fn delay(&mut self, level: u8) -> Delay;
       /// Begin the delay this crate decided is owed.
       fn start_delay(&mut self, level: u8);
 
-   The application persists and times; it never decides. That keeps ``UDSSVC_ARCH_0034``'s
+   The application persists and times; it never decides.
+
+   **The timer reports its expiry; the crate does not infer it.** An earlier draft took
+   "count at the limit, no delay running" to mean the delay had run out, and reset the
+   count. That is also the state after a restart: the count survives in non-volatile
+   storage, a RAM timer does not, and the next ``requestSeed`` would have reset the count
+   and issued a seed — a brute force by power cycle. The application now reports
+   ``Expired`` once when its timer runs out, which alone resets the count, and an
+   ``Idle`` timer with the count at the limit is a delay owed. Transition 1's "start
+   ``Delay_Timer`` … if required on start up" is ``ServiceSet::start_up``, which the
+   driver runs on its first step (``Server::new`` is a ``const fn`` and cannot call the
+   application) and which starts the delay of every supported level at its limit. That keeps ``UDSSVC_ARCH_0034``'s
    third question answered — an application cannot produce ``0x35`` where ``0x36`` is
    required, because it is not asked which to send.
 
@@ -665,7 +702,8 @@ Protocol state
 
    Rationale: the classification is a pure function of the previous and next session values,
    which this crate has, and misclassifying it is the whole failure mode. So this crate
-   classifies and hands down the *class*, never the raw session values:
+   classifies and hands down the *class*, with the session entered beside it but never the
+   pair of raw values to classify:
 
    .. code-block:: rust
 
@@ -679,10 +717,20 @@ Protocol state
       /// Called after the positive response to DiagnosticSessionControl, and on
       /// session timeout. Also called with `security_relocked` when a transition
       /// relocked a level, so functionality gated on it can be dropped.
-      fn on_session_transition(&mut self, t: SessionTransition, security_relocked: bool);
+      fn on_transition(
+          &mut self,
+          t: SessionTransition,
+          entered: DiagnosticSessionType,
+          security_relocked: bool,
+      );
 
    An application receiving a classified transition cannot mistake a same-session re-entry
    for a no-op, which is what it would do given two session bytes and clause 10.2 to read.
+   The session entered is handed down too, because what a class owes can turn on it: the
+   ``ControlDTCSetting`` and ``CommunicationControl`` state an application holds resumes on
+   entering a session where the service is not supported, and an application that
+   programs from a bootloader must know that ``10 02`` was the session entered, not ``10
+   03``. Both are non-default to non-default.
    State this crate holds — the security level of ``UDSSVC_ARCH_0037``, the transfer of
    ``UDSSVC_ARCH_0036`` — it resets itself, without asking.
 
@@ -712,7 +760,7 @@ Protocol state
    stack cannot yet express, and answers both 0x11.
 
    Until those message types exist, the periodic and event columns are rules with nothing to
-   apply them to, and ``on_session_transition`` is the only route by which an application
+   apply them to, and ``on_transition`` is the only route by which an application
    holding that functionality can comply. The classification is authored now because it is
    the part that does not change when the message types arrive.
 

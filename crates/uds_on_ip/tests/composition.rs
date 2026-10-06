@@ -13,7 +13,7 @@
 #![allow(dead_code, reason = "type-checked, never run")]
 
 use uds_on_ip::DoIpTransport;
-use uds_services::{Ai, TransportEvent, UdsTransport};
+use uds_services::{AfterSend, Ai, TransportEvent, UdsTransport};
 
 /// The driver bounds its transport on nothing but the trait.
 ///
@@ -73,7 +73,7 @@ async fn a_request_can_be_answered_while_its_bytes_are_live(
     // match from outside `uds_services` — the borrow is what is under test, not
     // the case coverage.
     if let TransportEvent::DataInd { ai, data } = event {
-        transport.t_data_req(ai, data).await?;
+        transport.t_data_req(ai, data, AfterSend::Continue).await?;
     }
     Ok(())
 }
@@ -94,7 +94,7 @@ async fn a_truncated_request_can_also_be_answered(
         transport.next_event(buffer, None).await?
     {
         let _ = declared;
-        transport.t_data_req(ai, data).await?;
+        transport.t_data_req(ai, data, AfterSend::Continue).await?;
     }
     Ok(())
 }

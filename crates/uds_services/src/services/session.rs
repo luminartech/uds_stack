@@ -2,7 +2,7 @@
 //!
 //! ``UDSSVC_ARCH_0012`` — one trait per service.
 
-use crate::{ResponseSink, SessionTransition};
+use crate::{Access, ResponseSink, SessionTransition};
 use uds_protocol::{
     CommunicationControlType, CommunicationType, DiagnosticSessionType, DtcSettingType,
     NegativeResponseCode, ResetType, SubnetNumber,
@@ -43,8 +43,9 @@ impl SessionTiming {
 ///
 /// **No `MAY_RESPOND_PENDING`**, unlike the services in ``UDSSVC_ARCH_0033``. A
 /// response-pending is what the driver sends while it is still awaiting a handler, and
-/// nothing here is awaited: [`Self::supports`], [`Self::supported_from`] and
-/// [`Self::timing`] are lookups the pipeline makes before composing the response, and
+/// nothing here is awaited: [`Self::supports`], [`Self::supported_from`],
+/// [`Self::timing`] and [`Self::leaves_running_software`] are lookups the driver makes
+/// before composing or sending the response, and
 /// [`Self::on_transition`] runs after that response has gone out. There is no window in
 /// which a 0x78 could come due, so the constant would have had one possible value and no
 /// effect.
@@ -105,29 +106,97 @@ pub trait DiagnosticSessionControl {
     /// * `session` - the session being entered; see [`DiagnosticSessionType`].
     fn timing(&self, session: DiagnosticSessionType) -> SessionTiming;
 
+    /// Whether entering `session` leaves the software this server is running.
+    ///
+    /// ISO 14229-1:2020 10.2.2.2 Table 25 lets the programming session run in boot
+    /// software, left only by `ECUReset`, `10 01` or a session timeout, with the
+    /// application software restarted where it is valid. So it is each binary's to say:
+    /// an application jumping to its bootloader answers `true` for
+    /// [`ProgrammingSession`](DiagnosticSessionType::ProgrammingSession), and the
+    /// bootloader `true` for [`DefaultSession`](DiagnosticSessionType::DefaultSession)
+    /// where valid application software exists. A server that programs from within its
+    /// application answers `false` for every session. [`crate::Server`] then hands the
+    /// final positive response [`AfterSend::ServerLeaves`](crate::AfterSend::ServerLeaves),
+    /// on which a connection-oriented transport closes (ISO 14229-5:2022 REQ 7.9).
+    ///
+    /// **A suppressed session change sends no response**, so no message carries the fact
+    /// and no orderly close precedes the departure: a server left by `10 82` drops its
+    /// connection unannounced. Nothing here prevents that; a client that needs the close
+    /// must not suppress the response.
+    ///
+    /// # Arguments
+    ///
+    /// * `session` - the session being entered; see [`DiagnosticSessionType`].
+    fn leaves_running_software(&self, session: DiagnosticSessionType) -> bool;
+
     /// Called after the positive response, and on `tS3_Server` expiry.
     ///
-    /// ``UDSSVC_ARCH_0038``. `security_relocked` is true where the transition relocked a
-    /// security level, so functionality gated on it can be dropped — clause 10.4 makes a
-    /// session change lock every level.
-    fn on_transition(&mut self, transition: SessionTransition, security_relocked: bool);
+    /// ``UDSSVC_ARCH_0038``. The application applies what clause 10.2 Figure 7 owes the
+    /// state it holds: `transition` says which of the four cases occurred, and `entered`
+    /// which session, because what a case owes can turn on it — `ControlDTCSetting` and
+    /// `CommunicationControl` state is the application's, and resumes on entering a
+    /// session where the service is not supported, and a session may run in other
+    /// software than the one now running (see [`Self::leaves_running_software`]).
+    ///
+    /// # Arguments
+    ///
+    /// * `transition` - which of Figure 7's transitions occurred; see
+    ///   [`SessionTransition`].
+    /// * `entered` - the session now in force; see [`DiagnosticSessionType`].
+    ///   [`DefaultSession`](DiagnosticSessionType::DefaultSession) on `tS3_Server` expiry.
+    /// * `security_relocked` - whether the transition relocked a security level, so
+    ///   functionality gated on it can be dropped: Annex I transition 6 makes a session
+    ///   change lock every level.
+    fn on_transition(
+        &mut self,
+        transition: SessionTransition,
+        entered: DiagnosticSessionType,
+        security_relocked: bool,
+    );
 }
 
 /// `EcuReset` (0x11).
+///
+/// ISO 14229-1:2020 clause 10.3. The pipeline writes the positive response's service
+/// identifier and echoed `resetType`; [`Self::reset`] decides whether the reset is
+/// accepted and supplies the `powerDownTime` that follows.
 pub trait EcuReset {
     /// ``UDSSVC_ARCH_0033`` — a reset legitimately sets this.
     const MAY_RESPOND_PENDING: bool;
 
-    /// Perform `kind`, writing any `powerDownTime` into `out`.
+    /// Where `kind` is available and which levels unlock it, or `None` where this
+    /// server does not support it.
+    ///
+    /// ISO 14229-1:2020 8.7.3.1 Figure 6, ``UDSSVC_ARCH_0007`` — in that order, `None`
+    /// settles the request `subFunctionNotSupported` (0x12), an active session outside
+    /// [`Access::sessions`] `subFunctionNotSupportedInActiveSession` (0x7E), and none of
+    /// [`Access::levels`] unlocked `securityAccessDenied` (0x33), each without
+    /// [`Self::reset`] being asked.
     ///
     /// # Arguments
     ///
-    /// * `kind` - the reset to perform; see [`ResetType`].
-    /// * `out` - where the `powerDownTime` byte goes, for the reset that carries one.
+    /// * `kind` - the reset requested; see [`ResetType`], whose reserved and specific
+    ///   variants carry the raw byte for a server that defines its own.
+    fn access(&self, kind: ResetType) -> Option<Access>;
+
+    /// Accept or refuse `kind`, writing any `powerDownTime` into `out`.
+    ///
+    /// **Must not perform the reset before returning.** ISO 14229-1:2020 clause 10.3.1
+    /// strongly recommends that the positive response is sent before the reset is
+    /// executed, and it is sent only after this returns `Ok`.
+    ///
+    /// # Arguments
+    ///
+    /// * `kind` - the reset requested, one [`Self::access`] admitted; see [`ResetType`].
+    /// * `out` - where the `powerDownTime` byte goes, for
+    ///   [`ResetType::EnableRapidPowerShutDown`], the one reset whose response carries
+    ///   it (clause 10.3.3, Table 35); nothing is written for any other.
     ///
     /// # Errors
     ///
-    /// The [`NegativeResponseCode`] for an unsupported or impermissible reset.
+    /// The [`NegativeResponseCode`] for a reset whose criteria are not met, such as
+    /// `conditionsNotCorrect` (0x22), clause 10.3.4. A locked level is
+    /// [`Self::access`]'s, not this method's.
     ///
     /// A refused write to `out` needs no handling: the sink records the refusal and the
     /// pipeline answers `responseTooLong` (0x14) in place of the response, so the write's
@@ -168,23 +237,55 @@ pub trait CommunicationControl {
     /// ``UDSSVC_ARCH_0033``.
     const MAY_RESPOND_PENDING: bool;
 
-    /// Apply `control_type` to `communication_type` on `node`.
+    /// Where `control_type` is available and which levels unlock it, or `None` where this
+    /// server does not support it.
+    ///
+    /// ISO 14229-1:2020 8.7.3.1 Figure 6, ``UDSSVC_ARCH_0007`` — in that order, `None`
+    /// settles the request `subFunctionNotSupported` (0x12), an active session outside
+    /// [`Access::sessions`] `subFunctionNotSupportedInActiveSession` (0x7E), and none of
+    /// [`Access::levels`] unlocked `securityAccessDenied` (0x33), each without
+    /// [`Self::control`] being asked.
+    ///
+    /// The default session never reaches here: Table 23 refuses the service there with
+    /// 0x7F.
+    ///
+    /// # Arguments
+    ///
+    /// * `control_type` - the `controlType` requested; see [`CommunicationControlType`],
+    ///   whose reserved and specific variants carry the raw byte.
+    fn access(&self, control_type: CommunicationControlType) -> Option<Access>;
+
+    /// Apply `control_type` to `communication_type` on `subnet`, or on the node `node_id`
+    /// names.
+    ///
+    /// Clause 10.5.1: the positive response is owed even where the requested state is
+    /// already in effect. Clause 10.2 Figure 7 resets it on a return to the default
+    /// session and leaves it on any other transition; that state is the application's to
+    /// reset, and `DiagnosticSessionControl::on_transition` tells it the session entered.
     ///
     /// # Arguments
     ///
     /// * `control_type` - what to do; see [`CommunicationControlType`].
-    /// * `communication_type` - what it applies to; see [`CommunicationType`].
-    /// * `node` - which network it applies to; see [`SubnetNumber`], which distinguishes
+    /// * `communication_type` - what it applies to; see [`CommunicationType`]. Never
+    ///   [`CommunicationType::IsoSaeReserved`]: Annex B Table B.1 reserves that value, and
+    ///   the pipeline answers it `requestOutOfRange` (0x31) without asking.
+    /// * `subnet` - which network it applies to; see [`SubnetNumber`], which distinguishes
     ///   [`SubnetNumber::ReceivedOn`] from [`SubnetNumber::AllConnectedNetworks`].
+    /// * `node_id` - the `nodeIdentificationNumber`, present exactly where `control_type`
+    ///   is one of the enhanced-address variants (clause 10.5.2.3; see
+    ///   [`CommunicationControlType::is_extended_address_variant`]).
     ///
     /// # Errors
     ///
-    /// The [`NegativeResponseCode`] for an unsupported combination.
+    /// The [`NegativeResponseCode`] where the control cannot be applied, clause 10.5.4:
+    /// `conditionsNotCorrect` (0x22), or `requestOutOfRange` (0x31) for an error in
+    /// `communication_type` or `node_id`.
     fn control(
         &mut self,
         control_type: CommunicationControlType,
         communication_type: CommunicationType,
-        node: SubnetNumber,
+        subnet: SubnetNumber,
+        node_id: Option<u16>,
     ) -> impl core::future::Future<Output = Result<(), NegativeResponseCode>>;
 }
 
@@ -195,13 +296,37 @@ pub trait ControlDtcSetting {
 
     /// The longest `DTCSettingControlOptionRecord` this server accepts.
     ///
-    /// Clause 10.7 leaves the record manufacturer-specific and gives it no fixed width,
-    /// so the ceiling is the application's to state — and stating it is what puts this
-    /// service's real contribution into the derived in-flight buffer rather than the
-    /// catch-all's six bytes.
+    /// Clause 10.8.2.3 leaves the record manufacturer-specific and gives it no fixed
+    /// width, so the ceiling is the application's to state — and stating it is what puts
+    /// this service's real contribution into the derived in-flight buffer rather than the
+    /// catch-all's six bytes. A longer record is `incorrectMessageLengthOrInvalidFormat`
+    /// (0x13) without [`Self::control_dtc_setting`] being asked.
     const MAX_OPTION_RECORD_LEN: usize;
 
+    /// Where `setting` is available and which levels unlock it, or `None` where this
+    /// server does not support it.
+    ///
+    /// ISO 14229-1:2020 8.7.3.1 Figure 6, ``UDSSVC_ARCH_0007`` — in that order, `None`
+    /// settles the request `subFunctionNotSupported` (0x12), an active session outside
+    /// [`Access::sessions`] `subFunctionNotSupportedInActiveSession` (0x7E), and none of
+    /// [`Access::levels`] unlocked `securityAccessDenied` (0x33), each without
+    /// [`Self::control_dtc_setting`] being asked.
+    ///
+    /// The default session never reaches here: Table 23 refuses the service there with
+    /// 0x7F.
+    ///
+    /// # Arguments
+    ///
+    /// * `setting` - the `DTCSettingType` requested; see [`DtcSettingType`]. A reserved
+    ///   `DTCSettingType` is not one, and is 0x12 without this being asked.
+    fn access(&self, setting: DtcSettingType) -> Option<Access>;
+
     /// Apply `setting`, with the manufacturer-specific option record.
+    ///
+    /// Clause 10.8.1: the positive response is owed even where `setting` is already in
+    /// effect, and updating resumes on a transition to a session where this service is
+    /// not supported. That state is the application's to resume: it is told the session
+    /// entered by `DiagnosticSessionControl::on_transition`.
     ///
     /// # Arguments
     ///
@@ -211,7 +336,9 @@ pub trait ControlDtcSetting {
     ///
     /// # Errors
     ///
-    /// The [`NegativeResponseCode`] for an unsupported setting.
+    /// The [`NegativeResponseCode`] where the setting cannot be applied, clause 10.8.4:
+    /// `conditionsNotCorrect` (0x22), or `requestOutOfRange` (0x31) for an error in
+    /// `option_record`.
     fn control_dtc_setting(
         &mut self,
         setting: DtcSettingType,
@@ -252,17 +379,29 @@ mod tests {
             !matches!(session, DiagnosticSessionType::ProgrammingSession)
                 || matches!(active, DiagnosticSessionType::ExtendedDiagnosticSession)
         }
+        fn leaves_running_software(&self, _s: DiagnosticSessionType) -> bool {
+            false
+        }
         fn timing(&self, _s: DiagnosticSessionType) -> SessionTiming {
             SessionTiming {
                 p2_server_max_ms: 50,
                 p2_star_server_max_10ms: 500,
             }
         }
-        fn on_transition(&mut self, _t: SessionTransition, _relocked: bool) {}
+        fn on_transition(
+            &mut self,
+            _t: SessionTransition,
+            _entered: DiagnosticSessionType,
+            _relocked: bool,
+        ) {
+        }
     }
 
     impl EcuReset for Ecu {
         const MAY_RESPOND_PENDING: bool = true;
+        fn access(&self, _k: ResetType) -> Option<crate::Access> {
+            Some(crate::Access::new(crate::Sessions::ALL))
+        }
         async fn reset(
             &mut self,
             _k: ResetType,
@@ -279,9 +418,19 @@ mod tests {
     #[test]
     fn the_application_receives_a_classified_transition() {
         let mut ecu = Ecu;
-        ecu.on_transition(SessionTransition::NonDefaultToDefault, true);
-        assert!(ecu.supports(DiagnosticSessionType::ProgrammingSession));
-        assert!(!ecu.supports(DiagnosticSessionType::SafetySystemDiagnosticSession));
+        ecu.on_transition(
+            SessionTransition::NonDefaultToDefault,
+            DiagnosticSessionType::DefaultSession,
+            true,
+        );
+        assert!(DiagnosticSessionControl::supports(
+            &ecu,
+            DiagnosticSessionType::ProgrammingSession
+        ));
+        assert!(!DiagnosticSessionControl::supports(
+            &ecu,
+            DiagnosticSessionType::SafetySystemDiagnosticSession
+        ));
     }
 
     /// P2 values are a property of the session being entered, so the application states

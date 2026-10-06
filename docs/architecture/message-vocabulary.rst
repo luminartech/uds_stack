@@ -142,9 +142,12 @@ together is the only way to find out whether the set is complete.
 
    The two roles need this differently, and the difference is precise:
 
-   * A **server** does not need it from the vocabulary. The dispatcher writes each
+   * A **server answering a read** does not need it. The dispatcher writes each
      supported identifier's two bytes and the handler writes its own record, so the length
-     is whatever the handler wrote (``UDSSVC_ARCH_0008``).
+     is whatever the handler wrote (``UDSSVC_ARCH_0008``). A **server receiving a write**
+     does: Figure 26 checks a ``WriteDataByIdentifier`` record's length (0x13) before its
+     security (0x33) and its content (0x31), so the stage splits the record with
+     ``split_record`` and hands the handler exactly that record.
    * A **client** cannot proceed without it. Given the response bytes and a list of
      requested identifiers, it must read a two-byte identifier, take the
      application-defined number of bytes, and repeat. Nothing in the message tells it

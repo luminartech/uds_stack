@@ -95,7 +95,11 @@ rather than merely the code path.
                if (SubFunction in active session?) then (no)
                  :0x7E; <<negative>>
                else (yes)
-                 :SubFunction accepted;
+                 if (SubFunction's levels unlocked?) then (no)
+                   :0x33; <<negative>>
+                 else (yes)
+                   :SubFunction accepted;
+                 endif
                endif
              endif
            else (no)
@@ -104,7 +108,8 @@ rather than merely the code path.
            endif
            :decode with uds_protocol;
            if (decodes?) then (no)
-             :0x13; <<negative>>
+             :0x13, or 0x31 for a
+             parameter out of range; <<negative>>
            else (yes)
              if (any data parameter supported?) then (none)
                :0x31; <<negative>>
@@ -136,7 +141,7 @@ decides whether its own answer is transmitted.
 Decode
 ------
 
-.. arch:: Decoding is delegated, and its failures map to 0x13
+.. arch:: Decoding is delegated, and its failures settle the code uds_protocol assigns
    :id: UDSSVC_ARCH_0005
    :part_of: UDSSVC_ARCH_0004
    :depends_on: UDSSVC_ARCH_0002
@@ -145,14 +150,19 @@ Decode
    :tags: dispatch; uds_protocol
 
    Rationale: 0x13 is a clause 8.7 outcome, but message length and format are properties of
-   the encoding, which is ``uds_protocol``'s. So ``uds_protocol`` *detects* and this crate
-   *maps*: neither re-derives the other's work, and there is exactly one place that knows
-   the wire format. The request bytes are decoded with ``uds_protocol`` once Figure 5's
-   support and session checks have passed (``UDSSVC_ARCH_0006``): decoding is the
-   service-specific check, where Figure 5 places length and format. A decode failure
-   settles the request with ``incorrectMessageLengthOrInvalidFormat`` (0x13). A request
-   that decodes to ``uds_protocol``'s unmodelled-service variant settles with
-   ``serviceNotSupported`` (0x11), not with 0x13.
+   the encoding, which is ``uds_protocol``'s. So ``uds_protocol`` *detects and classifies*
+   and this crate *settles*: neither re-derives the other's work, and there is exactly one
+   place that knows the wire format. The request bytes are decoded with ``uds_protocol``
+   once Figure 5's support and session checks have passed (``UDSSVC_ARCH_0006``):
+   decoding is the service-specific check, where Figure 5 places length and format. A
+   decode failure settles the request with the code ``uds_protocol`` assigns the failure
+   (``Error::negative_response_code``): ``incorrectMessageLengthOrInvalidFormat`` (0x13)
+   for a length or format fault, ``requestOutOfRange`` (0x31) for a parameter outside its
+   permitted range — a ``communicationType`` with its reserved bits set, for one (ISO
+   14229-1:2020 Annex B Table B.1, clause 10.5.4) — and 0x13 where it assigns none. A
+   request that decodes with bytes left over is 0x13. A request that decodes to
+   ``uds_protocol``'s unmodelled-service variant settles with ``serviceNotSupported``
+   (0x11), not with 0x13.
 
    The unmodelled-service carve-out is the part that is easy to get wrong. ``uds_protocol``
    represents a service identifier it does not model as a variant carrying the raw service
@@ -224,12 +234,14 @@ Mandatory preconditions
    (``UDSSVC_ARCH_0005``'s declared reading), then check 1, then check 3, then — for a
    service with a SubFunction parameter other than 0x31 — Figure 6's sub-function checks
    (``UDSSVC_ARCH_0007``: supported ever, 0x12, then supported in the active session,
-   0x7E), then the decode that settles 0x13 (``UDSSVC_ARCH_0005``). Nothing is decoded
-   until the service is known to be supported and allowed in the active session, so 0x13
-   never pre-empts 0x11 or 0x7F, and a trailing byte never pre-empts 0x12 or 0x7E.
-   Check 2, authentication (0x34), and the security precondition (0x33) are not
-   evaluated yet: authentication is architecture open question 4, and security joins with
-   security state.
+   0x7E, then the sub-function security check, 0x33), then the decode, whose failure
+   settles the code ``uds_protocol`` assigns it (``UDSSVC_ARCH_0005``). Nothing is decoded
+   until the service is known to be supported and allowed in the active session, so a
+   decode failure never pre-empts 0x11 or 0x7F, and a trailing byte never pre-empts 0x12,
+   0x7E or 0x33. Check 2, authentication (0x34), is not evaluated yet: it is architecture
+   open question 4. A service whose security requirement turns on an identifier in its
+   data-parameters (``WriteDataByIdentifier``, ``RoutineControl``) checks it in its own
+   stage, at the place its figure gives.
 
    **Check 3 is partly fixed by the standard, and this crate answers the fixed part.**
    Clause 10.2's Table 23 states, for each service it lists, whether it is available in the
@@ -340,6 +352,12 @@ Mandatory preconditions
         - Asked only after row 2 accepted, so 0x7E is sent only for a SubFunction
           "known to be supported in another session" (Annex A); read from the same
           stripped byte, before any exact-length test
+      * - 5
+        - SubFunction security check OK?
+        - 0x33
+        - Figure 6's optional column, evaluated wherever the service's lookup names
+          levels: none of them unlocked is 0x33. Read from the same stripped byte, before
+          any exact-length test
 
    The service's exact-length check is its service-specific check, after this stage:
    ISO 14229-1:2020 8.7.5's pseudo-code tests ``message_length`` only inside a supported
@@ -347,47 +365,52 @@ Mandatory preconditions
    Row 3 is not evaluated yet: authentication is architecture open question 4, so it is
    unconditionally true, as Figure 5's authentication check is.
 
-   **Row 2 is decided only for a service that has a stage** (``DiagnosticSessionControl``,
-   ``TesterPresent``). A listed service that carries a SubFunction but has no stage yet
-   passes row 2 and reaches the decode: it is then answered 0x11 through the wildcard, or
-   0x13 if the request does not decode. The macro documentation records the same rule.
+   **Row 2 is decided only for a service that has a stage**, which is every service with
+   a SubFunction this crate has a trait for. A listed service that carries a SubFunction
+   but has no stage would pass row 2 and reach the decode: it would then be answered 0x11
+   through the wildcard, or the decode's code if the request does not decode. The macro
+   documentation records the same rule.
 
-   **Rows 2 and 4 are each service trait's pair.** Whether a SubFunction is supported
-   ever, and whether from the active session, are deployment facts — which sessions a
-   server offers, and which it can be entered from — so the application states them, in
-   the service's own typed SubFunction, and the pipeline decides the code. Annex A says
-   0x7E "shall be supported by each diagnostic service with a SubFunction parameter",
-   so every such trait carries both lookups once it has a stage:
+   **Rows 2, 4 and 5 are one lookup per service trait.** Whether a SubFunction is
+   supported at all, in which sessions, and behind which security levels are deployment
+   facts, so the application states them, in the service's own typed SubFunction, and the
+   pipeline decides the code. Annex A says 0x7E "shall be supported by each diagnostic
+   service with a SubFunction parameter", so every such trait answers all three. It answers
+   them at once, with an ``Access`` — ``None`` for row 2's 0x12, otherwise the
+   ``Sessions`` row 4 reads and the ``Levels`` any one of which satisfies row 5 — so the
+   three answers cannot disagree, and a SubFunction that an OEM level and a supplier level
+   both unlock is expressible. An earlier draft asked three methods per trait, which only
+   rustdoc kept in agreement, and named one level per SubFunction.
 
    .. list-table::
       :header-rows: 1
-      :widths: 26 37 37
+      :widths: 26 74
 
       * - Service
-        - Row 2 (0x12)
-        - Row 4 (0x7E)
-      * - ``DiagnosticSessionControl``
-        - ``supports(session)``
-        - ``supported_from(session, active)``, with no default body: an application that
-          restricts no transition says so by returning ``true``
-      * - ``TesterPresent``
-        - fixed: only ``zeroSubFunction``
-        - fixed: always. ``zeroSubFunction`` is the service's only SubFunction (clause
-          10.7) and Table 23 allows the service in every session, so there is nothing
-          deployment-specific to ask and the trait carries no lookup
+        - Lookup
       * - ``EcuReset``, ``CommunicationControl``, ``ControlDTCSetting``,
-          ``SecurityAccess`` and the other SubFunction-bearing services
-        - gains a ``supports``-shaped lookup when its stage lands
-        - gains a ``supported_from``-shaped lookup, in its own SubFunction type, with it
+          ``ReadDTCInformation``
+        - ``access(sub_function) -> Option<Access>``
+      * - ``SecurityAccess``
+        - ``sessions(level) -> Option<Sessions>``: no level unlocks the service that
+          unlocks
+      * - ``DiagnosticSessionControl``
+        - ``supports(session)`` and ``supported_from(session, active)``: whether a
+          session may be entered turns on the one it is entered from. No level: entering
+          a session locks every level
+      * - ``TesterPresent``
+        - none. ``zeroSubFunction`` is the service's only SubFunction (clause 10.7) and
+          Table 23 allows the service in every session, so there is nothing
+          deployment-specific to ask
 
-   ``uds_server!`` hands ``pipeline::begin`` one closure per row; each routes the
-   question to the listed service's trait and decides nothing (``UDSSVC_ARCH_0013``).
-   ``pipeline::begin`` asks row 4 only once row 2 has accepted, and a SubFunction value
-   that names nothing the service defines — a reserved session byte — is row 2's
-   0x12 and never 0x7E.
+   ``uds_server!`` hands ``pipeline::begin`` one closure, which routes the question to the
+   listed service's trait and decides nothing (``UDSSVC_ARCH_0013``). ``pipeline::begin``
+   reads row 4 only once row 2 has accepted, and row 5 only once row 4 has, and a
+   SubFunction value that names nothing the service defines — a reserved session byte — is
+   row 2's 0x12 and never 0x7E.
 
-   Figure 6 then places a sub-function security check (0x33) and a request-sequence check
-   (0x24) in its optional column; both are ``UDSSVC_ARCH_0011``.
+   Figure 6 also places a request-sequence check (0x24) in its optional column; it is
+   ``UDSSVC_ARCH_0011``'s.
 
    The 0x31 exclusion is drawn from Figure 5's decision node, which reads "service with
    SubFunction, but not SID 0x31". It is not an editorial slip and it must be honoured:
@@ -399,22 +422,24 @@ Mandatory preconditions
 
    **The trait shape this implies is settled, and it settles open question 5.**
    ``RoutineControl`` carries three methods — ``start``, ``stop`` and ``results``, one per
-   sub-function of clause 13.2 — rather than one method taking the sub-function as a
-   parameter. The question the set had been carrying was whether Figure 5's exclusion should
-   be expressed in the type or merely documented on a trait shaped like every other
-   service's. Three methods is the answer, for a reason that outranks taste: this is the
-   only service whose *handler* decides ``subFunctionNotSupported`` (0x12), because it is
-   the only one the centralised sub-function stage does not run for. A single method taking
-   a sub-function byte would leave that asymmetry invisible — the signature would be
-   indistinguishable from every service whose 0x12 is settled before the handler is reached,
-   and an implementor would have no prompt to answer it. Split into three, a routine that
-   cannot be stopped returns 0x12 from ``stop`` and from nowhere else, and the exclusion is
-   a property a reader can see in the surface rather than one they must be told about.
+   sub-function of clause 14.2 — rather than one method taking the sub-function as a
+   parameter, and its sub-function lookup is keyed by routine:
+   ``supports(routine, control)``. Figure 30 asks it after the routine's own checks —
+   available in the active session (0x31), then unlocked (0x33) — and before the option
+   record's length (0x13), so ``RoutineControl``'s stage asks it there, and the pipeline,
+   not a handler, settles the 0x12. The exclusion is visible in the surface twice over: the
+   lookup takes the routine, which no other service's does, and a routine that cannot be
+   stopped is one whose ``supports`` refuses ``stopRoutine`` while its ``stop`` is never
+   called.
 
-   The cost is stated rather than discovered: adding a sub-function to clause 13 would add a
-   method to the trait, which is a breaking change where a parameter would not have been.
-   Clause 13.2's three have been stable across editions, and a service whose handler owns
-   the 0x12 decision has to gain a case either way.
+   An earlier version argued the three methods from 0x31 being "the only service whose
+   *handler* decides ``subFunctionNotSupported``". That stopped being true when the stage
+   learned Figure 30's order: a handler asked only after the 0x12 decision could not answer
+   0x12 in its place, because the option record's 0x13 comes between. The three methods
+   remain because each sub-function's handler is a different operation on the routine, and
+   the cost is stated rather than discovered: adding a sub-function to clause 14 would add
+   a method to the trait, which is a breaking change where a parameter would not have been.
+   Clause 14.2's three have been stable across editions.
 
 Data parameters
 ---------------
@@ -687,23 +712,25 @@ The service-specific check
    within ``TransferData`` as of Figure 5's order across services. Nothing distinguishes the
    two cases except that one is drawn in clause 8.7 and the other in clause 15.
 
-   **It is not built, and this element exists so that is a recorded gap rather than an
-   inference from silence** — ``UDSSVC_ARCH_0001`` holds that a clause with no seam and no
-   implementation is unbuilt, not out of scope. Until it is built, ``UDSSVC_ARCH_0004``'s
-   pipeline ends at the handler and a handler returns "a code of its own choosing", which
-   means the per-service order is the application's to get right. That is the arrangement
-   this crate exists to remove, and it is temporary.
+   **It is built for the services this crate stages, and recorded as a gap for the
+   rest.** ``UDSSVC_ARCH_0001`` holds that a clause with no seam and no implementation is
+   unbuilt, not out of scope. Each staged service's stage applies its figure's order:
+   Figure 20 (``ReadDataByIdentifier``), Figure 26 (``WriteDataByIdentifier``), Figure 28
+   (``ClearDiagnosticInformation``) and Figure 30 (``RoutineControl``), and Annex I's Table
+   I.2 for ``SecurityAccess``. A handler is asked only for what its figure leaves to it, and
+   its trait says which codes those are. Figures 11, 21, 22, 23, 27 and 29 belong to
+   services this crate has no trait for, and Figures 31 to 35 to ``DataTransfer``, which
+   has a trait and no stage; for those the order is still unbuilt.
 
-   What is not yet designed is the seam. A service trait would have to express its
-   evaluation order in a form the dispatcher can apply, and the candidates differ sharply in
-   cost: a declared sequence of predicates per trait, a fixed set of typed pre-handler hooks
-   per service, or generated code per figure. Choosing between them wants more than one
-   figure read in full, which is a pass of its own.
-
-   Rationale for recording it now rather than then: four services are in the first slice,
-   and their figures are small enough to carry in the handler contract meanwhile. The cost
-   of not recording it is that the gap reads as a decision — the set would appear to have
-   concluded that per-service ordering is the application's, which it has not.
+   **The seam is the second of the candidates an earlier draft weighed** — a fixed set of
+   typed pre-handler lookups per service, rather than a declared sequence of predicates per
+   trait or generated code per figure. Each check a figure places before the handler is a
+   typed answer the stage asks for in the figure's order: an ``Access`` for an identifier's
+   availability and levels, ``DataIdentifier::split_record`` for a record's length and
+   format, ``RoutineControl::supports`` for a routine's sub-functions, and declared maxima
+   such as ``RoutineControl::MAX_OPTION_LEN`` for a length the figure tests before the
+   handler. The order is the stage's code, so it cannot be reordered by an application, and
+   it reads against its figure line by line.
 
    An earlier version of this set had no element here at all, and none of ``not-owned``,
    ``UDSSVC_ARCH_0001``'s in-scope list or :doc:`open-questions` mentioned these figures.
@@ -750,7 +777,7 @@ Extension points
         - Figure 5, after 0x38
       * - 0x33
         - optional
-        - Security check for the SubFunction
+        - Security check for the SubFunction — **built**, ``UDSSVC_ARCH_0007`` row 5
         - Figure 6, after the session check
       * - 0x24
         - optional
@@ -770,9 +797,14 @@ Extension points
         - Figure 6, after 0x24 and before the service-specific check
 
    These are attachment points rather than implementations because none of them can be
-   decided here. Whether the server is busy is a property of the application's own
-   scheduling; what constitutes a satisfied security level is manufacturer-defined; and
-   ISO 14229-1 explicitly reserves the manufacturer/supplier column.
+   decided here, with one exception. Whether the server is busy is a property of the
+   application's own scheduling, and ISO 14229-1 explicitly reserves the
+   manufacturer/supplier column. The SubFunction security check *is* decided here: which
+   levels unlock a SubFunction is manufacturer-defined, but whether one of them is unlocked
+   is ``UDSSVC_ARCH_0037``'s state, which this crate holds, so the application states the
+   levels and ``pipeline::begin`` answers 0x33 (``UDSSVC_ARCH_0007`` row 5). The
+   service-identifier security check (0x33 in Figure 5) is not: no staged service requires
+   a level for its service identifier alone.
 
    The *position* is the part this crate owns and the part worth centralising. A caller
    that implements its own busy check in the wrong place answers 0x11 where the standard

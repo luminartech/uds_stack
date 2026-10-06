@@ -145,7 +145,10 @@ macro_rules! __uds_request_bound {
         4 + <$ty as $crate::RoutineControl>::MAX_OPTION_LEN
     };
     ($ty:ty, SecurityAccess) => {
-        2 + <$ty as $crate::SecurityAccess>::MAX_KEY_LEN
+        2 + $crate::assembly::max_of(&[
+            <$ty as $crate::SecurityAccess>::MAX_KEY_LEN,
+            <$ty as $crate::SecurityAccess>::MAX_RECORD_LEN,
+        ])
     };
     ($ty:ty, ControlDtcSetting) => {
         2 + <$ty as $crate::ControlDtcSetting>::MAX_OPTION_RECORD_LEN
@@ -184,8 +187,9 @@ macro_rules! __uds_response_bound {
             6_usize
         }
     };
+    // The service identifier, the echoed type, the identifier and `routineInfo`.
     ($ty:ty, RoutineControl) => {
-        4 + <<$ty as $crate::RoutineControl>::Rid
+        5 + <<$ty as $crate::RoutineControl>::Rid
             as $crate::RoutineIdentifier>::MAX_STATUS_LEN
     };
     ($ty:ty, SecurityAccess) => {
@@ -222,14 +226,15 @@ macro_rules! __uds_may_pend {
 #[doc(hidden)]
 #[macro_export]
 macro_rules! __uds_session_hook {
-    ($self:ident, $transition:expr, DiagnosticSessionControl) => {
+    ($self:ident, $entered:expr, DiagnosticSessionControl) => {
         <Self as $crate::DiagnosticSessionControl>::on_transition(
             $self,
-            $transition,
-            false,
+            $entered.transition,
+            $entered.session,
+            $entered.security_relocked,
         );
     };
-    ($self:ident, $transition:expr, $svc:ident) => {};
+    ($self:ident, $entered:expr, $svc:ident) => {};
 }
 
 /// The `P2` pair of the session in force, for one listed service: only
@@ -245,77 +250,182 @@ macro_rules! __uds_session_timing {
     ($self:ident, $state:ident, $svc:ident) => {};
 }
 
-/// Figure 6's sub-function check for one listed service (``UDSSVC_ARCH_0007``): an early
-/// `return` from the closure `pipeline::begin` is handed, where `$service` is this one.
-/// Only a service with a stage decides its sub-function; any other listed service emits
-/// nothing, and the closure's fall-through `true` passes the request on to the decode
-/// and to the 0x11 its missing stage settles.
+/// `ServiceSet::leaves_running_software` for one listed service: only
+/// `DiagnosticSessionControl` changes session, and any other listed service emits nothing.
 #[doc(hidden)]
 #[macro_export]
-macro_rules! __uds_sub_function {
-    ($self:ident, $service:ident, $value:ident, DiagnosticSessionControl) => {
+macro_rules! __uds_leaves {
+    ($self:ident, $session:ident, DiagnosticSessionControl) => {
+        return <Self as $crate::DiagnosticSessionControl>::leaves_running_software(
+            $self, $session,
+        );
+    };
+    ($self:ident, $session:ident, $svc:ident) => {};
+}
+
+/// Annex I transition 1 for one listed service, from `ServiceSet::start_up`: only
+/// `SecurityAccess` owes anything at start-up.
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __uds_start_up {
+    ($self:ident, SecurityAccess) => {
+        $crate::pipeline::security_start_up($self);
+    };
+    ($self:ident, $svc:ident) => {};
+}
+
+/// Figure 6's sub-function lookup for one listed service (``UDSSVC_ARCH_0007``): an early
+/// `return` of the [`Access`](crate::Access) the sub-function `$value` has, from the
+/// closure `pipeline::begin` is handed, where `$service` is this one. `begin` settles
+/// 0x12, 0x7E and 0x33 from it, in Figure 6's order. Only a service with a stage decides
+/// its sub-function; any other listed service emits nothing, and the closure's
+/// fall-through, available everywhere, passes the request on to the decode and to the
+/// 0x11 its missing stage settles.
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __uds_sub_function_access {
+    (
+        $self:ident, $service:ident, $value:ident, $active:ident, DiagnosticSessionControl
+    ) => {
         if ::core::matches!($service, $crate::UdsServiceType::DiagnosticSessionControl) {
-            return $crate::pipeline::session_supported($self, $value);
+            return $crate::pipeline::session_access($self, $value, $active);
         }
     };
-    ($self:ident, $service:ident, $value:ident, TesterPresent) => {
+    ($self:ident, $service:ident, $value:ident, $active:ident, TesterPresent) => {
         if ::core::matches!($service, $crate::UdsServiceType::TesterPresent) {
             return $crate::pipeline::zero_sub_function($value);
         }
     };
-    ($self:ident, $service:ident, $value:ident, $svc:ident) => {};
-}
-
-/// Figure 6's per-session sub-function check for one listed service
-/// (``UDSSVC_ARCH_0007`` row 4): an early `return` from the per-session closure
-/// `pipeline::begin` is handed, where `$service` is this one. The pipeline asks it only
-/// after `__uds_sub_function`'s closure accepted the sub-function, and settles 0x7E on a
-/// `false`; this routes the question to the application and decides nothing.
-/// `TesterPresent` emits nothing — its zero sub-function is its only one (clause 10.7)
-/// and Table 23 allows the service in every session — and neither does a service without
-/// a stage, so both reach the closure's fall-through `true`.
-#[doc(hidden)]
-#[macro_export]
-macro_rules! __uds_sub_function_in_session {
-    (
-        $self:ident,
-        $service:ident,
-        $value:ident,
-        $active:ident,
-        DiagnosticSessionControl
-    ) => {
-        if ::core::matches!($service, $crate::UdsServiceType::DiagnosticSessionControl) {
-            return $crate::pipeline::session_supported_from($self, $value, $active);
+    ($self:ident, $service:ident, $value:ident, $active:ident, SecurityAccess) => {
+        if ::core::matches!($service, $crate::UdsServiceType::SecurityAccess) {
+            return $crate::pipeline::security_access_sessions($self, $value);
+        }
+    };
+    ($self:ident, $service:ident, $value:ident, $active:ident, EcuReset) => {
+        if ::core::matches!($service, $crate::UdsServiceType::EcuReset) {
+            return $crate::pipeline::sub_function_access($value, |kind| {
+                <Self as $crate::EcuReset>::access($self, kind)
+            });
+        }
+    };
+    ($self:ident, $service:ident, $value:ident, $active:ident, CommunicationControl) => {
+        if ::core::matches!($service, $crate::UdsServiceType::CommunicationControl) {
+            return $crate::pipeline::sub_function_access($value, |kind| {
+                <Self as $crate::CommunicationControl>::access($self, kind)
+            });
+        }
+    };
+    ($self:ident, $service:ident, $value:ident, $active:ident, ControlDtcSetting) => {
+        if ::core::matches!($service, $crate::UdsServiceType::ControlDtcSetting) {
+            return $crate::pipeline::sub_function_access($value, |setting| {
+                <Self as $crate::ControlDtcSetting>::access($self, setting)
+            });
+        }
+    };
+    ($self:ident, $service:ident, $value:ident, $active:ident, ReadDtcInformation) => {
+        if ::core::matches!($service, $crate::UdsServiceType::ReadDtcInfo) {
+            return $crate::pipeline::sub_function_access($value, |report| {
+                <Self as $crate::ReadDtcInformation>::access($self, report)
+            });
         }
     };
     ($self:ident, $service:ident, $value:ident, $active:ident, $svc:ident) => {};
+}
+
+/// The checks a listed service's stage makes ahead of the request's total length, for a
+/// request too long to have been received whole: an early `return` of the first one that
+/// fails, from the closure the truncated branch of `dispatch` calls. Only a service whose
+/// stage checks something before the length emits one — an identifier in its
+/// data-parameters (WDBI, RoutineControl) or the request sequence (SecurityAccess's
+/// 0x24); for the others `begin` has already asked every such question, and the request
+/// is 0x13.
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __uds_before_length {
+    ($self:ident, $state:ident, $req:ident, WriteDataByIdentifier) => {
+        if let $crate::Request::WriteDataByIdentifier(ref r) = $req {
+            return $crate::pipeline::writable_identifier($self, $state, r).map(|_| ());
+        }
+    };
+    ($self:ident, $state:ident, $req:ident, RoutineControl) => {
+        if let $crate::Request::RoutineControl(ref r) = $req {
+            return $crate::pipeline::admitted_routine($self, $state, r).map(|_| ());
+        }
+    };
+    ($self:ident, $state:ident, $req:ident, SecurityAccess) => {
+        if let $crate::Request::SecurityAccess(ref r) = $req {
+            return $crate::pipeline::key_in_sequence($state, r);
+        }
+    };
+    ($self:ident, $state:ident, $req:ident, $svc:ident) => {};
 }
 
 /// One match arm per listed service, routing its decoded request to its stage. A listed
 /// service with no stage yet hits the wildcard, which emits nothing; the request then
 /// reaches the fall-through after every arm in `dispatch`, an outcome of 0x11 that the
 /// driver settles. That is the milestone-1 limit, and it makes "listed but unimplemented"
-/// visible on the wire rather than a panic. The RDBI stage awaits (its handler does); the
-/// other two are plain calls.
+/// visible on the wire rather than a panic. A stage whose handler is `async` is awaited;
+/// the others are plain calls.
 #[doc(hidden)]
 #[macro_export]
 macro_rules! __uds_stage {
-    ($self:ident, $out:ident, $req:ident, ReadDataByIdentifier) => {
+    ($self:ident, $state:ident, $out:ident, $req:ident, ReadDataByIdentifier) => {
         if let $crate::Request::ReadDataByIdentifier(ref r) = $req {
             return $crate::pipeline::read_data_by_identifier($self, r, $out).await;
         }
     };
-    ($self:ident, $out:ident, $req:ident, DiagnosticSessionControl) => {
+    ($self:ident, $state:ident, $out:ident, $req:ident, DiagnosticSessionControl) => {
         if let $crate::Request::DiagnosticSessionControl(ref r) = $req {
             return $crate::pipeline::diagnostic_session_control($self, r, $out);
         }
     };
-    ($self:ident, $out:ident, $req:ident, TesterPresent) => {
+    ($self:ident, $state:ident, $out:ident, $req:ident, TesterPresent) => {
         if let $crate::Request::TesterPresent(_) = $req {
             return $crate::pipeline::tester_present($self, $out);
         }
     };
-    ($self:ident, $out:ident, $req:ident, $svc:ident) => {};
+    ($self:ident, $state:ident, $out:ident, $req:ident, EcuReset) => {
+        if let $crate::Request::EcuReset(ref r) = $req {
+            return $crate::pipeline::ecu_reset($self, r, $out).await;
+        }
+    };
+    ($self:ident, $state:ident, $out:ident, $req:ident, SecurityAccess) => {
+        if let $crate::Request::SecurityAccess(ref r) = $req {
+            return $crate::pipeline::security_access($self, $state, r, $out).await;
+        }
+    };
+    ($self:ident, $state:ident, $out:ident, $req:ident, ControlDtcSetting) => {
+        if let $crate::Request::ControlDtcSetting(ref r) = $req {
+            return $crate::pipeline::control_dtc_setting($self, r, $out).await;
+        }
+    };
+    ($self:ident, $state:ident, $out:ident, $req:ident, CommunicationControl) => {
+        if let $crate::Request::CommunicationControl(ref r) = $req {
+            return $crate::pipeline::communication_control($self, r, $out).await;
+        }
+    };
+    ($self:ident, $state:ident, $out:ident, $req:ident, WriteDataByIdentifier) => {
+        if let $crate::Request::WriteDataByIdentifier(ref r) = $req {
+            return $crate::pipeline::write_data_by_identifier($self, $state, r, $out)
+                .await;
+        }
+    };
+    ($self:ident, $state:ident, $out:ident, $req:ident, ClearDiagnosticInformation) => {
+        if let $crate::Request::ClearDiagnosticInfo(ref r) = $req {
+            return $crate::pipeline::clear_diagnostic_information($self, r, $out).await;
+        }
+    };
+    ($self:ident, $state:ident, $out:ident, $req:ident, ReadDtcInformation) => {
+        if let $crate::Request::ReadDtcInfo(ref r) = $req {
+            return $crate::pipeline::read_dtc_information($self, r, $out).await;
+        }
+    };
+    ($self:ident, $state:ident, $out:ident, $req:ident, RoutineControl) => {
+        if let $crate::Request::RoutineControl(ref r) = $req {
+            return $crate::pipeline::routine_control($self, $state, r, $out).await;
+        }
+    };
+    ($self:ident, $state:ident, $out:ident, $req:ident, $svc:ident) => {};
 }
 
 /// Assemble a server from the services it implements.
@@ -346,25 +456,30 @@ macro_rules! __uds_stage {
 /// `pipeline::settle` nowhere; the driver does, once the handler has finished
 /// (``UDSSVC_ARCH_0016``). Every clause 8.7 decision is the pipeline's.
 ///
-/// **Figure 6's sub-function questions are each service trait's pair** — a "supported
-/// ever" lookup and a "supported in the active session" lookup, each typed in that
-/// service's own sub-function (``UDSSVC_ARCH_0007`` rows 2 and 4). `dispatch` hands both
-/// to `pipeline::begin` as closures that route to the listed service's trait, and the
-/// pipeline decides 0x12 versus 0x7E. Today the pair is [`supports`] and
-/// [`supported_from`] on `DiagnosticSessionControl`; `TesterPresent` has none, because
-/// its only sub-function is available everywhere. Each other sub-function-bearing service
-/// (`EcuReset`, `CommunicationControl`, `ControlDtcSetting`, `SecurityAccess`, …) gains
-/// the same pair, in its own sub-function type, when its stage lands.
+/// **Figure 6's sub-function questions are answered by one lookup per service trait** —
+/// an [`Access`](crate::Access) for a sub-function the service supports, typed in that
+/// service's own sub-function, carrying the sessions it is available in and the levels
+/// that unlock it (``UDSSVC_ARCH_0007`` rows 2 and 4, then Figure 6's optional 0x33).
+/// `dispatch` hands `pipeline::begin` one closure that routes to the listed service's
+/// trait, and the pipeline decides 0x12, 0x7E or 0x33 from the answer. The lookup is
+/// `access` on [`EcuReset`] and on every other staged service with a sub-function, except
+/// three: `DiagnosticSessionControl` answers with [`supports`] and [`supported_from`],
+/// because whether a session may be entered turns on the session it is entered from;
+/// `SecurityAccess` with [`sessions`], because it is the service that unlocks; and
+/// `TesterPresent` with nothing, because its only sub-function is available everywhere.
+/// `RoutineControl` is not asked here at all: Figure 5 keeps 0x31 out of the
+/// sub-function stage, so its `access` is keyed by routine and asked by its own stage.
 ///
 /// [`supports`]: crate::DiagnosticSessionControl::supports
 /// [`supported_from`]: crate::DiagnosticSessionControl::supported_from
+/// [`sessions`]: crate::SecurityAccess::sessions
+/// [`EcuReset`]: crate::EcuReset
 ///
-/// **Milestone-1 limit:** only `ReadDataByIdentifier`, `DiagnosticSessionControl` and
-/// `TesterPresent` have stages. Any other listed service is accepted by the list (so it
-/// is not refused by the support check) but has no stage to run. One that carries a
-/// `SubFunction` passes the support check's row 2 and reaches the decode, then settles
-/// `serviceNotSupported` (0x11), or `incorrectMessageLengthOrInvalidFormat` (0x13) if
-/// the request does not decode — visible on the wire rather than a panic.
+/// **Staging limit:** `DataTransfer` has no stage. Listed, it is accepted by the list
+/// (so it is not refused by the support check), and outside the default session, where
+/// Table 23 refuses it, its request reaches the decode and settles `serviceNotSupported`
+/// (0x11), or the code `uds_protocol` assigns the failure if it does not decode —
+/// visible on the wire rather than a panic.
 ///
 /// The syntax is `Ecu: ..; transport = T, ..` rather than `Ecu over T: ..` because
 /// `$ty:ty` cannot be followed by a bare identifier — the legal followers are
@@ -383,7 +498,7 @@ macro_rules! __uds_stage {
 ///
 /// ```
 /// # use uds_services::{
-/// #     Address, Ai, DataIdentifier, DataTransfer, ReadDataByIdentifier, RecordError,
+/// #     Address, AfterSend, Ai, DataIdentifier, DataTransfer, ReadDataByIdentifier, RecordError,
 /// #     Reloads, ResponseSink, ServerParams, ServiceSet, Storage, Timestamp,
 /// #     TransferRequest, TransportEvent, UdsTransport, uds_server,
 /// # };
@@ -451,7 +566,9 @@ macro_rules! __uds_stage {
 /// #
 /// # impl UdsTransport for DoIpTransport {
 /// #     type Error = ();
-/// #     async fn t_data_req(&mut self, _ai: Ai, _data: &[u8]) -> Result<(), ()> { Ok(()) }
+/// #     async fn t_data_req(&mut self, _: Ai, _: &[u8], _: AfterSend) -> Result<(), ()> {
+/// #         Ok(())
+/// #     }
 /// #     async fn next_event<'b>(
 /// #         &mut self,
 /// #         _buffer: &'b mut [u8],
@@ -561,70 +678,96 @@ macro_rules! uds_server {
                     received: $crate::Received<'_>,
                     out: &mut $crate::ResponseSink<'_>,
                 ) -> $crate::Unsettled {
-                    // Unused in an assembly listing neither service that decides a
-                    // sub-function, where every arm of the helper expands to nothing.
-                    #[allow(unused_variables, reason = "used only by some assemblies")]
-                    let sub_function = |service: $crate::UdsServiceType, value: u8| {
-                        $( $crate::__uds_sub_function!(self, service, value, $svc); )+
-                        true
-                    };
-                    // Unused likewise in an assembly without `DiagnosticSessionControl`,
-                    // whose `begin` never reaches it: the service is then unsupported at
-                    // Figure 5 and its request never enters Figure 6.
-                    #[allow(unused_variables, reason = "used only by some assemblies")]
-                    let in_session = |service: $crate::UdsServiceType,
+                    // Annex I transitions 9 and 10: a refused SecurityAccess request
+                    // discards the seed, whichever of the returns below refused it.
+                    let unsettled = async {
+                        // Unused in an assembly listing no service that decides a
+                        // sub-function, where every arm of the helper expands to nothing.
+                        #[allow(unused_variables, reason = "used only by some assemblies")]
+                        let access = |service: $crate::UdsServiceType,
                                       value: u8,
                                       active: $crate::DiagnosticSessionType| {
-                        $( $crate::__uds_sub_function_in_session!(
-                            self, service, value, active, $svc
-                        ); )+
-                        true
-                    };
-                    let (sid, decoded) = match $crate::pipeline::begin(
-                        state,
-                        received.bytes(),
-                        |s| <Self as $crate::ServiceSet>::supports(self, s),
-                        sub_function,
-                        in_session,
-                    ) {
-                        $crate::pipeline::Stage::Empty => {
-                            return $crate::Unsettled::empty();
+                            $( $crate::__uds_sub_function_access!(
+                                self, service, value, active, $svc
+                            ); )+
+                            ::core::option::Option::Some($crate::Access::new(
+                                $crate::Sessions::ALL,
+                            ))
+                        };
+                        let (sid, decoded) = match $crate::pipeline::begin(
+                            state,
+                            received.bytes(),
+                            |s| <Self as $crate::ServiceSet>::supports(self, s),
+                            access,
+                        ) {
+                            $crate::pipeline::Stage::Empty => {
+                                return $crate::Unsettled::empty();
+                            }
+                            $crate::pipeline::Stage::Settle { sid, nrc } => {
+                                return $crate::Unsettled::refused(sid, nrc);
+                            }
+                            $crate::pipeline::Stage::Proceed { sid, request }
+                                if ::core::matches!(received, $crate::Received::Truncated(_)) =>
+                            {
+                                let before_length = || -> ::core::result::Result<
+                                    (),
+                                    $crate::NegativeResponseCode,
+                                > {
+                                    $( $crate::__uds_before_length!(
+                                        self, state, request, $svc
+                                    ); )+
+                                    ::core::result::Result::Ok(())
+                                };
+                                let nrc = before_length().err().unwrap_or(
+                                    $crate::NegativeResponseCode::IncorrectMessageLengthOrInvalidFormat,
+                                );
+                                return $crate::Unsettled::refused(sid, nrc);
+                            }
+                            $crate::pipeline::Stage::Proceed { sid, request } => (sid, request),
+                        };
+                        let settling = $crate::pipeline::Settling {
+                            sid,
+                            suppress_bit: decoded
+                                .is_positive_response_suppressed()
+                                .unwrap_or(false),
+                        };
+                        let outcome = async {
+                            $( $crate::__uds_stage!(self, state, out, decoded, $svc); )+
+                            ::core::result::Result::Err(
+                                $crate::NegativeResponseCode::ServiceNotSupported,
+                            )
                         }
-                        $crate::pipeline::Stage::Settle { sid, nrc } => {
-                            return $crate::Unsettled::refused(sid, nrc);
-                        }
-                        $crate::pipeline::Stage::Proceed { sid, .. }
-                            if ::core::matches!(received, $crate::Received::Truncated(_)) =>
-                        {
-                            return $crate::Unsettled::refused(
-                                sid,
-                                $crate::NegativeResponseCode::IncorrectMessageLengthOrInvalidFormat,
-                            );
-                        }
-                        $crate::pipeline::Stage::Proceed { sid, request } => (sid, request),
-                    };
-                    let settling = $crate::pipeline::Settling {
-                        sid,
-                        suppress_bit: decoded
-                            .is_positive_response_suppressed()
-                            .unwrap_or(false),
-                    };
-                    let outcome = async {
-                        $( $crate::__uds_stage!(self, out, decoded, $svc); )+
-                        ::core::result::Result::Err(
-                            $crate::NegativeResponseCode::ServiceNotSupported,
-                        )
+                        .await;
+                        $crate::Unsettled::handled(settling, outcome)
                     }
                     .await;
-                    $crate::Unsettled::handled(settling, outcome)
+                    $crate::pipeline::discarding_seed(state, out, unsettled)
+                }
+
+                #[allow(
+                    unreachable_code,
+                    unused_variables,
+                    reason = "only an assembly with DiagnosticSessionControl reads it, \
+                              and returns before the fall-through"
+                )]
+                fn leaves_running_software(
+                    &self,
+                    session: $crate::DiagnosticSessionType,
+                ) -> bool {
+                    $( $crate::__uds_leaves!(self, session, $svc); )+
+                    false
+                }
+
+                fn start_up(&mut self, _state: &mut Self::State) {
+                    $( $crate::__uds_start_up!(self, $svc); )+
                 }
 
                 fn session_timed_out(&mut self, state: &mut Self::State) {
-                    let transition = $crate::pipeline::transition(
+                    let entered = $crate::pipeline::transition(
                         state,
                         $crate::DiagnosticSessionType::DefaultSession,
                     );
-                    $( $crate::__uds_session_hook!(self, transition, $svc); )+
+                    $( $crate::__uds_session_hook!(self, entered, $svc); )+
                 }
 
                 fn session_confirmed(
@@ -632,8 +775,8 @@ macro_rules! uds_server {
                     state: &mut Self::State,
                     selected: $crate::DiagnosticSessionType,
                 ) {
-                    let transition = $crate::pipeline::transition(state, selected);
-                    $( $crate::__uds_session_hook!(self, transition, $svc); )+
+                    let entered = $crate::pipeline::transition(state, selected);
+                    $( $crate::__uds_session_hook!(self, entered, $svc); )+
                 }
 
                 #[allow(
@@ -691,7 +834,7 @@ macro_rules! uds_server {
 ///
 /// ```
 /// # use uds_services::{
-/// #     Ai, DataIdentifier, PhysicalKeepAlive, RecordError, Reloads, Timestamp,
+/// #     AfterSend, Ai, DataIdentifier, PhysicalKeepAlive, RecordError, Reloads, Timestamp,
 /// #     TransportEvent, UdsTransport, uds_client,
 /// # };
 /// # #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -719,7 +862,9 @@ macro_rules! uds_server {
 /// # struct DoIpTransport;
 /// # impl UdsTransport for DoIpTransport {
 /// #     type Error = ();
-/// #     async fn t_data_req(&mut self, _ai: Ai, _d: &[u8]) -> Result<(), ()> { Ok(()) }
+/// #     async fn t_data_req(&mut self, _: Ai, _: &[u8], _: AfterSend) -> Result<(), ()> {
+/// #         Ok(())
+/// #     }
 /// #     async fn next_event<'b>(
 /// #         &mut self,
 /// #         _b: &'b mut [u8],

@@ -103,6 +103,31 @@ pub enum TransportEvent<'b> {
     Deadline,
 }
 
+/// What follows a message handed to [`UdsTransport::t_data_req`].
+///
+/// The server says it; a transport acts on it. Whether a session change leaves the
+/// software the server runs is a property of the server implementation — an application
+/// jumping to its bootloader for `10 02`, a bootloader restarting the application for
+/// `10 01` (ISO 14229-1:2020 10.2.2.2 Table 25) — and not of the response's octets, so a
+/// transport cannot derive it. ISO 14229-5:2022 REQ 7.9 has a `DoIP` server close the TCP
+/// connection after the `DiagnosticSessionControl` positive response "if the TCP connection
+/// is disconnected due to a session change", so a `DoIP` transport closes on
+/// [`Self::ServerLeaves`] and not otherwise.
+///
+/// **`ECUReset` is never flagged.** REQ 7.11 closes the connection after *every* `ECUReset`
+/// positive response, with no condition — including the resets that restart nothing — so
+/// a `DoIP` transport keys that close on the `0x51` itself. Flagging resets here would make
+/// an unconditional close depend on a fact it does not depend on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum AfterSend {
+    /// The server carries on in the software it is running.
+    Continue,
+    /// The server leaves the software it is running once this message is sent: the
+    /// final positive response to a `DiagnosticSessionControl` whose session
+    /// [`DiagnosticSessionControl::leaves_running_software`](crate::DiagnosticSessionControl::leaves_running_software).
+    ServerLeaves,
+}
+
 /// A transport's obligation to the stack.
 ///
 /// ``UDSSVC_ARCH_0030`` for the asynchrony — the trait is `async` and the runtime is
@@ -142,6 +167,13 @@ pub trait UdsTransport {
     /// An `Ok` is an acceptance, and obliges exactly one [`TransportEvent::DataConf`]
     /// for `ai` later — failed, where the connection closed first. See the trait's doc.
     ///
+    /// # Arguments
+    ///
+    /// * `ai` - the message's addressing; see [`Ai`].
+    /// * `data` - the message, service identifier first.
+    /// * `after` - what follows the message; see [`AfterSend`]. A transport without
+    ///   connections has nothing to do on [`AfterSend::ServerLeaves`] and ignores it.
+    ///
     /// # Errors
     ///
     /// [`Self::Error`] where the addressing cannot be carried or the link fails.
@@ -149,6 +181,7 @@ pub trait UdsTransport {
         &mut self,
         ai: Ai,
         data: &[u8],
+        after: AfterSend,
     ) -> impl core::future::Future<Output = Result<(), Self::Error>>;
 
     /// Fill `buffer` with the next inbound message, or return
@@ -215,7 +248,7 @@ pub trait UdsTransport {
               of the seam, not to do I/O"
 )]
 mod tests {
-    use super::{TransportEvent, UdsTransport};
+    use super::{AfterSend, TransportEvent, UdsTransport};
     use uds_session::{Address, Ai, Mtype, Reloads, SResult, TaType, Timestamp};
 
     fn ai() -> Ai {
@@ -232,7 +265,12 @@ mod tests {
     impl UdsTransport for Loopback {
         type Error = ();
 
-        async fn t_data_req(&mut self, _ai: Ai, _data: &[u8]) -> Result<(), ()> {
+        async fn t_data_req(
+            &mut self,
+            _ai: Ai,
+            _data: &[u8],
+            _after: AfterSend,
+        ) -> Result<(), ()> {
             Ok(())
         }
 
@@ -283,7 +321,7 @@ mod tests {
             let TransportEvent::DataInd { ai, data } = ev else {
                 return Err(());
             };
-            transport.t_data_req(ai, data).await?;
+            transport.t_data_req(ai, data, AfterSend::Continue).await?;
             Ok::<usize, ()>(data.len())
         });
         assert_eq!(poll_once(sent), Some(Ok(3)));

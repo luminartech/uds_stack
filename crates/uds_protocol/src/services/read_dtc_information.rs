@@ -656,6 +656,242 @@ impl ReadDtcInfoSubFunction {
     }
 }
 
+/// A `ReadDTCInformation` report type, without the parameters it carries.
+///
+/// ISO 14229-1:2020 clause 12.3.2.2, Table 317 — the sub-function byte alone. A server
+/// answers Figure 6's sub-function questions (`subFunctionNotSupported`, 0x12, and
+/// `subFunctionNotSupportedInActiveSession`, 0x7E) from this byte, before the request's
+/// length is checked, so it needs the report type apart from the parameters
+/// [`ReadDtcInfoSubFunction`] decodes with it. [`ReadDtcInfoSubFunction::report_type`]
+/// projects one onto the other.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+#[non_exhaustive]
+pub enum ReadDtcInfoReportType {
+    /// 0x01
+    ReportNumberOfDtcByStatusMask,
+    /// 0x02
+    ReportDtcByStatusMask,
+    /// 0x03
+    ReportDtcSnapshotIdentification,
+    /// 0x04
+    ReportDtcSnapshotRecordByDtcNumber,
+    /// 0x05
+    ReportDtcStoredDataByRecordNumber,
+    /// 0x06
+    ReportDtcExtDataRecordByDtcNumber,
+    /// 0x07
+    ReportNumberOfDtcBySeverityMaskRecord,
+    /// 0x08
+    ReportDtcBySeverityMaskRecord,
+    /// 0x09
+    ReportSeverityInfoOfDtc,
+    /// 0x0A
+    ReportSupportedDtc,
+    /// 0x0B
+    ReportFirstTestFailedDtc,
+    /// 0x0C
+    ReportFirstConfirmedDtc,
+    /// 0x0D
+    ReportMostRecentTestFailedDtc,
+    /// 0x0E
+    ReportMostRecentConfirmedDtc,
+    /// 0x14
+    ReportDtcFaultDetectionCounter,
+    /// 0x15
+    ReportDtcWithPermanentStatus,
+    /// 0x16
+    ReportDtcExtDataRecordByRecordNumber,
+    /// 0x17
+    ReportUserDefMemoryDtcByStatusMask,
+    /// 0x18
+    ReportUserDefMemoryDtcSnapshotRecordByDtcNumber,
+    /// 0x19
+    ReportUserDefMemoryDtcExtDataRecordByDtcNumber,
+    /// 0x1A
+    ReportSupportedDtcExtDataRecord,
+    /// 0x42
+    ReportWwhObdDtcByMaskRecord,
+    /// 0x55
+    ReportWwhObdDtcWithPermanentStatus,
+    /// 0x56
+    ReportDtcInformationByDtcReadinessGroupIdentifier,
+    /// A sub-function byte this crate does not model; see
+    /// [`ReadDtcInfoSubFunction::IsoSaeReserved`]. Never has bit 7 set.
+    #[non_exhaustive]
+    IsoSaeReserved(u8),
+}
+
+impl ReadDtcInfoReportType {
+    /// Return the raw `u8` sub-function byte.
+    #[must_use]
+    pub const fn value(&self) -> u8 {
+        match self {
+            Self::ReportNumberOfDtcByStatusMask => 0x01,
+            Self::ReportDtcByStatusMask => 0x02,
+            Self::ReportDtcSnapshotIdentification => 0x03,
+            Self::ReportDtcSnapshotRecordByDtcNumber => 0x04,
+            Self::ReportDtcStoredDataByRecordNumber => 0x05,
+            Self::ReportDtcExtDataRecordByDtcNumber => 0x06,
+            Self::ReportNumberOfDtcBySeverityMaskRecord => 0x07,
+            Self::ReportDtcBySeverityMaskRecord => 0x08,
+            Self::ReportSeverityInfoOfDtc => 0x09,
+            Self::ReportSupportedDtc => 0x0A,
+            Self::ReportFirstTestFailedDtc => 0x0B,
+            Self::ReportFirstConfirmedDtc => 0x0C,
+            Self::ReportMostRecentTestFailedDtc => 0x0D,
+            Self::ReportMostRecentConfirmedDtc => 0x0E,
+            Self::ReportDtcFaultDetectionCounter => 0x14,
+            Self::ReportDtcWithPermanentStatus => 0x15,
+            Self::ReportDtcExtDataRecordByRecordNumber => 0x16,
+            Self::ReportUserDefMemoryDtcByStatusMask => 0x17,
+            Self::ReportUserDefMemoryDtcSnapshotRecordByDtcNumber => 0x18,
+            Self::ReportUserDefMemoryDtcExtDataRecordByDtcNumber => 0x19,
+            Self::ReportSupportedDtcExtDataRecord => 0x1A,
+            Self::ReportWwhObdDtcByMaskRecord => 0x42,
+            Self::ReportWwhObdDtcWithPermanentStatus => 0x55,
+            Self::ReportDtcInformationByDtcReadinessGroupIdentifier => 0x56,
+            Self::IsoSaeReserved(value) => *value,
+        }
+    }
+}
+
+impl From<ReadDtcInfoReportType> for u8 {
+    fn from(value: ReadDtcInfoReportType) -> Self {
+        value.value()
+    }
+}
+
+impl TryFrom<u8> for ReadDtcInfoReportType {
+    type Error = Error;
+
+    /// # Errors
+    /// Returns [`Error::InvalidDtcSubfunctionType`] if bit 7 is set: that bit is the
+    /// suppressPosRspMsgIndicationBit, not part of the report type.
+    fn try_from(value: u8) -> Result<Self, Error> {
+        if value & !SPRMIB_VALUE_MASK != 0 {
+            return Err(Error::InvalidDtcSubfunctionType(value));
+        }
+        Ok(match value {
+            0x01 => Self::ReportNumberOfDtcByStatusMask,
+            0x02 => Self::ReportDtcByStatusMask,
+            0x03 => Self::ReportDtcSnapshotIdentification,
+            0x04 => Self::ReportDtcSnapshotRecordByDtcNumber,
+            0x05 => Self::ReportDtcStoredDataByRecordNumber,
+            0x06 => Self::ReportDtcExtDataRecordByDtcNumber,
+            0x07 => Self::ReportNumberOfDtcBySeverityMaskRecord,
+            0x08 => Self::ReportDtcBySeverityMaskRecord,
+            0x09 => Self::ReportSeverityInfoOfDtc,
+            0x0A => Self::ReportSupportedDtc,
+            0x0B => Self::ReportFirstTestFailedDtc,
+            0x0C => Self::ReportFirstConfirmedDtc,
+            0x0D => Self::ReportMostRecentTestFailedDtc,
+            0x0E => Self::ReportMostRecentConfirmedDtc,
+            0x14 => Self::ReportDtcFaultDetectionCounter,
+            0x15 => Self::ReportDtcWithPermanentStatus,
+            0x16 => Self::ReportDtcExtDataRecordByRecordNumber,
+            0x17 => Self::ReportUserDefMemoryDtcByStatusMask,
+            0x18 => Self::ReportUserDefMemoryDtcSnapshotRecordByDtcNumber,
+            0x19 => Self::ReportUserDefMemoryDtcExtDataRecordByDtcNumber,
+            0x1A => Self::ReportSupportedDtcExtDataRecord,
+            0x42 => Self::ReportWwhObdDtcByMaskRecord,
+            0x55 => Self::ReportWwhObdDtcWithPermanentStatus,
+            0x56 => Self::ReportDtcInformationByDtcReadinessGroupIdentifier,
+            other => Self::IsoSaeReserved(other),
+        })
+    }
+}
+
+impl ReadDtcInfoSubFunction {
+    /// The report type this sub-function is, without its parameters.
+    #[must_use]
+    pub const fn report_type(&self) -> ReadDtcInfoReportType {
+        use ReadDtcInfoReportType as R;
+        use ReadDtcInfoSubFunction as S;
+        match self {
+            S::ReportNumberOfDtcByStatusMask(_) => R::ReportNumberOfDtcByStatusMask,
+            S::ReportDtcByStatusMask(_) => R::ReportDtcByStatusMask,
+            S::ReportDtcSnapshotIdentification => R::ReportDtcSnapshotIdentification,
+            S::ReportDtcSnapshotRecordByDtcNumber(_, _) => {
+                R::ReportDtcSnapshotRecordByDtcNumber
+            }
+            S::ReportDtcStoredDataByRecordNumber(_) => R::ReportDtcStoredDataByRecordNumber,
+            S::ReportDtcExtDataRecordByDtcNumber(_, _) => {
+                R::ReportDtcExtDataRecordByDtcNumber
+            }
+            S::ReportNumberOfDtcBySeverityMaskRecord(_, _) => {
+                R::ReportNumberOfDtcBySeverityMaskRecord
+            }
+            S::ReportDtcBySeverityMaskRecord(_, _) => R::ReportDtcBySeverityMaskRecord,
+            S::ReportSeverityInfoOfDtc(_) => R::ReportSeverityInfoOfDtc,
+            S::ReportSupportedDtc => R::ReportSupportedDtc,
+            S::ReportFirstTestFailedDtc => R::ReportFirstTestFailedDtc,
+            S::ReportFirstConfirmedDtc => R::ReportFirstConfirmedDtc,
+            S::ReportMostRecentTestFailedDtc => R::ReportMostRecentTestFailedDtc,
+            S::ReportMostRecentConfirmedDtc => R::ReportMostRecentConfirmedDtc,
+            S::ReportDtcFaultDetectionCounter => R::ReportDtcFaultDetectionCounter,
+            S::ReportDtcWithPermanentStatus => R::ReportDtcWithPermanentStatus,
+            S::ReportDtcExtDataRecordByRecordNumber(_) => {
+                R::ReportDtcExtDataRecordByRecordNumber
+            }
+            S::ReportUserDefMemoryDtcByStatusMask(_, _) => {
+                R::ReportUserDefMemoryDtcByStatusMask
+            }
+            S::ReportUserDefMemoryDtcSnapshotRecordByDtcNumber(_, _, _) => {
+                R::ReportUserDefMemoryDtcSnapshotRecordByDtcNumber
+            }
+            S::ReportUserDefMemoryDtcExtDataRecordByDtcNumber(_, _, _) => {
+                R::ReportUserDefMemoryDtcExtDataRecordByDtcNumber
+            }
+            S::ReportSupportedDtcExtDataRecord(_) => R::ReportSupportedDtcExtDataRecord,
+            S::ReportWwhObdDtcByMaskRecord(_, _, _) => R::ReportWwhObdDtcByMaskRecord,
+            S::ReportWwhObdDtcWithPermanentStatus(_) => {
+                R::ReportWwhObdDtcWithPermanentStatus
+            }
+            S::ReportDtcInformationByDtcReadinessGroupIdentifier(_, _) => {
+                R::ReportDtcInformationByDtcReadinessGroupIdentifier
+            }
+            S::IsoSaeReserved(value) => R::IsoSaeReserved(*value),
+        }
+    }
+}
+
+#[cfg(test)]
+mod read_dtc_info_report_type_tests {
+    use super::*;
+
+    /// Every byte without bit 7 is a report type whose value is that byte; every byte
+    /// with it is rejected.
+    #[test]
+    fn report_type_round_trips_every_byte() {
+        for byte in 0..=u8::MAX {
+            match ReadDtcInfoReportType::try_from(byte) {
+                Ok(report) => assert_eq!(u8::from(report), byte),
+                Err(Error::InvalidDtcSubfunctionType(b)) => {
+                    assert_eq!(b, byte);
+                    assert!(byte & 0x80 != 0);
+                }
+                Err(e) => panic!("unexpected error {e:?}"),
+            }
+        }
+    }
+
+    /// A decoded sub-function's report type is the type its byte names, so the two
+    /// lookups a server makes — before and after decoding — agree.
+    #[test]
+    fn a_sub_function_projects_onto_the_report_type_of_its_byte() {
+        for byte in 0x00..=0x7F_u8 {
+            let request = [byte, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00];
+            if let Ok((decoded, _)) = ReadDtcInfoRequest::decode(&request) {
+                assert_eq!(
+                    decoded.dtc_subfunction.report_type(),
+                    ReadDtcInfoReportType::try_from(byte).unwrap(),
+                    "{byte:#04X}"
+                );
+            }
+        }
+    }
+}
+
 impl Encode for ReadDtcInfoSubFunction {
     type Error = crate::Error;
 

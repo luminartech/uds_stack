@@ -112,7 +112,7 @@ which is a clause 8.7 fact this crate already computes.
    S --> L : a reaction
    loop drain with Reaction::outputs()
      S --> L : ServerOutput::Transmit { ai, data }
-     L -> I : t_data_req(ai, data)
+     L -> I : t_data_req(ai, data, after)
      I -> T : 0x78
    end
    L -> S : finish()
@@ -126,7 +126,7 @@ which is a clause 8.7 fact this crate already computes.
    L -> S : s_data_req(now, ai, response bytes,\nServerTx::FinalResponse)
    loop drain with Reaction::outputs()
      S --> L : ServerOutput::Transmit { ai, data }
-     L -> I : t_data_req(ai, data)
+     L -> I : t_data_req(ai, data, after)
      I -> T : final response
      note right of T
        Sent even if functionally addressed

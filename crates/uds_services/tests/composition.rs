@@ -16,15 +16,15 @@ use static_cell::ConstStaticCell;
 use uds_protocol::NegativeResponseCode as Nrc;
 use uds_services::pipeline::settle;
 use uds_services::{
-    Address, Ai, Answer, ClearDiagnosticInformation, ClientSet, ClientStorage,
-    CommunicationControl, CommunicationControlType, CommunicationType, DataIdentifier,
-    DataTransfer, DiagnosticSessionType, DtcReportKind, DtcStatusMask,
-    FunctionalGroupIdentifier, KeyVerdict, Mtype, PhysicalKeepAlive, ReadDataByIdentifier,
-    ReadDtcInfoSubFunction, ReadDtcInformation, Received, RecordError, Reloads, Response,
-    ResponseSink, SecurityAccess, SecurityLevel, SecurityPolicy, ServerParams, ServiceSet,
-    SessionTiming, SessionTransition, Sink, Storage, SubnetNumber, TaType, TesterPresent,
-    Timestamp, TransferRequest, TransportEvent, UdsServiceType, UdsTransport, uds_client,
-    uds_server,
+    Access, Address, AfterSend, Ai, Answer, ClearDiagnosticInformation, ClientSet,
+    ClientStorage, CommunicationControl, CommunicationControlType, CommunicationType,
+    DataIdentifier, DataTransfer, Delay, DiagnosticSessionType, DtcRecord, DtcReportKind,
+    DtcStatusMask, KeyVerdict, Mtype, PhysicalKeepAlive, ReadDataByIdentifier,
+    ReadDtcInfoReportType, ReadDtcInfoSubFunction, ReadDtcInformation, Received,
+    RecordError, Reloads, Response, ResponseSink, SecurityAccess, SecurityLevel,
+    SecurityPolicy, ServerParams, ServiceSet, SessionTiming, SessionTransition, Sessions,
+    Sink, Storage, SubnetNumber, TaType, TesterPresent, Timestamp, TransferRequest,
+    TransportEvent, UdsServiceType, UdsTransport, uds_client, uds_server,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -89,6 +89,9 @@ impl ReadDtcInformation for Ecu {
     const MAX_DTCS: usize = 10;
     const REPORTS: &'static [DtcReportKind] =
         &[DtcReportKind::DtcList, DtcReportKind::SeverityList];
+    fn access(&self, _x: ReadDtcInfoReportType) -> Option<Access> {
+        Some(Access::new(Sessions::ALL))
+    }
     // No `parameters: &[u8]`: every report type's parameters ride on its variant.
     async fn read_dtc_information(
         &mut self,
@@ -106,12 +109,14 @@ impl ClearDiagnosticInformation for Ecu {
     const MAY_RESPOND_PENDING: bool = true;
     async fn clear(
         &mut self,
-        group: FunctionalGroupIdentifier,
+        group: DtcRecord,
         _memory_selection: Option<u8>,
     ) -> Result<(), Nrc> {
-        match group {
-            FunctionalGroupIdentifier::EmissionsSystemGroup => Ok(()),
-            _ => Err(Nrc::RequestOutOfRange),
+        // Annex D.1's emissions-related group is the only one this server clears.
+        if group == DtcRecord::new(0xFF, 0xFF, 0x33) {
+            Ok(())
+        } else {
+            Err(Nrc::RequestOutOfRange)
         }
     }
 }
@@ -124,14 +129,18 @@ impl TesterPresent for Ecu {
 
 impl CommunicationControl for Ecu {
     const MAY_RESPOND_PENDING: bool = false;
+    fn access(&self, _x: CommunicationControlType) -> Option<Access> {
+        Some(Access::new(Sessions::ALL))
+    }
     // The two sub-function bytes are unrelated types, so they cannot be transposed.
     async fn control(
         &mut self,
         control_type: CommunicationControlType,
         communication_type: CommunicationType,
-        node: SubnetNumber,
+        subnet: SubnetNumber,
+        _node_id: Option<u16>,
     ) -> Result<(), Nrc> {
-        match (control_type, communication_type, node) {
+        match (control_type, communication_type, subnet) {
             (
                 CommunicationControlType::DisableRxAndTx,
                 CommunicationType::NetworkManagement,
@@ -161,11 +170,17 @@ impl SecurityAccess for Ecu {
     const MAY_RESPOND_PENDING: bool = false;
     const MAX_SEED_LEN: usize = 4;
     const MAX_KEY_LEN: usize = 4;
+    const MAX_RECORD_LEN: usize = 0;
+    fn sessions(&self, _l: SecurityLevel) -> Option<Sessions> {
+        Some(Sessions::ALL)
+    }
+    fn preconditions_met(&self, _l: SecurityLevel) -> bool {
+        true
+    }
     fn policy(&self, _l: SecurityLevel) -> SecurityPolicy {
         SecurityPolicy::Counted {
-            attempt_limit: 3,
+            attempt_limit: core::num::NonZeroU8::MIN.saturating_add(2),
             delay_ms: Some(10_000),
-            static_seed: false,
         }
     }
     fn load_attempts(&self, _l: SecurityLevel) -> u8 {
@@ -174,8 +189,12 @@ impl SecurityAccess for Ecu {
     fn store_attempts(&mut self, _l: SecurityLevel, c: u8) {
         self.attempts = c;
     }
-    fn delay_running(&self, _l: SecurityLevel) -> bool {
-        self.delay
+    fn delay(&mut self, _l: SecurityLevel) -> Delay {
+        if self.delay {
+            Delay::Running
+        } else {
+            Delay::Idle
+        }
     }
     fn start_delay(&mut self, _l: SecurityLevel) {
         self.delay = true;
@@ -183,6 +202,7 @@ impl SecurityAccess for Ecu {
     async fn seed(
         &mut self,
         _l: SecurityLevel,
+        _record: &[u8],
         out: &mut ResponseSink<'_>,
     ) -> Result<(), Nrc> {
         out.write_all(&[1, 2, 3, 4])
@@ -219,13 +239,22 @@ impl uds_services::DiagnosticSessionControl for Ecu {
     ) -> bool {
         true
     }
+    fn leaves_running_software(&self, _s: DiagnosticSessionType) -> bool {
+        false
+    }
     fn timing(&self, _s: DiagnosticSessionType) -> SessionTiming {
         SessionTiming {
             p2_server_max_ms: 50,
             p2_star_server_max_10ms: 500,
         }
     }
-    fn on_transition(&mut self, _t: SessionTransition, _relocked: bool) {}
+    fn on_transition(
+        &mut self,
+        _t: SessionTransition,
+        _entered: DiagnosticSessionType,
+        _relocked: bool,
+    ) {
+    }
 }
 
 #[derive(Debug)]
@@ -233,7 +262,12 @@ struct FakeTransport;
 
 impl UdsTransport for FakeTransport {
     type Error = ();
-    async fn t_data_req(&mut self, _ai: Ai, _d: &[u8]) -> Result<(), ()> {
+    async fn t_data_req(
+        &mut self,
+        _ai: Ai,
+        _d: &[u8],
+        _after: AfterSend,
+    ) -> Result<(), ()> {
         Ok(())
     }
     async fn next_event<'b>(
@@ -315,17 +349,35 @@ fn the_buffers_are_derived_from_the_declared_maxima() {
 #[test]
 fn the_assembled_list_answers_service_supported() {
     let ecu = Ecu::new();
-    assert!(ecu.supports(UdsServiceType::ReadDataByIdentifier));
-    assert!(ecu.supports(UdsServiceType::SecurityAccess));
-    assert!(ecu.supports(UdsServiceType::TransferData));
-    assert!(ecu.supports(UdsServiceType::ReadDtcInfo));
-    assert!(ecu.supports(UdsServiceType::ClearDiagnosticInfo));
-    assert!(ecu.supports(UdsServiceType::CommunicationControl));
-    assert!(ecu.supports(UdsServiceType::TesterPresent));
-    assert!(!ecu.supports(UdsServiceType::WriteDataByIdentifier));
-    assert!(!ecu.supports(UdsServiceType::ControlDtcSetting));
+    assert!(ServiceSet::supports(
+        &ecu,
+        UdsServiceType::ReadDataByIdentifier
+    ));
+    assert!(ServiceSet::supports(&ecu, UdsServiceType::SecurityAccess));
+    assert!(ServiceSet::supports(&ecu, UdsServiceType::TransferData));
+    assert!(ServiceSet::supports(&ecu, UdsServiceType::ReadDtcInfo));
+    assert!(ServiceSet::supports(
+        &ecu,
+        UdsServiceType::ClearDiagnosticInfo
+    ));
+    assert!(ServiceSet::supports(
+        &ecu,
+        UdsServiceType::CommunicationControl
+    ));
+    assert!(ServiceSet::supports(&ecu, UdsServiceType::TesterPresent));
+    assert!(!ServiceSet::supports(
+        &ecu,
+        UdsServiceType::WriteDataByIdentifier
+    ));
+    assert!(!ServiceSet::supports(
+        &ecu,
+        UdsServiceType::ControlDtcSetting
+    ));
     // A byte naming no service at all resolves to one variant, which no list contains.
-    assert!(!ecu.supports(UdsServiceType::from_request_sid(0x01)));
+    assert!(!ServiceSet::supports(
+        &ecu,
+        UdsServiceType::from_request_sid(0x01)
+    ));
 }
 
 /// ``UDSSVC_ARCH_0033`` — Annex A permission is per service and declared.
@@ -410,6 +462,7 @@ fn the_handler_seam_is_typed_not_byte_shaped() {
         CommunicationControlType::DisableRxAndTx,
         CommunicationType::NetworkManagement,
         SubnetNumber::ReceivedOn,
+        None,
     )));
     assert_eq!(denied, Some(Err(Nrc::ConditionsNotCorrect)));
 
@@ -425,7 +478,7 @@ fn the_handler_seam_is_typed_not_byte_shaped() {
     );
 
     let cleared = poll_once(core::pin::pin!(
-        ecu.clear(FunctionalGroupIdentifier::EmissionsSystemGroup, None)
+        ecu.clear(DtcRecord::new(0xFF, 0xFF, 0x33), None)
     ));
     assert_eq!(cleared, Some(Ok(())));
 }
@@ -566,8 +619,9 @@ fn the_assembled_dispatch_answers_a_read() {
     assert_eq!(out.written_bytes(), &[0x62, 0xF4, 0x0D, 0x40]);
 }
 
-/// A listed service whose stage is not yet written, and an unlisted one, both settle
-/// 0x11 — physically; functionally they are silenced (``UDSSVC_ARCH_0009`` rule 1).
+/// A listed service whose stage is not yet written (`DataTransfer`), and an unlisted one,
+/// both settle 0x11 — physically; functionally they are silenced (``UDSSVC_ARCH_0009``
+/// rule 1).
 #[test]
 fn unsupported_services_settle_0x11_or_silence() {
     let mut ecu = Ecu::new();
@@ -585,13 +639,19 @@ fn unsupported_services_settle_0x11_or_silence() {
     let r = settle(phys, unsettled, false, &mut out);
     assert_eq!(r, uds_services::Responded::Yes { session: None });
     assert_eq!(out.written_bytes(), &[0x7F, 0x11, 0x11]);
-    // Listed, so `begin` passes it; no stage, so the fall-through settles it.
-    let request = [0x14, 0xFF, 0xFF, 0xFF];
+    // Listed, so `begin` passes it; no stage, so the fall-through settles it. Table 23
+    // refuses the transfer services in the default session, so it is asked from another.
+    let mut extended = <<Ecu as ServiceSet>::State as uds_services::ProtocolState>::INITIAL;
+    ecu.session_confirmed(
+        &mut extended,
+        DiagnosticSessionType::ExtendedDiagnosticSession,
+    );
+    let request = [0x36, 0x01, 0xAA];
     let unsettled =
-        block_on(ecu.dispatch(&mut state, phys, Received::Whole(&request), &mut out));
+        block_on(ecu.dispatch(&mut extended, phys, Received::Whole(&request), &mut out));
     let r = settle(phys, unsettled, false, &mut out);
     assert_eq!(r, uds_services::Responded::Yes { session: None });
-    assert_eq!(out.written_bytes(), &[0x7F, 0x14, 0x11]);
+    assert_eq!(out.written_bytes(), &[0x7F, 0x36, 0x11]);
     let func = Ai {
         ta_type: TaType::Functional,
         ..phys

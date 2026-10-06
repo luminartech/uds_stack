@@ -10,11 +10,11 @@ use core::future::{Future, poll_fn, ready};
 use core::task::Poll;
 use uds_protocol::NegativeResponseCode as Nrc;
 use uds_services::{
-    Address, Ai, DataIdentifier, DiagnosticSessionControl, DiagnosticSessionType as S,
-    KeyVerdict, Mtype, ReadDataByIdentifier, RecordError, Reloads, ResponseSink, SResult,
-    SecurityAccess, SecurityLevel, SecurityPolicy, ServerParams, SessionTiming,
-    SessionTransition, Sink, TaType, TesterPresent, Timestamp, TransportEvent,
-    UdsTransport, uds_server,
+    Address, AfterSend, Ai, DataIdentifier, Delay, DiagnosticSessionControl,
+    DiagnosticSessionType as S, KeyVerdict, Mtype, ReadDataByIdentifier, RecordError,
+    Reloads, ResponseSink, SResult, SecurityAccess, SecurityLevel, SecurityPolicy,
+    ServerParams, SessionTiming, SessionTransition, Sessions, Sink, TaType, TesterPresent,
+    Timestamp, TransportEvent, UdsTransport, uds_server,
 };
 use uds_session::TransportError;
 
@@ -26,6 +26,9 @@ const FUNCTIONAL: Address = Address(0xE400);
 /// A second tester, which never controls the session: its requests leave `tS3_Server`
 /// running (``UDSS_LLR_0097``).
 const OTHER: Address = Address(0x0E81);
+/// The answer to `27 01` wherever Table 23 allows it: the fixture's seed, so a session
+/// probe reads as positive in a non-default session and 0x7F in the default one.
+const SEED: [u8; 6] = [0x67, 0x01, 0x01, 0x02, 0x03, 0x04];
 
 fn from(sa: Address, ta_type: TaType) -> Ai {
     Ai {
@@ -88,6 +91,8 @@ struct Scripted {
     sent_count: usize,
     /// Each transmission's addressing.
     sent_ai: [Option<Ai>; MAX_SENT],
+    /// What each transmission said follows it.
+    sent_then: [Option<AfterSend>; MAX_SENT],
     /// How many `Deadline`s were reported: one per `At` that reached the driver's deadline.
     deadlines: usize,
 }
@@ -111,6 +116,7 @@ impl Scripted {
             sent_after: [0; MAX_SENT],
             sent_count: 0,
             sent_ai: [None; MAX_SENT],
+            sent_then: [None; MAX_SENT],
             deadlines: 0,
         }
     }
@@ -119,6 +125,9 @@ impl Scripted {
             .get(i)
             .and_then(|(buf, n)| buf.get(..*n))
             .unwrap_or(&[])
+    }
+    fn sent_then(&self, i: usize) -> Option<AfterSend> {
+        self.sent_then.get(i).copied().flatten()
     }
     fn sent_ai(&self, i: usize) -> Option<Ai> {
         self.sent_ai.get(i).copied().flatten()
@@ -200,7 +209,15 @@ impl Scripted {
 // future is always awaited at once, so `ready` serves.
 impl UdsTransport for Scripted {
     type Error = ();
-    fn t_data_req(&mut self, ai: Ai, data: &[u8]) -> impl Future<Output = Result<(), ()>> {
+    fn t_data_req(
+        &mut self,
+        ai: Ai,
+        data: &[u8],
+        after: AfterSend,
+    ) -> impl Future<Output = Result<(), ()>> {
+        if let Some(then) = self.sent_then.get_mut(self.sent_count) {
+            *then = Some(after);
+        }
         assert!(
             ai == to_tester() || ai == to(OTHER),
             "responses go back to a tester, physically, from the ECU: {ai:?}"
@@ -280,6 +297,12 @@ struct Ecu {
     slow: u8,
     /// What the next `read` answers once it has pended: its record, or this code.
     refuse: Option<Nrc>,
+    /// Every level's stored attempt count.
+    attempts: u8,
+    /// How many times a delay was started.
+    delays_started: u8,
+    /// The session whose entry leaves the software this server runs, if any.
+    leaves: Option<S>,
 }
 impl Ecu {
     const fn new() -> Self {
@@ -288,6 +311,9 @@ impl Ecu {
             n: 0,
             slow: 0,
             refuse: None,
+            attempts: 0,
+            delays_started: 0,
+            leaves: None,
         }
     }
 }
@@ -318,13 +344,16 @@ impl DiagnosticSessionControl for Ecu {
         !matches!(s, S::ProgrammingSession)
             || matches!(active, S::ExtendedDiagnosticSession)
     }
+    fn leaves_running_software(&self, s: S) -> bool {
+        self.leaves == Some(s)
+    }
     fn timing(&self, _s: S) -> SessionTiming {
         SessionTiming {
             p2_server_max_ms: 50,
             p2_star_server_max_10ms: 500,
         }
     }
-    fn on_transition(&mut self, t: SessionTransition, _relocked: bool) {
+    fn on_transition(&mut self, t: SessionTransition, _entered: S, _relocked: bool) {
         if let Some(slot) = self.transitions.get_mut(self.n) {
             *slot = Some(t);
         }
@@ -338,24 +367,33 @@ impl SecurityAccess for Ecu {
     const MAY_RESPOND_PENDING: bool = false;
     const MAX_SEED_LEN: usize = 4;
     const MAX_KEY_LEN: usize = 4;
+    const MAX_RECORD_LEN: usize = 0;
+    fn sessions(&self, _l: SecurityLevel) -> Option<Sessions> {
+        Some(Sessions::ALL)
+    }
+    fn preconditions_met(&self, _l: SecurityLevel) -> bool {
+        true
+    }
     fn policy(&self, _l: SecurityLevel) -> SecurityPolicy {
         SecurityPolicy::Counted {
-            attempt_limit: 3,
+            attempt_limit: core::num::NonZeroU8::MIN.saturating_add(2),
             delay_ms: Some(10_000),
-            static_seed: false,
         }
     }
     fn load_attempts(&self, _l: SecurityLevel) -> u8 {
-        0
+        self.attempts
     }
     fn store_attempts(&mut self, _l: SecurityLevel, _c: u8) {}
-    fn delay_running(&self, _l: SecurityLevel) -> bool {
-        false
+    fn delay(&mut self, _l: SecurityLevel) -> Delay {
+        Delay::Idle
     }
-    fn start_delay(&mut self, _l: SecurityLevel) {}
+    fn start_delay(&mut self, _l: SecurityLevel) {
+        self.delays_started = self.delays_started.saturating_add(1);
+    }
     fn seed(
         &mut self,
         _l: SecurityLevel,
+        _record: &[u8],
         out: &mut ResponseSink<'_>,
     ) -> impl Future<Output = Result<(), Nrc>> {
         ready(
@@ -409,6 +447,62 @@ fn run(server: &mut EcuServer) {
         t.cursor, t.len,
         "the run ended with script steps unconsumed"
     );
+}
+
+/// Annex I Table I.2 transition 1 — the server starts an owed delay when it starts, on
+/// its first step and only then: each supported level at its attempt limit — here every
+/// `requestSeed` value — gets one delay, however many steps follow.
+#[test]
+fn start_up_starts_an_owed_delay_once() {
+    let mut s = EcuServer::new(
+        Ecu {
+            attempts: 3,
+            ..Ecu::new()
+        },
+        Scripted::new(&[
+            Ev::Ind(TaType::Physical, &[0x22, 0xF4, 0x0D]),
+            Ev::Conf(SResult::Ok),
+        ]),
+        ECU,
+        PARAMS,
+    );
+    let levels = (0x01_u8..0x7F).step_by(2).count();
+    assert_eq!(s.services().delays_started, 0);
+    run(&mut s);
+    assert_eq!(usize::from(s.services().delays_started), levels);
+}
+
+/// ISO 14229-5:2022 REQ 7.9, ISO 14229-1:2020 10.2.2.2 Table 25 — the final positive
+/// response to a `DiagnosticSessionControl` whose session leaves the running software is
+/// the one message sent `ServerLeaves`; the response entering a session that does not
+/// leave is `Continue`, and so is the negative response to the same leaving session
+/// refused from the default one (0x7E).
+#[test]
+fn only_the_response_entering_a_leaving_session_says_the_server_leaves() {
+    let mut s = EcuServer::new(
+        Ecu {
+            leaves: Some(S::ProgrammingSession),
+            ..Ecu::new()
+        },
+        Scripted::new(&[
+            Ev::Ind(TaType::Physical, &[0x10, 0x02]),
+            Ev::Conf(SResult::Ok),
+            Ev::Ind(TaType::Physical, &[0x10, 0x03]),
+            Ev::Conf(SResult::Ok),
+            Ev::Ind(TaType::Physical, &[0x10, 0x02]),
+            Ev::Conf(SResult::Ok),
+        ]),
+        ECU,
+        PARAMS,
+    );
+    run(&mut s);
+    let t = s.transport();
+    assert_eq!(t.sent(0), &[0x7F, 0x10, 0x7E]);
+    assert_eq!(t.sent_then(0), Some(AfterSend::Continue));
+    assert_eq!(t.sent(1), &[0x50, 0x03, 0x00, 0x32, 0x01, 0xF4]);
+    assert_eq!(t.sent_then(1), Some(AfterSend::Continue));
+    assert_eq!(t.sent(2), &[0x50, 0x02, 0x00, 0x32, 0x01, 0xF4]);
+    assert_eq!(t.sent_then(2), Some(AfterSend::ServerLeaves));
 }
 
 #[test]
@@ -747,7 +841,7 @@ fn a_late_confirmation_does_not_restart_the_session_timer_during_the_next_reques
     assert_eq!(t.sent(2), &[0x7F, 0x22, 0x78]);
     assert_eq!(t.sent(3), &[0x7F, 0x22, 0x78]);
     assert_eq!(t.sent(4), &[0x62, 0xF4, 0x0D, 0x40]);
-    assert_eq!(t.sent(5), &[0x7F, 0x27, 0x11]); // allowed in extended; listed, no stage
+    assert_eq!(t.sent(5), &SEED); // allowed in extended: the seed
     assert_eq!(t.deadlines, 2); // the read's tP2_Server and tP2*_Server only
     assert_eq!(
         s.services().transitions,
@@ -798,7 +892,7 @@ fn a_late_selection_confirmation_does_not_start_the_session_timer_during_the_nex
     assert_eq!(t.sent(1), &[0x7F, 0x22, 0x78]);
     assert_eq!(t.sent(2), &[0x7F, 0x22, 0x78]);
     assert_eq!(t.sent(3), &[0x62, 0xF4, 0x0D, 0x40]);
-    assert_eq!(t.sent(4), &[0x7F, 0x27, 0x11]); // allowed in extended; listed, no stage
+    assert_eq!(t.sent(4), &SEED); // allowed in extended, so the seed
     assert_eq!(t.deadlines, 2); // the read's tP2_Server and tP2*_Server only
     assert_eq!(
         s.services().transitions,
@@ -877,7 +971,7 @@ fn a_session_change_takes_effect_on_confirmation_and_times_out() {
     run(&mut s);
     let t = s.transport();
     assert_eq!(t.sent(0), &[0x50, 0x03, 0x00, 0x32, 0x01, 0xF4]);
-    assert_eq!(t.sent(1), &[0x7F, 0x27, 0x11]); // allowed in extended; listed, no stage
+    assert_eq!(t.sent(1), &SEED); // allowed in extended: the seed
     assert_eq!(t.sent(2), &[0x7F, 0x27, 0x7F]); // Table 23 refuses it in default
     assert_eq!(t.deadlines, 1); // tS3_Server's, reached at 5100
     assert_eq!(
@@ -904,7 +998,7 @@ fn a_suppressed_session_change_enters_the_session() {
     );
     run(&mut s);
     assert_eq!(s.transport().sent_count, 1);
-    assert_eq!(s.transport().sent(0), &[0x7F, 0x27, 0x11]); // in extended
+    assert_eq!(s.transport().sent(0), &SEED); // in extended
     assert_eq!(
         s.services().transitions.first().copied().flatten(),
         Some(SessionTransition::DefaultToNonDefault)
@@ -1084,7 +1178,7 @@ fn a_session_confirmation_during_a_handler_is_applied_once() {
     assert_eq!(t.sent_ai(1), Some(to(OTHER)));
     // Sent after the 50 03's confirmation was consumed, mid-handler.
     assert_eq!(t.sent_after.get(1), Some(&3));
-    assert_eq!(t.sent(2), &[0x7F, 0x27, 0x11]); // allowed in extended; listed, no stage
+    assert_eq!(t.sent(2), &SEED); // allowed in extended: the seed
     assert_eq!(
         s.services().transitions,
         [

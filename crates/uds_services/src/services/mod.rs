@@ -33,7 +33,7 @@ pub mod transfer;
 pub use data::{ReadDataByIdentifier, WriteDataByIdentifier};
 pub use dtc::{ClearDiagnosticInformation, DtcReportKind, ReadDtcInformation};
 pub use routine::RoutineControl;
-pub use security::{KeyVerdict, SecurityAccess, SecurityLevel, SecurityPolicy};
+pub use security::{Delay, KeyVerdict, SecurityAccess, SecurityLevel, SecurityPolicy};
 pub use session::{
     CommunicationControl, ControlDtcSetting, DiagnosticSessionControl, EcuReset,
     SessionTiming, TesterPresent,
@@ -259,6 +259,20 @@ pub trait ServiceSet: crate::sealed::Sealed {
         out: &mut ResponseSink<'_>,
     ) -> impl core::future::Future<Output = Unsettled>;
 
+    /// The server is starting: what Annex I transition 1 owes at start-up.
+    ///
+    /// [`crate::Server`] calls it once, on its first step, because
+    /// [`Server::new`](crate::Server::new) is a `const fn` and cannot call into the
+    /// application. Emitted by the assembly; where `SecurityAccess` is listed, it starts
+    /// the delay of every level whose stored attempt count is at its limit (see
+    /// [`crate::SecurityAccess::delay`]), and otherwise it does
+    /// nothing.
+    ///
+    /// # Arguments
+    ///
+    /// * `state` - the [`ProtocolState`] of this assembly, held by [`crate::Server`]
+    fn start_up(&mut self, state: &mut Self::State);
+
     /// `tS3_Server` expired: return to the default session and tell the application.
     ///
     /// ``UDSS_LLR_0100`` reports the expiry; ``UDSSVC_ARCH_0038`` has the application
@@ -298,6 +312,18 @@ pub trait ServiceSet: crate::sealed::Sealed {
     ///
     /// * `state` - the [`ProtocolState`] of this assembly, which holds the session in force
     fn session_timing(&self, state: &Self::State) -> Option<SessionTiming>;
+
+    /// Whether entering `session` leaves the software this server is running, which
+    /// [`crate::Server`] tells the transport with the response that selects it.
+    ///
+    /// [`DiagnosticSessionControl::leaves_running_software`], or `false` where the
+    /// assembly has no `DiagnosticSessionControl` and so never changes session.
+    ///
+    /// # Arguments
+    ///
+    /// * `session` - the session a positive response selects; see
+    ///   [`DiagnosticSessionType`].
+    fn leaves_running_software(&self, session: DiagnosticSessionType) -> bool;
 
     /// Whether this server implements `service` at all.
     ///

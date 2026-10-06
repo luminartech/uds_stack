@@ -6,6 +6,7 @@
 //! type; the macro expands in the application's crate and could not keep a field private
 //! there, which is why the type is declared here and only *named* by the macro.
 
+use crate::SecurityLevel;
 use uds_protocol::DiagnosticSessionType;
 
 /// The state an assembled server keeps between requests. ``UDSSVC_ARCH_0035``.
@@ -37,12 +38,16 @@ pub trait ProtocolState: private::Sealed + core::fmt::Debug {
     const INITIAL: Self;
 }
 
-/// Milestone-1 state: the active diagnostic session. ``UDSSVC_ARCH_0035``.
+/// The active diagnostic session and the security access state. ``UDSSVC_ARCH_0035``.
 ///
-/// Security and transfer state join as fields when their services land.
+/// Transfer state joins as a field when its service lands.
 #[derive(Debug)]
 pub struct State {
     session: DiagnosticSessionType,
+    /// ISO 14229-1:2020 clause 10.4.1: at most one level is unlocked at any instant.
+    unlocked: Option<SecurityLevel>,
+    /// Annex I's `xx`: the level whose seed was sent and whose key is awaited.
+    seed_sent: Option<SecurityLevel>,
 }
 
 /// The seal on [`ProtocolState`]: public in a private module, so no other crate can name
@@ -57,6 +62,8 @@ impl private::Sealed for State {}
 impl ProtocolState for State {
     const INITIAL: Self = Self {
         session: DiagnosticSessionType::DefaultSession,
+        unlocked: None,
+        seed_sent: None,
     };
 }
 
@@ -70,6 +77,34 @@ impl State {
     pub(crate) fn set_session(&mut self, session: DiagnosticSessionType) {
         self.session = session;
     }
+
+    pub(crate) const fn unlocked(&self) -> Option<SecurityLevel> {
+        self.unlocked
+    }
+
+    pub(crate) fn seed_sent(&mut self, level: SecurityLevel) {
+        self.seed_sent = Some(level);
+    }
+
+    pub(crate) const fn awaited(&self) -> Option<SecurityLevel> {
+        self.seed_sent
+    }
+
+    pub(crate) fn take_seed(&mut self) -> Option<SecurityLevel> {
+        self.seed_sent.take()
+    }
+
+    /// Annex I transitions 3 and 10: unlocking `level` locks whichever was unlocked.
+    pub(crate) fn unlock(&mut self, level: SecurityLevel) {
+        self.unlocked = Some(level);
+    }
+
+    /// Annex I transition 6: every level locked, no seed awaiting a key. Whether a level
+    /// had been unlocked.
+    pub(crate) fn lock(&mut self) -> bool {
+        self.seed_sent = None;
+        self.unlocked.take().is_some()
+    }
 }
 
 #[cfg(test)]
@@ -77,11 +112,14 @@ mod tests {
     use super::{ProtocolState, State};
     use uds_protocol::DiagnosticSessionType;
 
-    /// ISO 14229-1:2020 10.2.1 — a server powers up in the default session.
+    /// ISO 14229-1:2020 10.2.1 — a server powers up in the default session, and Annex I
+    /// transition 1 in state A: every level locked, no seed sent.
     #[test]
-    fn the_initial_state_is_the_default_session() {
-        let s = State::INITIAL;
+    fn the_initial_state_is_the_default_session_and_locked() {
+        let mut s = State::INITIAL;
         assert_eq!(s.session(), DiagnosticSessionType::DefaultSession);
+        assert_eq!(s.unlocked(), None);
+        assert_eq!(s.take_seed(), None);
     }
 
     /// A `static` server needs `INITIAL` to be a `const`.

@@ -27,9 +27,9 @@
 //! # Status
 //!
 //! The server role runs end to end over any `UdsTransport` (see
-//! `tests/end_to_end.rs`) for the services with a pipeline stage:
-//! `ReadDataByIdentifier`, `DiagnosticSessionControl` and `TesterPresent`. A
-//! listed service without a stage answers `serviceNotSupported`. The client's
+//! `tests/end_to_end.rs`), and every service trait but `DataTransfer` has a pipeline
+//! stage (see `tests/stages.rs`). A listed `DataTransfer` answers
+//! `serviceNotSupported`. The client's
 //! entry points are `todo!()` and carry the architecture element each will
 //! satisfy. `tests/composition.rs` assembles a server against the whole surface.
 //!
@@ -74,6 +74,9 @@
 #![no_std]
 #![forbid(unsafe_code)]
 
+pub mod access;
+pub use access::{Access, Levels, Sessions};
+
 pub mod assembly;
 
 pub mod client;
@@ -108,8 +111,9 @@ pub use state::{ProtocolState, State};
 ///
 /// ```
 /// use uds_services::{
-///     DtcRecord, DtcReportKind, Encode, NegativeResponseCode, ReadDtcInfoSubFunction,
-///     ReadDtcInformation, ResponseSink,
+///     Access, DtcRecord, DtcReportKind, DtcStatusMask, Encode, NegativeResponseCode,
+///     ReadDtcInfoReportType, ReadDtcInfoSubFunction, ReadDtcInformation, ResponseSink,
+///     Sessions,
 /// };
 ///
 /// struct Ecu;
@@ -119,13 +123,20 @@ pub use state::{ProtocolState, State};
 ///     const MAX_DTCS: usize = 1;
 ///     const REPORTS: &'static [DtcReportKind] = &[DtcReportKind::DtcList];
 ///
+///     fn access(&self, report: ReadDtcInfoReportType) -> Option<Access> {
+///         matches!(report, ReadDtcInfoReportType::ReportDtcByStatusMask)
+///             .then(|| Access::new(Sessions::ALL))
+///     }
+///
 ///     async fn read_dtc_information(
 ///         &mut self,
 ///         _request: ReadDtcInfoSubFunction,
 ///         out: &mut ResponseSink<'_>,
 ///     ) -> Result<(), NegativeResponseCode> {
 ///         // A refusal is the sink's to record and the pipeline's to answer.
+///         let _ = DtcStatusMask::from(0x09).encode(out);
 ///         let _ = DtcRecord::new(0xC0, 0x01, 0x23).encode(out);
+///         let _ = DtcStatusMask::from(0x09).encode(out);
 ///         Ok(())
 ///     }
 /// }
@@ -134,7 +145,8 @@ pub use automotive_wire_codec::{Encode, InsufficientBuffer, Sink, WriteError};
 
 pub mod transport;
 pub use transport::{
-    Address, Ai, Mtype, Reloads, SResult, TaType, Timestamp, TransportEvent, UdsTransport,
+    Address, AfterSend, Ai, Mtype, Reloads, SResult, TaType, Timestamp, TransportEvent,
+    UdsTransport,
 };
 
 /// The keep-alive modes a client is built in, from `uds_session`.
@@ -152,10 +164,10 @@ pub use identifier::{DataIdentifier, RecordError, RoutineIdentifier};
 pub mod services;
 pub use services::{
     ClearDiagnosticInformation, CommunicationControl, ControlDtcSetting, DataTransfer,
-    DiagnosticSessionControl, DtcReportKind, EcuReset, KeyVerdict, ReadDataByIdentifier,
-    ReadDtcInformation, Received, Responded, RoutineControl, SecurityAccess, SecurityLevel,
-    SecurityPolicy, ServiceSet, SessionTiming, SessionTransition, TesterPresent,
-    TransferRequest, Unsettled, WriteDataByIdentifier,
+    Delay, DiagnosticSessionControl, DtcReportKind, EcuReset, KeyVerdict,
+    ReadDataByIdentifier, ReadDtcInformation, Received, Responded, RoutineControl,
+    SecurityAccess, SecurityLevel, SecurityPolicy, ServiceSet, SessionTiming,
+    SessionTransition, TesterPresent, TransferRequest, Unsettled, WriteDataByIdentifier,
 };
 
 /// The protocol vocabulary this crate's handler signatures are written in.
@@ -172,7 +184,8 @@ pub use services::{
 pub use uds_protocol::{
     CLEAR_ALL_DTCS, CommunicationControlType, CommunicationType, DiagnosticSessionType,
     DtcRecord, DtcSettingType, DtcStatusMask, FileOperationMode, FunctionalGroupIdentifier,
-    NegativeResponseCode, ReadDtcInfoSubFunction, ResetType, SubnetNumber, UdsServiceType,
+    NegativeResponseCode, ReadDtcInfoReportType, ReadDtcInfoSubFunction, ResetType,
+    RoutineControlSubFunction, SubnetNumber, UdsServiceType,
 };
 
 /// Re-exported only so `uds_server!`'s expansion can name it; not part of the API.
