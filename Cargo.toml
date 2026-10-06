@@ -9,10 +9,9 @@ members = ["crates/*"]
 [workspace.package]
 version = "0.7.0"
 # One MSRV for the whole stack, so CI runs one MSRV check. It is the highest MSRV of any
-# dependency the host build faces: edge-nal 0.7's 1.88, which simple_doip's connection
-# service will take. A bare-metal integrator's own choices (edge-nal-embassy needs 1.91)
-# do not set it.
-rust-version = "1.88"
+# dependency the workspace builds: smoltcp 0.13's 1.91, which embassy-net 0.9 brings in for
+# the embassy-net entity adapter.
+rust-version = "1.91"
 
 # Shared dependency versions. Declared once so a bump is one edit, and so the five
 # crates cannot silently drift onto different majors of the same library.

@@ -79,7 +79,7 @@ jobs:
       # package rust-version to read by default (it would fail: "No msrv input and no
       # rust-version in Cargo.toml"). The stack's one MSRV is [workspace.package]'s
       # rust-version, which every crate inherits; keep this input equal to it.
-      msrv: '1.88'
+      msrv: '1.91'
 
       # Empty: the whole workspace. The same input scopes both cargo-semver-checks and the
       # PR publish dry run. For the dry run, the whole workspace is the only scope that

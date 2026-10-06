@@ -164,7 +164,7 @@ semver: a breaking change in that crate is a breaking change here too.
 
 ## MSRV
 
-The minimum supported Rust version is **1.88**, the UDS stack's single MSRV,
+The minimum supported Rust version is **1.91**, the UDS stack's single MSRV,
 declared once in the workspace manifest and inherited by all five crates.
 
 ## Relationship to the standards
