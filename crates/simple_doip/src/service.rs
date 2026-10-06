@@ -94,7 +94,7 @@ pub enum ConnectionEvent<'b> {
         pdu: &'b [u8],
     },
     /// `DoIP_Data.indication` for a diagnostic message longer than the caller's buffer,
-    /// truncated to what fit.
+    /// or than the connection's own receive buffer, truncated to what fit.
     ///
     /// A variant rather than a flag on [`Self::Indication`], so that a fragment cannot
     /// be destructured as a whole PDU.
@@ -106,7 +106,7 @@ pub enum ConnectionEvent<'b> {
         /// The target's addressing model:
         /// [`ta.default_ta_type()`](LogicalAddress::default_ta_type).
         ta_type: TaType,
-        /// The leading bytes of the PDU that fit in the caller's buffer.
+        /// The leading bytes of the PDU that fit both buffers.
         pdu: &'b [u8],
         /// The whole PDU's length, from the message's header.
         length: usize,
@@ -271,7 +271,7 @@ pub enum EntityEvent<'b> {
         /// The PDU, in the caller's buffer.
         pdu: &'b [u8],
     },
-    /// A diagnostic message longer than the caller's buffer; see
+    /// A diagnostic message longer than the caller's buffer or the connection's; see
     /// [`ConnectionEvent::IndicationTruncated`].
     IndicationTruncated {
         /// The connection the message arrived on.
@@ -284,7 +284,7 @@ pub enum EntityEvent<'b> {
         /// The target's addressing model:
         /// [`ta.default_ta_type()`](LogicalAddress::default_ta_type).
         ta_type: TaType,
-        /// The leading bytes of the PDU that fit in the caller's buffer.
+        /// The leading bytes of the PDU that fit both buffers.
         pdu: &'b [u8],
         /// The whole PDU's length, from the message's header.
         length: usize,

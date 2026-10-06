@@ -53,16 +53,16 @@
 //!    missing either is a *link* error, not a compile error. On a host:
 //!    `embassy-time = { version = "0.5", features = ["std", "generic-queue-8"] }`. On
 //!    bare metal the driver usually comes with the HAL. Tests can use its `mock-driver`.
-//! 3. **Reads, writes and accepts that do nothing when cancelled.** The event methods
-//!    of this feature are cancel-safe — a caller may drop them at any await and call
-//!    again — only if the backend's `embedded_io_async::Read::read`,
-//!    `embedded_io_async::Write::write` and, for an entity, `edge_nal::TcpAccept::accept`
-//!    move no data and change no connection state when dropped before completing.
-//!    `embedded-io-async` encourages that but does not require it, so it is the
-//!    integrator's obligation:
-//!    - `edge-nal-std` 0.7.0 meets it for all three.
-//!    - `edge-nal-embassy` 0.9.0 meets it for `read` and `write` but **not for
-//!      `accept`**, which creates its socket inside the future: a cancelled `accept`
+//! 3. **Reads, writes, readiness and accepts that do nothing when cancelled.** The
+//!    event methods of this feature are cancel-safe — a caller may drop them at any
+//!    await and call again — only if the backend's `embedded_io_async::Read::read`,
+//!    `embedded_io_async::Write::write`, `edge_nal::Readable::readable` and, for an
+//!    entity, `edge_nal::TcpAccept::accept` move no data and change no connection state
+//!    when dropped before completing. `embedded-io-async` encourages that but does not
+//!    require it, so it is the integrator's obligation:
+//!    - `edge-nal-std` 0.7.0 meets it for all four.
+//!    - `edge-nal-embassy` 0.9.0 meets it for `read`, `write` and `readable` but **not
+//!      for `accept`**, which creates its socket inside the future: a cancelled `accept`
 //!      drops a connection that may already be established. An entity on embassy-net
 //!      accepts through an adapter over embassy-net's own `TcpSocket` instead.
 //! 4. **For an entity, `MCTS + 1` sockets** from the backend: ISO 13400-2:2019 Table 11
