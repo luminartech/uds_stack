@@ -2222,3 +2222,24 @@ fn security_access_a_refused_seed_is_0x14_not_a_zero_seed() {
         [0x7F, 0x27, 0x14]
     );
 }
+
+/// ISO 14229-1:2020 8.7.5 — `message_length` is tested before any data parameter: a
+/// `communicationType` whose reserved bits 3-2 are set is 0x31, but 0x13 when the
+/// request also carries a stray byte, as one whose bits 1-0 are clear is.
+#[test]
+fn communication_control_a_reserved_type_with_a_trailing_byte_is_0x13() {
+    let mut ecu = Ecu::default();
+    let mut state = extended(&mut ecu);
+    for (request, nrc) in [
+        (&[0x28, 0x00, 0x0D][..], 0x31),
+        (&[0x28, 0x00, 0x0D, 0x00][..], 0x13),
+        (&[0x28, 0x00, 0x00, 0x00][..], 0x13),
+    ] {
+        assert_eq!(
+            exchange(&mut ecu, &mut state, request).as_deref(),
+            Some(&[0x7F, 0x28, nrc][..]),
+            "{request:02X?}"
+        );
+    }
+    assert_eq!(ecu.communication, None);
+}

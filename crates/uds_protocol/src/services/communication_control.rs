@@ -545,6 +545,11 @@ impl Encode for CommunicationControlRequest {
 impl<'a> Decode<'a> for CommunicationControlRequest {
     type Error = crate::Error;
 
+    /// Decodes a request, reading every `communicationType` Annex B Table B.1 reserves —
+    /// bits 1-0 clear, or bits 3-2 set — as [`CommunicationType::IsoSaeReserved`] rather
+    /// than rejecting it. A server answers it `requestOutOfRange` (0x31), but ISO
+    /// 14229-1:2020 8.7.5 tests the message length first, so a request that also carries
+    /// a stray byte must still reach the length check and be 0x13.
     fn decode(buf: &'a [u8]) -> Result<(Self, &'a [u8]), Error> {
         if buf.len() < 2 {
             return Err(Error::InsufficientData(Incomplete {
@@ -553,7 +558,8 @@ impl<'a> Decode<'a> for CommunicationControlRequest {
             }));
         }
         let communication_enable = SuppressablePositiveResponse::try_from(buf[0])?;
-        let communication_type = CommunicationType::try_from(buf[1])?;
+        let communication_type = CommunicationType::try_from(buf[1])
+            .unwrap_or(CommunicationType::IsoSaeReserved);
         let subnet = SubnetNumber::try_from((buf[1] & SUBNET_MASK) >> 4)?;
         match communication_enable.value() {
             CommunicationControlType::EnableRxAndDisableTxWithEnhancedAddressInfo
@@ -702,6 +708,23 @@ mod request {
                 CommunicationType::try_from(byte).is_err(),
                 "{byte:#04X} sets a reserved bit but was accepted"
             );
+        }
+    }
+
+    /// ISO 14229-1:2020 8.7.5 tests `message_length` before any data parameter, so a
+    /// request whose `communicationType` sets a reserved bit 3-2 decodes, as one clearing
+    /// bits 1-0 does, leaving its length to be judged before its 0x31.
+    #[test]
+    fn a_request_with_reserved_communication_type_bits_decodes_as_reserved() {
+        for byte in [0x04u8, 0x0D, 0xFF] {
+            let wire = [0x00, byte, 0x00];
+            let (request, rest) = <CommunicationControlRequest as Decode>::decode(&wire)
+                .expect("a reserved communicationType decodes");
+            assert_eq!(
+                request.communication_type(),
+                CommunicationType::IsoSaeReserved
+            );
+            assert_eq!(rest, [0x00], "{byte:#04X}");
         }
     }
 

@@ -867,11 +867,11 @@ pub fn discarding_seed(
 /// ISO 14229-1:2020 clause 10.5 — `CommunicationControl`'s own stage. Whether the
 /// `controlType` is supported (0x12), in the active session (0x7E) and unlocked (0x33)
 /// was settled by [`begin`], and the exact length, with `nodeIdentificationNumber`
-/// present exactly for the enhanced-address variants, by its decode (0x13), as was a
-/// `communicationType` with its reserved bits 3-2 set (0x31). One whose bits 1-0 are the
-/// value Annex B Table B.1 also reserves is `requestOutOfRange` (0x31) here. The
-/// handler's verdict decides the rest, and the positive response is `68` and the echoed
-/// `controlType` (Table 56).
+/// present exactly for the enhanced-address variants, by its decode (0x13). A
+/// `communicationType` Annex B Table B.1 reserves — bits 1-0 clear or bits 3-2 set — is
+/// `requestOutOfRange` (0x31) here, after that length check. The handler's verdict
+/// decides the rest, and the positive response is `68` and the echoed `controlType`
+/// (Table 56).
 #[doc(hidden)]
 pub async fn communication_control<A: CommunicationControl>(
     services: &mut A,
