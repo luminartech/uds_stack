@@ -157,7 +157,13 @@ impl<E: DiagnosticEntity, const MCTS: usize> DoIpTransport<E, MCTS> {
     ///     const CONNECTIONS: usize = 2;
     ///     // ...
     /// #   type Error = ();
-    /// #   async fn request(&mut self, _: LogicalAddress, _: TaType, _: &[u8]) -> Result<(), ()> {
+    /// #   async fn request(
+    /// #       &mut self,
+    /// #       _: LogicalAddress,
+    /// #       _: LogicalAddress,
+    /// #       _: TaType,
+    /// #       _: &[u8],
+    /// #   ) -> Result<(), ()> {
     /// #       Ok(())
     /// #   }
     /// #   async fn next_event<'b>(
@@ -324,7 +330,9 @@ impl<E: DiagnosticEntity, const MCTS: usize> UdsTransport for DoIpTransport<E, M
     type Error = Error<E::Error>;
 
     /// `T_Data.req` as `DoIP_Data.request` (ISO 14229-5:2022 REQ 4.3 Table 4),
-    /// routed by the target address to the connection that activated it.
+    /// routed by the target address to the connection that activated it. `ai`'s
+    /// source address is the message's (REQ 4.4 Table 5), and the entity confirms
+    /// one it does not own as failed.
     ///
     /// A positive `ECUReset` response, or a message `after` says the server leaves
     /// its running software on, arms the prescribed close described on
@@ -344,7 +352,7 @@ impl<E: DiagnosticEntity, const MCTS: usize> UdsTransport for DoIpTransport<E, M
     ) -> Result<(), Self::Error> {
         let target = target_of(ai)?;
         self.entity
-            .request(target, to_doip_ta_type(ai.ta_type), data)
+            .request(to_logical(ai.sa), target, to_doip_ta_type(ai.ta_type), data)
             .await
             .map_err(Error::Entity)?;
         self.record_send(target, data, after);
@@ -482,6 +490,7 @@ mod tests {
         const CONNECTIONS: usize = 1;
         async fn request(
             &mut self,
+            _sa: LogicalAddress,
             _ta: LogicalAddress,
             _ta_type: TaType,
             _pdu: &[u8],

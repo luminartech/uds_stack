@@ -196,14 +196,13 @@ fn a_response_is_sent_on_the_testers_connection_and_confirmed() {
 }
 
 /// `UDSS_LLR_0060`: the confirmation carries the addressing the request was made
-/// with, which the driver matches it by, even where the entity sends under its own
-/// address and `DoIP` has no field for the message type.
+/// with, which the driver matches it by, though `DoIP` has no field for the message
+/// type.
 #[test]
 fn a_confirmation_carries_the_addressing_it_was_requested_with() {
     let mut t = indicated(&[0x3E, 0x00]);
     let requested = Ai {
         mtype: Mtype::SecureDiag,
-        sa: Address(0x0002),
         ..response_ai()
     };
     block_on(t.t_data_req(requested, &[0x7E, 0x00], AfterSend::Continue)).unwrap();
@@ -214,6 +213,27 @@ fn a_confirmation_carries_the_addressing_it_was_requested_with() {
             result: SResult::Ok,
         }
     );
+}
+
+/// REQ 4.4 Table 5 maps `T_SA` to `DoIP_SA`, so a response from an address the
+/// entity does not own is not sent under the entity's, and its confirmation fails
+/// with `DoIP_UNKNOWN_SA`, third in ISO 13400-2:2019 8.2.5's order.
+#[test]
+fn a_response_from_an_address_the_entity_does_not_own_is_not_sent() {
+    let mut t = indicated(&[0x3E, 0x00]);
+    let foreign = Ai {
+        sa: Address(0x0002),
+        ..response_ai()
+    };
+    block_on(t.t_data_req(foreign, &[0x7E, 0x00], AfterSend::Continue)).unwrap();
+    assert_eq!(
+        next(&mut t),
+        TransportEvent::DataConf {
+            ai: foreign,
+            result: SResult::Transport(TransportError(3)),
+        }
+    );
+    assert_eq!(t.entity().wire, []);
 }
 
 /// REQ 7.11: the server initiates the close after sending the positive `ECUReset`

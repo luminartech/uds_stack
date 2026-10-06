@@ -59,7 +59,7 @@ struct Slot {
 pub struct MockEntity<const MCTS: usize> {
     pub script: VecDeque<Tester>,
     table: [Option<Slot>; MCTS],
-    confirms: VecDeque<(LogicalAddress, TaType, DoIpResult)>,
+    confirms: VecDeque<(LogicalAddress, LogicalAddress, TaType, DoIpResult)>,
     pub wire: Vec<Wire>,
     /// Every PDU `request` accepted, whether or not a connection carried it.
     pub requested: Vec<Vec<u8>>,
@@ -108,16 +108,16 @@ impl<const MCTS: usize> MockEntity<MCTS> {
                 self.wire.push(Wire::Data(Self::id(index), pdu));
                 DoIpResult::Ok
             });
-            self.confirms.push_back((slot.sa, ta_type, result));
+            self.confirms.push_back((ENTITY, slot.sa, ta_type, result));
         }
     }
 }
 
 impl<const MCTS: usize> MockEntity<MCTS> {
     fn confirm(&mut self) -> Option<EntityEvent<'static>> {
-        let (ta, ta_type, result) = self.confirms.pop_front()?;
+        let (sa, ta, ta_type, result) = self.confirms.pop_front()?;
         Some(EntityEvent::Confirm {
-            sa: ENTITY,
+            sa,
             ta,
             ta_type,
             result,
@@ -152,18 +152,26 @@ impl<const MCTS: usize> DiagnosticEntity for MockEntity<MCTS> {
 
     async fn request(
         &mut self,
+        sa: LogicalAddress,
         ta: LogicalAddress,
         ta_type: TaType,
         pdu: &[u8],
     ) -> Result<(), Self::Error> {
         self.requested.push(pdu.to_vec());
+        if sa != ENTITY {
+            self.confirms
+                .push_back((sa, ta, ta_type, DoIpResult::UnknownSa));
+            return Ok(());
+        }
         match self.slot_of(ta) {
             Some(index) => self.table[index]
                 .as_mut()
                 .unwrap()
                 .outbound
                 .push_back((ta_type, pdu.to_vec())),
-            None => self.confirms.push_back((ta, ta_type, DoIpResult::NoSocket)),
+            None => self
+                .confirms
+                .push_back((sa, ta, ta_type, DoIpResult::NoSocket)),
         }
         Ok(())
     }

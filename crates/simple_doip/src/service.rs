@@ -294,7 +294,7 @@ pub enum EntityEvent<'b> {
     /// Carries no [`ConnectionId`]: a request whose target no connection registered was
     /// carried by none, and is confirmed all the same.
     Confirm {
-        /// The source address of the confirmed request: the entity's own.
+        /// The source address of the confirmed request.
         sa: LogicalAddress,
         /// The target address of the confirmed request.
         ta: LogicalAddress,
@@ -369,15 +369,18 @@ pub trait DiagnosticEntity {
     /// socket when a tester returns without closing its old one (REQ 3.DoIP-092).
     const CONNECTIONS: usize;
 
-    /// `DoIP_Data.request`: send `pdu` to `ta` on the connection whose routing
-    /// activation registered `ta` (ISO 13400-2:2019 8.3.1).
+    /// `DoIP_Data.request`: send `pdu` from `sa` to `ta` on the connection whose
+    /// routing activation registered `ta` (ISO 13400-2:2019 8.3.1).
     ///
     /// Routing activation registers each source address on one connection only, so
-    /// the target address alone chooses the connection. The source address is the
-    /// entity's own. Completion is reported by a later [`EntityEvent::Confirm`].
+    /// the target address alone chooses the connection. Completion is reported by a
+    /// later [`EntityEvent::Confirm`]: a request whose `sa` is not one of the
+    /// entity's own logical addresses is accepted, sends nothing, and is confirmed
+    /// with [`DoIpResult::UnknownSa`].
     ///
     /// # Arguments
     ///
+    /// * `sa` - the source, one of the entity's own logical addresses.
     /// * `ta` - the target, a tester's source address.
     /// * `ta_type` - the target's addressing model.
     /// * `pdu` - the PDU to send.
@@ -388,6 +391,7 @@ pub trait DiagnosticEntity {
     /// target no connection registered is not an error.
     fn request(
         &mut self,
+        sa: LogicalAddress,
         ta: LogicalAddress,
         ta_type: TaType,
         pdu: &[u8],

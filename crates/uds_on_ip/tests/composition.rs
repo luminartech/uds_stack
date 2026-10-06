@@ -30,6 +30,7 @@ impl DiagnosticEntity for OpaqueEntity {
     const CONNECTIONS: usize = 1;
     async fn request(
         &mut self,
+        _sa: LogicalAddress,
         _ta: LogicalAddress,
         _ta_type: TaType,
         _pdu: &[u8],
