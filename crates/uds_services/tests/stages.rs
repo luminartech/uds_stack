@@ -98,6 +98,17 @@ impl RoutineIdentifier for Rid {
     }
 }
 
+/// A way `SecurityAccess::seed` can misbehave.
+#[derive(Debug, Default, Clone, Copy)]
+enum SeedFault {
+    #[default]
+    None,
+    /// An all-zero seed, which clause 10.4.1 forbids for a locked level.
+    Zero,
+    /// `00 AB` written a byte at a time, so a short sink refuses it part-way.
+    Split,
+}
+
 #[derive(Debug, Default)]
 struct Ecu {
     /// The reset `EcuReset::reset` last accepted.
@@ -116,8 +127,8 @@ struct Ecu {
     entered: Option<S>,
     /// Makes Annex I's optional pre-conditions unmet.
     preconditions_unmet: bool,
-    /// Makes `seed` write an all-zero seed, which clause 10.4.1 forbids.
-    zero_seed: bool,
+    /// How `seed` misbehaves, if it does.
+    seed_fault: SeedFault,
     /// The `securityAccessDataRecord` the last seed was asked with.
     record: Vec<u8>,
     /// What `CommunicationControl` last applied.
@@ -273,8 +284,18 @@ impl SecurityAccess for Ecu {
             return Err(Nrc::RequestOutOfRange);
         }
         self.record = record.to_vec();
-        let seed = if self.zero_seed { 0 } else { seed_of(level) };
-        let _ = out.write_all(&seed.to_be_bytes());
+        match self.seed_fault {
+            SeedFault::None => {
+                let _ = out.write_all(&seed_of(level).to_be_bytes());
+            }
+            SeedFault::Zero => {
+                let _ = out.write_all(&[0x00, 0x00]);
+            }
+            SeedFault::Split => {
+                let _ = out.write_all(&[0x00]);
+                let _ = out.write_all(&[0xAB]);
+            }
+        }
         Ok(())
     }
     async fn verify_key(
@@ -627,6 +648,22 @@ fn exchange_truncated(ecu: &mut Ecu, state: &mut State, front: &[u8]) -> Vec<u8>
     let mut out = ResponseSink::new(&mut buf, None);
     let unsettled =
         block_on(ecu.dispatch(state, PHYSICAL, Received::Truncated(front), &mut out));
+    let _ = settle(PHYSICAL, unsettled, false, &mut out);
+    out.written_bytes().to_vec()
+}
+
+/// What a request produced through a sink bounded at `bound` bytes, as the peer's
+/// advertised maximum bounds it.
+fn exchange_bounded(
+    ecu: &mut Ecu,
+    state: &mut State,
+    request: &[u8],
+    bound: usize,
+) -> Vec<u8> {
+    let mut buf = [0_u8; 64];
+    let mut out = ResponseSink::new(&mut buf, Some(bound));
+    let unsettled =
+        block_on(ecu.dispatch(state, PHYSICAL, Received::Whole(request), &mut out));
     let _ = settle(PHYSICAL, unsettled, false, &mut out);
     out.written_bytes().to_vec()
 }
@@ -2118,9 +2155,51 @@ fn on_transition_is_told_the_session_entered() {
 #[should_panic(expected = "all-zero seed")]
 fn security_access_an_all_zero_seed_for_a_locked_level_panics_in_debug() {
     let mut ecu = Ecu {
-        zero_seed: true,
+        seed_fault: SeedFault::Zero,
         ..Ecu::default()
     };
     let mut state = extended(&mut ecu);
     let _ = exchange(&mut ecu, &mut state, &[0x27, 0x01]);
+}
+
+/// Annex I Table I.2 transition 9, with clause 8.7.3's `responseTooLong` (0x14) — a
+/// `requestSeed` whose response does not fit reaches the tester as a negative response,
+/// so no seed awaits a key: the right key is 0x24, and a wrong one is 0x24 without
+/// counting an attempt.
+#[test]
+fn security_access_a_seed_answered_0x14_awaits_no_key() {
+    let mut ecu = Ecu::default();
+    let mut state = extended(&mut ecu);
+    assert_eq!(
+        exchange_bounded(&mut ecu, &mut state, &[0x27, 0x01], 3),
+        [0x7F, 0x27, 0x14]
+    );
+    assert_eq!(
+        exchange(&mut ecu, &mut state, &RIGHT_KEY).as_deref(),
+        Some(&[0x7F, 0x27, 0x24][..])
+    );
+    assert_eq!(
+        exchange_bounded(&mut ecu, &mut state, &[0x27, 0x01], 3),
+        [0x7F, 0x27, 0x14]
+    );
+    assert_eq!(
+        exchange(&mut ecu, &mut state, &WRONG_KEY).as_deref(),
+        Some(&[0x7F, 0x27, 0x24][..])
+    );
+    assert_eq!(ecu.attempts, 0);
+}
+
+/// Clause 10.4.1's zero-seed check reads only a seed the sink accepted: a non-zero seed
+/// refused part-way is `responseTooLong` (0x14), not a debug panic.
+#[test]
+fn security_access_a_refused_seed_is_0x14_not_a_zero_seed() {
+    let mut ecu = Ecu {
+        seed_fault: SeedFault::Split,
+        ..Ecu::default()
+    };
+    let mut state = extended(&mut ecu);
+    assert_eq!(
+        exchange_bounded(&mut ecu, &mut state, &[0x27, 0x01], 3),
+        [0x7F, 0x27, 0x14]
+    );
 }

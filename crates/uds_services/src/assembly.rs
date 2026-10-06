@@ -734,7 +734,7 @@ macro_rules! uds_server {
                         $crate::Unsettled::handled(settling, outcome)
                     }
                     .await;
-                    $crate::pipeline::discarding_seed(state, unsettled)
+                    $crate::pipeline::discarding_seed(state, out, unsettled)
                 }
 
                 #[allow(

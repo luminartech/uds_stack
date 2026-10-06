@@ -733,10 +733,13 @@ async fn request_seed<A: SecurityAccess>(
     }
     services.seed(level, record, out).await?;
     debug_assert!(
-        out.written_bytes()
-            .get(2..)
-            .is_none_or(|seed| seed.is_empty() || seed.iter().any(|&byte| byte != 0)),
-        "SecurityAccess::seed wrote an all-zero seed for a locked level (clause 10.4.1)"
+        out.refused()
+            || out
+                .written_bytes()
+                .get(2..)
+                .is_some_and(|seed| seed.iter().any(|&byte| byte != 0)),
+        "SecurityAccess::seed wrote an empty or all-zero seed for a locked level \
+         (clause 10.4.1)"
     );
     state.seed_sent(level);
     Ok(())
@@ -834,13 +837,20 @@ fn failed_attempt<A: SecurityAccess>(
 }
 
 /// ISO 14229-1:2020 Annex I, Table I.2 transitions 9 and 10 — `unsettled`, having
-/// discarded the seed awaiting a key where it refuses a `SecurityAccess` request, whichever
-/// check refused it: the common stages, the length of a request too long to be received
-/// whole, or the stage itself. Any other request leaves the seed.
+/// discarded the seed awaiting a key where a `SecurityAccess` request is answered
+/// negatively, whichever check refused it: the common stages, the length of a request too
+/// long to be received whole, the stage itself, or [`settle`]'s `responseTooLong` (0x14)
+/// for a response `out` refused, which leaves the tester without the seed. Any other
+/// request leaves the seed.
 #[doc(hidden)]
 #[must_use]
-pub fn discarding_seed(state: &mut State, unsettled: Unsettled) -> Unsettled {
-    if let Some((settling, Err(_))) = unsettled.parts()
+pub fn discarding_seed(
+    state: &mut State,
+    out: &ResponseSink<'_>,
+    unsettled: Unsettled,
+) -> Unsettled {
+    if let Some((settling, outcome)) = unsettled.parts()
+        && (outcome.is_err() || out.refused())
         && matches!(
             UdsServiceType::from_request_sid(settling.sid),
             UdsServiceType::SecurityAccess

@@ -209,7 +209,7 @@ pub trait SecurityAccess {
     /// answer as an all-zero seed, and this crate supplies it, because it knows what is
     /// unlocked and the application does not. So the seed written here must not be all
     /// zero: clause 10.4.1 forbids that for a locked level, and a debug build panics on
-    /// one.
+    /// an empty or all-zero seed that `out` accepted.
     ///
     /// Whether a repeated `requestSeed` gets the same seed is this method's to decide
     /// (Table I.1 `Static_Seed`, vehicle-manufacturer specific). A static seed is returned
