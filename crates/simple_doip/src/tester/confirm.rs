@@ -4,10 +4,6 @@ use crate::messages::{DiagnosticNackCode, NackCode};
 use crate::service::DoIpResult;
 
 /// ISO 13400-2:2019 Table 26 against 8.2.5.
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "confirms land in the next commit")
-)]
 pub(super) fn from_diagnostic_nack(code: DiagnosticNackCode) -> DoIpResult {
     match code {
         DiagnosticNackCode::InvalidSourceAddress => DoIpResult::InvalidSa,
@@ -22,10 +18,6 @@ pub(super) fn from_diagnostic_nack(code: DiagnosticNackCode) -> DoIpResult {
 }
 
 /// ISO 13400-2:2019 Table 19 against 8.2.5.
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "confirms land in the next commit")
-)]
 pub(super) fn from_header_nack(code: NackCode) -> DoIpResult {
     match code {
         NackCode::IncorrectPatternFormat

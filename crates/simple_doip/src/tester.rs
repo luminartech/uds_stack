@@ -16,9 +16,11 @@ use crate::messages::{
     ActivationTypeCode, DiagnosticMessage, Header, Message, NackCode, Payload, PayloadType,
     ProtocolVersion, RoutingActivationResponseCode,
 };
-use crate::service::{ConnectionEvent, DiagnosticConnection, NotATesterAddress};
-use crate::wire::Decode;
-use crate::{LogicalAddress, TaType};
+use crate::service::{
+    ConnectionEvent, DiagnosticConnection, DoIpResult, NotATesterAddress,
+};
+use crate::wire::{Decode, Encode};
+use crate::{LogicalAddress, TIMEOUT_DIAGNOSTIC_MESSAGE_RESPONSE, TaType};
 
 mod confirm;
 mod rx;
@@ -31,12 +33,20 @@ use tx::TxQueue;
 /// answered with confirmation required.
 const ROUTING_CONFIRMATION_RETRY: Duration = Duration::from_secs(2);
 
+/// `A_DoIP_Diagnostic_Message`'s timeout (ISO 13400-2:2019 Table 12): how long after a
+/// request's last byte its acknowledgement may take before the request is lost.
+const ACK_TIMEOUT: Duration =
+    Duration::from_secs(TIMEOUT_DIAGNOSTIC_MESSAGE_RESPONSE.as_secs());
+
+/// An alive check response, for which the transmit queue keeps room beside a request.
+const ALIVE_CHECK_RESPONSE: usize = Header::SIZE + 2;
+
 /// The protocol version the tester sends.
 const VERSION: ProtocolVersion = ProtocolVersion::V2019;
 
 /// The smallest `N`: a routing activation request with an alive check response queued
 /// beside it, which is also more than the longest routing activation response.
-const MIN_N: usize = Header::SIZE + 7 + Header::SIZE + 2;
+const MIN_N: usize = Header::SIZE + 7 + ALIVE_CHECK_RESPONSE;
 
 /// Why a tester could not connect, or could not do what it was asked.
 ///
@@ -104,6 +114,9 @@ pub struct Tester<'s, C: TcpConnect + 's, const N: usize> {
     socket: Option<C::Socket<'s>>,
     rx: RxBuffer<N>,
     tx: TxQueue<N>,
+    outstanding: Option<Outstanding>,
+    /// The confirm of a request whose connection was lost, reported before anything else.
+    owed: Option<ConnectionEvent<'static>>,
     /// Whether [`ConnectionEvent::Closed`] has been reported for the connection that
     /// was lost.
     closed_reported: bool,
@@ -176,6 +189,8 @@ impl<'s, C: TcpConnect, const N: usize> Tester<'s, C, N> {
             socket: None,
             rx: RxBuffer::new(),
             tx: TxQueue::new(),
+            outstanding: None,
+            owed: None,
             closed_reported: true,
         };
         tester.establish().await?;
@@ -249,14 +264,36 @@ impl<'s, C: TcpConnect, const N: usize> Tester<'s, C, N> {
 
 impl<C: TcpConnect, const N: usize> Tester<'_, C, N> {
     /// Gives up the connection, aborting it first where the tester is the one ending it.
+    ///
+    /// An outstanding request is owed its confirm: `DoIP_NO_SOCKET` if its last byte
+    /// never left, `DoIP_ERROR` if it left and was never acknowledged.
     async fn lose_connection(&mut self, abort: bool) {
-        if let Some(mut socket) = self.socket.take()
+        let socket = self.socket.take();
+        if let Some(outstanding) = self.outstanding.take() {
+            let result = if self.tx.written_through(outstanding.end) {
+                DoIpResult::Error
+            } else {
+                DoIpResult::NoSocket
+            };
+            self.owed = Some(outstanding.confirm(self.sa, result));
+        }
+        self.rx.clear();
+        self.tx.clear();
+        if let Some(mut socket) = socket
             && abort
         {
             socket.abort().await.ok();
         }
-        self.rx.clear();
-        self.tx.clear();
+    }
+
+    /// The outstanding request's confirm with `DoIP_TIMEOUT_A`, if its time is up.
+    fn timed_out(&mut self) -> Option<ConnectionEvent<'static>> {
+        let deadline = self.outstanding?.ack_deadline?;
+        if deadline > Instant::now() {
+            return None;
+        }
+        let outstanding = self.outstanding.take()?;
+        Some(outstanding.confirm(self.sa, DoIpResult::TimeoutA))
     }
 }
 
@@ -269,17 +306,67 @@ impl<C: TcpConnect, const N: usize> Tester<'_, C, N> {
 impl<C: TcpConnect, const N: usize> DiagnosticConnection for Tester<'_, C, N> {
     type Error = Error<C::Error>;
 
-    #[expect(
-        clippy::unused_async_trait_impl,
-        reason = "requests land in the next commit"
-    )]
+    /// Sends `pdu` to `ta` as one diagnostic message, from the tester's source address.
+    ///
+    /// Its [`ConnectionEvent::Confirm`] comes from the entity's acknowledgement
+    /// (ISO 13400-2:2019 9.5): [`DoIpResult::Ok`] for a positive one, the result naming a
+    /// negative one's code, or [`DoIpResult::TimeoutA`] where none arrives within
+    /// `A_DoIP_Diagnostic_Message` (Table 12) of the request's last byte.
+    ///
+    /// # Cancel safety
+    ///
+    /// The request is accepted once it is queued, which happens before the first await.
+    /// Dropping the future after that leaves the rest to be written by
+    /// [`DiagnosticConnection::next_event`], and the confirm still follows.
+    ///
+    /// # Errors
+    ///
+    /// None of these is followed by a confirm:
+    /// - [`Error::NotConnected`] once the connection has closed.
+    /// - [`Error::RequestPending`] while an earlier request awaits its confirm.
+    /// - [`Error::MessageTooLarge`] for a message that does not fit beside the room the
+    ///   tester keeps for an alive check response in `N`.
+    /// - [`Error::Io`] where writing fails; the connection is then closed.
     async fn request(
         &mut self,
-        _ta: LogicalAddress,
-        _ta_type: TaType,
-        _pdu: &[u8],
+        ta: LogicalAddress,
+        ta_type: TaType,
+        pdu: &[u8],
     ) -> Result<(), Self::Error> {
-        Err(Error::NotConnected)
+        if self.socket.is_none() {
+            return Err(Error::NotConnected);
+        }
+        if self.outstanding.is_some() || self.owed.is_some() {
+            return Err(Error::RequestPending);
+        }
+        let message = Message::diagnostic_message(VERSION, self.sa, ta, pdu);
+        if message
+            .encoded_size()
+            .map_or(true, |size| size > N - ALIVE_CHECK_RESPONSE)
+        {
+            return Err(Error::MessageTooLarge);
+        }
+        let end = self.tx.push(&message).map_err(|_| Error::MessageTooLarge)?;
+        self.outstanding = Some(Outstanding {
+            ta,
+            ta_type,
+            end,
+            ack_deadline: None,
+        });
+        let Some(socket) = self.socket.as_mut() else {
+            return Ok(());
+        };
+        match flush(socket, &mut self.tx, None).await {
+            Ok(_) => {
+                start_ack_timer(&mut self.outstanding, &self.tx);
+                Ok(())
+            }
+            Err(error) => {
+                self.outstanding = None;
+                self.lose_connection(false).await;
+                Err(Error::Io(error))
+            }
+        }
     }
 
     /// `embassy-time`'s clock, the one the tester's own timers run on.
@@ -306,6 +393,9 @@ impl<C: TcpConnect, const N: usize> DiagnosticConnection for Tester<'_, C, N> {
         let until = deadline_ms
             .map(|deadline_ms| confirm::caller_deadline(deadline_ms, Instant::now()));
         loop {
+            if let Some(owed) = self.owed.take().or_else(|| self.timed_out()) {
+                return Ok(owed);
+            }
             let Some(socket) = self.socket.as_mut() else {
                 if self.closed_reported {
                     return Err(Error::NotConnected);
@@ -314,7 +404,7 @@ impl<C: TcpConnect, const N: usize> DiagnosticConnection for Tester<'_, C, N> {
                 return Ok(ConnectionEvent::Closed);
             };
             match flush(socket, &mut self.tx, until).await {
-                Ok(Flush::Done) => {}
+                Ok(Flush::Done) => start_ack_timer(&mut self.outstanding, &self.tx),
                 Ok(Flush::TimedOut) => return Ok(ConnectionEvent::Deadline),
                 Ok(Flush::Closed) => {
                     self.lose_connection(false).await;
@@ -331,9 +421,16 @@ impl<C: TcpConnect, const N: usize> DiagnosticConnection for Tester<'_, C, N> {
                     continue;
                 }
                 Ok(Next::NeedMore) => {
-                    match fill(socket, &mut self.rx, until).await {
-                        Ok(Fill::Data) => {}
-                        Ok(Fill::TimedOut) => return Ok(ConnectionEvent::Deadline),
+                    let ack_deadline = self.outstanding.and_then(|o| o.ack_deadline);
+                    let wake = match (until, ack_deadline) {
+                        (Some(until), Some(ack)) => Some(until.min(ack)),
+                        (until, ack) => until.or(ack),
+                    };
+                    match fill(socket, &mut self.rx, wake).await {
+                        Ok(Fill::TimedOut) if wake == until => {
+                            return Ok(ConnectionEvent::Deadline);
+                        }
+                        Ok(Fill::Data | Fill::TimedOut) => {}
                         Ok(Fill::Eof) => self.lose_connection(false).await,
                         Err(error) => {
                             self.lose_connection(false).await;
@@ -343,13 +440,26 @@ impl<C: TcpConnect, const N: usize> DiagnosticConnection for Tester<'_, C, N> {
                     continue;
                 }
                 Ok(Next::Oversized { header, head }) => {
-                    let delivered = on_frame(&header, head, self.sa, &mut self.tx, buf);
+                    let delivered = on_frame(
+                        &header,
+                        head,
+                        self.sa,
+                        &mut self.tx,
+                        &mut self.outstanding,
+                        buf,
+                    );
                     self.rx.skip_oversized(&header);
                     delivered
                 }
                 Ok(Next::Frame(frame, consumed)) => {
-                    let delivered =
-                        on_frame(&frame.header, frame.payload, self.sa, &mut self.tx, buf);
+                    let delivered = on_frame(
+                        &frame.header,
+                        frame.payload,
+                        self.sa,
+                        &mut self.tx,
+                        &mut self.outstanding,
+                        buf,
+                    );
                     self.rx.consume(consumed);
                     delivered
                 }
@@ -361,8 +471,41 @@ impl<C: TcpConnect, const N: usize> DiagnosticConnection for Tester<'_, C, N> {
     }
 }
 
+/// The request awaiting its acknowledgement.
+#[derive(Debug, Clone, Copy)]
+struct Outstanding {
+    ta: LogicalAddress,
+    ta_type: TaType,
+    /// The transmit-stream position of the request's last byte.
+    end: u64,
+    /// When the request is lost, once that byte is written.
+    ack_deadline: Option<Instant>,
+}
+
+impl Outstanding {
+    fn confirm(self, sa: LogicalAddress, result: DoIpResult) -> ConnectionEvent<'static> {
+        ConnectionEvent::Confirm {
+            sa,
+            ta: self.ta,
+            ta_type: self.ta_type,
+            result,
+        }
+    }
+}
+
+/// Starts the outstanding request's acknowledgement timer once its last byte is out.
+fn start_ack_timer<const N: usize>(outstanding: &mut Option<Outstanding>, tx: &TxQueue<N>) {
+    if let Some(outstanding) = outstanding
+        && outstanding.ack_deadline.is_none()
+        && tx.written_through(outstanding.end)
+    {
+        outstanding.ack_deadline = Some(Instant::now() + ACK_TIMEOUT);
+    }
+}
+
 /// An event whose data [`on_frame`] has copied into the caller's buffer.
 enum Delivered {
+    Confirm(ConnectionEvent<'static>),
     Indication {
         sa: LogicalAddress,
         ta: LogicalAddress,
@@ -378,6 +521,7 @@ enum Delivered {
 impl Delivered {
     fn into_event(self, buf: &mut [u8]) -> ConnectionEvent<'_> {
         match self {
+            Self::Confirm(confirm) => confirm,
             Self::Indication {
                 sa,
                 ta,
@@ -421,8 +565,13 @@ fn on_frame<const N: usize>(
     payload: &[u8],
     sa: LogicalAddress,
     tx: &mut TxQueue<N>,
+    outstanding: &mut Option<Outstanding>,
     buf: &mut [u8],
 ) -> Option<Delivered> {
+    let mut acknowledge = |result: DoIpResult| {
+        let acknowledged = outstanding.take_if(|o| o.ack_deadline.is_some())?;
+        Some(Delivered::Confirm(acknowledged.confirm(sa, result)))
+    };
     let copy = |data: &[u8], buf: &mut [u8]| {
         let copied = data.len().min(buf.len());
         buf[..copied].copy_from_slice(&data[..copied]);
@@ -437,6 +586,28 @@ fn on_frame<const N: usize>(
                 copied: copy(message.user_data, buf),
                 length: (header.payload_length as usize).checked_sub(4)?,
             })
+        }
+        PayloadType::DiagnosticMessagePositiveAcknowledge => {
+            match Payload::decode(payload, header.payload_type).ok()? {
+                Payload::DiagnosticMessageAck(ack) if ack.target_address == sa => {
+                    acknowledge(DoIpResult::Ok)
+                }
+                _ => None,
+            }
+        }
+        PayloadType::DiagnosticMessageNegativeAcknowledge => {
+            match Payload::decode(payload, header.payload_type).ok()? {
+                Payload::DiagnosticMessageNack(nack) if nack.target_address == sa => {
+                    acknowledge(confirm::from_diagnostic_nack(nack.nack_code))
+                }
+                _ => None,
+            }
+        }
+        PayloadType::NegativeAcknowledge => {
+            match Payload::decode(payload, header.payload_type) {
+                Ok(Payload::DoIPNack(code)) => acknowledge(confirm::from_header_nack(code)),
+                _ => None,
+            }
         }
         PayloadType::AliveCheckRequest => {
             answer_alive_check(sa, tx);

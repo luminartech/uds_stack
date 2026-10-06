@@ -59,6 +59,7 @@ struct Connection {
     inbound: VecDeque<u8>,
     eof: bool,
     read_error: bool,
+    write_error: bool,
     outbound: Vec<u8>,
     aborted: bool,
     closed: bool,
@@ -154,6 +155,11 @@ impl MockPeer {
         self.wake_reader();
     }
 
+    /// The tester's next write fails.
+    pub fn fail_writes(&self) {
+        self.with(|c| c.write_error = true);
+    }
+
     /// Everything the tester has written, and forget it.
     pub fn take_written(&self) -> Vec<u8> {
         self.with(|c| std::mem::take(&mut c.outbound))
@@ -233,8 +239,13 @@ impl Write for MockSocket {
         yield_once().await;
         let piece = self.peer.shared.borrow().piece;
         let n = buf.len().min(piece);
-        self.peer.with(|c| c.outbound.extend(&buf[..n]));
-        Ok(n)
+        self.peer.with(|c| {
+            if c.write_error {
+                return Err(MockError);
+            }
+            c.outbound.extend(&buf[..n]);
+            Ok(n)
+        })
     }
 
     async fn flush(&mut self) -> Result<(), MockError> {

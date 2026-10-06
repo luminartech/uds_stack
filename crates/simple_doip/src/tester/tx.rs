@@ -53,13 +53,6 @@ impl<const N: usize> TxQueue<N> {
         Ok(self.queued)
     }
 
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "the confirm timer that uses it lands in a later commit"
-        )
-    )]
     pub(super) fn written_through(&self, position: u64) -> bool {
         self.written >= position
     }
