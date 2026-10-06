@@ -54,31 +54,85 @@ fn transport(script: impl IntoIterator<Item = Tester>) -> Transport {
 }
 
 /// The next event, with its data copied out so the buffer can go.
-fn next(t: &mut Transport<1>) -> TransportEvent<'static> {
+fn next(t: &mut Transport<1>) -> Seen {
     let mut buffer = [0u8; 16];
     let event = block_on(t.next_event(&mut buffer, None)).unwrap();
-    leak(event)
+    Seen::from(event)
 }
 
-fn leak(event: TransportEvent<'_>) -> TransportEvent<'static> {
-    match event {
-        TransportEvent::DataInd { ai, data } => TransportEvent::DataInd {
-            ai,
-            data: data.to_vec().leak(),
-        },
-        TransportEvent::DataTooLong { ai, data, declared } => TransportEvent::DataTooLong {
-            ai,
-            data: data.to_vec().leak(),
-            declared,
-        },
-        TransportEvent::Periodic { ai, pdid, data } => TransportEvent::Periodic {
-            ai,
-            pdid,
-            data: data.to_vec().leak(),
-        },
-        TransportEvent::DataConf { ai, result } => TransportEvent::DataConf { ai, result },
-        TransportEvent::Closed { expected } => TransportEvent::Closed { expected },
-        TransportEvent::Deadline => TransportEvent::Deadline,
+/// A [`TransportEvent`] that owns its data, compared against one that borrows.
+#[derive(Debug)]
+enum Seen {
+    DataInd {
+        ai: Ai,
+        data: Vec<u8>,
+    },
+    DataTooLong {
+        ai: Ai,
+        data: Vec<u8>,
+        declared: Option<usize>,
+    },
+    Periodic {
+        ai: Ai,
+        pdid: u8,
+        data: Vec<u8>,
+    },
+    Bare(TransportEvent<'static>),
+}
+
+impl From<TransportEvent<'_>> for Seen {
+    fn from(event: TransportEvent<'_>) -> Self {
+        match event {
+            TransportEvent::DataInd { ai, data } => Self::DataInd {
+                ai,
+                data: data.to_vec(),
+            },
+            TransportEvent::DataTooLong { ai, data, declared } => Self::DataTooLong {
+                ai,
+                data: data.to_vec(),
+                declared,
+            },
+            TransportEvent::Periodic { ai, pdid, data } => Self::Periodic {
+                ai,
+                pdid,
+                data: data.to_vec(),
+            },
+            TransportEvent::DataConf { ai, result } => {
+                Self::Bare(TransportEvent::DataConf { ai, result })
+            }
+            TransportEvent::Closed { expected } => {
+                Self::Bare(TransportEvent::Closed { expected })
+            }
+            TransportEvent::Deadline => Self::Bare(TransportEvent::Deadline),
+        }
+    }
+}
+
+impl PartialEq<TransportEvent<'_>> for Seen {
+    fn eq(&self, other: &TransportEvent<'_>) -> bool {
+        match (self, other) {
+            (Self::DataInd { ai, data }, TransportEvent::DataInd { ai: a, data: d }) => {
+                ai == a && data == d
+            }
+            (
+                Self::DataTooLong { ai, data, declared },
+                TransportEvent::DataTooLong {
+                    ai: a,
+                    data: d,
+                    declared: l,
+                },
+            ) => ai == a && data == d && declared == l,
+            (
+                Self::Periodic { ai, pdid, data },
+                TransportEvent::Periodic {
+                    ai: a,
+                    pdid: p,
+                    data: d,
+                },
+            ) => ai == a && pdid == p && data == d,
+            (Self::Bare(seen), other) => seen == other,
+            _ => false,
+        }
     }
 }
 
@@ -108,7 +162,7 @@ fn indicated_by(request: &[u8], configure: impl FnOnce(&mut MockEntity<1>)) -> T
         next(&mut t),
         TransportEvent::DataInd {
             ai: request_ai(),
-            data: request.to_vec().leak(),
+            data: request,
         }
     );
     t
@@ -405,10 +459,7 @@ fn a_tester_leaving_mid_service_is_an_unexpected_close() {
 /// not trusted: the PDU is never handed to the driver.
 #[test]
 fn a_pdu_outside_the_lent_buffer_is_an_error() {
-    let mut t = transport([
-        Tester::Connects(TESTER),
-        Tester::SendsOutsideBuffer(TESTER, vec![0x3E, 0x00]),
-    ]);
+    let mut t = transport([Tester::Connects(TESTER), Tester::SendsOutsideBuffer(TESTER)]);
     let mut buffer = [0u8; 16];
     assert!(matches!(
         block_on(t.next_event(&mut buffer, None)),

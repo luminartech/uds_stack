@@ -20,6 +20,9 @@ use simple_doip::service::{ConnectionId, DiagnosticEntity, DoIpResult, EntityEve
 pub const ENTITY: LogicalAddress = LogicalAddress(0x0001);
 pub const TESTER: LogicalAddress = LogicalAddress(0x0E00);
 
+/// A request that lives outside any buffer a caller lends the entity.
+pub static STRAY: [u8; 2] = [0x3E, 0x00];
+
 #[derive(Debug)]
 pub enum Tester {
     Connects(LogicalAddress),
@@ -27,8 +30,8 @@ pub enum Tester {
     SendsUnmodelled(LogicalAddress, u16, Vec<u8>),
     Leaves(LogicalAddress),
     /// Sends a request the entity reports from memory other than the buffer it was
-    /// lent, breaking its contract.
-    SendsOutsideBuffer(LogicalAddress, Vec<u8>),
+    /// lent ([`STRAY`]), breaking its contract.
+    SendsOutsideBuffer(LogicalAddress),
 }
 
 /// Why the mock entity failed.
@@ -221,14 +224,14 @@ impl<const MCTS: usize> DiagnosticEntity for MockEntity<MCTS> {
                         data: delivered,
                     });
                 }
-                Tester::SendsOutsideBuffer(sa, pdu) => {
+                Tester::SendsOutsideBuffer(sa) => {
                     let connection = Self::id(self.slot_of(sa).unwrap());
                     return Ok(EntityEvent::Indication {
                         connection,
                         sa,
                         ta: ENTITY,
                         ta_type: ENTITY.default_ta_type(),
-                        pdu: pdu.leak(),
+                        pdu: &STRAY,
                     });
                 }
                 Tester::Leaves(sa) => {
