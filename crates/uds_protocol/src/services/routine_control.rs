@@ -245,8 +245,14 @@ impl<'a> Decode<'a> for RoutineControlResponse<'a> {
                 available: buf.len(),
             }));
         }
-        // Plain try_from (no SPRMIB mask): a set 0x80 bit on a response is malformed.
-        let sub_function = RoutineControlSubFunction::try_from(buf[0])?;
+        // Plain try_from (no SPRMIB mask): a set 0x80 bit on a response is malformed, and
+        // so is a reserved routineControlType, which Figure 30 answers 0x12.
+        let sub_function = match RoutineControlSubFunction::try_from(buf[0])? {
+            RoutineControlSubFunction::IsoSaeReserved(value) => {
+                return Err(Error::InvalidRoutineControlSubFunction(value));
+            }
+            defined => defined,
+        };
         let routine_id = u16::from_be_bytes([buf[1], buf[2]]);
         Ok((
             Self {
@@ -335,6 +341,21 @@ mod test {
             err.negative_response_code(),
             Some(NegativeResponseCode::SubFunctionNotSupported)
         );
+    }
+
+    #[test]
+    fn a_response_echoing_a_reserved_routine_control_type_is_rejected() {
+        // ISO 14229-1:2020 Table 428 echoes the request's routineControlType, and Figure
+        // 30 answers a reserved one 0x12, so a positive response carrying one is
+        // malformed even though the request that named it decodes.
+        for byte in [0x00u8, 0x04, 0x7F] {
+            let err = <RoutineControlResponse as Decode>::decode(&[byte, 0x02, 0x01])
+                .expect_err("a reserved routineControlType is not a response");
+            assert!(
+                matches!(err, Error::InvalidRoutineControlSubFunction(got) if got == byte),
+                "{byte:#04X}: {err:?}"
+            );
+        }
     }
 
     #[test]
