@@ -53,6 +53,7 @@ embedded-io-async = { version = "0.7", default-features = false }
 # dev-dependencies
 anyhow = "1"
 edge-nal-std = "0.7"
+critical-section = "1"
 static_cell = "2"
 proptest = "1"
 serde_json = "1"

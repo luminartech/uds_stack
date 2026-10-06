@@ -859,6 +859,7 @@ dependencies = [
  "async-trait",
  "automotive-wire-codec",
  "bytes",
+ "critical-section",
  "edge-nal",
  "edge-nal-std",
  "embassy-time",
