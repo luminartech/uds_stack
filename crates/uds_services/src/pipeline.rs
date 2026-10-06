@@ -472,8 +472,11 @@ pub async fn write_data_by_identifier<A: WriteDataByIdentifier>(
     out: &mut ResponseSink<'_>,
 ) -> Result<Option<DiagnosticSessionType>, NegativeResponseCode> {
     let (did, access) = writable_identifier(services, state, request)?;
-    let split = did.split_record(request.data());
-    if matches!(split, Err(RecordError::Short) | Ok((_, [_, ..]))) {
+    let data = request.data();
+    let split = did.split_record(data);
+    if matches!(split, Err(RecordError::Short) | Ok((_, [_, ..])))
+        || matches!(split, Err(RecordError::Malformed { len }) if data.len() > len)
+    {
         return Err(NegativeResponseCode::IncorrectMessageLengthOrInvalidFormat);
     }
     if !access.admits(state.unlocked()) {

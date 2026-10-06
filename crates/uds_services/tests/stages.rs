@@ -61,7 +61,9 @@ impl DataIdentifier for Did {
         };
         let (record, rest) = buf.split_at_checked(width).ok_or(RecordError::Short)?;
         match (self, record) {
-            (Self::Mode, [mode]) if *mode > 0x03 => Err(RecordError::Malformed),
+            (Self::Mode, [mode]) if *mode > 0x03 => {
+                Err(RecordError::Malformed { len: width })
+            }
             _ => Ok((record, rest)),
         }
     }
@@ -1647,6 +1649,23 @@ fn wdbi_a_record_of_the_wrong_length_is_0x13() {
             "{request:02X?}"
         );
     }
+    assert_eq!(ecu.written, None);
+}
+
+/// Figure 26, key 2 — the total length is checked before the record's content: a
+/// malformed record followed by a stray byte is 0x13, and the same record alone is 0x31.
+#[test]
+fn wdbi_a_malformed_record_with_a_trailing_byte_is_0x13() {
+    let mut ecu = Ecu::default();
+    let mut state = extended(&mut ecu);
+    assert_eq!(
+        exchange(&mut ecu, &mut state, &[0x2E, 0x01, 0x01, 0x05, 0x00]).as_deref(),
+        Some(&[0x7F, 0x2E, 0x13][..])
+    );
+    assert_eq!(
+        exchange(&mut ecu, &mut state, &[0x2E, 0x01, 0x01, 0x05]).as_deref(),
+        Some(&[0x7F, 0x2E, 0x31][..])
+    );
     assert_eq!(ecu.written, None);
 }
 

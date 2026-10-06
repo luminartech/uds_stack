@@ -14,8 +14,13 @@
 pub enum RecordError {
     /// Fewer bytes remained than this identifier's record needs.
     Short,
-    /// The bytes were the right length but not a valid record.
-    Malformed,
+    /// The record's bytes were the right length but not a valid record.
+    Malformed {
+        /// How many bytes the record took, so a caller can still see what follows it:
+        /// ISO 14229-1:2020 Figure 26 answers bytes after a `WriteDataByIdentifier` record
+        /// `incorrectMessageLengthOrInvalidFormat` (0x13) before the record's content.
+        len: usize,
+    },
     /// A response named an identifier this application does not define.
     ///
     /// Only a client sees this: [`DataIdentifier::from_u16`] returning `None` on a
@@ -46,7 +51,8 @@ pub trait DataIdentifier: Copy + Eq {
     ///
     /// # Errors
     ///
-    /// [`RecordError`] where `buf` is too short or the record is not valid.
+    /// [`RecordError::Short`] where `buf` is shorter than the record, whatever it holds,
+    /// and otherwise [`RecordError::Malformed`] where the record is not valid.
     fn split_record(self, buf: &[u8]) -> Result<(&[u8], &[u8]), RecordError>;
 }
 
