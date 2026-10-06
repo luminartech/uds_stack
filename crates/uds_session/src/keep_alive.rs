@@ -13,10 +13,16 @@ mod role {
     use crate::time::Timestamp;
 
     /// What a keep-alive mode keeps and does. Public in a private module, so it can bound
-    /// [`super::KeepAliveMode`] and no caller can name, call or implement it.
+    /// [`super::KeepAliveMode`] while no caller can implement it or name it by path. Its
+    /// items stay reachable through that bound, so they are public surface; none of them
+    /// delivers an output, and the only mode value a caller holds is one not yet moved
+    /// into a client.
     pub trait Role: core::fmt::Debug {
         /// The mode's state in each physical channel's storage (``UDSS_LLR_0151``).
         type Channel: Copy + core::fmt::Debug;
+
+        /// Whether the mode's `TesterPresent` goes out on a functional channel.
+        const FUNCTIONAL: bool;
 
         /// Act on `event`, which happened at `site`.
         fn on(&mut self, now: Timestamp, site: Site<'_, Self::Channel>, event: Event);
@@ -137,6 +143,7 @@ impl KeepAliveMode for FunctionalKeepAlive {}
 
 impl role::Role for FunctionalKeepAlive {
     type Channel = ();
+    const FUNCTIONAL: bool = true;
 
     fn on(&mut self, now: Timestamp, site: Site<'_, ()>, event: Event) {
         let functional = matches!(site, Site::Functional);
@@ -204,6 +211,7 @@ impl KeepAliveMode for PhysicalKeepAlive {}
 
 impl role::Role for PhysicalKeepAlive {
     type Channel = role::PhysicalSession;
+    const FUNCTIONAL: bool = false;
 
     fn on(&mut self, now: Timestamp, site: Site<'_, PhysicalSession>, event: Event) {
         let Site::Physical(s) = site else {

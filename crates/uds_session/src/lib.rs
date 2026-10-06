@@ -101,7 +101,7 @@ pub use classification::{
 };
 pub use client::{
     ChannelId, Client, ClientOutput, ClientReaction, FunctionalChannelId, FunctionalSlot,
-    PhysicalChannelId, PhysicalSlot, ResponderSlot,
+    PhysicalChannelId, PhysicalSlot,
 };
 pub use keep_alive::{FunctionalKeepAlive, KeepAliveMode, PhysicalKeepAlive};
 pub use params::{

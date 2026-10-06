@@ -61,15 +61,13 @@ use crate::timer::{Exceeds, Reaches, Timer};
 /// start-of-message is open and whether a response-pending message is outstanding.
 /// ISO 14229-2:2021 9.6 Table 7 allots the client one timer per channel and no storage
 /// for either fact, which is why this requirement is derived.
-/// Storage is moved into the instance, never duplicated — see [`crate::Association`].
 #[derive(Debug)]
-pub struct ResponderSlot {
+struct ResponderSlot {
     entry: Option<Responder>,
 }
 
 impl ResponderSlot {
-    /// A free entry.
-    pub const EMPTY: Self = Self { entry: None };
+    const EMPTY: Self = Self { entry: None };
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -643,7 +641,8 @@ pub type ClientReaction<
 /// rather than in a field — see [`KeepAliveMode`]. It is inferred from the value passed
 /// to [`Client::new`], so a caller names it only where they annotate the type.
 ///
-/// `R` defaults to `0`, since a client with `FUNC` of `0` has no responder table to size.
+/// `R` defaults to `0`, since a client with `FUNC` of `0` has no responder table to size;
+/// with functional channels, [`Client::new`] refuses it at compile time.
 #[derive(Debug)]
 pub struct Client<
     K: KeepAliveMode,
@@ -674,12 +673,48 @@ impl<K: KeepAliveMode, const PHYS: usize, const FUNC: usize, const R: usize>
     ///
     /// `keep_alive` is [`FunctionalKeepAlive`] or [`PhysicalKeepAlive`], and fixes `K` for
     /// the life of the instance, as ``UDSS_LLR_0149`` requires.
+    ///
+    /// Two shapes are refused at compile time, since neither client could work. Functional
+    /// channels with no responder table would report every responder beyond capacity
+    /// (``UDSS_LLR_0143``) and track none of them:
+    ///
+    /// ```compile_fail,E0080
+    /// use uds_session::{Client, FunctionalKeepAlive, FunctionalSlot, PhysicalSlot};
+    ///
+    /// let _untracked: Client<FunctionalKeepAlive, 1, 1, 0> = Client::new(
+    ///     [PhysicalSlot::EMPTY],
+    ///     [FunctionalSlot::EMPTY],
+    ///     FunctionalKeepAlive::new(2_000),
+    /// );
+    /// ```
+    ///
+    /// And functional keep-alive with no functional channel would fall due
+    /// (``UDSS_LLR_0156``) with nowhere to send the `TesterPresent` it asks for:
+    ///
+    /// ```compile_fail,E0080
+    /// use uds_session::{Client, FunctionalKeepAlive, PhysicalSlot};
+    ///
+    /// let _unsendable: Client<FunctionalKeepAlive, 1, 0> =
+    ///     Client::new([PhysicalSlot::EMPTY], [], FunctionalKeepAlive::new(2_000));
+    /// ```
     #[must_use]
     pub const fn new(
         physical: [PhysicalSlot<K>; PHYS],
         functional: [FunctionalSlot<R>; FUNC],
         keep_alive: K,
     ) -> Self {
+        const {
+            assert!(
+                FUNC == 0 || R > 0,
+                "functional channels need a responder table"
+            );
+        };
+        const {
+            assert!(
+                FUNC > 0 || !K::FUNCTIONAL,
+                "functional keep-alive needs a functional channel"
+            );
+        };
         Self {
             physical,
             functional,
@@ -1391,7 +1426,7 @@ impl<'d, K: KeepAliveMode, const PHYS: usize, const FUNC: usize, const R: usize>
 
 #[cfg(test)]
 mod tests {
-    use super::{Client, PhysicalSlot};
+    use super::{Client, FunctionalSlot, PhysicalSlot};
     use crate::addressing::{Address, ChannelAddressing, Mtype};
     use crate::keep_alive::FunctionalKeepAlive;
     use crate::params::{ChannelParams, Reloads};
@@ -1403,8 +1438,11 @@ mod tests {
     /// the slots.
     #[test]
     fn an_open_with_every_handle_issued_is_rejected() {
-        let mut c: Client<FunctionalKeepAlive, 1, 0> =
-            Client::new([PhysicalSlot::EMPTY], [], FunctionalKeepAlive::new(2_000));
+        let mut c: Client<FunctionalKeepAlive, 1, 1, 1> = Client::new(
+            [PhysicalSlot::EMPTY],
+            [FunctionalSlot::EMPTY],
+            FunctionalKeepAlive::new(2_000),
+        );
         c.next_id = u32::MAX;
         let addressing = ChannelAddressing {
             mtype: Mtype::Diag,

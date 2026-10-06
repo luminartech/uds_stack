@@ -46,11 +46,11 @@ fn tester() -> Tester {
     )
 }
 
-/// A client with one physical slot and no functional one.
-fn single() -> Client<FunctionalKeepAlive, 1, 0> {
+/// A client with one physical slot, and the one functional slot its keep-alive needs.
+fn single() -> Client<FunctionalKeepAlive, 1, 1, 1> {
     Client::new(
         [PhysicalSlot::EMPTY],
-        [],
+        [FunctionalSlot::EMPTY],
         FunctionalKeepAlive::new(S3_CLIENT),
     )
 }
