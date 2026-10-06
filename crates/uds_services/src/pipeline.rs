@@ -710,6 +710,30 @@ pub async fn security_access<A: SecurityAccess>(
     Ok(None)
 }
 
+/// ISO 14229-1:2020 8.7.3.1 Figure 6's request-sequence check (0x24, "e.g.
+/// SecurityAccess") and Annex I Table I.2 — the check `SecurityAccess` makes ahead of the
+/// request's length: a `sendKey` with no seed awaiting its level's key is
+/// `requestSequenceError` (0x24). Asked by `dispatch` for a request too long to be
+/// received whole, which is 0x13 only once this passes; [`security_access`] makes the same
+/// check for a whole one.
+///
+/// # Errors
+///
+/// `requestSequenceError` (0x24), as above.
+#[doc(hidden)]
+pub fn key_in_sequence(
+    state: &State,
+    request: &SecurityAccessRequest<'_>,
+) -> Result<(), NegativeResponseCode> {
+    let value = u8::from(request.access_type);
+    match security_level(value) {
+        Some(level) if value == level.send_key() && state.awaited() != Some(level) => {
+            Err(NegativeResponseCode::RequestSequenceError)
+        }
+        _ => Ok(()),
+    }
+}
+
 async fn request_seed<A: SecurityAccess>(
     services: &mut A,
     state: &mut State,

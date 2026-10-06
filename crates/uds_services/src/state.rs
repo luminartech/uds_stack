@@ -86,6 +86,10 @@ impl State {
         self.seed_sent = Some(level);
     }
 
+    pub(crate) const fn awaited(&self) -> Option<SecurityLevel> {
+        self.seed_sent
+    }
+
     pub(crate) fn take_seed(&mut self) -> Option<SecurityLevel> {
         self.seed_sent.take()
     }

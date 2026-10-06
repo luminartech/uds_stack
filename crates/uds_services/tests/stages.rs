@@ -2243,3 +2243,27 @@ fn communication_control_a_reserved_type_with_a_trailing_byte_is_0x13() {
     }
     assert_eq!(ecu.communication, None);
 }
+
+/// ISO 14229-1:2020 8.7.3.1 Figure 6 puts the request-sequence check (0x24) before the
+/// service's length: a `sendKey` too long to be received whole is 0x24 where no seed
+/// awaits its key, as a whole one is, and 0x13 only where one does — after which the seed
+/// is discarded, as any refusal discards it.
+#[test]
+fn security_access_a_truncated_key_out_of_sequence_is_0x24() {
+    let mut ecu = Ecu::default();
+    let mut state = extended(&mut ecu);
+    let front = [0x27, 0x02, 0xAA, 0xAA, 0xAA];
+    assert_eq!(
+        exchange_truncated(&mut ecu, &mut state, &front),
+        [0x7F, 0x27, 0x24]
+    );
+    let _ = exchange(&mut ecu, &mut state, &[0x27, 0x01]);
+    assert_eq!(
+        exchange_truncated(&mut ecu, &mut state, &front),
+        [0x7F, 0x27, 0x13]
+    );
+    assert_eq!(
+        exchange(&mut ecu, &mut state, &RIGHT_KEY).as_deref(),
+        Some(&[0x7F, 0x27, 0x24][..])
+    );
+}

@@ -335,8 +335,10 @@ macro_rules! __uds_sub_function_access {
 /// The checks a listed service's stage makes ahead of the request's total length, for a
 /// request too long to have been received whole: an early `return` of the first one that
 /// fails, from the closure the truncated branch of `dispatch` calls. Only a service whose
-/// stage checks an identifier in its data-parameters before the length emits one; for
-/// the others `begin` has already asked every such question, and the request is 0x13.
+/// stage checks something before the length emits one — an identifier in its
+/// data-parameters (WDBI, RoutineControl) or the request sequence (SecurityAccess's
+/// 0x24); for the others `begin` has already asked every such question, and the request
+/// is 0x13.
 #[doc(hidden)]
 #[macro_export]
 macro_rules! __uds_before_length {
@@ -348,6 +350,11 @@ macro_rules! __uds_before_length {
     ($self:ident, $state:ident, $req:ident, RoutineControl) => {
         if let $crate::Request::RoutineControl(ref r) = $req {
             return $crate::pipeline::admitted_routine($self, $state, r).map(|_| ());
+        }
+    };
+    ($self:ident, $state:ident, $req:ident, SecurityAccess) => {
+        if let $crate::Request::SecurityAccess(ref r) = $req {
+            return $crate::pipeline::key_in_sequence($state, r);
         }
     };
     ($self:ident, $state:ident, $req:ident, $svc:ident) => {};
