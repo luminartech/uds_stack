@@ -554,7 +554,8 @@ struct Served {
 ///
 /// A message arriving meanwhile finds the protocol instance occupied (ISO 14229-1:2020
 /// 8.7.6): the keep-alive `TesterPresent` bypasses it ([`keep_alive`]) and anything else
-/// is refused ([`refuse_busy`]).
+/// is refused ([`refuse_busy`]). Every event other than a close first answers an overrun
+/// due by its own timestamp ([`overrun_at`]), so none is lost to the event's own input.
 async fn serve<
     A: ServiceSet,
     H: Future<Output = Unsettled>,
@@ -590,40 +591,7 @@ async fn serve<
                     deferred,
                 });
             }
-            Either::Right(Ok(TransportEvent::Deadline)) if !serving.may_pend => {
-                // UDSSVC_ARCH_0032 — the service admits no 0x78, so an overrun is drained
-                // as any tick is, nothing is submitted and `pending_sent` stays false.
-                let now = transport.now();
-                let reaction = session.tick(now);
-                let d = drain(reaction, transport, pending).await?;
-                deferred = deferred.merge(d.deferred);
-            }
-            Either::Right(Ok(TransportEvent::Deadline)) => {
-                let now = transport.now();
-                let o = answer_overrun(session, transport, pending, now, serving).await?;
-                // UDSSVC_ARCH_0009 rule 3 — kept for `settle`, which runs once the
-                // handler has finished. Never cleared: one accepted 0x78 is enough.
-                pending_sent |= o.sent_pending;
-                owed |= o.owed;
-                deferred = deferred.merge(o.deferred);
-            }
-            Either::Right(Ok(TransportEvent::DataConf { ai, result })) => {
-                // The 0x78's confirmation, or any other: it frees its association
-                // and opens the enhanced window (UDSS_LLR_0116).
-                let now = transport.now();
-                let reaction = session.t_data_conf(now, ai, result);
-                let d = drain(reaction, transport, pending).await?;
-                deferred = deferred.merge(d.deferred);
-                if owed {
-                    // UDSS_LLR_0061/0062 refused the 0x78 for want of the association
-                    // this confirmation may have freed, and the overrun is reported once.
-                    let o =
-                        submit_pending(session, transport, pending, now, serving).await?;
-                    pending_sent |= o.sent_pending;
-                    owed = o.owed;
-                    deferred = deferred.merge(o.deferred);
-                }
-            }
+            Either::Right(Err(e)) => return Err(e),
             Either::Right(Ok(TransportEvent::Closed { .. })) => {
                 // The exchange is over either way: a server does not reconnect
                 // (ISO 13400-2 REQ 8.DoIP-144 puts routing activation on the
@@ -636,39 +604,70 @@ async fn serve<
                     deferred,
                 });
             }
-            Either::Right(Ok(TransportEvent::DataInd { ai, data }))
-                if A::is_concurrent_exception(data, ai) =>
-            {
-                let d = keep_alive(session, transport, pending, ai, data).await?;
-                deferred = deferred.merge(d);
+            Either::Right(Ok(event)) => {
+                let now = transport.now();
+                let o = overrun_at(session, transport, pending, now, serving).await?;
+                // UDSSVC_ARCH_0009 rule 3 — kept for `settle`, which runs once the
+                // handler has finished. Never cleared: one accepted 0x78 is enough.
+                pending_sent |= o.sent_pending;
+                owed |= o.owed;
+                deferred = deferred.merge(o.deferred);
+                match event {
+                    TransportEvent::DataConf { ai, result } => {
+                        // The 0x78's confirmation, or any other: it frees its association
+                        // and opens the enhanced window (UDSS_LLR_0116).
+                        let reaction = session.t_data_conf(now, ai, result);
+                        let d = drain(reaction, transport, pending).await?;
+                        deferred = deferred.merge(d.deferred);
+                        if owed {
+                            // UDSS_LLR_0061/0062 refused the 0x78 for want of the
+                            // association this confirmation may have freed, and the
+                            // overrun is reported once.
+                            let o =
+                                submit_pending(session, transport, pending, now, serving);
+                            let o = o.await?;
+                            pending_sent |= o.sent_pending;
+                            owed = o.owed;
+                            deferred = deferred.merge(o.deferred);
+                        }
+                    }
+                    TransportEvent::DataInd { ai, data }
+                        if A::is_concurrent_exception(data, ai) =>
+                    {
+                        let d = keep_alive(session, transport, pending, now, ai, data);
+                        deferred = deferred.merge(d.await?);
+                    }
+                    TransportEvent::DataInd { ai, data }
+                    | TransportEvent::DataTooLong { ai, data, .. } => {
+                        let own = serving.own;
+                        let d =
+                            refuse_busy(session, transport, pending, now, own, ai, data);
+                        deferred = deferred.merge(d.await?);
+                    }
+                    // A deadline is answered by `overrun_at` alone; Periodic has no
+                    // consumer; Closed returned above.
+                    TransportEvent::Deadline
+                    | TransportEvent::Periodic { .. }
+                    | TransportEvent::Closed { .. } => {}
+                }
             }
-            Either::Right(Ok(
-                TransportEvent::DataInd { ai, data }
-                | TransportEvent::DataTooLong { ai, data, .. },
-            )) => {
-                let d = refuse_busy(session, transport, pending, serving.own, ai, data);
-                deferred = deferred.merge(d.await?);
-            }
-            // Periodic has no consumer.
-            Either::Right(Ok(TransportEvent::Periodic { .. })) => {}
-            Either::Right(Err(e)) => return Err(e),
         }
     }
 }
 
 /// ISO 14229-1:2020 8.7.6's first exception: the keep-alive `TesterPresent` bypasses the
-/// service in progress. Indicated as keep-alive, which reloads a running `tS3_Server`
-/// from the controlling client and changes nothing else (``UDSS_LLR_0095``,
-/// ``UDSS_LLR_0096``); neither dispatched nor answered, its positive response being
-/// suppressed.
+/// service in progress. Indicated as keep-alive, never as a request, so it replaces no
+/// service (``UDSS_LLR_0108``) and reloads `tS3_Server` only where that is running and it
+/// is from the controlling client (``UDSS_LLR_0095``, ``UDSS_LLR_0096``); neither
+/// dispatched nor answered, its positive response being suppressed.
 async fn keep_alive<T: UdsTransport, const PEERS: usize>(
     session: &mut SessionServer<PEERS>,
     transport: &mut T,
     pending: &mut Option<Pending>,
+    now: Timestamp,
     ai: Ai,
     data: &[u8],
 ) -> Result<Deferred, T::Error> {
-    let now = transport.now();
     let reaction = session.t_data_ind(now, ai, data, SResult::Ok, ServerRx::KeepAlive);
     Ok(drain(reaction, transport, pending).await?.deferred)
 }
@@ -687,6 +686,7 @@ async fn refuse_busy<T: UdsTransport, const PEERS: usize>(
     session: &mut SessionServer<PEERS>,
     transport: &mut T,
     pending: &mut Option<Pending>,
+    now: Timestamp,
     own: Address,
     ai: Ai,
     data: &[u8],
@@ -695,7 +695,6 @@ async fn refuse_busy<T: UdsTransport, const PEERS: usize>(
         return Ok(Deferred::NONE);
     };
     let busy = [0x7F, sid, u8::from(NegativeResponseCode::BusyRepeatRequest)];
-    let now = transport.now();
     let reply_to = reply_address(own, ai);
     let reaction = session.s_data_req(now, reply_to, &busy, ServerTx::BusyRepeatRequest);
     Ok(drain(reaction, transport, pending).await?.deferred)
@@ -860,10 +859,10 @@ enum Awaited {
 /// Wait for a transmission outstanding to be confirmed, so the final response
 /// ``UDSS_LLR_0061`` or ``UDSS_LLR_0062`` refused can be resubmitted.
 ///
-/// Each event takes the path it takes mid-handler: a `DataConf` reaches `t_data_conf`,
-/// a deadline reaches [`answer_overrun`] where the service admits a 0x78
-/// (``UDSSVC_ARCH_0032``) and is only drained where it does not, and a message arriving
-/// is bypassed or refused as in [`serve`].
+/// Each event takes the path it takes mid-handler: an overrun due by its timestamp is
+/// answered first ([`overrun_at`]), a `DataConf` then reaches `t_data_conf`, and a
+/// message arriving is bypassed or refused as in [`serve`]. A 0x78 refused here is not
+/// owed: the final response the awaited confirmation frees the way for supersedes it.
 ///
 /// Returns what the drains recorded once the awaited `DataConf` has been drained and
 /// accepted — `serving.reply_to`'s for [`Awaited::Reply`], any for [`Awaited::Any`] — or
@@ -884,9 +883,17 @@ async fn await_confirmation<A: ServiceSet, T: UdsTransport, const PEERS: usize>(
     let mut deferred = Deferred::NONE;
     loop {
         let deadline = session.next_deadline();
-        match transport.next_event(concurrent, deadline).await? {
+        let event = transport.next_event(concurrent, deadline).await?;
+        if let TransportEvent::Closed { .. } = event {
+            return Ok(None);
+        }
+        // The handler's outcome is already settled, so whether a 0x78 goes out no
+        // longer reaches `settle`; only what the drains recorded is kept.
+        let now = transport.now();
+        let o = overrun_at(session, transport, pending, now, serving).await?;
+        deferred = deferred.merge(o.deferred);
+        match event {
             TransportEvent::DataConf { ai, result } => {
-                let now = transport.now();
                 let reaction = session.t_data_conf(now, ai, result);
                 let d = drain(reaction, transport, pending).await?;
                 deferred = deferred.merge(d.deferred);
@@ -895,35 +902,21 @@ async fn await_confirmation<A: ServiceSet, T: UdsTransport, const PEERS: usize>(
                     return Ok(Some(deferred));
                 }
             }
-            TransportEvent::Deadline if !serving.may_pend => {
-                // UDSSVC_ARCH_0032 — as in `serve`: the service admits no 0x78, so the
-                // tick is drained and nothing is submitted.
-                let now = transport.now();
-                let reaction = session.tick(now);
-                // milestone-1 limit: see `Server::step`'s doc on `Err`.
-                let d = drain(reaction, transport, pending).await?;
-                deferred = deferred.merge(d.deferred);
-            }
-            TransportEvent::Deadline => {
-                // The handler's outcome is already settled, so whether a 0x78 goes out
-                // no longer reaches `settle`; only what the drains recorded is kept.
-                let now = transport.now();
-                let o = answer_overrun(session, transport, pending, now, serving).await?;
-                deferred = deferred.merge(o.deferred);
-            }
-            TransportEvent::Closed { .. } => return Ok(None),
             TransportEvent::DataInd { ai, data }
                 if A::is_concurrent_exception(data, ai) =>
             {
-                let d = keep_alive(session, transport, pending, ai, data).await?;
+                let d = keep_alive(session, transport, pending, now, ai, data).await?;
                 deferred = deferred.merge(d);
             }
             TransportEvent::DataInd { ai, data }
             | TransportEvent::DataTooLong { ai, data, .. } => {
-                let d = refuse_busy(session, transport, pending, serving.own, ai, data);
+                let own = serving.own;
+                let d = refuse_busy(session, transport, pending, now, own, ai, data);
                 deferred = deferred.merge(d.await?);
             }
-            TransportEvent::Periodic { .. } => {}
+            TransportEvent::Deadline
+            | TransportEvent::Periodic { .. }
+            | TransportEvent::Closed { .. } => {}
         }
     }
 }
@@ -939,6 +932,32 @@ struct Overrun {
     owed: bool,
     /// What the tick's and the submission's drains recorded.
     deferred: Deferred,
+}
+
+/// Answer an overrun due by `now` before anything else arriving at `now` reaches the
+/// session layer.
+///
+/// Every session-layer input expires its timers first, and ``UDSS_LLR_0117`` reports an
+/// overrun once and stops `tP2_Server`, so an overrun first seen in another input's
+/// drain would go unanswered. Ticking here, at the timestamp that input will carry,
+/// leaves it nothing to expire. Where the service admits no 0x78 (``UDSSVC_ARCH_0032``),
+/// the tick is only drained.
+async fn overrun_at<T: UdsTransport, const PEERS: usize>(
+    session: &mut SessionServer<PEERS>,
+    transport: &mut T,
+    pending: &mut Option<Pending>,
+    now: Timestamp,
+    serving: Serving,
+) -> Result<Overrun, T::Error> {
+    if serving.may_pend {
+        return answer_overrun(session, transport, pending, now, serving).await;
+    }
+    let d = drain(session.tick(now), transport, pending).await?;
+    Ok(Overrun {
+        sent_pending: false,
+        owed: false,
+        deferred: d.deferred,
+    })
 }
 
 /// Answer `requestCorrectlyReceivedResponsePending` (0x78) if one has come due.

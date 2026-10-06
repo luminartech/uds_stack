@@ -601,3 +601,26 @@ fn unsupported_services_settle_0x11_or_silence() {
     let r = settle(func, unsettled, false, &mut out);
     assert_eq!(r, uds_services::Responded::Suppressed { session: None });
 }
+
+/// Figure 5's `serviceNotSupportedInActiveSession` (0x7F) precedes
+/// `incorrectMessageLengthOrInvalidFormat` (0x13) for a request longer than the in-flight
+/// buffer: `SecurityAccess` is not available in the default session, however long the
+/// request.
+#[test]
+fn an_over_long_request_for_a_service_not_in_this_session_is_refused_0x7f() {
+    let mut ecu = Ecu::new();
+    let mut state = <<Ecu as ServiceSet>::State as uds_services::ProtocolState>::INITIAL;
+    let mut buf = [0_u8; 32];
+    let mut out = ResponseSink::new(&mut buf, None);
+    let phys = Ai {
+        mtype: Mtype::Diag,
+        sa: Address(0x0E80),
+        ta: Address(0x10),
+        ta_type: TaType::Physical,
+    };
+    let truncated = Received::Truncated(&[0x27, 0x02, 0, 0, 0, 0]);
+    let unsettled = block_on(ecu.dispatch(&mut state, phys, truncated, &mut out));
+    let r = settle(phys, unsettled, false, &mut out);
+    assert_eq!(r, uds_services::Responded::Yes { session: None });
+    assert_eq!(out.written_bytes(), &[0x7F, 0x27, 0x7F]);
+}
