@@ -318,7 +318,7 @@ mod test {
             for suppress in [false, true] {
                 let wire = [raw | if suppress { 0x80 } else { 0x00 }];
                 let (req, rest) = <TesterPresentRequest as Decode>::decode(&wire).unwrap();
-                assert!(rest.is_empty());
+                assert_eq!(rest, [0u8; 0]);
                 assert_eq!(req.suppress_positive_response, suppress);
                 assert_eq!(req.sub_function(), raw, "sub-function byte not retained");
 

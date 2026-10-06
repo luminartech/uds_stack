@@ -211,6 +211,29 @@ The response window
    have occupied it apart; either satisfies this, and ``UDSS_LLR_0125`` does not discard
    what the second needs.
 
+.. llr:: An open with no free slot or no unissued handle is rejected
+   :id: UDSS_LLR_0185
+   :status: draft
+   :integrity_level: QM
+   :target_level: D
+   :origin: derived
+   :tags: client; p_client; service-interface
+
+   An open of a logical communication channel for which the caller-supplied storage of
+   that channel's kind has no free slot, or for which no handle remains that the client
+   has not already issued, shall be rejected as ``UDSS_LLR_0015`` defines, the report
+   stating which of the two held.
+
+   Rationale: the storage is the caller's and is sized by the deployment, as
+   ``UDSS_LLR_0062`` says of association storage, so it can be exhausted by a caller
+   opening more channels than it provided for. The handle limb follows from
+   ``UDSS_LLR_0121``: a handle may never identify a channel opened after the one it was
+   issued for, so handles cannot be reused, and a client that issues them from a finite
+   range eventually has none left. The two limbs are reported apart because they call for
+   opposite actions — withdrawing a channel frees a slot, while a spent handle range is
+   recovered only by creating the client anew — and ``UDSS_LLR_0016`` has the report state
+   the cause so that the caller can tell which.
+
 .. llr:: Duplicate channel addressing is rejected
    :id: UDSS_LLR_0122
    :status: draft

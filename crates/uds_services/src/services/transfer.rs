@@ -101,6 +101,10 @@ pub trait DataTransfer {
     ///
     /// The [`NegativeResponseCode`] — `generalProgrammingFailure` (0x72) where the write
     /// failed, `transferDataSuspended` (0x71) where it cannot continue.
+    ///
+    /// A refused write to `out` needs no handling: the sink records the refusal and the
+    /// pipeline answers `responseTooLong` (0x14) in place of the response, so the write's
+    /// `Result` may be discarded. See [`ResponseSink`].
     fn block(
         &mut self,
         data: &[u8],
@@ -113,6 +117,10 @@ pub trait DataTransfer {
     ///
     /// The [`NegativeResponseCode`] where the transfer cannot complete — a checksum
     /// failure is the usual case.
+    ///
+    /// A refused write to `out` needs no handling: the sink records the refusal and the
+    /// pipeline answers `responseTooLong` (0x14) in place of the response, so the write's
+    /// `Result` may be discarded. See [`ResponseSink`].
     fn exit(
         &mut self,
         parameter_record: &[u8],

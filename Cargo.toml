@@ -8,6 +8,11 @@ members = ["crates/*"]
 # and all five move together. See release-plz.toml.
 [workspace.package]
 version = "0.7.0"
+# One MSRV for the whole stack, so CI runs one MSRV check. It is the highest MSRV of any
+# dependency the host build faces: edge-nal 0.7's 1.88, which simple_doip's connection
+# service will take. A bare-metal integrator's own choices (edge-nal-embassy needs 1.91)
+# do not set it.
+rust-version = "1.88"
 
 # Shared dependency versions. Declared once so a bump is one edit, and so the five
 # crates cannot silently drift onto different majors of the same library.
@@ -41,6 +46,7 @@ clap = { version = "4", features = ["derive"] }
 
 # dev-dependencies
 anyhow = "1"
+static_cell = "2"
 proptest = "1"
 serde_json = "1"
 tracing-subscriber = { version = "0.3", features = ["fmt"] }

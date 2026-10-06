@@ -26,9 +26,12 @@
 //!
 //! # Status
 //!
-//! **API stub.** The public surface is complete; behaviour is not. Every entry
-//! point is `todo!()` and carries the architecture element it will satisfy.
-//! `tests/composition.rs` assembles a server against the whole surface.
+//! The server role runs end to end over any `UdsTransport` (see
+//! `tests/end_to_end.rs`) for the services with a pipeline stage:
+//! `ReadDataByIdentifier`, `DiagnosticSessionControl` and `TesterPresent`. A
+//! listed service without a stage answers `serviceNotSupported`. The client's
+//! entry points are `todo!()` and carry the architecture element each will
+//! satisfy. `tests/composition.rs` assembles a server against the whole surface.
 //!
 //! # Scope
 //!
@@ -85,6 +88,9 @@ pub use storage::{Buffers, ClientBuffers, ClientStorage, ClientStore, Storage, S
 pub mod sink;
 pub use sink::ResponseSink;
 
+pub mod state;
+pub use state::{ProtocolState, State};
+
 /// The write vocabulary a handler needs to use a [`ResponseSink`].
 ///
 /// [`Sink`] is re-exported because `write_all` is one of its methods: without the trait
@@ -93,8 +99,37 @@ pub use sink::ResponseSink;
 ///
 /// [`Encode`] is the reason that matters beyond convenience. `uds_protocol`'s types
 /// encode *into* a [`Sink`], and [`ResponseSink`] is one — so a handler writes
-/// `DtcRecord::new(0xC0, 0x01, 0x23).encode(out)?` rather than assembling the bytes by
+/// `DtcRecord::new(0xC0, 0x01, 0x23).encode(out)` rather than assembling the bytes by
 /// hand, and the length cannot disagree with the value.
+///
+/// A handler discards the write's `Result`. A refused write is recorded by the sink, and
+/// the pipeline answers `responseTooLong` (0x14) in its place, so it needs no handling;
+/// there is no `From` conversion to a [`NegativeResponseCode`] for `?` to use either.
+///
+/// ```
+/// use uds_services::{
+///     DtcRecord, DtcReportKind, Encode, NegativeResponseCode, ReadDtcInfoSubFunction,
+///     ReadDtcInformation, ResponseSink,
+/// };
+///
+/// struct Ecu;
+///
+/// impl ReadDtcInformation for Ecu {
+///     const MAY_RESPOND_PENDING: bool = false;
+///     const MAX_DTCS: usize = 1;
+///     const REPORTS: &'static [DtcReportKind] = &[DtcReportKind::DtcList];
+///
+///     async fn read_dtc_information(
+///         &mut self,
+///         _request: ReadDtcInfoSubFunction,
+///         out: &mut ResponseSink<'_>,
+///     ) -> Result<(), NegativeResponseCode> {
+///         // A refusal is the sink's to record and the pipeline's to answer.
+///         let _ = DtcRecord::new(0xC0, 0x01, 0x23).encode(out);
+///         Ok(())
+///     }
+/// }
+/// ```
 pub use automotive_wire_codec::{Encode, InsufficientBuffer, Sink, WriteError};
 
 pub mod transport;
@@ -120,7 +155,7 @@ pub use services::{
     DiagnosticSessionControl, DtcReportKind, EcuReset, KeyVerdict, ReadDataByIdentifier,
     ReadDtcInformation, Responded, RoutineControl, SecurityAccess, SecurityLevel,
     SecurityPolicy, ServiceSet, SessionTiming, SessionTransition, TesterPresent,
-    TransferRequest, WriteDataByIdentifier,
+    TransferRequest, Unsettled, WriteDataByIdentifier,
 };
 
 /// The protocol vocabulary this crate's handler signatures are written in.
@@ -140,7 +175,12 @@ pub use uds_protocol::{
     NegativeResponseCode, ReadDtcInfoSubFunction, ResetType, SubnetNumber, UdsServiceType,
 };
 
+/// Re-exported only so `uds_server!`'s expansion can name it; not part of the API.
+#[doc(hidden)]
+pub use uds_protocol::Request;
+
 #[doc(hidden)]
 pub mod sealed;
 
-mod dispatch;
+#[doc(hidden)]
+pub mod pipeline;

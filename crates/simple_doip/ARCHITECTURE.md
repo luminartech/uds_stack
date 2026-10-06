@@ -11,11 +11,13 @@ the code.
 
 For usage, feature flags, and the current gap list, see [`README.md`](README.md).
 
-> **A note on spec citations.** This repository contains no copy of ISO 13400-2.
-> Nothing here cites a section, clause, or table number of the standard, and new
-> documentation should not either — an earlier review of this crate found and
-> removed a batch of fabricated spec locators. "per ISO 13400-2" without a
-> locator is fine; a specific numbered reference that nobody can check is not.
+> **A note on spec citations.** Cite a section, clause, table or requirement of
+> ISO 13400-2 only after reading it in the standard's text, and cite the edition
+> (`ISO 13400-2:2019 Table 11`). An earlier review of this crate found and removed
+> a batch of fabricated spec locators, written when no reader could check one; the
+> rule exists so that never recurs. A locator nobody has read is worse than none —
+> "per ISO 13400-2" without one is fine. Where a claim rests on a figure, say so,
+> and do not paraphrase a figure that has not been read.
 
 ---
 

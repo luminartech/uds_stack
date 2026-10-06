@@ -2,7 +2,7 @@
 name = "uds_session"
 version.workspace = true
 edition = "2024"
-rust-version = "1.88"
+rust-version.workspace = true
 description = "ISO 14229-2 session layer: a transport-agnostic, no_std, sans-io state machine for the client and server roles"
 keywords = ["uds", "iso14229", "automotive", "diagnostics", "no-std"]
 categories = ["no-std", "embedded", "network-programming"]

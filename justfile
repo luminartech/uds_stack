@@ -106,6 +106,12 @@ test:
 clippy:
     cargo clippy --workspace --all-targets --all-features -- -D warnings
 
+# A broken intra-doc link renders as plain text and fails nothing else, so a renamed item
+# leaves its references silently dangling. Denied here so the rename fails instead.
+[doc("Build the workspace's API docs, failing on a broken intra-doc link")]
+doc:
+    RUSTDOCFLAGS="-D rustdoc::broken_intra_doc_links" cargo doc --workspace --no-deps
+
 # The check host builds cannot make. A workspace Cargo.lock unifies features across
 # members, so a std dependency enabled by one crate can reach a no_std sibling; nothing
 # below `cargo test` on the host would notice.
@@ -138,7 +144,7 @@ check:
 check-docs: test-tools validate governance docs
 
 [doc("The full gate: crates and docs")]
-check-all: check-docs test clippy embedded
+check-all: check-docs test clippy embedded doc
 
 [doc("Remove build output")]
 clean:

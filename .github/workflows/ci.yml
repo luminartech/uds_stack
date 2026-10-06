@@ -75,13 +75,10 @@ jobs:
       use-release-plz: false
       publish-crate: false
 
-      # The root Cargo.toml is a virtual manifest with no [package], so there is no
-      # rust-version for the msrv job to read by default (it would fail: "No msrv input
-      # and no rust-version in Cargo.toml"). 1.88 is the floor that matters: an msrv build
-      # with no -p builds every member together, so the highest per-crate rust-version
-      # (uds_session, uds_services, simple_doip and uds_on_ip all declare 1.88 -- only
-      # uds_protocol's own manifest still says 1.85.0) is what a shared build actually
-      # needs. This matches the previous hand-rolled msrv job's choice.
+      # The root Cargo.toml is a virtual manifest with no [package], so the msrv job has no
+      # package rust-version to read by default (it would fail: "No msrv input and no
+      # rust-version in Cargo.toml"). The stack's one MSRV is [workspace.package]'s
+      # rust-version, which every crate inherits; keep this input equal to it.
       msrv: '1.88'
 
       # Empty: the whole workspace. The same input scopes both cargo-semver-checks and the

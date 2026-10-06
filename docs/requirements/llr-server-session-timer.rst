@@ -173,7 +173,25 @@ The timer's state
    whose classification selects a non-default session, the server shall be in a non-default
    session, shall record as the controlling client the client identified by the
    confirmation's ``S_AI[TA]`` and, where ``S_Mtype`` carries one, its ``S_AI[AE]``, and
-   shall start ``tS3_Server``.
+   shall start ``tS3_Server``, except where a later request from that client is in progress,
+   in which case the timer shall stay stopped. A later request is in progress where a service
+   is in progress under ``UDSS_LLR_0104`` for a request from that client and the confirmation
+   does not answer it under ``UDSS_LLR_0109``.
+
+   The later-request exception is ``UDSS_LLR_0088``'s and holds for the same reason, with
+   one more step. ISO 14229-2:2021 10.3 lets the client send its next request on complete
+   reception of the response, so that request can reach the session layer before this
+   confirmation. It was then received in the session the selection is leaving, often the
+   default session, where ``UDSS_LLR_0087`` had no timer to stop, so nothing after this
+   confirmation stops the timer before that request completes. Started here, it would run
+   through the request. ``UDSS_LLR_0090`` leaves it alone on that request's response-pending
+   confirmations, and ``UDSS_LLR_0100`` acts on the expiry whatever is in progress, so a
+   request pending longer than ``tS3_Server``, such as an erase following
+   ``DiagnosticSessionControl``, would return the server to the default session mid-service
+   while the client believes the selected session is active. With the exception the session
+   is entered and the client recorded, and the timer starts at that request's own completion
+   under ``UDSS_LLR_0088`` or ``UDSS_LLR_0089``, as though the selection's confirmation had
+   come first and the request's ``UDSS_LLR_0087`` stop had followed it.
 
    The solicitation qualifier is ``UDSS_LLR_0088``'s and is here for that requirement's
    reason: an unsolicited positive response carrying a session selection would otherwise put
@@ -257,11 +275,16 @@ The timer's state
    :source: ISO 14229-2:2021 9.5 Table 6; ISO 14229-5:2022 8.9.2
    :tags: server; s3_server
 
-   While in a non-default session, on ``T_Data.conf`` indicating successful transmission
-   of a solicited final response message to the controlling client, the server shall
-   restart the ``tS3_Server`` timer, except where that response selects a session, in
-   which case ``UDSS_LLR_0085`` or ``UDSS_LLR_0098`` applies. A final response is a message
-   whose classification states kind ``final response`` under ``UDSS_LLR_0065``.
+   While in a non-default session, on ``T_Data.conf`` indicating successful transmission of
+   a solicited final response message to the controlling client, the server shall restart
+   the ``tS3_Server`` timer, except where that response selects a session, in which case
+   ``UDSS_LLR_0085`` or ``UDSS_LLR_0098`` applies, and except where a later request from the
+   controlling client is in progress, in which case the timer shall stay stopped. A final
+   response is a message whose classification states kind ``final response`` under
+   ``UDSS_LLR_0065``. A later request is in progress where a service is in progress under
+   ``UDSS_LLR_0104`` for a request from the controlling client and the confirmation does not
+   answer it under ``UDSS_LLR_0109``: that request was received after the confirmed response
+   was submitted.
 
    The response must be solicited, meaning transmitted as the direct result of processing
    a request message, because a positive response may also be unsolicited: a periodic
@@ -273,6 +296,27 @@ The timer's state
    client, and the requester need not yet be the controlling client this requirement is
    scoped to; left to this requirement alone, a hand-over to another client would restart
    nothing.
+
+   The later-request exception keeps Table 6's order of events. Table 6 pairs the stop on
+   reception of a request with the restart on completion of the final response, and
+   ISO 14229-2:2021 9.2 REQ 5.19 has the server process a new request immediately after the
+   ``T_Data.conf`` of the previous response, presuming the confirmation comes first. It need
+   not reach the session layer first: 10.3 lets the client send its next request on complete
+   reception of the response, so the sequence can be a request, its final response
+   submitted, the next request from the same client received, which stops the timer under
+   ``UDSS_LLR_0087`` and replaces the service in progress under ``UDSS_LLR_0108``, and only
+   then the first response's confirmation. The client had the whole of the first response
+   before it sent the next request; only the server's confirmation of it was late. Read
+   literally, this requirement would restart the timer during the next request, reversing
+   Table 6's order, and ``UDSS_LLR_0090`` leaves the timer alone on that request's
+   response-pending confirmations while ``UDSS_LLR_0100`` acts on the expiry whatever is in
+   progress, so a request pending longer than ``tS3_Server`` would lose its session
+   mid-service. With the exception the next request's stop is the later event, as it was on
+   the wire, and the timer restarts at that request's own completion under this requirement
+   or ``UDSS_LLR_0089``. The test is ``UDSS_LLR_0109``'s, the confirmation answering the
+   service in progress only where that service submitted the transmission. Where the service
+   in progress is another client's the exception does not apply: that request did not stop
+   the timer (``UDSS_LLR_0097``), and the confirmation restarts it.
 
 .. llr:: Session timer restarts on completion of a request with no response
    :id: UDSS_LLR_0089
@@ -392,15 +436,24 @@ The timer's state
    :source: ISO 14229-2:2021 9.7 Table 10; ISO 14229-5:2022 8.9.2
    :tags: server; s3_server; error-handling
 
-   While in a non-default session, on ``T_Data.conf`` reporting an unsuccessful result
-   for a response message to the controlling client whose classification does not state
-   ``unsolicited``, the server shall restart the ``tS3_Server`` timer.
+   While in a non-default session, on ``T_Data.conf`` reporting an unsuccessful result for a
+   response message to the controlling client whose classification does not state
+   ``unsolicited``, the server shall restart the ``tS3_Server`` timer, except where a later
+   request from the controlling client is in progress as ``UDSS_LLR_0088`` defines it, in
+   which case the timer shall stay stopped.
 
    Table 10 gives the reason for the restart: the timer was stopped by the request that
    the failed response answers. Where that request came from any other client the timer
    was never stopped, ``UDSS_LLR_0087`` and ``UDSS_LLR_0097`` having scoped both effects
    to the controlling client, so restarting it here would let another client's traffic
    extend a session it does not control.
+
+   The later-request exception is ``UDSS_LLR_0088``'s and holds for the same reason. Where
+   the failed response's confirmation is delivered after the controlling client's next
+   request was received, the timer was last stopped by that request, not by the one the
+   failed response answers, so Table 10's reason does not hold; that request restarts the
+   timer at its own completion, and a restart here would expose it to the mid-service expiry
+   ``UDSS_LLR_0088`` describes.
 
    An unsolicited response is excluded because Table 10's reason never holds for it: no
    request stopped the timer on its behalf, and ISO 14229-5:2022 8.9.2 forbids any

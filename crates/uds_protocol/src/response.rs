@@ -249,7 +249,7 @@ mod tests {
         // SID 0x6E, echoed DID 0xF190
         let wire = [0x6E, 0xF1, 0x90];
         let (resp, remaining) = Response::decode(&wire).unwrap();
-        assert!(remaining.is_empty());
+        assert_eq!(remaining, [0u8; 0]);
         assert!(matches!(resp, Response::WriteDataByIdentifier(_)));
         let mut buf = [0u8; 8];
         let written =
@@ -263,7 +263,7 @@ mod tests {
         // SID 0x71, sub 0x01, RID 0xFF00, status 0x10
         let wire = [0x71, 0x01, 0xFF, 0x00, 0x10];
         let (resp, remaining) = Response::decode(&wire).unwrap();
-        assert!(remaining.is_empty());
+        assert_eq!(remaining, [0u8; 0]);
         let mut buf = [0u8; 8];
         let written =
             Encode::encode(&resp, &mut automotive_wire_codec::SliceSink::new(&mut buf))
@@ -276,7 +276,7 @@ mod tests {
         // 0x63 = ReadMemoryByAddress positive response, not modeled.
         let frame = [0x63, 0x01, 0x02];
         let (resp, remaining) = Response::decode(&frame).unwrap();
-        assert!(remaining.is_empty());
+        assert_eq!(remaining, [0u8; 0]);
         match resp {
             Response::Other { sid, data } => {
                 assert_eq!(sid, 0x63);
@@ -309,7 +309,7 @@ mod tests {
         // Bare SID round-trips; a conformant ClearDiagnosticInfo positive response is
         // [0x54].
         let (resp, remaining) = Response::decode(&[0x54]).unwrap();
-        assert!(remaining.is_empty());
+        assert_eq!(remaining, [0u8; 0]);
         assert!(matches!(resp, Response::ClearDiagnosticInfo(_)));
         // Trailing bytes after the SID are now rejected (matches every other response arm).
         assert!(matches!(

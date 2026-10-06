@@ -27,10 +27,9 @@
 //!
 //! # Status
 //!
-//! The public surface is complete; behaviour is not. Every entry point is `todo!()` and
-//! carries the requirements it will satisfy in its documentation. Requirements are
-//! authored before the code that satisfies them — the ordering is evidence that cannot be
-//! reconstructed afterwards.
+//! The server role is implemented and tested against its requirements in
+//! `tests/server_behaviour.rs`. The client role's public surface is complete; its bodies
+//! are `todo!()` and carry the requirements they will satisfy.
 //!
 //! # How the surface discharges its requirements
 //!
@@ -42,9 +41,10 @@
 //!
 //! - **``UDSS_LLR_0011``** — outputs are retrieved, not pushed. Nothing here delivers an
 //!   output through a callback, handler or caller-supplied trait implementation: no public
-//!   type takes a trait object or a function, storage is supplied by value for the same
-//!   reason, and the one trait a caller can name — [`KeepAliveMode`], which selects a
-//!   [`Client`]'s mode and carries no output — is sealed, so no implementation of it can
+//!   type takes a caller-supplied trait object or function, and every trait in a public
+//!   bound is sealed: `Drain`, which a caller cannot name, and [`KeepAliveMode`], the only
+//!   one a caller can name, which selects a [`Client`]'s mode and carries no output.
+//!   Storage is supplied by value for the same reason, so no implementation of either can
 //!   be the caller's. Every input returns a [`Reaction`] the caller drains.
 //! - **``UDSS_LLR_0013``** — no payload is retained. No type here holds an owned buffer.
 //! - **``UDSS_LLR_0014``** — an output refers to caller-owned data. [`ServerOutput`] and
@@ -87,8 +87,10 @@ mod params;
 mod reaction;
 mod rejection;
 mod result;
+mod sealed;
 mod server;
 mod time;
+mod timer;
 
 pub use addressing::{
     Address, AddressExtension, Ai, ChannelAddressing, Mtype, PeerIdentity, TaType,

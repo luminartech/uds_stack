@@ -769,6 +769,6 @@ mod dtc_status_tests {
         assert_eq!(written, 3);
         let (decoded, rest) = <DtcRecord as Decode>::decode(&buf).unwrap();
         assert_eq!(decoded, record);
-        assert!(rest.is_empty());
+        assert_eq!(rest, [0u8; 0]);
     }
 }

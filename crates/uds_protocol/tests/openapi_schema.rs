@@ -52,13 +52,12 @@ fn walk(value: &serde_json::Value, found: &mut BTreeSet<String>) {
     match value {
         serde_json::Value::Object(map) => {
             for (key, val) in map {
-                if key == "$ref" {
-                    if let Some(name) = val
+                if key == "$ref"
+                    && let Some(name) = val
                         .as_str()
                         .and_then(|s| s.strip_prefix("#/components/schemas/"))
-                    {
-                        found.insert(name.to_owned());
-                    }
+                {
+                    found.insert(name.to_owned());
                 }
                 walk(val, found);
             }

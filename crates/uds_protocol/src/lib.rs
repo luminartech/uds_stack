@@ -96,7 +96,7 @@ mod no_std_api_tests {
         let (decoded, rest) =
             <TesterPresentRequest as Decode>::decode(&buf[..written]).unwrap();
         assert_eq!(decoded, req);
-        assert!(rest.is_empty());
+        assert_eq!(rest, [0u8; 0]);
     }
 
     #[test]
@@ -294,7 +294,7 @@ mod no_std_api_tests {
         let (decoded, remainder) =
             <WriteDataByIdentifierResponse as Decode>::decode(&buf[..written]).unwrap();
         assert_eq!(decoded, resp);
-        assert!(remainder.is_empty());
+        assert_eq!(remainder, [0u8; 0]);
     }
 
     #[test]

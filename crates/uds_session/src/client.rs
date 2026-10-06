@@ -108,19 +108,23 @@ impl<const R: usize> FunctionalSlot<R> {
 
 /// Identifies a physical channel of this client.
 ///
-/// ``UDSS_LLR_0121`` — returned when the caller opens one, valid until it is withdrawn.
-/// `PHYS` indexes from zero independently of `FUNC`, so this carries no ordering across
-/// the two arrays; `PartialOrd` and `Ord` are not derived, since nothing needs them.
+/// ``UDSS_LLR_0121`` — returned when the caller opens one, valid until it is withdrawn,
+/// and never reissued: ids come from one client-wide counter, so a withdrawn channel's
+/// handle identifies no later one. The value is private and has no accessor, which is a
+/// promise: nothing about it is meaningful to a caller. `PartialOrd`/`Ord` are not
+/// derived, since nothing needs them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct PhysicalChannelId(u16);
+pub struct PhysicalChannelId(u32);
 
 /// Identifies a functional channel of this client.
 ///
-/// ``UDSS_LLR_0121`` — returned when the caller opens one, valid until it is withdrawn.
-/// `FUNC` indexes from zero independently of `PHYS`, so this carries no ordering across
-/// the two arrays; `PartialOrd` and `Ord` are not derived, since nothing needs them.
+/// ``UDSS_LLR_0121`` — returned when the caller opens one, valid until it is withdrawn,
+/// and never reissued: ids come from one client-wide counter, so a withdrawn channel's
+/// handle identifies no later one. The value is private and has no accessor, which is a
+/// promise: nothing about it is meaningful to a caller. `PartialOrd`/`Ord` are not
+/// derived, since nothing needs them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct FunctionalChannelId(u16);
+pub struct FunctionalChannelId(u32);
 
 /// Identifies a channel of either kind.
 ///
@@ -160,11 +164,6 @@ impl From<FunctionalChannelId> for ChannelId {
     }
 }
 
-mod sealed {
-    /// Sealed so that the keep-alive modes are exactly the two ``UDSS_LLR_0149`` names.
-    pub trait Sealed {}
-}
-
 /// How the client keeps servers alive.
 ///
 /// ``UDSS_LLR_0149`` — one of two modes, fixed when the instance is created, changed by
@@ -181,7 +180,7 @@ mod sealed {
 /// The trait is sealed. A mode is not an extension point — the standard names two — and
 /// ``UDSS_LLR_0011`` forbids the session layer to deliver an output through a
 /// caller-supplied trait implementation, which sealing keeps true of every trait here.
-pub trait KeepAliveMode: sealed::Sealed + core::fmt::Debug {}
+pub trait KeepAliveMode: crate::sealed::Sealed + core::fmt::Debug {}
 
 /// Functional keep-alive: one `TesterPresent` for the client, functionally addressed.
 ///
@@ -212,7 +211,7 @@ impl FunctionalKeepAlive {
     }
 }
 
-impl sealed::Sealed for FunctionalKeepAlive {}
+impl crate::sealed::Sealed for FunctionalKeepAlive {}
 impl KeepAliveMode for FunctionalKeepAlive {}
 
 /// Physical keep-alive: a `TesterPresent` per physical channel, physically addressed.
@@ -226,7 +225,7 @@ impl KeepAliveMode for FunctionalKeepAlive {}
 #[derive(Debug)]
 pub struct PhysicalKeepAlive;
 
-impl sealed::Sealed for PhysicalKeepAlive {}
+impl crate::sealed::Sealed for PhysicalKeepAlive {}
 impl KeepAliveMode for PhysicalKeepAlive {}
 
 /// What a client produces for the caller to retrieve.
@@ -307,7 +306,15 @@ pub enum ClientOutput<'d> {
 }
 
 /// A reaction carrying client outputs.
-pub type ClientReaction<'s, 'd, T = ()> = Reaction<'s, 'd, ClientOutput<'d>, T>;
+pub type ClientReaction<
+    's,
+    'd,
+    K,
+    const PHYS: usize,
+    const FUNC: usize,
+    const R: usize,
+    T = (),
+> = Reaction<'s, 'd, ClientOutput<'d>, Client<K, PHYS, FUNC, R>, T>;
 
 /// The session layer in the client role.
 ///
@@ -332,6 +339,10 @@ pub struct Client<
     _physical: [PhysicalSlot; PHYS],
     _functional: [FunctionalSlot<R>; FUNC],
     _keep_alive: K,
+    /// ``UDSS_LLR_0121``, ``UDSS_LLR_0185`` — the next handle to issue; `checked_add` on
+    /// it failing is the second limb's rejection.
+    #[expect(dead_code, reason = "read by open_*_channel in milestone 2")]
+    next_id: u32,
 }
 
 impl<K: KeepAliveMode, const PHYS: usize, const FUNC: usize, const R: usize>
@@ -357,6 +368,7 @@ impl<K: KeepAliveMode, const PHYS: usize, const FUNC: usize, const R: usize>
             _physical: physical,
             _functional: functional,
             _keep_alive: keep_alive,
+            next_id: 0,
         }
     }
 
@@ -375,7 +387,7 @@ impl<K: KeepAliveMode, const PHYS: usize, const FUNC: usize, const R: usize>
         now: Timestamp,
         addressing: ChannelAddressing,
         params: ChannelParams,
-    ) -> ClientReaction<'_, 'static, FunctionalChannelId> {
+    ) -> ClientReaction<'_, 'static, K, PHYS, FUNC, R, FunctionalChannelId> {
         let ai = addressing.with_ta_type(TaType::Functional);
         #[allow(
             clippy::todo,
@@ -397,7 +409,7 @@ impl<K: KeepAliveMode, const PHYS: usize, const FUNC: usize, const R: usize>
         &mut self,
         now: Timestamp,
         channel: impl Into<ChannelId>,
-    ) -> ClientReaction<'_, 'static> {
+    ) -> ClientReaction<'_, 'static, K, PHYS, FUNC, R> {
         let channel = channel.into();
         #[allow(
             clippy::todo,
@@ -420,7 +432,7 @@ impl<K: KeepAliveMode, const PHYS: usize, const FUNC: usize, const R: usize>
         now: Timestamp,
         channel: PhysicalChannelId,
         parameter: ChannelParameter,
-    ) -> ClientReaction<'_, 'static> {
+    ) -> ClientReaction<'_, 'static, K, PHYS, FUNC, R> {
         #[allow(
             clippy::todo,
             reason = "API stub; behaviour lands with its requirement"
@@ -441,7 +453,7 @@ impl<K: KeepAliveMode, const PHYS: usize, const FUNC: usize, const R: usize>
         now: Timestamp,
         channel: FunctionalChannelId,
         parameter: ChannelParameter,
-    ) -> ClientReaction<'_, 'static> {
+    ) -> ClientReaction<'_, 'static, K, PHYS, FUNC, R> {
         #[allow(
             clippy::todo,
             reason = "API stub; behaviour lands with its requirement"
@@ -464,7 +476,7 @@ impl<K: KeepAliveMode, const PHYS: usize, const FUNC: usize, const R: usize>
         &mut self,
         now: Timestamp,
         channel: impl Into<ChannelId>,
-    ) -> ClientReaction<'_, 'static> {
+    ) -> ClientReaction<'_, 'static, K, PHYS, FUNC, R> {
         let channel = channel.into();
         #[allow(
             clippy::todo,
@@ -486,7 +498,7 @@ impl<K: KeepAliveMode, const PHYS: usize, const FUNC: usize, const R: usize>
         &mut self,
         now: Timestamp,
         channel: impl Into<ChannelId>,
-    ) -> ClientReaction<'_, 'static> {
+    ) -> ClientReaction<'_, 'static, K, PHYS, FUNC, R> {
         let channel = channel.into();
         #[allow(
             clippy::todo,
@@ -510,7 +522,7 @@ impl<K: KeepAliveMode, const PHYS: usize, const FUNC: usize, const R: usize>
         ai: Ai,
         data: &'d [u8],
         class: ClientTx,
-    ) -> ClientReaction<'_, 'd> {
+    ) -> ClientReaction<'_, 'd, K, PHYS, FUNC, R> {
         #[allow(
             clippy::todo,
             reason = "API stub; behaviour lands with its requirement"
@@ -538,7 +550,7 @@ impl<K: KeepAliveMode, const PHYS: usize, const FUNC: usize, const R: usize>
         channel: impl Into<ChannelId>,
         ai: Ai,
         class: ClientRx,
-    ) -> ClientReaction<'_, 'static> {
+    ) -> ClientReaction<'_, 'static, K, PHYS, FUNC, R> {
         let channel = channel.into();
         #[allow(
             clippy::todo,
@@ -571,7 +583,7 @@ impl<K: KeepAliveMode, const PHYS: usize, const FUNC: usize, const R: usize>
         data: &'d [u8],
         result: SResult,
         class: Option<ClientRx>,
-    ) -> ClientReaction<'_, 'd> {
+    ) -> ClientReaction<'_, 'd, K, PHYS, FUNC, R> {
         let channel = channel.into();
         #[allow(
             clippy::todo,
@@ -597,7 +609,7 @@ impl<K: KeepAliveMode, const PHYS: usize, const FUNC: usize, const R: usize>
         now: Timestamp,
         ai: Ai,
         result: SResult,
-    ) -> ClientReaction<'_, 'static> {
+    ) -> ClientReaction<'_, 'static, K, PHYS, FUNC, R> {
         #[allow(
             clippy::todo,
             reason = "API stub; behaviour lands with its requirement"
@@ -610,7 +622,10 @@ impl<K: KeepAliveMode, const PHYS: usize, const FUNC: usize, const R: usize>
     /// Supply a timestamp on its own.
     ///
     /// ``UDSS_LLR_0010`` and ``UDSS_LLR_0079`` — see [`crate::Server::tick`].
-    pub fn tick(&mut self, now: Timestamp) -> ClientReaction<'_, 'static> {
+    pub fn tick(
+        &mut self,
+        now: Timestamp,
+    ) -> ClientReaction<'_, 'static, K, PHYS, FUNC, R> {
         #[allow(
             clippy::todo,
             reason = "API stub; behaviour lands with its requirement"
@@ -661,7 +676,8 @@ impl<const PHYS: usize, const FUNC: usize, const R: usize>
         now: Timestamp,
         addressing: ChannelAddressing,
         params: ChannelParams,
-    ) -> ClientReaction<'_, 'static, PhysicalChannelId> {
+    ) -> ClientReaction<'_, 'static, FunctionalKeepAlive, PHYS, FUNC, R, PhysicalChannelId>
+    {
         let ai = addressing.with_ta_type(TaType::Physical);
         #[allow(
             clippy::todo,
@@ -686,7 +702,7 @@ impl<const PHYS: usize, const FUNC: usize, const R: usize>
         &mut self,
         now: Timestamp,
         s3_client: u32,
-    ) -> ClientReaction<'_, 'static> {
+    ) -> ClientReaction<'_, 'static, FunctionalKeepAlive, PHYS, FUNC, R> {
         #[allow(
             clippy::todo,
             reason = "API stub; behaviour lands with its requirement"
@@ -716,7 +732,8 @@ impl<const PHYS: usize, const FUNC: usize, const R: usize>
         addressing: ChannelAddressing,
         params: ChannelParams,
         s3_client: u32,
-    ) -> ClientReaction<'_, 'static, PhysicalChannelId> {
+    ) -> ClientReaction<'_, 'static, PhysicalKeepAlive, PHYS, FUNC, R, PhysicalChannelId>
+    {
         let ai = addressing.with_ta_type(TaType::Physical);
         #[allow(
             clippy::todo,
@@ -741,7 +758,7 @@ impl<const PHYS: usize, const FUNC: usize, const R: usize>
         now: Timestamp,
         channel: PhysicalChannelId,
         s3_client: u32,
-    ) -> ClientReaction<'_, 'static> {
+    ) -> ClientReaction<'_, 'static, PhysicalKeepAlive, PHYS, FUNC, R> {
         #[allow(
             clippy::todo,
             reason = "API stub; behaviour lands with its requirement"
@@ -749,5 +766,18 @@ impl<const PHYS: usize, const FUNC: usize, const R: usize>
         {
             todo!("UDSS_LLR_0043, 0134, 0152: {now:?} {channel:?} {s3_client:?}")
         }
+    }
+}
+
+impl<K: KeepAliveMode, const PHYS: usize, const FUNC: usize, const R: usize>
+    crate::sealed::Sealed for Client<K, PHYS, FUNC, R>
+{
+}
+
+impl<'d, K: KeepAliveMode, const PHYS: usize, const FUNC: usize, const R: usize>
+    crate::reaction::Drain<'d, ClientOutput<'d>> for Client<K, PHYS, FUNC, R>
+{
+    fn next_expiry(&mut self) -> Option<ClientOutput<'d>> {
+        None // the client role's expiries land with milestone 2
     }
 }

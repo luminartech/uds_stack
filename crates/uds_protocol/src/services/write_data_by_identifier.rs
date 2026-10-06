@@ -191,7 +191,7 @@ mod test {
         let (decoded, rest) =
             <WriteDataByIdentifierResponse as Decode>::decode(&buf[..written]).unwrap();
         assert_eq!(decoded, response);
-        assert!(rest.is_empty());
+        assert_eq!(rest, [0u8; 0]);
     }
 
     #[test]
@@ -211,7 +211,7 @@ mod test {
         assert_eq!(&buf[..n], &[0xF1, 0x90, 0x01, 0x02, 0x03]);
         let (decoded, rest) =
             <WriteDataByIdentifierRequest as Decode>::decode(&buf[..n]).unwrap();
-        assert!(rest.is_empty());
+        assert_eq!(rest, [0u8; 0]);
         assert_eq!(decoded.identifier, 0xF190);
         assert_eq!(decoded.data, &[0x01, 0x02, 0x03]);
         assert_encode_size_agrees(&req);
