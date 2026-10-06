@@ -586,12 +586,31 @@ pub async fn read_data_by_identifier<A: ReadDataByIdentifier>(
     }
 }
 
+/// ISO 14229-1:2020 clause 11.7, Figure 26 — the check `WriteDataByIdentifier` makes
+/// ahead of the record's length: an identifier the application does not define, or one
+/// [`WriteDataByIdentifier::writable_in`] refuses in the active session, is
+/// `requestOutOfRange` (0x31). Asked by [`write_data_by_identifier`], and by `dispatch`
+/// for a request too long to have been received whole, which is 0x13 only once this
+/// passes.
+///
+/// # Errors
+///
+/// `requestOutOfRange` (0x31), as above.
+#[doc(hidden)]
+pub fn writable_identifier<A: WriteDataByIdentifier>(
+    services: &A,
+    state: &State,
+    request: &WriteDataByIdentifierRequest<'_>,
+) -> Result<A::Did, NegativeResponseCode> {
+    <A::Did as DataIdentifier>::from_u16(request.identifier)
+        .filter(|&did| services.writable_in(did, state.session()))
+        .ok_or(NegativeResponseCode::RequestOutOfRange)
+}
+
 /// ISO 14229-1:2020 clause 11.7 — `WriteDataByIdentifier`'s own stage, in Figure 26's
 /// order. The decode settled a request without a data record (0x13); then:
 ///
-/// * an identifier the application does not define, or one
-///   [`WriteDataByIdentifier::writable_in`] refuses in the active session, is
-///   `requestOutOfRange` (0x31);
+/// * [`writable_identifier`]'s check (0x31);
 /// * a record [`DataIdentifier::split_record`] finds short, or followed by further bytes,
 ///   is `incorrectMessageLengthOrInvalidFormat` (0x13);
 /// * a [`WriteDataByIdentifier::required_level`] that `state` does not hold unlocked is
@@ -607,11 +626,7 @@ pub async fn write_data_by_identifier<A: WriteDataByIdentifier>(
     request: &WriteDataByIdentifierRequest<'_>,
     out: &mut ResponseSink<'_>,
 ) -> Result<Option<DiagnosticSessionType>, NegativeResponseCode> {
-    let Some(did) = <A::Did as DataIdentifier>::from_u16(request.identifier)
-        .filter(|&did| services.writable_in(did, state.session()))
-    else {
-        return Err(NegativeResponseCode::RequestOutOfRange);
-    };
+    let did = writable_identifier(services, state, request)?;
     let split = did.split_record(request.data());
     if matches!(split, Err(RecordError::Short) | Ok((_, [_, ..]))) {
         return Err(NegativeResponseCode::IncorrectMessageLengthOrInvalidFormat);
@@ -628,16 +643,70 @@ pub async fn write_data_by_identifier<A: WriteDataByIdentifier>(
     Ok(None)
 }
 
+/// The three `routineControlType`s Table 426 defines, each its own [`RoutineControl`]
+/// method.
+#[derive(Debug, Clone, Copy)]
+enum Routine {
+    Start,
+    Stop,
+    Results,
+}
+
+impl Routine {
+    const fn of(control: RoutineControlSubFunction) -> Option<Self> {
+        match control {
+            RoutineControlSubFunction::StartRoutine => Some(Self::Start),
+            RoutineControlSubFunction::StopRoutine => Some(Self::Stop),
+            RoutineControlSubFunction::RequestRoutineResults => Some(Self::Results),
+            _ => None,
+        }
+    }
+}
+
+/// ISO 14229-1:2020 clause 14.2, Figure 30 — the checks `RoutineControl` makes ahead of
+/// the option record's length, in order: an identifier the application does not define,
+/// or one [`RoutineControl::supported_in`] refuses in the active session, is
+/// `requestOutOfRange` (0x31); a [`RoutineControl::required_level`] that `state` does not
+/// hold unlocked is `securityAccessDenied` (0x33); and a `routineControlType` Table 426
+/// reserves, or one [`RoutineControl::supports`] refuses for this routine, is
+/// `subFunctionNotSupported` (0x12). Asked by [`routine_control`], and by `dispatch` for a
+/// request too long to have been received whole, which is 0x13 only once these pass.
+///
+/// # Errors
+///
+/// 0x31, 0x33 or 0x12, as above.
+#[doc(hidden)]
+pub fn admitted_routine<A: RoutineControl>(
+    services: &A,
+    state: &State,
+    request: &RoutineControlRequest<'_>,
+) -> Result<A::Rid, NegativeResponseCode> {
+    admitted(services, state, request).map(|(routine, _)| routine)
+}
+
+fn admitted<A: RoutineControl>(
+    services: &A,
+    state: &State,
+    request: &RoutineControlRequest<'_>,
+) -> Result<(A::Rid, Routine), NegativeResponseCode> {
+    let Some(routine) = <A::Rid as RoutineIdentifier>::from_u16(request.routine_id)
+        .filter(|&routine| services.supported_in(routine, state.session()))
+    else {
+        return Err(NegativeResponseCode::RequestOutOfRange);
+    };
+    if !unlocked(state, services.required_level(routine)) {
+        return Err(NegativeResponseCode::SecurityAccessDenied);
+    }
+    Routine::of(request.sub_function)
+        .filter(|_| services.supports(routine, request.sub_function))
+        .map(|method| (routine, method))
+        .ok_or(NegativeResponseCode::SubFunctionNotSupported)
+}
+
 /// ISO 14229-1:2020 clause 14.2 — `RoutineControl`'s own stage, in Figure 30's order.
 /// The decode settled a request shorter than its routine identifier (0x13); then:
 ///
-/// * an identifier the application does not define, or one
-///   [`RoutineControl::supported_in`] refuses in the active session, is
-///   `requestOutOfRange` (0x31);
-/// * a [`RoutineControl::required_level`] that `state` does not hold unlocked is
-///   `securityAccessDenied` (0x33);
-/// * a `routineControlType` Table 426 reserves, or one [`RoutineControl::supports`]
-///   refuses for this routine, is `subFunctionNotSupported` (0x12);
+/// * [`admitted_routine`]'s checks (0x31, 0x33, 0x12);
 /// * an option record longer than [`RoutineControl::MAX_OPTION_LEN`] is
 ///   `incorrectMessageLengthOrInvalidFormat` (0x13).
 ///
@@ -650,39 +719,17 @@ pub async fn routine_control<A: RoutineControl>(
     request: &RoutineControlRequest<'_>,
     out: &mut ResponseSink<'_>,
 ) -> Result<Option<DiagnosticSessionType>, NegativeResponseCode> {
-    let Some(routine) = <A::Rid as RoutineIdentifier>::from_u16(request.routine_id)
-        .filter(|&routine| services.supported_in(routine, state.session()))
-    else {
-        return Err(NegativeResponseCode::RequestOutOfRange);
-    };
-    if !unlocked(state, services.required_level(routine)) {
-        return Err(NegativeResponseCode::SecurityAccessDenied);
-    }
-    let control = request.sub_function;
-    if !matches!(
-        control,
-        RoutineControlSubFunction::StartRoutine
-            | RoutineControlSubFunction::StopRoutine
-            | RoutineControlSubFunction::RequestRoutineResults
-    ) || !services.supports(routine, control)
-    {
-        return Err(NegativeResponseCode::SubFunctionNotSupported);
-    }
+    let (routine, method) = admitted(services, state, request)?;
     let record = request.option_record;
     if record.len() > A::MAX_OPTION_LEN {
         return Err(NegativeResponseCode::IncorrectMessageLengthOrInvalidFormat);
     }
     let _ = out.write_all(&[0x71, u8::from(request.sub_function)]);
     let _ = out.write_all(&request.routine_id.to_be_bytes());
-    match request.sub_function {
-        RoutineControlSubFunction::StartRoutine => {
-            services.start(routine, record, out).await
-        }
-        RoutineControlSubFunction::StopRoutine => services.stop(routine, record, out).await,
-        RoutineControlSubFunction::RequestRoutineResults => {
-            services.results(routine, record, out).await
-        }
-        _ => Err(NegativeResponseCode::SubFunctionNotSupported),
+    match method {
+        Routine::Start => services.start(routine, record, out).await,
+        Routine::Stop => services.stop(routine, record, out).await,
+        Routine::Results => services.results(routine, record, out).await,
     }?;
     Ok(None)
 }

@@ -614,6 +614,17 @@ fn exchange(ecu: &mut Ecu, state: &mut State, request: &[u8]) -> Option<Vec<u8>>
     }
 }
 
+/// What the front of a request too long for the buffer produced, as the driver hands it
+/// over for a `DataTooLong`.
+fn exchange_truncated(ecu: &mut Ecu, state: &mut State, front: &[u8]) -> Vec<u8> {
+    let mut buf = [0_u8; 64];
+    let mut out = ResponseSink::new(&mut buf, None);
+    let unsettled =
+        block_on(ecu.dispatch(state, PHYSICAL, Received::Truncated(front), &mut out));
+    let _ = settle(PHYSICAL, unsettled, false, &mut out);
+    out.written_bytes().to_vec()
+}
+
 fn in_session(ecu: &mut Ecu, session: S) -> State {
     let mut state = State::INITIAL;
     ecu.session_confirmed(&mut state, session);
@@ -1456,6 +1467,27 @@ fn wdbi_an_identifier_not_writable_here_is_0x31() {
     assert_eq!(ecu.written, None);
 }
 
+/// Figure 26, "DID supports service 2E in active session?" ahead of the total length —
+/// a request too long for the buffer is 0x31 for an identifier not writable here, and
+/// 0x13 only for one that is.
+#[test]
+fn wdbi_a_truncated_request_is_checked_for_its_identifier_before_0x13() {
+    let mut ecu = Ecu::default();
+    let mut state = extended(&mut ecu);
+    for (front, nrc) in [
+        (&[0x2E, 0x12, 0x34, 0x00][..], 0x31),
+        (&[0x2E, 0xF4, 0x0D, 0x40][..], 0x31),
+        (&[0x2E, 0x01, 0x00, 0x12][..], 0x13),
+    ] {
+        assert_eq!(
+            exchange_truncated(&mut ecu, &mut state, front),
+            [0x7F, 0x2E, nrc],
+            "{front:02X?}"
+        );
+    }
+    assert_eq!(ecu.written, None);
+}
+
 /// Figure 26, key 2 — a record shorter than the identifier's, or followed by more bytes,
 /// is 0x13, ahead of the security check.
 #[test]
@@ -1796,6 +1828,34 @@ fn routine_control_a_routine_requiring_a_locked_level_is_0x33() {
         Some(&[0x71, 0x01, 0xFF, 0x00, 0x00][..])
     );
     assert_eq!(ecu.started, Some(Rid::EraseMemory));
+}
+
+/// Figure 30's checks ahead of the total length — a request too long for the buffer is
+/// 0x31 for a routine not available here, 0x33 for a locked one, 0x12 for a reserved
+/// `routineControlType` or one the routine does not support, and 0x13 only once all
+/// three pass.
+#[test]
+fn routine_control_a_truncated_request_is_checked_in_figure_30s_order_before_0x13() {
+    let mut ecu = Ecu::default();
+    let mut state = extended(&mut ecu);
+    for (front, nrc) in [
+        (&[0x31, 0x01, 0x12, 0x34][..], 0x31),
+        (&[0x31, 0x01, 0xFF, 0x00][..], 0x33),
+        (&[0x31, 0x05, 0x02, 0x01][..], 0x12),
+        (&[0x31, 0x02, 0x02, 0x01][..], 0x12),
+    ] {
+        assert_eq!(
+            exchange_truncated(&mut ecu, &mut state, front),
+            [0x7F, 0x31, nrc],
+            "{front:02X?}"
+        );
+    }
+    let mut state = unlocked_level_3(&mut ecu);
+    assert_eq!(
+        exchange_truncated(&mut ecu, &mut state, &[0x31, 0x01, 0xFF, 0x00, 0x00]),
+        [0x7F, 0x31, 0x13]
+    );
+    assert_eq!(ecu.started, None);
 }
 
 /// Figure 30, key 2 — an option record longer than `MAX_OPTION_LEN` is 0x13 and no

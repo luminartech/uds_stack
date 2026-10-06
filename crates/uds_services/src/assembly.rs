@@ -377,6 +377,27 @@ macro_rules! __uds_sub_function_security {
     ($self:ident, $service:ident, $value:ident, $svc:ident) => {};
 }
 
+/// The checks a listed service's stage makes ahead of the request's total length, for a
+/// request too long to have been received whole: an early `return` of the first one that
+/// fails, from the closure the truncated branch of `dispatch` calls. Only a service whose
+/// stage checks an identifier in its data-parameters before the length emits one; for
+/// the others `begin` has already asked every such question, and the request is 0x13.
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __uds_before_length {
+    ($self:ident, $state:ident, $req:ident, WriteDataByIdentifier) => {
+        if let $crate::Request::WriteDataByIdentifier(ref r) = $req {
+            return $crate::pipeline::writable_identifier($self, $state, r).map(|_| ());
+        }
+    };
+    ($self:ident, $state:ident, $req:ident, RoutineControl) => {
+        if let $crate::Request::RoutineControl(ref r) = $req {
+            return $crate::pipeline::admitted_routine($self, $state, r).map(|_| ());
+        }
+    };
+    ($self:ident, $state:ident, $req:ident, $svc:ident) => {};
+}
+
 /// One match arm per listed service, routing its decoded request to its stage. A listed
 /// service with no stage yet hits the wildcard, which emits nothing; the request then
 /// reaches the fall-through after every arm in `dispatch`, an outcome of 0x11 that the
@@ -732,13 +753,22 @@ macro_rules! uds_server {
                         $crate::pipeline::Stage::Settle { sid, nrc } => {
                             return $crate::Unsettled::refused(sid, nrc);
                         }
-                        $crate::pipeline::Stage::Proceed { sid, .. }
+                        $crate::pipeline::Stage::Proceed { sid, request }
                             if ::core::matches!(received, $crate::Received::Truncated(_)) =>
                         {
-                            return $crate::Unsettled::refused(
-                                sid,
+                            let before_length = || -> ::core::result::Result<
+                                (),
+                                $crate::NegativeResponseCode,
+                            > {
+                                $( $crate::__uds_before_length!(
+                                    self, state, request, $svc
+                                ); )+
+                                ::core::result::Result::Ok(())
+                            };
+                            let nrc = before_length().err().unwrap_or(
                                 $crate::NegativeResponseCode::IncorrectMessageLengthOrInvalidFormat,
                             );
+                            return $crate::Unsettled::refused(sid, nrc);
                         }
                         $crate::pipeline::Stage::Proceed { sid, request } => (sid, request),
                     };
