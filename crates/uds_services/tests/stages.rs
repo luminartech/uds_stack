@@ -840,6 +840,70 @@ fn security_access_a_key_without_a_seed_is_0x24() {
     }
 }
 
+/// Annex I Table I.2 transition 9 — in state B, a `SecurityAccess` request refused for
+/// any reason discards the seed, so the right key that follows is 0x24: a record too
+/// long (0x13), the same too long to be received whole (0x13), unmet pre-conditions
+/// (0x22), an unsupported level (0x12) and a level not offered in this session (0x7E). A
+/// refused request for another service leaves the seed, and the key still unlocks.
+#[test]
+fn security_access_a_refused_request_discards_the_seed() {
+    let mut ecu = Ecu::default();
+    for refusal in [
+        &[0x27, 0x01, 0x0E, 0x80, 0x00][..],
+        &[0x27, 0x07][..],
+        &[0x27, 0x05][..],
+    ] {
+        let mut state = extended(&mut ecu);
+        let _ = exchange(&mut ecu, &mut state, &[0x27, 0x01]);
+        let refused = exchange(&mut ecu, &mut state, refusal);
+        assert_eq!(
+            refused.as_deref().and_then(|bytes| bytes.get(..2)),
+            Some(&[0x7F, 0x27][..]),
+            "{refusal:02X?}"
+        );
+        assert_eq!(
+            exchange(&mut ecu, &mut state, &RIGHT_KEY).as_deref(),
+            Some(&[0x7F, 0x27, 0x24][..]),
+            "after {refusal:02X?}"
+        );
+    }
+
+    let mut state = extended(&mut ecu);
+    let _ = exchange(&mut ecu, &mut state, &[0x27, 0x01]);
+    assert_eq!(
+        exchange_truncated(&mut ecu, &mut state, &[0x27, 0x02, 0xC9, 0xA9]),
+        [0x7F, 0x27, 0x13]
+    );
+    assert_eq!(
+        exchange(&mut ecu, &mut state, &RIGHT_KEY).as_deref(),
+        Some(&[0x7F, 0x27, 0x24][..])
+    );
+
+    let mut state = extended(&mut ecu);
+    let _ = exchange(&mut ecu, &mut state, &[0x27, 0x01]);
+    ecu.preconditions_unmet = true;
+    assert_eq!(
+        exchange(&mut ecu, &mut state, &[0x27, 0x01]).as_deref(),
+        Some(&[0x7F, 0x27, 0x22][..])
+    );
+    ecu.preconditions_unmet = false;
+    assert_eq!(
+        exchange(&mut ecu, &mut state, &RIGHT_KEY).as_deref(),
+        Some(&[0x7F, 0x27, 0x24][..])
+    );
+
+    let mut state = extended(&mut ecu);
+    let _ = exchange(&mut ecu, &mut state, &[0x27, 0x01]);
+    assert_eq!(
+        exchange(&mut ecu, &mut state, &[0x2E, 0x12, 0x34, 0x00]).as_deref(),
+        Some(&[0x7F, 0x2E, 0x31][..])
+    );
+    assert_eq!(
+        exchange(&mut ecu, &mut state, &RIGHT_KEY).as_deref(),
+        Some(&[0x67, 0x02][..])
+    );
+}
+
 /// Annex I transition 9 — a `sendKey` whose `yy` is not `xx + 1` is 0x24, and the seed
 /// is discarded: the right key for the seeded level is then 0x24 too.
 #[test]

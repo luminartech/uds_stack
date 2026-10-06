@@ -793,6 +793,24 @@ fn failed_attempt<A: SecurityAccess>(
     NegativeResponseCode::ExceedNumberOfAttempts
 }
 
+/// ISO 14229-1:2020 Annex I, Table I.2 transitions 9 and 10 — `unsettled`, having
+/// discarded the seed awaiting a key where it refuses a `SecurityAccess` request, whichever
+/// check refused it: the common stages, the length of a request too long to be received
+/// whole, or the stage itself. Any other request leaves the seed.
+#[doc(hidden)]
+#[must_use]
+pub fn discarding_seed(state: &mut State, unsettled: Unsettled) -> Unsettled {
+    if let Some((settling, Err(_))) = unsettled.parts()
+        && matches!(
+            UdsServiceType::from_request_sid(settling.sid),
+            UdsServiceType::SecurityAccess
+        )
+    {
+        state.take_seed();
+    }
+    unsettled
+}
+
 /// ISO 14229-1:2020 clause 10.5 — `CommunicationControl`'s own stage. Whether the
 /// `controlType` is supported (0x12), in the active session (0x7E) and unlocked (0x33)
 /// was settled by [`begin`], and the exact length, with `nodeIdentificationNumber`

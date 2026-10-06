@@ -462,9 +462,17 @@ Protocol state
       D --> A : 6. session change or timeout → lock
       C --> C : 7. requestSeed for the unlocked level → zero seed\n0x13 / 0x22 / 0x37
       C --> D : 8. requestSeed for a level that is not unlocked
-      B --> A : 9. sendKey outcome in B\n0x35 / 0x36 / 0x24 / 0x13 — seed discarded
-      D --> C : 10. sendKey outcome in D\nkey OK → lock current, unlock xx\nkey NOK → 0x35 / 0x36 — seed discarded
+      B --> A : 9. sendKey outcome in B, or any refused request\n0x35 / 0x36 / 0x24 / 0x13 / general NRC — seed discarded
+      D --> C : 10. sendKey outcome in D, or any refused request\nkey OK → lock current, unlock xx\nkey NOK → 0x35 / 0x36, general NRC — seed discarded
       @enduml
+
+   **Any refused request discards the seed, not only a failed key.** Table I.2's rows for
+   transitions 9 and 10 include a ``requestSeed`` whose length is wrong (0x13) and "a
+   SecurityAccess request [that] results in a general negative response code" (8.7), so in
+   state B or D every ``SecurityAccess`` request answered negatively leaves the seed
+   discarded, whichever check refused it — Figure 6's 0x12 and 0x7E included, and a request
+   too long to be received whole. ``uds_server!``'s ``dispatch`` applies it once, to its
+   result, rather than in each check.
 
    **The restart rule is the chart's shape, and an earlier draft had it wrong.** Clause 10.4
    states that "an invalid key shall require the client to start over from the beginning

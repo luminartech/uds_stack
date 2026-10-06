@@ -644,64 +644,70 @@ macro_rules! uds_server {
                     received: $crate::Received<'_>,
                     out: &mut $crate::ResponseSink<'_>,
                 ) -> $crate::Unsettled {
-                    // Unused in an assembly listing no service that decides a
-                    // sub-function, where every arm of the helper expands to nothing.
-                    #[allow(unused_variables, reason = "used only by some assemblies")]
-                    let access = |service: $crate::UdsServiceType,
-                                  value: u8,
-                                  active: $crate::DiagnosticSessionType| {
-                        $( $crate::__uds_sub_function_access!(
-                            self, service, value, active, $svc
-                        ); )+
-                        ::core::option::Option::Some($crate::Access::new(
-                            $crate::Sessions::ALL,
-                        ))
-                    };
-                    let (sid, decoded) = match $crate::pipeline::begin(
-                        state,
-                        received.bytes(),
-                        |s| <Self as $crate::ServiceSet>::supports(self, s),
-                        access,
-                    ) {
-                        $crate::pipeline::Stage::Empty => {
-                            return $crate::Unsettled::empty();
+                    // Annex I transitions 9 and 10: a refused SecurityAccess request
+                    // discards the seed, whichever of the returns below refused it.
+                    let unsettled = async {
+                        // Unused in an assembly listing no service that decides a
+                        // sub-function, where every arm of the helper expands to nothing.
+                        #[allow(unused_variables, reason = "used only by some assemblies")]
+                        let access = |service: $crate::UdsServiceType,
+                                      value: u8,
+                                      active: $crate::DiagnosticSessionType| {
+                            $( $crate::__uds_sub_function_access!(
+                                self, service, value, active, $svc
+                            ); )+
+                            ::core::option::Option::Some($crate::Access::new(
+                                $crate::Sessions::ALL,
+                            ))
+                        };
+                        let (sid, decoded) = match $crate::pipeline::begin(
+                            state,
+                            received.bytes(),
+                            |s| <Self as $crate::ServiceSet>::supports(self, s),
+                            access,
+                        ) {
+                            $crate::pipeline::Stage::Empty => {
+                                return $crate::Unsettled::empty();
+                            }
+                            $crate::pipeline::Stage::Settle { sid, nrc } => {
+                                return $crate::Unsettled::refused(sid, nrc);
+                            }
+                            $crate::pipeline::Stage::Proceed { sid, request }
+                                if ::core::matches!(received, $crate::Received::Truncated(_)) =>
+                            {
+                                let before_length = || -> ::core::result::Result<
+                                    (),
+                                    $crate::NegativeResponseCode,
+                                > {
+                                    $( $crate::__uds_before_length!(
+                                        self, state, request, $svc
+                                    ); )+
+                                    ::core::result::Result::Ok(())
+                                };
+                                let nrc = before_length().err().unwrap_or(
+                                    $crate::NegativeResponseCode::IncorrectMessageLengthOrInvalidFormat,
+                                );
+                                return $crate::Unsettled::refused(sid, nrc);
+                            }
+                            $crate::pipeline::Stage::Proceed { sid, request } => (sid, request),
+                        };
+                        let settling = $crate::pipeline::Settling {
+                            sid,
+                            suppress_bit: decoded
+                                .is_positive_response_suppressed()
+                                .unwrap_or(false),
+                        };
+                        let outcome = async {
+                            $( $crate::__uds_stage!(self, state, out, decoded, $svc); )+
+                            ::core::result::Result::Err(
+                                $crate::NegativeResponseCode::ServiceNotSupported,
+                            )
                         }
-                        $crate::pipeline::Stage::Settle { sid, nrc } => {
-                            return $crate::Unsettled::refused(sid, nrc);
-                        }
-                        $crate::pipeline::Stage::Proceed { sid, request }
-                            if ::core::matches!(received, $crate::Received::Truncated(_)) =>
-                        {
-                            let before_length = || -> ::core::result::Result<
-                                (),
-                                $crate::NegativeResponseCode,
-                            > {
-                                $( $crate::__uds_before_length!(
-                                    self, state, request, $svc
-                                ); )+
-                                ::core::result::Result::Ok(())
-                            };
-                            let nrc = before_length().err().unwrap_or(
-                                $crate::NegativeResponseCode::IncorrectMessageLengthOrInvalidFormat,
-                            );
-                            return $crate::Unsettled::refused(sid, nrc);
-                        }
-                        $crate::pipeline::Stage::Proceed { sid, request } => (sid, request),
-                    };
-                    let settling = $crate::pipeline::Settling {
-                        sid,
-                        suppress_bit: decoded
-                            .is_positive_response_suppressed()
-                            .unwrap_or(false),
-                    };
-                    let outcome = async {
-                        $( $crate::__uds_stage!(self, state, out, decoded, $svc); )+
-                        ::core::result::Result::Err(
-                            $crate::NegativeResponseCode::ServiceNotSupported,
-                        )
+                        .await;
+                        $crate::Unsettled::handled(settling, outcome)
                     }
                     .await;
-                    $crate::Unsettled::handled(settling, outcome)
+                    $crate::pipeline::discarding_seed(state, unsettled)
                 }
 
                 fn session_timed_out(&mut self, state: &mut Self::State) {
