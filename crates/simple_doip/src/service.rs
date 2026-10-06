@@ -346,8 +346,12 @@ pub enum EntityEvent<'b> {
 ///   whose target no connection registered, confirmed with [`DoIpResult::NoSocket`],
 ///   and one whose connection closed before it was written.
 ///
-/// And two of its own:
+/// And three of its own:
 ///
+/// - **Requests to one target are confirmed in the order they were made.** An
+///   [`EntityEvent::Confirm`] carries only the addressing, which every request to that
+///   target shares, so its order is what tells the layer above which request it
+///   confirms.
 /// - **The connection table changes only inside [`Self::next_event`] and
 ///   [`Self::close`]**, so a [`ConnectionId`] the caller holds keeps naming its
 ///   connection between the two calls that could end it.

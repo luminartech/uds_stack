@@ -54,11 +54,11 @@ use uds_session::{Ai, Reloads, SResult, Timestamp};
 /// handler that resets on its own does so before the close. A message whose
 /// confirmation fails closes nothing.
 ///
-/// The close waits for every message sent to that tester to be confirmed, not
-/// only the one that armed it, and holds back the last confirmation. That is the
-/// armed message's own while nothing more is sent to the tester before it is
-/// confirmed, which `uds_session` guarantees (`UDSS_LLR_0061`: no second
-/// transmission on an addressing whose first is unconfirmed).
+/// The close follows the armed message's own confirmation, told apart from the
+/// tester's others by the order the entity confirms them in. A message sent to the
+/// tester after the armed one is written before the close, as
+/// [`DiagnosticEntity::close`] requires, and its confirmation is reported after the
+/// armed one's.
 ///
 /// # Integrating on bare metal
 ///
@@ -87,6 +87,7 @@ struct Tester {
     address: LogicalAddress,
     owes: ConnectionAction,
     unconfirmed: u8,
+    confirmations_to_close: u8,
     requested: Option<Ai>,
 }
 
@@ -243,6 +244,7 @@ impl<E, const MCTS: usize> DoIpTransport<E, MCTS> {
                 address,
                 owes: ConnectionAction::Continue,
                 unconfirmed: 0,
+                confirmations_to_close: 0,
                 requested: None,
             });
         }
@@ -258,17 +260,16 @@ impl<E, const MCTS: usize> DoIpTransport<E, MCTS> {
         let first_octet = data.first().copied().unwrap_or_default();
         let action = after_sending(first_octet, after);
         if let Some(tester) = self.tester_mut(target) {
-            if action == ConnectionAction::InitiateClose
-                || tester.owes != ConnectionAction::InitiateClose
-            {
-                tester.owes = action;
-            }
             tester.unconfirmed = tester.unconfirmed.saturating_add(1);
+            if tester.owes != ConnectionAction::InitiateClose {
+                tester.owes = action;
+                tester.confirmations_to_close = tester.unconfirmed;
+            }
         }
     }
 
-    /// The connection to close, where this confirmation is the last one a
-    /// tester owed a prescribed close was waiting on.
+    /// The connection to close, where this is the confirmation of the message that
+    /// owes a prescribed close.
     fn record_confirm(
         &mut self,
         target: LogicalAddress,
@@ -276,12 +277,18 @@ impl<E, const MCTS: usize> DoIpTransport<E, MCTS> {
     ) -> Option<ConnectionId> {
         let tester = self.tester_mut(target)?;
         tester.unconfirmed = tester.unconfirmed.saturating_sub(1);
-        if tester.unconfirmed > 0 {
+        if tester.owes != ConnectionAction::InitiateClose {
+            if tester.unconfirmed == 0 {
+                tester.owes = ConnectionAction::Continue;
+            }
             return None;
         }
-        let owed = core::mem::replace(&mut tester.owes, ConnectionAction::Continue);
-        (owed == ConnectionAction::InitiateClose && result == SResult::Ok)
-            .then_some(tester.connection)
+        tester.confirmations_to_close = tester.confirmations_to_close.saturating_sub(1);
+        if tester.confirmations_to_close > 0 {
+            return None;
+        }
+        tester.owes = ConnectionAction::Continue;
+        (result == SResult::Ok).then_some(tester.connection)
     }
 }
 
@@ -587,9 +594,10 @@ mod tests {
     }
 
     /// A `0x78` still unconfirmed when the positive response is sent does not
-    /// close the connection on its own confirmation: the close follows the last.
+    /// close the connection on its own confirmation: the close follows the
+    /// response's.
     #[test]
-    fn the_close_waits_for_the_last_outstanding_confirmation() {
+    fn the_close_waits_for_its_own_messages_confirmation() {
         let mut t = serving_the_tester();
         t.record_send(TESTER, &[0x7F, 0x11, 0x78], AfterSend::Continue);
         t.record_send(TESTER, &[0x51, 0x01], AfterSend::Continue);
@@ -597,13 +605,22 @@ mod tests {
         assert_eq!(t.record_confirm(TESTER, SResult::Ok), Some(CONNECTION));
     }
 
-    /// Once owed, a close is not cancelled by a later send before it is made.
+    /// A message sent after the one owing the close neither cancels nor delays
+    /// it: the close follows the owing message's confirmation, not the last.
     #[test]
-    fn a_later_send_does_not_cancel_an_owed_close() {
+    fn a_later_send_neither_cancels_nor_delays_an_owed_close() {
         let mut t = serving_the_tester();
         t.record_send(TESTER, &[0x51, 0x01], AfterSend::Continue);
-        t.record_send(TESTER, &[0x7F, 0x22, 0x13], AfterSend::Continue);
-        assert_eq!(t.record_confirm(TESTER, SResult::Ok), None);
+        t.record_send(TESTER, &[0x7F, 0x22, 0x21], AfterSend::Continue);
+        assert_eq!(t.record_confirm(TESTER, SResult::Ok), Some(CONNECTION));
+    }
+
+    /// A second message owing a close leaves the first's in place.
+    #[test]
+    fn the_first_message_owing_a_close_is_the_one_it_follows() {
+        let mut t = serving_the_tester();
+        t.record_send(TESTER, &[0x51, 0x01], AfterSend::Continue);
+        t.record_send(TESTER, &[0x51, 0x01], AfterSend::Continue);
         assert_eq!(t.record_confirm(TESTER, SResult::Ok), Some(CONNECTION));
     }
 

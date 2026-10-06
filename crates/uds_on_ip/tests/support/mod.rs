@@ -159,6 +159,9 @@ impl<const MCTS: usize> DiagnosticEntity for MockEntity<MCTS> {
     ) -> Result<(), Self::Error> {
         self.requested.push(pdu.to_vec());
         if sa != ENTITY {
+            if let Some(index) = self.slot_of(ta) {
+                self.flush(index);
+            }
             self.confirms
                 .push_back((sa, ta, ta_type, DoIpResult::UnknownSa));
             return Ok(());

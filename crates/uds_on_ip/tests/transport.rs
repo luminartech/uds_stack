@@ -262,6 +262,41 @@ fn a_positive_reset_response_closes_the_connection_after_its_confirmation() {
     );
 }
 
+/// A busy refusal sent to the tester before the positive `ECUReset` response is
+/// confirmed does not reorder REQ 7.11: the response's confirmation still reaches
+/// the driver after the close, and the refusal, written before the close, is
+/// confirmed after it.
+#[test]
+fn a_message_sent_after_the_reset_response_does_not_delay_its_close() {
+    let mut t = indicated(&[0x11, 0x01]);
+    respond(&mut t, &[0x51, 0x01]);
+    respond(&mut t, &[0x7F, 0x22, 0x21]);
+
+    assert_eq!(
+        next(&mut t),
+        TransportEvent::DataConf {
+            ai: response_ai(),
+            result: SResult::Ok,
+        }
+    );
+    assert_eq!(
+        t.entity().wire,
+        [
+            Wire::Data(CONNECTION, vec![0x51, 0x01]),
+            Wire::Data(CONNECTION, vec![0x7F, 0x22, 0x21]),
+            Wire::Close(CONNECTION),
+        ]
+    );
+    assert_eq!(
+        next(&mut t),
+        TransportEvent::DataConf {
+            ai: response_ai(),
+            result: SResult::Ok,
+        }
+    );
+    assert_nothing_follows(&mut t);
+}
+
 /// The tester, back as a new connection after routing activation (REQ 7.10), is
 /// served without another close.
 #[test]
