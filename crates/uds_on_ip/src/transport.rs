@@ -12,7 +12,7 @@
 
 use crate::error::Error;
 use crate::mapping::{
-    Inbound, Unclassifiable, classify, target_of, to_doip_ta_type, to_logical,
+    Inbound, Unclassifiable, classify, from_logical, target_of, to_doip_ta_type, to_logical,
 };
 use crate::profile::{ConnectionAction, after_sending};
 use simple_doip::LogicalAddress;
@@ -33,10 +33,6 @@ use uds_session::{Ai, Reloads, SResult, Timestamp};
 /// ISO 14229-5:2022 REQ 7.9 or REQ 7.11 requires it. It must be at least the
 /// entity's own maximum number of concurrent connections; a connection beyond it
 /// is [`Error::ConnectionOutsideTable`].
-///
-/// With more than one tester, one tester's departure can end another's exchange:
-/// [`TransportEvent::Closed`] does not say whose connection closed, and
-/// `uds_services::Server` ends the exchange it is serving on any `Closed`.
 ///
 /// # The prescribed close
 ///
@@ -260,6 +256,29 @@ impl<E: DiagnosticEntity, const MCTS: usize> DoIpTransport<E, MCTS> {
         }
         Ok(closing.confirmation.event())
     }
+
+    async fn confirm(
+        &mut self,
+        ai: Ai,
+        result: SResult,
+    ) -> Result<TransportEvent<'static>, Error<E::Error>> {
+        let target = to_logical(ai.ta);
+        let ai = self
+            .tester_mut(target)
+            .and_then(|tester| tester.requested)
+            .unwrap_or(ai);
+        let confirmation = Confirmation { ai, result };
+        match self.record_confirm(target, result) {
+            Some(connection) => {
+                self.close(Closing {
+                    connection,
+                    confirmation,
+                })
+                .await
+            }
+            None => Ok(confirmation.event()),
+        }
+    }
 }
 
 impl<E: DiagnosticEntity, const MCTS: usize> UdsTransport for DoIpTransport<E, MCTS> {
@@ -299,14 +318,16 @@ impl<E: DiagnosticEntity, const MCTS: usize> UdsTransport for DoIpTransport<E, M
     /// The next `T_Data.ind` or `T_Data.conf`, a closed connection, or
     /// [`TransportEvent::Deadline`] when `deadline` passes first.
     ///
-    /// A message longer than `buffer` is [`TransportEvent::DataTooLong`] with
-    /// `declared` always `Some`: `DoIP`'s generic header carries the length.
-    /// [`TransportEvent::Closed`]'s `expected` is true only for a tester owed a
-    /// prescribed close; the prescribed close this transport makes itself is
-    /// reported by no `Closed`, only by the [`TransportEvent::DataConf`] it held
-    /// back. While that close is in progress, `deadline` is not honoured: the call
-    /// returns once the entity has closed. Cancel-safe, as [`DiagnosticEntity`]'s
-    /// obligations make its `next_event` and `close`.
+    /// A message longer than `buffer` is [`TransportEvent::DataTooLong`] with `declared`
+    /// always `Some`: `DoIP`'s generic header carries the length.
+    /// [`TransportEvent::Closed`] names the tester whose connection closed, and is not
+    /// reported for a connection no tester has sent a diagnostic message on. Its `expected`
+    /// is true only for a tester owed a prescribed close. The prescribed close this
+    /// transport makes itself is reported by no `Closed`, only by the
+    /// [`TransportEvent::DataConf`] it held back. While that close is in progress,
+    /// `deadline` is not honoured: the call returns once the entity has closed.
+    /// Cancel-safe, as [`DiagnosticEntity`]'s obligations make its `next_event` and
+    /// `close`.
     ///
     /// # Errors
     ///
@@ -328,72 +349,56 @@ impl<E: DiagnosticEntity, const MCTS: usize> UdsTransport for DoIpTransport<E, M
             return Ok(confirmation.event());
         }
         let buffer_start = buffer.as_ptr().addr();
-        let inbound = loop {
+        let (connection, ai, at, declared) = loop {
             let event = self
                 .entity
                 .next_event(&mut *buffer, deadline.map(|at| at.0))
                 .await
                 .map_err(Error::Entity)?;
-            if let Some(inbound) =
-                classify(event, buffer_start).map_err(|breach| match breach {
-                    Unclassifiable::PduOutsideBuffer => Error::PduOutsideBuffer,
-                    Unclassifiable::UnknownEvent => Error::UnknownEvent,
-                })?
-            {
-                break inbound;
-            }
-        };
-        let buffer: &'b [u8] = buffer;
-        let outside_table = |connection| Error::ConnectionOutsideTable {
-            connection,
-            capacity: MCTS,
-        };
-        match inbound {
-            Inbound::Ind { connection, ai, at } => {
-                self.register(connection, to_logical(ai.sa))
-                    .map_err(outside_table)?;
-                let data = buffer.get(at).ok_or(Error::PduOutsideBuffer)?;
-                Ok(TransportEvent::DataInd { ai, data })
-            }
-            Inbound::TooLong {
-                connection,
-                ai,
-                at,
-                declared,
-            } => {
-                self.register(connection, to_logical(ai.sa))
-                    .map_err(outside_table)?;
-                let data = buffer.get(at).ok_or(Error::PduOutsideBuffer)?;
-                Ok(TransportEvent::DataTooLong {
-                    ai,
-                    data,
-                    declared: Some(declared),
-                })
-            }
-            Inbound::Conf { ai, result } => {
-                let target = to_logical(ai.ta);
-                let ai = self
-                    .tester_mut(target)
-                    .and_then(|tester| tester.requested)
-                    .unwrap_or(ai);
-                match self.record_confirm(target, result) {
-                    Some(connection) => {
-                        self.close(Closing {
-                            connection,
-                            confirmation: Confirmation { ai, result },
-                        })
-                        .await
-                    }
-                    None => Ok(Confirmation { ai, result }.event()),
+            let inbound = classify(event, buffer_start).map_err(|breach| match breach {
+                Unclassifiable::PduOutsideBuffer => Error::PduOutsideBuffer,
+                Unclassifiable::UnknownEvent => Error::UnknownEvent,
+            })?;
+            match inbound {
+                None => {}
+                Some(Inbound::Ind { connection, ai, at }) => {
+                    break (connection, ai, at, None);
                 }
+                Some(Inbound::TooLong {
+                    connection,
+                    ai,
+                    at,
+                    declared,
+                }) => break (connection, ai, at, Some(declared)),
+                Some(Inbound::Conf { ai, result }) => {
+                    return self.confirm(ai, result).await;
+                }
+                Some(Inbound::Closed { connection }) => {
+                    if let Some(tester) = self.forget(connection) {
+                        return Ok(TransportEvent::Closed {
+                            peer: from_logical(tester.address),
+                            expected: tester.owes.close_is_prescribed(),
+                        });
+                    }
+                }
+                Some(Inbound::Deadline) => return Ok(TransportEvent::Deadline),
             }
-            Inbound::Closed { connection } => Ok(TransportEvent::Closed {
-                expected: self
-                    .forget(connection)
-                    .is_some_and(|tester| tester.owes.close_is_prescribed()),
-            }),
-            Inbound::Deadline => Ok(TransportEvent::Deadline),
-        }
+        };
+        self.register(connection, to_logical(ai.sa))
+            .map_err(|connection| Error::ConnectionOutsideTable {
+                connection,
+                capacity: MCTS,
+            })?;
+        let buffer: &'b [u8] = buffer;
+        let data = buffer.get(at).ok_or(Error::PduOutsideBuffer)?;
+        Ok(match declared {
+            None => TransportEvent::DataInd { ai, data },
+            Some(declared) => TransportEvent::DataTooLong {
+                ai,
+                data,
+                declared: Some(declared),
+            },
+        })
     }
 
     /// The largest `A_PDU` the peer will accept, where it has advertised one.

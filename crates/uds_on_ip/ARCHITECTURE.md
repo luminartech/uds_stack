@@ -750,11 +750,6 @@ ships. It has been replaced rather than amended.
   `DiagnosticSessionControl::leaves_running_software`; there is no mechanism,
   and a client that needs the close must not suppress the response. `11 81`,
   a suppressed reset, is the same: no `51` is sent, so no close is made.
-- **With several testers, any close ends the exchange in progress.**
-  `TransportEvent::Closed` carries no address, and `uds_services::Server` ends
-  the exchange it is serving on any `Closed`, so a second tester leaving
-  abandons the first tester's request. Correct with one tester (`MCTS = 1`);
-  with more, the seam needs to say whose connection closed.
 - **A reset is not executed on its confirmation.** REQ 7.11 orders the close
   before the reset. This crate holds the confirmation back until the close is
   made, but `uds_services` has no hook that runs the reset on that confirmation,

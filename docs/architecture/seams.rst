@@ -525,6 +525,11 @@ The transport seam
    itself. A suppressed session change sends no response, so nothing carries the flag and
    the connection drops unannounced; that is recorded at the method, with no mechanism.
 
+   *``Closed`` gained ``peer: Address``.* A ``DoIP`` server carries several testers'
+   connections behind one transport, and the driver ended the exchange it was serving on any
+   close, so one tester leaving abandoned another's request. Naming the peer lets it end
+   only the exchange the close belongs to.
+
    *``now_ms() -> u32`` became ``now() -> Timestamp``.* Same obligation, a type that carries
    ``UDSS_LLR_0019``'s modular arithmetic with it.
 
@@ -557,9 +562,11 @@ The transport seam
    software, which the driver marks ``AfterSend::ServerLeaves`` — so an expected close is a
    step in a prescribed sequence and not a failure. Typing
    it as an error would put a conformant flow into the branch ``UDSSVC_ARCH_0016`` argues
-   callers learn to ignore — the same mistake, one seam lower. It carries whether the close
-   was expected and nothing more, and that is informational: re-establishing the connection
-   is never this crate's. ISO 13400-2:2019 REQ 8.DoIP-144 puts the routing activation
+   callers learn to ignore — the same mistake, one seam lower. It carries whose connection
+   closed and whether the close was expected. The peer scopes it: a server serving one
+   client's request while another client's connection closes ends nothing, and a transport
+   that cannot name a connection's peer reports no close for it. Whether it was expected is
+   informational: re-establishing the connection is never this crate's. ISO 13400-2:2019 REQ 8.DoIP-144 puts the routing activation
    request on the client entity, so a server is reconnected *to* and never reconnects, and
    a client's own reconnection is its transport's business below this seam. A transport
    with no connections never emits it, exactly as one that never truncates never emits

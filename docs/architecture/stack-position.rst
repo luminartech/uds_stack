@@ -334,8 +334,8 @@ Scope
      luminartech/uds_stack#19, together with recovery after an error.
    * **Waiting out a refused final response is unbounded.** A final response refused
      because its association, or every association, still awaits a confirmation is
-     resubmitted once that confirmation arrives. The wait ends on the confirmation, a
-     ``Closed`` or a transport error and on nothing else, which rests on the transport's
+     resubmitted once that confirmation arrives. The wait ends on the confirmation, the
+     requesting client's ``Closed`` or a transport error and on nothing else, which rests on the transport's
      assumption of use that every accepted ``t_data_req`` is confirmed
      (``UDSS_LLR_0060``).
    * **A final response refused for any other cause, or refused again after that wait,

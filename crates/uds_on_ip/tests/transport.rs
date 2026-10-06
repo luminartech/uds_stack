@@ -100,8 +100,8 @@ impl From<TransportEvent<'_>> for Seen {
             TransportEvent::DataConf { ai, result } => {
                 Self::Bare(TransportEvent::DataConf { ai, result })
             }
-            TransportEvent::Closed { expected } => {
-                Self::Bare(TransportEvent::Closed { expected })
+            TransportEvent::Closed { peer, expected } => {
+                Self::Bare(TransportEvent::Closed { peer, expected })
             }
             TransportEvent::Deadline => Self::Bare(TransportEvent::Deadline),
         }
@@ -370,7 +370,13 @@ fn a_tester_leaving_while_owed_the_prescribed_close_is_expected() {
     });
     respond(&mut t, &[0x51, 0x01]);
 
-    assert_eq!(next(&mut t), TransportEvent::Closed { expected: true });
+    assert_eq!(
+        next(&mut t),
+        TransportEvent::Closed {
+            peer: request_ai().sa,
+            expected: true,
+        }
+    );
     assert_eq!(
         next(&mut t),
         TransportEvent::DataConf {
@@ -463,7 +469,13 @@ fn a_tester_leaving_while_owed_the_session_close_is_expected() {
     });
     respond_leaving(&mut t, &[0x50, 0x02, 0x00, 0x32, 0x01, 0xF4]);
 
-    assert_eq!(next(&mut t), TransportEvent::Closed { expected: true });
+    assert_eq!(
+        next(&mut t),
+        TransportEvent::Closed {
+            peer: request_ai().sa,
+            expected: true,
+        }
+    );
 }
 
 /// A tester that leaves during an ordinary exchange is not in any flow the standard
@@ -473,7 +485,13 @@ fn a_tester_leaving_mid_service_is_an_unexpected_close() {
     let mut t = indicated_by(&[0x22, 0xF1, 0x90], |entity| {
         entity.script.push_back(Tester::Leaves(TESTER));
     });
-    assert_eq!(next(&mut t), TransportEvent::Closed { expected: false });
+    assert_eq!(
+        next(&mut t),
+        TransportEvent::Closed {
+            peer: request_ai().sa,
+            expected: false,
+        }
+    );
 }
 
 /// An entity reporting a request from outside the buffer it was lent is refused,
@@ -485,6 +503,23 @@ fn a_pdu_outside_the_lent_buffer_is_an_error() {
     assert!(matches!(
         block_on(t.next_event(&mut buffer, None)),
         Err(Error::PduOutsideBuffer)
+    ));
+}
+
+/// A connection whose tester never sent a diagnostic message closes unreported: no
+/// tester is known to have spoken on it, so no exchange can be waiting on it, and a
+/// `Closed` naming no peer would end someone else's.
+#[test]
+fn a_close_with_no_known_tester_is_not_reported() {
+    let mut t = transport([
+        Tester::Connects(TESTER),
+        Tester::SendsUnmodelled(TESTER, 0x8004, vec![0x01]),
+        Tester::Leaves(TESTER),
+    ]);
+    let mut buffer = [0u8; 16];
+    assert!(matches!(
+        block_on(t.next_event(&mut buffer, None)),
+        Err(Error::Entity(Fault::Exhausted))
     ));
 }
 

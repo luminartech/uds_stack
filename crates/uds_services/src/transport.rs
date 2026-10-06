@@ -76,7 +76,7 @@ pub enum TransportEvent<'b> {
         /// The record, in the buffer the driver supplied.
         data: &'b [u8],
     },
-    /// The connection went away.
+    /// The connection to `peer` went away.
     ///
     /// ISO 14229-5:2022 REQ 7.9 and REQ 7.11 make a close **part of the normal
     /// `DiagnosticSessionControl` and `ECUReset` flows**: the server initiates one after
@@ -86,6 +86,12 @@ pub enum TransportEvent<'b> {
     /// A transport with no connections never emits this, exactly as one that never
     /// truncates never emits [`Self::DataTooLong`].
     Closed {
+        /// The peer whose connection closed: for a server, the client whose requests
+        /// it carried. Only an exchange with this peer ends; a transport carrying
+        /// several peers' connections reports each close as its own peer's, and one
+        /// that cannot name the peer of a connection reports no close for it, because
+        /// nothing is waiting on a connection whose peer never spoke.
+        peer: Address,
         /// Whether the close was one the standard prescribes.
         ///
         /// **Informational: re-establishing the connection is never this crate's.**
