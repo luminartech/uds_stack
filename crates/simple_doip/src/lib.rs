@@ -65,7 +65,8 @@
 //!    - `edge-nal-embassy` 0.9.0 meets it for `read`, `write` and `readable` but **not
 //!      for `accept`**, which creates its socket inside the future: a cancelled `accept`
 //!      drops a connection that may already be established. An entity on embassy-net
-//!      accepts through an adapter over embassy-net's own `TcpSocket` instead.
+//!      accepts through an adapter over embassy-net's own `TcpSocket` instead; the
+//!      repository's `examples/embassy-net-entity` crate is one.
 //! 4. **Reads and writes that wait on nothing else.** A `read` after `readable` has
 //!    reported data completes with it, and a `write` sends what it accepts without
 //!    waiting for `embedded_io_async::Write::flush`, which this feature never calls. A
