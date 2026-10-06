@@ -10,7 +10,7 @@
 use uds_protocol::NegativeResponseCode as Nrc;
 use uds_services::pipeline::settle;
 use uds_services::{
-    Access, Address, Ai, ClearDiagnosticInformation, CommunicationControl,
+    Access, Address, AfterSend, Ai, ClearDiagnosticInformation, CommunicationControl,
     CommunicationControlType, CommunicationType, ControlDtcSetting, DataIdentifier, Delay,
     DiagnosticSessionType as S, DtcRecord, DtcReportKind, DtcSettingType, DtcStatusMask,
     EcuReset, KeyVerdict, Levels, Mtype, ProtocolState, ReadDtcInfoReportType,
@@ -145,6 +145,9 @@ impl uds_services::DiagnosticSessionControl for Ecu {
     }
     fn supported_from(&self, _s: S, _active: S) -> bool {
         true
+    }
+    fn leaves_running_software(&self, _s: S) -> bool {
+        false
     }
     fn timing(&self, _s: S) -> SessionTiming {
         SessionTiming {
@@ -543,7 +546,12 @@ struct NoTransport;
 
 impl uds_services::UdsTransport for NoTransport {
     type Error = ();
-    async fn t_data_req(&mut self, _ai: Ai, _d: &[u8]) -> Result<(), ()> {
+    async fn t_data_req(
+        &mut self,
+        _ai: Ai,
+        _d: &[u8],
+        _after: AfterSend,
+    ) -> Result<(), ()> {
         Ok(())
     }
     async fn next_event<'b>(

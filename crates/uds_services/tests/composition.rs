@@ -16,15 +16,15 @@ use static_cell::ConstStaticCell;
 use uds_protocol::NegativeResponseCode as Nrc;
 use uds_services::pipeline::settle;
 use uds_services::{
-    Access, Address, Ai, Answer, ClearDiagnosticInformation, ClientSet, ClientStorage,
-    CommunicationControl, CommunicationControlType, CommunicationType, DataIdentifier,
-    DataTransfer, Delay, DiagnosticSessionType, DtcRecord, DtcReportKind, DtcStatusMask,
-    KeyVerdict, Mtype, PhysicalKeepAlive, ReadDataByIdentifier, ReadDtcInfoReportType,
-    ReadDtcInfoSubFunction, ReadDtcInformation, Received, RecordError, Reloads, Response,
-    ResponseSink, SecurityAccess, SecurityLevel, SecurityPolicy, ServerParams, ServiceSet,
-    SessionTiming, SessionTransition, Sessions, Sink, Storage, SubnetNumber, TaType,
-    TesterPresent, Timestamp, TransferRequest, TransportEvent, UdsServiceType,
-    UdsTransport, uds_client, uds_server,
+    Access, Address, AfterSend, Ai, Answer, ClearDiagnosticInformation, ClientSet,
+    ClientStorage, CommunicationControl, CommunicationControlType, CommunicationType,
+    DataIdentifier, DataTransfer, Delay, DiagnosticSessionType, DtcRecord, DtcReportKind,
+    DtcStatusMask, KeyVerdict, Mtype, PhysicalKeepAlive, ReadDataByIdentifier,
+    ReadDtcInfoReportType, ReadDtcInfoSubFunction, ReadDtcInformation, Received,
+    RecordError, Reloads, Response, ResponseSink, SecurityAccess, SecurityLevel,
+    SecurityPolicy, ServerParams, ServiceSet, SessionTiming, SessionTransition, Sessions,
+    Sink, Storage, SubnetNumber, TaType, TesterPresent, Timestamp, TransferRequest,
+    TransportEvent, UdsServiceType, UdsTransport, uds_client, uds_server,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -239,6 +239,9 @@ impl uds_services::DiagnosticSessionControl for Ecu {
     ) -> bool {
         true
     }
+    fn leaves_running_software(&self, _s: DiagnosticSessionType) -> bool {
+        false
+    }
     fn timing(&self, _s: DiagnosticSessionType) -> SessionTiming {
         SessionTiming {
             p2_server_max_ms: 50,
@@ -259,7 +262,12 @@ struct FakeTransport;
 
 impl UdsTransport for FakeTransport {
     type Error = ();
-    async fn t_data_req(&mut self, _ai: Ai, _d: &[u8]) -> Result<(), ()> {
+    async fn t_data_req(
+        &mut self,
+        _ai: Ai,
+        _d: &[u8],
+        _after: AfterSend,
+    ) -> Result<(), ()> {
         Ok(())
     }
     async fn next_event<'b>(

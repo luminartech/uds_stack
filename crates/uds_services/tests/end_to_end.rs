@@ -10,7 +10,7 @@ use core::future::{Future, poll_fn, ready};
 use core::task::Poll;
 use uds_protocol::NegativeResponseCode as Nrc;
 use uds_services::{
-    Address, Ai, DataIdentifier, Delay, DiagnosticSessionControl,
+    Address, AfterSend, Ai, DataIdentifier, Delay, DiagnosticSessionControl,
     DiagnosticSessionType as S, KeyVerdict, Mtype, ReadDataByIdentifier, RecordError,
     Reloads, ResponseSink, SResult, SecurityAccess, SecurityLevel, SecurityPolicy,
     ServerParams, SessionTiming, SessionTransition, Sessions, Sink, TaType, TesterPresent,
@@ -91,6 +91,8 @@ struct Scripted {
     sent_count: usize,
     /// Each transmission's addressing.
     sent_ai: [Option<Ai>; MAX_SENT],
+    /// What each transmission said follows it.
+    sent_then: [Option<AfterSend>; MAX_SENT],
     /// How many `Deadline`s were reported: one per `At` that reached the driver's deadline.
     deadlines: usize,
 }
@@ -114,6 +116,7 @@ impl Scripted {
             sent_after: [0; MAX_SENT],
             sent_count: 0,
             sent_ai: [None; MAX_SENT],
+            sent_then: [None; MAX_SENT],
             deadlines: 0,
         }
     }
@@ -122,6 +125,9 @@ impl Scripted {
             .get(i)
             .and_then(|(buf, n)| buf.get(..*n))
             .unwrap_or(&[])
+    }
+    fn sent_then(&self, i: usize) -> Option<AfterSend> {
+        self.sent_then.get(i).copied().flatten()
     }
     fn sent_ai(&self, i: usize) -> Option<Ai> {
         self.sent_ai.get(i).copied().flatten()
@@ -203,7 +209,15 @@ impl Scripted {
 // future is always awaited at once, so `ready` serves.
 impl UdsTransport for Scripted {
     type Error = ();
-    fn t_data_req(&mut self, ai: Ai, data: &[u8]) -> impl Future<Output = Result<(), ()>> {
+    fn t_data_req(
+        &mut self,
+        ai: Ai,
+        data: &[u8],
+        after: AfterSend,
+    ) -> impl Future<Output = Result<(), ()>> {
+        if let Some(then) = self.sent_then.get_mut(self.sent_count) {
+            *then = Some(after);
+        }
         assert!(
             ai == to_tester() || ai == to(OTHER),
             "responses go back to a tester, physically, from the ECU: {ai:?}"
@@ -287,6 +301,8 @@ struct Ecu {
     attempts: u8,
     /// How many times a delay was started.
     delays_started: u8,
+    /// The session whose entry leaves the software this server runs, if any.
+    leaves: Option<S>,
 }
 impl Ecu {
     const fn new() -> Self {
@@ -297,6 +313,7 @@ impl Ecu {
             refuse: None,
             attempts: 0,
             delays_started: 0,
+            leaves: None,
         }
     }
 }
@@ -326,6 +343,9 @@ impl DiagnosticSessionControl for Ecu {
     fn supported_from(&self, s: S, active: S) -> bool {
         !matches!(s, S::ProgrammingSession)
             || matches!(active, S::ExtendedDiagnosticSession)
+    }
+    fn leaves_running_software(&self, s: S) -> bool {
+        self.leaves == Some(s)
     }
     fn timing(&self, _s: S) -> SessionTiming {
         SessionTiming {
@@ -450,6 +470,39 @@ fn start_up_starts_an_owed_delay_once() {
     assert_eq!(s.services().delays_started, 0);
     run(&mut s);
     assert_eq!(usize::from(s.services().delays_started), levels);
+}
+
+/// W4 addendum item 3, ISO 14229-5:2022 REQ 7.9 — the final positive response to a
+/// `DiagnosticSessionControl` whose session leaves the running software is the one
+/// message sent `ServerLeaves`; the response entering a session that does not leave is
+/// `Continue`, and so is the negative response to the same leaving session refused from
+/// the default one (0x7E).
+#[test]
+fn only_the_response_entering_a_leaving_session_says_the_server_leaves() {
+    let mut s = EcuServer::new(
+        Ecu {
+            leaves: Some(S::ProgrammingSession),
+            ..Ecu::new()
+        },
+        Scripted::new(&[
+            Ev::Ind(TaType::Physical, &[0x10, 0x02]),
+            Ev::Conf(SResult::Ok),
+            Ev::Ind(TaType::Physical, &[0x10, 0x03]),
+            Ev::Conf(SResult::Ok),
+            Ev::Ind(TaType::Physical, &[0x10, 0x02]),
+            Ev::Conf(SResult::Ok),
+        ]),
+        ECU,
+        PARAMS,
+    );
+    run(&mut s);
+    let t = s.transport();
+    assert_eq!(t.sent(0), &[0x7F, 0x10, 0x7E]);
+    assert_eq!(t.sent_then(0), Some(AfterSend::Continue));
+    assert_eq!(t.sent(1), &[0x50, 0x03, 0x00, 0x32, 0x01, 0xF4]);
+    assert_eq!(t.sent_then(1), Some(AfterSend::Continue));
+    assert_eq!(t.sent(2), &[0x50, 0x02, 0x00, 0x32, 0x01, 0xF4]);
+    assert_eq!(t.sent_then(2), Some(AfterSend::ServerLeaves));
 }
 
 #[test]

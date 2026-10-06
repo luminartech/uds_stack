@@ -105,6 +105,29 @@ pub trait DiagnosticSessionControl {
     /// * `session` - the session being entered; see [`DiagnosticSessionType`].
     fn timing(&self, session: DiagnosticSessionType) -> SessionTiming;
 
+    /// Whether entering `session` leaves the software this server is running.
+    ///
+    /// ISO 14229-1:2020 10.2.2.2 Table 25 lets the programming session run in boot
+    /// software, left only by `ECUReset`, `10 01` or a session timeout, with the
+    /// application software restarted where it is valid. So it is each binary's to say:
+    /// an application jumping to its bootloader answers `true` for
+    /// [`ProgrammingSession`](DiagnosticSessionType::ProgrammingSession), and the
+    /// bootloader `true` for [`DefaultSession`](DiagnosticSessionType::DefaultSession)
+    /// where valid application software exists. A server that programs from within its
+    /// application answers `false` for every session. [`crate::Server`] then hands the
+    /// final positive response [`AfterSend::ServerLeaves`](crate::AfterSend::ServerLeaves),
+    /// on which a connection-oriented transport closes (ISO 14229-5:2022 REQ 7.9).
+    ///
+    /// **A suppressed session change sends no response**, so no message carries the fact
+    /// and no orderly close precedes the departure: a server left by `10 82` drops its
+    /// connection unannounced. Nothing here prevents that; a client that needs the close
+    /// must not suppress the response.
+    ///
+    /// # Arguments
+    ///
+    /// * `session` - the session being entered; see [`DiagnosticSessionType`].
+    fn leaves_running_software(&self, session: DiagnosticSessionType) -> bool;
+
     /// Called after the positive response, and on `tS3_Server` expiry.
     ///
     /// ``UDSSVC_ARCH_0038``. The application applies what clause 10.2 Figure 7 owes the
@@ -354,6 +377,9 @@ mod tests {
         ) -> bool {
             !matches!(session, DiagnosticSessionType::ProgrammingSession)
                 || matches!(active, DiagnosticSessionType::ExtendedDiagnosticSession)
+        }
+        fn leaves_running_software(&self, _s: DiagnosticSessionType) -> bool {
+            false
         }
         fn timing(&self, _s: DiagnosticSessionType) -> SessionTiming {
             SessionTiming {

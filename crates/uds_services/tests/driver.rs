@@ -7,9 +7,9 @@
 //! `end_to_end.rs`'s; these are the cases that need a fixture of their own.
 
 use uds_services::{
-    Address, Ai, DiagnosticSessionType as S, Mtype, NegativeResponseCode as Nrc, Reloads,
-    ResponseSink, SResult, ServerParams, SessionTiming, SessionTransition, Sink, TaType,
-    Timestamp, TransportEvent, UdsTransport, uds_server,
+    Address, AfterSend, Ai, DiagnosticSessionType as S, Mtype, NegativeResponseCode as Nrc,
+    Reloads, ResponseSink, SResult, ServerParams, SessionTiming, SessionTransition, Sink,
+    TaType, Timestamp, TransportEvent, UdsTransport, uds_server,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -58,6 +58,9 @@ impl uds_services::DiagnosticSessionControl for Ecu {
     fn supported_from(&self, _s: S, _active: S) -> bool {
         true
     }
+    fn leaves_running_software(&self, _s: S) -> bool {
+        false
+    }
     fn timing(&self, _s: S) -> SessionTiming {
         SessionTiming {
             p2_server_max_ms: 50,
@@ -79,6 +82,7 @@ impl UdsTransport for Spurious {
         &mut self,
         _ai: Ai,
         _d: &[u8],
+        _after: AfterSend,
     ) -> impl core::future::Future<Output = Result<(), ()>> {
         core::future::ready(Ok(()))
     }
@@ -300,6 +304,7 @@ impl UdsTransport for Script {
         &mut self,
         ai: Ai,
         data: &[u8],
+        _after: AfterSend,
     ) -> impl core::future::Future<Output = Result<(), ()>> {
         // A frame that does not fit is recorded with no bytes, so a test comparing them
         // fails rather than passing on a truncation.
@@ -770,6 +775,9 @@ impl uds_services::DiagnosticSessionControl for Timed {
     /// The extended session is entered from the default one only.
     fn supported_from(&self, s: S, active: S) -> bool {
         !(s == S::ExtendedDiagnosticSession && active == S::ExtendedDiagnosticSession)
+    }
+    fn leaves_running_software(&self, _s: S) -> bool {
+        false
     }
     fn timing(&self, s: S) -> SessionTiming {
         match s {

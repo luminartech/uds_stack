@@ -473,7 +473,7 @@ seams earn their keep.
      S --> L : a reaction
      loop drain through outputs()
        S --> L : ServerOutput::Transmit { ai, data }
-       L -> I : t_data_req(ai, data)
+       L -> I : t_data_req(ai, data, after)
        I -> D : response bytes
        D -> T : DoIP diagnostic message
      end

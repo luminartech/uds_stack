@@ -250,6 +250,19 @@ macro_rules! __uds_session_timing {
     ($self:ident, $state:ident, $svc:ident) => {};
 }
 
+/// `ServiceSet::leaves_running_software` for one listed service: only
+/// `DiagnosticSessionControl` changes session, and any other listed service emits nothing.
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __uds_leaves {
+    ($self:ident, $session:ident, DiagnosticSessionControl) => {
+        return <Self as $crate::DiagnosticSessionControl>::leaves_running_software(
+            $self, $session,
+        );
+    };
+    ($self:ident, $session:ident, $svc:ident) => {};
+}
+
 /// Annex I transition 1 for one listed service, from `ServiceSet::start_up`: only
 /// `SecurityAccess` owes anything at start-up.
 #[doc(hidden)]
@@ -478,7 +491,7 @@ macro_rules! __uds_stage {
 ///
 /// ```
 /// # use uds_services::{
-/// #     Address, Ai, DataIdentifier, DataTransfer, ReadDataByIdentifier, RecordError,
+/// #     Address, AfterSend, Ai, DataIdentifier, DataTransfer, ReadDataByIdentifier, RecordError,
 /// #     Reloads, ResponseSink, ServerParams, ServiceSet, Storage, Timestamp,
 /// #     TransferRequest, TransportEvent, UdsTransport, uds_server,
 /// # };
@@ -546,7 +559,9 @@ macro_rules! __uds_stage {
 /// #
 /// # impl UdsTransport for DoIpTransport {
 /// #     type Error = ();
-/// #     async fn t_data_req(&mut self, _ai: Ai, _data: &[u8]) -> Result<(), ()> { Ok(()) }
+/// #     async fn t_data_req(&mut self, _: Ai, _: &[u8], _: AfterSend) -> Result<(), ()> {
+/// #         Ok(())
+/// #     }
 /// #     async fn next_event<'b>(
 /// #         &mut self,
 /// #         _buffer: &'b mut [u8],
@@ -722,6 +737,20 @@ macro_rules! uds_server {
                     $crate::pipeline::discarding_seed(state, unsettled)
                 }
 
+                #[allow(
+                    unreachable_code,
+                    unused_variables,
+                    reason = "only an assembly with DiagnosticSessionControl reads it, \
+                              and returns before the fall-through"
+                )]
+                fn leaves_running_software(
+                    &self,
+                    session: $crate::DiagnosticSessionType,
+                ) -> bool {
+                    $( $crate::__uds_leaves!(self, session, $svc); )+
+                    false
+                }
+
                 fn start_up(&mut self, _state: &mut Self::State) {
                     $( $crate::__uds_start_up!(self, $svc); )+
                 }
@@ -798,7 +827,7 @@ macro_rules! uds_server {
 ///
 /// ```
 /// # use uds_services::{
-/// #     Ai, DataIdentifier, PhysicalKeepAlive, RecordError, Reloads, Timestamp,
+/// #     AfterSend, Ai, DataIdentifier, PhysicalKeepAlive, RecordError, Reloads, Timestamp,
 /// #     TransportEvent, UdsTransport, uds_client,
 /// # };
 /// # #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -826,7 +855,9 @@ macro_rules! uds_server {
 /// # struct DoIpTransport;
 /// # impl UdsTransport for DoIpTransport {
 /// #     type Error = ();
-/// #     async fn t_data_req(&mut self, _ai: Ai, _d: &[u8]) -> Result<(), ()> { Ok(()) }
+/// #     async fn t_data_req(&mut self, _: Ai, _: &[u8], _: AfterSend) -> Result<(), ()> {
+/// #         Ok(())
+/// #     }
 /// #     async fn next_event<'b>(
 /// #         &mut self,
 /// #         _b: &'b mut [u8],

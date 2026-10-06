@@ -145,7 +145,8 @@ pub use automotive_wire_codec::{Encode, InsufficientBuffer, Sink, WriteError};
 
 pub mod transport;
 pub use transport::{
-    Address, Ai, Mtype, Reloads, SResult, TaType, Timestamp, TransportEvent, UdsTransport,
+    Address, AfterSend, Ai, Mtype, Reloads, SResult, TaType, Timestamp, TransportEvent,
+    UdsTransport,
 };
 
 /// The keep-alive modes a client is built in, from `uds_session`.

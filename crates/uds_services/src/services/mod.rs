@@ -313,6 +313,18 @@ pub trait ServiceSet: crate::sealed::Sealed {
     /// * `state` - the [`ProtocolState`] of this assembly, which holds the session in force
     fn session_timing(&self, state: &Self::State) -> Option<SessionTiming>;
 
+    /// Whether entering `session` leaves the software this server is running, which
+    /// [`crate::Server`] tells the transport with the response that selects it.
+    ///
+    /// [`DiagnosticSessionControl::leaves_running_software`], or `false` where the
+    /// assembly has no `DiagnosticSessionControl` and so never changes session.
+    ///
+    /// # Arguments
+    ///
+    /// * `session` - the session a positive response selects; see
+    ///   [`DiagnosticSessionType`].
+    fn leaves_running_software(&self, session: DiagnosticSessionType) -> bool;
+
     /// Whether this server implements `service` at all.
     ///
     /// ``UDSSVC_ARCH_0006`` — Figure 5's first mandatory check, and the one only the

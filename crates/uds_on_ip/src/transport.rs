@@ -13,7 +13,7 @@
 use crate::error::Error;
 use crate::mapping::target_of;
 use crate::profile::{ConnectionAction, after_sending};
-use uds_services::{TransportEvent, UdsTransport};
+use uds_services::{AfterSend, TransportEvent, UdsTransport};
 use uds_session::{Ai, Reloads, Timestamp};
 
 /// ISO 14229-5 over `DoIP`.
@@ -159,7 +159,12 @@ impl<S> UdsTransport for DoIpTransport<S> {
         clippy::todo,
         reason = "unwritten body; the allow is the record that it is outstanding"
     )]
-    async fn t_data_req(&mut self, ai: Ai, data: &[u8]) -> Result<(), Error> {
+    async fn t_data_req(
+        &mut self,
+        ai: Ai,
+        data: &[u8],
+        _after: AfterSend,
+    ) -> Result<(), Error> {
         let _target = target_of(ai)?;
         self.record_what_follows(data);
         todo!(

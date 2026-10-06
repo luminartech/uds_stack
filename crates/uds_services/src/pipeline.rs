@@ -994,6 +994,9 @@ mod tests {
             !matches!(s, S::ProgrammingSession)
                 || matches!(active, S::ExtendedDiagnosticSession)
         }
+        fn leaves_running_software(&self, _s: S) -> bool {
+            false
+        }
         fn timing(&self, _s: S) -> crate::SessionTiming {
             crate::SessionTiming {
                 p2_server_max_ms: 50,
@@ -1078,6 +1081,9 @@ mod tests {
         }
         fn supported_from(&self, _s: S, _active: S) -> bool {
             true
+        }
+        fn leaves_running_software(&self, _s: S) -> bool {
+            false
         }
         fn timing(&self, _s: S) -> crate::SessionTiming {
             crate::SessionTiming {
