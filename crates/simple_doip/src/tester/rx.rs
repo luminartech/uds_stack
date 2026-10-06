@@ -1,3 +1,7 @@
+// The lengths here come from the peer, so their arithmetic is held to the standard the
+// crate root relaxes.
+#![deny(clippy::arithmetic_side_effects)]
+
 use crate::messages::{Header, MessageError};
 use crate::wire::Decode;
 use crate::{RawFrame, try_frame};
@@ -39,11 +43,14 @@ impl<const N: usize> RxBuffer<N> {
 
     /// Records that `read` bytes were read into [`Self::free`].
     pub(super) fn filled(&mut self, read: usize) {
+        let read = read.min(N.saturating_sub(self.len));
         let skipped = read.min(self.discard);
+        let kept = read.saturating_sub(skipped);
+        let start = self.len.saturating_add(skipped);
         self.buf
-            .copy_within(self.len + skipped..self.len + read, self.len);
-        self.discard -= skipped;
-        self.len += read - skipped;
+            .copy_within(start..start.saturating_add(kept), self.len);
+        self.discard = self.discard.saturating_sub(skipped);
+        self.len = self.len.saturating_add(kept);
     }
 
     pub(super) fn next(&self) -> Result<Next<'_>, MessageError> {
@@ -61,14 +68,14 @@ impl<const N: usize> RxBuffer<N> {
     pub(super) fn consume(&mut self, consumed: usize) {
         let consumed = consumed.min(self.len);
         self.buf.copy_within(consumed..self.len, 0);
-        self.len -= consumed;
+        self.len = self.len.saturating_sub(consumed);
     }
 
     /// Drops the buffered start of the oversized frame `header` describes, and the rest
     /// of it as it arrives.
     pub(super) fn skip_oversized(&mut self, header: &Header) {
-        let frame = Header::SIZE + header.payload_length as usize;
-        self.discard = frame - self.len;
+        let buffered = self.len.saturating_sub(Header::SIZE);
+        self.discard = (header.payload_length as usize).saturating_sub(buffered);
         self.len = 0;
     }
 
@@ -195,6 +202,25 @@ mod tests {
             panic!("expected the frame after the oversized one");
         };
         assert_eq!(frame.payload.last(), Some(&0x55));
+    }
+
+    /// A length the peer chose at the very top of the `u32` range is skipped like any
+    /// other, with no arithmetic overflowing on a 32-bit target.
+    #[test]
+    fn the_largest_declared_length_is_skipped_without_overflow() {
+        let mut rx = RxBuffer::<24>::new();
+        feed(&mut rx, &[0x03, 0xFC, 0x80, 0x01, 0xFF, 0xFF, 0xFF, 0xFF]);
+        feed(&mut rx, &[0xAA; 16]);
+        let Next::Oversized { header, .. } = rx.next().unwrap() else {
+            panic!("expected an oversized frame");
+        };
+
+        rx.skip_oversized(&header);
+
+        assert_eq!(rx.discard, 0xFFFF_FFFF - 16);
+        feed(&mut rx, &[0xAA; 30]);
+        assert_eq!(rx.next().unwrap(), Next::NeedMore);
+        assert_eq!(rx.len, 0);
     }
 
     #[test]
