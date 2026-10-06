@@ -36,6 +36,19 @@ pub enum SecurityPolicy {
     },
 }
 
+/// The state of a level's delay timer, as [`SecurityAccess::delay`] reports it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum Delay {
+    /// The delay is running: a `requestSeed` is `requiredTimeDelayNotExpired` (0x37).
+    Running,
+    /// The delay has run out since [`SecurityAccess::delay`] last reported it. Reported
+    /// once per expiry: the next report is [`Delay::Idle`].
+    Expired,
+    /// No delay is running, and none has run out unreported.
+    #[default]
+    Idle,
+}
+
 /// One security level: the `requestSeed`/`sendKey` pair, not a raw sub-function.
 ///
 /// Clause 10.4.2 requires `sendKey` to be `requestSeed + 1`. Holding the pair makes that
@@ -167,11 +180,21 @@ pub trait SecurityAccess {
     /// Store the count this crate computed.
     fn store_attempts(&mut self, level: SecurityLevel, count: u8);
 
-    /// Whether a delay is currently running for `level`.
+    /// The state of `level`'s delay timer, which the application runs.
     ///
-    /// Figure I.1 transition 4 — a request arriving while the delay runs is answered
-    /// `requiredTimeDelayNotExpired` (0x37) without consulting the key.
-    fn delay_running(&self, level: SecurityLevel) -> bool;
+    /// Asked only for a level whose [`Self::policy`] keeps a delay: at start-up, and on
+    /// each `requestSeed` once its pre-conditions are met. [`Delay::Running`] answers the
+    /// request `requiredTimeDelayNotExpired` (0x37) (Table I.2 transition 4).
+    /// [`Delay::Expired`] has this crate reset the attempt count, as the timer's
+    /// expiry does in Table I.2. [`Delay::Idle`] with the stored count at the limit — the
+    /// state after a restart, which a RAM timer does not survive — has this crate call
+    /// [`Self::start_delay`] (transition 1, "Start `Delay_Timer` … if required on start
+    /// up"). So a lockout outlives a power cycle.
+    ///
+    /// # Arguments
+    ///
+    /// * `level` - the level asked about; see [`SecurityLevel`].
+    fn delay(&mut self, level: SecurityLevel) -> Delay;
 
     /// Begin the delay this crate decided is owed.
     fn start_delay(&mut self, level: SecurityLevel);

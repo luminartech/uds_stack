@@ -18,7 +18,7 @@ use uds_services::pipeline::settle;
 use uds_services::{
     Access, Address, Ai, Answer, ClearDiagnosticInformation, ClientSet, ClientStorage,
     CommunicationControl, CommunicationControlType, CommunicationType, DataIdentifier,
-    DataTransfer, DiagnosticSessionType, DtcRecord, DtcReportKind, DtcStatusMask,
+    DataTransfer, Delay, DiagnosticSessionType, DtcRecord, DtcReportKind, DtcStatusMask,
     KeyVerdict, Mtype, PhysicalKeepAlive, ReadDataByIdentifier, ReadDtcInfoReportType,
     ReadDtcInfoSubFunction, ReadDtcInformation, Received, RecordError, Reloads, Response,
     ResponseSink, SecurityAccess, SecurityLevel, SecurityPolicy, ServerParams, ServiceSet,
@@ -190,8 +190,12 @@ impl SecurityAccess for Ecu {
     fn store_attempts(&mut self, _l: SecurityLevel, c: u8) {
         self.attempts = c;
     }
-    fn delay_running(&self, _l: SecurityLevel) -> bool {
-        self.delay
+    fn delay(&mut self, _l: SecurityLevel) -> Delay {
+        if self.delay {
+            Delay::Running
+        } else {
+            Delay::Idle
+        }
     }
     fn start_delay(&mut self, _l: SecurityLevel) {
         self.delay = true;

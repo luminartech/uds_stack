@@ -15,7 +15,7 @@ use crate::state::State;
 use crate::{Access, Responded, ResponseSink, Sessions, Unsettled};
 use crate::{
     ClearDiagnosticInformation, CommunicationControl, ControlDtcSetting, DataIdentifier,
-    DiagnosticSessionControl, EcuReset, KeyVerdict, ReadDataByIdentifier,
+    Delay, DiagnosticSessionControl, EcuReset, KeyVerdict, ReadDataByIdentifier,
     ReadDtcInformation, RecordError, RoutineControl, RoutineIdentifier, SecurityAccess,
     SecurityLevel, SecurityPolicy, TesterPresent, WriteDataByIdentifier,
 };
@@ -717,7 +717,7 @@ async fn request_seed<A: SecurityAccess>(
     if !services.preconditions_met(level) {
         return Err(NegativeResponseCode::ConditionsNotCorrect);
     }
-    if services.delay_running(level) {
+    if delay_owed(services, level) {
         return Err(NegativeResponseCode::RequiredTimeDelayNotExpired);
     }
     let _ = out.write_all(&[0x67, level.request_seed()]);
@@ -728,18 +728,49 @@ async fn request_seed<A: SecurityAccess>(
         }
         return Ok(());
     }
-    if let SecurityPolicy::Counted {
+    services.seed(level, record, out).await?;
+    state.seed_sent(level);
+    Ok(())
+}
+
+/// Annex I — whether `level` owes a delay now: one is running, or none is and the
+/// stored attempt count is at the limit, which starts it (transition 1). An expired delay
+/// resets the count (Table I.2). False for a level whose policy keeps no delay.
+fn delay_owed<A: SecurityAccess>(services: &mut A, level: SecurityLevel) -> bool {
+    let SecurityPolicy::Counted {
         attempt_limit,
         delay_ms: Some(_),
         ..
     } = services.policy(level)
-        && services.load_attempts(level) >= attempt_limit
-    {
-        services.store_attempts(level, 0);
+    else {
+        return false;
+    };
+    match services.delay(level) {
+        Delay::Running => true,
+        Delay::Expired => {
+            services.store_attempts(level, 0);
+            false
+        }
+        Delay::Idle if services.load_attempts(level) >= attempt_limit => {
+            services.start_delay(level);
+            true
+        }
+        Delay::Idle => false,
     }
-    services.seed(level, record, out).await?;
-    state.seed_sent(level);
-    Ok(())
+}
+
+/// ISO 14229-1:2020 Annex I, Table I.2 transition 1 — at start-up, start the delay of
+/// every level `services` supports whose stored attempt count is at its limit, so a
+/// lockout outlives a restart that a RAM delay timer does not.
+#[doc(hidden)]
+pub fn security_start_up<A: SecurityAccess>(services: &mut A) {
+    for value in (0x01..0x7F).step_by(2) {
+        if let Some(level) = SecurityLevel::from_request_seed(value)
+            && services.sessions(level).is_some()
+        {
+            let _ = delay_owed(services, level);
+        }
+    }
 }
 
 async fn send_key<A: SecurityAccess>(

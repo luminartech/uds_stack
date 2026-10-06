@@ -11,7 +11,7 @@ use uds_protocol::NegativeResponseCode as Nrc;
 use uds_services::pipeline::settle;
 use uds_services::{
     Access, Address, Ai, ClearDiagnosticInformation, CommunicationControl,
-    CommunicationControlType, CommunicationType, ControlDtcSetting, DataIdentifier,
+    CommunicationControlType, CommunicationType, ControlDtcSetting, DataIdentifier, Delay,
     DiagnosticSessionType as S, DtcRecord, DtcReportKind, DtcSettingType, DtcStatusMask,
     EcuReset, KeyVerdict, Levels, Mtype, ProtocolState, ReadDtcInfoReportType,
     ReadDtcInfoSubFunction, ReadDtcInformation, Received, RecordError, ResetType,
@@ -106,8 +106,8 @@ struct Ecu {
     refuse: bool,
     /// Level 0x01's stored attempt count.
     attempts: u8,
-    /// Whether level 0x01's delay is running.
-    delay: bool,
+    /// Level 0x01's delay timer.
+    delay: Delay,
     /// How many times a delay was started.
     delays_started: u8,
     /// The `security_relocked` of the last session transition.
@@ -242,11 +242,18 @@ impl SecurityAccess for Ecu {
     fn store_attempts(&mut self, _l: SecurityLevel, count: u8) {
         self.attempts = count;
     }
-    fn delay_running(&self, level: SecurityLevel) -> bool {
-        self.delay && level.request_seed() == 0x01
+    fn delay(&mut self, level: SecurityLevel) -> Delay {
+        if level.request_seed() != 0x01 {
+            return Delay::Idle;
+        }
+        let delay = self.delay;
+        if delay == Delay::Expired {
+            self.delay = Delay::Idle;
+        }
+        delay
     }
     fn start_delay(&mut self, _l: SecurityLevel) {
-        self.delay = true;
+        self.delay = Delay::Running;
         self.delays_started = self.delays_started.saturating_add(1);
     }
     async fn seed(
@@ -974,7 +981,7 @@ fn security_access_the_data_record_reaches_the_seed() {
 #[test]
 fn security_access_unmet_preconditions_are_0x22_before_the_delay() {
     let mut ecu = Ecu {
-        delay: true,
+        delay: Delay::Running,
         preconditions_unmet: true,
         ..Ecu::default()
     };
@@ -988,7 +995,7 @@ fn security_access_unmet_preconditions_are_0x22_before_the_delay() {
         exchange(&mut ecu, &mut state, &[0x27, 0x01]).as_deref(),
         Some(&[0x7F, 0x27, 0x37][..])
     );
-    ecu.delay = false;
+    ecu.delay = Delay::Expired;
     let _ = exchange(&mut ecu, &mut state, &[0x27, 0x01]);
     let _ = exchange(&mut ecu, &mut state, &RIGHT_KEY);
     ecu.preconditions_unmet = true;
@@ -1037,12 +1044,47 @@ fn security_access_the_attempt_at_the_limit_is_0x36_then_the_delay_is_0x37() {
     );
 }
 
+/// Annex I Table I.2 transition 1 — a restart loses a RAM delay timer but not the
+/// stored attempt count, so a lockout at the limit is not mistaken for an expired delay:
+/// start-up starts the delay again, and the `requestSeed` after it is 0x37. Without
+/// start-up, the first `requestSeed` that finds the count at the limit with no delay
+/// running starts it and is 0x37 too.
+#[test]
+fn security_access_a_lockout_outlives_a_power_cycle() {
+    let mut ecu = Ecu::default();
+    let mut state = extended(&mut ecu);
+    for _ in 0..3 {
+        let _ = exchange(&mut ecu, &mut state, &[0x27, 0x01]);
+        let _ = exchange(&mut ecu, &mut state, &WRONG_KEY);
+    }
+    assert_eq!((ecu.attempts, ecu.delay), (3, Delay::Running));
+
+    ecu.delay = Delay::Idle;
+    let mut state = State::INITIAL;
+    ecu.start_up(&mut state);
+    assert_eq!((ecu.attempts, ecu.delay), (3, Delay::Running));
+    ecu.session_confirmed(&mut state, S::ExtendedDiagnosticSession);
+    assert_eq!(
+        exchange(&mut ecu, &mut state, &[0x27, 0x01]).as_deref(),
+        Some(&[0x7F, 0x27, 0x37][..])
+    );
+
+    ecu.delay = Delay::Idle;
+    let mut state = extended(&mut ecu);
+    assert_eq!(
+        exchange(&mut ecu, &mut state, &[0x27, 0x01]).as_deref(),
+        Some(&[0x7F, 0x27, 0x37][..])
+    );
+    assert_eq!((ecu.attempts, ecu.delay), (3, Delay::Running));
+}
+
 /// Annex I, "Delay Timer Expiration Occurs" — once the delay has run out the count is
 /// reset, so the next wrong key is 0x35 again rather than 0x36.
 #[test]
 fn security_access_an_expired_delay_resets_the_attempt_count() {
     let mut ecu = Ecu {
         attempts: 3,
+        delay: Delay::Expired,
         ..Ecu::default()
     };
     let mut state = extended(&mut ecu);

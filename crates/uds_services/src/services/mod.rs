@@ -33,7 +33,7 @@ pub mod transfer;
 pub use data::{ReadDataByIdentifier, WriteDataByIdentifier};
 pub use dtc::{ClearDiagnosticInformation, DtcReportKind, ReadDtcInformation};
 pub use routine::RoutineControl;
-pub use security::{KeyVerdict, SecurityAccess, SecurityLevel, SecurityPolicy};
+pub use security::{Delay, KeyVerdict, SecurityAccess, SecurityLevel, SecurityPolicy};
 pub use session::{
     CommunicationControl, ControlDtcSetting, DiagnosticSessionControl, EcuReset,
     SessionTiming, TesterPresent,
@@ -258,6 +258,20 @@ pub trait ServiceSet: crate::sealed::Sealed {
         request: Received<'_>,
         out: &mut ResponseSink<'_>,
     ) -> impl core::future::Future<Output = Unsettled>;
+
+    /// The server is starting: what Annex I transition 1 owes at start-up.
+    ///
+    /// [`crate::Server`] calls it once, on its first step, because
+    /// [`Server::new`](crate::Server::new) is a `const fn` and cannot call into the
+    /// application. Emitted by the assembly; where `SecurityAccess` is listed, it starts
+    /// the delay of every level whose stored attempt count is at its limit (see
+    /// [`SecurityAccess::delay`](crate::SecurityAccess::delay)), and otherwise it does
+    /// nothing.
+    ///
+    /// # Arguments
+    ///
+    /// * `state` - the [`ProtocolState`] of this assembly, held by [`crate::Server`]
+    fn start_up(&mut self, state: &mut Self::State);
 
     /// `tS3_Server` expired: return to the default session and tell the application.
     ///

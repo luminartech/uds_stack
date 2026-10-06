@@ -53,6 +53,8 @@ pub struct Server<A: ServiceSet, T: UdsTransport, const PEERS: usize> {
     /// The parameters the server was built with, against which each session's `P2` pair is
     /// checked in debug builds.
     params: ServerParams,
+    /// Whether [`ServiceSet::start_up`] has run.
+    started: bool,
 }
 
 impl<A: ServiceSet, T: UdsTransport, const PEERS: usize> Server<A, T, PEERS> {
@@ -109,6 +111,7 @@ impl<A: ServiceSet, T: UdsTransport, const PEERS: usize> Server<A, T, PEERS> {
             own,
             pending: None,
             params,
+            started: false,
         }
     }
 
@@ -122,6 +125,13 @@ impl<A: ServiceSet, T: UdsTransport, const PEERS: usize> Server<A, T, PEERS> {
     #[must_use]
     pub fn transport(&self) -> &T {
         &self.transport
+    }
+
+    /// Run [`ServiceSet::start_up`] the first time it is called, and never again.
+    fn start_up(&mut self) {
+        if !core::mem::replace(&mut self.started, true) {
+            self.services.start_up(&mut self.state);
+        }
     }
 
     /// Handle one transport event.
@@ -150,6 +160,7 @@ impl<A: ServiceSet, T: UdsTransport, const PEERS: usize> Server<A, T, PEERS> {
     /// [`UdsTransport::Error`] where the transport failed. A negative response is not an
     /// error: it is a response, written into the sink.
     pub async fn step(&mut self) -> Result<(), T::Error> {
+        self.start_up();
         let Buffers {
             in_flight,
             concurrent,

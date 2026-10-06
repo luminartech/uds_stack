@@ -10,11 +10,11 @@ use core::future::{Future, poll_fn, ready};
 use core::task::Poll;
 use uds_protocol::NegativeResponseCode as Nrc;
 use uds_services::{
-    Address, Ai, DataIdentifier, DiagnosticSessionControl, DiagnosticSessionType as S,
-    KeyVerdict, Mtype, ReadDataByIdentifier, RecordError, Reloads, ResponseSink, SResult,
-    SecurityAccess, SecurityLevel, SecurityPolicy, ServerParams, SessionTiming,
-    SessionTransition, Sessions, Sink, TaType, TesterPresent, Timestamp, TransportEvent,
-    UdsTransport, uds_server,
+    Address, Ai, DataIdentifier, Delay, DiagnosticSessionControl,
+    DiagnosticSessionType as S, KeyVerdict, Mtype, ReadDataByIdentifier, RecordError,
+    Reloads, ResponseSink, SResult, SecurityAccess, SecurityLevel, SecurityPolicy,
+    ServerParams, SessionTiming, SessionTransition, Sessions, Sink, TaType, TesterPresent,
+    Timestamp, TransportEvent, UdsTransport, uds_server,
 };
 use uds_session::TransportError;
 
@@ -283,6 +283,10 @@ struct Ecu {
     slow: u8,
     /// What the next `read` answers once it has pended: its record, or this code.
     refuse: Option<Nrc>,
+    /// Every level's stored attempt count.
+    attempts: u8,
+    /// How many times a delay was started.
+    delays_started: u8,
 }
 impl Ecu {
     const fn new() -> Self {
@@ -291,6 +295,8 @@ impl Ecu {
             n: 0,
             slow: 0,
             refuse: None,
+            attempts: 0,
+            delays_started: 0,
         }
     }
 }
@@ -356,13 +362,15 @@ impl SecurityAccess for Ecu {
         }
     }
     fn load_attempts(&self, _l: SecurityLevel) -> u8 {
-        0
+        self.attempts
     }
     fn store_attempts(&mut self, _l: SecurityLevel, _c: u8) {}
-    fn delay_running(&self, _l: SecurityLevel) -> bool {
-        false
+    fn delay(&mut self, _l: SecurityLevel) -> Delay {
+        Delay::Idle
     }
-    fn start_delay(&mut self, _l: SecurityLevel) {}
+    fn start_delay(&mut self, _l: SecurityLevel) {
+        self.delays_started = self.delays_started.saturating_add(1);
+    }
     fn seed(
         &mut self,
         _l: SecurityLevel,
@@ -420,6 +428,29 @@ fn run(server: &mut EcuServer) {
         t.cursor, t.len,
         "the run ended with script steps unconsumed"
     );
+}
+
+/// Annex I Table I.2 transition 1 — the server starts an owed delay when it starts, on
+/// its first step and only then: each supported level at its attempt limit — here every
+/// `requestSeed` value — gets one delay, however many steps follow.
+#[test]
+fn start_up_starts_an_owed_delay_once() {
+    let mut s = EcuServer::new(
+        Ecu {
+            attempts: 3,
+            ..Ecu::new()
+        },
+        Scripted::new(&[
+            Ev::Ind(TaType::Physical, &[0x22, 0xF4, 0x0D]),
+            Ev::Conf(SResult::Ok),
+        ]),
+        ECU,
+        PARAMS,
+    );
+    let levels = (0x01_u8..0x7F).step_by(2).count();
+    assert_eq!(s.services().delays_started, 0);
+    run(&mut s);
+    assert_eq!(usize::from(s.services().delays_started), levels);
 }
 
 #[test]

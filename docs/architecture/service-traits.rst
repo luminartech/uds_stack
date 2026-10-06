@@ -571,12 +571,23 @@ Protocol state
       fn attempts(&self, level: u8) -> u8;
       /// Store the count this crate computed. The application never computes one.
       fn store_attempts(&mut self, level: u8, count: u8);
-      /// Whether a delay is running for `level`.
-      fn delay_running(&self, level: u8) -> bool;
+      /// The delay timer's state for `level`: running, expired since last asked, or idle.
+      fn delay(&mut self, level: u8) -> Delay;
       /// Begin the delay this crate decided is owed.
       fn start_delay(&mut self, level: u8);
 
-   The application persists and times; it never decides. That keeps ``UDSSVC_ARCH_0034``'s
+   The application persists and times; it never decides.
+
+   **The timer reports its expiry; the crate does not infer it.** An earlier draft took
+   "count at the limit, no delay running" to mean the delay had run out, and reset the
+   count. That is also the state after a restart: the count survives in non-volatile
+   storage, a RAM timer does not, and the next ``requestSeed`` would have reset the count
+   and issued a seed — a brute force by power cycle. The application now reports
+   ``Expired`` once when its timer runs out, which alone resets the count, and an
+   ``Idle`` timer with the count at the limit is a delay owed. Transition 1's "start
+   ``Delay_Timer`` … if required on start up" is ``ServiceSet::start_up``, which the
+   driver runs on its first step (``Server::new`` is a ``const fn`` and cannot call the
+   application) and which starts the delay of every supported level at its limit. That keeps ``UDSSVC_ARCH_0034``'s
    third question answered — an application cannot produce ``0x35`` where ``0x36`` is
    required, because it is not asked which to send.
 

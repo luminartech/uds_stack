@@ -249,6 +249,17 @@ macro_rules! __uds_session_timing {
     ($self:ident, $state:ident, $svc:ident) => {};
 }
 
+/// Annex I transition 1 for one listed service, from `ServiceSet::start_up`: only
+/// `SecurityAccess` owes anything at start-up.
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __uds_start_up {
+    ($self:ident, SecurityAccess) => {
+        $crate::pipeline::security_start_up($self);
+    };
+    ($self:ident, $svc:ident) => {};
+}
+
 /// Figure 6's sub-function lookup for one listed service (``UDSSVC_ARCH_0007``): an early
 /// `return` of the [`Access`](crate::Access) the sub-function `$value` has, from the
 /// closure `pipeline::begin` is handed, where `$service` is this one. `begin` settles
@@ -708,6 +719,10 @@ macro_rules! uds_server {
                     }
                     .await;
                     $crate::pipeline::discarding_seed(state, unsettled)
+                }
+
+                fn start_up(&mut self, _state: &mut Self::State) {
+                    $( $crate::__uds_start_up!(self, $svc); )+
                 }
 
                 fn session_timed_out(&mut self, state: &mut Self::State) {

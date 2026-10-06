@@ -163,10 +163,10 @@ pub use identifier::{DataIdentifier, RecordError, RoutineIdentifier};
 pub mod services;
 pub use services::{
     ClearDiagnosticInformation, CommunicationControl, ControlDtcSetting, DataTransfer,
-    DiagnosticSessionControl, DtcReportKind, EcuReset, KeyVerdict, ReadDataByIdentifier,
-    ReadDtcInformation, Received, Responded, RoutineControl, SecurityAccess, SecurityLevel,
-    SecurityPolicy, ServiceSet, SessionTiming, SessionTransition, TesterPresent,
-    TransferRequest, Unsettled, WriteDataByIdentifier,
+    Delay, DiagnosticSessionControl, DtcReportKind, EcuReset, KeyVerdict,
+    ReadDataByIdentifier, ReadDtcInformation, Received, Responded, RoutineControl,
+    SecurityAccess, SecurityLevel, SecurityPolicy, ServiceSet, SessionTiming,
+    SessionTransition, TesterPresent, TransferRequest, Unsettled, WriteDataByIdentifier,
 };
 
 /// The protocol vocabulary this crate's handler signatures are written in.
