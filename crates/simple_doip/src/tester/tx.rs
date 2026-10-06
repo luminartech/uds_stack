@@ -46,6 +46,11 @@ impl<const N: usize> Outgoing<N> {
         self.written = self.len.min(self.written.saturating_add(written));
     }
 
+    /// Whether none of the message has been written.
+    pub(super) fn untouched(&self) -> bool {
+        self.written == 0
+    }
+
     pub(super) fn clear(&mut self) {
         self.len = 0;
         self.written = 0;

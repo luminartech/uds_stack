@@ -1,6 +1,6 @@
-//! A late acknowledgement over real loopback sockets, through `edge-nal-std`, where a
-//! socket reports data already received only after a reactor turn: the case a scripted
-//! backend, which reports it at once, cannot show.
+//! A request lost to `A_DoIP_Diagnostic_Message` over real loopback sockets, through
+//! `edge-nal-std`, whose acknowledgement and response were already in the socket: the
+//! retry on a new connection sees only its own.
 //!
 //! A test binary of its own because it moves `embassy-time`'s mock clock, which is
 //! process-wide.
@@ -9,14 +9,16 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 use std::io::{Read, Write};
-use std::net::TcpListener;
+use std::net::{TcpListener, TcpStream};
 use std::sync::mpsc;
 use std::time::Duration as StdDuration;
 
 use edge_nal_std::Stack;
 use embassy_time::{Duration, MockDriver};
-use simple_doip::service::{ConnectionEvent, DiagnosticConnection, DoIpResult};
-use simple_doip::tester::{Tester, TesterAddress};
+use simple_doip::service::{
+    ConnectionEvent, DiagnosticConnection, DoIpResult, TesterAddress,
+};
+use simple_doip::tester::Tester;
 use simple_doip::{LogicalAddress, TaType};
 use tokio::time::timeout;
 
@@ -41,39 +43,44 @@ fn response(pdu: &[u8]) -> Vec<u8> {
     frame
 }
 
-/// The entity: activates routing, then acknowledges and answers two requests, holding
-/// the first acknowledgement back until `release` says the tester has given up on it.
+fn activated(listener: &TcpListener) -> TcpStream {
+    let (mut socket, _) = listener.accept().unwrap();
+    let mut activation = [0; 15];
+    socket.read_exact(&mut activation).unwrap();
+    socket.write_all(&ACTIVATION_RESPONSE).unwrap();
+    socket
+}
+
+/// The entity: on the first connection it acknowledges and answers the request only once
+/// `release` says the tester has given it up; on the second it answers at once.
 fn entity(
     listener: &TcpListener,
     received: &mpsc::Sender<()>,
     release: &mpsc::Receiver<()>,
 ) {
-    let (mut socket, _) = listener.accept().unwrap();
-    let mut activation = [0; 15];
-    socket.read_exact(&mut activation).unwrap();
-    socket.write_all(&ACTIVATION_RESPONSE).unwrap();
-
-    let mut first = [0; 14];
-    socket.read_exact(&mut first).unwrap();
+    let mut first = activated(listener);
+    let mut request = [0; 14];
+    first.read_exact(&mut request).unwrap();
     received.send(()).unwrap();
     release.recv().unwrap();
-    socket.write_all(&ACK).unwrap();
-    socket.write_all(&response(&[0x7E, 0x00])).unwrap();
+    first.write_all(&ACK).ok();
+    first.write_all(&response(&[0x7E, 0x00])).ok();
 
-    let mut second = [0; 15];
-    socket.read_exact(&mut second).unwrap();
-    socket.write_all(&ACK).unwrap();
-    socket.write_all(&response(&[0x62, 0xF1, 0x90])).unwrap();
+    let mut second = activated(listener);
+    let mut request = [0; 15];
+    second.read_exact(&mut request).unwrap();
+    second.write_all(&ACK).unwrap();
+    second.write_all(&response(&[0x62, 0xF1, 0x90])).unwrap();
     let mut rest = Vec::new();
-    socket.read_to_end(&mut rest).ok();
+    second.read_to_end(&mut rest).ok();
 }
 
 /// ISO 13400-2:2019 Table 12: a request the caller comes back to after
 /// `A_DoIP_Diagnostic_Message` is lost, even though its acknowledgement already sits in
-/// the socket; that acknowledgement is then discarded, and the next request is confirmed
-/// by its own.
+/// the socket. The tester gives the connection up, so the next request, on a new
+/// connection, is confirmed and answered by its own.
 #[tokio::test(flavor = "current_thread")]
-async fn a_late_acknowledgement_does_not_confirm_the_next_request() {
+async fn a_lost_request_leaves_nothing_for_the_next_one() {
     MockDriver::get().reset();
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let remote = listener.local_addr().unwrap();
@@ -102,52 +109,42 @@ async fn a_late_acknowledgement_does_not_confirm_the_next_request() {
     std::thread::sleep(StdDuration::from_millis(100));
     MockDriver::get().advance(Duration::from_secs(3));
 
-    let event = timeout(PATIENCE, tester.next_event(&mut buf, None))
-        .await
-        .unwrap();
-    assert_eq!(
-        event.unwrap(),
-        ConnectionEvent::Confirm {
-            sa: TESTER,
-            ta: ENTITY,
-            ta_type: TaType::Physical,
-            result: DoIpResult::TimeoutA,
-        }
-    );
-
-    tester
-        .request(ENTITY, TaType::Physical, &[0x22, 0xF1, 0x90])
-        .await
-        .unwrap();
     let mut events = Vec::new();
-    while events.len() < 3 {
+    for _ in 0..2 {
         let event = timeout(PATIENCE, tester.next_event(&mut buf, None))
             .await
             .unwrap()
             .unwrap();
         events.push(format!("{event:?}"));
     }
+    timeout(PATIENCE, tester.reconnect())
+        .await
+        .unwrap()
+        .unwrap();
+    tester
+        .request(ENTITY, TaType::Physical, &[0x22, 0xF1, 0x90])
+        .await
+        .unwrap();
+    for _ in 0..2 {
+        let event = timeout(PATIENCE, tester.next_event(&mut buf, None))
+            .await
+            .unwrap()
+            .unwrap();
+        events.push(format!("{event:?}"));
+    }
+
+    let confirm = |result| ConnectionEvent::Confirm {
+        sa: TESTER,
+        ta: ENTITY,
+        ta_type: TaType::Physical,
+        result,
+    };
     assert_eq!(
         events,
         [
-            format!(
-                "{:?}",
-                ConnectionEvent::Indication {
-                    sa: ENTITY,
-                    ta: TESTER,
-                    ta_type: TaType::Physical,
-                    pdu: &[0x7E, 0x00],
-                }
-            ),
-            format!(
-                "{:?}",
-                ConnectionEvent::Confirm {
-                    sa: TESTER,
-                    ta: ENTITY,
-                    ta_type: TaType::Physical,
-                    result: DoIpResult::Ok,
-                }
-            ),
+            format!("{:?}", confirm(DoIpResult::TimeoutA)),
+            format!("{:?}", ConnectionEvent::Closed),
+            format!("{:?}", confirm(DoIpResult::Ok)),
             format!(
                 "{:?}",
                 ConnectionEvent::Indication {

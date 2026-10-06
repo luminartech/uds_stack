@@ -17,9 +17,7 @@ use crate::messages::{
     DiagnosticAckCode, DiagnosticMessage, Header, Message, NackCode, Payload, PayloadType,
     ProtocolVersion, RoutingActivationResponseCode,
 };
-use crate::service::{
-    ConnectionEvent, DiagnosticConnection, DoIpResult, NotATesterAddress,
-};
+use crate::service::{ConnectionEvent, DiagnosticConnection, DoIpResult, TesterAddress};
 use crate::wire::Decode;
 use crate::{LogicalAddress, TIMEOUT_DIAGNOSTIC_MESSAGE_RESPONSE, TaType};
 
@@ -48,43 +46,6 @@ pub const DIAGNOSTIC_MESSAGE_OVERHEAD: usize = Header::SIZE + 4;
 /// The smallest `N` a [`Tester`] builds with: the longest routing activation response
 /// (ISO 13400-2:2019 Table 48, with its OEM-specific field).
 pub const MIN_N: usize = Header::SIZE + 13;
-
-/// A logical address in the client range of ISO 13400-2:2019 Table 13, which a tester
-/// may activate routing for.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct TesterAddress(LogicalAddress);
-
-impl TesterAddress {
-    /// Takes `address` as a tester's.
-    ///
-    /// # Arguments
-    ///
-    /// * `address` - within
-    ///   [`LogicalAddress::MIN_CLIENT_ADDRESS`]..=[`LogicalAddress::MAX_CLIENT_ADDRESS`].
-    ///
-    /// # Errors
-    ///
-    /// [`NotATesterAddress`] for an `address` outside that range.
-    pub fn new(address: LogicalAddress) -> Result<Self, NotATesterAddress> {
-        if address.is_valid_client_address() {
-            Ok(Self(address))
-        } else {
-            Err(NotATesterAddress { address })
-        }
-    }
-
-    /// The address.
-    #[must_use]
-    pub const fn address(self) -> LogicalAddress {
-        self.0
-    }
-}
-
-impl From<TesterAddress> for LogicalAddress {
-    fn from(address: TesterAddress) -> Self {
-        address.0
-    }
-}
 
 /// Why a tester could not connect and activate routing. Each leaves no connection open.
 ///
@@ -153,16 +114,29 @@ pub enum Error<E> {
 /// is delivered truncated. `N` is at least [`MIN_N`]: a smaller one fails to build,
 /// though not to `cargo check`, which stops before the assertion is evaluated.
 ///
+/// The tester sends ISO 13400-2:2019's protocol version, so an entity that speaks only
+/// an earlier edition refuses it.
+///
 /// The stack is borrowed for `'s` because every socket it opens borrows it, and
 /// [`Tester::reconnect`] opens another.
 ///
+/// # Polling
+///
+/// The tester does its I/O only while [`Tester::connect`], [`Tester::reconnect`] or
+/// [`DiagnosticConnection::next_event`] is being polled. An entity checks that a tester
+/// is alive within `T_TCP_Alive_Check` (ISO 13400-2:2019 Table 12) before giving its
+/// socket to another tester, so a caller that wants to keep the connection keeps
+/// `next_event` polled. While a request is being written, nothing is read.
+///
 /// # Examples
 ///
-/// A request, its confirm, then the entity's answer:
+/// A request, its confirm, then the entity's answer, sent again on a new connection
+/// where it was lost:
 ///
 /// ```no_run
 /// use simple_doip::service::{ConnectionEvent, DiagnosticConnection, DoIpResult};
-/// use simple_doip::tester::{DIAGNOSTIC_MESSAGE_OVERHEAD, Tester, TesterAddress};
+/// use simple_doip::service::TesterAddress;
+/// use simple_doip::tester::{DIAGNOSTIC_MESSAGE_OVERHEAD, Tester};
 /// use simple_doip::{LogicalAddress, TCP_PORT, TaType};
 /// # #[derive(Debug)]
 /// # enum Failed {
@@ -183,18 +157,22 @@ pub enum Error<E> {
 /// let sa = TesterAddress::new(LogicalAddress(0x0E00)).expect("a tester address");
 /// let mut tester = Tester::<_, N>::connect(&stack, remote, sa).await?;
 ///
-/// tester.request(LogicalAddress(0x0001), TaType::Physical, &[0x3E, 0x00]).await?;
 /// let mut buf = [0; Tester::<edge_nal_std::Stack, N>::MAX_PDU];
-/// loop {
-///     match tester.next_event(&mut buf, None).await? {
-///         ConnectionEvent::Confirm { result: DoIpResult::Ok, .. } => {}
-///         ConnectionEvent::Confirm { result, .. } => panic!("not delivered: {result:?}"),
-///         ConnectionEvent::Indication { pdu, .. } => {
-///             assert_eq!(pdu, [0x7E, 0x00]);
-///             break;
+/// 'send: loop {
+///     tester.request(LogicalAddress(0x0001), TaType::Physical, &[0x3E, 0x00]).await?;
+///     loop {
+///         match tester.next_event(&mut buf, None).await? {
+///             ConnectionEvent::Confirm { result: DoIpResult::Ok, .. } => {}
+///             ConnectionEvent::Indication { pdu, .. } => {
+///                 assert_eq!(pdu, [0x7E, 0x00]);
+///                 break 'send;
+///             }
+///             ConnectionEvent::Closed => {
+///                 tester.reconnect().await?;
+///                 continue 'send;
+///             }
+///             _ => {}
 ///         }
-///         ConnectionEvent::Closed => tester.reconnect().await?,
-///         _ => {}
 ///     }
 /// }
 /// # Ok(())
@@ -225,8 +203,12 @@ impl<C: TcpConnect, const N: usize> fmt::Debug for Tester<'_, C, N> {
 
 impl<'s, C: TcpConnect, const N: usize> Tester<'s, C, N> {
     /// The longest PDU a request may carry, and the longest an indication delivers
-    /// whole: `N` less [`DIAGNOSTIC_MESSAGE_OVERHEAD`].
-    pub const MAX_PDU: usize = N.saturating_sub(DIAGNOSTIC_MESSAGE_OVERHEAD);
+    /// whole: `N` less [`DIAGNOSTIC_MESSAGE_OVERHEAD`]. Naming it for an `N` below
+    /// [`MIN_N`] fails to build.
+    pub const MAX_PDU: usize = {
+        assert!(N >= MIN_N, "a Tester's N must be at least MIN_N");
+        N.saturating_sub(DIAGNOSTIC_MESSAGE_OVERHEAD)
+    };
 
     /// Connects to the entity at `remote` and activates routing for source address `sa`
     /// (ISO 13400-2:2019 12.5.2).
@@ -314,9 +296,6 @@ impl<'s, C: TcpConnect, const N: usize> Tester<'s, C, N> {
 
     /// Opens a new connection and activates routing on it, keeping it only on success.
     async fn establish(&mut self) -> Result<(), ConnectError<C::Error>> {
-        self.rx.clear();
-        self.control.clear();
-        self.outgoing.clear();
         let stack = self.stack;
         let mut socket = stack.connect(self.remote).await.map_err(ConnectError::Io)?;
         match self.activate(&mut socket).await {
@@ -364,7 +343,9 @@ impl<'s, C: TcpConnect, const N: usize> Tester<'s, C, N> {
                         }
                     }
                     Ok(Next::Oversized { header, .. }) => {
-                        if !spoken(&header) {
+                        if !spoken(&header)
+                            || header.payload_type == PayloadType::RoutingActivationResponse
+                        {
                             return Err(ConnectError::InvalidMessage);
                         }
                         rx.skip_oversized(&header);
@@ -405,7 +386,6 @@ impl<C: TcpConnect, const N: usize> Tester<'_, C, N> {
             };
             self.owed = Some(outstanding.confirm(self.sa.address(), result));
         }
-        self.exchange.late_ack_owed = false;
         self.rx.clear();
         self.control.clear();
         self.outgoing.clear();
@@ -419,20 +399,23 @@ impl<C: TcpConnect, const N: usize> Tester<'_, C, N> {
     /// Owes the outstanding request `DoIP_TIMEOUT_A` once its time is up, and whether it
     /// did.
     ///
-    /// The connection is given up where the request never finished being written, or
-    /// where an earlier request's acknowledgement is still owed: the entity is then
-    /// taking nothing in, or acknowledging nothing.
+    /// A request none of which was written is withdrawn; otherwise the connection is
+    /// given up, so that neither a late acknowledgement nor a late response can be taken
+    /// for a later request's.
     async fn time_out(&mut self) -> bool {
         let Some(outstanding) = self.exchange.outstanding else {
             return false;
         };
-        if outstanding.deadline > Instant::now() {
+        if outstanding
+            .deadline
+            .is_none_or(|deadline| deadline > Instant::now())
+        {
             return false;
         }
         self.exchange.outstanding = None;
         self.owed = Some(outstanding.confirm(self.sa.address(), DoIpResult::TimeoutA));
-        if outstanding.sent && !self.exchange.late_ack_owed {
-            self.exchange.late_ack_owed = true;
+        if self.outgoing.untouched() {
+            self.outgoing.clear();
         } else {
             self.lose_connection(true).await;
         }
@@ -452,13 +435,19 @@ impl<C: TcpConnect, const N: usize> DiagnosticConnection for Tester<'_, C, N> {
     /// for [`DiagnosticConnection::next_event`] to write.
     ///
     /// Its [`ConnectionEvent::Confirm`] comes from the entity's acknowledgement
-    /// (ISO 13400-2:2019 9.5): [`DoIpResult::Ok`] for a positive one, the result naming a
-    /// negative one's code, or [`DoIpResult::TimeoutA`] where none arrives within
-    /// `A_DoIP_Diagnostic_Message` (Table 12) of the request's last byte, or of the
-    /// request where its bytes cannot all be written in that time. A physical request's
-    /// acknowledgement must come from `ta`. An acknowledgement arriving after the
-    /// timeout is discarded; a second timeout while one is still owed gives up the
-    /// connection, as does a request that could not be written.
+    /// (ISO 13400-2:2019 9.5): [`DoIpResult::Ok`] for a positive one,
+    /// [`DoIpResult::Error`] for a positive one with a reserved code, and the result
+    /// naming a negative one's code. A physical request's acknowledgement must come from
+    /// `ta`. A generic header negative acknowledgement confirms the request only if the
+    /// tester has written nothing since it, as it may otherwise be about an alive check
+    /// response.
+    ///
+    /// The confirm is [`DoIpResult::TimeoutA`] where no acknowledgement arrives within
+    /// `A_DoIP_Diagnostic_Message` (Table 12) of the request's last byte, or where its
+    /// bytes cannot all be written within that time of the tester starting to write
+    /// them. The request is then lost: one none of which was written is withdrawn, and
+    /// otherwise the tester gives the connection up, so that neither a late
+    /// acknowledgement nor a late response can be taken for a later request's.
     ///
     /// # Cancel safety
     ///
@@ -494,8 +483,9 @@ impl<C: TcpConnect, const N: usize> DiagnosticConnection for Tester<'_, C, N> {
         self.exchange.outstanding = Some(Outstanding {
             ta,
             ta_type,
-            deadline: confirm::after(Instant::now(), ACK_TIMEOUT),
+            deadline: None,
             sent: false,
+            alive_check_answered: false,
         });
         Ok(())
     }
@@ -509,13 +499,13 @@ impl<C: TcpConnect, const N: usize> DiagnosticConnection for Tester<'_, C, N> {
     ///
     /// Answers alive check requests itself and reports nothing for them. Reports
     /// [`ConnectionEvent::Unmodelled`] for a payload type ISO 13400-2:2019 Table 17
-    /// reserves, its data truncated to `buf` and to `N` less the generic header. Ignores
-    /// every other message a tester is not sent, every message in error (8.3.3), and a
-    /// diagnostic message addressed to another tester. Gives up the connection on a
-    /// header it cannot delimit or a protocol version other than ISO 13400-2:2012's or
-    /// this edition's (Table 16), and after a negative acknowledgement on which the
-    /// entity closes its socket: diagnostic `0x02` (REQ 7.DoIP-070), and generic header
-    /// `0x00` and `0x04` (Table 19).
+    /// reserves, or [`ConnectionEvent::UnmodelledTruncated`] where it does not fit `buf`
+    /// or `N` less the generic header. Ignores every other message a tester is not sent,
+    /// every message in error (8.3.3), and a diagnostic message addressed to another
+    /// tester. Gives up the connection on a header it cannot delimit or a protocol
+    /// version Table 16 does not define for `DoIP` messages, and after a negative
+    /// acknowledgement on which the entity closes its socket: diagnostic `0x02`
+    /// (REQ 7.DoIP-070), and generic header `0x00` and `0x04` (Table 19).
     ///
     /// # Cancel safety
     ///
@@ -543,6 +533,7 @@ impl<C: TcpConnect, const N: usize> DiagnosticConnection for Tester<'_, C, N> {
             if self.time_out().await {
                 continue;
             }
+            self.exchange.start_writing();
             let wake = match (until, self.exchange.deadline()) {
                 (Some(until), Some(ack)) => Some(until.min(ack)),
                 (until, ack) => until.or(ack),
@@ -606,6 +597,7 @@ impl<C: TcpConnect, const N: usize> DiagnosticConnection for Tester<'_, C, N> {
                 }
             };
             match reaction {
+                Reaction::Ignore if passed() => return Ok(ConnectionEvent::Deadline),
                 Reaction::Ignore => {}
                 Reaction::Deliver(delivered) => return Ok(delivered.into_event(buf)),
                 Reaction::Close { confirm } => {
@@ -617,18 +609,25 @@ impl<C: TcpConnect, const N: usize> DiagnosticConnection for Tester<'_, C, N> {
     }
 }
 
-/// The request awaiting its acknowledgement, and the one owed from before it.
+/// The request awaiting its acknowledgement.
 #[derive(Debug, Default)]
 struct Exchange {
     outstanding: Option<Outstanding>,
-    /// A request was confirmed `DoIP_TIMEOUT_A` after its last byte was written, and the
-    /// entity has not acknowledged it since.
-    late_ack_owed: bool,
 }
 
 impl Exchange {
     fn deadline(&self) -> Option<Instant> {
-        self.outstanding.map(|outstanding| outstanding.deadline)
+        self.outstanding
+            .and_then(|outstanding| outstanding.deadline)
+    }
+
+    /// Starts the outstanding request's timer as the tester starts writing it.
+    fn start_writing(&mut self) {
+        if let Some(outstanding) = &mut self.outstanding
+            && outstanding.deadline.is_none()
+        {
+            outstanding.deadline = Some(confirm::after(Instant::now(), ACK_TIMEOUT));
+        }
     }
 
     /// Restarts the outstanding request's timer from its last byte, now written.
@@ -637,22 +636,26 @@ impl Exchange {
             && !outstanding.sent
         {
             outstanding.sent = true;
-            outstanding.deadline = confirm::after(Instant::now(), ACK_TIMEOUT);
+            outstanding.deadline = Some(confirm::after(Instant::now(), ACK_TIMEOUT));
         }
     }
 
-    /// Takes one acknowledgement from `source`, or a generic header NACK where `source`
-    /// is `None`, as the next one the entity owes.
+    fn note_alive_check_answer(&mut self) {
+        if let Some(outstanding) = &mut self.outstanding
+            && outstanding.sent
+        {
+            outstanding.alive_check_answered = true;
+        }
+    }
+
+    /// Takes an acknowledgement from `source`, or a generic header NACK where `source`
+    /// is `None`, as the outstanding request's, if it can be.
     fn acknowledge(
         &mut self,
         sa: LogicalAddress,
         source: Option<LogicalAddress>,
         result: DoIpResult,
     ) -> Option<ConnectionEvent<'static>> {
-        if self.late_ack_owed {
-            self.late_ack_owed = false;
-            return None;
-        }
         let outstanding = self
             .outstanding
             .take_if(|outstanding| outstanding.acknowledged_by(source))?;
@@ -664,13 +667,20 @@ impl Exchange {
 struct Outstanding {
     ta: LogicalAddress,
     ta_type: TaType,
-    deadline: Instant,
+    /// Unset until the tester starts writing the request.
+    deadline: Option<Instant>,
     sent: bool,
+    /// An alive check response was written after the request, so a generic header NACK
+    /// may be about either.
+    alive_check_answered: bool,
 }
 
 impl Outstanding {
     fn acknowledged_by(&self, source: Option<LogicalAddress>) -> bool {
-        self.ta_type != TaType::Physical || source.is_none_or(|source| source == self.ta)
+        match source {
+            Some(source) => self.ta_type != TaType::Physical || source == self.ta,
+            None => !self.alive_check_answered,
+        }
     }
 
     fn confirm(self, sa: LogicalAddress, result: DoIpResult) -> ConnectionEvent<'static> {
@@ -705,6 +715,7 @@ enum Delivered {
     Unmodelled {
         payload_type: u16,
         copied: usize,
+        length: usize,
     },
 }
 
@@ -740,20 +751,29 @@ impl Delivered {
             Self::Unmodelled {
                 payload_type,
                 copied,
-            } => ConnectionEvent::Unmodelled {
-                payload_type,
-                data: &buf[..copied],
-            },
+                length,
+            } => {
+                let data = &buf[..copied];
+                if copied == length {
+                    ConnectionEvent::Unmodelled { payload_type, data }
+                } else {
+                    ConnectionEvent::UnmodelledTruncated {
+                        payload_type,
+                        data,
+                        length,
+                    }
+                }
+            }
         }
     }
 }
 
-/// Whether the tester speaks `header`'s protocol version: ISO 13400-2:2012's or this
-/// edition's (ISO 13400-2:2019 Table 16).
+/// Whether `header`'s protocol version is one ISO 13400-2:2019 Table 16 defines for
+/// `DoIP` messages: ISO/DIS 13400-2:2010's, ISO 13400-2:2012's or its own.
 fn spoken(header: &Header) -> bool {
     matches!(
         header.protocol_version,
-        ProtocolVersion::V2012 | ProtocolVersion::V2019
+        ProtocolVersion::V2010 | ProtocolVersion::V2012 | ProtocolVersion::V2019
     )
 }
 
@@ -801,7 +821,7 @@ fn react(
                 return Reaction::Ignore;
             };
             let ta = message.target_address;
-            if ta != sa && ta.is_valid_client_address() {
+            if ta != sa && TesterAddress::new(ta).is_ok() {
                 return Reaction::Ignore;
             }
             let copied = message.user_data.len().min(buf.len());
@@ -813,15 +833,13 @@ fn react(
                 length: (header.payload_length as usize).saturating_sub(4),
             })
         }
-        (_, Ok(Payload::DiagnosticMessageAck(ack)))
-            if ack.target_address == sa
-                && ack.ack_code == DiagnosticAckCode::RoutingConfirmationAck =>
-        {
-            deliver_confirm(exchange.acknowledge(
-                sa,
-                Some(ack.source_address),
-                DoIpResult::Ok,
-            ))
+        (_, Ok(Payload::DiagnosticMessageAck(ack))) if ack.target_address == sa => {
+            let result = if ack.ack_code == DiagnosticAckCode::RoutingConfirmationAck {
+                DoIpResult::Ok
+            } else {
+                DoIpResult::Error
+            };
+            deliver_confirm(exchange.acknowledge(sa, Some(ack.source_address), result))
         }
         (_, Ok(Payload::DiagnosticMessageNack(nack))) if nack.target_address == sa => {
             let result = confirm::from_diagnostic_nack(nack.nack_code);
@@ -845,6 +863,7 @@ fn react(
         }
         (_, Ok(Payload::AliveCheckRequest)) => {
             control.alive_check_response(sa);
+            exchange.note_alive_check_answer();
             Reaction::Ignore
         }
         (
@@ -857,6 +876,7 @@ fn react(
             Reaction::Deliver(Delivered::Unmodelled {
                 payload_type,
                 copied,
+                length: header.payload_length as usize,
             })
         }
         _ => Reaction::Ignore,

@@ -61,6 +61,7 @@ struct Connection {
     read_error: bool,
     write_error: bool,
     write_stall: bool,
+    write_budget: Option<usize>,
     write_zero: bool,
     outbound: Vec<u8>,
     aborted: bool,
@@ -168,6 +169,16 @@ impl MockPeer {
         self.with(|c| c.write_stall = true);
     }
 
+    /// The tester's writes take `bytes` more bytes, then pend from then on.
+    pub fn stall_writes_after(&self, bytes: usize) {
+        self.with(|c| c.write_budget = Some(bytes));
+    }
+
+    /// Ends [`Self::stall_writes_after`].
+    pub fn resume_writes(&self) {
+        self.with(|c| c.write_budget = None);
+    }
+
     /// The tester's writes complete having written nothing, as on a closed socket.
     pub fn write_nothing(&self) {
         self.with(|c| c.write_zero = true);
@@ -262,8 +273,12 @@ impl Write for MockSocket {
                 if c.write_error {
                     return Poll::Ready(Err(MockError));
                 }
-                if c.write_stall {
+                if c.write_stall || c.write_budget == Some(0) {
                     return Poll::Pending;
+                }
+                let n = c.write_budget.map_or(n, |budget| n.min(budget));
+                if let Some(budget) = &mut c.write_budget {
+                    *budget -= n;
                 }
                 if c.write_zero {
                     return Poll::Ready(Ok(0));
@@ -377,7 +392,7 @@ impl TcpConnect for MockStack {
 pub fn run<F: Future>(future: F) -> F::Output {
     let mut future = pin!(future);
     let mut cx = Context::from_waker(Waker::noop());
-    for _ in 0..100_000 {
+    for _ in 0..10_000 {
         if let Poll::Ready(output) = future.as_mut().poll(&mut cx) {
             return output;
         }

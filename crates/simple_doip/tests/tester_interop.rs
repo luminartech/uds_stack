@@ -15,10 +15,10 @@ use simple_doip::messages::{
     RoutingActivationResponseCode,
 };
 use simple_doip::server::{ResponseWriter, Server, ServerConnectionHandler};
-use simple_doip::service::{ConnectionEvent, DiagnosticConnection, DoIpResult};
-use simple_doip::tester::{
-    ConnectError, DIAGNOSTIC_MESSAGE_OVERHEAD, Tester, TesterAddress,
+use simple_doip::service::{
+    ConnectionEvent, DiagnosticConnection, DoIpResult, TesterAddress,
 };
+use simple_doip::tester::{ConnectError, DIAGNOSTIC_MESSAGE_OVERHEAD, Tester};
 use simple_doip::{LogicalAddress, TaType};
 use tokio::net::TcpListener;
 use tokio::time::{Duration, timeout};

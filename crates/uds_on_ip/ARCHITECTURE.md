@@ -467,7 +467,8 @@ truncated event carries.
 (REQ 7.7, REQ 7.16), outside the request/response correlation path, and does not
 reset `tS3_Server` on them (REQ 7.20). Nothing here can send one yet
 ([§9.2](#92-design-gaps-in-this-crate)). One that arrives reaches this crate as
-`simple_doip`'s `EntityEvent::Unmodelled` and is ignored, since a server has no
+`simple_doip`'s `EntityEvent::Unmodelled` (or `UnmodelledTruncated`, if it is too
+long for the buffer) and is ignored, since a server has no
 use for it; surfacing it as `TransportEvent::Periodic` belongs to the client
 role, which is not built.
 

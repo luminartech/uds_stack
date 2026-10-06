@@ -137,6 +137,19 @@ pub enum ConnectionEvent<'b> {
         /// The payload, in the caller's buffer.
         data: &'b [u8],
     },
+    /// A valid message of a payload type this crate does not model, longer than the
+    /// caller's buffer or the connection's, truncated to what fit.
+    ///
+    /// A variant rather than a flag on [`Self::Unmodelled`], for the reason
+    /// [`Self::IndicationTruncated`] is one.
+    UnmodelledTruncated {
+        /// The message's payload type, as on the wire.
+        payload_type: u16,
+        /// The leading bytes of the payload that fit both buffers.
+        data: &'b [u8],
+        /// The whole payload's length, from the message's header.
+        length: usize,
+    },
     /// The connection is closed.
     ///
     /// Carries no reason: whether a close was one the diagnostic protocol prescribes is
@@ -314,6 +327,18 @@ pub enum EntityEvent<'b> {
         /// The payload, in the caller's buffer.
         data: &'b [u8],
     },
+    /// A valid message of a payload type this crate does not model, longer than the
+    /// caller's buffer or the connection's; see [`ConnectionEvent::UnmodelledTruncated`].
+    UnmodelledTruncated {
+        /// The connection the message arrived on.
+        connection: ConnectionId,
+        /// The message's payload type, as on the wire.
+        payload_type: u16,
+        /// The leading bytes of the payload that fit both buffers.
+        data: &'b [u8],
+        /// The whole payload's length, from the message's header.
+        length: usize,
+    },
     /// `connection` closed other than by [`DiagnosticEntity::close`]: the tester closed
     /// it, or the entity did on an error or a timeout.
     ///
@@ -459,7 +484,7 @@ pub trait DiagnosticEntity {
     ) -> impl Future<Output = Result<(), Self::Error>>;
 }
 
-/// A tester address an [`EntityConfig`] was given that is outside the client range,
+/// An address given as a tester's that is outside the client range,
 /// [`LogicalAddress::MIN_CLIENT_ADDRESS`]..=[`LogicalAddress::MAX_CLIENT_ADDRESS`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 #[error(
@@ -468,6 +493,59 @@ pub trait DiagnosticEntity {
 pub struct NotATesterAddress {
     /// The rejected address.
     pub address: LogicalAddress,
+}
+
+/// A logical address in the client range of ISO 13400-2:2019 Table 13: one a tester may
+/// activate routing for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct TesterAddress(LogicalAddress);
+
+impl TesterAddress {
+    /// Takes `address` as a tester's.
+    ///
+    /// # Arguments
+    ///
+    /// * `address` - within
+    ///   [`LogicalAddress::MIN_CLIENT_ADDRESS`]..=[`LogicalAddress::MAX_CLIENT_ADDRESS`].
+    ///
+    /// # Errors
+    ///
+    /// [`NotATesterAddress`] for an `address` outside that range.
+    pub const fn new(address: LogicalAddress) -> Result<Self, NotATesterAddress> {
+        if address.0 >= LogicalAddress::MIN_CLIENT_ADDRESS.0
+            && address.0 <= LogicalAddress::MAX_CLIENT_ADDRESS.0
+        {
+            Ok(Self(address))
+        } else {
+            Err(NotATesterAddress { address })
+        }
+    }
+
+    /// The address.
+    #[must_use]
+    pub const fn address(self) -> LogicalAddress {
+        self.0
+    }
+}
+
+impl TryFrom<LogicalAddress> for TesterAddress {
+    type Error = NotATesterAddress;
+
+    fn try_from(address: LogicalAddress) -> Result<Self, NotATesterAddress> {
+        Self::new(address)
+    }
+}
+
+impl From<TesterAddress> for LogicalAddress {
+    fn from(address: TesterAddress) -> Self {
+        address.0
+    }
+}
+
+impl core::fmt::Display for TesterAddress {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        core::fmt::Display::fmt(&self.0, f)
+    }
 }
 
 /// What a `DoIP` entity is told about its testers.
@@ -511,11 +589,8 @@ impl<const TESTERS: usize> EntityConfig<TESTERS> {
         const { assert!(TESTERS > 0, "an entity must accept at least one tester") };
         let mut i = 0;
         while i < TESTERS {
-            let address = accepted_testers[i];
-            if address.0 < LogicalAddress::MIN_CLIENT_ADDRESS.0
-                || address.0 > LogicalAddress::MAX_CLIENT_ADDRESS.0
-            {
-                return Err(NotATesterAddress { address });
+            if let Err(error) = TesterAddress::new(accepted_testers[i]) {
+                return Err(error);
             }
             i += 1;
         }

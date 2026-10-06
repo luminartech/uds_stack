@@ -62,8 +62,9 @@ pub const fn from_logical(addr: simple_doip::LogicalAddress) -> Address {
 /// `uds_services::UdsTransport::t_data_req` nor
 /// [`DiagnosticEntity::request`](simple_doip::service::DiagnosticEntity::request)
 /// can choose a payload type, so a server built on this crate cannot. One that
-/// arrives is reported by `simple_doip` as an [`EntityEvent::Unmodelled`], and
-/// this crate ignores it.
+/// arrives is reported by `simple_doip` as an [`EntityEvent::Unmodelled`] (an
+/// [`EntityEvent::UnmodelledTruncated`] if it is too long for the buffer), and this
+/// crate ignores it.
 ///
 /// REQ 7.17's length bound — a periodic data record must not exceed the
 /// non-segmented `UDSonIP` message limit — has no home here either. It belongs
@@ -177,9 +178,9 @@ pub(crate) struct PduOutsideBuffer;
 
 /// Classify `event`, which borrows the buffer starting at address `buffer_start`.
 ///
-/// `None` for an [`EntityEvent::Unmodelled`], a payload type ISO 14229-5 gives a
-/// server no use for — a periodic response ([`PERIODIC_RESPONSE_PAYLOAD_TYPE`])
-/// among them.
+/// `None` for an [`EntityEvent::Unmodelled`] or [`EntityEvent::UnmodelledTruncated`]: a
+/// payload type ISO 14229-5 gives a server no use for — a periodic response
+/// ([`PERIODIC_RESPONSE_PAYLOAD_TYPE`]) among them.
 pub(crate) fn classify(
     event: EntityEvent<'_>,
     buffer_start: usize,
@@ -224,7 +225,9 @@ pub(crate) fn classify(
         },
         EntityEvent::Closed { connection } => Inbound::Closed { connection },
         EntityEvent::Deadline => Inbound::Deadline,
-        EntityEvent::Unmodelled { .. } => return Ok(None),
+        EntityEvent::Unmodelled { .. } | EntityEvent::UnmodelledTruncated { .. } => {
+            return Ok(None);
+        }
     }))
 }
 
@@ -405,6 +408,19 @@ mod tests {
             connection: ConnectionId::new(0),
             payload_type: super::PERIODIC_RESPONSE_PAYLOAD_TYPE,
             data: &data,
+        };
+        assert_eq!(classify(event, data.as_ptr().addr()), Ok(None));
+    }
+
+    /// One too long for the buffers is ignored too: its payload type is what decides.
+    #[test]
+    fn an_unmodelled_payload_too_long_for_the_buffer_is_ignored() {
+        let data = [0x01, 0x02];
+        let event = EntityEvent::UnmodelledTruncated {
+            connection: ConnectionId::new(0),
+            payload_type: super::PERIODIC_RESPONSE_PAYLOAD_TYPE,
+            data: &data,
+            length: 4_096,
         };
         assert_eq!(classify(event, data.as_ptr().addr()), Ok(None));
     }
