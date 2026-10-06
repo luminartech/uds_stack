@@ -201,8 +201,9 @@ The traits
    **Two services do not carry it, and cannot.** A response-pending is what the driver
    sends while it is still awaiting a handler, so a service with nothing awaited has no
    window in which one could come due. ``TesterPresent``'s ``on_tester_present`` is
-   synchronous; ``DiagnosticSessionControl``'s ``supports``, ``supported_from`` and
-   ``timing`` are lookups the pipeline makes before composing the response, and its
+   synchronous; ``DiagnosticSessionControl``'s ``supports``, ``supported_from``,
+   ``timing`` and ``leaves_running_software`` are lookups made before the response is
+   composed or sent, and its
    ``on_transition`` runs after that response has gone out. On both, the constant would
    have had one possible value and no effect, and declaring it asked an application to
    answer a question with one answer.

@@ -43,8 +43,9 @@ impl SessionTiming {
 ///
 /// **No `MAY_RESPOND_PENDING`**, unlike the services in ``UDSSVC_ARCH_0033``. A
 /// response-pending is what the driver sends while it is still awaiting a handler, and
-/// nothing here is awaited: [`Self::supports`], [`Self::supported_from`] and
-/// [`Self::timing`] are lookups the pipeline makes before composing the response, and
+/// nothing here is awaited: [`Self::supports`], [`Self::supported_from`],
+/// [`Self::timing`] and [`Self::leaves_running_software`] are lookups the driver makes
+/// before composing or sending the response, and
 /// [`Self::on_transition`] runs after that response has gone out. There is no window in
 /// which a 0x78 could come due, so the constant would have had one possible value and no
 /// effect.
@@ -135,7 +136,7 @@ pub trait DiagnosticSessionControl {
     /// which session, because what a case owes can turn on it — `ControlDTCSetting` and
     /// `CommunicationControl` state is the application's, and resumes on entering a
     /// session where the service is not supported, and a session may run in other
-    /// software than the one now running (see [`Self::timing`]'s session).
+    /// software than the one now running (see [`Self::leaves_running_software`]).
     ///
     /// # Arguments
     ///

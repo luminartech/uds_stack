@@ -1102,10 +1102,11 @@ mod tests {
         ta_type: TaType::Physical,
     };
 
-    /// W4 addendum item 3 — only the positive `DiagnosticSessionControl` response to the
-    /// leaving request's addressing is `ServerLeaves`: never the 0x78 sharing that
-    /// addressing, a negative response, another tester's response, or anything sent
-    /// while no session change leaves.
+    /// ISO 14229-5:2022 REQ 7.9 closes the connection after the positive
+    /// `DiagnosticSessionControl` response of a session change that disconnects it, so
+    /// only that response to the leaving request's addressing is `ServerLeaves`: never the
+    /// 0x78 sharing that addressing, a negative response, another tester's response, or
+    /// anything sent while no session change leaves.
     #[test]
     fn only_the_leaving_positive_response_is_flagged() {
         let other = Ai {

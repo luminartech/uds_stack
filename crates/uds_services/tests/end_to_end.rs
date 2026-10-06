@@ -472,11 +472,11 @@ fn start_up_starts_an_owed_delay_once() {
     assert_eq!(usize::from(s.services().delays_started), levels);
 }
 
-/// W4 addendum item 3, ISO 14229-5:2022 REQ 7.9 — the final positive response to a
-/// `DiagnosticSessionControl` whose session leaves the running software is the one
-/// message sent `ServerLeaves`; the response entering a session that does not leave is
-/// `Continue`, and so is the negative response to the same leaving session refused from
-/// the default one (0x7E).
+/// ISO 14229-5:2022 REQ 7.9, ISO 14229-1:2020 10.2.2.2 Table 25 — the final positive
+/// response to a `DiagnosticSessionControl` whose session leaves the running software is
+/// the one message sent `ServerLeaves`; the response entering a session that does not
+/// leave is `Continue`, and so is the negative response to the same leaving session
+/// refused from the default one (0x7E).
 #[test]
 fn only_the_response_entering_a_leaving_session_says_the_server_leaves() {
     let mut s = EcuServer::new(

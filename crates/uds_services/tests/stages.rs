@@ -131,6 +131,8 @@ struct Ecu {
     preconditions_unmet: bool,
     /// How `seed` misbehaves, if it does.
     seed_fault: SeedFault,
+    /// How many seeds a `RandomSeedOnly` level has been issued, so each is fresh.
+    random_seeds: u16,
     /// The `securityAccessDataRecord` the last seed was asked with.
     record: Vec<u8>,
     /// What `CommunicationControl` last applied.
@@ -288,7 +290,10 @@ impl SecurityAccess for Ecu {
         self.record = record.to_vec();
         match self.seed_fault {
             SeedFault::None => {
-                let _ = out.write_all(&seed_of(level).to_be_bytes());
+                if !matches!(self.policy(level), SecurityPolicy::Counted { .. }) {
+                    self.random_seeds = self.random_seeds.wrapping_add(1);
+                }
+                let _ = out.write_all(&self.seed_of(level).to_be_bytes());
             }
             SeedFault::Zero => {
                 let _ = out.write_all(&[0x00, 0x00]);
@@ -305,7 +310,7 @@ impl SecurityAccess for Ecu {
         level: SecurityLevel,
         key: &[u8],
     ) -> Result<KeyVerdict, Nrc> {
-        Ok(if key == key_of(level) {
+        Ok(if key == self.seed_of(level).wrapping_neg().to_be_bytes() {
             KeyVerdict::Valid
         } else {
             KeyVerdict::Invalid
@@ -313,15 +318,16 @@ impl SecurityAccess for Ecu {
     }
 }
 
-fn seed_of(level: SecurityLevel) -> u16 {
-    match level.request_seed() {
-        0x01 => 0x3657,
-        _ => 0x1234,
+impl Ecu {
+    /// The seed last issued for `level`: level 0x01's is static, as its counted policy
+    /// allows, and every `RandomSeedOnly` seed is fresh, as Table I.1 requires — `1234`,
+    /// then `1235`, and so on. Each key is its seed's two's complement (clause 10.4.5.1).
+    fn seed_of(&self, level: SecurityLevel) -> u16 {
+        match level.request_seed() {
+            0x01 => 0x3657,
+            _ => 0x1233_u16.wrapping_add(self.random_seeds),
+        }
     }
-}
-
-fn key_of(level: SecurityLevel) -> [u8; 2] {
-    seed_of(level).wrapping_neg().to_be_bytes()
 }
 
 /// The three DTCs of clause 12.3.5.2's example, and its `DTCStatusAvailabilityMask`.
@@ -907,17 +913,16 @@ fn security_access_a_key_without_a_seed_is_0x24() {
 #[test]
 fn security_access_a_refused_request_discards_the_seed() {
     let mut ecu = Ecu::default();
-    for refusal in [
-        &[0x27, 0x01, 0x0E, 0x80, 0x00][..],
-        &[0x27, 0x07][..],
-        &[0x27, 0x05][..],
+    for (refusal, nrc) in [
+        (&[0x27, 0x01, 0x0E, 0x80, 0x00][..], 0x13),
+        (&[0x27, 0x07][..], 0x12),
+        (&[0x27, 0x05][..], 0x7E),
     ] {
         let mut state = extended(&mut ecu);
         let _ = exchange(&mut ecu, &mut state, &[0x27, 0x01]);
-        let refused = exchange(&mut ecu, &mut state, refusal);
         assert_eq!(
-            refused.as_deref().and_then(|bytes| bytes.get(..2)),
-            Some(&[0x7F, 0x27][..]),
+            exchange(&mut ecu, &mut state, refusal).as_deref(),
+            Some(&[0x7F, 0x27, nrc][..]),
             "{refusal:02X?}"
         );
         assert_eq!(
