@@ -1077,3 +1077,128 @@ fn cancelled_while_waiting_for_the_ack_keeps_its_deadline() {
         confirm(DoIpResult::TimeoutA)
     );
 }
+
+// --- reconnect --------------------------------------------------------------------------
+
+/// ISO 14229-5:2022 REQ 7.8 and REQ 7.10: after the server closes the connection for a
+/// session change or a reset, the client performs a new TCP connection and routing
+/// activation before continuing.
+#[test]
+fn reconnecting_after_a_close_opens_a_new_connection_and_activates() {
+    let _clock = clock();
+    let stack = MockStack::new(usize::MAX);
+    let mut tester = active(&stack);
+    stack.latest().eof();
+    let mut buf = [0; 16];
+    assert_eq!(
+        next(&mut tester, &mut buf).unwrap(),
+        ConnectionEvent::Closed
+    );
+    stack.script_next(&activation_response(0x10));
+
+    run(tester.reconnect()).unwrap();
+
+    assert_eq!(stack.connects(), 2);
+    assert_eq!(stack.latest().take_written(), activation_request());
+    stack
+        .latest()
+        .send(&diagnostic(ENTITY, TESTER, &[0x7E, 0x00]));
+    assert!(matches!(
+        next(&mut tester, &mut buf).unwrap(),
+        ConnectionEvent::Indication { .. }
+    ));
+}
+
+#[test]
+fn reconnecting_while_connected_gives_up_the_old_connection() {
+    let _clock = clock();
+    let stack = MockStack::new(usize::MAX);
+    let mut tester = active(&stack);
+    stack.script_next(&activation_response(0x10));
+
+    run(tester.reconnect()).unwrap();
+
+    assert!(stack.peer(0).is_shut());
+    assert!(!stack.peer(1).is_shut());
+}
+
+/// Review focus: a request outstanding when the tester reconnects is confirmed as failed
+/// before anything from the new connection, and only once.
+#[test]
+fn reconnecting_confirms_the_outstanding_request_first() {
+    let _clock = clock();
+    let stack = MockStack::new(usize::MAX);
+    let mut tester = active(&stack);
+    request(&mut tester).unwrap();
+    stack.script_next(&activation_response(0x10));
+    run(tester.reconnect()).unwrap();
+    stack
+        .latest()
+        .send(&diagnostic(ENTITY, TESTER, &[0x7E, 0x00]));
+    let mut buf = [0; 16];
+
+    assert_eq!(
+        next(&mut tester, &mut buf).unwrap(),
+        confirm(DoIpResult::Error)
+    );
+    assert!(matches!(
+        next(&mut tester, &mut buf).unwrap(),
+        ConnectionEvent::Indication { .. }
+    ));
+    assert_eq!(
+        run(tester.next_event(&mut buf, Some(0))).unwrap(),
+        ConnectionEvent::Deadline
+    );
+}
+
+#[test]
+fn a_failed_reconnect_leaves_the_tester_not_connected() {
+    let _clock = clock();
+    let stack = MockStack::new(usize::MAX);
+    let mut tester = active(&stack);
+    stack.refuse_next_connect();
+    stack.script_next(&activation_response(0x00));
+    let mut buf = [0; 16];
+
+    assert_eq!(run(tester.reconnect()).unwrap_err(), Error::Io(MockError));
+    assert_eq!(
+        next(&mut tester, &mut buf).unwrap_err(),
+        Error::NotConnected
+    );
+
+    assert_eq!(
+        run(tester.reconnect()).unwrap_err(),
+        Error::RoutingActivationDenied(
+            RoutingActivationResponseCode::DeniedUnknownSourceAddress
+        )
+    );
+    assert_eq!(
+        next(&mut tester, &mut buf).unwrap_err(),
+        Error::NotConnected
+    );
+    assert_eq!(request(&mut tester).unwrap_err(), Error::NotConnected);
+}
+
+/// A reconnect dropped before routing is active leaves no connection behind: the old
+/// one is reported closed, and the half-activated new one is given up.
+#[test]
+fn a_dropped_reconnect_leaves_the_tester_closed() {
+    let _clock = clock();
+    let stack = MockStack::new(usize::MAX);
+    let mut tester = active(&stack);
+    {
+        let mut reconnecting = pin!(tester.reconnect());
+        assert!(until_stalled(reconnecting.as_mut()).is_none());
+    }
+    let mut buf = [0; 16];
+
+    assert!(stack.peer(1).is_shut());
+    assert_eq!(
+        next(&mut tester, &mut buf).unwrap(),
+        ConnectionEvent::Closed
+    );
+    assert_eq!(
+        next(&mut tester, &mut buf).unwrap_err(),
+        Error::NotConnected
+    );
+}

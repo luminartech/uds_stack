@@ -106,7 +106,7 @@ pub enum Error<E: core::fmt::Debug> {
 /// for.
 ///
 /// The stack is borrowed for `'s` because every socket it opens borrows it, and
-/// reconnecting opens another.
+/// [`Tester::reconnect`] opens another.
 pub struct Tester<'s, C: TcpConnect + 's, const N: usize> {
     stack: &'s C,
     remote: SocketAddr,
@@ -195,6 +195,35 @@ impl<'s, C: TcpConnect, const N: usize> Tester<'s, C, N> {
         };
         tester.establish().await?;
         Ok(tester)
+    }
+
+    /// Gives up the connection, if there is one, then connects and activates routing
+    /// again, as [`Tester::connect`] did.
+    ///
+    /// This is what ISO 14229-5:2022 REQ 7.8 and REQ 7.10 require of a client before it
+    /// continues after the server closed the connection for a session change or a reset.
+    /// A request still awaiting its confirm is confirmed with [`DoIpResult::Error`] or
+    /// [`DoIpResult::NoSocket`] by the next
+    /// [`next_event`](DiagnosticConnection::next_event), before anything from the new
+    /// connection.
+    ///
+    /// # Cancel safety
+    ///
+    /// As for [`Tester::connect`]. Dropped, or failed, it leaves the tester with no
+    /// connection; a dropped one reports [`ConnectionEvent::Closed`] for the old
+    /// connection if that was not yet reported.
+    ///
+    /// # Errors
+    ///
+    /// As for [`Tester::connect`], except [`Error::NotATesterAddress`]. After an error
+    /// the tester is [`Error::NotConnected`] until a reconnect succeeds.
+    pub async fn reconnect(&mut self) -> Result<(), Error<C::Error>> {
+        self.lose_connection(true).await;
+        let result = self.establish().await;
+        if result.is_err() {
+            self.closed_reported = true;
+        }
+        result
     }
 
     /// Opens a new connection and activates routing on it, keeping it only on success.
