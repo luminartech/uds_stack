@@ -54,6 +54,7 @@ use crate::rejection::{Cause, Content, Rejection};
 use crate::result::SResult;
 use crate::time::{Timestamp, earlier};
 use crate::timer::{Exceeds, Reaches, Timer};
+use core::marker::PhantomData;
 
 /// One entry of a functional channel's responder table.
 ///
@@ -96,7 +97,7 @@ pub struct PhysicalSlot<K: KeepAliveMode> {
     channel: Option<Physical<K>>,
     timed_out: Option<TimedOut>,
     /// ``UDSS_LLR_0162`` — the channel's keep-alive fell due, not yet retrieved.
-    keep_alive_due: Option<PhysicalChannelId>,
+    keep_alive_due: Option<u32>,
 }
 
 impl<K: KeepAliveMode> PhysicalSlot<K> {
@@ -139,9 +140,11 @@ impl<const R: usize> FunctionalSlot<R> {
 /// and never reissued: ids come from one client-wide counter, so a withdrawn channel's
 /// handle identifies no later one. The value is private and has no accessor, which is a
 /// promise: nothing about it is meaningful to a caller. `PartialOrd`/`Ord` are not
-/// derived, since nothing needs them.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct PhysicalChannelId(u32);
+/// implemented, since nothing needs them.
+///
+/// `Tag` is the issuing client's tag — see [`Client`] — so a handle from a client with
+/// another tag does not type-check here. Its traits hold whatever the tag implements.
+pub struct PhysicalChannelId<Tag = ()>(u32, PhantomData<fn() -> Tag>);
 
 /// Identifies a functional channel of this client.
 ///
@@ -149,9 +152,53 @@ pub struct PhysicalChannelId(u32);
 /// and never reissued: ids come from one client-wide counter, so a withdrawn channel's
 /// handle identifies no later one. The value is private and has no accessor, which is a
 /// promise: nothing about it is meaningful to a caller. `PartialOrd`/`Ord` are not
-/// derived, since nothing needs them.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct FunctionalChannelId(u32);
+/// implemented, since nothing needs them.
+///
+/// `Tag` is the issuing client's tag — see [`Client`] — so a handle from a client with
+/// another tag does not type-check here. Its traits hold whatever the tag implements.
+pub struct FunctionalChannelId<Tag = ()>(u32, PhantomData<fn() -> Tag>);
+
+/// A handle is `Copy`, `Eq`, `Hash` and `Debug` whatever its tag derives.
+macro_rules! handle {
+    ($name:ident) => {
+        impl<Tag> $name<Tag> {
+            const fn new(id: u32) -> Self {
+                Self(id, PhantomData)
+            }
+        }
+
+        impl<Tag> Clone for $name<Tag> {
+            fn clone(&self) -> Self {
+                *self
+            }
+        }
+
+        impl<Tag> Copy for $name<Tag> {}
+
+        impl<Tag> PartialEq for $name<Tag> {
+            fn eq(&self, other: &Self) -> bool {
+                self.0 == other.0
+            }
+        }
+
+        impl<Tag> Eq for $name<Tag> {}
+
+        impl<Tag> core::hash::Hash for $name<Tag> {
+            fn hash<H: core::hash::Hasher>(&self, state: &mut H) {
+                self.0.hash(state);
+            }
+        }
+
+        impl<Tag> core::fmt::Debug for $name<Tag> {
+            fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+                f.debug_tuple(stringify!($name)).field(&self.0).finish()
+            }
+        }
+    };
+}
+
+handle!(PhysicalChannelId);
+handle!(FunctionalChannelId);
 
 /// Identifies a channel of either kind.
 ///
@@ -160,33 +207,71 @@ pub struct FunctionalChannelId(u32);
 /// ``UDSS_LLR_0151`` a `tS3_Client` to a physical one — so the identity carries the kind.
 /// Operations that act on either kind take anything that converts into this, so either
 /// kind's own identity passes directly; those that act on one kind take that kind's own
-/// identity, which is why no setting can name a channel of the wrong kind.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum ChannelId {
+/// identity, which is why no setting can name a channel of the wrong kind. `Tag` is the
+/// issuing client's, as on each kind's own identity.
+pub enum ChannelId<Tag = ()> {
     /// A physical channel.
-    Physical(PhysicalChannelId),
+    Physical(PhysicalChannelId<Tag>),
     /// A functional channel.
-    Functional(FunctionalChannelId),
+    Functional(FunctionalChannelId<Tag>),
 }
 
-impl From<PhysicalChannelId> for ChannelId {
+impl<Tag> Clone for ChannelId<Tag> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<Tag> Copy for ChannelId<Tag> {}
+
+impl<Tag> PartialEq for ChannelId<Tag> {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::Physical(a), Self::Physical(b)) => a == b,
+            (Self::Functional(a), Self::Functional(b)) => a == b,
+            _ => false,
+        }
+    }
+}
+
+impl<Tag> Eq for ChannelId<Tag> {}
+
+impl<Tag> core::hash::Hash for ChannelId<Tag> {
+    fn hash<H: core::hash::Hasher>(&self, state: &mut H) {
+        match self {
+            Self::Physical(id) => (0_u8, id).hash(state),
+            Self::Functional(id) => (1_u8, id).hash(state),
+        }
+    }
+}
+
+impl<Tag> core::fmt::Debug for ChannelId<Tag> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::Physical(id) => f.debug_tuple("Physical").field(id).finish(),
+            Self::Functional(id) => f.debug_tuple("Functional").field(id).finish(),
+        }
+    }
+}
+
+impl<Tag> From<PhysicalChannelId<Tag>> for ChannelId<Tag> {
     /// Widen a physical channel's identity to either kind's.
     ///
     /// ``UDSS_LLR_0121`` — the same channel. A kind-agnostic method such as
-    /// [`Client::withdraw_channel`] takes `impl Into<ChannelId>`, so this conversion
+    /// [`Client::withdraw_channel`] takes `impl Into<ChannelId<Tag>>`, so this conversion
     /// happens at the call rather than in the caller's own code.
-    fn from(id: PhysicalChannelId) -> Self {
+    fn from(id: PhysicalChannelId<Tag>) -> Self {
         Self::Physical(id)
     }
 }
 
-impl From<FunctionalChannelId> for ChannelId {
+impl<Tag> From<FunctionalChannelId<Tag>> for ChannelId<Tag> {
     /// Widen a functional channel's identity to either kind's.
     ///
     /// ``UDSS_LLR_0121`` — the same channel. A kind-agnostic method such as
-    /// [`Client::withdraw_channel`] takes `impl Into<ChannelId>`, so this conversion
+    /// [`Client::withdraw_channel`] takes `impl Into<ChannelId<Tag>>`, so this conversion
     /// happens at the call rather than in the caller's own code.
-    fn from(id: FunctionalChannelId) -> Self {
+    fn from(id: FunctionalChannelId<Tag>) -> Self {
         Self::Functional(id)
     }
 }
@@ -251,10 +336,10 @@ impl Channel {
     }
 
     /// The handle naming this channel; its kind is its `TAtype` (``UDSS_LLR_0049``).
-    const fn handle(&self) -> ChannelId {
+    const fn handle<Tag>(&self) -> ChannelId<Tag> {
         match self.ai.ta_type {
-            TaType::Physical => ChannelId::Physical(PhysicalChannelId(self.id)),
-            TaType::Functional => ChannelId::Functional(FunctionalChannelId(self.id)),
+            TaType::Physical => ChannelId::Physical(PhysicalChannelId::new(self.id)),
+            TaType::Functional => ChannelId::Functional(FunctionalChannelId::new(self.id)),
         }
     }
 
@@ -532,7 +617,10 @@ impl<const R: usize> FunctionalSlot<R> {
 }
 
 /// ``UDSS_LLR_0143`` — the responder `ai` came from had no room in `channel`'s table.
-const fn capacity(channel: FunctionalChannelId, ai: Ai) -> ClientOutput<'static> {
+const fn capacity<Tag>(
+    channel: FunctionalChannelId<Tag>,
+    ai: Ai,
+) -> ClientOutput<'static, Tag> {
     ClientOutput::Capacity {
         channel,
         sa: ai.sa,
@@ -546,10 +634,11 @@ const NO_SUCH_CHANNEL: Rejection = Rejection::new(Cause::NoSuchChannel);
 ///
 /// ``UDSS_LLR_0012`` — the standard's own outputs, plus the ones it does not define. That
 /// requirement states an open enumeration, which is what `#[non_exhaustive]` rests on
-/// here; see [`crate::ServerOutput`].
+/// here; see [`crate::ServerOutput`]. `Tag` is the client's, carried by the handles in
+/// it; the derived traits hold where the tag implements them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
-pub enum ClientOutput<'d> {
+pub enum ClientOutput<'d, Tag = ()> {
     /// `T_Data.req` — ``UDSS_LLR_0024``. The data is the caller's own, per
     /// ``UDSS_LLR_0014``.
     Transmit {
@@ -558,7 +647,7 @@ pub enum ClientOutput<'d> {
         /// A convenience: the request's addressing already determines the channel, since
         /// ``UDSS_LLR_0122`` makes an addressing unique per channel, so this field saves
         /// the caller a lookup rather than carrying information the addressing lacks.
-        channel: ChannelId,
+        channel: ChannelId<Tag>,
         /// Where it goes.
         ai: Ai,
         /// What to send.
@@ -567,7 +656,7 @@ pub enum ClientOutput<'d> {
     /// `S_Data.ind` — ``UDSS_LLR_0034`` and ``UDSS_LLR_0036``.
     Indicate {
         /// The channel the caller identified under ``UDSS_LLR_0026``.
-        channel: ChannelId,
+        channel: ChannelId<Tag>,
         /// Who it came from and who it was for.
         ai: Ai,
         /// The message; meaningful only where `result` is [`SResult::Ok`]
@@ -601,7 +690,7 @@ pub enum ClientOutput<'d> {
     /// never builds a message.
     KeepAliveDue {
         /// `None` in functional keep-alive; the physical channel in physical keep-alive.
-        channel: Option<PhysicalChannelId>,
+        channel: Option<PhysicalChannelId<Tag>>,
     },
     /// A responder was seen that the table has no room for.
     ///
@@ -611,7 +700,7 @@ pub enum ClientOutput<'d> {
     /// channel alone: ``UDSS_LLR_0139`` gives a physical one no table to overflow.
     Capacity {
         /// The functional channel it arrived on.
-        channel: FunctionalChannelId,
+        channel: FunctionalChannelId<Tag>,
         /// The responder's `S_AI[SA]`.
         sa: Address,
         /// Its `S_AI[AE]`, where `S_Mtype` carries one.
@@ -628,7 +717,8 @@ pub type ClientReaction<
     const FUNC: usize,
     const R: usize,
     T = (),
-> = Reaction<'s, 'd, ClientOutput<'d>, Client<K, PHYS, FUNC, R>, T>;
+    Tag = (),
+> = Reaction<'s, 'd, ClientOutput<'d, Tag>, Client<K, PHYS, FUNC, R, Tag>, T>;
 
 /// The session layer in the client role.
 ///
@@ -644,12 +734,38 @@ pub type ClientReaction<
 ///
 /// `R` defaults to `0`, since a client with `FUNC` of `0` has no responder table to size;
 /// with functional channels, [`Client::new`] refuses it at compile time.
+///
+/// `Tag` brands the handles this client issues, at no cost: [`PhysicalChannelId`],
+/// [`FunctionalChannelId`], [`ChannelId`] and the outputs carrying them all take it. It
+/// defaults to `()`, which a single client never needs to name. A caller running several
+/// clients gives each its own marker type, and a handle passed to a client it did not come
+/// from no longer compiles. Clients sharing a tag share a handle space, and a handle from
+/// one is not checked against the other. A tag need implement nothing; [`ClientOutput`]'s
+/// derived traits hold where it implements them, and handles have theirs regardless.
+///
+/// ```compile_fail,E0308
+/// use uds_session::{
+///     ChannelParameter, Client, FunctionalKeepAlive, PhysicalChannelId, Timestamp,
+/// };
+///
+/// struct Front;
+/// struct Rear;
+///
+/// fn crossed(
+///     rear: &mut Client<FunctionalKeepAlive, 1, 1, 1, Rear>,
+///     front_handle: PhysicalChannelId<Front>,
+/// ) {
+///     let parameter = ChannelParameter::Spacing(60);
+///     let _ = rear.set_physical_parameter(Timestamp(0), front_handle, parameter);
+/// }
+/// ```
 #[derive(Debug)]
 pub struct Client<
     K: KeepAliveMode,
     const PHYS: usize,
     const FUNC: usize,
     const R: usize = 0,
+    Tag = (),
 > {
     physical: [PhysicalSlot<K>; PHYS],
     functional: [FunctionalSlot<R>; FUNC],
@@ -659,10 +775,11 @@ pub struct Client<
     /// ``UDSS_LLR_0121``, ``UDSS_LLR_0185`` — the next handle to issue; `checked_add` on
     /// it failing is the second limb's rejection.
     next_id: u32,
+    tag: PhantomData<fn() -> Tag>,
 }
 
-impl<K: KeepAliveMode, const PHYS: usize, const FUNC: usize, const R: usize>
-    Client<K, PHYS, FUNC, R>
+impl<K: KeepAliveMode, const PHYS: usize, const FUNC: usize, const R: usize, Tag>
+    Client<K, PHYS, FUNC, R, Tag>
 {
     /// Create a client.
     ///
@@ -722,6 +839,7 @@ impl<K: KeepAliveMode, const PHYS: usize, const FUNC: usize, const R: usize>
             keep_alive,
             keep_alive_due: false,
             next_id: 0,
+            tag: PhantomData,
         }
     }
 
@@ -734,7 +852,7 @@ impl<K: KeepAliveMode, const PHYS: usize, const FUNC: usize, const R: usize>
                 continue;
             };
             if K::expire_channel(&mut p.keep_alive, now) {
-                slot.keep_alive_due = Some(PhysicalChannelId(p.core.id)); // UDSS_LLR_0162
+                slot.keep_alive_due = Some(p.core.id); // UDSS_LLR_0162
             }
             let class = p.core.request.map(|r| r.class);
             let Some(timed_out) = p.core.expire(now) else {
@@ -758,7 +876,7 @@ impl<K: KeepAliveMode, const PHYS: usize, const FUNC: usize, const R: usize>
     }
 
     /// Tell the keep-alive mode of `event` on `channel`.
-    fn keep_alive_on(&mut self, now: Timestamp, channel: ChannelId, event: Event) {
+    fn keep_alive_on(&mut self, now: Timestamp, channel: ChannelId<Tag>, event: Event) {
         let Self {
             physical,
             keep_alive,
@@ -795,11 +913,11 @@ impl<K: KeepAliveMode, const PHYS: usize, const FUNC: usize, const R: usize>
         physical.map(|p| &mut p.core).chain(functional)
     }
 
-    fn channel_mut(&mut self, id: ChannelId) -> Option<&mut Channel> {
+    fn channel_mut(&mut self, id: ChannelId<Tag>) -> Option<&mut Channel> {
         self.channels_mut().find(|c| c.handle() == id)
     }
 
-    fn physical_mut(&mut self, id: PhysicalChannelId) -> Option<&mut Physical<K>> {
+    fn physical_mut(&mut self, id: PhysicalChannelId<Tag>) -> Option<&mut Physical<K>> {
         self.physical
             .iter_mut()
             .filter_map(|s| s.channel.as_mut())
@@ -808,7 +926,7 @@ impl<K: KeepAliveMode, const PHYS: usize, const FUNC: usize, const R: usize>
 
     fn functional_mut(
         &mut self,
-        id: FunctionalChannelId,
+        id: FunctionalChannelId<Tag>,
     ) -> Option<&mut FunctionalSlot<R>> {
         self.functional
             .iter_mut()
@@ -818,7 +936,7 @@ impl<K: KeepAliveMode, const PHYS: usize, const FUNC: usize, const R: usize>
     /// ``UDSS_LLR_0027`` and ``UDSS_LLR_0069``, every cause stated (``UDSS_LLR_0016``).
     fn validate_ind(
         &self,
-        channel: ChannelId,
+        channel: ChannelId<Tag>,
         result: SResult,
         class: Option<ClientRx>,
     ) -> Result<(), Rejection> {
@@ -867,7 +985,7 @@ impl<K: KeepAliveMode, const PHYS: usize, const FUNC: usize, const R: usize>
         addressing: ChannelAddressing,
         params: ChannelParams,
         keep_alive: K::Channel,
-    ) -> ClientReaction<'_, 'static, K, PHYS, FUNC, R, PhysicalChannelId> {
+    ) -> ClientReaction<'_, 'static, K, PHYS, FUNC, R, PhysicalChannelId<Tag>, Tag> {
         let ai = addressing.with_ta_type(TaType::Physical);
         self.expire(now);
         let free = self.physical.iter().any(|s| s.channel.is_none());
@@ -880,7 +998,7 @@ impl<K: KeepAliveMode, const PHYS: usize, const FUNC: usize, const R: usize>
                     keep_alive,
                 });
             }
-            PhysicalChannelId(id)
+            PhysicalChannelId::new(id)
         });
         Reaction::new(self, [None, None], outcome)
     }
@@ -937,7 +1055,7 @@ impl<K: KeepAliveMode, const PHYS: usize, const FUNC: usize, const R: usize>
         now: Timestamp,
         addressing: ChannelAddressing,
         params: ChannelParams,
-    ) -> ClientReaction<'_, 'static, K, PHYS, FUNC, R, FunctionalChannelId> {
+    ) -> ClientReaction<'_, 'static, K, PHYS, FUNC, R, FunctionalChannelId<Tag>, Tag> {
         let ai = addressing.with_ta_type(TaType::Functional);
         self.expire(now);
         let free = self.functional.iter().any(|s| s.channel.is_none());
@@ -947,7 +1065,7 @@ impl<K: KeepAliveMode, const PHYS: usize, const FUNC: usize, const R: usize>
                 slot.channel = Some(Channel::opened(id, ai, params));
                 slot.responders = [ResponderSlot::EMPTY; R]; // UDSS_LLR_0142
             }
-            FunctionalChannelId(id)
+            FunctionalChannelId::new(id)
         });
         Reaction::new(self, [None, None], outcome)
     }
@@ -962,8 +1080,8 @@ impl<K: KeepAliveMode, const PHYS: usize, const FUNC: usize, const R: usize>
     pub fn withdraw_channel(
         &mut self,
         now: Timestamp,
-        channel: impl Into<ChannelId>,
-    ) -> ClientReaction<'_, 'static, K, PHYS, FUNC, R> {
+        channel: impl Into<ChannelId<Tag>>,
+    ) -> ClientReaction<'_, 'static, K, PHYS, FUNC, R, (), Tag> {
         let channel = channel.into();
         self.expire(now);
         let physical = self.physical.iter_mut().find(|s| {
@@ -997,9 +1115,9 @@ impl<K: KeepAliveMode, const PHYS: usize, const FUNC: usize, const R: usize>
     pub fn set_physical_parameter(
         &mut self,
         now: Timestamp,
-        channel: PhysicalChannelId,
+        channel: PhysicalChannelId<Tag>,
         parameter: ChannelParameter,
-    ) -> ClientReaction<'_, 'static, K, PHYS, FUNC, R> {
+    ) -> ClientReaction<'_, 'static, K, PHYS, FUNC, R, (), Tag> {
         self.expire(now);
         let outcome = match self.channel_mut(channel.into()) {
             Some(c) => {
@@ -1020,9 +1138,9 @@ impl<K: KeepAliveMode, const PHYS: usize, const FUNC: usize, const R: usize>
     pub fn set_functional_parameter(
         &mut self,
         now: Timestamp,
-        channel: FunctionalChannelId,
+        channel: FunctionalChannelId<Tag>,
         parameter: ChannelParameter,
-    ) -> ClientReaction<'_, 'static, K, PHYS, FUNC, R> {
+    ) -> ClientReaction<'_, 'static, K, PHYS, FUNC, R, (), Tag> {
         self.expire(now);
         let outcome = match self.channel_mut(channel.into()) {
             Some(c) => {
@@ -1046,8 +1164,8 @@ impl<K: KeepAliveMode, const PHYS: usize, const FUNC: usize, const R: usize>
     pub fn reset_channel(
         &mut self,
         now: Timestamp,
-        channel: impl Into<ChannelId>,
-    ) -> ClientReaction<'_, 'static, K, PHYS, FUNC, R> {
+        channel: impl Into<ChannelId<Tag>>,
+    ) -> ClientReaction<'_, 'static, K, PHYS, FUNC, R, (), Tag> {
         let channel = channel.into();
         self.expire(now);
         let found = match channel {
@@ -1076,8 +1194,8 @@ impl<K: KeepAliveMode, const PHYS: usize, const FUNC: usize, const R: usize>
     pub fn release_keep_alive(
         &mut self,
         now: Timestamp,
-        channel: impl Into<ChannelId>,
-    ) -> ClientReaction<'_, 'static, K, PHYS, FUNC, R> {
+        channel: impl Into<ChannelId<Tag>>,
+    ) -> ClientReaction<'_, 'static, K, PHYS, FUNC, R, (), Tag> {
         let channel = channel.into();
         self.expire(now);
         if !self.channels().any(|c| c.handle() == channel) {
@@ -1100,7 +1218,7 @@ impl<K: KeepAliveMode, const PHYS: usize, const FUNC: usize, const R: usize>
         ai: Ai,
         data: &'d [u8],
         class: ClientTx,
-    ) -> ClientReaction<'_, 'd, K, PHYS, FUNC, R> {
+    ) -> ClientReaction<'_, 'd, K, PHYS, FUNC, R, (), Tag> {
         self.expire(now);
         if let Err(rejection) = self.validate_req(now, ai, class) {
             return Reaction::new(self, [None, None], Err(rejection)); // UDSS_LLR_0015
@@ -1136,10 +1254,10 @@ impl<K: KeepAliveMode, const PHYS: usize, const FUNC: usize, const R: usize>
     pub fn t_data_som_ind(
         &mut self,
         now: Timestamp,
-        channel: impl Into<ChannelId>,
+        channel: impl Into<ChannelId<Tag>>,
         ai: Ai,
         class: ClientRx,
-    ) -> ClientReaction<'_, 'static, K, PHYS, FUNC, R> {
+    ) -> ClientReaction<'_, 'static, K, PHYS, FUNC, R, (), Tag> {
         let channel = channel.into();
         self.expire(now);
         if let Err(rejection) = self.validate_ind(channel, SResult::Ok, Some(class)) {
@@ -1177,12 +1295,12 @@ impl<K: KeepAliveMode, const PHYS: usize, const FUNC: usize, const R: usize>
     pub fn t_data_ind<'d>(
         &mut self,
         now: Timestamp,
-        channel: impl Into<ChannelId>,
+        channel: impl Into<ChannelId<Tag>>,
         ai: Ai,
         data: &'d [u8],
         result: SResult,
         class: Option<ClientRx>,
-    ) -> ClientReaction<'_, 'd, K, PHYS, FUNC, R> {
+    ) -> ClientReaction<'_, 'd, K, PHYS, FUNC, R, (), Tag> {
         let channel = channel.into();
         self.expire(now);
         if let Err(rejection) = self.validate_ind(channel, result, class) {
@@ -1223,7 +1341,7 @@ impl<K: KeepAliveMode, const PHYS: usize, const FUNC: usize, const R: usize>
         now: Timestamp,
         ai: Ai,
         result: SResult,
-    ) -> ClientReaction<'_, 'static, K, PHYS, FUNC, R> {
+    ) -> ClientReaction<'_, 'static, K, PHYS, FUNC, R, (), Tag> {
         self.expire(now);
         let matched = self.channels_mut().find_map(|c| {
             let sent = c.sent.take_if(|_| c.ai == ai)?; // UDSS_LLR_0059
@@ -1263,7 +1381,7 @@ impl<K: KeepAliveMode, const PHYS: usize, const FUNC: usize, const R: usize>
     pub fn tick(
         &mut self,
         now: Timestamp,
-    ) -> ClientReaction<'_, 'static, K, PHYS, FUNC, R> {
+    ) -> ClientReaction<'_, 'static, K, PHYS, FUNC, R, (), Tag> {
         self.expire(now);
         Reaction::new(self, [None, None], Ok(()))
     }
@@ -1294,8 +1412,8 @@ impl<K: KeepAliveMode, const PHYS: usize, const FUNC: usize, const R: usize>
     }
 }
 
-impl<const PHYS: usize, const FUNC: usize, const R: usize>
-    Client<FunctionalKeepAlive, PHYS, FUNC, R>
+impl<const PHYS: usize, const FUNC: usize, const R: usize, Tag>
+    Client<FunctionalKeepAlive, PHYS, FUNC, R, Tag>
 {
     /// Open a physical channel.
     ///
@@ -1317,8 +1435,16 @@ impl<const PHYS: usize, const FUNC: usize, const R: usize>
         now: Timestamp,
         addressing: ChannelAddressing,
         params: ChannelParams,
-    ) -> ClientReaction<'_, 'static, FunctionalKeepAlive, PHYS, FUNC, R, PhysicalChannelId>
-    {
+    ) -> ClientReaction<
+        '_,
+        'static,
+        FunctionalKeepAlive,
+        PHYS,
+        FUNC,
+        R,
+        PhysicalChannelId<Tag>,
+        Tag,
+    > {
         self.open_physical(now, addressing, params, ())
     }
 
@@ -1336,15 +1462,15 @@ impl<const PHYS: usize, const FUNC: usize, const R: usize>
         &mut self,
         now: Timestamp,
         s3_client: u32,
-    ) -> ClientReaction<'_, 'static, FunctionalKeepAlive, PHYS, FUNC, R> {
+    ) -> ClientReaction<'_, 'static, FunctionalKeepAlive, PHYS, FUNC, R, (), Tag> {
         self.expire(now);
         self.keep_alive.reload = s3_client; // UDSS_LLR_0152
         Reaction::new(self, [None, None], Ok(()))
     }
 }
 
-impl<const PHYS: usize, const FUNC: usize, const R: usize>
-    Client<PhysicalKeepAlive, PHYS, FUNC, R>
+impl<const PHYS: usize, const FUNC: usize, const R: usize, Tag>
+    Client<PhysicalKeepAlive, PHYS, FUNC, R, Tag>
 {
     /// Open a physical channel, with this channel's `tS3_Client` reload.
     ///
@@ -1362,8 +1488,16 @@ impl<const PHYS: usize, const FUNC: usize, const R: usize>
         addressing: ChannelAddressing,
         params: ChannelParams,
         s3_client: u32,
-    ) -> ClientReaction<'_, 'static, PhysicalKeepAlive, PHYS, FUNC, R, PhysicalChannelId>
-    {
+    ) -> ClientReaction<
+        '_,
+        'static,
+        PhysicalKeepAlive,
+        PHYS,
+        FUNC,
+        R,
+        PhysicalChannelId<Tag>,
+        Tag,
+    > {
         let session = PhysicalSession::new(s3_client); // UDSS_LLR_0151, UDSS_LLR_0152
         self.open_physical(now, addressing, params, session)
     }
@@ -1378,9 +1512,9 @@ impl<const PHYS: usize, const FUNC: usize, const R: usize>
     pub fn set_physical_s3_client(
         &mut self,
         now: Timestamp,
-        channel: PhysicalChannelId,
+        channel: PhysicalChannelId<Tag>,
         s3_client: u32,
-    ) -> ClientReaction<'_, 'static, PhysicalKeepAlive, PHYS, FUNC, R> {
+    ) -> ClientReaction<'_, 'static, PhysicalKeepAlive, PHYS, FUNC, R, (), Tag> {
         self.expire(now);
         let outcome = match self.physical_mut(channel) {
             Some(p) => {
@@ -1393,15 +1527,15 @@ impl<const PHYS: usize, const FUNC: usize, const R: usize>
     }
 }
 
-impl<K: KeepAliveMode, const PHYS: usize, const FUNC: usize, const R: usize>
-    crate::sealed::Sealed for Client<K, PHYS, FUNC, R>
+impl<K: KeepAliveMode, const PHYS: usize, const FUNC: usize, const R: usize, Tag>
+    crate::sealed::Sealed for Client<K, PHYS, FUNC, R, Tag>
 {
 }
 
-impl<'d, K: KeepAliveMode, const PHYS: usize, const FUNC: usize, const R: usize>
-    crate::reaction::Drain<'d, ClientOutput<'d>> for Client<K, PHYS, FUNC, R>
+impl<'d, K: KeepAliveMode, const PHYS: usize, const FUNC: usize, const R: usize, Tag>
+    crate::reaction::Drain<'d, ClientOutput<'d, Tag>> for Client<K, PHYS, FUNC, R, Tag>
 {
-    fn next_expiry(&mut self) -> Option<ClientOutput<'d>> {
+    fn next_expiry(&mut self) -> Option<ClientOutput<'d, Tag>> {
         let timeout = |t: TimedOut| ClientOutput::ResponseTimeout {
             ai: t.ai,
             loaded: t.loaded,
@@ -1410,7 +1544,7 @@ impl<'d, K: KeepAliveMode, const PHYS: usize, const FUNC: usize, const R: usize>
             s.timed_out.take().map(timeout).or_else(|| {
                 let channel = s.keep_alive_due.take()?;
                 Some(ClientOutput::KeepAliveDue {
-                    channel: Some(channel),
+                    channel: Some(PhysicalChannelId::new(channel)),
                 })
             })
         });

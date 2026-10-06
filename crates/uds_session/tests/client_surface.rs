@@ -22,6 +22,43 @@ fn a_client_is_created_from_caller_storage() {
     );
 }
 
+/// ``UDSS_LLR_0121`` — a handle names a channel of the client that issued it. Clients
+/// given different tags issue handles of different types, so one client's handle cannot
+/// be passed to another; a tag need derive nothing for its handles to stay `Copy`.
+#[test]
+fn a_tagged_client_issues_handles_of_its_own_type() {
+    struct Front;
+    let mut front: Client<FunctionalKeepAlive, 1, 1, 1, Front> = Client::new(
+        [PhysicalSlot::EMPTY],
+        [FunctionalSlot::EMPTY],
+        FunctionalKeepAlive::new(2_000),
+    );
+    let now = Timestamp(0);
+    let addressing = ChannelAddressing {
+        mtype: Mtype::Diag,
+        sa: Address(0xF1),
+        ta: Address(0x10),
+    };
+    let params = ChannelParams {
+        reloads: Reloads {
+            default_reload: 50,
+            enhanced_reload: 5_000,
+        },
+        spacing: 60,
+    };
+    let opened = front
+        .open_physical_channel(now, addressing, params)
+        .finish()
+        .outcome;
+    let used = opened.map(|handle: PhysicalChannelId<Front>| {
+        let copied = handle;
+        let reset = front.reset_channel(now, handle).finish().outcome;
+        let withdrawn = front.withdraw_channel(now, copied).finish().outcome;
+        (reset, withdrawn)
+    });
+    assert_eq!(used, Ok((Ok(()), Ok(()))));
+}
+
 /// ``UDSS_LLR_0151`` — in physical keep-alive the fact and timer live in each channel's
 /// storage, so the mode carries nothing.
 ///
