@@ -7,36 +7,6 @@ What is not yet settled, and why. This page holds no needs and contributes nothi
 Still open
 ----------
 
-**1. Acting on clause 8.7.6's classification.** The question used to be how much of clause
-8.7.6 belongs here at all, and proposed a split — this crate classifies, the driver acts —
-across what was then a crate boundary. Both halves have since landed on the same side.
-``UDSSVC_ARCH_0040`` made this crate the driver, so there is no boundary left to split
-across, and the classification is here: ``ServiceSet::is_concurrent_exception`` answers it,
-and ``UDSSVC_ARCH_0017``'s small concurrent buffer exists so that a message arriving
-mid-service can be received and classified at all. The argument that settled ownership is
-unchanged and was the strong one: the second exception is predicated on "if a server
-supports services in the range of 0x00 to 0x0F", which only ``UDSSVC_ARCH_0013``'s assembly
-list knows, so classification is not merely *arguably* this crate's — it is available
-nowhere else.
-
-**What remains open is acting on it**, and the gap is visible in the driver today. A
-functionally addressed ``TesterPresent`` with the suppress bit set must bypass the occupied
-diagnostic protocol instance, and a request in the 0x00–0x0F range must abort an active
-service outside that range and start the default session unless a programming session is
-active. The first is not performed. The second cannot arise: the clause predicates it on
-the server supporting a service in that range, ``uds_server!`` can assemble none — the
-lowest identifier in ``__uds_sids!`` is 0x10, that range being OBD territory
-``uds_protocol`` does not model — and ``is_concurrent_exception`` therefore no longer
-carries an arm for it. The arm returns with the first service in that range, which cannot
-be added without editing the same macro. Nor is the negative case: anything arriving mid-service that
-is *not* an exception is occupancy and owes ``busyRepeatRequest`` (0x21), and a
-``DataTooLong`` on the concurrent buffer owes the same — the driver's concurrent arm
-currently re-arms the deadline and does nothing else. No caller in ``src/`` invokes
-``is_concurrent_exception`` at all; the only call site in the repository is
-``tests/composition.rs``, which exercises it to prove the classifier is reachable. So the
-classification exists and is tested, and nothing in the running server consults it. See
-:doc:`dispatch`.
-
 **2. What does ``A_Mtype`` mean for this crate?** Clause 7.2 defines four formats —
 diagnostics, remote, secure, and secure remote — and Figure 5's optional 0x38 and 0x39
 checks exist to enforce the secure ones. Those are filed as caller-supplied checks in
@@ -89,6 +59,28 @@ Retired
 
 Kept rather than deleted, because a question's answer is only evidence alongside what was
 asked and why. The numbering is not reused.
+
+**1. Acting on clause 8.7.6's classification — the driver refuses, the keep-alive
+bypasses.** It asked how much of clause 8.7.6 belonged here, then, once ``UDSSVC_ARCH_0040``
+made this crate the driver and ``ServiceSet::is_concurrent_exception`` the classifier, why
+nothing in ``src/`` consulted it: a message arriving mid-service was received into the
+concurrent buffer and dropped. The driver now acts on it. A message arriving while a
+service is in progress finds the one protocol instance occupied (ISO 14229-1:2020 8.7.6)
+and is answered ``busyRepeatRequest`` (0x21, Annex A) from its service identifier, whether
+it was physically or functionally addressed and whether or not it fit the concurrent
+buffer; the service in progress continues. The functionally addressed ``3E 80`` is the
+exception: it is indicated to the session layer as keep-alive (``UDSS_LLR_0095``,
+``UDSS_LLR_0096``) and neither dispatched nor answered.
+
+What it took was a session-layer kind, not only a driver arm. Sent as a solicited final
+response to the client whose service is in progress, a 0x21 would have answered that
+service by addressing (``UDSS_LLR_0106``): stopped its ``tP2_Server`` and ended it on
+confirmation. ``UDSS_LLR_0187``'s busy refusal answers no service, and ``UDSS_LLR_0108`` now
+governs only the requests a caller indicates. One association serves the one client, so a
+0x78 that comes due while a 0x21 is unconfirmed is refused, and the driver resubmits it on
+the confirmation that frees the association; a 0x21 refused for the same reason is dropped,
+Annex J Figure J.2's other branch. The OBD-range exception stays absent for the reason the
+classifier's own doc gives: no assemblable service reaches it.
 
 **5. Does ``RoutineControl`` need a distinct trait shape? — yes, three methods.** It asked
 whether Figure 5's exclusion of service identifier 0x31 from the sub-function stage should

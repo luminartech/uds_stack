@@ -195,6 +195,31 @@ impl SessionTransition {
     }
 }
 
+/// A request as the transport delivered it: whole, or only the front of a message longer
+/// than the buffer it was received into.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Received<'a> {
+    /// The whole request, service identifier first.
+    Whole(&'a [u8]),
+    /// What fit of a request longer than the in-flight buffer, service identifier first.
+    ///
+    /// [`crate::uds_server`] sizes that buffer to the longest request any assembled service
+    /// accepts, so such a request is never processed: it is checked as clause 8.7 checks
+    /// any request, and one that would pass every check before the length is refused
+    /// `incorrectMessageLengthOrInvalidFormat` (0x13).
+    Truncated(&'a [u8]),
+}
+
+impl<'a> Received<'a> {
+    /// The bytes received, service identifier first.
+    #[must_use]
+    pub const fn bytes(self) -> &'a [u8] {
+        match self {
+            Self::Whole(bytes) | Self::Truncated(bytes) => bytes,
+        }
+    }
+}
+
 /// One application's assembled service implementations.
 ///
 /// ``UDSSVC_ARCH_0013`` — implemented by [`crate::uds_server`], never by hand.
@@ -222,14 +247,15 @@ pub trait ServiceSet: crate::sealed::Sealed {
     ///
     /// * `state` - the [`ProtocolState`] of this assembly, held by [`crate::Server`]
     /// * `ai` - the [`Ai`] the driver drained with the request
-    /// * `request` - the request bytes, service identifier first
+    /// * `request` - the request, [`Received::Whole`] or [`Received::Truncated`]; only a
+    ///   whole one reaches a handler
     /// * `out` - the [`ResponseSink`] the response is written into, and that the driver
     ///   settles once this future completes
     fn dispatch(
         &mut self,
         state: &mut Self::State,
         ai: Ai,
-        request: &[u8],
+        request: Received<'_>,
         out: &mut ResponseSink<'_>,
     ) -> impl core::future::Future<Output = Unsettled>;
 
@@ -261,6 +287,18 @@ pub trait ServiceSet: crate::sealed::Sealed {
         selected: DiagnosticSessionType,
     );
 
+    /// The `P2` pair of the session `state` is in, which [`crate::Server`] enforces for
+    /// the next request.
+    ///
+    /// [`DiagnosticSessionControl::timing`] for that session, or `None` where the
+    /// assembly has no `DiagnosticSessionControl`: such a server never leaves the default
+    /// session, and the [`ServerParams`](crate::ServerParams) it was built with time it.
+    ///
+    /// # Arguments
+    ///
+    /// * `state` - the [`ProtocolState`] of this assembly, which holds the session in force
+    fn session_timing(&self, state: &Self::State) -> Option<SessionTiming>;
+
     /// Whether this server implements `service` at all.
     ///
     /// ``UDSSVC_ARCH_0006`` — Figure 5's first mandatory check, and the one only the
@@ -277,11 +315,11 @@ pub trait ServiceSet: crate::sealed::Sealed {
     /// Whether `request`, addressed this way, may proceed while a service is already in
     /// progress.
     ///
-    /// True for a **functionally addressed** `TesterPresent` carrying
-    /// `suppressPosRspMsgIndication`, which clause 8.7.6 lets bypass the occupied
-    /// diagnostic protocol instance. The addressing is a parameter because that
-    /// condition turns on it and the bytes do not carry it; `ai` is the one the driver
-    /// drained from the transport event alongside `request`.
+    /// True for exactly the **functionally addressed** `TesterPresent` `3E 80`, the
+    /// "valid `TesterPresent` message with SPRMIB=true" that ISO 14229-1:2020 8.7.6 lets
+    /// bypass the occupied diagnostic protocol instance. The addressing is a parameter
+    /// because that condition turns on it and the bytes do not carry it; `ai` is the one
+    /// the driver drained from the transport event alongside `request`.
     ///
     /// Clause 8.7.6 admits a second exception — a request in `0x00`–`0x0F`, which aborts
     /// the active service — and no assembled server can meet it. That range is OBD
@@ -289,9 +327,11 @@ pub trait ServiceSet: crate::sealed::Sealed {
     /// assemble no service in it and the case cannot arise. Its absence here is coverage,
     /// not an omission.
     ///
-    /// Anything else arriving mid-service is occupancy and owes `busyRepeatRequest`
-    /// (0x21). *Acting* on a classification is open question 1.
-    fn is_concurrent_exception(&self, request: &[u8], ai: Ai) -> bool;
+    /// An associated function, because the driver asks while a handler holds the
+    /// services: the answer depends on the assembly, never on a handler's state.
+    /// [`crate::Server`] answers anything else arriving mid-service `busyRepeatRequest`
+    /// (0x21).
+    fn is_concurrent_exception(request: &[u8], ai: Ai) -> bool;
 }
 
 #[cfg(test)]

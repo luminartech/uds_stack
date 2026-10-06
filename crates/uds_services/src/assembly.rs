@@ -232,6 +232,19 @@ macro_rules! __uds_session_hook {
     ($self:ident, $transition:expr, $svc:ident) => {};
 }
 
+/// The `P2` pair of the session in force, for one listed service: only
+/// `DiagnosticSessionControl` states one, and any other listed service emits nothing.
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __uds_session_timing {
+    ($self:ident, $state:ident, DiagnosticSessionControl) => {
+        return ::core::option::Option::Some($crate::pipeline::session_timing(
+            $self, $state,
+        ));
+    };
+    ($self:ident, $state:ident, $svc:ident) => {};
+}
+
 /// Figure 6's sub-function check for one listed service (``UDSSVC_ARCH_0007``): an early
 /// `return` from the closure `pipeline::begin` is handed, where `$service` is this one.
 /// Only a service with a stage decides its sub-function; any other listed service emits
@@ -545,7 +558,7 @@ macro_rules! uds_server {
                     state: &mut Self::State,
                     // The driver settles, and it is `settle` that reads the addressing.
                     _ai: $crate::Ai,
-                    request: &[u8],
+                    received: $crate::Received<'_>,
                     out: &mut $crate::ResponseSink<'_>,
                 ) -> $crate::Unsettled {
                     // Unused in an assembly listing neither service that decides a
@@ -569,7 +582,7 @@ macro_rules! uds_server {
                     };
                     let (sid, decoded) = match $crate::pipeline::begin(
                         state,
-                        request,
+                        received.bytes(),
                         |s| <Self as $crate::ServiceSet>::supports(self, s),
                         sub_function,
                         in_session,
@@ -579,6 +592,14 @@ macro_rules! uds_server {
                         }
                         $crate::pipeline::Stage::Settle { sid, nrc } => {
                             return $crate::Unsettled::refused(sid, nrc);
+                        }
+                        $crate::pipeline::Stage::Proceed { sid, .. }
+                            if ::core::matches!(received, $crate::Received::Truncated(_)) =>
+                        {
+                            return $crate::Unsettled::refused(
+                                sid,
+                                $crate::NegativeResponseCode::IncorrectMessageLengthOrInvalidFormat,
+                            );
                         }
                         $crate::pipeline::Stage::Proceed { sid, request } => (sid, request),
                     };
@@ -615,6 +636,18 @@ macro_rules! uds_server {
                     $( $crate::__uds_session_hook!(self, transition, $svc); )+
                 }
 
+                #[allow(
+                    unreachable_code,
+                    reason = "the arm emitted for DiagnosticSessionControl returns"
+                )]
+                fn session_timing(
+                    &self,
+                    state: &Self::State,
+                ) -> ::core::option::Option<$crate::SessionTiming> {
+                    $( $crate::__uds_session_timing!(self, state, $svc); )+
+                    ::core::option::Option::None
+                }
+
                 fn supports(&self, service: $crate::UdsServiceType) -> bool {
                     $( if $crate::__uds_sids!($svc).contains(&service) {
                         return true;
@@ -629,23 +662,9 @@ macro_rules! uds_server {
                     false
                 }
 
-                fn is_concurrent_exception(
-                    &self,
-                    request: &[u8],
-                    ai: $crate::Ai,
-                ) -> bool {
-                    match request.first() {
-                        // Clause 8.7.6's first exception is a functionally addressed
-                        // TesterPresent whose sub-function carries
-                        // suppressPosRspMsgIndication, which is bit 7 of that byte.
-                        // `get` rather than an index: this crate denies
-                        // indexing_slicing.
-                        Some(0x3E) => {
-                            ::core::matches!(ai.ta_type, $crate::TaType::Functional)
-                                && request.get(1).is_some_and(|sub| sub & 0x80 != 0)
-                        }
-                        _ => false,
-                    }
+                fn is_concurrent_exception(request: &[u8], ai: $crate::Ai) -> bool {
+                    ::core::matches!(ai.ta_type, $crate::TaType::Functional)
+                        && request == [0x3E, 0x80]
                 }
             }
         };

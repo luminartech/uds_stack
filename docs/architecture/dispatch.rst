@@ -843,7 +843,10 @@ processed (with final response sent **or application call without response**)", 
 released the instance only on a transmission would deadlock on the silence clause 8.7
 requires.
 
-Occupying a resource, bypassing it, and aborting an in-flight service are all properties
-of the driver loop that calls this crate, not of a single dispatch. What belongs here is
-at most the classification — which requests qualify for each exception — and that
-allocation is unsettled. See :doc:`open-questions`.
+Occupying a resource, bypassing it, and aborting an in-flight service are properties of
+the driver loop, not of a single dispatch, and ``UDSSVC_ARCH_0040`` made that loop this
+crate's. ``ServiceSet::is_concurrent_exception`` classifies, and the driver acts: the
+keep-alive ``TesterPresent`` bypasses the occupied instance, and anything else arriving
+mid-service is answered ``busyRepeatRequest`` (0x21) as a busy refusal
+(``UDSS_LLR_0187``). Open question 1 records how that was settled; see
+:doc:`open-questions`.

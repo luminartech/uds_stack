@@ -295,13 +295,22 @@ The response window
    has one request abort another, its OBD-range exception, and the reception of the new
    request necessarily precedes the abort it causes; were the fact merely left true, the
    aborted request's ending would be read as the new one's. The replacement applies to every
-   request received while a service is in progress, because ``UDSS_LLR_0073`` leaves the
+   request indicated while a service is in progress, because ``UDSS_LLR_0073`` leaves the
    session layer unable to single out the OBD-range one.
 
-   That is a declared choice: ISO 14229-2:2021 10.3 Figure 18 key f shows a server ignoring
-   a request received while it is still handling the previous one, and a caller that
-   ignores it as the figure does loses the first request's window measurement under
-   ``UDSS_LLR_0117`` and must answer or report the second.
+   The requirement governs the requests a caller indicates, not every request a transport
+   delivers. ISO 14229-1:2020 8.7.6 has any other received message occupy the protocol
+   instance until processed, so a caller enforcing that rule indicates no request while it
+   is still processing the service in progress: it answers one with a ``busy refusal``
+   under ``UDSS_LLR_0187``, which leaves the service in progress and its window untouched,
+   and it indicates the keep-alive TesterPresent as ``keep-alive``, which
+   ``UDSS_LLR_0107`` excludes. What remains for this requirement is a request received
+   once the final response has been submitted and before its confirmation, which
+   ISO 14229-2:2021 10.3 lets the client send and ``UDSS_LLR_0106`` and ``UDSS_LLR_0109``
+   provide for, and the OBD-range request 8.7.6 has abort the active service.
+   ISO 14229-2:2021 10.3 Figure 18 key f, which shows a server ignoring a request received
+   while it is handling another, describes the hazard ``tP3_Client_Func`` exists to
+   prevent rather than a rule for the server.
 
 .. llr:: A service ceases to be in progress
    :id: UDSS_LLR_0109
@@ -551,6 +560,36 @@ The response window
    :doc:`llr-server-session-timer`'s assumptions of use make that report optional;
    ``UDSS_LLR_0106``'s match guards only the facts ``UDSS_LLR_0104`` keeps, and without the
    guard here the report would stop the window ``UDSS_LLR_0113`` opened for the OBD request.
+
+.. llr:: A busy refusal answers no service
+   :id: UDSS_LLR_0187
+   :status: draft
+   :integrity_level: QM
+   :target_level: D
+   :origin: derived
+   :tags: server; p2_server; s3_server; service-in-progress
+
+   On ``S_Data.req`` of a message classified ``busy refusal``, the server shall take an
+   association under ``UDSS_LLR_0059`` and shall neither stop ``tP2_Server`` nor record the
+   transmission as the one answering the service in progress. On the ``T_Data.conf``
+   ``UDSS_LLR_0059`` associates with it, successful or not, the server shall free the
+   association and shall change neither the service in progress, its ``tP2_Server`` and
+   anchor, nor ``tS3_Server``.
+
+   Rationale: ISO 14229-1:2020 8.7.6 has a received message occupy the one diagnostic
+   protocol instance until it is processed, so a request arriving while a service is in
+   progress, other than the keep-alive TesterPresent, is refused with ``busyRepeatRequest``
+   (Annex A) and the service in progress continues. The refused request is not indicated as
+   a request, so it starts no service under ``UDSS_LLR_0107`` and replaces none under
+   ``UDSS_LLR_0108``; its refusal must leave the service it did not replace exactly as it
+   was. ``tS3_Server`` is left alone because the refused request touched nothing on
+   arrival: restarting the timer on the refusal's confirmation would keep a session alive on
+   traffic the server did not process.
+
+   The association is still taken because the transmission still occupies the transport's
+   addressing; ``UDSS_LLR_0061`` and ``UDSS_LLR_0062`` therefore refuse a busy refusal while
+   a response to the same client is outstanding, and refuse that client's response while a
+   busy refusal is.
 
 Enhanced response timing
 ------------------------

@@ -20,7 +20,7 @@ use uds_services::{
     CommunicationControl, CommunicationControlType, CommunicationType, DataIdentifier,
     DataTransfer, DiagnosticSessionType, DtcReportKind, DtcStatusMask,
     FunctionalGroupIdentifier, KeyVerdict, Mtype, PhysicalKeepAlive, ReadDataByIdentifier,
-    ReadDtcInfoSubFunction, ReadDtcInformation, RecordError, Reloads, Response,
+    ReadDtcInfoSubFunction, ReadDtcInformation, Received, RecordError, Reloads, Response,
     ResponseSink, SecurityAccess, SecurityLevel, SecurityPolicy, ServerParams, ServiceSet,
     SessionTiming, SessionTransition, Sink, Storage, SubnetNumber, TaType, TesterPresent,
     Timestamp, TransferRequest, TransportEvent, UdsServiceType, UdsTransport, uds_client,
@@ -221,8 +221,8 @@ impl uds_services::DiagnosticSessionControl for Ecu {
     }
     fn timing(&self, _s: DiagnosticSessionType) -> SessionTiming {
         SessionTiming {
-            p2_server_max: 50,
-            p2_star_server_max: 5_000,
+            p2_server_max_ms: 50,
+            p2_star_server_max_10ms: 500,
         }
     }
     fn on_transition(&mut self, _t: SessionTransition, _relocked: bool) {}
@@ -341,9 +341,9 @@ fn response_pending_permission_follows_the_declaration() {
 }
 
 /// The one message clause 8.7.6 admits mid-service is a **functionally addressed**
-/// suppressed `TesterPresent`. The same bytes physically addressed are not admitted,
-/// which is the distinction the classifier could not draw while its only argument was
-/// the request.
+/// suppressed `TesterPresent`, `3E 80` exactly. The same bytes physically addressed are
+/// not admitted, which is the distinction the classifier could not draw while its only
+/// argument was the request.
 ///
 /// The 0x01 assertion covers the clause's other exception, a request in 0x00-0x0F. No
 /// server `uds_server!` can assemble reaches it — the lowest SID in `__uds_sids!` is
@@ -361,14 +361,18 @@ fn the_tester_present_exception_is_admitted_only_when_functionally_addressed() {
         }
     }
 
-    let ecu = Ecu::new();
-    assert!(ecu.is_concurrent_exception(&[0x3E, 0x80], ai(TaType::Functional)));
-    assert!(!ecu.is_concurrent_exception(&[0x3E, 0x80], ai(TaType::Physical)));
+    let admitted = <Ecu as ServiceSet>::is_concurrent_exception;
+    assert!(admitted(&[0x3E, 0x80], ai(TaType::Functional)));
+    assert!(!admitted(&[0x3E, 0x80], ai(TaType::Physical)));
     // Without the suppress bit it is an ordinary request either way.
-    assert!(!ecu.is_concurrent_exception(&[0x3E, 0x00], ai(TaType::Functional)));
+    assert!(!admitted(&[0x3E, 0x00], ai(TaType::Functional)));
+    // Clause 8.7.6 admits a *valid* TesterPresent: no other sub-function, no other length.
+    assert!(!admitted(&[0x3E, 0x81], ai(TaType::Functional)));
+    assert!(!admitted(&[0x3E, 0x80, 0x00], ai(TaType::Functional)));
+    assert!(!admitted(&[0x3E], ai(TaType::Functional)));
     // An OBD-range service identifier: no exception, because none is assemblable.
-    assert!(!ecu.is_concurrent_exception(&[0x01], ai(TaType::Functional)));
-    assert!(!ecu.is_concurrent_exception(&[0x22, 0xF1, 0x90], ai(TaType::Functional)));
+    assert!(!admitted(&[0x01], ai(TaType::Functional)));
+    assert!(!admitted(&[0x22, 0xF1, 0x90], ai(TaType::Functional)));
 }
 
 /// The in-place server is usable, not only constructible: the cell yields the
@@ -551,7 +555,12 @@ fn the_assembled_dispatch_answers_a_read() {
         ta: Address(0x10),
         ta_type: TaType::Physical,
     };
-    let unsettled = block_on(ecu.dispatch(&mut state, ai, &[0x22, 0xF4, 0x0D], &mut out));
+    let unsettled = block_on(ecu.dispatch(
+        &mut state,
+        ai,
+        Received::Whole(&[0x22, 0xF4, 0x0D]),
+        &mut out,
+    ));
     let r = settle(ai, unsettled, false, &mut out);
     assert_eq!(r, uds_services::Responded::Yes { session: None });
     assert_eq!(out.written_bytes(), &[0x62, 0xF4, 0x0D, 0x40]);
@@ -571,13 +580,15 @@ fn unsupported_services_settle_0x11_or_silence() {
         ta: Address(0x10),
         ta_type: TaType::Physical,
     };
-    let unsettled = block_on(ecu.dispatch(&mut state, phys, &[0x11, 0x01], &mut out));
+    let unsettled =
+        block_on(ecu.dispatch(&mut state, phys, Received::Whole(&[0x11, 0x01]), &mut out));
     let r = settle(phys, unsettled, false, &mut out);
     assert_eq!(r, uds_services::Responded::Yes { session: None });
     assert_eq!(out.written_bytes(), &[0x7F, 0x11, 0x11]);
     // Listed, so `begin` passes it; no stage, so the fall-through settles it.
     let request = [0x14, 0xFF, 0xFF, 0xFF];
-    let unsettled = block_on(ecu.dispatch(&mut state, phys, &request, &mut out));
+    let unsettled =
+        block_on(ecu.dispatch(&mut state, phys, Received::Whole(&request), &mut out));
     let r = settle(phys, unsettled, false, &mut out);
     assert_eq!(r, uds_services::Responded::Yes { session: None });
     assert_eq!(out.written_bytes(), &[0x7F, 0x14, 0x11]);
@@ -585,7 +596,31 @@ fn unsupported_services_settle_0x11_or_silence() {
         ta_type: TaType::Functional,
         ..phys
     };
-    let unsettled = block_on(ecu.dispatch(&mut state, func, &[0x11, 0x01], &mut out));
+    let unsettled =
+        block_on(ecu.dispatch(&mut state, func, Received::Whole(&[0x11, 0x01]), &mut out));
     let r = settle(func, unsettled, false, &mut out);
     assert_eq!(r, uds_services::Responded::Suppressed { session: None });
+}
+
+/// Figure 5's `serviceNotSupportedInActiveSession` (0x7F) precedes
+/// `incorrectMessageLengthOrInvalidFormat` (0x13) for a request longer than the in-flight
+/// buffer: `SecurityAccess` is not available in the default session, however long the
+/// request.
+#[test]
+fn an_over_long_request_for_a_service_not_in_this_session_is_refused_0x7f() {
+    let mut ecu = Ecu::new();
+    let mut state = <<Ecu as ServiceSet>::State as uds_services::ProtocolState>::INITIAL;
+    let mut buf = [0_u8; 32];
+    let mut out = ResponseSink::new(&mut buf, None);
+    let phys = Ai {
+        mtype: Mtype::Diag,
+        sa: Address(0x0E80),
+        ta: Address(0x10),
+        ta_type: TaType::Physical,
+    };
+    let truncated = Received::Truncated(&[0x27, 0x02, 0, 0, 0, 0]);
+    let unsettled = block_on(ecu.dispatch(&mut state, phys, truncated, &mut out));
+    let r = settle(phys, unsettled, false, &mut out);
+    assert_eq!(r, uds_services::Responded::Yes { session: None });
+    assert_eq!(out.written_bytes(), &[0x7F, 0x27, 0x7F]);
 }

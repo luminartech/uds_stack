@@ -349,7 +349,8 @@ impl<const A: usize> Server<A> {
     /// request takes an association (``UDSS_LLR_0059``), stops `tP2_Server` where it
     /// answers the service in progress (``UDSS_LLR_0114``), being then the transmission
     /// whose confirmation answers that service (``UDSS_LLR_0109``), and is passed on as a
-    /// `T_Data.req`.
+    /// `T_Data.req`. A [`ServerTx::BusyRepeatRequest`] takes an association and answers no
+    /// service (``UDSS_LLR_0187``).
     pub fn s_data_req<'d>(
         &mut self,
         now: Timestamp,
@@ -372,6 +373,7 @@ impl<const A: usize> Server<A> {
             ServerTx::FinalResponse { solicitation, .. } => {
                 solicitation == Solicitation::Solicited
             }
+            ServerTx::BusyRepeatRequest => false, // UDSS_LLR_0187
         };
         if stops_p2
             && self.serves(ai.target())
@@ -494,11 +496,11 @@ impl<const A: usize> Server<A> {
     /// (``UDSS_LLR_0085``, ``UDSS_LLR_0088``, ``UDSS_LLR_0093``, ``UDSS_LLR_0098``) and,
     /// only where the service in progress submitted the transmission it confirms
     /// (``UDSS_LLR_0109``), on that service and its response timer (``UDSS_LLR_0110``,
-    /// ``UDSS_LLR_0116``). A confirmation that a later request from the controlling client
-    /// overtook restarts no `tS3_Server`: that request's stop is the later event
-    /// (``UDSS_LLR_0088``, ``UDSS_LLR_0093``). One selecting a non-default session that a
-    /// later request from the requester overtook enters it with `tS3_Server` stopped
-    /// (``UDSS_LLR_0085``).
+    /// ``UDSS_LLR_0116``); a busy refusal's acts on neither (``UDSS_LLR_0187``). A
+    /// confirmation that a later request from the controlling client overtook restarts no
+    /// `tS3_Server`: that request's stop is the later event (``UDSS_LLR_0088``,
+    /// ``UDSS_LLR_0093``). One selecting a non-default session that a later request from
+    /// the requester overtook enters it with `tS3_Server` stopped (``UDSS_LLR_0085``).
     pub fn t_data_conf(
         &mut self,
         now: Timestamp,
@@ -548,12 +550,14 @@ impl<const A: usize> Server<A> {
                     self.restart_s3(now);
                 }
             }
-            ServerTx::FinalResponse {
+            // UDSS_LLR_0187 — freeing the association above is all a busy refusal's
+            // does; UDSS_LLR_0091 — an unsolicited one's touches no tS3 and answers no
+            // service.
+            ServerTx::BusyRepeatRequest
+            | ServerTx::FinalResponse {
                 solicitation: Solicitation::Unsolicited,
                 ..
-            } => {
-                // UDSS_LLR_0091 — nothing to tS3; and no service is answered.
-            }
+            } => {}
             ServerTx::FinalResponse {
                 solicitation: Solicitation::Solicited,
                 session,

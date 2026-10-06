@@ -154,7 +154,7 @@ shape is in hand, and the API is not to be contorted chasing one until there is.
 ``UDSS_LLR_0081``, ``UDSS_LLR_0011`` and ``UDSS_LLR_0005``.
 
 Should a reset leave a physical keep-alive with no timer running?
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 ``UDSS_LLR_0160`` stops a physical channel's ``tS3_Client`` when a request is sent, and the
 fifth bullet of ``UDSS_LLR_0161`` restarts it when a keep-alive's response window expires.

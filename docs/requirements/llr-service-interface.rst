@@ -1444,9 +1444,13 @@ means of recognising it to the implementation.
      positive response is suppressed, which ISO 14229-1:2020 8.7.6 defines as keep-alive
      logic to be handled by bypass logic;
    * ``final response``, a positive response, or a negative response whose response code
-     is not ``requestCorrectlyReceived-ResponsePending``;
+     is not ``requestCorrectlyReceived-ResponsePending`` and that is not a ``busy
+     refusal``;
    * ``response pending``, a negative response whose response code is
-     ``requestCorrectlyReceived-ResponsePending``.
+     ``requestCorrectlyReceived-ResponsePending``;
+   * ``busy refusal``, a negative response whose response code is ``busyRepeatRequest``,
+     refusing a request that ISO 14229-1:2020 8.7.6 kept out of the service in progress
+     and that was therefore never indicated as a request.
 
    A classification whose kind is ``final response`` shall further state whether the
    message is ``solicited``, transmitted because of a request received from a client, or
@@ -1531,6 +1535,15 @@ means of recognising it to the implementation.
    is at once a final response and unsolicited. It applies only to a final response because
    a response-pending message is by construction a reply to a request, so asking whether it
    was solicited has no meaning.
+
+   A busy refusal is a kind of its own, not a solicited final response, because the request
+   it answers never became the service in progress. Addressing is how ``UDSS_LLR_0106``
+   matches a response to that service, and with one client the refused request and the
+   service in progress share it, so a busy refusal classified as a final response would
+   stop the window of the service it was sent to protect and end that service on its
+   confirmation. ``UDSS_LLR_0187`` states what the kind does. The response code alone does
+   not decide the kind: a handler that answers the service in progress with
+   ``busyRepeatRequest`` sends a final response.
 
 .. llr:: An expected response count of zero is rejected
    :id: UDSS_LLR_0066

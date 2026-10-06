@@ -668,6 +668,7 @@ mod overlap {
     fn submit(s: &mut Server<2>, now: Timestamp, class: ServerTx) -> Result<(), Rejection> {
         let data: &[u8] = match class {
             ServerTx::ResponsePending => &PENDING,
+            ServerTx::BusyRepeatRequest => &[0x7F, 0x22, 0x21],
             ServerTx::FinalResponse { .. } => &[0x62, 0xF1, 0x90, 0x01],
         };
         outputs(s.s_data_req(now, ai(ECU, TESTER), data, class)).1
@@ -1094,5 +1095,115 @@ mod lead {
         assert_eq!(out[0], Some(overrun(ServerReload::P2)));
         request(&mut s, Timestamp(60));
         assert_eq!(s.next_deadline(), Some(Timestamp(80)));
+    }
+}
+
+/// ``UDSS_LLR_0187`` — a busy refusal to the client whose service is in progress, which
+/// ISO 14229-1:2020 8.7.6 sends for a request it keeps out of that service.
+mod busy {
+    use super::*;
+    use uds_session::Cause;
+
+    const BUSY: [u8; 3] = [0x7F, 0x22, 0x21];
+    const FINAL: ServerTx = ServerTx::FinalResponse {
+        solicitation: Solicitation::Solicited,
+        session: None,
+    };
+
+    fn refuse(s: &mut Server<2>, now: Timestamp) -> Result<(), Rejection> {
+        outputs(s.s_data_req(now, ai(ECU, TESTER), &BUSY, ServerTx::BusyRepeatRequest)).1
+    }
+
+    fn request(s: &mut Server<2>, now: Timestamp) {
+        let (_, ok) = outputs(s.t_data_ind(
+            now,
+            ai(TESTER, ECU),
+            &[0x22, 0xF1, 0x90],
+            SResult::Ok,
+            ServerRx::Request { session: None },
+        ));
+        assert!(ok.is_ok());
+    }
+
+    /// It is transmitted, and leaves `tP2_Server` running: the service in progress still
+    /// owes its response by the same deadline.
+    #[test]
+    fn a_busy_refusal_leaves_the_response_timer_running() {
+        let mut s = server();
+        request(&mut s, Timestamp(0));
+        let (out, ok) = outputs(s.s_data_req(
+            Timestamp(5),
+            ai(ECU, TESTER),
+            &BUSY,
+            ServerTx::BusyRepeatRequest,
+        ));
+        assert!(ok.is_ok());
+        assert_eq!(
+            out[0],
+            Some(ServerOutput::Transmit {
+                ai: ai(ECU, TESTER),
+                data: &BUSY,
+            })
+        );
+        assert_eq!(s.next_deadline(), Some(Timestamp(50)));
+    }
+
+    /// Its confirmation, successful or not, ends no service: the window still closes on
+    /// time, and the service's own final response then stops it.
+    #[test]
+    fn a_busy_refusals_confirmation_ends_no_service() {
+        for result in [
+            SResult::Ok,
+            SResult::Transport(uds_session::TransportError(1)),
+        ] {
+            let mut s = server();
+            request(&mut s, Timestamp(0));
+            assert!(refuse(&mut s, Timestamp(5)).is_ok());
+            let (_, ok) = outputs(s.t_data_conf(Timestamp(6), ai(ECU, TESTER), result));
+            assert!(ok.is_ok());
+            assert_eq!(s.next_deadline(), Some(Timestamp(50)), "{result:?}");
+            let (_, ok) =
+                outputs(s.s_data_req(Timestamp(7), ai(ECU, TESTER), &[0x62], FINAL));
+            assert!(ok.is_ok());
+            assert_eq!(s.next_deadline(), None, "{result:?}");
+        }
+    }
+
+    /// Its confirmation restarts no `tS3_Server`, in or out of a service: the refused
+    /// request was never processed.
+    #[test]
+    fn a_busy_refusals_confirmation_restarts_no_session_timer() {
+        let mut s = server();
+        enter_non_default(&mut s, Timestamp(0)); // tS3_Server due at 5_000
+        assert!(refuse(&mut s, Timestamp(4_000)).is_ok());
+        let (_, ok) =
+            outputs(s.t_data_conf(Timestamp(4_001), ai(ECU, TESTER), SResult::Ok));
+        assert!(ok.is_ok());
+        assert_eq!(s.next_deadline(), Some(Timestamp(5_000)));
+
+        // In a service: the controlling client's request stopped tS3_Server
+        // (UDSS_LLR_0087), and the refusal's confirmation leaves it stopped, so only that
+        // service's tP2_Server is pending.
+        request(&mut s, Timestamp(4_100)); // tP2_Server due at 4_150
+        assert!(refuse(&mut s, Timestamp(4_110)).is_ok());
+        let (_, ok) =
+            outputs(s.t_data_conf(Timestamp(4_111), ai(ECU, TESTER), SResult::Ok));
+        assert!(ok.is_ok());
+        assert_eq!(s.next_deadline(), Some(Timestamp(4_150)));
+    }
+
+    /// ``UDSS_LLR_0061`` — it occupies the client's addressing: the service's response is
+    /// refused until the refusal is confirmed, and accepted after.
+    #[test]
+    fn a_busy_refusal_holds_the_addressing_until_confirmed() {
+        let mut s = server();
+        request(&mut s, Timestamp(0));
+        assert!(refuse(&mut s, Timestamp(5)).is_ok());
+        let (_, err) = outputs(s.s_data_req(Timestamp(6), ai(ECU, TESTER), &[0x62], FINAL));
+        assert!(err.is_err_and(|r| r.contains(Cause::AssociationOutstanding)));
+        let (_, ok) = outputs(s.t_data_conf(Timestamp(7), ai(ECU, TESTER), SResult::Ok));
+        assert!(ok.is_ok());
+        let (_, ok) = outputs(s.s_data_req(Timestamp(8), ai(ECU, TESTER), &[0x62], FINAL));
+        assert!(ok.is_ok());
     }
 }

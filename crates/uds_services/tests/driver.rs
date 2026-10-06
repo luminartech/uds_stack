@@ -60,8 +60,8 @@ impl uds_services::DiagnosticSessionControl for Ecu {
     }
     fn timing(&self, _s: S) -> SessionTiming {
         SessionTiming {
-            p2_server_max: 50,
-            p2_star_server_max: 5_000,
+            p2_server_max_ms: 50,
+            p2_star_server_max_10ms: 500,
         }
     }
     fn on_transition(&mut self, _t: SessionTransition, _r: bool) {}
@@ -166,6 +166,16 @@ const fn request_from(tester: Address) -> Ai {
     }
 }
 
+/// A request from `tester` to the functional group.
+const fn functional_from(tester: Address) -> Ai {
+    Ai {
+        mtype: Mtype::Diag,
+        sa: tester,
+        ta: Address(0xE400),
+        ta_type: TaType::Functional,
+    }
+}
+
 /// A response from the ECU to `tester`: what the driver submits, and what its
 /// confirmation carries.
 const fn response_to(tester: Address) -> Ai {
@@ -182,14 +192,21 @@ const fn response_to(tester: Address) -> Ai {
 enum Step {
     /// A request arrives.
     Ind(Ai, &'static [u8]),
+    /// A request longer than the buffer offered arrives: what fits, and its length.
+    TooLong(Ai, &'static [u8]),
+    /// The link closes.
+    Close,
     /// A transmission to this addressing is confirmed sent.
     Conf(Ai),
     /// The clock advances to this instant. The deadline is reported only if that reaches
     /// the one the driver asked for; otherwise the next step is taken.
     At(u32),
+    /// The clock advances to this instant and the next step is taken, the deadline
+    /// unreported: what arrives next arrives at or after it.
+    Slip(u32),
 }
 
-const STEPS: usize = 8;
+const STEPS: usize = 10;
 const FRAMES: usize = 4;
 const FRAME: usize = 8;
 
@@ -200,6 +217,8 @@ struct Script {
     cursor: usize,
     now: u32,
     sent: [(Option<Ai>, [u8; FRAME], usize); FRAMES],
+    /// The clock when each frame was sent.
+    sent_at: [u32; FRAMES],
     sent_count: usize,
     /// How many `Deadline`s were reported.
     deadlines: usize,
@@ -216,6 +235,7 @@ impl Script {
             cursor: 0,
             now: 0,
             sent: [(None, [0; FRAME], 0); FRAMES],
+            sent_at: [0; FRAMES],
             sent_count: 0,
             deadlines: 0,
         }
@@ -243,12 +263,24 @@ impl Script {
                     head.copy_from_slice(bytes);
                     return Ok(TransportEvent::DataInd { ai, data: head });
                 }
+                Step::TooLong(ai, bytes) => {
+                    let fit = buffer.len().min(bytes.len());
+                    let (head, _) = buffer.split_at_mut(fit);
+                    head.copy_from_slice(bytes.get(..fit).ok_or(())?);
+                    return Ok(TransportEvent::DataTooLong {
+                        ai,
+                        data: head,
+                        declared: Some(bytes.len()),
+                    });
+                }
+                Step::Close => return Ok(TransportEvent::Closed { expected: false }),
                 Step::Conf(ai) => {
                     return Ok(TransportEvent::DataConf {
                         ai,
                         result: SResult::Ok,
                     });
                 }
+                Step::Slip(t) => self.now = t,
                 Step::At(t) => {
                     self.now = t;
                     // The comparison the seam doc prescribes, right across the wrap.
@@ -271,6 +303,9 @@ impl UdsTransport for Script {
     ) -> impl core::future::Future<Output = Result<(), ()>> {
         // A frame that does not fit is recorded with no bytes, so a test comparing them
         // fails rather than passing on a truncation.
+        if let Some(at) = self.sent_at.get_mut(self.sent_count) {
+            *at = self.now;
+        }
         if let Some((slot_ai, buf, n)) = self.sent.get_mut(self.sent_count) {
             *slot_ai = Some(ai);
             if let Some(head) = buf.get_mut(..data.len()) {
@@ -355,24 +390,54 @@ uds_server! {
     server = SlowSrv,
 }
 
+/// An application whose one service may be slow and admits a response-pending.
+#[derive(Debug)]
+struct Patient {
+    /// How many times the next `read` pends before answering.
+    pends: u8,
+}
+
+impl uds_services::ReadDataByIdentifier for Patient {
+    type Did = Did;
+    const MAY_RESPOND_PENDING: bool = true;
+    const MAX_DIDS_PER_REQUEST: usize = 1;
+    async fn read(&mut self, _did: Did, out: &mut ResponseSink<'_>) -> Result<(), Nrc> {
+        PendN(core::mem::take(&mut self.pends)).await;
+        out.write_all(&[0x40]).map_err(|_| Nrc::ResponseTooLong)
+    }
+}
+
+uds_server! {
+    Patient: ReadDataByIdentifier;
+    transport = Script,
+    peers = 1,
+    server = PatientSrv,
+}
+
 /// Step until the transport errors, which it does only once the script is exhausted.
 /// Bounded, so a driver that stopped consuming the script fails rather than hangs.
-fn run(server: &mut SlowSrv) {
-    let waker = core::task::Waker::noop();
-    let mut cx = core::task::Context::from_waker(waker);
-    for _ in 0..STEPS {
-        let mut step = core::pin::pin!(server.step());
-        let mut result = None;
-        for _ in 0..16 {
-            if let core::task::Poll::Ready(r) = step.as_mut().poll(&mut cx) {
-                result = Some(r);
+macro_rules! run {
+    ($server:expr) => {{
+        let waker = core::task::Waker::noop();
+        let mut cx = core::task::Context::from_waker(waker);
+        for _ in 0..STEPS {
+            let mut step = core::pin::pin!($server.step());
+            let mut result = None;
+            for _ in 0..16 {
+                if let core::task::Poll::Ready(r) = step.as_mut().poll(&mut cx) {
+                    result = Some(r);
+                    break;
+                }
+            }
+            if result != Some(Ok(())) {
                 break;
             }
         }
-        if result != Some(Ok(())) {
-            break;
-        }
-    }
+    }};
+}
+
+fn run(server: &mut SlowSrv) {
+    run!(server);
 }
 
 const READ: &[u8] = &[0x22, 0xF4, 0x0D];
@@ -464,4 +529,521 @@ fn a_service_that_may_not_pend_gets_no_response_pending_while_a_response_waits()
     assert_eq!(t.sent_count, 2);
     assert_eq!(t.sent(0), (Some(response_to(TESTER)), POSITIVE));
     assert_eq!(t.sent(1), (Some(response_to(OTHER_TESTER)), POSITIVE));
+}
+
+/// `7F 22 21` — `busyRepeatRequest` for a `ReadDataByIdentifier` request.
+const BUSY: &[u8] = &[0x7F, 0x22, 0x21];
+/// Another `ReadDataByIdentifier` request, distinguishable from [`READ`].
+const READ_OTHER: &[u8] = &[0x22, 0xF1, 0x90];
+
+/// ISO 14229-1:2020 8.7.6 — a second physically addressed request arriving while the
+/// first is handled finds the protocol instance occupied and is answered
+/// `busyRepeatRequest` (Annex A); the first is still answered, once the refusal's
+/// confirmation frees the client's addressing (``UDSS_LLR_0061``).
+#[test]
+fn a_physical_request_mid_service_is_answered_busy() {
+    let mut server = SlowSrv::new(
+        Slow { pends: 1 },
+        Script::new(&[
+            Step::Ind(request_from(TESTER), READ),
+            Step::Ind(request_from(TESTER), READ_OTHER), // mid-handler
+            Step::Conf(response_to(TESTER)),             // the refusal's
+            Step::Conf(response_to(TESTER)),             // the final response's
+        ]),
+        ECU,
+        PARAMS,
+    );
+    run(&mut server);
+    let t = server.transport();
+    assert_eq!(t.cursor, 4, "the script was not consumed");
+    assert_eq!(t.sent_count, 2);
+    assert_eq!(t.sent(0), (Some(response_to(TESTER)), BUSY));
+    assert_eq!(t.sent(1), (Some(response_to(TESTER)), POSITIVE));
+}
+
+/// ``UDSS_LLR_0187`` end to end — the refusal leaves the service in progress its window:
+/// `tP2_Server` still runs out on time after the refusal is confirmed, and the 0x78 it
+/// owes goes out. Sent as a final response, the refusal would have stopped that timer and
+/// no 0x78 would follow.
+#[test]
+fn a_busy_refusal_leaves_the_service_in_progress_its_response_pending() {
+    let mut server = PatientSrv::new(
+        Patient { pends: 3 },
+        Script::new(&[
+            Step::Ind(request_from(TESTER), READ),
+            Step::Ind(request_from(TESTER), READ_OTHER), // mid-handler
+            Step::Conf(response_to(TESTER)),             // the refusal's
+            Step::At(50),                                // tP2_Server, mid-handler
+            Step::Conf(response_to(TESTER)),             // the 0x78's
+            Step::Conf(response_to(TESTER)),             // the final response's
+        ]),
+        ECU,
+        PARAMS,
+    );
+    run!(&mut server);
+    let t = server.transport();
+    assert_eq!(t.cursor, 6, "the script was not consumed");
+    assert_eq!(t.sent_count, 3);
+    assert_eq!(t.sent(0), (Some(response_to(TESTER)), BUSY));
+    assert_eq!(
+        t.sent(1),
+        (Some(response_to(TESTER)), &[0x7F, 0x22, 0x78][..])
+    );
+    assert_eq!(t.sent(2), (Some(response_to(TESTER)), POSITIVE));
+}
+
+/// A 0x78 that comes due while a busy refusal to the same client is unconfirmed is
+/// refused for the association (``UDSS_LLR_0061``), and the overrun is reported once; it
+/// is resubmitted on the confirmation that frees the association, not lost.
+#[test]
+fn a_response_pending_held_up_by_a_busy_refusal_still_goes_out() {
+    let mut server = PatientSrv::new(
+        Patient { pends: 3 },
+        Script::new(&[
+            Step::Ind(request_from(TESTER), READ),
+            Step::Ind(request_from(TESTER), READ_OTHER), // mid-handler
+            Step::At(50), // tP2_Server, the refusal unconfirmed
+            Step::Conf(response_to(TESTER)), // the refusal's
+            Step::Conf(response_to(TESTER)), // the 0x78's
+            Step::Conf(response_to(TESTER)), // the final response's
+        ]),
+        ECU,
+        PARAMS,
+    );
+    run!(&mut server);
+    let t = server.transport();
+    assert_eq!(t.cursor, 6, "the script was not consumed");
+    assert_eq!(t.sent_count, 3);
+    assert_eq!(t.sent(0), (Some(response_to(TESTER)), BUSY));
+    assert_eq!(
+        t.sent(1),
+        (Some(response_to(TESTER)), &[0x7F, 0x22, 0x78][..])
+    );
+    assert_eq!(t.sent(2), (Some(response_to(TESTER)), POSITIVE));
+}
+
+/// ISO 14229-1:2020 8.7.6 — occupancy holds "regardless of addressing mode": a
+/// functionally addressed request mid-service is refused too, and the refusal goes to the
+/// client physically. 8.7.5 suppresses no `busyRepeatRequest`.
+#[test]
+fn a_functional_request_mid_service_is_answered_busy() {
+    let mut server = SlowSrv::new(
+        Slow { pends: 1 },
+        Script::new(&[
+            Step::Ind(request_from(TESTER), READ),
+            Step::Ind(functional_from(TESTER), READ_OTHER), // mid-handler
+            Step::Conf(response_to(TESTER)),
+            Step::Conf(response_to(TESTER)),
+        ]),
+        ECU,
+        PARAMS,
+    );
+    run(&mut server);
+    let t = server.transport();
+    assert_eq!(t.cursor, 4, "the script was not consumed");
+    assert_eq!(t.sent_count, 2);
+    assert_eq!(t.sent(0), (Some(response_to(TESTER)), BUSY));
+    assert_eq!(t.sent(1), (Some(response_to(TESTER)), POSITIVE));
+}
+
+/// ISO 14229-1:2020 8.7.6's first exception — the functionally addressed `3E 80`
+/// bypasses the service in progress: nothing answers it, and the service's own response
+/// goes out unhindered. The same bytes physically addressed, or a functional
+/// `TesterPresent` not suppressing its response, are ordinary occupancy.
+#[test]
+fn a_functional_keep_alive_mid_service_bypasses_it() {
+    let mut server = SlowSrv::new(
+        Slow { pends: 1 },
+        Script::new(&[
+            Step::Ind(request_from(TESTER), READ),
+            Step::Ind(functional_from(TESTER), &[0x3E, 0x80]), // mid-handler
+            Step::Conf(response_to(TESTER)),
+        ]),
+        ECU,
+        PARAMS,
+    );
+    run(&mut server);
+    let t = server.transport();
+    assert_eq!(t.cursor, 3, "the script was not consumed");
+    assert_eq!(t.sent_count, 1);
+    assert_eq!(t.sent(0), (Some(response_to(TESTER)), POSITIVE));
+
+    for (ai, tester_present) in [
+        (request_from(TESTER), &[0x3E, 0x80][..]),
+        (functional_from(TESTER), &[0x3E, 0x00][..]),
+    ] {
+        let mut server = SlowSrv::new(
+            Slow { pends: 1 },
+            Script::new(&[
+                Step::Ind(request_from(TESTER), READ),
+                Step::Ind(ai, tester_present), // mid-handler
+                Step::Conf(response_to(TESTER)),
+                Step::Conf(response_to(TESTER)),
+            ]),
+            ECU,
+            PARAMS,
+        );
+        run(&mut server);
+        let t = server.transport();
+        assert_eq!(t.sent_count, 2, "{ai:?} {tester_present:02X?}");
+        assert_eq!(
+            t.sent(0),
+            (Some(response_to(TESTER)), &[0x7F, 0x3E, 0x21][..])
+        );
+    }
+}
+
+/// ISO 14229-1:2020 8.7.6 — a message too long for the concurrent buffer is occupancy
+/// like any other, refused from the service identifier that fit; its length is the
+/// buffer's limit, not this server's, so it is never `0x13`.
+#[test]
+fn a_message_too_long_for_the_concurrent_buffer_is_answered_busy() {
+    let mut server = SlowSrv::new(
+        Slow { pends: 1 },
+        Script::new(&[
+            Step::Ind(request_from(TESTER), READ),
+            Step::TooLong(
+                request_from(TESTER),
+                &[0x2E, 0xF1, 0x90, 1, 2, 3, 4, 5, 6, 7, 8, 9],
+            ), // mid-handler
+            Step::Conf(response_to(TESTER)),
+            Step::Conf(response_to(TESTER)),
+        ]),
+        ECU,
+        PARAMS,
+    );
+    run(&mut server);
+    let t = server.transport();
+    assert_eq!(t.cursor, 4, "the script was not consumed");
+    assert_eq!(t.sent_count, 2);
+    assert_eq!(
+        t.sent(0),
+        (Some(response_to(TESTER)), &[0x7F, 0x2E, 0x21][..])
+    );
+    assert_eq!(t.sent(1), (Some(response_to(TESTER)), POSITIVE));
+}
+
+/// A link closed while a handler runs ends the request with nothing sent, the abandoned
+/// handler's bytes included, and the server goes on to answer the next request.
+#[test]
+fn a_close_mid_handler_sends_nothing_and_the_server_carries_on() {
+    let mut server = SlowSrv::new(
+        Slow { pends: 1 },
+        Script::new(&[
+            Step::Ind(request_from(TESTER), READ),
+            Step::Close, // mid-handler
+            Step::Ind(request_from(TESTER), READ),
+            Step::Conf(response_to(TESTER)),
+        ]),
+        ECU,
+        PARAMS,
+    );
+    run(&mut server);
+    let t = server.transport();
+    assert_eq!(t.cursor, 4, "the script was not consumed");
+    assert_eq!(t.sent_count, 1);
+    assert_eq!(t.sent(0), (Some(response_to(TESTER)), POSITIVE));
+}
+
+/// An application whose sessions time differently: the default session as [`PARAMS`]
+/// does, the extended one with a wider `P2` and a narrower `P2*`.
+#[derive(Debug)]
+struct Timed {
+    /// How many times the next `read` pends before answering.
+    pends: u8,
+}
+
+impl uds_services::ReadDataByIdentifier for Timed {
+    type Did = Did;
+    const MAY_RESPOND_PENDING: bool = true;
+    const MAX_DIDS_PER_REQUEST: usize = 1;
+    async fn read(&mut self, _did: Did, out: &mut ResponseSink<'_>) -> Result<(), Nrc> {
+        PendN(core::mem::take(&mut self.pends)).await;
+        out.write_all(&[0x40]).map_err(|_| Nrc::ResponseTooLong)
+    }
+}
+
+impl uds_services::DiagnosticSessionControl for Timed {
+    const MAX_RESPONSE_LEN: usize = 0;
+    fn supports(&self, s: S) -> bool {
+        matches!(s, S::DefaultSession | S::ExtendedDiagnosticSession)
+    }
+    /// The extended session is entered from the default one only.
+    fn supported_from(&self, s: S, active: S) -> bool {
+        !(s == S::ExtendedDiagnosticSession && active == S::ExtendedDiagnosticSession)
+    }
+    fn timing(&self, s: S) -> SessionTiming {
+        match s {
+            S::ExtendedDiagnosticSession => SessionTiming {
+                p2_server_max_ms: 100,
+                p2_star_server_max_10ms: 200,
+            },
+            _ => SessionTiming {
+                p2_server_max_ms: 50,
+                p2_star_server_max_10ms: 500,
+            },
+        }
+    }
+    fn on_transition(&mut self, _t: SessionTransition, _r: bool) {}
+}
+
+uds_server! {
+    Timed: ReadDataByIdentifier, DiagnosticSessionControl;
+    transport = Script,
+    peers = 1,
+    server = TimedSrv,
+}
+
+/// The pair a `DiagnosticSessionControl` response advertises is the pair enforced once
+/// its session is in force: the next request's `tP2_Server` runs the extended session's
+/// 100 ms, not [`PARAMS`]' 50 ms, and its enhanced window that session's 2000 ms, not
+/// 5000 ms. Each 0x78 goes out when its own session's window comes due.
+#[test]
+fn the_confirmed_sessions_advertised_timing_is_enforced() {
+    let mut server = TimedSrv::new(
+        Timed { pends: 3 },
+        Script::new(&[
+            Step::Ind(request_from(TESTER), &[0x10, 0x03]),
+            Step::Conf(response_to(TESTER)), // the extended session takes effect
+            Step::Ind(request_from(TESTER), READ),
+            Step::At(50),  // PARAMS' tP2_Server would end here, mid-handler
+            Step::At(100), // the extended session's does
+            Step::Conf(response_to(TESTER)), // the 0x78's: tP2*_Server starts
+            Step::At(2_100), // the extended session's tP2*_Server ends
+            Step::Conf(response_to(TESTER)), // the second 0x78's
+            Step::Conf(response_to(TESTER)), // the final response's
+        ]),
+        ECU,
+        PARAMS,
+    );
+    run!(&mut server);
+    let t = server.transport();
+    assert_eq!(t.cursor, 9, "the script was not consumed");
+    assert_eq!(t.sent_count, 4);
+    // Advertised: P2 100 ms, P2* 200 x 10 ms.
+    assert_eq!(t.sent(0).1, &[0x50, 0x03, 0x00, 0x64, 0x00, 0xC8]);
+    let pending = &[0x7F, 0x22, 0x78][..];
+    assert_eq!((t.sent(1).1, t.sent_at[1]), (pending, 100));
+    assert_eq!((t.sent(2).1, t.sent_at[2]), (pending, 2_100));
+    assert_eq!(t.sent(3).1, POSITIVE);
+}
+
+/// A request longer than the in-flight buffer, with no service in progress, is checked as
+/// clause 8.7 checks any request, in ISO 14229-1:2020 Figure 5's and Figure 6's order:
+/// `serviceNotSupported` (0x11) for a service this server lacks, `subFunctionNotSupported`
+/// (0x12) for a sub-function it lacks, and only then
+/// `incorrectMessageLengthOrInvalidFormat` (0x13), that buffer holding the longest request
+/// any assembled service accepts. Never `busyRepeatRequest`, which would have the client
+/// repeat it forever. 0x11 and 0x12 to a functional request are suppressed (8.7.5). The
+/// session checks precede 0x13 too: 0x7F is pinned in `composition.rs`, and 0x7E in
+/// [`an_over_long_request_for_a_sub_function_not_in_this_session_is_refused_0x7e`].
+///
+/// `Timed`'s in-flight buffer is six bytes, `DiagnosticSessionControl`'s bound, so what
+/// fits of `SESSION` is itself too long and 0x13 comes from decoding it;
+/// [`an_over_long_request_whose_front_decodes_is_not_handled`] pins the 0x13 a request
+/// whose front decodes owes.
+#[test]
+fn a_request_too_long_for_any_service_is_refused_in_figure_5s_order() {
+    const NOT_SUPPORTED: &[u8] = &[0x2E, 0xF1, 0x90, 1, 2, 3, 4, 5, 6];
+    const NO_SUCH_SESSION: &[u8] = &[0x10, 0x05, 0, 0, 0, 0, 0];
+    const SESSION: &[u8] = &[0x10, 0x03, 0, 0, 0, 0, 0];
+    for (ai, request, expected) in [
+        (request_from(TESTER), SESSION, &[0x7F, 0x10, 0x13][..]),
+        (request_from(TESTER), NOT_SUPPORTED, &[0x7F, 0x2E, 0x11][..]),
+        (functional_from(TESTER), NOT_SUPPORTED, &[][..]),
+        (
+            request_from(TESTER),
+            NO_SUCH_SESSION,
+            &[0x7F, 0x10, 0x12][..],
+        ),
+        (functional_from(TESTER), NO_SUCH_SESSION, &[][..]),
+    ] {
+        let mut server = TimedSrv::new(
+            Timed { pends: 0 },
+            Script::new(&[Step::TooLong(ai, request), Step::Conf(response_to(TESTER))]),
+            ECU,
+            PARAMS,
+        );
+        run!(&mut server);
+        let t = server.transport();
+        assert_eq!(
+            t.sent_count,
+            usize::from(!expected.is_empty()),
+            "{request:02X?}"
+        );
+        if !expected.is_empty() {
+            assert_eq!(
+                t.sent(0),
+                (Some(response_to(TESTER)), expected),
+                "{request:02X?}"
+            );
+        }
+    }
+}
+
+/// What fit of an over-long request can itself be a whole request — `22 F4 0D`, `Slow`'s
+/// in-flight buffer being three bytes — and is still refused 0x13, never handled.
+#[test]
+fn an_over_long_request_whose_front_decodes_is_not_handled() {
+    let mut server = SlowSrv::new(
+        Slow { pends: 0 },
+        Script::new(&[
+            Step::TooLong(request_from(TESTER), &[0x22, 0xF4, 0x0D, 0xF4, 0x0E]),
+            Step::Conf(response_to(TESTER)),
+        ]),
+        ECU,
+        PARAMS,
+    );
+    run(&mut server);
+    let t = server.transport();
+    assert_eq!(t.sent_count, 1);
+    assert_eq!(
+        t.sent(0),
+        (Some(response_to(TESTER)), &[0x7F, 0x22, 0x13][..])
+    );
+}
+
+/// Figure 6's `subFunctionNotSupportedInActiveSession` (0x7E) precedes 0x13 for a request
+/// longer than the in-flight buffer too: `Timed` enters the extended session from the
+/// default one only.
+#[test]
+fn an_over_long_request_for_a_sub_function_not_in_this_session_is_refused_0x7e() {
+    let mut server = TimedSrv::new(
+        Timed { pends: 0 },
+        Script::new(&[
+            Step::Ind(request_from(TESTER), &[0x10, 0x03]),
+            Step::Conf(response_to(TESTER)), // the extended session takes effect
+            Step::TooLong(request_from(TESTER), &[0x10, 0x03, 0, 0, 0, 0, 0]),
+            Step::Conf(response_to(TESTER)),
+        ]),
+        ECU,
+        PARAMS,
+    );
+    run!(&mut server);
+    let t = server.transport();
+    assert_eq!(t.cursor, 4, "the script was not consumed");
+    assert_eq!(t.sent_count, 2);
+    assert_eq!(
+        t.sent(1),
+        (Some(response_to(TESTER)), &[0x7F, 0x10, 0x7E][..])
+    );
+}
+
+/// `7F 22 78` — the response-pending for a `ReadDataByIdentifier` request.
+const PENDING: &[u8] = &[0x7F, 0x22, 0x78];
+
+/// A request arriving mid-service at `tP2_Server` meets the overrun first: the 0x78 goes
+/// out on time, and the busy refusal then finds the client's addressing awaiting that
+/// 0x78's confirmation and is dropped (Annex J Figure J.2's other branch). Arriving in the
+/// refusal's own input, the overrun would be reported there once and never answered.
+#[test]
+fn a_request_arriving_at_the_response_deadline_does_not_cost_the_response_pending() {
+    let mut server = PatientSrv::new(
+        Patient { pends: 2 },
+        Script::new(&[
+            Step::Ind(request_from(TESTER), READ),
+            Step::Slip(50), // tP2_Server, unreported
+            Step::Ind(request_from(TESTER), READ_OTHER), // mid-handler, at it
+            Step::Conf(response_to(TESTER)), // the 0x78's
+            Step::Conf(response_to(TESTER)), // the final response's
+        ]),
+        ECU,
+        PARAMS,
+    );
+    run!(&mut server);
+    let t = server.transport();
+    assert_eq!(t.cursor, 5, "the script was not consumed");
+    assert_eq!(t.sent_count, 2);
+    assert_eq!(
+        (t.sent(0), t.sent_at[0]),
+        ((Some(response_to(TESTER)), PENDING), 50)
+    );
+    assert_eq!(t.sent(1), (Some(response_to(TESTER)), POSITIVE));
+}
+
+/// The keep-alive `3E 80` arriving at `tP2_Server` does not cost the 0x78 either.
+#[test]
+fn a_keep_alive_arriving_at_the_response_deadline_does_not_cost_the_response_pending() {
+    let mut server = PatientSrv::new(
+        Patient { pends: 2 },
+        Script::new(&[
+            Step::Ind(request_from(TESTER), READ),
+            Step::Slip(50),
+            Step::Ind(functional_from(TESTER), &[0x3E, 0x80]),
+            Step::Conf(response_to(TESTER)), // the 0x78's
+            Step::Conf(response_to(TESTER)), // the final response's
+        ]),
+        ECU,
+        PARAMS,
+    );
+    run!(&mut server);
+    let t = server.transport();
+    assert_eq!(t.cursor, 5, "the script was not consumed");
+    assert_eq!(t.sent_count, 2);
+    assert_eq!(
+        (t.sent(0), t.sent_at[0]),
+        ((Some(response_to(TESTER)), PENDING), 50)
+    );
+    assert_eq!(t.sent(1), (Some(response_to(TESTER)), POSITIVE));
+}
+
+/// A confirmation arriving at `tP2_Server` — here the busy refusal's — does not cost the
+/// 0x78: refused while the refusal holds the client's addressing, it is owed, and sent
+/// once this confirmation has freed it.
+#[test]
+fn a_confirmation_arriving_at_the_response_deadline_does_not_cost_the_response_pending() {
+    let mut server = PatientSrv::new(
+        Patient { pends: 3 },
+        Script::new(&[
+            Step::Ind(request_from(TESTER), READ),
+            Step::Ind(request_from(TESTER), READ_OTHER), // mid-handler
+            Step::Slip(50),
+            Step::Conf(response_to(TESTER)), // the refusal's, at tP2_Server
+            Step::Conf(response_to(TESTER)), // the 0x78's
+            Step::Conf(response_to(TESTER)), // the final response's
+        ]),
+        ECU,
+        PARAMS,
+    );
+    run!(&mut server);
+    let t = server.transport();
+    assert_eq!(t.cursor, 6, "the script was not consumed");
+    assert_eq!(t.sent_count, 3);
+    assert_eq!(t.sent(0), (Some(response_to(TESTER)), BUSY));
+    assert_eq!(
+        (t.sent(1), t.sent_at[1]),
+        ((Some(response_to(TESTER)), PENDING), 50)
+    );
+    assert_eq!(t.sent(2), (Some(response_to(TESTER)), POSITIVE));
+}
+
+/// The keep-alive is indicated as keep-alive, not as a request: one would replace the
+/// service in progress (``UDSS_LLR_0108``) and restart its `tP2_Server` from the
+/// keep-alive's arrival, moving the 0x78 from 50 to 80. With one tester, the controlling
+/// client's own request has stopped `tS3_Server`, so ``UDSS_LLR_0096`` has the keep-alive
+/// change nothing at all.
+#[test]
+fn a_keep_alive_mid_service_leaves_the_response_window_where_it_was() {
+    let mut server = PatientSrv::new(
+        Patient { pends: 2 },
+        Script::new(&[
+            Step::Ind(request_from(TESTER), READ),
+            Step::Slip(30),
+            Step::Ind(functional_from(TESTER), &[0x3E, 0x80]), // mid-handler
+            Step::At(50),
+            Step::At(80),
+            Step::Conf(response_to(TESTER)), // the 0x78's
+            Step::Conf(response_to(TESTER)), // the final response's
+        ]),
+        ECU,
+        PARAMS,
+    );
+    run!(&mut server);
+    let t = server.transport();
+    assert_eq!(t.sent_count, 2);
+    assert_eq!(
+        (t.sent(0), t.sent_at[0]),
+        ((Some(response_to(TESTER)), PENDING), 50)
+    );
+    assert_eq!(t.sent(1), (Some(response_to(TESTER)), POSITIVE));
 }
