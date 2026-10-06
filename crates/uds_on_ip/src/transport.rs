@@ -11,75 +11,116 @@
 //! the wrong seam.
 
 use crate::error::Error;
-use crate::mapping::target_of;
+use crate::mapping::{
+    Inbound, PduOutsideBuffer, classify, target_of, to_doip_ta_type, to_logical,
+};
 use crate::profile::{ConnectionAction, after_sending};
+use simple_doip::LogicalAddress;
+use simple_doip::service::{ConnectionId, DiagnosticEntity};
 use uds_services::{AfterSend, TransportEvent, UdsTransport};
-use uds_session::{Ai, Reloads, Timestamp};
+use uds_session::{Ai, Reloads, SResult, Timestamp};
 
-/// ISO 14229-5 over `DoIP`.
+/// ISO 14229-5 over a `DoIP` entity: the server side of `UDSonIP`.
 ///
-/// `S` is the socket, so no runtime is named: this builds for a bare-metal
-/// target as readily as for tokio, and an adapter for either is additive.
-pub struct DoIpTransport<S> {
-    #[expect(
-        dead_code,
-        reason = "read once t_data_req and next_event leave todo!()"
-    )]
-    socket: S,
+/// One transport drives the whole [`DiagnosticEntity`] — every connection it has
+/// accepted — and feeds one `uds_services::Server`, because the session, the
+/// security state and `tS3_Server` are the server's rather than a connection's.
+/// Responses are routed by their target address, which routing activation
+/// registers on one connection only.
+///
+/// `MCTS` sizes the table in which the transport remembers which tester arrived
+/// on which connection, so that it can close the right one when
+/// ISO 14229-5:2022 REQ 7.9 or REQ 7.11 requires it. It must be at least the
+/// entity's own maximum number of concurrent connections; a connection beyond it
+/// is [`Error::ConnectionOutsideTable`].
+///
+/// # The prescribed close
+///
+/// After sending a positive `DiagnosticSessionControl` or `ECUReset` response,
+/// the transport closes the connection the tester arrived on with
+/// [`DiagnosticEntity::close`] once the entity confirms the response was sent,
+/// and only then reports that confirmation. The close therefore follows the
+/// response (REQ 7.9, REQ 7.11: "after sending") and precedes the service's
+/// execution, which the driver begins on the confirmation. A response whose
+/// confirmation fails closes nothing.
+///
+/// # Integrating on bare metal
+///
+/// [`uds_services::Server::step`] takes `&mut self`, and this stack forbids
+/// `unsafe`, so a server built in place in a `static` is reached in one of two
+/// ways. Where one task owns it, `static_cell::ConstStaticCell` yields the
+/// `&'static mut` once, as `uds_services::Server::new` shows. Where anything
+/// else must reach it too — an interrupt handler, a second task — it lives in a
+/// `critical_section::Mutex<core::cell::RefCell<..>>`, and the integrator
+/// supplies a `critical-section` implementation for the target. An entity whose
+/// timers run on `embassy-time`, as `simple_doip`'s `connection` feature does,
+/// also needs the integrator's time driver and timer queue.
+pub struct DoIpTransport<E, const MCTS: usize = 1> {
+    entity: E,
     reloads: Reloads,
     outbound_max: Option<usize>,
-    /// What ISO 14229-5 clause 8 required of the connection after the message
-    /// most recently handed to `t_data_req`.
-    ///
-    /// Stored rather than acted on and discarded, because the two non-trivial
-    /// cases have different lifetimes.
-    /// [`InitiateClose`](ConnectionAction::InitiateClose) is spent immediately —
-    /// the close follows that one send. `ExpectClose` outlives the call: it is
-    /// read whenever a close eventually arrives, to fill in
-    /// `uds_services::TransportEvent::Closed`'s `expected`, and that may be
-    /// several events later.
-    ///
-    /// Every send overwrites it, including with `Continue`. Leaving a stale
-    /// `ExpectClose` in place would have one `DiagnosticSessionControl` arm the
-    /// transport for the rest of its life, so that every later drop — a pulled
-    /// cable, a crashed entity — reported itself as a flow the standard
-    /// prescribes.
-    last_send: ConnectionAction,
+    testers: [Option<Tester>; MCTS],
+    closing: Option<Closing>,
 }
 
-// Written by hand rather than derived, and held by
-// `tests::a_transport_over_an_opaque_socket_is_debug` rather than by this
-// paragraph. `#[derive(Debug)]` would generate a conditional
-// `impl<S: Debug> Debug for DoIpTransport<S>`, leaving `DoIpTransport<S>` with
-// no `Debug` at all for any socket that is not itself `Debug` — the common case
-// rather than the exception.
-impl<S> core::fmt::Debug for DoIpTransport<S> {
+/// A tester with routing active on `connection`, and what its connection owes.
+#[derive(Debug, Clone, Copy)]
+struct Tester {
+    connection: ConnectionId,
+    address: LogicalAddress,
+    owes: ConnectionAction,
+    unconfirmed: u8,
+}
+
+/// A prescribed close in progress, and the confirmation it holds back.
+#[derive(Debug, Clone, Copy)]
+struct Closing {
+    connection: ConnectionId,
+    ai: Ai,
+    result: SResult,
+}
+
+impl<E, const MCTS: usize> core::fmt::Debug for DoIpTransport<E, MCTS> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("DoIpTransport")
-            .field("socket", &"..")
+            .field("entity", &"..")
             .field("reloads", &self.reloads)
             .field("outbound_max", &self.outbound_max)
-            .field("last_send", &self.last_send)
+            .field("testers", &self.testers)
+            .field("closing", &self.closing)
             .finish()
     }
 }
 
-impl<S> DoIpTransport<S> {
-    /// A transport over `socket`, loading the session layer's response timer
+impl<E, const MCTS: usize> DoIpTransport<E, MCTS> {
+    /// A transport over `entity`, loading the session layer's response timer
     /// with `reloads`.
-    ///
-    /// See [`profile::bench_reloads`](crate::profile::bench_reloads) for values
-    /// suitable for a bench, and for why they are not suitable for a vehicle.
     ///
     /// The peer's size bound starts unknown, because it is learned from the
     /// peer's entity status response rather than assumed.
-    pub const fn new(socket: S, reloads: Reloads) -> Self {
+    ///
+    /// # Arguments
+    ///
+    /// * `entity` - the [`DiagnosticEntity`] whose connections this transport
+    ///   serves.
+    /// * `reloads` - the `tP6` pair; see
+    ///   [`profile::bench_reloads`](crate::profile::bench_reloads) for values
+    ///   suitable for a bench, and why they are not suitable for a vehicle.
+    #[must_use]
+    pub const fn new(entity: E, reloads: Reloads) -> Self {
         Self {
-            socket,
+            entity,
             reloads,
             outbound_max: None,
-            last_send: ConnectionAction::Continue,
+            testers: [None; MCTS],
+            closing: None,
         }
+    }
+
+    /// The entity, for inspection between events.
+    #[must_use]
+    pub const fn entity(&self) -> &E {
+        &self.entity
     }
 
     /// Record the peer's advertised *Max. data size*, learned from the peer's
@@ -87,189 +128,227 @@ impl<S> DoIpTransport<S> {
     ///
     /// A server typically has not requested one, which is why this stays
     /// `None` and `responseTooLong` is then unreachable rather than fabricated.
-    ///
-    /// # There is no inbound counterpart
-    ///
-    /// This entity's *own* MDS is not this crate's to hold. `simple_doip`
-    /// answers the ISO 13400-2:2019 Table 11 entity status request itself and
-    /// fills `max_data_size` from its own receive capacity, so a number stored
-    /// here would reach no response. `uds_services` reached the same conclusion
-    /// from the other side and removed `inbound_max` from
-    /// [`UdsTransport`]: the driver derives the figure from the services it
-    /// assembled and nothing on the seam ever asked for it.
-    ///
-    /// An `inbound_max`/`set_inbound_max` pair used to sit here, with a
-    /// paragraph explaining how the advertised number and the buffer that must
-    /// hold a request were kept in agreement. Nothing enforced that agreement,
-    /// and with the producer and the consumer both elsewhere there was nothing
-    /// for it to agree with.
+    /// This entity's *own* MDS is not this crate's to hold: `simple_doip`
+    /// answers the ISO 13400-2:2019 Table 11 entity status request itself.
     pub fn set_outbound_max(&mut self, max: Option<usize>) {
         self.outbound_max = max;
     }
 
-    /// Record what ISO 14229-5 clause 8 requires of the connection after
-    /// sending `data`, from its first octet.
-    ///
-    /// Split out of [`t_data_req`](UdsTransport::t_data_req) so it is reachable
-    /// from a test: that method ends in a `todo!()`, so nothing could otherwise
-    /// observe the arming — including the case that matters most, a `Continue`
-    /// clearing a previous `ExpectClose`.
-    ///
-    /// An empty message records [`ConnectionAction::Continue`]. There is no
-    /// service identifier to key on, and clause 8 attaches no connection
-    /// handling to a message that carries none.
-    fn record_what_follows(&mut self, data: &[u8]) {
-        self.last_send = data
+    fn tester_mut(&mut self, address: LogicalAddress) -> Option<&mut Tester> {
+        self.testers
+            .iter_mut()
+            .flatten()
+            .find(|tester| tester.address == address)
+    }
+
+    fn register(
+        &mut self,
+        connection: ConnectionId,
+        address: LogicalAddress,
+    ) -> Result<(), ConnectionId> {
+        let slot = self.testers.get_mut(connection.index()).ok_or(connection)?;
+        if !slot.is_some_and(|tester| tester.address == address) {
+            *slot = Some(Tester {
+                connection,
+                address,
+                owes: ConnectionAction::Continue,
+                unconfirmed: 0,
+            });
+        }
+        Ok(())
+    }
+
+    fn forget(&mut self, connection: ConnectionId) -> Option<Tester> {
+        self.testers
+            .get_mut(connection.index())
+            .and_then(Option::take)
+    }
+
+    fn record_send(&mut self, target: LogicalAddress, data: &[u8]) {
+        let action = data
             .first()
             .map_or(ConnectionAction::Continue, |octet| after_sending(*octet));
+        if let Some(tester) = self.tester_mut(target) {
+            if action == ConnectionAction::InitiateClose
+                || tester.owes != ConnectionAction::InitiateClose
+            {
+                tester.owes = action;
+            }
+            tester.unconfirmed = tester.unconfirmed.saturating_add(1);
+        }
+    }
+
+    /// The connection to close, where this confirmation is the last one a
+    /// tester owed a prescribed close was waiting on.
+    fn record_confirm(
+        &mut self,
+        target: LogicalAddress,
+        result: SResult,
+    ) -> Option<ConnectionId> {
+        let tester = self.tester_mut(target)?;
+        tester.unconfirmed = tester.unconfirmed.saturating_sub(1);
+        if tester.unconfirmed > 0 {
+            return None;
+        }
+        let owed = core::mem::replace(&mut tester.owes, ConnectionAction::Continue);
+        (owed == ConnectionAction::InitiateClose && result == SResult::Ok)
+            .then_some(tester.connection)
     }
 }
 
-impl<S> UdsTransport for DoIpTransport<S> {
-    type Error = Error;
+impl<E: DiagnosticEntity, const MCTS: usize> DoIpTransport<E, MCTS> {
+    async fn close(
+        &mut self,
+        closing: Closing,
+    ) -> Result<TransportEvent<'static>, Error<E::Error>> {
+        self.closing = Some(closing);
+        self.forget(closing.connection);
+        let closed = self.entity.close(closing.connection).await;
+        self.closing = None;
+        closed.map_err(Error::Entity)?;
+        Ok(TransportEvent::DataConf {
+            ai: closing.ai,
+            result: closing.result,
+        })
+    }
+}
 
-    /// `T_Data.req` — map a `T_PDU` onto a `DoIP` diagnostic message and send it.
+impl<E: DiagnosticEntity, const MCTS: usize> UdsTransport for DoIpTransport<E, MCTS> {
+    type Error = Error<E::Error>;
+
+    /// `T_Data.req` as `DoIP_Data.request` (ISO 14229-5:2022 REQ 4.3 Table 4),
+    /// routed by the target address to the connection that activated it.
     ///
-    /// # What the connection owes afterwards
-    ///
-    /// The message's first octet decides it, via
-    /// `after_sending`, and both ISO 14229-5
-    /// clause 8 connection requirements come from that one read.
-    ///
-    /// A client sending `DiagnosticSessionControl` or `ECUReset` arms
-    /// `ConnectionAction::ExpectClose`, so the close REQ 7.8 and REQ 7.10
-    /// prescribe is reported to the driver as expected rather than as a fault.
-    /// A server sending a *positive response* to either arms
-    /// `ConnectionAction::InitiateClose`: REQ 7.9 and REQ 7.11 require the
-    /// server itself to close, after the response and before executing the
-    /// service, so this transport asks the connection to close once the send
-    /// completes.
-    ///
-    /// The driver is told, and never asked to work either out — see
-    /// `after_sending` for why the decision
-    /// lands in this crate rather than above or below it.
+    /// A positive `DiagnosticSessionControl` or `ECUReset` response arms the
+    /// prescribed close described on [`DoIpTransport`].
     ///
     /// # Errors
     ///
     /// [`Error::Mapping`] if the addressing cannot be carried: the two remote
-    /// message types have no `DoIP` representation.
-    ///
-    /// A *socket* failure has no variant yet — see [`Self::next_event`].
-    #[expect(
-        clippy::todo,
-        reason = "unwritten body; the allow is the record that it is outstanding"
-    )]
+    /// message types have no `DoIP` representation. [`Error::Entity`] if the
+    /// entity does not accept the request.
     async fn t_data_req(
         &mut self,
         ai: Ai,
         data: &[u8],
         _after: AfterSend,
-    ) -> Result<(), Error> {
-        let _target = target_of(ai)?;
-        self.record_what_follows(data);
-        todo!(
-            "REQ 4.3 Table 4 — send as a DoIP diagnostic message, then close the \
-             connection if last_send is InitiateClose"
-        )
+    ) -> Result<(), Self::Error> {
+        let target = target_of(ai)?;
+        self.entity
+            .request(target, to_doip_ta_type(ai.ta_type), data)
+            .await
+            .map_err(Error::Entity)?;
+        self.record_send(target, data);
+        Ok(())
     }
 
-    /// The next inbound event, or
-    /// [`TransportEvent::Deadline`]
-    /// when `deadline` passes first.
+    /// The next `T_Data.ind` or `T_Data.conf`, a closed connection, or
+    /// [`TransportEvent::Deadline`] when `deadline` passes first.
     ///
-    /// An inbound payload is written into `buffer` and reported as the subslice
-    /// it occupies, so the event borrows the caller's buffer and never `self` —
-    /// which is what lets the driver answer a request while its bytes are still
-    /// live. `deadline` is the session layer's `next_deadline`, so this
-    /// transport never invents one.
-    ///
-    /// # A message longer than `buffer`
-    ///
-    /// Reported as
-    /// [`TransportEvent::DataTooLong`],
-    /// never as a `DataInd` whose data happens to fill `buffer`. The caller must
-    /// be able to tell a whole message from the front of a longer one: the first
-    /// is dispatchable and the second is only classifiable.
-    ///
-    /// `declared` is always `Some` here. ISO 13400-2's generic header carries
-    /// the payload length and it is read before the payload, so truncation is
-    /// decided before there is a whole message to classify — never by comparing
-    /// what arrived against `buffer.len()` afterwards.
-    ///
-    /// A driver serving a request offers only its small concurrent buffer, as
-    /// ISO 14229-1 8.7.6 requires for the functionally addressed
-    /// `TesterPresent` and the `0x00`–`0x0F` range. Truncation is the normal
-    /// outcome in that window, not a fault: 8.7.6 owes that request
-    /// `busyRepeatRequest` (0x21) regardless, and composing one needs the
-    /// service identifier and the addressing, both of which this carries.
+    /// A message longer than `buffer` is [`TransportEvent::DataTooLong`] with
+    /// `declared` always `Some`: `DoIP`'s generic header carries the length.
+    /// [`TransportEvent::Closed`]'s `expected` is true only for a tester owed a
+    /// prescribed close. Cancel-safe, provided the entity's `next_event` and
+    /// `close` are.
     ///
     /// # Errors
     ///
-    /// [`Error::Wire`] if a `DoIP` message could not be decoded.
-    ///
-    /// # A socket failure has nowhere to go yet
-    ///
-    /// `S` carries no bound, so a socket has no error type for [`Error`] to
-    /// compose, and [`Error::Wire`] is explicitly not it. There is no such
-    /// bound available to take: `automotive-wire-codec`'s `Sink` is
-    /// synchronous, has no read side, and its `WriteError::Io` carries no
-    /// detail by design, while every async surface in `simple_doip` sits
-    /// behind its `codec` feature, which requires `std` and a runtime. No
-    /// `no_std` async socket seam exists anywhere in this stack.
-    ///
-    /// [`UdsTransport::Error`] is this crate's to name, so the shape is settled
-    /// and only the bound is open. Until it lands, the failure this method is
-    /// most likely to have is unrepresentable.
-    #[expect(
-        unused_variables,
-        reason = "buffer and deadline are unused until next_event's body replaces the todo!()"
-    )]
-    #[expect(
-        clippy::todo,
-        reason = "unwritten body; the allow is the record that it is outstanding"
-    )]
+    /// [`Error::Entity`] where the entity fails as a whole, and
+    /// [`Error::ConnectionOutsideTable`] or [`Error::PduOutsideBuffer`] where it
+    /// breaks its contract with this transport.
     async fn next_event<'b>(
         &mut self,
         buffer: &'b mut [u8],
         deadline: Option<Timestamp>,
-    ) -> Result<TransportEvent<'b>, Error> {
-        todo!("read a DoIP message, mapping::classify it, translate it onto the seam")
+    ) -> Result<TransportEvent<'b>, Self::Error> {
+        if let Some(closing) = self.closing {
+            return self.close(closing).await;
+        }
+        let buffer_start = buffer.as_ptr().addr();
+        let inbound = loop {
+            let event = self
+                .entity
+                .next_event(&mut *buffer, deadline.map(|at| at.0))
+                .await
+                .map_err(Error::Entity)?;
+            if let Some(inbound) = classify(event, buffer_start)
+                .map_err(|PduOutsideBuffer| Error::PduOutsideBuffer)?
+            {
+                break inbound;
+            }
+        };
+        let buffer: &'b [u8] = buffer;
+        let outside_table = |connection| Error::ConnectionOutsideTable {
+            connection,
+            capacity: MCTS,
+        };
+        match inbound {
+            Inbound::Ind { connection, ai, at } => {
+                self.register(connection, to_logical(ai.sa))
+                    .map_err(outside_table)?;
+                let data = buffer.get(at).ok_or(Error::PduOutsideBuffer)?;
+                Ok(TransportEvent::DataInd { ai, data })
+            }
+            Inbound::TooLong {
+                connection,
+                ai,
+                at,
+                declared,
+            } => {
+                self.register(connection, to_logical(ai.sa))
+                    .map_err(outside_table)?;
+                let data = buffer.get(at).ok_or(Error::PduOutsideBuffer)?;
+                Ok(TransportEvent::DataTooLong {
+                    ai,
+                    data,
+                    declared: Some(declared),
+                })
+            }
+            Inbound::Conf { ai, result } => {
+                match self.record_confirm(to_logical(ai.ta), result) {
+                    Some(connection) => {
+                        self.close(Closing {
+                            connection,
+                            ai,
+                            result,
+                        })
+                        .await
+                    }
+                    None => Ok(TransportEvent::DataConf { ai, result }),
+                }
+            }
+            Inbound::Closed { connection } => Ok(TransportEvent::Closed {
+                expected: self
+                    .forget(connection)
+                    .is_some_and(|tester| tester.owes.close_is_prescribed()),
+            }),
+            Inbound::Deadline => Ok(TransportEvent::Deadline),
+        }
     }
 
     /// The largest `A_PDU` the peer will accept, where it has advertised one.
     ///
     /// ISO 13400-2:2019 Table 11 — support for *Max. data size* is
-    /// **optional**, so `None` is conformant. MDS is defined as the maximum
-    /// size of one logical **request** an entity can process, so a server
-    /// asking what it may send is asking about the client.
+    /// **optional**, so `None` is conformant.
     fn outbound_max(&self) -> Option<usize> {
         self.outbound_max
     }
 
-    /// The `tP_Client` reload pair this transport dictates.
-    ///
-    /// What this transport dictates is *which* pair: `DoIP` has no
+    /// The `tP_Client` reload pair this transport dictates: `DoIP` has no
     /// `T_DataSOM.ind`, so ISO 14229-2:2021 REQ 5.11 gives it `tP6` rather than
-    /// `tP2`. The session layer does not distinguish the two, so the choice
-    /// lives in these values and nowhere else.
+    /// `tP2`.
     fn channel_timing(&self) -> Reloads {
         self.reloads
     }
 
     /// The current time.
-    ///
-    /// [`Timestamp`] rather than a bare `u32`: it is a newtype over exactly
-    /// that `u32`, and it carries `interval_since`, the modulo-2³² subtraction
-    /// `UDSS_LLR_0019` requires. The value `uds_session`'s `next_deadline`
-    /// returns can then be handed straight back to [`Self::next_event`] with no
-    /// arithmetic on either side of the seam.
     #[expect(
         clippy::todo,
         reason = "unwritten body; the allow is the record that it is outstanding"
     )]
     fn now(&self) -> Timestamp {
         todo!(
-            "the clock belongs to whatever S is; see the missing-bound note on next_event"
+            "the clock is the W5 checkpoint: DiagnosticEntity::now_ms or a clock parameter"
         )
     }
 }
@@ -277,26 +356,65 @@ impl<S> UdsTransport for DoIpTransport<S> {
 #[cfg(test)]
 mod tests {
     use super::DoIpTransport;
-    use crate::profile::{ConnectionAction, bench_reloads};
+    use crate::profile::bench_reloads;
+    use simple_doip::service::{ConnectionId, DiagnosticEntity, EntityEvent};
+    use simple_doip::{LogicalAddress, TaType};
     use uds_services::UdsTransport;
+    use uds_session::{SResult, TransportError};
+
+    const TESTER: LogicalAddress = LogicalAddress(0x0E00);
+    const CONNECTION: ConnectionId = ConnectionId::new(0);
+
+    /// An entity on which nothing ever happens.
+    #[derive(Debug)]
+    struct Idle;
+
+    #[allow(
+        clippy::unused_async_trait_impl,
+        reason = "nothing happens, so nothing is awaited"
+    )]
+    impl DiagnosticEntity for Idle {
+        type Error = core::convert::Infallible;
+        async fn request(
+            &mut self,
+            _ta: LogicalAddress,
+            _ta_type: TaType,
+            _pdu: &[u8],
+        ) -> Result<(), Self::Error> {
+            Ok(())
+        }
+        async fn next_event<'b>(
+            &mut self,
+            _buf: &'b mut [u8],
+            _deadline_ms: Option<u32>,
+        ) -> Result<EntityEvent<'b>, Self::Error> {
+            Ok(EntityEvent::Deadline)
+        }
+        async fn close(&mut self, _connection: ConnectionId) -> Result<(), Self::Error> {
+            Ok(())
+        }
+    }
+
+    /// A transport with tester `0x0E00` registered on connection 0.
+    fn serving_the_tester() -> DoIpTransport<()> {
+        let mut t = DoIpTransport::new((), bench_reloads());
+        assert_eq!(t.register(CONNECTION, TESTER), Ok(()));
+        t
+    }
 
     /// ISO 13400-2:2019 Table 11 marks *Max. data size* support **optional**, so
     /// a conformant `DoIP` entity need not advertise one and `None` is a correct
     /// answer rather than a defect.
-    ///
-    /// A bound is reported only where one was learned, never fabricated: a
-    /// response sink bounded at an invented number would reject responses the
-    /// peer would have accepted.
     #[test]
     fn an_unadvertised_max_data_size_is_none_not_a_guess() {
-        let t = DoIpTransport::new((), bench_reloads());
+        let t = DoIpTransport::<_>::new(Idle, bench_reloads());
         assert_eq!(t.outbound_max(), None);
     }
 
     /// What the peer advertised is what `outbound_max` reports.
     #[test]
     fn the_peers_bound_is_reported_once_it_is_learned() {
-        let mut t = DoIpTransport::new((), bench_reloads());
+        let mut t = DoIpTransport::<_>::new(Idle, bench_reloads());
         t.set_outbound_max(Some(4096));
         assert_eq!(t.outbound_max(), Some(4096));
     }
@@ -305,105 +423,107 @@ mod tests {
     /// is what the session layer actually loads.
     #[test]
     fn the_reloads_reach_the_seam_unchanged() {
-        let t = DoIpTransport::new((), bench_reloads());
+        let t = DoIpTransport::<_>::new(Idle, bench_reloads());
         assert_eq!(t.channel_timing(), bench_reloads());
     }
 
-    /// The hand-written `Debug` covers a socket that is not itself `Debug`.
-    ///
-    /// This is the guard for that choice; the note above the impl only explains
-    /// it. A `#[derive(Debug)]` generates `impl<S: Debug>`, under which
-    /// `DoIpTransport<OpaqueSocket>` has no `Debug` at all and this stops
-    /// compiling. Verified by deriving it and watching this line fail.
+    /// The hand-written `Debug` covers an entity that is not itself `Debug`; a
+    /// derived one would not.
     #[test]
-    fn a_transport_over_an_opaque_socket_is_debug() {
-        struct OpaqueSocket;
+    fn a_transport_over_an_opaque_entity_is_debug() {
+        struct OpaqueEntity;
         const fn assert_debug<T: core::fmt::Debug>() {}
-        assert_debug::<DoIpTransport<OpaqueSocket>>();
+        assert_debug::<DoIpTransport<OpaqueEntity>>();
     }
 
-    /// A send records what the connection owes afterwards, and a later send
-    /// replaces it.
-    ///
-    /// The clearing is the half worth testing. A stale `ExpectClose` is silent:
-    /// nothing fails, and every close for the rest of the transport's life
-    /// reports itself as a flow the standard prescribes — so a pulled cable
-    /// during an ordinary `ReadDataByIdentifier` exchange would tell the driver
-    /// to end the exchange cleanly instead of failing it.
-    ///
-    /// Verified by watching it fail: making `record_what_follows` skip the
-    /// write when the action is `Continue` — the plausible shape of this bug,
-    /// since it reads as "only record something interesting" — breaks this test
-    /// and two of its neighbours.
+    /// ISO 14229-5:2022 REQ 7.9: a positive `DiagnosticSessionControl` response
+    /// owes a close of the connection its tester arrived on, once it is
+    /// confirmed sent.
     #[test]
-    fn what_the_connection_owes_is_replaced_by_every_send() {
-        let mut t = DoIpTransport::new((), bench_reloads());
-        assert_eq!(
-            t.last_send,
-            ConnectionAction::Continue,
-            "a fresh transport owes nothing",
-        );
-
-        t.record_what_follows(&[0x10, 0x03]);
-        assert_eq!(
-            t.last_send,
-            ConnectionAction::ExpectClose,
-            "REQ 7.8 — a client sent DiagnosticSessionControl",
-        );
-
-        t.record_what_follows(&[0x22, 0xF1, 0x90]);
-        assert_eq!(
-            t.last_send,
-            ConnectionAction::Continue,
-            "ReadDataByIdentifier must clear it, or the arming never expires",
-        );
+    fn a_confirmed_positive_session_response_closes_its_connection() {
+        let mut t = serving_the_tester();
+        t.record_send(TESTER, &[0x50, 0x03]);
+        assert_eq!(t.record_confirm(TESTER, SResult::Ok), Some(CONNECTION));
     }
 
-    /// A server's positive response arms the close it must itself initiate.
-    ///
-    /// The mirror of the client case, and the direction REQ 7.9 and REQ 7.11
-    /// specify: the server closes after sending the positive response and
-    /// before executing the service.
+    /// REQ 7.11: so does a positive `ECUReset` response.
     #[test]
-    fn a_positive_response_arms_the_close_a_server_owes() {
-        let mut t = DoIpTransport::new((), bench_reloads());
-
-        t.record_what_follows(&[0x50, 0x03]);
-        assert_eq!(t.last_send, ConnectionAction::InitiateClose);
-
-        t.record_what_follows(&[0x7F, 0x10, 0x22]);
-        assert_eq!(
-            t.last_send,
-            ConnectionAction::Continue,
-            "a negative response to the same service closes nothing",
-        );
+    fn a_confirmed_positive_reset_response_closes_its_connection() {
+        let mut t = serving_the_tester();
+        t.record_send(TESTER, &[0x51, 0x01]);
+        assert_eq!(t.record_confirm(TESTER, SResult::Ok), Some(CONNECTION));
     }
 
-    /// An empty message keys on nothing and owes nothing.
-    ///
-    /// `data.first()` is `None`, and clause 8 attaches no connection handling to
-    /// a message carrying no service identifier. Worth pinning because the
-    /// alternative — indexing octet zero — would panic on a message a peer
-    /// controls the length of.
+    /// REQ 7.9 and REQ 7.11 key the close on a *positive* response.
+    #[test]
+    fn a_negative_response_closes_nothing() {
+        let mut t = serving_the_tester();
+        t.record_send(TESTER, &[0x7F, 0x10, 0x22]);
+        assert_eq!(t.record_confirm(TESTER, SResult::Ok), None);
+    }
+
+    /// A response that was not sent is not one the close may follow.
+    #[test]
+    fn a_failed_confirmation_closes_nothing_and_owes_nothing_after() {
+        let mut t = serving_the_tester();
+        t.record_send(TESTER, &[0x50, 0x03]);
+        let failed = SResult::Transport(TransportError(10));
+        assert_eq!(t.record_confirm(TESTER, failed), None);
+
+        t.record_send(TESTER, &[0x62, 0xF1, 0x90, 0x00]);
+        assert_eq!(t.record_confirm(TESTER, SResult::Ok), None);
+    }
+
+    /// A `0x78` still unconfirmed when the positive response is sent does not
+    /// close the connection on its own confirmation: the close follows the last.
+    #[test]
+    fn the_close_waits_for_the_last_outstanding_confirmation() {
+        let mut t = serving_the_tester();
+        t.record_send(TESTER, &[0x7F, 0x10, 0x78]);
+        t.record_send(TESTER, &[0x50, 0x02]);
+        assert_eq!(t.record_confirm(TESTER, SResult::Ok), None);
+        assert_eq!(t.record_confirm(TESTER, SResult::Ok), Some(CONNECTION));
+    }
+
+    /// Once owed, a close is not cancelled by a later send before it is made.
+    #[test]
+    fn a_later_send_does_not_cancel_an_owed_close() {
+        let mut t = serving_the_tester();
+        t.record_send(TESTER, &[0x50, 0x03]);
+        t.record_send(TESTER, &[0x7F, 0x22, 0x13]);
+        assert_eq!(t.record_confirm(TESTER, SResult::Ok), None);
+        assert_eq!(t.record_confirm(TESTER, SResult::Ok), Some(CONNECTION));
+    }
+
+    /// A message with no service identifier owes nothing, and indexing octet
+    /// zero would panic on a length the peer controls.
     #[test]
     fn an_empty_message_owes_nothing() {
-        let mut t = DoIpTransport::new((), bench_reloads());
-        t.record_what_follows(&[0x11]);
-        assert_eq!(
-            t.last_send,
-            ConnectionAction::ExpectClose,
-            "0x11 is the ECUReset request, so a close is coming",
-        );
-
-        t.record_what_follows(&[]);
-        assert_eq!(t.last_send, ConnectionAction::Continue);
+        let mut t = serving_the_tester();
+        t.record_send(TESTER, &[]);
+        assert_eq!(t.record_confirm(TESTER, SResult::Ok), None);
     }
 
-    /// `Timestamp` is what makes the deadline exchangeable across the seam
-    /// without arithmetic: the value `uds_session` reports as a next deadline
-    /// goes straight back into `next_event`, and `interval_since` carries
-    /// `UDSS_LLR_0019`'s modulo-2³² subtraction so a wrap is not a special case
-    /// at either end.
+    /// A response to a tester no connection carries has no connection to close.
+    #[test]
+    fn a_response_to_an_unknown_tester_closes_nothing() {
+        let mut t = serving_the_tester();
+        let stranger = LogicalAddress(0x0E80);
+        t.record_send(stranger, &[0x50, 0x03]);
+        assert_eq!(t.record_confirm(stranger, SResult::Ok), None);
+    }
+
+    /// A connection beyond `MCTS` cannot be remembered, and says so.
+    #[test]
+    fn a_connection_beyond_the_table_is_refused() {
+        let mut t = DoIpTransport::<(), 1>::new((), bench_reloads());
+        let second = ConnectionId::new(1);
+        assert_eq!(t.register(second, TESTER), Err(second));
+    }
+
+    /// The value `uds_session` reports as a next deadline goes straight back into
+    /// `next_event`, and `interval_since` carries `UDSS_LLR_0019`'s modulo-2³²
+    /// subtraction, so a wrap is not a special case at either end.
     #[test]
     fn a_deadline_survives_the_wrap_it_is_typed_for() {
         let before_wrap = uds_session::Timestamp(u32::MAX - 10);

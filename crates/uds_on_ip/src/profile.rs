@@ -132,10 +132,6 @@ impl ConnectionAction {
     /// a server that has just caused one are both in a prescribed flow, and the
     /// driver's decision — end the exchange rather than treat it as a failure —
     /// is the same either way.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "read once next_event's body replaces its todo!()")
-    )]
     pub(crate) const fn close_is_prescribed(self) -> bool {
         matches!(self, Self::ExpectClose | Self::InitiateClose)
     }

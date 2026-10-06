@@ -8,36 +8,44 @@
 //! that went away is `TransportEvent::Closed`. Only a failure that leaves
 //! nothing to report at all is an [`Error`].
 //!
-//! Two variants, therefore, and one absence worth stating. A *closed
-//! connection* has no variant, and now needs none: ISO 14229-5:2022 REQ 7.9 and
-//! REQ 7.11 make a server-initiated close part of the
-//! `DiagnosticSessionControl` and `ECUReset` flows, so an expected close
-//! arriving as an `Err` would have a driver treat a conformant flow as a
-//! failure. `uds_services` published `TransportEvent::Closed { expected }` on
-//! 2026-09-17, which is where it belongs.
-//!
-//! This type is [`uds_services::UdsTransport::Error`], so a socket failure is
-//! this crate's to name. It has no variant yet — see
-//! [`UdsTransport::next_event`](uds_services::UdsTransport::next_event) for
-//! why there is no bound to take one from.
+//! A *closed connection* has no variant: ISO 14229-5:2022 REQ 7.9 and REQ 7.11
+//! make a server-initiated close part of the `DiagnosticSessionControl` and
+//! `ECUReset` flows, so an expected close arriving as an `Err` would have a
+//! driver treat a conformant flow as a failure.
 
-/// Errors raised by this crate.
+use simple_doip::service::ConnectionId;
+
+/// Errors raised by [`DoIpTransport`](crate::DoIpTransport), whose entity fails
+/// with `E`.
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
-pub enum Error {
-    /// A wire-level encode/decode failure: a `DoIP` message could not be
-    /// encoded or decoded.
-    ///
-    /// This does not carry `simple_doip::Error`, that crate's async driver's
-    /// error type, gated on its `client`/`server` features. This crate has no
-    /// driver — it is a transport whose socket is the caller's — so the
-    /// wire-level error is the one that crosses this boundary instead.
-    #[error("DoIP message error: {0}")]
-    Wire(#[from] simple_doip::messages::MessageError),
+pub enum Error<E> {
+    /// The `DoIP` entity failed as a whole: its
+    /// [`DiagnosticEntity::Error`](simple_doip::service::DiagnosticEntity::Error).
+    #[error("the DoIP entity failed: {0:?}")]
+    Entity(E),
 
     /// The addressing cannot be carried over `DoIP`.
     #[error(transparent)]
     Mapping(#[from] crate::mapping::MappingError),
+
+    /// The entity reported a connection beyond the transport's connection table:
+    /// the transport's `MCTS` is smaller than the entity's.
+    #[error(
+        "the DoIP entity reported connection {connection:?}, beyond a table of {capacity}"
+    )]
+    ConnectionOutsideTable {
+        /// The connection the entity reported.
+        connection: ConnectionId,
+        /// The transport's `MCTS`.
+        capacity: usize,
+    },
+
+    /// The entity reported a PDU outside the buffer it was lent, breaking
+    /// [`DiagnosticEntity::next_event`](simple_doip::service::DiagnosticEntity::next_event)'s
+    /// contract.
+    #[error("the DoIP entity reported a PDU outside the buffer it was lent")]
+    PduOutsideBuffer,
 }
 
 /// Compile-time proof that this crate's errors, and the upstream errors it
@@ -49,7 +57,6 @@ pub enum Error {
 /// exist — which is where a `*-none` target build would exercise it.
 const _: () = {
     const fn assert_core_error<T: core::error::Error>() {}
-    assert_core_error::<simple_doip::messages::MessageError>();
     assert_core_error::<uds_protocol::Error>();
-    assert_core_error::<Error>();
+    assert_core_error::<Error<core::convert::Infallible>>();
 };

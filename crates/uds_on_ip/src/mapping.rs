@@ -9,14 +9,15 @@
 //! publishes is thinner still: the address conversions and the one constant
 //! ISO 14229-5 adds to ISO 13400-2's payload types.
 //!
-//! Classifying an inbound message — in particular recognising that a
-//! diagnostic message acknowledgement is a `T_Data.conf`, because that is what
-//! starts `tP_Client` (ISO 14229-2:2021 REQ 5.9) — happens here too, but
-//! privately. It produces vocabulary the driver never sees, and publishing it
-//! would leave a caller two event types and only prose to say which was
-//! theirs.
+//! Classifying what a `DoIP` entity reports onto the transport seam happens here
+//! too, but privately. It produces vocabulary the driver never sees, and
+//! publishing it would leave a caller two event types and only prose to say which
+//! was theirs.
 
-use uds_session::{Address, Ai, Mtype, SResult};
+use core::ops::Range;
+
+use simple_doip::service::{ConnectionId, DoIpResult, EntityEvent};
+use uds_session::{Address, Ai, Mtype, SResult, TaType, TransportError};
 
 /// A constraint of the `DoIP` mapping, not of the session layer.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error)]
@@ -47,52 +48,6 @@ pub const fn from_logical(addr: simple_doip::LogicalAddress) -> Address {
     Address(addr.0)
 }
 
-/// Why a connection closed.
-///
-/// ISO 14229-5:2022 REQ 7.9 and REQ 7.11 make a server-initiated close part of
-/// the `DiagnosticSessionControl` and `ECUReset` flows, so a close is not
-/// necessarily a fault. This becomes
-/// `uds_services::TransportEvent::Closed`'s `expected`, which is binary because
-/// the driver's decision is; see `a_close_cause_is_the_seams_expected_flag`.
-// `cfg_attr(not(test), ...)` rather than a bare `expect`: the tests below
-// construct both variants, so under `cfg(test)` the type is not dead and a bare
-// expectation goes unfulfilled. The suppression is for the non-test build, where
-// `classify` is still a `todo!()`.
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "constructed once classify's body replaces its todo!()"
-    )
-)]
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum CloseCause {
-    /// Expected: the server closed after a positive response and before
-    /// executing the service (REQ 7.9, REQ 7.11).
-    ServiceInitiated,
-    /// Unexpected: the transport failed.
-    TransportFailure,
-}
-
-impl CloseCause {
-    /// `uds_services::TransportEvent::Closed`'s `expected` flag.
-    ///
-    /// The seam's flag is binary because the driver's decision is — reconnect
-    /// and repeat routing activation, or fail the exchange — so the distinction
-    /// this enum keeps is the one this crate needs in order to *make* that
-    /// decision, not one the driver would act on differently.
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "called once next_event's body replaces its todo!()"
-        )
-    )]
-    pub(crate) const fn expected(self) -> bool {
-        matches!(self, Self::ServiceInitiated)
-    }
-}
-
 /// The `DoIP` payload type carrying UDS periodic responses.
 ///
 /// Introduced by ISO 14229-5:2022 REQ 7.16, **not** by ISO 13400-2:2019, whose
@@ -101,13 +56,10 @@ impl CloseCause {
 ///
 /// # Nothing in this crate acts on it yet
 ///
-/// Published as vocabulary, not as a capability. A message with this payload
-/// type cannot yet be *received*: `simple_doip`'s `Payload` models only the
-/// types ISO 13400-2 defines, with no catch-all carrying an unmodelled type's
-/// bytes. Delivery is no longer a gap —
-/// `uds_services::TransportEvent::Periodic` exists as of 2026-09-17 — so one
-/// half of this is closed and the constant still promises nothing until the
-/// other is.
+/// Published as vocabulary, not as a capability. A server never receives one, and
+/// the client role that would, and `uds_services::TransportEvent::Periodic` that
+/// would carry it, are not built on `DoIP` yet: such a message arrives from
+/// `simple_doip` as an [`EntityEvent::Unmodelled`], and this crate ignores it.
 ///
 /// REQ 7.17's length bound — a periodic data record must not exceed the
 /// non-segmented `UDSonIP` message limit — has no home here yet either. It was
@@ -132,139 +84,178 @@ pub fn target_of(ai: Ai) -> Result<simple_doip::LogicalAddress, MappingError> {
     }
 }
 
-/// An inbound `DoIP` message, classified.
-///
-/// Crate-internal: `transport` translates the cases that cross the stack's
-/// seam into the driver's event type. Not public, because a caller reading
-/// this crate would otherwise face two event vocabularies with nothing but
-/// prose to say which is theirs.
-#[expect(
-    dead_code,
-    reason = "constructed once classify's body replaces its todo!()"
-)]
-#[derive(Debug)]
-pub(crate) enum DoIpEvent<'a> {
-    /// `T_Data.ind` — a diagnostic message (`DoIP` `0x8001`).
-    Ind {
-        /// The responding entity. Under functional addressing this differs
-        /// between responses, and is the only way to tell them apart.
-        source: Address,
-        /// The UDS payload, opaque at this layer.
-        data: &'a [u8],
-    },
-    /// `T_Data.conf` — derived from a diagnostic message acknowledgement
-    /// (`DoIP` `0x8002`/`0x8003`), **never** from a completed socket write,
-    /// because the acknowledgement is what starts `tP_Client`
-    /// (ISO 14229-2:2021 REQ 5.9).
-    Conf {
-        /// The acknowledging entity.
-        peer: Address,
-        /// The acknowledgement's outcome.
-        ///
-        /// Derived from which acknowledgement arrived: ISO 13400-2:2019 Table 17
-        /// gives the positive and negative acknowledgements their own payload
-        /// types, and Tables 24 and 26 their own codes, which `simple_doip`
-        /// decodes to separate variants.
-        ///
-        /// A rejection does not yet say why. `SResult::Transport` carries a
-        /// `TransportError(u16)` so a lower layer's own code reaches the driver
-        /// unchanged, and `simple_doip` decodes a received `0x8003` with its
-        /// NACK code, both addresses and the echoed request bytes; carrying the
-        /// code into the result is this mapping's to do.
-        result: SResult,
-    },
-    /// A periodic response (`DoIP` `0x8004`).
-    ///
-    /// Deliberately not a `T_Data.ind`: ISO 14229-5:2022 REQ 7.20 requires
-    /// that unsolicited responses do not reset `tS3_Server`, so these bypass
-    /// the request/response path entirely.
-    Periodic {
-        /// The responding entity.
-        source: Address,
-        /// The periodic data identifier.
-        pdid: u8,
-        /// The periodic data record.
-        data: &'a [u8],
-    },
-    /// The connection closed.
-    Closed {
-        /// Whether the close was expected.
-        cause: CloseCause,
-    },
+/// ISO 14229-2 `T_TAtype` to ISO 13400-2 `DoIP_TAtype` (ISO 14229-5:2022 REQ 4.4
+/// Table 5).
+pub(crate) const fn to_doip_ta_type(ta_type: TaType) -> simple_doip::TaType {
+    match ta_type {
+        TaType::Physical => simple_doip::TaType::Physical,
+        TaType::Functional => simple_doip::TaType::Functional,
+    }
 }
 
-/// Classify an inbound `DoIP` message from its header and its payload bytes.
+/// ISO 13400-2 `DoIP_TAtype` to ISO 14229-2 `T_TAtype`; the inverse of
+/// [`to_doip_ta_type`].
+pub(crate) const fn from_doip_ta_type(ta_type: simple_doip::TaType) -> TaType {
+    match ta_type {
+        simple_doip::TaType::Physical => TaType::Physical,
+        simple_doip::TaType::Functional => TaType::Functional,
+    }
+}
+
+/// `DoIP_Result` to `T_Result` (ISO 14229-5:2022 REQ 4.4 Table 5).
 ///
-/// `Ok(None)` for a payload type this crate assigns no [`DoIpEvent`] meaning —
-/// one of ISO 13400-2's non-diagnostic payload types (routing activation,
-/// vehicle identification, and so on), which belong to `simple_doip`'s own
-/// connection handling rather than to a UDS exchange.
+/// ISO 13400-2:2019 8.2.5 gives `DoIP_Result` no numeric values, only a normative
+/// order, so an error's [`TransportError`] is its position in that order: `DoIP_OK`
+/// is 0 and becomes [`SResult::Ok`], `DoIP_ERROR` is 11.
+pub(crate) const fn s_result(result: DoIpResult) -> SResult {
+    let position = match result {
+        DoIpResult::Ok => return SResult::Ok,
+        DoIpResult::HdrError => 1,
+        DoIpResult::TimeoutA => 2,
+        DoIpResult::UnknownSa => 3,
+        DoIpResult::InvalidSa => 4,
+        DoIpResult::UnknownTa => 5,
+        DoIpResult::MessageTooLarge => 6,
+        DoIpResult::OutOfMemory => 7,
+        DoIpResult::TargetUnreachable => 8,
+        DoIpResult::NoLink => 9,
+        DoIpResult::NoSocket => 10,
+        DoIpResult::Error => 11,
+    };
+    SResult::Transport(TransportError(position))
+}
+
+/// The addressing of a `DoIP_Data` primitive as ISO 14229-2's `S_AI`.
 ///
-/// # Why this takes a header rather than a decoded `Message`
+/// Always [`Mtype::Diag`]: ISO 14229-5:2022 REQ 4.4 Table 5 maps `T_Ptype` onto
+/// nothing, so `DoIP` carries no message type to read.
+const fn ai(
+    sa: simple_doip::LogicalAddress,
+    ta: simple_doip::LogicalAddress,
+    ta_type: simple_doip::TaType,
+) -> Ai {
+    Ai {
+        mtype: Mtype::Diag,
+        sa: from_logical(sa),
+        ta: from_logical(ta),
+        ta_type: from_doip_ta_type(ta_type),
+    }
+}
+
+/// An [`EntityEvent`] as the transport seam needs it, with a PDU held as its place in
+/// the caller's buffer so that the event no longer borrows it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum Inbound {
+    /// `T_Data.ind` (REQ 4.3 Table 4: `DoIP_Data.indication`).
+    Ind {
+        connection: ConnectionId,
+        ai: Ai,
+        at: Range<usize>,
+    },
+    /// `T_Data.ind` for a message longer than the caller's buffer.
+    TooLong {
+        connection: ConnectionId,
+        ai: Ai,
+        at: Range<usize>,
+        declared: usize,
+    },
+    /// `T_Data.conf` (REQ 4.3 Table 4: `DoIP_Data.confirm`).
+    Conf {
+        ai: Ai,
+        result: SResult,
+    },
+    Closed {
+        connection: ConnectionId,
+    },
+    Deadline,
+}
+
+/// A PDU an entity reported outside the buffer it was given.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct PduOutsideBuffer;
+
+/// Classify `event`, which borrows the buffer starting at address `buffer_start`.
 ///
-/// Because `0x8004` is not decodable by the layer below, and routing it there
-/// turns a conformant message into an error.
-///
-/// ISO 13400-2:2019 does not define `0x8004`; ISO 14229-5:2022 REQ 7.16 adds
-/// it. `simple_doip` maps every value it does not model to
-/// `PayloadType::Reserved`, and `Payload::decode` returns a `MessageError` for
-/// `Reserved(_)` rather than decoding it — correctly, since it cannot know what
-/// the bytes mean. So a periodic response handed to `Message::decode` comes
-/// back as a wire error, and a driver that tears down a connection on an `Err`
-/// would do so on a message the standard requires the server to send. That is
-/// the same failure `uds_services::TransportEvent::Closed` exists to prevent
-/// for an expected close.
-///
-/// Reading [`Header::payload_type`](simple_doip::messages::Header) first keeps
-/// the decision here: `Payload::decode` is called only for the types it models,
-/// and `0x8004` is this crate's to interpret, which is what
-/// [`PERIODIC_RESPONSE_PAYLOAD_TYPE`] has always said it was. Both facts are
-/// pinned by `tests::the_layer_below_cannot_decode_a_periodic_response`, which
-/// starts failing when `simple_doip` gains a catch-all.
-///
-/// The generic header is read before the payload in any case — it is what
-/// carries the payload length, and so what decides truncation — so this costs
-/// no extra read.
-///
-/// # Errors
-///
-/// A [`MessageError`](simple_doip::messages::MessageError) from the layer below
-/// for a payload it models but cannot decode.
-#[expect(
-    unused_variables,
-    reason = "header and payload are unused until classify's body replaces the todo!()"
-)]
-#[expect(
-    dead_code,
-    reason = "called once next_event's body replaces its todo!()"
-)]
-#[expect(
-    clippy::todo,
-    reason = "unwritten body; the allow is the record that it is outstanding"
-)]
-pub(crate) fn classify<'a>(
-    header: &simple_doip::messages::Header,
-    payload: &'a [u8],
-) -> Result<Option<DoIpEvent<'a>>, simple_doip::messages::MessageError> {
-    todo!(
-        "branch on header.payload_type: 0x8001 -> Ind, 0x8002/0x8003 -> Conf, \
-         0x8004 -> Periodic decoded here, everything else -> Ok(None)"
-    )
+/// `None` for an [`EntityEvent::Unmodelled`], a payload type ISO 14229-5 gives a
+/// server no use for — a periodic response ([`PERIODIC_RESPONSE_PAYLOAD_TYPE`])
+/// among them.
+pub(crate) fn classify(
+    event: EntityEvent<'_>,
+    buffer_start: usize,
+) -> Result<Option<Inbound>, PduOutsideBuffer> {
+    let span = |pdu: &[u8]| {
+        let start = pdu.as_ptr().addr().checked_sub(buffer_start)?;
+        Some(start..start.checked_add(pdu.len())?)
+    };
+    Ok(Some(match event {
+        EntityEvent::Indication {
+            connection,
+            sa,
+            ta,
+            ta_type,
+            pdu,
+        } => Inbound::Ind {
+            connection,
+            ai: ai(sa, ta, ta_type),
+            at: span(pdu).ok_or(PduOutsideBuffer)?,
+        },
+        EntityEvent::IndicationTruncated {
+            connection,
+            sa,
+            ta,
+            ta_type,
+            pdu,
+            length,
+        } => Inbound::TooLong {
+            connection,
+            ai: ai(sa, ta, ta_type),
+            at: span(pdu).ok_or(PduOutsideBuffer)?,
+            declared: length,
+        },
+        EntityEvent::Confirm {
+            sa,
+            ta,
+            ta_type,
+            result,
+        } => Inbound::Conf {
+            ai: ai(sa, ta, ta_type),
+            result: s_result(result),
+        },
+        EntityEvent::Closed { connection } => Inbound::Closed { connection },
+        EntityEvent::Deadline => Inbound::Deadline,
+        EntityEvent::Unmodelled { .. } | _ => return Ok(None),
+    }))
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
-        CloseCause, DoIpEvent, MappingError, PERIODIC_RESPONSE_PAYLOAD_TYPE, target_of,
+        Inbound, MappingError, PduOutsideBuffer, classify, from_doip_ta_type, s_result,
+        target_of, to_doip_ta_type,
     };
-    use simple_doip::messages::{Payload, PayloadType};
-    use uds_session::{Address, AddressExtension, Ai, Mtype, TaType};
+    use simple_doip::LogicalAddress;
+    use simple_doip::service::{ConnectionId, DoIpResult, EntityEvent};
+    use uds_session::{
+        Address, AddressExtension, Ai, Mtype, SResult, TaType, TransportError,
+    };
+
+    const TESTER: LogicalAddress = LogicalAddress(0x0E00);
+    const ENTITY: LogicalAddress = LogicalAddress(0x0001);
 
     fn ai_with(mtype: Mtype) -> Ai {
         Ai {
             mtype,
             sa: Address(0x0E00),
             ta: Address(0x0E80),
+            ta_type: TaType::Physical,
+        }
+    }
+
+    fn from_tester() -> Ai {
+        Ai {
+            mtype: Mtype::Diag,
+            sa: Address(0x0E00),
+            ta: Address(0x0001),
             ta_type: TaType::Physical,
         }
     }
@@ -285,111 +276,6 @@ mod tests {
         );
     }
 
-    /// Every classified case has a seam event to become.
-    ///
-    /// This match is exhaustive and the crate denies `wildcard_enum_match_arm`,
-    /// so a new [`DoIpEvent`] case breaks this build rather than being quietly
-    /// absorbed by a `_` arm.
-    ///
-    /// It replaces `the_two_cases_with_nowhere_to_go`, which held open the two
-    /// holes this seam used to have: a periodic response (REQ 7.16) and a
-    /// connection close (REQ 7.9, REQ 7.11) could both be classified here and
-    /// had nowhere to be delivered. `uds_services` published
-    /// `TransportEvent::Periodic` and `TransportEvent::Closed` on 2026-09-17,
-    /// so the holes are closed and this asserts the opposite property.
-    ///
-    /// The danger it exists for is unchanged: `classify` constructs all four
-    /// cases, so `#[expect(dead_code)]` on [`DoIpEvent`] clears itself whether
-    /// or not each case reaches the driver. Nothing else in the build would
-    /// notice a periodic response being decoded and dropped.
-    #[test]
-    fn every_classified_case_has_a_seam_event() {
-        /// The `uds_services::TransportEvent` case this becomes. A `&'static
-        /// str` rather than a constructed event, because building one needs a
-        /// buffer to borrow and the mapping is what is under test.
-        fn seam_case(event: &DoIpEvent<'_>) -> &'static str {
-            match event {
-                DoIpEvent::Ind { .. } => "DataInd",
-                DoIpEvent::Conf { .. } => "DataConf",
-                DoIpEvent::Periodic { .. } => "Periodic",
-                DoIpEvent::Closed { .. } => "Closed",
-            }
-        }
-
-        assert_eq!(
-            seam_case(&DoIpEvent::Ind {
-                source: Address(0x0E80),
-                data: &[],
-            }),
-            "DataInd",
-        );
-        assert_eq!(
-            seam_case(&DoIpEvent::Closed {
-                cause: CloseCause::ServiceInitiated,
-            }),
-            "Closed",
-            "ISO 14229-5:2022 REQ 7.9 / 7.11",
-        );
-        assert_eq!(
-            seam_case(&DoIpEvent::Periodic {
-                source: Address(0x0E80),
-                pdid: 0x01,
-                data: &[],
-            }),
-            "Periodic",
-            "ISO 14229-5:2022 REQ 7.16",
-        );
-    }
-
-    /// Only a close the standard prescribes is reported as expected.
-    ///
-    /// The direction matters more than the mapping: reporting a prescribed
-    /// close as unexpected makes the driver fail a conformant
-    /// `DiagnosticSessionControl` or `ECUReset` flow, which is the failure
-    /// `uds_services::TransportEvent::Closed` exists to prevent.
-    #[test]
-    fn only_a_prescribed_close_is_expected() {
-        assert!(
-            CloseCause::ServiceInitiated.expected(),
-            "REQ 7.9 / 7.11 make this close part of the flow",
-        );
-        assert!(
-            !CloseCause::TransportFailure.expected(),
-            "a link that went away is not a flow the standard prescribes",
-        );
-    }
-
-    /// The layer below cannot decode a periodic response, which is why
-    /// [`classify`](super::classify) reads the payload type from the header
-    /// rather than handing the message to `Payload::decode`.
-    ///
-    /// Two facts, both `simple_doip`'s and neither ours to assume: `0x8004` is
-    /// a payload type it does not model, and an unmodelled type is an **error**
-    /// from `Payload::decode` rather than something it passes through. The
-    /// second is what makes this a conformance problem instead of a missing
-    /// capability — ISO 14229-5:2022 REQ 7.16 requires the server to send this
-    /// message, and routing it through the layer below reports it as a wire
-    /// failure.
-    ///
-    /// **When this test starts failing**, `simple_doip` has gained the
-    /// catch-all variant asked for in
-    /// `2026-09-17-uds_on_ip-payload-and-ack-gaps.md`. That is good news:
-    /// delete this test and let the message decode normally.
-    #[test]
-    fn the_layer_below_cannot_decode_a_periodic_response() {
-        let periodic = PayloadType::from(PERIODIC_RESPONSE_PAYLOAD_TYPE);
-        assert_eq!(
-            periodic,
-            PayloadType::Reserved(PERIODIC_RESPONSE_PAYLOAD_TYPE),
-            "ISO 13400-2:2019 stops at 0x8003; 0x8004 is REQ 7.16's addition",
-        );
-        assert!(
-            Payload::decode(&[], periodic).is_err(),
-            "an unmodelled payload type is an error below, so a conformant \
-             periodic response must never be routed through Payload::decode",
-        );
-    }
-
     #[test]
     fn a_local_message_type_maps_to_its_target() {
         assert_eq!(target_of(ai_with(Mtype::Diag)).map(|a| a.0), Ok(0x0E80));
@@ -397,5 +283,145 @@ mod tests {
             target_of(ai_with(Mtype::SecureDiag)).map(|a| a.0),
             Ok(0x0E80)
         );
+    }
+
+    /// REQ 4.4 Table 5: `T_TAtype` is `DoIP_TAtype`, both ways.
+    #[test]
+    fn the_target_address_type_maps_both_ways() {
+        for ta_type in [TaType::Physical, TaType::Functional] {
+            assert_eq!(from_doip_ta_type(to_doip_ta_type(ta_type)), ta_type);
+        }
+        assert_eq!(
+            to_doip_ta_type(TaType::Functional),
+            simple_doip::TaType::Functional
+        );
+    }
+
+    /// REQ 4.4 Table 5: `T_Result` is `DoIP_Result`. `DoIP_OK` is the session
+    /// layer's `S_OK`, and every error stays distinct, numbered by its place in
+    /// ISO 13400-2:2019 8.2.5's normative order.
+    #[test]
+    fn every_doip_result_maps_to_a_distinct_result() {
+        let errors = [
+            DoIpResult::HdrError,
+            DoIpResult::TimeoutA,
+            DoIpResult::UnknownSa,
+            DoIpResult::InvalidSa,
+            DoIpResult::UnknownTa,
+            DoIpResult::MessageTooLarge,
+            DoIpResult::OutOfMemory,
+            DoIpResult::TargetUnreachable,
+            DoIpResult::NoLink,
+            DoIpResult::NoSocket,
+            DoIpResult::Error,
+        ];
+        assert_eq!(s_result(DoIpResult::Ok), SResult::Ok);
+        for (position, error) in (1..).zip(errors) {
+            assert_eq!(
+                s_result(error),
+                SResult::Transport(TransportError(position)),
+                "{error:?}"
+            );
+        }
+    }
+
+    /// REQ 4.3 Table 4: `DoIP_Data.indication` is `T_Data.ind`, and the PDU is
+    /// located in the caller's buffer rather than copied out of it.
+    #[test]
+    fn an_indication_is_a_data_indication_located_in_the_buffer() {
+        let buffer = [0x00, 0x22, 0xF1, 0x90, 0x00];
+        let event = EntityEvent::Indication {
+            connection: ConnectionId::new(0),
+            sa: TESTER,
+            ta: ENTITY,
+            ta_type: simple_doip::TaType::Physical,
+            pdu: buffer.get(1..4).unwrap_or_default(),
+        };
+        assert_eq!(
+            classify(event, buffer.as_ptr().addr()),
+            Ok(Some(Inbound::Ind {
+                connection: ConnectionId::new(0),
+                ai: from_tester(),
+                at: 1..4,
+            }))
+        );
+    }
+
+    /// A truncated indication keeps the whole message's length from the header,
+    /// so the driver can tell a fragment from a message.
+    #[test]
+    fn a_truncated_indication_is_too_long_with_its_declared_length() {
+        let buffer = [0x2E, 0xF1, 0x90];
+        let event = EntityEvent::IndicationTruncated {
+            connection: ConnectionId::new(0),
+            sa: TESTER,
+            ta: ENTITY,
+            ta_type: simple_doip::TaType::Physical,
+            pdu: &buffer,
+            length: 40,
+        };
+        assert_eq!(
+            classify(event, buffer.as_ptr().addr()),
+            Ok(Some(Inbound::TooLong {
+                connection: ConnectionId::new(0),
+                ai: from_tester(),
+                at: 0..3,
+                declared: 40,
+            }))
+        );
+    }
+
+    /// REQ 4.3 Table 4: `DoIP_Data.confirm` is `T_Data.conf`, with the confirmed
+    /// request's own addressing: from the entity, to the tester.
+    #[test]
+    fn a_confirm_is_a_data_confirmation_with_the_requests_addressing() {
+        let event = EntityEvent::Confirm {
+            sa: ENTITY,
+            ta: TESTER,
+            ta_type: simple_doip::TaType::Physical,
+            result: DoIpResult::NoSocket,
+        };
+        assert_eq!(
+            classify(event, 0),
+            Ok(Some(Inbound::Conf {
+                ai: Ai {
+                    mtype: Mtype::Diag,
+                    sa: Address(0x0001),
+                    ta: Address(0x0E00),
+                    ta_type: TaType::Physical,
+                },
+                result: SResult::Transport(TransportError(10)),
+            }))
+        );
+    }
+
+    /// A periodic response is ignored rather than mistaken for a request: ISO
+    /// 14229-5:2022 REQ 7.20 keeps it off the path that resets `tS3_Server`, and a
+    /// server has no use for one.
+    #[test]
+    fn an_unmodelled_payload_is_ignored() {
+        let data = [0x01, 0x02];
+        let event = EntityEvent::Unmodelled {
+            connection: ConnectionId::new(0),
+            payload_type: super::PERIODIC_RESPONSE_PAYLOAD_TYPE,
+            data: &data,
+        };
+        assert_eq!(classify(event, data.as_ptr().addr()), Ok(None));
+    }
+
+    /// An entity that reports a PDU outside the buffer it was lent has broken its
+    /// contract, and that is reported rather than turned into a range.
+    #[test]
+    fn a_pdu_outside_the_buffer_is_refused() {
+        let elsewhere = [0x3E, 0x00];
+        let event = EntityEvent::Indication {
+            connection: ConnectionId::new(0),
+            sa: TESTER,
+            ta: ENTITY,
+            ta_type: simple_doip::TaType::Physical,
+            pdu: &elsewhere,
+        };
+        let after = elsewhere.as_ptr().addr().wrapping_add(1);
+        assert_eq!(classify(event, after), Err(PduOutsideBuffer));
     }
 }
