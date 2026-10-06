@@ -63,9 +63,24 @@ impl Future for PendN {
     }
 }
 
+/// The software a server runs, which decides whether a session change leaves it
+/// (ISO 14229-1:2020 10.2.2.2 Table 25).
+#[derive(Debug, Default, Clone, Copy)]
+enum Software {
+    /// Programs from within itself: no session change leaves it.
+    #[default]
+    ProgramsInPlace,
+    /// Jumps to its bootloader for the programming session.
+    Application,
+    /// Restarts the application for the default session.
+    Bootloader,
+}
+
 #[derive(Debug, Default)]
 struct Ecu {
+    runs: Software,
     transitions: Vec<SessionTransition>,
+    entered: Vec<S>,
     /// How many times the next `read` pends before answering.
     slow: u8,
 }
@@ -91,8 +106,12 @@ impl DiagnosticSessionControl for Ecu {
         !matches!(s, S::ProgrammingSession)
             || matches!(active, S::ExtendedDiagnosticSession)
     }
-    fn leaves_running_software(&self, _s: S) -> bool {
-        false
+    fn leaves_running_software(&self, s: S) -> bool {
+        match self.runs {
+            Software::ProgramsInPlace => false,
+            Software::Application => matches!(s, S::ProgrammingSession),
+            Software::Bootloader => matches!(s, S::DefaultSession),
+        }
     }
     fn timing(&self, _s: S) -> SessionTiming {
         SessionTiming {
@@ -100,8 +119,9 @@ impl DiagnosticSessionControl for Ecu {
             p2_star_server_max_10ms: 500,
         }
     }
-    fn on_transition(&mut self, t: SessionTransition, _entered: S, _relocked: bool) {
+    fn on_transition(&mut self, t: SessionTransition, entered: S, _relocked: bool) {
         self.transitions.push(t);
+        self.entered.push(entered);
     }
 }
 impl TesterPresent for Ecu {
@@ -123,8 +143,15 @@ const PARAMS: ServerParams = ServerParams {
 };
 
 fn server(script: impl IntoIterator<Item = Tester>) -> EcuServer {
+    server_running(Software::default(), script)
+}
+
+fn server_running(runs: Software, script: impl IntoIterator<Item = Tester>) -> EcuServer {
     EcuServer::new(
-        Ecu::default(),
+        Ecu {
+            runs,
+            ..Ecu::default()
+        },
         DoIpTransport::new(MockEntity::new(script), bench_reloads()),
         ECU,
         PARAMS,
@@ -236,6 +263,62 @@ fn a_tester_stays_connected_through_a_session_change() {
             Wire::Data(CONNECTION, vec![0x50, 0x02, 0x00, 0x32, 0x01, 0xF4]),
         ]
     );
+}
+
+/// An application entering its bootloader: `50 02` is sent, then the connection is
+/// closed (ISO 14229-5:2022 REQ 7.9, Figure 5), and the application learns which
+/// session it entered so it can jump. `50 03` on the way closes nothing.
+#[test]
+fn an_application_entering_its_bootloader_closes_the_connection_after_50_02() {
+    let _clock = exclusive_clock();
+    let mut s = server_running(
+        Software::Application,
+        [
+            Tester::Connects(TESTER),
+            Tester::Sends(TESTER, vec![0x10, 0x03]),
+            Tester::Sends(TESTER, vec![0x10, 0x02]),
+        ],
+    );
+    run(&mut s);
+    assert_eq!(
+        wire(&s),
+        [
+            Wire::Data(CONNECTION, vec![0x50, 0x03, 0x00, 0x32, 0x01, 0xF4]),
+            Wire::Data(CONNECTION, vec![0x50, 0x02, 0x00, 0x32, 0x01, 0xF4]),
+            Wire::Close(CONNECTION),
+        ]
+    );
+    assert_eq!(
+        s.services().entered[..2],
+        [S::ExtendedDiagnosticSession, S::ProgrammingSession]
+    );
+}
+
+/// A bootloader returning to the application: entering programming keeps the
+/// connection, and `50 01` is sent, then the connection is closed.
+#[test]
+fn a_bootloader_returning_to_the_application_closes_the_connection_after_50_01() {
+    let _clock = exclusive_clock();
+    let mut s = server_running(
+        Software::Bootloader,
+        [
+            Tester::Connects(TESTER),
+            Tester::Sends(TESTER, vec![0x10, 0x03]),
+            Tester::Sends(TESTER, vec![0x10, 0x02]),
+            Tester::Sends(TESTER, vec![0x10, 0x01]),
+        ],
+    );
+    run(&mut s);
+    assert_eq!(
+        wire(&s),
+        [
+            Wire::Data(CONNECTION, vec![0x50, 0x03, 0x00, 0x32, 0x01, 0xF4]),
+            Wire::Data(CONNECTION, vec![0x50, 0x02, 0x00, 0x32, 0x01, 0xF4]),
+            Wire::Data(CONNECTION, vec![0x50, 0x01, 0x00, 0x32, 0x01, 0xF4]),
+            Wire::Close(CONNECTION),
+        ]
+    );
+    assert_eq!(s.services().entered.last(), Some(&S::DefaultSession));
 }
 
 /// A tester that leaves while its request is being served ends the exchange: the

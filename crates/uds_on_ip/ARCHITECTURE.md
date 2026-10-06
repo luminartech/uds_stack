@@ -267,7 +267,7 @@ pub trait UdsTransport {
     type Error: core::fmt::Debug;
     const MAX_PDU: usize = usize::MAX;
 
-    fn t_data_req(&mut self, ai: Ai, data: &[u8])
+    fn t_data_req(&mut self, ai: Ai, data: &[u8], after: AfterSend)
         -> impl Future<Output = Result<(), Self::Error>>;
     fn next_event<'b>(&mut self, buffer: &'b mut [u8], deadline: Option<Timestamp>)
         -> impl Future<Output = Result<TransportEvent<'b>, Self::Error>>;
@@ -388,11 +388,9 @@ One consequence for the driver, which is `uds_services`. Dispatch to a handler
 must not block the loop that drains session actions, or the timer cannot fire
 while a handler is executing. `uds_services::Server::step` does this: it races
 the handler against `next_event` and answers an overrun with response-pending
-while the handler keeps running. One gap remains there: a `Closed` event
-arriving while a handler is running is currently absorbed as a clean end of
-exchange (`Responded::Suppressed`), which cannot be the REQ 7.9 flow, because
-at that point no response has gone out. `uds_services` records this against
-its own dispatch pipeline, not against the loop shape.
+while the handler keeps running. A `Closed` event arriving while a handler is
+running ends the exchange and abandons the handler; it cannot be the REQ 7.9 or
+7.11 flow, because at that point no positive response has gone out.
 
 An earlier draft placed this constraint on a synchronous `RequestHandler` trait
 declared in *this* crate. That trait is deleted
@@ -740,16 +738,13 @@ ships. It has been replaced rather than amended.
 
 ### 9.2 Design gaps in this crate
 
-- **REQ 7.9's close is not yet made.** The requirement is conditional: the
-  close follows a positive `DiagnosticSessionControl` response "if the TCP
-  connection is disconnected due to a session change" (ISO 14229-5:2022 8.5.3;
-  Figure 5 shows the switch to the programming session), unlike REQ 7.11's
-  for `ECUReset`. What disconnects is the server leaving the software it is
-  running — ISO 14229-1:2020 10.2.2.2 lets the programming session run in boot
-  software, left by restarting the application — which only the server knows.
-  `uds_services` is to state it with the response, across the transport seam;
-  until it does, a positive `0x50` closes nothing, and an application entering
-  its bootloader drops the connection without the orderly close.
+- **A suppressed session change has no orderly close.** REQ 7.9's close
+  follows the positive response to a session change that leaves the running
+  software, which `uds_services` marks `AfterSend::ServerLeaves`. `10 82` sends
+  no response, so nothing carries the mark, and a server that leaves on it drops
+  the connection unannounced. `uds_services` records this at
+  `DiagnosticSessionControl::leaves_running_software`; there is no mechanism,
+  and a client that needs the close must not suppress the response.
 - **REQ 7.17 has no home.** The periodic data record length bound is not checked
   anywhere. It was briefly a free function in `profile` that no caller was
   obliged to consult and no path could reach, and was deleted until there is a

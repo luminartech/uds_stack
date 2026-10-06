@@ -36,18 +36,20 @@ use uds_session::{Ai, Reloads, SResult, Timestamp};
 ///
 /// # The prescribed close
 ///
-/// After sending a positive `ECUReset` response, the transport closes the
-/// connection the tester arrived on with [`DiagnosticEntity::close`] once the
-/// entity confirms the response was sent, and only then reports that
-/// confirmation. The close therefore follows the response (REQ 7.11: "after
-/// sending") and precedes the reset's execution, which the driver begins on the
-/// confirmation. A response whose confirmation fails closes nothing.
+/// Two messages are followed by a close: every positive `ECUReset` response
+/// (REQ 7.11), and a message handed over with [`AfterSend::ServerLeaves`] — the
+/// positive `DiagnosticSessionControl` response to a session change that leaves
+/// the software the server is running, as an application entering its
+/// bootloader does (REQ 7.9). Any other positive `DiagnosticSessionControl`
+/// response closes nothing: the octet cannot say whether the change disconnects,
+/// and only the server knows.
 ///
-/// A positive `DiagnosticSessionControl` response closes nothing by itself.
-/// REQ 7.9 requires the same close only where the session change disconnects —
-/// where the server leaves the software it is running, as an application
-/// entering its bootloader does — and that is the server's to state, which the
-/// transport seam does not yet carry.
+/// After sending one, the transport closes the connection the tester arrived on
+/// with [`DiagnosticEntity::close`] once the entity confirms the message was
+/// sent, and only then reports that confirmation. The close therefore follows
+/// the response ("after sending") and precedes the service's execution, which
+/// the driver begins on the confirmation. A message whose confirmation fails
+/// closes nothing, and the driver does not execute the service either.
 ///
 /// # Integrating on bare metal
 ///
@@ -171,10 +173,9 @@ impl<E, const MCTS: usize> DoIpTransport<E, MCTS> {
             .and_then(Option::take)
     }
 
-    fn record_send(&mut self, target: LogicalAddress, data: &[u8]) {
-        let action = data
-            .first()
-            .map_or(ConnectionAction::Continue, |octet| after_sending(*octet));
+    fn record_send(&mut self, target: LogicalAddress, data: &[u8], after: AfterSend) {
+        let first_octet = data.first().copied().unwrap_or_default();
+        let action = after_sending(first_octet, after);
         if let Some(tester) = self.tester_mut(target) {
             if action == ConnectionAction::InitiateClose
                 || tester.owes != ConnectionAction::InitiateClose
@@ -226,7 +227,8 @@ impl<E: DiagnosticEntity, const MCTS: usize> UdsTransport for DoIpTransport<E, M
     /// `T_Data.req` as `DoIP_Data.request` (ISO 14229-5:2022 REQ 4.3 Table 4),
     /// routed by the target address to the connection that activated it.
     ///
-    /// A positive `ECUReset` response arms the prescribed close described on
+    /// A positive `ECUReset` response, or a message `after` says the server leaves
+    /// its running software on, arms the prescribed close described on
     /// [`DoIpTransport`].
     ///
     /// # Errors
@@ -238,14 +240,14 @@ impl<E: DiagnosticEntity, const MCTS: usize> UdsTransport for DoIpTransport<E, M
         &mut self,
         ai: Ai,
         data: &[u8],
-        _after: AfterSend,
+        after: AfterSend,
     ) -> Result<(), Self::Error> {
         let target = target_of(ai)?;
         self.entity
             .request(target, to_doip_ta_type(ai.ta_type), data)
             .await
             .map_err(Error::Entity)?;
-        self.record_send(target, data);
+        self.record_send(target, data, after);
         Ok(())
     }
 
@@ -363,7 +365,7 @@ mod tests {
     use crate::profile::bench_reloads;
     use simple_doip::service::{ConnectionId, DiagnosticEntity, EntityEvent};
     use simple_doip::{LogicalAddress, TaType};
-    use uds_services::UdsTransport;
+    use uds_services::{AfterSend, UdsTransport};
     use uds_session::{SResult, TransportError};
 
     const TESTER: LogicalAddress = LogicalAddress(0x0E00);
@@ -445,25 +447,34 @@ mod tests {
     #[test]
     fn a_confirmed_positive_reset_response_closes_its_connection() {
         let mut t = serving_the_tester();
-        t.record_send(TESTER, &[0x51, 0x01]);
+        t.record_send(TESTER, &[0x51, 0x01], AfterSend::Continue);
         assert_eq!(t.record_confirm(TESTER, SResult::Ok), Some(CONNECTION));
     }
 
     /// REQ 7.9's close is conditional on the session change disconnecting, which
     /// the response's octets cannot say, so a positive `DiagnosticSessionControl`
-    /// response alone closes nothing.
+    /// response the server stays on closes nothing.
     #[test]
     fn a_positive_session_response_alone_closes_nothing() {
         let mut t = serving_the_tester();
-        t.record_send(TESTER, &[0x50, 0x03]);
+        t.record_send(TESTER, &[0x50, 0x03], AfterSend::Continue);
         assert_eq!(t.record_confirm(TESTER, SResult::Ok), None);
+    }
+
+    /// REQ 7.9: a session change the server says leaves its running software owes
+    /// the same close.
+    #[test]
+    fn a_confirmed_response_the_server_leaves_on_closes_its_connection() {
+        let mut t = serving_the_tester();
+        t.record_send(TESTER, &[0x50, 0x02], AfterSend::ServerLeaves);
+        assert_eq!(t.record_confirm(TESTER, SResult::Ok), Some(CONNECTION));
     }
 
     /// REQ 7.11 keys the close on a *positive* response.
     #[test]
     fn a_negative_response_closes_nothing() {
         let mut t = serving_the_tester();
-        t.record_send(TESTER, &[0x7F, 0x11, 0x22]);
+        t.record_send(TESTER, &[0x7F, 0x11, 0x22], AfterSend::Continue);
         assert_eq!(t.record_confirm(TESTER, SResult::Ok), None);
     }
 
@@ -471,11 +482,11 @@ mod tests {
     #[test]
     fn a_failed_confirmation_closes_nothing_and_owes_nothing_after() {
         let mut t = serving_the_tester();
-        t.record_send(TESTER, &[0x51, 0x01]);
+        t.record_send(TESTER, &[0x51, 0x01], AfterSend::Continue);
         let failed = SResult::Transport(TransportError(10));
         assert_eq!(t.record_confirm(TESTER, failed), None);
 
-        t.record_send(TESTER, &[0x62, 0xF1, 0x90, 0x00]);
+        t.record_send(TESTER, &[0x62, 0xF1, 0x90, 0x00], AfterSend::Continue);
         assert_eq!(t.record_confirm(TESTER, SResult::Ok), None);
     }
 
@@ -484,8 +495,8 @@ mod tests {
     #[test]
     fn the_close_waits_for_the_last_outstanding_confirmation() {
         let mut t = serving_the_tester();
-        t.record_send(TESTER, &[0x7F, 0x11, 0x78]);
-        t.record_send(TESTER, &[0x51, 0x01]);
+        t.record_send(TESTER, &[0x7F, 0x11, 0x78], AfterSend::Continue);
+        t.record_send(TESTER, &[0x51, 0x01], AfterSend::Continue);
         assert_eq!(t.record_confirm(TESTER, SResult::Ok), None);
         assert_eq!(t.record_confirm(TESTER, SResult::Ok), Some(CONNECTION));
     }
@@ -494,8 +505,8 @@ mod tests {
     #[test]
     fn a_later_send_does_not_cancel_an_owed_close() {
         let mut t = serving_the_tester();
-        t.record_send(TESTER, &[0x51, 0x01]);
-        t.record_send(TESTER, &[0x7F, 0x22, 0x13]);
+        t.record_send(TESTER, &[0x51, 0x01], AfterSend::Continue);
+        t.record_send(TESTER, &[0x7F, 0x22, 0x13], AfterSend::Continue);
         assert_eq!(t.record_confirm(TESTER, SResult::Ok), None);
         assert_eq!(t.record_confirm(TESTER, SResult::Ok), Some(CONNECTION));
     }
@@ -505,7 +516,7 @@ mod tests {
     #[test]
     fn an_empty_message_owes_nothing() {
         let mut t = serving_the_tester();
-        t.record_send(TESTER, &[]);
+        t.record_send(TESTER, &[], AfterSend::Continue);
         assert_eq!(t.record_confirm(TESTER, SResult::Ok), None);
     }
 
@@ -514,7 +525,7 @@ mod tests {
     fn a_response_to_an_unknown_tester_closes_nothing() {
         let mut t = serving_the_tester();
         let stranger = LogicalAddress(0x0E80);
-        t.record_send(stranger, &[0x51, 0x01]);
+        t.record_send(stranger, &[0x51, 0x01], AfterSend::Continue);
         assert_eq!(t.record_confirm(stranger, SResult::Ok), None);
     }
 

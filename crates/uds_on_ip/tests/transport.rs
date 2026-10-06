@@ -83,6 +83,11 @@ fn respond(t: &mut Transport<1>, pdu: &[u8]) {
     block_on(t.t_data_req(response_ai(), pdu, AfterSend::Continue)).unwrap();
 }
 
+/// [`respond`] with a message the server leaves its running software on.
+fn respond_leaving(t: &mut Transport<1>, pdu: &[u8]) {
+    block_on(t.t_data_req(response_ai(), pdu, AfterSend::ServerLeaves)).unwrap();
+}
+
 /// A tester that has sent `request`, already delivered to the driver.
 fn indicated(request: &[u8]) -> Transport {
     indicated_by(request, |_| {})
@@ -266,7 +271,8 @@ fn a_tester_leaving_while_owed_the_prescribed_close_is_expected() {
 
 /// ISO 14229-5:2022 REQ 7.9 closes after a positive `DiagnosticSessionControl`
 /// response only where the session change disconnects, which the response's octets
-/// cannot say: by itself, `50 03` is sent and confirmed, and the connection stays.
+/// cannot say: `50 03` the server stays on is sent and confirmed, and the connection
+/// stays.
 #[test]
 fn a_positive_session_response_keeps_the_connection() {
     let mut t = indicated(&[0x10, 0x03]);
@@ -285,6 +291,67 @@ fn a_positive_session_response_keeps_the_connection() {
             vec![0x50, 0x03, 0x00, 0x32, 0x01, 0xF4]
         )]
     );
+}
+
+/// REQ 7.9: a session change the server leaves its running software for is closed
+/// as an `ECUReset` is — after the response's confirmation, before that confirmation
+/// reaches the driver, which executes the change on it (ISO 14229-5:2022 Figure 5).
+#[test]
+fn a_response_the_server_leaves_on_closes_the_connection_after_its_confirmation() {
+    let mut t = indicated(&[0x10, 0x02]);
+    respond_leaving(&mut t, &[0x50, 0x02, 0x00, 0x32, 0x01, 0xF4]);
+    assert_eq!(
+        t.entity().wire,
+        [],
+        "nothing is sent or closed at the request"
+    );
+
+    assert_eq!(
+        next(&mut t),
+        TransportEvent::DataConf {
+            ai: response_ai(),
+            result: SResult::Ok,
+        }
+    );
+    assert_eq!(
+        t.entity().wire,
+        [
+            Wire::Data(CONNECTION, vec![0x50, 0x02, 0x00, 0x32, 0x01, 0xF4]),
+            Wire::Close(CONNECTION),
+        ]
+    );
+}
+
+/// The server leaves only once the response is sent: one whose write fails leaves
+/// the server where it was, and closes nothing.
+#[test]
+fn a_response_the_server_leaves_on_that_fails_to_send_closes_nothing() {
+    let mut t = indicated_by(&[0x10, 0x02], |entity| {
+        entity.fail_next_write = Some(DoIpResult::Error);
+    });
+    respond_leaving(&mut t, &[0x50, 0x02, 0x00, 0x32, 0x01, 0xF4]);
+
+    assert_eq!(
+        next(&mut t),
+        TransportEvent::DataConf {
+            ai: response_ai(),
+            result: SResult::Transport(TransportError(11)),
+        }
+    );
+    assert_eq!(t.entity().wire, []);
+}
+
+/// A tester that closes its connection while owed REQ 7.9's close is in the flow it
+/// prescribes, as for `ECUReset`.
+#[test]
+fn a_tester_leaving_while_owed_the_session_close_is_expected() {
+    let mut t = indicated_by(&[0x10, 0x02], |entity| {
+        entity.confirms_last = true;
+        entity.script.push_back(Tester::Leaves(TESTER));
+    });
+    respond_leaving(&mut t, &[0x50, 0x02, 0x00, 0x32, 0x01, 0xF4]);
+
+    assert_eq!(next(&mut t), TransportEvent::Closed { expected: true });
 }
 
 /// A tester that leaves during an ordinary exchange is not in any flow the standard
