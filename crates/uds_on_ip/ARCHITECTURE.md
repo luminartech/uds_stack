@@ -323,7 +323,7 @@ the seam with no I/O in it:
 - `DiagnosticConnection` — one connection, as a tester uses it. This crate's
   client role over it is not built yet.
 
-The entity's own `MCTS` and this transport's must agree: the transport
+This transport's `MCTS` must be at least the entity's own: the transport
 remembers which tester arrived on which connection, so that it can close the
 right one, and reports a connection beyond its table as an error rather than
 leaving a close unmade.
@@ -469,10 +469,10 @@ re-establishing is `simple_doip`'s ([§3.6](#36-when-and-what)).
 **Server, session change or ECU reset.** The mirror image, and the direction
 that is easy to miss: REQ 7.9 and REQ 7.11 require the *server* to initiate the
 close, after sending the positive response and before executing the service.
-`uds_on_ip` recognises a positive `ECUReset` response going out and, once it is
-confirmed sent, closes the connection before reporting the confirmation. For a
-session change it waits for the server to say the change disconnects
-([§9.2](#92-design-gaps-in-this-crate)).
+`uds_on_ip` recognises a positive `ECUReset` response going out, or is told by
+`AfterSend::ServerLeaves` that the server leaves its running software after
+this `DiagnosticSessionControl` response, and once that response is confirmed
+sent, closes the connection before reporting the confirmation.
 
 **Server, ordinary request.** A diagnostic message arrives, becomes
 `TransportEvent::DataInd`, and the driver offers it to the session layer, which
@@ -488,8 +488,10 @@ composing one needs the service identifier and the addressing, both of which the
 truncated event carries.
 
 **Periodic responses.** Payload type `0x8004` bypasses the request/response
-correlation path entirely and is surfaced as `TransportEvent::Periodic`, without
-resetting `tS3_Server` (REQ 7.16, REQ 7.20).
+correlation path entirely (REQ 7.16, REQ 7.20). It reaches this crate as
+`simple_doip`'s `EntityEvent::Unmodelled`, and a server, which never receives
+one, ignores it; surfacing it as `TransportEvent::Periodic` belongs to the client
+role, which is not built ([§9.2](#92-design-gaps-in-this-crate)).
 
 ## 8. Two different graphs
 

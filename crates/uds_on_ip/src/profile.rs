@@ -92,9 +92,7 @@ pub const fn bench_reloads() -> uds_session::Reloads {
 ///
 /// On a segmented transport this would not hold, so a binding for one must
 /// re-derive it rather than copy this module. That is a reading of the
-/// standards rather than a property a test can hold: it becomes testable
-/// when `post_exchange` is implemented and can be exercised against a real
-/// `T_PDU`.
+/// standards rather than a property a test can hold.
 pub(crate) mod service_ids {
     use uds_protocol::UdsServiceType;
 

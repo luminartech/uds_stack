@@ -12,7 +12,7 @@
 
 use crate::error::Error;
 use crate::mapping::{
-    Inbound, PduOutsideBuffer, classify, target_of, to_doip_ta_type, to_logical,
+    Inbound, Unclassifiable, classify, target_of, to_doip_ta_type, to_logical,
 };
 use crate::profile::{ConnectionAction, after_sending};
 use simple_doip::LogicalAddress;
@@ -133,6 +133,7 @@ impl<E, const MCTS: usize> DoIpTransport<E, MCTS> {
     ///   suitable for a bench, and why they are not suitable for a vehicle.
     #[must_use]
     pub const fn new(entity: E, reloads: Reloads) -> Self {
+        const { assert!(MCTS > 0, "a transport serves at least one connection") };
         Self {
             entity,
             reloads,
@@ -172,8 +173,17 @@ impl<E, const MCTS: usize> DoIpTransport<E, MCTS> {
         connection: ConnectionId,
         address: LogicalAddress,
     ) -> Result<(), ConnectionId> {
-        let slot = self.testers.get_mut(connection.index()).ok_or(connection)?;
-        if !slot.is_some_and(|tester| tester.address == address) {
+        let index = connection.index();
+        let slot = self.testers.get(index).ok_or(connection)?;
+        if slot.is_some_and(|tester| tester.address == address) {
+            return Ok(());
+        }
+        for (other, tester) in self.testers.iter_mut().enumerate() {
+            if other == index || tester.is_some_and(|tester| tester.address == address) {
+                *tester = None;
+            }
+        }
+        if let Some(slot) = self.testers.get_mut(index) {
             *slot = Some(Tester {
                 connection,
                 address,
@@ -274,14 +284,18 @@ impl<E: DiagnosticEntity, const MCTS: usize> UdsTransport for DoIpTransport<E, M
     /// A message longer than `buffer` is [`TransportEvent::DataTooLong`] with
     /// `declared` always `Some`: `DoIP`'s generic header carries the length.
     /// [`TransportEvent::Closed`]'s `expected` is true only for a tester owed a
-    /// prescribed close. Cancel-safe, provided the entity's `next_event` and
-    /// `close` are.
+    /// prescribed close; the prescribed close this transport makes itself is
+    /// reported by no `Closed`, only by the [`TransportEvent::DataConf`] it held
+    /// back. While that close is in progress, `deadline` is not honoured: the call
+    /// returns once the entity has closed. Cancel-safe, provided the entity's
+    /// `next_event` and `close` are.
     ///
     /// # Errors
     ///
     /// [`Error::Entity`] where the entity fails as a whole, and
     /// [`Error::ConnectionOutsideTable`] or [`Error::PduOutsideBuffer`] where it
-    /// breaks its contract with this transport. Where it is the prescribed close
+    /// breaks its contract with this transport, and [`Error::UnknownEvent`] for an
+    /// event this transport does not know. Where it is the prescribed close
     /// that fails, the confirmation the close held back is not lost: the next call
     /// reports it.
     async fn next_event<'b>(
@@ -302,8 +316,11 @@ impl<E: DiagnosticEntity, const MCTS: usize> UdsTransport for DoIpTransport<E, M
                 .next_event(&mut *buffer, deadline.map(|at| at.0))
                 .await
                 .map_err(Error::Entity)?;
-            if let Some(inbound) = classify(event, buffer_start)
-                .map_err(|PduOutsideBuffer| Error::PduOutsideBuffer)?
+            if let Some(inbound) =
+                classify(event, buffer_start).map_err(|breach| match breach {
+                    Unclassifiable::PduOutsideBuffer => Error::PduOutsideBuffer,
+                    Unclassifiable::UnknownEvent => Error::UnknownEvent,
+                })?
             {
                 break inbound;
             }
@@ -550,21 +567,45 @@ mod tests {
         assert_eq!(t.record_confirm(stranger, SResult::Ok), None);
     }
 
+    /// With two testers, each close goes to the connection its own tester arrived on.
+    #[test]
+    fn a_reset_response_closes_only_its_own_testers_connection() {
+        let mut t = DoIpTransport::<(), 2>::new((), bench_reloads());
+        let other = LogicalAddress(0x0E80);
+        let second = ConnectionId::new(1);
+        assert_eq!(t.register(CONNECTION, TESTER), Ok(()));
+        assert_eq!(t.register(second, other), Ok(()));
+
+        t.record_send(other, &[0x51, 0x01], AfterSend::Continue);
+        t.record_send(TESTER, &[0x62, 0xF1, 0x90, 0x00], AfterSend::Continue);
+        assert_eq!(t.record_confirm(TESTER, SResult::Ok), None);
+        assert_eq!(t.record_confirm(other, SResult::Ok), Some(second));
+    }
+
+    /// Routing activation registers a tester's address on one connection only
+    /// (ISO 13400-2:2019 9.6): a tester that reappears on another connection
+    /// before the first is reported closed is the tester on the new one, and its
+    /// close goes there.
+    #[test]
+    fn a_tester_reappearing_on_another_connection_is_closed_there() {
+        let mut t = DoIpTransport::<(), 2>::new((), bench_reloads());
+        let second = ConnectionId::new(1);
+        assert_eq!(t.register(CONNECTION, TESTER), Ok(()));
+        assert_eq!(t.register(second, TESTER), Ok(()));
+
+        t.record_send(TESTER, &[0x51, 0x01], AfterSend::Continue);
+        assert_eq!(t.record_confirm(TESTER, SResult::Ok), Some(second));
+        assert!(
+            t.forget(CONNECTION).is_none(),
+            "the first connection no longer holds the tester"
+        );
+    }
+
     /// A connection beyond `MCTS` cannot be remembered, and says so.
     #[test]
     fn a_connection_beyond_the_table_is_refused() {
         let mut t = DoIpTransport::<(), 1>::new((), bench_reloads());
         let second = ConnectionId::new(1);
         assert_eq!(t.register(second, TESTER), Err(second));
-    }
-
-    /// The value `uds_session` reports as a next deadline goes straight back into
-    /// `next_event`, and `interval_since` carries `UDSS_LLR_0019`'s modulo-2³²
-    /// subtraction, so a wrap is not a special case at either end.
-    #[test]
-    fn a_deadline_survives_the_wrap_it_is_typed_for() {
-        let before_wrap = uds_session::Timestamp(u32::MAX - 10);
-        let after_wrap = uds_session::Timestamp(5);
-        assert_eq!(after_wrap.interval_since(before_wrap), 16);
     }
 }

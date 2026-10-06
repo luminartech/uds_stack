@@ -26,6 +26,9 @@ pub enum Tester {
     Sends(LogicalAddress, Vec<u8>),
     SendsUnmodelled(LogicalAddress, u16, Vec<u8>),
     Leaves(LogicalAddress),
+    /// Sends a request the entity reports from memory other than the buffer it was
+    /// lent, breaking its contract.
+    SendsOutsideBuffer(LogicalAddress, Vec<u8>),
 }
 
 /// Why the mock entity failed.
@@ -216,6 +219,16 @@ impl<const MCTS: usize> DiagnosticEntity for MockEntity<MCTS> {
                         connection,
                         payload_type,
                         data: delivered,
+                    });
+                }
+                Tester::SendsOutsideBuffer(sa, pdu) => {
+                    let connection = Self::id(self.slot_of(sa).unwrap());
+                    return Ok(EntityEvent::Indication {
+                        connection,
+                        sa,
+                        ta: ENTITY,
+                        ta_type: ENTITY.default_ta_type(),
+                        pdu: pdu.leak(),
                     });
                 }
                 Tester::Leaves(sa) => {

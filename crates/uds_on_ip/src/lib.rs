@@ -83,7 +83,7 @@
 //! rather than redeclared here.
 //!
 //! The one exception is narrow and forced by the standard: clause 8 keys TCP
-//! connection handling on two specific service identifiers. See
+//! connection handling on three identifiers of two services. See
 //! `profile::service_ids`.
 
 #![cfg_attr(not(feature = "std"), no_std)]

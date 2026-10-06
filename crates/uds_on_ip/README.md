@@ -52,9 +52,9 @@ session state machine are
 and are used from there rather than redeclared here.
 
 The one exception is narrow and forced by the standard: clause 8 keys TCP
-connection handling on two specific service identifiers
-(`DiagnosticSessionControl` and `ECUReset`), so this crate recognises those
-identifiers and nothing else about the services.
+connection handling on two services (`DiagnosticSessionControl` and
+`ECUReset`), so this crate recognises their request identifiers and `ECUReset`'s
+positive response identifier, and nothing else about the services.
 
 It also names no async runtime. An `async fn` implies neither an executor nor
 `std`, but a runtime *dependency* would compromise the `no_std` build, so

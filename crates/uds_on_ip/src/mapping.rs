@@ -21,6 +21,7 @@ use uds_session::{Address, Ai, Mtype, SResult, TaType, TransportError};
 
 /// A constraint of the `DoIP` mapping, not of the session layer.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error)]
+#[non_exhaustive]
 pub enum MappingError {
     /// ISO 14229-5:2022 REQ 4.4 Table 5 records `T_AE` as not applicable to
     /// `DoIP`, so `Mtype::RDiag` and `Mtype::SecureRDiag` cannot be carried.
@@ -170,9 +171,13 @@ pub(crate) enum Inbound {
     Deadline,
 }
 
-/// A PDU an entity reported outside the buffer it was given.
+/// An event an entity reported that breaks its contract with this crate, or that
+/// this crate cannot classify.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct PduOutsideBuffer;
+pub(crate) enum Unclassifiable {
+    PduOutsideBuffer,
+    UnknownEvent,
+}
 
 /// Classify `event`, which borrows the buffer starting at address `buffer_start`.
 ///
@@ -182,7 +187,7 @@ pub(crate) struct PduOutsideBuffer;
 pub(crate) fn classify(
     event: EntityEvent<'_>,
     buffer_start: usize,
-) -> Result<Option<Inbound>, PduOutsideBuffer> {
+) -> Result<Option<Inbound>, Unclassifiable> {
     let span = |pdu: &[u8]| {
         let start = pdu.as_ptr().addr().checked_sub(buffer_start)?;
         Some(start..start.checked_add(pdu.len())?)
@@ -197,7 +202,7 @@ pub(crate) fn classify(
         } => Inbound::Ind {
             connection,
             ai: ai(sa, ta, ta_type),
-            at: span(pdu).ok_or(PduOutsideBuffer)?,
+            at: span(pdu).ok_or(Unclassifiable::PduOutsideBuffer)?,
         },
         EntityEvent::IndicationTruncated {
             connection,
@@ -209,7 +214,7 @@ pub(crate) fn classify(
         } => Inbound::TooLong {
             connection,
             ai: ai(sa, ta, ta_type),
-            at: span(pdu).ok_or(PduOutsideBuffer)?,
+            at: span(pdu).ok_or(Unclassifiable::PduOutsideBuffer)?,
             declared: length,
         },
         EntityEvent::Confirm {
@@ -223,14 +228,15 @@ pub(crate) fn classify(
         },
         EntityEvent::Closed { connection } => Inbound::Closed { connection },
         EntityEvent::Deadline => Inbound::Deadline,
-        EntityEvent::Unmodelled { .. } | _ => return Ok(None),
+        EntityEvent::Unmodelled { .. } => return Ok(None),
+        _ => return Err(Unclassifiable::UnknownEvent),
     }))
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
-        Inbound, MappingError, PduOutsideBuffer, classify, from_doip_ta_type, s_result,
+        Inbound, MappingError, Unclassifiable, classify, from_doip_ta_type, s_result,
         target_of, to_doip_ta_type,
     };
     use simple_doip::LogicalAddress;
@@ -422,6 +428,9 @@ mod tests {
             pdu: &elsewhere,
         };
         let after = elsewhere.as_ptr().addr().wrapping_add(1);
-        assert_eq!(classify(event, after), Err(PduOutsideBuffer));
+        assert_eq!(
+            classify(event, after),
+            Err(Unclassifiable::PduOutsideBuffer)
+        );
     }
 }

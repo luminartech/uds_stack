@@ -12,15 +12,18 @@
 #[allow(dead_code, reason = "each test binary uses part of the shared mock")]
 mod support;
 
+use embassy_time::{Duration, MockDriver};
 use simple_doip::LogicalAddress;
 use simple_doip::service::{ConnectionId, DoIpResult};
-use support::{Fault, MockEntity, TESTER, Tester, Wire, block_on, poll_once_and_drop};
+use support::{
+    Fault, MockEntity, TESTER, Tester, Wire, block_on, exclusive_clock, poll_once_and_drop,
+};
 use uds_on_ip::profile::bench_reloads;
 use uds_on_ip::{DoIpTransport, Error};
 use uds_services::{
     Address, AfterSend, Ai, Mtype, SResult, TaType, TransportEvent, UdsTransport,
 };
-use uds_session::{AddressExtension, TransportError};
+use uds_session::{AddressExtension, Timestamp, TransportError};
 
 const CONNECTION: ConnectionId = ConnectionId::new(0);
 
@@ -244,6 +247,16 @@ fn a_close_dropped_unfinished_is_finished_by_the_next_call() {
     );
     assert_eq!(t.entity().wire.last(), Some(&Wire::Close(CONNECTION)));
     assert_eq!(t.entity().wire.len(), 2);
+    assert_nothing_follows(&mut t);
+}
+
+/// The script is spent: no event, a held-back confirmation least of all, is left.
+fn assert_nothing_follows(t: &mut Transport<1>) {
+    let mut buffer = [0u8; 16];
+    assert!(matches!(
+        block_on(t.next_event(&mut buffer, None)),
+        Err(Error::Entity(Fault::Exhausted))
+    ));
 }
 
 /// An entity that fails while making the prescribed close surfaces its failure, and
@@ -267,6 +280,7 @@ fn a_close_that_fails_still_reports_the_confirmation_it_held_back() {
         }
     );
     assert_eq!(t.entity().wire.last(), Some(&Wire::Close(CONNECTION)));
+    assert_nothing_follows(&mut t);
 }
 
 /// A tester that closes its connection after the positive `ECUReset` response was
@@ -387,6 +401,21 @@ fn a_tester_leaving_mid_service_is_an_unexpected_close() {
     assert_eq!(next(&mut t), TransportEvent::Closed { expected: false });
 }
 
+/// An entity reporting a request from outside the buffer it was lent is refused,
+/// not trusted: the PDU is never handed to the driver.
+#[test]
+fn a_pdu_outside_the_lent_buffer_is_an_error() {
+    let mut t = transport([
+        Tester::Connects(TESTER),
+        Tester::SendsOutsideBuffer(TESTER, vec![0x3E, 0x00]),
+    ]);
+    let mut buffer = [0u8; 16];
+    assert!(matches!(
+        block_on(t.next_event(&mut buffer, None)),
+        Err(Error::PduOutsideBuffer)
+    ));
+}
+
 /// A response to a tester that has left is confirmed `DoIP_NO_SOCKET`, not refused,
 /// so the driver still gets the one confirmation it waits on (`UDSS_LLR_0060`).
 #[test]
@@ -490,4 +519,14 @@ fn a_remote_message_type_is_refused_before_the_entity() {
         ),
         "no confirmation follows a refused request"
     );
+}
+
+/// `now()` is `embassy-time`'s milliseconds truncated to 32 bits, so it wraps where
+/// `Timestamp` is typed to wrap.
+#[test]
+fn now_is_the_low_32_bits_of_embassy_times_milliseconds() {
+    let _clock = exclusive_clock();
+    MockDriver::get().advance(Duration::from_millis((1_u64 << 32) + 7));
+    let t = transport([]);
+    assert_eq!(t.now(), Timestamp(7));
 }
