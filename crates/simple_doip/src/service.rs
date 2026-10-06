@@ -45,6 +45,12 @@ pub enum DoIpResult {
     /// `DoIP_UNKNOWN_SA`: the source address is not known.
     UnknownSa,
     /// `DoIP_INVALID_SA`: the source address is not valid on this connection.
+    ///
+    /// The connection does not survive it: an entity rejecting a diagnostic message whose
+    /// source address routing activation did not register on its socket also closes
+    /// that socket (ISO 13400-2:2019 REQ 7.DoIP-070). Nothing more can be sent on
+    /// the connection; a tester that wants to continue opens a new one and activates
+    /// routing again.
     InvalidSa,
     /// `DoIP_UNKNOWN_TA`: the target address is not known.
     UnknownTa,
