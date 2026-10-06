@@ -34,6 +34,10 @@ use uds_session::{Ai, Reloads, SResult, Timestamp};
 /// entity's own maximum number of concurrent connections; a connection beyond it
 /// is [`Error::ConnectionOutsideTable`].
 ///
+/// With more than one tester, one tester's departure can end another's exchange:
+/// [`TransportEvent::Closed`] does not say whose connection closed, and
+/// `uds_services::Server` ends the exchange it is serving on any `Closed`.
+///
 /// # The prescribed close
 ///
 /// Two messages are followed by a close: every positive `ECUReset` response
@@ -47,9 +51,17 @@ use uds_session::{Ai, Reloads, SResult, Timestamp};
 /// After sending one, the transport closes the connection the tester arrived on
 /// with [`DiagnosticEntity::close`] once the entity confirms the message was
 /// sent, and only then reports that confirmation. The close therefore follows
-/// the response ("after sending") and precedes the service's execution, which
-/// the driver begins on the confirmation. A message whose confirmation fails
-/// closes nothing, and the driver does not execute the service either.
+/// the response ("after sending") and precedes anything done on the
+/// confirmation: `uds_services::Server` executes a session change there. It has
+/// no hook yet that executes a reset on its confirmation, so an `ECUReset`
+/// handler that resets on its own does so before the close. A message whose
+/// confirmation fails closes nothing.
+///
+/// The close waits for every message sent to that tester to be confirmed, not
+/// only the one that armed it, and holds back the last confirmation. That is the
+/// armed message's own while nothing more is sent to the tester before it is
+/// confirmed, which `uds_session` guarantees (`UDSS_LLR_0061`: no second
+/// transmission on an addressing whose first is unconfirmed).
 ///
 /// # Integrating on bare metal
 ///
@@ -80,6 +92,7 @@ struct Tester {
     address: LogicalAddress,
     owes: ConnectionAction,
     unconfirmed: u8,
+    requested: Option<Ai>,
 }
 
 /// A prescribed close in progress, and the confirmation it holds back.
@@ -189,6 +202,7 @@ impl<E, const MCTS: usize> DoIpTransport<E, MCTS> {
                 address,
                 owes: ConnectionAction::Continue,
                 unconfirmed: 0,
+                requested: None,
             });
         }
         Ok(())
@@ -256,7 +270,8 @@ impl<E: DiagnosticEntity, const MCTS: usize> UdsTransport for DoIpTransport<E, M
     ///
     /// A positive `ECUReset` response, or a message `after` says the server leaves
     /// its running software on, arms the prescribed close described on
-    /// [`DoIpTransport`].
+    /// [`DoIpTransport`]. The [`TransportEvent::DataConf`] that follows carries `ai`
+    /// as given, whatever addressing the entity reports it with.
     ///
     /// # Errors
     ///
@@ -275,6 +290,9 @@ impl<E: DiagnosticEntity, const MCTS: usize> UdsTransport for DoIpTransport<E, M
             .await
             .map_err(Error::Entity)?;
         self.record_send(target, data, after);
+        if let Some(tester) = self.tester_mut(target) {
+            tester.requested = Some(ai);
+        }
         Ok(())
     }
 
@@ -353,7 +371,12 @@ impl<E: DiagnosticEntity, const MCTS: usize> UdsTransport for DoIpTransport<E, M
                 })
             }
             Inbound::Conf { ai, result } => {
-                match self.record_confirm(to_logical(ai.ta), result) {
+                let target = to_logical(ai.ta);
+                let ai = self
+                    .tester_mut(target)
+                    .and_then(|tester| tester.requested)
+                    .unwrap_or(ai);
+                match self.record_confirm(target, result) {
                     Some(connection) => {
                         self.close(Closing {
                             connection,

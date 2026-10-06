@@ -196,6 +196,27 @@ fn a_response_is_sent_on_the_testers_connection_and_confirmed() {
     );
 }
 
+/// `UDSS_LLR_0060`: the confirmation carries the addressing the request was made
+/// with, which the driver matches it by, even where the entity sends under its own
+/// address and `DoIP` has no field for the message type.
+#[test]
+fn a_confirmation_carries_the_addressing_it_was_requested_with() {
+    let mut t = indicated(&[0x3E, 0x00]);
+    let requested = Ai {
+        mtype: Mtype::SecureDiag,
+        sa: Address(0x0002),
+        ..response_ai()
+    };
+    block_on(t.t_data_req(requested, &[0x7E, 0x00], AfterSend::Continue)).unwrap();
+    assert_eq!(
+        next(&mut t),
+        TransportEvent::DataConf {
+            ai: requested,
+            result: SResult::Ok,
+        }
+    );
+}
+
 /// REQ 7.11: the server initiates the close after sending the positive `ECUReset`
 /// response. The close waits for the response's confirmation, and is made before
 /// that confirmation reaches the driver, which executes the reset on it.

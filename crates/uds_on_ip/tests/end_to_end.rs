@@ -18,9 +18,9 @@ use uds_on_ip::DoIpTransport;
 use uds_on_ip::profile::bench_reloads;
 use uds_protocol::NegativeResponseCode as Nrc;
 use uds_services::{
-    Address, DataIdentifier, DiagnosticSessionControl, DiagnosticSessionType as S,
-    ReadDataByIdentifier, RecordError, ResponseSink, ServerParams, SessionTiming,
-    SessionTransition, Sink, TesterPresent, uds_server,
+    Access, Address, DataIdentifier, DiagnosticSessionControl, DiagnosticSessionType as S,
+    EcuReset, ReadDataByIdentifier, RecordError, ResetType, ResponseSink, ServerParams,
+    SessionTiming, SessionTransition, Sessions, Sink, TesterPresent, uds_server,
 };
 
 const ECU: Address = Address(0x0001);
@@ -83,6 +83,8 @@ struct Ecu {
     entered: Vec<S>,
     /// How many times the next `read` pends before answering.
     slow: u8,
+    /// How many times the next `reset` pends before accepting.
+    reset_slow: u8,
 }
 impl ReadDataByIdentifier for Ecu {
     type Did = Did;
@@ -124,12 +126,26 @@ impl DiagnosticSessionControl for Ecu {
         self.entered.push(entered);
     }
 }
+impl EcuReset for Ecu {
+    const MAY_RESPOND_PENDING: bool = true;
+    fn access(&self, _kind: ResetType) -> Option<Access> {
+        Some(Access::new(Sessions::ALL))
+    }
+    async fn reset(
+        &mut self,
+        _kind: ResetType,
+        _out: &mut ResponseSink<'_>,
+    ) -> Result<(), Nrc> {
+        PendN(core::mem::take(&mut self.reset_slow)).await;
+        Ok(())
+    }
+}
 impl TesterPresent for Ecu {
     fn on_tester_present(&mut self) {}
 }
 
 uds_server! {
-    Ecu: ReadDataByIdentifier, DiagnosticSessionControl, TesterPresent;
+    Ecu: ReadDataByIdentifier, DiagnosticSessionControl, EcuReset, TesterPresent;
     transport = Transport,
     peers = 1,
     server = EcuServer,
@@ -261,6 +277,36 @@ fn a_tester_stays_connected_through_a_session_change() {
         [
             Wire::Data(CONNECTION, vec![0x50, 0x03, 0x00, 0x32, 0x01, 0xF4]),
             Wire::Data(CONNECTION, vec![0x50, 0x02, 0x00, 0x32, 0x01, 0xF4]),
+        ]
+    );
+}
+
+/// ISO 14229-5:2022 REQ 7.11 through the driver: a reset that takes long enough to
+/// be answered response-pending keeps the connection through each `7F 11 78`, and
+/// the final `51 01` is sent, then the connection is closed.
+#[test]
+fn a_reset_answered_pending_closes_the_connection_after_51_01() {
+    let _clock = exclusive_clock();
+    let mut s = server([
+        Tester::Connects(TESTER),
+        Tester::Sends(TESTER, vec![0x11, 0x01]),
+    ]);
+    s.services().reset_slow = 200;
+    run(&mut s);
+    let wire = wire(&s);
+    let (pending, last_two) = wire.split_last_chunk::<2>().unwrap();
+    assert!(!pending.is_empty(), "the reset was answered pending first");
+    assert!(
+        pending
+            .iter()
+            .all(|sent| *sent == Wire::Data(CONNECTION, vec![0x7F, 0x11, 0x78])),
+        "{pending:?}"
+    );
+    assert_eq!(
+        last_two,
+        &[
+            Wire::Data(CONNECTION, vec![0x51, 0x01]),
+            Wire::Close(CONNECTION),
         ]
     );
 }

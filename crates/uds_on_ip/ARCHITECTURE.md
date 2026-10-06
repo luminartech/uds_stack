@@ -472,7 +472,9 @@ close, after sending the positive response and before executing the service.
 `uds_on_ip` recognises a positive `ECUReset` response going out, or is told by
 `AfterSend::ServerLeaves` that the server leaves its running software after
 this `DiagnosticSessionControl` response, and once that response is confirmed
-sent, closes the connection before reporting the confirmation.
+sent, closes the connection before reporting the confirmation. The driver
+executes a session change on that confirmation, so the close precedes it. A
+reset it does not yet execute there (see [§9.2](#92-design-gaps-in-this-crate)).
 
 **Server, ordinary request.** A diagnostic message arrives, becomes
 `TransportEvent::DataInd`, and the driver offers it to the session layer, which
@@ -746,7 +748,19 @@ ships. It has been replaced rather than amended.
   no response, so nothing carries the mark, and a server that leaves on it drops
   the connection unannounced. `uds_services` records this at
   `DiagnosticSessionControl::leaves_running_software`; there is no mechanism,
-  and a client that needs the close must not suppress the response.
+  and a client that needs the close must not suppress the response. `11 81`,
+  a suppressed reset, is the same: no `51` is sent, so no close is made.
+- **With several testers, any close ends the exchange in progress.**
+  `TransportEvent::Closed` carries no address, and `uds_services::Server` ends
+  the exchange it is serving on any `Closed`, so a second tester leaving
+  abandons the first tester's request. Correct with one tester (`MCTS = 1`);
+  with more, the seam needs to say whose connection closed.
+- **A reset is not executed on its confirmation.** REQ 7.11 orders the close
+  before the reset. This crate holds the confirmation back until the close is
+  made, but `uds_services` has no hook that runs the reset on that confirmation,
+  and its `EcuReset::reset` must not reset before returning, so an application
+  has no signal that the response was sent and the connection closed. Tracked in
+  `uds_services` as #38.
 - **REQ 7.17 has no home.** The periodic data record length bound is not checked
   anywhere. It was briefly a free function in `profile` that no caller was
   obliged to consult and no path could reach, and was deleted until there is a
