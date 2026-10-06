@@ -11,7 +11,8 @@ waiting on a document: one is a question of convention, one a decision about a b
 switch that wants the full inventory first, and one a statement that belongs in the
 qualification repository. One more records a limit accepted rather than chased: a gap
 between what ``Reaction`` enforces and what it can be made to enforce without breaching a
-requirement of its own.
+requirement of its own. The last four came from an adversarial review of the client: each
+is behaviour the requirements permit and an application may not expect.
 
 A question closes by being answered in a requirement, not here. When that happens the
 entry is deleted and the requirement carries the reasoning, as a ``Rationale:`` paragraph
@@ -126,18 +127,15 @@ start-of-message the transport never completes is closed by resetting its channe
 bounds the harm of a transport that breaks the assumption without settling where the
 assumption is stated.
 
-``Reaction`` enforces the order of its outputs, not that they are delivered
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+``Reaction`` cannot make the caller read what it hands back
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-``Reaction`` is ``#[must_use]``, and the obligation it states is discharged by calling
-``Reaction::finish``, which drops any outputs the caller has not already drained by
-iterating. That makes ``UDSS_LLR_0081``'s ordering between the indications an expiry
-produces and the input's own rejection report a property of the type — ``finish`` cannot
-be reached without going through the drain that would have produced them — but it does not
-make delivery to the application a property of the type: a caller who calls ``finish``
-first, before draining, loses every output the input produced, with the same code shape as
-a caller who drained correctly. A session timeout, a response timeout and a keep-alive due
-are lost exactly as silently as any other output.
+Nothing is lost to a reaction finished before it was drained. An expiry's indication
+borrows nothing, so the session keeps it until it is retrieved, from this reaction or the
+next input's; ``Reaction::finish`` hands back the input's own outputs not yet drained,
+expiry indications first, beside the outcome. Both roles share that. What no type here can
+do is make the caller read them: dropping what ``finish`` hands back discards the input's
+own outputs, and the outcome can be read before them.
 
 The usual remedy for a type that must be exhausted before it yields its result is a
 ``drain_with(f)`` taking a closure to call on each output, so that the outcome is returned
@@ -145,13 +143,71 @@ only from the call that ran the closure over every item. ``UDSS_LLR_0011`` forbi
 shape here: it forbids the session layer to invoke a callback, handler, or caller-supplied
 trait implementation, and a closure parameter on a public method is exactly that. Rust
 also has no linear type — nothing short of `unsafe`, which ``UDSS_LLR_0005``'s crate
-attributes forbid, forces a value to be exhausted before it can be consumed. Between the
-two, ``Reaction`` enforces what a type can enforce here: the order, not the delivery.
+attributes forbid, forces a value to be exhausted before it can be consumed. The input's own
+outputs borrow its payload, which ``UDSS_LLR_0013`` and ``UDSS_LLR_0014`` keep from being
+held past the input, so the session cannot keep them as it keeps an indication.
 
-What would settle it is a shape in which the rejection outcome is reachable only from a
-drain that actually ran to completion, without a caller-supplied function reaching that
-drain. No such shape is in hand, and the API is not to be contorted chasing one until
-there is. Touches ``UDSS_LLR_0081``, ``UDSS_LLR_0011`` and ``UDSS_LLR_0005``.
+``UDSS_LLR_0081``'s order is the order the drain yields in, which every path keeps. What
+would settle the rest is a shape in which the outcome is reachable only from a drain that
+actually ran to completion, without a caller-supplied function reaching that drain. No such
+shape is in hand, and the API is not to be contorted chasing one until there is. Touches
+``UDSS_LLR_0081``, ``UDSS_LLR_0011`` and ``UDSS_LLR_0005``.
+
+Should a reset leave a physical keep-alive with no timer running?
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+``UDSS_LLR_0160`` stops a physical channel's ``tS3_Client`` when a request is sent, and the
+fifth bullet of ``UDSS_LLR_0161`` restarts it when a keep-alive's response window expires.
+A reset under ``UDSS_LLR_0180`` while that keep-alive is in progress ends the request with
+no expiry, and the confirmation of an abandoned association opens no window
+(``UDSS_LLR_0182``), so the restart never comes. The channel's session fact still holds, no
+timer runs, and no ``KeepAliveDue`` is indicated again until the application sends
+something on the channel; meanwhile the server's ``tS3_Server`` runs out. Each requirement
+reads as written. What is open is whether ``UDSS_LLR_0180`` should restart ``tS3_Client``
+where the session fact holds, and the same question for an abandoned confirmation of a
+keep-alive. Touches ``UDSS_LLR_0160``, ``UDSS_LLR_0161``, ``UDSS_LLR_0180`` and
+``UDSS_LLR_0182``.
+
+Should a reset discard a message already arriving?
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+``UDSS_LLR_0180`` closes a physical channel's open start-of-message and releases every
+entry of a functional channel's table, which is what lets ``UDSS_LLR_0178`` admit the next
+request. The message whose start was open is still arriving; when its ``T_Data.ind`` comes
+it pairs with nothing, so ``UDSS_LLR_0045`` takes it for a single-frame message. On a
+physical channel a solicited final response then closes the new request's window, and on a
+functional one it counts toward the new request's exact count (``UDSS_LLR_0138``). Nothing
+in the indication tells an old response from a new one, which ``UDSS_LLR_0073`` keeps the
+session layer from reading. Settling it means either a fact the reset leaves behind that
+discards the next completion, or an assumption of use that the caller resets only once the
+transport has abandoned the message. Touches ``UDSS_LLR_0045``, ``UDSS_LLR_0138``,
+``UDSS_LLR_0178`` and ``UDSS_LLR_0180``.
+
+A late confirmation can match a reopened channel's request
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+``UDSS_LLR_0125`` discards a withdrawn channel's outstanding association, and
+``UDSS_LLR_0063`` rejects a confirmation that then matches nothing. If the caller reopens a
+channel with the same addressing and sends before the old confirmation arrives, that
+confirmation matches the new association, because ``UDSS_LLR_0059`` matches by addressing
+alone, as ISO 14229-2:2021 7.6 identifies a request. The standard gives nothing else to
+match on. This is a limit accepted rather than a question, recorded so that an assumption of
+use — that the caller withdraws a channel only once its transport has reported or abandoned
+every transmission on it — can be stated in the qualification repository. Touches
+``UDSS_LLR_0059``, ``UDSS_LLR_0063`` and ``UDSS_LLR_0125``.
+
+Functional keep-alive falls due with no functional channel open
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+``UDSS_LLR_0150`` makes functional keep-alive client-wide, and ``UDSS_LLR_0155`` engages it
+on a confirmed change to a non-default session on any channel. Once every functional channel
+is withdrawn it still falls due (``UDSS_LLR_0156``), asking for a ``TesterPresent`` the
+application has no channel to send on, and only ``UDSS_LLR_0184``'s release, which names a
+functional channel, or a return to the default session on one (``UDSS_LLR_0158``) disengages
+it. A client built with no functional channel at all is refused at compile time; the case of
+one withdrawn is not. What is open is whether withdrawing the last functional channel should
+disengage the keep-alive. Touches ``UDSS_LLR_0150``, ``UDSS_LLR_0155``, ``UDSS_LLR_0158``
+and ``UDSS_LLR_0184``.
 
 Sequencing
 ----------
