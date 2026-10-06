@@ -14,6 +14,7 @@
 //! server that wants it cannot implement it.
 
 use crate::{ResponseSink, Sessions};
+use core::num::NonZeroU8;
 use uds_protocol::NegativeResponseCode;
 
 /// How a level's attempts and delay are governed.
@@ -29,8 +30,10 @@ pub enum SecurityPolicy {
     RandomSeedOnly,
     /// Counted attempts, with an optional delay.
     Counted {
-        /// Failed attempts permitted before the delay starts.
-        attempt_limit: u8,
+        /// `Att_Cnt_Limit` (Table I.1): the failed attempt that reaches it is
+        /// `exceedNumberOfAttempts` (0x36) and starts the delay. Never zero, which would
+        /// owe a delay before any attempt had failed.
+        attempt_limit: NonZeroU8,
         /// How long the delay lasts, where one is kept.
         delay_ms: Option<u32>,
     },

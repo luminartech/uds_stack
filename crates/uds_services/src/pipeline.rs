@@ -763,7 +763,7 @@ fn delay_owed<A: SecurityAccess>(services: &mut A, level: SecurityLevel) -> bool
             services.store_attempts(level, 0);
             false
         }
-        Delay::Idle if services.load_attempts(level) >= attempt_limit => {
+        Delay::Idle if services.load_attempts(level) >= attempt_limit.get() => {
             services.start_delay(level);
             true
         }
@@ -825,11 +825,11 @@ fn failed_attempt<A: SecurityAccess>(
         return NegativeResponseCode::InvalidKey;
     };
     let count = services.load_attempts(level);
-    if count.saturating_add(1) < attempt_limit {
+    if count.saturating_add(1) < attempt_limit.get() {
         services.store_attempts(level, count.saturating_add(1));
         return NegativeResponseCode::InvalidKey;
     }
-    services.store_attempts(level, attempt_limit);
+    services.store_attempts(level, attempt_limit.get());
     if delay_ms.is_some() {
         services.start_delay(level);
     }

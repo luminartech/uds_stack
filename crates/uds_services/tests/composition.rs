@@ -179,7 +179,7 @@ impl SecurityAccess for Ecu {
     }
     fn policy(&self, _l: SecurityLevel) -> SecurityPolicy {
         SecurityPolicy::Counted {
-            attempt_limit: 3,
+            attempt_limit: core::num::NonZeroU8::MIN.saturating_add(2),
             delay_ms: Some(10_000),
         }
     }
