@@ -13,6 +13,15 @@
 //!
 //! Nothing here performs I/O or names a socket, so implementing these traits over an
 //! application's own stack needs no dependency beyond this crate.
+//!
+//! # Time
+//!
+//! Every deadline here is on one clock, `embassy-time`'s: an `embassy_time::Instant`
+//! in milliseconds (`Instant::as_millis`), truncated to 32 bits and wrapping. An
+//! implementor and its caller each read that clock directly, which is why neither
+//! trait reports the time, and why a deadline computed by the caller means the same
+//! instant to the implementor. An implementation whose timers run on any other clock
+//! does not meet these traits' contract.
 
 use core::future::Future;
 
@@ -189,8 +198,9 @@ pub trait DiagnosticConnection {
     /// # Arguments
     ///
     /// * `buf` - where a PDU is delivered; the event borrows it.
-    /// * `deadline_ms` - when to stop waiting, in milliseconds of the implementor's
-    ///   monotonic clock, truncated to 32 bits and wrapping. It may already have
+    /// * `deadline_ms` - when to stop waiting, on the clock this module's time is
+    ///   read from: `embassy-time`'s, in milliseconds, truncated to 32 bits and
+    ///   wrapping. It may already have
     ///   passed. `None` waits for an event alone.
     ///
     /// # Errors
