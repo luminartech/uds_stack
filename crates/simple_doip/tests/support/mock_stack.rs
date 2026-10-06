@@ -60,6 +60,8 @@ struct Connection {
     eof: bool,
     read_error: bool,
     write_error: bool,
+    write_stall: bool,
+    write_zero: bool,
     outbound: Vec<u8>,
     aborted: bool,
     closed: bool,
@@ -160,6 +162,17 @@ impl MockPeer {
         self.with(|c| c.write_error = true);
     }
 
+    /// The tester's writes pend from now on, as when the entity stops reading and its
+    /// receive window fills.
+    pub fn stall_writes(&self) {
+        self.with(|c| c.write_stall = true);
+    }
+
+    /// The tester's writes complete having written nothing, as on a closed socket.
+    pub fn write_nothing(&self) {
+        self.with(|c| c.write_zero = true);
+    }
+
     /// Everything the tester has written, and forget it.
     pub fn take_written(&self) -> Vec<u8> {
         self.with(|c| std::mem::take(&mut c.outbound))
@@ -168,6 +181,11 @@ impl MockPeer {
     /// Whether the tester aborted, closed or dropped this connection.
     pub fn is_shut(&self) -> bool {
         self.with(|c| c.aborted || c.closed || c.dropped)
+    }
+
+    /// Whether the tester aborted this connection, rather than only dropping it.
+    pub fn is_aborted(&self) -> bool {
+        self.with(|c| c.aborted)
     }
 
     /// Whether the tester has read everything the entity sent.
@@ -239,13 +257,22 @@ impl Write for MockSocket {
         yield_once().await;
         let piece = self.peer.shared.borrow().piece;
         let n = buf.len().min(piece);
-        self.peer.with(|c| {
-            if c.write_error {
-                return Err(MockError);
-            }
-            c.outbound.extend(&buf[..n]);
-            Ok(n)
+        poll_fn(|_| {
+            self.peer.with(|c| {
+                if c.write_error {
+                    return Poll::Ready(Err(MockError));
+                }
+                if c.write_stall {
+                    return Poll::Pending;
+                }
+                if c.write_zero {
+                    return Poll::Ready(Ok(0));
+                }
+                c.outbound.extend(&buf[..n]);
+                Poll::Ready(Ok(n))
+            })
         })
+        .await
     }
 
     async fn flush(&mut self) -> Result<(), MockError> {
@@ -489,5 +516,12 @@ pub fn raw(payload_type: u16, payload: &[u8]) -> Vec<u8> {
     frame.extend(u16::from(PayloadType::from(payload_type)).to_be_bytes());
     frame.extend(u32::try_from(payload.len()).unwrap().to_be_bytes());
     frame.extend(payload);
+    frame
+}
+
+/// `frame` with its protocol version, and the inverse, set to `version`.
+pub fn versioned(mut frame: Vec<u8>, version: u8) -> Vec<u8> {
+    frame[0] = version;
+    frame[1] = !version;
     frame
 }

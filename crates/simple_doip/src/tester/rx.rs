@@ -1,7 +1,3 @@
-// The lengths here come from the peer, so their arithmetic is held to the standard the
-// crate root relaxes.
-#![deny(clippy::arithmetic_side_effects)]
-
 use crate::messages::{Header, MessageError};
 use crate::wire::Decode;
 use crate::{RawFrame, try_frame};

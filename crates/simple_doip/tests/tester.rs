@@ -19,7 +19,7 @@ use simple_doip::messages::{NackCode, RoutingActivationResponseCode};
 use simple_doip::service::{
     ConnectionEvent, DiagnosticConnection, DoIpResult, NotATesterAddress,
 };
-use simple_doip::tester::{Error, Tester};
+use simple_doip::tester::{ConnectError, Error, Tester, TesterAddress};
 use simple_doip::{LogicalAddress, TaType};
 use support::mock_stack::*;
 
@@ -29,8 +29,12 @@ const REMOTE: SocketAddr = SocketAddr::V4(std::net::SocketAddrV4::new(
     13400,
 ));
 
-fn connect(stack: &MockStack) -> Result<Tester<'_, MockStack, N>, Error<MockError>> {
-    run(Tester::connect(stack, REMOTE, TESTER))
+fn sa() -> TesterAddress {
+    TesterAddress::new(TESTER).unwrap()
+}
+
+fn connect(stack: &MockStack) -> Result<Tester<'_, MockStack, N>, ConnectError<MockError>> {
+    run(Tester::connect(stack, REMOTE, sa()))
 }
 
 /// ISO 13400-2:2019 Table 46 and Table 47: a default (`0x00`) activation from the
@@ -64,10 +68,12 @@ fn every_denial_code_is_an_error_and_the_socket_is_given_up() {
 
         assert_eq!(
             error,
-            Error::RoutingActivationDenied(RoutingActivationResponseCode::from(code)),
+            ConnectError::RoutingActivationDenied(RoutingActivationResponseCode::from(
+                code
+            )),
             "{code:#04X}"
         );
-        assert!(stack.latest().is_shut(), "{code:#04X}");
+        assert!(stack.latest().is_aborted(), "{code:#04X}");
     }
 }
 
@@ -83,11 +89,11 @@ fn missing_authentication_is_denied_and_closed_by_the_tester() {
 
     assert_eq!(
         error,
-        Error::RoutingActivationDenied(
+        ConnectError::RoutingActivationDenied(
             RoutingActivationResponseCode::DeniedMissingAuthentication
         )
     );
-    assert!(stack.latest().is_shut());
+    assert!(stack.latest().is_aborted());
 }
 
 /// ISO 13400-2:2019 REQ 3.DoIP-063, NOTE 3: after `0x11` the tester repeats the request
@@ -97,7 +103,7 @@ fn confirmation_required_is_retried_on_the_same_socket_until_activated() {
     let _clock = clock();
     let stack = MockStack::new(usize::MAX);
     stack.script_next(&activation_response(0x11));
-    let mut connecting = pin!(Tester::<_, N>::connect(&stack, REMOTE, TESTER));
+    let mut connecting = pin!(Tester::<_, N>::connect(&stack, REMOTE, sa()));
 
     assert!(until_stalled(connecting.as_mut()).is_none());
     assert_eq!(stack.latest().take_written(), activation_request());
@@ -121,7 +127,7 @@ fn confirmation_required_then_rejected_is_denied() {
     let _clock = clock();
     let stack = MockStack::new(usize::MAX);
     stack.script_next(&activation_response(0x11));
-    let mut connecting = pin!(Tester::<_, N>::connect(&stack, REMOTE, TESTER));
+    let mut connecting = pin!(Tester::<_, N>::connect(&stack, REMOTE, sa()));
     assert!(until_stalled(connecting.as_mut()).is_none());
 
     advance(Duration::from_secs(2));
@@ -130,7 +136,7 @@ fn confirmation_required_then_rejected_is_denied() {
 
     assert_eq!(
         run(connecting).unwrap_err(),
-        Error::RoutingActivationDenied(
+        ConnectError::RoutingActivationDenied(
             RoutingActivationResponseCode::DeniedRejectedConfirmation
         )
     );
@@ -163,9 +169,9 @@ fn a_response_for_another_tester_is_an_error() {
 
     assert_eq!(
         connect(&stack).unwrap_err(),
-        Error::ActivationAnsweredForAnotherTester(LogicalAddress(0x0E01))
+        ConnectError::ActivationAnsweredForAnotherTester(LogicalAddress(0x0E01))
     );
-    assert!(stack.latest().is_shut());
+    assert!(stack.latest().is_aborted());
 }
 
 /// ISO 13400-2:2019 Table 19: the entity rejected the request's header.
@@ -177,21 +183,21 @@ fn a_header_nack_during_activation_is_an_error() {
 
     assert_eq!(
         connect(&stack).unwrap_err(),
-        Error::HeaderNack(NackCode::MessageTooLarge)
+        ConnectError::HeaderNack(NackCode::MessageTooLarge)
     );
-    assert!(stack.latest().is_shut());
+    assert!(stack.latest().is_aborted());
 }
 
 #[test]
 fn the_entity_closing_during_activation_is_an_error() {
     let _clock = clock();
     let stack = MockStack::new(usize::MAX);
-    let mut connecting = pin!(Tester::<_, N>::connect(&stack, REMOTE, TESTER));
+    let mut connecting = pin!(Tester::<_, N>::connect(&stack, REMOTE, sa()));
     assert!(until_stalled(connecting.as_mut()).is_none());
 
     stack.latest().eof();
 
-    assert_eq!(run(connecting).unwrap_err(), Error::ClosedDuringActivation);
+    assert_eq!(run(connecting).unwrap_err(), ConnectError::Closed);
 }
 
 #[test]
@@ -200,29 +206,27 @@ fn a_refused_connection_is_an_io_error() {
     let stack = MockStack::new(usize::MAX);
     stack.refuse_next_connect();
 
-    assert_eq!(connect(&stack).unwrap_err(), Error::Io(MockError));
+    assert_eq!(connect(&stack).unwrap_err(), ConnectError::Io(MockError));
 }
 
 /// ISO 13400-2:2019 Table 13: a tester's source address is in the client range, so
-/// anything else is refused before a connection is attempted.
+/// nothing else can be made into one.
 #[test]
-fn a_source_address_outside_the_client_range_is_refused_before_connecting() {
-    let _clock = clock();
-    let stack = MockStack::new(usize::MAX);
-
-    let error = run(Tester::<_, N>::connect(
-        &stack,
-        REMOTE,
-        LogicalAddress(0xE400),
-    ));
-
-    assert_eq!(
-        error.unwrap_err(),
-        Error::NotATesterAddress(NotATesterAddress {
-            address: LogicalAddress(0xE400)
-        })
-    );
-    assert_eq!(stack.connects(), 0);
+fn a_source_address_outside_the_client_range_is_not_a_tester_address() {
+    for address in [0x0DFF, 0x1000, 0xE400] {
+        assert_eq!(
+            TesterAddress::new(LogicalAddress(address)),
+            Err(NotATesterAddress {
+                address: LogicalAddress(address)
+            })
+        );
+    }
+    for address in [0x0E00, 0x0FFF] {
+        assert_eq!(
+            TesterAddress::new(LogicalAddress(address)).map(TesterAddress::address),
+            Ok(LogicalAddress(address))
+        );
+    }
 }
 
 // --- next_event ------------------------------------------------------------------------
@@ -511,7 +515,7 @@ fn a_header_out_of_sync_closes_the_connection() {
         next(&mut tester, &mut buf).unwrap(),
         ConnectionEvent::Closed
     );
-    assert!(stack.latest().is_shut());
+    assert!(stack.latest().is_aborted());
     assert_eq!(stack.latest().take_written(), []);
 }
 
@@ -555,7 +559,7 @@ fn confirm(result: DoIpResult) -> ConnectionEvent<'static> {
 }
 
 /// ISO 13400-2:2019 Table 21: the request is one diagnostic message from the tester's
-/// source address to the requested target.
+/// source address to the requested target, written by `next_event`.
 #[test]
 fn a_request_is_written_as_one_diagnostic_message() {
     let _clock = clock();
@@ -563,6 +567,10 @@ fn a_request_is_written_as_one_diagnostic_message() {
     let mut tester = active(&stack);
 
     request(&mut tester).unwrap();
+    assert_eq!(stack.latest().take_written(), []);
+    let mut buf = [0; 16];
+    let mut waiting = pin!(tester.next_event(&mut buf, None));
+    assert!(until_stalled(waiting.as_mut()).is_none());
 
     assert_eq!(
         stack.latest().take_written(),
@@ -664,17 +672,14 @@ fn no_ack_within_a_doip_diagnostic_message_is_timeout_a() {
     );
 }
 
-/// `A_DoIP_Diagnostic_Message` runs from the request's last byte, wherever that byte is
-/// written: here by `next_event`, after the `request` that queued it was dropped.
+/// `A_DoIP_Diagnostic_Message` runs from the request's last byte, which `next_event`
+/// writes, not from when it was queued.
 #[test]
 fn the_ack_timer_starts_at_the_last_byte_written() {
     let _clock = clock();
     let stack = MockStack::new(1);
     let mut tester = active(&stack);
-    {
-        let mut requesting = pin!(tester.request(ENTITY, TaType::Physical, &PDU));
-        assert!(poll_times(requesting.as_mut(), 3).is_none());
-    }
+    request(&mut tester).unwrap();
     advance(Duration::from_millis(1500));
     let mut buf = [0; 16];
     let mut waiting = pin!(tester.next_event(&mut buf, None));
@@ -712,20 +717,25 @@ fn an_ack_for_another_tester_is_ignored() {
 }
 
 /// ISO 13400-2:2019 Table 23 gives the acknowledgement's source as the request's
-/// "(intended) receiver", which a gateway answering a functional request may name
-/// differently; the tester does not hold it to the requested target.
+/// "(intended) receiver", which for a functional request is no single address; the
+/// tester does not hold it to the requested target.
 #[test]
-fn an_ack_from_a_different_source_still_confirms() {
+fn a_functional_requests_ack_from_any_source_confirms() {
     let _clock = clock();
     let stack = MockStack::new(usize::MAX);
     let mut tester = active(&stack);
-    request(&mut tester).unwrap();
+    run(tester.request(LogicalAddress(0xE400), TaType::Functional, &PDU)).unwrap();
     stack.latest().send(&ack(LogicalAddress(0x0002), TESTER));
     let mut buf = [0; 16];
 
     assert_eq!(
         next(&mut tester, &mut buf).unwrap(),
-        confirm(DoIpResult::Ok)
+        ConnectionEvent::Confirm {
+            sa: TESTER,
+            ta: LogicalAddress(0xE400),
+            ta_type: TaType::Functional,
+            result: DoIpResult::Ok,
+        }
     );
 }
 
@@ -775,34 +785,43 @@ fn a_second_request_before_the_confirm_is_refused() {
     request(&mut tester).unwrap();
 }
 
-/// The queue keeps room for an alive check response beside any request.
+/// `N` bounds the whole message: a PDU of [`Tester::MAX_PDU`] is sent, a longer one is
+/// not accepted.
 #[test]
-fn a_pdu_too_large_for_the_queue_is_refused() {
+fn a_pdu_longer_than_max_pdu_is_refused() {
+    const MAX_PDU: usize = Tester::<MockStack, N>::MAX_PDU;
     let _clock = clock();
     let stack = MockStack::new(usize::MAX);
     let mut tester = active(&stack);
-    let largest = [0x2E; N - 12 - 10];
+    assert_eq!(MAX_PDU, N - 12);
 
     assert_eq!(
-        run(tester.request(ENTITY, TaType::Physical, &[0x2E; N - 12 - 10 + 1]))
-            .unwrap_err(),
+        run(tester.request(ENTITY, TaType::Physical, &[0x2E; MAX_PDU + 1])).unwrap_err(),
         Error::MessageTooLarge
     );
-    assert_eq!(stack.latest().take_written(), []);
-    run(tester.request(ENTITY, TaType::Physical, &largest)).unwrap();
+    run(tester.request(ENTITY, TaType::Physical, &[0x2E; MAX_PDU])).unwrap();
+    let mut buf = [0; 16];
+    let mut waiting = pin!(tester.next_event(&mut buf, None));
+    assert!(until_stalled(waiting.as_mut()).is_none());
+    assert_eq!(
+        stack.latest().take_written(),
+        diagnostic(TESTER, ENTITY, &[0x2E; MAX_PDU])
+    );
 }
 
-/// Review focus: a `request` dropped half-written is still accepted. Its remainder is
-/// written once by `next_event`, and its confirm follows.
+/// `request` completes on its first poll, so a request is accepted exactly when it
+/// returned `Ok`: one dropped unpolled queued nothing.
 #[test]
-fn a_dropped_request_is_still_written_once_and_confirmed() {
+fn an_unpolled_request_is_not_accepted() {
     let _clock = clock();
-    let stack = MockStack::new(1);
+    let stack = MockStack::new(usize::MAX);
     let mut tester = active(&stack);
     {
-        let mut requesting = pin!(tester.request(ENTITY, TaType::Physical, &PDU));
-        assert!(poll_times(requesting.as_mut(), 5).is_none());
+        let mut requesting = pin!(tester.request(ENTITY, TaType::Physical, &[0x3E, 0x00]));
+        assert!(poll_times(requesting.as_mut(), 0).is_none());
     }
+
+    request(&mut tester).unwrap();
     let mut buf = [0; 16];
     let mut waiting = pin!(tester.next_event(&mut buf, None));
     assert!(until_stalled(waiting.as_mut()).is_none());
@@ -810,9 +829,6 @@ fn a_dropped_request_is_still_written_once_and_confirmed() {
         stack.latest().take_written(),
         diagnostic(TESTER, ENTITY, &PDU)
     );
-
-    stack.latest().send(&ack(ENTITY, TESTER));
-    assert_eq!(run(waiting), Ok(confirm(DoIpResult::Ok)));
 }
 
 #[test]
@@ -851,16 +867,14 @@ fn the_entity_closing_with_a_request_outstanding_confirms_before_closed() {
     );
 }
 
-/// A request whose last byte never left is confirmed `DoIP_NO_SOCKET`.
+/// A request whose last byte never left is confirmed `DoIP_NO_SOCKET`, after the error
+/// that ended the connection and before the close.
 #[test]
-fn a_write_failing_under_a_dropped_request_confirms_no_socket() {
+fn a_failed_write_confirms_no_socket() {
     let _clock = clock();
-    let stack = MockStack::new(1);
+    let stack = MockStack::new(usize::MAX);
     let mut tester = active(&stack);
-    {
-        let mut requesting = pin!(tester.request(ENTITY, TaType::Physical, &PDU));
-        assert!(poll_times(requesting.as_mut(), 3).is_none());
-    }
+    request(&mut tester).unwrap();
     stack.latest().fail_writes();
     let mut buf = [0; 16];
 
@@ -872,23 +886,6 @@ fn a_write_failing_under_a_dropped_request_confirms_no_socket() {
         next(&mut tester, &mut buf).unwrap(),
         confirm(DoIpResult::NoSocket)
     );
-    assert_eq!(
-        next(&mut tester, &mut buf).unwrap(),
-        ConnectionEvent::Closed
-    );
-}
-
-/// A request whose own write fails is not accepted: it reports the failure, and no
-/// confirm follows.
-#[test]
-fn a_request_whose_write_fails_is_an_error_and_not_confirmed() {
-    let _clock = clock();
-    let stack = MockStack::new(usize::MAX);
-    let mut tester = active(&stack);
-    stack.latest().fail_writes();
-    let mut buf = [0; 16];
-
-    assert_eq!(request(&mut tester).unwrap_err(), Error::Io(MockError));
     assert_eq!(
         next(&mut tester, &mut buf).unwrap(),
         ConnectionEvent::Closed
@@ -923,7 +920,7 @@ fn drop_at_every_poll(
     }
 }
 
-/// Review focus: a diagnostic message half-read when `next_event` is dropped is
+/// A diagnostic message half-read when `next_event` is dropped is
 /// delivered whole by the next call, into whatever buffer that call brings.
 #[test]
 fn cancelled_mid_frame_resumes_into_a_new_buffer() {
@@ -992,7 +989,7 @@ fn cancelled_while_answering_an_alive_check_writes_the_answer_once() {
     );
 }
 
-/// Review focus: an alive check between a request and its acknowledgement is answered
+/// An alive check between a request and its acknowledgement is answered
 /// once, and the acknowledgement still confirms the request.
 #[test]
 fn an_alive_check_between_a_request_and_its_ack_is_answered_once() {
@@ -1000,7 +997,7 @@ fn an_alive_check_between_a_request_and_its_ack_is_answered_once() {
     drop_at_every_poll(
         |stack, tester| {
             run(tester.request(ENTITY, TaType::Physical, &PDU)).unwrap();
-            stack.latest().take_written();
+            sent(stack, tester);
             stack.latest().send(&alive_check_request());
             stack.latest().send(&ack(ENTITY, TESTER));
         },
@@ -1020,7 +1017,7 @@ fn an_alive_check_between_a_request_and_its_ack_is_answered_once() {
     );
 }
 
-/// Review focus: a message longer than the tester's buffer, dropped anywhere in it,
+/// A message longer than the tester's buffer, dropped anywhere in it,
 /// still leaves the next message whole.
 #[test]
 fn a_cancelled_oversized_message_leaves_the_stream_in_sync() {
@@ -1122,7 +1119,7 @@ fn reconnecting_while_connected_gives_up_the_old_connection() {
     assert!(!stack.peer(1).is_shut());
 }
 
-/// Review focus: a request outstanding when the tester reconnects is confirmed as failed
+/// A request outstanding when the tester reconnects is confirmed as failed
 /// before anything from the new connection, and only once.
 #[test]
 fn reconnecting_confirms_the_outstanding_request_first() {
@@ -1130,6 +1127,7 @@ fn reconnecting_confirms_the_outstanding_request_first() {
     let stack = MockStack::new(usize::MAX);
     let mut tester = active(&stack);
     request(&mut tester).unwrap();
+    sent(&stack, &mut tester);
     stack.script_next(&activation_response(0x10));
     run(tester.reconnect()).unwrap();
     stack
@@ -1160,7 +1158,10 @@ fn a_failed_reconnect_leaves_the_tester_not_connected() {
     stack.script_next(&activation_response(0x00));
     let mut buf = [0; 16];
 
-    assert_eq!(run(tester.reconnect()).unwrap_err(), Error::Io(MockError));
+    assert_eq!(
+        run(tester.reconnect()).unwrap_err(),
+        ConnectError::Io(MockError)
+    );
     assert_eq!(
         next(&mut tester, &mut buf).unwrap_err(),
         Error::NotConnected
@@ -1168,7 +1169,7 @@ fn a_failed_reconnect_leaves_the_tester_not_connected() {
 
     assert_eq!(
         run(tester.reconnect()).unwrap_err(),
-        Error::RoutingActivationDenied(
+        ConnectError::RoutingActivationDenied(
             RoutingActivationResponseCode::DeniedUnknownSourceAddress
         )
     );
@@ -1201,4 +1202,560 @@ fn a_dropped_reconnect_leaves_the_tester_closed() {
         next(&mut tester, &mut buf).unwrap_err(),
         Error::NotConnected
     );
+}
+
+// --- correlation and the strict timeout --------------------------------------------------
+
+/// Writes everything `request` queued by polling `next_event` until it waits on the
+/// entity, then forgets what was written.
+fn sent(stack: &MockStack, tester: &mut ActiveTester<'_>) {
+    let mut buf = [0; 16];
+    let mut waiting = pin!(tester.next_event(&mut buf, None));
+    assert!(until_stalled(waiting.as_mut()).is_none());
+    stack.latest().take_written();
+}
+
+/// ISO 13400-2:2019 Table 12: once `A_DoIP_Diagnostic_Message` has passed the request is
+/// lost, however late the caller comes back, and the acknowledgement it was owed is
+/// discarded when it arrives rather than confirming the next request.
+#[test]
+fn a_late_ack_after_timeout_a_does_not_confirm_the_next_request() {
+    let _clock = clock();
+    let stack = MockStack::new(usize::MAX);
+    let mut tester = active(&stack);
+    request(&mut tester).unwrap();
+    sent(&stack, &mut tester);
+    stack.latest().send(&ack(ENTITY, TESTER));
+    advance(Duration::from_millis(2500));
+    let mut buf = [0; 16];
+
+    assert_eq!(
+        next(&mut tester, &mut buf).unwrap(),
+        confirm(DoIpResult::TimeoutA)
+    );
+
+    request(&mut tester).unwrap();
+    let mut waiting = pin!(tester.next_event(&mut buf, None));
+    assert!(until_stalled(waiting.as_mut()).is_none());
+    stack.latest().send(&ack(ENTITY, TESTER));
+    assert_eq!(
+        until_stalled(waiting.as_mut()),
+        Some(Ok(confirm(DoIpResult::Ok)))
+    );
+}
+
+/// ISO 13400-2:2019 Table 12: the timeout is not put off by traffic that keeps the
+/// tester busy; it is reported before anything read after it passed.
+#[test]
+fn timeout_a_is_reported_before_traffic_that_follows_it() {
+    let _clock = clock();
+    let stack = MockStack::new(usize::MAX);
+    let mut tester = active(&stack);
+    request(&mut tester).unwrap();
+    sent(&stack, &mut tester);
+    let mut buf = [0; 16];
+    advance(Duration::from_millis(1000));
+    stack
+        .latest()
+        .send(&diagnostic(ENTITY, TESTER, &[0x7E, 0x00]));
+    assert!(matches!(
+        next(&mut tester, &mut buf).unwrap(),
+        ConnectionEvent::Indication { .. }
+    ));
+
+    advance(Duration::from_millis(1000));
+    stack
+        .latest()
+        .send(&diagnostic(ENTITY, TESTER, &[0x7E, 0x00]));
+
+    assert_eq!(
+        next(&mut tester, &mut buf).unwrap(),
+        confirm(DoIpResult::TimeoutA)
+    );
+    assert!(matches!(
+        next(&mut tester, &mut buf).unwrap(),
+        ConnectionEvent::Indication { .. }
+    ));
+}
+
+/// ISO 13400-2:2019 Table 23: a physical request's acknowledgement comes from the target
+/// it was sent to; one from elsewhere is not its confirm.
+#[test]
+fn a_physical_requests_ack_from_another_source_is_ignored() {
+    let _clock = clock();
+    let stack = MockStack::new(usize::MAX);
+    let mut tester = active(&stack);
+    request(&mut tester).unwrap();
+    stack.latest().send(&ack(LogicalAddress(0x0002), TESTER));
+    let mut buf = [0; 16];
+    let mut waiting = pin!(tester.next_event(&mut buf, None));
+
+    assert!(until_stalled(waiting.as_mut()).is_none());
+    assert!(stack.latest().all_read());
+    advance(Duration::from_secs(2));
+    assert_eq!(
+        until_stalled(waiting.as_mut()),
+        Some(Ok(confirm(DoIpResult::TimeoutA)))
+    );
+}
+
+#[test]
+fn a_nack_for_another_tester_is_ignored() {
+    let _clock = clock();
+    let stack = MockStack::new(usize::MAX);
+    let mut tester = active(&stack);
+    request(&mut tester).unwrap();
+    stack
+        .latest()
+        .send(&nack(ENTITY, LogicalAddress(0x0E01), 0x03));
+    stack.latest().send(&ack(ENTITY, TESTER));
+    let mut buf = [0; 16];
+
+    assert_eq!(
+        next(&mut tester, &mut buf).unwrap(),
+        confirm(DoIpResult::Ok)
+    );
+}
+
+/// A request lost with its connection is owed its confirm; until that is reported, a new
+/// request is not accepted.
+#[test]
+fn a_request_while_a_confirm_is_owed_is_pending() {
+    let _clock = clock();
+    let stack = MockStack::new(usize::MAX);
+    let mut tester = active(&stack);
+    request(&mut tester).unwrap();
+    stack.script_next(&activation_response(0x10));
+    run(tester.reconnect()).unwrap();
+
+    assert_eq!(request(&mut tester).unwrap_err(), Error::RequestPending);
+}
+
+/// The caller's deadline is kept while an acknowledgement is awaited, even though
+/// `A_DoIP_Diagnostic_Message` ends later.
+#[test]
+fn the_callers_deadline_comes_first_while_an_ack_is_awaited() {
+    let _clock = clock();
+    let stack = MockStack::new(usize::MAX);
+    let mut tester = active(&stack);
+    request(&mut tester).unwrap();
+    let mut buf = [0; 16];
+    let mut waiting = pin!(tester.next_event(&mut buf, Some(500)));
+
+    assert!(until_stalled(waiting.as_mut()).is_none());
+    advance(Duration::from_millis(500));
+    assert_eq!(
+        until_stalled(waiting.as_mut()),
+        Some(Ok(ConnectionEvent::Deadline))
+    );
+}
+
+// --- a peer that stops reading ---------------------------------------------------------
+
+/// A request the entity never takes is lost when `A_DoIP_Diagnostic_Message` runs out,
+/// and a connection whose writes cannot finish is given up.
+#[test]
+fn a_request_stuck_unwritten_times_out_and_closes() {
+    let _clock = clock();
+    let stack = MockStack::new(usize::MAX);
+    let mut tester = active(&stack);
+    stack.latest().stall_writes();
+    request(&mut tester).unwrap();
+    let mut buf = [0; 16];
+    {
+        let mut waiting = pin!(tester.next_event(&mut buf, None));
+
+        assert!(until_stalled(waiting.as_mut()).is_none());
+        advance(Duration::from_millis(2000));
+        assert_eq!(
+            until_stalled(waiting.as_mut()),
+            Some(Ok(confirm(DoIpResult::TimeoutA)))
+        );
+    }
+    assert!(stack.latest().is_aborted());
+    assert_eq!(
+        next(&mut tester, &mut buf).unwrap(),
+        ConnectionEvent::Closed
+    );
+}
+
+#[test]
+fn the_callers_deadline_ends_a_stalled_write() {
+    let _clock = clock();
+    let stack = MockStack::new(usize::MAX);
+    let mut tester = active(&stack);
+    stack.latest().stall_writes();
+    request(&mut tester).unwrap();
+    let mut buf = [0; 16];
+    let mut waiting = pin!(tester.next_event(&mut buf, Some(100)));
+
+    assert!(until_stalled(waiting.as_mut()).is_none());
+    advance(Duration::from_millis(100));
+    assert_eq!(
+        until_stalled(waiting.as_mut()),
+        Some(Ok(ConnectionEvent::Deadline))
+    );
+}
+
+/// A write that completes having written nothing is a closed connection.
+#[test]
+fn a_write_of_nothing_closes_and_confirms_no_socket() {
+    let _clock = clock();
+    let stack = MockStack::new(usize::MAX);
+    let mut tester = active(&stack);
+    stack.latest().write_nothing();
+    let _ = request(&mut tester);
+    let mut buf = [0; 16];
+
+    assert_eq!(
+        next(&mut tester, &mut buf).unwrap(),
+        confirm(DoIpResult::NoSocket)
+    );
+    assert_eq!(
+        next(&mut tester, &mut buf).unwrap(),
+        ConnectionEvent::Closed
+    );
+}
+
+// --- messages in error -----------------------------------------------------------------
+
+/// ISO 13400-2:2019 Table 16: a tester understands ISO 13400-2:2012's messages and this
+/// edition's.
+#[test]
+fn a_message_of_the_2012_edition_is_indicated() {
+    let _clock = clock();
+    let stack = MockStack::new(usize::MAX);
+    let mut tester = active(&stack);
+    stack
+        .latest()
+        .send(&versioned(diagnostic(ENTITY, TESTER, &[0x7E, 0x00]), 0x02));
+    let mut buf = [0; 16];
+
+    assert!(matches!(
+        next(&mut tester, &mut buf).unwrap(),
+        ConnectionEvent::Indication { .. }
+    ));
+}
+
+/// ISO 13400-2:2019 Table 16 and Figure 16: any other protocol version is an incorrect
+/// pattern, after which the stream cannot be trusted, so the tester closes.
+#[test]
+fn a_message_of_any_other_version_closes_the_connection() {
+    let _clock = clock();
+    for version in [0x00, 0x01, 0x04, 0xFE, 0xFF] {
+        let stack = MockStack::new(usize::MAX);
+        let mut tester = active(&stack);
+        stack.latest().send(&versioned(
+            diagnostic(ENTITY, TESTER, &[0x7E, 0x00]),
+            version,
+        ));
+        let mut buf = [0; 16];
+
+        assert_eq!(
+            next(&mut tester, &mut buf).unwrap(),
+            ConnectionEvent::Closed,
+            "{version:#04X}"
+        );
+        assert!(stack.latest().is_aborted(), "{version:#04X}");
+    }
+}
+
+/// ISO 13400-2:2019 Table 21: the user data is mandatory, so a diagnostic message of its
+/// addresses alone is in error, and 8.3.3 raises no indication for it.
+#[test]
+fn a_diagnostic_message_without_user_data_is_ignored() {
+    let _clock = clock();
+    let stack = MockStack::new(usize::MAX);
+    let mut tester = active(&stack);
+    stack.latest().send(&raw(0x8001, &[0x00, 0x01, 0x0E, 0x00]));
+    stack
+        .latest()
+        .send(&diagnostic(ENTITY, TESTER, &[0x7E, 0x00]));
+    let mut buf = [0; 16];
+
+    assert!(matches!(
+        next(&mut tester, &mut buf).unwrap(),
+        ConnectionEvent::Indication {
+            pdu: [0x7E, 0x00],
+            ..
+        }
+    ));
+}
+
+/// ISO 13400-2:2019 9.3 (`0x04`): the payload length must match its type, so a message
+/// whose length is wrong for its type is ignored, not acted on.
+#[test]
+fn messages_of_the_wrong_length_for_their_type_are_ignored() {
+    let _clock = clock();
+    let stack = MockStack::new(usize::MAX);
+    let mut tester = active(&stack);
+    request(&mut tester).unwrap();
+    stack.latest().send(&raw(0x0000, &[0x02, 0x00, 0x00]));
+    stack.latest().send(&raw(0x0007, &[0x00, 0x00]));
+    stack.latest().send(&raw(0x8002, &[0x00, 0x01, 0x0E, 0x00]));
+    stack.latest().send(&ack(ENTITY, TESTER));
+    let mut buf = [0; 16];
+
+    assert_eq!(
+        next(&mut tester, &mut buf).unwrap(),
+        confirm(DoIpResult::Ok)
+    );
+    assert_eq!(
+        stack.latest().take_written(),
+        diagnostic(TESTER, ENTITY, &PDU)
+    );
+}
+
+/// ISO 13400-2:2019 Table 24: `0x00` is the only positive acknowledgement code; a
+/// reserved one confirms nothing.
+#[test]
+fn a_positive_ack_with_a_reserved_code_is_ignored() {
+    let _clock = clock();
+    let stack = MockStack::new(usize::MAX);
+    let mut tester = active(&stack);
+    request(&mut tester).unwrap();
+    stack
+        .latest()
+        .send(&raw(0x8002, &[0x00, 0x01, 0x0E, 0x00, 0x7F]));
+    let mut buf = [0; 16];
+    let mut waiting = pin!(tester.next_event(&mut buf, None));
+
+    assert!(until_stalled(waiting.as_mut()).is_none());
+    advance(Duration::from_secs(2));
+    assert_eq!(
+        until_stalled(waiting.as_mut()),
+        Some(Ok(confirm(DoIpResult::TimeoutA)))
+    );
+}
+
+/// ISO 13400-2:2019 Table 21: the target is the receiver, so a message for another tester
+/// is not this one's to indicate.
+#[test]
+fn a_diagnostic_message_for_another_tester_is_ignored() {
+    let _clock = clock();
+    let stack = MockStack::new(usize::MAX);
+    let mut tester = active(&stack);
+    stack
+        .latest()
+        .send(&diagnostic(ENTITY, LogicalAddress(0x0E01), &[0x7E, 0x01]));
+    stack
+        .latest()
+        .send(&diagnostic(ENTITY, TESTER, &[0x7E, 0x00]));
+    let mut buf = [0; 16];
+
+    assert!(matches!(
+        next(&mut tester, &mut buf).unwrap(),
+        ConnectionEvent::Indication {
+            pdu: [0x7E, 0x00],
+            ..
+        }
+    ));
+}
+
+// --- failures after which the entity closes -------------------------------------------
+
+/// ISO 13400-2:2019 REQ 7.DoIP-070: an entity rejecting a source address closes the
+/// socket, so the tester confirms the request and gives the connection up itself.
+#[test]
+fn an_invalid_source_address_nack_confirms_then_closes() {
+    let _clock = clock();
+    let stack = MockStack::new(usize::MAX);
+    let mut tester = active(&stack);
+    request(&mut tester).unwrap();
+    stack.latest().send(&nack(ENTITY, TESTER, 0x02));
+    let mut buf = [0; 16];
+
+    assert_eq!(
+        next(&mut tester, &mut buf).unwrap(),
+        confirm(DoIpResult::InvalidSa)
+    );
+    assert!(stack.latest().is_aborted());
+    assert_eq!(
+        next(&mut tester, &mut buf).unwrap(),
+        ConnectionEvent::Closed
+    );
+}
+
+/// ISO 13400-2:2019 Table 19: after an incorrect pattern (`0x00`) or an invalid payload
+/// length (`0x04`) the entity closes the socket; after the other codes it does not.
+#[test]
+fn a_header_nack_on_which_the_entity_closes_closes_the_tester() {
+    let _clock = clock();
+    for (code, closes) in [
+        (0x00, true),
+        (0x01, false),
+        (0x02, false),
+        (0x03, false),
+        (0x04, true),
+    ] {
+        let stack = MockStack::new(usize::MAX);
+        let mut tester = active(&stack);
+        request(&mut tester).unwrap();
+        stack.latest().send(&header_nack(code));
+        let mut buf = [0; 16];
+        next(&mut tester, &mut buf).unwrap();
+
+        assert_eq!(stack.latest().is_aborted(), closes, "{code:#04X}");
+        let after = run(tester.next_event(&mut buf, Some(0))).unwrap();
+        let expected = if closes {
+            ConnectionEvent::Closed
+        } else {
+            ConnectionEvent::Deadline
+        };
+        assert_eq!(after, expected, "{code:#04X}");
+    }
+}
+
+// --- aborting, not only dropping ------------------------------------------------------
+
+/// A connection the tester ends on its own initiative is aborted, not left to an orderly
+/// close a dead or confused peer may never complete.
+#[test]
+fn the_tester_aborts_what_it_gives_up() {
+    let _clock = clock();
+    let stack = MockStack::new(usize::MAX);
+    stack.script_next(&activation_response(0x00));
+    connect(&stack).unwrap_err();
+    assert!(stack.latest().is_aborted());
+
+    let stack = MockStack::new(usize::MAX);
+    let mut tester = active(&stack);
+    stack
+        .latest()
+        .send(&[0x03, 0xFD, 0x80, 0x01, 0, 0, 0, 4, 0, 1, 0x0E, 0]);
+    let mut buf = [0; 16];
+    assert_eq!(
+        next(&mut tester, &mut buf).unwrap(),
+        ConnectionEvent::Closed
+    );
+    assert!(stack.latest().is_aborted());
+}
+
+/// A reconnect dropped at any await after it started leaves the tester reporting the old
+/// connection closed once, then not connected; one that completed leaves it connected.
+#[test]
+fn a_reconnect_dropped_at_any_await_leaves_a_consistent_tester() {
+    let _clock = clock();
+    for polls in 0.. {
+        let stack = MockStack::new(1);
+        let mut tester = active(&stack);
+        stack.script_next(&activation_response(0x10));
+        let completed = {
+            let mut reconnecting = pin!(tester.reconnect());
+            poll_times(reconnecting.as_mut(), polls).is_some()
+        };
+        let mut buf = [0; 16];
+        let first = run(tester.next_event(&mut buf, Some(0)));
+        if polls == 0 {
+            assert_eq!(first.unwrap(), ConnectionEvent::Deadline, "never polled");
+            continue;
+        }
+        if completed {
+            assert_eq!(first.unwrap(), ConnectionEvent::Deadline);
+            assert!(polls > 1, "reconnect must have await points to drop at");
+            return;
+        }
+        assert_eq!(
+            first.unwrap(),
+            ConnectionEvent::Closed,
+            "dropped after {polls} polls"
+        );
+        assert_eq!(
+            run(tester.next_event(&mut buf, Some(0))).unwrap_err(),
+            Error::NotConnected,
+            "dropped after {polls} polls"
+        );
+        assert!(stack.peer(0).is_shut(), "dropped after {polls} polls");
+    }
+}
+
+// --- routing activation responses in error ---------------------------------------------
+
+/// ISO 13400-2:2019 Table 48: a response may carry the OEM-specific field.
+#[test]
+fn an_activation_response_with_its_oem_field_activates() {
+    let _clock = clock();
+    let stack = MockStack::new(usize::MAX);
+    let mut response = raw(0x0006, &[0x0E, 0x00, 0x00, 0x01, 0x10, 0, 0, 0, 0]);
+    response.extend([0xAA; 4]);
+    response[7] = 13;
+    stack.script_next(&response);
+
+    assert!(connect(&stack).is_ok());
+}
+
+/// ISO 13400-2:2019 Table 48 and Table 16: a response of the wrong length, or in a
+/// protocol version the tester does not speak, is not an answer; the tester gives up.
+#[test]
+fn an_activation_response_in_error_fails_at_once() {
+    let _clock = clock();
+    for response in [
+        raw(0x0006, &[0x0E, 0x00, 0x00, 0x01, 0x10]),
+        raw(
+            0x0006,
+            &[0x0E, 0x00, 0x00, 0x01, 0x10, 0, 0, 0, 0, 0xAA, 0xAA],
+        ),
+        versioned(activation_response(0x10), 0xFF),
+        versioned(activation_response(0x10), 0x04),
+    ] {
+        let stack = MockStack::new(usize::MAX);
+        stack.script_next(&response);
+
+        assert_eq!(
+            connect(&stack).unwrap_err(),
+            ConnectError::InvalidMessage,
+            "{response:02X?}"
+        );
+        assert!(stack.latest().is_aborted(), "{response:02X?}");
+    }
+}
+
+/// A message of a payload type this crate does not model, longer than the tester's
+/// buffer, is reported as far as the buffer holds, and the stream stays in sync.
+#[test]
+fn an_unmodelled_message_longer_than_n_is_truncated_to_it() {
+    let _clock = clock();
+    let stack = MockStack::new(usize::MAX);
+    let mut tester = active(&stack);
+    let long: Vec<u8> = (0..100).collect();
+    stack.latest().send(&raw(0x8004, &long));
+    stack
+        .latest()
+        .send(&diagnostic(ENTITY, TESTER, &[0x7E, 0x00]));
+    let mut buf = [0; 128];
+
+    assert_eq!(
+        next(&mut tester, &mut buf).unwrap(),
+        ConnectionEvent::Unmodelled {
+            payload_type: 0x8004,
+            data: &long[..N - 8],
+        }
+    );
+    assert!(matches!(
+        next(&mut tester, &mut buf).unwrap(),
+        ConnectionEvent::Indication { .. }
+    ));
+}
+
+/// An entity that leaves a second request unacknowledged while it still owes the first
+/// one's acknowledgement is acknowledging nothing, so the tester gives the connection up
+/// rather than wait on acknowledgements that may never come.
+#[test]
+fn a_second_timeout_while_a_late_ack_is_owed_closes() {
+    let _clock = clock();
+    let stack = MockStack::new(usize::MAX);
+    let mut tester = active(&stack);
+    let mut buf = [0; 16];
+    for expected in [None, Some(ConnectionEvent::Closed)] {
+        request(&mut tester).unwrap();
+        sent(&stack, &mut tester);
+        advance(Duration::from_secs(2));
+        assert_eq!(
+            next(&mut tester, &mut buf).unwrap(),
+            confirm(DoIpResult::TimeoutA)
+        );
+        let after = run(tester.next_event(&mut buf, Some(0))).unwrap();
+        assert_eq!(after, expected.unwrap_or(ConnectionEvent::Deadline));
+    }
+    assert!(stack.latest().is_aborted());
 }

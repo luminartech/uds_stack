@@ -46,9 +46,14 @@ pub(super) fn millis(instant: Instant) -> u32 {
 pub(super) fn caller_deadline(deadline_ms: u32, now: Instant) -> Instant {
     let ahead = deadline_ms.wrapping_sub(millis(now)).cast_signed();
     match u64::try_from(ahead) {
-        Ok(ahead) => now + Duration::from_millis(ahead),
+        Ok(ahead) => after(now, Duration::from_millis(ahead)),
         Err(_) => now,
     }
+}
+
+/// `duration` after `start`, or the end of time if that is past it.
+pub(super) fn after(start: Instant, duration: Duration) -> Instant {
+    start.checked_add(duration).unwrap_or(Instant::MAX)
 }
 
 #[cfg(test)]

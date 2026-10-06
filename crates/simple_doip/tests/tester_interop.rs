@@ -16,14 +16,16 @@ use simple_doip::messages::{
 };
 use simple_doip::server::{ResponseWriter, Server, ServerConnectionHandler};
 use simple_doip::service::{ConnectionEvent, DiagnosticConnection, DoIpResult};
-use simple_doip::tester::{Error, Tester};
+use simple_doip::tester::{
+    ConnectError, DIAGNOSTIC_MESSAGE_OVERHEAD, Tester, TesterAddress,
+};
 use simple_doip::{LogicalAddress, TaType};
 use tokio::net::TcpListener;
 use tokio::time::{Duration, timeout};
 
 const TESTER: LogicalAddress = LogicalAddress(0x0E00);
 const ENTITY: LogicalAddress = LogicalAddress(0x0001);
-const N: usize = 4108;
+const N: usize = 4096 + DIAGNOSTIC_MESSAGE_OVERHEAD;
 
 /// A real-time bound on each exchange. The tester's own timers run on `embassy-time`'s
 /// mock clock here, which never advances, so a lost message would otherwise hang.
@@ -35,7 +37,6 @@ struct Echo {
     code: RoutingActivationResponseCode,
 }
 
-// `ResponseWriter` is the old server's trait object, which this test does not choose.
 #[async_trait]
 impl ServerConnectionHandler for Echo {
     fn get_vin(&self) -> [u8; 17] {
@@ -108,10 +109,13 @@ async fn serve(code: RoutingActivationResponseCode) -> SocketAddr {
 async fn tester_and_tokio_server_exchange_a_request_over_loopback() {
     let remote = serve(RoutingActivationResponseCode::RoutingSuccessfullyActivated).await;
     let stack = Stack::new();
-    let mut tester = timeout(PATIENCE, Tester::<_, N>::connect(&stack, remote, TESTER))
-        .await
-        .unwrap()
-        .unwrap();
+    let mut tester = timeout(
+        PATIENCE,
+        Tester::<_, N>::connect(&stack, remote, TesterAddress::new(TESTER).unwrap()),
+    )
+    .await
+    .unwrap()
+    .unwrap();
     let mut buf = [0; 64];
 
     timeout(
@@ -155,15 +159,18 @@ async fn the_tokio_server_can_deny_activation() {
     let remote = serve(RoutingActivationResponseCode::DeniedUnknownSourceAddress).await;
     let stack = Stack::new();
 
-    let error = timeout(PATIENCE, Tester::<_, N>::connect(&stack, remote, TESTER))
-        .await
-        .unwrap()
-        .unwrap_err();
+    let error = timeout(
+        PATIENCE,
+        Tester::<_, N>::connect(&stack, remote, TesterAddress::new(TESTER).unwrap()),
+    )
+    .await
+    .unwrap()
+    .unwrap_err();
 
     assert!(
         matches!(
             error,
-            Error::RoutingActivationDenied(
+            ConnectError::RoutingActivationDenied(
                 RoutingActivationResponseCode::DeniedUnknownSourceAddress
             )
         ),
