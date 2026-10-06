@@ -5,7 +5,7 @@ use core::num::NonZeroU16;
 use uds_session::{
     Address, Ai, Cause, ChannelAddressing, ChannelId, ChannelParameter, ChannelParams,
     ChannelReload, Client, ClientOutput, ClientReaction, ClientRx, ClientTx, Content,
-    ExpectedResponses, FunctionalChannelId, FunctionalKeepAlive, FunctionalSlot,
+    ExpectedResponses, Finished, FunctionalChannelId, FunctionalKeepAlive, FunctionalSlot,
     KeepAliveMode, Mtype, PhysicalChannelId, PhysicalKeepAlive, PhysicalSlot, Rejection,
     Reloads, SResult, SessionSelection, Solicitation, TaType, Timestamp, TransportError,
 };
@@ -109,7 +109,7 @@ const FAILED: SResult = SResult::Transport(TransportError(1));
 
 const NOTHING: [Option<ClientOutput<'static>>; 6] = [None; 6];
 
-/// Drain a reaction into a fixed array (no alloc), then finish it.
+/// Drain a reaction into a fixed array (no alloc), then finish it with nothing left.
 fn outputs<'d, K: KeepAliveMode, const P: usize, const F: usize, const R: usize, T>(
     mut r: ClientReaction<'_, 'd, K, P, F, R, T>,
 ) -> ([Option<ClientOutput<'d>>; 6], Result<T, Rejection>) {
@@ -117,7 +117,9 @@ fn outputs<'d, K: KeepAliveMode, const P: usize, const F: usize, const R: usize,
     for (slot, o) in out.iter_mut().zip(r.outputs()) {
         *slot = Some(o);
     }
-    (out, r.finish())
+    let Finished { outcome, rest } = r.finish();
+    assert_eq!(rest.count(), 0, "more outputs than the array holds");
+    (out, outcome)
 }
 
 /// The drained outputs, exactly `first` and nothing after it.
@@ -695,6 +697,47 @@ mod expiry {
             outputs(c.tick(Timestamp(6))).0,
             only(timeout(phys(ECU), ChannelReload::Default))
         );
+    }
+
+    /// ``UDSS_LLR_0011`` — an expiry's indication is produced for the caller to
+    /// retrieve, so one not retrieved is still there at the next input.
+    #[test]
+    fn an_expiry_not_retrieved_is_indicated_at_the_next_input() {
+        let mut c = tester();
+        open_phys(&mut c, Timestamp(0), ECU);
+        exchange(&mut c, Timestamp(0), phys(ECU), UNKNOWN);
+        let _ = c.tick(Timestamp(51)).finish();
+        assert_eq!(
+            outputs(c.tick(Timestamp(52))).0,
+            only(timeout(phys(ECU), ChannelReload::Default))
+        );
+    }
+
+    /// ``UDSS_LLR_0011``, ``UDSS_LLR_0081`` — finishing a reaction hands back what was
+    /// not drained, the expiry's indication ahead of the input's own output.
+    #[test]
+    fn finishing_hands_back_what_was_not_drained() {
+        let mut c = tester();
+        open_phys(&mut c, Timestamp(0), ECU);
+        let other = open_phys(&mut c, Timestamp(0), ECU_2);
+        exchange(&mut c, Timestamp(0), phys(ECU), UNKNOWN);
+        let Finished { outcome, mut rest } = c
+            .s_data_req(Timestamp(51), phys(ECU_2), &DATA, UNKNOWN)
+            .finish();
+        assert_eq!(
+            rest.next(),
+            Some(timeout(phys(ECU), ChannelReload::Default))
+        );
+        assert_eq!(
+            rest.next(),
+            Some(ClientOutput::Transmit {
+                channel: other.into(),
+                ai: phys(ECU_2),
+                data: &DATA,
+            })
+        );
+        assert_eq!(rest.next(), None);
+        assert_eq!(outcome, Ok(()));
     }
 }
 
@@ -1997,6 +2040,18 @@ mod functional_keep_alive {
         exchange(&mut c, Timestamp(2_100), func(), KEEP_ALIVE);
         assert_eq!(tick(&mut c, 2_599), NOTHING);
         assert_eq!(tick(&mut c, 2_600), only(DUE));
+    }
+
+    /// ``UDSS_LLR_0011`` — a keep-alive that fell due at an input whose reaction was
+    /// finished undrained is still indicated at the next input, so it is not lost while
+    /// its timer stands stopped.
+    #[test]
+    fn a_keep_alive_due_not_retrieved_is_indicated_at_the_next_input() {
+        let (mut c, _, _) = engaged(Timestamp(0));
+        let _ = c
+            .open_physical_channel(Timestamp(2_000), to(ECU_2), PHYS_PARAMS)
+            .finish();
+        assert_eq!(tick(&mut c, 2_001), only(DUE));
     }
 }
 

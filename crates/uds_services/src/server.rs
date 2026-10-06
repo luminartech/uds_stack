@@ -424,7 +424,11 @@ async fn drain<'d, T: UdsTransport, const PEERS: usize>(
             _ => {}
         }
     }
-    found.rejected = reaction.finish().err();
+    let uds_session::Finished {
+        outcome,
+        rest: _drained,
+    } = reaction.finish();
+    found.rejected = outcome.err();
     Ok(found)
 }
 

@@ -95,7 +95,7 @@ struct Responder {
 pub struct PhysicalSlot<K: KeepAliveMode> {
     channel: Option<Physical<K>>,
     timed_out: Option<TimedOut>,
-    /// ``UDSS_LLR_0162`` — the channel's keep-alive fell due at this input's timestamp.
+    /// ``UDSS_LLR_0162`` — the channel's keep-alive fell due, not yet retrieved.
     keep_alive_due: Option<PhysicalChannelId>,
 }
 
@@ -226,7 +226,8 @@ struct Sent {
 }
 
 /// An expired `tP_Client`, kept in the slot rather than the channel so that a withdrawal
-/// at the same timestamp still indicates it (``UDSS_LLR_0081``).
+/// at the same timestamp still indicates it (``UDSS_LLR_0081``), and kept until it is
+/// retrieved (``UDSS_LLR_0011``).
 #[derive(Debug, Clone, Copy)]
 struct TimedOut {
     ai: Ai,
@@ -653,7 +654,7 @@ pub struct Client<
     physical: [PhysicalSlot<K>; PHYS],
     functional: [FunctionalSlot<R>; FUNC],
     keep_alive: K,
-    /// ``UDSS_LLR_0156`` — the client-wide keep-alive fell due at this input's timestamp.
+    /// ``UDSS_LLR_0156`` — the client-wide keep-alive fell due, not yet retrieved.
     keep_alive_due: bool,
     /// ``UDSS_LLR_0121``, ``UDSS_LLR_0185`` — the next handle to issue; `checked_add` on
     /// it failing is the second limb's rejection.
@@ -724,12 +725,11 @@ impl<K: KeepAliveMode, const PHYS: usize, const FUNC: usize, const R: usize>
         }
     }
 
-    /// ``UDSS_LLR_0081`` — act on every expiry the timestamp causes before the input,
-    /// sweeping the previous input's unreported snapshots.
+    /// ``UDSS_LLR_0081`` — act on every expiry the timestamp causes before the input.
+    /// A snapshot stays until it is retrieved (``UDSS_LLR_0011``); a later expiry of the
+    /// same timer replaces one never retrieved.
     fn expire(&mut self, now: Timestamp) {
         for slot in &mut self.physical {
-            slot.timed_out = None;
-            slot.keep_alive_due = None;
             let Some(p) = slot.channel.as_mut() else {
                 continue;
             };
@@ -737,9 +737,11 @@ impl<K: KeepAliveMode, const PHYS: usize, const FUNC: usize, const R: usize>
                 slot.keep_alive_due = Some(PhysicalChannelId(p.core.id)); // UDSS_LLR_0162
             }
             let class = p.core.request.map(|r| r.class);
-            slot.timed_out = p.core.expire(now);
-            if slot.timed_out.is_some() && matches!(class, Some(ClientTx::KeepAlive { .. }))
-            {
+            let Some(timed_out) = p.core.expire(now) else {
+                continue;
+            };
+            slot.timed_out = Some(timed_out);
+            if matches!(class, Some(ClientTx::KeepAlive { .. })) {
                 // UDSS_LLR_0161, fifth bullet; UDSS_LLR_0079 leaves the restart to the
                 // next timestamp
                 let site = Site::Physical(&mut p.keep_alive);
@@ -747,12 +749,12 @@ impl<K: KeepAliveMode, const PHYS: usize, const FUNC: usize, const R: usize>
             }
         }
         for slot in &mut self.functional {
-            slot.timed_out = slot.channel.as_mut().and_then(|c| c.expire(now));
-            if slot.timed_out.is_some() {
+            if let Some(timed_out) = slot.channel.as_mut().and_then(|c| c.expire(now)) {
+                slot.timed_out = Some(timed_out);
                 slot.end_request(); // UDSS_LLR_0141
             }
         }
-        self.keep_alive_due = self.keep_alive.expire(now);
+        self.keep_alive_due |= self.keep_alive.expire(now);
     }
 
     /// Tell the keep-alive mode of `event` on `channel`.
@@ -1458,7 +1460,8 @@ mod tests {
         };
         let r = c
             .open_physical_channel(Timestamp(0), addressing, params)
-            .finish();
+            .finish()
+            .outcome;
         assert!(r.is_err_and(|e| e.contains(Cause::ChannelHandlesSpent)
             && !e.contains(Cause::NoChannelSlotFree)));
     }

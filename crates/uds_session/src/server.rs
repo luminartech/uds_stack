@@ -211,11 +211,10 @@ impl<const A: usize> Server<A> {
     }
 
     /// ``UDSS_LLR_0081`` — act on every expiry the timestamp causes before the input.
-    /// Sweeps the previous input's unreported snapshots first. `tP2_Server` is read the
-    /// service's lead ahead of its expiry (``UDSS_LLR_0117``, ``UDSS_LLR_0186``).
+    /// A snapshot stays until it is retrieved (``UDSS_LLR_0011``); a later expiry of the
+    /// same timer replaces one never retrieved. `tP2_Server` is read the service's lead
+    /// ahead of its expiry (``UDSS_LLR_0117``, ``UDSS_LLR_0186``).
     fn expire(&mut self, now: Timestamp) {
-        self.s3_expiry = None;
-        self.p2_expiry = None;
         if let Session::NonDefault { client, s3 } = self.session
             && s3.expired(now)
         {
