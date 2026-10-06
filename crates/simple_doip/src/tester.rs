@@ -11,18 +11,15 @@ use edge_nal::{Readable, TcpConnect, TcpShutdown};
 use embassy_time::{Duration, Instant, with_deadline};
 use embedded_io_async::{Read, Write};
 
-use crate::LogicalAddress;
 use crate::RawFrame;
 use crate::messages::{
-    ActivationTypeCode, Header, Message, NackCode, Payload, ProtocolVersion,
-    RoutingActivationResponseCode,
+    ActivationTypeCode, DiagnosticMessage, Header, Message, NackCode, Payload, PayloadType,
+    ProtocolVersion, RoutingActivationResponseCode,
 };
-use crate::service::NotATesterAddress;
+use crate::service::{ConnectionEvent, DiagnosticConnection, NotATesterAddress};
+use crate::wire::Decode;
+use crate::{LogicalAddress, TaType};
 
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "used by the tester in the next commit")
-)]
 mod confirm;
 mod rx;
 mod tx;
@@ -107,6 +104,9 @@ pub struct Tester<'s, C: TcpConnect + 's, const N: usize> {
     socket: Option<C::Socket<'s>>,
     rx: RxBuffer<N>,
     tx: TxQueue<N>,
+    /// Whether [`ConnectionEvent::Closed`] has been reported for the connection that
+    /// was lost.
+    closed_reported: bool,
 }
 
 impl<C: TcpConnect, const N: usize> fmt::Debug for Tester<'_, C, N> {
@@ -176,6 +176,7 @@ impl<'s, C: TcpConnect, const N: usize> Tester<'s, C, N> {
             socket: None,
             rx: RxBuffer::new(),
             tx: TxQueue::new(),
+            closed_reported: true,
         };
         tester.establish().await?;
         Ok(tester)
@@ -190,6 +191,7 @@ impl<'s, C: TcpConnect, const N: usize> Tester<'s, C, N> {
         match self.activate(&mut socket).await {
             Ok(()) => {
                 self.socket = Some(socket);
+                self.closed_reported = false;
                 Ok(())
             }
             Err(error) => {
@@ -242,6 +244,212 @@ impl<'s, C: TcpConnect, const N: usize> Tester<'s, C, N> {
                 }
             }
         }
+    }
+}
+
+impl<C: TcpConnect, const N: usize> Tester<'_, C, N> {
+    /// Gives up the connection, aborting it first where the tester is the one ending it.
+    async fn lose_connection(&mut self, abort: bool) {
+        if let Some(mut socket) = self.socket.take()
+            && abort
+        {
+            socket.abort().await.ok();
+        }
+        self.rx.clear();
+        self.tx.clear();
+    }
+}
+
+/// `DoIP_Data` over the tester's connection.
+///
+/// [`ConnectionEvent::Closed`] is reported once when the connection ends: the entity
+/// closed it, the tester closed it on a header it could not delimit, or an
+/// [`Error::Io`] ended it. Every call after that is [`Error::NotConnected`] until the
+/// tester reconnects.
+impl<C: TcpConnect, const N: usize> DiagnosticConnection for Tester<'_, C, N> {
+    type Error = Error<C::Error>;
+
+    #[expect(
+        clippy::unused_async_trait_impl,
+        reason = "requests land in the next commit"
+    )]
+    async fn request(
+        &mut self,
+        _ta: LogicalAddress,
+        _ta_type: TaType,
+        _pdu: &[u8],
+    ) -> Result<(), Self::Error> {
+        Err(Error::NotConnected)
+    }
+
+    /// `embassy-time`'s clock, the one the tester's own timers run on.
+    fn now(&self) -> u32 {
+        confirm::millis(Instant::now())
+    }
+
+    /// The next event from the entity.
+    ///
+    /// Answers alive check requests itself and reports nothing for them. Reports
+    /// [`ConnectionEvent::Unmodelled`] for a payload type ISO 13400-2:2019 Table 17
+    /// reserves, its data truncated to `buf`, and ignores every other message a tester
+    /// is not sent.
+    ///
+    /// # Cancel safety
+    ///
+    /// Cancel-safe, provided the socket's reads and writes are; see the crate's
+    /// `connection` feature documentation.
+    async fn next_event<'b>(
+        &mut self,
+        buf: &'b mut [u8],
+        deadline_ms: Option<u32>,
+    ) -> Result<ConnectionEvent<'b>, Self::Error> {
+        let until = deadline_ms
+            .map(|deadline_ms| confirm::caller_deadline(deadline_ms, Instant::now()));
+        loop {
+            let Some(socket) = self.socket.as_mut() else {
+                if self.closed_reported {
+                    return Err(Error::NotConnected);
+                }
+                self.closed_reported = true;
+                return Ok(ConnectionEvent::Closed);
+            };
+            match flush(socket, &mut self.tx, until).await {
+                Ok(Flush::Done) => {}
+                Ok(Flush::TimedOut) => return Ok(ConnectionEvent::Deadline),
+                Ok(Flush::Closed) => {
+                    self.lose_connection(false).await;
+                    continue;
+                }
+                Err(error) => {
+                    self.lose_connection(false).await;
+                    return Err(Error::Io(error));
+                }
+            }
+            let delivered = match self.rx.next() {
+                Err(_) => {
+                    self.lose_connection(true).await;
+                    continue;
+                }
+                Ok(Next::NeedMore) => {
+                    match fill(socket, &mut self.rx, until).await {
+                        Ok(Fill::Data) => {}
+                        Ok(Fill::TimedOut) => return Ok(ConnectionEvent::Deadline),
+                        Ok(Fill::Eof) => self.lose_connection(false).await,
+                        Err(error) => {
+                            self.lose_connection(false).await;
+                            return Err(Error::Io(error));
+                        }
+                    }
+                    continue;
+                }
+                Ok(Next::Oversized { header, head }) => {
+                    let delivered = on_frame(&header, head, self.sa, &mut self.tx, buf);
+                    self.rx.skip_oversized(&header);
+                    delivered
+                }
+                Ok(Next::Frame(frame, consumed)) => {
+                    let delivered =
+                        on_frame(&frame.header, frame.payload, self.sa, &mut self.tx, buf);
+                    self.rx.consume(consumed);
+                    delivered
+                }
+            };
+            if let Some(delivered) = delivered {
+                return Ok(delivered.into_event(buf));
+            }
+        }
+    }
+}
+
+/// An event whose data [`on_frame`] has copied into the caller's buffer.
+enum Delivered {
+    Indication {
+        sa: LogicalAddress,
+        ta: LogicalAddress,
+        copied: usize,
+        length: usize,
+    },
+    Unmodelled {
+        payload_type: u16,
+        copied: usize,
+    },
+}
+
+impl Delivered {
+    fn into_event(self, buf: &mut [u8]) -> ConnectionEvent<'_> {
+        match self {
+            Self::Indication {
+                sa,
+                ta,
+                copied,
+                length,
+            } => {
+                let pdu = &buf[..copied];
+                let ta_type = ta.default_ta_type();
+                if copied == length {
+                    ConnectionEvent::Indication {
+                        sa,
+                        ta,
+                        ta_type,
+                        pdu,
+                    }
+                } else {
+                    ConnectionEvent::IndicationTruncated {
+                        sa,
+                        ta,
+                        ta_type,
+                        pdu,
+                        length,
+                    }
+                }
+            }
+            Self::Unmodelled {
+                payload_type,
+                copied,
+            } => ConnectionEvent::Unmodelled {
+                payload_type,
+                data: &buf[..copied],
+            },
+        }
+    }
+}
+
+/// Acts on one message from the entity, whose `payload` may be only the start of what
+/// `header` describes, copying anything to report into `buf`.
+fn on_frame<const N: usize>(
+    header: &Header,
+    payload: &[u8],
+    sa: LogicalAddress,
+    tx: &mut TxQueue<N>,
+    buf: &mut [u8],
+) -> Option<Delivered> {
+    let copy = |data: &[u8], buf: &mut [u8]| {
+        let copied = data.len().min(buf.len());
+        buf[..copied].copy_from_slice(&data[..copied]);
+        copied
+    };
+    match header.payload_type {
+        PayloadType::DiagnosticMessage => {
+            let (message, _) = DiagnosticMessage::decode(payload).ok()?;
+            Some(Delivered::Indication {
+                sa: message.source_address,
+                ta: message.target_address,
+                copied: copy(message.user_data, buf),
+                length: (header.payload_length as usize).checked_sub(4)?,
+            })
+        }
+        PayloadType::AliveCheckRequest => {
+            answer_alive_check(sa, tx);
+            None
+        }
+        PayloadType::Reserved(payload_type)
+        | PayloadType::ReservedVehicleManufacturer(payload_type) => {
+            Some(Delivered::Unmodelled {
+                payload_type,
+                copied: copy(payload, buf),
+            })
+        }
+        _ => None,
     }
 }
 

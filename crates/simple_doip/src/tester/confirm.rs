@@ -4,6 +4,10 @@ use crate::messages::{DiagnosticNackCode, NackCode};
 use crate::service::DoIpResult;
 
 /// ISO 13400-2:2019 Table 26 against 8.2.5.
+#[cfg_attr(
+    not(test),
+    expect(dead_code, reason = "confirms land in the next commit")
+)]
 pub(super) fn from_diagnostic_nack(code: DiagnosticNackCode) -> DoIpResult {
     match code {
         DiagnosticNackCode::InvalidSourceAddress => DoIpResult::InvalidSa,
@@ -18,6 +22,10 @@ pub(super) fn from_diagnostic_nack(code: DiagnosticNackCode) -> DoIpResult {
 }
 
 /// ISO 13400-2:2019 Table 19 against 8.2.5.
+#[cfg_attr(
+    not(test),
+    expect(dead_code, reason = "confirms land in the next commit")
+)]
 pub(super) fn from_header_nack(code: NackCode) -> DoIpResult {
     match code {
         NackCode::IncorrectPatternFormat
@@ -29,16 +37,22 @@ pub(super) fn from_header_nack(code: NackCode) -> DoIpResult {
     }
 }
 
-/// The instant `deadline_ms` names on `embassy_time`'s clock, read at `now`: the
-/// nearest instant whose milliseconds truncate to it, or `now` if it has passed.
+/// `instant` as [`DiagnosticConnection::now`] reports it: milliseconds, truncated to
+/// 32 bits.
+///
+/// [`DiagnosticConnection::now`]: crate::service::DiagnosticConnection::now
 #[expect(
     clippy::cast_possible_truncation,
-    reason = "deadline_ms is the clock's milliseconds truncated to 32 bits"
+    reason = "the trait's clock is the milliseconds truncated to 32 bits"
 )]
+pub(super) fn millis(instant: Instant) -> u32 {
+    instant.as_millis() as u32
+}
+
+/// The instant `deadline_ms` names on `embassy_time`'s clock, read at `now`: the
+/// nearest instant whose milliseconds truncate to it, or `now` if it has passed.
 pub(super) fn caller_deadline(deadline_ms: u32, now: Instant) -> Instant {
-    let ahead = deadline_ms
-        .wrapping_sub(now.as_millis() as u32)
-        .cast_signed();
+    let ahead = deadline_ms.wrapping_sub(millis(now)).cast_signed();
     match u64::try_from(ahead) {
         Ok(ahead) => now + Duration::from_millis(ahead),
         Err(_) => now,
