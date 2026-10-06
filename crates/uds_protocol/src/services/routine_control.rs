@@ -37,8 +37,10 @@ pub enum RoutineControlSubFunction {
     /// Decoded rather than rejected because Figure 30 answers it
     /// `subFunctionNotSupported` (0x12) only after the routine identifier's checks
     /// (`requestOutOfRange`, 0x31, and `securityAccessDenied`, 0x33), which a server can
-    /// make only on a request that decoded. Never has bit 7 set, and only decoding builds
-    /// it.
+    /// make only on a request that decoded. Never has bit 7 set. Built by
+    /// [`TryFrom<u8>`](RoutineControlSubFunction::try_from), as decoding is, so a client
+    /// can name and encode one; a server answers it 0x12, and a positive response
+    /// echoing one does not decode.
     #[cfg_attr(feature = "clap", clap(skip))]
     #[cfg_attr(feature = "serde", serde(skip_deserializing))]
     #[non_exhaustive]

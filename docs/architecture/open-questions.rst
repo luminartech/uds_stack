@@ -82,16 +82,15 @@ the confirmation that frees the association; a 0x21 refused for the same reason 
 Annex J Figure J.2's other branch. The OBD-range exception stays absent for the reason the
 classifier's own doc gives: no assemblable service reaches it.
 
-**5. Does ``RoutineControl`` need a distinct trait shape? — yes, three methods.** It asked
-whether Figure 5's exclusion of service identifier 0x31 from the sub-function stage should
-be expressed as a differently shaped trait or as documentation on an identically shaped one.
-``RoutineControl`` carries ``start``, ``stop`` and ``results``, one per clause 13.2
-sub-function. ``UDSSVC_ARCH_0007`` records the reason: 0x31 is the only service whose
-*handler* decides ``subFunctionNotSupported`` (0x12), because it is the only one the
-centralised sub-function stage does not run for, and a single method taking a sub-function
-byte would leave a signature indistinguishable from every service whose 0x12 is settled
-before the handler is reached. Documenting the asymmetry was the alternative; making it
-visible in the surface is what was built.
+**5. Does ``RoutineControl`` need a distinct trait shape? — yes, three methods and a
+lookup keyed by routine.** It asked whether Figure 5's exclusion of service identifier 0x31
+from the sub-function stage should be expressed as a differently shaped trait or as
+documentation on an identically shaped one. ``RoutineControl`` carries ``start``, ``stop``
+and ``results``, one per clause 14.2 sub-function, and ``supports(routine, control)``,
+which its own stage asks in Figure 30's order. ``UDSSVC_ARCH_0007`` records the reason:
+whether a sub-function is supported is a property of the routine, so the lookup takes the
+routine, which no other service's does, and the asymmetry is visible in the surface rather
+than documented.
 
 **6. What does ``Ctx`` finally carry? — nothing; there is no ``Ctx``.** It asked what the
 struct's final field list would be, and was filed as open *across the stack* because

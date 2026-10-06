@@ -265,7 +265,7 @@ pub trait ServiceSet: crate::sealed::Sealed {
     /// [`Server::new`](crate::Server::new) is a `const fn` and cannot call into the
     /// application. Emitted by the assembly; where `SecurityAccess` is listed, it starts
     /// the delay of every level whose stored attempt count is at its limit (see
-    /// [`SecurityAccess::delay`](crate::SecurityAccess::delay)), and otherwise it does
+    /// [`crate::SecurityAccess::delay`]), and otherwise it does
     /// nothing.
     ///
     /// # Arguments

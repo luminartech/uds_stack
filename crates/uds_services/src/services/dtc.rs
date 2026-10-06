@@ -108,10 +108,10 @@ pub trait ReadDtcInformation {
     ///   fixed-width and ride on its variant, so a malformed one is rejected with
     ///   `incorrectMessageLengthOrInvalidFormat` (0x13) before it reaches here.
     /// * `out` - where the response is written after the `59` service identifier and
-    ///   the echoed report type, which the pipeline writes: everything else the layout
-    ///   carries, from the `DTCStatusAvailabilityMask` on, is the handler's. Clause 12.3.3
-    ///   gives each report type's layout; [`DtcReportKind::header_len`] counts the
-    ///   pipeline's two bytes with the rest of the header.
+    ///   the echoed report type, which the pipeline writes: everything after `59 xx` is
+    ///   the handler's, whatever the report type's layout puts first. Clause 12.3.3 gives
+    ///   each report type's layout; [`DtcReportKind::header_len`] counts the pipeline's
+    ///   two bytes with the rest of the header.
     ///
     /// [`report_type`]: ReadDtcInfoSubFunction::report_type
     ///
