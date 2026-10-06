@@ -65,6 +65,12 @@ impl Sessions {
         self.0 & Self::bit(session) != 0
     }
 
+    /// Whether the set has no member.
+    #[must_use]
+    pub const fn is_empty(self) -> bool {
+        self.0 == 0
+    }
+
     fn bit(session: DiagnosticSessionType) -> u128 {
         1 << (u8::from(session) & 0x7F)
     }
@@ -89,6 +95,22 @@ pub struct Levels(u64);
 impl Levels {
     /// No level.
     pub const NONE: Self = Self(0);
+
+    /// The levels in `levels`.
+    ///
+    /// # Arguments
+    ///
+    /// * `levels` - the members; see [`SecurityLevel`].
+    #[must_use]
+    pub const fn of(levels: &[SecurityLevel]) -> Self {
+        let mut set = Self::NONE;
+        let mut rest = levels;
+        while let [level, tail @ ..] = rest {
+            set = set.with(*level);
+            rest = tail;
+        }
+        set
+    }
 
     /// This set and `level`.
     ///
@@ -127,7 +149,9 @@ impl Levels {
 /// A service trait returns one for what it supports and `None` for what it does not
 /// (0x12 for a sub-function, 0x31 for an identifier). The pipeline then settles a request
 /// made outside [`Self::sessions`] (0x7E for a sub-function, 0x31 for an identifier), and
-/// one made while none of [`Self::levels`] is unlocked (0x33).
+/// one made while none of [`Self::levels`] is unlocked (0x33). [`Self::new`] requires no
+/// level; [`Self::unlocked_by`] names the levels, and an empty set names none that unlock
+/// it, so the empty set means "nothing" for both [`Sessions`] and [`Levels`].
 ///
 /// # Examples
 ///
@@ -139,17 +163,19 @@ impl Levels {
 ///
 /// // Anywhere, with nothing unlocked.
 /// let open = Access::new(Sessions::ALL);
-/// assert!(open.levels().is_empty());
+/// assert_eq!(open.levels(), None);
 ///
 /// // Only in the extended session, and only once either level is unlocked.
 /// let secured = Access::new(Sessions::of(&[S::ExtendedDiagnosticSession]))
 ///     .unlocked_by(Levels::NONE.with(oem).with(supplier));
-/// assert!(secured.levels().contains(supplier));
+/// assert!(secured.levels().is_some_and(|levels| levels.contains(supplier)));
 /// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Access {
     sessions: Sessions,
-    levels: Levels,
+    /// `None` where no level is required; otherwise the levels any one of which unlocks
+    /// it, so an empty set is unlockable by none.
+    levels: Option<Levels>,
 }
 
 impl Access {
@@ -162,7 +188,7 @@ impl Access {
     pub const fn new(sessions: Sessions) -> Self {
         Self {
             sessions,
-            levels: Levels::NONE,
+            levels: None,
         }
     }
 
@@ -170,13 +196,14 @@ impl Access {
     ///
     /// # Arguments
     ///
-    /// * `levels` - the levels any one of which unlocks it; see [`Levels`].
-    ///   [`Levels::NONE`] requires none, as [`Self::new`] does.
+    /// * `levels` - the levels any one of which unlocks it; see [`Levels`]. An empty set,
+    ///   [`Levels::NONE`], is unlocked by none: the request is always
+    ///   `securityAccessDenied` (0x33). [`Self::new`] alone requires no level.
     #[must_use]
     pub const fn unlocked_by(self, levels: Levels) -> Self {
         Self {
             sessions: self.sessions,
-            levels,
+            levels: Some(levels),
         }
     }
 
@@ -186,16 +213,17 @@ impl Access {
         self.sessions
     }
 
-    /// The levels any one of which unlocks it, empty where none is required.
+    /// The levels any one of which unlocks it, or `None` where none is required.
     #[must_use]
-    pub const fn levels(self) -> Levels {
+    pub const fn levels(self) -> Option<Levels> {
         self.levels
     }
 
     /// Whether `unlocked`, the level the server holds unlocked, satisfies
     /// [`Self::levels`].
     pub(crate) fn admits(self, unlocked: Option<SecurityLevel>) -> bool {
-        self.levels.is_empty() || unlocked.is_some_and(|level| self.levels.contains(level))
+        self.levels
+            .is_none_or(|levels| unlocked.is_some_and(|level| levels.contains(level)))
     }
 }
 
@@ -254,5 +282,20 @@ mod tests {
         assert!(!either.admits(Some(level(0x03))));
         assert!(!either.admits(None));
         assert!(Access::new(Sessions::ALL).admits(None));
+    }
+
+    /// The empty set means "nothing" for levels as for sessions: a resource no level
+    /// unlocks is 0x33 whatever is unlocked, unlike one that requires no level at all.
+    #[test]
+    fn no_level_unlocks_an_empty_set() {
+        let never = Access::new(Sessions::ALL).unlocked_by(Levels::NONE);
+        assert!(!never.admits(None));
+        assert!(!never.admits(Some(level(0x01))));
+        assert_eq!(
+            Levels::of(&[level(0x01), level(0x11)]),
+            Levels::NONE.with(level(0x01)).with(level(0x11))
+        );
+        assert!(Sessions::NONE.is_empty());
+        assert!(!Sessions::ALL.is_empty());
     }
 }
