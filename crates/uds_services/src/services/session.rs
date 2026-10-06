@@ -2,7 +2,7 @@
 //!
 //! ``UDSSVC_ARCH_0012`` — one trait per service.
 
-use crate::{ResponseSink, SecurityLevel, SessionTransition};
+use crate::{Access, ResponseSink, SessionTransition};
 use uds_protocol::{
     CommunicationControlType, CommunicationType, DiagnosticSessionType, DtcSettingType,
     NegativeResponseCode, ResetType, SubnetNumber,
@@ -122,43 +122,20 @@ pub trait EcuReset {
     /// ``UDSSVC_ARCH_0033`` — a reset legitimately sets this.
     const MAY_RESPOND_PENDING: bool;
 
-    /// Whether this server supports `kind` at all, in whichever session.
+    /// Where `kind` is available and which levels unlock it, or `None` where this
+    /// server does not support it.
     ///
-    /// ISO 14229-1:2020 8.7.3.1 Figure 6, "`SubFunction` supported ever for the SID?" —
-    /// ``UDSSVC_ARCH_0007`` row 2. A `false` settles the request
-    /// `subFunctionNotSupported` (0x12) before [`Self::supported_in`] is asked.
+    /// ISO 14229-1:2020 8.7.3.1 Figure 6, ``UDSSVC_ARCH_0007`` — in that order, `None`
+    /// settles the request `subFunctionNotSupported` (0x12), an active session outside
+    /// [`Access::sessions`] `subFunctionNotSupportedInActiveSession` (0x7E), and none of
+    /// [`Access::levels`] unlocked `securityAccessDenied` (0x33), each without
+    /// [`Self::reset`] being asked.
     ///
     /// # Arguments
     ///
     /// * `kind` - the reset requested; see [`ResetType`], whose reserved and specific
     ///   variants carry the raw byte for a server that defines its own.
-    fn supports(&self, kind: ResetType) -> bool;
-
-    /// Whether `kind` is available in the `active` session.
-    ///
-    /// ISO 14229-1:2020 8.7.3.1 Figure 6, "`SubFunction` supported in active session
-    /// for the SID?" — ``UDSSVC_ARCH_0007`` row 4. Asked only for a `kind` that
-    /// [`Self::supports`] accepted, so a `false` settles the request
-    /// `subFunctionNotSupportedInActiveSession` (0x7E). A server that restricts no reset
-    /// to a session returns `true`.
-    ///
-    /// # Arguments
-    ///
-    /// * `kind` - the reset requested; see [`ResetType`].
-    /// * `active` - the session the server is in when the request arrives.
-    fn supported_in(&self, kind: ResetType, active: DiagnosticSessionType) -> bool;
-
-    /// The security level `kind` requires unlocked, or `None` where it requires none.
-    ///
-    /// ISO 14229-1:2020 8.7.3.1 Figure 6, "`SubFunction` security check OK?" — asked only
-    /// for a `kind` that [`Self::supported_in`] accepted. Where the level this crate holds
-    /// unlocked is not the one returned, the request settles `securityAccessDenied`
-    /// (0x33) without [`Self::reset`] being asked.
-    ///
-    /// # Arguments
-    ///
-    /// * `kind` - the reset requested; see [`ResetType`].
-    fn required_level(&self, kind: ResetType) -> Option<SecurityLevel>;
+    fn access(&self, kind: ResetType) -> Option<Access>;
 
     /// Accept or refuse `kind`, writing any `powerDownTime` into `out`.
     ///
@@ -168,8 +145,7 @@ pub trait EcuReset {
     ///
     /// # Arguments
     ///
-    /// * `kind` - the reset requested, one [`Self::supports`] and [`Self::supported_in`]
-    ///   accepted and whose [`Self::required_level`] is unlocked; see [`ResetType`].
+    /// * `kind` - the reset requested, one [`Self::access`] admitted; see [`ResetType`].
     /// * `out` - where the `powerDownTime` byte goes, for
     ///   [`ResetType::EnableRapidPowerShutDown`], the one reset whose response carries
     ///   it (clause 10.3.3, Table 35); nothing is written for any other.
@@ -178,7 +154,7 @@ pub trait EcuReset {
     ///
     /// The [`NegativeResponseCode`] for a reset whose criteria are not met, such as
     /// `conditionsNotCorrect` (0x22), clause 10.3.4. A locked level is
-    /// [`Self::required_level`]'s, not this method's.
+    /// [`Self::access`]'s, not this method's.
     ///
     /// A refused write to `out` needs no handling: the sink records the refusal and the
     /// pipeline answers `responseTooLong` (0x14) in place of the response, so the write's
@@ -219,52 +195,23 @@ pub trait CommunicationControl {
     /// ``UDSSVC_ARCH_0033``.
     const MAY_RESPOND_PENDING: bool;
 
-    /// Whether this server supports `control_type` at all, in whichever session.
+    /// Where `control_type` is available and which levels unlock it, or `None` where this
+    /// server does not support it.
     ///
-    /// ISO 14229-1:2020 8.7.3.1 Figure 6, "`SubFunction` supported ever for the SID?" —
-    /// ``UDSSVC_ARCH_0007`` row 2. A `false` settles the request
-    /// `subFunctionNotSupported` (0x12) before [`Self::supported_in`] is asked.
+    /// ISO 14229-1:2020 8.7.3.1 Figure 6, ``UDSSVC_ARCH_0007`` — in that order, `None`
+    /// settles the request `subFunctionNotSupported` (0x12), an active session outside
+    /// [`Access::sessions`] `subFunctionNotSupportedInActiveSession` (0x7E), and none of
+    /// [`Access::levels`] unlocked `securityAccessDenied` (0x33), each without
+    /// [`Self::control`] being asked.
+    ///
+    /// The default session never reaches here: Table 23 refuses the service there with
+    /// 0x7F.
     ///
     /// # Arguments
     ///
     /// * `control_type` - the `controlType` requested; see [`CommunicationControlType`],
     ///   whose reserved and specific variants carry the raw byte.
-    fn supports(&self, control_type: CommunicationControlType) -> bool;
-
-    /// Whether `control_type` is available in the `active` session.
-    ///
-    /// ISO 14229-1:2020 8.7.3.1 Figure 6, "`SubFunction` supported in active session
-    /// for the SID?" — ``UDSSVC_ARCH_0007`` row 4. Asked only for a `control_type` that
-    /// [`Self::supports`] accepted, so a `false` settles the request
-    /// `subFunctionNotSupportedInActiveSession` (0x7E). The default session never reaches
-    /// here: Table 23 refuses the service there with 0x7F.
-    ///
-    /// # Arguments
-    ///
-    /// * `control_type` - the `controlType` requested; see [`CommunicationControlType`].
-    /// * `active` - the session the server is in when the request arrives; see
-    ///   [`DiagnosticSessionType`].
-    fn supported_in(
-        &self,
-        control_type: CommunicationControlType,
-        active: DiagnosticSessionType,
-    ) -> bool;
-
-    /// The security level `control_type` requires unlocked, or `None` where it requires
-    /// none.
-    ///
-    /// ISO 14229-1:2020 8.7.3.1 Figure 6, "`SubFunction` security check OK?" — asked only
-    /// for a `control_type` that [`Self::supported_in`] accepted. Where the level this
-    /// crate holds unlocked is not the one returned, the request settles
-    /// `securityAccessDenied` (0x33) without [`Self::control`] being asked.
-    ///
-    /// # Arguments
-    ///
-    /// * `control_type` - the `controlType` requested; see [`CommunicationControlType`].
-    fn required_level(
-        &self,
-        control_type: CommunicationControlType,
-    ) -> Option<SecurityLevel>;
+    fn access(&self, control_type: CommunicationControlType) -> Option<Access>;
 
     /// Apply `control_type` to `communication_type` on `subnet`, or on the node `node_id`
     /// names.
@@ -312,44 +259,23 @@ pub trait ControlDtcSetting {
     /// (0x13) without [`Self::control_dtc_setting`] being asked.
     const MAX_OPTION_RECORD_LEN: usize;
 
-    /// Whether this server supports `setting` at all, in whichever session.
+    /// Where `setting` is available and which levels unlock it, or `None` where this
+    /// server does not support it.
     ///
-    /// ISO 14229-1:2020 8.7.3.1 Figure 6, "`SubFunction` supported ever for the SID?" —
-    /// ``UDSSVC_ARCH_0007`` row 2. A `false` settles the request
-    /// `subFunctionNotSupported` (0x12) before [`Self::supported_in`] is asked. A reserved
-    /// `DTCSettingType` is not a [`DtcSettingType`] and is 0x12 without being asked.
+    /// ISO 14229-1:2020 8.7.3.1 Figure 6, ``UDSSVC_ARCH_0007`` — in that order, `None`
+    /// settles the request `subFunctionNotSupported` (0x12), an active session outside
+    /// [`Access::sessions`] `subFunctionNotSupportedInActiveSession` (0x7E), and none of
+    /// [`Access::levels`] unlocked `securityAccessDenied` (0x33), each without
+    /// [`Self::control_dtc_setting`] being asked.
     ///
-    /// # Arguments
-    ///
-    /// * `setting` - the `DTCSettingType` requested; see [`DtcSettingType`].
-    fn supports(&self, setting: DtcSettingType) -> bool;
-
-    /// Whether `setting` is available in the `active` session.
-    ///
-    /// ISO 14229-1:2020 8.7.3.1 Figure 6, "`SubFunction` supported in active session
-    /// for the SID?" — ``UDSSVC_ARCH_0007`` row 4. Asked only for a `setting` that
-    /// [`Self::supports`] accepted, so a `false` settles the request
-    /// `subFunctionNotSupportedInActiveSession` (0x7E). The default session never reaches
-    /// here: Table 23 refuses the service there with 0x7F.
+    /// The default session never reaches here: Table 23 refuses the service there with
+    /// 0x7F.
     ///
     /// # Arguments
     ///
-    /// * `setting` - the `DTCSettingType` requested; see [`DtcSettingType`].
-    /// * `active` - the session the server is in when the request arrives; see
-    ///   [`DiagnosticSessionType`].
-    fn supported_in(&self, setting: DtcSettingType, active: DiagnosticSessionType) -> bool;
-
-    /// The security level `setting` requires unlocked, or `None` where it requires none.
-    ///
-    /// ISO 14229-1:2020 8.7.3.1 Figure 6, "`SubFunction` security check OK?" — asked only
-    /// for a `setting` that [`Self::supported_in`] accepted. Where the level this crate
-    /// holds unlocked is not the one returned, the request settles
-    /// `securityAccessDenied` (0x33) without [`Self::control_dtc_setting`] being asked.
-    ///
-    /// # Arguments
-    ///
-    /// * `setting` - the `DTCSettingType` requested; see [`DtcSettingType`].
-    fn required_level(&self, setting: DtcSettingType) -> Option<SecurityLevel>;
+    /// * `setting` - the `DTCSettingType` requested; see [`DtcSettingType`]. A reserved
+    ///   `DTCSettingType` is not one, and is 0x12 without this being asked.
+    fn access(&self, setting: DtcSettingType) -> Option<Access>;
 
     /// Apply `setting`, with the manufacturer-specific option record.
     ///
@@ -419,14 +345,8 @@ mod tests {
 
     impl EcuReset for Ecu {
         const MAY_RESPOND_PENDING: bool = true;
-        fn supports(&self, _k: ResetType) -> bool {
-            true
-        }
-        fn supported_in(&self, _k: ResetType, _a: DiagnosticSessionType) -> bool {
-            true
-        }
-        fn required_level(&self, _k: ResetType) -> Option<crate::SecurityLevel> {
-            None
+        fn access(&self, _k: ResetType) -> Option<crate::Access> {
+            Some(crate::Access::new(crate::Sessions::ALL))
         }
         async fn reset(
             &mut self,

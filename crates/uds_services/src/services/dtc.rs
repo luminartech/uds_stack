@@ -1,9 +1,8 @@
 //! Stored data transmission — ISO 14229-1:2020 clause 12.
 
-use crate::{ResponseSink, SecurityLevel};
+use crate::{Access, ResponseSink};
 use uds_protocol::{
-    DiagnosticSessionType, DtcRecord, NegativeResponseCode, ReadDtcInfoReportType,
-    ReadDtcInfoSubFunction,
+    DtcRecord, NegativeResponseCode, ReadDtcInfoReportType, ReadDtcInfoSubFunction,
 };
 
 /// Which shape of `ReadDTCInformation` response a report type produces.
@@ -83,55 +82,28 @@ pub trait ReadDtcInformation {
     /// application's to know.
     const REPORTS: &'static [DtcReportKind];
 
-    /// Whether this server supports `report` at all, in whichever session.
+    /// Where `report` is available and which levels unlock it, or `None` where this
+    /// server does not support it.
     ///
-    /// ISO 14229-1:2020 8.7.3.1 Figure 6, "`SubFunction` supported ever for the SID?" —
-    /// ``UDSSVC_ARCH_0007`` row 2. A `false` settles the request
-    /// `subFunctionNotSupported` (0x12) before [`Self::supported_in`] is asked, and before
-    /// the request's parameters are decoded.
+    /// ISO 14229-1:2020 8.7.3.1 Figure 6, ``UDSSVC_ARCH_0007`` — in that order, `None`
+    /// settles the request `subFunctionNotSupported` (0x12), an active session outside
+    /// [`Access::sessions`] `subFunctionNotSupportedInActiveSession` (0x7E), and none of
+    /// [`Access::levels`] unlocked `securityAccessDenied` (0x33), each before the
+    /// request's parameters are decoded and without [`Self::read_dtc_information`] being
+    /// asked.
     ///
     /// # Arguments
     ///
     /// * `report` - the report type requested; see [`ReadDtcInfoReportType`], whose
     ///   reserved variant carries the raw byte.
-    fn supports(&self, report: ReadDtcInfoReportType) -> bool;
-
-    /// Whether `report` is available in the `active` session.
-    ///
-    /// ISO 14229-1:2020 8.7.3.1 Figure 6, "`SubFunction` supported in active session
-    /// for the SID?" — ``UDSSVC_ARCH_0007`` row 4. Asked only for a `report` that
-    /// [`Self::supports`] accepted, so a `false` settles the request
-    /// `subFunctionNotSupportedInActiveSession` (0x7E).
-    ///
-    /// # Arguments
-    ///
-    /// * `report` - the report type requested; see [`ReadDtcInfoReportType`].
-    /// * `active` - the session the server is in when the request arrives; see
-    ///   [`DiagnosticSessionType`].
-    fn supported_in(
-        &self,
-        report: ReadDtcInfoReportType,
-        active: DiagnosticSessionType,
-    ) -> bool;
-
-    /// The security level `report` requires unlocked, or `None` where it requires none.
-    ///
-    /// ISO 14229-1:2020 8.7.3.1 Figure 6, "`SubFunction` security check OK?" — asked only
-    /// for a `report` that [`Self::supported_in`] accepted. Where the level this crate
-    /// holds unlocked is not the one returned, the request settles
-    /// `securityAccessDenied` (0x33) without [`Self::read_dtc_information`] being asked.
-    ///
-    /// # Arguments
-    ///
-    /// * `report` - the report type requested; see [`ReadDtcInfoReportType`].
-    fn required_level(&self, report: ReadDtcInfoReportType) -> Option<SecurityLevel>;
+    fn access(&self, report: ReadDtcInfoReportType) -> Option<Access>;
 
     /// Write the report `request` asks for into `out`.
     ///
     /// # Arguments
     ///
     /// * `request` - the report type and its parameters; see
-    ///   [`ReadDtcInfoSubFunction`], whose [`report_type`] [`Self::supports`] accepted.
+    ///   [`ReadDtcInfoSubFunction`], whose [`report_type`] [`Self::access`] admitted.
     ///   There is no separate parameter slice: a report type's parameters are
     ///   fixed-width and ride on its variant, so a malformed one is rejected with
     ///   `incorrectMessageLengthOrInvalidFormat` (0x13) before it reaches here.

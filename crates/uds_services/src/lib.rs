@@ -74,6 +74,9 @@
 #![no_std]
 #![forbid(unsafe_code)]
 
+pub mod access;
+pub use access::{Access, Levels, Sessions};
+
 pub mod assembly;
 
 pub mod client;
@@ -108,9 +111,9 @@ pub use state::{ProtocolState, State};
 ///
 /// ```
 /// use uds_services::{
-///     DiagnosticSessionType, DtcRecord, DtcReportKind, DtcStatusMask, Encode,
-///     NegativeResponseCode, ReadDtcInfoReportType, ReadDtcInfoSubFunction,
-///     ReadDtcInformation, ResponseSink, SecurityLevel,
+///     Access, DtcRecord, DtcReportKind, DtcStatusMask, Encode, NegativeResponseCode,
+///     ReadDtcInfoReportType, ReadDtcInfoSubFunction, ReadDtcInformation, ResponseSink,
+///     Sessions,
 /// };
 ///
 /// struct Ecu;
@@ -120,18 +123,9 @@ pub use state::{ProtocolState, State};
 ///     const MAX_DTCS: usize = 1;
 ///     const REPORTS: &'static [DtcReportKind] = &[DtcReportKind::DtcList];
 ///
-///     fn supports(&self, report: ReadDtcInfoReportType) -> bool {
+///     fn access(&self, report: ReadDtcInfoReportType) -> Option<Access> {
 ///         matches!(report, ReadDtcInfoReportType::ReportDtcByStatusMask)
-///     }
-///     fn supported_in(
-///         &self,
-///         _report: ReadDtcInfoReportType,
-///         _active: DiagnosticSessionType,
-///     ) -> bool {
-///         true
-///     }
-///     fn required_level(&self, _r: ReadDtcInfoReportType) -> Option<SecurityLevel> {
-///         None
+///             .then(|| Access::new(Sessions::ALL))
 ///     }
 ///
 ///     async fn read_dtc_information(

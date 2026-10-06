@@ -12,20 +12,19 @@
 
 use crate::services::SessionTransition;
 use crate::state::State;
+use crate::{Access, Responded, ResponseSink, Sessions, Unsettled};
 use crate::{
     ClearDiagnosticInformation, CommunicationControl, ControlDtcSetting, DataIdentifier,
     DiagnosticSessionControl, EcuReset, KeyVerdict, ReadDataByIdentifier,
     ReadDtcInformation, RecordError, RoutineControl, RoutineIdentifier, SecurityAccess,
     SecurityLevel, SecurityPolicy, TesterPresent, WriteDataByIdentifier,
 };
-use crate::{Responded, ResponseSink, Unsettled};
 use automotive_wire_codec::Sink;
 use uds_protocol::{
-    ClearDiagnosticInfoRequest, CommunicationControlRequest, CommunicationControlType,
-    CommunicationType, ControlDtcSettingRequest, DiagnosticSessionControlRequest,
-    DtcSettingType, EcuResetRequest, ReadDataByIdentifierRequest, ReadDtcInfoReportType,
-    ReadDtcInfoRequest, ResetType, RoutineControlRequest, RoutineControlSubFunction,
-    SecurityAccessRequest, WriteDataByIdentifierRequest,
+    ClearDiagnosticInfoRequest, CommunicationControlRequest, CommunicationType,
+    ControlDtcSettingRequest, DiagnosticSessionControlRequest, EcuResetRequest,
+    ReadDataByIdentifierRequest, ReadDtcInfoRequest, RoutineControlRequest,
+    RoutineControlSubFunction, SecurityAccessRequest, WriteDataByIdentifierRequest,
 };
 use uds_protocol::{
     Decode, DiagnosticSessionType, Encode, NegativeResponse, NegativeResponseCode, Request,
@@ -99,18 +98,17 @@ pub enum Stage<'a> {
 /// 3. Supported in the active session? Table 23's refusals settle
 ///    `serviceNotSupportedInActiveSession` (0x7F).
 /// 4. For a service with a sub-function, other than 0x31, Figure 6's sub-function checks
-///    (``UDSSVC_ARCH_0007``), in its order: a sub-function `sub_function_supported`
-///    refuses settles `subFunctionNotSupported` (0x12) (row 2); one it accepts but
-///    `supported_in_session` refuses for the active session settles
-///    `subFunctionNotSupportedInActiveSession` (0x7E) (row 4). Asking row 4 only after
-///    row 2 accepted is what keeps Annex A's rule that 0x7E is sent only for a
-///    sub-function supported in another session. Then Figure 6's optional sub-function
-///    security check: where `required_level` names a level that [`State`] does not hold
-///    unlocked, `securityAccessDenied` (0x33). All three read the byte after the service
-///    identifier, with `suppressPosRspMsgIndicationBit` stripped, before any exact-length
-///    test, so a trailing byte cannot turn 0x12, 0x7E or 0x33 into 0x13. A request with no
-///    such byte fails Figure 6's minimum-length check, which the decode in 5 settles. Row
-///    3, authentication (0x34), is unconditionally true, as in Figure 5.
+///    (``UDSSVC_ARCH_0007``), in its order, from the one [`Access`] `access` returns: no
+///    access settles `subFunctionNotSupported` (0x12) (row 2); an active session outside
+///    [`Access::sessions`] settles `subFunctionNotSupportedInActiveSession` (0x7E) (row
+///    4), so 0x7E is sent only for a sub-function supported somewhere, as Annex A
+///    requires; and none of [`Access::levels`] unlocked in [`State`] settles
+///    `securityAccessDenied` (0x33), Figure 6's optional sub-function security check.
+///    All three read the byte after the service identifier, with
+///    `suppressPosRspMsgIndicationBit` stripped, before any exact-length test, so a
+///    trailing byte cannot turn 0x12, 0x7E or 0x33 into 0x13. A request with no such byte
+///    fails Figure 6's minimum-length check, which the decode in 5 settles. Row 3,
+///    authentication (0x34), is unconditionally true, as in Figure 5.
 /// 5. Only then the service-specific check, where length and format live: a decode
 ///    failure settles the code `uds_protocol` assigns it, `requestOutOfRange` (0x31) for
 ///    a parameter outside its range and otherwise `incorrectMessageLengthOrInvalidFormat`
@@ -127,19 +125,15 @@ pub enum Stage<'a> {
 /// identifier in its data-parameters checks it in its own stage.
 #[doc(hidden)]
 #[must_use]
-pub fn begin<'a, F, G, H, K>(
+pub fn begin<'a, F, G>(
     state: &State,
     request: &'a [u8],
     supports: F,
-    sub_function_supported: G,
-    supported_in_session: H,
-    required_level: K,
+    access: G,
 ) -> Stage<'a>
 where
     F: Fn(UdsServiceType) -> bool,
-    G: Fn(UdsServiceType, u8) -> bool,
-    H: Fn(UdsServiceType, u8, DiagnosticSessionType) -> bool,
-    K: Fn(UdsServiceType, u8) -> Option<SecurityLevel>,
+    G: Fn(UdsServiceType, u8, DiagnosticSessionType) -> Option<Access>,
 {
     let Some((&sid, parameters)) = request.split_first() else {
         return Stage::Empty;
@@ -161,20 +155,20 @@ where
     if enters_sub_function_stage(service)
         && let Some(&byte) = parameters.first()
     {
-        let value = byte & SUB_FUNCTION_VALUE;
-        if !sub_function_supported(service, value) {
+        let Some(access) = access(service, byte & SUB_FUNCTION_VALUE, state.session())
+        else {
             return Stage::Settle {
                 sid,
                 nrc: NegativeResponseCode::SubFunctionNotSupported,
             };
-        }
-        if !supported_in_session(service, value, state.session()) {
+        };
+        if !access.sessions().contains(state.session()) {
             return Stage::Settle {
                 sid,
                 nrc: NegativeResponseCode::SubFunctionNotSupportedInActiveSession,
             };
         }
-        if !unlocked(state, required_level(service, value)) {
+        if !access.admits(state.unlocked()) {
             return Stage::Settle {
                 sid,
                 nrc: NegativeResponseCode::SecurityAccessDenied,
@@ -205,11 +199,6 @@ where
     }
 }
 
-/// Whether `required`, where there is one, is the level `state` holds unlocked.
-fn unlocked(state: &State, required: Option<SecurityLevel>) -> bool {
-    required.is_none_or(|level| state.unlocked() == Some(level))
-}
-
 /// The sub-function's value bits: bit 7 of the byte is `suppressPosRspMsgIndicationBit`
 /// (ISO 14229-1:2020 clause 9.2.2), which says nothing about whether the sub-function
 /// is supported.
@@ -223,63 +212,38 @@ const fn enters_sub_function_stage(service: UdsServiceType) -> bool {
         && !matches!(service, UdsServiceType::RoutineControl)
 }
 
-/// ISO 14229-1:2020 clause 10.2 — whether `DiagnosticSessionControl`'s sub-function
-/// `value` (suppress bit stripped) names a session the application supports.
-/// [`begin`]'s "supported ever" check for that service (``UDSSVC_ARCH_0007`` row 2).
+/// ISO 14229-1:2020 8.7.3.1 Figure 6 — the [`Access`] of the sub-function `value`
+/// (suppress bit stripped) names, where `T`, the service's sub-function type, accepts the
+/// value and `access` has one for it. [`begin`]'s lookup for every service whose trait
+/// answers with an [`Access`] (``UDSSVC_ARCH_0007``).
 #[doc(hidden)]
-#[must_use]
-pub fn session_supported<A: DiagnosticSessionControl>(services: &A, value: u8) -> bool {
-    DiagnosticSessionType::try_from(value).is_ok_and(|session| services.supports(session))
+pub fn sub_function_access<T: TryFrom<u8>>(
+    value: u8,
+    access: impl FnOnce(T) -> Option<Access>,
+) -> Option<Access> {
+    T::try_from(value).ok().and_then(access)
 }
 
-/// ISO 14229-1:2020 clause 10.2 — whether the application lets the session
-/// `DiagnosticSessionControl`'s sub-function `value` (suppress bit stripped) names be
-/// entered from `active`. [`begin`]'s "supported in active session" check for that
-/// service (``UDSSVC_ARCH_0007`` row 4), asked only after [`session_supported`] accepted
-/// `value`.
+/// ISO 14229-1:2020 clause 10.2 — `DiagnosticSessionControl`'s lookups as [`begin`] asks
+/// them: no [`Access`] for a session the application does not support, and otherwise one
+/// available in `active` exactly where the session may be entered from it. No level is
+/// required: entering a session locks every level.
 #[doc(hidden)]
 #[must_use]
-pub fn session_supported_from<A: DiagnosticSessionControl>(
+pub fn session_access<A: DiagnosticSessionControl>(
     services: &A,
     value: u8,
     active: DiagnosticSessionType,
-) -> bool {
-    DiagnosticSessionType::try_from(value)
-        .is_ok_and(|session| services.supported_from(session, active))
-}
-
-/// ISO 14229-1:2020 clause 10.3 — whether `EcuReset`'s sub-function `value` (suppress
-/// bit stripped) names a reset the application supports. [`begin`]'s "supported ever"
-/// check for that service (``UDSSVC_ARCH_0007`` row 2).
-#[doc(hidden)]
-#[must_use]
-pub fn reset_supported<A: EcuReset>(services: &A, value: u8) -> bool {
-    ResetType::try_from(value).is_ok_and(|kind| services.supports(kind))
-}
-
-/// ISO 14229-1:2020 clause 10.3 — whether the reset `EcuReset`'s sub-function `value`
-/// (suppress bit stripped) names is available in `active`. [`begin`]'s "supported in
-/// active session" check for that service (``UDSSVC_ARCH_0007`` row 4), asked only after
-/// [`reset_supported`] accepted `value`.
-#[doc(hidden)]
-#[must_use]
-pub fn reset_supported_in<A: EcuReset>(
-    services: &A,
-    value: u8,
-    active: DiagnosticSessionType,
-) -> bool {
-    ResetType::try_from(value).is_ok_and(|kind| services.supported_in(kind, active))
-}
-
-/// ISO 14229-1:2020 clause 10.3 — the level the reset `EcuReset`'s sub-function `value`
-/// (suppress bit stripped) names requires unlocked. [`begin`]'s sub-function security
-/// check for that service, asked only after [`reset_supported_in`] accepted `value`.
-#[doc(hidden)]
-#[must_use]
-pub fn reset_required_level<A: EcuReset>(services: &A, value: u8) -> Option<SecurityLevel> {
-    ResetType::try_from(value)
+) -> Option<Access> {
+    let session = DiagnosticSessionType::try_from(value)
         .ok()
-        .and_then(|kind| services.required_level(kind))
+        .filter(|&session| services.supports(session))?;
+    let from = if services.supported_from(session, active) {
+        Sessions::NONE.with(active)
+    } else {
+        Sessions::NONE
+    };
+    Some(Access::new(from))
 }
 
 /// The level a `SecurityAccess` sub-function `value` (suppress bit stripped) names: its
@@ -292,154 +256,31 @@ const fn security_level(value: u8) -> Option<SecurityLevel> {
     })
 }
 
-/// ISO 14229-1:2020 clause 10.4 — whether `SecurityAccess`'s sub-function `value`
-/// (suppress bit stripped) is the `requestSeed` or `sendKey` of a level the application
-/// supports. [`begin`]'s "supported ever" check for that service (``UDSSVC_ARCH_0007``
-/// row 2).
+/// ISO 14229-1:2020 clause 10.4 — `SecurityAccess`'s lookup as [`begin`] asks it: the
+/// sessions in which the level the sub-function `value` (suppress bit stripped) names is
+/// available, the `requestSeed` and `sendKey` alike, with no level required.
 #[doc(hidden)]
 #[must_use]
-pub fn security_supported<A: SecurityAccess>(services: &A, value: u8) -> bool {
-    security_level(value).is_some_and(|level| services.supports(level))
-}
-
-/// ISO 14229-1:2020 clause 10.4 — whether the level `SecurityAccess`'s sub-function
-/// `value` (suppress bit stripped) names is available in `active`. [`begin`]'s "supported
-/// in active session" check for that service (``UDSSVC_ARCH_0007`` row 4), asked only
-/// after [`security_supported`] accepted `value`.
-#[doc(hidden)]
-#[must_use]
-pub fn security_supported_in<A: SecurityAccess>(
+pub fn security_access_sessions<A: SecurityAccess>(
     services: &A,
     value: u8,
-    active: DiagnosticSessionType,
-) -> bool {
-    security_level(value).is_some_and(|level| services.supported_in(level, active))
+) -> Option<Access> {
+    security_level(value)
+        .and_then(|level| services.sessions(level))
+        .map(Access::new)
 }
 
-/// ISO 14229-1:2020 clause 10.5 — whether `CommunicationControl`'s sub-function `value`
-/// (suppress bit stripped) names a `controlType` the application supports. [`begin`]'s
-/// "supported ever" check for that service (``UDSSVC_ARCH_0007`` row 2).
+/// ISO 14229-1:2020 clause 10.7 — `TesterPresent`'s lookup as [`begin`] asks it:
+/// `zeroSubFunction`, the only one the service defines, is available in every session
+/// with no level required (Table 23).
 #[doc(hidden)]
 #[must_use]
-pub fn control_type_supported<A: CommunicationControl>(services: &A, value: u8) -> bool {
-    CommunicationControlType::try_from(value).is_ok_and(|kind| services.supports(kind))
-}
-
-/// ISO 14229-1:2020 clause 10.5 — whether the `controlType` `CommunicationControl`'s
-/// sub-function `value` (suppress bit stripped) names is available in `active`.
-/// [`begin`]'s "supported in active session" check for that service (``UDSSVC_ARCH_0007``
-/// row 4), asked only after [`control_type_supported`] accepted `value`.
-#[doc(hidden)]
-#[must_use]
-pub fn control_type_supported_in<A: CommunicationControl>(
-    services: &A,
-    value: u8,
-    active: DiagnosticSessionType,
-) -> bool {
-    CommunicationControlType::try_from(value)
-        .is_ok_and(|kind| services.supported_in(kind, active))
-}
-
-/// ISO 14229-1:2020 clause 10.5 — the level the `controlType` `CommunicationControl`'s
-/// sub-function `value` (suppress bit stripped) names requires unlocked. [`begin`]'s
-/// sub-function security check for that service, asked only after
-/// [`control_type_supported_in`] accepted `value`.
-#[doc(hidden)]
-#[must_use]
-pub fn control_type_required_level<A: CommunicationControl>(
-    services: &A,
-    value: u8,
-) -> Option<SecurityLevel> {
-    CommunicationControlType::try_from(value)
-        .ok()
-        .and_then(|kind| services.required_level(kind))
-}
-
-/// ISO 14229-1:2020 clause 10.8 — whether `ControlDTCSetting`'s sub-function `value`
-/// (suppress bit stripped) names a `DTCSettingType` the application supports. [`begin`]'s
-/// "supported ever" check for that service (``UDSSVC_ARCH_0007`` row 2).
-#[doc(hidden)]
-#[must_use]
-pub fn dtc_setting_supported<A: ControlDtcSetting>(services: &A, value: u8) -> bool {
-    DtcSettingType::try_from(value).is_ok_and(|setting| services.supports(setting))
-}
-
-/// ISO 14229-1:2020 clause 10.8 — whether the `DTCSettingType` `ControlDTCSetting`'s
-/// sub-function `value` (suppress bit stripped) names is available in `active`.
-/// [`begin`]'s "supported in active session" check for that service (``UDSSVC_ARCH_0007``
-/// row 4), asked only after [`dtc_setting_supported`] accepted `value`.
-#[doc(hidden)]
-#[must_use]
-pub fn dtc_setting_supported_in<A: ControlDtcSetting>(
-    services: &A,
-    value: u8,
-    active: DiagnosticSessionType,
-) -> bool {
-    DtcSettingType::try_from(value)
-        .is_ok_and(|setting| services.supported_in(setting, active))
-}
-
-/// ISO 14229-1:2020 clause 10.8 — the level the `DTCSettingType` `ControlDTCSetting`'s
-/// sub-function `value` (suppress bit stripped) names requires unlocked. [`begin`]'s
-/// sub-function security check for that service, asked only after
-/// [`dtc_setting_supported_in`] accepted `value`.
-#[doc(hidden)]
-#[must_use]
-pub fn dtc_setting_required_level<A: ControlDtcSetting>(
-    services: &A,
-    value: u8,
-) -> Option<SecurityLevel> {
-    DtcSettingType::try_from(value)
-        .ok()
-        .and_then(|setting| services.required_level(setting))
-}
-
-/// ISO 14229-1:2020 clause 12.3 — whether `ReadDTCInformation`'s sub-function `value`
-/// (suppress bit stripped) names a report type the application supports. [`begin`]'s
-/// "supported ever" check for that service (``UDSSVC_ARCH_0007`` row 2).
-#[doc(hidden)]
-#[must_use]
-pub fn report_type_supported<A: ReadDtcInformation>(services: &A, value: u8) -> bool {
-    ReadDtcInfoReportType::try_from(value).is_ok_and(|report| services.supports(report))
-}
-
-/// ISO 14229-1:2020 clause 12.3 — whether the report type `ReadDTCInformation`'s
-/// sub-function `value` (suppress bit stripped) names is available in `active`.
-/// [`begin`]'s "supported in active session" check for that service (``UDSSVC_ARCH_0007``
-/// row 4), asked only after [`report_type_supported`] accepted `value`.
-#[doc(hidden)]
-#[must_use]
-pub fn report_type_supported_in<A: ReadDtcInformation>(
-    services: &A,
-    value: u8,
-    active: DiagnosticSessionType,
-) -> bool {
-    ReadDtcInfoReportType::try_from(value)
-        .is_ok_and(|report| services.supported_in(report, active))
-}
-
-/// ISO 14229-1:2020 clause 12.3 — the level the report type `ReadDTCInformation`'s
-/// sub-function `value` (suppress bit stripped) names requires unlocked. [`begin`]'s
-/// sub-function security check for that service, asked only after
-/// [`report_type_supported_in`] accepted `value`.
-#[doc(hidden)]
-#[must_use]
-pub fn report_type_required_level<A: ReadDtcInformation>(
-    services: &A,
-    value: u8,
-) -> Option<SecurityLevel> {
-    ReadDtcInfoReportType::try_from(value)
-        .ok()
-        .and_then(|report| services.required_level(report))
-}
-
-/// ISO 14229-1:2020 clause 10.7 — whether `TesterPresent`'s sub-function `value`
-/// (suppress bit stripped) is `zeroSubFunction`, the only one the service defines.
-/// [`begin`]'s sub-function check for that service.
-#[doc(hidden)]
-#[must_use]
-pub const fn zero_sub_function(value: u8) -> bool {
-    value == 0x00
+pub const fn zero_sub_function(value: u8) -> Option<Access> {
+    if value == 0x00 {
+        Some(Access::new(Sessions::ALL))
+    } else {
+        None
+    }
 }
 
 /// ISO 14229-1:2020 10.2 Table 23 — the twelve services "not applicable" in the default
@@ -588,7 +429,7 @@ pub async fn read_data_by_identifier<A: ReadDataByIdentifier>(
 
 /// ISO 14229-1:2020 clause 11.7, Figure 26 — the check `WriteDataByIdentifier` makes
 /// ahead of the record's length: an identifier the application does not define, or one
-/// [`WriteDataByIdentifier::writable_in`] refuses in the active session, is
+/// [`WriteDataByIdentifier::access`] does not admit in the active session, is
 /// `requestOutOfRange` (0x31). Asked by [`write_data_by_identifier`], and by `dispatch`
 /// for a request too long to have been received whole, which is 0x13 only once this
 /// passes.
@@ -601,9 +442,10 @@ pub fn writable_identifier<A: WriteDataByIdentifier>(
     services: &A,
     state: &State,
     request: &WriteDataByIdentifierRequest<'_>,
-) -> Result<A::Did, NegativeResponseCode> {
+) -> Result<(A::Did, Access), NegativeResponseCode> {
     <A::Did as DataIdentifier>::from_u16(request.identifier)
-        .filter(|&did| services.writable_in(did, state.session()))
+        .and_then(|did| services.access(did).map(|access| (did, access)))
+        .filter(|(_, access)| access.sessions().contains(state.session()))
         .ok_or(NegativeResponseCode::RequestOutOfRange)
 }
 
@@ -613,7 +455,7 @@ pub fn writable_identifier<A: WriteDataByIdentifier>(
 /// * [`writable_identifier`]'s check (0x31);
 /// * a record [`DataIdentifier::split_record`] finds short, or followed by further bytes,
 ///   is `incorrectMessageLengthOrInvalidFormat` (0x13);
-/// * a [`WriteDataByIdentifier::required_level`] that `state` does not hold unlocked is
+/// * an identifier none of whose [`Access::levels`] `state` holds unlocked is
 ///   `securityAccessDenied` (0x33);
 /// * a record `split_record` finds malformed is `requestOutOfRange` (0x31).
 ///
@@ -626,12 +468,12 @@ pub async fn write_data_by_identifier<A: WriteDataByIdentifier>(
     request: &WriteDataByIdentifierRequest<'_>,
     out: &mut ResponseSink<'_>,
 ) -> Result<Option<DiagnosticSessionType>, NegativeResponseCode> {
-    let did = writable_identifier(services, state, request)?;
+    let (did, access) = writable_identifier(services, state, request)?;
     let split = did.split_record(request.data());
     if matches!(split, Err(RecordError::Short) | Ok((_, [_, ..]))) {
         return Err(NegativeResponseCode::IncorrectMessageLengthOrInvalidFormat);
     }
-    if !unlocked(state, services.required_level(did)) {
+    if !access.admits(state.unlocked()) {
         return Err(NegativeResponseCode::SecurityAccessDenied);
     }
     let Ok((record, _)) = split else {
@@ -665,9 +507,9 @@ impl Routine {
 
 /// ISO 14229-1:2020 clause 14.2, Figure 30 — the checks `RoutineControl` makes ahead of
 /// the option record's length, in order: an identifier the application does not define,
-/// or one [`RoutineControl::supported_in`] refuses in the active session, is
-/// `requestOutOfRange` (0x31); a [`RoutineControl::required_level`] that `state` does not
-/// hold unlocked is `securityAccessDenied` (0x33); and a `routineControlType` Table 426
+/// or one [`RoutineControl::access`] does not admit in the active session, is
+/// `requestOutOfRange` (0x31); a routine none of whose [`Access::levels`] `state` holds
+/// unlocked is `securityAccessDenied` (0x33); and a `routineControlType` Table 426
 /// reserves, or one [`RoutineControl::supports`] refuses for this routine, is
 /// `subFunctionNotSupported` (0x12). Asked by [`routine_control`], and by `dispatch` for a
 /// request too long to have been received whole, which is 0x13 only once these pass.
@@ -689,12 +531,14 @@ fn admitted<A: RoutineControl>(
     state: &State,
     request: &RoutineControlRequest<'_>,
 ) -> Result<(A::Rid, Routine), NegativeResponseCode> {
-    let Some(routine) = <A::Rid as RoutineIdentifier>::from_u16(request.routine_id)
-        .filter(|&routine| services.supported_in(routine, state.session()))
+    let Some((routine, access)) =
+        <A::Rid as RoutineIdentifier>::from_u16(request.routine_id)
+            .and_then(|routine| services.access(routine).map(|access| (routine, access)))
+            .filter(|(_, access)| access.sessions().contains(state.session()))
     else {
         return Err(NegativeResponseCode::RequestOutOfRange);
     };
-    if !unlocked(state, services.required_level(routine)) {
+    if !access.admits(state.unlocked()) {
         return Err(NegativeResponseCode::SecurityAccessDenied);
     }
     Routine::of(request.sub_function)
@@ -1027,10 +871,11 @@ pub fn tester_present<A: TesterPresent>(
 #[allow(clippy::panic, reason = "a test harness for futures that never pend")]
 mod tests {
     use super::{
-        Settling, Stage, allowed_in_session, begin, session_supported,
-        session_supported_from, settle, suppresses, zero_sub_function,
+        Settling, Stage, allowed_in_session, begin, session_access, settle, suppresses,
+        zero_sub_function,
     };
     use crate::state::{ProtocolState, State};
+    use crate::{Access, Sessions};
     use crate::{Responded, ResponseSink, Unsettled};
     use automotive_wire_codec::Sink;
     use uds_protocol::NegativeResponseCode as N;
@@ -1234,44 +1079,64 @@ mod tests {
         matches!(s, U::ReadDataByIdentifier)
     }
 
-    /// The sub-function check `uds_server!` emits for an assembly listing `Ecu`'s
-    /// services: each listed service with a stage answers for its own sub-function.
-    fn ecu_sub_function(service: U, value: u8) -> bool {
+    /// The lookup `uds_server!` emits for an assembly listing `Ecu`'s services: each
+    /// listed service with a stage answers for its own sub-function, and
+    /// `TesterPresent`'s zero sub-function is available in every session (clause 10.7;
+    /// Table 23). No sub-function of the test assembly requires a security level.
+    fn ecu_access(service: U, value: u8, active: S) -> Option<Access> {
         match service {
-            U::DiagnosticSessionControl => session_supported(&Ecu, value),
+            U::DiagnosticSessionControl => session_access(&Ecu, value, active),
             U::TesterPresent => zero_sub_function(value),
-            _ => true,
+            _ => Some(Access::new(Sessions::ALL)),
         }
     }
 
-    /// The per-session check `uds_server!` emits for the same assembly:
-    /// `DiagnosticSessionControl` asks the application; `TesterPresent`'s zero
-    /// sub-function is available in every session (clause 10.7; Table 23), so it falls
-    /// through.
-    fn ecu_in_session(service: U, value: u8, active: S) -> bool {
-        match service {
-            U::DiagnosticSessionControl => session_supported_from(&Ecu, value, active),
-            _ => true,
-        }
+    /// The same, refusing every session: what it supports is supported in none.
+    fn ecu_access_nowhere(service: U, value: u8, active: S) -> Option<Access> {
+        ecu_access(service, value, active).map(|_| Access::new(Sessions::NONE))
     }
 
-    /// No sub-function of the test assembly requires a security level.
-    fn no_level(_service: U, _value: u8) -> Option<crate::SecurityLevel> {
-        None
+    /// ISO 14229-1:2020 8.7.3.1 Figure 6, "`SubFunction` security check OK?" — a
+    /// sub-function that either of two levels unlocks, as an OEM and a supplier level
+    /// commonly share one, proceeds with either unlocked and is 0x33 with neither.
+    #[test]
+    #[allow(clippy::expect_used, reason = "the levels are odd requestSeed values")]
+    fn a_sub_function_any_of_its_levels_unlocks_proceeds() {
+        let level = |value| crate::SecurityLevel::from_request_seed(value).expect("odd");
+        let (oem, supplier) = (level(0x01), level(0x11));
+        let either = Access::new(Sessions::ALL)
+            .unlocked_by(crate::Levels::NONE.with(oem).with(supplier));
+        for (unlocked, nrc) in [
+            (Some(oem), None),
+            (Some(supplier), None),
+            (Some(level(0x03)), Some(N::SecurityAccessDenied)),
+            (None, Some(N::SecurityAccessDenied)),
+        ] {
+            let mut state = in_session(S::ExtendedDiagnosticSession);
+            if let Some(level) = unlocked {
+                state.unlock(level);
+            }
+            let st = begin(
+                &state,
+                &[0x11, 0x01],
+                |s| matches!(s, U::EcuReset),
+                |_, _, _| Some(either),
+            );
+            match nrc {
+                None => assert!(matches!(st, Stage::Proceed { sid: 0x11, .. }), "{st:?}"),
+                Some(nrc) => assert!(
+                    matches!(st, Stage::Settle { sid: 0x11, nrc: got } if got == nrc),
+                    "{unlocked:?}: {st:?}"
+                ),
+            }
+        }
     }
 
     /// ``UDSSVC_ARCH_0005`` — an empty request is the pipeline's, and is `Empty`.
     #[test]
     fn an_empty_request_is_empty() {
         assert!(matches!(
-            begin(
-                &State::INITIAL,
-                &[],
-                supports_rdbi,
-                ecu_sub_function,
-                ecu_in_session,
-                no_level
-            ),
+            begin(&State::INITIAL, &[], supports_rdbi, ecu_access),
             Stage::Empty
         ));
     }
@@ -1279,14 +1144,7 @@ mod tests {
     /// ``UDSSVC_ARCH_0005`` — a decode failure settles 0x13 with the SID echoed.
     #[test]
     fn a_short_request_settles_0x13() {
-        let st = begin(
-            &State::INITIAL,
-            &[0x22, 0xF1],
-            supports_rdbi,
-            ecu_sub_function,
-            ecu_in_session,
-            no_level,
-        );
+        let st = begin(&State::INITIAL, &[0x22, 0xF1], supports_rdbi, ecu_access);
         assert!(matches!(
             st,
             Stage::Settle {
@@ -1300,14 +1158,7 @@ mod tests {
     /// SID settles 0x11, not 0x13.
     #[test]
     fn an_unsupported_service_settles_0x11() {
-        let st = begin(
-            &State::INITIAL,
-            &[0x3E, 0x00],
-            supports_rdbi,
-            ecu_sub_function,
-            ecu_in_session,
-            no_level,
-        );
+        let st = begin(&State::INITIAL, &[0x3E, 0x00], supports_rdbi, ecu_access);
         assert!(matches!(
             st,
             Stage::Settle {
@@ -1315,14 +1166,7 @@ mod tests {
                 nrc: N::ServiceNotSupported
             }
         ));
-        let st = begin(
-            &State::INITIAL,
-            &[0xBA, 0x00],
-            supports_rdbi,
-            ecu_sub_function,
-            ecu_in_session,
-            no_level,
-        );
+        let st = begin(&State::INITIAL, &[0xBA, 0x00], supports_rdbi, ecu_access);
         assert!(matches!(
             st,
             Stage::Settle {
@@ -1355,9 +1199,7 @@ mod tests {
             &state,
             &[0x27, 0x01],
             |s| matches!(s, U::SecurityAccess),
-            ecu_sub_function,
-            ecu_in_session,
-            no_level,
+            ecu_access,
         );
         assert!(matches!(
             st,
@@ -1373,14 +1215,7 @@ mod tests {
     /// 0x13.
     #[test]
     fn a_malformed_request_for_an_unlisted_service_settles_0x11() {
-        let st = begin(
-            &State::INITIAL,
-            &[0x3E],
-            supports_rdbi,
-            ecu_sub_function,
-            ecu_in_session,
-            no_level,
-        );
+        let st = begin(&State::INITIAL, &[0x3E], supports_rdbi, ecu_access);
         assert!(matches!(
             st,
             Stage::Settle {
@@ -1398,9 +1233,7 @@ mod tests {
             &State::INITIAL,
             &[0x27],
             |s| matches!(s, U::SecurityAccess),
-            ecu_sub_function,
-            ecu_in_session,
-            no_level,
+            ecu_access,
         );
         assert!(matches!(
             st,
@@ -1419,9 +1252,7 @@ mod tests {
             &State::INITIAL,
             &[0x3E],
             |s| matches!(s, U::TesterPresent),
-            ecu_sub_function,
-            ecu_in_session,
-            no_level,
+            ecu_access,
         );
         assert!(matches!(
             st,
@@ -1439,9 +1270,7 @@ mod tests {
             &State::INITIAL,
             &[0x22, 0xF1, 0x90],
             supports_rdbi,
-            ecu_sub_function,
-            ecu_in_session,
-            no_level,
+            ecu_access,
         );
         assert!(matches!(st, Stage::Proceed { sid: 0x22, .. }));
     }
@@ -1465,14 +1294,7 @@ mod tests {
             (&[0x10, 0x05, 0x00][..], 0x10),
             (&[0x10, 0x04, 0x00][..], 0x10),
         ] {
-            let st = begin(
-                &State::INITIAL,
-                request,
-                supports_ecu,
-                ecu_sub_function,
-                ecu_in_session,
-                no_level,
-            );
+            let st = begin(&State::INITIAL, request, supports_ecu, ecu_access);
             assert!(
                 matches!(
                     st,
@@ -1488,14 +1310,7 @@ mod tests {
     #[test]
     fn a_supported_sub_function_with_a_trailing_byte_settles_0x13() {
         for request in [&[0x3E, 0x80, 0x00][..], &[0x10, 0x03, 0x00][..]] {
-            let st = begin(
-                &State::INITIAL,
-                request,
-                supports_ecu,
-                ecu_sub_function,
-                ecu_in_session,
-                no_level,
-            );
+            let st = begin(&State::INITIAL, request, supports_ecu, ecu_access);
             assert!(
                 matches!(
                     st,
@@ -1513,14 +1328,7 @@ mod tests {
     #[test]
     fn a_good_sub_function_request_proceeds() {
         for request in [&[0x3E, 0x00][..], &[0x3E, 0x80][..], &[0x10, 0x03][..]] {
-            let st = begin(
-                &State::INITIAL,
-                request,
-                supports_ecu,
-                ecu_sub_function,
-                ecu_in_session,
-                no_level,
-            );
+            let st = begin(&State::INITIAL, request, supports_ecu, ecu_access);
             assert!(
                 matches!(st, Stage::Proceed { .. }),
                 "{request:02X?}: {st:?}"
@@ -1537,9 +1345,7 @@ mod tests {
             &State::INITIAL,
             &[0x22, 0xF1, 0x90, 0x00],
             supports_ecu,
-            |_, _| false,
-            |_, _, _| false,
-            no_level,
+            |_, _, _| None,
         );
         assert!(matches!(
             st,
@@ -1558,9 +1364,7 @@ mod tests {
             &State::INITIAL,
             &[0x31, 0x01, 0xFF, 0x00],
             |s| matches!(s, U::RoutineControl),
-            |_, _| false,
-            |_, _, _| false,
-            no_level,
+            |_, _, _| None,
         );
         assert!(!matches!(
             st,
@@ -1586,9 +1390,7 @@ mod tests {
             &State::INITIAL,
             &[0x10, 0x04],
             supports_ecu,
-            ecu_sub_function,
-            |_, _, _| false,
-            no_level,
+            ecu_access_nowhere,
         );
         assert!(
             matches!(
@@ -1612,14 +1414,7 @@ mod tests {
             &[0x10, 0x82][..],
             &[0x10, 0x02, 0x00][..],
         ] {
-            let st = begin(
-                &State::INITIAL,
-                request,
-                supports_ecu,
-                ecu_sub_function,
-                ecu_in_session,
-                no_level,
-            );
+            let st = begin(&State::INITIAL, request, supports_ecu, ecu_access);
             assert!(
                 matches!(
                     st,
@@ -1641,18 +1436,14 @@ mod tests {
             &in_session(S::ExtendedDiagnosticSession),
             &[0x10, 0x02],
             supports_ecu,
-            ecu_sub_function,
-            ecu_in_session,
-            no_level,
+            ecu_access,
         );
         assert!(matches!(st, Stage::Proceed { sid: 0x10, .. }), "{st:?}");
         let st = begin(
             &in_session(S::ProgrammingSession),
             &[0x10, 0x02],
             supports_ecu,
-            ecu_sub_function,
-            ecu_in_session,
-            no_level,
+            ecu_access,
         );
         assert!(
             matches!(
@@ -1677,9 +1468,7 @@ mod tests {
                 &in_session(S::ExtendedDiagnosticSession),
                 &request,
                 supports_ecu,
-                ecu_sub_function,
-                |_, _, _| false,
-                no_level,
+                ecu_access_nowhere,
             );
             assert!(
                 matches!(
@@ -1704,9 +1493,7 @@ mod tests {
                 &in_session(session),
                 &[0x3E, 0x00],
                 supports_ecu,
-                ecu_sub_function,
-                ecu_in_session,
-                no_level,
+                ecu_access,
             );
             assert!(matches!(st, Stage::Proceed { sid: 0x3E, .. }), "{st:?}");
         }

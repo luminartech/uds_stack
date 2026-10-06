@@ -16,15 +16,15 @@ use static_cell::ConstStaticCell;
 use uds_protocol::NegativeResponseCode as Nrc;
 use uds_services::pipeline::settle;
 use uds_services::{
-    Address, Ai, Answer, ClearDiagnosticInformation, ClientSet, ClientStorage,
+    Access, Address, Ai, Answer, ClearDiagnosticInformation, ClientSet, ClientStorage,
     CommunicationControl, CommunicationControlType, CommunicationType, DataIdentifier,
     DataTransfer, DiagnosticSessionType, DtcRecord, DtcReportKind, DtcStatusMask,
     KeyVerdict, Mtype, PhysicalKeepAlive, ReadDataByIdentifier, ReadDtcInfoReportType,
     ReadDtcInfoSubFunction, ReadDtcInformation, Received, RecordError, Reloads, Response,
     ResponseSink, SecurityAccess, SecurityLevel, SecurityPolicy, ServerParams, ServiceSet,
-    SessionTiming, SessionTransition, Sink, Storage, SubnetNumber, TaType, TesterPresent,
-    Timestamp, TransferRequest, TransportEvent, UdsServiceType, UdsTransport, uds_client,
-    uds_server,
+    SessionTiming, SessionTransition, Sessions, Sink, Storage, SubnetNumber, TaType,
+    TesterPresent, Timestamp, TransferRequest, TransportEvent, UdsServiceType,
+    UdsTransport, uds_client, uds_server,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -89,14 +89,8 @@ impl ReadDtcInformation for Ecu {
     const MAX_DTCS: usize = 10;
     const REPORTS: &'static [DtcReportKind] =
         &[DtcReportKind::DtcList, DtcReportKind::SeverityList];
-    fn supports(&self, _r: ReadDtcInfoReportType) -> bool {
-        true
-    }
-    fn supported_in(&self, _r: ReadDtcInfoReportType, _a: DiagnosticSessionType) -> bool {
-        true
-    }
-    fn required_level(&self, _r: ReadDtcInfoReportType) -> Option<SecurityLevel> {
-        None
+    fn access(&self, _x: ReadDtcInfoReportType) -> Option<Access> {
+        Some(Access::new(Sessions::ALL))
     }
     // No `parameters: &[u8]`: every report type's parameters ride on its variant.
     async fn read_dtc_information(
@@ -135,18 +129,8 @@ impl TesterPresent for Ecu {
 
 impl CommunicationControl for Ecu {
     const MAY_RESPOND_PENDING: bool = false;
-    fn supports(&self, _c: CommunicationControlType) -> bool {
-        true
-    }
-    fn supported_in(
-        &self,
-        _c: CommunicationControlType,
-        _a: DiagnosticSessionType,
-    ) -> bool {
-        true
-    }
-    fn required_level(&self, _c: CommunicationControlType) -> Option<SecurityLevel> {
-        None
+    fn access(&self, _x: CommunicationControlType) -> Option<Access> {
+        Some(Access::new(Sessions::ALL))
     }
     // The two sub-function bytes are unrelated types, so they cannot be transposed.
     async fn control(
@@ -187,11 +171,8 @@ impl SecurityAccess for Ecu {
     const MAX_SEED_LEN: usize = 4;
     const MAX_KEY_LEN: usize = 4;
     const MAX_RECORD_LEN: usize = 0;
-    fn supports(&self, _l: SecurityLevel) -> bool {
-        true
-    }
-    fn supported_in(&self, _l: SecurityLevel, _active: DiagnosticSessionType) -> bool {
-        true
+    fn sessions(&self, _l: SecurityLevel) -> Option<Sessions> {
+        Some(Sessions::ALL)
     }
     fn preconditions_met(&self, _l: SecurityLevel) -> bool {
         true

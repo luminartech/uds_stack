@@ -13,7 +13,7 @@ use uds_services::{
     Address, Ai, DataIdentifier, DiagnosticSessionControl, DiagnosticSessionType as S,
     KeyVerdict, Mtype, ReadDataByIdentifier, RecordError, Reloads, ResponseSink, SResult,
     SecurityAccess, SecurityLevel, SecurityPolicy, ServerParams, SessionTiming,
-    SessionTransition, Sink, TaType, TesterPresent, Timestamp, TransportEvent,
+    SessionTransition, Sessions, Sink, TaType, TesterPresent, Timestamp, TransportEvent,
     UdsTransport, uds_server,
 };
 use uds_session::TransportError;
@@ -342,11 +342,8 @@ impl SecurityAccess for Ecu {
     const MAX_SEED_LEN: usize = 4;
     const MAX_KEY_LEN: usize = 4;
     const MAX_RECORD_LEN: usize = 0;
-    fn supports(&self, _l: SecurityLevel) -> bool {
-        true
-    }
-    fn supported_in(&self, _l: SecurityLevel, _active: S) -> bool {
-        true
+    fn sessions(&self, _l: SecurityLevel) -> Option<Sessions> {
+        Some(Sessions::ALL)
     }
     fn preconditions_met(&self, _l: SecurityLevel) -> bool {
         true

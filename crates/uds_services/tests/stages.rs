@@ -10,15 +10,15 @@
 use uds_protocol::NegativeResponseCode as Nrc;
 use uds_services::pipeline::settle;
 use uds_services::{
-    Address, Ai, ClearDiagnosticInformation, CommunicationControl,
+    Access, Address, Ai, ClearDiagnosticInformation, CommunicationControl,
     CommunicationControlType, CommunicationType, ControlDtcSetting, DataIdentifier,
     DiagnosticSessionType as S, DtcRecord, DtcReportKind, DtcSettingType, DtcStatusMask,
-    EcuReset, KeyVerdict, Mtype, ProtocolState, ReadDtcInfoReportType,
+    EcuReset, KeyVerdict, Levels, Mtype, ProtocolState, ReadDtcInfoReportType,
     ReadDtcInfoSubFunction, ReadDtcInformation, Received, RecordError, ResetType,
     Responded, ResponseSink, RoutineControl, RoutineControlSubFunction, RoutineIdentifier,
     SecurityAccess, SecurityLevel, SecurityPolicy, ServiceSet, SessionTiming,
-    SessionTransition, Sink, SubnetNumber, TaType, TesterPresent, WriteDataByIdentifier,
-    uds_server,
+    SessionTransition, Sessions, Sink, SubnetNumber, TaType, TesterPresent,
+    WriteDataByIdentifier, uds_server,
 };
 
 /// The test server's data identifiers.
@@ -155,31 +155,38 @@ impl uds_services::DiagnosticSessionControl for Ecu {
     }
 }
 
+fn everywhere() -> Access {
+    Access::new(Sessions::ALL)
+}
+
+fn only_in(session: S) -> Access {
+    Access::new(Sessions::of(&[session]))
+}
+
+#[allow(clippy::expect_used, reason = "0x03 is a requestSeed value")]
+fn by_level_3(access: Access) -> Access {
+    access.unlocked_by(
+        Levels::NONE
+            .with(SecurityLevel::from_request_seed(0x03).expect("a requestSeed value")),
+    )
+}
+
 impl TesterPresent for Ecu {
     fn on_tester_present(&mut self) {}
 }
 
 impl EcuReset for Ecu {
     const MAY_RESPOND_PENDING: bool = false;
-    fn supports(&self, kind: ResetType) -> bool {
-        matches!(
-            kind,
-            ResetType::HardReset
-                | ResetType::KeyOffOnReset
-                | ResetType::SoftReset
-                | ResetType::EnableRapidPowerShutDown
-        )
-    }
-    /// A key-off-on reset is offered only in the extended session.
-    fn supported_in(&self, kind: ResetType, active: S) -> bool {
-        !matches!(kind, ResetType::KeyOffOnReset)
-            || matches!(active, S::ExtendedDiagnosticSession)
-    }
-    /// A soft or key-off-on reset requires level 0x03 unlocked.
-    fn required_level(&self, kind: ResetType) -> Option<SecurityLevel> {
+    /// A key-off-on reset is offered only in the extended session, and it and a soft
+    /// reset require level 0x03 unlocked.
+    fn access(&self, kind: ResetType) -> Option<Access> {
         match kind {
-            ResetType::SoftReset | ResetType::KeyOffOnReset => {
-                SecurityLevel::from_request_seed(0x03)
+            ResetType::HardReset | ResetType::EnableRapidPowerShutDown => {
+                Some(everywhere())
+            }
+            ResetType::SoftReset => Some(by_level_3(everywhere())),
+            ResetType::KeyOffOnReset => {
+                Some(by_level_3(only_in(S::ExtendedDiagnosticSession)))
             }
             _ => None,
         }
@@ -209,11 +216,12 @@ impl SecurityAccess for Ecu {
     const MAX_SEED_LEN: usize = 2;
     const MAX_KEY_LEN: usize = 2;
     const MAX_RECORD_LEN: usize = 2;
-    fn supports(&self, level: SecurityLevel) -> bool {
-        matches!(level.request_seed(), 0x01 | 0x03 | 0x05)
-    }
-    fn supported_in(&self, level: SecurityLevel, active: S) -> bool {
-        level.request_seed() != 0x05 || matches!(active, S::ProgrammingSession)
+    fn sessions(&self, level: SecurityLevel) -> Option<Sessions> {
+        match level.request_seed() {
+            0x01 | 0x03 => Some(Sessions::ALL),
+            0x05 => Some(Sessions::of(&[S::ProgrammingSession])),
+            _ => None,
+        }
     }
     fn preconditions_met(&self, _l: SecurityLevel) -> bool {
         !self.preconditions_unmet
@@ -293,16 +301,11 @@ impl ReadDtcInformation for Ecu {
     const MAX_DTCS: usize = 3;
     const REPORTS: &'static [DtcReportKind] =
         &[DtcReportKind::Count, DtcReportKind::DtcList];
-    fn supports(&self, report: ReadDtcInfoReportType) -> bool {
-        matches!(u8::from(report), 0x01 | 0x02 | 0x0A | 0x19)
-    }
-    fn supported_in(&self, report: ReadDtcInfoReportType, active: S) -> bool {
-        !matches!(report, ReadDtcInfoReportType::ReportSupportedDtc)
-            || matches!(active, S::ExtendedDiagnosticSession)
-    }
-    fn required_level(&self, report: ReadDtcInfoReportType) -> Option<SecurityLevel> {
+    fn access(&self, report: ReadDtcInfoReportType) -> Option<Access> {
         match u8::from(report) {
-            0x19 => SecurityLevel::from_request_seed(0x03),
+            0x01 | 0x02 => Some(everywhere()),
+            0x0A => Some(only_in(S::ExtendedDiagnosticSession)),
+            0x19 => Some(by_level_3(everywhere())),
             _ => None,
         }
     }
@@ -356,13 +359,11 @@ impl RoutineControl for Ecu {
     type Rid = Rid;
     const MAY_RESPOND_PENDING: bool = true;
     const MAX_OPTION_LEN: usize = 4;
-    fn supported_in(&self, routine: Rid, active: S) -> bool {
-        !matches!(routine, Rid::CheckProgramming) || matches!(active, S::ProgrammingSession)
-    }
-    fn required_level(&self, routine: Rid) -> Option<SecurityLevel> {
+    fn access(&self, routine: Rid) -> Option<Access> {
         match routine {
-            Rid::EraseMemory => SecurityLevel::from_request_seed(0x03),
-            _ => None,
+            Rid::SelfTest => Some(everywhere()),
+            Rid::EraseMemory => Some(by_level_3(everywhere())),
+            Rid::CheckProgramming => Some(only_in(S::ProgrammingSession)),
         }
     }
     /// The self-test cannot be stopped; the others can only be started.
@@ -445,17 +446,12 @@ impl ClearDiagnosticInformation for Ecu {
 impl WriteDataByIdentifier for Ecu {
     type Did = Did;
     const MAY_RESPOND_PENDING: bool = false;
-    fn writable_in(&self, did: Did, active: S) -> bool {
+    fn access(&self, did: Did) -> Option<Access> {
         match did {
-            Did::Vin => matches!(active, S::ExtendedDiagnosticSession),
-            Did::VehicleSpeed => false,
-            Did::Config | Did::Mode => true,
-        }
-    }
-    fn required_level(&self, did: Did) -> Option<SecurityLevel> {
-        match did {
-            Did::Config => SecurityLevel::from_request_seed(0x03),
-            _ => None,
+            Did::Vin => Some(only_in(S::ExtendedDiagnosticSession)),
+            Did::VehicleSpeed => None,
+            Did::Config => Some(by_level_3(everywhere())),
+            Did::Mode => Some(everywhere()),
         }
     }
     /// A `Config` of `FFFF` is a value this server rejects.
@@ -477,17 +473,11 @@ impl WriteDataByIdentifier for Ecu {
 /// know.
 impl CommunicationControl for Ecu {
     const MAY_RESPOND_PENDING: bool = false;
-    fn supports(&self, kind: CommunicationControlType) -> bool {
-        matches!(u8::from(kind), 0x00 | 0x01 | 0x03 | 0x04 | 0x05)
-    }
-    fn supported_in(&self, kind: CommunicationControlType, active: S) -> bool {
-        u8::from(kind) != 0x05 || matches!(active, S::ProgrammingSession)
-    }
-    fn required_level(&self, kind: CommunicationControlType) -> Option<SecurityLevel> {
-        match kind {
-            CommunicationControlType::DisableRxAndTx => {
-                SecurityLevel::from_request_seed(0x03)
-            }
+    fn access(&self, kind: CommunicationControlType) -> Option<Access> {
+        match u8::from(kind) {
+            0x00 | 0x01 | 0x04 => Some(everywhere()),
+            0x03 => Some(by_level_3(everywhere())),
+            0x05 => Some(only_in(S::ProgrammingSession)),
             _ => None,
         }
     }
@@ -515,15 +505,11 @@ impl CommunicationControl for Ecu {
 impl ControlDtcSetting for Ecu {
     const MAY_RESPOND_PENDING: bool = false;
     const MAX_OPTION_RECORD_LEN: usize = 3;
-    fn supports(&self, setting: DtcSettingType) -> bool {
-        matches!(u8::from(setting), 0x01 | 0x02 | 0x40 | 0x41)
-    }
-    fn supported_in(&self, setting: DtcSettingType, active: S) -> bool {
-        u8::from(setting) != 0x40 || matches!(active, S::ProgrammingSession)
-    }
-    fn required_level(&self, setting: DtcSettingType) -> Option<SecurityLevel> {
+    fn access(&self, setting: DtcSettingType) -> Option<Access> {
         match u8::from(setting) {
-            0x41 => SecurityLevel::from_request_seed(0x03),
+            0x01 | 0x02 => Some(everywhere()),
+            0x40 => Some(only_in(S::ProgrammingSession)),
+            0x41 => Some(by_level_3(everywhere())),
             _ => None,
         }
     }

@@ -1,7 +1,7 @@
 //! Data transmission — ISO 14229-1:2020 clause 11.
 
-use crate::{DataIdentifier, ResponseSink, SecurityLevel};
-use uds_protocol::{DiagnosticSessionType, NegativeResponseCode};
+use crate::{Access, DataIdentifier, ResponseSink};
+use uds_protocol::NegativeResponseCode;
 
 /// `ReadDataByIdentifier` (0x22).
 ///
@@ -44,9 +44,10 @@ pub trait ReadDataByIdentifier {
 ///
 /// ISO 14229-1:2020 clause 11.7, Figure 26 — the pipeline settles, in order: a request
 /// with no data record (0x13), an identifier [`DataIdentifier::from_u16`] rejects or
-/// [`Self::writable_in`] refuses (0x31), a record [`DataIdentifier::split_record`] finds
-/// short or followed by more bytes (0x13), a locked [`Self::required_level`] (0x33), and a
-/// record `split_record` finds malformed (0x31). Only then is [`Self::write`] asked.
+/// [`Self::access`] does not admit in the active session (0x31), a record
+/// [`DataIdentifier::split_record`] finds short or followed by more bytes (0x13), an
+/// identifier none of whose levels is unlocked (0x33), and a record `split_record` finds
+/// malformed (0x31). Only then is [`Self::write`] asked.
 pub trait WriteDataByIdentifier {
     /// This application's data identifier enumeration.
     type Did: DataIdentifier;
@@ -55,37 +56,25 @@ pub trait WriteDataByIdentifier {
     /// further requests while it completes.
     const MAY_RESPOND_PENDING: bool;
 
-    /// Whether `did` may be written in the `active` session.
+    /// Where `did` may be written and which levels unlock writing it, or `None` where it
+    /// is not writable at all.
     ///
-    /// Figure 26, "DID supports service 2E in active session?" — a `false` settles the
+    /// Figure 26 — `None`, or an active session outside [`Access::sessions`], settles the
     /// request `requestOutOfRange` (0x31), as clause 11.7.4 has it for a read-only
-    /// identifier, before the record's length is checked.
+    /// identifier, before the record's length is checked; none of [`Access::levels`]
+    /// unlocked settles it `securityAccessDenied` (0x33), after the length is checked and
+    /// without [`Self::write`] being asked.
     ///
     /// # Arguments
     ///
     /// * `did` - the identifier the request names; see [`Self::Did`].
-    /// * `active` - the session the server is in when the request arrives; see
-    ///   [`DiagnosticSessionType`].
-    fn writable_in(&self, did: Self::Did, active: DiagnosticSessionType) -> bool;
-
-    /// The security level writing `did` requires unlocked, or `None` where it requires
-    /// none.
-    ///
-    /// Figure 26, "DID security check OK?" — where the level this crate holds unlocked
-    /// is not the one returned, the request settles `securityAccessDenied` (0x33) without
-    /// [`Self::write`] being asked.
-    ///
-    /// # Arguments
-    ///
-    /// * `did` - the identifier the request names; see [`Self::Did`].
-    fn required_level(&self, did: Self::Did) -> Option<SecurityLevel>;
+    fn access(&self, did: Self::Did) -> Option<Access>;
 
     /// Store `record` as `did`'s data record.
     ///
     /// # Arguments
     ///
-    /// * `did` - an identifier [`Self::writable_in`] accepted and whose
-    ///   [`Self::required_level`] is unlocked; see [`Self::Did`].
+    /// * `did` - an identifier [`Self::access`] admitted; see [`Self::Did`].
     /// * `record` - exactly the record [`DataIdentifier::split_record`] took.
     ///
     /// # Errors

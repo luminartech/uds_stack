@@ -249,132 +249,62 @@ macro_rules! __uds_session_timing {
     ($self:ident, $state:ident, $svc:ident) => {};
 }
 
-/// Figure 6's sub-function check for one listed service (``UDSSVC_ARCH_0007``): an early
-/// `return` from the closure `pipeline::begin` is handed, where `$service` is this one.
-/// Only a service with a stage decides its sub-function; any other listed service emits
-/// nothing, and the closure's fall-through `true` passes the request on to the decode
-/// and to the 0x11 its missing stage settles.
+/// Figure 6's sub-function lookup for one listed service (``UDSSVC_ARCH_0007``): an early
+/// `return` of the [`Access`](crate::Access) the sub-function `$value` has, from the
+/// closure `pipeline::begin` is handed, where `$service` is this one. `begin` settles
+/// 0x12, 0x7E and 0x33 from it, in Figure 6's order. Only a service with a stage decides
+/// its sub-function; any other listed service emits nothing, and the closure's
+/// fall-through, available everywhere, passes the request on to the decode and to the
+/// 0x11 its missing stage settles.
 #[doc(hidden)]
 #[macro_export]
-macro_rules! __uds_sub_function {
-    ($self:ident, $service:ident, $value:ident, DiagnosticSessionControl) => {
+macro_rules! __uds_sub_function_access {
+    (
+        $self:ident, $service:ident, $value:ident, $active:ident, DiagnosticSessionControl
+    ) => {
         if ::core::matches!($service, $crate::UdsServiceType::DiagnosticSessionControl) {
-            return $crate::pipeline::session_supported($self, $value);
+            return $crate::pipeline::session_access($self, $value, $active);
         }
     };
-    ($self:ident, $service:ident, $value:ident, TesterPresent) => {
+    ($self:ident, $service:ident, $value:ident, $active:ident, TesterPresent) => {
         if ::core::matches!($service, $crate::UdsServiceType::TesterPresent) {
             return $crate::pipeline::zero_sub_function($value);
         }
     };
-    ($self:ident, $service:ident, $value:ident, EcuReset) => {
-        if ::core::matches!($service, $crate::UdsServiceType::EcuReset) {
-            return $crate::pipeline::reset_supported($self, $value);
-        }
-    };
-    ($self:ident, $service:ident, $value:ident, SecurityAccess) => {
+    ($self:ident, $service:ident, $value:ident, $active:ident, SecurityAccess) => {
         if ::core::matches!($service, $crate::UdsServiceType::SecurityAccess) {
-            return $crate::pipeline::security_supported($self, $value);
-        }
-    };
-    ($self:ident, $service:ident, $value:ident, ControlDtcSetting) => {
-        if ::core::matches!($service, $crate::UdsServiceType::ControlDtcSetting) {
-            return $crate::pipeline::dtc_setting_supported($self, $value);
-        }
-    };
-    ($self:ident, $service:ident, $value:ident, CommunicationControl) => {
-        if ::core::matches!($service, $crate::UdsServiceType::CommunicationControl) {
-            return $crate::pipeline::control_type_supported($self, $value);
-        }
-    };
-    ($self:ident, $service:ident, $value:ident, ReadDtcInformation) => {
-        if ::core::matches!($service, $crate::UdsServiceType::ReadDtcInfo) {
-            return $crate::pipeline::report_type_supported($self, $value);
-        }
-    };
-    ($self:ident, $service:ident, $value:ident, $svc:ident) => {};
-}
-
-/// Figure 6's per-session sub-function check for one listed service
-/// (``UDSSVC_ARCH_0007`` row 4): an early `return` from the per-session closure
-/// `pipeline::begin` is handed, where `$service` is this one. The pipeline asks it only
-/// after `__uds_sub_function`'s closure accepted the sub-function, and settles 0x7E on a
-/// `false`; this routes the question to the application and decides nothing.
-/// `TesterPresent` emits nothing — its zero sub-function is its only one (clause 10.7)
-/// and Table 23 allows the service in every session — and neither does a service without
-/// a stage, so both reach the closure's fall-through `true`.
-#[doc(hidden)]
-#[macro_export]
-macro_rules! __uds_sub_function_in_session {
-    (
-        $self:ident,
-        $service:ident,
-        $value:ident,
-        $active:ident,
-        DiagnosticSessionControl
-    ) => {
-        if ::core::matches!($service, $crate::UdsServiceType::DiagnosticSessionControl) {
-            return $crate::pipeline::session_supported_from($self, $value, $active);
+            return $crate::pipeline::security_access_sessions($self, $value);
         }
     };
     ($self:ident, $service:ident, $value:ident, $active:ident, EcuReset) => {
         if ::core::matches!($service, $crate::UdsServiceType::EcuReset) {
-            return $crate::pipeline::reset_supported_in($self, $value, $active);
-        }
-    };
-    ($self:ident, $service:ident, $value:ident, $active:ident, SecurityAccess) => {
-        if ::core::matches!($service, $crate::UdsServiceType::SecurityAccess) {
-            return $crate::pipeline::security_supported_in($self, $value, $active);
-        }
-    };
-    ($self:ident, $service:ident, $value:ident, $active:ident, ControlDtcSetting) => {
-        if ::core::matches!($service, $crate::UdsServiceType::ControlDtcSetting) {
-            return $crate::pipeline::dtc_setting_supported_in($self, $value, $active);
+            return $crate::pipeline::sub_function_access($value, |kind| {
+                <Self as $crate::EcuReset>::access($self, kind)
+            });
         }
     };
     ($self:ident, $service:ident, $value:ident, $active:ident, CommunicationControl) => {
         if ::core::matches!($service, $crate::UdsServiceType::CommunicationControl) {
-            return $crate::pipeline::control_type_supported_in($self, $value, $active);
+            return $crate::pipeline::sub_function_access($value, |kind| {
+                <Self as $crate::CommunicationControl>::access($self, kind)
+            });
+        }
+    };
+    ($self:ident, $service:ident, $value:ident, $active:ident, ControlDtcSetting) => {
+        if ::core::matches!($service, $crate::UdsServiceType::ControlDtcSetting) {
+            return $crate::pipeline::sub_function_access($value, |setting| {
+                <Self as $crate::ControlDtcSetting>::access($self, setting)
+            });
         }
     };
     ($self:ident, $service:ident, $value:ident, $active:ident, ReadDtcInformation) => {
         if ::core::matches!($service, $crate::UdsServiceType::ReadDtcInfo) {
-            return $crate::pipeline::report_type_supported_in($self, $value, $active);
+            return $crate::pipeline::sub_function_access($value, |report| {
+                <Self as $crate::ReadDtcInformation>::access($self, report)
+            });
         }
     };
     ($self:ident, $service:ident, $value:ident, $active:ident, $svc:ident) => {};
-}
-
-/// Figure 6's sub-function security check for one listed service: an early `return` from
-/// the closure `pipeline::begin` is handed, where `$service` is this one, naming the level
-/// the sub-function requires unlocked. The pipeline asks it only after both
-/// `__uds_sub_function` and `__uds_sub_function_in_session` accepted, and settles 0x33
-/// where that level is not the unlocked one. A service whose sub-functions require no
-/// level emits nothing and reaches the closure's fall-through `None`.
-#[doc(hidden)]
-#[macro_export]
-macro_rules! __uds_sub_function_security {
-    ($self:ident, $service:ident, $value:ident, EcuReset) => {
-        if ::core::matches!($service, $crate::UdsServiceType::EcuReset) {
-            return $crate::pipeline::reset_required_level($self, $value);
-        }
-    };
-    ($self:ident, $service:ident, $value:ident, ControlDtcSetting) => {
-        if ::core::matches!($service, $crate::UdsServiceType::ControlDtcSetting) {
-            return $crate::pipeline::dtc_setting_required_level($self, $value);
-        }
-    };
-    ($self:ident, $service:ident, $value:ident, CommunicationControl) => {
-        if ::core::matches!($service, $crate::UdsServiceType::CommunicationControl) {
-            return $crate::pipeline::control_type_required_level($self, $value);
-        }
-    };
-    ($self:ident, $service:ident, $value:ident, ReadDtcInformation) => {
-        if ::core::matches!($service, $crate::UdsServiceType::ReadDtcInfo) {
-            return $crate::pipeline::report_type_required_level($self, $value);
-        }
-    };
-    ($self:ident, $service:ident, $value:ident, $svc:ident) => {};
 }
 
 /// The checks a listed service's stage makes ahead of the request's total length, for a
@@ -494,20 +424,23 @@ macro_rules! __uds_stage {
 /// `pipeline::settle` nowhere; the driver does, once the handler has finished
 /// (``UDSSVC_ARCH_0016``). Every clause 8.7 decision is the pipeline's.
 ///
-/// **Figure 6's sub-function questions are each service trait's lookups** — a
-/// "supported ever" lookup, a "supported in the active session" lookup, and a
-/// "security check" lookup, each typed in that service's own sub-function
-/// (``UDSSVC_ARCH_0007`` rows 2 and 4, then Figure 6's optional 0x33). `dispatch` hands
-/// them to `pipeline::begin` as closures that route to the listed service's trait, and
-/// the pipeline decides 0x12, 0x7E or 0x33. On `DiagnosticSessionControl` the first two
-/// are [`supports`] and [`supported_from`] and there is no third; on every other staged
-/// service with a sub-function they are `supports`, `supported_in` and `required_level`,
-/// as on [`EcuReset`]. `SecurityAccess` has no `required_level`: it is the service that
-/// unlocks. `TesterPresent` has none of the three, because its only sub-function is
-/// available everywhere.
+/// **Figure 6's sub-function questions are answered by one lookup per service trait** —
+/// an [`Access`](crate::Access) for a sub-function the service supports, typed in that
+/// service's own sub-function, carrying the sessions it is available in and the levels
+/// that unlock it (``UDSSVC_ARCH_0007`` rows 2 and 4, then Figure 6's optional 0x33).
+/// `dispatch` hands `pipeline::begin` one closure that routes to the listed service's
+/// trait, and the pipeline decides 0x12, 0x7E or 0x33 from the answer. The lookup is
+/// `access` on [`EcuReset`] and on every other staged service with a sub-function, except
+/// three: `DiagnosticSessionControl` answers with [`supports`] and [`supported_from`],
+/// because whether a session may be entered turns on the session it is entered from;
+/// `SecurityAccess` with [`sessions`], because it is the service that unlocks; and
+/// `TesterPresent` with nothing, because its only sub-function is available everywhere.
+/// `RoutineControl` is not asked here at all: Figure 5 keeps 0x31 out of the
+/// sub-function stage, so its `access` is keyed by routine and asked by its own stage.
 ///
 /// [`supports`]: crate::DiagnosticSessionControl::supports
 /// [`supported_from`]: crate::DiagnosticSessionControl::supported_from
+/// [`sessions`]: crate::SecurityAccess::sessions
 /// [`EcuReset`]: crate::EcuReset
 ///
 /// **Staging limit:** `DataTransfer` has no stage. Listed, it is accepted by the list
@@ -711,41 +644,24 @@ macro_rules! uds_server {
                     received: $crate::Received<'_>,
                     out: &mut $crate::ResponseSink<'_>,
                 ) -> $crate::Unsettled {
-                    // Unused in an assembly listing neither service that decides a
+                    // Unused in an assembly listing no service that decides a
                     // sub-function, where every arm of the helper expands to nothing.
                     #[allow(unused_variables, reason = "used only by some assemblies")]
-                    let sub_function = |service: $crate::UdsServiceType, value: u8| {
-                        $( $crate::__uds_sub_function!(self, service, value, $svc); )+
-                        true
-                    };
-                    // Unused likewise in an assembly without `DiagnosticSessionControl`,
-                    // whose `begin` never reaches it: the service is then unsupported at
-                    // Figure 5 and its request never enters Figure 6.
-                    #[allow(unused_variables, reason = "used only by some assemblies")]
-                    let in_session = |service: $crate::UdsServiceType,
-                                      value: u8,
-                                      active: $crate::DiagnosticSessionType| {
-                        $( $crate::__uds_sub_function_in_session!(
+                    let access = |service: $crate::UdsServiceType,
+                                  value: u8,
+                                  active: $crate::DiagnosticSessionType| {
+                        $( $crate::__uds_sub_function_access!(
                             self, service, value, active, $svc
                         ); )+
-                        true
-                    };
-                    // Unused likewise in an assembly listing no service whose
-                    // sub-functions can require a security level.
-                    #[allow(unused_variables, reason = "used only by some assemblies")]
-                    let required_level = |service: $crate::UdsServiceType, value: u8| {
-                        $( $crate::__uds_sub_function_security!(
-                            self, service, value, $svc
-                        ); )+
-                        ::core::option::Option::None
+                        ::core::option::Option::Some($crate::Access::new(
+                            $crate::Sessions::ALL,
+                        ))
                     };
                     let (sid, decoded) = match $crate::pipeline::begin(
                         state,
                         received.bytes(),
                         |s| <Self as $crate::ServiceSet>::supports(self, s),
-                        sub_function,
-                        in_session,
-                        required_level,
+                        access,
                     ) {
                         $crate::pipeline::Stage::Empty => {
                             return $crate::Unsettled::empty();
