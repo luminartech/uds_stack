@@ -509,6 +509,34 @@ mod request {
         let (out, _) = outputs(c.tick(Timestamp(1_000)));
         assert_eq!(out, NOTHING);
     }
+
+    /// ``UDSS_LLR_0073`` — two inputs differing only in their message data produce the
+    /// same outputs, but for the data they carry, and leave the same state.
+    #[test]
+    fn outputs_do_not_depend_on_the_message_data() {
+        let run = |data: &[u8]| {
+            let mut c = tester();
+            open_phys(&mut c, Timestamp(0), ECU);
+            let class = select(SessionSelection::NonDefault);
+            let (sent, _) = outputs(c.s_data_req(Timestamp(0), phys(ECU), data, class));
+            let transmitted = match sent {
+                [
+                    Some(ClientOutput::Transmit { channel, ai, .. }),
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                ] => Some((channel, ai)),
+                _ => None,
+            };
+            let (confirmed, _) =
+                outputs(c.t_data_conf(Timestamp(0), phys(ECU), SResult::Ok));
+            let (spaced, _) = outputs(c.tick(Timestamp(60)));
+            (transmitted, confirmed, spaced, c.next_deadline())
+        };
+        assert_eq!(run(&[0x3E, 0x00]), run(&[0x10, 0x03]));
+    }
 }
 
 mod expiry {
@@ -854,6 +882,57 @@ mod physical_window {
         assert_eq!(out, only(indicate(id, ECU, SResult::Ok)));
         assert_eq!(c.next_deadline(), None);
     }
+
+    /// ``UDSS_LLR_0130`` — an open start-of-message outlives the request that saw it, so
+    /// its completion during the next request is paired with it rather than taken for a
+    /// first indication.
+    #[test]
+    fn an_open_start_of_message_outlives_the_request() {
+        let (mut c, id) = exchanged(Timestamp(0));
+        som(&mut c, Timestamp(10), id, ECU, UNSOLICITED);
+        assert_ne!(outputs(c.tick(Timestamp(51))).0, NOTHING);
+        exchange(&mut c, Timestamp(100), phys(ECU), UNKNOWN);
+        ind(
+            &mut c,
+            Timestamp(110),
+            id,
+            ECU,
+            SResult::Ok,
+            Some(SOLICITED),
+        );
+        assert_eq!(c.next_deadline(), Some(Timestamp(151)));
+    }
+
+    /// ``UDSS_LLR_0130`` — a failed completion closes the start-of-message too, so the
+    /// next single-frame response is a first indication and closes its window.
+    #[test]
+    fn a_failed_completion_closes_the_start_of_message() {
+        let (mut c, id) = exchanged(Timestamp(0));
+        som(&mut c, Timestamp(10), id, ECU, UNSOLICITED);
+        ind(&mut c, Timestamp(20), id, ECU, FAILED, None);
+        exchange(&mut c, Timestamp(100), phys(ECU), UNKNOWN);
+        ind(
+            &mut c,
+            Timestamp(110),
+            id,
+            ECU,
+            SResult::Ok,
+            Some(SOLICITED),
+        );
+        assert_eq!(c.next_deadline(), None);
+    }
+
+    /// ``UDSS_LLR_0136``, ``UDSS_LLR_0128`` — a failed completion ends the request, one
+    /// whose start-of-message came first included, so a stray response-pending message
+    /// after it opens no window.
+    #[test]
+    fn a_failed_completion_ends_the_request() {
+        let (mut c, id) = exchanged(Timestamp(0));
+        som(&mut c, Timestamp(10), id, ECU, PENDING);
+        ind(&mut c, Timestamp(20), id, ECU, FAILED, None);
+        ind(&mut c, Timestamp(30), id, ECU, SResult::Ok, Some(PENDING));
+        assert_eq!(c.next_deadline(), None);
+    }
 }
 
 mod functional_window {
@@ -1067,7 +1146,7 @@ mod functional_window {
             Some(SOLICITED),
         );
         exchange(&mut c, Timestamp(5_100), func(), UNKNOWN);
-        som(&mut c, Timestamp(5_110), id, ECU, SOLICITED);
+        som(&mut c, Timestamp(5_110), id, ECU_3, SOLICITED);
         assert_eq!(c.next_deadline(), Some(Timestamp(5_161)));
     }
 
@@ -1096,6 +1175,82 @@ mod functional_window {
         for sa in [ECU, ECU_2, ECU_3, 0x0013] {
             assert_eq!(som(&mut c, Timestamp(10), id, sa, SOLICITED), NOTHING);
         }
+    }
+
+    /// ``UDSS_LLR_0141`` — a failed reception ends the request and with it every
+    /// responder's pending fact, so the next request runs on the default window.
+    #[test]
+    fn a_failed_reception_clears_every_pending_fact() {
+        let (mut c, id) = exchanged(Timestamp(0), UNKNOWN);
+        ind(&mut c, Timestamp(10), id, ECU, SResult::Ok, Some(PENDING));
+        ind(&mut c, Timestamp(20), id, ECU_2, FAILED, None);
+        exchange(&mut c, Timestamp(100), func(), UNKNOWN);
+        som(&mut c, Timestamp(110), id, ECU_3, SOLICITED);
+        assert_eq!(c.next_deadline(), Some(Timestamp(161)));
+    }
+
+    /// ``UDSS_LLR_0146`` — a pending fact ends at the responder's next message, a
+    /// single-frame one included.
+    #[test]
+    fn a_single_frame_response_ends_the_pending_fact() {
+        let (mut c, id) = exchanged(Timestamp(0), UNKNOWN);
+        ind(&mut c, Timestamp(10), id, ECU, SResult::Ok, Some(PENDING));
+        ind(&mut c, Timestamp(20), id, ECU, SResult::Ok, Some(SOLICITED));
+        assert_eq!(c.next_deadline(), Some(Timestamp(71)));
+    }
+
+    /// ``UDSS_LLR_0144`` — a response-pending message from a responder the full table
+    /// cannot hold still opens the enhanced window.
+    #[test]
+    fn a_response_pending_beyond_capacity_opens_the_enhanced_window() {
+        let (mut c, id) = exchanged(Timestamp(0), UNKNOWN);
+        som(&mut c, Timestamp(10), id, ECU, SOLICITED);
+        som(&mut c, Timestamp(10), id, ECU_2, SOLICITED);
+        let out = ind(&mut c, Timestamp(20), id, ECU_3, SResult::Ok, Some(PENDING));
+        assert_eq!(out[0], Some(capacity(id, ECU_3)));
+        assert_eq!(c.next_deadline(), Some(Timestamp(5_021)));
+    }
+
+    /// ``UDSS_LLR_0146``, ``UDSS_LLR_0141`` — with no request in progress a
+    /// response-pending message records no pending fact.
+    #[test]
+    fn with_no_request_a_response_pending_message_records_nothing() {
+        let (mut c, id) = exchanged(Timestamp(0), UNKNOWN);
+        assert_ne!(outputs(c.tick(Timestamp(51))).0, NOTHING);
+        ind(&mut c, Timestamp(60), id, ECU, SResult::Ok, Some(PENDING));
+        exchange(&mut c, Timestamp(100), func(), UNKNOWN);
+        som(&mut c, Timestamp(110), id, ECU_2, SOLICITED);
+        assert_eq!(c.next_deadline(), Some(Timestamp(161)));
+    }
+
+    /// ``UDSS_LLR_0137`` — a start-of-message with no request in progress starts no
+    /// window.
+    #[test]
+    fn a_start_of_message_with_no_request_starts_no_window() {
+        let mut c = tester();
+        let id = open_func(&mut c, Timestamp(0));
+        som(&mut c, Timestamp(10), id, ECU, SOLICITED);
+        assert_eq!(c.next_deadline(), None);
+    }
+
+    /// ``UDSS_LLR_0141`` — a failed completion releases the responder's entry, so no
+    /// response is still arriving and the next request goes.
+    #[test]
+    fn a_failed_completion_releases_the_entry() {
+        let (mut c, id) = exchanged(Timestamp(0), UNKNOWN);
+        som(&mut c, Timestamp(10), id, ECU, SOLICITED);
+        ind(&mut c, Timestamp(20), id, ECU, FAILED, None);
+        let (_, sent) = outputs(c.s_data_req(Timestamp(100), func(), &DATA, UNKNOWN));
+        assert_eq!(sent, Ok(()));
+    }
+
+    /// ``UDSS_LLR_0137`` — a failed completion ends the request and stops the window.
+    #[test]
+    fn a_failed_completion_stops_the_window() {
+        let (mut c, id) = exchanged(Timestamp(0), UNKNOWN);
+        som(&mut c, Timestamp(10), id, ECU, SOLICITED);
+        ind(&mut c, Timestamp(20), id, ECU, FAILED, None);
+        assert_eq!(c.next_deadline(), None);
     }
 }
 
@@ -1579,6 +1734,65 @@ mod error_handling {
         let id = open_phys(&mut c, Timestamp(0), ECU);
         assert_eq!(outputs(c.withdraw_channel(Timestamp(0), id)).1, Ok(()));
         assert!(rejected(reset(&mut c, 10, id), Cause::NoSuchChannel));
+    }
+
+    /// ``UDSS_LLR_0182`` — the confirmation of an abandoned association still acts on
+    /// the keep-alive, here engaging it.
+    #[test]
+    fn an_abandoned_confirmation_still_engages_the_keep_alive() {
+        let mut c = tester();
+        let id = open_phys(&mut c, Timestamp(0), ECU);
+        let class = select(SessionSelection::NonDefault);
+        assert_eq!(send(&mut c, 0, phys(ECU), class), Ok(()));
+        assert_eq!(reset(&mut c, 5, id), Ok(()));
+        let (_, confirmed) = outputs(c.t_data_conf(Timestamp(10), phys(ECU), SResult::Ok));
+        assert_eq!(confirmed, Ok(()));
+        assert_eq!(outputs(c.tick(Timestamp(70))).0, NOTHING);
+        assert_eq!(c.next_deadline(), Some(Timestamp(2_010)));
+    }
+
+    /// ``UDSS_LLR_0016`` — one report states both an outstanding association and a spent
+    /// repeat count.
+    #[test]
+    fn one_report_states_an_outstanding_association_and_a_spent_count() {
+        let mut c = tester();
+        open_phys(&mut c, Timestamp(0), ECU);
+        let ai = phys(ECU);
+        assert_eq!(attempt(&mut c, 0, ai, UNKNOWN), Ok(()));
+        assert_eq!(attempt(&mut c, 60, ai, REPEAT), Ok(()));
+        assert_eq!(send(&mut c, 120, ai, REPEAT), Ok(()));
+        let report = send(&mut c, 130, ai, REPEAT);
+        assert!(
+            report.is_err_and(|r| r.contains(Cause::AssociationOutstanding)
+                && r.contains(Cause::RepeatCountSpent))
+        );
+    }
+
+    /// ``UDSS_LLR_0174`` — a channel opens with its repeat count at zero, so two repeats
+    /// are allowed before any ordinary request.
+    #[test]
+    fn a_fresh_channel_allows_two_repeats() {
+        let mut c = tester();
+        open_phys(&mut c, Timestamp(0), ECU);
+        let ai = phys(ECU);
+        assert_eq!(attempt(&mut c, 0, ai, REPEAT), Ok(()));
+        assert_eq!(attempt(&mut c, 60, ai, REPEAT), Ok(()));
+        assert!(rejected(
+            send(&mut c, 120, ai, REPEAT),
+            Cause::RepeatCountSpent
+        ));
+    }
+
+    /// ``UDSS_LLR_0180`` — resetting a functional channel ends its request and stops its
+    /// window, with no indication.
+    #[test]
+    fn a_functional_reset_ends_the_request() {
+        let mut c = tester();
+        let id = open_func(&mut c, Timestamp(0));
+        exchange(&mut c, Timestamp(0), func(), UNKNOWN);
+        assert_eq!(reset(&mut c, 10, id), Ok(()));
+        assert_eq!(c.next_deadline(), None);
+        assert_eq!(outputs(c.tick(Timestamp(51))).0, NOTHING);
     }
 }
 
@@ -2133,6 +2347,24 @@ mod physical_keep_alive {
             (NOTHING, Ok(()))
         );
         assert_eq!(outputs(c.tick(Timestamp(10_000))).0, NOTHING);
+        assert_eq!(c.next_deadline(), None);
+    }
+
+    /// ``UDSS_LLR_0161`` (third bullet) — only a solicited final response restarts the
+    /// keep-alive; an unsolicited one leaves it stopped.
+    #[test]
+    fn an_unsolicited_final_response_does_not() {
+        let (mut c, id) = engaged();
+        exchange(&mut c, Timestamp(100), phys(ECU), UNKNOWN);
+        ind(
+            &mut c,
+            Timestamp(110),
+            id,
+            ECU,
+            SResult::Ok,
+            Some(UNSOLICITED),
+        );
+        assert_ne!(tick(&mut c, 151), NOTHING);
         assert_eq!(c.next_deadline(), None);
     }
 }
