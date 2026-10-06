@@ -894,3 +894,186 @@ fn a_request_whose_write_fails_is_an_error_and_not_confirmed() {
         ConnectionEvent::Closed
     );
 }
+
+// --- cancellation ----------------------------------------------------------------------
+
+/// Runs `scenario` once for every number of polls `next_event` can be given before it
+/// completes: each time over a fresh connection, with the first `next_event` polled that
+/// many times and dropped, and then `check` run on the same tester. `prepare` sets the
+/// connection up; reads and writes move one byte per poll, so every byte is a point the
+/// future can be dropped at.
+fn drop_at_every_poll(
+    prepare: impl Fn(&MockStack, &mut ActiveTester<'_>),
+    check: impl Fn(&MockStack, &mut ActiveTester<'_>, usize),
+) {
+    for polls in 0.. {
+        let stack = MockStack::new(1);
+        let mut tester = active(&stack);
+        prepare(&stack, &mut tester);
+        let mut buf = [0; N];
+        let completed = {
+            let mut first = pin!(tester.next_event(&mut buf, None));
+            poll_times(first.as_mut(), polls).is_some()
+        };
+        if completed {
+            assert!(polls > 1, "the scenario must have await points to drop at");
+            return;
+        }
+        check(&stack, &mut tester, polls);
+    }
+}
+
+/// Review focus: a diagnostic message half-read when `next_event` is dropped is
+/// delivered whole by the next call, into whatever buffer that call brings.
+#[test]
+fn cancelled_mid_frame_resumes_into_a_new_buffer() {
+    let _clock = clock();
+    let pdu: Vec<u8> = (0..10).collect();
+    drop_at_every_poll(
+        |stack, _| {
+            stack.latest().send(&diagnostic(ENTITY, TESTER, &pdu));
+            stack
+                .latest()
+                .send(&diagnostic(ENTITY, TESTER, &[0x7E, 0x00]));
+        },
+        |_, tester, polls| {
+            let mut small = [0; 4];
+            assert_eq!(
+                run(tester.next_event(&mut small, None)).unwrap(),
+                ConnectionEvent::IndicationTruncated {
+                    sa: ENTITY,
+                    ta: TESTER,
+                    ta_type: TaType::Physical,
+                    pdu: &pdu[..4],
+                    length: 10,
+                },
+                "dropped after {polls} polls"
+            );
+            let mut buf = [0; 16];
+            assert!(
+                matches!(
+                    run(tester.next_event(&mut buf, None)).unwrap(),
+                    ConnectionEvent::Indication {
+                        pdu: [0x7E, 0x00],
+                        ..
+                    }
+                ),
+                "dropped after {polls} polls"
+            );
+        },
+    );
+}
+
+#[test]
+fn cancelled_while_answering_an_alive_check_writes_the_answer_once() {
+    let _clock = clock();
+    drop_at_every_poll(
+        |stack, _| {
+            stack.latest().send(&alive_check_request());
+            stack
+                .latest()
+                .send(&diagnostic(ENTITY, TESTER, &[0x7E, 0x00]));
+        },
+        |stack, tester, polls| {
+            let mut buf = [0; 16];
+            assert!(
+                matches!(
+                    run(tester.next_event(&mut buf, None)).unwrap(),
+                    ConnectionEvent::Indication { .. }
+                ),
+                "dropped after {polls} polls"
+            );
+            assert_eq!(
+                stack.latest().take_written(),
+                alive_check_response(),
+                "dropped after {polls} polls"
+            );
+        },
+    );
+}
+
+/// Review focus: an alive check between a request and its acknowledgement is answered
+/// once, and the acknowledgement still confirms the request.
+#[test]
+fn an_alive_check_between_a_request_and_its_ack_is_answered_once() {
+    let _clock = clock();
+    drop_at_every_poll(
+        |stack, tester| {
+            run(tester.request(ENTITY, TaType::Physical, &PDU)).unwrap();
+            stack.latest().take_written();
+            stack.latest().send(&alive_check_request());
+            stack.latest().send(&ack(ENTITY, TESTER));
+        },
+        |stack, tester, polls| {
+            let mut buf = [0; 16];
+            assert_eq!(
+                run(tester.next_event(&mut buf, None)).unwrap(),
+                confirm(DoIpResult::Ok),
+                "dropped after {polls} polls"
+            );
+            assert_eq!(
+                stack.latest().take_written(),
+                alive_check_response(),
+                "dropped after {polls} polls"
+            );
+        },
+    );
+}
+
+/// Review focus: a message longer than the tester's buffer, dropped anywhere in it,
+/// still leaves the next message whole.
+#[test]
+fn a_cancelled_oversized_message_leaves_the_stream_in_sync() {
+    let _clock = clock();
+    let long: Vec<u8> = (0..100).collect();
+    drop_at_every_poll(
+        |stack, _| {
+            stack.latest().send(&diagnostic(ENTITY, TESTER, &long));
+            stack
+                .latest()
+                .send(&diagnostic(ENTITY, TESTER, &[0x7E, 0x00]));
+        },
+        |_, tester, polls| {
+            let mut buf = [0; 128];
+            assert!(
+                matches!(
+                    run(tester.next_event(&mut buf, None)).unwrap(),
+                    ConnectionEvent::IndicationTruncated { length: 100, .. }
+                ),
+                "dropped after {polls} polls"
+            );
+            assert!(
+                matches!(
+                    run(tester.next_event(&mut buf, None)).unwrap(),
+                    ConnectionEvent::Indication {
+                        pdu: [0x7E, 0x00],
+                        ..
+                    }
+                ),
+                "dropped after {polls} polls"
+            );
+        },
+    );
+}
+
+/// The acknowledgement timer lives in the tester, not the future: dropping `next_event`
+/// while it waits neither restarts nor loses `A_DoIP_Diagnostic_Message`.
+#[test]
+fn cancelled_while_waiting_for_the_ack_keeps_its_deadline() {
+    let _clock = clock();
+    let stack = MockStack::new(usize::MAX);
+    let mut tester = active(&stack);
+    request(&mut tester).unwrap();
+    let mut buf = [0; 16];
+
+    for _ in 0..2 {
+        let mut waiting = pin!(tester.next_event(&mut buf, None));
+        assert!(until_stalled(waiting.as_mut()).is_none());
+        advance(Duration::from_millis(1000));
+    }
+
+    assert_eq!(
+        run(tester.next_event(&mut buf, None)).unwrap(),
+        confirm(DoIpResult::TimeoutA)
+    );
+}
