@@ -77,6 +77,10 @@ required-features = ["server"]
 name = "tester"
 required-features = ["connection"]
 
+[[test]]
+name = "tester_interop"
+required-features = ["connection", "server"]
+
 [[example]]
 name = "simple_client"
 required-features = ["client"]
