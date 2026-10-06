@@ -14,7 +14,7 @@ mod support;
 
 use simple_doip::LogicalAddress;
 use simple_doip::service::{ConnectionId, DoIpResult};
-use support::{Exhausted, MockEntity, TESTER, Tester, Wire, block_on, poll_once_and_drop};
+use support::{Fault, MockEntity, TESTER, Tester, Wire, block_on, poll_once_and_drop};
 use uds_on_ip::profile::bench_reloads;
 use uds_on_ip::{DoIpTransport, Error};
 use uds_services::{
@@ -246,6 +246,29 @@ fn a_close_dropped_unfinished_is_finished_by_the_next_call() {
     assert_eq!(t.entity().wire.len(), 2);
 }
 
+/// An entity that fails while making the prescribed close surfaces its failure, and
+/// the confirmation the close held back is still reported, by the next call: the
+/// driver is owed one for every accepted request, and waits on it.
+#[test]
+fn a_close_that_fails_still_reports_the_confirmation_it_held_back() {
+    let mut t = indicated_by(&[0x11, 0x01], |entity| entity.fail_next_close = true);
+    respond(&mut t, &[0x51, 0x01]);
+
+    let mut buffer = [0u8; 16];
+    assert!(matches!(
+        block_on(t.next_event(&mut buffer, None)),
+        Err(Error::Entity(Fault::CloseFailed))
+    ));
+    assert_eq!(
+        next(&mut t),
+        TransportEvent::DataConf {
+            ai: response_ai(),
+            result: SResult::Ok,
+        }
+    );
+    assert_eq!(t.entity().wire.last(), Some(&Wire::Close(CONNECTION)));
+}
+
 /// A tester that closes its connection after the positive `ECUReset` response was
 /// requested and before it was confirmed is in the flow REQ 7.11 prescribes: the
 /// close is expected. Its confirmation still arrives, and the
@@ -463,7 +486,7 @@ fn a_remote_message_type_is_refused_before_the_entity() {
     assert!(
         matches!(
             block_on(t.next_event(&mut buffer, None)),
-            Err(Error::Entity(Exhausted))
+            Err(Error::Entity(Fault::Exhausted))
         ),
         "no confirmation follows a refused request"
     );

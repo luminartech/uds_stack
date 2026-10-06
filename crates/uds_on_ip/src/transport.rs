@@ -70,6 +70,7 @@ pub struct DoIpTransport<E, const MCTS: usize = 1> {
     outbound_max: Option<usize>,
     testers: [Option<Tester>; MCTS],
     closing: Option<Closing>,
+    unreported: Option<Confirmation>,
 }
 
 /// A tester with routing active on `connection`, and what its connection owes.
@@ -85,8 +86,22 @@ struct Tester {
 #[derive(Debug, Clone, Copy)]
 struct Closing {
     connection: ConnectionId,
+    confirmation: Confirmation,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct Confirmation {
     ai: Ai,
     result: SResult,
+}
+
+impl Confirmation {
+    const fn event(self) -> TransportEvent<'static> {
+        TransportEvent::DataConf {
+            ai: self.ai,
+            result: self.result,
+        }
+    }
 }
 
 impl<E, const MCTS: usize> core::fmt::Debug for DoIpTransport<E, MCTS> {
@@ -97,6 +112,7 @@ impl<E, const MCTS: usize> core::fmt::Debug for DoIpTransport<E, MCTS> {
             .field("outbound_max", &self.outbound_max)
             .field("testers", &self.testers)
             .field("closing", &self.closing)
+            .field("unreported", &self.unreported)
             .finish()
     }
 }
@@ -123,6 +139,7 @@ impl<E, const MCTS: usize> DoIpTransport<E, MCTS> {
             outbound_max: None,
             testers: [None; MCTS],
             closing: None,
+            unreported: None,
         }
     }
 
@@ -213,11 +230,11 @@ impl<E: DiagnosticEntity, const MCTS: usize> DoIpTransport<E, MCTS> {
         self.forget(closing.connection);
         let closed = self.entity.close(closing.connection).await;
         self.closing = None;
-        closed.map_err(Error::Entity)?;
-        Ok(TransportEvent::DataConf {
-            ai: closing.ai,
-            result: closing.result,
-        })
+        if let Err(error) = closed {
+            self.unreported = Some(closing.confirmation);
+            return Err(Error::Entity(error));
+        }
+        Ok(closing.confirmation.event())
     }
 }
 
@@ -264,7 +281,9 @@ impl<E: DiagnosticEntity, const MCTS: usize> UdsTransport for DoIpTransport<E, M
     ///
     /// [`Error::Entity`] where the entity fails as a whole, and
     /// [`Error::ConnectionOutsideTable`] or [`Error::PduOutsideBuffer`] where it
-    /// breaks its contract with this transport.
+    /// breaks its contract with this transport. Where it is the prescribed close
+    /// that fails, the confirmation the close held back is not lost: the next call
+    /// reports it.
     async fn next_event<'b>(
         &mut self,
         buffer: &'b mut [u8],
@@ -272,6 +291,9 @@ impl<E: DiagnosticEntity, const MCTS: usize> UdsTransport for DoIpTransport<E, M
     ) -> Result<TransportEvent<'b>, Self::Error> {
         if let Some(closing) = self.closing {
             return self.close(closing).await;
+        }
+        if let Some(confirmation) = self.unreported.take() {
+            return Ok(confirmation.event());
         }
         let buffer_start = buffer.as_ptr().addr();
         let inbound = loop {
@@ -318,12 +340,11 @@ impl<E: DiagnosticEntity, const MCTS: usize> UdsTransport for DoIpTransport<E, M
                     Some(connection) => {
                         self.close(Closing {
                             connection,
-                            ai,
-                            result,
+                            confirmation: Confirmation { ai, result },
                         })
                         .await
                     }
-                    None => Ok(TransportEvent::DataConf { ai, result }),
+                    None => Ok(Confirmation { ai, result }.event()),
                 }
             }
             Inbound::Closed { connection } => Ok(TransportEvent::Closed {

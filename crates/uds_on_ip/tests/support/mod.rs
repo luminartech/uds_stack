@@ -2,7 +2,7 @@
 //! sequence of tester actions.
 //!
 //! Copied from `simple_doip/tests/entity_mock.rs` and extended with what a transport
-//! test needs: a write that fails, a close that is cancelled once, an unmodelled
+//! test needs: a write that fails, a close that is cancelled once or fails, an unmodelled
 //! payload, and time. Time is `embassy-time`'s mock driver, the clock
 //! `simple_doip::service`'s deadlines are on: an idle entity runs the clock to the
 //! caller's deadline, and with no deadline has nothing left to do and says so.
@@ -28,9 +28,14 @@ pub enum Tester {
     Leaves(LogicalAddress),
 }
 
-/// The script is spent and nothing is due: a run is over.
+/// Why the mock entity failed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Exhausted;
+pub enum Fault {
+    /// The script is spent and nothing is due: a run is over.
+    Exhausted,
+    /// A `close` the test asked to fail.
+    CloseFailed,
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Wire {
@@ -56,6 +61,9 @@ pub struct MockEntity<const MCTS: usize> {
     pub fail_next_write: Option<DoIpResult>,
     /// The next `close` yields once before acting, so a caller can drop it unfinished.
     pub close_yields: bool,
+    /// The next `close` fails, after taking the connection out of the table as the
+    /// contract requires.
+    pub fail_next_close: bool,
     /// Tester actions are reported before pending confirmations rather than after.
     pub confirms_last: bool,
 }
@@ -70,6 +78,7 @@ impl<const MCTS: usize> MockEntity<MCTS> {
             requested: Vec::new(),
             fail_next_write: None,
             close_yields: false,
+            fail_next_close: false,
             confirms_last: false,
         }
     }
@@ -132,7 +141,7 @@ impl Future for YieldOnce {
     reason = "the mock has no sockets, so only a yielding close ever waits"
 )]
 impl<const MCTS: usize> DiagnosticEntity for MockEntity<MCTS> {
-    type Error = Exhausted;
+    type Error = Fault;
 
     async fn request(
         &mut self,
@@ -221,7 +230,7 @@ impl<const MCTS: usize> DiagnosticEntity for MockEntity<MCTS> {
         if let Some(confirm) = self.confirm() {
             return Ok(confirm);
         }
-        let deadline = deadline_ms.ok_or(Exhausted)?;
+        let deadline = deadline_ms.ok_or(Fault::Exhausted)?;
         let wait = now().until(Timestamp(deadline));
         MockDriver::get().advance(Duration::from_millis(u64::from(wait)));
         Ok(EntityEvent::Deadline)
@@ -236,6 +245,9 @@ impl<const MCTS: usize> DiagnosticEntity for MockEntity<MCTS> {
             self.flush(index);
             self.wire.push(Wire::Close(connection));
             self.table[index] = None;
+        }
+        if core::mem::take(&mut self.fail_next_close) {
+            return Err(Fault::CloseFailed);
         }
         Ok(())
     }
