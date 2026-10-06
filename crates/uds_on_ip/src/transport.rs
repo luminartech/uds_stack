@@ -287,8 +287,8 @@ impl<E: DiagnosticEntity, const MCTS: usize> UdsTransport for DoIpTransport<E, M
     /// prescribed close; the prescribed close this transport makes itself is
     /// reported by no `Closed`, only by the [`TransportEvent::DataConf`] it held
     /// back. While that close is in progress, `deadline` is not honoured: the call
-    /// returns once the entity has closed. Cancel-safe, provided the entity's
-    /// `next_event` and `close` are.
+    /// returns once the entity has closed. Cancel-safe, as [`DiagnosticEntity`]'s
+    /// obligations make its `next_event` and `close`.
     ///
     /// # Errors
     ///

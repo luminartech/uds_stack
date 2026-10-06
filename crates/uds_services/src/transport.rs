@@ -80,10 +80,11 @@ pub enum TransportEvent<'b> {
     ///
     /// ISO 14229-5:2022 REQ 7.9 and REQ 7.11 make a close **part of the normal
     /// `DiagnosticSessionControl` and `ECUReset` flows**: the server initiates one after
-    /// sending the positive response and before executing the service. So a close is not
-    /// a failure and must not arrive as `Err`. A transport with no connections never
-    /// emits this, exactly as one that never truncates never emits
-    /// [`Self::DataTooLong`].
+    /// sending every positive `ECUReset` response, and after the positive
+    /// `DiagnosticSessionControl` response sent with [`AfterSend::ServerLeaves`], before
+    /// executing the service. So a close is not a failure and must not arrive as `Err`.
+    /// A transport with no connections never emits this, exactly as one that never
+    /// truncates never emits [`Self::DataTooLong`].
     Closed {
         /// Whether the close was one the standard prescribes.
         ///

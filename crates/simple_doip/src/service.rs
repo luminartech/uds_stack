@@ -345,9 +345,15 @@ pub enum EntityEvent<'b> {
 ///   whose target no connection registered, confirmed with [`DoIpResult::NoSocket`],
 ///   and one whose connection closed before it was written.
 ///
-/// And one of its own: **the connection table changes only inside [`Self::next_event`]
-/// and [`Self::close`]**, so a [`ConnectionId`] the caller holds keeps naming its
-/// connection between the two calls that could end it.
+/// And two of its own:
+///
+/// - **The connection table changes only inside [`Self::next_event`] and
+///   [`Self::close`]**, so a [`ConnectionId`] the caller holds keeps naming its
+///   connection between the two calls that could end it.
+/// - **[`Self::close`] is cancel-safe.** A caller dropped while closing calls `close`
+///   again for the same connection, and that call finishes the close: the writes the
+///   first call owed are made once, and the connection leaves the table once. The same
+///   socket condition as for `next_event` applies.
 pub trait DiagnosticEntity {
     /// What this entity's failures are. Never interpreted by the layer above, which can
     /// only report it.
@@ -398,9 +404,10 @@ pub trait DiagnosticEntity {
         deadline_ms: Option<u32>,
     ) -> impl Future<Output = Result<EntityEvent<'b>, Self::Error>>;
 
-    /// Close `connection` in an orderly way, as ISO 14229-5:2022 REQ 7.9 and REQ 7.11
-    /// require of a server after a positive `DiagnosticSessionControl` or `ECUReset`
-    /// response.
+    /// Close `connection` in an orderly way, as ISO 14229-5:2022 REQ 7.11 requires of a
+    /// server after a positive `ECUReset` response, and REQ 7.9 after a positive
+    /// `DiagnosticSessionControl` response to a session change that leaves the software
+    /// it is running.
     ///
     /// Everything requested on `connection` before this call is written first; the
     /// future completes once the close has been sent. The connection then leaves the
@@ -411,6 +418,8 @@ pub trait DiagnosticEntity {
     ///
     /// This is the only close the caller can ask for. A close on an error is the
     /// entity's own decision, reported as [`EntityEvent::Closed`].
+    ///
+    /// Cancel-safe, as the trait's obligations require.
     ///
     /// # Arguments
     ///

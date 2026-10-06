@@ -552,7 +552,10 @@ The transport seam
 
    ``Closed`` **cannot be an ``Err``**. ISO 14229-5:2022 REQ 7.9 and REQ 7.11 make a
    server-initiated close part of the normal ``DiagnosticSessionControl`` and ``ECUReset``
-   flows, so an expected close is a step in a prescribed sequence and not a failure. Typing
+   flows — after every positive ``ECUReset`` response, and after the positive
+   ``DiagnosticSessionControl`` response to a session change that leaves the running
+   software, which the driver marks ``AfterSend::ServerLeaves`` — so an expected close is a
+   step in a prescribed sequence and not a failure. Typing
    it as an error would put a conformant flow into the branch ``UDSSVC_ARCH_0016`` argues
    callers learn to ignore — the same mistake, one seam lower. It carries whether the close
    was expected and nothing more, and that is informational: re-establishing the connection
