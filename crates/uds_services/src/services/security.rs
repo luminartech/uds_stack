@@ -18,21 +18,21 @@ use uds_protocol::NegativeResponseCode;
 
 /// How a level's attempts and delay are governed.
 ///
-/// An enum because ISO 14229-1:2020 Table I.1 states a fallback — "if `Delay_Timer` and
-/// `Att_Cnt` are not supported, a random seed shall always be used" — and an enum makes
-/// declining both incompatible with a static seed rather than merely invalid.
+/// ISO 14229-1:2020 Table I.1 makes the attempt counter and the delay optional, and
+/// states a fallback for declining both — "a random seed shall always be used" — which
+/// [`SecurityAccess::seed`] must honour under [`SecurityPolicy::RandomSeedOnly`]. Whether
+/// a seed is static is otherwise the seed's own property, and [`SecurityAccess::seed`]'s
+/// to decide.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum SecurityPolicy {
     /// Neither counter nor delay: Table I.1's fallback, so the seed is always random.
     RandomSeedOnly,
-    /// Counted attempts, with an optional delay and an optional static seed.
+    /// Counted attempts, with an optional delay.
     Counted {
         /// Failed attempts permitted before the delay starts.
         attempt_limit: u8,
         /// How long the delay lasts, where one is kept.
         delay_ms: Option<u32>,
-        /// Whether a repeated `requestSeed` returns the same seed.
-        static_seed: bool,
     },
 }
 
@@ -206,6 +206,12 @@ pub trait SecurityAccess {
     /// unlocked and the application does not. So the seed written here must not be all
     /// zero: clause 10.4.1 forbids that for a locked level.
     ///
+    /// Whether a repeated `requestSeed` gets the same seed is this method's to decide
+    /// (Table I.1 `Static_Seed`, vehicle-manufacturer specific). A static seed is returned
+    /// again for `level` until [`Self::verify_key`] reports [`KeyVerdict::Valid`] for it,
+    /// after which Table I.2 transitions 3 and 10 have it cleared, so the next is new.
+    /// Under [`SecurityPolicy::RandomSeedOnly`] every seed is fresh (Table I.1).
+    ///
     /// # Arguments
     ///
     /// * `level` - the level the `requestSeed` names; see [`SecurityLevel`].
@@ -252,7 +258,7 @@ pub trait SecurityAccess {
               them as code"
 )]
 mod tests {
-    use super::{KeyVerdict, SecurityLevel, SecurityPolicy};
+    use super::{KeyVerdict, SecurityLevel};
 
     /// Clause 10.4.2 pairs `requestSeed` (odd) with `sendKey` (the next even value).
     /// `SecurityLevel` holds the pair, so `yy == xx + 1` is structural and Annex I's
@@ -275,20 +281,6 @@ mod tests {
             SecurityLevel::from_request_seed(0x7D).map(SecurityLevel::send_key),
             Some(0x7E)
         );
-    }
-
-    /// Table I.1's fallback: "if Delay_Timer and Att_Cnt are not supported, a random
-    /// seed shall always be used". As an enum, a deployment declining both cannot also
-    /// set Static_Seed — the combination is unrepresentable rather than rejected.
-    #[test]
-    fn declining_the_counters_makes_a_static_seed_unrepresentable() {
-        let fallback = SecurityPolicy::RandomSeedOnly;
-        let counted = SecurityPolicy::Counted {
-            attempt_limit: 3,
-            delay_ms: Some(10_000),
-            static_seed: true,
-        };
-        assert_ne!(fallback, counted);
     }
 
     /// A wrong key is a verdict, not an error: which negative response it produces

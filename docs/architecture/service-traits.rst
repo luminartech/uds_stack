@@ -456,8 +456,8 @@ Protocol state
       A --> B : 2. requestSeed accepted\nseed stored, xx saved
       B --> C : 3. sendKey, yy == xx+1, key OK\nAtt_Cnt := 0, unlock xx
       A --> A : 4. 0x13 / 0x24 / 0x22 / 0x37\ndelay-timer expiry
-      B --> B : 5. a further requestSeed\n(Static_Seed governs)
-      D --> D : 5. a further requestSeed\n(Static_Seed governs)
+      B --> B : 5. a further requestSeed\n(Static_Seed governs; the application's)
+      D --> D : 5. a further requestSeed\n(Static_Seed governs; the application's)
       C --> A : 6. session change or timeout → lock
       D --> A : 6. session change or timeout → lock
       C --> C : 7. requestSeed for the unlocked level → zero seed\n0x13 / 0x22 / 0x37
@@ -489,7 +489,7 @@ Protocol state
    standard. ``UDSSVC_ARCH_0034`` had quoted the restart rule correctly all along; the chart
    contradicted it.
 
-   **Five rules this crate enforces that an application would have to rediscover.**
+   **Five rules an application would have to rediscover, four of which this crate enforces.**
 
    *The paired sub-function.* Clause 10.4.2 makes ``requestSeed`` the odd values and
    ``sendKey`` the even, with a fixed relationship — level 0x01 pairs with 0x02, 0x03 with
@@ -540,12 +540,21 @@ Protocol state
    that the at-limit action is ``Att_Cnt = Att_Cnt_Limit`` — a **clamp**, not a further
    increment — so a counter that is already at the limit does not run away.
 
-   *The seed policy.* Table I.1 defines ``Static_Seed``: true means a stored seed is re-used
-   when the same level's seed is requested again, false means a fresh seed is generated each
-   time. It governs transitions 5, 7 and 10, including the "if ``Static_Seed = True`` then
-   clear generated seed for SubFunction ``xx``" action that follows a successful unlock.
-   Table I.1 also fixes the fallback: "if ``Delay_Timer`` and ``Att_Cnt`` are not supported,
-   a random seed shall always be used", so a deployment that declines both loses the choice.
+   *The seed policy is the application's.* Table I.1 defines ``Static_Seed``: true means a
+   stored seed is re-used when the same level's seed is requested again, false means a
+   fresh seed is generated each time. It governs transitions 5, 7 and 10, including the "if
+   ``Static_Seed = True`` then clear generated seed for SubFunction ``xx``" action that
+   follows a successful unlock. Table I.1 also fixes the fallback: "if ``Delay_Timer`` and
+   ``Att_Cnt`` are not supported, a random seed shall always be used", so a deployment that
+   declines both loses the choice.
+
+   It is the one rule here this crate does not enforce, because the seed's bytes are the
+   application's and this crate keeps none: ``State`` is not generic, and holding a seed
+   would make it so. An earlier draft carried ``static_seed`` on ``SecurityPolicy`` and read
+   it nowhere. The obligation is ``SecurityAccess::seed``'s contract instead: a static seed
+   is returned again until ``verify_key`` reports the level's key valid, and under
+   ``RandomSeedOnly`` every seed is fresh. The application sees the unlock that clears a
+   static seed, because the verdict that causes it is its own.
 
    **What the application supplies, and why the split falls here rather than elsewhere.**
    Annex I Table I.1 marks ``Delay_Timer``, ``Att_Cnt_Limit`` and ``Static_Seed`` as

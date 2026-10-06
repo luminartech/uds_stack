@@ -231,7 +231,6 @@ impl SecurityAccess for Ecu {
             0x01 => SecurityPolicy::Counted {
                 attempt_limit: 3,
                 delay_ms: Some(10_000),
-                static_seed: false,
             },
             _ => SecurityPolicy::RandomSeedOnly,
         }

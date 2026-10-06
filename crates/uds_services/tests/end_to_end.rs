@@ -358,7 +358,6 @@ impl SecurityAccess for Ecu {
         SecurityPolicy::Counted {
             attempt_limit: 3,
             delay_ms: Some(10_000),
-            static_seed: false,
         }
     }
     fn load_attempts(&self, _l: SecurityLevel) -> u8 {
