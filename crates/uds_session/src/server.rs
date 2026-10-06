@@ -13,8 +13,8 @@ use crate::params::{ServerParameter, ServerParams, ServerReload};
 use crate::reaction::Reaction;
 use crate::rejection::{Cause, Rejection};
 use crate::result::SResult;
-use crate::time::Timestamp;
-use crate::timer::{Expiry, Timer};
+use crate::time::{Timestamp, earlier};
+use crate::timer::{Reaches, Timer};
 
 /// One transmission between its `S_Data.req` and its `T_Data.conf`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -52,7 +52,10 @@ impl Association {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Session {
     Default,
-    NonDefault { client: PeerIdentity, s3: Timer },
+    NonDefault {
+        client: PeerIdentity,
+        s3: Timer<Reaches>,
+    },
 }
 
 impl Session {
@@ -74,7 +77,7 @@ impl Session {
 struct InProgress {
     peer: PeerIdentity,
     anchor: Option<Timestamp>,
-    p2: Timer,
+    p2: Timer<Reaches>,
     loaded: ServerReload,
     lead: u32,
     /// The transmission this service submitted that is still unconfirmed: the only one
@@ -208,20 +211,19 @@ impl<const A: usize> Server<A> {
     }
 
     /// ``UDSS_LLR_0081`` — act on every expiry the timestamp causes before the input.
-    /// Sweeps the previous input's unreported snapshots first. `tP2_Server` is read the
-    /// service's lead ahead of its expiry (``UDSS_LLR_0117``, ``UDSS_LLR_0186``).
+    /// A snapshot stays until it is retrieved (``UDSS_LLR_0011``); a later expiry of the
+    /// same timer replaces one never retrieved. `tP2_Server` is read the service's lead
+    /// ahead of its expiry (``UDSS_LLR_0117``, ``UDSS_LLR_0186``).
     fn expire(&mut self, now: Timestamp) {
-        self.s3_expiry = None;
-        self.p2_expiry = None;
         if let Session::NonDefault { client, s3 } = self.session
-            && s3.expired(now, Expiry::Reaches)
+            && s3.expired(now)
         {
             // UDSS_LLR_0100
             self.s3_expiry = Some(client);
             self.session = Session::Default;
         }
         if let Some(service) = self.service.as_mut()
-            && service.p2.expired_by(now, service.lead, Expiry::Reaches)
+            && service.p2.expired_by(now, service.lead)
         {
             // UDSS_LLR_0117 — stop, and report the service and the parameter; 0186 is
             // the lead, the timer itself still loaded with the whole window.
@@ -665,26 +667,14 @@ impl<const A: usize> Server<A> {
     #[must_use]
     pub fn next_deadline(&self) -> Option<Timestamp> {
         let s3 = match self.session {
-            Session::NonDefault { s3, .. } => s3.deadline(Expiry::Reaches),
+            Session::NonDefault { s3, .. } => s3.deadline(),
             Session::Default => None,
         };
-        let p2 = self
-            .service
-            .and_then(|s| s.p2.deadline_by(s.lead, Expiry::Reaches));
+        let p2 = self.service.and_then(|s| s.p2.deadline_by(s.lead));
         match (s3, p2) {
             (Some(a), Some(b)) => Some(earlier(a, b)),
             (a, b) => a.or(b),
         }
-    }
-}
-
-/// The earlier of two wrapping timestamps (``UDSS_LLR_0019``): `a` is earlier when the
-/// modular difference `a - b` lands in the upper half of the range.
-fn earlier(a: Timestamp, b: Timestamp) -> Timestamp {
-    if a.0.wrapping_sub(b.0) > u32::MAX / 2 {
-        a
-    } else {
-        b
     }
 }
 
@@ -702,23 +692,5 @@ impl<'d, const A: usize> crate::reaction::Drain<'d, ServerOutput<'d>> for Server
                 ae: peer.extension,
                 loaded,
             })
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::earlier;
-    use crate::time::Timestamp;
-
-    /// ``UDSS_LLR_0019`` — the earlier deadline is chosen by modular distance, so one
-    /// just past the wrap is later than one just before it.
-    #[test]
-    fn the_earlier_deadline_is_chosen_across_the_wrap() {
-        assert_eq!(earlier(Timestamp(10), Timestamp(20)), Timestamp(10));
-        assert_eq!(earlier(Timestamp(20), Timestamp(10)), Timestamp(10));
-        let before = Timestamp(u32::MAX - 5);
-        let after = Timestamp(5);
-        assert_eq!(earlier(before, after), before);
-        assert_eq!(earlier(after, before), before);
     }
 }

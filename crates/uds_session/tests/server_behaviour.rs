@@ -1,7 +1,7 @@
 //! Behavioural tests of the server role, one per requirement a body satisfies.
 
 use uds_session::{
-    Address, Ai, Association, Mtype, PeerIdentity, Rejection, SResult, Server,
+    Address, Ai, Association, Finished, Mtype, PeerIdentity, Rejection, SResult, Server,
     ServerOutput, ServerParams, ServerReaction, ServerReload, ServerRx, ServerTx,
     SessionSelection, Solicitation, TaType, Timestamp,
 };
@@ -43,7 +43,7 @@ fn peer(address: u16) -> PeerIdentity {
     }
 }
 
-/// Drain a reaction into a fixed array (no alloc), then finish it.
+/// Drain a reaction into a fixed array (no alloc), then finish it with nothing left.
 fn outputs<'d>(
     mut r: ServerReaction<'_, 'd, 2>,
 ) -> ([Option<ServerOutput<'d>>; 4], Result<(), Rejection>) {
@@ -51,7 +51,9 @@ fn outputs<'d>(
     for (slot, o) in out.iter_mut().zip(r.outputs()) {
         *slot = Some(o);
     }
-    (out, r.finish())
+    let Finished { outcome, rest } = r.finish();
+    assert_eq!(rest.count(), 0, "more outputs than the array holds");
+    (out, outcome)
 }
 
 /// Put the server in a non-default session controlled by `TESTER`, by the path
@@ -111,6 +113,22 @@ mod expiry {
         // "one overrun yields one indication" reasoning, applied here too).
         let (out, _) = outputs(s.tick(Timestamp(5_001)));
         assert_eq!(out[0], None);
+    }
+
+    /// ``UDSS_LLR_0011`` — a session timeout not retrieved is indicated at the next
+    /// input.
+    #[test]
+    fn a_session_timeout_not_retrieved_is_indicated_at_the_next_input() {
+        let mut s = server();
+        enter_non_default(&mut s, Timestamp(0));
+        let _ = s.tick(Timestamp(5_000)).finish();
+        let (out, _) = outputs(s.tick(Timestamp(5_001)));
+        assert_eq!(
+            out[0],
+            Some(ServerOutput::SessionTimeout {
+                client: peer(TESTER)
+            })
+        );
     }
 
     /// ``UDSS_LLR_0081`` — the expiry is reported before the input's own output, and the

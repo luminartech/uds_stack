@@ -13,7 +13,7 @@ const PARAMS: ServerParams = ServerParams {
 /// ``UDSS_LLR_0081`` — `finish` consumes the drain.
 fn drained_then_finished(mut r: ServerReaction<'_, '_, 1>) -> bool {
     for _output in r.outputs() {}
-    r.finish().is_ok()
+    r.finish().outcome.is_ok()
 }
 
 /// A `tick` on a fresh server expires nothing and is accepted; draining it twice yields
@@ -24,7 +24,7 @@ fn a_fresh_tick_is_empty_and_accepted() {
     let mut r = server.tick(Timestamp(0));
     assert_eq!(r.outputs().count(), 0);
     assert_eq!(r.outputs().count(), 0);
-    assert!(r.finish().is_ok());
+    assert!(r.finish().outcome.is_ok());
     let r = server.tick(Timestamp(1));
     assert!(drained_then_finished(r));
 }
@@ -33,6 +33,6 @@ fn a_fresh_tick_is_empty_and_accepted() {
 #[test]
 fn finish_without_draining_is_accepted() {
     let mut server = Server::new([Association::EMPTY; 1], PARAMS);
-    assert!(server.tick(Timestamp(0)).finish().is_ok());
+    assert!(server.tick(Timestamp(0)).finish().outcome.is_ok());
     assert_eq!(server.next_deadline(), None);
 }

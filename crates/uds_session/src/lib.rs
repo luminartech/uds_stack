@@ -27,16 +27,15 @@
 //!
 //! # Status
 //!
-//! The server role is implemented and tested against its requirements in
-//! `tests/server_behaviour.rs`. The client role's public surface is complete; its bodies
-//! are `todo!()` and carry the requirements they will satisfy.
+//! Both roles are implemented and tested against their requirements: the server in
+//! `tests/server_behaviour.rs`, the client in `tests/client_behaviour.rs`.
 //!
 //! # How the surface discharges its requirements
 //!
 //! Four requirements are best verified by looking at these types directly, so what a
 //! reviewer should look at is stated here rather than left to be inferred. Three of them
 //! name inspection of the crate's types as their own verification method; the fourth,
-//! ``UDSS_LLR_0081``, is enforced by [`Reaction::finish`]'s signature rather than verified
+//! ``UDSS_LLR_0081``, is a property of the order the drain yields in rather than verified
 //! that way, and is included here for the same reason.
 //!
 //! - **``UDSS_LLR_0011``** — outputs are retrieved, not pushed. Nothing here delivers an
@@ -45,14 +44,18 @@
 //!   bound is sealed: `Drain`, which a caller cannot name, and [`KeepAliveMode`], the only
 //!   one a caller can name, which selects a [`Client`]'s mode and carries no output.
 //!   Storage is supplied by value for the same reason, so no implementation of either can
-//!   be the caller's. Every input returns a [`Reaction`] the caller drains.
+//!   be the caller's. Every input returns a [`Reaction`] the caller drains, and nothing
+//!   is lost to one finished early: an expiry's indication stays in the session until it
+//!   is retrieved, and [`Reaction::finish`] hands back the input's own outputs not yet
+//!   drained, in [`Finished::rest`].
 //! - **``UDSS_LLR_0013``** — no payload is retained. No type here holds an owned buffer.
 //! - **``UDSS_LLR_0014``** — an output refers to caller-owned data. [`ServerOutput`] and
 //!   [`ClientOutput`] borrow `&'d [u8]` from the input that supplied it, and the
 //!   [`Reaction`] carrying them cannot outlive that borrow.
 //! - **``UDSS_LLR_0081``** — expiry indications precede the input's outputs and any
-//!   rejection report. [`Reaction::finish`] consumes the drain, so the report is
-//!   unreachable until draining stops.
+//!   rejection report. The drain yields every expiry indication before any output of the
+//!   input, and [`Finished::rest`] keeps that order for what was not drained; the report
+//!   is [`Finished::outcome`], read beside it.
 //!
 //! # Requirements discharged by construction
 //!
@@ -83,6 +86,7 @@
 mod addressing;
 mod classification;
 mod client;
+mod keep_alive;
 mod params;
 mod reaction;
 mod rejection;
@@ -100,15 +104,15 @@ pub use classification::{
     Solicitation,
 };
 pub use client::{
-    ChannelId, Client, ClientOutput, ClientReaction, FunctionalChannelId,
-    FunctionalKeepAlive, FunctionalSlot, KeepAliveMode, PhysicalChannelId,
-    PhysicalKeepAlive, PhysicalSlot, ResponderSlot,
+    ChannelId, Client, ClientOutput, ClientReaction, FunctionalChannelId, FunctionalSlot,
+    PhysicalChannelId, PhysicalSlot,
 };
+pub use keep_alive::{FunctionalKeepAlive, KeepAliveMode, PhysicalKeepAlive};
 pub use params::{
     ChannelParameter, ChannelParams, ChannelReload, Reloads, ServerParameter, ServerParams,
     ServerReload,
 };
-pub use reaction::{Outputs, Reaction};
+pub use reaction::{Finished, Outputs, Reaction, Rest};
 pub use rejection::{Cause, Causes, Content, Rejection, ReportedCause};
 pub use result::{SResult, TransportError};
 pub use server::{Association, Server, ServerOutput, ServerReaction};
