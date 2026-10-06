@@ -107,6 +107,38 @@ pub enum Error<E: core::fmt::Debug> {
 ///
 /// The stack is borrowed for `'s` because every socket it opens borrows it, and
 /// [`Tester::reconnect`] opens another.
+///
+/// # Examples
+///
+/// A request, its confirm, then the entity's answer:
+///
+/// ```no_run
+/// use simple_doip::service::{ConnectionEvent, DiagnosticConnection, DoIpResult};
+/// use simple_doip::tester::{Error, Tester};
+/// use simple_doip::{LogicalAddress, TCP_PORT, TaType};
+///
+/// # async fn example() -> Result<(), Error<std::io::Error>> {
+/// let stack = edge_nal_std::Stack::new();
+/// let remote = ([192, 168, 0, 10], TCP_PORT).into();
+/// let mut tester = Tester::<_, 4108>::connect(&stack, remote, LogicalAddress(0x0E00)).await?;
+///
+/// tester.request(LogicalAddress(0x0001), TaType::Physical, &[0x3E, 0x00]).await?;
+/// let mut buf = [0; 4096];
+/// loop {
+///     match tester.next_event(&mut buf, None).await? {
+///         ConnectionEvent::Confirm { result: DoIpResult::Ok, .. } => {}
+///         ConnectionEvent::Confirm { result, .. } => panic!("not delivered: {result:?}"),
+///         ConnectionEvent::Indication { pdu, .. } => {
+///             assert_eq!(pdu, [0x7E, 0x00]);
+///             break;
+///         }
+///         ConnectionEvent::Closed => tester.reconnect().await?,
+///         _ => {}
+///     }
+/// }
+/// # Ok(())
+/// # }
+/// ```
 pub struct Tester<'s, C: TcpConnect + 's, const N: usize> {
     stack: &'s C,
     remote: SocketAddr,
