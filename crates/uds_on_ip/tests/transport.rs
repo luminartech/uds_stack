@@ -350,19 +350,14 @@ fn assert_nothing_follows(t: &mut Transport<1>) {
     ));
 }
 
-/// An entity that fails while making the prescribed close surfaces its failure, and
-/// the confirmation the close held back is still reported, by the next call: the
-/// driver is owed one for every accepted request, and waits on it.
+/// A prescribed close that fails has still ended the connection, so the
+/// confirmation it held back is reported at once rather than behind an error that
+/// ends the server: the driver executes the reset on it.
 #[test]
 fn a_close_that_fails_still_reports_the_confirmation_it_held_back() {
     let mut t = indicated_by(&[0x11, 0x01], |entity| entity.fail_next_close = true);
     respond(&mut t, &[0x51, 0x01]);
 
-    let mut buffer = [0u8; 16];
-    assert!(matches!(
-        block_on(t.next_event(&mut buffer, None)),
-        Err(Error::Entity(Fault::CloseFailed))
-    ));
     assert_eq!(
         next(&mut t),
         TransportEvent::DataConf {

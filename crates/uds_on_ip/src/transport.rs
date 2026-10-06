@@ -78,7 +78,6 @@ pub struct DoIpTransport<E, const MCTS: usize = 1> {
     outbound_max: Option<usize>,
     testers: [Option<Tester>; MCTS],
     closing: Option<Closing>,
-    unreported: Option<Confirmation>,
 }
 
 /// A tester with routing active on `connection`, and what its connection owes.
@@ -121,7 +120,6 @@ impl<E, const MCTS: usize> core::fmt::Debug for DoIpTransport<E, MCTS> {
             .field("outbound_max", &self.outbound_max)
             .field("testers", &self.testers)
             .field("closing", &self.closing)
-            .field("unreported", &self.unreported)
             .finish()
     }
 }
@@ -197,7 +195,6 @@ impl<E: DiagnosticEntity, const MCTS: usize> DoIpTransport<E, MCTS> {
             outbound_max: None,
             testers: [None; MCTS],
             closing: None,
-            unreported: None,
         }
     }
 }
@@ -289,26 +286,16 @@ impl<E, const MCTS: usize> DoIpTransport<E, MCTS> {
 }
 
 impl<E: DiagnosticEntity, const MCTS: usize> DoIpTransport<E, MCTS> {
-    async fn close(
-        &mut self,
-        closing: Closing,
-    ) -> Result<TransportEvent<'static>, Error<E::Error>> {
+    async fn close(&mut self, closing: Closing) -> TransportEvent<'static> {
         self.closing = Some(closing);
         self.forget(closing.connection);
-        let closed = self.entity.close(closing.connection).await;
+        let _ended_either_way: Result<(), E::Error> =
+            self.entity.close(closing.connection).await;
         self.closing = None;
-        if let Err(error) = closed {
-            self.unreported = Some(closing.confirmation);
-            return Err(Error::Entity(error));
-        }
-        Ok(closing.confirmation.event())
+        closing.confirmation.event()
     }
 
-    async fn confirm(
-        &mut self,
-        ai: Ai,
-        result: SResult,
-    ) -> Result<TransportEvent<'static>, Error<E::Error>> {
+    async fn confirm(&mut self, ai: Ai, result: SResult) -> TransportEvent<'static> {
         let target = to_logical(ai.ta);
         let ai = self
             .tester_mut(target)
@@ -323,7 +310,7 @@ impl<E: DiagnosticEntity, const MCTS: usize> DoIpTransport<E, MCTS> {
                 })
                 .await
             }
-            None => Ok(confirmation.event()),
+            None => confirmation.event(),
         }
     }
 }
@@ -374,27 +361,24 @@ impl<E: DiagnosticEntity, const MCTS: usize> UdsTransport for DoIpTransport<E, M
     /// is true only for a tester owed a prescribed close. The prescribed close this
     /// transport makes itself is reported by no `Closed`, only by the
     /// [`TransportEvent::DataConf`] it held back. While that close is in progress,
-    /// `deadline` is not honoured: the call returns once the entity has closed.
+    /// `deadline` is not honoured: the call returns once the entity has closed. A close
+    /// that fails has still ended the connection ([`DiagnosticEntity::close`]), so the
+    /// confirmation is reported all the same and the entity's error is not; the entity,
+    /// which knows what failed, is the one to record it.
     /// Cancel-safe, as [`DiagnosticEntity`]'s obligations make its `next_event` and
     /// `close`.
     ///
     /// # Errors
     ///
     /// [`Error::Entity`] where the entity fails as a whole, and
-    /// [`Error::PduOutsideBuffer`] where it reports a PDU outside `buffer`. Where it
-    /// is the prescribed close
-    /// that fails, the confirmation the close held back is not lost: the next call
-    /// reports it.
+    /// [`Error::PduOutsideBuffer`] where it reports a PDU outside `buffer`.
     async fn next_event<'b>(
         &mut self,
         buffer: &'b mut [u8],
         deadline: Option<Timestamp>,
     ) -> Result<TransportEvent<'b>, Self::Error> {
         if let Some(closing) = self.closing {
-            return self.close(closing).await;
-        }
-        if let Some(confirmation) = self.unreported.take() {
-            return Ok(confirmation.event());
+            return Ok(self.close(closing).await);
         }
         let buffer_start = buffer.as_ptr().addr();
         let (connection, ai, at, declared) = loop {
@@ -417,7 +401,7 @@ impl<E: DiagnosticEntity, const MCTS: usize> UdsTransport for DoIpTransport<E, M
                     declared,
                 }) => break (connection, ai, at, Some(declared)),
                 Some(Inbound::Conf { ai, result }) => {
-                    return self.confirm(ai, result).await;
+                    return Ok(self.confirm(ai, result).await);
                 }
                 Some(Inbound::Closed { connection }) => {
                     if let Some(tester) = self.forget(connection) {
