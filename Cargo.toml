@@ -43,9 +43,16 @@ tokio-util = { version = "0.7", features = ["net", "codec"] }
 serde = { version = "1", default-features = false, features = ["derive"] }
 utoipa = "5"
 clap = { version = "4", features = ["derive"] }
+# The clock simple_doip's `connection` feature reads. A time abstraction, not a
+# runtime: the integrator links a time driver for the target.
+embassy-time = { version = "0.5", default-features = false }
+# simple_doip's `connection` feature. no_std: no default features.
+edge-nal = { version = "0.7", default-features = false }
+embedded-io-async = { version = "0.7", default-features = false }
 
 # dev-dependencies
 anyhow = "1"
+edge-nal-std = "0.7"
 static_cell = "2"
 proptest = "1"
 serde_json = "1"

@@ -38,12 +38,18 @@ tokio = { workspace = true, optional = true, features = [
     "time",
 ] }
 tokio-util = { workspace = true, optional = true }
+# the `connection` feature, no_std
+edge-nal = { workspace = true, optional = true }
+embedded-io-async = { workspace = true, optional = true }
+embassy-time = { workspace = true, optional = true }
 
 [dev-dependencies]
 anyhow = { workspace = true }
 proptest = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "net", "io-util", "time"] }
 tracing-subscriber = { workspace = true }
+edge-nal-std = { workspace = true }
+embassy-time = { workspace = true, features = ["mock-driver"] }
 
 [features]
 default = []
@@ -52,6 +58,7 @@ std = ["alloc", "thiserror/std", "dep:tracing", "tracing/std"]
 codec = ["std", "dep:tokio", "dep:tokio-util", "dep:bytes"]
 client = ["codec", "dep:async-trait", "dep:futures"]
 server = ["codec", "dep:async-trait", "dep:futures"]
+connection = ["dep:edge-nal", "dep:embedded-io-async", "dep:embassy-time"]
 
 [[test]]
 name = "golden_vectors"

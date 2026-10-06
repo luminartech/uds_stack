@@ -125,6 +125,7 @@ embedded:
     cargo build -p uds_session  --target {{ embedded_target }} --no-default-features
     cargo build -p uds_services --target {{ embedded_target }} --no-default-features
     cargo build -p uds_on_ip    --target {{ embedded_target }} --no-default-features
+    cargo build -p simple_doip  --target {{ embedded_target }} --no-default-features --features connection
     cargo build -p uds_protocol --target {{ embedded_target }} --no-default-features --features alloc
     cargo build -p uds_on_ip    --target {{ embedded_target }} --no-default-features --features alloc
 
