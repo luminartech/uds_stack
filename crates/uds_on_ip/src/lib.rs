@@ -68,8 +68,8 @@
 //! **Alpha.** The public API is unstable. The server role is implemented over
 //! any `DiagnosticEntity`; the client role is not yet. Known gaps are recorded in
 //! `ARCHITECTURE.md` §9, which ships with the package, and each one is also named
-//! at the item it affects — see [`mapping::PERIODIC_RESPONSE_PAYLOAD_TYPE`]'s
-//! unreachable payload type.
+//! at the item it affects — see [`mapping::PERIODIC_RESPONSE_PAYLOAD_TYPE`], a
+//! payload type a server built on this crate cannot yet send.
 //!
 //! ## What this crate deliberately does not do
 //!

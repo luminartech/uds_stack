@@ -658,9 +658,9 @@ mod tests {
     }
 
     /// Routing activation registers a tester's address on one connection only
-    /// (ISO 13400-2:2019 9.6): a tester that reappears on another connection
-    /// before the first is reported closed is the tester on the new one, and its
-    /// close goes there.
+    /// (ISO 13400-2:2019 REQ 3.DoIP-089, REQ 3.DoIP-090, REQ 3.DoIP-106): a tester
+    /// that reappears on another connection before the first is reported closed is
+    /// the tester on the new one, and its close goes there.
     #[test]
     fn a_tester_reappearing_on_another_connection_is_closed_there() {
         let mut t = DoIpTransport::<Idle, 2>::new(Idle, bench_reloads());

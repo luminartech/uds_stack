@@ -566,9 +566,9 @@ The transport seam
    closed and whether the close was expected. The peer scopes it: a server serving one
    client's request while another client's connection closes ends nothing, and a transport
    that cannot name a connection's peer reports no close for it. Whether it was expected is
-   informational: re-establishing the connection is never this crate's. ISO 13400-2:2019 REQ 8.DoIP-144 puts the routing activation
-   request on the client entity, so a server is reconnected *to* and never reconnects, and
-   a client's own reconnection is its transport's business below this seam. A transport
+   informational: re-establishing the connection is never this crate's. ISO 14229-5:2022
+   REQ 7.8 and REQ 7.10 have the client open a new connection and activate routing again,
+   so a server is reconnected *to* and never reconnects, and a client's own reconnection is its transport's business below this seam. A transport
    with no connections never emits it, exactly as one that never truncates never emits
    ``DataTooLong``.
 

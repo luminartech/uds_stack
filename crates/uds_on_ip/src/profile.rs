@@ -165,14 +165,11 @@ impl ConnectionAction {
 ///
 /// # Why a close is classified, never predicted
 ///
-/// An earlier shape was `post_exchange(request_sid, response) -> PostExchange`,
-/// a public function returning `Continue` or `ReconnectAndReactivate` once an
-/// exchange finished. It had to answer a question clause 8 does not settle:
-/// REQ 7.11 describes the close as following a *positive* response
-/// and say nothing about a negative one, so predicting a close meant guessing
-/// what a negative response implies.
-///
-/// Keyed on what was sent, that question does not arise.
+/// Predicting a close from a finished exchange would have to answer a question
+/// clause 8 does not settle: REQ 7.11 describes the close as following a
+/// *positive* response and says nothing about a negative one, so a prediction
+/// would guess what a negative response implies. Keyed on what was sent, that
+/// question does not arise.
 /// [`ExpectClose`](ConnectionAction::ExpectClose) says a close would be
 /// prescribed, and classifies one that happens;
 /// [`InitiateClose`](ConnectionAction::InitiateClose) fires only on a positive
@@ -183,8 +180,10 @@ impl ConnectionAction {
 /// `Continue`, and the final positive response that follows is what triggers
 /// the close. And a request carrying the suppress-positive-response bit
 /// produces no response at all, so nothing is sent, nothing is classified, and
-/// no close is triggered — which is what REQ 7.11 requires, since it keys on
-/// *having sent* a positive response.
+/// no close is made. REQ 7.11 and REQ 7.9 describe the close only after a
+/// positive response that is sent, and say nothing of a suppressed `11 81` or
+/// `10 82`: a server that resets or leaves on one drops the connection
+/// unannounced (`ARCHITECTURE.md` §9.2).
 ///
 /// # The client half is deliberately not exact
 ///

@@ -55,19 +55,19 @@ pub const fn from_logical(addr: simple_doip::LogicalAddress) -> Address {
 /// diagnostic payload types stop at `0x8003`. It is therefore this crate's to
 /// interpret rather than `simple_doip`'s to name — see `ARCHITECTURE.md` §3.1.
 ///
-/// # Nothing in this crate acts on it yet
+/// # Nothing in this crate sends or decodes it
 ///
-/// Published as vocabulary, not as a capability. A server never receives one, and
-/// the client role that would, and `uds_services::TransportEvent::Periodic` that
-/// would carry it, are not built on `DoIP` yet: such a message arrives from
-/// `simple_doip` as an [`EntityEvent::Unmodelled`], and this crate ignores it.
+/// Published as vocabulary, not as a capability. A server sends periodic
+/// responses with it (REQ 7.7, REQ 7.16), but neither
+/// `uds_services::UdsTransport::t_data_req` nor
+/// [`DiagnosticEntity::request`](simple_doip::service::DiagnosticEntity::request)
+/// can choose a payload type, so a server built on this crate cannot. One that
+/// arrives is reported by `simple_doip` as an [`EntityEvent::Unmodelled`], and
+/// this crate ignores it.
 ///
 /// REQ 7.17's length bound — a periodic data record must not exceed the
-/// non-segmented `UDSonIP` message limit — has no home here yet either. It was
-/// briefly a free `periodic_record_within_limit(len) -> bool` in `profile`,
-/// which no caller was obliged to consult and no path could reach; it is
-/// deleted until there is a periodic record to bound, at which point the check
-/// belongs where the record is accepted rather than beside it.
+/// non-segmented `UDSonIP` message limit — has no home here either. It belongs
+/// where a periodic record is accepted, and none is. See `ARCHITECTURE.md` §9.2.
 pub const PERIODIC_RESPONSE_PAYLOAD_TYPE: u16 = 0x8004;
 
 /// The `DoIP` target address for this addressing triple, or why it has none.
@@ -396,9 +396,8 @@ mod tests {
         );
     }
 
-    /// A periodic response is ignored rather than mistaken for a request: ISO
-    /// 14229-5:2022 REQ 7.20 keeps it off the path that resets `tS3_Server`, and a
-    /// server has no use for one.
+    /// A periodic response, which a server sends rather than receives (ISO
+    /// 14229-5:2022 REQ 7.16), is ignored rather than mistaken for a request.
     #[test]
     fn an_unmodelled_payload_is_ignored() {
         let data = [0x01, 0x02];

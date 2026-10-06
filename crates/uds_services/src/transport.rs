@@ -95,11 +95,11 @@ pub enum TransportEvent<'b> {
         /// Whether the close was one the standard prescribes.
         ///
         /// **Informational: re-establishing the connection is never this crate's.**
-        /// ISO 13400-2:2019 REQ 8.DoIP-144 puts the routing activation request on the
-        /// *client* entity, so a server is reconnected *to* and never reconnects, and a
-        /// client's own reconnection is its transport's business below this seam
-        /// (``UDSSVC_ARCH_0002``). Nothing here asks a transport to reconnect, and no
-        /// method to do so exists.
+        /// ISO 14229-5:2022 REQ 7.8 and REQ 7.10 have the client open a new connection
+        /// and activate routing again, so a server is reconnected *to* and never
+        /// reconnects, and a client's own reconnection is its transport's business
+        /// below this seam (``UDSSVC_ARCH_0002``). Nothing here asks a transport to
+        /// reconnect, and no method to do so exists.
         expected: bool,
     },
     /// The deadline the driver supplied passed before anything arrived.
