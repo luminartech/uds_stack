@@ -427,6 +427,27 @@ fn an_oversize_payload_is_nacked_0x02_discarded_and_the_next_frame_handled() {
     assert_eq!(peer.take_written(), expected);
 }
 
+/// REQ 7.DoIP-044: before routing activation a socket's frames must fit the reserve's
+/// buffer. A longer payload, within the entity's maximum data size, exceeds only the
+/// memory it has for that socket: it is answered with NACK code 0x03 and discarded, and
+/// the next frame handled.
+#[test]
+fn a_payload_too_long_before_activation_is_nacked_0x03_and_discarded() {
+    let _clock = clock();
+    let stack = MockStack::new(4096);
+    let mut entity = OneSocket::new(&stack, address(), two_testers());
+    let peer = stack.dial();
+    peer.send(&diagnostic(TESTER, ENTITY, &[0x22; 21]));
+    peer.send(&activation_from(TESTER, 0));
+
+    assert_eq!(events(&mut entity), []);
+
+    let mut expected = header_nack(0x03);
+    expected.extend(activation_response_for(TESTER, ACTIVATED));
+    assert_eq!(peer.take_written(), expected);
+    assert!(!peer.is_shut());
+}
+
 /// REQ 7.DoIP-045: a payload length wrong for its payload type is answered with NACK
 /// code 0x04, and the socket closed.
 #[test]

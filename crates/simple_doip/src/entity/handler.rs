@@ -167,11 +167,15 @@ fn check_header<S, const CAP: usize>(
     let Some(length_ok) = length_rule(header.payload_type) else {
         return Err(discard(open, tx, rx, &header, NackCode::UnknownPayloadType));
     };
-    let limit = if registered { CAP } else { limit.min(CAP) };
-    let fits = usize::try_from(header.payload_length)
-        .is_ok_and(|length| length <= limit.saturating_sub(Header::SIZE));
-    if !fits {
+    let fits = |limit: usize| {
+        usize::try_from(header.payload_length)
+            .is_ok_and(|length| length <= limit.saturating_sub(Header::SIZE))
+    };
+    if !fits(CAP) {
         return Err(discard(open, tx, rx, &header, NackCode::MessageTooLarge));
+    }
+    if !registered && !fits(limit) {
+        return Err(discard(open, tx, rx, &header, NackCode::OutOfMemory));
     }
     if !length_ok(header.payload_length) {
         return Err(refuse(open, tx, NackCode::InvalidPayloadLength, close_by));
