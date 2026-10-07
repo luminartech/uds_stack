@@ -104,6 +104,10 @@ name = "tester_interop"
 required-features = ["connection", "server"]
 
 [[test]]
+name = "entity_interop"
+required-features = ["connection", "codec"]
+
+[[test]]
 name = "tester_late_ack"
 required-features = ["connection"]
 
