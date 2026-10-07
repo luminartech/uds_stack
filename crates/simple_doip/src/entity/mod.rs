@@ -189,6 +189,39 @@ pub enum Error<E: fmt::Debug> {
 ///
 /// [`ConnectionId`]s are the connection slots' indices, below `MCTS`.
 ///
+/// # Memory
+///
+/// The connections' buffers are most of an `Entity`: `2 × MCTS × MAX_MESSAGE` bytes.
+/// The reserve's two buffers and the bookkeeping add a few hundred bytes more, and
+/// under a hundred per connection; the sockets the acceptor hands out are counted in
+/// their own type. With `MCTS` 1 and `MAX_MESSAGE` 4096 an `Entity` is about 8.4 KiB.
+///
+/// # Examples
+///
+/// An entity on the host, echoing every diagnostic message back to its sender:
+///
+/// ```no_run
+/// use edge_nal::TcpBind;
+/// use simple_doip::entity::{Entity, EntityAddress};
+/// use simple_doip::service::{DiagnosticEntity, EntityConfig, EntityEvent};
+/// use simple_doip::{LogicalAddress, TCP_PORT, TaType};
+///
+/// # async fn serve() -> anyhow::Result<()> {
+/// let stack = edge_nal_std::Stack::new();
+/// let acceptor = stack.bind(([0, 0, 0, 0], TCP_PORT).into()).await?;
+/// let address = EntityAddress::new(LogicalAddress(0x0001), LogicalAddress(0xE400))?;
+/// let mut entity = Entity::<_, 1, 4096>::new(&acceptor, address, EntityConfig::default());
+/// let mut buf = [0u8; 4096];
+/// loop {
+///     if let EntityEvent::Indication { sa, pdu, .. } = entity.next_event(&mut buf, None).await? {
+///         entity
+///             .request(address.physical(), sa, TaType::Physical, pdu)
+///             .await?;
+///     }
+/// }
+/// # }
+/// ```
+///
 /// # Cancel safety
 ///
 /// [`DiagnosticEntity::next_event`], [`DiagnosticEntity::request`] and
