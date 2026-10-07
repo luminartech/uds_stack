@@ -1,4 +1,5 @@
-//! `Entity`'s `next_event` and `close` lose nothing when dropped at any await: each
+//! `Entity`'s `next_event`, `request` and `close` lose nothing when dropped at any
+//! await: each
 //! scenario runs once to completion, then again over sockets that move one byte per read
 //! or write, dropping the future after every number of polls in turn, and the events and
 //! the bytes on the wire must be the same.
@@ -16,12 +17,13 @@ mod support;
 
 use std::pin::pin;
 
+use embassy_time::Duration;
 use simple_doip::entity::{Entity, EntityAddress};
 use simple_doip::service::{ConnectionId, DiagnosticEntity, EntityConfig, EntityEvent};
 use simple_doip::{LogicalAddress, TaType};
 use support::mock_stack::{
-    ENTITY, MockStack, TESTER, alive_check_response, clock, diagnostic, poll_times, raw,
-    until_stalled,
+    ENTITY, MockStack, TESTER, advance, alive_check_response, clock, diagnostic,
+    poll_times, raw, until_stalled,
 };
 
 const OTHER: LogicalAddress = LogicalAddress(0x0E80);
@@ -101,9 +103,34 @@ fn close(entity: &mut TestEntity<'_>, drive: Drive, connection: ConnectionId) {
     }
 }
 
-fn request(entity: &mut TestEntity<'_>, ta: LogicalAddress, pdu: &[u8]) {
+/// Requests `pdu` for `ta`, first dropping the request unpolled when `drive` drops.
+fn request(entity: &mut TestEntity<'_>, drive: Drive, ta: LogicalAddress, pdu: &[u8]) {
+    if let Drive::Dropped = drive {
+        drop(entity.request(ENTITY, ta, TaType::Physical, pdu));
+    }
     let future = pin!(entity.request(ENTITY, ta, TaType::Physical, pdu));
     until_stalled(future).unwrap().unwrap();
+}
+
+/// Closes `connection` once its writes have stalled: the close waits out its limit,
+/// then aborts.
+fn close_stalled(entity: &mut TestEntity<'_>, drive: Drive, connection: ConnectionId) {
+    for polls in 1.. {
+        let future = pin!(entity.close(connection));
+        let done = match drive {
+            Drive::Dropped if polls <= MOST_POLLS => poll_times(future, polls),
+            _ => match until_stalled(future) {
+                None => {
+                    advance(Duration::from_millis(500));
+                    None
+                }
+                done => done,
+            },
+        };
+        if let Some(result) = done {
+            return result.unwrap();
+        }
+    }
 }
 
 /// A tester activates routing with a diagnostic message right behind it, is answered,
@@ -122,7 +149,7 @@ fn activate_echo_close(drive: Drive) -> (Vec<String>, Vec<u8>, bool) {
     let mut seen = Vec::new();
 
     drain(&mut entity, drive, &mut seen);
-    request(&mut entity, TESTER, &[0x51, 0x01]);
+    request(&mut entity, drive, TESTER, &[0x51, 0x01]);
     drain(&mut entity, drive, &mut seen);
     close(&mut entity, drive, ConnectionId::new(0));
     drain(&mut entity, drive, &mut seen);
@@ -147,6 +174,54 @@ fn contested_activation(drive: Drive) -> (Vec<String>, Vec<u8>, Vec<u8>) {
     drain(&mut entity, drive, &mut seen);
 
     (seen, holder.take_written(), newcomer.take_written())
+}
+
+/// A second tester claims a registered source address, the holder stays silent, and
+/// after `T_TCP_Alive_Check` the holder is aborted and the second registered.
+fn silent_holder_replaced(drive: Drive) -> (Vec<String>, Vec<u8>, Vec<u8>, bool) {
+    let stack = MockStack::new(1);
+    let mut entity = new_entity(&stack);
+    let holder = stack.dial();
+    holder.send(&activation_from(TESTER));
+    let mut seen = Vec::new();
+    drain(&mut entity, drive, &mut seen);
+
+    let newcomer = stack.dial();
+    newcomer.send(&activation_from(TESTER));
+    drain(&mut entity, drive, &mut seen);
+    advance(Duration::from_millis(500));
+    drain(&mut entity, drive, &mut seen);
+
+    (
+        seen,
+        holder.take_written(),
+        newcomer.take_written(),
+        holder.is_aborted(),
+    )
+}
+
+/// A registered tester stops reading with a response queued, and the entity's close
+/// of the connection is aborted once it cannot finish.
+fn stalled_close_aborted(drive: Drive) -> (Vec<String>, Vec<u8>, bool) {
+    let stack = MockStack::new(1);
+    let mut entity = new_entity(&stack);
+    let peer = stack.dial();
+    peer.send(
+        &[
+            activation_from(TESTER),
+            diagnostic(TESTER, ENTITY, &[0x11, 0x01]),
+        ]
+        .concat(),
+    );
+    let mut seen = Vec::new();
+    drain(&mut entity, drive, &mut seen);
+    peer.stall_writes();
+
+    request(&mut entity, drive, TESTER, &[0x51, 0x01]);
+    close_stalled(&mut entity, drive, ConnectionId::new(0));
+    drain(&mut entity, drive, &mut seen);
+
+    (seen, peer.take_written(), peer.is_aborted())
 }
 
 #[test]
@@ -192,4 +267,27 @@ fn no_connection_is_lost_to_a_dropped_accept() {
         .filter(|peer| !peer.take_written().is_empty())
         .count();
     assert_eq!(answered, 2, "both connections were accepted and answered");
+}
+
+#[test]
+fn an_alive_check_that_expires_loses_nothing_when_dropped_at_any_await() {
+    let first_run = clock();
+    let whole = silent_holder_replaced(Drive::Whole);
+    assert!(whole.3, "the silent holder is aborted");
+    assert!(!whole.2.is_empty(), "the newcomer is answered");
+
+    drop(first_run);
+    let _clock = clock();
+    assert_eq!(silent_holder_replaced(Drive::Dropped), whole);
+}
+
+#[test]
+fn a_close_that_cannot_finish_loses_nothing_when_dropped_at_any_await() {
+    let first_run = clock();
+    let whole = stalled_close_aborted(Drive::Whole);
+    assert!(whole.2, "the stalled close is aborted");
+
+    drop(first_run);
+    let _clock = clock();
+    assert_eq!(stalled_close_aborted(Drive::Dropped), whole);
 }
