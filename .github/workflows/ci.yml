@@ -245,6 +245,50 @@ jobs:
           --lib --test tester --test entity --test entity_cancel
 
   # ===================================================================================
+  # Embedded (hand-rolled: the reusable workflow checks default members on the host)
+  # ===================================================================================
+  # rust-ci.yml runs bare cargo at the root, which builds default members only, so it
+  # never builds examples/embassy-net-entity, and its no_std canary never builds
+  # simple_doip's `connection` feature. `just embedded` builds every no_std crate for
+  # bare metal, the adapter among them. On the MSRV: the adapter is what sets it.
+  embedded:
+    name: Embedded build (thumbv7em-none-eabihf, MSRV)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      # Stable lints and documents: clippy at the MSRV does not know every lint the
+      # workspace configures.
+      - uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master 2026-07-14
+        with:
+          toolchain: stable
+          targets: thumbv7em-none-eabihf
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: just
+      - name: Lint the embassy-net adapter
+        run: >-
+          cargo +stable clippy -p embassy-net-entity --target thumbv7em-none-eabihf
+          -- -D warnings
+      - name: Document the embassy-net adapter
+        env:
+          RUSTDOCFLAGS: -D rustdoc::broken_intra_doc_links -D warnings
+        run: >-
+          cargo +stable doc -p embassy-net-entity --target thumbv7em-none-eabihf
+          --no-deps
+      - uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master 2026-07-14
+        with:
+          toolchain: '1.91'
+          targets: thumbv7em-none-eabihf
+      - name: Build the no_std crates for bare metal at the MSRV
+        run: just embedded
+
+  # ===================================================================================
   # Release PR (hand-rolled: the reusable one cannot run while releases are held)
   # ===================================================================================
   # rust-ci.yml has one switch for both release-plz jobs. use-release-plz turns on the
