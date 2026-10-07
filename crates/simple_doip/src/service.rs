@@ -235,6 +235,39 @@ pub trait DiagnosticConnection {
     ) -> impl Future<Output = Result<ConnectionEvent<'b>, Self::Error>>;
 }
 
+/// A tester's [`DiagnosticConnection`], which it can replace with a new one.
+///
+/// ISO 14229-5:2022 REQ 7.8 and REQ 7.10 require a client to open a new TCP connection
+/// and activate routing again after the server closes the connection for a session
+/// change or a reset. This is how the layer above a tester does that without naming the
+/// socket the tester runs on.
+///
+/// # Obligations on implementors
+///
+/// - **The old connection is given up before the new one is opened, and a back-off
+///   the implementor states comes between.** An entity may keep the tester's address
+///   registered for a while after its socket closes, and refuse a second routing
+///   activation for it meanwhile.
+/// - **A request awaiting its confirm is confirmed** before anything from the new
+///   connection, as when a connection closes.
+/// - **Dropping [`Self::reconnect`] leaves no connection**, which
+///   [`DiagnosticConnection::next_event`] reports as [`ConnectionEvent::Closed`], so a
+///   caller can bound the whole attempt by dropping it.
+pub trait TesterConnection: DiagnosticConnection {
+    /// Why a reconnect failed. Never interpreted by the layer above, which can only
+    /// report it.
+    type ReconnectError: core::fmt::Debug;
+
+    /// Gives the connection up, if there is one, then opens a new TCP connection and
+    /// activates routing on it.
+    ///
+    /// # Errors
+    ///
+    /// [`Self::ReconnectError`] where no connection could be opened and activated; the
+    /// connection is then closed until a reconnect succeeds.
+    fn reconnect(&mut self) -> impl Future<Output = Result<(), Self::ReconnectError>>;
+}
+
 /// One connection in a [`DiagnosticEntity`]'s connection table.
 ///
 /// Names one connection from the event that first reports it until the

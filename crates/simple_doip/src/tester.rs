@@ -10,14 +10,16 @@ use core::fmt;
 use core::net::SocketAddr;
 
 use edge_nal::{Close, Readable, TcpConnect, TcpShutdown};
-use embassy_time::{Duration, Instant, with_deadline};
+use embassy_time::{Duration, Instant, Timer, with_deadline};
 use embedded_io_async::{Read, Write};
 
 use crate::messages::{
     DiagnosticAckCode, DiagnosticMessage, Header, Message, NackCode, Payload, PayloadType,
     ProtocolVersion, RoutingActivationResponseCode,
 };
-use crate::service::{ConnectionEvent, DiagnosticConnection, DoIpResult, TesterAddress};
+use crate::service::{
+    ConnectionEvent, DiagnosticConnection, DoIpResult, TesterAddress, TesterConnection,
+};
 use crate::wire::Decode;
 use crate::{LogicalAddress, TIMEOUT_DIAGNOSTIC_MESSAGE_RESPONSE, TaType};
 
@@ -35,6 +37,13 @@ const ROUTING_CONFIRMATION_RETRY: Duration = Duration::from_secs(2);
 /// `A_DoIP_Diagnostic_Message`'s timeout (ISO 13400-2:2019 Table 12).
 const ACK_TIMEOUT: Duration =
     Duration::from_secs(TIMEOUT_DIAGNOSTIC_MESSAGE_RESPONSE.as_secs());
+
+/// How long [`TesterConnection::reconnect`] waits after a connection is lost before it
+/// connects again: an entity may hold the tester's address for a couple of seconds after
+/// the socket closes and refuse its routing activation meanwhile (`0x03`, ISO
+/// 13400-2:2019 Table 49). Three seconds is what a sensor that does so was measured to
+/// need.
+pub const RECONNECT_BACKOFF: Duration = Duration::from_secs(3);
 
 /// The protocol version the tester sends.
 const VERSION: ProtocolVersion = ProtocolVersion::V2019;
@@ -114,18 +123,29 @@ pub enum Error {
 /// an earlier edition refuses it.
 ///
 /// The stack is borrowed for `'s` because every socket it opens borrows it, and
-/// [`Tester::reconnect`] opens another.
+/// [`TesterConnection::reconnect`] opens another.
 ///
-/// # Polling
+/// # What the caller owes
 ///
-/// The tester does its I/O only while [`Tester::connect`], [`Tester::reconnect`] or
-/// [`DiagnosticConnection::next_event`] is being polled. An entity checks that a tester
-/// is alive within `T_TCP_Alive_Check` (ISO 13400-2:2019 Table 12) before giving its
-/// socket to another tester, so a caller that wants to keep the connection keeps
-/// `next_event` polled. While a request is being written, nothing is read.
-///
-/// A tester is ended with [`Tester::close`], which closes the connection gracefully;
-/// dropping it leaves that to the backend.
+/// - **One request at a time.** [`DiagnosticConnection::request`] is
+///   [`Error::RequestPending`] until the previous request's
+///   [`ConnectionEvent::Confirm`] has been reported, so a caller that wants to send
+///   another meanwhile, such as a keep-alive or a second channel's request, queues it.
+/// - **[`DiagnosticConnection::next_event`] kept polled.** The tester does its I/O only
+///   while it, [`Tester::connect`] or [`TesterConnection::reconnect`] is being polled:
+///   nothing is written and no alive check is answered otherwise. An entity checks
+///   that a tester is alive within `T_TCP_Alive_Check` (ISO 13400-2:2019 Table 12)
+///   before giving its socket to another tester, so an idle caller loses the
+///   connection. While a request is being written, nothing is read.
+/// - **A new connection after a lost request.** A request not acknowledged within
+///   `A_DoIP_Diagnostic_Message` (Table 12, 2 s) is confirmed
+///   [`DoIpResult::TimeoutA`], and once any of it was written the connection is given
+///   up and [`ConnectionEvent::Closed`] follows. Table 12 says the request or the
+///   response "shall be considered lost"; keeping the connection would let the late
+///   acknowledgement or response be taken for a later request's, which a tester that
+///   carries one request at a time cannot tell apart.
+/// - **[`Tester::close`] to end it.** It closes the connection gracefully; dropping the
+///   tester leaves that to the backend.
 ///
 /// # Examples
 ///
@@ -133,7 +153,9 @@ pub enum Error {
 /// connection ends is repeated, on a new connection where the old one is gone:
 ///
 /// ```no_run
-/// use simple_doip::service::{ConnectionEvent, DiagnosticConnection, DoIpResult};
+/// use simple_doip::service::{
+///     ConnectionEvent, DiagnosticConnection, DoIpResult, TesterConnection,
+/// };
 /// use simple_doip::service::TesterAddress;
 /// use simple_doip::tester::{DIAGNOSTIC_MESSAGE_OVERHEAD, Error, Tester};
 /// use simple_doip::{LogicalAddress, TCP_PORT, TaType};
@@ -202,6 +224,7 @@ pub struct Tester<'s, C: TcpConnect + 's, const N: usize> {
     exchange: Exchange,
     owed: Option<ConnectionEvent<'static>>,
     io_error: Option<C::Error>,
+    lost_at: Option<Instant>,
 }
 
 impl<C: TcpConnect, const N: usize> fmt::Debug for Tester<'_, C, N> {
@@ -273,35 +296,10 @@ impl<'s, C: TcpConnect, const N: usize> Tester<'s, C, N> {
             exchange: Exchange::default(),
             owed: None,
             io_error: None,
+            lost_at: None,
         };
         tester.establish().await?;
         Ok(tester)
-    }
-
-    /// Gives up the connection, if there is one, then connects and activates routing
-    /// again, as [`Tester::connect`] did.
-    ///
-    /// This is what ISO 14229-5:2022 REQ 7.8 and REQ 7.10 require of a client before it
-    /// continues after the server closed the connection for a session change or a reset.
-    /// A request still awaiting its confirm is confirmed with [`DoIpResult::Error`] or
-    /// [`DoIpResult::NoSocket`] by the next
-    /// [`next_event`](DiagnosticConnection::next_event), before anything from the new
-    /// connection.
-    ///
-    /// # Cancel safety
-    ///
-    /// As for [`Tester::connect`]. Dropped, or failed, it leaves the tester with no
-    /// connection.
-    ///
-    /// # Errors
-    ///
-    /// As for [`Tester::connect`]. After an error,
-    /// [`next_event`](DiagnosticConnection::next_event) reports
-    /// [`ConnectionEvent::Closed`] and [`request`](DiagnosticConnection::request) is
-    /// [`Error::NotConnected`] until a reconnect succeeds.
-    pub async fn reconnect(&mut self) -> Result<(), ConnectError<C::Error>> {
-        self.lose_connection(true, None).await;
-        self.establish().await
     }
 
     /// Closes the connection gracefully, if there is one, and ends the tester.
@@ -349,6 +347,7 @@ impl<'s, C: TcpConnect, const N: usize> Tester<'s, C, N> {
                 Ok(())
             }
             Err(error) => {
+                self.lost_at = Some(Instant::now());
                 socket.abort().await.ok();
                 Err(error)
             }
@@ -423,6 +422,9 @@ impl<C: TcpConnect, const N: usize> Tester<'_, C, N> {
     /// never left, `DoIP_ERROR` if it left and was never acknowledged.
     async fn lose_connection(&mut self, abort: bool, until: Option<Instant>) {
         let socket = self.socket.take();
+        if socket.is_some() {
+            self.lost_at = Some(Instant::now());
+        }
         if let Some(outstanding) = self.exchange.outstanding.take() {
             let result = if outstanding.sent {
                 DoIpResult::Error
@@ -667,6 +669,44 @@ impl<C: TcpConnect, const N: usize> DiagnosticConnection for Tester<'_, C, N> {
                 }
             }
         }
+    }
+}
+
+impl<C: TcpConnect, const N: usize> TesterConnection for Tester<'_, C, N> {
+    type ReconnectError = ConnectError<C::Error>;
+
+    /// Gives up the connection, if there is one, waits until [`RECONNECT_BACKOFF`] has
+    /// passed since a connection was last lost, then connects and activates routing
+    /// again, as [`Tester::connect`] did.
+    ///
+    /// The order is the point: an entity may hold this tester's address for a while
+    /// after the socket closes, and refuse its activation meanwhile, so a reconnect
+    /// that opened the new connection before closing the old, or straight after, would
+    /// be refused. A reconnect made long after the connection was lost does not wait.
+    /// A request still awaiting its confirm is confirmed with [`DoIpResult::Error`] or
+    /// [`DoIpResult::NoSocket`] by the next
+    /// [`next_event`](DiagnosticConnection::next_event), before anything from the new
+    /// connection.
+    ///
+    /// # Cancel safety
+    ///
+    /// As for [`Tester::connect`]: no timer bounds the attempt but the back-off, so
+    /// bound the whole of it by dropping the future, for example with
+    /// [`embassy_time::with_timeout`]. Dropped, or failed, it leaves the tester with no
+    /// connection.
+    ///
+    /// # Errors
+    ///
+    /// As for [`Tester::connect`]. After an error,
+    /// [`next_event`](DiagnosticConnection::next_event) reports
+    /// [`ConnectionEvent::Closed`] and [`request`](DiagnosticConnection::request) is
+    /// [`Error::NotConnected`] until a reconnect succeeds.
+    async fn reconnect(&mut self) -> Result<(), Self::ReconnectError> {
+        self.lose_connection(true, None).await;
+        if let Some(lost_at) = self.lost_at {
+            Timer::at(confirm::after(lost_at, RECONNECT_BACKOFF)).await;
+        }
+        self.establish().await
     }
 }
 

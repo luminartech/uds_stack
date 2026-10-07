@@ -79,8 +79,8 @@
 //! ## Where to start
 //!
 //! - **A `no_std` tester:** `tester::Tester` connects to an entity, activates routing
-//!   and is then a [`service::DiagnosticConnection`] (requires the `connection`
-//!   feature).
+//!   and is then a [`service::TesterConnection`], a [`service::DiagnosticConnection`]
+//!   that can reconnect (requires the `connection` feature).
 //! - **Writing against the connection service:** [`service`] holds ISO 13400-2's own
 //!   service vocabulary, the [`service::DiagnosticConnection`] trait for one
 //!   connection and the [`service::DiagnosticEntity`] trait for a whole entity, with

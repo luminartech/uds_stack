@@ -16,9 +16,9 @@ use std::time::Duration as StdDuration;
 use edge_nal_std::Stack;
 use embassy_time::{Duration, MockDriver};
 use simple_doip::service::{
-    ConnectionEvent, DiagnosticConnection, DoIpResult, TesterAddress,
+    ConnectionEvent, DiagnosticConnection, DoIpResult, TesterAddress, TesterConnection,
 };
-use simple_doip::tester::Tester;
+use simple_doip::tester::{RECONNECT_BACKOFF, Tester};
 use simple_doip::{LogicalAddress, TaType};
 use tokio::time::timeout;
 
@@ -117,6 +117,7 @@ async fn a_lost_request_leaves_nothing_for_the_next_one() {
             .unwrap();
         events.push(format!("{event:?}"));
     }
+    MockDriver::get().advance(RECONNECT_BACKOFF);
     timeout(PATIENCE, tester.reconnect())
         .await
         .unwrap()

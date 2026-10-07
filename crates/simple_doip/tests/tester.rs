@@ -18,8 +18,9 @@ use embassy_time::Duration;
 use simple_doip::messages::{NackCode, RoutingActivationResponseCode};
 use simple_doip::service::{
     ConnectionEvent, DiagnosticConnection, DoIpResult, NotATesterAddress, TesterAddress,
+    TesterConnection,
 };
-use simple_doip::tester::{ConnectError, Error, MIN_N, Tester};
+use simple_doip::tester::{ConnectError, Error, MIN_N, RECONNECT_BACKOFF, Tester};
 use simple_doip::{LogicalAddress, TaType};
 use support::mock_stack::*;
 
@@ -248,6 +249,16 @@ fn active(stack: &MockStack) -> ActiveTester<'_> {
     let tester = connect(stack).unwrap();
     stack.latest().take_written();
     tester
+}
+
+/// Reconnects, letting [`RECONNECT_BACKOFF`] pass on the mock clock.
+fn reconnect(tester: &mut ActiveTester<'_>) -> Result<(), ConnectError<MockError>> {
+    let mut reconnecting = pin!(tester.reconnect());
+    if let Some(done) = until_stalled(reconnecting.as_mut()) {
+        return done;
+    }
+    advance(RECONNECT_BACKOFF);
+    run(reconnecting)
 }
 
 fn next<'b>(
@@ -1138,7 +1149,7 @@ fn reconnecting_after_a_close_opens_a_new_connection_and_activates() {
     );
     stack.script_next(&activation_response(0x10));
 
-    run(tester.reconnect()).unwrap();
+    reconnect(&mut tester).unwrap();
 
     assert_eq!(stack.connects(), 2);
     assert_eq!(stack.latest().take_written(), activation_request());
@@ -1158,7 +1169,7 @@ fn reconnecting_while_connected_gives_up_the_old_connection() {
     let mut tester = active(&stack);
     stack.script_next(&activation_response(0x10));
 
-    run(tester.reconnect()).unwrap();
+    reconnect(&mut tester).unwrap();
 
     assert!(stack.peer(0).is_shut());
     assert!(!stack.peer(1).is_shut());
@@ -1174,7 +1185,7 @@ fn reconnecting_confirms_the_outstanding_request_first() {
     request(&mut tester).unwrap();
     sent(&stack, &mut tester);
     stack.script_next(&activation_response(0x10));
-    run(tester.reconnect()).unwrap();
+    reconnect(&mut tester).unwrap();
     stack
         .latest()
         .send(&diagnostic(ENTITY, TESTER, &[0x7E, 0x00]));
@@ -1204,7 +1215,7 @@ fn a_failed_reconnect_leaves_the_tester_closed() {
     let mut buf = [0; 16];
 
     assert_eq!(
-        run(tester.reconnect()).unwrap_err(),
+        reconnect(&mut tester).unwrap_err(),
         ConnectError::Io(MockError)
     );
     assert_eq!(
@@ -1213,7 +1224,7 @@ fn a_failed_reconnect_leaves_the_tester_closed() {
     );
 
     assert_eq!(
-        run(tester.reconnect()).unwrap_err(),
+        reconnect(&mut tester).unwrap_err(),
         ConnectError::RoutingActivationDenied(
             RoutingActivationResponseCode::DeniedUnknownSourceAddress
         )
@@ -1234,6 +1245,8 @@ fn a_dropped_reconnect_leaves_the_tester_closed() {
     let mut tester = active(&stack);
     {
         let mut reconnecting = pin!(tester.reconnect());
+        assert!(until_stalled(reconnecting.as_mut()).is_none());
+        advance(RECONNECT_BACKOFF);
         assert!(until_stalled(reconnecting.as_mut()).is_none());
     }
     let mut buf = [0; 16];
@@ -1370,7 +1383,7 @@ fn a_request_while_a_confirm_is_owed_is_pending() {
     let mut tester = active(&stack);
     request(&mut tester).unwrap();
     stack.script_next(&activation_response(0x10));
-    run(tester.reconnect()).unwrap();
+    reconnect(&mut tester).unwrap();
 
     assert_eq!(request(&mut tester).unwrap_err(), Error::RequestPending);
 }
@@ -1745,7 +1758,11 @@ fn a_reconnect_dropped_at_any_await_leaves_a_consistent_tester() {
         stack.script_next(&activation_response(0x10));
         let completed = {
             let mut reconnecting = pin!(tester.reconnect());
-            poll_times(reconnecting.as_mut(), polls).is_some()
+            (0..polls).any(|_| {
+                let done = poll_times(reconnecting.as_mut(), 1).is_some();
+                advance(RECONNECT_BACKOFF);
+                done
+            })
         };
         let mut buf = [0; 16];
         let first = run(tester.next_event(&mut buf, Some(0)));
@@ -1934,7 +1951,7 @@ fn a_partial_message_does_not_survive_a_reconnect() {
         assert!(until_stalled(waiting.as_mut()).is_none());
     }
     stack.script_next(&activation_response(0x10));
-    run(tester.reconnect()).unwrap();
+    reconnect(&mut tester).unwrap();
     stack
         .latest()
         .send(&diagnostic(ENTITY, TESTER, &[0x62, 0xF1, 0x90]));
@@ -2248,7 +2265,7 @@ fn a_reconnect_carries_only_the_activation_request() {
     let mut tester = active(&stack);
     request(&mut tester).unwrap();
     stack.script_next(&activation_response(0x10));
-    run(tester.reconnect()).unwrap();
+    reconnect(&mut tester).unwrap();
     let mut buf = [0; 16];
 
     assert_eq!(
@@ -2368,4 +2385,93 @@ fn closing_a_closed_tester_does_nothing() {
     run(tester.close()).unwrap();
 
     assert!(!stack.latest().is_closed());
+}
+
+// --- reconnecting -------------------------------------------------------------------
+
+/// Issue #17 item 2: an entity holds the tester's address for a while after its socket
+/// closes and refuses a second activation for it meanwhile, so a reconnect gives the
+/// old connection up first, backs off, and only then connects.
+#[test]
+fn a_reconnect_drops_the_old_connection_then_backs_off_then_connects() {
+    let _clock = clock();
+    let stack = MockStack::new(usize::MAX);
+    let mut tester = active(&stack);
+    stack.script_next(&activation_response(0x10));
+    let mut reconnecting = pin!(tester.reconnect());
+
+    assert!(until_stalled(reconnecting.as_mut()).is_none());
+    assert!(stack.peer(0).is_shut(), "the old connection goes first");
+    assert_eq!(stack.connects(), 1);
+    advance(RECONNECT_BACKOFF - Duration::from_millis(1));
+    assert!(until_stalled(reconnecting.as_mut()).is_none());
+    assert_eq!(stack.connects(), 1, "still backing off");
+    advance(Duration::from_millis(1));
+
+    assert!(matches!(until_stalled(reconnecting.as_mut()), Some(Ok(()))));
+    assert_eq!(stack.connects(), 2);
+}
+
+/// The back-off runs from when the old connection was lost: a reconnect made long after
+/// does not wait again.
+#[test]
+fn a_reconnect_long_after_the_close_does_not_back_off() {
+    let _clock = clock();
+    let stack = MockStack::new(usize::MAX);
+    let mut tester = active(&stack);
+    stack.latest().eof();
+    let mut buf = [0; 16];
+    assert_eq!(
+        next(&mut tester, &mut buf).unwrap(),
+        ConnectionEvent::Closed
+    );
+    advance(RECONNECT_BACKOFF);
+    stack.script_next(&activation_response(0x10));
+
+    run(tester.reconnect()).unwrap();
+
+    assert_eq!(stack.connects(), 2);
+}
+
+/// A connection given up after a refused activation is one the entity may still hold,
+/// so the next reconnect backs off from it too.
+#[test]
+fn a_reconnect_after_a_refused_activation_backs_off_again() {
+    let _clock = clock();
+    let stack = MockStack::new(usize::MAX);
+    let mut tester = active(&stack);
+    stack.script_next(&activation_response(0x03));
+    assert_eq!(
+        reconnect(&mut tester).unwrap_err(),
+        ConnectError::RoutingActivationDenied(
+            RoutingActivationResponseCode::DeniedSourceAddressAlreadyRegistered
+        )
+    );
+    stack.script_next(&activation_response(0x10));
+    let mut reconnecting = pin!(tester.reconnect());
+
+    assert!(until_stalled(reconnecting.as_mut()).is_none());
+    assert_eq!(stack.connects(), 2);
+    advance(RECONNECT_BACKOFF);
+    assert!(matches!(until_stalled(reconnecting.as_mut()), Some(Ok(()))));
+    assert_eq!(stack.connects(), 3);
+}
+
+/// A successful reconnect forgets the error that ended the old connection.
+#[test]
+fn a_reconnect_clears_the_io_error() {
+    let _clock = clock();
+    let stack = MockStack::new(usize::MAX);
+    let mut tester = active(&stack);
+    stack.latest().fail_reads();
+    let mut buf = [0; 16];
+    assert_eq!(
+        next(&mut tester, &mut buf).unwrap(),
+        ConnectionEvent::Closed
+    );
+    stack.script_next(&activation_response(0x10));
+
+    reconnect(&mut tester).unwrap();
+
+    assert_eq!(tester.io_error(), None);
 }
