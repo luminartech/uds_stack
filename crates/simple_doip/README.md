@@ -1,7 +1,8 @@
 # simple_doip
 
 `simple_doip` owns ISO 13400-2: Diagnostics over IP (DoIP). It is a `no_std`,
-zero-copy protocol core with optional async client and server.
+zero-copy protocol core with optional async client and server, and a `no_std`
+tester over `edge-nal`.
 
 [`ARCHITECTURE.md`](ARCHITECTURE.md) describes how the crate is put together —
 the feature-gated layering, the sans-io framing/decode seam, the error taxonomy,
@@ -60,7 +61,9 @@ case, within these bounds:
 [`ARCHITECTURE.md`](ARCHITECTURE.md) §7 records these and the rest of the
 deferred work.
 
-None of this constrains bare-metal or single-client use.
+None of this constrains bare-metal or single-client use. On bare metal, the
+`connection` feature's `tester::Tester` is a tester that allocates nothing; the
+crate documentation lists what its integrator supplies.
 
 ## Quickstart
 
@@ -99,6 +102,7 @@ The protocol core is `no_std` and zero-copy by default. Everything that pulls in
 | `codec`  | The tokio-util `Encoder`/`Decoder` for DoIP frames           | `std`, `tokio`, `tokio-util`, `bytes` |
 | `client` | The async DoIP client                                        | `codec`, `async-trait`, `futures`  |
 | `server` | The async DoIP server                                        | `codec`, `async-trait`, `futures`  |
+| `connection` | The `no_std` tester, `tester::Tester`, over `edge-nal`   | `edge-nal`, `embedded-io-async`, `embassy-time` |
 
 `default = []`, so bare-metal / embedded targets should build with
 `default-features = false` to keep the crate `no_std` with no allocator or

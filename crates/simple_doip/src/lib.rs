@@ -45,7 +45,8 @@
 //!
 //! Performs I/O through [`edge-nal`](https://docs.rs/edge-nal/0.7) and keeps time with
 //! [`embassy-time`](https://docs.rs/embassy-time/0.5). This crate declares no transport or
-//! clock trait of its own, so the integrator supplies both:
+//! clock trait of its own, so the integrator supplies both. The feature has a tester
+//! today; what is said here of an entity is for the `DoIP` entity it is to gain.
 //!
 //! 1. **An `edge-nal` 0.7 backend**: `TcpConnect` for a tester, `TcpBind` for an entity.
 //!    `edge-nal-std` serves a host; on bare metal the backend is the integrator's.
@@ -65,12 +66,21 @@
 //!      for `accept`**, which creates its socket inside the future: a cancelled `accept`
 //!      drops a connection that may already be established. An entity on embassy-net
 //!      accepts through an adapter over embassy-net's own `TcpSocket` instead.
-//! 4. **For an entity, `MCTS + 1` sockets** from the backend: ISO 13400-2:2019 Table 11
+//! 4. **Reads and writes that wait on nothing else.** A `read` after `readable` has
+//!    reported data completes with it, and a `write` sends what it accepts without
+//!    waiting for `embedded_io_async::Write::flush`, which this feature never calls. A
+//!    backend that holds data back, such as a record layer buffering a whole record,
+//!    holds a request until it is lost, and a passed deadline until the data comes.
+//!    `edge-nal-std` 0.7.0 and `edge-nal-embassy` 0.9.0 meet it.
+//! 5. **For an entity, `MCTS + 1` sockets** from the backend: ISO 13400-2:2019 Table 11
 //!    counts the maximum concurrent `TCP_DATA` sockets excluding the reserve socket, on
 //!    which a further connection is accepted or refused.
 //!
 //! ## Where to start
 //!
+//! - **A `no_std` tester:** `tester::Tester` connects to an entity, activates routing
+//!   and is then a [`service::DiagnosticConnection`] (requires the `connection`
+//!   feature).
 //! - **Writing against the connection service:** [`service`] holds ISO 13400-2's own
 //!   service vocabulary, the [`service::DiagnosticConnection`] trait for one
 //!   connection and the [`service::DiagnosticEntity`] trait for a whole entity, with

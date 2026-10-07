@@ -43,10 +43,11 @@ decision below follows from that.
 
 ## 2. Layering
 
-Capability is added in strict Cargo-feature tiers, each building on the previous.
+Capability is added in Cargo-feature tiers, each building on the previous.
 `default = []`, so the bare crate is the `no_std` core, running up through
 owned/alloc mirrors, `std` I/O and errors, the tokio-util codec, and finally the
-async client/server:
+async client/server. `connection` stands apart: it builds on the core alone, and
+is `no_std` with no allocator:
 
 | Tier | Cargo feature | What it adds | Key files |
 |---|---|---|---|
@@ -57,6 +58,7 @@ async client/server:
 | Codec | `codec` | `MessageCodec`, a `tokio_util::codec` `Encoder`/`Decoder` | `src/message_codec.rs` |
 | Async client | `client` | `Client`, `Connector` (trait + `ConnectorSocket`) | `src/client.rs`, `src/client_inner.rs`, `src/socket_manager.rs`, `src/connection.rs` |
 | Async server | `server` | `Server`, `ServerConnectionHandler` | `src/server.rs` |
+| Connection service | `connection` | `tester::Tester`, a `DiagnosticConnection` over `edge-nal` and `embassy-time` | `src/tester.rs`, `src/tester/` |
 
 `client` and `server` are each `["codec", ...]` in `Cargo.toml`, so either one
 pulls in `codec` (and transitively `std`/`alloc`), but they do **not** pull in
@@ -234,6 +236,7 @@ carry a wildcard arm.
 | `src/messages/traits.rs` | Re-export of `Decode`, `Encode`, `take` from the codec crate |
 | `src/messages/*.rs` (rest) | One file per concrete payload body (alive check, diagnostic message, routing activation, entity status, power mode, vehicle identification, NACK codes) |
 | `src/logical_address.rs` | `LogicalAddress` newtype plus tester-range validation |
+| `src/service.rs` | The connection service's vocabulary, with no I/O: `DiagnosticConnection`, `DiagnosticEntity`, their events, `DoIpResult`, `TesterAddress` |
 | `src/wire.rs` | Re-export surface for the codec crate's types |
 
 `PayloadType` is a closed enum with `Reserved(u16)` and
@@ -241,6 +244,15 @@ carry a wildcard arm.
 into a `Reserved` discriminant at the header level and only fails later, at
 `Payload::decode`, with `UnsupportedPayloadType`. That ordering is what makes
 the seam described in section 3 usable.
+
+### `connection`
+
+| Path | Role |
+|---|---|
+| `src/tester.rs` | `Tester`: connect, routing activation, `DiagnosticConnection`, the event loop and its reactions |
+| `src/tester/tx.rs` | `Outgoing<N>`, the diagnostic message being written, and `Control`, the activation request or alive check response written ahead of it |
+| `src/tester/rx.rs` | `RxBuffer<N>`: bytes read and not yet consumed, and the skipping of a frame longer than `N` |
+| `src/tester/confirm.rs` | NACK codes to `DoIpResult`, and the caller's deadline on `embassy-time`'s clock |
 
 ### std / async layers
 

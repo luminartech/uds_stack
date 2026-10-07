@@ -698,8 +698,9 @@ the entries this revision touches.
   crate's transport runs over it, but the implementation over real sockets —
   `simple_doip`'s `Entity`, behind its `connection` feature — is separate
   work. Until it lands, the transport is exercised only over a scripted mock.
-- **The client role has nothing to drive.** `DiagnosticConnection` is declared;
-  its `no_std` tester, and this crate's client role over it, are not built.
+- **The client role is not built.** `DiagnosticConnection` is declared, and
+  `simple_doip`'s `tester::Tester` implements it behind the `connection` feature;
+  this crate's client role over it is not built.
 - **Two server seams.** `bare_metal_entity` owns the connection *and* dispatches
   UDS through `Callbacks::on_uds_request: fn(&[u8], &mut [u8]) -> i32`, one
   layer below the seam `uds_services` declares. [§13](#13-invariants-to-preserve)
