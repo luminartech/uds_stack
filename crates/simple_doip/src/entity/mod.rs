@@ -209,8 +209,6 @@ pub struct Entity<
     arbitration: Option<Arbitration>,
     /// Oldest first.
     confirms: [Option<PendingConfirm>; CONFIRMS],
-    /// Where the next search for a buffered frame starts, so no connection starves.
-    next_slot: usize,
     /// Which source [`Self::wait`] polls first.
     turn: Turn,
 }
@@ -364,7 +362,6 @@ impl<
             reserve: Slot::new(),
             arbitration: None,
             confirms: [None; CONFIRMS],
-            next_slot: 0,
             turn: Turn::Connection(0),
         }
     }
@@ -840,13 +837,11 @@ impl<
         });
     }
 
-    /// Handles one buffered frame, from the next slot that has one.
+    /// Handles one buffered frame, from the first slot that has one.
     fn handle_one(&mut self, buf: &mut [u8], now: Instant) -> Step {
-        let positions = MCTS + 1;
         let arbitrating = self.arbitration.map(|arbitration| arbitration.on);
         let close_by = now + CLOSE_LIMIT;
-        for step in 0..positions {
-            let position = (self.next_slot + step) % positions;
+        for position in 0..=MCTS {
             let at = Self::slot_ref(position);
             if arbitrating == Some(at) {
                 continue;
@@ -895,7 +890,6 @@ impl<
                     length,
                 }),
             };
-            self.next_slot = (position + 1) % positions;
             return step;
         }
         Step::Idle
