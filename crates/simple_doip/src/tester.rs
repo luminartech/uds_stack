@@ -39,10 +39,10 @@ const ACK_TIMEOUT: Duration =
     Duration::from_secs(TIMEOUT_DIAGNOSTIC_MESSAGE_RESPONSE.as_secs());
 
 /// How long [`TesterConnection::reconnect`] waits after a connection is lost before it
-/// connects again: an entity may hold the tester's address for a couple of seconds after
-/// the socket closes and refuse its routing activation meanwhile (`0x03`, ISO
-/// 13400-2:2019 Table 49). Three seconds is what a sensor that does so was measured to
-/// need.
+/// connects again, unless [`Tester::with_reconnect_backoff`] says otherwise: an entity
+/// may hold the tester's address for a couple of seconds after the socket closes and
+/// refuse its routing activation meanwhile (`0x03`, ISO 13400-2:2019 Table 49). Three
+/// seconds is what a sensor that does so was measured to need.
 pub const RECONNECT_BACKOFF: Duration = Duration::from_secs(3);
 
 /// The protocol version the tester sends.
@@ -227,6 +227,7 @@ pub struct Tester<'s, C: TcpConnect + 's, const N: usize> {
     owed: Option<ConnectionEvent<'static>>,
     io_error: Option<C::Error>,
     lost_at: Option<Instant>,
+    backoff: Duration,
 }
 
 impl<C: TcpConnect, const N: usize> fmt::Debug for Tester<'_, C, N> {
@@ -291,9 +292,23 @@ impl<'s, C: TcpConnect, const N: usize> Tester<'s, C, N> {
             owed: None,
             io_error: None,
             lost_at: None,
+            backoff: RECONNECT_BACKOFF,
         };
         tester.establish().await?;
         Ok(tester)
+    }
+
+    /// Sets how long [`TesterConnection::reconnect`] waits after a connection is lost
+    /// before it connects again, in place of [`RECONNECT_BACKOFF`].
+    ///
+    /// # Arguments
+    ///
+    /// * `backoff` - at least as long as the entity holds this tester's address after
+    ///   its socket closes; zero where it holds none.
+    #[must_use]
+    pub const fn with_reconnect_backoff(mut self, backoff: Duration) -> Self {
+        self.backoff = backoff;
+        self
     }
 
     /// The socket error that ended the last connection, if one did, until a new
@@ -309,7 +324,7 @@ impl<'s, C: TcpConnect, const N: usize> Tester<'s, C, N> {
 
     /// Opens a new connection and activates routing on it, keeping it only on success.
     /// A connection that opens and is not kept, because activation failed or the future
-    /// was dropped, counts as a loss for [`RECONNECT_BACKOFF`].
+    /// was dropped, counts as a loss for the reconnect back-off.
     async fn establish(&mut self) -> Result<(), ConnectError<C::Error>> {
         let Self {
             stack,
@@ -699,7 +714,8 @@ impl<C: TcpConnect, const N: usize> TesterConnection for Tester<'_, C, N> {
     type ReconnectError = ConnectError<C::Error>;
     type CloseError = C::Error;
 
-    /// Gives up the connection, if there is one, waits until [`RECONNECT_BACKOFF`] has
+    /// Gives up the connection, if there is one, waits until the back-off
+    /// ([`RECONNECT_BACKOFF`] unless [`Tester::with_reconnect_backoff`] set another) has
     /// passed since a connection was last lost, then connects and activates routing
     /// again, as [`Tester::connect`] did.
     ///
@@ -728,7 +744,7 @@ impl<C: TcpConnect, const N: usize> TesterConnection for Tester<'_, C, N> {
     async fn reconnect(&mut self) -> Result<(), Self::ReconnectError> {
         self.lose_connection(true, None).await;
         if let Some(lost_at) = self.lost_at {
-            Timer::at(confirm::after(lost_at, RECONNECT_BACKOFF)).await;
+            Timer::at(confirm::after(lost_at, self.backoff)).await;
         }
         self.establish().await
     }
@@ -746,7 +762,7 @@ impl<C: TcpConnect, const N: usize> TesterConnection for Tester<'_, C, N> {
     /// [`DoIpResult::Error`] by the next
     /// [`next_event`](DiagnosticConnection::next_event), as when the connection is lost
     /// otherwise, which then reports [`ConnectionEvent::Closed`]. A close counts as a
-    /// loss for [`RECONNECT_BACKOFF`].
+    /// loss for the reconnect back-off.
     ///
     /// # Cancel safety
     ///

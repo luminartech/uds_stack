@@ -2536,6 +2536,27 @@ fn a_reconnect_drops_the_old_connection_then_backs_off_then_connects() {
     assert_eq!(stack.connects(), 2);
 }
 
+/// An entity that frees a tester's address sooner, or later, than the sensor the default
+/// was measured on gets a back-off of its own.
+#[test]
+fn a_reconnect_backs_off_for_as_long_as_the_tester_was_given() {
+    let _clock = clock();
+    let stack = MockStack::new(usize::MAX);
+    let backoff = Duration::from_millis(500);
+    let mut tester = active(&stack).with_reconnect_backoff(backoff);
+    stack.script_next(&activation_response(0x10));
+    let mut reconnecting = pin!(tester.reconnect());
+
+    assert!(until_stalled(reconnecting.as_mut()).is_none());
+    advance(backoff - Duration::from_millis(1));
+    assert!(until_stalled(reconnecting.as_mut()).is_none());
+    assert_eq!(stack.connects(), 1, "still backing off");
+    advance(Duration::from_millis(1));
+
+    assert!(matches!(until_stalled(reconnecting.as_mut()), Some(Ok(()))));
+    assert_eq!(stack.connects(), 2);
+}
+
 /// The back-off runs from when the old connection was lost: a reconnect made long after
 /// does not wait again.
 #[test]
