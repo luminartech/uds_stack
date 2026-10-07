@@ -3,8 +3,8 @@
 
 use embassy_time::Instant;
 
-use super::EntityAddress;
 use super::table::{Activation, AliveCheck, Open, Phase, Slot};
+use super::{CLOSE_LIMIT, EntityAddress, GENERAL_INACTIVITY};
 use crate::messages::{
     DiagnosticNackCode, Header, Message, MessageError, NackCode, Payload, PayloadType,
     ProtocolVersion,
@@ -48,8 +48,9 @@ pub(super) fn handle<S, const CAP: usize>(
     limit: usize,
     arbitrating: bool,
     buf: &mut [u8],
-    close_by: Instant,
+    now: Instant,
 ) -> Handled {
+    let close_by = now + CLOSE_LIMIT;
     let Slot { open, rx, tx, .. } = slot;
     let Some(open) = open.as_mut() else {
         return Handled::Waiting;
@@ -70,6 +71,10 @@ pub(super) fn handle<S, const CAP: usize>(
     open.version = frame.header.protocol_version;
     let handled = match (payload_type, Payload::decode(frame.payload, payload_type)) {
         (_, Ok(Payload::RoutingActivationRequest(request))) => {
+            if registered.is_none() && !open.activation_received {
+                open.activation_received = true;
+                open.deadline = now + GENERAL_INACTIVITY;
+            }
             if arbitrating || !tx.has_room_for(ROUTING_ACTIVATION_RESPONSE) {
                 return Handled::Waiting;
             }

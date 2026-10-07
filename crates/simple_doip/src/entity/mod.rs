@@ -678,11 +678,6 @@ impl<
     /// request received on `at`.
     fn activate(&mut self, at: SlotRef, request: Activation, now: Instant) {
         use RoutingActivationResponseCode as Code;
-        if let Some(open) = self.open_mut(at)
-            && open.phase == Phase::Initialized
-        {
-            open.deadline = now + GENERAL_INACTIVITY;
-        }
         if !self.config.accepts(request.sa) {
             return self.respond(at, request, Code::DeniedUnknownSourceAddress, now);
         }
@@ -840,7 +835,6 @@ impl<
     /// Handles one buffered frame, from the first slot that has one.
     fn handle_one(&mut self, buf: &mut [u8], now: Instant) -> Step {
         let arbitrating = self.arbitration.map(|arbitration| arbitration.on);
-        let close_by = now + CLOSE_LIMIT;
         for position in 0..=MCTS {
             let at = Self::slot_ref(position);
             if arbitrating == Some(at) {
@@ -854,7 +848,7 @@ impl<
                         RESERVE_CAP,
                         arbitrating.is_some(),
                         buf,
-                        close_by,
+                        now,
                     ),
                     None => Handled::Waiting,
                 },
@@ -864,7 +858,7 @@ impl<
                     RESERVE_CAP,
                     arbitrating.is_some(),
                     buf,
-                    close_by,
+                    now,
                 ),
             };
             let connection = Self::connection_id(position);

@@ -944,6 +944,40 @@ fn an_alive_check_response_that_arrived_in_time_counts_though_next_event_is_late
     );
 }
 
+/// REQ 3.DoIP-085: a routing activation request held behind another socket's
+/// arbitration has still stopped its socket's `T_TCP_Initial_Inactivity`.
+#[test]
+fn an_activation_held_behind_an_arbitration_stops_the_initial_timer() {
+    let _clock = clock();
+    let stack = MockStack::new(4096);
+    let mut entity = TwoSockets::new(&stack, address(), two_testers());
+    let holder = activated(&stack, &mut entity, TESTER);
+    let late = stack.dial();
+    assert_eq!(events(&mut entity), []);
+    advance(ms(1600));
+    let newcomer = stack.dial();
+    newcomer.send(&activation_from(TESTER, 0));
+    assert_eq!(events(&mut entity), []);
+    assert_eq!(holder.take_written(), alive_check_request());
+    advance(ms(100));
+    late.send(&activation_from(OTHER, 0));
+    assert_eq!(events(&mut entity), []);
+
+    advance(ms(400));
+    assert_eq!(events(&mut entity), []);
+
+    assert!(holder.is_aborted());
+    assert_eq!(
+        newcomer.take_written(),
+        activation_response_for(TESTER, ACTIVATED)
+    );
+    assert_eq!(
+        late.take_written(),
+        activation_response_for(OTHER, ACTIVATED)
+    );
+    assert!(!late.is_shut());
+}
+
 /// A `next_event` already waiting wakes when an arbitration's `T_TCP_Alive_Check`
 /// elapses.
 #[test]

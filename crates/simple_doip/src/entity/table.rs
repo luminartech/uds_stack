@@ -21,10 +21,13 @@ pub(super) struct Slot<S, const CAP: usize> {
 pub(super) struct Open<S> {
     pub(super) socket: S,
     pub(super) phase: Phase,
-    /// `T_TCP_Initial_Inactivity`'s expiry while [`Phase::Initialized`],
-    /// `T_TCP_General_Inactivity`'s while [`Phase::Registered`], the close's bound while
-    /// [`Phase::Finalizing`].
+    /// `T_TCP_Initial_Inactivity`'s expiry while [`Phase::Initialized`] until a routing
+    /// activation request is received, `T_TCP_General_Inactivity`'s from then on, the
+    /// close's bound while [`Phase::Finalizing`].
     pub(super) deadline: Instant,
+    /// Whether a routing activation request has been received, which stops
+    /// `T_TCP_Initial_Inactivity` (REQ 3.DoIP-085).
+    pub(super) activation_received: bool,
     /// The version of the last frame received, which the entity's answers carry.
     pub(super) version: ProtocolVersion,
     /// Whether an event has named this connection, so its close is owed a report.
@@ -151,6 +154,7 @@ impl<S, const CAP: usize> Slot<S, CAP> {
             deadline,
             version: ProtocolVersion::V2019,
             named: false,
+            activation_received: false,
         });
     }
 
