@@ -780,7 +780,7 @@ fn an_ack_for_another_tester_is_ignored() {
 }
 
 /// ISO 13400-2:2019 Table 23 gives the acknowledgement's source as the request's
-/// "(intended) receiver", which for a functional request is no single address; the
+/// intended receiver, which for a functional request is no single address; the
 /// tester does not hold it to the requested target.
 #[test]
 fn a_functional_requests_ack_from_any_source_confirms() {
@@ -1352,7 +1352,7 @@ fn sent(stack: &MockStack, tester: &mut ActiveTester<'_>) {
 }
 
 /// ISO 13400-2:2019 Table 12: once `A_DoIP_Diagnostic_Message` has passed, the request
-/// "shall be considered lost", however late the caller comes back. The tester gives the
+/// is lost, however late the caller comes back. The tester gives the
 /// connection up, so neither its acknowledgement nor its response can reach a later
 /// request.
 #[test]

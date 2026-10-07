@@ -147,8 +147,8 @@ pub enum Error {
 /// - **A new connection after a lost request.** A request not acknowledged within
 ///   `A_DoIP_Diagnostic_Message` (Table 12, 2 s) is confirmed
 ///   [`DoIpResult::TimeoutA`], and once any of it was written the connection is given
-///   up and [`ConnectionEvent::Closed`] follows. Table 12 says the request or the
-///   response "shall be considered lost"; keeping the connection would let the late
+///   up and [`ConnectionEvent::Closed`] follows. Past that timeout, Table 12 treats the
+///   request or its response as lost; keeping the connection would let the late
 ///   acknowledgement or response be taken for a later request's, which a tester that
 ///   carries one request at a time cannot tell apart.
 /// - **[`TesterConnection::close`] to end it.** It closes the connection gracefully;
