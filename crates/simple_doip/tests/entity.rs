@@ -249,7 +249,8 @@ fn an_alive_check_response_keeps_an_idle_connection_open() {
     assert_eq!(peer.take_written(), []);
 }
 
-/// A connection beyond the `MCTS + 1` sockets the entity holds is accepted and dropped.
+/// REQ 4.DoIP-002: the entity holds `MCTS + 1` sockets; a connection beyond them is
+/// accepted and dropped.
 #[test]
 fn surplus_connections_are_accepted_and_dropped() {
     let _clock = clock();
@@ -266,8 +267,8 @@ fn surplus_connections_are_accepted_and_dropped() {
     assert!(!reserve.is_shut());
 }
 
-/// A caller's deadline that has already passed returns at once, but only after what is
-/// owed: here, a request's confirm.
+/// The `DiagnosticEntity` contract: a caller's deadline that has already passed returns
+/// at once, but only after what is owed: here, a request's confirm.
 #[test]
 fn a_past_deadline_returns_deadline_after_what_is_owed_and_without_waiting() {
     let _clock = clock();
@@ -288,7 +289,7 @@ fn a_past_deadline_returns_deadline_after_what_is_owed_and_without_waiting() {
     assert_eq!(step_into(&mut entity, 64, Some(9_000)), Some(Ev::Deadline));
 }
 
-/// A caller's deadline ahead is waited for.
+/// The `DiagnosticEntity` contract: a caller's deadline ahead is waited for.
 #[test]
 fn a_deadline_ahead_returns_deadline_when_it_passes() {
     let _clock = clock();
@@ -873,9 +874,9 @@ fn only_registered_sockets_are_alive_checked() {
     assert_eq!(idle.take_written(), []);
 }
 
-/// The tester whose activation is being arbitrated leaving ends the arbitration: nothing
-/// is answered, the socket it challenged is left alone, and the next activation is
-/// arbitrated afresh.
+/// Figure 26: the tester whose activation is being arbitrated leaving ends the
+/// arbitration: nothing is answered, the socket it challenged is left alone, and the
+/// next activation is arbitrated afresh.
 #[test]
 fn the_arbitrating_tester_leaving_ends_the_arbitration() {
     let _clock = clock();
@@ -904,8 +905,9 @@ fn the_arbitrating_tester_leaving_ends_the_arbitration() {
     assert_eq!(next.take_written(), activation_response_for(TESTER, 0x03));
 }
 
-/// A tester on the reserve socket that activates routing while the one connection slot
-/// holds a socket that has not moves into that slot, and the other into the reserve.
+/// REQ 4.DoIP-002 and Figure 26: a tester on the reserve socket that activates routing
+/// while the one connection slot holds a socket that has not moves into that slot, and
+/// the other into the reserve.
 #[test]
 fn a_reserve_activation_exchanges_with_an_initialized_slot() {
     let _clock = clock();
@@ -1083,8 +1085,8 @@ fn a_full_table_closes_only_and_all_its_silent_sockets() {
     );
 }
 
-/// A second activation arriving during an arbitration waits for it to end, and is then
-/// arbitrated afresh.
+/// Figure 26: a second activation arriving during an arbitration waits for it to end,
+/// and is then arbitrated afresh.
 #[test]
 fn a_second_activation_waits_for_the_arbitration_in_progress() {
     let _clock = clock();
@@ -1157,8 +1159,8 @@ fn a_response_from_a_holder_not_yet_asked_counts() {
     assert!(!holder.is_shut());
 }
 
-/// The reserve socket exchanging with an Initialized slot takes that slot's unsent bytes
-/// with it: here, a NACK still queued for the idle tester.
+/// REQ 4.DoIP-002: the reserve socket exchanging with an Initialized slot takes that
+/// slot's unsent bytes with it: here, a NACK still queued for the idle tester.
 #[test]
 fn an_exchange_with_the_reserve_keeps_each_sockets_unsent_bytes() {
     let _clock = clock();
@@ -1244,8 +1246,8 @@ fn a_diagnostic_message_is_indicated_and_acknowledged() {
     assert_eq!(peer.take_written(), ack(ENTITY, TESTER));
 }
 
-/// The entity answers its one functional address as well as its physical one, and no
-/// other functional address.
+/// REQ 7.DoIP-071: the entity answers its one functional address as well as its
+/// physical one; another functional address is unknown, and refused with code 0x03.
 #[test]
 fn the_entity_answers_its_functional_address_and_no_other() {
     let _clock = clock();
@@ -1417,8 +1419,8 @@ fn a_manufacturer_payload_type_before_activation_is_nacked_0x01() {
 
 // --- request, confirm and close ----------------------------------------------------------
 
-/// A request is written to the connection that registered its target, and confirmed
-/// once written.
+/// ISO 13400-2:2019 8.3.1 and 8.3.2: a request is written to the connection that
+/// registered its target, and confirmed once written.
 #[test]
 fn a_request_is_confirmed_once_written() {
     let _clock = clock();
@@ -1443,7 +1445,8 @@ fn a_request_is_confirmed_once_written() {
     );
 }
 
-/// A request whose target no connection registered is confirmed `NoSocket`.
+/// ISO 13400-2:2019 8.3.2: a request whose target no connection registered is confirmed
+/// `NoSocket`.
 #[test]
 fn a_request_to_an_unregistered_ta_is_confirmed_no_socket() {
     let _clock = clock();
@@ -1463,8 +1466,8 @@ fn a_request_to_an_unregistered_ta_is_confirmed_no_socket() {
     );
 }
 
-/// A request from a source address that is not the entity's sends nothing, and is
-/// confirmed `UnknownSa`.
+/// ISO 13400-2:2019 8.3.2: a request from a source address that is not the entity's
+/// sends nothing, and is confirmed `UnknownSa`.
 #[test]
 fn a_request_from_another_sa_is_confirmed_unknown_sa() {
     let _clock = clock();
@@ -1489,8 +1492,8 @@ fn a_request_from_another_sa_is_confirmed_unknown_sa() {
     assert_eq!(peer.take_written(), []);
 }
 
-/// A request whose connection fails before it is written is confirmed `NoSocket`, then
-/// the close reported.
+/// ISO 13400-2:2019 8.3.2: a request whose connection fails before it is written is
+/// confirmed `NoSocket`, then the close reported.
 #[test]
 fn a_request_on_a_connection_that_closes_unwritten_is_confirmed_no_socket() {
     let _clock = clock();
@@ -1594,8 +1597,9 @@ fn a_tester_that_stops_reading_is_replaced_after_t_tcp_alive_check() {
     );
 }
 
-/// Requests to one target are confirmed in the order they were made: one from another
-/// `sa`, settled at once, waits for the unwritten one ahead of it.
+/// The `DiagnosticEntity` contract: requests to one target are confirmed in the order
+/// they were made. One from another `sa`, settled at once, waits for the unwritten one
+/// ahead of it.
 #[test]
 fn a_settled_request_is_confirmed_after_an_unwritten_one_ahead() {
     let _clock = clock();
@@ -1620,8 +1624,8 @@ fn a_settled_request_is_confirmed_after_an_unwritten_one_ahead() {
     );
 }
 
-/// A request made after an earlier one is confirmed is still confirmed after every
-/// request made before it, wherever its confirm is held.
+/// The `DiagnosticEntity` contract: a request made after an earlier one is confirmed is
+/// still confirmed after every request made before it, wherever its confirm is held.
 #[test]
 fn a_later_request_is_confirmed_after_every_earlier_one() {
     let _clock = clock();
@@ -1712,7 +1716,7 @@ fn close_writes_what_was_queued_then_closes() {
     );
 }
 
-/// Closing a connection that has gone does nothing.
+/// The `DiagnosticEntity` contract: closing a connection that has gone does nothing.
 #[test]
 fn closing_a_connection_that_is_not_there_does_nothing() {
     let _clock = clock();
@@ -1726,8 +1730,8 @@ fn closing_a_connection_that_is_not_there_does_nothing() {
     assert_eq!(events(&mut entity), []);
 }
 
-/// A request dropped before it is polled was never made: nothing is sent and nothing
-/// confirmed.
+/// `Entity`'s cancel safety: a request dropped before it is polled was never made;
+/// nothing is sent and nothing confirmed.
 #[test]
 fn a_request_dropped_unpolled_is_not_made() {
     let _clock = clock();
@@ -1741,7 +1745,8 @@ fn a_request_dropped_unpolled_is_not_made() {
     assert_eq!(peer.take_written(), []);
 }
 
-/// Closing an id no event has issued does nothing, though a connection holds its slot.
+/// The `DiagnosticEntity` contract: closing an id no event has issued does nothing,
+/// though a connection holds its slot.
 #[test]
 fn closing_an_id_no_event_issued_does_nothing() {
     let _clock = clock();
@@ -1757,8 +1762,8 @@ fn closing_an_id_no_event_issued_does_nothing() {
     assert!(!peer.is_shut());
 }
 
-/// No `Closed` follows a close, even of a connection that had gone with its `Closed`
-/// still to be reported.
+/// The `DiagnosticEntity` contract: no `Closed` follows a close, even of a connection
+/// that had gone with its `Closed` still to be reported.
 #[test]
 fn no_closed_follows_closing_a_connection_that_had_gone() {
     let _clock = clock();
