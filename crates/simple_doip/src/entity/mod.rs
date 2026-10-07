@@ -5,6 +5,11 @@
 //! testers are alive by itself, inside [`DiagnosticEntity::next_event`], following
 //! ISO 13400-2:2019 Figures 16, 17, 22 and 26 to 28, and keeps the three `TCP_DATA`
 //! timers of Table 12.
+//!
+//! It activates routing for the two activation types Table 47 makes mandatory,
+//! [`ActivationTypeCode::Default`] and [`ActivationTypeCode::RegulationRequired`], and
+//! refuses every other with
+//! [`RoutingActivationResponseCode::DeniedUnsupportedRoutingActivationType`].
 
 mod handler;
 mod io;
@@ -658,7 +663,10 @@ impl<
         if !self.config.accepts(request.sa) {
             return self.respond(at, request, Code::DeniedUnknownSourceAddress, now);
         }
-        if request.activation_type != ActivationTypeCode::Default {
+        if !matches!(
+            request.activation_type,
+            ActivationTypeCode::Default | ActivationTypeCode::RegulationRequired
+        ) {
             return self.respond(
                 at,
                 request,

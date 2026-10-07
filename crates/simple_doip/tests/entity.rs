@@ -576,6 +576,25 @@ fn a_tester_outside_the_entity_config_is_refused_0x00_and_closed() {
     assert!(peer.is_closed());
 }
 
+/// REQ 3.DoIP-100 and Table 47: activation type 0x01, diagnostic communication required
+/// by regulation, is mandatory, and accepted as the default is.
+#[test]
+fn the_regulation_activation_type_is_accepted_0x10() {
+    let _clock = clock();
+    let stack = MockStack::new(4096);
+    let mut entity = OneSocket::new(&stack, address(), two_testers());
+    let peer = stack.dial();
+    peer.send(&activation_from(TESTER, 0x01));
+
+    assert_eq!(events(&mut entity), []);
+
+    assert_eq!(
+        peer.take_written(),
+        activation_response_for(TESTER, ACTIVATED)
+    );
+    assert!(!peer.is_shut());
+}
+
 /// REQ 3.DoIP-151: an activation type the entity does not support is refused with code
 /// 0x06, and the socket closed.
 #[test]
