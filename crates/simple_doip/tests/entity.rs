@@ -954,33 +954,129 @@ fn a_request_on_a_connection_that_closes_unwritten_is_confirmed_no_socket() {
     assert!(peer.is_aborted());
 }
 
-/// A request to a tester that has stopped reading waits for room in its queue, and is
-/// confirmed `NoSocket` once the connection's general inactivity timer gives up on it.
+fn confirm(sa: LogicalAddress, ta_type: TaType, result: DoIpResult) -> Ev {
+    Ev::Confirm {
+        sa,
+        ta: TESTER,
+        ta_type,
+        result,
+    }
+}
+
+/// ISO 13400-2:2019 8.3.1 and ISO 14229-2:2021 Table 10: a request with no room in its
+/// connection's queue waits for nothing. It is confirmed `OutOfMemory` and never sent,
+/// after the request ahead of it.
 #[test]
-fn a_request_to_a_peer_that_stops_reading_waits_then_is_confirmed_no_socket() {
+fn a_request_with_no_room_is_confirmed_out_of_memory_after_the_one_ahead() {
     let _clock = clock();
     let stack = MockStack::new(4096);
     let mut entity = Entity::<_, 1, 64, 2>::new(&stack, address(), two_testers());
     let peer = activated(&stack, &mut entity, TESTER);
     peer.stall_writes();
+
     request(&mut entity, TESTER, &[0x11; 40]).unwrap();
+    request(&mut entity, TESTER, &[0x22; 40]).unwrap();
+    assert_eq!(events(&mut entity), []);
+    peer.resume_writes();
 
+    assert_eq!(
+        events(&mut entity),
+        [
+            confirm(ENTITY, TaType::Physical, DoIpResult::Ok),
+            confirm(ENTITY, TaType::Physical, DoIpResult::OutOfMemory)
+        ]
+    );
+    assert_eq!(peer.take_written(), diagnostic(ENTITY, TESTER, &[0x11; 40]));
+}
+
+/// REQ 3.DoIP-092: a tester that has stopped reading is replaced by one activating its
+/// address once `T_TCP_Alive_Check` elapses, however full its queue. Its requests are
+/// confirmed in order: the one it never read `NoSocket`, the one with no room
+/// `OutOfMemory`.
+#[test]
+fn a_tester_that_stops_reading_is_replaced_after_t_tcp_alive_check() {
+    let _clock = clock();
+    let stack = MockStack::new(4096);
+    let mut entity = Entity::<_, 1, 64, 2>::new(&stack, address(), two_testers());
+    let stalled = activated(&stack, &mut entity, TESTER);
+    stalled.stall_writes();
+    request(&mut entity, TESTER, &[0x11; 40]).unwrap();
+    request(&mut entity, TESTER, &[0x22; 40]).unwrap();
+
+    let newcomer = stack.dial();
+    newcomer.send(&activation_from(TESTER, 0));
+    assert_eq!(events(&mut entity), []);
+    advance(ms(500));
+
+    assert_eq!(
+        events(&mut entity),
+        [
+            confirm(ENTITY, TaType::Physical, DoIpResult::NoSocket),
+            confirm(ENTITY, TaType::Physical, DoIpResult::OutOfMemory)
+        ]
+    );
+    assert!(stalled.is_aborted());
+    assert_eq!(
+        newcomer.take_written(),
+        activation_response_for(TESTER, ACTIVATED)
+    );
+}
+
+/// Requests to one target are confirmed in the order they were made: one from another
+/// `sa`, settled at once, waits for the unwritten one ahead of it.
+#[test]
+fn a_settled_request_is_confirmed_after_an_unwritten_one_ahead() {
+    let _clock = clock();
+    let stack = MockStack::new(4096);
+    let mut entity = OneSocket::new(&stack, address(), two_testers());
+    let peer = activated(&stack, &mut entity, TESTER);
+    peer.stall_writes();
+    request(&mut entity, TESTER, &[0x50, 0x01]).unwrap();
     {
-        let mut waiting =
-            pin!(entity.request(ENTITY, TESTER, TaType::Physical, &[0x22; 40]));
-        assert!(until_stalled(waiting.as_mut()).is_none());
-        advance(ms(300_000));
-        assert!(until_stalled(waiting.as_mut()).unwrap().is_ok());
+        let future = pin!(entity.request(FUNCTIONAL, TESTER, TaType::Physical, &[0x50]));
+        until_stalled(future).unwrap().unwrap();
     }
+    assert_eq!(events(&mut entity), []);
+    peer.resume_writes();
 
-    let no_socket = Ev::Confirm {
-        sa: ENTITY,
-        ta: TESTER,
-        ta_type: TaType::Physical,
-        result: DoIpResult::NoSocket,
-    };
-    assert_eq!(events(&mut entity), [no_socket.clone(), no_socket]);
-    assert!(peer.is_aborted());
+    assert_eq!(
+        events(&mut entity),
+        [
+            confirm(ENTITY, TaType::Physical, DoIpResult::Ok),
+            confirm(FUNCTIONAL, TaType::Physical, DoIpResult::UnknownSa)
+        ]
+    );
+}
+
+/// A request made after an earlier one is confirmed is still confirmed after every
+/// request made before it, wherever its confirm is held.
+#[test]
+fn a_later_request_is_confirmed_after_every_earlier_one() {
+    let _clock = clock();
+    let stack = MockStack::new(4096);
+    let mut entity = OneSocket::new(&stack, address(), two_testers());
+    let peer = activated(&stack, &mut entity, TESTER);
+    let first = diagnostic(ENTITY, TESTER, &[0x01]);
+    peer.stall_writes_after(first.len() + 4);
+    request(&mut entity, TESTER, &[0x01]).unwrap();
+    request(&mut entity, TESTER, &[0x02; 40]).unwrap();
+    assert_eq!(
+        events(&mut entity),
+        [confirm(ENTITY, TaType::Physical, DoIpResult::Ok)]
+    );
+    {
+        let future = pin!(entity.request(ENTITY, TESTER, TaType::Functional, &[0x03]));
+        until_stalled(future).unwrap().unwrap();
+    }
+    peer.resume_writes();
+
+    assert_eq!(
+        events(&mut entity),
+        [
+            confirm(ENTITY, TaType::Physical, DoIpResult::Ok),
+            confirm(ENTITY, TaType::Functional, DoIpResult::Ok)
+        ]
+    );
 }
 
 /// A request is refused, with no confirm, where too many await theirs or the PDU does

@@ -18,8 +18,7 @@ use core::task::Poll;
 use edge_nal::TcpAccept;
 
 use embassy_futures::select::{Either, select, select_array};
-use embassy_time::{Duration, Instant, Timer, with_deadline};
-use embedded_io_async::Write;
+use embassy_time::{Duration, Instant, Timer};
 
 use crate::messages::{
     ActivationTypeCode, Message, ProtocolVersion, RoutingActivationResponseCode,
@@ -27,7 +26,7 @@ use crate::messages::{
 use crate::service::{
     ConnectionId, DiagnosticEntity, DoIpResult, EntityConfig, EntityEvent,
 };
-use crate::stream::tx::TxQueue;
+use crate::stream::tx::{Full, TxQueue};
 use crate::stream::{caller_deadline, millis};
 use crate::{LogicalAddress, TaType};
 use handler::{ALIVE_CHECK_REQUEST, Handled};
@@ -203,6 +202,7 @@ pub struct Entity<
     connections: [Slot<A::Socket<'a>, MAX_MESSAGE>; MCTS],
     reserve: Slot<A::Socket<'a>, RESERVE_CAP>,
     arbitration: Option<Arbitration>,
+    /// Oldest first.
     confirms: [Option<PendingConfirm>; CONFIRMS],
     /// Where the next search for a buffered frame starts, so no connection starves.
     next_slot: usize,
@@ -384,28 +384,10 @@ impl<
             .position(|slot| slot.registered_sa() == Some(sa))
     }
 
-    /// A confirm that is due, then a close that is owed its report.
+    /// A confirm that is due and owed to no earlier request to its target, then a close
+    /// that is owed its report.
     fn owed_event(&mut self) -> Option<EntityEvent<'static>> {
-        for pending in &mut self.confirms {
-            let Some(confirm) = pending else { continue };
-            let result = match confirm.result {
-                Some(result) => result,
-                None if self
-                    .connections
-                    .get(confirm.connection)
-                    .is_some_and(|slot| slot.tx.written_through(confirm.end)) =>
-                {
-                    DoIpResult::Ok
-                }
-                None => continue,
-            };
-            let event = EntityEvent::Confirm {
-                sa: confirm.sa,
-                ta: confirm.ta,
-                ta_type: confirm.ta_type,
-                result,
-            };
-            *pending = None;
+        if let Some(event) = self.take_due_confirm() {
             return Some(event);
         }
         let (index, slot) = self
@@ -417,6 +399,93 @@ impl<
         Some(EntityEvent::Closed {
             connection: Self::connection_id(index),
         })
+    }
+
+    fn take_due_confirm(&mut self) -> Option<EntityEvent<'static>> {
+        let (at, result) = self.confirms.iter().enumerate().find_map(|(at, held)| {
+            let confirm = held.as_ref()?;
+            if self
+                .confirms
+                .iter()
+                .take(at)
+                .flatten()
+                .any(|earlier| earlier.ta == confirm.ta)
+            {
+                return None;
+            }
+            let result = confirm.result.or_else(|| {
+                self.connections
+                    .get(confirm.connection)
+                    .filter(|slot| slot.tx.written_through(confirm.end))
+                    .map(|_| DoIpResult::Ok)
+            })?;
+            Some((at, result))
+        })?;
+        let held = self.confirms.get_mut(at..)?;
+        let confirm = held.first_mut()?.take()?;
+        held.rotate_left(1);
+        Some(EntityEvent::Confirm {
+            sa: confirm.sa,
+            ta: confirm.ta,
+            ta_type: confirm.ta_type,
+            result,
+        })
+    }
+
+    fn queue(
+        &mut self,
+        sa: LogicalAddress,
+        ta: LogicalAddress,
+        ta_type: TaType,
+        pdu: &[u8],
+    ) -> Result<(), Error<A::Error>> {
+        let Some(free) = self.confirms.iter().position(Option::is_none) else {
+            return Err(Error::RequestQueueFull);
+        };
+        let mut confirm = PendingConfirm {
+            connection: MCTS,
+            end: 0,
+            sa,
+            ta,
+            ta_type,
+            result: Some(DoIpResult::UnknownSa),
+        };
+        if sa == self.address.physical {
+            let max = MAX_MESSAGE.saturating_sub(handler::DIAGNOSTIC_ACK - 1);
+            if pdu.len() > max {
+                return Err(Error::PduTooLarge {
+                    len: pdu.len(),
+                    max,
+                });
+            }
+            confirm.result = Some(DoIpResult::NoSocket);
+            if let Some(index) = self.holder_of(ta)
+                && let Some(Slot {
+                    open: Some(open),
+                    tx,
+                    ..
+                }) = self.connections.get_mut(index)
+                && matches!(open.phase, Phase::Registered { .. })
+            {
+                let message = Message::diagnostic_message(open.version, sa, ta, pdu);
+                confirm = match tx.push(&message) {
+                    Ok(end) => PendingConfirm {
+                        connection: index,
+                        end,
+                        result: None,
+                        ..confirm
+                    },
+                    Err(Full) => PendingConfirm {
+                        result: Some(DoIpResult::OutOfMemory),
+                        ..confirm
+                    },
+                };
+            }
+        }
+        if let Some(entry) = self.confirms.get_mut(free) {
+            *entry = Some(confirm);
+        }
+        Ok(())
     }
 
     /// Takes the socket at `at` out of the table, settling the confirms of requests it
@@ -881,82 +950,23 @@ impl<
     /// The entity's own logical address is its [`EntityAddress::physical`]; a request
     /// from any other `sa` sends nothing and is confirmed [`DoIpResult::UnknownSa`].
     ///
-    /// Where the connection's queue has no room, writes it until there is. A
-    /// connection whose general inactivity timer expires meanwhile is aborted, and the
-    /// request confirmed [`DoIpResult::NoSocket`].
+    /// Waits for nothing: where the connection's queue has no room for `pdu`, nothing is
+    /// sent and the request is confirmed [`DoIpResult::OutOfMemory`]. Requests to one
+    /// target are confirmed in the order they were made.
     ///
     /// # Errors
     ///
     /// None of these is followed by a confirm:
     /// - [`Error::PduTooLarge`] where `pdu` does not fit `MAX_MESSAGE`.
     /// - [`Error::RequestQueueFull`] while too many earlier requests await their confirm.
-    async fn request(
+    fn request(
         &mut self,
         sa: LogicalAddress,
         ta: LogicalAddress,
         ta_type: TaType,
         pdu: &[u8],
-    ) -> Result<(), Self::Error> {
-        let Some(free) = self.confirms.iter().position(Option::is_none) else {
-            return Err(Error::RequestQueueFull);
-        };
-        let mut confirm = PendingConfirm {
-            connection: MCTS,
-            end: 0,
-            sa,
-            ta,
-            ta_type,
-            result: Some(DoIpResult::UnknownSa),
-        };
-        if sa != self.address.physical {
-            if let Some(entry) = self.confirms.get_mut(free) {
-                *entry = Some(confirm);
-            }
-            return Ok(());
-        }
-        let max = MAX_MESSAGE.saturating_sub(handler::DIAGNOSTIC_ACK - 1);
-        if pdu.len() > max {
-            return Err(Error::PduTooLarge {
-                len: pdu.len(),
-                max,
-            });
-        }
-        confirm.result = Some(DoIpResult::NoSocket);
-        if let Some(index) = self.holder_of(ta) {
-            while let Some(slot) = self.connections.get_mut(index) {
-                let Slot { open, tx, .. } = slot;
-                let Some(open) = open
-                    .as_mut()
-                    .filter(|open| matches!(open.phase, Phase::Registered { .. }))
-                else {
-                    break;
-                };
-                let message = Message::diagnostic_message(open.version, sa, ta, pdu);
-                if let Ok(end) = tx.push(&message) {
-                    confirm = PendingConfirm {
-                        connection: index,
-                        end,
-                        result: None,
-                        ..confirm
-                    };
-                    break;
-                }
-                match with_deadline(open.deadline, open.socket.write(tx.pending())).await {
-                    Ok(Ok(written)) if written > 0 => {
-                        tx.advance(written);
-                        open.deadline = Instant::now() + GENERAL_INACTIVITY;
-                    }
-                    _ => {
-                        slot.finalize(true, false, Instant::now() + CLOSE_LIMIT);
-                        break;
-                    }
-                }
-            }
-        }
-        if let Some(entry) = self.confirms.get_mut(free) {
-            *entry = Some(confirm);
-        }
-        Ok(())
+    ) -> impl Future<Output = Result<(), Self::Error>> {
+        core::future::ready(self.queue(sa, ta, ta_type, pdu))
     }
 
     fn now(&self) -> u32 {
