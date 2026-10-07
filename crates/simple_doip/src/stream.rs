@@ -12,12 +12,9 @@ pub(crate) mod tx;
 /// 32 bits.
 ///
 /// [`DiagnosticConnection::now`]: crate::service::DiagnosticConnection::now
-#[expect(
-    clippy::cast_possible_truncation,
-    reason = "the trait's clock is the milliseconds truncated to 32 bits"
-)]
 pub(crate) fn millis(instant: Instant) -> u32 {
-    instant.as_millis() as u32
+    let [b0, b1, b2, b3, ..] = instant.as_millis().to_le_bytes();
+    u32::from_le_bytes([b0, b1, b2, b3])
 }
 
 /// Contents too long for the buffer they were to move into.

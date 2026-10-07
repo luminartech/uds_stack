@@ -1,14 +1,9 @@
 // Derogations from the workspace lint standard in the root Cargo.toml. Each is a
 // gap to close, not a decision that the lint is wrong here.
 //
-// The defensive three: a zero-copy framer indexes the receive buffer and computes
-// payload offsets on every path, and this crate predates the standard. 29 sites in
-// production code as of this writing.
-#![allow(
-    clippy::indexing_slicing,
-    clippy::arithmetic_side_effects,
-    clippy::as_conversions
-)]
+// The defensive three, `indexing_slicing`, `arithmetic_side_effects` and
+// `as_conversions`, are allowed on each module below that predates the standard, and on
+// no other: 40 sites in production code as of this writing.
 // Panic freedom holds in this crate's production code and is enforced there; its
 // test modules predate the standard and use `unwrap` as test code ordinarily does
 // (49 sites). Scoped to `test`, so the production build stays strict.
@@ -112,20 +107,45 @@ extern crate alloc;
 #[cfg(feature = "std")]
 extern crate std;
 
+#[allow(
+    clippy::indexing_slicing,
+    clippy::arithmetic_side_effects,
+    clippy::as_conversions
+)]
 pub mod bare_metal_entity;
 #[cfg(feature = "connection")]
 pub mod entity;
 pub mod logical_address;
+#[allow(
+    clippy::indexing_slicing,
+    clippy::arithmetic_side_effects,
+    clippy::as_conversions
+)]
 pub mod messages;
+#[allow(
+    clippy::indexing_slicing,
+    clippy::arithmetic_side_effects,
+    clippy::as_conversions
+)]
 pub mod service;
 pub mod wire;
 pub use logical_address::{LogicalAddress, TaType};
+#[allow(
+    clippy::indexing_slicing,
+    clippy::arithmetic_side_effects,
+    clippy::as_conversions
+)]
 mod framer;
 pub use framer::{RawFrame, try_frame};
 
 #[cfg(feature = "client")]
 pub mod client;
 #[cfg(feature = "client")]
+#[allow(
+    clippy::indexing_slicing,
+    clippy::arithmetic_side_effects,
+    clippy::as_conversions
+)]
 mod client_inner;
 #[cfg(feature = "client")]
 pub mod connection;
@@ -134,14 +154,29 @@ mod error;
 #[cfg(feature = "codec")]
 pub mod message_codec;
 #[cfg(feature = "client")]
+#[allow(
+    clippy::indexing_slicing,
+    clippy::arithmetic_side_effects,
+    clippy::as_conversions
+)]
 mod socket_manager;
 #[cfg(any(feature = "client", feature = "server"))]
 pub use error::Error;
 #[cfg(feature = "server")]
+#[allow(
+    clippy::indexing_slicing,
+    clippy::arithmetic_side_effects,
+    clippy::as_conversions
+)]
 pub mod server;
 #[cfg(feature = "connection")]
 mod stream;
 #[cfg(feature = "connection")]
+#[allow(
+    clippy::indexing_slicing,
+    clippy::arithmetic_side_effects,
+    clippy::as_conversions
+)]
 pub mod tester;
 
 use core::time::Duration;

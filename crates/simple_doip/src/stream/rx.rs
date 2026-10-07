@@ -38,7 +38,7 @@ impl<const N: usize> RxBuffer<N> {
     }
 
     pub(crate) fn free(&mut self) -> &mut [u8] {
-        &mut self.buf[self.len..]
+        self.buf.get_mut(self.len..).unwrap_or_default()
     }
 
     /// Records that `read` bytes were read into [`Self::free`].
@@ -54,7 +54,7 @@ impl<const N: usize> RxBuffer<N> {
     }
 
     pub(crate) fn next(&self) -> Result<Next<'_>, MessageError> {
-        let buffered = &self.buf[..self.len];
+        let buffered = self.buf.get(..self.len).unwrap_or_default();
         if let Some((frame, consumed)) = try_frame(buffered)? {
             return Ok(Next::Frame(frame, consumed));
         }
@@ -75,7 +75,9 @@ impl<const N: usize> RxBuffer<N> {
     /// it arrives.
     pub(crate) fn skip_frame(&mut self, header: &Header) {
         let buffered = self.len.saturating_sub(Header::SIZE);
-        self.discard = (header.payload_length as usize).saturating_sub(buffered);
+        self.discard = usize::try_from(header.payload_length)
+            .unwrap_or(usize::MAX)
+            .saturating_sub(buffered);
         self.len = 0;
     }
 
@@ -95,12 +97,14 @@ impl<const N: usize> RxBuffer<N> {
             })
         };
         let start = self.len.min(N);
-        &mut self.buf[start..end.clamp(start, N)]
+        self.buf
+            .get_mut(start..end.clamp(start, N))
+            .unwrap_or_default()
     }
 
     /// The header of the frame being read, once all of it is buffered.
     pub(crate) fn header(&self) -> Result<Header, MessageError> {
-        let (header, _) = Header::decode(&self.buf[..self.len])?;
+        let (header, _) = Header::decode(self.buf.get(..self.len).unwrap_or_default())?;
         Ok(header)
     }
 
@@ -121,10 +125,12 @@ impl<const N: usize> RxBuffer<N> {
         other: &mut RxBuffer<M>,
     ) -> Result<(), DoesNotFit> {
         let span = self.len.max(other.len);
-        if span > N || span > M {
+        let (Some(mine), Some(theirs)) =
+            (self.buf.get_mut(..span), other.buf.get_mut(..span))
+        else {
             return Err(DoesNotFit);
-        }
-        self.buf[..span].swap_with_slice(&mut other.buf[..span]);
+        };
+        mine.swap_with_slice(theirs);
         core::mem::swap(&mut self.len, &mut other.len);
         core::mem::swap(&mut self.discard, &mut other.discard);
         Ok(())
@@ -142,6 +148,7 @@ mod tests {
     use crate::LogicalAddress;
     use crate::messages::{Message, PayloadType, ProtocolVersion};
     use crate::wire::{Encode, SliceSink};
+    use core::slice::SliceIndex;
 
     fn encode(message: &Message<'_>, out: &mut [u8]) -> usize {
         message.encode(&mut SliceSink::new(out)).unwrap()
@@ -159,9 +166,24 @@ mod tests {
 
     fn feed<const N: usize>(rx: &mut RxBuffer<N>, bytes: &[u8]) {
         for byte in bytes {
-            rx.free()[0] = *byte;
+            *rx.free().first_mut().unwrap() = *byte;
             rx.filled(1);
         }
+    }
+
+    fn part<R: SliceIndex<[u8], Output = [u8]>>(bytes: &[u8], range: R) -> &[u8] {
+        bytes.get(range).unwrap()
+    }
+
+    fn part_mut<R: SliceIndex<[u8], Output = [u8]>>(
+        bytes: &mut [u8],
+        range: R,
+    ) -> &mut [u8] {
+        bytes.get_mut(range).unwrap()
+    }
+
+    fn plus(a: usize, b: usize) -> usize {
+        a.checked_add(b).unwrap()
     }
 
     #[test]
@@ -170,15 +192,16 @@ mod tests {
         let len = diagnostic(&[0x62, 0xF1, 0x90], &mut wire);
         let mut rx = RxBuffer::<32>::new();
 
-        feed(&mut rx, &wire[..len - 1]);
+        let last = len.checked_sub(1).unwrap();
+        feed(&mut rx, part(&wire, ..last));
         assert_eq!(rx.next().unwrap(), Next::NeedMore);
 
-        feed(&mut rx, &wire[len - 1..len]);
+        feed(&mut rx, part(&wire, last..len));
         let Next::Frame(frame, consumed) = rx.next().unwrap() else {
             panic!("expected a frame");
         };
         assert_eq!(frame.header.payload_type, PayloadType::DiagnosticMessage);
-        assert_eq!(frame.payload, &wire[8..len]);
+        assert_eq!(frame.payload, part(&wire, 8..len));
         assert_eq!(consumed, len);
     }
 
@@ -186,10 +209,11 @@ mod tests {
     fn two_frames_in_one_read_come_out_in_order() {
         let mut wire = [0u8; 64];
         let first = diagnostic(&[0x01], &mut wire);
-        let second = diagnostic(&[0x02, 0x03], &mut wire[first..]);
+        let second = diagnostic(&[0x02, 0x03], part_mut(&mut wire, first..));
+        let both = plus(first, second);
         let mut rx = RxBuffer::<64>::new();
-        rx.free()[..first + second].copy_from_slice(&wire[..first + second]);
-        rx.filled(first + second);
+        part_mut(rx.free(), ..both).copy_from_slice(part(&wire, ..both));
+        rx.filled(both);
 
         let Next::Frame(frame, consumed) = rx.next().unwrap() else {
             panic!("expected the first frame");
@@ -209,45 +233,45 @@ mod tests {
     fn an_oversized_frame_is_reported_once_the_buffer_is_full_then_skipped() {
         let mut wire = [0u8; 64];
         let big = diagnostic(&[0xAA; 30], &mut wire);
-        let small = diagnostic(&[0x55], &mut wire[big..]);
+        let small = diagnostic(&[0x55], part_mut(&mut wire, big..));
         let mut rx = RxBuffer::<24>::new();
 
-        feed(&mut rx, &wire[..23]);
+        feed(&mut rx, part(&wire, ..23));
         assert_eq!(rx.next().unwrap(), Next::NeedMore);
-        feed(&mut rx, &wire[23..24]);
+        feed(&mut rx, part(&wire, 23..24));
         let Next::Oversized { header, head } = rx.next().unwrap() else {
             panic!("expected an oversized frame");
         };
         assert_eq!(header.payload_length, 34);
-        assert_eq!(head, &wire[8..24]);
+        assert_eq!(head, part(&wire, 8..24));
 
         rx.skip_frame(&header);
-        feed(&mut rx, &wire[24..big + small]);
+        feed(&mut rx, part(&wire, 24..plus(big, small)));
         let Next::Frame(frame, _) = rx.next().unwrap() else {
             panic!("expected the frame after the oversized one");
         };
-        assert_eq!(frame.payload, &wire[big + 8..big + small]);
+        assert_eq!(frame.payload, part(&wire, plus(big, 8)..plus(big, small)));
     }
 
     #[test]
     fn a_skip_is_spread_over_many_reads() {
         let mut wire = [0u8; 64];
         let big = diagnostic(&[0xAA; 30], &mut wire);
-        let small = diagnostic(&[0x55], &mut wire[big..]);
+        let small = diagnostic(&[0x55], part_mut(&mut wire, big..));
         let mut rx = RxBuffer::<24>::new();
-        feed(&mut rx, &wire[..24]);
+        feed(&mut rx, part(&wire, ..24));
         let Next::Oversized { header, .. } = rx.next().unwrap() else {
             panic!("expected an oversized frame");
         };
         rx.skip_frame(&header);
 
-        let mut rest = &wire[24..big + small];
+        let mut rest = part(&wire, 24..plus(big, small));
         while !rest.is_empty() {
             let free = rx.free();
             let read = free.len().min(rest.len()).min(7);
-            free[..read].copy_from_slice(&rest[..read]);
+            part_mut(free, ..read).copy_from_slice(part(rest, ..read));
             rx.filled(read);
-            rest = &rest[read..];
+            rest = part(rest, read..);
         }
         let Next::Frame(frame, _) = rx.next().unwrap() else {
             panic!("expected the frame after the oversized one");
@@ -268,7 +292,7 @@ mod tests {
 
         rx.skip_frame(&header);
 
-        assert_eq!(rx.discard, 0xFFFF_FFFF - 16);
+        assert_eq!(rx.discard, 0xFFFF_FFEF);
         feed(&mut rx, &[0xAA; 30]);
         assert_eq!(rx.next().unwrap(), Next::NeedMore);
         assert_eq!(rx.len, 0);
@@ -277,9 +301,9 @@ mod tests {
     fn read_to_frame_end<const N: usize>(rx: &mut RxBuffer<N>, wire: &mut &[u8]) -> usize {
         let free = rx.free_to_frame_end();
         let read = free.len().min(wire.len());
-        free[..read].copy_from_slice(&wire[..read]);
+        part_mut(free, ..read).copy_from_slice(part(wire, ..read));
         rx.filled(read);
-        *wire = &wire[read..];
+        *wire = part(wire, read..);
         read
     }
 
@@ -287,12 +311,15 @@ mod tests {
     fn reads_to_the_frame_end_stop_at_the_frame_boundary() {
         let mut wire = [0u8; 64];
         let first = diagnostic(&[0x01, 0x02], &mut wire);
-        let second = diagnostic(&[0x03], &mut wire[first..]);
-        let mut rest = &wire[..first + second];
+        let second = diagnostic(&[0x03], part_mut(&mut wire, first..));
+        let mut rest = part(&wire, ..plus(first, second));
         let mut rx = RxBuffer::<64>::new();
 
         assert_eq!(read_to_frame_end(&mut rx, &mut rest), 8);
-        assert_eq!(read_to_frame_end(&mut rx, &mut rest), first - 8);
+        assert_eq!(
+            read_to_frame_end(&mut rx, &mut rest),
+            first.checked_sub(8).unwrap()
+        );
         assert_eq!(read_to_frame_end(&mut rx, &mut rest), 0);
         let Next::Frame(frame, consumed) = rx.next().unwrap() else {
             panic!("expected the first frame");
@@ -306,8 +333,8 @@ mod tests {
     fn a_skipped_frame_is_read_to_its_end_and_no_further() {
         let mut wire = [0u8; 96];
         let big = diagnostic(&[0xAA; 50], &mut wire);
-        let small = diagnostic(&[0x55], &mut wire[big..]);
-        let mut rest = &wire[..big + small];
+        let small = diagnostic(&[0x55], part_mut(&mut wire, big..));
+        let mut rest = part(&wire, ..plus(big, small));
         let mut rx = RxBuffer::<24>::new();
         read_to_frame_end(&mut rx, &mut rest);
         rx.skip_frame(&rx.header().unwrap());
@@ -324,7 +351,7 @@ mod tests {
         let len = diagnostic(&[0x01], &mut wire);
         let mut small = RxBuffer::<16>::new();
         let mut large = RxBuffer::<64>::new();
-        feed(&mut large, &wire[..len]);
+        feed(&mut large, part(&wire, ..len));
 
         small.swap(&mut large).unwrap();
 
@@ -355,15 +382,15 @@ mod tests {
         let mut wire = [0u8; 64];
         let big = diagnostic(&[0xAA; 30], &mut wire);
         let mut rx = RxBuffer::<24>::new();
-        feed(&mut rx, &wire[..24]);
+        feed(&mut rx, part(&wire, ..24));
         let Next::Oversized { header, .. } = rx.next().unwrap() else {
             panic!("expected an oversized frame");
         };
         rx.skip_frame(&header);
         rx.clear();
 
-        let small = diagnostic(&[0x55], &mut wire[big..]);
-        feed(&mut rx, &wire[big..big + small]);
+        let small = diagnostic(&[0x55], part_mut(&mut wire, big..));
+        feed(&mut rx, part(&wire, big..plus(big, small)));
         assert!(matches!(rx.next().unwrap(), Next::Frame(..)));
     }
 }

@@ -17,7 +17,7 @@ mod table;
 
 use core::fmt;
 
-use core::future::{Future, poll_fn};
+use core::future::{Future, pending, poll_fn};
 use core::pin::pin;
 use core::task::{Context, Poll};
 use edge_nal::TcpAccept;
@@ -32,7 +32,7 @@ use crate::service::{
     ConnectionId, DiagnosticEntity, DoIpResult, EntityConfig, EntityEvent,
 };
 use crate::stream::tx::{Full, TxQueue};
-use crate::stream::{caller_deadline, millis};
+use crate::stream::{after, caller_deadline, millis};
 use crate::{LogicalAddress, TaType};
 use handler::{ALIVE_CHECK_REQUEST, Handled};
 use io::{Io, drive};
@@ -48,16 +48,17 @@ const RESERVE_CAP: usize = 32;
 const CONFIRMS: usize = 4;
 
 /// `T_TCP_Initial_Inactivity` (ISO 13400-2:2019 Table 12).
-const INITIAL_INACTIVITY: Duration = ticks(crate::TCP_TIMEOUT_INITIAL_INACTIVITY);
+const INITIAL_INACTIVITY: core::time::Duration = crate::TCP_TIMEOUT_INITIAL_INACTIVITY;
 /// `T_TCP_General_Inactivity` (ISO 13400-2:2019 Table 12).
-const GENERAL_INACTIVITY: Duration = ticks(crate::TCP_TIMEOUT_GENERAL_INACTIVITY);
+const GENERAL_INACTIVITY: core::time::Duration = crate::TCP_TIMEOUT_GENERAL_INACTIVITY;
 /// `T_TCP_Alive_Check` (ISO 13400-2:2019 Table 12).
-const ALIVE_CHECK: Duration = ticks(crate::TCP_TIMEOUT_ALIVE_CHECK);
+const ALIVE_CHECK: core::time::Duration = crate::TCP_TIMEOUT_ALIVE_CHECK;
 /// How long an orderly close, and then an abort, may take before the socket is dropped.
-const CLOSE_LIMIT: Duration = ALIVE_CHECK;
+const CLOSE_LIMIT: core::time::Duration = ALIVE_CHECK;
 
-const fn ticks(timeout: core::time::Duration) -> Duration {
-    Duration::from_micros(timeout.as_secs() * 1_000_000 + timeout.subsec_micros() as u64)
+/// When `timer`, started at `now`, expires: the end of time if that is past it.
+fn expiry(now: Instant, timer: core::time::Duration) -> Instant {
+    Duration::try_from(timer).map_or(Instant::MAX, |timer| after(now, timer))
 }
 
 /// The logical addresses an [`Entity`] answers diagnostic messages on.
@@ -540,7 +541,7 @@ impl<
     }
 
     fn finalize(&mut self, at: SlotRef, abort: bool, now: Instant) {
-        let deadline = now + CLOSE_LIMIT;
+        let deadline = expiry(now, CLOSE_LIMIT);
         match at {
             SlotRef::Connection(index) => {
                 if let Some(slot) = self.connections.get_mut(index) {
@@ -559,7 +560,7 @@ impl<
                 if let Some(open) = self.open_mut(at)
                     && matches!(open.phase, Phase::Registered { .. })
                 {
-                    open.deadline = now + GENERAL_INACTIVITY;
+                    open.deadline = expiry(now, GENERAL_INACTIVITY);
                 }
             }
             Io::Lost => self.finalize(at, true, now),
@@ -582,7 +583,7 @@ impl<
                     self.finalize(at, false, now);
                 }
                 Phase::Finalizing { abort: false, .. } => {
-                    open.deadline = now + CLOSE_LIMIT;
+                    open.deadline = expiry(now, CLOSE_LIMIT);
                     self.finalize(at, true, now);
                 }
                 Phase::Finalizing { abort: true, .. } => self.remove(at),
@@ -610,7 +611,7 @@ impl<
 
     /// Puts a newly accepted socket in a free slot, or drops it if there is none.
     fn place(&mut self, socket: A::Socket<'a>, now: Instant) {
-        let deadline = now + INITIAL_INACTIVITY;
+        let deadline = expiry(now, INITIAL_INACTIVITY);
         if let Some(slot) = self.connections.iter_mut().find(|slot| slot.is_free()) {
             slot.open(socket, deadline);
         } else if self.reserve.is_free() {
@@ -664,7 +665,7 @@ impl<
             sa: request.sa,
             alive_check: AliveCheck::NotAsked,
         };
-        open.deadline = now + GENERAL_INACTIVITY;
+        open.deadline = expiry(now, GENERAL_INACTIVITY);
         self.respond(
             SlotRef::Connection(index),
             request,
@@ -700,7 +701,7 @@ impl<
             };
             return self.respond(at, request, code, now);
         }
-        let deadline = now + ALIVE_CHECK;
+        let deadline = expiry(now, ALIVE_CHECK);
         let stage = if let Some(holder) = self.holder_of(request.sa) {
             if let Some(slot) = self.connections.get_mut(holder) {
                 slot.set_alive_check(AliveCheck::Due);
@@ -938,7 +939,7 @@ impl<
     /// or `wake`. The source that wins is polled last next time, so none starves.
     async fn wait(&mut self, wake: Option<Instant>) -> Woke<A::Socket<'a>, A::Error> {
         use Source::{Acceptor, Connections, Reserve};
-        let (rotation, order) = match self.turn {
+        let (first, order) = match self.turn {
             Turn::Connection(index) => (index, [Connections, Reserve, Acceptor]),
             Turn::Reserve => (0, [Reserve, Acceptor, Connections]),
             Turn::Acceptor => (0, [Acceptor, Connections, Reserve]),
@@ -946,23 +947,38 @@ impl<
         let winner = {
             let acceptor = self.acceptor;
             let mut accept = pin!(acceptor.accept());
-            let mut slots = self.connections.each_mut();
-            slots.rotate_left(rotation);
-            let mut connections = pin!(select_array(slots.map(drive)));
+            let (before, from) = self
+                .connections
+                .split_at_mut_checked(first)
+                .unwrap_or_default();
+            let mut slots = from
+                .iter_mut()
+                .zip(first..)
+                .chain(before.iter_mut().zip(0..));
+            let mut connections =
+                pin!(select_array(core::array::from_fn::<_, MCTS, _>(|_| {
+                    let next = slots.next();
+                    async move {
+                        match next {
+                            Some((slot, index)) => (index, drive(slot).await),
+                            None => pending().await,
+                        }
+                    }
+                })));
             let mut reserve = pin!(drive(&mut self.reserve));
             let mut timer = pin!(async {
                 match wake {
                     Some(wake) => Timer::at(wake).await,
-                    None => core::future::pending().await,
+                    None => pending().await,
                 }
             });
             poll_fn(|cx| {
                 for source in order {
                     match source {
                         Connections => {
-                            if let Poll::Ready((io, index)) = connections.as_mut().poll(cx)
+                            if let Poll::Ready(((index, io), _)) =
+                                connections.as_mut().poll(cx)
                             {
-                                let index = (index + rotation) % MCTS;
                                 return Poll::Ready(Woke::Socket(
                                     SlotRef::Connection(index),
                                     io,
@@ -988,10 +1004,10 @@ impl<
             .await
         };
         self.turn = match &winner {
-            Woke::Socket(SlotRef::Connection(index), _) if index + 1 < MCTS => {
-                Turn::Connection(index + 1)
-            }
-            Woke::Socket(SlotRef::Connection(_), _) => Turn::Reserve,
+            Woke::Socket(SlotRef::Connection(index), _) => index
+                .checked_add(1)
+                .filter(|next| *next < MCTS)
+                .map_or(Turn::Reserve, Turn::Connection),
             Woke::Socket(SlotRef::Reserve, _) => Turn::Acceptor,
             Woke::Accepted(_) => Turn::Connection(0),
             Woke::Timer => self.turn,
@@ -1151,7 +1167,7 @@ impl<
         if !slot.open.as_ref().is_some_and(|open| open.named) {
             return Ok(());
         }
-        slot.finalize(false, true, Instant::now() + CLOSE_LIMIT);
+        slot.finalize(false, true, expiry(Instant::now(), CLOSE_LIMIT));
         loop {
             let Some(slot) = self.connections.get_mut(index) else {
                 return Ok(());

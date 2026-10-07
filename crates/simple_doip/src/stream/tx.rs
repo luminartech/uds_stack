@@ -28,13 +28,15 @@ impl<const N: usize> TxQueue<N> {
     }
 
     pub(crate) fn pending(&self) -> &[u8] {
-        &self.buf[self.start..self.end]
+        self.buf.get(self.start..self.end).unwrap_or_default()
     }
 
     pub(crate) fn advance(&mut self, written: usize) {
         let written = written.min(self.pending().len());
         self.start = self.start.saturating_add(written);
-        self.written = self.written.saturating_add(written as u64);
+        self.written = self
+            .written
+            .saturating_add(u64::try_from(written).unwrap_or(u64::MAX));
     }
 
     /// Queues `message`, returning the stream position its last byte will occupy.
@@ -44,11 +46,14 @@ impl<const N: usize> TxQueue<N> {
             return Err(Full);
         }
         self.compact();
+        let free = self.buf.get_mut(self.end..).ok_or(Full)?;
         let encoded = message
-            .encode(&mut SliceSink::new(&mut self.buf[self.end..]))
+            .encode(&mut SliceSink::new(free))
             .map_err(|_| Full)?;
         self.end = self.end.saturating_add(encoded);
-        self.queued = self.queued.saturating_add(encoded as u64);
+        self.queued = self
+            .queued
+            .saturating_add(u64::try_from(encoded).unwrap_or(u64::MAX));
         Ok(self.queued)
     }
 
@@ -70,10 +75,12 @@ impl<const N: usize> TxQueue<N> {
         self.compact();
         other.compact();
         let span = self.end.max(other.end);
-        if span > N || span > M {
+        let (Some(mine), Some(theirs)) =
+            (self.buf.get_mut(..span), other.buf.get_mut(..span))
+        else {
             return Err(DoesNotFit);
-        }
-        self.buf[..span].swap_with_slice(&mut other.buf[..span]);
+        };
+        mine.swap_with_slice(theirs);
         core::mem::swap(&mut self.end, &mut other.end);
         core::mem::swap(&mut self.written, &mut other.written);
         core::mem::swap(&mut self.queued, &mut other.queued);
