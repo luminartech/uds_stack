@@ -211,6 +211,8 @@ pub struct Entity<
     confirms: [Option<PendingConfirm>; CONFIRMS],
     /// Where the next search for a buffered frame starts, so no connection starves.
     next_slot: usize,
+    /// Which source [`Self::wait`] polls first.
+    turn: Turn,
 }
 
 /// A request awaiting its [`EntityEvent::Confirm`].
@@ -272,6 +274,22 @@ enum Step {
     Idle,
     Progress,
     Deliver(Delivery),
+}
+
+/// The source [`Entity::wait`] polls first, after the one that won last.
+#[derive(Clone, Copy)]
+enum Turn {
+    Connection(usize),
+    Reserve,
+    Acceptor,
+}
+
+/// The three sources [`Entity::wait`] polls, in turn.
+#[derive(Clone, Copy)]
+enum Source {
+    Connections,
+    Reserve,
+    Acceptor,
 }
 
 /// What woke the entity.
@@ -347,6 +365,7 @@ impl<
             arbitration: None,
             confirms: [None; CONFIRMS],
             next_slot: 0,
+            turn: Turn::Connection(0),
         }
     }
 
@@ -928,31 +947,68 @@ impl<
     }
 
     /// Waits for whichever comes first: a connection, a socket's next read or write,
-    /// or `wake`.
+    /// or `wake`. The source that wins is polled last next time, so none starves.
     async fn wait(&mut self, wake: Option<Instant>) -> Woke<A::Socket<'a>, A::Error> {
-        let acceptor = self.acceptor;
-        let mut accept = pin!(acceptor.accept());
-        let mut connections = pin!(select_array(self.connections.each_mut().map(drive)));
-        let mut reserve = pin!(drive(&mut self.reserve));
-        let mut timer = pin!(async {
-            match wake {
-                Some(wake) => Timer::at(wake).await,
-                None => core::future::pending().await,
+        use Source::{Acceptor, Connections, Reserve};
+        let (rotation, order) = match self.turn {
+            Turn::Connection(index) => (index, [Connections, Reserve, Acceptor]),
+            Turn::Reserve => (0, [Reserve, Acceptor, Connections]),
+            Turn::Acceptor => (0, [Acceptor, Connections, Reserve]),
+        };
+        let winner = {
+            let acceptor = self.acceptor;
+            let mut accept = pin!(acceptor.accept());
+            let mut slots = self.connections.each_mut();
+            slots.rotate_left(rotation);
+            let mut connections = pin!(select_array(slots.map(drive)));
+            let mut reserve = pin!(drive(&mut self.reserve));
+            let mut timer = pin!(async {
+                match wake {
+                    Some(wake) => Timer::at(wake).await,
+                    None => core::future::pending().await,
+                }
+            });
+            poll_fn(|cx| {
+                for source in order {
+                    match source {
+                        Connections => {
+                            if let Poll::Ready((io, index)) = connections.as_mut().poll(cx)
+                            {
+                                let index = (index + rotation) % MCTS;
+                                return Poll::Ready(Woke::Socket(
+                                    SlotRef::Connection(index),
+                                    io,
+                                ));
+                            }
+                        }
+                        Reserve => {
+                            if let Poll::Ready(io) = reserve.as_mut().poll(cx) {
+                                return Poll::Ready(Woke::Socket(SlotRef::Reserve, io));
+                            }
+                        }
+                        Acceptor => {
+                            if let Poll::Ready(accepted) = accept.as_mut().poll(cx) {
+                                return Poll::Ready(Woke::Accepted(
+                                    accepted.map(|(_, socket)| socket),
+                                ));
+                            }
+                        }
+                    }
+                }
+                timer.as_mut().poll(cx).map(|()| Woke::Timer)
+            })
+            .await
+        };
+        self.turn = match &winner {
+            Woke::Socket(SlotRef::Connection(index), _) if index + 1 < MCTS => {
+                Turn::Connection(index + 1)
             }
-        });
-        poll_fn(|cx| {
-            if let Poll::Ready(accepted) = accept.as_mut().poll(cx) {
-                return Poll::Ready(Woke::Accepted(accepted.map(|(_, socket)| socket)));
-            }
-            if let Poll::Ready((io, index)) = connections.as_mut().poll(cx) {
-                return Poll::Ready(Woke::Socket(SlotRef::Connection(index), io));
-            }
-            if let Poll::Ready(io) = reserve.as_mut().poll(cx) {
-                return Poll::Ready(Woke::Socket(SlotRef::Reserve, io));
-            }
-            timer.as_mut().poll(cx).map(|()| Woke::Timer)
-        })
-        .await
+            Woke::Socket(SlotRef::Connection(_), _) => Turn::Reserve,
+            Woke::Socket(SlotRef::Reserve, _) => Turn::Acceptor,
+            Woke::Accepted(_) => Turn::Connection(0),
+            Woke::Timer => self.turn,
+        };
+        winner
     }
 }
 

@@ -24,8 +24,8 @@ use simple_doip::service::{
 use simple_doip::{LogicalAddress, TaType};
 use support::mock_stack::{
     ENTITY, MockPeer, MockStack, TESTER, ack, activation_response_for, advance,
-    alive_check_request, alive_check_response, clock, diagnostic, header_nack, nack, raw,
-    until_stalled,
+    alive_check_request, alive_check_response, clock, diagnostic, header_nack, nack,
+    poll_times, raw, until_stalled,
 };
 
 const FUNCTIONAL: LogicalAddress = LogicalAddress(0xE400);
@@ -1075,6 +1075,44 @@ fn an_exchange_with_the_reserve_keeps_each_sockets_unsent_bytes() {
     idle.resume_writes();
     assert_eq!(events(&mut entity), []);
     assert_eq!(idle.take_written(), header_nack(0x01));
+}
+
+/// A connection with input always ready does not hold off the next connection's.
+#[test]
+fn a_busy_connection_does_not_starve_the_next() {
+    let _clock = clock();
+    let stack = MockStack::new(4096);
+    let mut entity = TwoSockets::new(&stack, address(), two_testers());
+    let busy = activated(&stack, &mut entity, TESTER);
+    let quiet = activated(&stack, &mut entity, OTHER);
+    busy.send(&alive_check_response().repeat(400));
+    quiet.send(&diagnostic(OTHER, ENTITY, &[0x3E, 0x00]));
+
+    assert!(matches!(
+        step(&mut entity),
+        Some(Ev::Indication { connection: 1, .. })
+    ));
+    assert!(!busy.all_read());
+}
+
+/// The reserve socket is read while a connection has input always ready.
+#[test]
+fn a_busy_connection_does_not_starve_the_reserve() {
+    let _clock = clock();
+    let stack = MockStack::new(4096);
+    let mut entity = OneSocket::new(&stack, address(), two_testers());
+    let busy = activated(&stack, &mut entity, TESTER);
+    let newcomer = stack.dial();
+    assert_eq!(events(&mut entity), []);
+    busy.send(&alive_check_response().repeat(400));
+    newcomer.send(&activation_from(OTHER, 0));
+
+    let mut buf = [0u8; 64];
+    let next = pin!(entity.next_event(&mut buf, None));
+    assert!(poll_times(next, 100).is_none());
+
+    assert_eq!(busy.take_written(), alive_check_request());
+    assert!(!busy.all_read());
 }
 
 // --- Figure 17, diagnostic messages ------------------------------------------------------
