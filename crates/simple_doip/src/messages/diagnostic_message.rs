@@ -46,6 +46,12 @@ impl OwnedDiagnosticMessage {
     }
 }
 
+impl DiagnosticMessage<'_> {
+    /// The source and target addresses ahead of the user data (ISO 13400-2:2019
+    /// Table 21).
+    pub(crate) const ADDRESSES_SIZE: usize = 4;
+}
+
 #[cfg(feature = "alloc")]
 impl DiagnosticMessage<'_> {
     /// Copy the borrowed `user_data` into an owned buffer, detaching this message
@@ -94,7 +100,7 @@ impl Encode for DiagnosticMessage<'_> {
     /// # Errors
     /// Never returns an error; the size is always computable.
     fn encoded_size(&self) -> Result<usize, MessageError> {
-        Ok(4 + self.user_data.len())
+        Ok(Self::ADDRESSES_SIZE + self.user_data.len())
     }
 
     /// Serialize this diagnostic message into `writer`
@@ -109,6 +115,6 @@ impl Encode for DiagnosticMessage<'_> {
         write_u16_be(writer, self.target_address.into())?;
         let user_data = self.user_data;
         write_bytes(writer, user_data)?;
-        Ok(4 + user_data.len())
+        Ok(Self::ADDRESSES_SIZE + user_data.len())
     }
 }

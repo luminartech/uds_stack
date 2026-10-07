@@ -112,6 +112,13 @@ pub struct RoutingActivationResponse {
     pub oem_specific: Option<[u8; 4]>,
 }
 
+impl RoutingActivationResponse {
+    /// The payload's length without OEM-specific data (ISO 13400-2:2019 Table 48).
+    pub(crate) const PAYLOAD_SIZE: usize = 9;
+    /// The payload's length with OEM-specific data.
+    pub(crate) const PAYLOAD_SIZE_WITH_OEM: usize = 13;
+}
+
 impl<'a> Decode<'a> for RoutingActivationResponse {
     type Error = MessageError;
 
@@ -157,7 +164,11 @@ impl Encode for RoutingActivationResponse {
     /// # Errors
     /// Never returns an error; the size is always computable.
     fn encoded_size(&self) -> Result<usize, MessageError> {
-        Ok(9 + self.oem_specific.map_or(0, |_| 4))
+        Ok(if self.oem_specific.is_some() {
+            Self::PAYLOAD_SIZE_WITH_OEM
+        } else {
+            Self::PAYLOAD_SIZE
+        })
     }
 
     /// Serialize this routing activation response into `writer`
@@ -175,6 +186,6 @@ impl Encode for RoutingActivationResponse {
         if let Some(oem_specific) = self.oem_specific {
             write_bytes(writer, &oem_specific)?;
         }
-        Ok(9 + self.oem_specific.map_or(0, |_| 4))
+        self.encoded_size()
     }
 }

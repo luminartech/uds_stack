@@ -74,6 +74,13 @@ pub struct RoutingActivationRequest {
     pub reserved_vehicle_manufacturer: Option<[u8; 4]>,
 }
 
+impl RoutingActivationRequest {
+    /// The payload's length without the VM-specific tail (ISO 13400-2:2019 Table 47).
+    pub(crate) const PAYLOAD_SIZE: usize = 7;
+    /// The payload's length with the VM-specific tail.
+    pub(crate) const PAYLOAD_SIZE_WITH_OEM: usize = 11;
+}
+
 impl fmt::Debug for RoutingActivationRequest {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("RoutingActivationRequest")
@@ -136,9 +143,9 @@ impl Encode for RoutingActivationRequest {
     /// Never returns an error; the size is always computable.
     fn encoded_size(&self) -> Result<usize, MessageError> {
         Ok(if self.reserved_vehicle_manufacturer.is_some() {
-            11
+            Self::PAYLOAD_SIZE_WITH_OEM
         } else {
-            7
+            Self::PAYLOAD_SIZE
         })
     }
 
@@ -155,8 +162,8 @@ impl Encode for RoutingActivationRequest {
         write_bytes(writer, &self.reserved)?;
         if let Some(reserved_vehicle_manufacturer) = self.reserved_vehicle_manufacturer {
             write_bytes(writer, &reserved_vehicle_manufacturer)?;
-            return Ok(11);
+            return Ok(Self::PAYLOAD_SIZE_WITH_OEM);
         }
-        Ok(7)
+        Ok(Self::PAYLOAD_SIZE)
     }
 }
