@@ -545,6 +545,36 @@ fn a_header_out_of_sync_closes_the_connection() {
     assert_eq!(stack.latest().take_written(), []);
 }
 
+/// Why the connection was lost, as a layer generic over [`TesterConnection`] sees it.
+fn cause_of_loss<T: TesterConnection>(connection: &T) -> Option<&T::IoError> {
+    connection.io_error()
+}
+
+/// A layer that only knows the connection as a [`TesterConnection`] can still tell a
+/// failed socket from an entity that closed it.
+#[test]
+fn the_cause_of_a_loss_is_readable_through_the_trait() {
+    let _clock = clock();
+    let stack = MockStack::new(usize::MAX);
+    let mut tester = active(&stack);
+    let mut buf = [0; 16];
+    stack.latest().eof();
+    assert_eq!(
+        next(&mut tester, &mut buf).unwrap(),
+        ConnectionEvent::Closed
+    );
+    assert_eq!(cause_of_loss(&tester), None, "the entity closed it");
+
+    stack.script_next(&activation_response(0x10));
+    reconnect(&mut tester).unwrap();
+    stack.latest().fail_reads();
+    assert_eq!(
+        next(&mut tester, &mut buf).unwrap(),
+        ConnectionEvent::Closed
+    );
+    assert_eq!(cause_of_loss(&tester), Some(&MockError));
+}
+
 /// A failed read ends the connection, reported as `Closed` rather than as an `Err`; the
 /// socket's error stays readable from the tester.
 #[test]

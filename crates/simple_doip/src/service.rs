@@ -270,6 +270,18 @@ pub trait TesterConnection: DiagnosticConnection {
     /// it.
     type CloseError: core::fmt::Debug;
 
+    /// Why a connection failed. Never interpreted by the layer above, which can only
+    /// report it.
+    type IoError: core::fmt::Debug;
+
+    /// The I/O failure that ended the last connection, until a reconnect succeeds.
+    ///
+    /// [`DiagnosticConnection::next_event`] reports every end as
+    /// [`ConnectionEvent::Closed`], so this is how the layer above tells a failed
+    /// connection from one the entity closed or the tester gave up, for which it is
+    /// `None`.
+    fn io_error(&self) -> Option<&Self::IoError>;
+
     /// Gives the connection up, if there is one, then opens a new TCP connection and
     /// activates routing on it.
     ///

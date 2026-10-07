@@ -311,17 +311,6 @@ impl<'s, C: TcpConnect, const N: usize> Tester<'s, C, N> {
         self
     }
 
-    /// The socket error that ended the last connection, if one did, until a new
-    /// connection is established.
-    ///
-    /// [`DiagnosticConnection::next_event`] reports such an end as
-    /// [`ConnectionEvent::Closed`], never as an error, so this is where its cause is
-    /// kept.
-    #[must_use]
-    pub fn io_error(&self) -> Option<&C::Error> {
-        self.io_error.as_ref()
-    }
-
     /// Opens a new connection and activates routing on it, keeping it only on success.
     /// A connection that opens and is not kept, because activation failed or the future
     /// was dropped, counts as a loss for the reconnect back-off.
@@ -506,10 +495,11 @@ impl<'s, C: TcpConnect, const N: usize> Tester<'s, C, N> {
 ///
 /// A connection ending is an event, never an `Err`: the confirm a request awaiting one is
 /// owed, then [`ConnectionEvent::Closed`], whether the entity closed the connection, the
-/// tester gave it up, or the socket failed, whose error [`Tester::io_error`] keeps. Every
-/// [`next_event`](DiagnosticConnection::next_event) after that reports `Closed` again,
-/// and [`request`](DiagnosticConnection::request) is [`Error::NotConnected`], until a
-/// reconnect succeeds. `next_event` never returns `Err`.
+/// tester gave it up, or the socket failed, whose error [`TesterConnection::io_error`]
+/// keeps. Every [`next_event`](DiagnosticConnection::next_event) after that reports
+/// `Closed` again, and [`request`](DiagnosticConnection::request) is
+/// [`Error::NotConnected`], until a reconnect succeeds. `next_event` never returns
+/// `Err`.
 impl<C: TcpConnect, const N: usize> DiagnosticConnection for Tester<'_, C, N> {
     type Error = Error;
 
@@ -713,6 +703,13 @@ impl<C: TcpConnect, const N: usize> DiagnosticConnection for Tester<'_, C, N> {
 impl<C: TcpConnect, const N: usize> TesterConnection for Tester<'_, C, N> {
     type ReconnectError = ConnectError<C::Error>;
     type CloseError = C::Error;
+    type IoError = C::Error;
+
+    /// The socket error that ended the last connection, if one did, until a reconnect
+    /// succeeds.
+    fn io_error(&self) -> Option<&Self::IoError> {
+        self.io_error.as_ref()
+    }
 
     /// Gives up the connection, if there is one, waits until the back-off
     /// ([`RECONNECT_BACKOFF`] unless [`Tester::with_reconnect_backoff`] set another) has
