@@ -84,16 +84,12 @@ pub enum ConnectError<E> {
     InvalidMessage,
 }
 
-/// Why a connected tester could not do what it was asked.
+/// Why a tester did not accept a request. None is followed by a confirm.
 ///
-/// `E` is the socket's error, `edge_nal::TcpConnect::Error`.
-#[derive(Debug, PartialEq, Eq, thiserror::Error)]
+/// A connection ending is never one of these: it is [`ConnectionEvent::Closed`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 #[non_exhaustive]
-pub enum Error<E> {
-    /// The socket failed carrying data. The connection is closed, and the next
-    /// [`DiagnosticConnection::next_event`] reports what follows from that.
-    #[error("socket failed: {0:?}")]
-    Io(E),
+pub enum Error {
     /// A request's [`ConnectionEvent::Confirm`] has not been reported yet; this one was
     /// not accepted.
     #[error("a request is still awaiting its confirm")]
@@ -144,15 +140,15 @@ pub enum Error<E> {
 /// # #[derive(Debug)]
 /// # enum Failed {
 /// #     Connect(simple_doip::tester::ConnectError<std::io::Error>),
-/// #     Use(Error<std::io::Error>),
+/// #     Use(Error),
 /// #     Refused(DoIpResult),
 /// #     Close(std::io::Error),
 /// # }
 /// # impl From<simple_doip::tester::ConnectError<std::io::Error>> for Failed {
 /// #     fn from(e: simple_doip::tester::ConnectError<std::io::Error>) -> Self { Self::Connect(e) }
 /// # }
-/// # impl From<Error<std::io::Error>> for Failed {
-/// #     fn from(e: Error<std::io::Error>) -> Self { Self::Use(e) }
+/// # impl From<Error> for Failed {
+/// #     fn from(e: Error) -> Self { Self::Use(e) }
 /// # }
 /// # impl From<std::io::Error> for Failed {
 /// #     fn from(e: std::io::Error) -> Self { Self::Close(e) }
@@ -205,7 +201,7 @@ pub struct Tester<'s, C: TcpConnect + 's, const N: usize> {
     outgoing: Outgoing<N>,
     exchange: Exchange,
     owed: Option<ConnectionEvent<'static>>,
-    closed_reported: bool,
+    io_error: Option<C::Error>,
 }
 
 impl<C: TcpConnect, const N: usize> fmt::Debug for Tester<'_, C, N> {
@@ -276,7 +272,7 @@ impl<'s, C: TcpConnect, const N: usize> Tester<'s, C, N> {
             outgoing: Outgoing::new(),
             exchange: Exchange::default(),
             owed: None,
-            closed_reported: true,
+            io_error: None,
         };
         tester.establish().await?;
         Ok(tester)
@@ -290,26 +286,22 @@ impl<'s, C: TcpConnect, const N: usize> Tester<'s, C, N> {
     /// A request still awaiting its confirm is confirmed with [`DoIpResult::Error`] or
     /// [`DoIpResult::NoSocket`] by the next
     /// [`next_event`](DiagnosticConnection::next_event), before anything from the new
-    /// connection. Succeeding or failing, it reports no [`ConnectionEvent::Closed`] for
-    /// the connection it gave up.
+    /// connection.
     ///
     /// # Cancel safety
     ///
     /// As for [`Tester::connect`]. Dropped, or failed, it leaves the tester with no
-    /// connection; a dropped one reports [`ConnectionEvent::Closed`] for the old
-    /// connection if that was not yet reported.
+    /// connection.
     ///
     /// # Errors
     ///
-    /// As for [`Tester::connect`]. After an error the tester is [`Error::NotConnected`]
-    /// until a reconnect succeeds.
+    /// As for [`Tester::connect`]. After an error,
+    /// [`next_event`](DiagnosticConnection::next_event) reports
+    /// [`ConnectionEvent::Closed`] and [`request`](DiagnosticConnection::request) is
+    /// [`Error::NotConnected`] until a reconnect succeeds.
     pub async fn reconnect(&mut self) -> Result<(), ConnectError<C::Error>> {
         self.lose_connection(true, None).await;
-        let result = self.establish().await;
-        if result.is_err() {
-            self.closed_reported = true;
-        }
-        result
+        self.establish().await
     }
 
     /// Closes the connection gracefully, if there is one, and ends the tester.
@@ -335,6 +327,17 @@ impl<'s, C: TcpConnect, const N: usize> Tester<'s, C, N> {
         }
     }
 
+    /// The socket error that ended the last connection, if one did, until a new
+    /// connection is established.
+    ///
+    /// [`DiagnosticConnection::next_event`] reports such an end as
+    /// [`ConnectionEvent::Closed`], never as an error, so this is where its cause is
+    /// kept.
+    #[must_use]
+    pub fn io_error(&self) -> Option<&C::Error> {
+        self.io_error.as_ref()
+    }
+
     /// Opens a new connection and activates routing on it, keeping it only on success.
     async fn establish(&mut self) -> Result<(), ConnectError<C::Error>> {
         let stack = self.stack;
@@ -342,7 +345,7 @@ impl<'s, C: TcpConnect, const N: usize> Tester<'s, C, N> {
         match self.activate(&mut socket).await {
             Ok(()) => {
                 self.socket = Some(socket);
-                self.closed_reported = false;
+                self.io_error = None;
                 Ok(())
             }
             Err(error) => {
@@ -470,12 +473,14 @@ impl<C: TcpConnect, const N: usize> Tester<'_, C, N> {
 
 /// `DoIP_Data` over the tester's connection.
 ///
-/// [`ConnectionEvent::Closed`] is reported once when the connection ends: the entity
-/// closed it, the tester gave it up, or an [`Error::Io`] ended it. Every call after that
-/// is [`Error::NotConnected`] until the tester reconnects. A connection that
-/// [`Tester::reconnect`] gives up is not reported, as the caller ended it.
+/// A connection ending is an event, never an `Err`: the confirm a request awaiting one is
+/// owed, then [`ConnectionEvent::Closed`], whether the entity closed the connection, the
+/// tester gave it up, or the socket failed, whose error [`Tester::io_error`] keeps. Every
+/// [`next_event`](DiagnosticConnection::next_event) after that reports `Closed` again,
+/// and [`request`](DiagnosticConnection::request) is [`Error::NotConnected`], until a
+/// reconnect succeeds. `next_event` never returns `Err`.
 impl<C: TcpConnect, const N: usize> DiagnosticConnection for Tester<'_, C, N> {
-    type Error = Error<C::Error>;
+    type Error = Error;
 
     /// Queues `pdu` to `ta` as one diagnostic message, from the tester's source address,
     /// for [`DiagnosticConnection::next_event`] to write.
@@ -578,10 +583,6 @@ impl<C: TcpConnect, const N: usize> DiagnosticConnection for Tester<'_, C, N> {
                 return Ok(owed);
             }
             if self.socket.is_none() {
-                if self.closed_reported {
-                    return Err(Error::NotConnected);
-                }
-                self.closed_reported = true;
                 return Ok(ConnectionEvent::Closed);
             }
             if self.time_out(until).await {
@@ -604,8 +605,9 @@ impl<C: TcpConnect, const N: usize> DiagnosticConnection for Tester<'_, C, N> {
                     continue;
                 }
                 Err(error) => {
+                    self.io_error = Some(error);
                     self.lose_connection(false, None).await;
-                    return Err(Error::Io(error));
+                    continue;
                 }
             }
             let sa = self.sa.address();
@@ -623,8 +625,8 @@ impl<C: TcpConnect, const N: usize> DiagnosticConnection for Tester<'_, C, N> {
                         Ok(Fill::Data) => read_since_passed = passed(),
                         Ok(Fill::Eof) => self.lose_connection(false, None).await,
                         Err(error) => {
+                            self.io_error = Some(error);
                             self.lose_connection(false, None).await;
-                            return Err(Error::Io(error));
                         }
                     }
                     continue;

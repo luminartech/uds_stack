@@ -253,7 +253,7 @@ fn active(stack: &MockStack) -> ActiveTester<'_> {
 fn next<'b>(
     tester: &mut ActiveTester<'_>,
     buf: &'b mut [u8],
-) -> Result<ConnectionEvent<'b>, Error<MockError>> {
+) -> Result<ConnectionEvent<'b>, Error> {
     run(tester.next_event(buf, None))
 }
 
@@ -490,22 +490,23 @@ fn a_deadline_from_now_is_on_the_testers_clock() {
     );
 }
 
+/// A connection ending is an event, never an `Err`: `Closed`, and `Closed` again on
+/// every call until a reconnect succeeds.
 #[test]
-fn the_entity_closing_is_closed_once_then_not_connected() {
+fn the_entity_closing_is_closed_until_a_reconnect() {
     let _clock = clock();
     let stack = MockStack::new(usize::MAX);
     let mut tester = active(&stack);
     stack.latest().eof();
     let mut buf = [0; 16];
 
-    assert_eq!(
-        next(&mut tester, &mut buf).unwrap(),
-        ConnectionEvent::Closed
-    );
-    assert_eq!(
-        next(&mut tester, &mut buf).unwrap_err(),
-        Error::NotConnected
-    );
+    for _ in 0..3 {
+        assert_eq!(
+            next(&mut tester, &mut buf).unwrap(),
+            ConnectionEvent::Closed
+        );
+    }
+    assert_eq!(tester.io_error(), None);
     assert!(stack.latest().is_shut());
     assert!(
         !stack.latest().is_aborted(),
@@ -533,8 +534,10 @@ fn a_header_out_of_sync_closes_the_connection() {
     assert_eq!(stack.latest().take_written(), []);
 }
 
+/// A failed read ends the connection, reported as `Closed` rather than as an `Err`; the
+/// socket's error stays readable from the tester.
 #[test]
-fn a_failed_read_is_an_error_then_closed() {
+fn a_failed_read_is_closed_and_keeps_its_error() {
     let _clock = clock();
     let stack = MockStack::new(usize::MAX);
     let mut tester = active(&stack);
@@ -542,17 +545,14 @@ fn a_failed_read_is_an_error_then_closed() {
     let mut buf = [0; 16];
 
     assert_eq!(
-        next(&mut tester, &mut buf).unwrap_err(),
-        Error::Io(MockError)
+        next(&mut tester, &mut buf).unwrap(),
+        ConnectionEvent::Closed
     );
     assert_eq!(
         next(&mut tester, &mut buf).unwrap(),
         ConnectionEvent::Closed
     );
-    assert_eq!(
-        next(&mut tester, &mut buf).unwrap_err(),
-        Error::NotConnected
-    );
+    assert_eq!(tester.io_error(), Some(&MockError));
     assert!(stack.latest().is_shut());
     assert!(
         !stack.latest().is_aborted(),
@@ -564,7 +564,7 @@ fn a_failed_read_is_an_error_then_closed() {
 
 const PDU: [u8; 3] = [0x22, 0xF1, 0x90];
 
-fn request(tester: &mut ActiveTester<'_>) -> Result<(), Error<MockError>> {
+fn request(tester: &mut ActiveTester<'_>) -> Result<(), Error> {
     run(tester.request(ENTITY, TaType::Physical, &PDU))
 }
 
@@ -889,8 +889,8 @@ fn the_entity_closing_with_a_request_outstanding_confirms_before_closed() {
     );
 }
 
-/// A request whose last byte never left is confirmed `DoIP_NO_SOCKET`, after the error
-/// that ended the connection and before the close.
+/// ISO 13400-2:2019 8.2.5: a request whose last byte never left had no socket to carry
+/// it, so a failed write confirms it `DoIP_NO_SOCKET`, then reports the close.
 #[test]
 fn a_failed_write_confirms_no_socket() {
     let _clock = clock();
@@ -901,12 +901,35 @@ fn a_failed_write_confirms_no_socket() {
     let mut buf = [0; 16];
 
     assert_eq!(
-        next(&mut tester, &mut buf).unwrap_err(),
-        Error::Io(MockError)
+        next(&mut tester, &mut buf).unwrap(),
+        confirm(DoIpResult::NoSocket)
     );
     assert_eq!(
         next(&mut tester, &mut buf).unwrap(),
-        confirm(DoIpResult::NoSocket)
+        ConnectionEvent::Closed
+    );
+    assert_eq!(
+        next(&mut tester, &mut buf).unwrap(),
+        ConnectionEvent::Closed
+    );
+    assert_eq!(tester.io_error(), Some(&MockError));
+}
+
+/// A request that left and was never acknowledged has an unknown outcome, so an I/O
+/// failure confirms it `DoIP_ERROR` (8.2.5), then reports the close.
+#[test]
+fn a_failed_read_with_a_request_sent_confirms_error() {
+    let _clock = clock();
+    let stack = MockStack::new(usize::MAX);
+    let mut tester = active(&stack);
+    request(&mut tester).unwrap();
+    sent(&stack, &mut tester);
+    stack.latest().fail_reads();
+    let mut buf = [0; 16];
+
+    assert_eq!(
+        next(&mut tester, &mut buf).unwrap(),
+        confirm(DoIpResult::Error)
     );
     assert_eq!(
         next(&mut tester, &mut buf).unwrap(),
@@ -1172,7 +1195,7 @@ fn reconnecting_confirms_the_outstanding_request_first() {
 }
 
 #[test]
-fn a_failed_reconnect_leaves_the_tester_not_connected() {
+fn a_failed_reconnect_leaves_the_tester_closed() {
     let _clock = clock();
     let stack = MockStack::new(usize::MAX);
     let mut tester = active(&stack);
@@ -1185,8 +1208,8 @@ fn a_failed_reconnect_leaves_the_tester_not_connected() {
         ConnectError::Io(MockError)
     );
     assert_eq!(
-        next(&mut tester, &mut buf).unwrap_err(),
-        Error::NotConnected
+        next(&mut tester, &mut buf).unwrap(),
+        ConnectionEvent::Closed
     );
 
     assert_eq!(
@@ -1196,8 +1219,8 @@ fn a_failed_reconnect_leaves_the_tester_not_connected() {
         )
     );
     assert_eq!(
-        next(&mut tester, &mut buf).unwrap_err(),
-        Error::NotConnected
+        next(&mut tester, &mut buf).unwrap(),
+        ConnectionEvent::Closed
     );
     assert_eq!(request(&mut tester).unwrap_err(), Error::NotConnected);
 }
@@ -1216,14 +1239,12 @@ fn a_dropped_reconnect_leaves_the_tester_closed() {
     let mut buf = [0; 16];
 
     assert!(stack.peer(1).is_shut());
-    assert_eq!(
-        next(&mut tester, &mut buf).unwrap(),
-        ConnectionEvent::Closed
-    );
-    assert_eq!(
-        next(&mut tester, &mut buf).unwrap_err(),
-        Error::NotConnected
-    );
+    for _ in 0..2 {
+        assert_eq!(
+            next(&mut tester, &mut buf).unwrap(),
+            ConnectionEvent::Closed
+        );
+    }
 }
 
 // --- correlation and the strict timeout ------------------------------------------------
@@ -1714,7 +1735,7 @@ fn the_tester_aborts_what_it_gives_up() {
 }
 
 /// A reconnect dropped at any await after it started leaves the tester reporting the old
-/// connection closed once, then not connected; one that completed leaves it connected.
+/// connection closed; one that completed leaves it connected.
 #[test]
 fn a_reconnect_dropped_at_any_await_leaves_a_consistent_tester() {
     let _clock = clock();
@@ -1743,8 +1764,8 @@ fn a_reconnect_dropped_at_any_await_leaves_a_consistent_tester() {
             "dropped after {polls} polls"
         );
         assert_eq!(
-            run(tester.next_event(&mut buf, Some(0))).unwrap_err(),
-            Error::NotConnected,
+            run(tester.next_event(&mut buf, Some(0))).unwrap(),
+            ConnectionEvent::Closed,
             "dropped after {polls} polls"
         );
         assert!(stack.peer(0).is_shut(), "dropped after {polls} polls");
