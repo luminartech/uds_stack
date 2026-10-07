@@ -290,8 +290,9 @@ the seam described in section 3 usable.
 |---|---|
 | `src/tester.rs` | `Tester`: connect, routing activation, `DiagnosticConnection`, the event loop and its reactions |
 | `src/tester/tx.rs` | `Outgoing<N>`, the diagnostic message being written, and `Control`, the activation request or alive check response written ahead of it |
-| `src/tester/rx.rs` | `RxBuffer<N>`: bytes read and not yet consumed, and the skipping of a frame longer than `N` |
-| `src/tester/confirm.rs` | NACK codes to `DoIpResult`, and the caller's deadline on `embassy-time`'s clock |
+| `src/tester/confirm.rs` | NACK codes to `DoIpResult` |
+| `src/stream.rs` | What either end of a `TCP_DATA` stream shares: the caller's deadline and other instants on `embassy-time`'s clock |
+| `src/stream/rx.rs` | `RxBuffer<N>`: bytes read and not yet consumed, and the skipping of a frame longer than `N` |
 
 ### std / async layers
 

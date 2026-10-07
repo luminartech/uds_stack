@@ -5,7 +5,7 @@ use crate::{RawFrame, try_frame};
 /// Bytes read from the socket and not yet consumed, holding at most one frame of `N`
 /// bytes, plus how much of an oversized frame is still to be skipped.
 #[derive(Debug)]
-pub(super) struct RxBuffer<const N: usize> {
+pub(crate) struct RxBuffer<const N: usize> {
     buf: [u8; N],
     len: usize,
     discard: usize,
@@ -13,7 +13,7 @@ pub(super) struct RxBuffer<const N: usize> {
 
 /// What [`RxBuffer::next`] found at the front of the buffered bytes.
 #[derive(Debug, PartialEq)]
-pub(super) enum Next<'a> {
+pub(crate) enum Next<'a> {
     /// A whole frame, and the bytes it occupies.
     Frame(RawFrame<'a>, usize),
     /// The start of a frame longer than the buffer, which is full of it.
@@ -23,7 +23,7 @@ pub(super) enum Next<'a> {
 }
 
 impl<const N: usize> RxBuffer<N> {
-    pub(super) const fn new() -> Self {
+    pub(crate) const fn new() -> Self {
         Self {
             buf: [0; N],
             len: 0,
@@ -32,16 +32,16 @@ impl<const N: usize> RxBuffer<N> {
     }
 
     /// How many bytes are read and not yet consumed.
-    pub(super) fn buffered_len(&self) -> usize {
+    pub(crate) fn buffered_len(&self) -> usize {
         self.len
     }
 
-    pub(super) fn free(&mut self) -> &mut [u8] {
+    pub(crate) fn free(&mut self) -> &mut [u8] {
         &mut self.buf[self.len..]
     }
 
     /// Records that `read` bytes were read into [`Self::free`].
-    pub(super) fn filled(&mut self, read: usize) {
+    pub(crate) fn filled(&mut self, read: usize) {
         let read = read.min(N.saturating_sub(self.len));
         let skipped = read.min(self.discard);
         let kept = read.saturating_sub(skipped);
@@ -52,7 +52,7 @@ impl<const N: usize> RxBuffer<N> {
         self.len = self.len.saturating_add(kept);
     }
 
-    pub(super) fn next(&self) -> Result<Next<'_>, MessageError> {
+    pub(crate) fn next(&self) -> Result<Next<'_>, MessageError> {
         let buffered = &self.buf[..self.len];
         if let Some((frame, consumed)) = try_frame(buffered)? {
             return Ok(Next::Frame(frame, consumed));
@@ -64,21 +64,21 @@ impl<const N: usize> RxBuffer<N> {
         Ok(Next::Oversized { header, head })
     }
 
-    pub(super) fn consume(&mut self, consumed: usize) {
+    pub(crate) fn consume(&mut self, consumed: usize) {
         let consumed = consumed.min(self.len);
         self.buf.copy_within(consumed..self.len, 0);
         self.len = self.len.saturating_sub(consumed);
     }
 
-    /// Drops the buffered start of the oversized frame `header` describes, and the rest
-    /// of it as it arrives.
-    pub(super) fn skip_oversized(&mut self, header: &Header) {
+    /// Drops the buffered start of the frame `header` describes, and the rest of it as
+    /// it arrives.
+    pub(crate) fn skip_frame(&mut self, header: &Header) {
         let buffered = self.len.saturating_sub(Header::SIZE);
         self.discard = (header.payload_length as usize).saturating_sub(buffered);
         self.len = 0;
     }
 
-    pub(super) fn clear(&mut self) {
+    pub(crate) fn clear(&mut self) {
         self.len = 0;
         self.discard = 0;
     }
@@ -169,7 +169,7 @@ mod tests {
         assert_eq!(header.payload_length, 34);
         assert_eq!(head, &wire[8..24]);
 
-        rx.skip_oversized(&header);
+        rx.skip_frame(&header);
         feed(&mut rx, &wire[24..big + small]);
         let Next::Frame(frame, _) = rx.next().unwrap() else {
             panic!("expected the frame after the oversized one");
@@ -187,7 +187,7 @@ mod tests {
         let Next::Oversized { header, .. } = rx.next().unwrap() else {
             panic!("expected an oversized frame");
         };
-        rx.skip_oversized(&header);
+        rx.skip_frame(&header);
 
         let mut rest = &wire[24..big + small];
         while !rest.is_empty() {
@@ -214,7 +214,7 @@ mod tests {
             panic!("expected an oversized frame");
         };
 
-        rx.skip_oversized(&header);
+        rx.skip_frame(&header);
 
         assert_eq!(rx.discard, 0xFFFF_FFFF - 16);
         feed(&mut rx, &[0xAA; 30]);
@@ -238,7 +238,7 @@ mod tests {
         let Next::Oversized { header, .. } = rx.next().unwrap() else {
             panic!("expected an oversized frame");
         };
-        rx.skip_oversized(&header);
+        rx.skip_frame(&header);
         rx.clear();
 
         let small = diagnostic(&[0x55], &mut wire[big..]);

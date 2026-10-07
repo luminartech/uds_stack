@@ -24,10 +24,10 @@ use crate::wire::Decode;
 use crate::{LogicalAddress, TIMEOUT_DIAGNOSTIC_MESSAGE_RESPONSE, TaType};
 
 mod confirm;
-mod rx;
 mod tx;
 
-use rx::{Next, RxBuffer};
+use crate::stream::rx::{Next, RxBuffer};
+use crate::stream::{after, caller_deadline, millis};
 use tx::{Control, Outgoing, TooLarge};
 
 /// How long the tester waits before repeating a routing activation request the entity
@@ -410,7 +410,7 @@ async fn activate<S: Read + Write + Readable, const N: usize>(
                     {
                         return Err(ConnectError::InvalidMessage);
                     }
-                    rx.skip_oversized(&header);
+                    rx.skip_frame(&header);
                 }
                 Ok(Next::Frame(frame, consumed)) => {
                     let step =
@@ -420,10 +420,8 @@ async fn activate<S: Read + Write + Readable, const N: usize>(
                         Activation::Waiting => {}
                         Activation::Activated => return Ok(()),
                         Activation::ConfirmationRequired => {
-                            retry_at = Some(confirm::after(
-                                Instant::now(),
-                                ROUTING_CONFIRMATION_RETRY,
-                            ));
+                            retry_at =
+                                Some(after(Instant::now(), ROUTING_CONFIRMATION_RETRY));
                         }
                     }
                 }
@@ -583,7 +581,7 @@ impl<C: TcpConnect, const N: usize> DiagnosticConnection for Tester<'_, C, N> {
 
     /// `embassy-time`'s clock, the one the tester's own timers run on.
     fn now(&self) -> u32 {
-        confirm::millis(Instant::now())
+        millis(Instant::now())
     }
 
     /// The next event from the entity.
@@ -611,8 +609,8 @@ impl<C: TcpConnect, const N: usize> DiagnosticConnection for Tester<'_, C, N> {
         buf: &'b mut [u8],
         deadline_ms: Option<u32>,
     ) -> Result<ConnectionEvent<'b>, Self::Error> {
-        let until = deadline_ms
-            .map(|deadline_ms| confirm::caller_deadline(deadline_ms, Instant::now()));
+        let until =
+            deadline_ms.map(|deadline_ms| caller_deadline(deadline_ms, Instant::now()));
         let passed = || until.is_some_and(|until| until <= Instant::now());
         let mut read_since_passed = false;
         loop {
@@ -677,7 +675,7 @@ impl<C: TcpConnect, const N: usize> DiagnosticConnection for Tester<'_, C, N> {
                         &mut self.control,
                         buf,
                     );
-                    self.rx.skip_oversized(&header);
+                    self.rx.skip_frame(&header);
                     self.exchange.consumed(usize::MAX);
                     reaction
                 }
@@ -748,7 +746,7 @@ impl<C: TcpConnect, const N: usize> TesterConnection for Tester<'_, C, N> {
     async fn reconnect(&mut self) -> Result<(), Self::ReconnectError> {
         self.lose_connection(true, None).await;
         if let Some(lost_at) = self.lost_at {
-            Timer::at(confirm::after(lost_at, self.backoff)).await;
+            Timer::at(after(lost_at, self.backoff)).await;
         }
         self.establish().await
     }
@@ -806,7 +804,7 @@ impl Exchange {
             let started = Instant::now();
             outstanding.phase = Phase::Writing {
                 started,
-                deadline: confirm::after(started, ACK_TIMEOUT),
+                deadline: after(started, ACK_TIMEOUT),
             };
             outstanding.stale = buffered;
         }
@@ -819,7 +817,7 @@ impl Exchange {
         {
             outstanding.phase = Phase::Sent {
                 started,
-                deadline: confirm::after(Instant::now(), ACK_TIMEOUT),
+                deadline: after(Instant::now(), ACK_TIMEOUT),
             };
         }
     }
@@ -874,8 +872,7 @@ impl Outstanding {
         match source {
             Some(source) => self.ta_type != TaType::Physical || source == self.ta,
             None => self.phase.started().is_some_and(|started| {
-                answered_at
-                    .is_none_or(|answered| confirm::after(answered, ACK_TIMEOUT) <= started)
+                answered_at.is_none_or(|answered| after(answered, ACK_TIMEOUT) <= started)
             }),
         }
     }

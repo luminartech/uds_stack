@@ -131,6 +131,8 @@ pub use error::Error;
 #[cfg(feature = "server")]
 pub mod server;
 #[cfg(feature = "connection")]
+mod stream;
+#[cfg(feature = "connection")]
 pub mod tester;
 
 use core::time::Duration;
