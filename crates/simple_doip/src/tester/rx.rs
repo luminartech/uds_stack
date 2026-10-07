@@ -11,16 +11,14 @@ pub(super) struct RxBuffer<const N: usize> {
     discard: usize,
 }
 
-/// What the buffered bytes hold.
+/// What [`RxBuffer::next`] found at the front of the buffered bytes.
 #[derive(Debug, PartialEq)]
 pub(super) enum Next<'a> {
     /// A whole frame, and the bytes it occupies.
     Frame(RawFrame<'a>, usize),
     /// The start of a frame longer than the buffer, which is full of it.
-    Oversized {
-        header: Header,
-        head: &'a [u8],
-    },
+    Oversized { header: Header, head: &'a [u8] },
+    /// Less than a whole frame: read more.
     NeedMore,
 }
 
@@ -34,7 +32,7 @@ impl<const N: usize> RxBuffer<N> {
     }
 
     /// How many bytes are read and not yet consumed.
-    pub(super) fn buffered(&self) -> usize {
+    pub(super) fn buffered_len(&self) -> usize {
         self.len
     }
 

@@ -625,7 +625,7 @@ impl<C: TcpConnect, const N: usize> DiagnosticConnection for Tester<'_, C, N> {
             if self.time_out(until).await {
                 continue;
             }
-            self.exchange.start_writing(self.rx.buffered());
+            self.exchange.start_writing(self.rx.buffered_len());
             let wake = match (until, self.exchange.deadline()) {
                 (Some(until), Some(ack)) => Some(until.min(ack)),
                 (until, ack) => until.or(ack),

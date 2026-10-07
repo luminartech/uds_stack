@@ -28,6 +28,11 @@ impl<const N: usize> Outgoing<N> {
     }
 
     /// Replaces whatever was being written with `message`.
+    ///
+    /// # Errors
+    ///
+    /// [`TooLarge`] where `message` does not fit in `N` bytes; what was being written is
+    /// kept.
     pub(super) fn load(&mut self, message: &Message<'_>) -> Result<(), TooLarge> {
         if message.encoded_size().map_err(|_| TooLarge)? > N {
             return Err(TooLarge);
@@ -40,10 +45,12 @@ impl<const N: usize> Outgoing<N> {
         Ok(())
     }
 
+    /// The bytes of the message that are still to be written.
     pub(super) fn pending(&self) -> &[u8] {
         &self.buf[self.written..self.len]
     }
 
+    /// Records that the first `written` bytes of [`Self::pending`] were written.
     pub(super) fn advance(&mut self, written: usize) {
         self.written = self.len.min(self.written.saturating_add(written));
     }
@@ -53,6 +60,7 @@ impl<const N: usize> Outgoing<N> {
         self.written == 0
     }
 
+    /// Drops the message, written or not.
     pub(super) fn clear(&mut self) {
         self.len = 0;
         self.written = 0;
