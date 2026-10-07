@@ -107,6 +107,10 @@ pub enum Error {
     /// accepted.
     #[error("the PDU does not fit the tester's buffer")]
     MessageTooLarge,
+    /// The PDU is empty, which a diagnostic message cannot carry (ISO 13400-2:2019
+    /// Table 21); it was not accepted.
+    #[error("the PDU is empty")]
+    EmptyPdu,
     /// There is no connection: it closed, or a reconnect failed. Reconnect to continue.
     #[error("not connected")]
     NotConnected,
@@ -543,6 +547,7 @@ impl<C: TcpConnect, const N: usize> DiagnosticConnection for Tester<'_, C, N> {
     /// - [`Error::RequestPending`] until an earlier request's confirm has been reported.
     /// - [`Error::MessageTooLarge`] for a `pdu` longer than
     ///   [`MAX_PDU`](DiagnosticConnection::MAX_PDU).
+    /// - [`Error::EmptyPdu`] for an empty `pdu`.
     #[expect(
         clippy::unused_async_trait_impl,
         reason = "accepting on the first poll is the contract"
@@ -558,6 +563,9 @@ impl<C: TcpConnect, const N: usize> DiagnosticConnection for Tester<'_, C, N> {
         }
         if self.exchange.outstanding.is_some() || self.owed.is_some() {
             return Err(Error::RequestPending);
+        }
+        if pdu.is_empty() {
+            return Err(Error::EmptyPdu);
         }
         let message = Message::diagnostic_message(VERSION, self.sa.address(), ta, pdu);
         self.outgoing

@@ -872,6 +872,28 @@ fn a_pdu_longer_than_max_pdu_is_refused() {
     );
 }
 
+/// ISO 13400-2:2019 Table 21: a diagnostic message carries at least one byte of user
+/// data, so an empty PDU is refused rather than sent for the entity to NACK and close
+/// the connection over.
+#[test]
+fn an_empty_pdu_is_refused() {
+    let _clock = clock();
+    let stack = MockStack::new(usize::MAX);
+    let mut tester = active(&stack);
+
+    assert_eq!(
+        run(tester.request(ENTITY, TaType::Physical, &[])).unwrap_err(),
+        Error::EmptyPdu
+    );
+    let mut buf = [0; 16];
+    {
+        let mut waiting = pin!(tester.next_event(&mut buf, None));
+        assert!(until_stalled(waiting.as_mut()).is_none());
+    }
+    assert_eq!(stack.latest().take_written(), []);
+    request(&mut tester).unwrap();
+}
+
 /// `request` completes on its first poll, so a request is accepted exactly when it
 /// returned `Ok`: one dropped unpolled queued nothing.
 #[test]
