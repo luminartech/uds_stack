@@ -630,19 +630,22 @@ impl core::fmt::Display for TesterAddress {
 ///
 /// ```
 /// use simple_doip::LogicalAddress;
-/// use simple_doip::service::EntityConfig;
+/// use simple_doip::service::{EntityConfig, TesterAddress};
 ///
 /// let config = EntityConfig::default();
 /// assert!(config.accepts(LogicalAddress(0x0E00)));
 /// assert!(!config.accepts(LogicalAddress(0x0E80)));
 ///
-/// let config = EntityConfig::new([LogicalAddress(0x0E00), LogicalAddress(0x0E80)])?;
+/// let config = EntityConfig::new([
+///     TesterAddress::new(LogicalAddress(0x0E00))?,
+///     TesterAddress::new(LogicalAddress(0x0E80))?,
+/// ]);
 /// assert!(config.accepts(LogicalAddress(0x0E80)));
 /// # Ok::<(), simple_doip::service::NotATesterAddress>(())
 /// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct EntityConfig<const TESTERS: usize = 1> {
-    accepted_testers: [LogicalAddress; TESTERS],
+    accepted_testers: [TesterAddress; TESTERS],
 }
 
 impl<const TESTERS: usize> EntityConfig<TESTERS> {
@@ -651,29 +654,18 @@ impl<const TESTERS: usize> EntityConfig<TESTERS> {
     /// # Arguments
     ///
     /// * `accepted_testers` - the tester source addresses that may activate routing.
-    ///
-    /// # Errors
-    ///
-    /// [`NotATesterAddress`] for the first of `accepted_testers` outside the client
-    /// range.
-    pub const fn new(
-        accepted_testers: [LogicalAddress; TESTERS],
-    ) -> Result<Self, NotATesterAddress> {
+    #[must_use]
+    pub const fn new(accepted_testers: [TesterAddress; TESTERS]) -> Self {
         const { assert!(TESTERS > 0, "an entity must accept at least one tester") };
-        let mut i = 0;
-        while i < TESTERS {
-            if let Err(error) = TesterAddress::new(accepted_testers[i]) {
-                return Err(error);
-            }
-            i += 1;
-        }
-        Ok(Self { accepted_testers })
+        Self { accepted_testers }
     }
 
     /// Whether a tester with source address `sa` may activate routing.
     #[must_use]
     pub fn accepts(&self, sa: LogicalAddress) -> bool {
-        self.accepted_testers.contains(&sa)
+        self.accepted_testers
+            .iter()
+            .any(|tester| tester.address() == sa)
     }
 }
 
@@ -681,7 +673,7 @@ impl Default for EntityConfig {
     /// Accepts the one tester `0x0E00`.
     fn default() -> Self {
         Self {
-            accepted_testers: [LogicalAddress(0x0E00)],
+            accepted_testers: [TesterAddress(LogicalAddress(0x0E00))],
         }
     }
 }
@@ -785,21 +777,38 @@ mod tests {
     }
 
     /// A functional group address, like the `0xE400` this crate once offered as a tester
-    /// address, is refused at construction, as is anything else outside the client
-    /// range at either edge.
+    /// address, is not a tester's, nor is anything else outside the client range at
+    /// either edge.
     #[test]
-    fn an_entity_config_refuses_an_address_outside_the_client_range() {
+    fn a_tester_address_is_one_in_the_client_range() {
         for address in [0xE400, 0x0DFF, 0x1000] {
             assert_eq!(
-                EntityConfig::new([LogicalAddress(0x0E00), LogicalAddress(address)]),
+                TesterAddress::new(LogicalAddress(address)),
                 Err(NotATesterAddress {
                     address: LogicalAddress(address)
                 }),
                 "{address:#06X}"
             );
         }
-        assert!(
-            EntityConfig::new([LogicalAddress(0x0E00), LogicalAddress(0x0FFF)]).is_ok()
-        );
+        for address in [0x0E00, 0x0FFF] {
+            assert!(TesterAddress::new(LogicalAddress(address)).is_ok());
+        }
+    }
+
+    /// An entity's configuration is built from proven tester addresses, so it cannot
+    /// fail, and a `const` one is written as such.
+    #[test]
+    fn an_entity_config_accepts_the_testers_it_was_given() {
+        const fn tester(address: u16) -> TesterAddress {
+            match TesterAddress::new(LogicalAddress(address)) {
+                Ok(tester) => tester,
+                Err(_) => panic!("a tester address"),
+            }
+        }
+        const CONFIG: EntityConfig<2> = EntityConfig::new([tester(0x0E00), tester(0x0E80)]);
+
+        assert!(CONFIG.accepts(LogicalAddress(0x0E00)));
+        assert!(CONFIG.accepts(LogicalAddress(0x0E80)));
+        assert!(!CONFIG.accepts(LogicalAddress(0x0E01)));
     }
 }
