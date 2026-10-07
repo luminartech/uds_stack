@@ -24,7 +24,6 @@ pub static STRAY: [u8; 2] = [0x3E, 0x00];
 pub enum Tester {
     Connects(LogicalAddress),
     Sends(LogicalAddress, Vec<u8>),
-    SendsUnmodelled(LogicalAddress, u16, Vec<u8>),
     Leaves(LogicalAddress),
     /// Sends a request the entity reports from memory other than the buffer it was
     /// lent ([`STRAY`]), breaking its contract.
@@ -228,16 +227,6 @@ impl<const MCTS: usize> DiagnosticEntity for MockEntity<MCTS> {
                             pdu: delivered,
                             length: pdu.len(),
                         }
-                    });
-                }
-                Tester::SendsUnmodelled(sa, payload_type, data) => {
-                    let connection = Self::id(self.slot_of(sa).unwrap());
-                    let delivered = &mut buf[..data.len()];
-                    delivered.copy_from_slice(&data);
-                    return Ok(EntityEvent::Unmodelled {
-                        connection,
-                        payload_type,
-                        data: delivered,
                     });
                 }
                 Tester::SendsOutsideBuffer(sa) => {

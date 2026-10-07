@@ -212,7 +212,9 @@ async fn echo_until_idle<E: DiagnosticEntity>(entity: &mut E) -> Vec<EntityEvent
             EntityEvent::Closed { connection } => {
                 seen.push(EntityEvent::Closed { connection });
             }
-            other => panic!("unexpected {other:?}"),
+            other @ EntityEvent::IndicationTruncated { .. } => {
+                panic!("unexpected {other:?}")
+            }
         }
     }
 }

@@ -466,10 +466,10 @@ truncated event carries.
 **Periodic responses.** A server sends them as payload type `0x8004`
 (REQ 7.7, REQ 7.16), outside the request/response correlation path, and does not
 reset `tS3_Server` on them (REQ 7.20). Nothing here can send one yet
-([§9.2](#92-design-gaps-in-this-crate)). One that arrives reaches this crate as
-`simple_doip`'s `EntityEvent::Unmodelled` (or `UnmodelledTruncated`, if it is too
-long for the buffer) and is ignored, since a server has no
-use for it; surfacing it as `TransportEvent::Periodic` belongs to the client
+([§9.2](#92-design-gaps-in-this-crate)). One that a tester sends never reaches
+this crate: a server has no use for it, `simple_doip`'s `EntityEvent` has no event
+for it, and the entity answers it with a generic header NACK (ISO 13400-2:2019
+REQ 7.DoIP-042). Surfacing one as `TransportEvent::Periodic` belongs to the client
 role, which is not built.
 
 ## 8. Two different graphs

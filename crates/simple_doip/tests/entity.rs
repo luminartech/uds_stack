@@ -61,17 +61,6 @@ enum Ev {
         pdu: Vec<u8>,
         length: usize,
     },
-    Unmodelled {
-        connection: usize,
-        payload_type: u16,
-        data: Vec<u8>,
-    },
-    UnmodelledTruncated {
-        connection: usize,
-        payload_type: u16,
-        data: Vec<u8>,
-        length: usize,
-    },
     Confirm {
         sa: LogicalAddress,
         ta: LogicalAddress,
@@ -105,26 +94,6 @@ fn owned(event: EntityEvent<'_>) -> Ev {
         } => Ev::Truncated {
             connection: connection.index(),
             pdu: pdu.to_vec(),
-            length,
-        },
-        EntityEvent::Unmodelled {
-            connection,
-            payload_type,
-            data,
-        } => Ev::Unmodelled {
-            connection: connection.index(),
-            payload_type,
-            data: data.to_vec(),
-        },
-        EntityEvent::UnmodelledTruncated {
-            connection,
-            payload_type,
-            data,
-            length,
-        } => Ev::UnmodelledTruncated {
-            connection: connection.index(),
-            payload_type,
-            data: data.to_vec(),
             length,
         },
         EntityEvent::Confirm {

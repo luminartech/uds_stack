@@ -397,20 +397,19 @@ impl<E: DiagnosticEntity, const MCTS: usize> UdsTransport for DoIpTransport<E, M
             let inbound = classify(event, buffer_start)
                 .map_err(|PduOutsideBuffer| Error::PduOutsideBuffer)?;
             match inbound {
-                None => {}
-                Some(Inbound::Ind { connection, ai, at }) => {
+                Inbound::Ind { connection, ai, at } => {
                     break (connection, ai, at, None);
                 }
-                Some(Inbound::TooLong {
+                Inbound::TooLong {
                     connection,
                     ai,
                     at,
                     declared,
-                }) => break (connection, ai, at, Some(declared)),
-                Some(Inbound::Conf { ai, result }) => {
+                } => break (connection, ai, at, Some(declared)),
+                Inbound::Conf { ai, result } => {
                     return Ok(self.confirm(ai, result).await);
                 }
-                Some(Inbound::Closed { connection }) => {
+                Inbound::Closed { connection } => {
                     if let Some(tester) = self.forget(connection) {
                         return Ok(TransportEvent::Closed {
                             peer: from_logical(tester.address),
@@ -418,7 +417,7 @@ impl<E: DiagnosticEntity, const MCTS: usize> UdsTransport for DoIpTransport<E, M
                         });
                     }
                 }
-                Some(Inbound::Deadline) => return Ok(TransportEvent::Deadline),
+                Inbound::Deadline => return Ok(TransportEvent::Deadline),
             }
         };
         self.register(connection, to_logical(ai.sa));

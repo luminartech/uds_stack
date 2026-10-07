@@ -387,28 +387,6 @@ pub enum EntityEvent<'b> {
         /// The outcome; [`DoIpResult::Ok`] where the request was written.
         result: DoIpResult,
     },
-    /// A valid message of a payload type this crate does not model; see
-    /// [`ConnectionEvent::Unmodelled`].
-    Unmodelled {
-        /// The connection the message arrived on.
-        connection: ConnectionId,
-        /// The message's payload type, as on the wire.
-        payload_type: u16,
-        /// The payload, in the caller's buffer.
-        data: &'b [u8],
-    },
-    /// A valid message of a payload type this crate does not model, longer than the
-    /// caller's buffer or the connection's; see [`ConnectionEvent::UnmodelledTruncated`].
-    UnmodelledTruncated {
-        /// The connection the message arrived on.
-        connection: ConnectionId,
-        /// The message's payload type, as on the wire.
-        payload_type: u16,
-        /// The leading bytes of the payload that fit both buffers.
-        data: &'b [u8],
-        /// The whole payload's length, from the message's header.
-        length: usize,
-    },
     /// `connection` closed other than by [`DiagnosticEntity::close`]: the tester closed
     /// it, or the entity did on an error or a timeout.
     ///
