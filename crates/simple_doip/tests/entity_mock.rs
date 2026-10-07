@@ -41,7 +41,7 @@ struct Slot {
 struct MockEntity<const MCTS: usize> {
     script: VecDeque<Tester>,
     table: [Option<Slot>; MCTS],
-    confirms: VecDeque<(LogicalAddress, TaType, DoIpResult)>,
+    confirms: VecDeque<(LogicalAddress, LogicalAddress, TaType, DoIpResult)>,
     wire: Vec<Wire>,
 }
 
@@ -71,7 +71,8 @@ impl<const MCTS: usize> MockEntity<MCTS> {
         };
         while let Some((ta_type, pdu)) = slot.outbound.pop_front() {
             self.wire.push(Wire::Data(Self::id(index), pdu));
-            self.confirms.push_back((slot.sa, ta_type, DoIpResult::Ok));
+            self.confirms
+                .push_back((ENTITY, slot.sa, ta_type, DoIpResult::Ok));
         }
     }
 }
@@ -82,22 +83,35 @@ impl<const MCTS: usize> MockEntity<MCTS> {
 )]
 impl<const MCTS: usize> DiagnosticEntity for MockEntity<MCTS> {
     type Error = core::convert::Infallible;
+    const CONNECTIONS: usize = MCTS;
 
     async fn request(
         &mut self,
+        sa: LogicalAddress,
         ta: LogicalAddress,
         ta_type: TaType,
         pdu: &[u8],
     ) -> Result<(), Self::Error> {
+        if sa != ENTITY {
+            self.confirms
+                .push_back((sa, ta, ta_type, DoIpResult::UnknownSa));
+            return Ok(());
+        }
         match self.slot_of(ta) {
             Some(index) => self.table[index]
                 .as_mut()
                 .unwrap()
                 .outbound
                 .push_back((ta_type, pdu.to_vec())),
-            None => self.confirms.push_back((ta, ta_type, DoIpResult::NoSocket)),
+            None => self
+                .confirms
+                .push_back((sa, ta, ta_type, DoIpResult::NoSocket)),
         }
         Ok(())
+    }
+
+    fn now(&self) -> u32 {
+        0
     }
 
     async fn next_event<'b>(
@@ -108,9 +122,9 @@ impl<const MCTS: usize> DiagnosticEntity for MockEntity<MCTS> {
         for index in 0..MCTS {
             self.flush(index);
         }
-        if let Some((ta, ta_type, result)) = self.confirms.pop_front() {
+        if let Some((sa, ta, ta_type, result)) = self.confirms.pop_front() {
             return Ok(EntityEvent::Confirm {
-                sa: ENTITY,
+                sa,
                 ta,
                 ta_type,
                 result,
@@ -180,8 +194,8 @@ async fn echo_until_idle<E: DiagnosticEntity>(entity: &mut E) -> Vec<EntityEvent
     loop {
         let mut buf = [0u8; 16];
         match entity.next_event(&mut buf, Some(0)).await.unwrap() {
-            EntityEvent::Indication { sa, pdu, .. } => {
-                entity.request(sa, TaType::Physical, pdu).await.unwrap();
+            EntityEvent::Indication { sa, ta, pdu, .. } => {
+                entity.request(ta, sa, TaType::Physical, pdu).await.unwrap();
             }
             EntityEvent::Deadline => return seen,
             EntityEvent::Confirm {
@@ -251,7 +265,7 @@ async fn a_request_to_a_tester_that_has_left_is_confirmed_no_socket() {
     );
 
     entity
-        .request(TESTER, TaType::Physical, &[0x7E, 0x00])
+        .request(ENTITY, TESTER, TaType::Physical, &[0x7E, 0x00])
         .await
         .unwrap();
 
@@ -284,7 +298,7 @@ async fn the_prescribed_close_follows_the_response_and_reports_nothing() {
     };
 
     entity
-        .request(sa, TaType::Physical, &[0x50, 0x02])
+        .request(ENTITY, sa, TaType::Physical, &[0x50, 0x02])
         .await
         .unwrap();
     entity.close(connection).await.unwrap();

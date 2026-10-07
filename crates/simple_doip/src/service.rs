@@ -16,12 +16,11 @@
 //!
 //! # Time
 //!
-//! Every deadline here is on one clock, `embassy-time`'s: an `embassy_time::Instant`
-//! in milliseconds (`Instant::as_millis`), truncated to 32 bits and wrapping. An
-//! implementor and its caller each read that clock directly, which is why neither
-//! trait reports the time, and why a deadline computed by the caller means the same
-//! instant to the implementor. An implementation whose timers run on any other clock
-//! does not meet these traits' contract.
+//! Every deadline here is on the implementor's own clock, which it reports as
+//! [`DiagnosticConnection::now`] or [`DiagnosticEntity::now`]: milliseconds,
+//! truncated to 32 bits and wrapping. The caller computes its deadlines from that
+//! reading, so a deadline means the same instant to the implementor whatever clock
+//! it runs on, and nothing here names a time source.
 
 use core::future::Future;
 
@@ -74,8 +73,10 @@ pub enum DoIpResult {
 /// subslice of the buffer passed to [`DiagnosticConnection::next_event`] that it
 /// occupies, so the connection is free to be used again while the PDU is still live —
 /// which is what lets a server answer the request it has just received.
+///
+/// Exhaustive: an event added later is a change every caller must handle, so it stops
+/// their build rather than reaching a wildcard arm.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[non_exhaustive]
 pub enum ConnectionEvent<'b> {
     /// `DoIP_Data.indication`: a diagnostic message arrived (ISO 13400-2:2019 8.3.3).
     ///
@@ -196,6 +197,10 @@ pub trait DiagnosticConnection {
         pdu: &[u8],
     ) -> impl Future<Output = Result<(), Self::Error>>;
 
+    /// The current time on the clock `deadline_ms` is on: milliseconds, truncated to
+    /// 32 bits and wrapping.
+    fn now(&self) -> u32;
+
     /// The next event, written into `buf`, or [`ConnectionEvent::Deadline`] if
     /// `deadline_ms` passes first.
     ///
@@ -204,10 +209,8 @@ pub trait DiagnosticConnection {
     /// # Arguments
     ///
     /// * `buf` - where a PDU is delivered; the event borrows it.
-    /// * `deadline_ms` - when to stop waiting, on the clock this module's time is
-    ///   read from: `embassy-time`'s, in milliseconds, truncated to 32 bits and
-    ///   wrapping. It may already have
-    ///   passed. `None` waits for an event alone.
+    /// * `deadline_ms` - when to stop waiting, on [`Self::now`]'s clock. It may
+    ///   already have passed. `None` waits for an event alone.
     ///
     /// # Errors
     ///
@@ -232,15 +235,14 @@ impl ConnectionId {
     ///
     /// # Arguments
     ///
-    /// * `index` - the slot, below the entity's maximum number of concurrent
-    ///   connections.
+    /// * `index` - the slot, below [`DiagnosticEntity::CONNECTIONS`].
     #[must_use]
     pub const fn new(index: u8) -> Self {
         Self(index)
     }
 
-    /// The connection's slot in the entity's connection table, which is below the
-    /// entity's maximum number of concurrent connections.
+    /// The connection's slot in the entity's connection table, which is below
+    /// [`DiagnosticEntity::CONNECTIONS`].
     #[must_use]
     pub const fn index(self) -> usize {
         self.0 as usize
@@ -251,9 +253,8 @@ impl ConnectionId {
 ///
 /// [`ConnectionEvent`]'s variants, with the [`ConnectionId`] each arrived on wherever one
 /// did. **The lifetime is the caller's buffer, never the entity**, exactly as for
-/// [`ConnectionEvent`].
+/// [`ConnectionEvent`]. Exhaustive, as [`ConnectionEvent`] is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[non_exhaustive]
 pub enum EntityEvent<'b> {
     /// `DoIP_Data.indication` on `connection`; see [`ConnectionEvent::Indication`].
     Indication {
@@ -294,7 +295,7 @@ pub enum EntityEvent<'b> {
     /// Carries no [`ConnectionId`]: a request whose target no connection registered was
     /// carried by none, and is confirmed all the same.
     Confirm {
-        /// The source address of the confirmed request: the entity's own.
+        /// The source address of the confirmed request.
         sa: LogicalAddress,
         /// The target address of the confirmed request.
         ta: LogicalAddress,
@@ -345,23 +346,46 @@ pub enum EntityEvent<'b> {
 ///   whose target no connection registered, confirmed with [`DoIpResult::NoSocket`],
 ///   and one whose connection closed before it was written.
 ///
-/// And one of its own: **the connection table changes only inside [`Self::next_event`]
-/// and [`Self::close`]**, so a [`ConnectionId`] the caller holds keeps naming its
-/// connection between the two calls that could end it.
+/// And three of its own:
+///
+/// - **Requests to one target are confirmed in the order they were made.** An
+///   [`EntityEvent::Confirm`] carries only the addressing, which every request to that
+///   target shares, so its order is what tells the layer above which request it
+///   confirms.
+/// - **The connection table changes only inside [`Self::next_event`] and
+///   [`Self::close`]**, so a [`ConnectionId`] the caller holds keeps naming its
+///   connection between the two calls that could end it.
+/// - **[`Self::close`] is cancel-safe.** A caller dropped while closing calls `close`
+///   again for the same connection, and that call finishes the close: the writes the
+///   first call owed are made once, and the connection leaves the table once. The same
+///   socket condition as for `next_event` applies.
 pub trait DiagnosticEntity {
     /// What this entity's failures are. Never interpreted by the layer above, which can
     /// only report it.
     type Error: core::fmt::Debug;
 
-    /// `DoIP_Data.request`: send `pdu` to `ta` on the connection whose routing
-    /// activation registered `ta` (ISO 13400-2:2019 8.3.1).
+    /// The size of this entity's connection table: every [`ConnectionId`] it reports
+    /// has an index below it.
+    ///
+    /// Every `TCP_DATA` socket the entity supports counts, the reserve one included,
+    /// so a conformant entity serving `n` testers at once declares `n + 1`
+    /// (ISO 13400-2:2019 REQ 4.DoIP-002). Every established socket enters the
+    /// connection table (REQ 3.DoIP-127), and routing is activated on the reserve
+    /// socket when a tester returns without closing its old one (REQ 3.DoIP-092).
+    const CONNECTIONS: usize;
+
+    /// `DoIP_Data.request`: send `pdu` from `sa` to `ta` on the connection whose
+    /// routing activation registered `ta` (ISO 13400-2:2019 8.3.1).
     ///
     /// Routing activation registers each source address on one connection only, so
-    /// the target address alone chooses the connection. The source address is the
-    /// entity's own. Completion is reported by a later [`EntityEvent::Confirm`].
+    /// the target address alone chooses the connection. Completion is reported by a
+    /// later [`EntityEvent::Confirm`]: a request whose `sa` is not one of the
+    /// entity's own logical addresses is accepted, sends nothing, and is confirmed
+    /// with [`DoIpResult::UnknownSa`].
     ///
     /// # Arguments
     ///
+    /// * `sa` - the source, one of the entity's own logical addresses.
     /// * `ta` - the target, a tester's source address.
     /// * `ta_type` - the target's addressing model.
     /// * `pdu` - the PDU to send.
@@ -372,10 +396,15 @@ pub trait DiagnosticEntity {
     /// target no connection registered is not an error.
     fn request(
         &mut self,
+        sa: LogicalAddress,
         ta: LogicalAddress,
         ta_type: TaType,
         pdu: &[u8],
     ) -> impl Future<Output = Result<(), Self::Error>>;
+
+    /// The current time on the clock `deadline_ms` is on: milliseconds, truncated to
+    /// 32 bits and wrapping.
+    fn now(&self) -> u32;
 
     /// The next event on any connection, written into `buf`, or
     /// [`EntityEvent::Deadline`] if `deadline_ms` passes first.
@@ -385,7 +414,8 @@ pub trait DiagnosticEntity {
     /// # Arguments
     ///
     /// * `buf` - where a PDU is delivered; the event borrows it.
-    /// * `deadline_ms` - as for [`DiagnosticConnection::next_event`]. The entity's own
+    /// * `deadline_ms` - when to stop waiting, on [`Self::now`]'s clock. It may
+    ///   already have passed. `None` waits for an event alone. The entity's own
     ///   timers run whatever it is.
     ///
     /// # Errors
@@ -398,9 +428,10 @@ pub trait DiagnosticEntity {
         deadline_ms: Option<u32>,
     ) -> impl Future<Output = Result<EntityEvent<'b>, Self::Error>>;
 
-    /// Close `connection` in an orderly way, as ISO 14229-5:2022 REQ 7.9 and REQ 7.11
-    /// require of a server after a positive `DiagnosticSessionControl` or `ECUReset`
-    /// response.
+    /// Close `connection` in an orderly way, as ISO 14229-5:2022 REQ 7.11 requires of a
+    /// server after a positive `ECUReset` response, and REQ 7.9 after a positive
+    /// `DiagnosticSessionControl` response to a session change that leaves the software
+    /// it is running.
     ///
     /// Everything requested on `connection` before this call is written first; the
     /// future completes once the close has been sent. The connection then leaves the
@@ -411,6 +442,8 @@ pub trait DiagnosticEntity {
     ///
     /// This is the only close the caller can ask for. A close on an error is the
     /// entity's own decision, reported as [`EntityEvent::Closed`].
+    ///
+    /// Cancel-safe, as the trait's obligations require.
     ///
     /// # Arguments
     ///
@@ -536,6 +569,10 @@ mod tests {
             self.sent_len = pdu.len();
             self.confirm = Some((ta, ta_type));
             Ok(())
+        }
+
+        fn now(&self) -> u32 {
+            0
         }
 
         async fn next_event<'b>(

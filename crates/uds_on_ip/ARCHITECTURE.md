@@ -5,16 +5,8 @@ diagnostics stack, and `uds_on_ip`'s place in it. It is a design document rather
 than a description of the code, and [§9](#9-gap-analysis) records the distance
 between the two.
 
-That distance has changed direction. When this was first written the code
-predated the design and the gaps were things not yet built. The crate has since
-been rewritten against these boundaries, and the failure mode inverted: on
-2026-09-21 several sections were found describing a design that had been
-*replaced* — a `SessionLayer` trait declared here, a `RequestHandler` byte seam
-declared here, `uds_services` reaching a transport through a feature gate, and
-this crate wrapping the session layer. All four were reversed when `uds_services`
-took the driver role and declared the transport seam, and this document did not
-follow. The corrections are marked in place rather than silently applied, because
-a reader who learned the old shape from an earlier read needs to know it changed.
+It describes the design as it stands; the repository's history records how it
+got there.
 
 It exists so that `uds_session`, `uds_services`, and `uds_on_ip` can be designed
 in parallel against one agreed set of boundaries.
@@ -39,13 +31,11 @@ in parallel against one agreed set of boundaries.
 > conversion splits `REQ 4.4` across a table cell and line-breaks `REQ 5.9`'s
 > heading. If you cannot check a citation, delete it rather than soften it.
 >
-> Re-checked on 2026-09-21 for the sections rewritten that day. Two claims
-> arrived second-hand from a neighbouring crate's brief — that ISO 13400-2 puts
-> the routing activation request on the client entity, and that closing a TCP
-> connection is an ISO 13400-2 mechanism. Both are load-bearing for
-> [§3.6](#36-when-and-what), and neither locator is carried here, because
-> neither was checked against a copy of the standard. The claims are attributed
-> where they are used.
+> Re-checked on 2026-10-06 for the sections changed that day: ISO 14229-5:2022
+> REQ 7.7–7.20 and clause 8.8, and ISO 13400-2:2019 REQ 4.DoIP-002,
+> REQ 3.DoIP-092, REQ 3.DoIP-127, REQ 7.DoIP-072 and REQ 7.DoIP-073. One claim
+> in [§3.6](#36-when-and-what) is carried without a locator: that closing a TCP
+> connection is an ISO 13400-2 mechanism.
 >
 > This repository contains no copy of any ISO standard, and the standards
 > remain ISO's; nothing here reproduces their text at length.
@@ -112,14 +102,9 @@ for them, or it is a bare-metal-only convenience that should be documented as
 not composing with that path. Deciding it is a prerequisite for the server role,
 not a detail of it.
 
-It also blocks the connection seam of
-[§4.2](#42-connection-seam--uds_on_ip--simple_doip-proposed): if the only way to
-reach a `no_std` DoIP connection is through an entity that dispatches UDS
-itself, this crate cannot sit on it without a second dispatcher underneath.
-
-An earlier draft described the collision as being with a `RequestHandler` seam
-declared in *this* crate. That trait is deleted; the collision is unchanged and
-is now with `uds_services`' seam instead.
+The connection seam of [§4.2](#42-connection-seam--uds_on_ip--simple_doip) does
+not pass through it: `simple_doip::service::DiagnosticEntity` is declared beside
+the bare-metal entity, and carries no dispatch of its own.
 
 ### 3.2 `uds_protocol` — ISO 14229-1 messages
 
@@ -153,28 +138,32 @@ Owns three things:
    and enhanced reload parameters (ISO 14229-2:2021 REQ 5.11). It supplies the
    *values*; `uds_session::Reloads` is the type, and is not redeclared here.
 2. **Primitive adaptation.** The `T_PDU` ↔ `DoIP_PDU` parameter mapping
-   (ISO 14229-5:2022 REQ 4.3, REQ 4.4, Tables 4 and 5). Most importantly it
-   derives `T_Data.conf` from the DoIP **acknowledgement** (`0x8002`/`0x8003`),
-   not from the act of sending — because `tP_Client` starts on `T_Data.conf`
-   (ISO 14229-2:2021 REQ 5.9).
-3. **The UDSonIP profile.** REQ 7.8–7.11 (TCP close and re-activation around
-   `DiagnosticSessionControl` and `ECUReset`), REQ 7.16 (`0x8004` periodic
-   responses) and REQ 7.17 (periodic record length limit). REQ 7.20 — that
-   unsolicited responses must not reset `tS3_Server` — is a constraint this
-   crate must *honour* by routing `0x8004` outside the request/response path,
-   but the timer it protects belongs to `uds_session` ([§6](#6-timing-ownership)).
+   (ISO 14229-5:2022 REQ 4.3, REQ 4.4, Tables 4 and 5): `T_Data.conf` is
+   `DoIP_Data.confirm`, whose `DoIP_Result` becomes the `T_Result`. For a
+   tester's request `simple_doip` raises that confirm from the DoIP
+   **acknowledgement** (`0x8002`/`0x8003`), not from the act of sending —
+   because `tP_Client` starts on `T_Data.conf` (ISO 14229-2:2021 REQ 5.9); for
+   an entity's response, which a tester does not acknowledge, from the
+   completed write.
+3. **The UDSonIP profile.** REQ 7.8–7.11: TCP close and re-activation around
+   `DiagnosticSessionControl` and `ECUReset`. The periodic-response
+   requirements — REQ 7.7 and REQ 7.16 (payload type `0x8004`) and REQ 7.17
+   (record length) — are this crate's too, and are not implemented
+   ([§9.2](#92-design-gaps-in-this-crate)). REQ 7.20, that an unsolicited
+   response does not reset `tS3_Server`, constrains that send path, but the
+   timer it protects belongs to `uds_session` ([§6](#6-timing-ownership)).
 
-**It does not own channel storage.** An earlier draft listed that fourth,
-because `uds_session` requires per-channel storage from its caller and this
-crate was then the caller. It is not: `uds_services::Server` holds the session
-layer by value and the storage with it (`store: <A::Store as Storage>::EMPTY`).
+**It does not own channel storage.** `uds_session` requires per-channel storage
+from its caller, and the caller is `uds_services::Server`, which holds the
+session layer by value and the storage with it
+(`store: <A::Store as Storage>::EMPTY`).
 
 **Must not learn what a service is.** No data identifier, routine identifier, or
 service-specific policy belongs here.
 
 The exception is narrow, forced, and exhaustively listed: clause 8 keys TCP
 connection handling on two service identifiers, `DiagnosticSessionControl` and
-`ECUReset`, in both their request and positive-response forms. That is not
+`ECUReset`, in their request forms, and on `ECUReset`'s positive response. That is not
 service *semantics* — it is a clause 8 rule that happens to be keyed on a
 service, and the identifiers themselves are derived from `uds_protocol`'s
 `UdsServiceType` rather than written here as bytes. See
@@ -190,11 +179,9 @@ actions, and calls a transport through the trait it declares.
 `UDSS_LLR_0029` fixes the role at creation, so a node acting as both holds two
 instances rather than one session object.
 
-**Declares the transport seam, and implements no transport.** An earlier draft
-said this crate "must not name a transport" and reached one through a
-`doip = ["dep:uds_on_ip"]` feature. Both are false and the reversal was
-deliberate: `uds_services` declares `UdsTransport`, `uds_on_ip` implements it,
-and the Cargo edge runs from the implementor up to the declarer
+**Declares the transport seam, and implements no transport.** `uds_services`
+declares `UdsTransport`, `uds_on_ip` implements it, and the Cargo edge runs from
+the implementor up to the declarer
 ([§4.1](#41-transport-seam--uds_services--uds_on_ip)).
 
 **Must not acquire a transport's protocol.** The test is the one that crate
@@ -211,24 +198,31 @@ question. Stating the rule once means the next one does not have to be.
 > **ISO 14229-5 decides *when*. ISO 13400-2 performs *what*.**
 
 - **Reconnect and repeat routing activation** (REQ 7.8, 7.10) — `uds_on_ip`
-  sequences it, `simple_doip` performs it. Routing activation is
-  ISO 13400-2's procedure, and it is the *client* entity that sends the routing
-  activation request — so a server has nothing to sequence. `uds_services`
-  quote ISO 13400-2 to that effect (2026-09-21); the locator is not carried here
-  because it has not been checked against a copy of the standard, and this
-  document does not repeat numbers it has not verified.
+  sequences it, `simple_doip` performs it. Both requirements put the new
+  connection and routing activation before diagnostic communication continues,
+  and routing activation is ISO 13400-2's procedure, in which the *client*
+  entity sends the request — so a server has nothing to sequence.
 - **Close after a positive response** (REQ 7.9, 7.11) — `uds_on_ip` decides,
   `simple_doip` closes. Closing a TCP connection is an ISO 13400-2 mechanism;
   the rule that a close follows *this particular* response is ISO 14229-5's.
-- **Periodic responses** (REQ 7.16) — `simple_doip` delivers the bytes of a
-  payload type it does not model, `uds_on_ip` interprets `0x8004`.
-  ISO 13400-2:2019 stops at `0x8003`.
+  REQ 7.11's close follows every positive `ECUReset` response. REQ 7.9's
+  follows a positive `DiagnosticSessionControl` response only where the session
+  change disconnects — where the server leaves the software it is running, as
+  an application entering its bootloader does — and that fact is the server's
+  own, so the server states it and `uds_on_ip` decides what follows.
+- **Periodic responses** (REQ 7.7, 7.16) — `uds_on_ip` chooses payload type
+  `0x8004`, `simple_doip` sends it. The type is ISO 14229-5's; ISO 13400-2:2019
+  stops at `0x8003`. Neither half is built
+  ([§9.2](#92-design-gaps-in-this-crate)).
 - **Which `tP_Client` reload pair** (REQ 5.11) — `uds_on_ip` chooses,
   `uds_session` runs the timer.
 
 The rule also says what must *not* happen. `uds_services` never decides when a
-connection closes: knowing that REQ 7.9 requires one is ISO 14229-5 knowledge,
-and a flag it set would carry the requirement, not just the plumbing. And
+connection closes: knowing that REQ 7.9 or 7.11 requires one is ISO 14229-5
+knowledge, and a "close" flag it set would carry the requirement, not just the
+plumbing. What it carries instead is the server's statement that it leaves its
+running software after this response — an ISO 14229-1 fact about the server,
+true on any transport, from which this crate derives REQ 7.9's close. And
 `simple_doip` never recognises a service identifier to decide it for itself —
 that is [§13](#13-invariants-to-preserve) invariant 2, already listed as
 violated and awaiting restoration.
@@ -256,7 +250,7 @@ pub trait UdsTransport {
     type Error: core::fmt::Debug;
     const MAX_PDU: usize = usize::MAX;
 
-    fn t_data_req(&mut self, ai: Ai, data: &[u8])
+    fn t_data_req(&mut self, ai: Ai, data: &[u8], after: AfterSend)
         -> impl Future<Output = Result<(), Self::Error>>;
     fn next_event<'b>(&mut self, buffer: &'b mut [u8], deadline: Option<Timestamp>)
         -> impl Future<Output = Result<TransportEvent<'b>, Self::Error>>;
@@ -267,16 +261,15 @@ pub trait UdsTransport {
 }
 ```
 
-Three properties of this shape are load-bearing and were each arrived at by
-getting them wrong first:
+Three properties of this shape are load-bearing:
 
-- **The event borrows the driver's buffer, never the transport.** An earlier
-  `TransportEvent<'a>` borrowed from `&'a mut self`, which kept the transport
-  mutably borrowed for as long as the message lived — so a server could never
+- **The event borrows the driver's buffer, never the transport.** A
+  `TransportEvent<'a>` borrowing `&'a mut self` would keep the transport
+  mutably borrowed for as long as the message lived, so a server could never
   answer the request it had just received. Borrowing the `buffer` parameter
-  releases `&mut self` when the future completes. A length-plus-buffer shape
-  was tried in between and is worse than either: it puts the tie in prose and
-  leaves a length that can overstate what was lent.
+  releases `&mut self` when the future completes. A length-plus-buffer shape is
+  worse than either: it puts the tie in prose and leaves a length that can
+  overstate what was lent.
 - **Truncation is a variant, not a flag.** `DataInd { ai, data, .. }` is
   idiomatic destructuring and would silently discard a `truncated` flag,
   leaving a fragment decoded as a whole message. `DataTooLong` cannot be
@@ -287,44 +280,37 @@ getting them wrong first:
   destination at all.
 
 **No close and no reconnect, by decision rather than omission.** A server is
-reconnected *to* and never reconnects — ISO 13400-2 puts sending the routing
-activation request on the client entity — so a `reconnect()` would be a method
+reconnected *to* and never reconnects — ISO 14229-5:2022 REQ 7.8 and REQ 7.10
+have the connection re-established and routing activated anew, and the client
+entity sends the routing activation request — so a `reconnect()` would be a method
 the only existing driver must never call. A `close()` would require `uds_services` to
-know that REQ 7.9 demands one — see [§3.6](#36-when-and-what).
+know that REQ 7.9 demands one — see [§3.6](#36-when-and-what) for what it states
+instead.
 
-### 4.2 Connection seam — `uds_on_ip` → `simple_doip` *(proposed)*
+### 4.2 Connection seam — `uds_on_ip` → `simple_doip`
 
-**Not yet built.** This crate currently holds a socket itself —
-`DoIpTransport<S>`, generic over an unbounded `S` — and that is the largest
-remaining misallocation in the stack. ISO 13400-2 is titled *Transport protocol
-and network layer services*; a TCP connection is its subject matter, not an
-implementation detail of ours. Proposed to `simple_doip` on 2026-09-19.
+**Built for the server role.** ISO 13400-2 is titled *Transport protocol and
+network layer services*; a TCP connection is its subject matter, so the sockets
+are `simple_doip`'s and this crate holds none. `simple_doip::service` declares
+the seam with no I/O in it:
 
-The shape asked for, with the ISO split of [§3.6](#36-when-and-what) visible in
-every method:
+- `DiagnosticEntity` — a whole `DoIP` entity, every connection it has
+  accepted, behind one event stream. `next_event` reports each
+  `DoIP_Data.indication` and `DoIP_Data.confirm` tagged with the
+  `ConnectionId` it arrived on; `request` routes a response by its target
+  address; `close(connection)` performs the close REQ 7.9 and REQ 7.11
+  prescribe — this crate decides *when*, the entity performs *what*.
+  `DoIpTransport<E: DiagnosticEntity, MCTS>` drives it and feeds one
+  `uds_services::Server`, because the session is the server's, not a
+  connection's.
+- `DiagnosticConnection` — one connection, as a tester uses it. This crate's
+  client role over it is not built yet.
 
-```rust
-pub trait DiagnosticConnection {
-    type Error: core::fmt::Debug;
-
-    fn send(&mut self, target: LogicalAddress, data: &[u8])
-        -> impl Future<Output = Result<(), Self::Error>>;
-    fn next_event<'b>(&mut self, buffer: &'b mut [u8], deadline_ms: Option<u32>)
-        -> impl Future<Output = Result<ConnectionEvent<'b>, Self::Error>>;
-
-    /// REQ 7.8 / 7.10 — we sequence, this performs.
-    fn reconnect(&mut self) -> impl Future<Output = Result<(), Self::Error>>;
-    /// REQ 7.9 / 7.11 — we decide, this performs.
-    fn close(&mut self) -> impl Future<Output = Result<(), Self::Error>>;
-
-    fn now(&self) -> u32;
-}
-```
-
-Two constraints are not ours to resolve and are recorded in
-[§9](#9-gap-analysis): the connection must be reachable without
-`bare_metal_entity`'s UDS dispatch callback also being in play, and the client
-role has no `no_std` implementation to grow from.
+This transport's `MCTS` must be at least the entity's `CONNECTIONS`, the size of
+its connection table, reserve socket included (ISO 13400-2:2019 REQ 4.DoIP-002):
+the transport remembers which tester arrived on which connection, so that it can
+close the right one. `DoIpTransport::new` checks the two at compile time, so the
+mismatch cannot reach a running server.
 
 `deadline_ms` is deliberately not a UDS concept. It is `tP6_Client` arriving
 from ISO 14229-2 two layers above, and `simple_doip` must not learn what that
@@ -340,17 +326,12 @@ This crate names `Ai`, `Address`, `Mtype`, `TaType`, `SResult`, `Timestamp` and
 drive the session layer, hold a `Client` or a `Server`, or feed it primitives.
 `uds_services` does all of that ([§3.5](#35-uds_services--iso-14229-1-cl-87)).
 
-This is worth stating because two earlier drafts got it wrong in the same
-direction. One declared a `SessionLayer` trait here with an adapter onto
-`uds_session` behind a feature gate; another described this crate as *wrapping*
-the session layer and driving it from both edges — the "sandwich" of
-[§8.1](#81-protocol-layering). Neither describes the code, and
-`tests/no_upward_seam.rs` now fails the build if either name returns as a live
-declaration.
-
-The protocol layering that produced the sandwich reading is real and unchanged;
-what was wrong was inferring a *crate* boundary from it. See
-[§8.1](#81-protocol-layering).
+This is worth stating because the protocol layering of
+[§8.1](#81-protocol-layering) invites the opposite reading: that this crate
+*wraps* the session layer, driving it from both edges through a `SessionLayer`
+trait declared here. The layering is real, but it is not a crate boundary.
+`tests/no_upward_seam.rs` fails the build if a `SessionLayer` or
+`RequestHandler` trait is declared here.
 
 ## 6. Timing ownership
 
@@ -369,8 +350,8 @@ ownership is stated explicitly.
 
 ### 6.1 Who emits response-pending
 
-Server-side NRC `0x78` had no owner in the first draft of this document, and it
-is the one server-side timing rule that cannot be got wrong: if the server will
+Server-side NRC `0x78` is the one server-side timing rule that cannot be got
+wrong: if the server will
 not answer within `tP2_Server`, it must emit response-pending *before* that
 timer expires, which then grants it `tP2*_Server`.
 
@@ -386,24 +367,18 @@ One consequence for the driver, which is `uds_services`. Dispatch to a handler
 must not block the loop that drains session actions, or the timer cannot fire
 while a handler is executing. `uds_services::Server::step` does this: it races
 the handler against `next_event` and answers an overrun with response-pending
-while the handler keeps running. One gap remains there: a `Closed` event
-arriving while a handler is running is currently absorbed as a clean end of
-exchange (`Responded::Suppressed`), which cannot be the REQ 7.9 flow, because
-at that point no response has gone out. `uds_services` records this against
-its own dispatch pipeline, not against the loop shape.
-
-An earlier draft placed this constraint on a synchronous `RequestHandler` trait
-declared in *this* crate. That trait is deleted
-([§4.3](#43-uds_session-is-vocabulary-not-a-seam)), and the constraint belongs
-to the driver.
+while the handler keeps running. The requesting tester's `Closed`, arriving
+while its handler is running, ends the exchange and abandons the handler; it
+cannot be the REQ 7.9 or 7.11 flow, because at that point no positive response
+has gone out. Another tester's `Closed` ends nothing.
 
 ## 7. Data flow
 
 ### 7.1 Client, physically addressed
 
 The canonical path, and where `uds_on_ip` meets its two neighbours. Every
-participant is a distinct crate: the sandwich an earlier draft drew here is
-gone ([§4.3](#43-uds_session-is-vocabulary-not-a-seam)).
+participant is a distinct crate
+([§4.3](#43-uds_session-is-vocabulary-not-a-seam)).
 
 ```mermaid
 sequenceDiagram
@@ -436,8 +411,7 @@ The step worth dwelling on is 6→7: `tP_Client` starts on the
 in the stack by one network round trip.
 
 That is why `DataConf` is a distinct event rather than `t_data_req` returning
-`Ok(())`. Fusing send and confirm into one future — which the retired
-implementation did — leaves no `T_Data.conf` to name, no separate timestamp to
+`Ok(())`. Fusing send and confirm into one future leaves no `T_Data.conf` to name, no separate timestamp to
 attach to it, and turns a negative acknowledgement into a send *error* rather
 than a negative confirm. A session layer cannot then distinguish "the peer
 refused the message" from "the socket broke".
@@ -469,7 +443,12 @@ re-establishing is `simple_doip`'s ([§3.6](#36-when-and-what)).
 **Server, session change or ECU reset.** The mirror image, and the direction
 that is easy to miss: REQ 7.9 and REQ 7.11 require the *server* to initiate the
 close, after sending the positive response and before executing the service.
-`uds_on_ip` recognises the response going out and asks the connection to close.
+`uds_on_ip` recognises a positive `ECUReset` response going out, or is told by
+`AfterSend::ServerLeaves` that the server leaves its running software after
+this `DiagnosticSessionControl` response, and once that response is confirmed
+sent, closes the connection before reporting the confirmation. The driver
+executes a session change on that confirmation, so the close precedes it. A
+reset it does not yet execute there (see [§9.2](#92-design-gaps-in-this-crate)).
 
 **Server, ordinary request.** A diagnostic message arrives, becomes
 `TransportEvent::DataInd`, and the driver offers it to the session layer, which
@@ -484,9 +463,13 @@ fault: ISO 14229-1 8.7.6 owes that request `busyRepeatRequest` (0x21), and
 composing one needs the service identifier and the addressing, both of which the
 truncated event carries.
 
-**Periodic responses.** Payload type `0x8004` bypasses the request/response
-correlation path entirely and is surfaced as `TransportEvent::Periodic`, without
-resetting `tS3_Server` (REQ 7.16, REQ 7.20).
+**Periodic responses.** A server sends them as payload type `0x8004`
+(REQ 7.7, REQ 7.16), outside the request/response correlation path, and does not
+reset `tS3_Server` on them (REQ 7.20). Nothing here can send one yet
+([§9.2](#92-design-gaps-in-this-crate)). One that arrives reaches this crate as
+`simple_doip`'s `EntityEvent::Unmodelled` and is ignored, since a server has no
+use for it; surfacing it as `TransportEvent::Periodic` belongs to the client
+role, which is not built.
 
 ## 8. Two different graphs
 
@@ -526,16 +509,14 @@ flowchart TB
 Both blue boxes are `uds_on_ip`: ISO 14229-5 specifies content at two OSI
 layers, and one crate implements both.
 
-**That is a statement about the standard, not about the crate graph**, and two
-earlier drafts of this document inferred the wrong thing from it. They called
-this "the sandwich" and concluded that `uds_on_ip` *wraps* `uds_session` and
-drives it from both edges — pushing `S_Data.req` down and feeding `T_Data.conf`
-up. It does neither. `uds_services` holds the session layer and drives it, and
+**That is a statement about the standard, not about the crate graph.** It does
+not follow that `uds_on_ip` *wraps* `uds_session` and drives it from both edges,
+pushing `S_Data.req` down and feeding `T_Data.conf` up. It does neither. `uds_services` holds the session layer and drives it, and
 this crate sits wholly below, reached through `UdsTransport`
 ([§4.3](#43-uds_session-is-vocabulary-not-a-seam)).
 
-The layering is unchanged by that correction: the clause 8 profile really is
-above the session layer and the clause 11 mapping really is below it. What does
+The layering itself holds: the clause 8 profile really is above the session
+layer and the clause 11 mapping really is below it. What does
 not follow is that the crate implementing both must surround the crate between
 them. A driver above all three is what reconciles the two pictures, and is why
 the Cargo graph in [§8.2](#82-cargo-dependency-graph) has no cycle and needs no
@@ -581,19 +562,17 @@ flowchart LR
     class AWC,UP plain
 ```
 
-**`uds_on_ip` is a leaf, and every edge is unconditional.** Both facts are
-corrections. An earlier draft drew `uds_session` and `uds_services` as *optional*
-edges — the first behind a `SessionLayer` adapter feature, the second as
-`doip = ["dep:uds_on_ip"]` pointing the other way. Neither exists. This crate
-depends on `uds_services` to implement its trait, and nothing depends on this
-crate, which is what makes a binding additive at the application.
+**`uds_on_ip` is a leaf, and every edge is unconditional.** No edge sits behind
+a feature. This crate depends on `uds_services` to implement its trait, and
+nothing depends on this crate, which is what makes a binding additive at the
+application.
 
 Acyclic for a structural reason rather than a careful one: each seam is declared
 by the crate that calls through it ([§4](#4-the-seams)), so every edge runs from
-implementor to declarer and none can run back. The proposed connection seam of
-[§4.2](#42-connection-seam--uds_on_ip--simple_doip-proposed) is the one place
+implementor to declarer and none can run back. The connection seam of
+[§4.2](#42-connection-seam--uds_on_ip--simple_doip) is the one place
 this rule cannot be applied — `uds_on_ip` already consumes
-`simple_doip::messages`, so `simple_doip` cannot depend on `uds_on_ip` to
+`simple_doip`'s addressing, so `simple_doip` cannot depend on `uds_on_ip` to
 implement a trait this crate declares. The declaration has to live with
 `simple_doip` instead, and the edge stays as drawn.
 
@@ -712,22 +691,14 @@ Verified against the working tree on 2026-09-21, not recalled. Each entry names
 where it was checked. Re-checked on 2026-09-22, after the workspace merge, for
 the entries this revision touches.
 
-An earlier version of this section analysed `src/client.rs`, `src/session.rs`
-and their siblings. Those files were retired and have since been removed from
-the crate entirely, and it was rewritten against the seams of
-[§4](#4-the-seams); every gap listed there was about code that no longer
-ships. It has been replaced rather than amended.
-
 ### 9.1 Prerequisites — blocking, and not in this crate
 
-- **No `no_std` connection service.** The largest one. `simple_doip`'s
-  socket-owning code sits behind its `codec` feature, which requires `std` and
-  tokio; its `no_std` path, `bare_metal_entity::Entity`, is sans-io by design
-  and tracks no time at all. So for a bare-metal target nothing below this crate
-  owns a socket, which is why this crate currently does
-  ([§4.2](#42-connection-seam--uds_on_ip--simple_doip-proposed)). Every
-  unimplemented body here is blocked on it.
-- **`Entity` is server-only.** A `no_std` client has nothing below it at all.
+- **No socket-backed entity yet.** `DiagnosticEntity` is declared, and this
+  crate's transport runs over it, but the implementation over real sockets —
+  `simple_doip`'s `Entity`, behind its `connection` feature — is separate
+  work. Until it lands, the transport is exercised only over a scripted mock.
+- **The client role has nothing to drive.** `DiagnosticConnection` is declared;
+  its `no_std` tester, and this crate's client role over it, are not built.
 - **Two server seams.** `bare_metal_entity` owns the connection *and* dispatches
   UDS through `Callbacks::on_uds_request: fn(&[u8], &mut [u8]) -> i32`, one
   layer below the seam `uds_services` declares. [§13](#13-invariants-to-preserve)
@@ -737,29 +708,41 @@ ships. It has been replaced rather than amended.
 
 ### 9.2 Design gaps in this crate
 
-- **The socket is held here.** `DoIpTransport<S>` is generic over an unbounded
-  `S`. The misallocation is described in
-  [§4.2](#42-connection-seam--uds_on_ip--simple_doip-proposed); it is listed
-  again here because until it moves, this crate is implementing ISO 13400-2
-  services and [§13](#13-invariants-to-preserve) invariant 1 is violated by this
-  crate too, not only by `simple_doip`.
-- **REQ 7.9 / 7.11 are classified but not triggered.** `profile::after_sending`
-  now reads a message's first octet and records whether a close is owed
-  (`ConnectionAction::ExpectClose` / `InitiateClose`), and `transport.rs` calls
-  it on every send. But `t_data_req` itself is still a `todo!()`, so nothing
-  acts on what it recorded, and there is nowhere below to ask: the connection
-  seam of [§4.2](#42-connection-seam--uds_on_ip--simple_doip-proposed) carries
-  no `close()` yet. Ownership is settled ([§3.6](#36-when-and-what)); the
-  end-to-end mechanism is not.
-- **REQ 7.17 has no home.** The periodic data record length bound is not checked
-  anywhere. It was briefly a free function in `profile` that no caller was
-  obliged to consult and no path could reach, and was deleted until there is a
-  periodic record to bound — at which point the check belongs where the record
-  is accepted rather than beside it.
-- **`0x8004` is decodable but not decoded.** `classify` reads the payload type
-  from the generic header specifically so a periodic response does not reach
-  `Payload::decode` and come back as a wire error, but its body is still a
-  `todo!()` and the `0x8004` payload layout is not yet written down.
+- **A suppressed session change has no orderly close.** REQ 7.9's close
+  follows the positive response to a session change that leaves the running
+  software, which `uds_services` marks `AfterSend::ServerLeaves`. `10 82` sends
+  no response, so nothing carries the mark, and a server that leaves on it drops
+  the connection unannounced. `uds_services` records this at
+  `DiagnosticSessionControl::leaves_running_software`; there is no mechanism,
+  and a client that needs the close must not suppress the response. `11 81`,
+  a suppressed reset, is the same: no `51` is sent, so no close is made.
+- **A reset is not executed on its confirmation.** REQ 7.11 orders the close
+  before the reset. This crate holds the confirmation back until the close is
+  made, but `uds_services` has no hook that runs the reset on that confirmation,
+  and its `EcuReset::reset` must not reset before returning, so an application
+  has no signal that the response was sent and the connection closed. Tracked in
+  `uds_services` as #38.
+- **A server cannot send a periodic response.** REQ 7.7 and REQ 7.16 have it
+  sent as payload type `0x8004`, from the periodic-specific source address.
+  Neither `UdsTransport::t_data_req` nor `DiagnosticEntity::request` can choose
+  a payload type, so `ReadDataByPeriodicIdentifier` cannot be served over this
+  crate. REQ 7.17's record length bound has no home either; it belongs where a
+  periodic record is accepted. A received `0x8004` is ignored, and its payload
+  layout is not written down.
+- **Nothing sends a ResponseOnEvent response.** ISO 14229-5:2022 clause 8.8
+  sends each serviceToRespondTo response only while the activating client's
+  connection exists, and discards it otherwise. The send path does that already:
+  a message to a tester with no connection is confirmed `DoIP_NO_SOCKET`. What
+  is missing is above this crate: `uds_services` has no `ResponseOnEvent`
+  service.
+- **An over-long request is answered `0x13`, not refused with a `DoIP` NACK.**
+  ISO 13400-2:2019 REQ 7.DoIP-072 and REQ 7.DoIP-073 have the entity refuse a
+  message larger than it accepts with a diagnostic message NACK (`0x04` or
+  `0x05`) and discard it. This crate passes the entity no inbound bound, so the
+  entity acknowledges the message, and the driver answers it UDS
+  `incorrectMessageLengthOrInvalidFormat`. The entity cannot infer the bound
+  from the buffer it is lent, since a driver serving a request lends a smaller
+  one and a message too large for it is owed `0x21`.
 - **Functional addressing has no fan-out test.** ISO 14229-5:2022 Figure 8 has
   several servers answering one functional request, with `tP_Client` expiry
   rather than a single response being the signal that no more are coming.
@@ -769,16 +752,11 @@ ships. It has been replaced rather than amended.
 
 This crate has a recurring defect class worth naming: a sentence asserting a
 fact about a neighbouring crate, true when written and unchecked thereafter.
-Four instances were found in the first week.
 
-Nine such claims were verified by hand on 2026-09-19 and all nine held,
-including across `simple_doip`'s and `uds_protocol`'s migration to
-`automotive-wire-codec` 0.4 — which could have invalidated the socket-bound
-reasoning silently. Two of the nine are now held by the build
-(`mapping::tests::a_rejection_is_stamped_with_the_positive_payload_type` and
-`the_layer_below_cannot_decode_a_periodic_response`), and both are written to
-fail when the neighbour fixes the limitation, with instructions to delete rather
-than repair them. The rest remain prose.
+The seven such claims in this document were verified by hand on 2026-09-19,
+across `simple_doip`'s and `uds_protocol`'s migration to `automotive-wire-codec`
+0.4, which could have invalidated the socket-bound reasoning silently. They
+remain prose.
 
 `tests/architecture_references.rs` checks that every `ARCHITECTURE.md` section
 this crate cites exists. It cannot check that the section says what the citing
@@ -830,9 +808,9 @@ and a handler writes into a caller-supplied sink, so no public type carries a
 
 This is designed in rather than deferred because it cannot be retrofitted: the
 signatures that make an API alloc-free are the same signatures callers depend
-on. No driver exists yet for any runtime — `DoIpTransport<S>`'s bodies are
-still `todo!()` — but the socket being a bare type parameter is what makes a
-tokio adapter and a bare-metal one equally additive whenever one is written.
+on. The transport is generic over `simple_doip::service::DiagnosticEntity`, a
+trait with no I/O in it, so an entity over embassy-net and one over `std`
+sockets are equally additive and neither is this crate's.
 
 ## 12. Distribution constraints
 
@@ -852,23 +830,20 @@ one line rather than an argument about policy.
 ## 13. Invariants to preserve
 
 1. A crate's scope is decided by which standard specifies the behaviour, not by
-   convenience. **Currently violated by this crate**: `DoIpTransport<S>` holds a
-   socket, which is ISO 13400-2's
-   ([§4.2](#42-connection-seam--uds_on_ip--simple_doip-proposed)).
+   convenience. The sockets are ISO 13400-2's, so they are `simple_doip`'s
+   ([§4.2](#42-connection-seam--uds_on_ip--simple_doip)).
 2. `simple_doip` never learns what a UDS message means. **Currently violated**
    by the bare-metal entity's UDS callback ([§3.1](#31-simple_doip--iso-13400-2));
    listed as an invariant to restore, not one that holds.
 3. `uds_protocol` stays a codec — no dispatch, no policy, no session state.
 4. `uds_session` never learns its transport, and never reads a clock.
-5. `uds_on_ip` never learns what a service *is*. The two service identifiers
-   clause 8 keys connection handling on, in request and positive-response form,
-   are the exception the standard itself forces and the exhaustive list of it
+5. `uds_on_ip` never learns what a service *is*. The service identifiers
+   clause 8 keys connection handling on — `DiagnosticSessionControl` and
+   `ECUReset` requests, and `ECUReset`'s positive response — are the exception the standard itself forces and the exhaustive list of it
    ([§3.4](#34-uds_on_ip--iso-14229-5)).
 6. `uds_services` declares the transport seam and implements no transport, and
-   nothing on that seam is shaped by one protocol. An earlier version of this
-   invariant read "never names a transport outside a feature gate", which the
-   reversal described in [§3.5](#35-uds_services--iso-14229-1-cl-87) made wrong —
-   the invariant was stale, not the code.
+   nothing on that seam is shaped by one protocol
+   ([§3.5](#35-uds_services--iso-14229-1-cl-87)).
 7. Every timer has exactly one owner ([§6](#6-timing-ownership)), and every
    timing rule has exactly one decider ([§6.1](#61-who-emits-response-pending)).
 8. ISO 14229-5 decides *when*, ISO 13400-2 performs *what*
@@ -878,8 +853,8 @@ one line rather than an argument about policy.
 9. Each seam is declared by the crate that calls through it, so every Cargo edge
    runs from implementor to declarer ([§8.2](#82-cargo-dependency-graph)). The
    one exception is forced and documented: this crate consumes
-   `simple_doip::messages`, so the connection seam of
-   [§4.2](#42-connection-seam--uds_on_ip--simple_doip-proposed) must be declared
+   `simple_doip`'s addressing, so the connection seam of
+   [§4.2](#42-connection-seam--uds_on_ip--simple_doip) must be declared
    below rather than here.
 10. Spec locators are verified or absent — no third option, and no argument
     about the policy in place of checking.

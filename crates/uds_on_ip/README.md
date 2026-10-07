@@ -52,26 +52,27 @@ session state machine are
 and are used from there rather than redeclared here.
 
 The one exception is narrow and forced by the standard: clause 8 keys TCP
-connection handling on two specific service identifiers
-(`DiagnosticSessionControl` and `ECUReset`), so this crate recognises those two
-bytes and nothing else about them.
+connection handling on two services (`DiagnosticSessionControl` and
+`ECUReset`), so this crate recognises their request identifiers and `ECUReset`'s
+positive response identifier, and nothing else about the services.
 
 It also names no async runtime. An `async fn` implies neither an executor nor
 `std`, but a runtime *dependency* would compromise the `no_std` build, so
-`DoIpTransport` is generic over its socket and an adapter for tokio, embassy,
-or a bare-metal driver is additive rather than built in.
+`DoIpTransport` is generic over `simple_doip`'s `DiagnosticEntity` — a trait
+with no I/O in it — and the sockets, on whatever runtime, are the entity's.
 
 ## Status
 
 **Alpha, not yet published** (it releases in lockstep with the rest of the
 stack, at 0.7.0, once the stack's functionality has been verified). The public
 API shape is
-settled — `DoIpTransport<S>` implements `uds_services::UdsTransport` — but the
-transport method bodies are still `todo!()`: sending a message
-(`t_data_req`), reading the next event (`next_event`), and reading the clock
-(`now`) all panic today rather than doing anything. Constructing a transport
-and recording its outbound size bound already work and are exercised by unit
-tests; the wire-level send/receive path is the work that remains. See the
+settled — `DoIpTransport<E: DiagnosticEntity>` implements
+`uds_services::UdsTransport` — and the server role is implemented: requests
+and responses map onto `DoIP_Data` (ISO 14229-5:2022 REQ 4.3, REQ 4.4), and the
+connection is closed after a positive `ECUReset` response (REQ 7.11) and after
+the positive `DiagnosticSessionControl` response to a session change the server
+says leaves its running software (REQ 7.9). Time is the `DoIP` entity's own clock, which it
+reports through `DiagnosticEntity::now`. The client role is not built. See the
 [workspace README](https://github.com/luminartech/uds_stack#status) for how
 this compares to the rest of the stack.
 
@@ -93,27 +94,22 @@ stack, which is why no feature here ever names a runtime.
 
 ## Usage
 
-The API shape can be exercised today even though the transport methods
-themselves are not implemented yet:
+A transport wraps your `DoIP` entity — anything implementing
+`simple_doip::service::DiagnosticEntity` — and is handed to a `uds_server!`
+assembly as its `transport`:
 
 ```rust
+use simple_doip::service::DiagnosticEntity;
 use uds_on_ip::DoIpTransport;
 use uds_on_ip::profile::bench_reloads;
-use uds_services::UdsTransport;
 
-// `S` is your own socket type; nothing here names a runtime.
-let socket = (); // stand-in until a real async or bare-metal socket is wired in
-let mut transport = DoIpTransport::new(socket, bench_reloads());
-
-// Learned from the peer's entity status response, once one arrives.
-transport.set_outbound_max(Some(4096));
-assert_eq!(transport.outbound_max(), Some(4096));
+fn transport_over<E: DiagnosticEntity>(entity: E) -> DoIpTransport<E> {
+    DoIpTransport::new(entity, bench_reloads())
+}
 ```
 
 `bench_reloads()` gives the conventional `tP6` reload pair for a desk setup —
 see its documentation for why it is not a configuration for a vehicle.
-Calling `t_data_req`, `next_event`, or `now` on the transport still panics; see
-[Status](#status).
 
 ## Relationship to the standards
 

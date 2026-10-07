@@ -1,8 +1,6 @@
 // Above the workspace standard, and specific to this crate: a wildcard arm is how a
-// variant gets silently discarded, and mapping::DoIpEvent has two cases that would
-// go that way -- Periodic and Closed have no TransportEvent to become. Denying the
-// wildcard means a match over an enum must say what it does with every case, so the
-// hole is written down in code rather than remembered. Not in the workspace table
+// variant gets silently discarded on its way to the seam. Denying it means a match
+// over an enum must say what it does with every case. Not in the workspace table
 // because the other four crates have 46 wildcard arms between them.
 #![deny(clippy::wildcard_enum_match_arm)]
 //! # UDS on Internet Protocol
@@ -60,18 +58,18 @@
 //! It is **async without naming a runtime**. An `async fn` implies neither an
 //! executor nor `std`, but a runtime *dependency* would compromise the
 //! `no_std` build — and a bare-metal AURIX `TC4x` target is a qualification
-//! target. [`transport::DoIpTransport`] is therefore generic over its socket,
-//! and an adapter for tokio or embassy is additive.
+//! target. [`transport::DoIpTransport`] is therefore generic over a
+//! [`simple_doip::service::DiagnosticEntity`], a trait `simple_doip` declares
+//! with no I/O in it; the sockets, and whatever runtime drives them, are the
+//! entity's.
 //!
 //! ## Status
 //!
-//! **Prototype.** The public API is unstable and most bodies are unimplemented — this
-//! crate's `impl` is the first real implementation of `UdsTransport`, so the seam's shape
-//! is attested by one fake transport in `uds_services` and nothing else. Known gaps are
-//! recorded in `ARCHITECTURE.md` §9, which ships with the package, and each one is also
-//! named at the item it affects — see
-//! [`UdsTransport::next_event`](uds_services::UdsTransport::next_event)'s missing socket
-//! bound and [`mapping::PERIODIC_RESPONSE_PAYLOAD_TYPE`]'s unreachable payload type.
+//! **Alpha.** The public API is unstable. The server role is implemented over
+//! any `DiagnosticEntity`; the client role is not yet. Known gaps are recorded in
+//! `ARCHITECTURE.md` §9, which ships with the package, and each one is also named
+//! at the item it affects — see [`mapping::PERIODIC_RESPONSE_PAYLOAD_TYPE`], a
+//! payload type a server built on this crate cannot yet send.
 //!
 //! ## What this crate deliberately does not do
 //!
@@ -85,7 +83,7 @@
 //! rather than redeclared here.
 //!
 //! The one exception is narrow and forced by the standard: clause 8 keys TCP
-//! connection handling on two specific service identifiers. See
+//! connection handling on three identifiers of two services. See
 //! `profile::service_ids`.
 
 #![cfg_attr(not(feature = "std"), no_std)]

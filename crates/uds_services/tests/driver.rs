@@ -198,8 +198,8 @@ enum Step {
     Ind(Ai, &'static [u8]),
     /// A request longer than the buffer offered arrives: what fits, and its length.
     TooLong(Ai, &'static [u8]),
-    /// The link closes.
-    Close,
+    /// The link to this client closes.
+    Close(Address),
     /// A transmission to this addressing is confirmed sent.
     Conf(Ai),
     /// The clock advances to this instant. The deadline is reported only if that reaches
@@ -277,7 +277,12 @@ impl Script {
                         declared: Some(bytes.len()),
                     });
                 }
-                Step::Close => return Ok(TransportEvent::Closed { expected: false }),
+                Step::Close(peer) => {
+                    return Ok(TransportEvent::Closed {
+                        peer,
+                        expected: false,
+                    });
+                }
                 Step::Conf(ai) => {
                     return Ok(TransportEvent::DataConf {
                         ai,
@@ -565,6 +570,30 @@ fn a_physical_request_mid_service_is_answered_busy() {
     assert_eq!(t.sent(1), (Some(response_to(TESTER)), POSITIVE));
 }
 
+/// Another client's link closing while the final response waits on the refusal's
+/// confirmation ends nothing: the wait goes on, and the response is sent.
+#[test]
+fn another_clients_close_while_a_response_waits_ends_nothing() {
+    let mut server = SlowSrv::new(
+        Slow { pends: 1 },
+        Script::new(&[
+            Step::Ind(request_from(TESTER), READ),
+            Step::Ind(request_from(TESTER), READ_OTHER), // mid-handler
+            Step::Close(OTHER_TESTER),                   // while the response waits
+            Step::Conf(response_to(TESTER)),             // the refusal's
+            Step::Conf(response_to(TESTER)),             // the final response's
+        ]),
+        ECU,
+        PARAMS,
+    );
+    run(&mut server);
+    let t = server.transport();
+    assert_eq!(t.cursor, 5, "the script was not consumed");
+    assert_eq!(t.sent_count, 2);
+    assert_eq!(t.sent(0), (Some(response_to(TESTER)), BUSY));
+    assert_eq!(t.sent(1), (Some(response_to(TESTER)), POSITIVE));
+}
+
 /// ``UDSS_LLR_0187`` end to end — the refusal leaves the service in progress its window:
 /// `tP2_Server` still runs out on time after the refusal is confirmed, and the 0x78 it
 /// owes goes out. Sent as a final response, the refusal would have stopped that timer and
@@ -727,6 +756,27 @@ fn a_message_too_long_for_the_concurrent_buffer_is_answered_busy() {
     assert_eq!(t.sent(1), (Some(response_to(TESTER)), POSITIVE));
 }
 
+/// Another client's link closing while a handler runs ends nothing: the request in
+/// progress is answered.
+#[test]
+fn another_clients_close_mid_handler_leaves_the_request_in_progress() {
+    let mut server = SlowSrv::new(
+        Slow { pends: 1 },
+        Script::new(&[
+            Step::Ind(request_from(TESTER), READ),
+            Step::Close(OTHER_TESTER), // mid-handler
+            Step::Conf(response_to(TESTER)),
+        ]),
+        ECU,
+        PARAMS,
+    );
+    run(&mut server);
+    let t = server.transport();
+    assert_eq!(t.cursor, 3, "the script was not consumed");
+    assert_eq!(t.sent_count, 1);
+    assert_eq!(t.sent(0), (Some(response_to(TESTER)), POSITIVE));
+}
+
 /// A link closed while a handler runs ends the request with nothing sent, the abandoned
 /// handler's bytes included, and the server goes on to answer the next request.
 #[test]
@@ -735,7 +785,7 @@ fn a_close_mid_handler_sends_nothing_and_the_server_carries_on() {
         Slow { pends: 1 },
         Script::new(&[
             Step::Ind(request_from(TESTER), READ),
-            Step::Close, // mid-handler
+            Step::Close(TESTER), // mid-handler
             Step::Ind(request_from(TESTER), READ),
             Step::Conf(response_to(TESTER)),
         ]),

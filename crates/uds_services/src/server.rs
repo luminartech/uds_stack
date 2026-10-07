@@ -626,8 +626,10 @@ struct Served {
 ///
 /// A message arriving meanwhile finds the protocol instance occupied (ISO 14229-1:2020
 /// 8.7.6): the keep-alive `TesterPresent` bypasses it ([`keep_alive`]) and anything else
-/// is refused ([`refuse_busy`]). Every event other than a close first answers an overrun
-/// due by its own timestamp ([`overrun_at`]), so none is lost to the event's own input.
+/// is refused ([`refuse_busy`]). The requesting client's close ends the handling; another
+/// client's ends nothing. Every event other than the requesting client's close first
+/// answers an overrun due by its own timestamp ([`overrun_at`]), so none is lost to the
+/// event's own input.
 async fn serve<
     A: ServiceSet,
     H: Future<Output = Unsettled>,
@@ -664,10 +666,12 @@ async fn serve<
                 });
             }
             Either::Right(Err(e)) => return Err(e),
-            Either::Right(Ok(TransportEvent::Closed { .. })) => {
+            Either::Right(Ok(TransportEvent::Closed { peer, .. }))
+                if peer == serving.ai.sa =>
+            {
                 // The exchange is over either way: a server does not reconnect
-                // (ISO 13400-2 REQ 8.DoIP-144 puts routing activation on the
-                // client). A close reaching *this* arm is never REQ 7.9's or
+                // (ISO 14229-5 REQ 7.8 and REQ 7.10 have the client reconnect and
+                // activate routing). A close reaching *this* arm is never REQ 7.9's or
                 // 7.11's — those follow a positive response, and nothing positive
                 // has been sent yet — so whether it was expected changes nothing.
                 return Ok(Served {
@@ -717,7 +721,7 @@ async fn serve<
                         deferred = deferred.merge(d.await?);
                     }
                     // A deadline is answered by `overrun_at` alone; Periodic has no
-                    // consumer; Closed returned above.
+                    // consumer; another peer's close ends nothing here.
                     TransportEvent::Deadline
                     | TransportEvent::Periodic { .. }
                     | TransportEvent::Closed { .. } => {}
@@ -938,11 +942,11 @@ enum Awaited {
 ///
 /// Returns what the drains recorded once the awaited `DataConf` has been drained and
 /// accepted — `serving.reply_to`'s for [`Awaited::Reply`], any for [`Awaited::Any`] — or
-/// `None` where the link closed first.
+/// `None` where the requesting client's link closed first.
 ///
 /// **Unbounded** (milestone-1 limit, ``UDSSVC_ARCH_0040``). The wait ends on the awaited
-/// `DataConf`, a `Closed`, or a transport error, and on nothing else: a transport that
-/// never confirms stalls the driver here. That is the assumption of use
+/// `DataConf`, that client's `Closed`, or a transport error, and on nothing else: a
+/// transport that never confirms stalls the driver here. That is the assumption of use
 /// [`UdsTransport`] states, a `DataConf` for every accepted `t_data_req`.
 async fn await_confirmation<A: ServiceSet, T: UdsTransport, const PEERS: usize>(
     session: &mut SessionServer<PEERS>,
@@ -956,7 +960,9 @@ async fn await_confirmation<A: ServiceSet, T: UdsTransport, const PEERS: usize>(
     loop {
         let deadline = session.next_deadline();
         let event = transport.next_event(concurrent, deadline).await?;
-        if let TransportEvent::Closed { .. } = event {
+        if let TransportEvent::Closed { peer, .. } = event
+            && peer == serving.ai.sa
+        {
             return Ok(None);
         }
         // The handler's outcome is already settled, so whether a 0x78 goes out no
