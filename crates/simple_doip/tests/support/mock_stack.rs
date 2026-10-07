@@ -25,8 +25,9 @@ use std::future::{Future, poll_fn};
 use std::net::SocketAddr;
 use std::pin::{Pin, pin};
 use std::rc::Rc;
-use std::sync::{Mutex, MutexGuard};
-use std::task::{Context, Poll, Waker};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex, MutexGuard};
+use std::task::{Context, Poll, Wake, Waker};
 
 use edge_nal::{Close, Readable, TcpAccept, TcpConnect, TcpShutdown, TcpSplit};
 use embassy_time::{Duration, MockDriver};
@@ -494,10 +495,41 @@ pub fn poll_times<F: Future + ?Sized>(
     None
 }
 
-/// Polls `future` until it is waiting on something only the test can give, returning
-/// its output if it completed instead.
-pub fn until_stalled<F: Future + ?Sized>(future: Pin<&mut F>) -> Option<F::Output> {
-    poll_times(future, 10_000)
+struct WakeFlag(AtomicBool);
+
+impl Wake for WakeFlag {
+    fn wake(self: Arc<Self>) {
+        self.0.store(true, Ordering::SeqCst);
+    }
+}
+
+/// Under Miri, `Waker::will_wake` is false for a clone of the same waker, so
+/// `embassy-time`'s timer queue evicts and wakes on every poll of a future holding a
+/// timer; past this many wakes in a row, the future is taken to be waiting.
+const MIRI_WAKES_BEFORE_STALLED: usize = 64;
+
+/// Polls `future` until it returns `Pending` without waking itself, returning its output
+/// if it completed instead.
+///
+/// # Panics
+///
+/// If the future keeps waking itself without completing: a busy loop.
+pub fn until_stalled<F: Future + ?Sized>(mut future: Pin<&mut F>) -> Option<F::Output> {
+    let flag = Arc::new(WakeFlag(AtomicBool::new(false)));
+    let waker = Waker::from(flag.clone());
+    let mut cx = Context::from_waker(&waker);
+    for polls in 1..=200_000 {
+        flag.0.store(false, Ordering::SeqCst);
+        if let Poll::Ready(output) = future.as_mut().poll(&mut cx) {
+            return Some(output);
+        }
+        if !flag.0.load(Ordering::SeqCst)
+            || (cfg!(miri) && polls >= MIRI_WAKES_BEFORE_STALLED)
+        {
+            return None;
+        }
+    }
+    panic!("the future keeps waking itself without completing: a busy loop")
 }
 
 // --- the clock --------------------------------------------------------------------------
