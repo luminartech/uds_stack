@@ -69,6 +69,7 @@ struct Connection {
     write_budget: Option<usize>,
     write_zero: bool,
     close_stall: bool,
+    abort_stall: bool,
     outbound: Vec<u8>,
     aborted: bool,
     closed: bool,
@@ -233,6 +234,11 @@ impl MockPeer {
     /// its end.
     pub fn stall_closes(&self) {
         self.with(|c| c.close_stall = true);
+    }
+
+    /// The tester's aborts pend from now on, as when the stack cannot send the reset.
+    pub fn stall_aborts(&self) {
+        self.with(|c| c.abort_stall = true);
     }
 
     /// Whether the socket's owner dropped it.
@@ -409,8 +415,17 @@ impl TcpShutdown for MockSocket {
     }
 
     async fn abort(&mut self) -> Result<(), MockError> {
-        self.peer.with(|c| c.aborted = true);
-        Ok(())
+        poll_fn(|_| {
+            self.peer.with(|c| {
+                if c.abort_stall {
+                    Poll::Pending
+                } else {
+                    c.aborted = true;
+                    Poll::Ready(Ok(()))
+                }
+            })
+        })
+        .await
     }
 }
 

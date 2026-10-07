@@ -158,9 +158,10 @@ impl<S, const CAP: usize> Slot<S, CAP> {
         });
     }
 
-    /// Starts closing the socket, by `abort` or after writing what is queued. A close
-    /// already started keeps going, made an abort if `abort`, and owned by the caller if
-    /// `by_caller`.
+    /// Starts closing the socket, by `abort` or after writing what is queued, to be done
+    /// by `deadline`. A close already started keeps going and keeps its deadline, unless
+    /// `abort` makes an orderly close an abort, which gets `deadline`; it is owned by the
+    /// caller if `by_caller`.
     pub(super) fn finalize(&mut self, abort: bool, by_caller: bool, deadline: Instant) {
         let Some(open) = self.open.as_mut() else {
             return;
@@ -174,6 +175,9 @@ impl<S, const CAP: usize> Slot<S, CAP> {
                 abort: abort || was_abort,
                 by_caller: by_caller || was_by_caller,
             };
+            if abort && !was_abort {
+                open.deadline = deadline;
+            }
         } else {
             open.phase = Phase::Finalizing { abort, by_caller };
             open.deadline = deadline;

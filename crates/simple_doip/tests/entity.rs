@@ -576,6 +576,32 @@ fn an_orderly_close_that_cannot_write_is_aborted() {
     assert!(peer.is_aborted());
 }
 
+/// An orderly close whose write fails becomes an abort with `T_TCP_Alive_Check` of its
+/// own, rather than what was left of the close's, before the socket is dropped.
+#[test]
+fn an_abort_after_a_failed_orderly_close_gets_its_own_time() {
+    let _clock = clock();
+    let stack = MockStack::new(4096);
+    let mut entity = OneSocket::new(&stack, address(), two_testers());
+    let peer = stack.dial();
+    assert_eq!(events(&mut entity), []);
+    peer.stall_writes();
+    peer.stall_aborts();
+    peer.send(&[0x03, 0xFD, 0x00, 0x05, 0x00, 0x00, 0x00, 0x07]);
+    assert_eq!(events(&mut entity), []);
+
+    advance(ms(400));
+    peer.fail_writes();
+    assert_eq!(events(&mut entity), []);
+    advance(ms(100));
+    assert_eq!(events(&mut entity), []);
+    assert!(!peer.is_dropped());
+
+    advance(ms(400));
+    assert_eq!(events(&mut entity), []);
+    assert!(peer.is_dropped());
+}
+
 /// A socket closing after a NACK whose write fails is aborted.
 #[test]
 fn a_closing_socket_whose_write_fails_is_aborted() {
