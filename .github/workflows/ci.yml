@@ -216,6 +216,35 @@ jobs:
           retention-days: 30
 
   # ===================================================================================
+  # Miri (hand-rolled: the reusable workflow's Miri job builds default features only)
+  # ===================================================================================
+  # Every test behind simple_doip's `connection` feature is skipped by rust-ci.yml's
+  # Miri job. These run on the mock stack, so Miri can interpret them; the tests on real
+  # sockets (entity_std, tester_interop, tester_late_ack) cannot be. Tree borrows,
+  # because stacked borrows rejects embassy-futures' select_array, which tree borrows
+  # accepts. See `just miri`.
+  miri-connection:
+    name: Miri (simple_doip connection)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master 2026-07-14
+        with:
+          toolchain: nightly
+          components: miri
+      - uses: Swatinem/rust-cache@v2
+      - name: Run the connection tests under Miri
+        env:
+          MIRIFLAGS: -Zmiri-tree-borrows
+        run: >-
+          cargo miri test -p simple_doip --features connection
+          --lib --test tester --test entity --test entity_cancel
+
+  # ===================================================================================
   # Release PR (hand-rolled: the reusable one cannot run while releases are held)
   # ===================================================================================
   # rust-ci.yml has one switch for both release-plz jobs. use-release-plz turns on the
