@@ -58,7 +58,7 @@ is `no_std` with no allocator:
 | Codec | `codec` | `MessageCodec`, a `tokio_util::codec` `Encoder`/`Decoder` | `src/message_codec.rs` |
 | Async client | `client` | `Client`, `Connector` (trait + `ConnectorSocket`) | `src/client.rs`, `src/client_inner.rs`, `src/socket_manager.rs`, `src/connection.rs` |
 | Async server | `server` | `Server`, `ServerConnectionHandler` | `src/server.rs` |
-| Connection service | `connection` | `tester::Tester`, a `TesterConnection` over `edge-nal` and `embassy-time` | `src/tester.rs`, `src/tester/` |
+| Connection service | `connection` | `tester::Tester`, a `TesterConnection` (a `DiagnosticConnection` that can reconnect and close) over `edge-nal` and `embassy-time` | `src/tester.rs`, `src/tester/` |
 
 `client` and `server` are each `["codec", ...]` in `Cargo.toml`, so either one
 pulls in `codec` (and transitively `std`/`alloc`), but they do **not** pull in
@@ -236,7 +236,7 @@ carry a wildcard arm.
 | `src/messages/traits.rs` | Re-export of `Decode`, `Encode`, `take` from the codec crate |
 | `src/messages/*.rs` (rest) | One file per concrete payload body (alive check, diagnostic message, routing activation, entity status, power mode, vehicle identification, NACK codes) |
 | `src/logical_address.rs` | `LogicalAddress` newtype plus tester-range validation |
-| `src/service.rs` | The connection service's vocabulary, with no I/O: `DiagnosticConnection`, `TesterConnection`, `DiagnosticEntity`, their events, `DoIpResult`, `TesterAddress` |
+| `src/service.rs` | The connection service's vocabulary, with no I/O: `DiagnosticConnection` (with its `MAX_PDU`), `TesterConnection` (adding `reconnect` and `close`), `DiagnosticEntity`, their events, `DoIpResult`, `TesterAddress` |
 | `src/wire.rs` | Re-export surface for the codec crate's types |
 
 `PayloadType` is a closed enum with `Reserved(u16)` and

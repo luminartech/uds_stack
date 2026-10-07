@@ -818,11 +818,11 @@ fn a_second_request_before_the_confirm_is_refused() {
     request(&mut tester).unwrap();
 }
 
-/// `N` bounds the whole message: a PDU of [`Tester::MAX_PDU`] is sent, a longer one is
-/// not accepted.
+/// `N` bounds the whole message: a PDU of [`DiagnosticConnection::MAX_PDU`] is sent, a
+/// longer one is not accepted.
 #[test]
 fn a_pdu_longer_than_max_pdu_is_refused() {
-    const MAX_PDU: usize = Tester::<MockStack, N>::MAX_PDU;
+    const MAX_PDU: usize = <Tester<'_, MockStack, N> as DiagnosticConnection>::MAX_PDU;
     let _clock = clock();
     let stack = MockStack::new(usize::MAX);
     let mut tester = active(&stack);
@@ -2354,22 +2354,98 @@ fn a_manufacturer_payload_type_is_reported() {
     );
 }
 
-// --- close -----------------------------------------------------------------------------
+// --- close ----------------------------------------------------------------------------
 
-/// `close` ends the connection gracefully rather than aborting or merely dropping it.
+/// `close` ends the connection gracefully rather than aborting or merely dropping it, and
+/// leaves the tester closed: `Closed` on every `next_event`, `NotConnected` for a request.
 #[test]
-fn close_shuts_the_connection_gracefully() {
+fn close_shuts_the_connection_gracefully_and_leaves_it_closed() {
     let _clock = clock();
     let stack = MockStack::new(usize::MAX);
-    let tester = active(&stack);
+    let mut tester = active(&stack);
 
     run(tester.close()).unwrap();
 
     assert!(stack.latest().is_closed());
     assert!(!stack.latest().is_aborted());
+    let mut buf = [0; 16];
+    for _ in 0..2 {
+        assert_eq!(
+            next(&mut tester, &mut buf).unwrap(),
+            ConnectionEvent::Closed
+        );
+    }
+    assert_eq!(request(&mut tester).unwrap_err(), Error::NotConnected);
 }
 
-/// A tester whose connection has already closed has nothing left to close.
+/// A request unconfirmed at the close still gets its one confirm, from the next
+/// `next_event`, before `Closed`: `DoIP_NO_SOCKET` if none of it left.
+#[test]
+fn close_with_a_request_unwritten_confirms_no_socket() {
+    let _clock = clock();
+    let stack = MockStack::new(usize::MAX);
+    let mut tester = active(&stack);
+    request(&mut tester).unwrap();
+
+    run(tester.close()).unwrap();
+
+    let mut buf = [0; 16];
+    assert_eq!(
+        next(&mut tester, &mut buf).unwrap(),
+        confirm(DoIpResult::NoSocket)
+    );
+    assert_eq!(
+        next(&mut tester, &mut buf).unwrap(),
+        ConnectionEvent::Closed
+    );
+    assert_eq!(stack.latest().take_written(), []);
+}
+
+/// `DoIP_ERROR` if it left and was never acknowledged.
+#[test]
+fn close_with_a_request_sent_confirms_error() {
+    let _clock = clock();
+    let stack = MockStack::new(usize::MAX);
+    let mut tester = active(&stack);
+    request(&mut tester).unwrap();
+    sent(&stack, &mut tester);
+
+    run(tester.close()).unwrap();
+
+    let mut buf = [0; 16];
+    assert_eq!(
+        next(&mut tester, &mut buf).unwrap(),
+        confirm(DoIpResult::Error)
+    );
+    assert_eq!(
+        next(&mut tester, &mut buf).unwrap(),
+        ConnectionEvent::Closed
+    );
+}
+
+/// A close dropped before it completes drops the socket, and the tester is closed all
+/// the same.
+#[test]
+fn a_dropped_close_drops_the_socket() {
+    let _clock = clock();
+    let stack = MockStack::new(usize::MAX);
+    let mut tester = active(&stack);
+    stack.latest().stall_closes();
+    {
+        let mut closing = pin!(tester.close());
+        assert!(until_stalled(closing.as_mut()).is_none());
+    }
+
+    assert!(stack.latest().is_shut());
+    assert!(!stack.latest().is_closed());
+    let mut buf = [0; 16];
+    assert_eq!(
+        next(&mut tester, &mut buf).unwrap(),
+        ConnectionEvent::Closed
+    );
+}
+
+/// Closing twice, or with no connection, does nothing.
 #[test]
 fn closing_a_closed_tester_does_nothing() {
     let _clock = clock();
@@ -2383,8 +2459,28 @@ fn closing_a_closed_tester_does_nothing() {
     );
 
     run(tester.close()).unwrap();
+    run(tester.close()).unwrap();
 
     assert!(!stack.latest().is_closed());
+    assert_eq!(
+        next(&mut tester, &mut buf).unwrap(),
+        ConnectionEvent::Closed
+    );
+}
+
+/// A closed tester is revived by a reconnect, after the back-off from the close.
+#[test]
+fn a_reconnect_revives_a_closed_tester() {
+    let _clock = clock();
+    let stack = MockStack::new(usize::MAX);
+    let mut tester = active(&stack);
+    run(tester.close()).unwrap();
+    stack.script_next(&activation_response(0x10));
+
+    reconnect(&mut tester).unwrap();
+
+    assert_eq!(stack.connects(), 2);
+    request(&mut tester).unwrap();
 }
 
 // --- reconnecting -------------------------------------------------------------------

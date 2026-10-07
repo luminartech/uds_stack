@@ -103,7 +103,8 @@ pub enum Error {
     /// not accepted.
     #[error("a request is still awaiting its confirm")]
     RequestPending,
-    /// The PDU is longer than [`Tester::MAX_PDU`]; it was not accepted.
+    /// The PDU is longer than [`MAX_PDU`](DiagnosticConnection::MAX_PDU); it was not
+    /// accepted.
     #[error("the PDU does not fit the tester's buffer")]
     MessageTooLarge,
     /// There is no connection: it closed, or a reconnect failed. Reconnect to continue.
@@ -115,9 +116,10 @@ pub enum Error {
 ///
 /// `N` is the longest `DoIP` message, generic header included, that the tester sends or
 /// receives whole, and the size of each of its receive and transmit buffers. A
-/// request's PDU is at most [`Tester::MAX_PDU`]; an indication's PDU longer than that
-/// is delivered truncated. `N` is at least [`MIN_N`]: a smaller one fails to build,
-/// though not to `cargo check`, which stops before the assertion is evaluated.
+/// request's PDU is at most [`MAX_PDU`](DiagnosticConnection::MAX_PDU); an indication's
+/// PDU longer than that is delivered truncated. `N` is at least [`MIN_N`]: a smaller one
+/// fails to build, though not to `cargo check`, which stops before the assertion is
+/// evaluated.
 ///
 /// The tester sends ISO 13400-2:2019's protocol version, so an entity that speaks only
 /// an earlier edition refuses it.
@@ -144,8 +146,8 @@ pub enum Error {
 ///   response "shall be considered lost"; keeping the connection would let the late
 ///   acknowledgement or response be taken for a later request's, which a tester that
 ///   carries one request at a time cannot tell apart.
-/// - **[`Tester::close`] to end it.** It closes the connection gracefully; dropping the
-///   tester leaves that to the backend.
+/// - **[`TesterConnection::close`] to end it.** It closes the connection gracefully;
+///   dropping the tester leaves that to the backend.
 ///
 /// # Examples
 ///
@@ -238,14 +240,6 @@ impl<C: TcpConnect, const N: usize> fmt::Debug for Tester<'_, C, N> {
 }
 
 impl<'s, C: TcpConnect, const N: usize> Tester<'s, C, N> {
-    /// The longest PDU a request may carry, and the longest an indication delivers
-    /// whole: `N` less [`DIAGNOSTIC_MESSAGE_OVERHEAD`]. Naming it for an `N` below
-    /// [`MIN_N`] fails to build.
-    pub const MAX_PDU: usize = {
-        assert!(N >= MIN_N, "a Tester's N must be at least MIN_N");
-        N.saturating_sub(DIAGNOSTIC_MESSAGE_OVERHEAD)
-    };
-
     /// Connects to the entity at `remote` and activates routing for source address `sa`
     /// (ISO 13400-2:2019 12.5.2).
     ///
@@ -300,29 +294,6 @@ impl<'s, C: TcpConnect, const N: usize> Tester<'s, C, N> {
         };
         tester.establish().await?;
         Ok(tester)
-    }
-
-    /// Closes the connection gracefully, if there is one, and ends the tester.
-    ///
-    /// Dropping a tester drops its socket, and what that does is the backend's:
-    /// `edge-nal-std` closes the connection, but `edge-nal-embassy` 0.9 frees the socket
-    /// before its close is sent, so the entity holds its socket for this tester until its
-    /// own timers give it up. A request still awaiting its confirm gets none.
-    ///
-    /// # Cancel safety
-    ///
-    /// Waits as long as the backend's close does, which may be until the entity has
-    /// closed its end too. Bound it by dropping the future; dropping it drops the
-    /// socket, as dropping the tester would.
-    ///
-    /// # Errors
-    ///
-    /// The socket's error where closing fails; the socket is dropped all the same.
-    pub async fn close(mut self) -> Result<(), C::Error> {
-        match self.socket.take() {
-            Some(mut socket) => socket.close(Close::Both).await,
-            None => Ok(()),
-        }
     }
 
     /// The socket error that ended the last connection, if one did, until a new
@@ -414,13 +385,25 @@ impl<'s, C: TcpConnect, const N: usize> Tester<'s, C, N> {
     }
 }
 
-impl<C: TcpConnect, const N: usize> Tester<'_, C, N> {
+impl<'s, C: TcpConnect, const N: usize> Tester<'s, C, N> {
     /// Gives up the connection, aborting it where the tester is the one ending it, for no
     /// longer than `until`.
+    async fn lose_connection(&mut self, abort: bool, until: Option<Instant>) {
+        if let Some(mut socket) = self.give_up()
+            && abort
+        {
+            match until {
+                Some(until) => with_deadline(until, socket.abort()).await.ok().map(drop),
+                None => socket.abort().await.ok(),
+            };
+        }
+    }
+
+    /// Gives up the connection, returning its socket if there was one.
     ///
     /// An outstanding request is owed its confirm: `DoIP_NO_SOCKET` if its last byte
     /// never left, `DoIP_ERROR` if it left and was never acknowledged.
-    async fn lose_connection(&mut self, abort: bool, until: Option<Instant>) {
+    fn give_up(&mut self) -> Option<C::Socket<'s>> {
         let socket = self.socket.take();
         if socket.is_some() {
             self.lost_at = Some(Instant::now());
@@ -436,14 +419,7 @@ impl<C: TcpConnect, const N: usize> Tester<'_, C, N> {
         self.rx.clear();
         self.control.clear();
         self.outgoing.clear();
-        if let Some(mut socket) = socket
-            && abort
-        {
-            match until {
-                Some(until) => with_deadline(until, socket.abort()).await.ok().map(drop),
-                None => socket.abort().await.ok(),
-            };
-        }
+        socket
     }
 
     /// Owes the outstanding request `DoIP_TIMEOUT_A` once its time is up, and whether it
@@ -484,6 +460,14 @@ impl<C: TcpConnect, const N: usize> Tester<'_, C, N> {
 impl<C: TcpConnect, const N: usize> DiagnosticConnection for Tester<'_, C, N> {
     type Error = Error;
 
+    /// The longest PDU a request may carry, and the longest an indication delivers
+    /// whole: `N` less [`DIAGNOSTIC_MESSAGE_OVERHEAD`]. Naming it for an `N` below
+    /// [`MIN_N`] fails to build.
+    const MAX_PDU: usize = {
+        assert!(N >= MIN_N, "a Tester's N must be at least MIN_N");
+        N.saturating_sub(DIAGNOSTIC_MESSAGE_OVERHEAD)
+    };
+
     /// Queues `pdu` to `ta` as one diagnostic message, from the tester's source address,
     /// for [`DiagnosticConnection::next_event`] to write.
     ///
@@ -514,7 +498,8 @@ impl<C: TcpConnect, const N: usize> DiagnosticConnection for Tester<'_, C, N> {
     /// None of these is followed by a confirm:
     /// - [`Error::NotConnected`] once the connection has closed.
     /// - [`Error::RequestPending`] until an earlier request's confirm has been reported.
-    /// - [`Error::MessageTooLarge`] for a `pdu` longer than [`Tester::MAX_PDU`].
+    /// - [`Error::MessageTooLarge`] for a `pdu` longer than
+    ///   [`MAX_PDU`](DiagnosticConnection::MAX_PDU).
     #[expect(
         clippy::unused_async_trait_impl,
         reason = "accepting on the first poll is the contract"
@@ -674,6 +659,7 @@ impl<C: TcpConnect, const N: usize> DiagnosticConnection for Tester<'_, C, N> {
 
 impl<C: TcpConnect, const N: usize> TesterConnection for Tester<'_, C, N> {
     type ReconnectError = ConnectError<C::Error>;
+    type CloseError = C::Error;
 
     /// Gives up the connection, if there is one, waits until [`RECONNECT_BACKOFF`] has
     /// passed since a connection was last lost, then connects and activates routing
@@ -707,6 +693,37 @@ impl<C: TcpConnect, const N: usize> TesterConnection for Tester<'_, C, N> {
             Timer::at(confirm::after(lost_at, RECONNECT_BACKOFF)).await;
         }
         self.establish().await
+    }
+
+    /// Closes the connection gracefully, if there is one, through the socket's
+    /// `edge_nal::TcpShutdown::close`, leaving the tester closed until a reconnect
+    /// succeeds.
+    ///
+    /// Dropping a tester instead drops its socket, and what that does is the backend's:
+    /// `edge-nal-std` closes the connection, but `edge-nal-embassy` 0.9 frees the socket
+    /// before its close is sent, so the entity holds its socket for this tester until its
+    /// own timers give it up.
+    ///
+    /// A request awaiting its confirm is confirmed with [`DoIpResult::NoSocket`] or
+    /// [`DoIpResult::Error`] by the next
+    /// [`next_event`](DiagnosticConnection::next_event), as when the connection is lost
+    /// otherwise, which then reports [`ConnectionEvent::Closed`]. A close counts as a
+    /// loss for [`RECONNECT_BACKOFF`].
+    ///
+    /// # Cancel safety
+    ///
+    /// Waits as long as the backend's close does, which may be until the entity has
+    /// closed its end too. Bound it by dropping the future: dropped, it drops the socket,
+    /// and the tester is closed either way.
+    ///
+    /// # Errors
+    ///
+    /// The socket's error where closing fails; the tester is closed all the same.
+    async fn close(&mut self) -> Result<(), Self::CloseError> {
+        match self.give_up() {
+            Some(mut socket) => socket.close(Close::Both).await,
+            None => Ok(()),
+        }
     }
 }
 

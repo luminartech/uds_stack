@@ -187,6 +187,11 @@ pub trait DiagnosticConnection {
     /// can only report it.
     type Error: core::fmt::Debug;
 
+    /// The longest PDU [`Self::request`] accepts. A longer one is refused with
+    /// [`Self::Error`], and no confirm follows it, so the layer above can refuse it
+    /// first.
+    const MAX_PDU: usize;
+
     /// `DoIP_Data.request`: send `pdu` to `ta` (ISO 13400-2:2019 8.3.1).
     ///
     /// There is no source address: routing activation fixed it for the connection.
@@ -253,10 +258,17 @@ pub trait DiagnosticConnection {
 /// - **Dropping [`Self::reconnect`] leaves no connection**, which
 ///   [`DiagnosticConnection::next_event`] reports as [`ConnectionEvent::Closed`], so a
 ///   caller can bound the whole attempt by dropping it.
+/// - **A closed connection stays closed until a reconnect succeeds**, whether the entity
+///   closed it, it failed, or [`Self::close`] closed it: `next_event` reports `Closed`
+///   on every call, and [`DiagnosticConnection::request`] is refused.
 pub trait TesterConnection: DiagnosticConnection {
     /// Why a reconnect failed. Never interpreted by the layer above, which can only
     /// report it.
     type ReconnectError: core::fmt::Debug;
+
+    /// Why a close failed. Never interpreted by the layer above, which can only report
+    /// it.
+    type CloseError: core::fmt::Debug;
 
     /// Gives the connection up, if there is one, then opens a new TCP connection and
     /// activates routing on it.
@@ -266,6 +278,22 @@ pub trait TesterConnection: DiagnosticConnection {
     /// [`Self::ReconnectError`] where no connection could be opened and activated; the
     /// connection is then closed until a reconnect succeeds.
     fn reconnect(&mut self) -> impl Future<Output = Result<(), Self::ReconnectError>>;
+
+    /// Closes the connection gracefully, if there is one, and leaves it closed until a
+    /// [`Self::reconnect`] succeeds.
+    ///
+    /// A request awaiting its confirm is confirmed as failed by the next
+    /// [`DiagnosticConnection::next_event`], which then reports
+    /// [`ConnectionEvent::Closed`], as after any other end. Closing with no connection,
+    /// or a second time, does nothing.
+    ///
+    /// Cancel-safe: dropped before it completes, it drops the connection instead of
+    /// closing it gracefully, and the connection is closed either way.
+    ///
+    /// # Errors
+    ///
+    /// [`Self::CloseError`] where closing fails. The connection is closed either way.
+    fn close(&mut self) -> impl Future<Output = Result<(), Self::CloseError>>;
 }
 
 /// One connection in a [`DiagnosticEntity`]'s connection table.
@@ -665,6 +693,7 @@ mod tests {
     )]
     impl DiagnosticConnection for Echo {
         type Error = core::convert::Infallible;
+        const MAX_PDU: usize = 8;
 
         async fn request(
             &mut self,

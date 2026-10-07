@@ -63,6 +63,7 @@ struct Connection {
     write_stall: bool,
     write_budget: Option<usize>,
     write_zero: bool,
+    close_stall: bool,
     outbound: Vec<u8>,
     aborted: bool,
     closed: bool,
@@ -182,6 +183,12 @@ impl MockPeer {
     /// The tester's writes complete having written nothing, as on a closed socket.
     pub fn write_nothing(&self) {
         self.with(|c| c.write_zero = true);
+    }
+
+    /// The tester's graceful close pends from now on, as when the entity is slow to close
+    /// its end.
+    pub fn stall_closes(&self) {
+        self.with(|c| c.close_stall = true);
     }
 
     /// Everything the tester has written, and forget it.
@@ -318,8 +325,17 @@ impl Readable for MockSocket {
 
 impl TcpShutdown for MockSocket {
     async fn close(&mut self, _what: Close) -> Result<(), MockError> {
-        self.peer.with(|c| c.closed = true);
-        Ok(())
+        poll_fn(|_| {
+            self.peer.with(|c| {
+                if c.close_stall {
+                    Poll::Pending
+                } else {
+                    c.closed = true;
+                    Poll::Ready(Ok(()))
+                }
+            })
+        })
+        .await
     }
 
     async fn abort(&mut self) -> Result<(), MockError> {
