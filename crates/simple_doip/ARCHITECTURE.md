@@ -83,6 +83,45 @@ so there is exactly **one** wire implementation; there is no second serializer
 that could drift. The borrowed↔owned round trip for every `Payload` variant is
 locked by `payload_conversion_roundtrip_all_variants` in `src/messages/mod.rs`.
 
+### 2.2 A tester connection's life
+
+`TesterConnection` (in `src/service.rs`) states what every tester connection
+promises; `tester::Tester` (in `src/tester.rs`) is the one implementor. This is
+the life of one connection:
+
+```mermaid
+stateDiagram-v2
+    [*] --> Activating: Tester connect
+    Activating --> Connected: routing activated
+    Activating --> [*]: connect fails
+    Connected --> Closed: lost, or close
+    Connected --> BackingOff: reconnect gives the old connection up
+    Closed --> BackingOff: reconnect
+    BackingOff --> Activating: the back-off since the last loss has passed
+    Activating --> Closed: reconnect fails or is dropped
+    BackingOff --> Closed: reconnect is dropped
+    note right of Closed
+        A request awaiting its confirm is confirmed first,
+        DoIP_NO_SOCKET or DoIP_ERROR. Then next_event
+        reports Closed on every call, and request is refused,
+        until a reconnect succeeds.
+    end note
+```
+
+- **Every end is `Closed`, never an `Err`.** A connection is lost when the entity
+  closes it, the socket fails, a request it carried is lost, or the entity sends a
+  NACK it closes on. Where the socket failed, its error is kept in
+  `TesterConnection::io_error`.
+- **Reconnecting gives the old connection up before it waits, and waits before it
+  connects** (issue #17 item 2): an entity may hold the tester's address for a
+  while after its socket closes and refuse a second activation meanwhile. The
+  back-off runs from the last loss, which includes a connection that opened and
+  was not kept, so a reconnect long after a loss does not wait.
+- **A request is lost once `A_DoIP_Diagnostic_Message` passes** (ISO 13400-2:2019
+  Table 12). Once any of it was written the connection is given up, so its late
+  acknowledgement or response cannot be taken for a later request's (issue #17
+  item 3).
+
 ---
 
 ## 3. The sans-io seam
@@ -236,7 +275,7 @@ carry a wildcard arm.
 | `src/messages/traits.rs` | Re-export of `Decode`, `Encode`, `take` from the codec crate |
 | `src/messages/*.rs` (rest) | One file per concrete payload body (alive check, diagnostic message, routing activation, entity status, power mode, vehicle identification, NACK codes) |
 | `src/logical_address.rs` | `LogicalAddress` newtype plus tester-range validation |
-| `src/service.rs` | The connection service's vocabulary, with no I/O: `DiagnosticConnection` (with its `MAX_PDU`), `TesterConnection` (adding `reconnect` and `close`), `DiagnosticEntity`, their events, `DoIpResult`, `TesterAddress` |
+| `src/service.rs` | The connection service's vocabulary, with no I/O: `DiagnosticConnection` (with its `MAX_PDU`), `TesterConnection` (adding `reconnect`, `close` and `io_error`), `DiagnosticEntity`, their events, `DoIpResult`, `TesterAddress` |
 | `src/wire.rs` | Re-export surface for the codec crate's types |
 
 `PayloadType` is a closed enum with `Reserved(u16)` and

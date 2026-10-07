@@ -244,23 +244,20 @@ pub trait DiagnosticConnection {
 ///
 /// ISO 14229-5:2022 REQ 7.8 and REQ 7.10 require a client to open a new TCP connection
 /// and activate routing again after the server closes the connection for a session
-/// change or a reset. This is how the layer above a tester does that without naming the
-/// socket the tester runs on.
+/// change or a reset; this is how the layer above does so without naming the socket.
+/// The crate's `ARCHITECTURE.md`, section 2.2, draws a connection's life.
 ///
 /// # Obligations on implementors
 ///
-/// - **The old connection is given up before the new one is opened, and a back-off
-///   the implementor states comes between.** An entity may keep the tester's address
-///   registered for a while after its socket closes, and refuse a second routing
-///   activation for it meanwhile.
-/// - **A request awaiting its confirm is confirmed** before anything from the new
-///   connection, as when a connection closes.
-/// - **Dropping [`Self::reconnect`] leaves no connection**, which
-///   [`DiagnosticConnection::next_event`] reports as [`ConnectionEvent::Closed`], so a
-///   caller can bound the whole attempt by dropping it.
-/// - **A closed connection stays closed until a reconnect succeeds**, whether the entity
-///   closed it, it failed, or [`Self::close`] closed it: `next_event` reports `Closed`
-///   on every call, and [`DiagnosticConnection::request`] is refused.
+/// - [`Self::reconnect`] gives the old connection up, waits a back-off the implementor
+///   documents, then connects: an entity may refuse a tester's address for a while
+///   after its socket closes.
+/// - A request awaiting its confirm is confirmed before anything from a new
+///   connection.
+/// - However it closed, a connection stays closed until a reconnect succeeds:
+///   [`DiagnosticConnection::next_event`] reports [`ConnectionEvent::Closed`] on every
+///   call, and [`DiagnosticConnection::request`] is refused. Dropping
+///   [`Self::reconnect`] leaves it so.
 pub trait TesterConnection: DiagnosticConnection {
     /// Why a reconnect failed. Never interpreted by the layer above, which can only
     /// report it.
