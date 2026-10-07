@@ -1150,9 +1150,14 @@ impl<
     async fn close(&mut self, connection: ConnectionId) -> Result<(), Self::Error> {
         let index = connection.index();
         let at = SlotRef::Connection(index);
-        if let Some(slot) = self.connections.get_mut(index) {
-            slot.finalize(false, true, Instant::now() + CLOSE_LIMIT);
+        let Some(slot) = self.connections.get_mut(index) else {
+            return Ok(());
+        };
+        slot.closed_unreported = false;
+        if !slot.open.as_ref().is_some_and(|open| open.named) {
+            return Ok(());
         }
+        slot.finalize(false, true, Instant::now() + CLOSE_LIMIT);
         loop {
             let Some(slot) = self.connections.get_mut(index) else {
                 return Ok(());

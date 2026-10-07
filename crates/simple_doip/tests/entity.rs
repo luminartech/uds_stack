@@ -1597,6 +1597,50 @@ fn closing_a_connection_that_is_not_there_does_nothing() {
     assert_eq!(events(&mut entity), []);
 }
 
+/// Closing an id no event has issued does nothing, though a connection holds its slot.
+#[test]
+fn closing_an_id_no_event_issued_does_nothing() {
+    let _clock = clock();
+    let stack = MockStack::new(4096);
+    let mut entity = OneSocket::new(&stack, address(), two_testers());
+    let peer = activated(&stack, &mut entity, TESTER);
+
+    until_stalled(pin!(entity.close(ConnectionId::new(0))))
+        .unwrap()
+        .unwrap();
+
+    assert_eq!(events(&mut entity), []);
+    assert!(!peer.is_shut());
+}
+
+/// No `Closed` follows a close, even of a connection that had gone with its `Closed`
+/// still to be reported.
+#[test]
+fn no_closed_follows_closing_a_connection_that_had_gone() {
+    let _clock = clock();
+    let stack = MockStack::new(4096);
+    let mut entity = OneSocket::new(&stack, address(), two_testers());
+    let peer = activated(&stack, &mut entity, TESTER);
+    peer.send(&diagnostic(TESTER, ENTITY, &[0x11, 0x01]));
+    assert!(matches!(
+        step(&mut entity),
+        Some(Ev::Indication { connection: 0, .. })
+    ));
+    peer.take_written();
+    peer.fail_writes();
+    request(&mut entity, TESTER, &[0x51, 0x01]).unwrap();
+    assert_eq!(
+        step(&mut entity),
+        Some(confirm(ENTITY, TaType::Physical, DoIpResult::NoSocket))
+    );
+
+    until_stalled(pin!(entity.close(ConnectionId::new(0))))
+        .unwrap()
+        .unwrap();
+
+    assert_eq!(events(&mut entity), []);
+}
+
 /// The `DiagnosticEntity` contract, driven as the layer above drives it: every
 /// indication answered, every request confirmed exactly once, closes reported once.
 #[test]
