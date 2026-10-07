@@ -455,10 +455,9 @@ impl<'s, C: TcpConnect, const N: usize> Tester<'s, C, N> {
             self.lost_at = Some(Instant::now());
         }
         if let Some(outstanding) = self.exchange.outstanding.take() {
-            let result = if outstanding.sent {
-                DoIpResult::Error
-            } else {
-                DoIpResult::NoSocket
+            let result = match outstanding.phase {
+                Phase::Sent { .. } => DoIpResult::Error,
+                Phase::Queued | Phase::Writing { .. } => DoIpResult::NoSocket,
             };
             self.owed = Some(outstanding.confirm(self.sa.address(), result));
         }
@@ -479,7 +478,8 @@ impl<'s, C: TcpConnect, const N: usize> Tester<'s, C, N> {
             return false;
         };
         if outstanding
-            .deadline
+            .phase
+            .deadline()
             .is_none_or(|deadline| deadline > Instant::now())
         {
             return false;
@@ -574,9 +574,7 @@ impl<C: TcpConnect, const N: usize> DiagnosticConnection for Tester<'_, C, N> {
         self.exchange.outstanding = Some(Outstanding {
             ta,
             ta_type,
-            started: None,
-            deadline: None,
-            sent: false,
+            phase: Phase::Queued,
             stale: 0,
         });
         Ok(())
@@ -795,18 +793,20 @@ struct Exchange {
 impl Exchange {
     fn deadline(&self) -> Option<Instant> {
         self.outstanding
-            .and_then(|outstanding| outstanding.deadline)
+            .and_then(|outstanding| outstanding.phase.deadline())
     }
 
     /// Starts the outstanding request's timer as the tester starts writing it, with
     /// `buffered` bytes read and not yet consumed.
     fn start_writing(&mut self, buffered: usize) {
         if let Some(outstanding) = &mut self.outstanding
-            && outstanding.started.is_none()
+            && outstanding.phase == Phase::Queued
         {
-            let now = Instant::now();
-            outstanding.started = Some(now);
-            outstanding.deadline = Some(confirm::after(now, ACK_TIMEOUT));
+            let started = Instant::now();
+            outstanding.phase = Phase::Writing {
+                started,
+                deadline: confirm::after(started, ACK_TIMEOUT),
+            };
             outstanding.stale = buffered;
         }
     }
@@ -814,10 +814,12 @@ impl Exchange {
     /// Restarts the outstanding request's timer from its last byte, now written.
     fn mark_sent(&mut self) {
         if let Some(outstanding) = &mut self.outstanding
-            && !outstanding.sent
+            && let Phase::Writing { started, .. } = outstanding.phase
         {
-            outstanding.sent = true;
-            outstanding.deadline = Some(confirm::after(Instant::now(), ACK_TIMEOUT));
+            outstanding.phase = Phase::Sent {
+                started,
+                deadline: confirm::after(Instant::now(), ACK_TIMEOUT),
+            };
         }
     }
 
@@ -849,10 +851,7 @@ impl Exchange {
 struct Outstanding {
     ta: LogicalAddress,
     ta_type: TaType,
-    /// When the tester started writing the request; unset until then.
-    started: Option<Instant>,
-    deadline: Option<Instant>,
-    sent: bool,
+    phase: Phase,
     /// Bytes read before the request was started and not yet consumed: nothing in them
     /// can be about it.
     stale: usize,
@@ -873,7 +872,7 @@ impl Outstanding {
         }
         match source {
             Some(source) => self.ta_type != TaType::Physical || source == self.ta,
-            None => self.started.is_some_and(|started| {
+            None => self.phase.started().is_some_and(|started| {
                 answered_at
                     .is_none_or(|answered| confirm::after(answered, ACK_TIMEOUT) <= started)
             }),
@@ -886,6 +885,31 @@ impl Outstanding {
             ta: self.ta,
             ta_type: self.ta_type,
             result,
+        }
+    }
+}
+
+/// How far the outstanding request has got, with when the tester started writing it and
+/// when it times out.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Phase {
+    Queued,
+    Writing { started: Instant, deadline: Instant },
+    Sent { started: Instant, deadline: Instant },
+}
+
+impl Phase {
+    const fn started(self) -> Option<Instant> {
+        match self {
+            Self::Queued => None,
+            Self::Writing { started, .. } | Self::Sent { started, .. } => Some(started),
+        }
+    }
+
+    const fn deadline(self) -> Option<Instant> {
+        match self {
+            Self::Queued => None,
+            Self::Writing { deadline, .. } | Self::Sent { deadline, .. } => Some(deadline),
         }
     }
 }
