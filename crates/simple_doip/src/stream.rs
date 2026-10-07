@@ -6,6 +6,7 @@
 use embassy_time::{Duration, Instant};
 
 pub(crate) mod rx;
+pub(crate) mod tx;
 
 /// `instant` as [`DiagnosticConnection::now`] reports it: milliseconds, truncated to
 /// 32 bits.
@@ -18,6 +19,10 @@ pub(crate) mod rx;
 pub(crate) fn millis(instant: Instant) -> u32 {
     instant.as_millis() as u32
 }
+
+/// Contents too long for the buffer they were to move into.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) struct DoesNotFit;
 
 /// The instant `deadline_ms` names on `embassy_time`'s clock, read at `now`: the
 /// nearest instant whose milliseconds truncate to it, or `now` if it has passed.

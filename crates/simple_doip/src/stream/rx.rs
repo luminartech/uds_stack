@@ -1,3 +1,4 @@
+use super::DoesNotFit;
 use crate::messages::{Header, MessageError};
 use crate::wire::Decode;
 use crate::{RawFrame, try_frame};
@@ -76,6 +77,57 @@ impl<const N: usize> RxBuffer<N> {
         let buffered = self.len.saturating_sub(Header::SIZE);
         self.discard = (header.payload_length as usize).saturating_sub(buffered);
         self.len = 0;
+    }
+
+    /// The free space up to the end of the frame being read: the rest of its header,
+    /// then the rest of its payload, so that nothing after the frame is read before the
+    /// frame is handled. Empty once a whole frame, or a header that does not decode,
+    /// is buffered.
+    pub(crate) fn free_to_frame_end(&mut self) -> &mut [u8] {
+        let end = if self.discard > 0 {
+            self.len.saturating_add(self.discard)
+        } else if self.len < Header::SIZE {
+            Header::SIZE
+        } else {
+            self.header().map_or(self.len, |header| {
+                usize::try_from(header.payload_length)
+                    .map_or(usize::MAX, |length| Header::SIZE.saturating_add(length))
+            })
+        };
+        let start = self.len.min(N);
+        &mut self.buf[start..end.clamp(start, N)]
+    }
+
+    /// The header of the frame being read, once all of it is buffered.
+    pub(crate) fn header(&self) -> Result<Header, MessageError> {
+        let (header, _) = Header::decode(&self.buf[..self.len])?;
+        Ok(header)
+    }
+
+    /// Whether nothing is buffered and no skip is under way.
+    #[cfg(test)]
+    pub(crate) fn is_idle(&self) -> bool {
+        self.len == 0 && self.discard == 0
+    }
+
+    /// Exchanges contents with `other`, of another capacity.
+    ///
+    /// # Errors
+    ///
+    /// [`DoesNotFit`] where either side holds more than the other can, leaving both
+    /// unchanged.
+    pub(crate) fn swap<const M: usize>(
+        &mut self,
+        other: &mut RxBuffer<M>,
+    ) -> Result<(), DoesNotFit> {
+        let span = self.len.max(other.len);
+        if span > N || span > M {
+            return Err(DoesNotFit);
+        }
+        self.buf[..span].swap_with_slice(&mut other.buf[..span]);
+        core::mem::swap(&mut self.len, &mut other.len);
+        core::mem::swap(&mut self.discard, &mut other.discard);
+        Ok(())
     }
 
     pub(crate) fn clear(&mut self) {
@@ -220,6 +272,75 @@ mod tests {
         feed(&mut rx, &[0xAA; 30]);
         assert_eq!(rx.next().unwrap(), Next::NeedMore);
         assert_eq!(rx.len, 0);
+    }
+
+    fn read_to_frame_end<const N: usize>(rx: &mut RxBuffer<N>, wire: &mut &[u8]) -> usize {
+        let free = rx.free_to_frame_end();
+        let read = free.len().min(wire.len());
+        free[..read].copy_from_slice(&wire[..read]);
+        rx.filled(read);
+        *wire = &wire[read..];
+        read
+    }
+
+    #[test]
+    fn reads_to_the_frame_end_stop_at_the_frame_boundary() {
+        let mut wire = [0u8; 64];
+        let first = diagnostic(&[0x01, 0x02], &mut wire);
+        let second = diagnostic(&[0x03], &mut wire[first..]);
+        let mut rest = &wire[..first + second];
+        let mut rx = RxBuffer::<64>::new();
+
+        assert_eq!(read_to_frame_end(&mut rx, &mut rest), 8);
+        assert_eq!(read_to_frame_end(&mut rx, &mut rest), first - 8);
+        assert_eq!(read_to_frame_end(&mut rx, &mut rest), 0);
+        let Next::Frame(frame, consumed) = rx.next().unwrap() else {
+            panic!("expected the first frame");
+        };
+        assert_eq!(frame.payload.get(4..), Some(&[0x01, 0x02][..]));
+        rx.consume(consumed);
+        assert_eq!(rest.len(), second);
+    }
+
+    #[test]
+    fn a_skipped_frame_is_read_to_its_end_and_no_further() {
+        let mut wire = [0u8; 96];
+        let big = diagnostic(&[0xAA; 50], &mut wire);
+        let small = diagnostic(&[0x55], &mut wire[big..]);
+        let mut rest = &wire[..big + small];
+        let mut rx = RxBuffer::<24>::new();
+        read_to_frame_end(&mut rx, &mut rest);
+        rx.skip_frame(&rx.header().unwrap());
+
+        while !rx.is_idle() {
+            read_to_frame_end(&mut rx, &mut rest);
+        }
+        assert_eq!(rest.len(), small);
+    }
+
+    #[test]
+    fn swapping_moves_contents_between_capacities() {
+        let mut wire = [0u8; 32];
+        let len = diagnostic(&[0x01], &mut wire);
+        let mut small = RxBuffer::<16>::new();
+        let mut large = RxBuffer::<64>::new();
+        feed(&mut large, &wire[..len]);
+
+        small.swap(&mut large).unwrap();
+
+        assert!(large.is_idle());
+        assert!(matches!(small.next().unwrap(), Next::Frame(..)));
+    }
+
+    #[test]
+    fn swapping_more_than_fits_changes_nothing() {
+        let mut small = RxBuffer::<8>::new();
+        let mut large = RxBuffer::<64>::new();
+        feed(&mut large, &[0x03; 9]);
+
+        assert_eq!(small.swap(&mut large), Err(DoesNotFit));
+        assert_eq!(large.len, 9);
+        assert!(small.is_idle());
     }
 
     #[test]

@@ -694,10 +694,9 @@ the entries this revision touches.
 
 ### 9.1 Prerequisites — blocking, and not in this crate
 
-- **No socket-backed entity yet.** `DiagnosticEntity` is declared, and this
-  crate's transport runs over it, but the implementation over real sockets —
-  `simple_doip`'s `Entity`, behind its `connection` feature — is separate
-  work. Until it lands, the transport is exercised only over a scripted mock.
+- **The transport is tested only over a scripted mock.** `simple_doip`'s
+  `entity::Entity` implements `DiagnosticEntity` over real sockets, behind its
+  `connection` feature, but no test here runs the transport over it.
 - **The client role is not built.** `DiagnosticConnection` is declared, and
   `simple_doip`'s `tester::Tester` implements it behind the `connection` feature;
   this crate's client role over it is not built.

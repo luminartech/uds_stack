@@ -35,7 +35,7 @@
 //! | `codec` | `message_codec::MessageCodec`, a `tokio-util` `Encoder`/`Decoder` |
 //! | `client` | The async `client::Client` |
 //! | `server` | The async `server::Server` |
-//! | `connection` | The `no_std` connection service over `edge-nal`: `tester::Tester` |
+//! | `connection` | The `no_std` connection service over `edge-nal`: `tester::Tester` and `entity::Entity` |
 //!
 //! `default = []`, so an embedded target gets the `no_std` core with no allocator and no
 //! runtime. `connection` stands apart from the chain above: it is `no_std`, allocates
@@ -45,10 +45,10 @@
 //!
 //! Performs I/O through [`edge-nal`](https://docs.rs/edge-nal/0.7) and keeps time with
 //! [`embassy-time`](https://docs.rs/embassy-time/0.5). This crate declares no transport or
-//! clock trait of its own, so the integrator supplies both. The feature has a tester
-//! today; what is said here of an entity is for the `DoIP` entity it is to gain.
+//! clock trait of its own, so the integrator supplies both.
 //!
-//! 1. **An `edge-nal` 0.7 backend**: `TcpConnect` for a tester, `TcpBind` for an entity.
+//! 1. **An `edge-nal` 0.7 backend**: `TcpConnect` for a tester, `TcpBind` for an entity,
+//!    whose bound acceptor the entity borrows.
 //!    `edge-nal-std` serves a host; on bare metal the backend is the integrator's.
 //! 2. **An `embassy-time` driver *and* a timer queue.** These are two settings, and
 //!    missing either is a *link* error, not a compile error. On a host:
@@ -85,6 +85,9 @@
 //!   service vocabulary, the [`service::DiagnosticConnection`] trait for one
 //!   connection and the [`service::DiagnosticEntity`] trait for a whole entity, with
 //!   no I/O.
+//! - **A `no_std` entity:** `entity::Entity` is an entity's `TCP_DATA` sockets behind
+//!   [`service::DiagnosticEntity`], over a bound `edge-nal` acceptor (requires the
+//!   `connection` feature).
 //! - **Bare metal / sans-io:** [`try_frame`] delimits a frame from a byte buffer without
 //!   owning any I/O resource; [`messages::Payload::decode`] then interprets the body.
 //!   See `examples/bare_metal_codec.rs`.
@@ -106,6 +109,8 @@ extern crate alloc;
 extern crate std;
 
 pub mod bare_metal_entity;
+#[cfg(feature = "connection")]
+pub mod entity;
 pub mod logical_address;
 pub mod messages;
 pub mod service;

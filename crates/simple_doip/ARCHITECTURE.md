@@ -58,7 +58,7 @@ is `no_std` with no allocator:
 | Codec | `codec` | `MessageCodec`, a `tokio_util::codec` `Encoder`/`Decoder` | `src/message_codec.rs` |
 | Async client | `client` | `Client`, `Connector` (trait + `ConnectorSocket`) | `src/client.rs`, `src/client_inner.rs`, `src/socket_manager.rs`, `src/connection.rs` |
 | Async server | `server` | `Server`, `ServerConnectionHandler` | `src/server.rs` |
-| Connection service | `connection` | `tester::Tester`, a `TesterConnection` (a `DiagnosticConnection` that can reconnect and close) over `edge-nal` and `embassy-time` | `src/tester.rs`, `src/tester/` |
+| Connection service | `connection` | `tester::Tester`, a `TesterConnection` (a `DiagnosticConnection` that can reconnect and close), and `entity::Entity`, a `DiagnosticEntity`, over `edge-nal` and `embassy-time` | `src/tester.rs`, `src/tester/`, `src/entity/`, `src/stream.rs`, `src/stream/` |
 
 `client` and `server` are each `["codec", ...]` in `Cargo.toml`, so either one
 pulls in `codec` (and transitively `std`/`alloc`), but they do **not** pull in
@@ -293,6 +293,11 @@ the seam described in section 3 usable.
 | `src/tester/confirm.rs` | NACK codes to `DoIpResult` |
 | `src/stream.rs` | What either end of a `TCP_DATA` stream shares: the caller's deadline and other instants on `embassy-time`'s clock |
 | `src/stream/rx.rs` | `RxBuffer<N>`: bytes read and not yet consumed, and the skipping of a frame longer than `N` |
+| `src/stream/tx.rs` | `TxQueue<N>`: the entity's bytes waiting to be written, in order, with the count written |
+| `src/entity/mod.rs` | `Entity`: accepting, the socket handler and its arbitration, the timers of Table 12, `DiagnosticEntity` |
+| `src/entity/handler.rs` | Figure 16's generic header handler and Figure 17's diagnostic message handler |
+| `src/entity/table.rs` | The connection table: each slot's socket, buffers and phase, and the reserve |
+| `src/entity/io.rs` | The one socket operation each slot waits on, applied in the poll that completes it |
 
 ### std / async layers
 

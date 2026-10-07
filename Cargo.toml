@@ -49,6 +49,8 @@ embassy-time = { version = "0.5", default-features = false }
 # simple_doip's `connection` feature. no_std: no default features.
 edge-nal = { version = "0.7", default-features = false }
 embedded-io-async = { version = "0.7", default-features = false }
+# Selects over a const-generic array of futures without `unsafe`; executor-agnostic.
+embassy-futures = { version = "0.1", default-features = false }
 
 # dev-dependencies
 anyhow = "1"
