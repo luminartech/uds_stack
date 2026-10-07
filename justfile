@@ -113,7 +113,7 @@ clippy:
 # leaves its references silently dangling. Denied here so the rename fails instead.
 [doc("Build the workspace's API docs, failing on a broken intra-doc link")]
 doc:
-    RUSTDOCFLAGS="-D rustdoc::broken_intra_doc_links" cargo doc --workspace --no-deps
+    RUSTDOCFLAGS="-D rustdoc::broken_intra_doc_links -D warnings" cargo doc --workspace --all-features --no-deps
 
 # The check host builds cannot make. A workspace Cargo.lock unifies features across
 # members, so a std dependency enabled by one crate can reach a no_std sibling; nothing
@@ -125,6 +125,7 @@ embedded:
     cargo build -p uds_session  --target {{ embedded_target }} --no-default-features
     cargo build -p uds_services --target {{ embedded_target }} --no-default-features
     cargo build -p uds_on_ip    --target {{ embedded_target }} --no-default-features
+    cargo build -p simple_doip  --target {{ embedded_target }} --no-default-features --features connection
     cargo build -p uds_protocol --target {{ embedded_target }} --no-default-features --features alloc
     cargo build -p uds_on_ip    --target {{ embedded_target }} --no-default-features --features alloc
 

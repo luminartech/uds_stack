@@ -467,7 +467,8 @@ truncated event carries.
 (REQ 7.7, REQ 7.16), outside the request/response correlation path, and does not
 reset `tS3_Server` on them (REQ 7.20). Nothing here can send one yet
 ([§9.2](#92-design-gaps-in-this-crate)). One that arrives reaches this crate as
-`simple_doip`'s `EntityEvent::Unmodelled` and is ignored, since a server has no
+`simple_doip`'s `EntityEvent::Unmodelled` (or `UnmodelledTruncated`, if it is too
+long for the buffer) and is ignored, since a server has no
 use for it; surfacing it as `TransportEvent::Periodic` belongs to the client
 role, which is not built.
 
@@ -697,8 +698,9 @@ the entries this revision touches.
   crate's transport runs over it, but the implementation over real sockets —
   `simple_doip`'s `Entity`, behind its `connection` feature — is separate
   work. Until it lands, the transport is exercised only over a scripted mock.
-- **The client role has nothing to drive.** `DiagnosticConnection` is declared;
-  its `no_std` tester, and this crate's client role over it, are not built.
+- **The client role is not built.** `DiagnosticConnection` is declared, and
+  `simple_doip`'s `tester::Tester` implements it behind the `connection` feature;
+  this crate's client role over it is not built.
 - **Two server seams.** `bare_metal_entity` owns the connection *and* dispatches
   UDS through `Callbacks::on_uds_request: fn(&[u8], &mut [u8]) -> i32`, one
   layer below the seam `uds_services` declares. [§13](#13-invariants-to-preserve)

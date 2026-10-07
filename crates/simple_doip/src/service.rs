@@ -94,7 +94,7 @@ pub enum ConnectionEvent<'b> {
         pdu: &'b [u8],
     },
     /// `DoIP_Data.indication` for a diagnostic message longer than the caller's buffer,
-    /// truncated to what fit.
+    /// or than the connection's own receive buffer, truncated to what fit.
     ///
     /// A variant rather than a flag on [`Self::Indication`], so that a fragment cannot
     /// be destructured as a whole PDU.
@@ -106,7 +106,7 @@ pub enum ConnectionEvent<'b> {
         /// The target's addressing model:
         /// [`ta.default_ta_type()`](LogicalAddress::default_ta_type).
         ta_type: TaType,
-        /// The leading bytes of the PDU that fit in the caller's buffer.
+        /// The leading bytes of the PDU that fit both buffers.
         pdu: &'b [u8],
         /// The whole PDU's length, from the message's header.
         length: usize,
@@ -136,6 +136,19 @@ pub enum ConnectionEvent<'b> {
         payload_type: u16,
         /// The payload, in the caller's buffer.
         data: &'b [u8],
+    },
+    /// A valid message of a payload type this crate does not model, longer than the
+    /// caller's buffer or the connection's, truncated to what fit.
+    ///
+    /// A variant rather than a flag on [`Self::Unmodelled`], for the reason
+    /// [`Self::IndicationTruncated`] is one.
+    UnmodelledTruncated {
+        /// The message's payload type, as on the wire.
+        payload_type: u16,
+        /// The leading bytes of the payload that fit both buffers.
+        data: &'b [u8],
+        /// The whole payload's length, from the message's header.
+        length: usize,
     },
     /// The connection is closed.
     ///
@@ -173,6 +186,11 @@ pub trait DiagnosticConnection {
     /// What this connection's failures are. Never interpreted by the layer above, which
     /// can only report it.
     type Error: core::fmt::Debug;
+
+    /// The longest PDU [`Self::request`] accepts. A longer one is refused with
+    /// [`Self::Error`], and no confirm follows it, so the layer above can refuse it
+    /// first.
+    const MAX_PDU: usize;
 
     /// `DoIP_Data.request`: send `pdu` to `ta` (ISO 13400-2:2019 8.3.1).
     ///
@@ -220,6 +238,71 @@ pub trait DiagnosticConnection {
         buf: &'b mut [u8],
         deadline_ms: Option<u32>,
     ) -> impl Future<Output = Result<ConnectionEvent<'b>, Self::Error>>;
+}
+
+/// A tester's [`DiagnosticConnection`], which it can replace with a new one.
+///
+/// ISO 14229-5:2022 REQ 7.8 and REQ 7.10 require a client to open a new TCP connection
+/// and activate routing again after the server closes the connection for a session
+/// change or a reset; this is how the layer above does so without naming the socket.
+/// The crate's `ARCHITECTURE.md`, section 2.2, draws a connection's life.
+///
+/// # Obligations on implementors
+///
+/// - [`Self::reconnect`] gives the old connection up, waits a back-off the implementor
+///   documents, then connects: an entity may refuse a tester's address for a while
+///   after its socket closes.
+/// - A request awaiting its confirm is confirmed before anything from a new
+///   connection.
+/// - However it closed, a connection stays closed until a reconnect succeeds:
+///   [`DiagnosticConnection::next_event`] reports [`ConnectionEvent::Closed`] on every
+///   call, and [`DiagnosticConnection::request`] is refused. Dropping
+///   [`Self::reconnect`] leaves it so.
+pub trait TesterConnection: DiagnosticConnection {
+    /// Why a reconnect failed. Never interpreted by the layer above, which can only
+    /// report it.
+    type ReconnectError: core::fmt::Debug;
+
+    /// Why a close failed. Never interpreted by the layer above, which can only report
+    /// it.
+    type CloseError: core::fmt::Debug;
+
+    /// Why a connection failed. Never interpreted by the layer above, which can only
+    /// report it.
+    type IoError: core::fmt::Debug;
+
+    /// The I/O failure that ended the last connection, until a reconnect succeeds.
+    ///
+    /// [`DiagnosticConnection::next_event`] reports every end as
+    /// [`ConnectionEvent::Closed`], so this is how the layer above tells a failed
+    /// connection from one the entity closed or the tester gave up, for which it is
+    /// `None`.
+    fn io_error(&self) -> Option<&Self::IoError>;
+
+    /// Gives the connection up, if there is one, then opens a new TCP connection and
+    /// activates routing on it.
+    ///
+    /// # Errors
+    ///
+    /// [`Self::ReconnectError`] where no connection could be opened and activated; the
+    /// connection is then closed until a reconnect succeeds.
+    fn reconnect(&mut self) -> impl Future<Output = Result<(), Self::ReconnectError>>;
+
+    /// Closes the connection gracefully, if there is one, and leaves it closed until a
+    /// [`Self::reconnect`] succeeds.
+    ///
+    /// A request awaiting its confirm is confirmed as failed by the next
+    /// [`DiagnosticConnection::next_event`], which then reports
+    /// [`ConnectionEvent::Closed`], as after any other end. Closing with no connection,
+    /// or a second time, does nothing.
+    ///
+    /// Cancel-safe: dropped before it completes, it drops the connection instead of
+    /// closing it gracefully, and the connection is closed either way.
+    ///
+    /// # Errors
+    ///
+    /// [`Self::CloseError`] where closing fails. The connection is closed either way.
+    fn close(&mut self) -> impl Future<Output = Result<(), Self::CloseError>>;
 }
 
 /// One connection in a [`DiagnosticEntity`]'s connection table.
@@ -271,7 +354,7 @@ pub enum EntityEvent<'b> {
         /// The PDU, in the caller's buffer.
         pdu: &'b [u8],
     },
-    /// A diagnostic message longer than the caller's buffer; see
+    /// A diagnostic message longer than the caller's buffer or the connection's; see
     /// [`ConnectionEvent::IndicationTruncated`].
     IndicationTruncated {
         /// The connection the message arrived on.
@@ -284,7 +367,7 @@ pub enum EntityEvent<'b> {
         /// The target's addressing model:
         /// [`ta.default_ta_type()`](LogicalAddress::default_ta_type).
         ta_type: TaType,
-        /// The leading bytes of the PDU that fit in the caller's buffer.
+        /// The leading bytes of the PDU that fit both buffers.
         pdu: &'b [u8],
         /// The whole PDU's length, from the message's header.
         length: usize,
@@ -313,6 +396,18 @@ pub enum EntityEvent<'b> {
         payload_type: u16,
         /// The payload, in the caller's buffer.
         data: &'b [u8],
+    },
+    /// A valid message of a payload type this crate does not model, longer than the
+    /// caller's buffer or the connection's; see [`ConnectionEvent::UnmodelledTruncated`].
+    UnmodelledTruncated {
+        /// The connection the message arrived on.
+        connection: ConnectionId,
+        /// The message's payload type, as on the wire.
+        payload_type: u16,
+        /// The leading bytes of the payload that fit both buffers.
+        data: &'b [u8],
+        /// The whole payload's length, from the message's header.
+        length: usize,
     },
     /// `connection` closed other than by [`DiagnosticEntity::close`]: the tester closed
     /// it, or the entity did on an error or a timeout.
@@ -459,7 +554,7 @@ pub trait DiagnosticEntity {
     ) -> impl Future<Output = Result<(), Self::Error>>;
 }
 
-/// A tester address an [`EntityConfig`] was given that is outside the client range,
+/// An address given as a tester's that is outside the client range,
 /// [`LogicalAddress::MIN_CLIENT_ADDRESS`]..=[`LogicalAddress::MAX_CLIENT_ADDRESS`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 #[error(
@@ -468,6 +563,59 @@ pub trait DiagnosticEntity {
 pub struct NotATesterAddress {
     /// The rejected address.
     pub address: LogicalAddress,
+}
+
+/// A logical address in the client range of ISO 13400-2:2019 Table 13: one a tester may
+/// activate routing for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct TesterAddress(LogicalAddress);
+
+impl TesterAddress {
+    /// Takes `address` as a tester's.
+    ///
+    /// # Arguments
+    ///
+    /// * `address` - within
+    ///   [`LogicalAddress::MIN_CLIENT_ADDRESS`]..=[`LogicalAddress::MAX_CLIENT_ADDRESS`].
+    ///
+    /// # Errors
+    ///
+    /// [`NotATesterAddress`] for an `address` outside that range.
+    pub const fn new(address: LogicalAddress) -> Result<Self, NotATesterAddress> {
+        if address.0 >= LogicalAddress::MIN_CLIENT_ADDRESS.0
+            && address.0 <= LogicalAddress::MAX_CLIENT_ADDRESS.0
+        {
+            Ok(Self(address))
+        } else {
+            Err(NotATesterAddress { address })
+        }
+    }
+
+    /// The address.
+    #[must_use]
+    pub const fn address(self) -> LogicalAddress {
+        self.0
+    }
+}
+
+impl TryFrom<LogicalAddress> for TesterAddress {
+    type Error = NotATesterAddress;
+
+    fn try_from(address: LogicalAddress) -> Result<Self, NotATesterAddress> {
+        Self::new(address)
+    }
+}
+
+impl From<TesterAddress> for LogicalAddress {
+    fn from(address: TesterAddress) -> Self {
+        address.0
+    }
+}
+
+impl core::fmt::Display for TesterAddress {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        core::fmt::Display::fmt(&self.0, f)
+    }
 }
 
 /// What a `DoIP` entity is told about its testers.
@@ -479,19 +627,22 @@ pub struct NotATesterAddress {
 ///
 /// ```
 /// use simple_doip::LogicalAddress;
-/// use simple_doip::service::EntityConfig;
+/// use simple_doip::service::{EntityConfig, TesterAddress};
 ///
 /// let config = EntityConfig::default();
 /// assert!(config.accepts(LogicalAddress(0x0E00)));
 /// assert!(!config.accepts(LogicalAddress(0x0E80)));
 ///
-/// let config = EntityConfig::new([LogicalAddress(0x0E00), LogicalAddress(0x0E80)])?;
+/// let config = EntityConfig::new([
+///     TesterAddress::new(LogicalAddress(0x0E00))?,
+///     TesterAddress::new(LogicalAddress(0x0E80))?,
+/// ]);
 /// assert!(config.accepts(LogicalAddress(0x0E80)));
 /// # Ok::<(), simple_doip::service::NotATesterAddress>(())
 /// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct EntityConfig<const TESTERS: usize = 1> {
-    accepted_testers: [LogicalAddress; TESTERS],
+    accepted_testers: [TesterAddress; TESTERS],
 }
 
 impl<const TESTERS: usize> EntityConfig<TESTERS> {
@@ -500,32 +651,18 @@ impl<const TESTERS: usize> EntityConfig<TESTERS> {
     /// # Arguments
     ///
     /// * `accepted_testers` - the tester source addresses that may activate routing.
-    ///
-    /// # Errors
-    ///
-    /// [`NotATesterAddress`] for the first of `accepted_testers` outside the client
-    /// range.
-    pub const fn new(
-        accepted_testers: [LogicalAddress; TESTERS],
-    ) -> Result<Self, NotATesterAddress> {
+    #[must_use]
+    pub const fn new(accepted_testers: [TesterAddress; TESTERS]) -> Self {
         const { assert!(TESTERS > 0, "an entity must accept at least one tester") };
-        let mut i = 0;
-        while i < TESTERS {
-            let address = accepted_testers[i];
-            if address.0 < LogicalAddress::MIN_CLIENT_ADDRESS.0
-                || address.0 > LogicalAddress::MAX_CLIENT_ADDRESS.0
-            {
-                return Err(NotATesterAddress { address });
-            }
-            i += 1;
-        }
-        Ok(Self { accepted_testers })
+        Self { accepted_testers }
     }
 
     /// Whether a tester with source address `sa` may activate routing.
     #[must_use]
     pub fn accepts(&self, sa: LogicalAddress) -> bool {
-        self.accepted_testers.contains(&sa)
+        self.accepted_testers
+            .iter()
+            .any(|tester| tester.address() == sa)
     }
 }
 
@@ -533,7 +670,7 @@ impl Default for EntityConfig {
     /// Accepts the one tester `0x0E00`.
     fn default() -> Self {
         Self {
-            accepted_testers: [LogicalAddress(0x0E00)],
+            accepted_testers: [TesterAddress(LogicalAddress(0x0E00))],
         }
     }
 }
@@ -557,6 +694,7 @@ mod tests {
     )]
     impl DiagnosticConnection for Echo {
         type Error = core::convert::Infallible;
+        const MAX_PDU: usize = 8;
 
         async fn request(
             &mut self,
@@ -636,21 +774,38 @@ mod tests {
     }
 
     /// A functional group address, like the `0xE400` this crate once offered as a tester
-    /// address, is refused at construction, as is anything else outside the client
-    /// range at either edge.
+    /// address, is not a tester's, nor is anything else outside the client range at
+    /// either edge.
     #[test]
-    fn an_entity_config_refuses_an_address_outside_the_client_range() {
+    fn a_tester_address_is_one_in_the_client_range() {
         for address in [0xE400, 0x0DFF, 0x1000] {
             assert_eq!(
-                EntityConfig::new([LogicalAddress(0x0E00), LogicalAddress(address)]),
+                TesterAddress::new(LogicalAddress(address)),
                 Err(NotATesterAddress {
                     address: LogicalAddress(address)
                 }),
                 "{address:#06X}"
             );
         }
-        assert!(
-            EntityConfig::new([LogicalAddress(0x0E00), LogicalAddress(0x0FFF)]).is_ok()
-        );
+        for address in [0x0E00, 0x0FFF] {
+            assert!(TesterAddress::new(LogicalAddress(address)).is_ok());
+        }
+    }
+
+    /// An entity's configuration is built from proven tester addresses, so it cannot
+    /// fail, and a `const` one is written as such.
+    #[test]
+    fn an_entity_config_accepts_the_testers_it_was_given() {
+        const fn tester(address: u16) -> TesterAddress {
+            match TesterAddress::new(LogicalAddress(address)) {
+                Ok(tester) => tester,
+                Err(_) => panic!("a tester address"),
+            }
+        }
+        const CONFIG: EntityConfig<2> = EntityConfig::new([tester(0x0E00), tester(0x0E80)]);
+
+        assert!(CONFIG.accepts(LogicalAddress(0x0E00)));
+        assert!(CONFIG.accepts(LogicalAddress(0x0E80)));
+        assert!(!CONFIG.accepts(LogicalAddress(0x0E01)));
     }
 }

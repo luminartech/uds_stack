@@ -140,6 +140,12 @@ impl PartialEq<u16> for LogicalAddress {
         self.0 == *other
     }
 }
+impl core::hash::Hash for LogicalAddress {
+    fn hash<H: core::hash::Hasher>(&self, state: &mut H) {
+        self.0.hash(state);
+    }
+}
+
 impl PartialEq<LogicalAddress> for LogicalAddress {
     fn eq(&self, other: &LogicalAddress) -> bool {
         self.0 == other.0
