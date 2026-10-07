@@ -1107,6 +1107,30 @@ fn a_holder_that_cannot_be_asked_is_silent() {
     );
 }
 
+/// REQ 3.DoIP-093: an alive check response counts though the holder has stopped reading,
+/// so that the request could not even be queued yet.
+#[test]
+fn a_response_from_a_holder_not_yet_asked_counts() {
+    let _clock = clock();
+    let stack = MockStack::new(4096);
+    let mut entity = Entity::<_, 1, 64, 2>::new(&stack, address(), two_testers());
+    let holder = activated(&stack, &mut entity, TESTER);
+    holder.stall_writes();
+    request(&mut entity, TESTER, &[0x62; 52]).unwrap();
+    let newcomer = stack.dial();
+    newcomer.send(&activation_from(TESTER, 0));
+    assert_eq!(events(&mut entity), []);
+
+    holder.send(&alive_check_response());
+    assert_eq!(events(&mut entity), []);
+
+    assert_eq!(
+        newcomer.take_written(),
+        activation_response_for(TESTER, 0x03)
+    );
+    assert!(!holder.is_shut());
+}
+
 /// The reserve socket exchanging with an Initialized slot takes that slot's unsent bytes
 /// with it: here, a NACK still queued for the idle tester.
 #[test]
@@ -1285,6 +1309,30 @@ fn a_message_longer_than_the_callers_buffer_is_indicated_truncated() {
             pdu: vec![0x2E, 0xF1, 0x90],
             length: 5
         })
+    );
+}
+
+/// A connection is read while what the entity sends it waits for the tester to read:
+/// neither direction holds the other up.
+#[test]
+fn a_connection_whose_writes_wait_is_still_read() {
+    let _clock = clock();
+    let stack = MockStack::new(4096);
+    let mut entity = OneSocket::new(&stack, address(), two_testers());
+    let peer = activated(&stack, &mut entity, TESTER);
+    peer.stall_writes();
+    request(&mut entity, TESTER, &[0x62; 8]).unwrap();
+    peer.send(&diagnostic(TESTER, ENTITY, &[0x3E, 0x00]));
+
+    assert_eq!(
+        events(&mut entity),
+        [Ev::Indication {
+            connection: 0,
+            sa: TESTER,
+            ta: ENTITY,
+            ta_type: TaType::Physical,
+            pdu: vec![0x3E, 0x00],
+        }]
     );
 }
 

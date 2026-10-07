@@ -59,14 +59,17 @@
 //!    await and call again — only if the backend's `embedded_io_async::Read::read`,
 //!    `embedded_io_async::Write::write`, `edge_nal::Readable::readable` and, for an
 //!    entity, `edge_nal::TcpAccept::accept` move no data and change no connection state
-//!    when dropped before completing. `embedded-io-async` encourages that but does not
-//!    require it, so it is the integrator's obligation:
-//!    - `edge-nal-std` 0.7.0 meets it for all four.
-//!    - `edge-nal-embassy` 0.9.0 meets it for `read`, `write` and `readable` but **not
-//!      for `accept`**, which creates its socket inside the future: a cancelled `accept`
-//!      drops a connection that may already be established. An entity on embassy-net
-//!      accepts through an adapter over embassy-net's own `TcpSocket` instead; the
-//!      repository's `examples/embassy-net-entity` crate is one.
+//!    when dropped before completing. For an entity this holds of the halves
+//!    `edge_nal::TcpSplit::split` gives too, which it reads and writes at the same
+//!    time: each half must keep its own wakeup, so that one waiting does not displace
+//!    the other's. `embedded-io-async` encourages that but does not require it, so it is
+//!    the integrator's obligation:
+//!    - `edge-nal-std` 0.7.0 meets it for all four, and for the halves.
+//!    - `edge-nal-embassy` 0.9.0 meets it for `read`, `write`, `readable` and the halves
+//!      but **not for `accept`**, which creates its socket inside the future: a
+//!      cancelled `accept` drops a connection that may already be established. An entity
+//!      on embassy-net accepts through an adapter over embassy-net's own `TcpSocket`
+//!      instead; the repository's `examples/embassy-net-entity` crate is one.
 //! 4. **Reads and writes that wait on nothing else.** A `read` after `readable` has
 //!    reported data completes with it, and a `write` sends what it accepts without
 //!    waiting for `embedded_io_async::Write::flush`, which this feature never calls. A

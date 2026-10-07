@@ -297,17 +297,18 @@ impl ErrorType for MockSocket {
     type Error = MockError;
 }
 
-impl Read for MockSocket {
-    async fn read(&mut self, buf: &mut [u8]) -> Result<usize, MockError> {
+/// The socket operations, shared by a socket and its halves.
+impl MockPeer {
+    async fn read(&self, buf: &mut [u8]) -> Result<usize, MockError> {
         let (piece, read_yields) = {
-            let shared = self.peer.shared.borrow();
+            let shared = self.shared.borrow();
             (shared.piece, shared.read_yields)
         };
-        if read_yields || self.peer.with(|c| c.inbound.is_empty()) {
+        if read_yields || self.with(|c| c.inbound.is_empty()) {
             yield_once().await;
         }
         poll_fn(|cx| {
-            self.peer.with(|c| {
+            self.with(|c| {
                 if c.read_error {
                     return Poll::Ready(Err(MockError));
                 }
@@ -327,15 +328,13 @@ impl Read for MockSocket {
         })
         .await
     }
-}
 
-impl Write for MockSocket {
-    async fn write(&mut self, buf: &[u8]) -> Result<usize, MockError> {
+    async fn write(&self, buf: &[u8]) -> Result<usize, MockError> {
         yield_once().await;
-        let piece = self.peer.shared.borrow().piece;
+        let piece = self.shared.borrow().piece;
         let n = buf.len().min(piece);
         poll_fn(|cx| {
-            self.peer.with(|c| {
+            self.with(|c| {
                 if c.write_error {
                     return Poll::Ready(Err(MockError));
                 }
@@ -357,15 +356,9 @@ impl Write for MockSocket {
         .await
     }
 
-    async fn flush(&mut self) -> Result<(), MockError> {
-        Ok(())
-    }
-}
-
-impl Readable for MockSocket {
-    async fn readable(&mut self) -> Result<(), MockError> {
+    async fn readable(&self) -> Result<(), MockError> {
         poll_fn(|cx| {
-            self.peer.with(|c| {
+            self.with(|c| {
                 if c.read_error || c.eof || !c.inbound.is_empty() {
                     Poll::Ready(Ok(()))
                 } else {
@@ -375,6 +368,28 @@ impl Readable for MockSocket {
             })
         })
         .await
+    }
+}
+
+impl Read for MockSocket {
+    async fn read(&mut self, buf: &mut [u8]) -> Result<usize, MockError> {
+        self.peer.read(buf).await
+    }
+}
+
+impl Write for MockSocket {
+    async fn write(&mut self, buf: &[u8]) -> Result<usize, MockError> {
+        self.peer.write(buf).await
+    }
+
+    async fn flush(&mut self) -> Result<(), MockError> {
+        Ok(())
+    }
+}
+
+impl Readable for MockSocket {
+    async fn readable(&mut self) -> Result<(), MockError> {
+        self.peer.readable().await
     }
 }
 
@@ -399,33 +414,36 @@ impl TcpShutdown for MockSocket {
     }
 }
 
-/// Unused by the tester, but required of every `edge-nal` socket.
+/// One half of a split [`MockSocket`]: reads and writes the same connection, each half
+/// with its own waker.
 #[derive(Debug)]
-pub struct MockHalf;
+pub struct MockHalf {
+    peer: MockPeer,
+}
 
 impl ErrorType for MockHalf {
     type Error = MockError;
 }
 
 impl Read for MockHalf {
-    async fn read(&mut self, _buf: &mut [u8]) -> Result<usize, MockError> {
-        Err(MockError)
+    async fn read(&mut self, buf: &mut [u8]) -> Result<usize, MockError> {
+        self.peer.read(buf).await
     }
 }
 
 impl Write for MockHalf {
-    async fn write(&mut self, _buf: &[u8]) -> Result<usize, MockError> {
-        Err(MockError)
+    async fn write(&mut self, buf: &[u8]) -> Result<usize, MockError> {
+        self.peer.write(buf).await
     }
 
     async fn flush(&mut self) -> Result<(), MockError> {
-        Err(MockError)
+        Ok(())
     }
 }
 
 impl Readable for MockHalf {
     async fn readable(&mut self) -> Result<(), MockError> {
-        Err(MockError)
+        self.peer.readable().await
     }
 }
 
@@ -434,7 +452,10 @@ impl TcpSplit for MockSocket {
     type Write<'a> = MockHalf;
 
     fn split(&mut self) -> (MockHalf, MockHalf) {
-        panic!("the tester must not split its socket")
+        let half = || MockHalf {
+            peer: self.peer.clone(),
+        };
+        (half(), half())
     }
 }
 
