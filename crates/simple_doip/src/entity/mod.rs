@@ -219,76 +219,44 @@ struct PendingConfirm {
     result: Option<DoIpResult>,
 }
 
-/// An event whose data [`handler::handle`] has copied into the caller's buffer.
-enum Delivery {
-    Indication {
-        connection: ConnectionId,
-        sa: LogicalAddress,
-        ta: LogicalAddress,
-        ta_type: TaType,
-        copied: usize,
-        length: usize,
-    },
-    Unmodelled {
-        connection: ConnectionId,
-        payload_type: u16,
-        copied: usize,
-        length: usize,
-    },
+/// A diagnostic message whose data [`handler::handle`] has copied into the caller's
+/// buffer.
+struct Delivery {
+    connection: ConnectionId,
+    sa: LogicalAddress,
+    ta: LogicalAddress,
+    ta_type: TaType,
+    copied: usize,
+    length: usize,
 }
 
 impl Delivery {
     fn into_event(self, buf: &[u8]) -> EntityEvent<'_> {
-        match self {
-            Self::Indication {
+        let Self {
+            connection,
+            sa,
+            ta,
+            ta_type,
+            copied,
+            length,
+        } = self;
+        let pdu = buf.get(..copied).unwrap_or_default();
+        if copied == length {
+            EntityEvent::Indication {
                 connection,
                 sa,
                 ta,
                 ta_type,
-                copied,
-                length,
-            } => {
-                let pdu = buf.get(..copied).unwrap_or_default();
-                if copied == length {
-                    EntityEvent::Indication {
-                        connection,
-                        sa,
-                        ta,
-                        ta_type,
-                        pdu,
-                    }
-                } else {
-                    EntityEvent::IndicationTruncated {
-                        connection,
-                        sa,
-                        ta,
-                        ta_type,
-                        pdu,
-                        length,
-                    }
-                }
+                pdu,
             }
-            Self::Unmodelled {
+        } else {
+            EntityEvent::IndicationTruncated {
                 connection,
-                payload_type,
-                copied,
+                sa,
+                ta,
+                ta_type,
+                pdu,
                 length,
-            } => {
-                let data = buf.get(..copied).unwrap_or_default();
-                if copied == length {
-                    EntityEvent::Unmodelled {
-                        connection,
-                        payload_type,
-                        data,
-                    }
-                } else {
-                    EntityEvent::UnmodelledTruncated {
-                        connection,
-                        payload_type,
-                        data,
-                        length,
-                    }
-                }
             }
         }
     }
@@ -815,21 +783,11 @@ impl<
                     ta_type,
                     copied,
                     length,
-                } => Step::Deliver(Delivery::Indication {
+                } => Step::Deliver(Delivery {
                     connection,
                     sa,
                     ta,
                     ta_type,
-                    copied,
-                    length,
-                }),
-                Handled::Unmodelled {
-                    payload_type,
-                    copied,
-                    length,
-                } => Step::Deliver(Delivery::Unmodelled {
-                    connection,
-                    payload_type,
                     copied,
                     length,
                 }),

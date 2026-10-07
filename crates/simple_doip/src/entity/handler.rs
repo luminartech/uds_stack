@@ -36,11 +36,6 @@ pub(super) enum Handled {
         copied: usize,
         length: usize,
     },
-    Unmodelled {
-        payload_type: u16,
-        copied: usize,
-        length: usize,
-    },
 }
 
 /// Handles the frame at the front of `slot`'s receive buffer.
@@ -135,18 +130,6 @@ pub(super) fn handle<S, const CAP: usize>(
                 Handled::Done
             }
         }
-        (
-            PayloadType::Reserved(payload_type)
-            | PayloadType::ReservedVehicleManufacturer(payload_type),
-            _,
-        ) if registered.is_some() => {
-            open.named = true;
-            Handled::Unmodelled {
-                payload_type,
-                copied: copy(frame.payload, buf),
-                length: frame.payload.len(),
-            }
-        }
         _ => Handled::Done,
     };
     rx.consume(consumed);
@@ -201,9 +184,6 @@ fn length_rule(payload_type: PayloadType) -> Option<fn(u32) -> bool> {
         | PayloadType::DiagnosticMessagePositiveAcknowledge
         | PayloadType::DiagnosticMessageNegativeAcknowledge => Some(|length| length >= 5),
         PayloadType::NegativeAcknowledge => Some(|length| length == 1),
-        PayloadType::Reserved(_) | PayloadType::ReservedVehicleManufacturer(_) => {
-            Some(|_| true)
-        }
         _ => None,
     }
 }

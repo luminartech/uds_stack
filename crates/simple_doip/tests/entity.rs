@@ -829,46 +829,57 @@ fn a_message_longer_than_the_callers_buffer_is_indicated_truncated() {
     );
 }
 
-/// A reserved payload type on a registered connection is reported, not refused.
+/// REQ 7.DoIP-042: a payload type the entity does not support is answered with NACK
+/// code 0x01 and discarded on a registered connection too, whether ISO 13400-2:2019
+/// Table 17 reserves it, ISO 14229-5:2022 REQ 7.16 gives it to the server's periodic
+/// response, or it is left to the manufacturer.
 #[test]
-fn a_reserved_payload_type_is_reported_unmodelled() {
+fn every_unsupported_payload_type_on_a_registered_connection_is_nacked_0x01() {
     let _clock = clock();
     let stack = MockStack::new(4096);
     let mut entity = OneSocket::new(&stack, address(), two_testers());
     let peer = activated(&stack, &mut entity, TESTER);
-    peer.send(&raw(0xF001, &[0x01, 0x02]));
+    let unsupported = [
+        0x0009, 0x4000, 0x4005, 0x8000, 0x8004, 0xEFFF, 0xF000, 0xFFFF,
+    ];
+    for payload_type in unsupported {
+        peer.send(&raw(payload_type, &[0x01, 0x02]));
+    }
+    peer.send(&diagnostic(TESTER, ENTITY, &[0x3E, 0x00]));
 
     assert_eq!(
         events(&mut entity),
-        [Ev::Unmodelled {
+        [Ev::Indication {
             connection: 0,
-            payload_type: 0xF001,
-            data: vec![0x01, 0x02]
+            sa: TESTER,
+            ta: ENTITY,
+            ta_type: TaType::Physical,
+            pdu: vec![0x3E, 0x00]
         }]
     );
-    assert_eq!(peer.take_written(), []);
+    let mut expected = header_nack(0x01).repeat(unsupported.len());
+    expected.extend(ack(ENTITY, TESTER));
+    assert_eq!(peer.take_written(), expected);
+    assert!(!peer.is_shut());
 }
 
-/// A reserved payload type longer than the caller's buffer is reported truncated, with
-/// its whole length.
+/// REQ 7.DoIP-042 before routing activation: a manufacturer-specific payload type is
+/// answered with NACK code 0x01, not dropped unanswered.
 #[test]
-fn a_reserved_payload_type_longer_than_the_callers_buffer_is_reported_truncated() {
+fn a_manufacturer_payload_type_before_activation_is_nacked_0x01() {
     let _clock = clock();
     let stack = MockStack::new(4096);
     let mut entity = OneSocket::new(&stack, address(), two_testers());
-    let peer = activated(&stack, &mut entity, TESTER);
-    peer.send(&raw(0xF001, &[0x01, 0x02, 0x03, 0x04]));
+    let peer = stack.dial();
+    peer.send(&raw(0xF001, &[0x01, 0x02]));
+    peer.send(&activation_from(TESTER, 0));
 
-    assert_eq!(
-        step_into(&mut entity, 3, None),
-        Some(Ev::UnmodelledTruncated {
-            connection: 0,
-            payload_type: 0xF001,
-            data: vec![0x01, 0x02, 0x03],
-            length: 4
-        })
-    );
     assert_eq!(events(&mut entity), []);
+
+    let mut expected = header_nack(0x01);
+    expected.extend(activation_response_for(TESTER, ACTIVATED));
+    assert_eq!(peer.take_written(), expected);
+    assert!(!peer.is_shut());
 }
 
 // --- request, confirm and close ----------------------------------------------------------
