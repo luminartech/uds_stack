@@ -1077,9 +1077,11 @@ impl<
     /// The entity's own logical address is its [`EntityAddress::physical`]; a request
     /// from any other `sa` sends nothing and is confirmed [`DoIpResult::UnknownSa`].
     ///
-    /// Waits for nothing: where the connection's queue has no room for `pdu`, nothing is
-    /// sent and the request is confirmed [`DoIpResult::OutOfMemory`]. Requests to one
-    /// target are confirmed in the order they were made.
+    /// Waits for nothing: the request is made by the future's first poll, which
+    /// completes it, so a future dropped unpolled makes none. Where the connection's
+    /// queue has no room for `pdu`, nothing is sent and the request is confirmed
+    /// [`DoIpResult::OutOfMemory`]. Requests to one target are confirmed in the order
+    /// they were made.
     ///
     /// # Errors
     ///
@@ -1093,7 +1095,7 @@ impl<
         ta_type: TaType,
         pdu: &[u8],
     ) -> impl Future<Output = Result<(), Self::Error>> {
-        core::future::ready(self.queue(sa, ta, ta_type, pdu))
+        poll_fn(move |_| Poll::Ready(self.queue(sa, ta, ta_type, pdu)))
     }
 
     fn now(&self) -> u32 {

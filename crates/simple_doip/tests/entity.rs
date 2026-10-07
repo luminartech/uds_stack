@@ -1700,6 +1700,21 @@ fn closing_a_connection_that_is_not_there_does_nothing() {
     assert_eq!(events(&mut entity), []);
 }
 
+/// A request dropped before it is polled was never made: nothing is sent and nothing
+/// confirmed.
+#[test]
+fn a_request_dropped_unpolled_is_not_made() {
+    let _clock = clock();
+    let stack = MockStack::new(4096);
+    let mut entity = OneSocket::new(&stack, address(), two_testers());
+    let peer = activated(&stack, &mut entity, TESTER);
+
+    drop(entity.request(ENTITY, TESTER, TaType::Physical, &[0x62, 0x01]));
+
+    assert_eq!(events(&mut entity), []);
+    assert_eq!(peer.take_written(), []);
+}
+
 /// Closing an id no event has issued does nothing, though a connection holds its slot.
 #[test]
 fn closing_an_id_no_event_issued_does_nothing() {
