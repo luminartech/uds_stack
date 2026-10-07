@@ -4,8 +4,13 @@
 //! inside the future, so dropping the future, which [`Entity`] does routinely, loses a
 //! connection already made. [`Acceptor`] is the adapter instead: it owns `MCTS + 1` of
 //! embassy-net's own `TcpSocket`s, keeps each listening across dropped `accept`s, and
-//! hands out whichever has a connection. A socket the entity is done with is aborted and
-//! returns to the pool to listen again.
+//! hands out whichever has a connection. A socket the entity is done with returns to the
+//! pool: aborted if its connection was still open, left to finish a close the entity
+//! started, then listening again.
+//!
+//! While in the pool a socket has a timeout of [`POOL_TIMEOUT`], so a handshake whose
+//! peer vanished, or a close whose peer never closes its side, gives the socket back. A
+//! socket the entity holds has none: the entity keeps `DoIP`'s own timers.
 //!
 //! [`serve`] is what a firmware's task calls once its embassy-net `Stack` is up.
 
@@ -21,10 +26,14 @@ use core::task::Poll;
 use edge_nal::{Close, Readable, TcpAccept, TcpShutdown, TcpSplit};
 use embassy_net::Stack;
 use embassy_net::tcp::{Error, State, TcpReader, TcpSocket, TcpWriter};
+use embassy_time::Duration;
 use embedded_io_async::{ErrorType, Read, Write};
 use simple_doip::TCP_PORT;
 use simple_doip::entity::{Entity, EntityAddress};
 use simple_doip::service::{DiagnosticEntity, EntityConfig, EntityEvent};
+
+/// How long a socket in the pool waits on a silent peer before it is aborted.
+pub const POOL_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// `N` embassy-net sockets listening on one port.
 pub struct Acceptor<'d, const N: usize> {
@@ -51,8 +60,8 @@ impl<'d, const N: usize> Acceptor<'d, N> {
     }
 }
 
-/// A connection the [`Acceptor`] handed out. Dropping it aborts the connection and
-/// returns the socket to the pool.
+/// A connection the [`Acceptor`] handed out. Dropping it returns the socket to the pool,
+/// aborting the connection unless the entity has closed it.
 pub struct Accepted<'a, 'd> {
     socket: RefMut<'a, TcpSocket<'d>>,
 }
@@ -67,7 +76,10 @@ impl fmt::Debug for Accepted<'_, '_> {
 
 impl Drop for Accepted<'_, '_> {
     fn drop(&mut self) {
-        self.socket.abort();
+        if matches!(self.socket.state(), State::Established | State::CloseWait) {
+            self.socket.abort();
+        }
+        self.socket.set_timeout(Some(POOL_TIMEOUT));
     }
 }
 
@@ -88,15 +100,17 @@ impl<'d, const N: usize> TcpAccept for Acceptor<'d, N> {
                 };
                 match socket.state() {
                     State::Established | State::CloseWait => {
+                        socket.set_timeout(None);
                         let remote = socket.remote_endpoint().map_or(
                             SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 0),
                             |endpoint| SocketAddr::new(endpoint.addr.into(), endpoint.port),
                         );
                         return Poll::Ready(Ok((remote, Accepted { socket })));
                     }
-                    State::Closed | State::Listen => {
+                    State::Closed | State::Listen | State::TimeWait => {
                         // Listening again on the same endpoint changes nothing; polling
                         // the accept registers this task to be woken by a connection.
+                        socket.set_timeout(Some(POOL_TIMEOUT));
                         let refused = matches!(
                             pin!(socket.accept(self.port)).poll(cx),
                             Poll::Ready(Err(_))
@@ -106,9 +120,9 @@ impl<'d, const N: usize> TcpAccept for Acceptor<'d, N> {
                         }
                     }
                     _ => {
-                        if pin!(socket.wait_write_ready()).poll(cx).is_ready() {
-                            cx.waker().wake_by_ref();
-                        }
+                        // Never ready in these states: the poll only registers this task
+                        // to be woken when the handshake or the close moves on.
+                        let _ = pin!(socket.wait_write_ready()).poll(cx);
                     }
                 }
             }

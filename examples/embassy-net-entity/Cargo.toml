@@ -13,6 +13,7 @@ license = "MIT OR Apache-2.0"
 simple_doip = { workspace = true, features = ["connection"] }
 edge-nal = { workspace = true }
 embedded-io-async = { workspace = true }
+embassy-time = { workspace = true }
 embassy-net = { workspace = true, features = ["tcp", "proto-ipv4", "medium-ethernet"] }
 
 [lints]
