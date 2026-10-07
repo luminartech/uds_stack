@@ -1,7 +1,7 @@
 use embassy_time::Instant;
 
 use crate::LogicalAddress;
-use crate::messages::{ActivationTypeCode, Header, Message, PayloadType};
+use crate::messages::{ActivationTypeCode, Header, Message, RoutingActivationRequest};
 use crate::wire::{Encode, SliceSink};
 
 use super::VERSION;
@@ -60,17 +60,41 @@ impl<const N: usize> Outgoing<N> {
 }
 
 /// The longest control message: a routing activation request without its OEM field.
-const CONTROL: usize = Header::SIZE + 7;
+const CONTROL: usize = Header::SIZE + RoutingActivationRequest::PAYLOAD_SIZE;
 
-/// A routing activation request or an alive check response being written, ahead of
-/// [`Outgoing`], and when the last alive check response was written. Set only when
-/// nothing is pending.
+/// A message the tester owes the entity outside any request.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Owed {
+    /// ISO 13400-2:2019 Table 47: a default activation for the tester, with no OEM field.
+    RoutingActivationRequest(LogicalAddress),
+    /// ISO 13400-2:2019 Table 28: the alive check response naming the tester.
+    AliveCheckResponse(LogicalAddress),
+}
+
+impl Owed {
+    fn message(self) -> Message<'static> {
+        match self {
+            Self::RoutingActivationRequest(sa) => Message::routing_activation_request(
+                VERSION,
+                sa,
+                ActivationTypeCode::Default,
+                None,
+            ),
+            Self::AliveCheckResponse(sa) => Message::alive_check_response(VERSION, sa),
+        }
+    }
+}
+
+/// The routing activation request or alive check response being written, ahead of
+/// [`Outgoing`], with the one owed next, and when the last alive check response was
+/// written.
 #[derive(Debug)]
 pub(super) struct Control {
     buf: [u8; CONTROL],
     len: usize,
     written: usize,
-    answering: bool,
+    writing: Option<Owed>,
+    next: Option<Owed>,
     answered_at: Option<Instant>,
 }
 
@@ -80,54 +104,57 @@ impl Control {
             buf: [0; CONTROL],
             len: 0,
             written: 0,
-            answering: false,
+            writing: None,
+            next: None,
             answered_at: None,
         }
     }
 
-    /// ISO 13400-2:2019 Table 47: a default activation for `sa`, with no OEM field.
+    /// Owes a default routing activation request for `sa`.
     pub(super) fn routing_activation_request(&mut self, sa: LogicalAddress) {
-        let [high, low] = sa.0.to_be_bytes();
-        let activation_type = u8::from(ActivationTypeCode::Default);
-        self.set(
-            PayloadType::RoutingActivationRequest,
-            &[high, low, activation_type, 0, 0, 0, 0],
-        );
-        self.answering = false;
+        self.owe(Owed::RoutingActivationRequest(sa));
     }
 
-    /// ISO 13400-2:2019 Table 28: the alive check response naming `sa`.
+    /// Owes an alive check response naming `sa`.
     pub(super) fn alive_check_response(&mut self, sa: LogicalAddress) {
-        self.set(PayloadType::AliveCheckResponse, &sa.0.to_be_bytes());
-        self.answering = true;
+        self.owe(Owed::AliveCheckResponse(sa));
     }
 
-    fn set(&mut self, payload_type: PayloadType, payload: &[u8]) {
-        let version = u8::from(VERSION);
-        let [type_high, type_low] = u16::from(payload_type).to_be_bytes();
-        let length = u32::try_from(payload.len())
-            .unwrap_or(u32::MAX)
-            .to_be_bytes();
-        let header = [version, !version, type_high, type_low];
-        let (head, rest) = self.buf.split_at_mut(header.len());
-        head.copy_from_slice(&header);
-        let (length_field, rest) = rest.split_at_mut(length.len());
-        length_field.copy_from_slice(&length);
-        let copied = payload.len().min(rest.len());
-        rest[..copied].copy_from_slice(&payload[..copied]);
-        self.len = Header::SIZE.saturating_add(copied);
+    /// Starts writing `owed` now if nothing is being written, or once what is has been.
+    fn owe(&mut self, owed: Owed) {
+        if self.writing.is_some() {
+            self.next = Some(owed);
+        } else {
+            self.start(owed);
+        }
+    }
+
+    fn start(&mut self, owed: Owed) {
+        self.len = owed
+            .message()
+            .encode(&mut SliceSink::new(&mut self.buf))
+            .unwrap_or(0);
         self.written = 0;
+        self.writing = Some(owed);
     }
 
+    /// The bytes of the message being written that are still to be written.
     pub(super) fn pending(&self) -> &[u8] {
         &self.buf[self.written..self.len]
     }
 
+    /// Records that the first `written` bytes of [`Self::pending`] were written, and
+    /// starts the message owed next once the one being written is done.
     pub(super) fn advance(&mut self, written: usize) {
         self.written = self.len.min(self.written.saturating_add(written));
-        if self.answering && self.written == self.len {
-            self.answering = false;
+        if self.written < self.len {
+            return;
+        }
+        if let Some(Owed::AliveCheckResponse(_)) = self.writing.take() {
             self.answered_at = Some(Instant::now());
+        }
+        if let Some(next) = self.next.take() {
+            self.start(next);
         }
     }
 
@@ -136,11 +163,9 @@ impl Control {
         self.answered_at
     }
 
+    /// Forgets everything owed and written, for a new connection.
     pub(super) fn clear(&mut self) {
-        self.len = 0;
-        self.written = 0;
-        self.answering = false;
-        self.answered_at = None;
+        *self = Self::new();
     }
 }
 
@@ -174,6 +199,7 @@ mod tests {
                 &mut buf
             )
         );
+        control.advance(control.pending().len());
 
         control.alive_check_response(TESTER);
         assert_eq!(
@@ -196,6 +222,72 @@ mod tests {
         assert_eq!(control.pending(), &whole[3..]);
         control.advance(100);
         assert_eq!(control.pending(), [0u8; 0]);
+    }
+
+    /// Everything `control` has to write, written in pieces of `step` bytes.
+    fn drained(control: &mut Control, step: usize, out: &mut [u8]) -> usize {
+        let mut len = 0;
+        loop {
+            let pending = control.pending();
+            if pending.is_empty() {
+                return len;
+            }
+            let take = pending.len().min(step);
+            let end = len.saturating_add(take);
+            out[len..end].copy_from_slice(&pending[..take]);
+            len = end;
+            control.advance(take);
+        }
+    }
+
+    #[test]
+    fn a_message_owed_while_another_is_being_written_follows_it_whole() {
+        let mut control = Control::new();
+        control.routing_activation_request(TESTER);
+        let mut out = [0; 64];
+        let first = control.pending().len().min(3);
+        out[..first].copy_from_slice(&control.pending()[..first]);
+        control.advance(first);
+
+        control.alive_check_response(TESTER);
+        let len = first.saturating_add(drained(&mut control, 5, &mut out[first..]));
+
+        let mut expected = [0; 64];
+        let activation = encoded(
+            &Message::routing_activation_request(
+                ProtocolVersion::V2019,
+                TESTER,
+                ActivationTypeCode::Default,
+                None,
+            ),
+            &mut expected,
+        )
+        .len();
+        let (_, rest) = expected.split_at_mut(activation);
+        let alive = encoded(
+            &Message::alive_check_response(ProtocolVersion::V2019, TESTER),
+            rest,
+        )
+        .len();
+        assert_eq!(out[..len], expected[..activation.saturating_add(alive)]);
+    }
+
+    #[test]
+    fn an_alive_check_response_is_answered_once_its_last_byte_is_written() {
+        let mut control = Control::new();
+        control.routing_activation_request(TESTER);
+        control.advance(1);
+        control.alive_check_response(TESTER);
+        let mut out = [0; 64];
+
+        control.advance(control.pending().len());
+        assert_eq!(
+            control.answered_at(),
+            None,
+            "only the activation request is written"
+        );
+        drained(&mut control, usize::MAX, &mut out);
+        assert!(control.answered_at().is_some());
     }
 
     #[test]

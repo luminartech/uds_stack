@@ -15,7 +15,7 @@ use embedded_io_async::{Read, Write};
 
 use crate::messages::{
     DiagnosticAckCode, DiagnosticMessage, Header, Message, NackCode, Payload, PayloadType,
-    ProtocolVersion, RoutingActivationResponseCode,
+    ProtocolVersion, RoutingActivationResponse, RoutingActivationResponseCode,
 };
 use crate::service::{
     ConnectionEvent, DiagnosticConnection, DoIpResult, TesterAddress, TesterConnection,
@@ -50,11 +50,12 @@ const VERSION: ProtocolVersion = ProtocolVersion::V2019;
 
 /// What a diagnostic message adds to its PDU: the generic header, and the source and
 /// target addresses (ISO 13400-2:2019 Table 21).
-pub const DIAGNOSTIC_MESSAGE_OVERHEAD: usize = Header::SIZE + 4;
+pub const DIAGNOSTIC_MESSAGE_OVERHEAD: usize =
+    Header::SIZE + DiagnosticMessage::ADDRESSES_SIZE;
 
 /// The smallest `N` a [`Tester`] builds with: the longest routing activation response
 /// (ISO 13400-2:2019 Table 48, with its OEM-specific field).
-pub const MIN_N: usize = Header::SIZE + 13;
+pub const MIN_N: usize = Header::SIZE + RoutingActivationResponse::PAYLOAD_SIZE_WITH_OEM;
 
 /// Why a tester could not connect and activate routing. Each leaves no connection open.
 ///
@@ -1001,14 +1002,19 @@ fn spoken(header: &Header) -> bool {
 /// Whether `header`'s payload length is one ISO 13400-2:2019 allows its payload type
 /// (Tables 18, 21, 23, 25, 27 and 48).
 fn sized_for_its_type(header: &Header) -> bool {
-    let length = header.payload_length;
+    let length = header.payload_length as usize;
     match header.payload_type {
         PayloadType::NegativeAcknowledge => length == 1,
-        PayloadType::RoutingActivationResponse => length == 9 || length == 13,
+        PayloadType::RoutingActivationResponse => {
+            length == RoutingActivationResponse::PAYLOAD_SIZE
+                || length == RoutingActivationResponse::PAYLOAD_SIZE_WITH_OEM
+        }
         PayloadType::AliveCheckRequest => length == 0,
         PayloadType::DiagnosticMessage
         | PayloadType::DiagnosticMessagePositiveAcknowledge
-        | PayloadType::DiagnosticMessageNegativeAcknowledge => length >= 5,
+        | PayloadType::DiagnosticMessageNegativeAcknowledge => {
+            length > DiagnosticMessage::ADDRESSES_SIZE
+        }
         _ => true,
     }
 }
@@ -1051,7 +1057,8 @@ fn react(
                 sa: message.source_address,
                 ta,
                 copied,
-                length: (header.payload_length as usize).saturating_sub(4),
+                length: (header.payload_length as usize)
+                    .saturating_sub(DiagnosticMessage::ADDRESSES_SIZE),
             })
         }
         (_, Ok(Payload::DiagnosticMessageAck(ack))) if ack.target_address == sa => {
