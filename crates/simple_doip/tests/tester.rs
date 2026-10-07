@@ -24,6 +24,9 @@ use simple_doip::{LogicalAddress, TaType};
 use support::mock_stack::*;
 
 const N: usize = 64;
+
+/// `A_DoIP_Diagnostic_Message` (ISO 13400-2:2019 Table 12).
+const ACK_TIMEOUT: Duration = Duration::from_secs(2);
 const REMOTE: SocketAddr = SocketAddr::V4(std::net::SocketAddrV4::new(
     std::net::Ipv4Addr::LOCALHOST,
     13400,
@@ -503,6 +506,11 @@ fn the_entity_closing_is_closed_once_then_not_connected() {
         next(&mut tester, &mut buf).unwrap_err(),
         Error::NotConnected
     );
+    assert!(stack.latest().is_shut());
+    assert!(
+        !stack.latest().is_aborted(),
+        "the entity ended it; nothing to abort"
+    );
 }
 
 /// ISO 13400-2:2019 Table 19: a header out of sync cannot be skipped. The tester, which
@@ -545,9 +553,14 @@ fn a_failed_read_is_an_error_then_closed() {
         next(&mut tester, &mut buf).unwrap_err(),
         Error::NotConnected
     );
+    assert!(stack.latest().is_shut());
+    assert!(
+        !stack.latest().is_aborted(),
+        "the socket failed; nothing to abort"
+    );
 }
 
-// --- request and its confirm ------------------------------------------------------------
+// --- request and its confirm -----------------------------------------------------------
 
 const PDU: [u8; 3] = [0x22, 0xF1, 0x90];
 
@@ -1084,7 +1097,7 @@ fn cancelled_while_waiting_for_the_ack_keeps_its_deadline() {
     );
 }
 
-// --- reconnect --------------------------------------------------------------------------
+// --- reconnect -------------------------------------------------------------------------
 
 /// ISO 14229-5:2022 REQ 7.8 and REQ 7.10: after the server closes the connection for a
 /// session change or a reset, the client performs a new TCP connection and routing
@@ -1213,7 +1226,7 @@ fn a_dropped_reconnect_leaves_the_tester_closed() {
     );
 }
 
-// --- correlation and the strict timeout --------------------------------------------------
+// --- correlation and the strict timeout ------------------------------------------------
 
 /// Writes everything `request` queued by polling `next_event` until it waits on the
 /// entity, then forgets what was written.
@@ -1475,6 +1488,11 @@ fn a_write_of_nothing_closes_and_confirms_no_socket() {
         next(&mut tester, &mut buf).unwrap(),
         ConnectionEvent::Closed
     );
+    assert!(stack.latest().is_shut());
+    assert!(
+        !stack.latest().is_aborted(),
+        "the socket ended it; nothing to abort"
+    );
 }
 
 // --- messages in error -----------------------------------------------------------------
@@ -1616,7 +1634,7 @@ fn a_diagnostic_message_for_another_tester_is_ignored() {
     ));
 }
 
-// --- failures after which the entity closes -------------------------------------------
+// --- failures after which the entity closes --------------------------------------------
 
 /// ISO 13400-2:2019 REQ 7.DoIP-070: an entity rejecting a source address closes the
 /// socket, so the tester confirms the request and gives the connection up itself.
@@ -1670,7 +1688,7 @@ fn a_header_nack_on_which_the_entity_closes_closes_the_tester() {
     }
 }
 
-// --- aborting, not only dropping ------------------------------------------------------
+// --- aborting, not only dropping -------------------------------------------------------
 
 /// A connection the tester ends on its own initiative is aborted, not left to an orderly
 /// close a dead or confused peer may never complete.
@@ -1806,7 +1824,7 @@ fn an_unmodelled_message_too_long_to_hold_is_reported_truncated() {
     );
 }
 
-// --- round two: what the entity may send that the tester must not misread -------------
+// --- round two: what the entity may send that the tester must not misread --------------
 
 /// ISO 13400-2:2019 REQ 7.DoIP-040: a generic header NACK reports an error in a message
 /// the tester sent, which once it has answered an alive check need not be its request;
@@ -1907,4 +1925,426 @@ fn a_partial_message_does_not_survive_a_reconnect() {
             ..
         }
     ));
+}
+
+// --- the caller's deadline -------------------------------------------------------------
+
+/// Once the caller's deadline has passed, a message still arriving is read no further
+/// than one read: an entity streaming a body larger than the tester's buffer does not
+/// hold the deadline off.
+#[test]
+fn a_message_still_arriving_does_not_hold_off_a_passed_deadline() {
+    let _clock = clock();
+    let stack = MockStack::new(N);
+    let mut tester = active(&stack);
+    stack.latest().send(&raw(0x0004, &vec![0; 1 << 20]));
+    let mut buf = [0; 16];
+
+    for _ in 0..3 {
+        let mut waiting = pin!(tester.next_event(&mut buf, Some(0)));
+        assert_eq!(
+            poll_times(waiting.as_mut(), 50),
+            Some(Ok(ConnectionEvent::Deadline))
+        );
+    }
+    assert!(!stack.latest().all_read());
+}
+
+/// The same for a message within the buffer, arriving a byte at a time.
+#[test]
+fn a_message_trickling_in_does_not_hold_off_a_passed_deadline() {
+    let _clock = clock();
+    let stack = MockStack::new(1);
+    let mut tester = active(&stack);
+    stack.latest().send(&diagnostic(ENTITY, TESTER, &[0; 40]));
+    let mut buf = [0; 64];
+
+    let mut waiting = pin!(tester.next_event(&mut buf, Some(0)));
+    assert_eq!(
+        poll_times(waiting.as_mut(), 50),
+        Some(Ok(ConnectionEvent::Deadline))
+    );
+    assert!(!stack.latest().all_read());
+}
+
+/// A passed deadline still reads what is ready: the message that has arrived is
+/// delivered rather than reported as the deadline.
+#[test]
+fn a_passed_deadline_still_delivers_what_has_arrived() {
+    let _clock = clock();
+    let stack = MockStack::new(usize::MAX);
+    let mut tester = active(&stack);
+    stack
+        .latest()
+        .send(&diagnostic(ENTITY, TESTER, &[0x7E, 0x00]));
+    let mut buf = [0; 16];
+
+    assert!(matches!(
+        run(tester.next_event(&mut buf, Some(0))).unwrap(),
+        ConnectionEvent::Indication {
+            pdu: [0x7E, 0x00],
+            ..
+        }
+    ));
+}
+
+/// ISO 13400-2:2019 REQ 3.DoIP-092: the entity closes a socket whose tester does not
+/// answer its alive check within `T_TCP_Alive_Check`. An answer the tester has read the
+/// request for is written before the deadline is reported, not when the caller next
+/// polls.
+#[test]
+fn an_alive_check_is_answered_before_the_deadline_is_reported() {
+    let _clock = clock();
+    let stack = MockStack::new(usize::MAX);
+    let mut tester = active(&stack);
+    stack.latest().send(&alive_check_request());
+    let mut buf = [0; 16];
+
+    assert_eq!(
+        run(tester.next_event(&mut buf, Some(0))).unwrap(),
+        ConnectionEvent::Deadline
+    );
+    assert_eq!(stack.latest().take_written(), alive_check_response());
+}
+
+// --- which acknowledgement is the request's --------------------------------------------
+
+/// An acknowledgement can only follow the request it acknowledges, so one read before
+/// the request's first byte was written is not the request's, even if the tester only
+/// takes it from its buffer afterwards.
+#[test]
+fn a_header_nack_read_before_the_request_is_not_its() {
+    let _clock = clock();
+    let stack = MockStack::new(usize::MAX);
+    let mut tester = active(&stack);
+    stack.latest().send(&alive_check_request());
+    advance(Duration::from_secs(3));
+    let mut buf = [0; 16];
+    assert_eq!(
+        run(tester.next_event(&mut buf, Some(0))).unwrap(),
+        ConnectionEvent::Deadline
+    );
+    advance(Duration::from_secs(3));
+    let mut both = diagnostic(ENTITY, TESTER, &[0x7E, 0x00]);
+    both.extend(header_nack(0x03));
+    stack.latest().send(&both);
+    assert!(matches!(
+        next(&mut tester, &mut buf).unwrap(),
+        ConnectionEvent::Indication { .. }
+    ));
+    assert!(
+        stack.latest().all_read(),
+        "the NACK waits in the tester's buffer"
+    );
+
+    request(&mut tester).unwrap();
+    stack.latest().send(&ack(ENTITY, TESTER));
+
+    assert_eq!(
+        next(&mut tester, &mut buf).unwrap(),
+        confirm(DoIpResult::Ok)
+    );
+}
+
+/// The same for a positive acknowledgement.
+#[test]
+fn an_ack_read_before_the_request_is_not_its() {
+    let _clock = clock();
+    let stack = MockStack::new(usize::MAX);
+    let mut tester = active(&stack);
+    let mut both = diagnostic(ENTITY, TESTER, &[0x7E, 0x00]);
+    both.extend(ack(ENTITY, TESTER));
+    stack.latest().send(&both);
+    let mut buf = [0; 16];
+    assert!(matches!(
+        next(&mut tester, &mut buf).unwrap(),
+        ConnectionEvent::Indication { .. }
+    ));
+
+    request(&mut tester).unwrap();
+
+    assert_eq!(
+        run(tester.next_event(&mut buf, Some(0))).unwrap(),
+        ConnectionEvent::Deadline
+    );
+    stack.latest().send(&nack(ENTITY, TESTER, 0x03));
+    assert_eq!(
+        next(&mut tester, &mut buf).unwrap(),
+        confirm(DoIpResult::UnknownTa)
+    );
+}
+
+/// REQ 7.DoIP-040: a generic header NACK is about a message the tester sent. One that
+/// arrives within `A_DoIP_Diagnostic_Message` of an alive check response written just
+/// before the request may be about that response, so it is not the request's.
+#[test]
+fn a_header_nack_soon_after_an_alive_check_answer_before_the_request_is_not_its() {
+    let _clock = clock();
+    let stack = MockStack::new(usize::MAX);
+    let mut tester = active(&stack);
+    stack.latest().send(&alive_check_request());
+    let mut buf = [0; 16];
+    assert_eq!(
+        run(tester.next_event(&mut buf, Some(0))).unwrap(),
+        ConnectionEvent::Deadline
+    );
+    assert_eq!(stack.latest().take_written(), alive_check_response());
+    advance(Duration::from_millis(1_900));
+
+    request(&mut tester).unwrap();
+    sent(&stack, &mut tester);
+    stack.latest().send(&header_nack(0x03));
+    stack.latest().send(&ack(ENTITY, TESTER));
+
+    assert_eq!(
+        next(&mut tester, &mut buf).unwrap(),
+        confirm(DoIpResult::Ok)
+    );
+}
+
+/// An alive check response still waiting to be written when the request starts goes out
+/// ahead of it, so a header NACK after both may be about either.
+#[test]
+fn a_header_nack_after_an_alive_check_answer_written_ahead_of_the_request_is_not_its() {
+    let _clock = clock();
+    let stack = MockStack::new(usize::MAX);
+    let mut tester = active(&stack);
+    stack.latest().stall_writes_after(0);
+    stack.latest().send(&alive_check_request());
+    let mut buf = [0; 16];
+    assert_eq!(
+        run(tester.next_event(&mut buf, Some(0))).unwrap(),
+        ConnectionEvent::Deadline
+    );
+    assert_eq!(stack.latest().take_written(), []);
+    advance(Duration::from_secs(3));
+
+    request(&mut tester).unwrap();
+    stack.latest().resume_writes();
+    {
+        let mut waiting = pin!(tester.next_event(&mut buf, None));
+        assert!(until_stalled(waiting.as_mut()).is_none());
+    }
+    let mut written = alive_check_response();
+    written.extend(diagnostic(TESTER, ENTITY, &PDU));
+    assert_eq!(
+        stack.latest().take_written(),
+        written,
+        "the answer goes first"
+    );
+    stack.latest().send(&header_nack(0x03));
+    stack.latest().send(&ack(ENTITY, TESTER));
+
+    assert_eq!(
+        next(&mut tester, &mut buf).unwrap(),
+        confirm(DoIpResult::Ok)
+    );
+}
+
+/// An alive check response written longer than `A_DoIP_Diagnostic_Message` before the
+/// request is past anything the entity would still answer, so a header NACK is the
+/// request's.
+#[test]
+fn a_header_nack_long_after_an_alive_check_answer_is_the_requests() {
+    let _clock = clock();
+    let stack = MockStack::new(usize::MAX);
+    let mut tester = active(&stack);
+    stack.latest().send(&alive_check_request());
+    let mut buf = [0; 16];
+    assert_eq!(
+        run(tester.next_event(&mut buf, Some(0))).unwrap(),
+        ConnectionEvent::Deadline
+    );
+    advance(Duration::from_secs(2));
+
+    request(&mut tester).unwrap();
+    sent(&stack, &mut tester);
+    stack.latest().send(&header_nack(0x03));
+
+    assert_eq!(
+        next(&mut tester, &mut buf).unwrap(),
+        confirm(DoIpResult::OutOfMemory)
+    );
+}
+
+// --- writing a request -----------------------------------------------------------------
+
+/// A request one byte of which has been written cannot be withdrawn without putting the
+/// stream out of step, so its `TimeoutA` gives the connection up.
+#[test]
+fn a_request_with_one_byte_written_is_not_withdrawn() {
+    let _clock = clock();
+    let stack = MockStack::new(usize::MAX);
+    let mut tester = active(&stack);
+    stack.latest().stall_writes_after(1);
+    request(&mut tester).unwrap();
+    let mut buf = [0; 16];
+    {
+        let mut waiting = pin!(tester.next_event(&mut buf, None));
+        assert!(until_stalled(waiting.as_mut()).is_none());
+        advance(ACK_TIMEOUT);
+        assert_eq!(
+            until_stalled(waiting.as_mut()),
+            Some(Ok(confirm(DoIpResult::TimeoutA)))
+        );
+    }
+    assert!(stack.latest().is_aborted());
+}
+
+/// A withdrawn request is never written, even once the entity reads again.
+#[test]
+fn a_withdrawn_request_is_never_written() {
+    let _clock = clock();
+    let stack = MockStack::new(usize::MAX);
+    let mut tester = active(&stack);
+    stack.latest().stall_writes_after(0);
+    request(&mut tester).unwrap();
+    let mut buf = [0; 16];
+    {
+        let mut waiting = pin!(tester.next_event(&mut buf, None));
+        assert!(until_stalled(waiting.as_mut()).is_none());
+        advance(ACK_TIMEOUT);
+        assert_eq!(
+            until_stalled(waiting.as_mut()),
+            Some(Ok(confirm(DoIpResult::TimeoutA)))
+        );
+    }
+    stack.latest().resume_writes();
+
+    assert_eq!(
+        run(tester.next_event(&mut buf, Some(0))).unwrap(),
+        ConnectionEvent::Deadline
+    );
+    assert_eq!(stack.latest().take_written(), []);
+}
+
+/// A request queued on the old connection is not written on the new one: routing
+/// activation is the first thing a new connection carries.
+#[test]
+fn a_reconnect_carries_only_the_activation_request() {
+    let _clock = clock();
+    let stack = MockStack::new(usize::MAX);
+    let mut tester = active(&stack);
+    request(&mut tester).unwrap();
+    stack.script_next(&activation_response(0x10));
+    run(tester.reconnect()).unwrap();
+    let mut buf = [0; 16];
+
+    assert_eq!(
+        run(tester.next_event(&mut buf, Some(0))).unwrap(),
+        confirm(DoIpResult::NoSocket)
+    );
+    assert_eq!(
+        run(tester.next_event(&mut buf, Some(0))).unwrap(),
+        ConnectionEvent::Deadline
+    );
+    assert_eq!(stack.latest().take_written(), activation_request());
+}
+
+/// A request being written when `next_event` is dropped is written exactly once, by
+/// the calls that follow.
+#[test]
+fn cancelled_mid_write_writes_the_request_once() {
+    let _clock = clock();
+    drop_at_every_poll(
+        |stack, tester| {
+            request(tester).unwrap();
+            stack.latest().send(&ack(ENTITY, TESTER));
+        },
+        |stack, tester, polls| {
+            let mut buf = [0; 16];
+            assert_eq!(
+                run(tester.next_event(&mut buf, None)).unwrap(),
+                confirm(DoIpResult::Ok),
+                "dropped after {polls} polls"
+            );
+            assert_eq!(
+                stack.latest().take_written(),
+                diagnostic(TESTER, ENTITY, &PDU),
+                "dropped after {polls} polls"
+            );
+        },
+    );
+}
+
+// --- messages during routing activation ------------------------------------------------
+
+/// Routing activation ignores an alive check request of the wrong length, as
+/// `next_event` does, rather than answering it.
+#[test]
+fn activation_ignores_an_alive_check_request_of_the_wrong_length() {
+    let _clock = clock();
+    let stack = MockStack::new(usize::MAX);
+    let mut wrong = raw(0x0007, &[0]);
+    wrong.extend(activation_response(0x10));
+    stack.script_next(&wrong);
+
+    connect(&stack).unwrap();
+
+    assert_eq!(stack.latest().take_written(), activation_request());
+}
+
+/// Routing activation ignores a generic header NACK of the wrong length, a message in
+/// error (8.3.3), rather than failing on it.
+#[test]
+fn activation_ignores_a_header_nack_of_the_wrong_length() {
+    let _clock = clock();
+    let stack = MockStack::new(usize::MAX);
+    let mut wrong = raw(0x0000, &[0, 0]);
+    wrong.extend(activation_response(0x10));
+    stack.script_next(&wrong);
+
+    assert!(connect(&stack).is_ok());
+}
+
+/// ISO 13400-2:2019 Table 17: a payload type reserved for the vehicle manufacturer is
+/// reported, as one reserved by the document is.
+#[test]
+fn a_manufacturer_payload_type_is_reported() {
+    let _clock = clock();
+    let stack = MockStack::new(usize::MAX);
+    let mut tester = active(&stack);
+    stack.latest().send(&raw(0xF000, &[1, 2]));
+    let mut buf = [0; 16];
+
+    assert_eq!(
+        next(&mut tester, &mut buf).unwrap(),
+        ConnectionEvent::Unmodelled {
+            payload_type: 0xF000,
+            data: &[1, 2],
+        }
+    );
+}
+
+// --- close -----------------------------------------------------------------------------
+
+/// `close` ends the connection gracefully rather than aborting or merely dropping it.
+#[test]
+fn close_shuts_the_connection_gracefully() {
+    let _clock = clock();
+    let stack = MockStack::new(usize::MAX);
+    let tester = active(&stack);
+
+    run(tester.close()).unwrap();
+
+    assert!(stack.latest().is_closed());
+    assert!(!stack.latest().is_aborted());
+}
+
+/// A tester whose connection has already closed has nothing left to close.
+#[test]
+fn closing_a_closed_tester_does_nothing() {
+    let _clock = clock();
+    let stack = MockStack::new(usize::MAX);
+    let mut tester = active(&stack);
+    stack.latest().eof();
+    let mut buf = [0; 16];
+    assert_eq!(
+        next(&mut tester, &mut buf).unwrap(),
+        ConnectionEvent::Closed
+    );
+
+    run(tester.close()).unwrap();
+
+    assert!(!stack.latest().is_closed());
 }

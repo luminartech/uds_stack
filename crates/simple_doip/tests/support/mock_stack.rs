@@ -194,6 +194,11 @@ impl MockPeer {
         self.with(|c| c.aborted || c.closed || c.dropped)
     }
 
+    /// Whether the tester closed this connection gracefully.
+    pub fn is_closed(&self) -> bool {
+        self.with(|c| c.closed)
+    }
+
     /// Whether the tester aborted this connection, rather than only dropping it.
     pub fn is_aborted(&self) -> bool {
         self.with(|c| c.aborted)

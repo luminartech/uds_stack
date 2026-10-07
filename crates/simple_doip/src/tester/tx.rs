@@ -1,3 +1,5 @@
+use embassy_time::Instant;
+
 use crate::LogicalAddress;
 use crate::messages::{ActivationTypeCode, Header, Message, PayloadType};
 use crate::wire::{Encode, SliceSink};
@@ -61,12 +63,15 @@ impl<const N: usize> Outgoing<N> {
 const CONTROL: usize = Header::SIZE + 7;
 
 /// A routing activation request or an alive check response being written, ahead of
-/// [`Outgoing`]. Set only when nothing is pending.
+/// [`Outgoing`], and when the last alive check response was written. Set only when
+/// nothing is pending.
 #[derive(Debug)]
 pub(super) struct Control {
     buf: [u8; CONTROL],
     len: usize,
     written: usize,
+    answering: bool,
+    answered_at: Option<Instant>,
 }
 
 impl Control {
@@ -75,6 +80,8 @@ impl Control {
             buf: [0; CONTROL],
             len: 0,
             written: 0,
+            answering: false,
+            answered_at: None,
         }
     }
 
@@ -86,11 +93,13 @@ impl Control {
             PayloadType::RoutingActivationRequest,
             &[high, low, activation_type, 0, 0, 0, 0],
         );
+        self.answering = false;
     }
 
     /// ISO 13400-2:2019 Table 28: the alive check response naming `sa`.
     pub(super) fn alive_check_response(&mut self, sa: LogicalAddress) {
         self.set(PayloadType::AliveCheckResponse, &sa.0.to_be_bytes());
+        self.answering = true;
     }
 
     fn set(&mut self, payload_type: PayloadType, payload: &[u8]) {
@@ -116,11 +125,22 @@ impl Control {
 
     pub(super) fn advance(&mut self, written: usize) {
         self.written = self.len.min(self.written.saturating_add(written));
+        if self.answering && self.written == self.len {
+            self.answering = false;
+            self.answered_at = Some(Instant::now());
+        }
+    }
+
+    /// When the last alive check response on this connection was written in full.
+    pub(super) fn answered_at(&self) -> Option<Instant> {
+        self.answered_at
     }
 
     pub(super) fn clear(&mut self) {
         self.len = 0;
         self.written = 0;
+        self.answering = false;
+        self.answered_at = None;
     }
 }
 

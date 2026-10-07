@@ -9,7 +9,7 @@
 use core::fmt;
 use core::net::SocketAddr;
 
-use edge_nal::{Readable, TcpConnect, TcpShutdown};
+use edge_nal::{Close, Readable, TcpConnect, TcpShutdown};
 use embassy_time::{Duration, Instant, with_deadline};
 use embedded_io_async::{Read, Write};
 
@@ -128,26 +128,34 @@ pub enum Error<E> {
 /// socket to another tester, so a caller that wants to keep the connection keeps
 /// `next_event` polled. While a request is being written, nothing is read.
 ///
+/// A tester is ended with [`Tester::close`], which closes the connection gracefully;
+/// dropping it leaves that to the backend.
+///
 /// # Examples
 ///
-/// A request, its confirm, then the entity's answer, sent again on a new connection
-/// where it was lost:
+/// A request, its confirm, then the entity's answer. A request that is lost or whose
+/// connection ends is repeated, on a new connection where the old one is gone:
 ///
 /// ```no_run
 /// use simple_doip::service::{ConnectionEvent, DiagnosticConnection, DoIpResult};
 /// use simple_doip::service::TesterAddress;
-/// use simple_doip::tester::{DIAGNOSTIC_MESSAGE_OVERHEAD, Tester};
+/// use simple_doip::tester::{DIAGNOSTIC_MESSAGE_OVERHEAD, Error, Tester};
 /// use simple_doip::{LogicalAddress, TCP_PORT, TaType};
 /// # #[derive(Debug)]
 /// # enum Failed {
 /// #     Connect(simple_doip::tester::ConnectError<std::io::Error>),
-/// #     Use(simple_doip::tester::Error<std::io::Error>),
+/// #     Use(Error<std::io::Error>),
+/// #     Refused(DoIpResult),
+/// #     Close(std::io::Error),
 /// # }
 /// # impl From<simple_doip::tester::ConnectError<std::io::Error>> for Failed {
 /// #     fn from(e: simple_doip::tester::ConnectError<std::io::Error>) -> Self { Self::Connect(e) }
 /// # }
-/// # impl From<simple_doip::tester::Error<std::io::Error>> for Failed {
-/// #     fn from(e: simple_doip::tester::Error<std::io::Error>) -> Self { Self::Use(e) }
+/// # impl From<Error<std::io::Error>> for Failed {
+/// #     fn from(e: Error<std::io::Error>) -> Self { Self::Use(e) }
+/// # }
+/// # impl From<std::io::Error> for Failed {
+/// #     fn from(e: std::io::Error) -> Self { Self::Close(e) }
 /// # }
 ///
 /// # async fn example() -> Result<(), Failed> {
@@ -159,22 +167,31 @@ pub enum Error<E> {
 ///
 /// let mut buf = [0; Tester::<edge_nal_std::Stack, N>::MAX_PDU];
 /// 'send: loop {
-///     tester.request(LogicalAddress(0x0001), TaType::Physical, &[0x3E, 0x00]).await?;
+///     match tester.request(LogicalAddress(0x0001), TaType::Physical, &[0x3E, 0x00]).await {
+///         Err(Error::NotConnected) => {
+///             tester.reconnect().await?;
+///             continue 'send;
+///         }
+///         accepted => accepted?,
+///     }
 ///     loop {
 ///         match tester.next_event(&mut buf, None).await? {
 ///             ConnectionEvent::Confirm { result: DoIpResult::Ok, .. } => {}
+///             ConnectionEvent::Confirm {
+///                 result: DoIpResult::TimeoutA | DoIpResult::NoSocket | DoIpResult::Error,
+///                 ..
+///             }
+///             | ConnectionEvent::Closed => continue 'send,
+///             ConnectionEvent::Confirm { result, .. } => return Err(Failed::Refused(result)),
 ///             ConnectionEvent::Indication { pdu, .. } => {
 ///                 assert_eq!(pdu, [0x7E, 0x00]);
 ///                 break 'send;
-///             }
-///             ConnectionEvent::Closed => {
-///                 tester.reconnect().await?;
-///                 continue 'send;
 ///             }
 ///             _ => {}
 ///         }
 ///     }
 /// }
+/// tester.close().await?;
 /// # Ok(())
 /// # }
 /// ```
@@ -273,7 +290,8 @@ impl<'s, C: TcpConnect, const N: usize> Tester<'s, C, N> {
     /// A request still awaiting its confirm is confirmed with [`DoIpResult::Error`] or
     /// [`DoIpResult::NoSocket`] by the next
     /// [`next_event`](DiagnosticConnection::next_event), before anything from the new
-    /// connection.
+    /// connection. Succeeding or failing, it reports no [`ConnectionEvent::Closed`] for
+    /// the connection it gave up.
     ///
     /// # Cancel safety
     ///
@@ -286,12 +304,35 @@ impl<'s, C: TcpConnect, const N: usize> Tester<'s, C, N> {
     /// As for [`Tester::connect`]. After an error the tester is [`Error::NotConnected`]
     /// until a reconnect succeeds.
     pub async fn reconnect(&mut self) -> Result<(), ConnectError<C::Error>> {
-        self.lose_connection(true).await;
+        self.lose_connection(true, None).await;
         let result = self.establish().await;
         if result.is_err() {
             self.closed_reported = true;
         }
         result
+    }
+
+    /// Closes the connection gracefully, if there is one, and ends the tester.
+    ///
+    /// Dropping a tester drops its socket, and what that does is the backend's:
+    /// `edge-nal-std` closes the connection, but `edge-nal-embassy` 0.9 frees the socket
+    /// before its close is sent, so the entity holds its socket for this tester until its
+    /// own timers give it up. A request still awaiting its confirm gets none.
+    ///
+    /// # Cancel safety
+    ///
+    /// Waits as long as the backend's close does, which may be until the entity has
+    /// closed its end too. Bound it by dropping the future; dropping it drops the
+    /// socket, as dropping the tester would.
+    ///
+    /// # Errors
+    ///
+    /// The socket's error where closing fails; the socket is dropped all the same.
+    pub async fn close(mut self) -> Result<(), C::Error> {
+        match self.socket.take() {
+            Some(mut socket) => socket.close(Close::Both).await,
+            None => Ok(()),
+        }
     }
 
     /// Opens a new connection and activates routing on it, keeping it only on success.
@@ -372,11 +413,12 @@ impl<'s, C: TcpConnect, const N: usize> Tester<'s, C, N> {
 }
 
 impl<C: TcpConnect, const N: usize> Tester<'_, C, N> {
-    /// Gives up the connection, aborting it where the tester is the one ending it.
+    /// Gives up the connection, aborting it where the tester is the one ending it, for no
+    /// longer than `until`.
     ///
     /// An outstanding request is owed its confirm: `DoIP_NO_SOCKET` if its last byte
     /// never left, `DoIP_ERROR` if it left and was never acknowledged.
-    async fn lose_connection(&mut self, abort: bool) {
+    async fn lose_connection(&mut self, abort: bool, until: Option<Instant>) {
         let socket = self.socket.take();
         if let Some(outstanding) = self.exchange.outstanding.take() {
             let result = if outstanding.sent {
@@ -392,7 +434,10 @@ impl<C: TcpConnect, const N: usize> Tester<'_, C, N> {
         if let Some(mut socket) = socket
             && abort
         {
-            socket.abort().await.ok();
+            match until {
+                Some(until) => with_deadline(until, socket.abort()).await.ok().map(drop),
+                None => socket.abort().await.ok(),
+            };
         }
     }
 
@@ -402,7 +447,7 @@ impl<C: TcpConnect, const N: usize> Tester<'_, C, N> {
     /// A request none of which was written is withdrawn; otherwise the connection is
     /// given up, so that neither a late acknowledgement nor a late response can be taken
     /// for a later request's.
-    async fn time_out(&mut self) -> bool {
+    async fn time_out(&mut self, until: Option<Instant>) -> bool {
         let Some(outstanding) = self.exchange.outstanding else {
             return false;
         };
@@ -417,7 +462,7 @@ impl<C: TcpConnect, const N: usize> Tester<'_, C, N> {
         if self.outgoing.untouched() {
             self.outgoing.clear();
         } else {
-            self.lose_connection(true).await;
+            self.lose_connection(true, until).await;
         }
         true
     }
@@ -427,7 +472,8 @@ impl<C: TcpConnect, const N: usize> Tester<'_, C, N> {
 ///
 /// [`ConnectionEvent::Closed`] is reported once when the connection ends: the entity
 /// closed it, the tester gave it up, or an [`Error::Io`] ended it. Every call after that
-/// is [`Error::NotConnected`] until the tester reconnects.
+/// is [`Error::NotConnected`] until the tester reconnects. A connection that
+/// [`Tester::reconnect`] gives up is not reported, as the caller ended it.
 impl<C: TcpConnect, const N: usize> DiagnosticConnection for Tester<'_, C, N> {
     type Error = Error<C::Error>;
 
@@ -438,9 +484,11 @@ impl<C: TcpConnect, const N: usize> DiagnosticConnection for Tester<'_, C, N> {
     /// (ISO 13400-2:2019 9.5): [`DoIpResult::Ok`] for a positive one,
     /// [`DoIpResult::Error`] for a positive one with a reserved code, and the result
     /// naming a negative one's code. A physical request's acknowledgement must come from
-    /// `ta`. A generic header negative acknowledgement confirms the request only if the
-    /// tester has written nothing since it, as it may otherwise be about an alive check
-    /// response.
+    /// `ta`, and nothing the tester had read before it started writing the request is
+    /// its acknowledgement. A generic header negative acknowledgement confirms the
+    /// request only if no alive check response was written within
+    /// `A_DoIP_Diagnostic_Message` before the request or since, as it may otherwise be
+    /// about that response.
     ///
     /// The confirm is [`DoIpResult::TimeoutA`] where no acknowledgement arrives within
     /// `A_DoIP_Diagnostic_Message` (Table 12) of the request's last byte, or where its
@@ -483,9 +531,10 @@ impl<C: TcpConnect, const N: usize> DiagnosticConnection for Tester<'_, C, N> {
         self.exchange.outstanding = Some(Outstanding {
             ta,
             ta_type,
+            started: None,
             deadline: None,
             sent: false,
-            alive_check_answered: false,
+            stale: 0,
         });
         Ok(())
     }
@@ -507,6 +556,10 @@ impl<C: TcpConnect, const N: usize> DiagnosticConnection for Tester<'_, C, N> {
     /// acknowledgement on which the entity closes its socket: diagnostic `0x02`
     /// (REQ 7.DoIP-070), and generic header `0x00` and `0x04` (Table 19).
     ///
+    /// Once `deadline_ms` has passed, it still delivers what has arrived, reading the
+    /// socket at most once more, and writes an alive check response it owes if the
+    /// socket takes it at once, before reporting [`ConnectionEvent::Deadline`].
+    ///
     /// # Cancel safety
     ///
     /// Cancel-safe, provided the socket's reads, writes and readiness are; see the
@@ -519,6 +572,7 @@ impl<C: TcpConnect, const N: usize> DiagnosticConnection for Tester<'_, C, N> {
         let until = deadline_ms
             .map(|deadline_ms| confirm::caller_deadline(deadline_ms, Instant::now()));
         let passed = || until.is_some_and(|until| until <= Instant::now());
+        let mut read_since_passed = false;
         loop {
             if let Some(owed) = self.owed.take() {
                 return Ok(owed);
@@ -530,10 +584,10 @@ impl<C: TcpConnect, const N: usize> DiagnosticConnection for Tester<'_, C, N> {
                 self.closed_reported = true;
                 return Ok(ConnectionEvent::Closed);
             }
-            if self.time_out().await {
+            if self.time_out(until).await {
                 continue;
             }
-            self.exchange.start_writing();
+            self.exchange.start_writing(self.rx.buffered());
             let wake = match (until, self.exchange.deadline()) {
                 (Some(until), Some(ack)) => Some(until.min(ack)),
                 (until, ack) => until.or(ack),
@@ -546,11 +600,11 @@ impl<C: TcpConnect, const N: usize> DiagnosticConnection for Tester<'_, C, N> {
                 Ok(Flush::TimedOut) if passed() => return Ok(ConnectionEvent::Deadline),
                 Ok(Flush::TimedOut) => continue,
                 Ok(Flush::Closed) => {
-                    self.lose_connection(false).await;
+                    self.lose_connection(false, None).await;
                     continue;
                 }
                 Err(error) => {
-                    self.lose_connection(false).await;
+                    self.lose_connection(false, None).await;
                     return Err(Error::Io(error));
                 }
             }
@@ -558,14 +612,18 @@ impl<C: TcpConnect, const N: usize> DiagnosticConnection for Tester<'_, C, N> {
             let reaction = match self.rx.next() {
                 Err(_) => Reaction::Close { confirm: None },
                 Ok(Next::NeedMore) => {
+                    if read_since_passed {
+                        return Ok(ConnectionEvent::Deadline);
+                    }
                     match fill(socket, &mut self.rx, wake).await {
                         Ok(Fill::TimedOut) if passed() => {
                             return Ok(ConnectionEvent::Deadline);
                         }
-                        Ok(Fill::TimedOut | Fill::Data) => {}
-                        Ok(Fill::Eof) => self.lose_connection(false).await,
+                        Ok(Fill::TimedOut) => {}
+                        Ok(Fill::Data) => read_since_passed = passed(),
+                        Ok(Fill::Eof) => self.lose_connection(false, None).await,
                         Err(error) => {
-                            self.lose_connection(false).await;
+                            self.lose_connection(false, None).await;
                             return Err(Error::Io(error));
                         }
                     }
@@ -581,6 +639,7 @@ impl<C: TcpConnect, const N: usize> DiagnosticConnection for Tester<'_, C, N> {
                         buf,
                     );
                     self.rx.skip_oversized(&header);
+                    self.exchange.consumed(usize::MAX);
                     reaction
                 }
                 Ok(Next::Frame(frame, consumed)) => {
@@ -593,16 +652,16 @@ impl<C: TcpConnect, const N: usize> DiagnosticConnection for Tester<'_, C, N> {
                         buf,
                     );
                     self.rx.consume(consumed);
+                    self.exchange.consumed(consumed);
                     reaction
                 }
             };
             match reaction {
-                Reaction::Ignore if passed() => return Ok(ConnectionEvent::Deadline),
                 Reaction::Ignore => {}
                 Reaction::Deliver(delivered) => return Ok(delivered.into_event(buf)),
                 Reaction::Close { confirm } => {
                     self.owed = confirm;
-                    self.lose_connection(true).await;
+                    self.lose_connection(true, until).await;
                 }
             }
         }
@@ -621,12 +680,16 @@ impl Exchange {
             .and_then(|outstanding| outstanding.deadline)
     }
 
-    /// Starts the outstanding request's timer as the tester starts writing it.
-    fn start_writing(&mut self) {
+    /// Starts the outstanding request's timer as the tester starts writing it, with
+    /// `buffered` bytes read and not yet consumed.
+    fn start_writing(&mut self, buffered: usize) {
         if let Some(outstanding) = &mut self.outstanding
-            && outstanding.deadline.is_none()
+            && outstanding.started.is_none()
         {
-            outstanding.deadline = Some(confirm::after(Instant::now(), ACK_TIMEOUT));
+            let now = Instant::now();
+            outstanding.started = Some(now);
+            outstanding.deadline = Some(confirm::after(now, ACK_TIMEOUT));
+            outstanding.stale = buffered;
         }
     }
 
@@ -640,25 +703,26 @@ impl Exchange {
         }
     }
 
-    fn note_alive_check_answer(&mut self) {
-        if let Some(outstanding) = &mut self.outstanding
-            && outstanding.sent
-        {
-            outstanding.alive_check_answered = true;
+    /// Records that `consumed` bytes of what was buffered have been taken.
+    fn consumed(&mut self, consumed: usize) {
+        if let Some(outstanding) = &mut self.outstanding {
+            outstanding.stale = outstanding.stale.saturating_sub(consumed);
         }
     }
 
     /// Takes an acknowledgement from `source`, or a generic header NACK where `source`
-    /// is `None`, as the outstanding request's, if it can be.
+    /// is `None`, as the outstanding request's, if it can be. `answered_at` is when the
+    /// last alive check response was written.
     fn acknowledge(
         &mut self,
         sa: LogicalAddress,
         source: Option<LogicalAddress>,
+        answered_at: Option<Instant>,
         result: DoIpResult,
     ) -> Option<ConnectionEvent<'static>> {
         let outstanding = self
             .outstanding
-            .take_if(|outstanding| outstanding.acknowledged_by(source))?;
+            .take_if(|outstanding| outstanding.acknowledged_by(source, answered_at))?;
         Some(outstanding.confirm(sa, result))
     }
 }
@@ -667,19 +731,34 @@ impl Exchange {
 struct Outstanding {
     ta: LogicalAddress,
     ta_type: TaType,
-    /// Unset until the tester starts writing the request.
+    /// When the tester started writing the request; unset until then.
+    started: Option<Instant>,
     deadline: Option<Instant>,
     sent: bool,
-    /// An alive check response was written after the request, so a generic header NACK
-    /// may be about either.
-    alive_check_answered: bool,
+    /// Bytes read before the request was started and not yet consumed: nothing in them
+    /// can be about it.
+    stale: usize,
 }
 
 impl Outstanding {
-    fn acknowledged_by(&self, source: Option<LogicalAddress>) -> bool {
+    /// Whether an acknowledgement from `source`, or a generic header NACK where `source`
+    /// is `None`, is this request's. A header NACK is not where an alive check response
+    /// was written within `A_DoIP_Diagnostic_Message` before the request or since, as
+    /// it may be about that response.
+    fn acknowledged_by(
+        &self,
+        source: Option<LogicalAddress>,
+        answered_at: Option<Instant>,
+    ) -> bool {
+        if self.stale > 0 {
+            return false;
+        }
         match source {
             Some(source) => self.ta_type != TaType::Physical || source == self.ta,
-            None => !self.alive_check_answered,
+            None => self.started.is_some_and(|started| {
+                answered_at
+                    .is_none_or(|answered| confirm::after(answered, ACK_TIMEOUT) <= started)
+            }),
         }
     }
 
@@ -839,11 +918,21 @@ fn react(
             } else {
                 DoIpResult::Error
             };
-            deliver_confirm(exchange.acknowledge(sa, Some(ack.source_address), result))
+            deliver_confirm(exchange.acknowledge(
+                sa,
+                Some(ack.source_address),
+                control.answered_at(),
+                result,
+            ))
         }
         (_, Ok(Payload::DiagnosticMessageNack(nack))) if nack.target_address == sa => {
             let result = confirm::from_diagnostic_nack(nack.nack_code);
-            let confirm = exchange.acknowledge(sa, Some(nack.source_address), result);
+            let confirm = exchange.acknowledge(
+                sa,
+                Some(nack.source_address),
+                control.answered_at(),
+                result,
+            );
             if result == DoIpResult::InvalidSa {
                 Reaction::Close { confirm }
             } else {
@@ -851,7 +940,12 @@ fn react(
             }
         }
         (_, Ok(Payload::DoIPNack(code))) => {
-            let confirm = exchange.acknowledge(sa, None, confirm::from_header_nack(code));
+            let confirm = exchange.acknowledge(
+                sa,
+                None,
+                control.answered_at(),
+                confirm::from_header_nack(code),
+            );
             if matches!(
                 code,
                 NackCode::IncorrectPatternFormat | NackCode::InvalidPayloadLength
@@ -863,7 +957,6 @@ fn react(
         }
         (_, Ok(Payload::AliveCheckRequest)) => {
             control.alive_check_response(sa);
-            exchange.note_alive_check_answer();
             Reaction::Ignore
         }
         (

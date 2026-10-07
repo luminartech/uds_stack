@@ -33,6 +33,11 @@ impl<const N: usize> RxBuffer<N> {
         }
     }
 
+    /// How many bytes are read and not yet consumed.
+    pub(super) fn buffered(&self) -> usize {
+        self.len
+    }
+
     pub(super) fn free(&mut self) -> &mut [u8] {
         &mut self.buf[self.len..]
     }
