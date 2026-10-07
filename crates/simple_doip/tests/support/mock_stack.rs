@@ -1,6 +1,10 @@
-//! A scripted `edge_nal::TcpConnect` backend whose sockets move a configurable number of
-//! bytes per read or write and yield once before every one, so each byte can be an await
-//! point; and a single-threaded executor to drive futures against it poll by poll.
+//! A scripted `edge_nal` backend, `TcpConnect` for a tester and `TcpAccept` for an
+//! entity, whose sockets move a configurable number of bytes per read or write and yield
+//! once before every one, so each byte can be an await point; and a single-threaded
+//! executor to drive futures against it poll by poll.
+//!
+//! [`MockPeer`] is the far end of a socket: for a tester's socket the entity, for an
+//! entity's socket the tester.
 
 // Test code; see `golden_vectors.rs` for why the workspace lint standard is relaxed here.
 // `dead_code`: each test binary that includes this module uses a different part of it.
@@ -24,7 +28,7 @@ use std::rc::Rc;
 use std::sync::{Mutex, MutexGuard};
 use std::task::{Context, Poll, Waker};
 
-use edge_nal::{Close, Readable, TcpConnect, TcpShutdown, TcpSplit};
+use edge_nal::{Close, Readable, TcpAccept, TcpConnect, TcpShutdown, TcpSplit};
 use embassy_time::{Duration, MockDriver};
 use embedded_io_async::{ErrorKind, ErrorType, Read, Write};
 use simple_doip::LogicalAddress;
@@ -69,6 +73,7 @@ struct Connection {
     closed: bool,
     dropped: bool,
     reader: Option<Waker>,
+    writer: Option<Waker>,
 }
 
 #[derive(Debug)]
@@ -77,6 +82,9 @@ struct Shared {
     scripts: VecDeque<Option<Vec<u8>>>,
     connections: Vec<Connection>,
     piece: usize,
+    /// Connections dialled and not yet accepted.
+    incoming: VecDeque<usize>,
+    acceptor: Option<Waker>,
 }
 
 /// The stack: every `connect` opens a new scripted [`Connection`].
@@ -90,6 +98,8 @@ impl MockStack {
             scripts: VecDeque::new(),
             connections: Vec::new(),
             piece,
+            incoming: VecDeque::new(),
+            acceptor: None,
         })))
     }
 
@@ -115,6 +125,20 @@ impl MockStack {
     /// The peer end of the latest connection.
     pub fn latest(&self) -> MockPeer {
         self.peer(self.connects() - 1)
+    }
+
+    /// A tester connects to the entity accepting on this stack; its end of the
+    /// connection.
+    pub fn dial(&self) -> MockPeer {
+        let mut shared = self.0.borrow_mut();
+        shared.connections.push(Connection::default());
+        let index = shared.connections.len() - 1;
+        shared.incoming.push_back(index);
+        if let Some(waker) = shared.acceptor.take() {
+            waker.wake();
+        }
+        drop(shared);
+        self.peer(index)
     }
 
     /// Bytes `connect` delivers on the next connection before the test touches it.
@@ -175,9 +199,17 @@ impl MockPeer {
         self.with(|c| c.write_budget = Some(bytes));
     }
 
-    /// Ends [`Self::stall_writes_after`].
+    /// Ends [`Self::stall_writes`] and [`Self::stall_writes_after`], waking a write
+    /// waiting on either.
     pub fn resume_writes(&self) {
-        self.with(|c| c.write_budget = None);
+        let writer = self.with(|c| {
+            c.write_stall = false;
+            c.write_budget = None;
+            c.writer.take()
+        });
+        if let Some(waker) = writer {
+            waker.wake();
+        }
     }
 
     /// The tester's writes complete having written nothing, as on a closed socket.
@@ -189,6 +221,11 @@ impl MockPeer {
     /// its end.
     pub fn stall_closes(&self) {
         self.with(|c| c.close_stall = true);
+    }
+
+    /// Whether the socket's owner dropped it.
+    pub fn is_dropped(&self) -> bool {
+        self.with(|c| c.dropped)
     }
 
     /// Everything the tester has written, and forget it.
@@ -280,12 +317,13 @@ impl Write for MockSocket {
         yield_once().await;
         let piece = self.peer.shared.borrow().piece;
         let n = buf.len().min(piece);
-        poll_fn(|_| {
+        poll_fn(|cx| {
             self.peer.with(|c| {
                 if c.write_error {
                     return Poll::Ready(Err(MockError));
                 }
                 if c.write_stall || c.write_budget == Some(0) {
+                    c.writer = Some(cx.waker().clone());
                     return Poll::Pending;
                 }
                 let n = c.write_budget.map_or(n, |budget| n.min(budget));
@@ -404,6 +442,27 @@ impl TcpConnect for MockStack {
         Ok(MockSocket {
             peer: self.latest(),
         })
+    }
+}
+
+impl TcpAccept for MockStack {
+    type Error = MockError;
+    type Socket<'a> = MockSocket;
+
+    /// Cancel-safe: a connection is taken from the queue only by the poll that returns it.
+    async fn accept(&self) -> Result<(SocketAddr, MockSocket), MockError> {
+        yield_once().await;
+        poll_fn(|cx| {
+            let mut shared = self.0.borrow_mut();
+            let Some(index) = shared.incoming.pop_front() else {
+                shared.acceptor = Some(cx.waker().clone());
+                return Poll::Pending;
+            };
+            drop(shared);
+            let peer = self.peer(index);
+            Poll::Ready(Ok((([127, 0, 0, 1], 40_000).into(), MockSocket { peer })))
+        })
+        .await
     }
 }
 
