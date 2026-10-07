@@ -1260,6 +1260,34 @@ fn a_dropped_reconnect_leaves_the_tester_closed() {
     }
 }
 
+/// Issue #17 item 2: a socket dropped mid-activation may still hold the tester's address
+/// at the entity, so the next reconnect backs off from the drop, not from when the
+/// dropped socket opened.
+#[test]
+fn a_reconnect_dropped_mid_activation_still_backs_off_the_next() {
+    let _clock = clock();
+    let stack = MockStack::new(usize::MAX);
+    let mut tester = active(&stack);
+    {
+        let mut reconnecting = pin!(tester.reconnect());
+        assert!(until_stalled(reconnecting.as_mut()).is_none());
+        advance(RECONNECT_BACKOFF);
+        assert!(until_stalled(reconnecting.as_mut()).is_none());
+        assert_eq!(stack.connects(), 2);
+        advance(Duration::from_secs(1));
+    }
+    stack.script_next(&activation_response(0x10));
+    let mut reconnecting = pin!(tester.reconnect());
+
+    assert!(until_stalled(reconnecting.as_mut()).is_none());
+    advance(RECONNECT_BACKOFF - Duration::from_millis(1));
+    assert!(until_stalled(reconnecting.as_mut()).is_none());
+    assert_eq!(stack.connects(), 2, "still backing off");
+    advance(Duration::from_millis(1));
+    assert!(matches!(until_stalled(reconnecting.as_mut()), Some(Ok(()))));
+    assert_eq!(stack.connects(), 3);
+}
+
 // --- correlation and the strict timeout ------------------------------------------------
 
 /// Writes everything `request` queued by polling `next_event` until it waits on the

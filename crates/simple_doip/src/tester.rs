@@ -308,75 +308,113 @@ impl<'s, C: TcpConnect, const N: usize> Tester<'s, C, N> {
     }
 
     /// Opens a new connection and activates routing on it, keeping it only on success.
+    /// A connection that opens and is not kept, because activation failed or the future
+    /// was dropped, counts as a loss for [`RECONNECT_BACKOFF`].
     async fn establish(&mut self) -> Result<(), ConnectError<C::Error>> {
-        let stack = self.stack;
-        let mut socket = stack.connect(self.remote).await.map_err(ConnectError::Io)?;
-        match self.activate(&mut socket).await {
+        let Self {
+            stack,
+            remote,
+            sa,
+            socket: kept,
+            rx,
+            control,
+            outgoing,
+            io_error,
+            lost_at,
+            ..
+        } = self;
+        let stack: &'s C = stack;
+        let mut socket = stack.connect(*remote).await.map_err(ConnectError::Io)?;
+        let opened = Opened::new(lost_at);
+        match activate(&mut socket, sa.address(), rx, control, outgoing).await {
             Ok(()) => {
-                self.socket = Some(socket);
-                self.io_error = None;
+                opened.kept();
+                *kept = Some(socket);
+                *io_error = None;
                 Ok(())
             }
             Err(error) => {
-                self.lost_at = Some(Instant::now());
+                drop(opened);
                 socket.abort().await.ok();
                 Err(error)
             }
         }
     }
+}
 
-    async fn activate(
-        &mut self,
-        socket: &mut C::Socket<'s>,
-    ) -> Result<(), ConnectError<C::Error>> {
-        let Self {
-            sa,
-            rx,
-            control,
-            outgoing,
-            ..
-        } = self;
-        let sa = sa.address();
+/// A connection being established, which counts as lost when dropped unless
+/// [`Opened::kept`].
+struct Opened<'a> {
+    lost_at: Option<&'a mut Option<Instant>>,
+}
+
+impl<'a> Opened<'a> {
+    const fn new(lost_at: &'a mut Option<Instant>) -> Self {
+        Self {
+            lost_at: Some(lost_at),
+        }
+    }
+
+    fn kept(mut self) {
+        self.lost_at = None;
+    }
+}
+
+impl Drop for Opened<'_> {
+    fn drop(&mut self) {
+        if let Some(lost_at) = self.lost_at.take() {
+            *lost_at = Some(Instant::now());
+        }
+    }
+}
+
+/// Activates routing for `sa` on `socket`, answering alive checks meanwhile.
+async fn activate<S: Read + Write + Readable, const N: usize>(
+    socket: &mut S,
+    sa: LogicalAddress,
+    rx: &mut RxBuffer<N>,
+    control: &mut Control,
+    outgoing: &mut Outgoing<N>,
+) -> Result<(), ConnectError<S::Error>> {
+    loop {
+        control.routing_activation_request(sa);
+        let mut retry_at = None;
         loop {
-            control.routing_activation_request(sa);
-            let mut retry_at = None;
-            loop {
-                let flushed = flush(socket, control, outgoing, None)
-                    .await
-                    .map_err(ConnectError::Io)?;
-                if flushed != Flush::Done {
-                    return Err(ConnectError::Closed);
+            let flushed = flush(socket, control, outgoing, None)
+                .await
+                .map_err(ConnectError::Io)?;
+            if flushed != Flush::Done {
+                return Err(ConnectError::Closed);
+            }
+            match rx.next() {
+                Err(_) => return Err(ConnectError::InvalidMessage),
+                Ok(Next::NeedMore) => {
+                    match fill(socket, rx, retry_at).await.map_err(ConnectError::Io)? {
+                        Fill::Data => {}
+                        Fill::Eof => return Err(ConnectError::Closed),
+                        Fill::TimedOut => break,
+                    }
                 }
-                match rx.next() {
-                    Err(_) => return Err(ConnectError::InvalidMessage),
-                    Ok(Next::NeedMore) => {
-                        match fill(socket, rx, retry_at).await.map_err(ConnectError::Io)? {
-                            Fill::Data => {}
-                            Fill::Eof => return Err(ConnectError::Closed),
-                            Fill::TimedOut => break,
-                        }
+                Ok(Next::Oversized { header, .. }) => {
+                    if !spoken(&header)
+                        || header.payload_type == PayloadType::RoutingActivationResponse
+                    {
+                        return Err(ConnectError::InvalidMessage);
                     }
-                    Ok(Next::Oversized { header, .. }) => {
-                        if !spoken(&header)
-                            || header.payload_type == PayloadType::RoutingActivationResponse
-                        {
-                            return Err(ConnectError::InvalidMessage);
-                        }
-                        rx.skip_oversized(&header);
-                    }
-                    Ok(Next::Frame(frame, consumed)) => {
-                        let step =
-                            on_activation_frame(&frame.header, frame.payload, sa, control)?;
-                        rx.consume(consumed);
-                        match step {
-                            Activation::Waiting => {}
-                            Activation::Activated => return Ok(()),
-                            Activation::ConfirmationRequired => {
-                                retry_at = Some(confirm::after(
-                                    Instant::now(),
-                                    ROUTING_CONFIRMATION_RETRY,
-                                ));
-                            }
+                    rx.skip_oversized(&header);
+                }
+                Ok(Next::Frame(frame, consumed)) => {
+                    let step =
+                        on_activation_frame(&frame.header, frame.payload, sa, control)?;
+                    rx.consume(consumed);
+                    match step {
+                        Activation::Waiting => {}
+                        Activation::Activated => return Ok(()),
+                        Activation::ConfirmationRequired => {
+                            retry_at = Some(confirm::after(
+                                Instant::now(),
+                                ROUTING_CONFIRMATION_RETRY,
+                            ));
                         }
                     }
                 }
