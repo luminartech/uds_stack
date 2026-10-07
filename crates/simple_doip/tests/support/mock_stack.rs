@@ -83,6 +83,8 @@ struct Shared {
     scripts: VecDeque<Option<Vec<u8>>>,
     connections: Vec<Connection>,
     piece: usize,
+    /// Whether a read yields once even when bytes are waiting.
+    read_yields: bool,
     /// Connections dialled and not yet accepted.
     incoming: VecDeque<usize>,
     acceptor: Option<Waker>,
@@ -99,9 +101,18 @@ impl MockStack {
             scripts: VecDeque::new(),
             connections: Vec::new(),
             piece,
+            read_yields: true,
             incoming: VecDeque::new(),
             acceptor: None,
         })))
+    }
+
+    /// A stack like [`Self::new`] whose reads complete on their first poll when bytes are
+    /// waiting, as a real stack's do.
+    pub fn eager(piece: usize) -> Self {
+        let stack = Self::new(piece);
+        stack.0.borrow_mut().read_yields = false;
+        stack
     }
 
     /// The next `connect` fails.
@@ -288,8 +299,13 @@ impl ErrorType for MockSocket {
 
 impl Read for MockSocket {
     async fn read(&mut self, buf: &mut [u8]) -> Result<usize, MockError> {
-        yield_once().await;
-        let piece = self.peer.shared.borrow().piece;
+        let (piece, read_yields) = {
+            let shared = self.peer.shared.borrow();
+            (shared.piece, shared.read_yields)
+        };
+        if read_yields || self.peer.with(|c| c.inbound.is_empty()) {
+            yield_once().await;
+        }
         poll_fn(|cx| {
             self.peer.with(|c| {
                 if c.read_error {

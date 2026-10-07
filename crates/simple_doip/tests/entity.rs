@@ -340,6 +340,28 @@ fn a_waiting_next_event_wakes_for_t_tcp_initial_inactivity() {
     assert!(peer.is_closed());
 }
 
+/// REQ 3.DoIP-085: a routing activation request that reached the socket before
+/// `T_TCP_Initial_Inactivity` elapsed is handled, however late `next_event` is called.
+#[test]
+fn an_activation_that_arrived_in_time_is_handled_though_next_event_is_late() {
+    let _clock = clock();
+    let stack = MockStack::eager(4096);
+    let mut entity = OneSocket::new(&stack, address(), two_testers());
+    let peer = stack.dial();
+    assert_eq!(events(&mut entity), []);
+    advance(ms(1900));
+    peer.send(&activation_from(TESTER, 0));
+    advance(ms(200));
+
+    assert_eq!(events(&mut entity), []);
+
+    assert_eq!(
+        peer.take_written(),
+        activation_response_for(TESTER, ACTIVATED)
+    );
+    assert!(!peer.is_shut());
+}
+
 // --- Figure 16, the generic header handler -----------------------------------------------
 
 /// REQ 7.DoIP-041: a header whose protocol version and its inverse do not match is
@@ -893,6 +915,32 @@ fn an_activation_under_arbitration_is_not_closed_by_the_initial_timer() {
     assert_eq!(
         newcomer.take_written(),
         activation_response_for(TESTER, ACTIVATED)
+    );
+}
+
+/// REQ 3.DoIP-093: an alive check response that reached the socket within
+/// `T_TCP_Alive_Check` keeps the holder's registration, however late `next_event` is
+/// called.
+#[test]
+fn an_alive_check_response_that_arrived_in_time_counts_though_next_event_is_late() {
+    let _clock = clock();
+    let stack = MockStack::eager(4096);
+    let mut entity = OneSocket::new(&stack, address(), two_testers());
+    let holder = activated(&stack, &mut entity, TESTER);
+    let newcomer = stack.dial();
+    newcomer.send(&activation_from(TESTER, 0));
+    assert_eq!(events(&mut entity), []);
+    assert_eq!(holder.take_written(), alive_check_request());
+    advance(ms(100));
+    holder.send(&alive_check_response());
+    advance(ms(450));
+
+    assert_eq!(events(&mut entity), []);
+
+    assert!(!holder.is_shut());
+    assert_eq!(
+        newcomer.take_written(),
+        activation_response_for(TESTER, 0x03)
     );
 }
 

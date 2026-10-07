@@ -19,7 +19,7 @@ use core::fmt;
 
 use core::future::{Future, poll_fn};
 use core::pin::pin;
-use core::task::Poll;
+use core::task::{Context, Poll};
 use edge_nal::TcpAccept;
 
 use embassy_futures::select::{Either, select, select_array};
@@ -366,6 +366,13 @@ impl<
         match at {
             SlotRef::Connection(index) => self.connections.get_mut(index)?.open.as_mut(),
             SlotRef::Reserve => self.reserve.open.as_mut(),
+        }
+    }
+
+    fn open(&self, at: SlotRef) -> Option<&table::Open<A::Socket<'a>>> {
+        match at {
+            SlotRef::Connection(index) => self.connections.get(index)?.open.as_ref(),
+            SlotRef::Reserve => self.reserve.open.as_ref(),
         }
     }
 
@@ -875,6 +882,51 @@ impl<
         Step::Idle
     }
 
+    /// Whether a deadline passed by `now` judges the socket at `at`: its own timer, or
+    /// the alive check it has not answered.
+    fn is_judged(&self, at: SlotRef, now: Instant) -> bool {
+        let timer = self.open(at).is_some_and(|open| open.deadline <= now);
+        let alive_check = match (at, self.arbitration) {
+            (
+                SlotRef::Connection(index),
+                Some(Arbitration {
+                    stage: Stage::AliveCheck { deadline, .. },
+                    ..
+                }),
+            ) => deadline <= now && self.is_silent(index),
+            _ => false,
+        };
+        timer || alive_check
+    }
+
+    /// Takes in what each socket a passed deadline judges has ready, so input that
+    /// reached it in time is handled before the deadline is acted on. Whether anything
+    /// was.
+    async fn take_in(&mut self, now: Instant) -> bool {
+        poll_fn(|cx| {
+            let mut took = false;
+            for position in 0..=MCTS {
+                let at = Self::slot_ref(position);
+                if !self.is_judged(at, now) {
+                    continue;
+                }
+                let io = match at {
+                    SlotRef::Connection(index) => self
+                        .connections
+                        .get_mut(index)
+                        .and_then(|slot| poll_once(drive(slot), cx)),
+                    SlotRef::Reserve => poll_once(drive(&mut self.reserve), cx),
+                };
+                if let Some(io) = io {
+                    self.apply(at, io, now);
+                    took = true;
+                }
+            }
+            Poll::Ready(took)
+        })
+        .await
+    }
+
     /// Waits for whichever comes first: a connection, a socket's next read or write,
     /// or `wake`.
     async fn wait(&mut self, wake: Option<Instant>) -> Woke<A::Socket<'a>, A::Error> {
@@ -901,6 +953,13 @@ impl<
             timer.as_mut().poll(cx).map(|()| Woke::Timer)
         })
         .await
+    }
+}
+
+fn poll_once<F: Future>(future: F, cx: &mut Context<'_>) -> Option<F::Output> {
+    match pin!(future).poll(cx) {
+        Poll::Ready(output) => Some(output),
+        Poll::Pending => None,
     }
 }
 
@@ -1002,9 +1061,16 @@ impl<
             if let Some(event) = self.owed_event() {
                 return Ok(event);
             }
-            self.expire(now);
-            self.arbitrate(now);
-            match self.handle_one(buf, now) {
+            let step = match self.handle_one(buf, now) {
+                Step::Idle if self.take_in(now).await => continue,
+                Step::Idle => {
+                    self.expire(now);
+                    self.arbitrate(now);
+                    self.handle_one(buf, now)
+                }
+                step => step,
+            };
+            match step {
                 Step::Deliver(delivery) => return Ok(delivery.into_event(buf)),
                 Step::Progress => continue,
                 Step::Idle => {}
