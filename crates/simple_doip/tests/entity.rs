@@ -164,6 +164,15 @@ fn request<E: DiagnosticEntity>(
     until_stalled(future).expect("the request waits on nothing here")
 }
 
+fn confirm(sa: LogicalAddress, ta_type: TaType, result: DoIpResult) -> Ev {
+    Ev::Confirm {
+        sa,
+        ta: TESTER,
+        ta_type,
+        result,
+    }
+}
+
 // --- accepting and the timers of Table 12 ------------------------------------------------
 
 /// REQ 3.DoIP-084 and 086: a socket with no routing activation is closed when
@@ -291,6 +300,46 @@ fn a_deadline_ahead_returns_deadline_when_it_passes() {
     assert_eq!(step_into(&mut entity, 64, Some(100)), Some(Ev::Deadline));
 }
 
+/// REQ 3.DoIP-080: data the entity sends restarts `T_TCP_General_Inactivity` as data it
+/// receives does.
+#[test]
+fn data_sent_restarts_t_tcp_general_inactivity() {
+    let _clock = clock();
+    let stack = MockStack::new(4096);
+    let mut entity = OneSocket::new(&stack, address(), two_testers());
+    let peer = activated(&stack, &mut entity, TESTER);
+
+    advance(ms(200_000));
+    request(&mut entity, TESTER, &[0x7E, 0x00]).unwrap();
+    assert_eq!(
+        events(&mut entity),
+        [confirm(ENTITY, TaType::Physical, DoIpResult::Ok)]
+    );
+    advance(ms(299_999));
+    assert_eq!(events(&mut entity), []);
+    assert!(!peer.is_shut());
+
+    advance(ms(1));
+    assert_eq!(events(&mut entity), []);
+    assert!(peer.is_closed());
+}
+
+/// A `next_event` already waiting wakes when `T_TCP_Initial_Inactivity` elapses.
+#[test]
+fn a_waiting_next_event_wakes_for_t_tcp_initial_inactivity() {
+    let _clock = clock();
+    let stack = MockStack::new(4096);
+    let mut entity = OneSocket::new(&stack, address(), two_testers());
+    let peer = stack.dial();
+    let mut buf = [0u8; 64];
+    let mut waiting = pin!(entity.next_event(&mut buf, None));
+    assert!(until_stalled(waiting.as_mut()).is_none());
+
+    advance(ms(2000));
+    assert!(until_stalled(waiting.as_mut()).is_none());
+    assert!(peer.is_closed());
+}
+
 // --- Figure 16, the generic header handler -----------------------------------------------
 
 /// REQ 7.DoIP-041: a header whose protocol version and its inverse do not match is
@@ -385,6 +434,118 @@ fn a_received_header_nack_is_ignored() {
 
     assert_eq!(peer.take_written(), []);
     assert!(!peer.is_shut());
+}
+
+/// REQ 7.DoIP-043 at its boundary: a frame of exactly the entity's buffer is taken, and
+/// one a byte longer is answered with NACK code 0x02.
+#[test]
+fn a_frame_that_fills_the_buffer_is_taken_and_one_a_byte_longer_is_nacked_0x02() {
+    let _clock = clock();
+    let stack = MockStack::new(4096);
+    let mut entity = Entity::<_, 1, 64, 2>::new(&stack, address(), two_testers());
+    let peer = activated(&stack, &mut entity, TESTER);
+    let fits = diagnostic(TESTER, ENTITY, &[0x22; 52]);
+    assert_eq!(fits.len(), 64);
+
+    peer.send(&fits);
+    assert_eq!(
+        events(&mut entity),
+        [Ev::Indication {
+            connection: 0,
+            sa: TESTER,
+            ta: ENTITY,
+            ta_type: TaType::Physical,
+            pdu: vec![0x22; 52],
+        }]
+    );
+    assert_eq!(peer.take_written(), ack(ENTITY, TESTER));
+
+    peer.send(&diagnostic(TESTER, ENTITY, &[0x22; 53]));
+    assert_eq!(events(&mut entity), []);
+    assert_eq!(peer.take_written(), header_nack(0x02));
+    assert!(!peer.is_shut());
+}
+
+/// Table 16: a tester speaking ISO 13400-2:2012 is accepted, and answered in the version
+/// it used.
+#[test]
+fn a_2012_tester_is_answered_in_2012() {
+    let _clock = clock();
+    let stack = MockStack::new(4096);
+    let mut entity = OneSocket::new(&stack, address(), two_testers());
+    let peer = stack.dial();
+    let mut request = activation_from(TESTER, 0);
+    request[..2].copy_from_slice(&[0x02, 0xFD]);
+    peer.send(&request);
+
+    assert_eq!(events(&mut entity), []);
+
+    let mut expected = activation_response_for(TESTER, ACTIVATED);
+    expected[..2].copy_from_slice(&[0x02, 0xFD]);
+    assert_eq!(peer.take_written(), expected);
+}
+
+/// REQ 7.DoIP-045, Tables 46 and 28: a routing activation request is 7 or 11 bytes
+/// and an alive check response 2; any other length is answered with NACK code 0x04.
+#[test]
+fn control_frame_lengths_are_checked_exactly() {
+    let _clock = clock();
+    let stack = MockStack::new(4096);
+    let mut entity = TwoSockets::new(&stack, address(), two_testers());
+    let long = stack.dial();
+    long.send(&raw(
+        0x0005,
+        &[0x0E, 0x00, 0, 0, 0, 0, 0, 0xAA, 0xBB, 0xCC, 0xDD],
+    ));
+    assert_eq!(events(&mut entity), []);
+    assert_eq!(
+        long.take_written(),
+        activation_response_for(TESTER, ACTIVATED)
+    );
+
+    let odd = stack.dial();
+    odd.send(&raw(0x0005, &[0x0E, 0x80, 0, 0, 0, 0, 0, 0]));
+    assert_eq!(events(&mut entity), []);
+    assert_eq!(odd.take_written(), header_nack(0x04));
+
+    long.send(&raw(0x0008, &[0x0E, 0x00, 0x00]));
+    assert_eq!(events(&mut entity), []);
+    assert_eq!(long.take_written(), header_nack(0x04));
+    assert!(long.is_closed());
+}
+
+/// A socket closing after a NACK whose writes cannot finish within `T_TCP_Alive_Check`
+/// is aborted.
+#[test]
+fn an_orderly_close_that_cannot_write_is_aborted() {
+    let _clock = clock();
+    let stack = MockStack::new(4096);
+    let mut entity = OneSocket::new(&stack, address(), two_testers());
+    let peer = stack.dial();
+    assert_eq!(events(&mut entity), []);
+    peer.stall_writes();
+    peer.send(&[0x03, 0xFD, 0x00, 0x05, 0x00, 0x00, 0x00, 0x07]);
+    assert_eq!(events(&mut entity), []);
+    assert!(!peer.is_shut());
+
+    advance(ms(500));
+    assert_eq!(events(&mut entity), []);
+    assert!(peer.is_aborted());
+}
+
+/// A socket closing after a NACK whose write fails is aborted.
+#[test]
+fn a_closing_socket_whose_write_fails_is_aborted() {
+    let _clock = clock();
+    let stack = MockStack::new(4096);
+    let mut entity = OneSocket::new(&stack, address(), two_testers());
+    let peer = stack.dial();
+    assert_eq!(events(&mut entity), []);
+    peer.fail_writes();
+    peer.send(&[0x03, 0xFD, 0x00, 0x05, 0x00, 0x00, 0x00, 0x07]);
+
+    assert_eq!(events(&mut entity), []);
+    assert!(peer.is_aborted());
 }
 
 // --- Figure 22, the routing activation handler -------------------------------------------
@@ -625,7 +786,8 @@ fn only_registered_sockets_are_alive_checked() {
 }
 
 /// The tester whose activation is being arbitrated leaving ends the arbitration: nothing
-/// is answered, and the socket it challenged is left alone.
+/// is answered, the socket it challenged is left alone, and the next activation is
+/// arbitrated afresh.
 #[test]
 fn the_arbitrating_tester_leaving_ends_the_arbitration() {
     let _clock = clock();
@@ -644,6 +806,14 @@ fn the_arbitrating_tester_leaving_ends_the_arbitration() {
 
     assert!(!holder.is_shut());
     assert_eq!(newcomer.take_written(), []);
+
+    let next = stack.dial();
+    next.send(&activation_from(TESTER, 0));
+    assert_eq!(events(&mut entity), []);
+    assert_eq!(holder.take_written(), alive_check_request());
+    holder.send(&alive_check_response());
+    assert_eq!(events(&mut entity), []);
+    assert_eq!(next.take_written(), activation_response_for(TESTER, 0x03));
 }
 
 /// A tester on the reserve socket that activates routing while the one connection slot
@@ -678,6 +848,166 @@ fn a_reserve_activation_exchanges_with_an_initialized_slot() {
     active.send(&alive_check_response());
     assert_eq!(events(&mut entity), []);
     assert_eq!(idle.take_written(), activation_response_for(OTHER, 0x01));
+}
+
+/// REQ 3.DoIP-085: a routing activation request stops `T_TCP_Initial_Inactivity` even
+/// while it waits on an alive check.
+#[test]
+fn an_activation_under_arbitration_is_not_closed_by_the_initial_timer() {
+    let _clock = clock();
+    let stack = MockStack::new(4096);
+    let mut entity = OneSocket::new(&stack, address(), two_testers());
+    let holder = activated(&stack, &mut entity, TESTER);
+    let newcomer = stack.dial();
+    assert_eq!(events(&mut entity), []);
+    advance(ms(1800));
+    newcomer.send(&activation_from(TESTER, 0));
+    assert_eq!(events(&mut entity), []);
+    assert_eq!(holder.take_written(), alive_check_request());
+
+    advance(ms(300));
+    assert_eq!(events(&mut entity), []);
+    assert!(!newcomer.is_shut());
+
+    advance(ms(200));
+    assert_eq!(events(&mut entity), []);
+    assert_eq!(
+        newcomer.take_written(),
+        activation_response_for(TESTER, ACTIVATED)
+    );
+}
+
+/// A `next_event` already waiting wakes when an arbitration's `T_TCP_Alive_Check`
+/// elapses.
+#[test]
+fn a_waiting_next_event_wakes_for_the_alive_check_expiry() {
+    let _clock = clock();
+    let stack = MockStack::new(4096);
+    let mut entity = OneSocket::new(&stack, address(), two_testers());
+    let holder = activated(&stack, &mut entity, TESTER);
+    let newcomer = stack.dial();
+    newcomer.send(&activation_from(TESTER, 0));
+    {
+        let mut buf = [0u8; 64];
+        let mut waiting = pin!(entity.next_event(&mut buf, None));
+        assert!(until_stalled(waiting.as_mut()).is_none());
+        assert_eq!(holder.take_written(), alive_check_request());
+
+        advance(ms(500));
+        assert!(until_stalled(waiting.as_mut()).is_none());
+    }
+    assert!(holder.is_aborted());
+    assert_eq!(
+        newcomer.take_written(),
+        activation_response_for(TESTER, ACTIVATED)
+    );
+}
+
+/// REQ 3.DoIP-094 and 095 with two sockets: of the registered sockets, those, and only
+/// those, that do not answer within `T_TCP_Alive_Check` are closed.
+#[test]
+fn a_full_table_closes_only_and_all_its_silent_sockets() {
+    let _clock = clock();
+    let stack = MockStack::new(4096);
+    let third = LogicalAddress(0x0E01);
+    let three = EntityConfig::new(
+        [TESTER, OTHER, third]
+            .map(|sa| simple_doip::service::TesterAddress::new(sa).unwrap()),
+    );
+    let mut entity = Entity::<_, 2, 4096, 3>::new(&stack, address(), three);
+    let answers = activated(&stack, &mut entity, TESTER);
+    let silent = activated(&stack, &mut entity, OTHER);
+    let newcomer = stack.dial();
+    newcomer.send(&activation_from(third, 0));
+    assert_eq!(events(&mut entity), []);
+    assert_eq!(answers.take_written(), alive_check_request());
+    assert_eq!(silent.take_written(), alive_check_request());
+    answers.send(&alive_check_response());
+    assert_eq!(events(&mut entity), []);
+
+    advance(ms(500));
+    assert_eq!(events(&mut entity), []);
+    assert!(silent.is_aborted());
+    assert!(!answers.is_shut());
+    assert_eq!(
+        newcomer.take_written(),
+        activation_response_for(third, ACTIVATED)
+    );
+}
+
+/// A second activation arriving during an arbitration waits for it to end, and is then
+/// arbitrated afresh.
+#[test]
+fn a_second_activation_waits_for_the_arbitration_in_progress() {
+    let _clock = clock();
+    let stack = MockStack::new(4096);
+    let mut entity = TwoSockets::new(&stack, address(), two_testers());
+    let holder = activated(&stack, &mut entity, TESTER);
+    let second = stack.dial();
+    let first = stack.dial();
+    assert_eq!(events(&mut entity), []);
+    first.send(&activation_from(TESTER, 0));
+    assert_eq!(events(&mut entity), []);
+    assert_eq!(holder.take_written(), alive_check_request());
+    second.send(&activation_from(TESTER, 0));
+    assert_eq!(events(&mut entity), []);
+
+    holder.send(&alive_check_response());
+    assert_eq!(events(&mut entity), []);
+    assert_eq!(first.take_written(), activation_response_for(TESTER, 0x03));
+    assert_eq!(holder.take_written(), alive_check_request());
+}
+
+/// REQ 3.DoIP-095: a holder that has stopped reading, so that even its alive check
+/// request cannot be queued, has not answered, and is closed after `T_TCP_Alive_Check`.
+#[test]
+fn a_holder_that_cannot_be_asked_is_silent() {
+    let _clock = clock();
+    let stack = MockStack::new(4096);
+    let mut entity = Entity::<_, 1, 64, 2>::new(&stack, address(), two_testers());
+    let holder = activated(&stack, &mut entity, TESTER);
+    holder.stall_writes();
+    request(&mut entity, TESTER, &[0x62; 52]).unwrap();
+    let newcomer = stack.dial();
+    newcomer.send(&activation_from(TESTER, 0));
+    assert_eq!(events(&mut entity), []);
+    assert_eq!(newcomer.take_written(), []);
+
+    advance(ms(500));
+    assert_eq!(
+        events(&mut entity),
+        [confirm(ENTITY, TaType::Physical, DoIpResult::NoSocket)]
+    );
+    assert!(holder.is_aborted());
+    assert_eq!(
+        newcomer.take_written(),
+        activation_response_for(TESTER, ACTIVATED)
+    );
+}
+
+/// The reserve socket exchanging with an Initialized slot takes that slot's unsent bytes
+/// with it: here, a NACK still queued for the idle tester.
+#[test]
+fn an_exchange_with_the_reserve_keeps_each_sockets_unsent_bytes() {
+    let _clock = clock();
+    let stack = MockStack::new(4096);
+    let mut entity = OneSocket::new(&stack, address(), two_testers());
+    let idle = stack.dial();
+    let active = stack.dial();
+    assert_eq!(events(&mut entity), []);
+    idle.stall_writes();
+    idle.send(&raw(0x4001, &[]));
+    assert_eq!(events(&mut entity), []);
+
+    active.send(&activation_from(TESTER, 0));
+    assert_eq!(events(&mut entity), []);
+    assert_eq!(
+        active.take_written(),
+        activation_response_for(TESTER, ACTIVATED)
+    );
+    idle.resume_writes();
+    assert_eq!(events(&mut entity), []);
+    assert_eq!(idle.take_written(), header_nack(0x01));
 }
 
 // --- Figure 17, diagnostic messages ------------------------------------------------------
@@ -954,15 +1284,6 @@ fn a_request_on_a_connection_that_closes_unwritten_is_confirmed_no_socket() {
     assert!(peer.is_aborted());
 }
 
-fn confirm(sa: LogicalAddress, ta_type: TaType, result: DoIpResult) -> Ev {
-    Ev::Confirm {
-        sa,
-        ta: TESTER,
-        ta_type,
-        result,
-    }
-}
-
 /// ISO 13400-2:2019 8.3.1 and ISO 14229-2:2021 Table 10: a request with no room in its
 /// connection's queue waits for nothing. It is confirmed `OutOfMemory` and never sent,
 /// after the request ahead of it.
@@ -987,6 +1308,23 @@ fn a_request_with_no_room_is_confirmed_out_of_memory_after_the_one_ahead() {
         ]
     );
     assert_eq!(peer.take_written(), diagnostic(ENTITY, TESTER, &[0x11; 40]));
+}
+
+/// The largest PDU a request takes fills the entity's buffer, and is written whole.
+#[test]
+fn the_largest_pdu_is_requested_and_written() {
+    let _clock = clock();
+    let stack = MockStack::new(4096);
+    let mut entity = Entity::<_, 1, 64, 2>::new(&stack, address(), two_testers());
+    let peer = activated(&stack, &mut entity, TESTER);
+
+    request(&mut entity, TESTER, &[0x62; 52]).unwrap();
+
+    assert_eq!(
+        events(&mut entity),
+        [confirm(ENTITY, TaType::Physical, DoIpResult::Ok)]
+    );
+    assert_eq!(peer.take_written(), diagnostic(ENTITY, TESTER, &[0x62; 52]));
 }
 
 /// REQ 3.DoIP-092: a tester that has stopped reading is replaced by one activating its
