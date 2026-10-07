@@ -356,6 +356,12 @@ pub enum EntityEvent<'b> {
     },
     /// A diagnostic message longer than the caller's buffer or the connection's; see
     /// [`ConnectionEvent::IndicationTruncated`].
+    ///
+    /// The entity has acknowledged it positively, as it does every message it indicates,
+    /// rather than refusing it with ISO 13400-2:2019 REQ 7.DoIP-073's negative
+    /// acknowledgement 0x05: whether a message the caller cannot hold is an error is the
+    /// caller's to answer. A UDS server busy with a request owes it `busyRepeatRequest`,
+    /// composed from the service identifier and addressing this event carries.
     IndicationTruncated {
         /// The connection the message arrived on.
         connection: ConnectionId,
