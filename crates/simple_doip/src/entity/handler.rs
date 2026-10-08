@@ -1,10 +1,10 @@
-//! The handlers a received frame meets before the socket handler: Figure 16's generic
-//! header handler, and Figure 17's diagnostic message handler.
+//! The handlers a received frame meets before the socket handler: ISO 13400-2:2019
+//! Figure 16's generic header handler, and Figure 17's diagnostic message handler.
 
 use embassy_time::Instant;
 
 use super::table::{Activation, AliveCheck, Open, Phase, Slot};
-use super::{CLOSE_LIMIT, EntityAddress, GENERAL_INACTIVITY, expiry};
+use super::{EntityAddress, GENERAL_INACTIVITY, expiry};
 use crate::messages::{
     DiagnosticNackCode, Header, Message, MessageError, NackCode, Payload, PayloadType,
     ProtocolVersion,
@@ -54,7 +54,6 @@ pub(super) fn handle<S, const CAP: usize>(
     buf: &mut [u8],
     now: Instant,
 ) -> Handled {
-    let close_by = expiry(now, CLOSE_LIMIT);
     let Slot { open, rx, tx, .. } = slot;
     let Some(open) = open.as_mut() else {
         return Handled::Waiting;
@@ -69,7 +68,7 @@ pub(super) fn handle<S, const CAP: usize>(
     } else {
         limit.min(CAP)
     };
-    if let Err(handled) = check_header(open, rx, tx, max_message, memory, close_by) {
+    if let Err(handled) = check_header(open, rx, tx, max_message, memory, now) {
         return handled;
     }
     let Ok(Next::Frame(frame, consumed)) = rx.next() else {
@@ -117,11 +116,7 @@ pub(super) fn handle<S, const CAP: usize>(
             };
             if registered != Some(tester) {
                 nack(tx, DiagnosticNackCode::InvalidSourceAddress);
-                open.phase = Phase::Finalizing {
-                    abort: false,
-                    by_caller: false,
-                };
-                open.deadline = close_by;
+                open.finalize(false, false, now);
                 Handled::Done
             } else if let Some(ta_type) = address.ta_type_of(target) {
                 tx.push(&Message::diagnostic_message_ack(
@@ -158,20 +153,20 @@ fn check_header<S, const CAP: usize>(
     tx: &mut TxQueue<CAP>,
     max_message: usize,
     memory: usize,
-    close_by: Instant,
+    now: Instant,
 ) -> Result<(), Handled> {
     let header = match rx.header() {
         Ok(header) => header,
         Err(MessageError::Incomplete(_)) => return Err(Handled::Waiting),
         Err(_) => {
-            return Err(refuse(open, tx, NackCode::IncorrectPatternFormat, close_by));
+            return Err(refuse(open, tx, NackCode::IncorrectPatternFormat, now));
         }
     };
     if !matches!(
         header.protocol_version,
         ProtocolVersion::V2012 | ProtocolVersion::V2019
     ) {
-        return Err(refuse(open, tx, NackCode::IncorrectPatternFormat, close_by));
+        return Err(refuse(open, tx, NackCode::IncorrectPatternFormat, now));
     }
     open.version = header.protocol_version;
     let Some(length_ok) = length_rule(header.payload_type) else {
@@ -188,13 +183,15 @@ fn check_header<S, const CAP: usize>(
         return Err(discard(open, tx, rx, &header, NackCode::OutOfMemory));
     }
     if !length_ok(header.payload_length) {
-        return Err(refuse(open, tx, NackCode::InvalidPayloadLength, close_by));
+        return Err(refuse(open, tx, NackCode::InvalidPayloadLength, now));
     }
     Ok(())
 }
 
 /// The payload lengths ISO 13400-2:2019 allows each payload type a tester sends on a
 /// `TCP_DATA` socket, or `None` for a type the entity does not take there (Figure 16).
+/// A diagnostic message's user data is mandatory (Table 21), which this crate reads as
+/// at least one byte.
 fn length_rule(payload_type: PayloadType) -> Option<fn(u32) -> bool> {
     match payload_type {
         PayloadType::RoutingActivationRequest => Some(|length| matches!(length, 7 | 11)),
@@ -212,17 +209,13 @@ fn refuse<S, const CAP: usize>(
     open: &mut Open<S>,
     tx: &mut TxQueue<CAP>,
     code: NackCode,
-    close_by: Instant,
+    now: Instant,
 ) -> Handled {
     if !tx.has_room_for(HEADER_NACK) {
         return Handled::Waiting;
     }
     tx.push(&header_nack(open.version, code)).ok();
-    open.phase = Phase::Finalizing {
-        abort: false,
-        by_caller: false,
-    };
-    open.deadline = close_by;
+    open.finalize(false, false, now);
     Handled::Done
 }
 

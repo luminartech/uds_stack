@@ -79,6 +79,7 @@ impl<const MCTS: usize> MockEntity<MCTS> {
 impl<const MCTS: usize> DiagnosticEntity for MockEntity<MCTS> {
     type Error = core::convert::Infallible;
     const CONNECTIONS: usize = MCTS;
+    const MAX_PDU: usize = usize::MAX;
 
     async fn request(
         &mut self,

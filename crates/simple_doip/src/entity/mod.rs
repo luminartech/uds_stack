@@ -59,8 +59,12 @@ const INITIAL_INACTIVITY: core::time::Duration = crate::TCP_TIMEOUT_INITIAL_INAC
 const GENERAL_INACTIVITY: core::time::Duration = crate::TCP_TIMEOUT_GENERAL_INACTIVITY;
 /// `T_TCP_Alive_Check` (ISO 13400-2:2019 Table 12).
 const ALIVE_CHECK: core::time::Duration = crate::TCP_TIMEOUT_ALIVE_CHECK;
-/// How long an orderly close, and then an abort, may take before the socket is dropped.
-const CLOSE_LIMIT: core::time::Duration = ALIVE_CHECK;
+/// How long an orderly close may take before the entity aborts it, discarding whatever
+/// the tester has not yet acknowledged. ISO 13400-2 does not bound the close; this is
+/// long enough for what was written before it to be retransmitted.
+pub const ORDERLY_CLOSE_LIMIT: core::time::Duration = core::time::Duration::from_secs(2);
+/// How long an abort may take before the socket is dropped.
+const ABORT_LIMIT: core::time::Duration = ALIVE_CHECK;
 
 /// When `timer`, started at `now`, expires: the end of time if that is past it.
 fn expiry(now: Instant, timer: core::time::Duration) -> Instant {
@@ -167,7 +171,7 @@ pub enum Error<E> {
     /// accepted.
     #[error("too many requests await their confirm")]
     RequestQueueFull,
-    /// The PDU is longer than [`Entity::MAX_PDU`]; it was not accepted.
+    /// The PDU is longer than [`DiagnosticEntity::MAX_PDU`]; it was not accepted.
     #[error("a {len}-byte PDU exceeds the {max}-byte limit")]
     PduTooLarge {
         /// The PDU's length.
@@ -175,8 +179,9 @@ pub enum Error<E> {
         /// The longest PDU the entity sends.
         max: usize,
     },
-    /// The PDU is empty, which a diagnostic message cannot carry (ISO 13400-2:2019
-    /// Table 21); it was not accepted.
+    /// The PDU is empty; it was not accepted. ISO 13400-2:2019 Table 21 makes a
+    /// diagnostic message's user data mandatory, which this crate reads as at least one
+    /// byte.
     #[error("the PDU is empty")]
     EmptyPdu,
 }
@@ -374,10 +379,6 @@ impl<
     const TESTERS: usize,
 > Entity<'a, A, MCTS, MAX_MESSAGE, TESTERS>
 {
-    /// The longest PDU [`DiagnosticEntity::request`] accepts: `MAX_MESSAGE` less what a
-    /// diagnostic message adds to its PDU, [`DIAGNOSTIC_MESSAGE_OVERHEAD`].
-    pub const MAX_PDU: usize = MAX_MESSAGE.saturating_sub(DIAGNOSTIC_MESSAGE_OVERHEAD);
-
     /// An entity accepting connections from `acceptor`.
     ///
     /// Nothing is accepted until [`DiagnosticEntity::next_event`] is called.
@@ -516,6 +517,15 @@ impl<
         ta_type: TaType,
         pdu: &[u8],
     ) -> Result<(), Error<A::Error>> {
+        if pdu.is_empty() {
+            return Err(Error::EmptyPdu);
+        }
+        if pdu.len() > Self::MAX_PDU {
+            return Err(Error::PduTooLarge {
+                len: pdu.len(),
+                max: Self::MAX_PDU,
+            });
+        }
         let Some(free) = self.confirms.iter().position(Option::is_none) else {
             return Err(Error::RequestQueueFull);
         };
@@ -528,15 +538,6 @@ impl<
             result: Some(DoIpResult::UnknownSa),
         };
         if sa == self.address.physical {
-            if pdu.is_empty() {
-                return Err(Error::EmptyPdu);
-            }
-            if pdu.len() > Self::MAX_PDU {
-                return Err(Error::PduTooLarge {
-                    len: pdu.len(),
-                    max: Self::MAX_PDU,
-                });
-            }
             confirm.result = Some(DoIpResult::NoSocket);
             if let Some(index) = self.holder_of(ta)
                 && let Some(Slot {
@@ -591,14 +592,13 @@ impl<
     }
 
     fn finalize(&mut self, at: SlotRef, abort: bool, now: Instant) {
-        let deadline = expiry(now, CLOSE_LIMIT);
         match at {
             SlotRef::Connection(index) => {
                 if let Some(slot) = self.connections.get_mut(index) {
-                    slot.finalize(abort, false, deadline);
+                    slot.finalize(abort, false, now);
                 }
             }
-            SlotRef::Reserve => self.reserve.finalize(abort, false, deadline),
+            SlotRef::Reserve => self.reserve.finalize(abort, false, now),
         }
     }
 
@@ -652,7 +652,11 @@ impl<
             .map(|open| open.deadline);
         let arbitration = match self.arbitration {
             Some(Arbitration {
-                stage: Stage::AliveCheck { deadline, .. },
+                stage:
+                    Stage::AliveCheck { deadline, .. }
+                    | Stage::Assign {
+                        deadline: Some(deadline),
+                    },
                 ..
             }) => Some(deadline),
             _ => None,
@@ -765,7 +769,9 @@ impl<
             if self.assign(at, request, now) {
                 return;
             }
-            Stage::Assign
+            Stage::Assign {
+                deadline: Some(deadline),
+            }
         } else {
             for slot in &mut self.connections {
                 slot.set_alive_check(AliveCheck::Due);
@@ -825,13 +831,16 @@ impl<
         }
         self.send_alive_checks();
         let (on, request) = (arbitration.on, arbitration.request);
+        let assign = Stage::Assign {
+            deadline: Some(expiry(now, ALIVE_CHECK)),
+        };
         let stage = match arbitration.stage {
-            Stage::Assign => Stage::Assign,
+            Stage::Assign { deadline } => Stage::Assign { deadline },
             Stage::AliveCheck {
                 scope: AliveCheckScope::SocketOfSa,
                 deadline,
             } => match self.holder_of(request.sa) {
-                None => Stage::Assign,
+                None => assign,
                 Some(holder) if !self.is_silent(holder) => {
                     self.end_arbitration();
                     return self.respond(
@@ -843,7 +852,7 @@ impl<
                 }
                 Some(holder) if deadline <= now => {
                     self.finalize(SlotRef::Connection(holder), true, now);
-                    Stage::Assign
+                    assign
                 }
                 Some(_) => return,
             },
@@ -854,7 +863,7 @@ impl<
                 let silent: usize =
                     (0..MCTS).filter(|index| self.is_silent(*index)).count();
                 if self.registered_count() < MCTS {
-                    Stage::Assign
+                    assign
                 } else if silent == 0 {
                     self.end_arbitration();
                     return self.respond(
@@ -869,15 +878,32 @@ impl<
                             self.finalize(SlotRef::Connection(index), true, now);
                         }
                     }
-                    Stage::Assign
+                    assign
                 } else {
                     return;
                 }
             }
         };
-        if stage == Stage::Assign && self.assign(on, request, now) {
-            return self.end_arbitration();
-        }
+        let stage = match stage {
+            Stage::Assign { .. } if self.assign(on, request, now) => {
+                return self.end_arbitration();
+            }
+            Stage::Assign {
+                deadline: Some(deadline),
+            } if deadline <= now => {
+                for index in 0..MCTS {
+                    if self
+                        .connections
+                        .get(index)
+                        .is_some_and(Slot::is_initialized)
+                    {
+                        self.finalize(SlotRef::Connection(index), true, now);
+                    }
+                }
+                Stage::Assign { deadline: None }
+            }
+            stage => stage,
+        };
         self.arbitration = Some(Arbitration {
             stage,
             ..arbitration
@@ -1138,6 +1164,10 @@ impl<
 
     const CONNECTIONS: usize = MCTS + 1;
 
+    /// `MAX_MESSAGE` less what a diagnostic message adds to its PDU,
+    /// [`DIAGNOSTIC_MESSAGE_OVERHEAD`].
+    const MAX_PDU: usize = MAX_MESSAGE.saturating_sub(DIAGNOSTIC_MESSAGE_OVERHEAD);
+
     /// Queues `pdu` on the connection that registered `ta`. Its confirm is
     /// [`DoIpResult::Ok`] once [`DiagnosticEntity::next_event`] has written it.
     ///
@@ -1153,7 +1183,7 @@ impl<
     /// # Errors
     ///
     /// None of these is followed by a confirm:
-    /// - [`Error::PduTooLarge`] where `pdu` is longer than [`Entity::MAX_PDU`].
+    /// - [`Error::PduTooLarge`] where `pdu` is longer than [`DiagnosticEntity::MAX_PDU`].
     /// - [`Error::EmptyPdu`] where `pdu` is empty.
     /// - [`Error::RequestQueueFull`] while too many earlier requests await their confirm.
     fn request(
@@ -1196,6 +1226,9 @@ impl<
                 Step::Idle => {
                     self.expire(now);
                     self.arbitrate(now);
+                    if let Some(event) = self.owed_event() {
+                        return Ok(event);
+                    }
                     self.handle_one(buf, now)
                 }
                 step => step,
@@ -1225,11 +1258,11 @@ impl<
 
     /// Writes what is queued on `connection`, then closes it.
     ///
-    /// The close is bounded: a socket that has not closed within
-    /// [`TCP_TIMEOUT_ALIVE_CHECK`](crate::TCP_TIMEOUT_ALIVE_CHECK) is aborted, and one
-    /// whose abort has not finished within it again is dropped. Only `connection`'s own
-    /// timer is acted on meanwhile; every other socket's waits for the next
-    /// [`DiagnosticEntity::next_event`].
+    /// The close is bounded: a socket that has not closed within [`ORDERLY_CLOSE_LIMIT`]
+    /// is aborted, and one whose abort has not finished within
+    /// [`TCP_TIMEOUT_ALIVE_CHECK`](crate::TCP_TIMEOUT_ALIVE_CHECK) is dropped. Only
+    /// `connection`'s own timer is acted on meanwhile; every other socket's waits for
+    /// the next [`DiagnosticEntity::next_event`].
     ///
     /// # Errors
     ///
@@ -1245,7 +1278,7 @@ impl<
         if !slot.open.as_ref().is_some_and(|open| open.named) {
             return Ok(());
         }
-        slot.finalize(false, true, expiry(Instant::now(), CLOSE_LIMIT));
+        slot.finalize(false, true, Instant::now());
         loop {
             let Some(slot) = self.connections.get_mut(index) else {
                 return Ok(());

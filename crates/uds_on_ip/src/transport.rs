@@ -154,6 +154,7 @@ impl<E: DiagnosticEntity, const MCTS: usize> DoIpTransport<E, MCTS> {
     /// impl DiagnosticEntity for TwoSockets {
     ///     const CONNECTIONS: usize = 2;
     ///     // ...
+    /// #   const MAX_PDU: usize = 4084;
     /// #   type Error = ();
     /// #   async fn request(
     /// #       &mut self,
@@ -325,6 +326,10 @@ impl<E: DiagnosticEntity, const MCTS: usize> DoIpTransport<E, MCTS> {
 impl<E: DiagnosticEntity, const MCTS: usize> UdsTransport for DoIpTransport<E, MCTS> {
     type Error = Error<E::Error>;
 
+    /// The entity's [`DiagnosticEntity::MAX_PDU`], so [`uds_services::uds_server`]
+    /// sizes no response past what the entity sends.
+    const MAX_PDU: usize = E::MAX_PDU;
+
     /// `T_Data.req` as `DoIP_Data.request` (ISO 14229-5:2022 REQ 4.3 Table 4),
     /// routed by the target address to the connection that activated it. `ai`'s
     /// source address is the message's (REQ 4.4 Table 5), and the entity confirms
@@ -479,6 +484,7 @@ mod tests {
     impl DiagnosticEntity for Idle {
         type Error = core::convert::Infallible;
         const CONNECTIONS: usize = 1;
+        const MAX_PDU: usize = 500;
         async fn request(
             &mut self,
             _sa: LogicalAddress,
@@ -529,6 +535,13 @@ mod tests {
 
     /// The reload pair crosses the seam unchanged, so `DoIP`'s choice of `tP6`
     /// is what the session layer actually loads.
+    /// The entity's PDU limit is the transport's, so `uds_server!` sizes no response
+    /// past it.
+    #[test]
+    fn the_transport_carries_the_pdu_limit_of_its_entity() {
+        assert_eq!(<DoIpTransport<Idle> as UdsTransport>::MAX_PDU, 500);
+    }
+
     #[test]
     fn the_reloads_reach_the_seam_unchanged() {
         let t = DoIpTransport::<_>::new(Idle, bench_reloads());

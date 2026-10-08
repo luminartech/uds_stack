@@ -106,8 +106,9 @@ pub enum Error {
     /// accepted.
     #[error("the PDU does not fit the tester's buffer")]
     MessageTooLarge,
-    /// The PDU is empty, which a diagnostic message cannot carry (ISO 13400-2:2019
-    /// Table 21); it was not accepted.
+    /// The PDU is empty; it was not accepted. ISO 13400-2:2019 Table 21 makes a
+    /// diagnostic message's user data mandatory, which this crate reads as at least one
+    /// byte.
     #[error("the PDU is empty")]
     EmptyPdu,
     /// There is no connection: it closed, or a reconnect failed. Reconnect to continue.

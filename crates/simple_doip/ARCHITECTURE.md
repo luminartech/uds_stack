@@ -160,10 +160,12 @@ stateDiagram-v2
   a close for another. Otherwise an address registered on another socket has that
   socket alive-checked, and a full table has every registered socket alive-checked.
   Those that answer within `T_TCP_Alive_Check` keep their registration, and the
-  newcomer is refused `0x03` or `0x01`; those that do not are closed, and the
+  newcomer is refused `0x03` or `0x01`; those that do not are aborted, and the
   newcomer is registered (REQ 3.DoIP-092 to 096). One arbitration runs at a time:
   another socket's activation waits for it. A newcomer on the reserve is exchanged
-  into an `Initialized` slot when it is registered.
+  into an `Initialized` slot when it is registered; an `Initialized` socket whose
+  unread input or output keeps it from moving into the reserve is aborted once the
+  newcomer has waited `T_TCP_Alive_Check` for it.
 - **Figure 16's answers.** Each carries the protocol version of the frame it
   answers; only ISO 13400-2:2012 and 2019 headers are taken.
 
@@ -171,18 +173,24 @@ stateDiagram-v2
   |---|---|---|
   | `0x00` | A sync pattern or protocol version not taken | The socket is closed |
   | `0x01` | A payload type the entity does not take on `TCP_DATA`, ISO 14229-5's periodic `0x8004` and the manufacturer range included (REQ 7.DoIP-042) | The frame is discarded |
-  | `0x02` | A payload over the entity's `MAX_MESSAGE` (REQ 7.DoIP-043) | The frame is discarded |
+  | `0x02` | A message, header included, over the entity's `MAX_MESSAGE`: a payload over `MAX_MESSAGE` − 8 (REQ 7.DoIP-043) | The frame is discarded |
   | `0x03` | Before activation, a frame within `MAX_MESSAGE` but over the 32 bytes a socket has until it may move into the reserve (REQ 7.DoIP-044) | The frame is discarded |
+
+  The 32 bytes apply to every payload type, so before activation a diagnostic message
+  with more than 24 bytes of user data is answered `0x03` and the socket kept open,
+  where a shorter one reaches Figure 17 and is refused with diagnostic NACK `0x02` and
+  a close (REQ 7.DoIP-070). This is a deviation: buffering the longer one would mean
+  holding it where the reserve cannot.
   | `0x04` | A payload length wrong for its type (REQ 7.DoIP-045) | The socket is closed |
 
 - **Figure 17, and one deviation.** A diagnostic message whose source address is
   not the one registered on its socket is refused with diagnostic NACK `0x02` and
   the socket closed; one to a target the entity does not answer, `0x03`. Every other
-  is acknowledged positively and indicated. The acknowledgement comes before the
-  entity knows whether the caller's buffer holds the message, so one too long for it
-  is indicated truncated after a positive acknowledgement, where REQ 7.DoIP-073 has a
-  NACK `0x05`: a busy UDS server owes that request `busyRepeatRequest`, which
-  `uds_on_ip` composes from the truncated event.
+  is acknowledged positively and indicated, one too long for the caller's buffer
+  truncated. That departs from REQ 7.DoIP-073, which has a NACK `0x05` for it, from
+  REQ 7.DoIP-074, and from what Table 24's code `0x00` means. The reason is the
+  layer above: a UDS server busy with a request it can read only the start of still
+  owes it `busyRepeatRequest`, which `uds_on_ip` composes from the truncated event.
 - **Requests wait for nothing.** A `request` is made by its future's first poll,
   which completes it, so one dropped unpolled makes none. It is queued on the
   connection that registered its target and confirmed `Ok` once written,
@@ -360,7 +368,7 @@ carry a wildcard arm.
 | `src/messages/traits.rs` | Re-export of `Decode`, `Encode`, `take` from the codec crate |
 | `src/messages/*.rs` (rest) | One file per concrete payload body (alive check, diagnostic message, routing activation, entity status, power mode, vehicle identification, NACK codes) |
 | `src/logical_address.rs` | `LogicalAddress` newtype plus tester-range validation |
-| `src/service.rs` | The connection service's vocabulary, with no I/O: `DiagnosticConnection` (with its `MAX_PDU`), `TesterConnection` (adding `reconnect`, `close` and `io_error`), `DiagnosticEntity`, their events, `DoIpResult`, `TesterAddress` |
+| `src/service.rs` | The connection service's vocabulary, with no I/O: `DiagnosticConnection` (with its `MAX_PDU`), `TesterConnection` (adding `reconnect`, `close` and `io_error`), `DiagnosticEntity` (with its `MAX_PDU`), their events, `DoIpResult`, `TesterAddress` |
 | `src/wire.rs` | Re-export surface for the codec crate's types |
 
 `PayloadType` is a closed enum with `Reserved(u16)` and

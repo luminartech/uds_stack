@@ -628,8 +628,8 @@ fn control_frame_lengths_are_checked_exactly() {
     assert!(long.is_closed());
 }
 
-/// A socket closing after a NACK whose writes cannot finish within `T_TCP_Alive_Check`
-/// is aborted.
+/// A socket closing after a NACK whose writes cannot finish within the orderly close's
+/// 2 s is aborted, and not before.
 #[test]
 fn an_orderly_close_that_cannot_write_is_aborted() {
     let _clock = clock();
@@ -642,7 +642,11 @@ fn an_orderly_close_that_cannot_write_is_aborted() {
     assert_eq!(events(&mut entity), []);
     assert!(!peer.is_shut());
 
-    advance(ms(500));
+    advance(ms(1999));
+    assert_eq!(events(&mut entity), []);
+    assert!(!peer.is_shut());
+
+    advance(ms(1));
     assert_eq!(events(&mut entity), []);
     assert!(peer.is_aborted());
 }
@@ -670,6 +674,30 @@ fn an_abort_after_a_failed_orderly_close_gets_its_own_time() {
 
     advance(ms(400));
     assert_eq!(events(&mut entity), []);
+    assert!(peer.is_dropped());
+}
+
+/// A named socket dropped when its abort does not finish is reported `Closed` by the
+/// same `next_event` that dropped it, not after some unrelated wake.
+#[test]
+fn a_socket_dropped_by_its_timer_is_reported_at_once() {
+    let _clock = clock();
+    let stack = MockStack::new(4096);
+    let mut entity = OneSocket::new(&stack, address(), two_testers());
+    let peer = activated(&stack, &mut entity, TESTER);
+    peer.send(&diagnostic(TESTER, ENTITY, &[0x3E, 0x00]));
+    assert!(matches!(step(&mut entity), Some(Ev::Indication { .. })));
+    assert_eq!(events(&mut entity), []);
+    peer.stall_closes();
+    peer.stall_aborts();
+
+    advance(ms(300_000));
+    assert_eq!(step(&mut entity), None);
+    advance(ms(2000));
+    assert_eq!(step(&mut entity), None);
+    assert!(!peer.is_dropped());
+    advance(ms(500));
+    assert_eq!(step(&mut entity), Some(Ev::Closed(0)));
     assert!(peer.is_dropped());
 }
 
@@ -1364,6 +1392,40 @@ fn a_busy_first_connection_does_not_starve_the_reserve() {
     assert!(!busy.all_read());
 }
 
+/// A newcomer on the reserve waiting for a slot is held up for at most
+/// `T_TCP_Alive_Check` by an unregistered socket whose unread NACKs keep it from moving
+/// into the reserve: that socket is aborted, and the newcomer registered.
+#[test]
+fn an_unregistered_socket_blocking_the_reserve_is_aborted() {
+    let _clock = clock();
+    let stack = MockStack::new(4096);
+    let mut entity = OneSocket::new(&stack, address(), two_testers());
+    let blocker = stack.dial();
+    assert_eq!(events(&mut entity), []);
+    blocker.stall_writes();
+    for _ in 0..4 {
+        blocker.send(&raw(0x4001, &[]));
+    }
+    assert_eq!(events(&mut entity), []);
+    let newcomer = stack.dial();
+    newcomer.send(&activation_from(TESTER, 0));
+    assert_eq!(events(&mut entity), []);
+    blocker.send(&activation_from(OTHER, 0));
+    assert_eq!(events(&mut entity), []);
+    assert_eq!(newcomer.take_written(), []);
+
+    advance(ms(499));
+    assert_eq!(events(&mut entity), []);
+    assert!(!blocker.is_shut());
+    advance(ms(1));
+    assert_eq!(events(&mut entity), []);
+    assert!(blocker.is_aborted());
+    assert_eq!(
+        newcomer.take_written(),
+        activation_response_for(TESTER, ACTIVATED)
+    );
+}
+
 // --- Figure 17, diagnostic messages ------------------------------------------------------
 
 /// REQ 7.DoIP-067: a diagnostic message to the entity is indicated and acknowledged.
@@ -1798,7 +1860,7 @@ fn a_later_request_is_confirmed_after_every_earlier_one() {
 }
 
 /// A request is refused, with no confirm, where too many await theirs, or the PDU does
-/// not fit or is empty (ISO 13400-2:2019 Table 21).
+/// not fit or is empty (ISO 13400-2:2019 Table 21), whatever its source address.
 #[test]
 fn a_request_that_cannot_be_held_is_refused() {
     let _clock = clock();
@@ -1810,6 +1872,10 @@ fn a_request_that_cannot_be_held_is_refused() {
         Err(Error::PduTooLarge { len: 60, max: 52 })
     );
     assert_eq!(request(&mut entity, TESTER, &[]), Err(Error::EmptyPdu));
+    {
+        let not_ours = pin!(entity.request(OTHER, TESTER, TaType::Physical, &[]));
+        assert_eq!(until_stalled(not_ours), Some(Err(Error::EmptyPdu)));
+    }
     for _ in 0..4 {
         request(&mut entity, TESTER, &[0x7E, 0x00]).unwrap();
     }
@@ -1908,7 +1974,7 @@ fn a_waiting_close_leaves_other_sockets_timers_to_next_event() {
     {
         let mut close = pin!(entity.close(ConnectionId::new(0)));
         assert!(until_stalled(close.as_mut()).is_none());
-        advance(ms(500));
+        advance(ms(2000));
         assert!(until_stalled(close.as_mut()).is_none());
         advance(ms(500));
         until_stalled(close.as_mut()).unwrap().unwrap();
@@ -1918,6 +1984,34 @@ fn a_waiting_close_leaves_other_sockets_timers_to_next_event() {
         step(&mut entity),
         Some(Ev::Indication { connection: 1, .. })
     ));
+}
+
+/// ISO 14229-5:2022 REQ 7.11: a response confirmed before the caller's close is not
+/// aborted away while the close can still deliver it, for the orderly close's 2 s.
+#[test]
+fn a_confirmed_response_is_given_the_orderly_close_to_arrive() {
+    let _clock = clock();
+    let stack = MockStack::eager(4096);
+    let mut entity = OneSocket::new(&stack, address(), two_testers());
+    let peer = activated(&stack, &mut entity, TESTER);
+    peer.send(&diagnostic(TESTER, ENTITY, &[0x11, 0x01]));
+    assert_eq!(events(&mut entity).len(), 1);
+    peer.take_written();
+    request(&mut entity, TESTER, &[0x51, 0x01]).unwrap();
+    assert_eq!(
+        step(&mut entity),
+        Some(confirm(ENTITY, TaType::Physical, DoIpResult::Ok))
+    );
+
+    peer.stall_closes();
+    let mut close = pin!(entity.close(ConnectionId::new(0)));
+    assert!(until_stalled(close.as_mut()).is_none());
+    advance(ms(1999));
+    assert!(until_stalled(close.as_mut()).is_none());
+    assert!(!peer.is_aborted());
+    advance(ms(1));
+    until_stalled(close.as_mut()).unwrap().unwrap();
+    assert!(peer.is_aborted());
 }
 
 /// The `DiagnosticEntity` contract: closing an id no event has issued does nothing,

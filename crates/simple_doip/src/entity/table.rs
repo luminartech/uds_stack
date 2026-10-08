@@ -3,6 +3,7 @@
 
 use embassy_time::Instant;
 
+use super::{ABORT_LIMIT, ORDERLY_CLOSE_LIMIT, expiry};
 use crate::LogicalAddress;
 use crate::messages::{ActivationTypeCode, ProtocolVersion};
 use crate::stream::rx::RxBuffer;
@@ -35,6 +36,36 @@ pub(super) struct Open<S> {
     pub(super) version: ProtocolVersion,
     /// Whether an event has named this connection, so its close is owed a report.
     pub(super) named: bool,
+}
+
+impl<S> Open<S> {
+    /// Starts closing the socket at `now`, by `abort` or after writing what is queued,
+    /// within its limit. A close already started keeps going and keeps its deadline,
+    /// unless `abort` makes an orderly close an abort, which gets the abort's limit; it
+    /// is owned by the caller if `by_caller`.
+    pub(super) fn finalize(&mut self, abort: bool, by_caller: bool, now: Instant) {
+        let limit = if abort {
+            ABORT_LIMIT
+        } else {
+            ORDERLY_CLOSE_LIMIT
+        };
+        if let Phase::Finalizing {
+            abort: was_abort,
+            by_caller: was_by_caller,
+        } = self.phase
+        {
+            self.phase = Phase::Finalizing {
+                abort: abort || was_abort,
+                by_caller: by_caller || was_by_caller,
+            };
+            if abort && !was_abort {
+                self.deadline = expiry(now, limit);
+            }
+        } else {
+            self.phase = Phase::Finalizing { abort, by_caller };
+            self.deadline = expiry(now, limit);
+        }
+    }
 }
 
 /// Figure 25's states. `Registered` is `Registered [Routing Active]`: neither
@@ -78,8 +109,10 @@ pub(super) enum Stage {
         scope: AliveCheckScope,
         deadline: Instant,
     },
-    /// Accepted, waiting for a connection slot to take the reserve socket.
-    Assign,
+    /// Accepted, waiting for a connection slot to take the reserve socket. At `deadline`
+    /// the unregistered sockets whose buffers keep it out are aborted, and there is
+    /// none after.
+    Assign { deadline: Option<Instant> },
 }
 
 /// Figure 27 or Figure 28.
@@ -162,29 +195,10 @@ impl<S, const CAP: usize> Slot<S, CAP> {
         });
     }
 
-    /// Starts closing the socket, by `abort` or after writing what is queued, to be done
-    /// by `deadline`. A close already started keeps going and keeps its deadline, unless
-    /// `abort` makes an orderly close an abort, which gets `deadline`; it is owned by the
-    /// caller if `by_caller`.
-    pub(super) fn finalize(&mut self, abort: bool, by_caller: bool, deadline: Instant) {
-        let Some(open) = self.open.as_mut() else {
-            return;
-        };
-        if let Phase::Finalizing {
-            abort: was_abort,
-            by_caller: was_by_caller,
-        } = open.phase
-        {
-            open.phase = Phase::Finalizing {
-                abort: abort || was_abort,
-                by_caller: by_caller || was_by_caller,
-            };
-            if abort && !was_abort {
-                open.deadline = deadline;
-            }
-        } else {
-            open.phase = Phase::Finalizing { abort, by_caller };
-            open.deadline = deadline;
+    /// [`Open::finalize`], for the socket the slot holds.
+    pub(super) fn finalize(&mut self, abort: bool, by_caller: bool, now: Instant) {
+        if let Some(open) = self.open.as_mut() {
+            open.finalize(abort, by_caller, now);
         }
     }
 
