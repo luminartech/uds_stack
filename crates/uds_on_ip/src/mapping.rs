@@ -62,9 +62,9 @@ pub const fn from_logical(addr: simple_doip::LogicalAddress) -> Address {
 /// `uds_services::UdsTransport::t_data_req` nor
 /// [`DiagnosticEntity::request`](simple_doip::service::DiagnosticEntity::request)
 /// can choose a payload type, so a server built on this crate cannot. One that
-/// arrives is reported by `simple_doip` as an [`EntityEvent::Unmodelled`] (an
-/// [`EntityEvent::UnmodelledTruncated`] if it is too long for the buffer), and this
-/// crate ignores it.
+/// a tester sends never reaches this crate: [`EntityEvent`] has no event for it, and
+/// the entity answers it with a generic header NACK (ISO 13400-2:2019
+/// REQ 7.DoIP-042).
 ///
 /// REQ 7.17's length bound — a periodic data record must not exceed the
 /// non-segmented `UDSonIP` message limit — has no home here either. It belongs
@@ -177,19 +177,15 @@ pub(crate) enum Inbound {
 pub(crate) struct PduOutsideBuffer;
 
 /// Classify `event`, which borrows the buffer starting at address `buffer_start`.
-///
-/// `None` for an [`EntityEvent::Unmodelled`] or [`EntityEvent::UnmodelledTruncated`]: a
-/// payload type ISO 14229-5 gives a server no use for — a periodic response
-/// ([`PERIODIC_RESPONSE_PAYLOAD_TYPE`]) among them.
 pub(crate) fn classify(
     event: EntityEvent<'_>,
     buffer_start: usize,
-) -> Result<Option<Inbound>, PduOutsideBuffer> {
+) -> Result<Inbound, PduOutsideBuffer> {
     let span = |pdu: &[u8]| {
         let start = pdu.as_ptr().addr().checked_sub(buffer_start)?;
         Some(start..start.checked_add(pdu.len())?)
     };
-    Ok(Some(match event {
+    Ok(match event {
         EntityEvent::Indication {
             connection,
             sa,
@@ -225,10 +221,7 @@ pub(crate) fn classify(
         },
         EntityEvent::Closed { connection } => Inbound::Closed { connection },
         EntityEvent::Deadline => Inbound::Deadline,
-        EntityEvent::Unmodelled { .. } | EntityEvent::UnmodelledTruncated { .. } => {
-            return Ok(None);
-        }
-    }))
+    })
 }
 
 #[cfg(test)]
@@ -343,11 +336,11 @@ mod tests {
         };
         assert_eq!(
             classify(event, buffer.as_ptr().addr()),
-            Ok(Some(Inbound::Ind {
+            Ok(Inbound::Ind {
                 connection: ConnectionId::new(0),
                 ai: from_tester(),
                 at: 1..4,
-            }))
+            })
         );
     }
 
@@ -366,12 +359,12 @@ mod tests {
         };
         assert_eq!(
             classify(event, buffer.as_ptr().addr()),
-            Ok(Some(Inbound::TooLong {
+            Ok(Inbound::TooLong {
                 connection: ConnectionId::new(0),
                 ai: from_tester(),
                 at: 0..3,
                 declared: 40,
-            }))
+            })
         );
     }
 
@@ -387,7 +380,7 @@ mod tests {
         };
         assert_eq!(
             classify(event, 0),
-            Ok(Some(Inbound::Conf {
+            Ok(Inbound::Conf {
                 ai: Ai {
                     mtype: Mtype::Diag,
                     sa: Address(0x0001),
@@ -395,34 +388,8 @@ mod tests {
                     ta_type: TaType::Physical,
                 },
                 result: SResult::Transport(TransportError(10)),
-            }))
+            })
         );
-    }
-
-    /// A periodic response, which a server sends rather than receives (ISO
-    /// 14229-5:2022 REQ 7.16), is ignored rather than mistaken for a request.
-    #[test]
-    fn an_unmodelled_payload_is_ignored() {
-        let data = [0x01, 0x02];
-        let event = EntityEvent::Unmodelled {
-            connection: ConnectionId::new(0),
-            payload_type: super::PERIODIC_RESPONSE_PAYLOAD_TYPE,
-            data: &data,
-        };
-        assert_eq!(classify(event, data.as_ptr().addr()), Ok(None));
-    }
-
-    /// One too long for the buffers is ignored too: its payload type is what decides.
-    #[test]
-    fn an_unmodelled_payload_too_long_for_the_buffer_is_ignored() {
-        let data = [0x01, 0x02];
-        let event = EntityEvent::UnmodelledTruncated {
-            connection: ConnectionId::new(0),
-            payload_type: super::PERIODIC_RESPONSE_PAYLOAD_TYPE,
-            data: &data,
-            length: 4_096,
-        };
-        assert_eq!(classify(event, data.as_ptr().addr()), Ok(None));
     }
 
     /// An entity that reports a PDU outside the buffer it was lent has broken its

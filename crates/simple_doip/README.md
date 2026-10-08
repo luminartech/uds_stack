@@ -2,7 +2,7 @@
 
 `simple_doip` owns ISO 13400-2: Diagnostics over IP (DoIP). It is a `no_std`,
 zero-copy protocol core with optional async client and server, and a `no_std`
-tester over `edge-nal`.
+tester and entity over `edge-nal`.
 
 [`ARCHITECTURE.md`](ARCHITECTURE.md) describes how the crate is put together —
 the feature-gated layering, the sans-io framing/decode seam, the error taxonomy,
@@ -62,8 +62,9 @@ case, within these bounds:
 deferred work.
 
 None of this constrains bare-metal or single-client use. On bare metal, the
-`connection` feature's `tester::Tester` is a tester that allocates nothing; the
-crate documentation lists what its integrator supplies.
+`connection` feature's `tester::Tester` and `entity::Entity` are a tester and an
+entity that allocate nothing; the crate documentation lists what their integrator
+supplies.
 
 ## Quickstart
 
@@ -102,7 +103,7 @@ The protocol core is `no_std` and zero-copy by default. Everything that pulls in
 | `codec`  | The tokio-util `Encoder`/`Decoder` for DoIP frames           | `std`, `tokio`, `tokio-util`, `bytes` |
 | `client` | The async DoIP client                                        | `codec`, `async-trait`, `futures`  |
 | `server` | The async DoIP server                                        | `codec`, `async-trait`, `futures`  |
-| `connection` | The `no_std` tester, `tester::Tester`, over `edge-nal`   | `edge-nal`, `embedded-io-async`, `embassy-time` |
+| `connection` | The `no_std` tester and entity, `tester::Tester` and `entity::Entity`, over `edge-nal` | `edge-nal`, `embedded-io-async`, `embassy-time`, `embassy-futures` |
 
 `default = []`, so bare-metal / embedded targets should build with
 `default-features = false` to keep the crate `no_std` with no allocator or
@@ -163,7 +164,7 @@ semver: a breaking change in that crate is a breaking change here too.
 
 ## MSRV
 
-The minimum supported Rust version is **1.88**, the UDS stack's single MSRV,
+The minimum supported Rust version is **1.91**, the UDS stack's single MSRV,
 declared once in the workspace manifest and inherited by all five crates.
 
 ## Relationship to the standards

@@ -3,10 +3,11 @@
 # lint, build, no_std canary, unit/property tests with coverage, miri, MSRV, semver-checks,
 # security audit, docs, a publish dry run, and the release-plz automation.
 #
-# rust-ci.yml's commands are crate-shaped (no `--workspace`, no `package`/`members` input),
-# but that turns out not to matter here: this is a *virtual* workspace manifest (no root
-# [package]), and a bare `cargo <cmd>` with no `-p` at a virtual workspace root already
-# defaults to every member -- confirmed locally for build, clippy and test. The one job the
+# rust-ci.yml's commands are crate-shaped (no `--workspace`, no `package`/`members` input).
+# This is a *virtual* workspace manifest (no root [package]), so a bare `cargo <cmd>` with
+# no `-p` at the root runs on its default members, `crates/*`: the five crates. The
+# example member, examples/embassy-net-entity, is built by the hand-rolled `embedded` job
+# below instead; see the root Cargo.toml for why it is not a default member. The one job the
 # reusable workflow genuinely cannot reach is fuzzing: its fuzz-tests job runs
 # `cargo fuzz build`/`list`/`run` at the checkout root, which is where a single-crate repo's
 # `fuzz/` directory lives, and has no input to point it elsewhere. This workspace's two fuzz
@@ -79,7 +80,7 @@ jobs:
       # package rust-version to read by default (it would fail: "No msrv input and no
       # rust-version in Cargo.toml"). The stack's one MSRV is [workspace.package]'s
       # rust-version, which every crate inherits; keep this input equal to it.
-      msrv: '1.88'
+      msrv: '1.91'
 
       # Empty: the whole workspace. The same input scopes both cargo-semver-checks and the
       # PR publish dry run. For the dry run, the whole workspace is the only scope that
@@ -214,6 +215,79 @@ jobs:
           name: fuzz-artifacts-simple_doip
           path: crates/simple_doip/fuzz/artifacts/
           retention-days: 30
+
+  # ===================================================================================
+  # Miri (hand-rolled: the reusable workflow's Miri job builds default features only)
+  # ===================================================================================
+  # Every test behind simple_doip's `connection` feature is skipped by rust-ci.yml's
+  # Miri job. These run on the mock stack, so Miri can interpret them; the tests on real
+  # sockets (entity_std, entity_interop, tester_interop, tester_late_ack) cannot be.
+  # Tree borrows, because stacked borrows rejects embassy-futures' select_array, which
+  # tree borrows accepts. See `just miri`.
+  miri-connection:
+    name: Miri (simple_doip connection)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master 2026-07-14
+        with:
+          toolchain: nightly
+          components: miri
+      - uses: Swatinem/rust-cache@v2
+      - name: Run the connection tests under Miri
+        env:
+          MIRIFLAGS: -Zmiri-tree-borrows
+        run: >-
+          cargo miri test -p simple_doip --features connection
+          --lib --test tester --test entity --test entity_cancel --test mock_stack
+
+  # ===================================================================================
+  # Embedded (hand-rolled: the reusable workflow checks default members on the host)
+  # ===================================================================================
+  # rust-ci.yml runs bare cargo at the root, which builds default members only, so it
+  # never builds examples/embassy-net-entity, and its no_std canary never builds
+  # simple_doip's `connection` feature. `just embedded` builds every no_std crate for
+  # bare metal, the adapter among them. On the MSRV: the adapter is what sets it.
+  embedded:
+    name: Embedded build (thumbv7em-none-eabihf, MSRV)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      # Stable lints and documents: clippy at the MSRV does not know every lint the
+      # workspace configures.
+      - uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master 2026-07-14
+        with:
+          toolchain: stable
+          targets: thumbv7em-none-eabihf
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: just
+      - name: Lint the embassy-net adapter
+        run: >-
+          cargo +stable clippy -p embassy-net-entity --target thumbv7em-none-eabihf
+          -- -D warnings
+      - name: Document the embassy-net adapter
+        env:
+          RUSTDOCFLAGS: -D rustdoc::broken_intra_doc_links -D warnings
+        run: >-
+          cargo +stable doc -p embassy-net-entity --target thumbv7em-none-eabihf
+          --no-deps
+      - uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master 2026-07-14
+        with:
+          toolchain: '1.91'
+          targets: thumbv7em-none-eabihf
+      - name: Build the no_std crates for bare metal at the MSRV
+        run: just embedded
 
   # ===================================================================================
   # Release PR (hand-rolled: the reusable one cannot run while releases are held)

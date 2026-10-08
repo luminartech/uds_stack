@@ -1,0 +1,20 @@
+# Not published: an integrator's crate, kept in the workspace so it is built, linted and
+# documented with the stack. `just embedded` builds it for bare metal.
+[package]
+name = "embassy-net-entity"
+version = "0.0.0"
+edition = "2024"
+rust-version.workspace = true
+publish = false
+description = "simple_doip's Entity on embassy-net, through a cancel-safe acceptor"
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+simple_doip = { workspace = true, features = ["connection"] }
+edge-nal = { workspace = true }
+embedded-io-async = { workspace = true }
+embassy-time = { workspace = true }
+embassy-net = { workspace = true, features = ["tcp", "proto-ipv4", "medium-ethernet"] }
+
+[lints]
+workspace = true

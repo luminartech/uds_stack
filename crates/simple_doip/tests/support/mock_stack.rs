@@ -1,6 +1,10 @@
-//! A scripted `edge_nal::TcpConnect` backend whose sockets move a configurable number of
-//! bytes per read or write and yield once before every one, so each byte can be an await
-//! point; and a single-threaded executor to drive futures against it poll by poll.
+//! A scripted `edge_nal` backend, `TcpConnect` for a tester and `TcpAccept` for an
+//! entity, whose sockets move a configurable number of bytes per read or write and yield
+//! once before every one, so each byte can be an await point; and a single-threaded
+//! executor to drive futures against it poll by poll.
+//!
+//! [`MockPeer`] is the far end of a socket: for a tester's socket the entity, for an
+//! entity's socket the tester.
 
 // Test code; see `golden_vectors.rs` for why the workspace lint standard is relaxed here.
 // `dead_code`: each test binary that includes this module uses a different part of it.
@@ -21,10 +25,11 @@ use std::future::{Future, poll_fn};
 use std::net::SocketAddr;
 use std::pin::{Pin, pin};
 use std::rc::Rc;
-use std::sync::{Mutex, MutexGuard};
-use std::task::{Context, Poll, Waker};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex, MutexGuard};
+use std::task::{Context, Poll, Wake, Waker};
 
-use edge_nal::{Close, Readable, TcpConnect, TcpShutdown, TcpSplit};
+use edge_nal::{Close, Readable, TcpAccept, TcpConnect, TcpShutdown, TcpSplit};
 use embassy_time::{Duration, MockDriver};
 use embedded_io_async::{ErrorKind, ErrorType, Read, Write};
 use simple_doip::LogicalAddress;
@@ -64,11 +69,13 @@ struct Connection {
     write_budget: Option<usize>,
     write_zero: bool,
     close_stall: bool,
+    abort_stall: bool,
     outbound: Vec<u8>,
     aborted: bool,
     closed: bool,
     dropped: bool,
     reader: Option<Waker>,
+    writer: Option<Waker>,
 }
 
 #[derive(Debug)]
@@ -77,6 +84,13 @@ struct Shared {
     scripts: VecDeque<Option<Vec<u8>>>,
     connections: Vec<Connection>,
     piece: usize,
+    /// Whether a read yields once even when bytes are waiting.
+    read_yields: bool,
+    /// Connections dialled and not yet accepted.
+    incoming: VecDeque<usize>,
+    acceptor: Option<Waker>,
+    /// Whether the next `accept` fails.
+    accept_fails: bool,
 }
 
 /// The stack: every `connect` opens a new scripted [`Connection`].
@@ -90,7 +104,19 @@ impl MockStack {
             scripts: VecDeque::new(),
             connections: Vec::new(),
             piece,
+            read_yields: true,
+            incoming: VecDeque::new(),
+            acceptor: None,
+            accept_fails: false,
         })))
+    }
+
+    /// A stack like [`Self::new`] whose reads complete on their first poll when bytes are
+    /// waiting, as a real stack's do.
+    pub fn eager(piece: usize) -> Self {
+        let stack = Self::new(piece);
+        stack.0.borrow_mut().read_yields = false;
+        stack
     }
 
     /// The next `connect` fails.
@@ -115,6 +141,29 @@ impl MockStack {
     /// The peer end of the latest connection.
     pub fn latest(&self) -> MockPeer {
         self.peer(self.connects() - 1)
+    }
+
+    /// A tester connects to the entity accepting on this stack; its end of the
+    /// connection.
+    pub fn dial(&self) -> MockPeer {
+        let mut shared = self.0.borrow_mut();
+        shared.connections.push(Connection::default());
+        let index = shared.connections.len() - 1;
+        shared.incoming.push_back(index);
+        if let Some(waker) = shared.acceptor.take() {
+            waker.wake();
+        }
+        drop(shared);
+        self.peer(index)
+    }
+
+    /// The next `accept` fails.
+    pub fn fail_next_accept(&self) {
+        let mut shared = self.0.borrow_mut();
+        shared.accept_fails = true;
+        if let Some(waker) = shared.acceptor.take() {
+            waker.wake();
+        }
     }
 
     /// Bytes `connect` delivers on the next connection before the test touches it.
@@ -175,9 +224,17 @@ impl MockPeer {
         self.with(|c| c.write_budget = Some(bytes));
     }
 
-    /// Ends [`Self::stall_writes_after`].
+    /// Ends [`Self::stall_writes`] and [`Self::stall_writes_after`], waking a write
+    /// waiting on either.
     pub fn resume_writes(&self) {
-        self.with(|c| c.write_budget = None);
+        let writer = self.with(|c| {
+            c.write_stall = false;
+            c.write_budget = None;
+            c.writer.take()
+        });
+        if let Some(waker) = writer {
+            waker.wake();
+        }
     }
 
     /// The tester's writes complete having written nothing, as on a closed socket.
@@ -189,6 +246,16 @@ impl MockPeer {
     /// its end.
     pub fn stall_closes(&self) {
         self.with(|c| c.close_stall = true);
+    }
+
+    /// The tester's aborts pend from now on, as when the stack cannot send the reset.
+    pub fn stall_aborts(&self) {
+        self.with(|c| c.abort_stall = true);
+    }
+
+    /// Whether the socket's owner dropped it.
+    pub fn is_dropped(&self) -> bool {
+        self.with(|c| c.dropped)
     }
 
     /// Everything the tester has written, and forget it.
@@ -248,12 +315,18 @@ impl ErrorType for MockSocket {
     type Error = MockError;
 }
 
-impl Read for MockSocket {
-    async fn read(&mut self, buf: &mut [u8]) -> Result<usize, MockError> {
-        yield_once().await;
-        let piece = self.peer.shared.borrow().piece;
+/// The socket operations, shared by a socket and its halves.
+impl MockPeer {
+    async fn read(&self, buf: &mut [u8]) -> Result<usize, MockError> {
+        let (piece, read_yields) = {
+            let shared = self.shared.borrow();
+            (shared.piece, shared.read_yields)
+        };
+        if read_yields || self.with(|c| c.inbound.is_empty()) {
+            yield_once().await;
+        }
         poll_fn(|cx| {
-            self.peer.with(|c| {
+            self.with(|c| {
                 if c.read_error {
                     return Poll::Ready(Err(MockError));
                 }
@@ -273,19 +346,18 @@ impl Read for MockSocket {
         })
         .await
     }
-}
 
-impl Write for MockSocket {
-    async fn write(&mut self, buf: &[u8]) -> Result<usize, MockError> {
+    async fn write(&self, buf: &[u8]) -> Result<usize, MockError> {
         yield_once().await;
-        let piece = self.peer.shared.borrow().piece;
+        let piece = self.shared.borrow().piece;
         let n = buf.len().min(piece);
-        poll_fn(|_| {
-            self.peer.with(|c| {
+        poll_fn(|cx| {
+            self.with(|c| {
                 if c.write_error {
                     return Poll::Ready(Err(MockError));
                 }
                 if c.write_stall || c.write_budget == Some(0) {
+                    c.writer = Some(cx.waker().clone());
                     return Poll::Pending;
                 }
                 let n = c.write_budget.map_or(n, |budget| n.min(budget));
@@ -302,15 +374,9 @@ impl Write for MockSocket {
         .await
     }
 
-    async fn flush(&mut self) -> Result<(), MockError> {
-        Ok(())
-    }
-}
-
-impl Readable for MockSocket {
-    async fn readable(&mut self) -> Result<(), MockError> {
+    async fn readable(&self) -> Result<(), MockError> {
         poll_fn(|cx| {
-            self.peer.with(|c| {
+            self.with(|c| {
                 if c.read_error || c.eof || !c.inbound.is_empty() {
                     Poll::Ready(Ok(()))
                 } else {
@@ -320,6 +386,28 @@ impl Readable for MockSocket {
             })
         })
         .await
+    }
+}
+
+impl Read for MockSocket {
+    async fn read(&mut self, buf: &mut [u8]) -> Result<usize, MockError> {
+        self.peer.read(buf).await
+    }
+}
+
+impl Write for MockSocket {
+    async fn write(&mut self, buf: &[u8]) -> Result<usize, MockError> {
+        self.peer.write(buf).await
+    }
+
+    async fn flush(&mut self) -> Result<(), MockError> {
+        Ok(())
+    }
+}
+
+impl Readable for MockSocket {
+    async fn readable(&mut self) -> Result<(), MockError> {
+        self.peer.readable().await
     }
 }
 
@@ -339,38 +427,50 @@ impl TcpShutdown for MockSocket {
     }
 
     async fn abort(&mut self) -> Result<(), MockError> {
-        self.peer.with(|c| c.aborted = true);
-        Ok(())
+        poll_fn(|_| {
+            self.peer.with(|c| {
+                if c.abort_stall {
+                    Poll::Pending
+                } else {
+                    c.aborted = true;
+                    Poll::Ready(Ok(()))
+                }
+            })
+        })
+        .await
     }
 }
 
-/// Unused by the tester, but required of every `edge-nal` socket.
+/// One half of a split [`MockSocket`]: reads and writes the same connection, each half
+/// with its own waker.
 #[derive(Debug)]
-pub struct MockHalf;
+pub struct MockHalf {
+    peer: MockPeer,
+}
 
 impl ErrorType for MockHalf {
     type Error = MockError;
 }
 
 impl Read for MockHalf {
-    async fn read(&mut self, _buf: &mut [u8]) -> Result<usize, MockError> {
-        Err(MockError)
+    async fn read(&mut self, buf: &mut [u8]) -> Result<usize, MockError> {
+        self.peer.read(buf).await
     }
 }
 
 impl Write for MockHalf {
-    async fn write(&mut self, _buf: &[u8]) -> Result<usize, MockError> {
-        Err(MockError)
+    async fn write(&mut self, buf: &[u8]) -> Result<usize, MockError> {
+        self.peer.write(buf).await
     }
 
     async fn flush(&mut self) -> Result<(), MockError> {
-        Err(MockError)
+        Ok(())
     }
 }
 
 impl Readable for MockHalf {
     async fn readable(&mut self) -> Result<(), MockError> {
-        Err(MockError)
+        self.peer.readable().await
     }
 }
 
@@ -379,7 +479,10 @@ impl TcpSplit for MockSocket {
     type Write<'a> = MockHalf;
 
     fn split(&mut self) -> (MockHalf, MockHalf) {
-        panic!("the tester must not split its socket")
+        let half = || MockHalf {
+            peer: self.peer.clone(),
+        };
+        (half(), half())
     }
 }
 
@@ -404,6 +507,30 @@ impl TcpConnect for MockStack {
         Ok(MockSocket {
             peer: self.latest(),
         })
+    }
+}
+
+impl TcpAccept for MockStack {
+    type Error = MockError;
+    type Socket<'a> = MockSocket;
+
+    /// Cancel-safe: a connection is taken from the queue only by the poll that returns it.
+    async fn accept(&self) -> Result<(SocketAddr, MockSocket), MockError> {
+        yield_once().await;
+        poll_fn(|cx| {
+            let mut shared = self.0.borrow_mut();
+            if std::mem::take(&mut shared.accept_fails) {
+                return Poll::Ready(Err(MockError));
+            }
+            let Some(index) = shared.incoming.pop_front() else {
+                shared.acceptor = Some(cx.waker().clone());
+                return Poll::Pending;
+            };
+            drop(shared);
+            let peer = self.peer(index);
+            Poll::Ready(Ok((([127, 0, 0, 1], 40_000).into(), MockSocket { peer })))
+        })
+        .await
     }
 }
 
@@ -435,10 +562,41 @@ pub fn poll_times<F: Future + ?Sized>(
     None
 }
 
-/// Polls `future` until it is waiting on something only the test can give, returning
-/// its output if it completed instead.
-pub fn until_stalled<F: Future + ?Sized>(future: Pin<&mut F>) -> Option<F::Output> {
-    poll_times(future, 10_000)
+struct WakeFlag(AtomicBool);
+
+impl Wake for WakeFlag {
+    fn wake(self: Arc<Self>) {
+        self.0.store(true, Ordering::SeqCst);
+    }
+}
+
+/// Under Miri, `Waker::will_wake` is false for a clone of the same waker, so
+/// `embassy-time`'s timer queue evicts and wakes on every poll of a future holding a
+/// timer; past this many wakes in a row, the future is taken to be waiting.
+const MIRI_WAKES_BEFORE_STALLED: usize = 64;
+
+/// Polls `future` until it returns `Pending` without waking itself, returning its output
+/// if it completed instead.
+///
+/// # Panics
+///
+/// If the future keeps waking itself without completing: a busy loop.
+pub fn until_stalled<F: Future + ?Sized>(mut future: Pin<&mut F>) -> Option<F::Output> {
+    let flag = Arc::new(WakeFlag(AtomicBool::new(false)));
+    let waker = Waker::from(flag.clone());
+    let mut cx = Context::from_waker(&waker);
+    for polls in 1..=200_000 {
+        flag.0.store(false, Ordering::SeqCst);
+        if let Poll::Ready(output) = future.as_mut().poll(&mut cx) {
+            return Some(output);
+        }
+        if !flag.0.load(Ordering::SeqCst)
+            || (cfg!(miri) && polls >= MIRI_WAKES_BEFORE_STALLED)
+        {
+            return None;
+        }
+    }
+    panic!("the future keeps waking itself without completing: a busy loop")
 }
 
 // --- the clock --------------------------------------------------------------------------

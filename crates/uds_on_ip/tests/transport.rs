@@ -557,11 +557,7 @@ fn a_pdu_outside_the_lent_buffer_is_an_error() {
 /// `Closed` naming no peer would end someone else's.
 #[test]
 fn a_close_with_no_known_tester_is_not_reported() {
-    let mut t = transport([
-        Tester::Connects(TESTER),
-        Tester::SendsUnmodelled(TESTER, 0x8004, vec![0x01]),
-        Tester::Leaves(TESTER),
-    ]);
+    let mut t = transport([Tester::Connects(TESTER), Tester::Leaves(TESTER)]);
     let mut buffer = [0u8; 16];
     assert!(matches!(
         block_on(t.next_event(&mut buffer, None)),
@@ -602,24 +598,6 @@ fn a_request_longer_than_the_buffer_is_too_long_with_its_declared_length() {
             ai: request_ai(),
             data: &[0x2E, 0xF1, 0x90],
             declared: Some(5),
-        }
-    );
-}
-
-/// A payload type ISO 14229-5 gives a server no use for — here REQ 7.16's periodic
-/// response — is passed over, and the next event is the driver's.
-#[test]
-fn an_unmodelled_payload_is_passed_over() {
-    let mut t = transport([
-        Tester::Connects(TESTER),
-        Tester::SendsUnmodelled(TESTER, 0x8004, vec![0x01, 0xAA]),
-        Tester::Sends(TESTER, vec![0x3E, 0x00]),
-    ]);
-    assert_eq!(
-        next(&mut t),
-        TransportEvent::DataInd {
-            ai: request_ai(),
-            data: &[0x3E, 0x00],
         }
     );
 }

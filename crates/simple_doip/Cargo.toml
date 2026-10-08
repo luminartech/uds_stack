@@ -42,6 +42,7 @@ tokio-util = { workspace = true, optional = true }
 edge-nal = { workspace = true, optional = true }
 embedded-io-async = { workspace = true, optional = true }
 embassy-time = { workspace = true, optional = true }
+embassy-futures = { workspace = true, optional = true }
 
 [dev-dependencies]
 anyhow = { workspace = true }
@@ -60,7 +61,12 @@ std = ["alloc", "thiserror/std", "dep:tracing", "tracing/std"]
 codec = ["std", "dep:tokio", "dep:tokio-util", "dep:bytes"]
 client = ["codec", "dep:async-trait", "dep:futures"]
 server = ["codec", "dep:async-trait", "dep:futures"]
-connection = ["dep:edge-nal", "dep:embedded-io-async", "dep:embassy-time"]
+connection = [
+    "dep:edge-nal",
+    "dep:embedded-io-async",
+    "dep:embassy-time",
+    "dep:embassy-futures",
+]
 
 [[test]]
 name = "golden_vectors"
@@ -78,8 +84,28 @@ name = "tester"
 required-features = ["connection"]
 
 [[test]]
+name = "entity"
+required-features = ["connection"]
+
+[[test]]
+name = "entity_cancel"
+required-features = ["connection"]
+
+[[test]]
+name = "mock_stack"
+required-features = ["connection"]
+
+[[test]]
+name = "entity_std"
+required-features = ["connection"]
+
+[[test]]
 name = "tester_interop"
 required-features = ["connection", "server"]
+
+[[test]]
+name = "entity_interop"
+required-features = ["connection", "codec"]
 
 [[test]]
 name = "tester_late_ack"

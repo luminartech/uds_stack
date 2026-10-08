@@ -165,8 +165,9 @@ pub trait UdsTransport {
 
     /// The largest `A_PDU` this transport can carry, where its protocol caps it.
     ///
-    /// Participates in the const fold at [`crate::uds_server`]'s expansion site. `DoIP`
-    /// has no small fixed cap and leaves the default, which is then ignored.
+    /// Participates in the const fold at [`crate::uds_server`]'s expansion site. The
+    /// default, for a transport with no cap, is then ignored; a `DoIP` transport takes
+    /// its entity's message buffer.
     const MAX_PDU: usize = usize::MAX;
 
     /// `T_Data.req` — hand a `T_PDU` to the transport.

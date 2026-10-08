@@ -1,4 +1,5 @@
-# Command runner for the uds_stack workspace: five crates and one requirement set.
+# Command runner for the uds_stack workspace: five crates, an example crate and one
+# requirement set.
 #
 # The Python toolchain is pinned in pyproject.toml and locked in uv.lock, and every recipe
 # below runs it through `uv run --frozen`. `--frozen` is deliberate: needs.json is consumed
@@ -126,6 +127,7 @@ embedded:
     cargo build -p uds_services --target {{ embedded_target }} --no-default-features
     cargo build -p uds_on_ip    --target {{ embedded_target }} --no-default-features
     cargo build -p simple_doip  --target {{ embedded_target }} --no-default-features --features connection
+    cargo build -p embassy-net-entity --target {{ embedded_target }}
     cargo build -p uds_protocol --target {{ embedded_target }} --no-default-features --features alloc
     cargo build -p uds_on_ip    --target {{ embedded_target }} --no-default-features --features alloc
 
@@ -138,12 +140,18 @@ embedded:
 # The target is CI's, on any host: Miri interprets rather than runs, so it needs no linker
 # for it, and a macOS host target would fail on tokio's `kqueue`, which Miri does not
 # emulate. Linux's `epoll` it does.
+#
+# Then simple_doip's `connection` tests on the mock stack, which default features leave
+# out, as ci.yml's `miri-connection` job runs them.
 [doc("Run the test suite under Miri, as CI does")]
 miri:
     rustup toolchain install nightly --component miri --profile minimal --no-self-update
     PROPTEST_DISABLE_FAILURE_PERSISTENCE=1 \
         MIRIFLAGS="-Zmiri-env-forward=PROPTEST_DISABLE_FAILURE_PERSISTENCE" \
         cargo +nightly miri test --target {{ miri_target }}
+    MIRIFLAGS="-Zmiri-tree-borrows" \
+        cargo +nightly miri test --target {{ miri_target }} -p simple_doip --features connection \
+        --lib --test tester --test entity --test entity_cancel --test mock_stack
 
 # A guard rail is only verified by watching it fail, so each check in validate_needs.py is
 # demonstrated stopping something.

@@ -58,7 +58,7 @@ is `no_std` with no allocator:
 | Codec | `codec` | `MessageCodec`, a `tokio_util::codec` `Encoder`/`Decoder` | `src/message_codec.rs` |
 | Async client | `client` | `Client`, `Connector` (trait + `ConnectorSocket`) | `src/client.rs`, `src/client_inner.rs`, `src/socket_manager.rs`, `src/connection.rs` |
 | Async server | `server` | `Server`, `ServerConnectionHandler` | `src/server.rs` |
-| Connection service | `connection` | `tester::Tester`, a `TesterConnection` (a `DiagnosticConnection` that can reconnect and close) over `edge-nal` and `embassy-time` | `src/tester.rs`, `src/tester/` |
+| Connection service | `connection` | `tester::Tester`, a `TesterConnection` (a `DiagnosticConnection` that can reconnect and close), and `entity::Entity`, a `DiagnosticEntity`, over `edge-nal` and `embassy-time` | `src/tester.rs`, `src/tester/`, `src/entity/`, `src/stream.rs`, `src/stream/` |
 
 `client` and `server` are each `["codec", ...]` in `Cargo.toml`, so either one
 pulls in `codec` (and transitively `std`/`alloc`), but they do **not** pull in
@@ -121,6 +121,99 @@ stateDiagram-v2
   Table 12). Once any of it was written the connection is given up, so its late
   acknowledgement or response cannot be taken for a later request's (issue #17
   item 3).
+
+### 2.3 An entity's sockets
+
+`DiagnosticEntity` (in `src/service.rs`) states what an entity promises the layer
+above; `entity::Entity` (in `src/entity/`) is the one implementor. It holds `MCTS`
+connection slots and one reserve socket, the `n + 1` sockets of ISO 13400-2:2019
+REQ 4.DoIP-002, and accepts and drops a connection beyond them. Each socket moves
+through Figure 25's connection states, as `src/entity/table.rs` names them:
+
+```mermaid
+stateDiagram-v2
+    [*] --> Initialized: accepted, T_TCP_Initial_Inactivity starts
+    Initialized --> Registered: routing activation accepted
+    Initialized --> Finalizing: initial inactivity, a refused activation, a closing NACK, or lost I/O
+    Registered --> Finalizing: general inactivity, a silent alive check, a closing NACK, close, or lost I/O
+    Finalizing --> [*]: closed, else aborted, else dropped
+    note right of Initialized
+        The first routing activation request seen stops the
+        initial timer (REQ 3.DoIP-085), even while it waits
+        behind another socket's arbitration.
+    end note
+```
+
+- **Lost I/O aborts.** An end of stream from the tester, or a failed read or write,
+  aborts the socket in whatever state it is in; there is nothing left to write to.
+- **The layer above is told little.** `next_event` reports a diagnostic message
+  (`Indication`, or `IndicationTruncated` where the caller's buffer is too short), a
+  request's `Confirm`, a connection's `Closed`, or the caller's `Deadline`.
+  Accepting, routing activation, alive checks, header NACKs and the timers all run
+  inside it and are reported to no one. An event names a connection only once
+  routing is active on it, and `Closed` is reported once, for a connection an event
+  named, never after the caller's own `close`.
+- **Routing activation follows Figure 22, then Figures 26 to 28.** A source address
+  outside the `EntityConfig` is refused `0x00`; an activation type other than `0x00`
+  or `0x01`, the two Table 47 makes mandatory, `0x06`. A registered socket activating
+  again is answered at once: `0x10` for its own address (REQ 3.DoIP-089), `0x02` and
+  a close for another. Otherwise an address registered on another socket has that
+  socket alive-checked, and a full table has every registered socket alive-checked.
+  Those that answer within `T_TCP_Alive_Check` keep their registration, and the
+  newcomer is refused `0x03` or `0x01`; those that do not are aborted, and the
+  newcomer is registered (REQ 3.DoIP-092 to 096). One arbitration runs at a time:
+  another socket's activation waits for it. A newcomer on the reserve is exchanged
+  into an `Initialized` slot when it is registered; an `Initialized` socket whose
+  unread input or output keeps it from moving into the reserve is aborted once the
+  newcomer has waited `T_TCP_Alive_Check` for it.
+- **Figure 16's answers.** Each carries the protocol version of the frame it
+  answers; only ISO 13400-2:2012 and 2019 headers are taken.
+
+  | NACK | When | Then |
+  |---|---|---|
+  | `0x00` | A sync pattern or protocol version not taken | The socket is closed |
+  | `0x01` | A payload type the entity does not take on `TCP_DATA`, ISO 14229-5's periodic `0x8004` and the manufacturer range included (REQ 7.DoIP-042) | The frame is discarded |
+  | `0x02` | A message, header included, over the entity's `MAX_MESSAGE`: a payload over `MAX_MESSAGE` − 8 (REQ 7.DoIP-043) | The frame is discarded |
+  | `0x03` | Before activation, a frame within `MAX_MESSAGE` but over the 32 bytes a socket has until it may move into the reserve (REQ 7.DoIP-044) | The frame is discarded |
+
+  The 32 bytes apply to every payload type, so before activation a diagnostic message
+  with more than 24 bytes of user data is answered `0x03` and the socket kept open,
+  where a shorter one reaches Figure 17 and is refused with diagnostic NACK `0x02` and
+  a close (REQ 7.DoIP-070). This is a deviation: buffering the longer one would mean
+  holding it where the reserve cannot.
+  | `0x04` | A payload length wrong for its type (REQ 7.DoIP-045) | The socket is closed |
+
+- **Figure 17, and one deviation.** A diagnostic message whose source address is
+  not the one registered on its socket is refused with diagnostic NACK `0x02` and
+  the socket closed; one to a target the entity does not answer, `0x03`. Every other
+  is acknowledged positively and indicated, one too long for the caller's buffer
+  truncated. That departs from REQ 7.DoIP-073, which has a NACK `0x05` for it, from
+  REQ 7.DoIP-074, and from what Table 24's code `0x00` means. The reason is the
+  layer above: a UDS server busy with a request it can read only the start of still
+  owes it `busyRepeatRequest`, which `uds_on_ip` composes from the truncated event.
+- **Requests wait for nothing.** A `request` is made by its future's first poll,
+  which completes it, so one dropped unpolled makes none. It is queued on the
+  connection that registered its target and confirmed `Ok` once written,
+  `NoSocket` where no connection registered the target or the connection closes
+  first, `UnknownSa` from a source address not the entity's, and `OutOfMemory` where
+  the connection's queue has no room (ISO 13400-2:2019 8.3.1, 8.3.2). Requests to one
+  target are confirmed in the order they were made.
+- **A deadline is judged after the input that beat it.** Before acting on a passed
+  deadline, the entity reads and handles what the socket it judges has ready, so a
+  caller slow to call `next_event` again does not cost a tester its registration.
+  It reads at most that socket's receive buffer's worth per deadline, so a peer that
+  keeps sending holds off neither the deadline nor the caller's.
+- **No socket waits on another.** Each socket's write and read wait together, on
+  the two halves `edge_nal::TcpSplit::split` gives, and `wait` polls the
+  connections, the reserve and the acceptor in turn, starting after whichever won
+  last.
+- **Every close is bounded.** An orderly close that has not finished within
+  `T_TCP_Alive_Check` is aborted, an abort that has not finished within it again is
+  dropped, and an orderly close made an abort gets that limit afresh. The caller's
+  `close` acts on its own socket's timer alone, leaving every other to `next_event`.
+- **`next_event`, `request` and `close` are cancel-safe**, on the socket conditions
+  the crate docs list under the `connection` feature, so a caller may race them
+  against its own work.
 
 ---
 
@@ -275,7 +368,7 @@ carry a wildcard arm.
 | `src/messages/traits.rs` | Re-export of `Decode`, `Encode`, `take` from the codec crate |
 | `src/messages/*.rs` (rest) | One file per concrete payload body (alive check, diagnostic message, routing activation, entity status, power mode, vehicle identification, NACK codes) |
 | `src/logical_address.rs` | `LogicalAddress` newtype plus tester-range validation |
-| `src/service.rs` | The connection service's vocabulary, with no I/O: `DiagnosticConnection` (with its `MAX_PDU`), `TesterConnection` (adding `reconnect`, `close` and `io_error`), `DiagnosticEntity`, their events, `DoIpResult`, `TesterAddress` |
+| `src/service.rs` | The connection service's vocabulary, with no I/O: `DiagnosticConnection` (with its `MAX_PDU`), `TesterConnection` (adding `reconnect`, `close` and `io_error`), `DiagnosticEntity` (with its `MAX_PDU`), their events, `DoIpResult`, `TesterAddress` |
 | `src/wire.rs` | Re-export surface for the codec crate's types |
 
 `PayloadType` is a closed enum with `Reserved(u16)` and
@@ -290,8 +383,14 @@ the seam described in section 3 usable.
 |---|---|
 | `src/tester.rs` | `Tester`: connect, routing activation, `DiagnosticConnection`, the event loop and its reactions |
 | `src/tester/tx.rs` | `Outgoing<N>`, the diagnostic message being written, and `Control`, the activation request or alive check response written ahead of it |
-| `src/tester/rx.rs` | `RxBuffer<N>`: bytes read and not yet consumed, and the skipping of a frame longer than `N` |
-| `src/tester/confirm.rs` | NACK codes to `DoIpResult`, and the caller's deadline on `embassy-time`'s clock |
+| `src/tester/confirm.rs` | NACK codes to `DoIpResult` |
+| `src/stream.rs` | What either end of a `TCP_DATA` stream shares: the caller's deadline and other instants on `embassy-time`'s clock, and copying a PDU into the caller's buffer |
+| `src/stream/rx.rs` | `RxBuffer<N>`: bytes read and not yet consumed, and the skipping of a frame longer than `N` |
+| `src/stream/tx.rs` | `TxQueue<N>`: the entity's bytes waiting to be written, in order, with the count written |
+| `src/entity/mod.rs` | `Entity`: accepting, the socket handler and its arbitration, the timers of Table 12, `DiagnosticEntity` |
+| `src/entity/handler.rs` | Figure 16's generic header handler and Figure 17's diagnostic message handler |
+| `src/entity/table.rs` | The connection table: each slot's socket, buffers and phase, and the reserve |
+| `src/entity/io.rs` | What each slot waits on from its socket: a write and a read at once on its split halves, or its close, applied in the poll that completes it |
 
 ### std / async layers
 
@@ -344,6 +443,25 @@ new code reading `active_request` must preserve the restore-on-mismatch shape.
   allocator; builds and runs with `--no-default-features` as proof the core is
   genuinely allocator-free.
 - `examples/simple_client.rs` / `examples/echo_server.rs` — a matched async pair.
+- `tests/support/mock_stack.rs` — the scripted `edge-nal` backend the `connection`
+  tests run on: sockets that move a set number of bytes per read or write and yield
+  before each, and `until_stalled`, an executor that fails a test whose future keeps
+  waking itself (on native runs; see invariant 7). `tests/mock_stack.rs` holds the mock to what the other tests rely
+  on.
+- `tests/tester.rs`, `tests/tester_late_ack.rs` — `Tester` on the mock and on
+  loopback; `tests/tester_interop.rs` against this crate's `Server`.
+- `tests/entity.rs` — `Entity` on the mock, one test per requirement or contract
+  clause, each citing it; `tests/entity_cancel.rs` drops every call at every await
+  and checks nothing is lost; `tests/entity_mock.rs` pins the `DiagnosticEntity`
+  contract against a socketless entity.
+- `tests/entity_std.rs` — `Tester` against `Entity` over loopback;
+  `tests/entity_interop.rs` drives `Entity` with a client framed by `MessageCodec`, so
+  the two sides share no receive buffer.
+- `../../examples/embassy-net-entity` — not part of this crate: `Entity` on
+  embassy-net through a cancel-safe acceptor, built for bare metal in CI.
+
+The `connection` tests on the mock run under Miri in CI, with tree borrows; see
+`just miri`.
 
 ---
 
@@ -404,6 +522,24 @@ choosing the crate; the mechanics are here:
   the TCP accept loop and the UDP responder log the error, sleep briefly, and
   continue.
 
+### 7.4 The entity
+
+- `T_TCP_Alive_Check` runs from when an arbitration starts, not from when its alive
+  check request is written, so a request held back by a full transmit queue has less
+  of it. Table 12's note that the timer elapses when the stack cannot deliver makes
+  that a holder's loss either way.
+- The authentication and confirmation sub-states of a registered connection are
+  passed through on the spot (REQ 3.DoIP-129, 130).
+- The entity serves `TCP_DATA` alone: no vehicle announcement or identification over
+  UDP.
+- The embassy-net adapter has no test on its target; it is built, linted and
+  documented for `thumbv7em-none-eabihf`. Two entities sharing one of its acceptors
+  wake each other unreliably, and a socket whose `listen` fails, on a port of 0 or one
+  already listening elsewhere, is not recovered.
+- The crate root allows `indexing_slicing`, `arithmetic_side_effects` and
+  `as_conversions` on the modules that predate the lint standard, 29 sites; every
+  other module, `entity`, `stream` and `tester` among them, meets the standard.
+
 ---
 
 ## 8. Invariants to preserve when changing this crate
@@ -422,3 +558,10 @@ choosing the crate; the mechanics are here:
    through `as_ref()`. Do not add a second serialization path.
 5. **`automotive-wire-codec`'s semver is this crate's semver.** Bumping it is a
    public API change here.
+6. **Every accepted request is confirmed exactly once, in order per target.** The
+   layer above tells requests apart by order alone; `tests/entity.rs` and
+   `tests/entity_mock.rs` pin it.
+7. **The `connection` tests never busy-loop.** On native runs `until_stalled` fails
+   a future that keeps waking itself, so a change that spins fails the suite rather
+   than slowing it. Under Miri, where a waker's identity is unreliable, it takes 64
+   wakes in a row to be a wait, so the native run is the one that holds this.

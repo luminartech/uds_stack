@@ -47,7 +47,7 @@ impl<const N: usize> Outgoing<N> {
 
     /// The bytes of the message that are still to be written.
     pub(super) fn pending(&self) -> &[u8] {
-        &self.buf[self.written..self.len]
+        self.buf.get(self.written..self.len).unwrap_or_default()
     }
 
     /// Records that the first `written` bytes of [`Self::pending`] were written.
@@ -148,7 +148,7 @@ impl Control {
 
     /// The bytes of the message being written that are still to be written.
     pub(super) fn pending(&self) -> &[u8] {
-        &self.buf[self.written..self.len]
+        self.buf.get(self.written..self.len).unwrap_or_default()
     }
 
     /// Records that the first `written` bytes of [`Self::pending`] were written, and
@@ -186,7 +186,7 @@ mod tests {
 
     fn encoded<'b>(message: &Message<'_>, buf: &'b mut [u8]) -> &'b [u8] {
         let len = message.encode(&mut SliceSink::new(buf)).unwrap();
-        &buf[..len]
+        buf.get(..len).unwrap()
     }
 
     #[test]
@@ -242,7 +242,9 @@ mod tests {
             }
             let take = pending.len().min(step);
             let end = len.saturating_add(take);
-            out[len..end].copy_from_slice(&pending[..take]);
+            out.get_mut(len..end)
+                .unwrap()
+                .copy_from_slice(pending.get(..take).unwrap());
             len = end;
             control.advance(take);
         }
@@ -254,11 +256,14 @@ mod tests {
         control.routing_activation_request(TESTER);
         let mut out = [0; 64];
         let first = control.pending().len().min(3);
-        out[..first].copy_from_slice(&control.pending()[..first]);
+        out.get_mut(..first)
+            .unwrap()
+            .copy_from_slice(control.pending().get(..first).unwrap());
         control.advance(first);
 
         control.alive_check_response(TESTER);
-        let len = first.saturating_add(drained(&mut control, 5, &mut out[first..]));
+        let len =
+            first.saturating_add(drained(&mut control, 5, out.get_mut(first..).unwrap()));
 
         let mut expected = [0; 64];
         let activation = encoded(
@@ -277,7 +282,10 @@ mod tests {
             rest,
         )
         .len();
-        assert_eq!(out[..len], expected[..activation.saturating_add(alive)]);
+        assert_eq!(
+            out.get(..len),
+            expected.get(..activation.saturating_add(alive))
+        );
     }
 
     #[test]

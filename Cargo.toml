@@ -1,7 +1,12 @@
 # Cargo.toml
 [workspace]
 resolver = "3"
-members = ["crates/*"]
+members = ["crates/*", "examples/*"]
+# A bare `cargo` command at this root, which is how CI's reusable workflow runs every job,
+# covers the crates alone. The embassy-net adapter enables simple_doip's `connection`
+# feature, and as a default member it would unify that feature into every bare run,
+# Miri's included. `--workspace`, as the justfile passes, still covers it.
+default-members = ["crates/*"]
 
 # The stack's version. The five crates release in lockstep, so the version is declared once
 # and every crate inherits it with `version.workspace = true`; release-plz bumps this line
@@ -9,10 +14,9 @@ members = ["crates/*"]
 [workspace.package]
 version = "0.7.0"
 # One MSRV for the whole stack, so CI runs one MSRV check. It is the highest MSRV of any
-# dependency the host build faces: edge-nal 0.7's 1.88, which simple_doip's connection
-# service will take. A bare-metal integrator's own choices (edge-nal-embassy needs 1.91)
-# do not set it.
-rust-version = "1.88"
+# dependency the workspace builds: smoltcp 0.13's 1.91, which embassy-net 0.9 brings in for
+# the embassy-net entity adapter.
+rust-version = "1.91"
 
 # Shared dependency versions. Declared once so a bump is one edit, and so the five
 # crates cannot silently drift onto different majors of the same library.
@@ -49,6 +53,10 @@ embassy-time = { version = "0.5", default-features = false }
 # simple_doip's `connection` feature. no_std: no default features.
 edge-nal = { version = "0.7", default-features = false }
 embedded-io-async = { version = "0.7", default-features = false }
+# Selects over a const-generic array of futures without `unsafe`; executor-agnostic.
+embassy-futures = { version = "0.1", default-features = false }
+# The embassy-net entity adapter (examples/embassy-net-entity). no_std.
+embassy-net = { version = "0.9", default-features = false }
 
 # dev-dependencies
 anyhow = "1"

@@ -327,8 +327,8 @@ impl ConnectionId {
     /// The connection's slot in the entity's connection table, which is below
     /// [`DiagnosticEntity::CONNECTIONS`].
     #[must_use]
-    pub const fn index(self) -> usize {
-        self.0 as usize
+    pub fn index(self) -> usize {
+        usize::from(self.0)
     }
 }
 
@@ -354,8 +354,15 @@ pub enum EntityEvent<'b> {
         /// The PDU, in the caller's buffer.
         pdu: &'b [u8],
     },
-    /// A diagnostic message longer than the caller's buffer or the connection's; see
+    /// A diagnostic message longer than the caller's buffer, or, for an entity that
+    /// takes messages longer than it holds, its own; see
     /// [`ConnectionEvent::IndicationTruncated`].
+    ///
+    /// The entity has acknowledged it positively, as it does every message it indicates,
+    /// rather than refusing it with ISO 13400-2:2019 REQ 7.DoIP-073's negative
+    /// acknowledgement 0x05: whether a message the caller cannot hold is an error is the
+    /// caller's to answer. A UDS server busy with a request owes it `busyRepeatRequest`,
+    /// composed from the service identifier and addressing this event carries.
     IndicationTruncated {
         /// The connection the message arrived on.
         connection: ConnectionId,
@@ -386,28 +393,6 @@ pub enum EntityEvent<'b> {
         ta_type: TaType,
         /// The outcome; [`DoIpResult::Ok`] where the request was written.
         result: DoIpResult,
-    },
-    /// A valid message of a payload type this crate does not model; see
-    /// [`ConnectionEvent::Unmodelled`].
-    Unmodelled {
-        /// The connection the message arrived on.
-        connection: ConnectionId,
-        /// The message's payload type, as on the wire.
-        payload_type: u16,
-        /// The payload, in the caller's buffer.
-        data: &'b [u8],
-    },
-    /// A valid message of a payload type this crate does not model, longer than the
-    /// caller's buffer or the connection's; see [`ConnectionEvent::UnmodelledTruncated`].
-    UnmodelledTruncated {
-        /// The connection the message arrived on.
-        connection: ConnectionId,
-        /// The message's payload type, as on the wire.
-        payload_type: u16,
-        /// The leading bytes of the payload that fit both buffers.
-        data: &'b [u8],
-        /// The whole payload's length, from the message's header.
-        length: usize,
     },
     /// `connection` closed other than by [`DiagnosticEntity::close`]: the tester closed
     /// it, or the entity did on an error or a timeout.
@@ -465,9 +450,15 @@ pub trait DiagnosticEntity {
     /// Every `TCP_DATA` socket the entity supports counts, the reserve one included,
     /// so a conformant entity serving `n` testers at once declares `n + 1`
     /// (ISO 13400-2:2019 REQ 4.DoIP-002). Every established socket enters the
-    /// connection table (REQ 3.DoIP-127), and routing is activated on the reserve
-    /// socket when a tester returns without closing its old one (REQ 3.DoIP-092).
+    /// connection table (REQ 3.DoIP-127), so the count includes the reserve socket that
+    /// takes a tester returning without closing its old one (REQ 3.DoIP-092), wherever
+    /// the entity then activates routing for it.
     const CONNECTIONS: usize;
+
+    /// The longest PDU [`Self::request`] accepts. A longer one is refused with
+    /// [`Self::Error`], and no confirm follows it, so the layer above can refuse it
+    /// first.
+    const MAX_PDU: usize;
 
     /// `DoIP_Data.request`: send `pdu` from `sa` to `ta` on the connection whose
     /// routing activation registered `ta` (ISO 13400-2:2019 8.3.1).
@@ -487,8 +478,10 @@ pub trait DiagnosticEntity {
     ///
     /// # Errors
     ///
-    /// [`Self::Error`] where the request is not accepted; no confirm follows it. A
-    /// target no connection registered is not an error.
+    /// [`Self::Error`] where the request is not accepted; no confirm follows it. An
+    /// empty `pdu`, which no diagnostic message can carry, and one longer than
+    /// [`Self::MAX_PDU`] are not, whatever `sa` is. A target no connection registered is
+    /// not an error.
     fn request(
         &mut self,
         sa: LogicalAddress,
@@ -529,7 +522,10 @@ pub trait DiagnosticEntity {
     /// it is running.
     ///
     /// Everything requested on `connection` before this call is written first; the
-    /// future completes once the close has been sent. The connection then leaves the
+    /// future completes once the close has been sent. Written means handed to the
+    /// transport, whose orderly close delivers it; an implementor that bounds the close
+    /// gives it long enough to, since cutting it short with an abort can discard a
+    /// response already confirmed. The connection then leaves the
     /// table, no [`EntityEvent::Closed`] is reported for it, and a tester that wants to
     /// continue arrives as a new connection. Closing a [`ConnectionId`] that names no
     /// connection in the table — one that has already gone, or one the entity never

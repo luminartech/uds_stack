@@ -4,8 +4,6 @@
 //! [`DiagnosticConnection`]. It needs the `connection` feature; see the crate
 //! documentation for what the integrator supplies.
 
-#![deny(clippy::arithmetic_side_effects)]
-
 use core::fmt;
 use core::net::SocketAddr;
 
@@ -24,10 +22,10 @@ use crate::wire::Decode;
 use crate::{LogicalAddress, TIMEOUT_DIAGNOSTIC_MESSAGE_RESPONSE, TaType};
 
 mod confirm;
-mod rx;
 mod tx;
 
-use rx::{Next, RxBuffer};
+use crate::stream::rx::{Next, RxBuffer};
+use crate::stream::{after, caller_deadline, copy, millis};
 use tx::{Control, Outgoing, TooLarge};
 
 /// How long the tester waits before repeating a routing activation request the entity
@@ -108,8 +106,9 @@ pub enum Error {
     /// accepted.
     #[error("the PDU does not fit the tester's buffer")]
     MessageTooLarge,
-    /// The PDU is empty, which a diagnostic message cannot carry (ISO 13400-2:2019
-    /// Table 21); it was not accepted.
+    /// The PDU is empty; it was not accepted. ISO 13400-2:2019 Table 21 makes a
+    /// diagnostic message's user data mandatory, which this crate reads as at least one
+    /// byte.
     #[error("the PDU is empty")]
     EmptyPdu,
     /// There is no connection: it closed, or a reconnect failed. Reconnect to continue.
@@ -410,7 +409,7 @@ async fn activate<S: Read + Write + Readable, const N: usize>(
                     {
                         return Err(ConnectError::InvalidMessage);
                     }
-                    rx.skip_oversized(&header);
+                    rx.skip_frame(&header);
                 }
                 Ok(Next::Frame(frame, consumed)) => {
                     let step =
@@ -420,10 +419,8 @@ async fn activate<S: Read + Write + Readable, const N: usize>(
                         Activation::Waiting => {}
                         Activation::Activated => return Ok(()),
                         Activation::ConfirmationRequired => {
-                            retry_at = Some(confirm::after(
-                                Instant::now(),
-                                ROUTING_CONFIRMATION_RETRY,
-                            ));
+                            retry_at =
+                                Some(after(Instant::now(), ROUTING_CONFIRMATION_RETRY));
                         }
                     }
                 }
@@ -583,7 +580,7 @@ impl<C: TcpConnect, const N: usize> DiagnosticConnection for Tester<'_, C, N> {
 
     /// `embassy-time`'s clock, the one the tester's own timers run on.
     fn now(&self) -> u32 {
-        confirm::millis(Instant::now())
+        millis(Instant::now())
     }
 
     /// The next event from the entity.
@@ -611,8 +608,8 @@ impl<C: TcpConnect, const N: usize> DiagnosticConnection for Tester<'_, C, N> {
         buf: &'b mut [u8],
         deadline_ms: Option<u32>,
     ) -> Result<ConnectionEvent<'b>, Self::Error> {
-        let until = deadline_ms
-            .map(|deadline_ms| confirm::caller_deadline(deadline_ms, Instant::now()));
+        let until =
+            deadline_ms.map(|deadline_ms| caller_deadline(deadline_ms, Instant::now()));
         let passed = || until.is_some_and(|until| until <= Instant::now());
         let mut read_since_passed = false;
         loop {
@@ -677,7 +674,7 @@ impl<C: TcpConnect, const N: usize> DiagnosticConnection for Tester<'_, C, N> {
                         &mut self.control,
                         buf,
                     );
-                    self.rx.skip_oversized(&header);
+                    self.rx.skip_frame(&header);
                     self.exchange.consumed(usize::MAX);
                     reaction
                 }
@@ -748,7 +745,7 @@ impl<C: TcpConnect, const N: usize> TesterConnection for Tester<'_, C, N> {
     async fn reconnect(&mut self) -> Result<(), Self::ReconnectError> {
         self.lose_connection(true, None).await;
         if let Some(lost_at) = self.lost_at {
-            Timer::at(confirm::after(lost_at, self.backoff)).await;
+            Timer::at(after(lost_at, self.backoff)).await;
         }
         self.establish().await
     }
@@ -806,7 +803,7 @@ impl Exchange {
             let started = Instant::now();
             outstanding.phase = Phase::Writing {
                 started,
-                deadline: confirm::after(started, ACK_TIMEOUT),
+                deadline: after(started, ACK_TIMEOUT),
             };
             outstanding.stale = buffered;
         }
@@ -819,7 +816,7 @@ impl Exchange {
         {
             outstanding.phase = Phase::Sent {
                 started,
-                deadline: confirm::after(Instant::now(), ACK_TIMEOUT),
+                deadline: after(Instant::now(), ACK_TIMEOUT),
             };
         }
     }
@@ -874,8 +871,7 @@ impl Outstanding {
         match source {
             Some(source) => self.ta_type != TaType::Physical || source == self.ta,
             None => self.phase.started().is_some_and(|started| {
-                answered_at
-                    .is_none_or(|answered| confirm::after(answered, ACK_TIMEOUT) <= started)
+                answered_at.is_none_or(|answered| after(answered, ACK_TIMEOUT) <= started)
             }),
         }
     }
@@ -951,7 +947,7 @@ impl Delivered {
                 copied,
                 length,
             } => {
-                let pdu = &buf[..copied];
+                let pdu: &[u8] = buf.get(..copied).unwrap_or_default();
                 let ta_type = ta.default_ta_type();
                 if copied == length {
                     ConnectionEvent::Indication {
@@ -975,7 +971,7 @@ impl Delivered {
                 copied,
                 length,
             } => {
-                let data = &buf[..copied];
+                let data: &[u8] = buf.get(..copied).unwrap_or_default();
                 if copied == length {
                     ConnectionEvent::Unmodelled { payload_type, data }
                 } else {
@@ -1002,7 +998,7 @@ fn spoken(header: &Header) -> bool {
 /// Whether `header`'s payload length is one ISO 13400-2:2019 allows its payload type
 /// (Tables 18, 21, 23, 25, 27 and 48).
 fn sized_for_its_type(header: &Header) -> bool {
-    let length = header.payload_length as usize;
+    let length = usize::try_from(header.payload_length).unwrap_or(usize::MAX);
     match header.payload_type {
         PayloadType::NegativeAcknowledge => length == 1,
         PayloadType::RoutingActivationResponse => {
@@ -1051,13 +1047,12 @@ fn react(
             if ta != sa && TesterAddress::new(ta).is_ok() {
                 return Reaction::Ignore;
             }
-            let copied = message.user_data.len().min(buf.len());
-            buf[..copied].copy_from_slice(&message.user_data[..copied]);
             Reaction::Deliver(Delivered::Indication {
                 sa: message.source_address,
                 ta,
-                copied,
-                length: (header.payload_length as usize)
+                copied: copy(message.user_data, buf),
+                length: usize::try_from(header.payload_length)
+                    .unwrap_or(usize::MAX)
                     .saturating_sub(DiagnosticMessage::ADDRESSES_SIZE),
             })
         }
@@ -1112,15 +1107,11 @@ fn react(
             PayloadType::Reserved(payload_type)
             | PayloadType::ReservedVehicleManufacturer(payload_type),
             _,
-        ) => {
-            let copied = payload.len().min(buf.len());
-            buf[..copied].copy_from_slice(&payload[..copied]);
-            Reaction::Deliver(Delivered::Unmodelled {
-                payload_type,
-                copied,
-                length: header.payload_length as usize,
-            })
-        }
+        ) => Reaction::Deliver(Delivered::Unmodelled {
+            payload_type,
+            copied: copy(payload, buf),
+            length: usize::try_from(header.payload_length).unwrap_or(usize::MAX),
+        }),
         _ => Reaction::Ignore,
     }
 }
