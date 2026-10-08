@@ -17,7 +17,7 @@ use crate::mapping::{
 };
 use crate::profile::{ConnectionAction, after_sending};
 use simple_doip::LogicalAddress;
-use simple_doip::service::{ConnectionId, DiagnosticEntity, DoIpResult, Millis};
+use simple_doip::service::{self, ConnectionId, DiagnosticEntity, DoIpResult};
 use uds_services::{AfterSend, TransportEvent, UdsTransport};
 use uds_session::{Ai, Reloads, SResult, Timestamp};
 
@@ -173,7 +173,7 @@ impl<E: DiagnosticEntity, const CONNECTIONS: usize> DoIpTransport<E, CONNECTIONS
     /// An entity with two connections does not fit a table of one:
     ///
     /// ```compile_fail
-    /// # use simple_doip::service::{ConnectionId, DiagnosticEntity, EntityEvent, Millis};
+    /// # use simple_doip::service::{ConnectionId, DiagnosticEntity, EntityEvent, Timestamp};
     /// # use simple_doip::{LogicalAddress, TaType};
     /// # use uds_on_ip::{DoIpTransport, profile::bench_reloads};
     /// struct TwoSockets;
@@ -192,13 +192,13 @@ impl<E: DiagnosticEntity, const CONNECTIONS: usize> DoIpTransport<E, CONNECTIONS
     /// #   ) -> Result<(), ()> {
     /// #       Ok(())
     /// #   }
-    /// #   fn now(&self) -> Millis {
-    /// #       Millis(0)
+    /// #   fn now(&self) -> Timestamp {
+    /// #       Timestamp(0)
     /// #   }
     /// #   async fn next_event<'b>(
     /// #       &mut self,
     /// #       _: &'b mut [u8],
-    /// #       _: Option<Millis>,
+    /// #       _: Option<Timestamp>,
     /// #   ) -> Result<EntityEvent<'b>, ()> {
     /// #       Ok(EntityEvent::Deadline)
     /// #   }
@@ -483,7 +483,7 @@ impl<E: DiagnosticEntity, const CONNECTIONS: usize> UdsTransport
         let (connection, ai, at, declared) = loop {
             let event = self
                 .entity
-                .next_event(&mut *buffer, deadline.map(|at| Millis(at.0)))
+                .next_event(&mut *buffer, deadline.map(|at| service::Timestamp(at.0)))
                 .await
                 .map_err(Error::Entity)?;
             let inbound = classify(event, buffer_start)
@@ -552,7 +552,7 @@ impl<E: DiagnosticEntity, const CONNECTIONS: usize> UdsTransport
 mod tests {
     use super::DoIpTransport;
     use crate::profile::bench_reloads;
-    use simple_doip::service::{ConnectionId, DiagnosticEntity, EntityEvent, Millis};
+    use simple_doip::service::{ConnectionId, DiagnosticEntity, EntityEvent, Timestamp};
     use simple_doip::{LogicalAddress, TaType};
     use uds_services::{AfterSend, UdsTransport};
     use uds_session::{SResult, TransportError};
@@ -581,13 +581,13 @@ mod tests {
         ) -> Result<(), Self::Error> {
             Ok(())
         }
-        fn now(&self) -> Millis {
-            Millis(0)
+        fn now(&self) -> Timestamp {
+            Timestamp(0)
         }
         async fn next_event<'b>(
             &mut self,
             _buf: &'b mut [u8],
-            _deadline: Option<Millis>,
+            _deadline: Option<Timestamp>,
         ) -> Result<EntityEvent<'b>, Self::Error> {
             Ok(EntityEvent::Deadline)
         }

@@ -11,7 +11,7 @@ use std::collections::VecDeque;
 use simple_doip::LogicalAddress;
 use simple_doip::TaType;
 use simple_doip::service::{
-    ConnectionId, DiagnosticEntity, DoIpResult, EntityEvent, Millis,
+    ConnectionId, DiagnosticEntity, DoIpResult, EntityEvent, Timestamp,
 };
 
 pub const ENTITY: LogicalAddress = LogicalAddress(0x0001);
@@ -190,14 +190,14 @@ impl<const CONNECTIONS: usize> DiagnosticEntity for MockEntity<CONNECTIONS> {
         Ok(())
     }
 
-    fn now(&self) -> Millis {
-        Millis(self.clock)
+    fn now(&self) -> Timestamp {
+        Timestamp(self.clock)
     }
 
     async fn next_event<'b>(
         &mut self,
         buf: &'b mut [u8],
-        deadline: Option<Millis>,
+        deadline: Option<Timestamp>,
     ) -> Result<EntityEvent<'b>, Self::Error> {
         for index in 0..CONNECTIONS {
             self.flush(index);
@@ -270,8 +270,8 @@ impl<const CONNECTIONS: usize> DiagnosticEntity for MockEntity<CONNECTIONS> {
             return Ok(confirm);
         }
         let deadline = deadline.ok_or(Fault::Exhausted)?;
-        self.clock = Millis(self.clock)
-            .after(Millis(self.clock).until(deadline))
+        self.clock = Timestamp(self.clock)
+            .after(Timestamp(self.clock).until(deadline))
             .0;
         Ok(EntityEvent::Deadline)
     }

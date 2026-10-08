@@ -14,7 +14,7 @@
 
 use simple_doip::LogicalAddress;
 use simple_doip::TaType;
-use simple_doip::service::{ConnectionId, DiagnosticEntity, EntityEvent, Millis};
+use simple_doip::service::{ConnectionId, DiagnosticEntity, EntityEvent, Timestamp};
 use uds_on_ip::DoIpTransport;
 use uds_services::{AfterSend, Ai, TransportEvent, UdsTransport};
 
@@ -38,13 +38,13 @@ impl DiagnosticEntity for OpaqueEntity {
     ) -> Result<(), ()> {
         Ok(())
     }
-    fn now(&self) -> Millis {
-        Millis(0)
+    fn now(&self) -> Timestamp {
+        Timestamp(0)
     }
     async fn next_event<'b>(
         &mut self,
         _buf: &'b mut [u8],
-        _deadline: Option<Millis>,
+        _deadline: Option<Timestamp>,
     ) -> Result<EntityEvent<'b>, ()> {
         Ok(EntityEvent::Deadline)
     }

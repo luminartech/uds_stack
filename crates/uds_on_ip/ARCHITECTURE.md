@@ -323,10 +323,10 @@ the transport remembers which tester arrived on which connection, so that it can
 close the right one. `DoIpTransport::new` checks the two at compile time, so the
 mismatch cannot reach a running server.
 
-The deadline `next_event` takes, a `simple_doip::service::Millis`, is
+The deadline `next_event` takes, a `simple_doip::service::Timestamp`, is
 deliberately not a UDS concept. It is `tP6_Client` arriving from ISO 14229-2 two
 layers above, and `simple_doip` must not learn what that is; "wait for an event,
-or until this instant" is an ordinary service-layer facility. `Millis` and
+or until this instant" is an ordinary service-layer facility. It and its namesake
 `uds_session::Timestamp` are the same wrapping milliseconds, with the same rule
 for comparing across the wrap, so the conversion at this crate's edge is a field
 access that cannot fail and neither crate learns about the other.

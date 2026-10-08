@@ -13,7 +13,7 @@ use std::pin::pin;
 use embassy_time::Duration;
 use simple_doip::entity::{AddressError, Entity, EntityAddress, Error};
 use simple_doip::service::{
-    ConnectionId, DiagnosticEntity, DoIpResult, EntityConfig, EntityEvent, Millis,
+    ConnectionId, DiagnosticEntity, DoIpResult, EntityConfig, EntityEvent, Timestamp,
 };
 use simple_doip::{LogicalAddress, TaType};
 use support::mock_stack::{
@@ -117,7 +117,7 @@ fn owned(event: EntityEvent<'_>) -> Ev {
 fn step_into<E: DiagnosticEntity>(
     entity: &mut E,
     len: usize,
-    deadline: Option<Millis>,
+    deadline: Option<Timestamp>,
 ) -> Option<Ev> {
     let mut buf = vec![0u8; len];
     let future = pin!(entity.next_event(&mut buf, deadline));
@@ -319,7 +319,7 @@ fn a_past_deadline_returns_deadline_after_what_is_owed_and_without_waiting() {
     request(&mut entity, TESTER, &[0x7E, 0x00]).unwrap();
 
     assert_eq!(
-        step_into(&mut entity, 64, Some(Millis(9_000))),
+        step_into(&mut entity, 64, Some(Timestamp(9_000))),
         Some(Ev::Confirm {
             sa: ENTITY,
             ta: TESTER,
@@ -328,7 +328,7 @@ fn a_past_deadline_returns_deadline_after_what_is_owed_and_without_waiting() {
         })
     );
     assert_eq!(
-        step_into(&mut entity, 64, Some(Millis(9_000))),
+        step_into(&mut entity, 64, Some(Timestamp(9_000))),
         Some(Ev::Deadline)
     );
 }
@@ -340,10 +340,10 @@ fn a_deadline_ahead_returns_deadline_when_it_passes() {
     let stack = MockStack::new(4096);
     let mut entity = OneSocket::new(&stack, address(), two_testers());
 
-    assert_eq!(step_into(&mut entity, 64, Some(Millis(100))), None);
+    assert_eq!(step_into(&mut entity, 64, Some(Timestamp(100))), None);
     advance(ms(100));
     assert_eq!(
-        step_into(&mut entity, 64, Some(Millis(100))),
+        step_into(&mut entity, 64, Some(Timestamp(100))),
         Some(Ev::Deadline)
     );
 }

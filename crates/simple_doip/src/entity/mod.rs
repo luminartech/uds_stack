@@ -35,10 +35,10 @@ use crate::messages::{
     ActivationTypeCode, Message, ProtocolVersion, RoutingActivationResponseCode,
 };
 use crate::service::{
-    ConnectionId, DiagnosticEntity, DoIpResult, EntityConfig, EntityEvent, Millis,
+    ConnectionId, DiagnosticEntity, DoIpResult, EntityConfig, EntityEvent, Timestamp,
 };
 use crate::stream::tx::Full;
-use crate::stream::{after, caller_deadline, millis};
+use crate::stream::{after, caller_deadline, timestamp};
 use crate::tester::DIAGNOSTIC_MESSAGE_OVERHEAD;
 use crate::{LogicalAddress, TaType};
 use handler::{ALIVE_CHECK_REQUEST, Handled, Limits};
@@ -1206,8 +1206,8 @@ impl<
         poll_fn(move |_| Poll::Ready(self.queue(sa, ta, ta_type, pdu)))
     }
 
-    fn now(&self) -> Millis {
-        millis(Instant::now())
+    fn now(&self) -> Timestamp {
+        timestamp(Instant::now())
     }
 
     /// The next event on any connection.
@@ -1222,7 +1222,7 @@ impl<
     async fn next_event<'b>(
         &mut self,
         buf: &'b mut [u8],
-        deadline: Option<Millis>,
+        deadline: Option<Timestamp>,
     ) -> Result<EntityEvent<'b>, Self::Error> {
         let until = deadline.map(|deadline| caller_deadline(deadline, Instant::now()));
         loop {

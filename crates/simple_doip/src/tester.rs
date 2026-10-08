@@ -16,8 +16,8 @@ use crate::messages::{
     ProtocolVersion, RoutingActivationResponse, RoutingActivationResponseCode,
 };
 use crate::service::{
-    ConnectionEvent, DiagnosticConnection, DoIpResult, Millis, TesterAddress,
-    TesterConnection,
+    ConnectionEvent, DiagnosticConnection, DoIpResult, TesterAddress, TesterConnection,
+    Timestamp,
 };
 use crate::wire::Decode;
 use crate::{LogicalAddress, TIMEOUT_DIAGNOSTIC_MESSAGE_RESPONSE, TaType};
@@ -26,7 +26,7 @@ mod confirm;
 mod tx;
 
 use crate::stream::rx::{Next, RxBuffer};
-use crate::stream::{after, caller_deadline, copy, millis};
+use crate::stream::{after, caller_deadline, copy, timestamp};
 use tx::{Control, Outgoing, TooLarge};
 
 /// How long the tester waits before repeating a routing activation request the entity
@@ -580,8 +580,8 @@ impl<C: TcpConnect, const N: usize> DiagnosticConnection for Tester<'_, C, N> {
     }
 
     /// `embassy-time`'s clock, the one the tester's own timers run on.
-    fn now(&self) -> Millis {
-        millis(Instant::now())
+    fn now(&self) -> Timestamp {
+        timestamp(Instant::now())
     }
 
     /// The next event from the entity.
@@ -607,7 +607,7 @@ impl<C: TcpConnect, const N: usize> DiagnosticConnection for Tester<'_, C, N> {
     async fn next_event<'b>(
         &mut self,
         buf: &'b mut [u8],
-        deadline: Option<Millis>,
+        deadline: Option<Timestamp>,
     ) -> Result<ConnectionEvent<'b>, Self::Error> {
         let until = deadline.map(|deadline| caller_deadline(deadline, Instant::now()));
         let passed = || until.is_some_and(|until| until <= Instant::now());

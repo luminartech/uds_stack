@@ -17,8 +17,8 @@ use std::pin::pin;
 use embassy_time::Duration;
 use simple_doip::messages::{NackCode, RoutingActivationResponseCode};
 use simple_doip::service::{
-    ConnectionEvent, DiagnosticConnection, DoIpResult, Millis, NotATesterAddress,
-    TesterAddress, TesterConnection,
+    ConnectionEvent, DiagnosticConnection, DoIpResult, NotATesterAddress, TesterAddress,
+    TesterConnection, Timestamp,
 };
 use simple_doip::tester::{ConnectError, Error, MIN_N, RECONNECT_BACKOFF, Tester};
 use simple_doip::{LogicalAddress, TaType};
@@ -431,7 +431,7 @@ fn the_callers_deadline_is_reported_when_nothing_arrives_first() {
     let stack = MockStack::new(usize::MAX);
     let mut tester = active(&stack);
     let mut buf = [0; 16];
-    let mut waiting = pin!(tester.next_event(&mut buf, Some(Millis(250))));
+    let mut waiting = pin!(tester.next_event(&mut buf, Some(Timestamp(250))));
 
     assert!(until_stalled(waiting.as_mut()).is_none());
     advance(Duration::from_millis(249));
@@ -452,7 +452,7 @@ fn a_deadline_already_passed_is_reported_at_once() {
     let mut buf = [0; 16];
 
     assert_eq!(
-        run(tester.next_event(&mut buf, Some(Millis(1_000)))).unwrap(),
+        run(tester.next_event(&mut buf, Some(Timestamp(1_000)))).unwrap(),
         ConnectionEvent::Deadline
     );
 }
@@ -466,7 +466,7 @@ fn a_deadline_across_the_u32_wrap_is_ahead() {
     let mut tester = active(&stack);
     advance(Duration::from_millis(u64::from(u32::MAX) - 9));
     let mut buf = [0; 16];
-    let mut waiting = pin!(tester.next_event(&mut buf, Some(Millis(20))));
+    let mut waiting = pin!(tester.next_event(&mut buf, Some(Timestamp(20))));
 
     assert!(until_stalled(waiting.as_mut()).is_none());
     advance(Duration::from_millis(29));
@@ -486,7 +486,7 @@ fn a_deadline_from_now_is_on_the_testers_clock() {
     let stack = MockStack::new(usize::MAX);
     let mut tester = active(&stack);
     advance(Duration::from_millis(u64::from(u32::MAX) + 1 + 5_000));
-    assert_eq!(tester.now(), Millis(5_000));
+    assert_eq!(tester.now(), Timestamp(5_000));
     let deadline = tester.now().after(100);
     let mut buf = [0; 16];
     let mut waiting = pin!(tester.next_event(&mut buf, Some(deadline)));
@@ -838,7 +838,7 @@ fn a_second_request_before_the_confirm_is_refused() {
         confirm(DoIpResult::Ok)
     );
     assert_eq!(
-        run(tester.next_event(&mut buf, Some(Millis(0)))).unwrap(),
+        run(tester.next_event(&mut buf, Some(Timestamp(0)))).unwrap(),
         ConnectionEvent::Deadline
     );
     assert_eq!(
@@ -1252,7 +1252,7 @@ fn reconnecting_confirms_the_outstanding_request_first() {
         ConnectionEvent::Indication { .. }
     ));
     assert_eq!(
-        run(tester.next_event(&mut buf, Some(Millis(0)))).unwrap(),
+        run(tester.next_event(&mut buf, Some(Timestamp(0)))).unwrap(),
         ConnectionEvent::Deadline
     );
 }
@@ -1477,7 +1477,7 @@ fn the_callers_deadline_comes_first_while_an_ack_is_awaited() {
     let mut tester = active(&stack);
     request(&mut tester).unwrap();
     let mut buf = [0; 16];
-    let mut waiting = pin!(tester.next_event(&mut buf, Some(Millis(500))));
+    let mut waiting = pin!(tester.next_event(&mut buf, Some(Timestamp(500))));
 
     assert!(until_stalled(waiting.as_mut()).is_none());
     advance(Duration::from_millis(500));
@@ -1511,7 +1511,7 @@ fn a_request_never_begun_times_out_and_keeps_the_connection() {
     }
     assert!(!stack.latest().is_shut());
     assert_eq!(
-        run(tester.next_event(&mut buf, Some(Millis(0)))).unwrap(),
+        run(tester.next_event(&mut buf, Some(Timestamp(0)))).unwrap(),
         ConnectionEvent::Deadline
     );
 }
@@ -1574,7 +1574,7 @@ fn the_callers_deadline_ends_a_stalled_write() {
     stack.latest().stall_writes();
     request(&mut tester).unwrap();
     let mut buf = [0; 16];
-    let mut waiting = pin!(tester.next_event(&mut buf, Some(Millis(100))));
+    let mut waiting = pin!(tester.next_event(&mut buf, Some(Timestamp(100))));
 
     assert!(until_stalled(waiting.as_mut()).is_none());
     advance(Duration::from_millis(100));
@@ -1792,7 +1792,7 @@ fn a_header_nack_on_which_the_entity_closes_closes_the_tester() {
         next(&mut tester, &mut buf).unwrap();
 
         assert_eq!(stack.latest().is_aborted(), closes, "{code:#04X}");
-        let after = run(tester.next_event(&mut buf, Some(Millis(0)))).unwrap();
+        let after = run(tester.next_event(&mut buf, Some(Timestamp(0)))).unwrap();
         let expected = if closes {
             ConnectionEvent::Closed
         } else {
@@ -1845,7 +1845,7 @@ fn a_reconnect_dropped_at_any_await_leaves_a_consistent_tester() {
             })
         };
         let mut buf = [0; 16];
-        let first = run(tester.next_event(&mut buf, Some(Millis(0))));
+        let first = run(tester.next_event(&mut buf, Some(Timestamp(0))));
         if polls == 0 {
             assert_eq!(first.unwrap(), ConnectionEvent::Deadline, "never polled");
             continue;
@@ -1861,7 +1861,7 @@ fn a_reconnect_dropped_at_any_await_leaves_a_consistent_tester() {
             "dropped after {polls} polls"
         );
         assert_eq!(
-            run(tester.next_event(&mut buf, Some(Millis(0)))).unwrap(),
+            run(tester.next_event(&mut buf, Some(Timestamp(0)))).unwrap(),
             ConnectionEvent::Closed,
             "dropped after {polls} polls"
         );
@@ -1980,7 +1980,7 @@ fn the_callers_deadline_is_kept_while_ignored_messages_flood_in() {
     let mut buf = [0; 16];
 
     assert_eq!(
-        run(tester.next_event(&mut buf, Some(Millis(0)))).unwrap(),
+        run(tester.next_event(&mut buf, Some(Timestamp(0)))).unwrap(),
         ConnectionEvent::Deadline
     );
     assert!(!stack.latest().all_read());
@@ -2059,7 +2059,7 @@ fn a_message_still_arriving_does_not_hold_off_a_passed_deadline() {
     let mut buf = [0; 16];
 
     for _ in 0..3 {
-        let mut waiting = pin!(tester.next_event(&mut buf, Some(Millis(0))));
+        let mut waiting = pin!(tester.next_event(&mut buf, Some(Timestamp(0))));
         assert_eq!(
             poll_times(waiting.as_mut(), 50),
             Some(Ok(ConnectionEvent::Deadline))
@@ -2077,7 +2077,7 @@ fn a_message_trickling_in_does_not_hold_off_a_passed_deadline() {
     stack.latest().send(&diagnostic(ENTITY, TESTER, &[0; 40]));
     let mut buf = [0; 64];
 
-    let mut waiting = pin!(tester.next_event(&mut buf, Some(Millis(0))));
+    let mut waiting = pin!(tester.next_event(&mut buf, Some(Timestamp(0))));
     assert_eq!(
         poll_times(waiting.as_mut(), 50),
         Some(Ok(ConnectionEvent::Deadline))
@@ -2098,7 +2098,7 @@ fn a_passed_deadline_still_delivers_what_has_arrived() {
     let mut buf = [0; 16];
 
     assert!(matches!(
-        run(tester.next_event(&mut buf, Some(Millis(0)))).unwrap(),
+        run(tester.next_event(&mut buf, Some(Timestamp(0)))).unwrap(),
         ConnectionEvent::Indication {
             pdu: [0x7E, 0x00],
             ..
@@ -2119,7 +2119,7 @@ fn an_alive_check_is_answered_before_the_deadline_is_reported() {
     let mut buf = [0; 16];
 
     assert_eq!(
-        run(tester.next_event(&mut buf, Some(Millis(0)))).unwrap(),
+        run(tester.next_event(&mut buf, Some(Timestamp(0)))).unwrap(),
         ConnectionEvent::Deadline
     );
     assert_eq!(stack.latest().take_written(), alive_check_response());
@@ -2139,7 +2139,7 @@ fn a_header_nack_read_before_the_request_is_not_its() {
     advance(Duration::from_secs(3));
     let mut buf = [0; 16];
     assert_eq!(
-        run(tester.next_event(&mut buf, Some(Millis(0)))).unwrap(),
+        run(tester.next_event(&mut buf, Some(Timestamp(0)))).unwrap(),
         ConnectionEvent::Deadline
     );
     advance(Duration::from_secs(3));
@@ -2182,7 +2182,7 @@ fn an_ack_read_before_the_request_is_not_its() {
     request(&mut tester).unwrap();
 
     assert_eq!(
-        run(tester.next_event(&mut buf, Some(Millis(0)))).unwrap(),
+        run(tester.next_event(&mut buf, Some(Timestamp(0)))).unwrap(),
         ConnectionEvent::Deadline
     );
     stack.latest().send(&nack(ENTITY, TESTER, 0x03));
@@ -2203,7 +2203,7 @@ fn a_header_nack_soon_after_an_alive_check_answer_before_the_request_is_not_its(
     stack.latest().send(&alive_check_request());
     let mut buf = [0; 16];
     assert_eq!(
-        run(tester.next_event(&mut buf, Some(Millis(0)))).unwrap(),
+        run(tester.next_event(&mut buf, Some(Timestamp(0)))).unwrap(),
         ConnectionEvent::Deadline
     );
     assert_eq!(stack.latest().take_written(), alive_check_response());
@@ -2231,7 +2231,7 @@ fn a_header_nack_after_an_alive_check_answer_written_ahead_of_the_request_is_not
     stack.latest().send(&alive_check_request());
     let mut buf = [0; 16];
     assert_eq!(
-        run(tester.next_event(&mut buf, Some(Millis(0)))).unwrap(),
+        run(tester.next_event(&mut buf, Some(Timestamp(0)))).unwrap(),
         ConnectionEvent::Deadline
     );
     assert_eq!(stack.latest().take_written(), []);
@@ -2270,7 +2270,7 @@ fn a_header_nack_long_after_an_alive_check_answer_is_the_requests() {
     stack.latest().send(&alive_check_request());
     let mut buf = [0; 16];
     assert_eq!(
-        run(tester.next_event(&mut buf, Some(Millis(0)))).unwrap(),
+        run(tester.next_event(&mut buf, Some(Timestamp(0)))).unwrap(),
         ConnectionEvent::Deadline
     );
     advance(Duration::from_secs(2));
@@ -2330,7 +2330,7 @@ fn a_withdrawn_request_is_never_written() {
     stack.latest().resume_writes();
 
     assert_eq!(
-        run(tester.next_event(&mut buf, Some(Millis(0)))).unwrap(),
+        run(tester.next_event(&mut buf, Some(Timestamp(0)))).unwrap(),
         ConnectionEvent::Deadline
     );
     assert_eq!(stack.latest().take_written(), []);
@@ -2349,11 +2349,11 @@ fn a_reconnect_carries_only_the_activation_request() {
     let mut buf = [0; 16];
 
     assert_eq!(
-        run(tester.next_event(&mut buf, Some(Millis(0)))).unwrap(),
+        run(tester.next_event(&mut buf, Some(Timestamp(0)))).unwrap(),
         confirm(DoIpResult::NoSocket)
     );
     assert_eq!(
-        run(tester.next_event(&mut buf, Some(Millis(0)))).unwrap(),
+        run(tester.next_event(&mut buf, Some(Timestamp(0)))).unwrap(),
         ConnectionEvent::Deadline
     );
     assert_eq!(stack.latest().take_written(), activation_request());

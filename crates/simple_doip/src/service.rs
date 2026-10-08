@@ -19,7 +19,8 @@
 //! # Time
 //!
 //! Every deadline here is on the implementor's own clock, which it reports as
-//! [`DiagnosticConnection::now`] or [`DiagnosticEntity::now`]: a [`Millis`], which wraps.
+//! [`DiagnosticConnection::now`] or [`DiagnosticEntity::now`]: a [`Timestamp`], which
+//! wraps.
 //! The caller computes its deadlines from that reading, so a deadline means the same
 //! instant to the implementor whatever clock it runs on, and nothing here names a time
 //! source.
@@ -75,24 +76,25 @@ pub enum DoIpResult {
 /// It has no order, because the raw order is wrong either side of the wrap. Two readings
 /// compare only by how far apart they are, which [`Self::has_reached`] and
 /// [`Self::until`] read correctly so long as they lie within half the range, about 24.8
-/// days, of each other: the rule `uds_session::Timestamp` keeps one layer up.
+/// days, of each other: the rule its namesake `uds_session::Timestamp` keeps one layer
+/// up.
 ///
 /// # Examples
 ///
 /// ```
-/// use simple_doip::service::Millis;
+/// use simple_doip::service::Timestamp;
 ///
-/// let now = Millis(u32::MAX - 5);
+/// let now = Timestamp(u32::MAX - 5);
 /// let deadline = now.after(16);
-/// assert_eq!(deadline, Millis(10));
+/// assert_eq!(deadline, Timestamp(10));
 /// assert!(!now.has_reached(deadline));
 /// assert_eq!(now.until(deadline), 16);
 /// assert!(deadline.has_reached(now));
 /// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct Millis(pub u32);
+pub struct Timestamp(pub u32);
 
-impl Millis {
+impl Timestamp {
     /// The instant `millis` milliseconds after `self`.
     ///
     /// # Arguments
@@ -280,7 +282,7 @@ pub trait DiagnosticConnection {
     ) -> impl Future<Output = Result<(), Self::Error>>;
 
     /// The current time on the clock a deadline is on.
-    fn now(&self) -> Millis;
+    fn now(&self) -> Timestamp;
 
     /// The next event, written into `buf`, or [`ConnectionEvent::Deadline`] if
     /// `deadline` passes first.
@@ -299,7 +301,7 @@ pub trait DiagnosticConnection {
     fn next_event<'b>(
         &mut self,
         buf: &'b mut [u8],
-        deadline: Option<Millis>,
+        deadline: Option<Timestamp>,
     ) -> impl Future<Output = Result<ConnectionEvent<'b>, Self::Error>>;
 }
 
@@ -560,7 +562,7 @@ pub trait DiagnosticEntity {
     ) -> impl Future<Output = Result<(), Self::Error>>;
 
     /// The current time on the clock a deadline is on.
-    fn now(&self) -> Millis;
+    fn now(&self) -> Timestamp;
 
     /// The next event on any connection, written into `buf`, or
     /// [`EntityEvent::Deadline`] if `deadline` passes first.
@@ -581,7 +583,7 @@ pub trait DiagnosticEntity {
     fn next_event<'b>(
         &mut self,
         buf: &'b mut [u8],
-        deadline: Option<Millis>,
+        deadline: Option<Timestamp>,
     ) -> impl Future<Output = Result<EntityEvent<'b>, Self::Error>>;
 
     /// Close `connection` in an orderly way, as ISO 14229-5:2022 REQ 7.11 requires of a
@@ -764,14 +766,14 @@ mod tests {
             Ok(())
         }
 
-        fn now(&self) -> Millis {
-            Millis(0)
+        fn now(&self) -> Timestamp {
+            Timestamp(0)
         }
 
         async fn next_event<'b>(
             &mut self,
             buf: &'b mut [u8],
-            _deadline: Option<Millis>,
+            _deadline: Option<Timestamp>,
         ) -> Result<ConnectionEvent<'b>, Self::Error> {
             if let Some((ta, ta_type)) = self.confirm.take() {
                 return Ok(ConnectionEvent::Confirm {
@@ -821,20 +823,20 @@ mod tests {
     /// A deadline is reached at its own instant and after it, and not before.
     #[test]
     fn a_deadline_is_reached_at_and_after_its_instant() {
-        assert!(!Millis(99).has_reached(Millis(100)));
-        assert!(Millis(100).has_reached(Millis(100)));
-        assert!(Millis(101).has_reached(Millis(100)));
-        assert_eq!(Millis(90).until(Millis(100)), 10);
-        assert_eq!(Millis(100).until(Millis(100)), 0);
-        assert_eq!(Millis(150).until(Millis(100)), 0);
+        assert!(!Timestamp(99).has_reached(Timestamp(100)));
+        assert!(Timestamp(100).has_reached(Timestamp(100)));
+        assert!(Timestamp(101).has_reached(Timestamp(100)));
+        assert_eq!(Timestamp(90).until(Timestamp(100)), 10);
+        assert_eq!(Timestamp(100).until(Timestamp(100)), 0);
+        assert_eq!(Timestamp(150).until(Timestamp(100)), 0);
     }
 
     /// Across the wrap, a deadline just past it is still ahead of a time just before it,
     /// and one just before it has been reached by a time just past it.
     #[test]
     fn a_deadline_holds_across_the_wrap() {
-        let before = Millis(u32::MAX - 5);
-        let after = Millis(10);
+        let before = Timestamp(u32::MAX - 5);
+        let after = Timestamp(10);
         assert_eq!(before.after(16), after);
         assert!(!before.has_reached(after));
         assert_eq!(before.until(after), 16);
@@ -845,9 +847,9 @@ mod tests {
     /// Half the range away is still ahead; one more millisecond and it has been reached.
     #[test]
     fn half_the_range_is_the_horizon() {
-        let now = Millis(0);
-        assert!(now.has_reached(Millis(0_u32.wrapping_sub(u32::MAX / 2))));
-        assert!(!now.has_reached(Millis(0_u32.wrapping_sub(u32::MAX / 2 + 1))));
+        let now = Timestamp(0);
+        assert!(now.has_reached(Timestamp(0_u32.wrapping_sub(u32::MAX / 2))));
+        assert!(!now.has_reached(Timestamp(0_u32.wrapping_sub(u32::MAX / 2 + 1))));
     }
 
     /// The sensor's configuration: routing activation from `0x0E00` and no other

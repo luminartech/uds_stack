@@ -3,7 +3,7 @@
 
 use embassy_time::{Duration, Instant};
 
-use crate::service::Millis;
+use crate::service::Timestamp;
 
 pub(crate) mod rx;
 pub(crate) mod tx;
@@ -12,9 +12,9 @@ pub(crate) mod tx;
 /// 32 bits.
 ///
 /// [`DiagnosticConnection::now`]: crate::service::DiagnosticConnection::now
-pub(crate) fn millis(instant: Instant) -> Millis {
+pub(crate) fn timestamp(instant: Instant) -> Timestamp {
     let [b0, b1, b2, b3, ..] = instant.as_millis().to_le_bytes();
-    Millis(u32::from_le_bytes([b0, b1, b2, b3]))
+    Timestamp(u32::from_le_bytes([b0, b1, b2, b3]))
 }
 
 /// Copies as much of `data` into `buf` as fits, returning how much that was.
@@ -32,8 +32,8 @@ pub(crate) struct DoesNotFit;
 
 /// The instant `deadline` names on `embassy_time`'s clock, read at `now`: the nearest
 /// instant whose milliseconds truncate to it, or `now` if it has been reached.
-pub(crate) fn caller_deadline(deadline: Millis, now: Instant) -> Instant {
-    let ahead = millis(now).until(deadline);
+pub(crate) fn caller_deadline(deadline: Timestamp, now: Instant) -> Instant {
+    let ahead = timestamp(now).until(deadline);
     after(now, Duration::from_millis(u64::from(ahead)))
 }
 
@@ -50,7 +50,7 @@ mod tests {
     fn a_deadline_ahead_is_that_many_milliseconds_ahead() {
         let now = Instant::from_millis(10_000);
         assert_eq!(
-            caller_deadline(Millis(10_250), now),
+            caller_deadline(Timestamp(10_250), now),
             now + Duration::from_millis(250)
         );
     }
@@ -58,18 +58,18 @@ mod tests {
     #[test]
     fn a_deadline_passed_is_now() {
         let now = Instant::from_millis(10_000);
-        assert_eq!(caller_deadline(Millis(9_000), now), now);
-        assert_eq!(caller_deadline(Millis(10_000), now), now);
+        assert_eq!(caller_deadline(Timestamp(9_000), now), now);
+        assert_eq!(caller_deadline(Timestamp(10_000), now), now);
     }
 
     #[test]
     fn a_deadline_across_the_u32_wrap_is_still_ahead() {
         let now = Instant::from_millis(u64::from(u32::MAX) - 99);
         assert_eq!(
-            caller_deadline(Millis(100), now),
+            caller_deadline(Timestamp(100), now),
             now + Duration::from_millis(200)
         );
         let later = Instant::from_millis(u64::from(u32::MAX) + 1 + 50);
-        assert_eq!(caller_deadline(Millis(u32::MAX - 49), later), later);
+        assert_eq!(caller_deadline(Timestamp(u32::MAX - 49), later), later);
     }
 }
