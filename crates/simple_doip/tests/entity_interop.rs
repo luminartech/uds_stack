@@ -5,6 +5,8 @@
 // Test code; see `golden_vectors.rs` for why the workspace lint standard is relaxed here.
 #![expect(clippy::unwrap_used, clippy::panic)]
 
+mod support;
+
 use std::net::SocketAddr;
 
 use bytes::BytesMut;
@@ -16,10 +18,9 @@ use simple_doip::messages::{
     ActivationTypeCode, DiagnosticAckCode, OwnedMessage, OwnedPayload, ProtocolVersion,
     RoutingActivationResponseCode,
 };
-use simple_doip::service::{
-    DiagnosticEntity, DoIpResult, EntityConfig, EntityEvent, TesterAddress,
-};
+use simple_doip::service::{DiagnosticEntity, DoIpResult, EntityEvent};
 use simple_doip::{LogicalAddress, TaType};
+use support::the_tester;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio::time::{Duration, timeout};
@@ -29,11 +30,6 @@ const TESTER: LogicalAddress = LogicalAddress(0x0E00);
 const ENTITY: LogicalAddress = LogicalAddress(0x0001);
 
 const PATIENCE: Duration = Duration::from_secs(5);
-
-/// The sensor's configuration: routing activation from [`TESTER`] only.
-fn the_tester() -> EntityConfig {
-    EntityConfig::new([TesterAddress::new(TESTER).unwrap()])
-}
 
 fn free_local_address() -> SocketAddr {
     let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();

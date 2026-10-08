@@ -21,6 +21,7 @@ use support::mock_stack::{
     alive_check_request, alive_check_response, clock, diagnostic, header_nack, nack,
     poll_times, raw, until_stalled,
 };
+use support::the_tester;
 
 const FUNCTIONAL: LogicalAddress = LogicalAddress(0xE400);
 const OTHER: LogicalAddress = LogicalAddress(0x0E80);
@@ -37,11 +38,6 @@ type TwoSockets<'a> = Entity<'a, MockStack, 2, 4096, 2>;
 
 fn address() -> EntityAddress {
     EntityAddress::new(ENTITY, FUNCTIONAL).unwrap()
-}
-
-/// The sensor's configuration: routing activation from [`TESTER`] only.
-fn the_tester() -> EntityConfig {
-    EntityConfig::new([simple_doip::service::TesterAddress::new(TESTER).unwrap()])
 }
 
 fn two_testers() -> EntityConfig<2> {

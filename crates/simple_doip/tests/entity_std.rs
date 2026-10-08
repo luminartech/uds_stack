@@ -4,17 +4,20 @@
 // Test code; see `golden_vectors.rs` for why the workspace lint standard is relaxed here.
 #![expect(clippy::unwrap_used, clippy::panic)]
 
+mod support;
+
 use std::net::SocketAddr;
 
 use edge_nal::TcpBind;
 use edge_nal_std::Stack;
 use simple_doip::entity::{Entity, EntityAddress};
 use simple_doip::service::{
-    ConnectionEvent, DiagnosticConnection, DiagnosticEntity, DoIpResult, EntityConfig,
-    EntityEvent, TesterAddress,
+    ConnectionEvent, DiagnosticConnection, DiagnosticEntity, DoIpResult, EntityEvent,
+    TesterAddress,
 };
 use simple_doip::tester::Tester;
 use simple_doip::{LogicalAddress, TaType};
+use support::the_tester;
 use tokio::io::AsyncReadExt;
 use tokio::net::TcpStream;
 use tokio::time::{Duration, timeout};
@@ -35,11 +38,6 @@ fn free_local_address() -> SocketAddr {
 
 fn address() -> EntityAddress {
     EntityAddress::new(ENTITY, LogicalAddress(0xE400)).unwrap()
-}
-
-/// The sensor's configuration: routing activation from [`TESTER`] only.
-fn the_tester() -> EntityConfig {
-    EntityConfig::new([TesterAddress::new(TESTER).unwrap()])
 }
 
 /// Answers every indication by echoing it, until `answers` have been confirmed.
