@@ -59,9 +59,8 @@ mod role {
         KeepAliveWindowExpired,
         /// The caller released the keep-alive (``UDSS_LLR_0184``).
         Released,
-        /// The caller reset the channel (``UDSS_LLR_0180``); `ended` where that ended a
-        /// request in progress or abandoned an association.
-        Reset { ended: bool },
+        /// The caller reset the channel (``UDSS_LLR_0180``).
+        Reset,
     }
 
     /// ``UDSS_LLR_0151`` — a physical channel's `tS3_Client`, its reload and its
@@ -224,8 +223,8 @@ impl role::Role for PhysicalKeepAlive {
         let completed = match event {
             Event::Confirmed { ok: false, .. }
             | Event::Received { ok: false, .. }
-            | Event::KeepAliveWindowExpired
-            | Event::Reset { ended: true } => Some(None),
+            | Event::KeepAliveWindowExpired => Some(None),
+            Event::Reset if !s.s3.is_running() => Some(None), // UDSS_LLR_0180
             Event::Confirmed { ok: true, class }
                 if class.expected() == ExpectedResponses::None =>
             {
@@ -247,7 +246,7 @@ impl role::Role for PhysicalKeepAlive {
                 s.leave(); // UDSS_LLR_0184
                 None
             }
-            Event::Confirmed { .. } | Event::Received { .. } | Event::Reset { .. } => None,
+            Event::Confirmed { .. } | Event::Received { .. } | Event::Reset => None,
         };
         match (s.in_session, completed) {
             (false, Some(Some(SessionSelection::NonDefault))) => {

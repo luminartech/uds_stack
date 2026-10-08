@@ -2313,8 +2313,24 @@ mod physical_keep_alive {
         assert_eq!(c.next_deadline(), Some(Timestamp(2_520)));
     }
 
-    /// ``UDSS_LLR_0180`` (fifth effect) — a reset ending nothing leaves a running timer
-    /// where it was.
+    /// ``UDSS_LLR_0180`` (fifth effect) — a request whose response window expired ended
+    /// with its timer still stopped, ``UDSS_LLR_0161`` restarting it only for a
+    /// keep-alive; the reset that gives the server up after Table 9's repeats starts it.
+    #[test]
+    fn a_reset_after_a_request_timed_out_restarts_keep_alive() {
+        let (mut c, id) = engaged();
+        send(&mut c, 500, request(ONE));
+        confirm(&mut c, 500, SResult::Ok);
+        assert_eq!(
+            tick(&mut c, 551),
+            only(timeout(phys(ECU), ChannelReload::Default))
+        );
+        assert_eq!(c.next_deadline(), None);
+        reset(&mut c, 600, id);
+        assert_eq!(c.next_deadline(), Some(Timestamp(2_600)));
+    }
+
+    /// ``UDSS_LLR_0180`` (fifth effect) — a reset leaves a running timer where it was.
     #[test]
     fn a_reset_with_nothing_in_flight_leaves_the_timer_alone() {
         let (mut c, id) = engaged();

@@ -1157,10 +1157,10 @@ impl<K: KeepAliveMode, const PHYS: usize, const FUNC: usize, const R: usize, Tag
     /// ``UDSS_LLR_0180`` — ends any request in progress and stops its timer with no
     /// indication, marks an unconfirmed association abandoned, closes the open
     /// start-of-message or releases every responder entry, and zeroes the repeat count.
-    /// In physical keep-alive, where it ended a request or abandoned an association on a
-    /// physical channel in a non-default session, it starts that channel's `tS3_Client`:
-    /// the request stopped it (``UDSS_LLR_0160``) and the reset forecloses the events that
-    /// would have started it again (``UDSS_LLR_0161``). It produces no output.
+    /// In physical keep-alive, on a physical channel in a non-default session whose
+    /// `tS3_Client` is not running, it starts that timer: a request stopped it
+    /// (``UDSS_LLR_0160``), and once the server is reset or given up nothing else would
+    /// start it again (``UDSS_LLR_0161``). It produces no output.
     /// ISO 14229-2:2021 9.7 Table 9 ends at the third transmission and says nothing of
     /// what the client concludes, so something the caller invokes has to clear the state
     /// that persists on its own. ``UDSS_LLR_0183`` rejects a reset naming no existing
@@ -1174,22 +1174,19 @@ impl<K: KeepAliveMode, const PHYS: usize, const FUNC: usize, const R: usize, Tag
         self.expire(now);
         let found = match channel {
             ChannelId::Physical(id) => self.physical_mut(id).map(|p| {
-                let ended = p.core.request.is_some() || p.core.sent.is_some();
                 p.som_open = false;
                 p.core.reset();
-                ended
             }),
             ChannelId::Functional(id) => self.functional_mut(id).map(|s| {
                 s.responders = [ResponderSlot::EMPTY; R];
                 if let Some(c) = s.channel.as_mut() {
                     c.reset();
                 }
-                false
             }),
         };
         let outcome = match found {
-            Some(ended) => {
-                self.keep_alive_on(now, channel, Event::Reset { ended }); // UDSS_LLR_0180
+            Some(()) => {
+                self.keep_alive_on(now, channel, Event::Reset); // UDSS_LLR_0180
                 Ok(())
             }
             None => Err(NO_SUCH_CHANNEL), // UDSS_LLR_0183
