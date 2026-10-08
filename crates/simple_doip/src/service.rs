@@ -3,8 +3,10 @@
 //! [`DiagnosticConnection`] is one connection as the layer above sees it: the
 //! `DoIP_Data.request` primitive, and the confirm and indication primitives arriving as
 //! [`ConnectionEvent`]s whose outcome is a [`DoIpResult`] (ISO 13400-2:2019 8.3). The
-//! addressing model of a target is a [`TaType`], derived from the address by
-//! [`LogicalAddress::default_ta_type`].
+//! addressing model of a target is a [`TaType`]. On an indication it is the
+//! implementor's to report: an entity knows which of its own addresses were addressed,
+//! as `entity::Entity` does from its `EntityAddress`, and an implementor with no better
+//! knowledge derives it with [`LogicalAddress::default_ta_type`].
 //!
 //! [`DiagnosticEntity`] is a whole `DoIP` entity — every connection it has accepted —
 //! as the layer above drives it: events tagged with the [`ConnectionId`] they arrived
@@ -87,8 +89,8 @@ pub enum ConnectionEvent<'b> {
         sa: LogicalAddress,
         /// The target the sender addressed.
         ta: LogicalAddress,
-        /// The target's addressing model:
-        /// [`ta.default_ta_type()`](LogicalAddress::default_ta_type).
+        /// How `ta` addresses the receiver: the implementor's own knowledge where it has
+        /// it, otherwise [`ta.default_ta_type()`](LogicalAddress::default_ta_type).
         ta_type: TaType,
         /// The PDU, in the caller's buffer.
         pdu: &'b [u8],
@@ -103,8 +105,8 @@ pub enum ConnectionEvent<'b> {
         sa: LogicalAddress,
         /// The target the sender addressed.
         ta: LogicalAddress,
-        /// The target's addressing model:
-        /// [`ta.default_ta_type()`](LogicalAddress::default_ta_type).
+        /// How `ta` addresses the receiver: the implementor's own knowledge where it has
+        /// it, otherwise [`ta.default_ta_type()`](LogicalAddress::default_ta_type).
         ta_type: TaType,
         /// The leading bytes of the PDU that fit both buffers.
         pdu: &'b [u8],
@@ -348,8 +350,8 @@ pub enum EntityEvent<'b> {
         sa: LogicalAddress,
         /// The target the sender addressed.
         ta: LogicalAddress,
-        /// The target's addressing model:
-        /// [`ta.default_ta_type()`](LogicalAddress::default_ta_type).
+        /// How `ta` addresses the receiver: the implementor's own knowledge where it has
+        /// it, otherwise [`ta.default_ta_type()`](LogicalAddress::default_ta_type).
         ta_type: TaType,
         /// The PDU, in the caller's buffer.
         pdu: &'b [u8],
@@ -371,8 +373,8 @@ pub enum EntityEvent<'b> {
         sa: LogicalAddress,
         /// The target the sender addressed.
         ta: LogicalAddress,
-        /// The target's addressing model:
-        /// [`ta.default_ta_type()`](LogicalAddress::default_ta_type).
+        /// How `ta` addresses the receiver: the implementor's own knowledge where it has
+        /// it, otherwise [`ta.default_ta_type()`](LogicalAddress::default_ta_type).
         ta_type: TaType,
         /// The leading bytes of the PDU that fit both buffers.
         pdu: &'b [u8],
