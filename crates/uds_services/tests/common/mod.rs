@@ -93,6 +93,8 @@ pub struct Script {
     asked: usize,
     /// Which of them `t_data_req` refuses with `Err`, recording nothing.
     refused: Option<usize>,
+    /// How far the clock moves while a transmission is handed over.
+    send_cost: u32,
 }
 
 impl Script {
@@ -118,7 +120,14 @@ impl Script {
             },
             asked: 0,
             refused: None,
+            send_cost: 0,
         }
+    }
+
+    /// The same, the clock moving `ms` while each transmission is handed over.
+    pub fn costing(mut self, ms: u32) -> Self {
+        self.send_cost = ms;
+        self
     }
 
     /// The same, refusing the `i`th transmission asked for (from zero) with `Err`.
@@ -266,6 +275,7 @@ impl UdsTransport for Script {
             return ready(Err(()));
         }
         self.record(ai, data, after);
+        self.now = self.now.wrapping_add(self.send_cost);
         ready(Ok(()))
     }
     fn next_event<'b>(

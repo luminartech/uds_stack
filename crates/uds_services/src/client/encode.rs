@@ -98,6 +98,12 @@ pub(super) fn classify(
     }
 }
 
+/// Whether `message` is the positive response to `service`, whatever follows its
+/// service identifier.
+pub(super) fn is_positive(service: UdsServiceType, message: &[u8]) -> bool {
+    message.first().copied() == Some(service.to_response_sid())
+}
+
 /// Whether `class` is a final response answering the request it was classified against.
 pub(super) const fn solicited_final(class: ClientRx) -> bool {
     matches!(

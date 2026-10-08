@@ -94,10 +94,11 @@ pub enum TransportEvent<'b> {
     Closed {
         /// The peer whose connection closed: for a server, the client whose requests
         /// it carried; for a client, the server it sent them to. Only an exchange with
-        /// this peer ends; a transport carrying several peers' connections reports each
-        /// close as its own peer's, and one that cannot name the peer of a connection
-        /// reports no close for it, because nothing is waiting on a connection whose
-        /// peer never spoke.
+        /// this peer ends, a client's functional request counting as one with every
+        /// peer, since any of them may be answering it. A transport carrying several
+        /// peers' connections reports each close as its own peer's, and one that cannot
+        /// name the peer of a connection reports no close for it, because nothing is
+        /// waiting on a connection whose peer never spoke.
         peer: Address,
         /// Whether the close was one the standard prescribes.
         ///
@@ -149,7 +150,7 @@ pub enum AfterSend {
 /// inbound event *or* a timer expiry already measures time, so asking it for the clock
 /// adds no capability and avoids two implementors holding two timebases.
 ///
-/// Two obligations the signatures cannot state, both of which the driver relies on:
+/// Three obligations the signatures cannot state, which the drivers rely on:
 ///
 /// - **[`Self::next_event`] is cancel-safe.** The driver races it against the handler
 ///   and drops the losing future, often unpolled. A message partly read when the future
@@ -160,6 +161,10 @@ pub enum AfterSend {
 ///   `T_Data.conf` for every `T_Data.req` is an assumption of use: an association whose
 ///   confirmation never arrives has no server exit (``UDSS_LLR_0060``), and the driver
 ///   waits on it.
+/// - **That [`TransportEvent::DataConf`] comes before any message answering the
+///   request.** The session layer opens a request's response window at its confirmation,
+///   so a client takes nothing earlier as its answer. A transmission is complete before
+///   its server can answer it, on `DoIP` as on CAN.
 pub trait UdsTransport {
     /// What this transport's failures are. Never interpreted by this crate.
     ///

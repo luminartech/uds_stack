@@ -24,7 +24,8 @@ mod encode;
 
 use crate::storage::{ClientBuffers, ClientStorage};
 use crate::{
-    DataIdentifier, DiagnosticSessionType, RecordError, SessionTiming, UdsTransport,
+    DataIdentifier, DiagnosticSessionType, RecordError, SessionTiming, UdsServiceType,
+    UdsTransport,
 };
 use driver::{Answered, Book, Exchange};
 use uds_protocol::NegativeResponseCode;
@@ -163,8 +164,12 @@ impl ClientKeepAlive for PhysicalKeepAlive {
 /// How a [`Client`] keeps a server's non-default session alive, fixed at creation.
 ///
 /// ISO 14229-2:2021 9.7 — a `TesterPresent` every `tS3_Client` while a server is out of
-/// its default session, sent once no request is awaiting its response (issue #17
-/// item 1). The mode is the type parameter, so a client is built in exactly one.
+/// its default session, never to a server a request is awaiting a response from (issue
+/// #17 item 1): physically, one falling due during another server's exchange goes out on
+/// time, and one during a functional window waits for it to close; the functional
+/// keep-alive, which reaches every server, waits for any exchange to end. One confirmed
+/// failed is repeated up to ISO 14229-2:2021 9.7 Table 9's two times, and then given up.
+/// The mode is the type parameter, so a client is built in exactly one.
 #[derive(Debug)]
 pub struct KeepAlive<K: ClientKeepAlive> {
     /// Never dropped, only moved into the session layer: a `const fn` cannot destructure
@@ -604,8 +609,10 @@ impl<
     /// [`SessionTiming`], read in Table 29's units. Its `P2*Server_max`, plus
     /// [`ClientTiming::network_delay`], becomes the wait this client allows after a
     /// response-pending message from `target`, where that is longer than the transport's
-    /// own (issue #17 item 4). Entering a non-default session
-    /// starts the keep-alive the client was built with, and the default session ends it.
+    /// own (issue #17 item 4). Entering a non-default session starts the keep-alive the
+    /// client was built with. Returning to the default session ends a physical
+    /// keep-alive for `target`, and the functional keep-alive once no server this client
+    /// put in a non-default session remains in one.
     ///
     /// # Arguments
     ///
@@ -634,15 +641,18 @@ impl<
             )
             .await?;
         let message = answered_bytes(&mut self.store, &answered);
-        let reply = encode::final_response(message, answered.arrived);
-        let response = encode::session_timing(reply);
-        if let encode::Final::Positive(_) = reply {
+        let positive =
+            encode::is_positive(UdsServiceType::DiagnosticSessionControl, message);
+        let response =
+            encode::session_timing(encode::final_response(message, answered.arrived));
+        if positive {
             let timing = match response {
                 Response::Positive(timing) => Some(timing),
                 _ => None,
             };
             self.entered(target, selection, timing);
         }
+        self.settle_functional_keep_alive();
         Ok(response)
     }
 
