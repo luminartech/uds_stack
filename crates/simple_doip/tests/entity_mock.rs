@@ -2,12 +2,7 @@
 //! sequence of tester actions, and the trait's contract pinned against it.
 
 // Test code; see `golden_vectors.rs` for why the workspace lint standard is relaxed here.
-#![allow(
-    clippy::unwrap_used,
-    clippy::expect_used,
-    clippy::panic,
-    clippy::indexing_slicing
-)]
+#![expect(clippy::unwrap_used, clippy::panic)]
 
 use std::collections::VecDeque;
 
@@ -66,7 +61,7 @@ impl<const MCTS: usize> MockEntity<MCTS> {
     }
 
     fn flush(&mut self, index: usize) {
-        let Some(slot) = self.table[index].as_mut() else {
+        let Some(slot) = self.table.get_mut(index).and_then(Option::as_mut) else {
             return;
         };
         while let Some((ta_type, pdu)) = slot.outbound.pop_front() {
@@ -98,8 +93,10 @@ impl<const MCTS: usize> DiagnosticEntity for MockEntity<MCTS> {
             return Ok(());
         }
         match self.slot_of(ta) {
-            Some(index) => self.table[index]
-                .as_mut()
+            Some(index) => self
+                .table
+                .get_mut(index)
+                .and_then(Option::as_mut)
                 .unwrap()
                 .outbound
                 .push_back((ta_type, pdu.to_vec())),
@@ -134,7 +131,7 @@ impl<const MCTS: usize> DiagnosticEntity for MockEntity<MCTS> {
             match action {
                 Tester::Connects(sa) => {
                     let free = self.table.iter().position(Option::is_none).unwrap();
-                    self.table[free] = Some(Slot {
+                    *self.table.get_mut(free).unwrap() = Some(Slot {
                         sa,
                         outbound: VecDeque::new(),
                     });
@@ -142,8 +139,8 @@ impl<const MCTS: usize> DiagnosticEntity for MockEntity<MCTS> {
                 Tester::Sends(sa, pdu) => {
                     let connection = Self::id(self.slot_of(sa).unwrap());
                     let fits = pdu.len().min(buf.len());
-                    let delivered = &mut buf[..fits];
-                    delivered.copy_from_slice(&pdu[..fits]);
+                    let delivered = buf.get_mut(..fits).unwrap();
+                    delivered.copy_from_slice(pdu.get(..fits).unwrap());
                     let (ta, ta_type) = (ENTITY, ENTITY.default_ta_type());
                     return Ok(if fits == pdu.len() {
                         EntityEvent::Indication {
@@ -166,7 +163,7 @@ impl<const MCTS: usize> DiagnosticEntity for MockEntity<MCTS> {
                 }
                 Tester::Leaves(sa) => {
                     let index = self.slot_of(sa).unwrap();
-                    self.table[index] = None;
+                    *self.table.get_mut(index).unwrap() = None;
                     return Ok(EntityEvent::Closed {
                         connection: Self::id(index),
                     });
@@ -181,7 +178,7 @@ impl<const MCTS: usize> DiagnosticEntity for MockEntity<MCTS> {
         if self.table.get(index).is_some_and(Option::is_some) {
             self.flush(index);
             self.wire.push(Wire::Close(connection));
-            self.table[index] = None;
+            *self.table.get_mut(index).unwrap() = None;
         }
         Ok(())
     }

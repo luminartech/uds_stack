@@ -2,14 +2,7 @@
 //! `Tester` and plain TCP clients.
 
 // Test code; see `golden_vectors.rs` for why the workspace lint standard is relaxed here.
-#![allow(
-    clippy::unwrap_used,
-    clippy::expect_used,
-    clippy::panic,
-    clippy::indexing_slicing,
-    clippy::arithmetic_side_effects,
-    clippy::large_futures
-)]
+#![expect(clippy::unwrap_used, clippy::panic)]
 
 use std::net::SocketAddr;
 
@@ -52,7 +45,9 @@ async fn echo<E: DiagnosticEntity>(entity: &mut E, answers: usize) {
         match entity.next_event(&mut buf, None).await.unwrap() {
             EntityEvent::Indication { sa, pdu, .. } => {
                 let mut answer = pdu.to_vec();
-                answer[0] |= 0x40;
+                if let Some(sid) = answer.first_mut() {
+                    *sid |= 0x40;
+                }
                 entity
                     .request(ENTITY, sa, TaType::Physical, &answer)
                     .await
@@ -60,7 +55,7 @@ async fn echo<E: DiagnosticEntity>(entity: &mut E, answers: usize) {
             }
             EntityEvent::Confirm { result, .. } => {
                 assert_eq!(result, DoIpResult::Ok);
-                confirmed += 1;
+                confirmed = confirmed.checked_add(1).unwrap();
             }
             other => panic!("unexpected {other:?}"),
         }
@@ -76,7 +71,7 @@ async fn a_tester_is_answered_over_loopback() {
     let mut entity =
         Entity::<_, 1, 4096>::new(&acceptor, address(), EntityConfig::default());
 
-    let tester = async {
+    let tester = Box::pin(async {
         let mut tester =
             Tester::<_, 4108>::connect(&stack, local, TesterAddress::new(TESTER).unwrap())
                 .await
@@ -95,10 +90,10 @@ async fn a_tester_is_answered_over_loopback() {
                 other => panic!("unexpected {other:?}"),
             }
         }
-    };
+    });
 
     let ((), answer) = timeout(PATIENCE, async {
-        tokio::join!(echo(&mut entity, 1), tester)
+        tokio::join!(Box::pin(echo(&mut entity, 1)), tester)
     })
     .await
     .unwrap();

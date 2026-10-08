@@ -5,13 +5,7 @@
 //! the bytes on the wire must be the same.
 
 // Test code; see `golden_vectors.rs` for why the workspace lint standard is relaxed here.
-#![allow(
-    clippy::unwrap_used,
-    clippy::expect_used,
-    clippy::panic,
-    clippy::indexing_slicing,
-    clippy::arithmetic_side_effects
-)]
+#![expect(clippy::unwrap_used)]
 
 mod support;
 
@@ -71,8 +65,9 @@ fn drain(entity: &mut TestEntity<'_>, drive: Drive, seen: &mut Vec<String>) {
         let future = pin!(entity.next_event(&mut buf, None));
         let event = match drive {
             Drive::Dropped if polls <= MOST_POLLS => {
-                polls += 1;
-                match poll_times(future, polls - 1) {
+                let budget = polls;
+                polls = polls.checked_add(1).unwrap();
+                match poll_times(future, budget) {
                     Some(event) => event,
                     None => continue,
                 }
@@ -254,12 +249,13 @@ fn no_connection_is_lost_to_a_dropped_accept() {
     let _clock = clock();
     let stack = MockStack::new(1);
     let mut entity = new_entity(&stack);
-    let peers: Vec<_> = (0..2).map(|_| stack.dial()).collect();
+    let peers = [stack.dial(), stack.dial()];
     let mut seen = Vec::new();
 
     drain(&mut entity, Drive::Dropped, &mut seen);
-    peers[0].send(&activation_from(TESTER));
-    peers[1].send(&activation_from(LogicalAddress(0x0E01)));
+    let [first, second] = &peers;
+    first.send(&activation_from(TESTER));
+    second.send(&activation_from(LogicalAddress(0x0E01)));
     drain(&mut entity, Drive::Dropped, &mut seen);
 
     let answered = peers

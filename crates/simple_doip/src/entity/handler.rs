@@ -9,6 +9,7 @@ use crate::messages::{
     DiagnosticNackCode, Header, Message, MessageError, NackCode, Payload, PayloadType,
     ProtocolVersion,
 };
+use crate::stream::copy;
 use crate::stream::rx::{Next, RxBuffer};
 use crate::stream::tx::TxQueue;
 use crate::{LogicalAddress, TaType};
@@ -246,12 +247,4 @@ fn header_nack(version: ProtocolVersion, code: NackCode) -> Message<'static> {
         header: Header::new(version, PayloadType::NegativeAcknowledge, 1),
         payload: Payload::DoIPNack(code),
     }
-}
-
-fn copy(data: &[u8], buf: &mut [u8]) -> usize {
-    let copied = data.len().min(buf.len());
-    if let (Some(to), Some(from)) = (buf.get_mut(..copied), data.get(..copied)) {
-        to.copy_from_slice(from);
-    }
-    copied
 }

@@ -327,8 +327,8 @@ impl ConnectionId {
     /// The connection's slot in the entity's connection table, which is below
     /// [`DiagnosticEntity::CONNECTIONS`].
     #[must_use]
-    pub const fn index(self) -> usize {
-        self.0 as usize
+    pub fn index(self) -> usize {
+        usize::from(self.0)
     }
 }
 

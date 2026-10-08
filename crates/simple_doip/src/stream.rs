@@ -17,6 +17,15 @@ pub(crate) fn millis(instant: Instant) -> u32 {
     u32::from_le_bytes([b0, b1, b2, b3])
 }
 
+/// Copies as much of `data` into `buf` as fits, returning how much that was.
+pub(crate) fn copy(data: &[u8], buf: &mut [u8]) -> usize {
+    let copied = data.len().min(buf.len());
+    if let (Some(to), Some(from)) = (buf.get_mut(..copied), data.get(..copied)) {
+        to.copy_from_slice(from);
+    }
+    copied
+}
+
 /// Contents too long for the buffer they were to move into.
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) struct DoesNotFit;

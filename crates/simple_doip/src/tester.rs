@@ -27,7 +27,7 @@ mod confirm;
 mod tx;
 
 use crate::stream::rx::{Next, RxBuffer};
-use crate::stream::{after, caller_deadline, millis};
+use crate::stream::{after, caller_deadline, copy, millis};
 use tx::{Control, Outgoing, TooLarge};
 
 /// How long the tester waits before repeating a routing activation request the entity
@@ -948,7 +948,7 @@ impl Delivered {
                 copied,
                 length,
             } => {
-                let pdu = &buf[..copied];
+                let pdu: &[u8] = buf.get(..copied).unwrap_or_default();
                 let ta_type = ta.default_ta_type();
                 if copied == length {
                     ConnectionEvent::Indication {
@@ -972,7 +972,7 @@ impl Delivered {
                 copied,
                 length,
             } => {
-                let data = &buf[..copied];
+                let data: &[u8] = buf.get(..copied).unwrap_or_default();
                 if copied == length {
                     ConnectionEvent::Unmodelled { payload_type, data }
                 } else {
@@ -999,7 +999,7 @@ fn spoken(header: &Header) -> bool {
 /// Whether `header`'s payload length is one ISO 13400-2:2019 allows its payload type
 /// (Tables 18, 21, 23, 25, 27 and 48).
 fn sized_for_its_type(header: &Header) -> bool {
-    let length = header.payload_length as usize;
+    let length = usize::try_from(header.payload_length).unwrap_or(usize::MAX);
     match header.payload_type {
         PayloadType::NegativeAcknowledge => length == 1,
         PayloadType::RoutingActivationResponse => {
@@ -1048,13 +1048,12 @@ fn react(
             if ta != sa && TesterAddress::new(ta).is_ok() {
                 return Reaction::Ignore;
             }
-            let copied = message.user_data.len().min(buf.len());
-            buf[..copied].copy_from_slice(&message.user_data[..copied]);
             Reaction::Deliver(Delivered::Indication {
                 sa: message.source_address,
                 ta,
-                copied,
-                length: (header.payload_length as usize)
+                copied: copy(message.user_data, buf),
+                length: usize::try_from(header.payload_length)
+                    .unwrap_or(usize::MAX)
                     .saturating_sub(DiagnosticMessage::ADDRESSES_SIZE),
             })
         }
@@ -1109,15 +1108,11 @@ fn react(
             PayloadType::Reserved(payload_type)
             | PayloadType::ReservedVehicleManufacturer(payload_type),
             _,
-        ) => {
-            let copied = payload.len().min(buf.len());
-            buf[..copied].copy_from_slice(&payload[..copied]);
-            Reaction::Deliver(Delivered::Unmodelled {
-                payload_type,
-                copied,
-                length: header.payload_length as usize,
-            })
-        }
+        ) => Reaction::Deliver(Delivered::Unmodelled {
+            payload_type,
+            copied: copy(payload, buf),
+            length: usize::try_from(header.payload_length).unwrap_or(usize::MAX),
+        }),
         _ => Reaction::Ignore,
     }
 }

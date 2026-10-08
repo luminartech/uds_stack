@@ -3,7 +3,7 @@
 //
 // The defensive three, `indexing_slicing`, `arithmetic_side_effects` and
 // `as_conversions`, are allowed on each module below that predates the standard, and on
-// no other: 40 sites in production code as of this writing.
+// no other: 29 sites in production code as of this writing.
 // Panic freedom holds in this crate's production code and is enforced there; its
 // test modules predate the standard and use `unwrap` as test code ordinarily does
 // (49 sites). Scoped to `test`, so the production build stays strict.
@@ -122,11 +122,6 @@ pub mod logical_address;
     clippy::as_conversions
 )]
 pub mod messages;
-#[allow(
-    clippy::indexing_slicing,
-    clippy::arithmetic_side_effects,
-    clippy::as_conversions
-)]
 pub mod service;
 pub mod wire;
 pub use logical_address::{LogicalAddress, TaType};
@@ -172,11 +167,6 @@ pub mod server;
 #[cfg(feature = "connection")]
 mod stream;
 #[cfg(feature = "connection")]
-#[allow(
-    clippy::indexing_slicing,
-    clippy::arithmetic_side_effects,
-    clippy::as_conversions
-)]
 pub mod tester;
 
 use core::time::Duration;

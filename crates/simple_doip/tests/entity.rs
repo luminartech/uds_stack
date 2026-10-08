@@ -4,13 +4,7 @@
 //! `DiagnosticEntity` contract.
 
 // Test code; see `golden_vectors.rs` for why the workspace lint standard is relaxed here.
-#![allow(
-    clippy::unwrap_used,
-    clippy::expect_used,
-    clippy::panic,
-    clippy::indexing_slicing,
-    clippy::arithmetic_side_effects
-)]
+#![expect(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 mod support;
 
@@ -136,6 +130,12 @@ fn events<E: DiagnosticEntity>(entity: &mut E) -> Vec<Ev> {
 fn activation_from(sa: LogicalAddress, activation_type: u8) -> Vec<u8> {
     let [high, low] = sa.0.to_be_bytes();
     raw(0x0005, &[high, low, activation_type, 0, 0, 0, 0])
+}
+
+/// `frame` with the protocol version of ISO 13400-2:2012.
+fn in_2012(mut frame: Vec<u8>) -> Vec<u8> {
+    frame.splice(..2, [0x02, 0xFD]);
+    frame
 }
 
 fn ms(millis: u64) -> Duration {
@@ -539,15 +539,14 @@ fn a_2012_tester_is_answered_in_2012() {
     let stack = MockStack::new(4096);
     let mut entity = OneSocket::new(&stack, address(), two_testers());
     let peer = stack.dial();
-    let mut request = activation_from(TESTER, 0);
-    request[..2].copy_from_slice(&[0x02, 0xFD]);
-    peer.send(&request);
+    peer.send(&in_2012(activation_from(TESTER, 0)));
 
     assert_eq!(events(&mut entity), []);
 
-    let mut expected = activation_response_for(TESTER, ACTIVATED);
-    expected[..2].copy_from_slice(&[0x02, 0xFD]);
-    assert_eq!(peer.take_written(), expected);
+    assert_eq!(
+        peer.take_written(),
+        in_2012(activation_response_for(TESTER, ACTIVATED))
+    );
 }
 
 /// A header NACK carries the protocol version of the frame it refuses, as every other
@@ -558,15 +557,11 @@ fn a_header_nack_carries_the_refused_frames_version() {
     let stack = MockStack::new(4096);
     let mut entity = OneSocket::new(&stack, address(), two_testers());
     let peer = stack.dial();
-    let mut frame = raw(0x4001, &[]);
-    frame[..2].copy_from_slice(&[0x02, 0xFD]);
-    peer.send(&frame);
+    peer.send(&in_2012(raw(0x4001, &[])));
 
     assert_eq!(events(&mut entity), []);
 
-    let mut expected = header_nack(0x01);
-    expected[..2].copy_from_slice(&[0x02, 0xFD]);
-    assert_eq!(peer.take_written(), expected);
+    assert_eq!(peer.take_written(), in_2012(header_nack(0x01)));
 }
 
 /// REQ 7.DoIP-045, Tables 46 and 28: a routing activation request is 7 or 11 bytes
