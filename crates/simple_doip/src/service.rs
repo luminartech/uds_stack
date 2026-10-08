@@ -476,12 +476,18 @@ pub trait DiagnosticEntity {
     /// * `ta_type` - the target's addressing model.
     /// * `pdu` - the PDU to send.
     ///
+    /// A request is refused, rather than accepted and confirmed, in three cases only:
+    /// its `pdu` is empty, which a diagnostic message cannot carry (ISO 13400-2:2019
+    /// Table 21); it is longer than [`Self::MAX_PDU`]; or the entity has no room left to
+    /// remember another request until it is confirmed. The first two are the caller's
+    /// to avoid. The third is not the end of any connection: the caller that needs
+    /// every request confirmed, as ISO 13400-2:2019 8.3.1 has it, confirms a refused
+    /// one failed itself.
+    ///
     /// # Errors
     ///
-    /// [`Self::Error`] where the request is not accepted; no confirm follows it. An
-    /// empty `pdu`, which no diagnostic message can carry, and one longer than
-    /// [`Self::MAX_PDU`] are not, whatever `sa` is. A target no connection registered is
-    /// not an error.
+    /// [`Self::Error`] where the request is refused, as above, whatever `sa` is; no
+    /// confirm follows it. A target no connection registered is not an error.
     fn request(
         &mut self,
         sa: LogicalAddress,
