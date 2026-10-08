@@ -53,6 +53,8 @@ pub enum Wire {
 struct Slot {
     sa: LogicalAddress,
     outbound: VecDeque<(TaType, Vec<u8>)>,
+    /// Whether an event has named the connection, which a `Closed` for it requires.
+    named: bool,
 }
 
 #[derive(Debug)]
@@ -221,14 +223,17 @@ impl<const CONNECTIONS: usize> DiagnosticEntity for MockEntity<CONNECTIONS> {
                     self.table[free] = Some(Slot {
                         sa,
                         outbound: VecDeque::new(),
+                        named: false,
                     });
                 }
                 Tester::Sends(sa, pdu) => {
-                    let connection = Self::id(self.slot_of(sa).unwrap());
+                    let index = self.slot_of(sa).unwrap();
+                    let connection = Self::id(index);
                     if self.request_limit.is_some_and(|limit| pdu.len() > limit) {
                         self.wire.push(Wire::TooLarge(connection));
                         continue;
                     }
+                    self.table[index].as_mut().unwrap().named = true;
                     let fits = pdu.len().min(buf.len());
                     let delivered = &mut buf[..fits];
                     delivered.copy_from_slice(&pdu[..fits]);
@@ -253,7 +258,9 @@ impl<const CONNECTIONS: usize> DiagnosticEntity for MockEntity<CONNECTIONS> {
                     });
                 }
                 Tester::SendsOutsideBuffer(sa) => {
-                    let connection = Self::id(self.slot_of(sa).unwrap());
+                    let index = self.slot_of(sa).unwrap();
+                    self.table[index].as_mut().unwrap().named = true;
+                    let connection = Self::id(index);
                     return Ok(EntityEvent::Indication {
                         connection,
                         sa,
@@ -264,10 +271,11 @@ impl<const CONNECTIONS: usize> DiagnosticEntity for MockEntity<CONNECTIONS> {
                 }
                 Tester::Leaves(sa) => {
                     let index = self.slot_of(sa).unwrap();
-                    self.table[index] = None;
-                    return Ok(EntityEvent::Closed {
-                        connection: Self::id(index),
-                    });
+                    if self.table[index].take().unwrap().named {
+                        return Ok(EntityEvent::Closed {
+                            connection: Self::id(index),
+                        });
+                    }
                 }
             }
         }

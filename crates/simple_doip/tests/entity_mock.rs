@@ -30,6 +30,8 @@ enum Wire {
 struct Slot {
     sa: LogicalAddress,
     outbound: VecDeque<(TaType, Vec<u8>)>,
+    /// Whether an event has named the connection, which a `Closed` for it requires.
+    named: bool,
 }
 
 #[derive(Debug)]
@@ -141,10 +143,13 @@ impl<const MCTS: usize> DiagnosticEntity for MockEntity<MCTS> {
                     *self.table.get_mut(free).unwrap() = Some(Slot {
                         sa,
                         outbound: VecDeque::new(),
+                        named: false,
                     });
                 }
                 Tester::Sends(sa, pdu) => {
-                    let connection = Self::id(self.slot_of(sa).unwrap());
+                    let index = self.slot_of(sa).unwrap();
+                    self.table.get_mut(index).unwrap().as_mut().unwrap().named = true;
+                    let connection = Self::id(index);
                     let fits = pdu.len().min(buf.len());
                     let delivered = buf.get_mut(..fits).unwrap();
                     delivered.copy_from_slice(pdu.get(..fits).unwrap());
@@ -170,10 +175,12 @@ impl<const MCTS: usize> DiagnosticEntity for MockEntity<MCTS> {
                 }
                 Tester::Leaves(sa) => {
                     let index = self.slot_of(sa).unwrap();
-                    *self.table.get_mut(index).unwrap() = None;
-                    return Ok(EntityEvent::Closed {
-                        connection: Self::id(index),
-                    });
+                    let left = self.table.get_mut(index).unwrap().take().unwrap();
+                    if left.named {
+                        return Ok(EntityEvent::Closed {
+                            connection: Self::id(index),
+                        });
+                    }
                 }
             }
         }
@@ -256,12 +263,15 @@ async fn a_request_reaches_the_connection_its_target_activated_routing_on() {
 /// obligation covers a request no connection carried.
 #[tokio::test]
 async fn a_request_to_a_tester_that_has_left_is_confirmed_no_socket() {
-    let mut entity = MockEntity::<1>::new([Tester::Connects(TESTER)]);
+    let mut entity = MockEntity::<1>::new([
+        Tester::Connects(TESTER),
+        Tester::Sends(TESTER, vec![0x3E, 0x00]),
+    ]);
     let mut buf = [0u8; 16];
-    assert_eq!(
+    assert!(matches!(
         entity.next_event(&mut buf, Some(0)).await.unwrap(),
-        EntityEvent::Deadline
-    );
+        EntityEvent::Indication { .. }
+    ));
     entity.script.push_back(Tester::Leaves(TESTER));
     assert_eq!(
         entity.next_event(&mut buf, Some(0)).await.unwrap(),
@@ -285,6 +295,19 @@ async fn a_request_to_a_tester_that_has_left_is_confirmed_no_socket() {
         }]
     );
     assert_eq!(entity.wire, []);
+}
+
+/// `EntityEvent::Closed` is reported only for a connection an earlier event named: a
+/// tester that leaves before sending anything is not reported at all.
+#[tokio::test]
+async fn a_connection_no_event_named_closes_unreported() {
+    let mut entity =
+        MockEntity::<1>::new([Tester::Connects(TESTER), Tester::Leaves(TESTER)]);
+    let mut buf = [0u8; 16];
+    assert_eq!(
+        entity.next_event(&mut buf, Some(0)).await.unwrap(),
+        EntityEvent::Deadline
+    );
 }
 
 /// The close a server makes after a positive `DiagnosticSessionControl` response
