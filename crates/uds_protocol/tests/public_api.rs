@@ -53,9 +53,9 @@ fn a_tester_can_still_request_an_unmodeled_read_dtc_information_sub_function() {
 #[test]
 fn a_session_layer_can_tell_not_suppressed_from_cannot_say() {
     // The distinction this method exists to make, checked from outside the crate. ISO
-    // 14229-2 clause 10.3 gates tP3_Client_Phys on the SPRMIB, and whether a response is
-    // expected decides whether tP_Client starts at all -- so a caller has to be able to
-    // reach all three answers, not just the two a `bool` could express.
+    // 14229-2:2021 clause 10.3 gates tP3_Client_Phys on the SPRMIB, and whether a
+    // response is expected decides whether tP_Client starts at all -- so a caller has to
+    // be able to reach all three answers, not just the two a `bool` could express.
     use uds_protocol::{Decode, Request, UdsServiceType};
 
     // The fact behind all of the above is reachable on its own, for a caller building a
