@@ -713,3 +713,68 @@ fn a_functional_keep_alive_due_mid_exchange_waits_for_the_answer() {
     assert_eq!(s.sent(2).map(|x| x.at), Some(2_050));
     assert!(s.finished());
 }
+
+const THIRD_ECU: Address = Address(0x0012);
+
+/// ``UDSS_LLR_0125`` — with every channel slot taken, a read to a third server withdraws
+/// an idle channel to make room, never one whose server is in a non-default session: that
+/// server's keep-alive still comes when it falls due.
+#[test]
+fn a_full_client_withdraws_an_idle_channel_to_make_room() {
+    let mut t = patient(&[
+        ENTER[0],
+        ENTER[1],
+        Step::Conf(to(OTHER_ECU), SResult::Ok),
+        Step::Ind(from(OTHER_ECU), SPEED),
+        Step::Conf(to(THIRD_ECU), SResult::Ok),
+        Step::Ind(from(THIRD_ECU), SPEED),
+        Step::At(2_010),
+        Step::Conf(to(ECU), SResult::Ok),
+        Step::At(2_100),
+    ]);
+    let entered = block_on(
+        t.diagnostic_session_control(ECU, DiagnosticSessionType::ExtendedDiagnosticSession),
+    );
+    assert!(matches!(entered, Ok(Response::Positive(_))), "{entered:?}");
+    assert_eq!(
+        speed(block_on(
+            t.read_data_by_identifier(OTHER_ECU, &[Did::Speed])
+        )),
+        0x40
+    );
+    assert_eq!(
+        speed(block_on(
+            t.read_data_by_identifier(THIRD_ECU, &[Did::Speed])
+        )),
+        0x40
+    );
+    assert_eq!(block_on(t.idle_until(Timestamp(2_100))), Ok(()));
+    let s = t.transport();
+    assert_eq!(s.addressed(3), (Some(to(ECU)), KEEP_ALIVE));
+    assert_eq!(s.sent(3).map(|x| x.at), Some(2_010));
+    assert!(s.finished());
+}
+
+/// ``UDSS_LLR_0185`` — with every slot held by a server in a non-default session, none
+/// is idle, so a read to a third server is refused before anything is sent.
+#[test]
+fn a_full_client_with_no_idle_channel_refuses_a_new_server() {
+    let mut t = patient(&[
+        ENTER[0],
+        ENTER[1],
+        Step::Conf(to(OTHER_ECU), SResult::Ok),
+        Step::Ind(from(OTHER_ECU), EXTENDED),
+    ]);
+    for ecu in [ECU, OTHER_ECU] {
+        let entered = block_on(t.diagnostic_session_control(
+            ecu,
+            DiagnosticSessionType::ExtendedDiagnosticSession,
+        ));
+        assert!(matches!(entered, Ok(Response::Positive(_))), "{entered:?}");
+    }
+    assert_eq!(
+        block_on(t.read_data_by_identifier(THIRD_ECU, &[Did::Speed])).err(),
+        Some(ClientError::NoChannel)
+    );
+    assert_eq!(t.transport().sent_count, 2);
+}
