@@ -12,12 +12,12 @@
 
 use crate::error::Error;
 use crate::mapping::{
-    Inbound, PduOutsideBuffer, classify, from_logical, target_of, to_doip_ta_type,
-    to_logical,
+    Inbound, PduOutsideBuffer, classify, from_logical, s_result, target_of,
+    to_doip_ta_type, to_logical,
 };
 use crate::profile::{ConnectionAction, after_sending};
 use simple_doip::LogicalAddress;
-use simple_doip::service::{ConnectionId, DiagnosticEntity};
+use simple_doip::service::{ConnectionId, DiagnosticEntity, DoIpResult};
 use uds_services::{AfterSend, TransportEvent, UdsTransport};
 use uds_session::{Ai, Reloads, SResult, Timestamp};
 
@@ -88,6 +88,23 @@ pub struct DoIpTransport<E, const CONNECTIONS: usize> {
     reloads: Reloads,
     testers: [Option<Tester>; CONNECTIONS],
     closing: Option<Closing>,
+    /// Requests the entity accepted and has not yet confirmed.
+    unconfirmed: usize,
+    /// Refused requests whose failed confirmation is not yet reported, oldest first.
+    refused: [Option<Refused>; REFUSALS],
+}
+
+/// How many refused requests a [`DoIpTransport`] holds until it reports their failed
+/// confirmations.
+const REFUSALS: usize = 4;
+
+/// A request the entity refused, and how many accepted before it are still to be
+/// confirmed: its failed confirmation follows theirs, so that the order of a tester's
+/// confirmations is the order of its requests.
+#[derive(Debug, Clone, Copy)]
+struct Refused {
+    confirmation: Confirmation,
+    behind: usize,
 }
 
 /// A tester with routing active on `connection`, and what its connection owes.
@@ -130,6 +147,8 @@ impl<E, const CONNECTIONS: usize> core::fmt::Debug for DoIpTransport<E, CONNECTI
             .field("reloads", &self.reloads)
             .field("testers", &self.testers)
             .field("closing", &self.closing)
+            .field("unconfirmed", &self.unconfirmed)
+            .field("refused", &self.refused)
             .finish()
     }
 }
@@ -209,6 +228,8 @@ impl<E: DiagnosticEntity, const CONNECTIONS: usize> DoIpTransport<E, CONNECTIONS
             reloads,
             testers: [None; CONNECTIONS],
             closing: None,
+            unconfirmed: 0,
+            refused: [None; REFUSALS],
         }
     }
 }
@@ -304,7 +325,40 @@ impl<E: DiagnosticEntity, const CONNECTIONS: usize> DoIpTransport<E, CONNECTIONS
         closing.confirmation.event()
     }
 
+    /// Holds the failed confirmation of a request the entity refused, behind those of
+    /// the requests it accepted before it; `Err` gives `error` back where
+    /// [`REFUSALS`] are already held.
+    fn refuse(&mut self, ai: Ai, error: E::Error) -> Result<(), E::Error> {
+        let Some(free) = self.refused.iter_mut().find(|held| held.is_none()) else {
+            return Err(error);
+        };
+        *free = Some(Refused {
+            confirmation: Confirmation {
+                ai,
+                result: s_result(DoIpResult::Error),
+            },
+            behind: self.unconfirmed,
+        });
+        Ok(())
+    }
+
+    /// The oldest refusal's failed confirmation, once nothing accepted before it is
+    /// still to be confirmed.
+    fn take_refusal(&mut self) -> Option<TransportEvent<'static>> {
+        let oldest = self.refused.first_mut()?;
+        if oldest.is_none_or(|refused| refused.behind > 0) {
+            return None;
+        }
+        let refused = oldest.take()?;
+        self.refused.rotate_left(1);
+        Some(refused.confirmation.event())
+    }
+
     async fn confirm(&mut self, ai: Ai, result: SResult) -> TransportEvent<'static> {
+        self.unconfirmed = self.unconfirmed.saturating_sub(1);
+        for refused in self.refused.iter_mut().flatten() {
+            refused.behind = refused.behind.saturating_sub(1);
+        }
         let target = to_logical(ai.ta);
         let ai = self
             .tester_mut(target)
@@ -343,11 +397,18 @@ impl<E: DiagnosticEntity, const CONNECTIONS: usize> UdsTransport
     /// [`DoIpTransport`]. The [`TransportEvent::DataConf`] that follows carries `ai`
     /// as given, whatever addressing the entity reports it with.
     ///
+    /// A request the entity refuses, which [`DiagnosticEntity::request`] confirms
+    /// never, is accepted here all the same and confirmed failed, as `DoIP_ERROR`,
+    /// by a later [`UdsTransport::next_event`], after every request accepted before
+    /// it: ISO 13400-2:2019 8.3.1 confirms every request, and a refusal is not the
+    /// end of the connection. It arms no close.
+    ///
     /// # Errors
     ///
     /// [`Error::Mapping`] if the addressing cannot be carried: the two remote
     /// message types have no `DoIP` representation. [`Error::Entity`] if the
-    /// entity does not accept the request.
+    /// entity refuses the request while this transport already holds as many
+    /// refusals as it can, none of them yet reported.
     async fn t_data_req(
         &mut self,
         ai: Ai,
@@ -355,10 +416,14 @@ impl<E: DiagnosticEntity, const CONNECTIONS: usize> UdsTransport
         after: AfterSend,
     ) -> Result<(), Self::Error> {
         let target = target_of(ai)?;
-        self.entity
+        let accepted = self
+            .entity
             .request(to_logical(ai.sa), target, to_doip_ta_type(ai.ta_type), data)
-            .await
-            .map_err(Error::Entity)?;
+            .await;
+        if let Err(refused) = accepted {
+            return self.refuse(ai, refused).map_err(Error::Entity);
+        }
+        self.unconfirmed = self.unconfirmed.saturating_add(1);
         self.record_send(target, data, after);
         if let Some(tester) = self.tester_mut(target) {
             tester.requested = Some(ai);
@@ -394,6 +459,9 @@ impl<E: DiagnosticEntity, const CONNECTIONS: usize> UdsTransport
     ) -> Result<TransportEvent<'b>, Self::Error> {
         if let Some(closing) = self.closing {
             return Ok(self.close(closing).await);
+        }
+        if let Some(refusal) = self.take_refusal() {
+            return Ok(refusal);
         }
         let buffer_start = buffer.as_ptr().addr();
         let (connection, ai, at, declared) = loop {

@@ -349,6 +349,71 @@ fn a_positive_response_that_fails_to_send_closes_nothing() {
     assert_eq!(t.entity().wire, []);
 }
 
+/// ISO 13400-2:2019 8.3.1 confirms every request, so a request the entity refuses is
+/// confirmed failed rather than ending the server: nothing is sent, and a refused reset
+/// response closes nothing.
+#[test]
+fn a_refused_request_is_confirmed_failed() {
+    let mut t = indicated_by(&[0x11, 0x01], |entity| {
+        entity.refuse.push_back(true);
+    });
+    respond(&mut t, &[0x51, 0x01]);
+
+    assert_eq!(
+        next(&mut t),
+        TransportEvent::DataConf {
+            ai: response_ai(),
+            result: SResult::Transport(TransportError(11)),
+        }
+    );
+    assert_eq!(t.entity().wire, []);
+    assert_nothing_follows(&mut t);
+}
+
+/// `UDSS_LLR_0060` matches a confirmation to its request by order, so a refusal is
+/// confirmed after the requests accepted before it, not ahead of them.
+#[test]
+fn a_refusal_is_confirmed_after_the_requests_accepted_before_it() {
+    let mut t = indicated_by(&[0x22, 0xF1, 0x90], |entity| {
+        entity.refuse.extend([false, true]);
+    });
+    respond(&mut t, &[0x7F, 0x22, 0x78]);
+    respond(&mut t, &[0x62, 0xF1, 0x90, 0x01]);
+
+    assert_eq!(
+        next(&mut t),
+        TransportEvent::DataConf {
+            ai: response_ai(),
+            result: SResult::Ok,
+        }
+    );
+    assert_eq!(
+        next(&mut t),
+        TransportEvent::DataConf {
+            ai: response_ai(),
+            result: SResult::Transport(TransportError(11)),
+        }
+    );
+    assert_eq!(
+        t.entity().wire,
+        [Wire::Data(CONNECTION, vec![0x7F, 0x22, 0x78])]
+    );
+}
+
+/// A refusal beyond those the transport can hold unreported is the entity's error.
+#[test]
+fn a_refusal_beyond_those_held_is_an_error() {
+    let mut t = indicated_by(&[0x3E, 0x00], |entity| {
+        entity.refuse.extend([true; 5]);
+    });
+    for _ in 0..4 {
+        respond(&mut t, &[0x7E, 0x00]);
+    }
+    let error = block_on(t.t_data_req(response_ai(), &[0x7E, 0x00], AfterSend::Continue))
+        .unwrap_err();
+    assert!(matches!(error, Error::Entity(Fault::Refused)), "{error:?}");
+}
+
 /// Dropped while the prescribed close is still in progress — as the driver drops the
 /// `next_event` that loses its race — the transport loses neither the close nor the
 /// confirmation it holds back: the next call finishes both, once.

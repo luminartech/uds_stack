@@ -37,6 +37,8 @@ pub enum Fault {
     Exhausted,
     /// A `close` the test asked to fail.
     CloseFailed,
+    /// A `request` the test asked the entity to refuse.
+    Refused,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -70,6 +72,9 @@ pub struct MockEntity<const CONNECTIONS: usize> {
     pub confirms_last: bool,
     /// The entity's clock, in milliseconds.
     pub clock: u32,
+    /// Whether each `request` in turn is refused, as a full queue refuses it; once
+    /// spent, every request is accepted.
+    pub refuse: VecDeque<bool>,
 }
 
 impl<const CONNECTIONS: usize> MockEntity<CONNECTIONS> {
@@ -85,6 +90,7 @@ impl<const CONNECTIONS: usize> MockEntity<CONNECTIONS> {
             fail_next_close: false,
             confirms_last: false,
             clock: 0,
+            refuse: VecDeque::new(),
         }
     }
 
@@ -157,6 +163,9 @@ impl<const CONNECTIONS: usize> DiagnosticEntity for MockEntity<CONNECTIONS> {
         ta_type: TaType,
         pdu: &[u8],
     ) -> Result<(), Self::Error> {
+        if self.refuse.pop_front().unwrap_or(false) {
+            return Err(Fault::Refused);
+        }
         self.requested.push(pdu.to_vec());
         if sa != ENTITY {
             if let Some(index) = self.slot_of(ta) {

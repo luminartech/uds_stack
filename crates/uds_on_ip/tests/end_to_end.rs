@@ -203,6 +203,29 @@ fn a_physical_read_is_answered() {
     );
 }
 
+/// A response the entity refuses is confirmed failed (ISO 13400-2:2019 8.3.1), and
+/// the server carries on: the next request is answered.
+#[test]
+fn a_refused_response_does_not_stop_the_server() {
+    let mut entity = MockEntity::new([
+        Tester::Connects(TESTER),
+        Tester::Sends(TESTER, vec![0x22, 0xF4, 0x0D]),
+        Tester::Sends(TESTER, vec![0x22, 0xF4, 0x0D]),
+    ]);
+    entity.refuse.push_back(true);
+    let mut s = EcuServer::new(
+        Ecu::default(),
+        DoIpTransport::new(entity, bench_reloads()),
+        ECU,
+        PARAMS,
+    );
+    run(&mut s);
+    assert_eq!(
+        wire(&s),
+        [Wire::Data(CONNECTION, vec![0x62, 0xF4, 0x0D, 0x40])]
+    );
+}
+
 /// A request longer than the server's receive buffer reaches the driver as
 /// `DataTooLong`, never as a request made of its first bytes, and is refused
 /// `incorrectMessageLengthOrInvalidFormat`.
