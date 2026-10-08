@@ -203,7 +203,11 @@ stateDiagram-v2
   target are confirmed in the order they were made. A response queues apart from the
   entity's own frames (acknowledgements, NACKs, routing activation responses and alive
   check requests), which go first between frames, so a response of `MAX_PDU` fits
-  however many of them are waiting. A request is refused, with no confirm, only for an
+  however many of them are waiting. A response queued while nothing is being written
+  and no other response waits takes the entity's frames queued ahead of it along, room
+  permitting, so an acknowledgement and the response to its request leave in one
+  write: neither backend disables Nagle's algorithm, and a second small write would
+  wait about 40 ms on the tester's delayed acknowledgement of the first. A request is refused, with no confirm, only for an
   empty PDU, one over `MAX_PDU`, or a full confirm queue; `uds_on_ip` confirms the
   last failed itself.
 - **A deadline is judged after the input that beat it.** Before acting on a passed
@@ -398,7 +402,7 @@ the seam described in section 3 usable.
 | `src/entity/mod.rs` | `Entity`: accepting, the socket handler and its arbitration, the timers of Table 12, `DiagnosticEntity` |
 | `src/entity/handler.rs` | Figure 16's generic header handler and Figure 17's diagnostic message handler |
 | `src/entity/table.rs` | The connection table: each slot's socket, buffers and phase, and the reserve |
-| `src/entity/outbox.rs` | Each slot's two transmit queues, the entity's own frames and the responses, and which is written next, a frame at a time |
+| `src/entity/outbox.rs` | Each slot's two transmit queues, the entity's own frames and the responses, and what is written next: a frame part's rest, or one queue's whole frames |
 | `src/entity/io.rs` | What each slot waits on from its socket: a write and a read at once on its split halves, or its close, applied in the poll that completes it |
 
 ### std / async layers

@@ -132,6 +132,36 @@ fn a_request_is_answered() {
     });
 }
 
+/// An acknowledgement and the response to its request leave the entity in one write.
+/// Neither backend disables Nagle's algorithm, so a response in a second write waits for
+/// the tester to acknowledge the first, which a delayed acknowledgement holds back about
+/// 40 ms, most of the 50 ms `P2_server` (ISO 14229-2:2013 Table 4). Twenty round trips
+/// take nothing like that.
+#[test]
+fn a_response_does_not_wait_on_the_tester_acknowledging_its_acknowledgement() {
+    const ROUND_TRIPS: u32 = 20;
+    on_loopback(|loopback| async move {
+        let mut server = server(&loopback);
+        serve_until(&mut server, async {
+            let mut tester = loopback.tester().await.expect("activated");
+            let started = std::time::Instant::now();
+            for _ in 0..ROUND_TRIPS {
+                assert_eq!(
+                    ask(&mut tester, &[0x3E, 0x00]).await,
+                    answered(&[0x7E, 0x00])
+                );
+            }
+            let each = started.elapsed() / ROUND_TRIPS;
+            assert!(
+                each < std::time::Duration::from_millis(10),
+                "{each:?} a round trip"
+            );
+            tester.close().await.expect("closed");
+        })
+        .await;
+    });
+}
+
 /// A positive `ECUReset` response is followed by the entity closing the connection
 /// (ISO 14229-5:2022 REQ 7.11), and the tester then reconnects and activates routing
 /// again (REQ 7.10), on which it is served as before.

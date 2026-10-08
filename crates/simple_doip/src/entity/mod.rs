@@ -552,7 +552,7 @@ impl<
                 && matches!(open.phase, Phase::Registered { .. })
             {
                 let message = Message::diagnostic_message(open.version, sa, ta, pdu);
-                confirm = match out.data.push(&message) {
+                confirm = match out.push(&message) {
                     Ok(end) => PendingConfirm {
                         connection: index,
                         end,

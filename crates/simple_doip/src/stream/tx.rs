@@ -57,6 +57,25 @@ impl<const N: usize> TxQueue<N> {
         Ok(self.queued)
     }
 
+    /// Queues `encoded`, frames another queue already encoded, returning the stream
+    /// position its last byte will occupy.
+    pub(crate) fn push_encoded(&mut self, encoded: &[u8]) -> Result<u64, Full> {
+        if !self.has_room_for(encoded.len()) {
+            return Err(Full);
+        }
+        self.compact();
+        let end = self.end.saturating_add(encoded.len());
+        self.buf
+            .get_mut(self.end..end)
+            .ok_or(Full)?
+            .copy_from_slice(encoded);
+        self.end = end;
+        self.queued = self
+            .queued
+            .saturating_add(u64::try_from(encoded.len()).unwrap_or(u64::MAX));
+        Ok(self.queued)
+    }
+
     /// Whether a message of `size` encoded bytes fits beside what is queued.
     pub(crate) fn has_room_for(&self, size: usize) -> bool {
         size <= N.saturating_sub(self.pending().len())
@@ -164,6 +183,17 @@ mod tests {
         let mut queue = TxQueue::<16>::new();
         queue.push(&alive_check_response()).unwrap();
         assert_eq!(queue.push(&alive_check_response()), Err(Full));
+        assert_eq!(queue.pending(), ALIVE_CHECK_RESPONSE);
+    }
+
+    #[test]
+    fn encoded_bytes_queue_and_count_like_a_message() {
+        let mut queue = TxQueue::<24>::new();
+        queue.push(&alive_check_response()).unwrap();
+        queue.advance(10);
+        assert_eq!(queue.push_encoded(&ALIVE_CHECK_RESPONSE), Ok(20));
+        assert_eq!(queue.pending(), ALIVE_CHECK_RESPONSE);
+        assert_eq!(queue.push_encoded(&[0; 15]), Err(Full));
         assert_eq!(queue.pending(), ALIVE_CHECK_RESPONSE);
     }
 

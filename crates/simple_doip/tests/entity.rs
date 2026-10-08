@@ -578,6 +578,35 @@ fn a_frame_that_fills_the_buffer_is_taken_and_one_a_byte_longer_is_nacked_0x02()
     assert!(!peer.is_shut());
 }
 
+/// An acknowledgement still queued when the response to its request is requested leaves
+/// with it in one write, which Nagle's algorithm sends at once where it would hold back
+/// a second write until the tester acknowledges the first.
+#[test]
+fn an_acknowledgement_and_its_response_leave_in_one_write() {
+    let _clock = clock();
+    let stack = MockStack::new(4096);
+    let mut entity = OneSocket::new(&stack, address(), two_testers());
+    let peer = activated(&stack, &mut entity, TESTER);
+    peer.take_writes();
+    peer.send(&diagnostic(TESTER, ENTITY, &[0x3E, 0x00]));
+
+    assert!(matches!(step(&mut entity), Some(Ev::Indication { .. })));
+    assert_eq!(peer.take_writes(), []);
+    request(&mut entity, TESTER, &[0x7E, 0x00]).unwrap();
+    assert_eq!(
+        events(&mut entity),
+        [confirm(ENTITY, TaType::Physical, DoIpResult::Ok)]
+    );
+
+    let both = [
+        ack(ENTITY, TESTER),
+        diagnostic(ENTITY, TESTER, &[0x7E, 0x00]),
+    ]
+    .concat();
+    assert_eq!(peer.take_writes(), [both.len()]);
+    assert_eq!(peer.take_written(), both);
+}
+
 /// Table 16: a tester speaking ISO 13400-2:2012 is accepted, and answered in the version
 /// it used.
 #[test]
