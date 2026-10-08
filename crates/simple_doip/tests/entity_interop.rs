@@ -16,7 +16,9 @@ use simple_doip::messages::{
     ActivationTypeCode, DiagnosticAckCode, OwnedMessage, OwnedPayload, ProtocolVersion,
     RoutingActivationResponseCode,
 };
-use simple_doip::service::{DiagnosticEntity, DoIpResult, EntityConfig, EntityEvent};
+use simple_doip::service::{
+    DiagnosticEntity, DoIpResult, EntityConfig, EntityEvent, TesterAddress,
+};
 use simple_doip::{LogicalAddress, TaType};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
@@ -27,6 +29,11 @@ const TESTER: LogicalAddress = LogicalAddress(0x0E00);
 const ENTITY: LogicalAddress = LogicalAddress(0x0001);
 
 const PATIENCE: Duration = Duration::from_secs(5);
+
+/// The sensor's configuration: routing activation from [`TESTER`] only.
+fn the_tester() -> EntityConfig {
+    EntityConfig::new([TesterAddress::new(TESTER).unwrap()])
+}
 
 fn free_local_address() -> SocketAddr {
     let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
@@ -93,7 +100,7 @@ async fn a_codec_framed_client_is_activated_acknowledged_and_answered() {
     let stack = Stack::new();
     let acceptor = stack.bind(local).await.unwrap();
     let address = EntityAddress::new(ENTITY, LogicalAddress(0xE400)).unwrap();
-    let mut entity = Entity::<_, 1, 4096>::new(&acceptor, address, EntityConfig::default());
+    let mut entity = Entity::<_, 1, 4096>::new(&acceptor, address, the_tester());
     let messages = [
         OwnedMessage::routing_activation_request(
             ProtocolVersion::V2019,

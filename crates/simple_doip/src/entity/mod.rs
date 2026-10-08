@@ -219,14 +219,15 @@ pub enum Error<E> {
 /// ```no_run
 /// use edge_nal::TcpBind;
 /// use simple_doip::entity::{Entity, EntityAddress};
-/// use simple_doip::service::{DiagnosticEntity, EntityConfig, EntityEvent};
+/// use simple_doip::service::{DiagnosticEntity, EntityConfig, EntityEvent, TesterAddress};
 /// use simple_doip::{LogicalAddress, TCP_PORT, TaType};
 ///
 /// # async fn serve() -> anyhow::Result<()> {
 /// let stack = edge_nal_std::Stack::new();
 /// let acceptor = stack.bind(([0, 0, 0, 0], TCP_PORT).into()).await?;
 /// let address = EntityAddress::new(LogicalAddress(0x0001), LogicalAddress(0xE400))?;
-/// let mut entity = Entity::<_, 1, 4096>::new(&acceptor, address, EntityConfig::default());
+/// let config = EntityConfig::new([TesterAddress::new(LogicalAddress(0x0E00))?]);
+/// let mut entity = Entity::<_, 1, 4096>::new(&acceptor, address, config);
 /// let mut buf = [0u8; 4096];
 /// loop {
 ///     if let EntityEvent::Indication { sa, pdu, .. } = entity.next_event(&mut buf, None).await? {

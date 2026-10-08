@@ -262,13 +262,14 @@ impl fmt::Debug for SocketBuffers {
     }
 }
 
-/// Serves `DoIP` as `address` on `stack` with `MCTS + 1` sockets over `buffers`,
-/// echoing every diagnostic message.
+/// Serves `DoIP` as `address` on `stack` with `MCTS + 1` sockets over `buffers`, to the
+/// testers `config` accepts, echoing every diagnostic message.
 ///
 /// Returns only when [`DiagnosticEntity::next_event`] fails, with its error.
 pub async fn serve(
     stack: Stack<'_>,
     address: EntityAddress,
+    config: EntityConfig,
     buffers: &mut [SocketBuffers; MCTS + 1],
 ) -> simple_doip::entity::Error<Error> {
     let [first, second] = buffers;
@@ -279,8 +280,7 @@ pub async fn serve(
             TcpSocket::new(stack, &mut second.rx, &mut second.tx),
         ],
     );
-    let mut entity =
-        Entity::<_, MCTS, MAX_MESSAGE>::new(&acceptor, address, EntityConfig::default());
+    let mut entity = Entity::<_, MCTS, MAX_MESSAGE>::new(&acceptor, address, config);
     let mut buf = [0u8; MAX_MESSAGE];
     loop {
         match entity.next_event(&mut buf, None).await {

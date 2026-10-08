@@ -39,6 +39,11 @@ fn address() -> EntityAddress {
     EntityAddress::new(ENTITY, FUNCTIONAL).unwrap()
 }
 
+/// The sensor's configuration: routing activation from [`TESTER`] only.
+fn the_tester() -> EntityConfig {
+    EntityConfig::new([simple_doip::service::TesterAddress::new(TESTER).unwrap()])
+}
+
 fn two_testers() -> EntityConfig<2> {
     EntityConfig::new(
         [TESTER, OTHER].map(|sa| simple_doip::service::TesterAddress::new(sa).unwrap()),
@@ -757,7 +762,7 @@ fn the_first_activation_is_accepted_0x10() {
 fn a_tester_outside_the_entity_config_is_refused_0x00_and_closed() {
     let _clock = clock();
     let stack = MockStack::new(4096);
-    let mut entity = Entity::<_, 1, 4096>::new(&stack, address(), EntityConfig::default());
+    let mut entity = Entity::<_, 1, 4096>::new(&stack, address(), the_tester());
     let peer = stack.dial();
     peer.send(&activation_from(OTHER, 0));
 

@@ -37,6 +37,11 @@ fn address() -> EntityAddress {
     EntityAddress::new(ENTITY, LogicalAddress(0xE400)).unwrap()
 }
 
+/// The sensor's configuration: routing activation from [`TESTER`] only.
+fn the_tester() -> EntityConfig {
+    EntityConfig::new([TesterAddress::new(TESTER).unwrap()])
+}
+
 /// Answers every indication by echoing it, until `answers` have been confirmed.
 async fn echo<E: DiagnosticEntity>(entity: &mut E, answers: usize) {
     let mut confirmed = 0;
@@ -68,8 +73,7 @@ async fn a_tester_is_answered_over_loopback() {
     let local = free_local_address();
     let stack = Stack::new();
     let acceptor = stack.bind(local).await.unwrap();
-    let mut entity =
-        Entity::<_, 1, 4096>::new(&acceptor, address(), EntityConfig::default());
+    let mut entity = Entity::<_, 1, 4096>::new(&acceptor, address(), the_tester());
 
     let tester = Box::pin(async {
         let mut tester =
@@ -106,8 +110,7 @@ async fn a_surplus_connection_is_accepted_and_closed() {
     let local = free_local_address();
     let stack = Stack::new();
     let acceptor = stack.bind(local).await.unwrap();
-    let mut entity =
-        Entity::<_, 1, 4096>::new(&acceptor, address(), EntityConfig::default());
+    let mut entity = Entity::<_, 1, 4096>::new(&acceptor, address(), the_tester());
 
     let clients = async {
         let _first = TcpStream::connect(local).await.unwrap();

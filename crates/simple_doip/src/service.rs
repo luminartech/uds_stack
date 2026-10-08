@@ -650,7 +650,7 @@ impl core::fmt::Display for TesterAddress {
 /// use simple_doip::LogicalAddress;
 /// use simple_doip::service::{EntityConfig, TesterAddress};
 ///
-/// let config = EntityConfig::default();
+/// let config = EntityConfig::new([TesterAddress::new(LogicalAddress(0x0E00))?]);
 /// assert!(config.accepts(LogicalAddress(0x0E00)));
 /// assert!(!config.accepts(LogicalAddress(0x0E80)));
 ///
@@ -684,15 +684,6 @@ impl<const TESTERS: usize> EntityConfig<TESTERS> {
         self.accepted_testers
             .iter()
             .any(|tester| tester.address() == sa)
-    }
-}
-
-impl Default for EntityConfig {
-    /// Accepts the one tester `0x0E00`.
-    fn default() -> Self {
-        Self {
-            accepted_testers: [TesterAddress(LogicalAddress(0x0E00))],
-        }
     }
 }
 
@@ -787,8 +778,9 @@ mod tests {
     /// The sensor's configuration: routing activation from `0x0E00` and no other
     /// tester.
     #[test]
-    fn the_default_entity_accepts_tester_0e00_only() {
-        let config = EntityConfig::default();
+    fn a_one_tester_entity_accepts_that_tester_only() {
+        let config =
+            EntityConfig::new([TesterAddress::new(LogicalAddress(0x0E00)).unwrap()]);
         assert!(config.accepts(LogicalAddress(0x0E00)));
         assert!(!config.accepts(LogicalAddress(0x0E01)));
         assert!(!config.accepts(LogicalAddress(0x0FFF)));
