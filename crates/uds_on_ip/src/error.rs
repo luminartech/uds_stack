@@ -23,6 +23,11 @@ pub enum Error<E> {
     #[error("the DoIP entity failed: {0:?}")]
     Entity(E),
 
+    /// The entity refused a request while the transport already held as many refused
+    /// requests' failed confirmations as it can, none of them yet reported.
+    #[error("the DoIP entity refused a request with no room left to confirm it: {0}")]
+    Refused(simple_doip::service::Refusal),
+
     /// The addressing cannot be carried over `DoIP`.
     #[error(transparent)]
     Mapping(#[from] crate::mapping::MappingError),

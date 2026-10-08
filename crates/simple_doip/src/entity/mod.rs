@@ -35,7 +35,8 @@ use crate::messages::{
     ActivationTypeCode, Message, ProtocolVersion, RoutingActivationResponseCode,
 };
 use crate::service::{
-    ConnectionId, DiagnosticEntity, DoIpResult, EntityConfig, EntityEvent, Timestamp,
+    ConnectionId, DiagnosticEntity, DoIpResult, EntityConfig, EntityEvent, Refusal,
+    Timestamp,
 };
 use crate::stream::tx::Full;
 use crate::stream::{after, caller_deadline, timestamp};
@@ -168,23 +169,6 @@ pub enum Error<E> {
     /// Accepting a connection failed. Every call after this may fail the same way.
     #[error("accepting a connection failed: {0:?}")]
     Accept(E),
-    /// Every confirm the entity holds is owed to an earlier request; this one was not
-    /// accepted.
-    #[error("too many requests await their confirm")]
-    RequestQueueFull,
-    /// The PDU is longer than [`DiagnosticEntity::MAX_PDU`]; it was not accepted.
-    #[error("a {len}-byte PDU exceeds the {max}-byte limit")]
-    PduTooLarge {
-        /// The PDU's length.
-        len: usize,
-        /// The longest PDU the entity sends.
-        max: usize,
-    },
-    /// The PDU is empty; it was not accepted. ISO 13400-2:2019 Table 21 makes a
-    /// diagnostic message's user data mandatory, which this crate reads as at least one
-    /// byte.
-    #[error("the PDU is empty")]
-    EmptyPdu,
 }
 
 /// A `DoIP` entity: the `TCP_DATA` sockets of ISO 13400-2:2019 12.6, behind
@@ -520,18 +504,18 @@ impl<
         ta: LogicalAddress,
         ta_type: TaType,
         pdu: &[u8],
-    ) -> Result<(), Error<A::Error>> {
+    ) -> Result<(), Refusal> {
         if pdu.is_empty() {
-            return Err(Error::EmptyPdu);
+            return Err(Refusal::EmptyPdu);
         }
         if pdu.len() > Self::MAX_PDU {
-            return Err(Error::PduTooLarge {
+            return Err(Refusal::PduTooLarge {
                 len: pdu.len(),
                 max: Self::MAX_PDU,
             });
         }
         let Some(free) = self.confirms.iter().position(Option::is_none) else {
-            return Err(Error::RequestQueueFull);
+            return Err(Refusal::NoRoom);
         };
         let mut confirm = PendingConfirm {
             connection: MCTS,
@@ -1193,16 +1177,17 @@ impl<
     /// # Errors
     ///
     /// None of these is followed by a confirm:
-    /// - [`Error::PduTooLarge`] where `pdu` is longer than [`DiagnosticEntity::MAX_PDU`].
-    /// - [`Error::EmptyPdu`] where `pdu` is empty.
-    /// - [`Error::RequestQueueFull`] while too many earlier requests await their confirm.
+    /// - [`Refusal::PduTooLarge`] where `pdu` is longer than
+    ///   [`DiagnosticEntity::MAX_PDU`].
+    /// - [`Refusal::EmptyPdu`] where `pdu` is empty.
+    /// - [`Refusal::NoRoom`] while too many earlier requests await their confirm.
     fn request(
         &mut self,
         sa: LogicalAddress,
         ta: LogicalAddress,
         ta_type: TaType,
         pdu: &[u8],
-    ) -> impl Future<Output = Result<(), Self::Error>> {
+    ) -> impl Future<Output = Result<(), Refusal>> {
         poll_fn(move |_| Poll::Ready(self.queue(sa, ta, ta_type, pdu)))
     }
 

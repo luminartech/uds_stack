@@ -13,7 +13,8 @@ use std::pin::pin;
 use embassy_time::Duration;
 use simple_doip::entity::{AddressError, Entity, EntityAddress, Error};
 use simple_doip::service::{
-    ConnectionId, DiagnosticEntity, DoIpResult, EntityConfig, EntityEvent, Timestamp,
+    ConnectionId, DiagnosticEntity, DoIpResult, EntityConfig, EntityEvent, Refusal,
+    Timestamp,
 };
 use simple_doip::{LogicalAddress, TaType};
 use support::mock_stack::{
@@ -165,7 +166,7 @@ fn request<E: DiagnosticEntity>(
     entity: &mut E,
     ta: LogicalAddress,
     pdu: &[u8],
-) -> Result<(), E::Error> {
+) -> Result<(), Refusal> {
     let future = pin!(entity.request(ENTITY, ta, TaType::Physical, pdu));
     until_stalled(future).expect("the request waits on nothing here")
 }
@@ -1991,22 +1992,22 @@ fn a_request_that_cannot_be_held_is_refused() {
 
     assert_eq!(
         request(&mut entity, TESTER, &[0; 60]),
-        Err(Error::PduTooLarge {
+        Err(Refusal::PduTooLarge {
             len: 60,
             max: SMALL_PDU
         })
     );
-    assert_eq!(request(&mut entity, TESTER, &[]), Err(Error::EmptyPdu));
+    assert_eq!(request(&mut entity, TESTER, &[]), Err(Refusal::EmptyPdu));
     {
         let not_ours = pin!(entity.request(OTHER, TESTER, TaType::Physical, &[]));
-        assert_eq!(until_stalled(not_ours), Some(Err(Error::EmptyPdu)));
+        assert_eq!(until_stalled(not_ours), Some(Err(Refusal::EmptyPdu)));
     }
     for _ in 0..4 {
         request(&mut entity, TESTER, &[0x7E, 0x00]).unwrap();
     }
     assert_eq!(
         request(&mut entity, TESTER, &[0x7E, 0x00]),
-        Err(Error::RequestQueueFull)
+        Err(Refusal::NoRoom)
     );
 }
 

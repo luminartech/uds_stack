@@ -17,7 +17,7 @@ use crate::mapping::{
 };
 use crate::profile::{ConnectionAction, after_sending};
 use simple_doip::LogicalAddress;
-use simple_doip::service::{self, ConnectionId, DiagnosticEntity, DoIpResult};
+use simple_doip::service::{self, ConnectionId, DiagnosticEntity, DoIpResult, Refusal};
 use uds_services::{AfterSend, TransportEvent, UdsTransport};
 use uds_session::{Ai, Reloads, SResult, Timestamp};
 
@@ -88,25 +88,15 @@ pub struct DoIpTransport<E, const CONNECTIONS: usize> {
     reloads: Reloads,
     testers: [Option<Tester>; CONNECTIONS],
     closing: Option<Closing>,
-    /// Refused requests whose failed confirmation is not yet reported, oldest first.
-    refused: [Option<Refused>; REFUSALS],
+    /// The failed confirmations of refused requests not yet reported, oldest first.
+    refused: [Option<Confirmation>; REFUSALS],
 }
 
 /// How many refused requests a [`DoIpTransport`] holds until it reports their failed
 /// confirmations. `uds_session` has at most one message per addressing awaiting its
-/// confirmation (`UDSS_LLR_0060`), so a server cannot have more refusals outstanding
+/// confirmation (`UDSS_LLR_0061`), so a server cannot have more refusals outstanding
 /// than it has association slots, and a `PEERS == 1` server has fewer than this.
 const REFUSALS: usize = 4;
-
-/// A request the entity refused, and how many requests to the same target, accepted
-/// before it, are still to be confirmed: its failed confirmation follows theirs, so that
-/// a tester's confirmations come in the order of its requests, as the entity's own do.
-#[derive(Debug, Clone, Copy)]
-struct Refused {
-    confirmation: Confirmation,
-    target: LogicalAddress,
-    behind: u8,
-}
 
 /// A tester with routing active on `connection`, and what its connection owes.
 #[derive(Debug, Clone, Copy)]
@@ -173,7 +163,9 @@ impl<E: DiagnosticEntity, const CONNECTIONS: usize> DoIpTransport<E, CONNECTIONS
     /// An entity with two connections does not fit a table of one:
     ///
     /// ```compile_fail
-    /// # use simple_doip::service::{ConnectionId, DiagnosticEntity, EntityEvent, Timestamp};
+    /// # use simple_doip::service::{
+    /// #     ConnectionId, DiagnosticEntity, EntityEvent, Refusal, Timestamp,
+    /// # };
     /// # use simple_doip::{LogicalAddress, TaType};
     /// # use uds_on_ip::{DoIpTransport, profile::bench_reloads};
     /// struct TwoSockets;
@@ -189,7 +181,7 @@ impl<E: DiagnosticEntity, const CONNECTIONS: usize> DoIpTransport<E, CONNECTIONS
     /// #       _: LogicalAddress,
     /// #       _: TaType,
     /// #       _: &[u8],
-    /// #   ) -> Result<(), ()> {
+    /// #   ) -> Result<(), Refusal> {
     /// #       Ok(())
     /// #   }
     /// #   fn now(&self) -> Timestamp {
@@ -324,58 +316,36 @@ impl<E: DiagnosticEntity, const CONNECTIONS: usize> DoIpTransport<E, CONNECTIONS
         closing.confirmation.event()
     }
 
-    /// Holds the failed confirmation of a request to `target` the entity refused,
-    /// behind those of the requests to `target` it accepted before; `Err` gives `error`
-    /// back where [`REFUSALS`] are already held.
+    /// Holds the failed confirmation of a request the entity refused for `refusal`;
+    /// `Err` where [`REFUSALS`] are already held.
     ///
-    /// The result is `DoIP_OUT_OF_MEMORY`: of the refusals
-    /// [`DiagnosticEntity::request`] allows, the empty PDU and the one over
-    /// [`DiagnosticEntity::MAX_PDU`] cannot come from a server, which never sends the
-    /// first and sizes its responses to the second, so a refusal here is the entity
-    /// having no room to remember the request.
-    fn refuse(
-        &mut self,
-        ai: Ai,
-        target: LogicalAddress,
-        error: E::Error,
-    ) -> Result<(), E::Error> {
-        let behind = self
-            .tester_mut(target)
-            .map_or(0, |tester| tester.unconfirmed);
-        let Some(free) = self.refused.iter_mut().find(|held| held.is_none()) else {
-            return Err(error);
+    /// It is reported ahead of any confirmation the entity holds for an earlier request:
+    /// `uds_session` matches a confirmation to its request by addressing
+    /// (`UDSS_LLR_0059`), and has one request per addressing outstanding at most.
+    fn refuse(&mut self, ai: Ai, refusal: Refusal) -> Result<(), Error<E::Error>> {
+        let result = match refusal {
+            Refusal::NoRoom | Refusal::PduTooLarge { .. } => DoIpResult::OutOfMemory,
+            Refusal::EmptyPdu => DoIpResult::Error,
         };
-        *free = Some(Refused {
-            confirmation: Confirmation {
-                ai,
-                result: s_result(DoIpResult::OutOfMemory),
-            },
-            target,
-            behind,
+        let Some(free) = self.refused.iter_mut().find(|held| held.is_none()) else {
+            return Err(Error::Refused(refusal));
+        };
+        *free = Some(Confirmation {
+            ai,
+            result: s_result(result),
         });
         Ok(())
     }
 
-    /// The failed confirmation of the oldest refusal with nothing to its target still to
-    /// be confirmed ahead of it. A refusal to one tester never waits for another's.
+    /// The failed confirmation of the oldest refusal.
     fn take_refusal(&mut self) -> Option<TransportEvent<'static>> {
-        let at = self
-            .refused
-            .iter()
-            .position(|held| held.is_some_and(|refused| refused.behind == 0))?;
-        let held = self.refused.get_mut(at..)?;
-        let refused = held.first_mut()?.take()?;
-        held.rotate_left(1);
-        Some(refused.confirmation.event())
+        let confirmation = self.refused.first_mut()?.take()?;
+        self.refused.rotate_left(1);
+        Some(confirmation.event())
     }
 
     async fn confirm(&mut self, ai: Ai, result: SResult) -> TransportEvent<'static> {
         let target = to_logical(ai.ta);
-        for refused in self.refused.iter_mut().flatten() {
-            if refused.target == target {
-                refused.behind = refused.behind.saturating_sub(1);
-            }
-        }
         let ai = self
             .tester_mut(target)
             .and_then(|tester| tester.requested)
@@ -414,16 +384,16 @@ impl<E: DiagnosticEntity, const CONNECTIONS: usize> UdsTransport
     /// as given, whatever addressing the entity reports it with.
     ///
     /// A request the entity refuses, which [`DiagnosticEntity::request`] does not
-    /// confirm, is accepted here all the same and confirmed failed, as
-    /// `DoIP_OUT_OF_MEMORY`, by a later [`UdsTransport::next_event`], after every
-    /// request to the same target accepted before it: ISO 13400-2:2019 8.3.1 confirms
-    /// every request, and a refusal is not the end of the connection. It arms no
-    /// close.
+    /// confirm, is accepted here all the same and confirmed failed by the next
+    /// [`UdsTransport::next_event`]: ISO 13400-2:2019 8.3.1 confirms every request, and
+    /// a refusal is not the end of the connection. [`Refusal::NoRoom`] and
+    /// [`Refusal::PduTooLarge`] are `DoIP_OUT_OF_MEMORY`, [`Refusal::EmptyPdu`]
+    /// `DoIP_ERROR`. It arms no close.
     ///
     /// # Errors
     ///
     /// [`Error::Mapping`] if the addressing cannot be carried: the two remote
-    /// message types have no `DoIP` representation. [`Error::Entity`] if the
+    /// message types have no `DoIP` representation. [`Error::Refused`] if the
     /// entity refuses the request while this transport already holds as many
     /// refusals as it can, none of them yet reported.
     async fn t_data_req(
@@ -437,8 +407,8 @@ impl<E: DiagnosticEntity, const CONNECTIONS: usize> UdsTransport
             .entity
             .request(to_logical(ai.sa), target, to_doip_ta_type(ai.ta_type), data)
             .await;
-        if let Err(refused) = accepted {
-            return self.refuse(ai, target, refused).map_err(Error::Entity);
+        if let Err(refusal) = accepted {
+            return self.refuse(ai, refusal);
         }
         self.record_send(target, data, after);
         if let Some(tester) = self.tester_mut(target) {
@@ -552,7 +522,9 @@ impl<E: DiagnosticEntity, const CONNECTIONS: usize> UdsTransport
 mod tests {
     use super::DoIpTransport;
     use crate::profile::bench_reloads;
-    use simple_doip::service::{ConnectionId, DiagnosticEntity, EntityEvent, Timestamp};
+    use simple_doip::service::{
+        ConnectionId, DiagnosticEntity, EntityEvent, Refusal, Timestamp,
+    };
     use simple_doip::{LogicalAddress, TaType};
     use uds_services::{AfterSend, UdsTransport};
     use uds_session::{SResult, TransportError};
@@ -578,7 +550,7 @@ mod tests {
             _ta: LogicalAddress,
             _ta_type: TaType,
             _pdu: &[u8],
-        ) -> Result<(), Self::Error> {
+        ) -> Result<(), Refusal> {
             Ok(())
         }
         fn now(&self) -> Timestamp {

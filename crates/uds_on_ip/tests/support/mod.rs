@@ -11,7 +11,7 @@ use std::collections::VecDeque;
 use simple_doip::LogicalAddress;
 use simple_doip::TaType;
 use simple_doip::service::{
-    ConnectionId, DiagnosticEntity, DoIpResult, EntityEvent, Timestamp,
+    ConnectionId, DiagnosticEntity, DoIpResult, EntityEvent, Refusal, Timestamp,
 };
 
 pub const ENTITY: LogicalAddress = LogicalAddress(0x0001);
@@ -37,8 +37,6 @@ pub enum Fault {
     Exhausted,
     /// A `close` the test asked to fail.
     CloseFailed,
-    /// A `request` the test asked the entity to refuse.
-    Refused,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -74,9 +72,9 @@ pub struct MockEntity<const CONNECTIONS: usize> {
     pub confirms_last: bool,
     /// The entity's clock, in milliseconds.
     pub clock: u32,
-    /// Whether each `request` in turn is refused, as a full queue refuses it; once
-    /// spent, every request is accepted.
-    pub refuse: VecDeque<bool>,
+    /// What each `request` in turn is refused for, if anything; once spent, every
+    /// request is accepted.
+    pub refuse: VecDeque<Option<Refusal>>,
 }
 
 impl<const CONNECTIONS: usize> MockEntity<CONNECTIONS> {
@@ -164,9 +162,9 @@ impl<const CONNECTIONS: usize> DiagnosticEntity for MockEntity<CONNECTIONS> {
         ta: LogicalAddress,
         ta_type: TaType,
         pdu: &[u8],
-    ) -> Result<(), Self::Error> {
-        if self.refuse.pop_front().unwrap_or(false) {
-            return Err(Fault::Refused);
+    ) -> Result<(), Refusal> {
+        if let Some(refusal) = self.refuse.pop_front().flatten() {
+            return Err(refusal);
         }
         self.requested.push(pdu.to_vec());
         if sa != ENTITY {

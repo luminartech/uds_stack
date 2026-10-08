@@ -9,7 +9,7 @@ use std::collections::VecDeque;
 use simple_doip::LogicalAddress;
 use simple_doip::TaType;
 use simple_doip::service::{
-    ConnectionId, DiagnosticEntity, DoIpResult, EntityEvent, Timestamp,
+    ConnectionId, DiagnosticEntity, DoIpResult, EntityEvent, Refusal, Timestamp,
 };
 
 const ENTITY: LogicalAddress = LogicalAddress(0x0001);
@@ -91,7 +91,7 @@ impl<const MCTS: usize> DiagnosticEntity for MockEntity<MCTS> {
         ta: LogicalAddress,
         ta_type: TaType,
         pdu: &[u8],
-    ) -> Result<(), Self::Error> {
+    ) -> Result<(), Refusal> {
         if sa != ENTITY {
             self.confirms
                 .push_back((sa, ta, ta_type, DoIpResult::UnknownSa));

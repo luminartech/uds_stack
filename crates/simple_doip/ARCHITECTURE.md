@@ -207,9 +207,10 @@ stateDiagram-v2
   and no other response waits takes the entity's frames queued ahead of it along, room
   permitting, so an acknowledgement and the response to its request leave in one
   write: neither backend disables Nagle's algorithm, and a second small write would
-  wait about 40 ms on the tester's delayed acknowledgement of the first. A request is refused, with no confirm, only for an
-  empty PDU, one over `MAX_PDU`, or a full confirm queue; `uds_on_ip` confirms the
-  last failed itself.
+  wait about 40 ms on the tester's delayed acknowledgement of the first. A request is
+  refused, with no confirm, only for a `service::Refusal`: an empty PDU, one over
+  `MAX_PDU`, or a full confirm queue. `uds_on_ip` confirms a refused request failed
+  itself.
 - **A deadline is judged after the input that beat it.** Before acting on a passed
   deadline, the entity reads and handles what the socket it judges has ready, so a
   caller slow to call `next_event` again does not cost a tester its registration.

@@ -70,6 +70,31 @@ pub enum DoIpResult {
     Error,
 }
 
+/// Why [`DiagnosticEntity::request`] refused a request. No confirm follows a refusal.
+///
+/// Exhaustive: these are the only cases in which the request is refused rather than
+/// accepted and confirmed, and a caller that confirms a refused request failed itself
+/// decides what each means.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, thiserror::Error)]
+pub enum Refusal {
+    /// The PDU is empty. ISO 13400-2:2019 Table 21 makes a diagnostic message's user
+    /// data mandatory, which this crate reads as at least one byte.
+    #[error("the PDU is empty")]
+    EmptyPdu,
+    /// The PDU is longer than [`DiagnosticEntity::MAX_PDU`].
+    #[error("a {len}-byte PDU exceeds the {max}-byte limit")]
+    PduTooLarge {
+        /// The PDU's length.
+        len: usize,
+        /// [`DiagnosticEntity::MAX_PDU`].
+        max: usize,
+    },
+    /// The entity has no room left to remember another request until it is confirmed.
+    /// No connection ends for it.
+    #[error("too many requests await their confirm")]
+    NoRoom,
+}
+
 /// A reading of a [`DiagnosticConnection`]'s or a [`DiagnosticEntity`]'s clock, or an
 /// instant on it: milliseconds, truncated to 32 bits, so it wraps every 49.7 days.
 ///
@@ -254,8 +279,8 @@ pub trait DiagnosticConnection {
     type Error: core::fmt::Debug;
 
     /// The longest PDU [`Self::request`] accepts. A longer one is refused with
-    /// [`Self::Error`], and no confirm follows it, so the layer above can refuse it
-    /// first.
+    /// [`Refusal::PduTooLarge`], and no confirm follows it, so the layer above can refuse
+    /// it first.
     const MAX_PDU: usize;
 
     /// `DoIP_Data.request`: send `pdu` to `ta` (ISO 13400-2:2019 8.3.1).
@@ -541,25 +566,21 @@ pub trait DiagnosticEntity {
     /// * `ta_type` - the target's addressing model.
     /// * `pdu` - the PDU to send.
     ///
-    /// A request is refused, rather than accepted and confirmed, in three cases only:
-    /// its `pdu` is empty, which a diagnostic message cannot carry (ISO 13400-2:2019
-    /// Table 21); it is longer than [`Self::MAX_PDU`]; or the entity has no room left to
-    /// remember another request until it is confirmed. The first two are the caller's
-    /// to avoid. The third is not the end of any connection: the caller that needs
-    /// every request confirmed, as ISO 13400-2:2019 8.3.1 has it, confirms a refused
-    /// one failed itself.
+    /// A request is refused, rather than accepted and confirmed, only for a
+    /// [`Refusal`]. The caller that needs every request confirmed, as ISO 13400-2:2019
+    /// 8.3.1 has it, confirms a refused one failed itself.
     ///
     /// # Errors
     ///
-    /// [`Self::Error`] where the request is refused, as above, whatever `sa` is; no
-    /// confirm follows it. A target no connection registered is not an error.
+    /// A [`Refusal`] where the request is refused, whatever `sa` is; no confirm follows
+    /// it. A target no connection registered is not an error.
     fn request(
         &mut self,
         sa: LogicalAddress,
         ta: LogicalAddress,
         ta_type: TaType,
         pdu: &[u8],
-    ) -> impl Future<Output = Result<(), Self::Error>>;
+    ) -> impl Future<Output = Result<(), Refusal>>;
 
     /// The current time on the clock a deadline is on.
     fn now(&self) -> Timestamp;

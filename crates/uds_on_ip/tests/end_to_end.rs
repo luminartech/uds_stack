@@ -12,7 +12,7 @@
 mod support;
 
 use core::future::Future;
-use simple_doip::service::ConnectionId;
+use simple_doip::service::{ConnectionId, Refusal};
 use support::{MockEntity, TESTER, Tester, Wire, block_on};
 use uds_on_ip::DoIpTransport;
 use uds_on_ip::profile::bench_reloads;
@@ -212,7 +212,7 @@ fn a_refused_response_does_not_stop_the_server() {
         Tester::Sends(TESTER, vec![0x22, 0xF4, 0x0D]),
         Tester::Sends(TESTER, vec![0x22, 0xF4, 0x0D]),
     ]);
-    entity.refuse.push_back(true);
+    entity.refuse.push_back(Some(Refusal::NoRoom));
     let mut s = EcuServer::new(
         Ecu::default(),
         DoIpTransport::new(entity, bench_reloads()),
