@@ -256,6 +256,7 @@ pub trait UdsTransport {
         -> impl Future<Output = Result<TransportEvent<'b>, Self::Error>>;
 
     fn outbound_max(&self) -> Option<usize>;
+    fn limit_requests(&mut self, max: usize) {}
     fn channel_timing(&self) -> Reloads;
     fn now(&self) -> Timestamp;
 }
@@ -274,10 +275,15 @@ Three properties of this shape are load-bearing:
   idiomatic destructuring and would silently discard a `truncated` flag,
   leaving a fragment decoded as a whole message. `DataTooLong` cannot be
   absorbed by an arm written for a whole message.
-- **There is deliberately no `inbound_max`.** This entity's own *Max. data
-  size* is ISO 13400-2 Table 11, answered by `simple_doip` from its own receive
-  capacity. A getter here had no producer above, no consumer below, and no
-  destination at all.
+- **Each limit travels the way it is known.** `MAX_PDU` is the transport's,
+  known when the server is assembled, so it is a constant `uds_server!` folds
+  into the buffers: `DoIpTransport` states its entity's, and a response that
+  would not fit is answered `responseTooLong`. The longest request is the
+  server's in-flight buffer, so the server states it, once, with
+  `limit_requests`, and a transport that can refuse a longer request before
+  accepting it does: the `DoIP` entity with a diagnostic message NACK `0x04`.
+  `outbound_max` is the peer's advertised *Max. data size*, which a tester never
+  sends an entity, so `DoIpTransport` reports `None`.
 
 **No close and no reconnect, by decision rather than omission.** A server is
 reconnected *to* and never reconnects — ISO 14229-5:2022 REQ 7.8 and REQ 7.10
@@ -300,6 +306,8 @@ the seam with no I/O in it:
   `ConnectionId` it arrived on; `request` routes a response by its target
   address; `close(connection)` performs the close REQ 7.9 and REQ 7.11
   prescribe — this crate decides *when*, the entity performs *what*.
+  `MAX_PDU` is the longest response it sends, and `limit_requests` the longest
+  request it acknowledges.
   `DoIpTransport<E: DiagnosticEntity, CONNECTIONS>` drives it and feeds one
   `uds_services::Server`, because the session is the server's, not a
   connection's.
@@ -691,13 +699,12 @@ together, in dependency order, `uds_on_ip` last.
 
 Verified against the working tree on 2026-09-21, not recalled. Each entry names
 where it was checked. Re-checked on 2026-09-22, after the workspace merge, for
-the entries this revision touches.
+the entries this revision touches, and on 2026-10-08, when the transport began to
+run over `simple_doip`'s real `Entity` and `Tester` (`tests/sensor_path.rs`) and an
+over-long request became the entity's `0x04` NACK.
 
 ### 9.1 Prerequisites — blocking, and not in this crate
 
-- **The transport is tested only over a scripted mock.** `simple_doip`'s
-  `entity::Entity` implements `DiagnosticEntity` over real sockets, behind its
-  `connection` feature, but no test here runs the transport over it.
 - **The client role is not built.** `DiagnosticConnection` is declared, and
   `simple_doip`'s `tester::Tester` implements it behind the `connection` feature;
   this crate's client role over it is not built.
@@ -737,14 +744,6 @@ the entries this revision touches.
   a message to a tester with no connection is confirmed `DoIP_NO_SOCKET`. What
   is missing is above this crate: `uds_services` has no `ResponseOnEvent`
   service.
-- **An over-long request is answered `0x13`, not refused with a `DoIP` NACK.**
-  ISO 13400-2:2019 REQ 7.DoIP-072 and REQ 7.DoIP-073 have the entity refuse a
-  message larger than it accepts with a diagnostic message NACK (`0x04` or
-  `0x05`) and discard it. This crate passes the entity no inbound bound, so the
-  entity acknowledges the message, and the driver answers it UDS
-  `incorrectMessageLengthOrInvalidFormat`. The entity cannot infer the bound
-  from the buffer it is lent, since a driver serving a request lends a smaller
-  one and a message too large for it is owed `0x21`.
 - **Functional addressing has no fan-out test.** ISO 14229-5:2022 Figure 8 has
   several servers answering one functional request, with `tP_Client` expiry
   rather than a single response being the signal that no more are coming.

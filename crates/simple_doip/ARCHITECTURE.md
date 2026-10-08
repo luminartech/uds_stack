@@ -185,19 +185,24 @@ stateDiagram-v2
 
 - **Figure 17, and one deviation.** A diagnostic message whose source address is
   not the one registered on its socket is refused with diagnostic NACK `0x02` and
-  the socket closed; one to a target the entity does not answer, `0x03`. Every other
-  is acknowledged positively and indicated, one too long for the caller's buffer
-  truncated. That departs from REQ 7.DoIP-073, which has a NACK `0x05` for it, from
-  REQ 7.DoIP-074, and from what Table 24's code `0x00` means. The reason is the
-  layer above: a UDS server busy with a request it can read only the start of still
-  owes it `busyRepeatRequest`, which `uds_on_ip` composes from the truncated event.
+  the socket closed; one to a target the entity does not answer, `0x03`; one longer
+  than the layer above said it accepts, with `limit_requests`, `0x04` and discarded
+  (REQ 7.DoIP-072, 074). Every other is acknowledged positively and indicated. The
+  acknowledgement comes before the entity knows whether the caller's buffer holds
+  the message, so one within the limit but too long for the buffer lent is
+  indicated truncated after a positive acknowledgement, where REQ 7.DoIP-073 has a
+  NACK `0x05`: a busy UDS server owes that request `busyRepeatRequest`, which
+  `uds_on_ip` composes from the truncated event.
 - **Requests wait for nothing.** A `request` is made by its future's first poll,
   which completes it, so one dropped unpolled makes none. It is queued on the
   connection that registered its target and confirmed `Ok` once written,
   `NoSocket` where no connection registered the target or the connection closes
   first, `UnknownSa` from a source address not the entity's, and `OutOfMemory` where
   the connection's queue has no room (ISO 13400-2:2019 8.3.1, 8.3.2). Requests to one
-  target are confirmed in the order they were made.
+  target are confirmed in the order they were made. `MAX_PDU` leaves room for one
+  diagnostic message acknowledgement, so the longest response fits behind its own
+  request's. A request is refused, with no confirm, only for an empty PDU, one over
+  `MAX_PDU`, or a full confirm queue; `uds_on_ip` confirms the last failed itself.
 - **A deadline is judged after the input that beat it.** Before acting on a passed
   deadline, the entity reads and handles what the socket it judges has ready, so a
   caller slow to call `next_event` again does not cost a tester its registration.

@@ -71,8 +71,14 @@ settled — `DoIpTransport<E: DiagnosticEntity, CONNECTIONS>` implements
 and responses map onto `DoIP_Data` (ISO 14229-5:2022 REQ 4.3, REQ 4.4), and the
 connection is closed after a positive `ECUReset` response (REQ 7.11) and after
 the positive `DiagnosticSessionControl` response to a session change the server
-says leaves its running software (REQ 7.9). Time is the `DoIP` entity's own clock, which it
-reports through `DiagnosticEntity::now`. The client role is not built. See the
+says leaves its running software (REQ 7.9). A response longer than the entity
+can carry is answered `responseTooLong`, because the server's buffers are sized
+to the entity's `MAX_PDU`, and a request longer than the server accepts is
+refused by the entity with a `DoIP` diagnostic message NACK, before it is
+acknowledged (ISO 13400-2:2019 REQ 7.DoIP-072). Time is the `DoIP` entity's own
+clock, which it reports through `DiagnosticEntity::now`. The server role is
+tested end to end over loopback against `simple_doip`'s own entity and tester,
+behind the `connection` feature. The client role is not built. See the
 [workspace README](https://github.com/luminartech/uds_stack#status) for how
 this compares to the rest of the stack.
 
