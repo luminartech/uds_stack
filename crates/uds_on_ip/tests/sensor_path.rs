@@ -19,12 +19,12 @@ use core::future::Future;
 
 use loopback::{
     ENTITY, FUNCTIONAL, Loopback, SensorEntity, Then, advance, answered, ask, exchange,
-    next, on_loopback, serve_until,
+    next, on_loopback, send, serve_until,
 };
 use simple_doip::TaType;
 use simple_doip::messages::RoutingActivationResponseCode;
-use simple_doip::service::DiagnosticEntity;
 use simple_doip::service::TesterConnection;
+use simple_doip::service::{DiagnosticEntity, DoIpResult};
 use simple_doip::tester::ConnectError;
 use uds_on_ip::DoIpTransport;
 use uds_on_ip::profile::bench_reloads;
@@ -32,7 +32,8 @@ use uds_protocol::NegativeResponseCode as Nrc;
 use uds_services::{
     Access, Address, DataIdentifier, DiagnosticSessionControl, DiagnosticSessionType as S,
     EcuReset, ReadDataByIdentifier, RecordError, ResetType, ResponseSink, ServerParams,
-    SessionTiming, SessionTransition, Sessions, Sink, TesterPresent, uds_server,
+    ServiceSet, SessionTiming, SessionTransition, Sessions, Sink, Storage, TesterPresent,
+    uds_server,
 };
 
 /// The sensor's message size.
@@ -275,11 +276,13 @@ type SmallEntity = SensorEntity<64>;
 const SMALL_PDU: usize = <SmallEntity as DiagnosticEntity>::MAX_PDU;
 
 /// Two identifiers whose positive responses (`62`, the identifier, the record) are
-/// exactly the small entity's limit and one byte over it.
+/// exactly the small entity's limit and one byte over it, and one whose read waits for
+/// [`GATE`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Did {
     Fits,
     Overflows,
+    Gated,
 }
 
 impl Did {
@@ -287,9 +290,13 @@ impl Did {
         match self {
             Self::Fits => SMALL_PDU - 3,
             Self::Overflows => SMALL_PDU - 2,
+            Self::Gated => 1,
         }
     }
 }
+
+/// What a read of [`Did::Gated`] waits for.
+static GATE: tokio::sync::Notify = tokio::sync::Notify::const_new();
 
 impl DataIdentifier for Did {
     const MAX_RECORD_LEN: usize = SMALL_PDU - 2;
@@ -297,12 +304,14 @@ impl DataIdentifier for Did {
         match self {
             Self::Fits => 0xF190,
             Self::Overflows => 0xF191,
+            Self::Gated => 0xF192,
         }
     }
     fn from_u16(value: u16) -> Option<Self> {
         match value {
             0xF190 => Some(Self::Fits),
             0xF191 => Some(Self::Overflows),
+            0xF192 => Some(Self::Gated),
             _ => None,
         }
     }
@@ -312,21 +321,21 @@ impl DataIdentifier for Did {
     }
 }
 
-/// An application with a record too long for its entity.
+/// An application with a record too long for its entity, which reads up to eight
+/// identifiers at once, so its requests can outgrow the server's concurrent buffer.
 #[derive(Debug, Default)]
 struct Reader;
 
 impl ReadDataByIdentifier for Reader {
     type Did = Did;
     const MAY_RESPOND_PENDING: bool = false;
-    const MAX_DIDS_PER_REQUEST: usize = 1;
-    fn read(
-        &mut self,
-        did: Did,
-        out: &mut ResponseSink<'_>,
-    ) -> impl Future<Output = Result<(), Nrc>> {
-        let written = out.write_all(&vec![0xA5; did.record_len()]);
-        core::future::ready(written.map_err(|_| Nrc::ResponseTooLong))
+    const MAX_DIDS_PER_REQUEST: usize = 8;
+    async fn read(&mut self, did: Did, out: &mut ResponseSink<'_>) -> Result<(), Nrc> {
+        if did == Did::Gated {
+            GATE.notified().await;
+        }
+        out.write_all(&vec![0xA5; did.record_len()])
+            .map_err(|_| Nrc::ResponseTooLong)
     }
 }
 
@@ -344,12 +353,7 @@ uds_server! {
 #[test]
 fn a_response_longer_than_the_entity_carries_is_answered_0x14() {
     on_loopback(|loopback| async move {
-        let mut server = ReaderServer::new(
-            Reader,
-            DoIpTransport::new(loopback.entity(), bench_reloads()),
-            Address(ENTITY.0),
-            PARAMS,
-        );
+        let mut server = reader(&loopback);
         serve_until(&mut server, async {
             let mut tester = loopback.tester().await.expect("activated");
             let fits = ask(&mut tester, &[0x22, 0xF1, 0x90]).await;
@@ -362,6 +366,103 @@ fn a_response_longer_than_the_entity_carries_is_answered_0x14() {
             assert_eq!(
                 ask(&mut tester, &[0x22, 0xF1, 0x91]).await,
                 answered(&[0x7F, 0x22, 0x14])
+            );
+            tester.close().await.expect("closed");
+        })
+        .await;
+    });
+}
+
+fn reader(loopback: &Loopback) -> ReaderServer {
+    ReaderServer::new(
+        Reader,
+        DoIpTransport::new(loopback.entity(), bench_reloads()),
+        Address(ENTITY.0),
+        PARAMS,
+    )
+}
+
+/// The longest request [`ReaderServer`] accepts: its in-flight buffer.
+fn reader_limit() -> usize {
+    let mut store = <<Reader as ServiceSet>::Store as Storage>::EMPTY;
+    store.split().in_flight.len()
+}
+
+/// `22` and `count` identifiers: a request `1 + 2 × count` bytes long.
+fn read_of(count: usize) -> Vec<u8> {
+    let mut request = vec![0x22];
+    request.extend([0xF1, 0x90].repeat(count));
+    request
+}
+
+/// A request longer than the server accepts is refused by the entity with the negative
+/// acknowledgement *diagnostic message too large*, which the tester's confirm reports,
+/// and is not answered; the connection goes on (ISO 13400-2:2019 REQ 7.DoIP-072,
+/// REQ 7.DoIP-074; #41).
+#[test]
+fn an_over_long_request_is_nacked_0x04() {
+    on_loopback(|loopback| async move {
+        let mut server = reader(&loopback);
+        serve_until(&mut server, async {
+            let mut tester = loopback.tester().await.expect("activated");
+            let too_long = read_of(reader_limit() / 2 + 1);
+            assert!(too_long.len() > reader_limit());
+            assert_eq!(
+                send(&mut tester, &too_long).await,
+                DoIpResult::MessageTooLarge
+            );
+
+            assert_eq!(
+                ask(&mut tester, &[0x22, 0xF1, 0x90]).await.confirmed,
+                Some(DoIpResult::Ok)
+            );
+            tester.close().await.expect("closed");
+        })
+        .await;
+    });
+}
+
+/// A request exactly as long as the server accepts is acknowledged and served, not
+/// refused: the limit is the in-flight buffer's length, not one less.
+#[test]
+fn a_request_at_the_limit_is_served() {
+    on_loopback(|loopback| async move {
+        let mut server = reader(&loopback);
+        serve_until(&mut server, async {
+            let mut tester = loopback.tester().await.expect("activated");
+            let at_limit = read_of((reader_limit() - 1) / 2);
+            assert_eq!(at_limit.len(), reader_limit());
+            let exchanged = ask(&mut tester, &at_limit).await;
+            assert_eq!(exchanged.confirmed, Some(DoIpResult::Ok));
+            assert!(
+                matches!(exchanged.then, Then::Response(..)),
+                "{exchanged:?}"
+            );
+            tester.close().await.expect("closed");
+        })
+        .await;
+    });
+}
+
+/// A request within the server's limit but too long for the buffer it lends while a
+/// service runs is acknowledged, not refused, and answered `busyRepeatRequest` (ISO
+/// 14229-1:2020 NRC `0x21`; #41 keeps the two apart); the running service then
+/// answers.
+#[test]
+fn a_long_request_while_a_service_runs_is_answered_busy() {
+    on_loopback(|loopback| async move {
+        let mut server = reader(&loopback);
+        serve_until(&mut server, async {
+            let mut tester = loopback.tester().await.expect("activated");
+            assert_eq!(send(&mut tester, &[0x22, 0xF1, 0x92]).await, DoIpResult::Ok);
+
+            let long = read_of((reader_limit() - 1) / 2);
+            assert_eq!(ask(&mut tester, &long).await, answered(&[0x7F, 0x22, 0x21]));
+
+            GATE.notify_one();
+            assert_eq!(
+                next(&mut tester).await,
+                Then::Response(ENTITY, vec![0x62, 0xF1, 0x92, 0xA5])
             );
             tester.close().await.expect("closed");
         })

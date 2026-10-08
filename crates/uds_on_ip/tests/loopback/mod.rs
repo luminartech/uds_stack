@@ -233,6 +233,24 @@ pub async fn exchange<C: DiagnosticConnection>(
     }
 }
 
+/// Sends `pdu` physically to [`ENTITY`] and waits for its confirm alone: the entity's
+/// acknowledgement, or its refusal.
+///
+/// # Panics
+///
+/// If the request is refused, the tester fails, or its next event is not the confirm.
+pub async fn send<C: DiagnosticConnection>(tester: &mut C, pdu: &[u8]) -> DoIpResult {
+    tester
+        .request(ENTITY, TaType::Physical, pdu)
+        .await
+        .expect("the tester accepts the request");
+    let mut buf = vec![0u8; TESTER_MESSAGE];
+    match tester.next_event(&mut buf, None).await.expect("the tester") {
+        ConnectionEvent::Confirm { result, .. } => result,
+        other => panic!("unexpected {other:?}"),
+    }
+}
+
 /// Sends `pdu` physically to [`ENTITY`]; see [`exchange`].
 pub async fn ask<C: DiagnosticConnection>(tester: &mut C, pdu: &[u8]) -> Exchange {
     exchange(tester, ENTITY, TaType::Physical, pdu).await

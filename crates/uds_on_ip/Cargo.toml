@@ -66,7 +66,7 @@ edge-nal-std = { workspace = true }
 embassy-time = { workspace = true, features = ["mock-driver", "generic-queue-8"] }
 # mock-driver takes its lock through critical-section, which a host test supplies.
 critical-section = { workspace = true, features = ["std"] }
-tokio = { workspace = true, features = ["macros", "rt", "time"] }
+tokio = { workspace = true, features = ["macros", "rt", "sync", "time"] }
 
 [lints]
 workspace = true

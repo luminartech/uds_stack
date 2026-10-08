@@ -699,3 +699,12 @@ fn now_reads_the_entity_clock() {
     let t: Transport = DoIpTransport::new(entity, bench_reloads());
     assert_eq!(t.now(), Timestamp(0xFFFF_FFF0));
 }
+
+/// The server's request limit reaches the entity, which refuses a longer request before
+/// acknowledging it (ISO 13400-2:2019 REQ 7.DoIP-072; #41).
+#[test]
+fn the_request_limit_reaches_the_entity() {
+    let mut t = transport([]);
+    t.limit_requests(1_026);
+    assert_eq!(t.entity().request_limit, Some(1_026));
+}
