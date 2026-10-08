@@ -75,11 +75,31 @@ use uds_session::{Ai, Reloads, SResult, Timestamp};
 ///
 /// [`uds_services::Server::step`] takes `&mut self`, and this stack forbids
 /// `unsafe`, so a server built in place in a `static` is reached in one of two
-/// ways. Where one task owns it, `static_cell::ConstStaticCell` yields the
-/// `&'static mut` once, as `uds_services::Server::new` shows. Where anything
-/// else must reach it too — an interrupt handler, a second task — it lives in a
-/// `critical_section::Mutex<core::cell::RefCell<..>>`, and the integrator
-/// supplies a `critical-section` implementation for the target.
+/// ways. Where one task owns it, a `static_cell` cell yields the `&'static mut`
+/// once. Where anything else must reach it too — an interrupt handler, a second
+/// task — it lives in a `critical_section::Mutex<core::cell::RefCell<..>>`.
+///
+/// A transport over `simple_doip`'s `entity::Entity` is built at run time, because
+/// the entity borrows an acceptor the network stack creates then, and
+/// `Entity::new` is not `const`. So the cell is a `static_cell::StaticCell`, filled
+/// with `init_with(|| Server::new(..))`, which lets the compiler build the server in
+/// the cell rather than on the stack, where `init(Server::new(..))` usually does not;
+/// `static_cell::ConstStaticCell`, which `uds_services::Server::new` shows, serves only
+/// a transport with a `const` constructor.
+///
+/// The integrator supplies, for the target:
+///
+/// - a `critical-section` implementation, such as `cortex-m`'s
+///   `critical-section-single-core` feature on a single-core Cortex-M;
+/// - an `embassy-time` driver, which the entity's timers read: an
+///   `embassy_time_driver::Driver` registered with `time_driver_impl!`;
+/// - an `embassy-time` timer queue, which wakes those timers: an executor's
+///   integrated queue, or `embassy-time-queue-utils`' generic one (its
+///   `generic-queue-N` feature) held in the driver and woken from its alarm.
+///
+/// The workspace's unpublished `testing/embedded-probe` assembles all of it for bare
+/// metal: a `SysTick` driver with a generic queue, `cortex-m`'s critical section, and
+/// the sensor's server in a `StaticCell`.
 ///
 /// Time is the entity's: [`UdsTransport::now`] is [`DiagnosticEntity::now`], so a
 /// deadline the session layer computes means the same instant to the entity.
