@@ -508,7 +508,10 @@ async fn drain<'d, T: UdsTransport, const PEERS: usize>(
 }
 
 /// Act on what a drain recorded: the timeout, then the confirmation. The only caller of
-/// the session hooks.
+/// the session hooks, so the protocol state's session is written in one place, when the
+/// response that selected it is confirmed or its completion is reported, and
+/// `uds_session` and this crate cannot disagree about it (``UDSSVC_ARCH_0002``,
+/// ``UDSSVC_ARCH_0038``).
 ///
 /// That fixed order is the arrival order. Within one drain, ``UDSS_LLR_0081`` puts the
 /// expiry snapshots ahead of the input's own outputs, so a `SessionTimeout` always

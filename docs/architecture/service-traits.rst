@@ -109,6 +109,7 @@ The traits
           Ecu: ReadDataByIdentifier, SecurityAccess, DataTransfer;
           transport = DoIpTransport<Entity<'static, TcpAcceptor, 1, 4096>, 2>,
           peers = 1,
+          server = EcuServer,
       }
 
    Three numbers meet in that line, and are not the same number. At a sensor serving one
@@ -251,6 +252,7 @@ Protocol state
           Ecu: ReadDataByIdentifier, SecurityAccess, DataTransfer;
           transport = DoIpTransport<Entity<'static, TcpAcceptor, 1, 4096>, 2>,
           peers = 1,
+          server = EcuServer,
       }
 
    Rationale: ``UDSSVC_ARCH_0034`` puts protocol concerns in the stack, and a block sequence
@@ -337,6 +339,8 @@ Protocol state
    ``ServiceSet::State``, because the macro expands in the application's crate and a struct
    declared there could keep nothing private from it. ``Server`` holds the state in a
    private field and passes it to ``dispatch`` and to the two session hooks the macro emits.
+   Holding the state inside ``Store`` was rejected too: ``Store`` holds per-request buffers,
+   and state that outlives a request does not belong with them.
    The per-channel authentication table this element describes is still not built; nothing
    in scope needs it yet.
 
@@ -406,8 +410,8 @@ Protocol state
    accept a second transfer while one is live.
 
    **``maxNumberOfBlockLength`` is an associated const, not a value a handler returns**, and
-   the change removes a disagreement rather than saving a parameter. Clause 14.2 obliges the
-   server to report the number in its ``RequestDownload`` positive response, and
+   the change removes a disagreement rather than saving a parameter. Clause 15.2.3.2
+   obliges the server to report the number in its ``RequestDownload`` positive response, and
    ``UDSSVC_ARCH_0013``'s fold needs the same number to size the buffer a block is decoded
    into. Had ``begin`` returned it, those would be two statements of one fact made at two
    different times — one at compile time in the array length, one per request from a
