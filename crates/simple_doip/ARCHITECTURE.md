@@ -205,8 +205,8 @@ stateDiagram-v2
   7.DoIP-074; and from what Table 24's code `0x00` means. The reason is
   the layer above: a UDS server answers a request it can read only the start of by
   ISO 14229-1's rules, `0x11` or `0x13`, or `busyRepeatRequest` while busy, Figure
-  5's choice for a request ISO 14229-1 8.7.6 has wait, which `uds_on_ip` composes
-  from the truncated event.
+  5's choice for a request ISO 14229-1:2020 8.7.6 has wait, which `uds_on_ip`
+  composes from the truncated event.
 - **Requests wait for nothing.** A `request` is made by its future's first poll,
   which completes it, so one dropped unpolled makes none. It is queued on the
   connection that registered its target and confirmed `Ok` once written,
@@ -295,14 +295,13 @@ out while a read waits.
   API here re-exposes one.
 
 **Time comes from `embassy-time` inside the implementations, and crosses the traits
-as `Millis`.** `edge-nal` depends on `embassy-time` regardless, and its
+as `Timestamp`.** `edge-nal` depends on `embassy-time` regardless, and its
 `mock-driver` makes the `TCP_DATA` timers deterministic under test, which is the main
-reason not to declare a clock trait here. The traits carry `now()` and a `Millis`
+reason not to declare a clock trait here. The traits carry `now()` and a `Timestamp`
 deadline instead of `embassy-time`'s `Instant`, so the layer above names only this
-crate's types and takes no `embassy-time` dependency. `Millis` wraps, has no
-ordering, and compares across the wrap exactly as `uds_session::Timestamp` does. The
-rule is written twice on purpose: this crate cannot depend on `uds_session`, and
-neither should learn the other's vocabulary.
+crate's types and takes no `embassy-time` dependency. `Timestamp` wraps, has no
+ordering, and compares across the wrap exactly as its namesake `uds_session::Timestamp`
+does. The type is written twice on purpose: this crate cannot depend on `uds_session`.
 
 **The dependency risk, and its firewall.** `edge-nal` is pre-1.0 and changes:
 - 0.5.0 on 2025-01-15, 0.6.0 on 2026-01-01, and 0.7.0 on 2026-06-25, so roughly one
