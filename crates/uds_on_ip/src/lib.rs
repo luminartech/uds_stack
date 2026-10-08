@@ -78,7 +78,7 @@
 //!
 //! It does not decode UDS messages — that is `uds_protocol` — and it does not
 //! dispatch services, choose negative response codes, or know what a data
-//! identifier is. Those are ISO 14229-1 clause 8.7 concerns and belong to
+//! identifier is. Those are ISO 14229-1:2020 clause 8.7 concerns and belong to
 //! `uds_services`.
 //!
 //! It holds no ISO 14229-2 vocabulary. Addressing, the service primitives and
