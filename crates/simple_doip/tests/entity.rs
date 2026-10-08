@@ -11,13 +11,13 @@ mod support;
 use std::pin::pin;
 
 use embassy_time::Duration;
-use simple_doip::entity::{Entity, EntityAddress, Error};
+use simple_doip::entity::{AddressError, Entity, EntityAddress, Error};
 use simple_doip::service::{
     ConnectionId, DiagnosticEntity, DoIpResult, EntityConfig, EntityEvent,
 };
 use simple_doip::{LogicalAddress, TaType};
 use support::mock_stack::{
-    ENTITY, MockPeer, MockStack, TESTER, ack, activation_response_for, advance,
+    ENTITY, MockError, MockPeer, MockStack, TESTER, ack, activation_response_for, advance,
     alive_check_request, alive_check_response, clock, diagnostic, header_nack, nack,
     poll_times, raw, until_stalled,
 };
@@ -174,6 +174,41 @@ fn confirm(sa: LogicalAddress, ta_type: TaType, result: DoIpResult) -> Ev {
 }
 
 // --- accepting and the timers of Table 12 ------------------------------------------------
+
+/// An entity's physical address is neither functional nor a tester's, and its functional
+/// address is functional.
+#[test]
+fn an_entity_address_is_physical_then_functional() {
+    let functional = LogicalAddress(0xE400);
+    assert_eq!(
+        EntityAddress::new(functional, functional),
+        Err(AddressError::NotPhysical(functional))
+    );
+    assert_eq!(
+        EntityAddress::new(TESTER, functional),
+        Err(AddressError::NotPhysical(TESTER))
+    );
+    assert_eq!(
+        EntityAddress::new(ENTITY, ENTITY),
+        Err(AddressError::NotFunctional(ENTITY))
+    );
+    assert!(EntityAddress::new(ENTITY, functional).is_ok());
+}
+
+/// A failed accept is the caller's to handle: `next_event` returns it.
+#[test]
+fn a_failed_accept_is_returned() {
+    let _clock = clock();
+    let stack = MockStack::new(4096);
+    let mut entity = OneSocket::new(&stack, address(), two_testers());
+    stack.fail_next_accept();
+
+    let mut buf = [0u8; 64];
+    assert!(matches!(
+        until_stalled(pin!(entity.next_event(&mut buf, None))),
+        Some(Err(Error::Accept(MockError)))
+    ));
+}
 
 /// REQ 3.DoIP-084 and 086: a socket with no routing activation is closed when
 /// `T_TCP_Initial_Inactivity`, 2 s, elapses, and not before. No event names it.
@@ -1300,6 +1335,32 @@ fn a_busy_connection_does_not_starve_the_reserve() {
     assert!(poll_times(next, 100).is_none());
 
     assert_eq!(busy.take_written(), alive_check_request());
+    assert!(!busy.all_read());
+}
+
+/// The reserve socket is read while the first of several connections has input always
+/// ready, however the turn wraps round the connections.
+#[test]
+fn a_busy_first_connection_does_not_starve_the_reserve() {
+    let _clock = clock();
+    let stack = MockStack::new(4096);
+    let mut entity = TwoSockets::new(&stack, address(), two_testers());
+    let busy = activated(&stack, &mut entity, TESTER);
+    let _idle = stack.dial();
+    assert_eq!(events(&mut entity), []);
+    let newcomer = stack.dial();
+    assert_eq!(events(&mut entity), []);
+    busy.send(&alive_check_response().repeat(400));
+    newcomer.send(&activation_from(OTHER, 0));
+
+    let mut buf = [0u8; 64];
+    let next = pin!(entity.next_event(&mut buf, None));
+    assert!(poll_times(next, 100).is_none());
+
+    assert_eq!(
+        newcomer.take_written(),
+        activation_response_for(OTHER, ACTIVATED)
+    );
     assert!(!busy.all_read());
 }
 

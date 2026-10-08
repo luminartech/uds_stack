@@ -36,8 +36,9 @@ use crate::messages::{
 use crate::service::{
     ConnectionId, DiagnosticEntity, DoIpResult, EntityConfig, EntityEvent,
 };
-use crate::stream::tx::{Full, TxQueue};
+use crate::stream::tx::Full;
 use crate::stream::{after, caller_deadline, millis};
+use crate::tester::DIAGNOSTIC_MESSAGE_OVERHEAD;
 use crate::{LogicalAddress, TaType};
 use handler::{ALIVE_CHECK_REQUEST, Handled};
 use io::{Io, drive};
@@ -158,7 +159,7 @@ impl EntityAddress {
 /// `E` is the acceptor's error, [`TcpAccept::Error`].
 #[derive(Debug, PartialEq, Eq, thiserror::Error)]
 #[non_exhaustive]
-pub enum Error<E: fmt::Debug> {
+pub enum Error<E> {
     /// Accepting a connection failed. Every call after this may fail the same way.
     #[error("accepting a connection failed: {0:?}")]
     Accept(E),
@@ -166,7 +167,7 @@ pub enum Error<E: fmt::Debug> {
     /// accepted.
     #[error("too many requests await their confirm")]
     RequestQueueFull,
-    /// The PDU does not fit the entity's message buffer; it was not accepted.
+    /// The PDU is longer than [`Entity::MAX_PDU`]; it was not accepted.
     #[error("a {len}-byte PDU exceeds the {max}-byte limit")]
     PduTooLarge {
         /// The PDU's length.
@@ -198,8 +199,9 @@ pub enum Error<E: fmt::Debug> {
 ///
 /// The connections' buffers are most of an `Entity`: `2 × MCTS × MAX_MESSAGE` bytes.
 /// The reserve's two buffers and the bookkeeping add a few hundred bytes more, and
-/// under a hundred per connection; the sockets the acceptor hands out are counted in
-/// their own type. With `MCTS` 1 and `MAX_MESSAGE` 4096 an `Entity` is about 8.4 KiB.
+/// each of the `MCTS + 1` slots holds an accepted socket, [`TcpAccept::Socket`], inline
+/// beside about a hundred bytes of its own. With `MCTS` 1, `MAX_MESSAGE` 4096 and
+/// `edge-nal-std`'s sockets an `Entity` is about 8.4 KiB.
 ///
 /// # Examples
 ///
@@ -368,6 +370,10 @@ impl<
     const TESTERS: usize,
 > Entity<'a, A, MCTS, MAX_MESSAGE, TESTERS>
 {
+    /// The longest PDU [`DiagnosticEntity::request`] accepts: `MAX_MESSAGE` less what a
+    /// diagnostic message adds to its PDU, [`DIAGNOSTIC_MESSAGE_OVERHEAD`].
+    pub const MAX_PDU: usize = MAX_MESSAGE.saturating_sub(DIAGNOSTIC_MESSAGE_OVERHEAD);
+
     /// An entity accepting connections from `acceptor`.
     ///
     /// Nothing is accepted until [`DiagnosticEntity::next_event`] is called.
@@ -518,11 +524,10 @@ impl<
             result: Some(DoIpResult::UnknownSa),
         };
         if sa == self.address.physical {
-            let max = MAX_MESSAGE.saturating_sub(handler::DIAGNOSTIC_ACK - 1);
-            if pdu.len() > max {
+            if pdu.len() > Self::MAX_PDU {
                 return Err(Error::PduTooLarge {
                     len: pdu.len(),
-                    max,
+                    max: Self::MAX_PDU,
                 });
             }
             confirm.result = Some(DoIpResult::NoSocket);
@@ -625,10 +630,7 @@ impl<
             Phase::Initialized | Phase::Registered { .. } => {
                 self.finalize(at, false, now);
             }
-            Phase::Finalizing { abort: false, .. } => {
-                open.deadline = expiry(now, CLOSE_LIMIT);
-                self.finalize(at, true, now);
-            }
+            Phase::Finalizing { abort: false, .. } => self.finalize(at, true, now),
             Phase::Finalizing { abort: true, .. } => self.remove(at),
         }
     }
@@ -1068,7 +1070,7 @@ impl<
         self.turn = match &winner {
             Woke::Socket(SlotRef::Connection(index), _) => index
                 .checked_add(1)
-                .filter(|next| *next < MCTS)
+                .filter(|next| *index >= first && *next < MCTS)
                 .map_or(Turn::Reserve, Turn::Connection),
             Woke::Socket(SlotRef::Reserve, _) => Turn::Acceptor,
             Woke::Accepted(_) => Turn::Connection(0),
@@ -1098,11 +1100,7 @@ fn push_response<S, const CAP: usize>(
     let response = Message::routing_activation_response(
         version, request.sa, physical, code, [0; 4], None,
     );
-    push(&mut slot.tx, &response);
-}
-
-fn push<const CAP: usize>(tx: &mut TxQueue<CAP>, message: &Message<'_>) {
-    tx.push(message).ok();
+    slot.tx.push(&response).ok();
 }
 
 /// Exchanges `slot`'s socket and buffers with the reserve's, if both fit.
@@ -1148,7 +1146,7 @@ impl<
     /// # Errors
     ///
     /// None of these is followed by a confirm:
-    /// - [`Error::PduTooLarge`] where `pdu` does not fit `MAX_MESSAGE`.
+    /// - [`Error::PduTooLarge`] where `pdu` is longer than [`Entity::MAX_PDU`].
     /// - [`Error::RequestQueueFull`] while too many earlier requests await their confirm.
     fn request(
         &mut self,
@@ -1227,8 +1225,8 @@ impl<
     ///
     /// # Errors
     ///
-    /// None: the close is bounded instead, and `connection` has left the table when it
-    /// returns.
+    /// None: the close is bounded instead. A `connection` an event has named has left the
+    /// table when it returns; one no event has named is left alone.
     async fn close(&mut self, connection: ConnectionId) -> Result<(), Self::Error> {
         let index = connection.index();
         let at = SlotRef::Connection(index);

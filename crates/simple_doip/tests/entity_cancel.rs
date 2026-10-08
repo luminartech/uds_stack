@@ -1,8 +1,7 @@
 //! `Entity`'s `next_event`, `request` and `close` lose nothing when dropped at any
-//! await: each
-//! scenario runs once to completion, then again over sockets that move one byte per read
-//! or write, dropping the future after every number of polls in turn, and the events and
-//! the bytes on the wire must be the same.
+//! await: each scenario runs once to completion, then again over sockets that move one
+//! byte per read or write, dropping the future after every number of polls in turn, and
+//! the events and the bytes on the wire must be the same.
 
 // Test code; see `golden_vectors.rs` for why the workspace lint standard is relaxed here.
 #![expect(clippy::unwrap_used)]
@@ -68,7 +67,10 @@ fn drain(entity: &mut TestEntity<'_>, drive: Drive, seen: &mut Vec<String>) {
                 let budget = polls;
                 polls = polls.checked_add(1).unwrap();
                 match poll_times(future, budget) {
-                    Some(event) => event,
+                    Some(event) => {
+                        polls = 1;
+                        event
+                    }
                     None => continue,
                 }
             }

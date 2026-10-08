@@ -134,8 +134,8 @@ through Figure 25's connection states, as `src/entity/table.rs` names them:
 stateDiagram-v2
     [*] --> Initialized: accepted, T_TCP_Initial_Inactivity starts
     Initialized --> Registered: routing activation accepted
-    Initialized --> Finalizing: initial inactivity, a refused activation, or a closing NACK
-    Registered --> Finalizing: general inactivity, a silent alive check, a closing NACK, or close
+    Initialized --> Finalizing: initial inactivity, a refused activation, a closing NACK, or lost I/O
+    Registered --> Finalizing: general inactivity, a silent alive check, a closing NACK, close, or lost I/O
     Finalizing --> [*]: closed, else aborted, else dropped
     note right of Initialized
         The first routing activation request seen stops the
@@ -144,6 +144,8 @@ stateDiagram-v2
     end note
 ```
 
+- **Lost I/O aborts.** An end of stream from the tester, or a failed read or write,
+  aborts the socket in whatever state it is in; there is nothing left to write to.
 - **The layer above is told little.** `next_event` reports a diagnostic message
   (`Indication`, or `IndicationTruncated` where the caller's buffer is too short), a
   request's `Confirm`, a connection's `Closed`, or the caller's `Deadline`.
@@ -436,7 +438,7 @@ new code reading `active_request` must preserve the restore-on-mismatch shape.
 - `tests/support/mock_stack.rs` — the scripted `edge-nal` backend the `connection`
   tests run on: sockets that move a set number of bytes per read or write and yield
   before each, and `until_stalled`, an executor that fails a test whose future keeps
-  waking itself. `tests/mock_stack.rs` holds the mock to what the other tests rely
+  waking itself (on native runs; see invariant 7). `tests/mock_stack.rs` holds the mock to what the other tests rely
   on.
 - `tests/tester.rs`, `tests/tester_late_ack.rs` — `Tester` on the mock and on
   loopback; `tests/tester_interop.rs` against this crate's `Server`.
@@ -551,6 +553,7 @@ choosing the crate; the mechanics are here:
 6. **Every accepted request is confirmed exactly once, in order per target.** The
    layer above tells requests apart by order alone; `tests/entity.rs` and
    `tests/entity_mock.rs` pin it.
-7. **The `connection` tests never busy-loop.** `until_stalled` fails a future that
-   keeps waking itself, so a change that spins fails the suite rather than slowing
-   it.
+7. **The `connection` tests never busy-loop.** On native runs `until_stalled` fails
+   a future that keeps waking itself, so a change that spins fails the suite rather
+   than slowing it. Under Miri, where a waker's identity is unreliable, it takes 64
+   wakes in a row to be a wait, so the native run is the one that holds this.

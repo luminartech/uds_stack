@@ -3,7 +3,7 @@
 //! before it completes moves nothing, and a split socket's halves wait independently.
 
 // Test code; see `golden_vectors.rs` for why the workspace lint standard is relaxed here.
-#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+#![expect(clippy::unwrap_used)]
 
 mod support;
 

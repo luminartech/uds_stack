@@ -1,8 +1,6 @@
 //! The byte streams under a `DoIP` TCP connection, and their clock, shared by the tester
 //! and the entity.
 
-#![deny(clippy::arithmetic_side_effects)]
-
 use embassy_time::{Duration, Instant};
 
 pub(crate) mod rx;

@@ -89,6 +89,8 @@ struct Shared {
     /// Connections dialled and not yet accepted.
     incoming: VecDeque<usize>,
     acceptor: Option<Waker>,
+    /// Whether the next `accept` fails.
+    accept_fails: bool,
 }
 
 /// The stack: every `connect` opens a new scripted [`Connection`].
@@ -105,6 +107,7 @@ impl MockStack {
             read_yields: true,
             incoming: VecDeque::new(),
             acceptor: None,
+            accept_fails: false,
         })))
     }
 
@@ -152,6 +155,15 @@ impl MockStack {
         }
         drop(shared);
         self.peer(index)
+    }
+
+    /// The next `accept` fails.
+    pub fn fail_next_accept(&self) {
+        let mut shared = self.0.borrow_mut();
+        shared.accept_fails = true;
+        if let Some(waker) = shared.acceptor.take() {
+            waker.wake();
+        }
     }
 
     /// Bytes `connect` delivers on the next connection before the test touches it.
@@ -507,6 +519,9 @@ impl TcpAccept for MockStack {
         yield_once().await;
         poll_fn(|cx| {
             let mut shared = self.0.borrow_mut();
+            if std::mem::take(&mut shared.accept_fails) {
+                return Poll::Ready(Err(MockError));
+            }
             let Some(index) = shared.incoming.pop_front() else {
                 shared.acceptor = Some(cx.waker().clone());
                 return Poll::Pending;

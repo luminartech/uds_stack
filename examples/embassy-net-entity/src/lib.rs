@@ -21,7 +21,7 @@ use core::fmt;
 use core::future::{Future, poll_fn};
 use core::net::{IpAddr, Ipv4Addr, SocketAddr};
 use core::pin::pin;
-use core::task::Poll;
+use core::task::{Context, Poll};
 
 use edge_nal::{Close, Readable, TcpAccept, TcpShutdown, TcpSplit};
 use embassy_net::Stack;
@@ -108,28 +108,31 @@ impl<'d, const N: usize> TcpAccept for Acceptor<'d, N> {
                         return Poll::Ready(Ok((remote, Accepted { socket })));
                     }
                     State::Closed | State::Listen | State::TimeWait => {
-                        // Listening again on the same endpoint changes nothing; polling
-                        // the accept registers this task to be woken by a connection.
-                        socket.set_timeout(Some(POOL_TIMEOUT));
-                        let refused = matches!(
-                            pin!(socket.accept(self.port)).poll(cx),
-                            Poll::Ready(Err(_))
-                        );
-                        if refused {
-                            socket.abort();
-                        }
+                        listen_and_wake_on_connection(&mut socket, self.port, cx);
                     }
-                    _ => {
-                        // Never ready in these states: the poll only registers this task
-                        // to be woken when the handshake or the close moves on.
-                        let _ = pin!(socket.wait_write_ready()).poll(cx);
-                    }
+                    _ => wake_on_handshake_or_close(&socket, cx),
                 }
             }
             Poll::Pending
         })
         .await
     }
+}
+
+fn listen_and_wake_on_connection(
+    socket: &mut TcpSocket<'_>,
+    port: u16,
+    cx: &mut Context<'_>,
+) {
+    socket.set_timeout(Some(POOL_TIMEOUT));
+    let refused = matches!(pin!(socket.accept(port)).poll(cx), Poll::Ready(Err(_)));
+    if refused {
+        socket.abort();
+    }
+}
+
+fn wake_on_handshake_or_close(socket: &TcpSocket<'_>, cx: &mut Context<'_>) {
+    let _ = pin!(socket.wait_write_ready()).poll(cx);
 }
 
 impl ErrorType for Accepted<'_, '_> {
@@ -245,23 +248,35 @@ pub const MCTS: usize = 1;
 /// The largest message the connection carries.
 pub const MAX_MESSAGE: usize = 4096;
 
-/// Serves `DoIP` as `address` on `stack` with `MCTS + 1` sockets over the buffers given,
+/// The buffers of one embassy-net socket in the [`Acceptor`]'s pool.
+pub struct SocketBuffers {
+    /// What the socket receives into.
+    pub rx: [u8; MAX_MESSAGE],
+    /// What the socket sends from.
+    pub tx: [u8; MAX_MESSAGE],
+}
+
+impl fmt::Debug for SocketBuffers {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("SocketBuffers").finish_non_exhaustive()
+    }
+}
+
+/// Serves `DoIP` as `address` on `stack` with `MCTS + 1` sockets over `buffers`,
 /// echoing every diagnostic message.
 ///
 /// Returns only when [`DiagnosticEntity::next_event`] fails, with its error.
 pub async fn serve(
     stack: Stack<'_>,
     address: EntityAddress,
-    rx: &mut [[u8; MAX_MESSAGE]; MCTS + 1],
-    tx: &mut [[u8; MAX_MESSAGE]; MCTS + 1],
+    buffers: &mut [SocketBuffers; MCTS + 1],
 ) -> simple_doip::entity::Error<Error> {
-    let [rx0, rx1] = rx;
-    let [tx0, tx1] = tx;
+    let [first, second] = buffers;
     let acceptor = Acceptor::new(
         TCP_PORT,
         [
-            TcpSocket::new(stack, rx0, tx0),
-            TcpSocket::new(stack, rx1, tx1),
+            TcpSocket::new(stack, &mut first.rx, &mut first.tx),
+            TcpSocket::new(stack, &mut second.rx, &mut second.tx),
         ],
     );
     let mut entity =

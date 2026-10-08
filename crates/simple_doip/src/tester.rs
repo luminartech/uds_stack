@@ -4,8 +4,6 @@
 //! [`DiagnosticConnection`]. It needs the `connection` feature; see the crate
 //! documentation for what the integrator supplies.
 
-#![deny(clippy::arithmetic_side_effects)]
-
 use core::fmt;
 use core::net::SocketAddr;
 

@@ -3,7 +3,7 @@
 //! two cannot hide a framing bug they have in common.
 
 // Test code; see `golden_vectors.rs` for why the workspace lint standard is relaxed here.
-#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+#![expect(clippy::unwrap_used, clippy::panic)]
 
 use std::net::SocketAddr;
 
