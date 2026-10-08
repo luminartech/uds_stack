@@ -232,11 +232,30 @@ pub trait UdsTransport {
     /// conformant and leaves the response buffer as the only bound. MDS is defined for
     /// *requests*, so a server asking what it may send is asking about the client.
     ///
-    /// There is deliberately no `inbound_max`. This entity's own MDS is the in-flight
-    /// buffer's length, which [`crate::uds_server`] derives — so a transport that has to
-    /// advertise it needs the crate to *state* the number, not to be asked for it.
-    /// Stating it is a seam addition to make when a binding needs it.
+    /// The server's own bound runs the other way, stated rather than asked for: see
+    /// [`Self::limit_requests`].
     fn outbound_max(&self) -> Option<usize>;
+
+    /// The longest request the server accepts: the length of the in-flight buffer
+    /// [`crate::uds_server`] derives, which is also the server's ISO 13400-2:2019
+    /// Table 11 *Max. data size*.
+    ///
+    /// [`crate::Server`] calls it once, before its first [`Self::next_event`], so a
+    /// transport that can refuse a longer request before accepting it does so — a
+    /// `DoIP` entity with a diagnostic message negative acknowledgement, an ISO-TP
+    /// receiver with a flow control overflow — rather than delivering it as
+    /// [`TransportEvent::DataTooLong`]. A request within it that is longer than the
+    /// buffer lent to [`Self::next_event`] while a service runs is still delivered as
+    /// [`TransportEvent::DataTooLong`]: the server answers that one busy. The default
+    /// does nothing, which leaves every long request to arrive as
+    /// [`TransportEvent::DataTooLong`].
+    ///
+    /// # Arguments
+    ///
+    /// * `max` - the longest request, in bytes, service identifier included.
+    fn limit_requests(&mut self, max: usize) {
+        let _ = max;
+    }
 
     /// The `tP_Client` reload pair this transport dictates.
     ///
