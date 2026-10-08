@@ -18,25 +18,18 @@ and is ``derived`` where the shape is ours.
 Why it is here at all
 ---------------------
 
-Because nothing else in the stack offers it. ``uds_on_ip``'s client sends and receives
-**bytes**:
-
-.. code-block:: rust
-
-   // uds_on_ip
-   pub async fn send(&mut self, ta: Address, request: &[u8])
-       -> Result<Completion<'_>, S::Error>;
-
-and its documentation hands the rest upward in as many words: *"A UDS negative response is
-not an error: it is a response, and interpreting it belongs to a higher layer."* This crate
-is that higher layer. Without it, a client application assembles request bytes by hand and
-parses responses by hand, which is the same failure the server side exists to prevent, on
-the other side of the wire.
+Because nothing else in the stack offers it. ``uds_session``'s client role tracks channels,
+response windows, spacing and keep-alive, and indicates each response as a message;
+``UdsTransport`` carries bytes. Neither knows a service or an identifier, and interpreting
+a negative response belongs to the layer above both. This crate is that layer. Without it,
+a client application assembles request bytes by hand and parses responses by hand, which
+is the same failure the server side exists to prevent, on the other side of the wire.
 
 .. uml::
    :align: center
-   :caption: A typed client request. Steps 2 and 7 are what this crate adds; everything
-             between them is the binding's.
+   :caption: A typed client request. Steps 2 and 9 are the encoding and the
+             interpretation; between them this crate's driver runs the exchange through
+             uds_session over the transport.
 
    @startuml
    autonumber "<b>[0]"
@@ -44,19 +37,20 @@ the other side of the wire.
 
    participant "client\napplication" as APP
    participant "uds_services" as V
-   participant "binding\n(uds_on_ip)" as I
+   participant "uds_session\nclient role" as SES
+   participant "UdsTransport" as T
    participant server as S
 
-   APP -> V : read(MyDid::VehicleSpeed)
+   APP -> V : read_data_by_identifier(ta, [MyDid::VehicleSpeed])
    activate V
-   V -> V : build request bytes\n(uds_protocol)
-   V -> I : send(ta, bytes)
-   activate I
-   I -> S : request
-   S --> I : response bytes
-   I --> V : Completion::Responded(Indication)
-   deactivate I
-   V -> V : classify: positive, negative,\nor no response expected
+   V -> V : encode request bytes
+   V -> SES : s_data_req
+   SES --> V : Transmit
+   V -> T : t_data_req
+   T -> S : request
+   T --> V : DataConf, then DataInd(response)
+   V -> SES : t_data_conf, t_data_ind (classified)
+   V -> V : interpret: positive, negative,\nor malformed
    V --> APP : typed result over MyDid
    deactivate V
    @enduml
@@ -74,12 +68,19 @@ The elements
 
    A client application names a service and its parameters in the application's own
    vocabulary — the identifier types of ``UDSSVC_ARCH_0024`` — and this crate encodes the
-   request with ``uds_protocol`` and decodes the response. The client application never
-   assembles or parses request bytes.
+   request and decodes the response, with ``uds_protocol``'s service identifiers and
+   negative response codes. The client application never assembles or parses request
+   bytes.
+
+   The bytes between the service identifier and the end are the application's identifiers,
+   written big-endian, and a positive response is walked against the same identifiers. Every
+   ``uds_protocol`` request type is built either from a list the client does not hold or
+   from the wire bytes the client would already have written, so routing the encoding
+   through one would add a copy and no check.
 
    Clause 7.3.2's service request primitive is the operation being provided. This crate
-   realises it as a call the client application makes, with the transport-facing half
-   delegated to the binding.
+   realises it as a call the client application makes, exchanged over ``UdsTransport``
+   (``UDSSVC_ARCH_0029``) by this crate's own driver.
 
    The asymmetry with the server side is deliberate and worth stating, because it looks
    like an inconsistency. A server *implements* a trait per service and is called; a client
@@ -102,11 +103,10 @@ The elements
    Clause 8.6 defines the negative response/confirmation service primitive, which is what
    makes this an interpretation with a definition behind it rather than a convention.
 
-   This element exists because the layer below explicitly refuses the job.
-   ``uds_on_ip``'s client returns a ``Completion`` whose result is ``Ok`` for a negative
-   response — correctly, since the exchange completed — and its documentation states that
-   interpreting it belongs higher up. If this crate does not do it, every client
-   application does it, differently.
+   This element exists because nothing below does the job. ``uds_session`` indicates a
+   response as a message, classified only as final or pending, and ``UdsTransport`` carries
+   bytes; interpreting a negative response belongs to the application layer. If this crate
+   does not do it, every client application does it, differently.
 
    Symmetry with the server side is the point: ``UDSSVC_ARCH_0010`` writes the three bytes
    of a negative response, and this element reads them. Both refer to the same clause.
@@ -126,9 +126,9 @@ The elements
    and the sequence is *lending*: a response borrows the receive buffer and is valid only
    until the next is taken.
 
-   The source address is what makes the sequence usable. ``uds_on_ip``'s indication
-   records that for a functionally addressed request each responding server sets its own
-   source address, and that this is how responses are told apart. A sequence of decoded
+   The source address is what makes the sequence usable. For a functionally addressed
+   request each responding server sets its own source address, and ``UdsTransport``'s
+   indication carries it: that is how responses are told apart. A sequence of decoded
    responses without their senders would be unattributable.
 
    Note that this is the exact inverse of the server-side decision in
@@ -138,8 +138,14 @@ The elements
    who sent each.
 
    Lending rather than owning follows from ``UDSSVC_ARCH_0017``: an owned sequence
-   allocates per response, which is what the whole crate is shaped to avoid. It is the
-   same reasoning that keeps ``uds_on_ip``'s equivalent from being a ``Stream``.
+   allocates per response, which is what the whole crate is shaped to avoid. It is also why
+   the sequence is not a ``Stream``: a ``Stream`` item cannot borrow the receive buffer.
+
+   The sequence closes when the functional channel's response window does: one response
+   timeout after the last answer, a response-pending message holding it open meanwhile.
+   Nothing is sent until the first answer is asked for. The request in progress is recorded
+   in the client rather than in the sequence, so a sequence dropped part-way is drained by
+   the client's next call, and a late answer to it is never taken for the next request's.
 
 .. arch:: No response expected is a normal client outcome
    :id: UDSSVC_ARCH_0023
@@ -158,9 +164,10 @@ The elements
    timeout, and a timeout is a fault. Suppression is not a fault: the client asked for it,
    or clause 8.7 required it.
 
-   This mirrors ``Responded::Suppressed`` on the server side (``UDSSVC_ARCH_0016``), and it
-   is the same distinction the binding already draws — its completion type separates a
-   response arriving from a request being transmitted with no response expected.
+   This mirrors ``Responded::Suppressed`` on the server side (``UDSSVC_ARCH_0016``). The
+   faults are the client's ``ClientError``: a response window that expired after
+   ISO 14229-2:2021 9.7 Table 9's repeats, a transmission that failed after them, and a
+   connection that closed first.
 
 .. arch:: One identifier vocabulary serves both roles
    :id: UDSSVC_ARCH_0024
@@ -193,24 +200,27 @@ Two layers
 
    The client is two layers. The lower one is sans-io and synchronous: it encodes a typed
    request into a caller-supplied buffer, and interprets response bytes into a typed
-   result. The upper one is a feature-gated asynchronous client that joins the two halves
-   across a transport, so an application writes one call and awaits it.
+   result. The upper one is the asynchronous client that joins the two halves across a
+   transport, so an application writes one call and awaits it.
 
    .. code-block:: rust
 
-      // core: no async, no transport, no_std
-      let n = uds::encode_read(&[MyDid::VehicleSpeed], &mut buf)?;
-      let value = uds::interpret_read::<MyDid>(&response_bytes)?;
+      // core: no async, no transport, no_std (crate-internal: client::encode)
+      let n = encode::read_data_by_identifier(&mut request, &[MyDid::VehicleSpeed])?;
+      let value = encode::records::<MyDid>(encode::final_response(&response, Arrived::Whole));
 
       // layer: one call, over any transport
-      let value = client.read(&[MyDid::VehicleSpeed]).await?;
+      let value = client.read_data_by_identifier(ta, &[MyDid::VehicleSpeed]).await?;
 
-   Rationale: everything below this crate is asynchronous. ``simple_doip``'s ``client`` and
-   ``server`` features both require its ``codec`` feature, which requires ``std`` and tokio;
-   ``uds_on_ip``'s ``client`` and ``server`` features each imply ``std`` and tokio in turn.
-   A typed client that did not await would therefore hand the application a buffer, make it
-   call the binding, and hand back the bytes, which is precisely what ``UDSSVC_ARCH_0020``
-   says a client application never does.
+   The lower layer is not public. Its tests bind to it inside the crate, which is the use
+   this element names; a caller that needs it without a transport is a reason to publish
+   it, and none has appeared.
+
+   Rationale: everything below this crate is asynchronous. ``UdsTransport`` is an
+   ``async`` trait, and the bindings that implement it run over sockets. A typed client
+   that did not await would therefore hand the application a buffer, make it call the
+   binding, and hand back the bytes, which is precisely what ``UDSSVC_ARCH_0020`` says a
+   client application never does.
 
    **Why the server needs no equivalent and the client does.** A server *responds*, so the
    awaiting belongs to the loop that read the request: ``UDSSVC_ARCH_0040``'s driver holds
@@ -249,14 +259,14 @@ Two layers
    rectangle "client application" as APP
 
    package "uds_services" {
-     rectangle "async client\n(feature-gated)" as ASYNC
+     rectangle "async client" as ASYNC
      rectangle "sans-io core\nencode request / interpret response" as CORE
      rectangle "driver loop + uds_session" as DRV
      interface "UdsTransport" as TR
    }
 
    package "binding" {
-     rectangle "uds_on_ip\ntransport" as BIND
+     rectangle "DoIP client\ntransport" as BIND
    }
 
    APP -down-> ASYNC : read(..).await

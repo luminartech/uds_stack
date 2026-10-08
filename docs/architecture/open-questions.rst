@@ -103,14 +103,10 @@ struct it built from state it owns is a copy rather than an input. What remained
 addressing triple alone, and a struct wrapping one ``Ai`` is a rename. ``UDSSVC_ARCH_0015``
 carries the full reasoning and the field table.
 
-Open across the stack
----------------------
-
-These cannot be settled in this repository alone. They are the substance of the brief
-carried to the others.
-
-**7. ``uds_on_ip``'s client is entirely unimplemented.** Every method on it is
-``todo!()``. The client surface of :doc:`client-surface` sits directly on it, so the client
-half of this crate cannot be exercised end to end until that is real. Its *shape* is
-settled enough to design against, which is why the elements are written; its behaviour is
-not.
+**7. ``uds_on_ip``'s client is entirely unimplemented — moot; the client sits on
+``UdsTransport``.** It was filed as open across the stack because :doc:`client-surface` was
+written to sit on that client, so this crate's client half could not run until it did.
+Neither holds now. The client drives ``uds_session``'s client role over ``UdsTransport``
+itself (``UDSSVC_ARCH_0029``), as the server does, and runs end to end over a scripted
+transport. A ``DoIP`` client transport is the binding's to supply, not a dependency of this
+crate.
