@@ -988,7 +988,12 @@ fn a_session_confirmation_during_a_handler_is_applied_once() {
 }
 
 /// The driver's future is `Send` for a `Send` transport and service set, and
-/// its size is reported so a bare-metal stack budget has a number.
+/// its size is held near what it measures, so growth is seen here first.
+///
+/// 1,728 bytes on a 64-bit host over this test's transport, so the bound is that with
+/// some headroom. On bare metal it is smaller: `testing/embedded-probe`'s, every staged
+/// service over `DoIpTransport` on thumbv7em-none-eabihf, measured 1,264 bytes, and it
+/// sits on the stack of whatever polls `run`, which `just size` does not see.
 #[test]
 fn the_step_future_is_send_and_its_size_is_known() {
     fn assert_send<F: Send>(_: &F) {}
@@ -996,5 +1001,5 @@ fn the_step_future_is_send_and_its_size_is_known() {
     let fut = s.step();
     assert_send(&fut);
     let size = core::mem::size_of_val(&fut);
-    assert!(size < 4_096, "step future is {size} bytes");
+    assert!(size <= 2_048, "step future is {size} bytes");
 }
