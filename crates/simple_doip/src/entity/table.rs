@@ -33,7 +33,8 @@ pub(super) struct Open<S> {
     /// The passed deadline the socket was last read for before it was acted on, and how
     /// many bytes were read for it.
     pub(super) taken_in: Option<(Instant, usize)>,
-    /// The version of the last frame received, which the entity's answers carry.
+    /// The version of the last frame taken, which the entity's answers carry; a frame
+    /// refused for its version is answered in this one.
     pub(super) version: ProtocolVersion,
     /// Whether an event has named this connection, so its close is owed a report.
     pub(super) named: bool,

@@ -9,7 +9,8 @@
 //! It takes headers of ISO 13400-2:2012 and 2019 and answers each in the version it
 //! received; any other protocol version, the 2010 draft's included, is refused with
 //! [`IncorrectPatternFormat`](crate::messages::NackCode::IncorrectPatternFormat) and
-//! the socket closed.
+//! the socket closed. That refusal carries the version of the last frame the socket
+//! took, 2019 before any, since the refused frame's was not taken.
 //!
 //! It activates routing for the two activation types Table 47 makes mandatory,
 //! [`ActivationTypeCode::Default`] and [`ActivationTypeCode::RegulationRequired`], and

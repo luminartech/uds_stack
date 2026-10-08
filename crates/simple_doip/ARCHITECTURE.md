@@ -6,14 +6,18 @@ aware of before changing anything. It is written for someone who has never seen
 the code.
 
 > **Provisional.** This is a working document, not the crate's formal
-> architecture record. It will be superseded by the sphinx-needs architecture
-> set under `docs/architecture/`; until that exists, this file is what there is.
+> architecture record. The stack's sphinx-needs architecture set under
+> `docs/architecture/` will take this crate's architecture in; so far it covers
+> `uds_services` only, and until this content moves there, this file is the
+> record.
 
 For usage, feature flags, and the current gap list, see [`README.md`](README.md).
 
-> **A note on spec citations.** Cite a section, clause, table or requirement of
-> ISO 13400-2 only after reading it in the standard's text, and cite the edition
-> (`ISO 13400-2:2019 Table 11`). An earlier review of this crate found and removed
+> **A note on spec citations.** This crate is built against **ISO 13400-2:2019**,
+> and a clause, table, figure or requirement cited with no document named is
+> that one's. A citation of any other document names it and its edition
+> (`ISO 14229-5:2022 REQ 7.9`). Cite a locator only after reading it in the
+> standard's text. An earlier review of this crate found and removed
 > a batch of fabricated spec locators, written when no reader could check one; the
 > rule exists so that never recurs. A locator nobody has read is worse than none —
 > "per ISO 13400-2" without one is fine. Where a claim rests on a figure, say so,
@@ -59,6 +63,10 @@ is `no_std` with no allocator:
 | Async client | `client` | `Client`, `Connector` (trait + `ConnectorSocket`) | `src/client.rs`, `src/client_inner.rs`, `src/socket_manager.rs`, `src/connection.rs` |
 | Async server | `server` | `Server`, `ServerConnectionHandler` | `src/server.rs` |
 | Connection service | `connection` | `tester::Tester`, a `TesterConnection` (a `DiagnosticConnection` that can reconnect and close), and `entity::Entity`, a `DiagnosticEntity`, over `edge-nal` and `embassy-time` | `src/tester.rs`, `src/tester/`, `src/entity/`, `src/stream.rs`, `src/stream/` |
+
+`connection` is a feature, not part of the core, so that the codec tier
+`uds_on_ip` builds with `default-features = false` keeps its own dependency set
+(§2.4).
 
 `client` and `server` are each `["codec", ...]` in `Cargo.toml`, so either one
 pulls in `codec` (and transitively `std`/`alloc`), but they do **not** pull in
@@ -167,7 +175,9 @@ stateDiagram-v2
   unread input or output keeps it from moving into the reserve is aborted once the
   newcomer has waited `T_TCP_Alive_Check` for it.
 - **Figure 16's answers.** Each carries the protocol version of the frame it
-  answers; only ISO 13400-2:2012 and 2019 headers are taken.
+  answers, except NACK `0x00`, whose frame's version was not taken: it carries the
+  version of the last frame the socket did take, 2019 before any. Only ISO
+  13400-2:2012 and 2019 headers are taken.
 
   | NACK | When | Then |
   |---|---|---|
@@ -230,6 +240,165 @@ stateDiagram-v2
 - **`next_event`, `request` and `close` are cancel-safe**, on the socket conditions
   the crate docs list under the `connection` feature, so a caller may race them
   against its own work.
+
+### 2.4 Why the connection service is shaped this way
+
+The decisions behind `connection`, and what each rejected. `src/service.rs` and the
+crate docs state the contracts; this section gives the reasons.
+
+**The traits speak ISO 13400-2's service primitives, not its wire.** `request`,
+`Confirm` and `Indication` are `DoIP_Data.request`, `.confirm` and `.indication`
+(8.3), and `DoIpResult` is `DoIP_Result` (8.2.5). The NACK codes on the wire stay
+public in the codec tier, but they are not what the service speaks, because some
+outcomes have no wire code at all: `DoIP_NO_SOCKET`, `DoIP_NO_LINK`,
+`DoIP_TIMEOUT_A`. A NACK's code is not detail to be dropped either: ISO 14229-5:2022
+Figures 8 and 9 raise the client's `T_Data.con` on a DoIP ACK *or NACK*, so the code
+is a parameter of that primitive.
+
+**One layer below, the same event shape.** An event borrows the buffer the caller
+lends `next_event`, never the connection, so the caller can answer a request it has
+just received; `uds_on_ip/ARCHITECTURE.md` §4.1 gives the reasoning one layer up. The
+tester reports a valid message whose payload type it does not model as `Unmodelled`,
+which is not the same as one it refused: a diagnostic message in error is ignored and
+no indication raised (8.3.3). The entity answers a payload type it does not take with
+NACK `0x01` instead (§2.3), so it has nothing to report.
+
+**No `sa` on `request`, and `request` does not wait for its acknowledgement.**
+Routing activation fixes the source address per connection (REQ 3.DoIP-089, 090), so
+a per-call `sa` could only disagree with it. The acknowledgement arrives as `Confirm`,
+because ISO 14229-2:2021 REQ 5.9 starts `tP_Client` on the confirm, and a caller
+blocked inside `request` could not start it.
+
+**Addressing: `DoIP_TAtype` is not on the wire.** A diagnostic message carries `SA`
+and `TA` only, so the type is supplied on a request and derived on an indication.
+Table 13 settles it only partly: `0xE000` to `0xEFFF` is functional, and everything
+else is physical unless the deployment says otherwise, so
+`LogicalAddress::default_ta_type` is a default an implementor may override. It
+cannot be dropped: DoIP has no multicast (7.8), so a client reaches a functional
+group by unicasting to each entity in it, and one functional request can draw several
+responses.
+
+**`async fn` in traits, with no `dyn`.** The traits use `fn f(..) -> impl Future`,
+as `uds_services::UdsTransport` does one layer up. Neither is dyn-compatible, and that
+is accepted: the stack uses type parameters, never trait objects.
+
+**I/O through `edge-nal`; the crate declares no transport or clock trait of its
+own.** `edge-nal` has the traits both roles need: `TcpConnect` for a tester,
+`TcpBind` and its acceptor for an entity, `TcpShutdown::close` for the orderly close
+ISO 14229-5:2022 REQ 7.9 and REQ 7.11 call for, and `TcpSplit`, so a write can go
+out while a read waits.
+- **`embedded-nal-async` was rejected.** Its 0.9.0 has no server-side trait and no
+  orderly close.
+- **Two facts about `edge-nal` shaped the entity.** `TcpAccept` is implemented by what
+  `TcpBind::bind` returns, not by the stack, so `Entity` borrows that acceptor. A
+  stack that is `TcpBind` and `UdpBind` both makes a bare `.bind()` ambiguous, so no
+  API here re-exposes one.
+
+**Time comes from `embassy-time` inside the implementations, and crosses the traits
+as `Millis`.** `edge-nal` depends on `embassy-time` regardless, and its
+`mock-driver` makes the `TCP_DATA` timers deterministic under test, which is the main
+reason not to declare a clock trait here. The traits carry `now()` and a `Millis`
+deadline instead of `embassy-time`'s `Instant`, so the layer above names only this
+crate's types and takes no `embassy-time` dependency. `Millis` wraps, has no
+ordering, and compares across the wrap exactly as `uds_session::Timestamp` does. The
+rule is written twice on purpose: this crate cannot depend on `uds_session`, and
+neither should learn the other's vocabulary.
+
+**The dependency risk, and its firewall.** `edge-nal` is pre-1.0 and changes:
+- 0.5.0 on 2025-01-15, 0.6.0 on 2026-01-01, and 0.7.0 on 2026-06-25, so roughly one
+  breaking release every six months;
+- one maintainer;
+- it describes itself as a staging ground for traits not yet in
+  `embedded-nal-async`.
+
+The exposure is confined to two places. Only `connection` takes the dependency, so
+the codec tier that `uds_on_ip` builds with `default-features = false` keeps its own
+dependency set. And `uds_on_ip` names only this crate's traits and types, never an
+`edge-nal` type, so an `edge-nal` major release breaks the bounds of `Tester` and
+`Entity` and nothing above them.
+
+**The entity is the socket handler, not a connection.** Routing activation decides
+across connections: with every slot registered, a new source address has every
+registered socket alive-checked before it is accepted or refused (REQ 3.DoIP-094 to
+096). An object for one connection cannot see the others, so `Entity` owns the whole
+connection table, and `DiagnosticEntity` is a trait for a whole entity beside
+`DiagnosticConnection` for one.
+
+Single ownership is enough, because every trigger for the socket handler is a
+routing activation arriving or a timer running out, both of which `next_event`
+observes. So the handler runs inside `next_event`, when the caller holds no borrow of
+the entity, and an alive check on one socket never needs a second owner of another.
+
+The structure holds REQ 3.DoIP-131, which has nothing routed before
+`Registered [Routing Active]`: an event names a connection only once routing is
+active on it, so a caller cannot address one that is not.
+
+**Shaped for several testers, built and tested for one.** The sensor accepts one
+tester, from `0x0E00` only, so `MCTS = 1` is what is built and tested, though `MCTS =
+2` is tested too.
+- **Why a const generic.** `MCTS` is one so that the table's memory shows in the type.
+- **Why the handler loops over the table even at `MCTS = 1`.** The arbitration runs
+  whenever a second activation arrives, whatever `MCTS` is, so writing it for N costs
+  a loop, not a second design.
+- **Which source addresses may activate is configuration**, in `EntityConfig`, which
+  has no default.
+- **One server for every connection.** Session, security state and `tS3_Server` belong
+  to the ECU, not to a connection (`UDSS_LLR_0082`), so `uds_on_ip` drives the whole
+  entity into one `uds_services::Server`.
+
+**Cancel safety is held in the entity, and costs a buffer per connection.**
+`uds_services` races `next_event` against a running handler and drops the loser, and
+it lends different buffers at different call sites.
+- **A frame cancelled half-read cannot resume in the caller's buffer.** So each
+  connection assembles frames in a receive buffer of its own, sized to the largest it
+  takes, and copies a finished one out.
+- **Writes made inside `next_event` are queued in the connection**, with how much of
+  each was written. Those are acknowledgements, routing activation responses and alive
+  checks.
+- **A pending wait is entity state, never a future.** An arbitration's
+  `T_TCP_Alive_Check` is one example, so a dropped call resumes it.
+- **The entity waits on `edge_nal::Readable::readable` across its sockets** and reads
+  only a socket that is ready, rather than racing a read on each, because readiness is
+  cancel-safe on the backends this was checked against.
+- **What the backend must promise in return** is the integrator obligation in the
+  crate docs.
+
+**`close` is a prescribed close, not an error path.** ISO 14229-5:2022 REQ 7.9 and
+REQ 7.11 have the server close after certain positive responses, and `uds_on_ip`
+decides when (`uds_on_ip/ARCHITECTURE.md` §3.6). `DiagnosticEntity::close` performs
+it on the connection named. It takes no reason, because why the close happens is ISO
+14229-5's fact and stays in `uds_on_ip`, and `Closed` carries none for the same
+reason. A tester reconnects through `TesterConnection::reconnect`, which an entity
+has no use for, so it is not on the shared trait.
+
+**`Err` never means closed, and the events are exhaustive.** A connection ending is
+the event `Closed`, after every accepted request has had its one `Confirm`, so a
+caller has one path for an end however it came about. The event enums and
+`DoIpResult` have no `#[non_exhaustive]`, because an edition of the standard that adds
+a value is a change every caller must handle.
+
+**Decided by default.** Each of these is a choice the standard leaves open or that
+the sensor forced. Raise any of them to overturn it.
+- **The tester:**
+  - A request unacknowledged for `A_DoIP_Diagnostic_Message` (2 s, ISO 13400-2:2019
+    Table 12, in the standard's PDF only) ends the connection (§2.2).
+  - It carries one unconfirmed request at a time.
+  - It repeats routing activation every 2 s while the entity answers `0x11`
+    (confirmation required).
+  - It does not support activation code `0x04` (authentication).
+  - It sends only protocol version `0x03`; earlier editions' messages are understood.
+  - It takes a generic header NACK as its request's confirm only if no alive check
+    response went out within `A_DoIP_Diagnostic_Message` before the request or since,
+    because the NACK may be about that response (REQ 7.DoIP-040).
+- **The entity:**
+  - It takes activation types `0x00` and `0x01`, and refuses every other with `0x06`
+    (§2.3).
+  - Before activation, it answers a frame over 32 bytes but within `MAX_MESSAGE` with
+    header NACK `0x03` (§2.3).
+  - It passes the authentication and confirmation sub-states straight through (REQ
+    3.DoIP-129, 130; §7.4).
+- **Across the stack:** a suppressed `10 82` or `11 81` sends no response, so it makes
+  no close (`uds_on_ip/ARCHITECTURE.md` §9.2).
 
 ---
 
@@ -473,7 +642,8 @@ new code reading `active_request` must preserve the restore-on-mismatch shape.
   contract against a socketless entity.
 - `tests/entity_std.rs` — `Tester` against `Entity` over loopback;
   `tests/entity_interop.rs` drives `Entity` with a client framed by `MessageCodec`, so
-  the two sides share no receive buffer.
+  the two sides share no receive buffer. That independent framing is why
+  `MessageCodec` stays once the old client and server go.
 - `../../examples/embassy-net-entity` — not part of this crate: `Entity` on
   embassy-net through a cancel-safe acceptor, built for bare metal in CI.
 
