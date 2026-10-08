@@ -9,7 +9,9 @@
 //! document's format — the bits, the bytes, and which messages are valid — and
 //! this crate owns everything else in it. Clause 8.7, the server response
 //! implementation rules, is the densest part of that and the reason the crate
-//! exists, but it is not the boundary.
+//! exists, but it is not the boundary. A table, figure, clause or requirement
+//! cited in this crate with no document named is ISO 14229-1:2020's, and any
+//! other document is named where it is cited.
 //!
 //! A UDS server must do more than answer the requests it supports. Clause 8.7
 //! specifies the whole validation sequence: which checks run in which order,

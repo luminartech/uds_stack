@@ -114,6 +114,11 @@ Apache-2.0 should still have a path.
 
 ### Relationship to the standards
 
+Each crate is built against one ISO document and edition, which its README
+and crate docs name first, and `docs/index.rst` lists. From there on, a table,
+figure, clause or requirement cited with no document named is that one's, and
+any other document is named where it is cited.
+
 Neither licence grants any right in the ISO standards this code implements,
 which remain ISO's. The requirement set cites clauses so that a reader holding
 the standard can check the transcription; it does not reproduce them. You need

@@ -1,6 +1,10 @@
 Requirements
 ============
 
+These are ``uds_session``'s requirements, written against ISO 14229-2:2021. A table,
+figure, clause or requirement cited here with no document named is that one's; any other
+document is named where it is cited.
+
 .. toctree::
    :maxdepth: 1
 

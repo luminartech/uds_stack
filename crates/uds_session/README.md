@@ -1,8 +1,10 @@
 # uds_session
 
-`uds_session` owns ISO 14229-2, the session layer: a transport-agnostic,
+`uds_session` owns ISO 14229-2:2021, the session layer: a transport-agnostic,
 `no_std`, allocation-free sans-io state machine implementing both the client
-and the server role.
+and the server role. In its documentation, a table, figure, clause or
+requirement cited with no document named is ISO 14229-2:2021's; any other
+document is named where it is cited.
 
 ## Where this fits
 

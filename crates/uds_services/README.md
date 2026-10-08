@@ -1,8 +1,10 @@
 # uds_services
 
-Everything in ISO 14229-1 that is not the message format: typed UDS service
+Everything in ISO 14229-1:2020 that is not the message format: typed UDS service
 dispatch over caller-defined identifiers, and the clause 8.7 server response
-implementation rules.
+implementation rules. In its documentation, a table, figure, clause or
+requirement cited with no document named is ISO 14229-1:2020's; any other
+document is named where it is cited.
 
 ## Where this fits
 

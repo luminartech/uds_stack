@@ -1,11 +1,13 @@
 # uds_on_ip
 
-`uds_on_ip` owns **ISO 14229-5 (`UDSonIP`)**: the application profile that
+`uds_on_ip` owns **ISO 14229-5:2022 (`UDSonIP`)**: the application profile that
 binds Unified Diagnostic Services to a `DoIP` transport. It owns two layers of
 that standard — clause 8, the application profile (the `A_PDU` format, TCP
 connection handling around `DiagnosticSessionControl` and `ECUReset`, and which
 timing parameters apply), and clause 11, the mapping of `T_PDU` service
-primitives onto `DoIP`'s.
+primitives onto `DoIP`'s. In its documentation, a table, figure, clause or
+requirement cited with no document named is ISO 14229-5:2022's; any other
+document is named where it is cited.
 
 ## Where this fits
 

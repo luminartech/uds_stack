@@ -6,7 +6,10 @@
 //! # UDS on Internet Protocol
 //!
 //! An implementation of **ISO 14229-5:2022 (`UDSonIP`)** — the application
-//! profile that binds Unified Diagnostic Services to a `DoIP` transport.
+//! profile that binds Unified Diagnostic Services to a `DoIP` transport. A
+//! table, figure, clause or requirement cited in this crate with no document
+//! named is ISO 14229-5:2022's, and any other document is named where it is
+//! cited.
 //!
 //! ## What this crate is
 //!
