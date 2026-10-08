@@ -28,6 +28,9 @@ pub(super) struct Open<S> {
     /// Whether a routing activation request has been received, which stops
     /// `T_TCP_Initial_Inactivity` (REQ 3.DoIP-085).
     pub(super) activation_received: bool,
+    /// The passed deadline the socket was last read for before it was acted on, and how
+    /// many bytes were read for it.
+    pub(super) taken_in: Option<(Instant, usize)>,
     /// The version of the last frame received, which the entity's answers carry.
     pub(super) version: ProtocolVersion,
     /// Whether an event has named this connection, so its close is owed a report.
@@ -155,6 +158,7 @@ impl<S, const CAP: usize> Slot<S, CAP> {
             version: ProtocolVersion::V2019,
             named: false,
             activation_received: false,
+            taken_in: None,
         });
     }
 

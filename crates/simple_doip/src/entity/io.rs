@@ -16,7 +16,8 @@ use crate::stream::tx::TxQueue;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum Io {
     Wrote,
-    Read,
+    /// This many bytes.
+    Read(usize),
     /// End of stream, a failed read or write, or a write of nothing.
     Lost,
     /// The close or abort finished; the socket can leave the table.
@@ -83,7 +84,7 @@ async fn read<R: Read + Readable, const CAP: usize>(
         Ok(0) | Err(_) => Io::Lost,
         Ok(read) => {
             rx.filled(read);
-            Io::Read
+            Io::Read(read)
         }
     }
 }

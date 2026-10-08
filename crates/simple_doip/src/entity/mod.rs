@@ -589,7 +589,7 @@ impl<
     /// general inactivity timer (REQ 3.DoIP-080).
     fn apply(&mut self, at: SlotRef, io: Io, now: Instant) {
         match io {
-            Io::Wrote | Io::Read => {
+            Io::Wrote | Io::Read(_) => {
                 if let Some(open) = self.open_mut(at)
                     && matches!(open.phase, Phase::Registered { .. })
                 {
@@ -604,23 +604,27 @@ impl<
     /// Acts on every socket timer that has expired by `now`.
     fn expire(&mut self, now: Instant) {
         for position in 0..=MCTS {
-            let at = Self::slot_ref(position);
-            let Some(open) = self.open_mut(at) else {
-                continue;
-            };
-            if open.deadline > now {
-                continue;
+            self.expire_one(Self::slot_ref(position), now);
+        }
+    }
+
+    /// Acts on the socket timer at `at`, if it has expired by `now`.
+    fn expire_one(&mut self, at: SlotRef, now: Instant) {
+        let Some(open) = self.open_mut(at) else {
+            return;
+        };
+        if open.deadline > now {
+            return;
+        }
+        match open.phase {
+            Phase::Initialized | Phase::Registered { .. } => {
+                self.finalize(at, false, now);
             }
-            match open.phase {
-                Phase::Initialized | Phase::Registered { .. } => {
-                    self.finalize(at, false, now);
-                }
-                Phase::Finalizing { abort: false, .. } => {
-                    open.deadline = expiry(now, CLOSE_LIMIT);
-                    self.finalize(at, true, now);
-                }
-                Phase::Finalizing { abort: true, .. } => self.remove(at),
+            Phase::Finalizing { abort: false, .. } => {
+                open.deadline = expiry(now, CLOSE_LIMIT);
+                self.finalize(at, true, now);
             }
+            Phase::Finalizing { abort: true, .. } => self.remove(at),
         }
     }
 
@@ -879,6 +883,7 @@ impl<
                     Some(slot) => handler::handle(
                         slot,
                         self.address,
+                        MAX_MESSAGE,
                         RESERVE_CAP,
                         arbitrating.is_some(),
                         buf,
@@ -889,6 +894,7 @@ impl<
                 SlotRef::Reserve => handler::handle(
                     &mut self.reserve,
                     self.address,
+                    MAX_MESSAGE,
                     RESERVE_CAP,
                     arbitrating.is_some(),
                     buf,
@@ -923,10 +929,13 @@ impl<
         Step::Idle
     }
 
-    /// Whether a deadline passed by `now` judges the socket at `at`: its own timer, or
-    /// the alive check it has not answered.
-    fn is_judged(&self, at: SlotRef, now: Instant) -> bool {
-        let timer = self.open(at).is_some_and(|open| open.deadline <= now);
+    /// The deadline passed by `now` that judges the socket at `at`: its own timer, or the
+    /// alive check it has not answered.
+    fn judged_by(&self, at: SlotRef, now: Instant) -> Option<Instant> {
+        let timer = self
+            .open(at)
+            .map(|open| open.deadline)
+            .filter(|deadline| *deadline <= now);
         let alive_check = match (at, self.arbitration) {
             (
                 SlotRef::Connection(index),
@@ -934,21 +943,33 @@ impl<
                     stage: Stage::AliveCheck { deadline, .. },
                     ..
                 }),
-            ) => deadline <= now && self.is_silent(index),
-            _ => false,
+            ) if deadline <= now && self.is_silent(index) => Some(deadline),
+            _ => None,
         };
-        timer || alive_check
+        timer.or(alive_check)
     }
 
     /// Takes in what each socket a passed deadline judges has ready, so input that
-    /// reached it in time is handled before the deadline is acted on. Whether anything
-    /// was.
+    /// reached it in time is handled before the deadline is acted on: for each deadline,
+    /// at most as much as the socket's receive buffer holds, so a peer that keeps sending
+    /// holds it off no longer. Whether anything was taken in.
     async fn take_in(&mut self, now: Instant) -> bool {
         poll_fn(|cx| {
             let mut took = false;
             for position in 0..=MCTS {
                 let at = Self::slot_ref(position);
-                if !self.is_judged(at, now) {
+                let Some(deadline) = self.judged_by(at, now) else {
+                    continue;
+                };
+                let capacity = match at {
+                    SlotRef::Connection(_) => MAX_MESSAGE,
+                    SlotRef::Reserve => RESERVE_CAP,
+                };
+                let taken = match self.open(at).and_then(|open| open.taken_in) {
+                    Some((judged, taken)) if judged == deadline => taken,
+                    _ => 0,
+                };
+                if taken >= capacity {
                     continue;
                 }
                 let io = match at {
@@ -959,6 +980,9 @@ impl<
                     SlotRef::Reserve => poll_once(drive(&mut self.reserve), cx),
                 };
                 if let Some(io) = io {
+                    if let (Io::Read(read), Some(open)) = (io, self.open_mut(at)) {
+                        open.taken_in = Some((deadline, taken.saturating_add(read)));
+                    }
                     self.apply(at, io, now);
                     took = true;
                 }
@@ -1212,7 +1236,7 @@ impl<
             };
             match select(drive(slot), Timer::at(deadline)).await {
                 Either::First(io) => self.apply(at, io, Instant::now()),
-                Either::Second(()) => self.expire(Instant::now()),
+                Either::Second(()) => self.expire_one(at, Instant::now()),
             }
         }
     }

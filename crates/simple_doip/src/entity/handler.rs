@@ -40,11 +40,14 @@ pub(super) enum Handled {
 
 /// Handles the frame at the front of `slot`'s receive buffer.
 ///
-/// `limit` bounds a frame on a socket that has not activated routing, which may have
-/// to move into the reserve. Routing activation requests wait while `arbitrating`.
+/// `max_message` is the entity's largest message, beyond which a frame is refused on any
+/// socket; `limit` bounds a frame on a socket that has not activated routing, which may
+/// have to move into the reserve. Routing activation requests on such a socket wait
+/// while `arbitrating`.
 pub(super) fn handle<S, const CAP: usize>(
     slot: &mut Slot<S, CAP>,
     address: EntityAddress,
+    max_message: usize,
     limit: usize,
     arbitrating: bool,
     buf: &mut [u8],
@@ -60,22 +63,27 @@ pub(super) fn handle<S, const CAP: usize>(
         Phase::Registered { sa, .. } => Some(sa),
         Phase::Initialized => None,
     };
-    if let Err(handled) = check_header(open, rx, tx, registered.is_some(), limit, close_by)
-    {
+    let memory = if registered.is_some() {
+        CAP
+    } else {
+        limit.min(CAP)
+    };
+    if let Err(handled) = check_header(open, rx, tx, max_message, memory, close_by) {
         return handled;
     }
     let Ok(Next::Frame(frame, consumed)) = rx.next() else {
         return Handled::Waiting;
     };
     let payload_type = frame.header.payload_type;
-    open.version = frame.header.protocol_version;
     let handled = match (payload_type, Payload::decode(frame.payload, payload_type)) {
         (_, Ok(Payload::RoutingActivationRequest(request))) => {
             if registered.is_none() && !open.activation_received {
                 open.activation_received = true;
                 open.deadline = expiry(now, GENERAL_INACTIVITY);
             }
-            if arbitrating || !tx.has_room_for(ROUTING_ACTIVATION_RESPONSE) {
+            if (arbitrating && registered.is_none())
+                || !tx.has_room_for(ROUTING_ACTIVATION_RESPONSE)
+            {
                 return Handled::Waiting;
             }
             Handled::Activation(Activation {
@@ -147,8 +155,8 @@ fn check_header<S, const CAP: usize>(
     open: &mut Open<S>,
     rx: &mut RxBuffer<CAP>,
     tx: &mut TxQueue<CAP>,
-    registered: bool,
-    limit: usize,
+    max_message: usize,
+    memory: usize,
     close_by: Instant,
 ) -> Result<(), Handled> {
     let header = match rx.header() {
@@ -164,6 +172,7 @@ fn check_header<S, const CAP: usize>(
     ) {
         return Err(refuse(open, tx, NackCode::IncorrectPatternFormat, close_by));
     }
+    open.version = header.protocol_version;
     let Some(length_ok) = length_rule(header.payload_type) else {
         return Err(discard(open, tx, rx, &header, NackCode::UnknownPayloadType));
     };
@@ -171,10 +180,10 @@ fn check_header<S, const CAP: usize>(
         usize::try_from(header.payload_length)
             .is_ok_and(|length| length <= limit.saturating_sub(Header::SIZE))
     };
-    if !fits(CAP) {
+    if !fits(max_message) {
         return Err(discard(open, tx, rx, &header, NackCode::MessageTooLarge));
     }
-    if !registered && !fits(limit) {
+    if !fits(memory) {
         return Err(discard(open, tx, rx, &header, NackCode::OutOfMemory));
     }
     if !length_ok(header.payload_length) {

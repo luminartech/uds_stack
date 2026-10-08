@@ -363,6 +363,27 @@ fn an_activation_that_arrived_in_time_is_handled_though_next_event_is_late() {
     assert!(!peer.is_shut());
 }
 
+/// A socket a passed deadline judges is read before the deadline is acted on, but no
+/// further than its buffer's worth: a peer that keeps sending holds off neither the
+/// deadline nor the caller's.
+#[test]
+fn a_judged_socket_that_keeps_sending_does_not_hold_off_the_deadlines() {
+    let _clock = clock();
+    let stack = MockStack::eager(4096);
+    let mut entity = OneSocket::new(&stack, address(), two_testers());
+    let peer = stack.dial();
+    assert_eq!(events(&mut entity), []);
+    advance(ms(2000));
+    peer.send(&alive_check_response().repeat(20_000));
+
+    let now = entity.now();
+    assert_eq!(step_into(&mut entity, 64, Some(now)), Some(Ev::Deadline));
+    assert!(!peer.all_read());
+
+    assert_eq!(events(&mut entity), []);
+    assert!(peer.is_closed());
+}
+
 // --- Figure 16, the generic header handler -----------------------------------------------
 
 /// REQ 7.DoIP-041: a header whose protocol version and its inverse do not match is
@@ -529,6 +550,25 @@ fn a_2012_tester_is_answered_in_2012() {
     assert_eq!(peer.take_written(), expected);
 }
 
+/// A header NACK carries the protocol version of the frame it refuses, as every other
+/// answer does: here, a 2012 tester's first frame.
+#[test]
+fn a_header_nack_carries_the_refused_frames_version() {
+    let _clock = clock();
+    let stack = MockStack::new(4096);
+    let mut entity = OneSocket::new(&stack, address(), two_testers());
+    let peer = stack.dial();
+    let mut frame = raw(0x4001, &[]);
+    frame[..2].copy_from_slice(&[0x02, 0xFD]);
+    peer.send(&frame);
+
+    assert_eq!(events(&mut entity), []);
+
+    let mut expected = header_nack(0x01);
+    expected[..2].copy_from_slice(&[0x02, 0xFD]);
+    assert_eq!(peer.take_written(), expected);
+}
+
 /// REQ 7.DoIP-045, Tables 46 and 28: a routing activation request is 7 or 11 bytes
 /// and an alive check response 2; any other length is answered with NACK code 0x04.
 #[test]
@@ -616,6 +656,24 @@ fn a_closing_socket_whose_write_fails_is_aborted() {
 
     assert_eq!(events(&mut entity), []);
     assert!(peer.is_aborted());
+}
+
+/// REQ 7.DoIP-044 on the reserve socket too: before activation, a frame within the
+/// entity's maximum data size but too long for the reserve's buffer is refused with NACK
+/// code 0x03, not 0x02.
+#[test]
+fn a_payload_too_long_for_the_reserve_before_activation_is_nacked_0x03() {
+    let _clock = clock();
+    let stack = MockStack::new(4096);
+    let mut entity = OneSocket::new(&stack, address(), two_testers());
+    let _holder = activated(&stack, &mut entity, TESTER);
+    let newcomer = stack.dial();
+    newcomer.send(&diagnostic(OTHER, ENTITY, &[0x22; 21]));
+
+    assert_eq!(events(&mut entity), []);
+
+    assert_eq!(newcomer.take_written(), header_nack(0x03));
+    assert!(!newcomer.is_shut());
 }
 
 // --- Figure 22, the routing activation handler -------------------------------------------
@@ -1155,6 +1213,34 @@ fn a_response_from_a_holder_not_yet_asked_counts() {
     assert_eq!(
         newcomer.take_written(),
         activation_response_for(TESTER, 0x03)
+    );
+    assert!(!holder.is_shut());
+}
+
+/// REQ 3.DoIP-089 and 096: a registered tester asked whether it is alive may activate
+/// its own address again first; that is answered at once, and its alive check response
+/// behind it still counts.
+#[test]
+fn a_holder_that_reactivates_before_answering_is_alive() {
+    let _clock = clock();
+    let stack = MockStack::new(4096);
+    let mut entity = OneSocket::new(&stack, address(), two_testers());
+    let holder = activated(&stack, &mut entity, TESTER);
+    let newcomer = stack.dial();
+    newcomer.send(&activation_from(OTHER, 0));
+    assert_eq!(events(&mut entity), []);
+    assert_eq!(holder.take_written(), alive_check_request());
+
+    holder.send(&[activation_from(TESTER, 0), alive_check_response()].concat());
+    assert_eq!(events(&mut entity), []);
+
+    assert_eq!(
+        holder.take_written(),
+        activation_response_for(TESTER, ACTIVATED)
+    );
+    assert_eq!(
+        newcomer.take_written(),
+        activation_response_for(OTHER, 0x01)
     );
     assert!(!holder.is_shut());
 }
@@ -1743,6 +1829,38 @@ fn a_request_dropped_unpolled_is_not_made() {
 
     assert_eq!(events(&mut entity), []);
     assert_eq!(peer.take_written(), []);
+}
+
+/// A close that has to wait out its own limits acts on no other socket's timer: another
+/// tester's message that arrived in time is still indicated.
+#[test]
+fn a_waiting_close_leaves_other_sockets_timers_to_next_event() {
+    let _clock = clock();
+    let stack = MockStack::eager(4096);
+    let mut entity = TwoSockets::new(&stack, address(), two_testers());
+    let closing = activated(&stack, &mut entity, TESTER);
+    let other = activated(&stack, &mut entity, OTHER);
+    closing.send(&diagnostic(TESTER, ENTITY, &[0x11, 0x01]));
+    other.send(&diagnostic(OTHER, ENTITY, &[0x3E, 0x00]));
+    assert_eq!(events(&mut entity).len(), 2);
+
+    advance(ms(299_800));
+    other.send(&diagnostic(OTHER, ENTITY, &[0x3E, 0x00]));
+    closing.stall_closes();
+    closing.stall_aborts();
+    {
+        let mut close = pin!(entity.close(ConnectionId::new(0)));
+        assert!(until_stalled(close.as_mut()).is_none());
+        advance(ms(500));
+        assert!(until_stalled(close.as_mut()).is_none());
+        advance(ms(500));
+        until_stalled(close.as_mut()).unwrap().unwrap();
+    }
+
+    assert!(matches!(
+        step(&mut entity),
+        Some(Ev::Indication { connection: 1, .. })
+    ));
 }
 
 /// The `DiagnosticEntity` contract: closing an id no event has issued does nothing,
