@@ -58,6 +58,13 @@ embedded-io-async = { version = "0.7", default-features = false }
 embassy-futures = { version = "0.1", default-features = false }
 # The embassy-net entity adapter (examples/embassy-net-entity). no_std.
 embassy-net = { version = "0.9", default-features = false }
+# The embedded probe (testing/embedded-probe): a bare-metal image's time driver, timer
+# queue, runtime and critical section. no_std.
+embassy-time-driver = "0.2"
+embassy-time-queue-utils = "0.3"
+cortex-m = "0.7"
+cortex-m-rt = "0.7"
+portable-atomic = { version = "1", default-features = false }
 
 # dev-dependencies
 anyhow = "1"
