@@ -1797,8 +1797,8 @@ fn a_later_request_is_confirmed_after_every_earlier_one() {
     );
 }
 
-/// A request is refused, with no confirm, where too many await theirs or the PDU does
-/// not fit.
+/// A request is refused, with no confirm, where too many await theirs, or the PDU does
+/// not fit or is empty (ISO 13400-2:2019 Table 21).
 #[test]
 fn a_request_that_cannot_be_held_is_refused() {
     let _clock = clock();
@@ -1809,6 +1809,7 @@ fn a_request_that_cannot_be_held_is_refused() {
         request(&mut entity, TESTER, &[0; 60]),
         Err(Error::PduTooLarge { len: 60, max: 52 })
     );
+    assert_eq!(request(&mut entity, TESTER, &[]), Err(Error::EmptyPdu));
     for _ in 0..4 {
         request(&mut entity, TESTER, &[0x7E, 0x00]).unwrap();
     }

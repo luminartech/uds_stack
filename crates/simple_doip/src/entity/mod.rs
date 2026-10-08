@@ -175,6 +175,10 @@ pub enum Error<E> {
         /// The longest PDU the entity sends.
         max: usize,
     },
+    /// The PDU is empty, which a diagnostic message cannot carry (ISO 13400-2:2019
+    /// Table 21); it was not accepted.
+    #[error("the PDU is empty")]
+    EmptyPdu,
 }
 
 /// A `DoIP` entity: the `TCP_DATA` sockets of ISO 13400-2:2019 12.6, behind
@@ -524,6 +528,9 @@ impl<
             result: Some(DoIpResult::UnknownSa),
         };
         if sa == self.address.physical {
+            if pdu.is_empty() {
+                return Err(Error::EmptyPdu);
+            }
             if pdu.len() > Self::MAX_PDU {
                 return Err(Error::PduTooLarge {
                     len: pdu.len(),
@@ -1147,6 +1154,7 @@ impl<
     ///
     /// None of these is followed by a confirm:
     /// - [`Error::PduTooLarge`] where `pdu` is longer than [`Entity::MAX_PDU`].
+    /// - [`Error::EmptyPdu`] where `pdu` is empty.
     /// - [`Error::RequestQueueFull`] while too many earlier requests await their confirm.
     fn request(
         &mut self,
