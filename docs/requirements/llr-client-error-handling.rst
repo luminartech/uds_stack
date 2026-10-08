@@ -331,7 +331,10 @@ Giving a server up
      on the channel and a ``T_Data.conf`` not yet received for it;
    * where the channel is physical, close its open start-of-message, and where functional,
      release every entry of its responder table;
-   * set the channel's repeat count to zero.
+   * set the channel's repeat count to zero;
+   * in physical keep-alive, where the channel is physical, its session fact holds and the
+     reset ended a request in progress or marked an association abandoned, start the
+     channel's ``tS3_Client`` timer loaded with the reload parameter.
 
    The reset shall produce no output to the application and none to the transport layer.
 
@@ -342,15 +345,28 @@ Giving a server up
    Something the caller invokes has to clear it, and the standard supplies no input that
    does.
 
-   The four effects above are the state a reset clears, and the list is closed so that a
-   document adding state per channel must amend this requirement to say whether the reset
-   clears it. What it deliberately leaves: the protocol parameters of ``UDSS_LLR_0132`` and
+   The fifth effect exists because the first two foreclose the restart of the physical
+   keep-alive. ``UDSS_LLR_0160`` stopped the channel's ``tS3_Client`` when the request went
+   out, and only the events of ``UDSS_LLR_0161`` start it again: the request's response
+   window expiring, which the first effect ends without an indication, or a confirmation or
+   response completing the exchange, which an abandoned association's confirmation does not
+   when a response was expected (``UDSS_LLR_0182``). Without it the session fact holds, no
+   timer runs, no keep-alive is indicated again, and the server's ``tS3_Server`` runs out,
+   which is the outcome ``UDSS_LLR_0161``'s fifth bullet exists to prevent. The reset is
+   treated as completing the exchange, as that bullet treats a lost response. Where nothing
+   was in flight, the timer was not stopped, and restarting it would only stretch the
+   interval. Functional keep-alive needs no counterpart: no transmission stops its timer,
+   and an abandoned keep-alive's confirmation restarts it under ``UDSS_LLR_0157``.
+
+   The effects above are the state a reset clears or restarts, and the list is closed so
+   that a document adding state per channel must amend this requirement to say whether the
+   reset clears it. What it deliberately leaves: the protocol parameters of ``UDSS_LLR_0132`` and
    ``UDSS_LLR_0165``, which are the caller's; the spacing timer, which is left running
    because it protects a server that knows nothing of the reset, so that 10.3's wait is
    still owed; the count ``UDSS_LLR_0138`` keeps, defined relative to the last confirmation
    and so reset by the next; the association, which ``UDSS_LLR_0181`` keeps outstanding
-   rather than discarding; and the keep-alive state, which ``UDSS_LLR_0184`` covers as a
-   separate act.
+   rather than discarding; and the keep-alive session fact, whose clearing ``UDSS_LLR_0184``
+   covers as a separate act.
 
    The reset is neither a primitive nor a parameter but an act of the caller, as the
    completion report of ``UDSS_LLR_0074`` is; ``UDSS_LLR_0010`` names both among the inputs

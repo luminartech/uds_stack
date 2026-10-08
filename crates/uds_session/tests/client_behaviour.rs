@@ -1995,6 +1995,23 @@ mod functional_keep_alive {
         assert_eq!(tick(&mut c, 2_000), only(DUE));
     }
 
+    /// ``UDSS_LLR_0182``, ``UDSS_LLR_0157`` — a reset abandoning the functional
+    /// keep-alive leaves the timer to its confirmation, which still restarts it: no send
+    /// stops the client-wide timer, so a reset forecloses nothing here.
+    #[test]
+    fn an_abandoned_keep_alive_still_restarts_on_its_confirmation() {
+        let (mut c, _, f) = engaged(Timestamp(0));
+        assert_eq!(tick(&mut c, 2_000), only(DUE));
+        let (_, sent) = outputs(c.s_data_req(Timestamp(2_000), func(), &DATA, KEEP_ALIVE));
+        assert_eq!(sent, Ok(()));
+        let (out, reset) = outputs(c.reset_channel(Timestamp(2_001), f));
+        assert_eq!((out, reset), (NOTHING, Ok(())));
+        let (_, confirmed) = outputs(c.t_data_conf(Timestamp(2_002), func(), SResult::Ok));
+        assert_eq!(confirmed, Ok(()));
+        assert_eq!(tick(&mut c, 4_001), NOTHING);
+        assert_eq!(tick(&mut c, 4_002), only(DUE));
+    }
+
     /// ``UDSS_LLR_0184`` — a release naming a functional channel disengages it silently.
     #[test]
     fn release_on_a_functional_channel_disengages() {
@@ -2245,6 +2262,76 @@ mod physical_keep_alive {
             only(timeout(phys(ECU), ChannelReload::Default))
         );
         assert_eq!(c.next_deadline(), Some(Timestamp(4_052)));
+    }
+
+    fn reset(c: &mut PhysTester, now: u32, id: PhysicalChannelId) {
+        let (out, outcome) = outputs(c.reset_channel(Timestamp(now), id));
+        assert_eq!((out, outcome), (NOTHING, Ok(())));
+    }
+
+    const AWAITED_KEEP_ALIVE: ClientTx = ClientTx::KeepAlive {
+        expected: ExpectedResponses::Exactly(NonZeroU16::MIN),
+    };
+
+    /// ``UDSS_LLR_0180`` (fifth effect) — a reset ending the keep-alive's response window
+    /// starts the timer that ``UDSS_LLR_0160`` stopped, since it forecloses the expiry
+    /// ``UDSS_LLR_0161`` would have restarted it on. Raised on #30.
+    #[test]
+    fn a_reset_after_the_confirmation_restarts_keep_alive() {
+        let (mut c, id) = engaged();
+        assert_eq!(tick(&mut c, 2_000), only(due(id)));
+        send(&mut c, 2_000, AWAITED_KEEP_ALIVE);
+        confirm(&mut c, 2_001, SResult::Ok);
+        reset(&mut c, 2_010, id);
+        assert_eq!(c.next_deadline(), Some(Timestamp(4_010)));
+        assert_eq!(tick(&mut c, 4_009), NOTHING);
+        assert_eq!(tick(&mut c, 4_010), only(due(id)));
+    }
+
+    /// ``UDSS_LLR_0180`` (fifth effect) — so does one abandoning the keep-alive's
+    /// association, whose confirmation then opens no window (``UDSS_LLR_0182``). Raised
+    /// on #30.
+    #[test]
+    fn a_reset_before_the_confirmation_restarts_keep_alive() {
+        let (mut c, id) = engaged();
+        assert_eq!(tick(&mut c, 2_000), only(due(id)));
+        send(&mut c, 2_000, AWAITED_KEEP_ALIVE);
+        reset(&mut c, 2_001, id);
+        confirm(&mut c, 2_002, SResult::Ok);
+        assert_eq!(c.next_deadline(), Some(Timestamp(4_001)));
+        assert_eq!(tick(&mut c, 4_001), only(due(id)));
+    }
+
+    /// ``UDSS_LLR_0180`` (fifth effect) — any request stops the timer
+    /// (``UDSS_LLR_0160``), so a reset ending an ordinary request restarts it too.
+    #[test]
+    fn a_reset_ending_any_request_restarts_keep_alive() {
+        let (mut c, id) = engaged();
+        send(&mut c, 500, request(ONE));
+        confirm(&mut c, 500, SResult::Ok);
+        reset(&mut c, 520, id);
+        assert_eq!(c.next_deadline(), Some(Timestamp(2_520)));
+    }
+
+    /// ``UDSS_LLR_0180`` (fifth effect) — a reset ending nothing leaves a running timer
+    /// where it was.
+    #[test]
+    fn a_reset_with_nothing_in_flight_leaves_the_timer_alone() {
+        let (mut c, id) = engaged();
+        reset(&mut c, 500, id);
+        assert_eq!(c.next_deadline(), Some(Timestamp(2_000)));
+    }
+
+    /// ``UDSS_LLR_0180`` (fifth effect) — outside a non-default session there is nothing
+    /// to keep alive, so a reset starts nothing.
+    #[test]
+    fn a_reset_out_of_session_starts_nothing() {
+        let mut c = phys_tester();
+        let id = open(&mut c, ECU, S3_CLIENT);
+        send(&mut c, 0, request(ONE));
+        confirm(&mut c, 0, SResult::Ok);
+        reset(&mut c, 10, id);
+        assert_eq!(c.next_deadline(), None);
     }
 
     /// ``UDSS_LLR_0079`` — the `tS3_Client` that expiry starts falls due no earlier than

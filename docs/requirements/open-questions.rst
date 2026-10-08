@@ -153,21 +153,6 @@ actually ran to completion, without a caller-supplied function reaching that dra
 shape is in hand, and the API is not to be contorted chasing one until there is. Touches
 ``UDSS_LLR_0081``, ``UDSS_LLR_0011`` and ``UDSS_LLR_0005``.
 
-Should a reset leave a physical keep-alive with no timer running?
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-``UDSS_LLR_0160`` stops a physical channel's ``tS3_Client`` when a request is sent, and the
-fifth bullet of ``UDSS_LLR_0161`` restarts it when a keep-alive's response window expires.
-A reset under ``UDSS_LLR_0180`` while that keep-alive is in progress ends the request with
-no expiry, and the confirmation of an abandoned association opens no window
-(``UDSS_LLR_0182``), so the restart never comes. The channel's session fact still holds, no
-timer runs, and no ``KeepAliveDue`` is indicated again until the application sends
-something on the channel; meanwhile the server's ``tS3_Server`` runs out. Each requirement
-reads as written. What is open is whether ``UDSS_LLR_0180`` should restart ``tS3_Client``
-where the session fact holds, and the same question for an abandoned confirmation of a
-keep-alive. Touches ``UDSS_LLR_0160``, ``UDSS_LLR_0161``, ``UDSS_LLR_0180`` and
-``UDSS_LLR_0182``.
-
 Should a reset discard a message already arriving?
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
