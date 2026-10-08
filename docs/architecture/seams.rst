@@ -117,10 +117,10 @@ Request context
 
    Every input the pipeline needs but cannot determine from the request bytes is exactly
    one thing: the ISO 14229-2 addressing triple, ``uds_session::Ai``. There is no request
-   context struct. The driver takes the ``Ai`` from the ``S_Data.ind`` it drained and passes
-   it into the pipeline beside the request bytes; everything else the mandatory decision
-   nodes of Figures 5 and 6 and the suppression rules of clause 8.7.5 read, this crate
-   already holds.
+   context struct. The driver takes the ``Ai`` from the ``S_Data.ind`` it drained and
+   passes it into the pipeline beside the request bytes; everything else the mandatory
+   decision nodes of ISO 14229-1:2020 Figures 5 and 6 and the suppression rules of clause
+   8.7.5 read, this crate already holds.
 
    ``ServiceSet::dispatch`` takes the triple, beside the state ``UDSSVC_ARCH_0035`` keeps
    and the request bytes; the driver hands over the ``Ai`` it drained.
@@ -187,8 +187,8 @@ Request context
    the ground that a binding's addressing triple is transport-shaped — ``uds_on_ip``'s
    carried a DoIP logical address — so embedding one would make a transport a mandatory
    dependency of the typed layer. That objection was to the *binding's* type, and it no
-   longer applies: the triple now lives in ``uds_session``, shaped by ISO 14229-2 clauses
-   8.3–8.6 rather than by DoIP, and ``UDSSVC_ARCH_0002`` already depends on that crate.
+   longer applies: the triple now lives in ``uds_session``, shaped by ISO 14229-2:2021
+   clauses 8.3–8.6 rather than by DoIP, and ``UDSSVC_ARCH_0002`` already depends on that crate.
 
    Using it directly also closes a question the set had been carrying about whether two
    vocabularies for one concept were worth the conversion. There is one.

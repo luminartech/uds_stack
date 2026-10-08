@@ -254,8 +254,8 @@ pub trait UdsTransport {
     /// The `tP_Client` reload pair this transport dictates.
     ///
     /// The pair alone: a transport dictates it — `DoIP` has no `T_DataSOM.ind`, hence
-    /// `tP6` rather than `tP2` — but has no view on `tP3` spacing, which is
-    /// ISO 14229-2 clause 9.7 client policy.
+    /// `tP6` rather than `tP2` — but has no view on `tP3` spacing, which ISO
+    /// 14229-2:2021 Table 3 leaves to the client.
     fn channel_timing(&self) -> Reloads;
 
     /// Monotonic milliseconds, 32-bit and wrapping.

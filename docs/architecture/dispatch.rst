@@ -648,8 +648,8 @@ Suppression
    the service is implemented by this server (``UDSSVC_ARCH_0013``), and the service's own
    ``MAY_RESPOND_PENDING`` is true (``UDSSVC_ARCH_0033``).
 
-   Rationale: ISO 14229-2 states the prohibition and states it in terms only this layer can
-   evaluate. REQ 5.6 requires that services the server does not support use a
+   Rationale: ISO 14229-2:2021 states the prohibition and states it in terms only this
+   layer can evaluate. REQ 5.6 requires that services the server does not support use a
    ``tP4_Server_Max`` equal to ``tP2_Server_Max`` and that a response-pending "shall not be
    allowed" for them; REQ 5.4 gives that equality the same meaning "for the service in
    progress". *Does this server support this service* is the predicate, and it is the same
@@ -663,11 +663,12 @@ Suppression
    how ISO 14229-2 *expresses* a per-service permission, and ``UDSSVC_ARCH_0033`` is where
    that permission is declared, by the application.
 
-   REQ 5.6's own case is discharged without a check at all. Figure 5's first mandatory
-   condition settles an unsupported service at 0x11 in the precondition stage, so no handler
-   runs and ``UDSSVC_ARCH_0031``'s ``due`` never fires for one; and a service the server
-   does not implement has no trait impl from which ``MAY_RESPOND_PENDING`` could be read.
-   Clause 8.7's own ordering satisfies it twice over.
+   ISO 14229-2:2021 REQ 5.6's own case is discharged without a check at all.
+   ISO 14229-1:2020 Figure 5's first mandatory condition settles an unsupported service at
+   0x11 in the precondition stage, so no handler runs and ``UDSSVC_ARCH_0031``'s ``due``
+   never fires for one; and a service the server does not implement has no trait impl from
+   which ``MAY_RESPOND_PENDING`` could be read. Clause 8.7's own ordering satisfies it
+   twice over.
 
    The bytes are this crate's for the reason ``UDSSVC_ARCH_0010`` already gives: a
    response-pending is a negative response — ``0x7F``, the echoed service identifier,

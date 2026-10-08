@@ -193,17 +193,19 @@ The traits
 
    Rationale: the constant has no default because both defaults are traps, and choosing
    between them is choosing which failure to ship. A default of ``true`` sends 0x78 where
-   REQ 5.4 and REQ 5.6 forbid it. A default of ``false`` leaves slow handlers silently
-   never answering response-pending, which is invisible until a handler overruns
-   ``tP2_Server`` in the field. Requiring the value makes omission a compile error and
-   neither failure reachable — the same completeness argument ``UDSSVC_ARCH_0013`` makes
-   for the assembly list and ``UDSSVC_ARCH_0014`` for a fallible ``from_u16``. A defaulted
-   method would be the "override method 9 of 16" shape ``UDSSVC_ARCH_0012`` rejects.
+   ISO 14229-2:2021 REQ 5.4 and REQ 5.6 forbid it. A default of ``false`` leaves slow
+   handlers silently never answering response-pending, which is invisible until a handler
+   overruns ``tP2_Server`` in the field. Requiring the value makes omission a compile error
+   and neither failure reachable — the same completeness argument ``UDSSVC_ARCH_0013``
+   makes for the assembly list and ``UDSSVC_ARCH_0014`` for a fallible ``from_u16``. A
+   defaulted method would be the "override method 9 of 16" shape ``UDSSVC_ARCH_0012``
+   rejects.
 
    It is a constant rather than a method because the value is a property of the service as
    implemented, not of the request or the server's current state: admissibility folds at
-   compile time, and REQ 5.6's unsupported-service case needs no runtime check at all,
-   since a service that is not implemented has no impl to read the constant from.
+   compile time, and ISO 14229-2:2021 REQ 5.6's unsupported-service case needs no runtime
+   check at all, since a service that is not implemented has no impl to read the constant
+   from.
 
    **Two services do not carry it, and cannot.** A response-pending is what the driver
    sends while it is still awaiting a handler, so a service with nothing awaited has no
