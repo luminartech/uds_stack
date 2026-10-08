@@ -28,6 +28,11 @@ const OTHER: LogicalAddress = LogicalAddress(0x0E80);
 const ACTIVATED: u8 = 0x10;
 
 type OneSocket<'a> = Entity<'a, MockStack, 1, 4096, 2>;
+
+/// An entity whose 64-byte messages make its queue easy to fill.
+type Small<'a> = Entity<'a, MockStack, 1, 64, 2>;
+/// The longest PDU a [`Small`] entity sends.
+const SMALL_PDU: usize = <Small<'static> as DiagnosticEntity>::MAX_PDU;
 type TwoSockets<'a> = Entity<'a, MockStack, 2, 4096, 2>;
 
 fn address() -> EntityAddress {
@@ -1233,7 +1238,9 @@ fn a_holder_that_cannot_be_asked_is_silent() {
     let mut entity = Entity::<_, 1, 64, 2>::new(&stack, address(), two_testers());
     let holder = activated(&stack, &mut entity, TESTER);
     holder.stall_writes();
-    request(&mut entity, TESTER, &[0x62; 52]).unwrap();
+    // Together, the two fill the queue: not even an alive check request fits beside them.
+    request(&mut entity, TESTER, &[0x62; SMALL_PDU]).unwrap();
+    request(&mut entity, TESTER, &[0x3E]).unwrap();
     let newcomer = stack.dial();
     newcomer.send(&activation_from(TESTER, 0));
     assert_eq!(events(&mut entity), []);
@@ -1242,7 +1249,10 @@ fn a_holder_that_cannot_be_asked_is_silent() {
     advance(ms(500));
     assert_eq!(
         events(&mut entity),
-        [confirm(ENTITY, TaType::Physical, DoIpResult::NoSocket)]
+        [
+            confirm(ENTITY, TaType::Physical, DoIpResult::NoSocket),
+            confirm(ENTITY, TaType::Physical, DoIpResult::NoSocket)
+        ]
     );
     assert!(holder.is_aborted());
     assert_eq!(
@@ -1260,7 +1270,9 @@ fn a_response_from_a_holder_not_yet_asked_counts() {
     let mut entity = Entity::<_, 1, 64, 2>::new(&stack, address(), two_testers());
     let holder = activated(&stack, &mut entity, TESTER);
     holder.stall_writes();
-    request(&mut entity, TESTER, &[0x62; 52]).unwrap();
+    // Together, the two fill the queue: not even an alive check request fits beside them.
+    request(&mut entity, TESTER, &[0x62; SMALL_PDU]).unwrap();
+    request(&mut entity, TESTER, &[0x3E]).unwrap();
     let newcomer = stack.dial();
     newcomer.send(&activation_from(TESTER, 0));
     assert_eq!(events(&mut entity), []);
@@ -1736,8 +1748,8 @@ fn a_request_with_no_room_is_confirmed_out_of_memory_after_the_one_ahead() {
     let peer = activated(&stack, &mut entity, TESTER);
     peer.stall_writes();
 
-    request(&mut entity, TESTER, &[0x11; 40]).unwrap();
-    request(&mut entity, TESTER, &[0x22; 40]).unwrap();
+    request(&mut entity, TESTER, &[0x11; 30]).unwrap();
+    request(&mut entity, TESTER, &[0x22; 30]).unwrap();
     assert_eq!(events(&mut entity), []);
     peer.resume_writes();
 
@@ -1748,10 +1760,10 @@ fn a_request_with_no_room_is_confirmed_out_of_memory_after_the_one_ahead() {
             confirm(ENTITY, TaType::Physical, DoIpResult::OutOfMemory)
         ]
     );
-    assert_eq!(peer.take_written(), diagnostic(ENTITY, TESTER, &[0x11; 40]));
+    assert_eq!(peer.take_written(), diagnostic(ENTITY, TESTER, &[0x11; 30]));
 }
 
-/// The largest PDU a request takes fills the entity's buffer, and is written whole.
+/// The largest PDU a request takes is written whole.
 #[test]
 fn the_largest_pdu_is_requested_and_written() {
     let _clock = clock();
@@ -1759,13 +1771,41 @@ fn the_largest_pdu_is_requested_and_written() {
     let mut entity = Entity::<_, 1, 64, 2>::new(&stack, address(), two_testers());
     let peer = activated(&stack, &mut entity, TESTER);
 
-    request(&mut entity, TESTER, &[0x62; 52]).unwrap();
+    request(&mut entity, TESTER, &[0x62; SMALL_PDU]).unwrap();
 
     assert_eq!(
         events(&mut entity),
         [confirm(ENTITY, TaType::Physical, DoIpResult::Ok)]
     );
-    assert_eq!(peer.take_written(), diagnostic(ENTITY, TESTER, &[0x62; 52]));
+    assert_eq!(
+        peer.take_written(),
+        diagnostic(ENTITY, TESTER, &[0x62; SMALL_PDU])
+    );
+}
+
+/// The largest PDU a request takes is written whole when it answers a request at once,
+/// with that request's acknowledgement still queued ahead of it (ISO 13400-2:2019 REQ
+/// 7.DoIP-067 sends the acknowledgement first): a response is always preceded by one.
+#[test]
+fn the_largest_pdu_answering_a_request_is_written_after_its_acknowledgement() {
+    let _clock = clock();
+    let stack = MockStack::new(4096);
+    let mut entity = Entity::<_, 1, 64, 2>::new(&stack, address(), two_testers());
+    let peer = activated(&stack, &mut entity, TESTER);
+    peer.stall_writes();
+    peer.send(&diagnostic(TESTER, ENTITY, &[0x22, 0xF1, 0x90]));
+    assert!(matches!(step(&mut entity), Some(Ev::Indication { .. })));
+
+    request(&mut entity, TESTER, &[0x62; SMALL_PDU]).unwrap();
+    peer.resume_writes();
+
+    assert_eq!(
+        events(&mut entity),
+        [confirm(ENTITY, TaType::Physical, DoIpResult::Ok)]
+    );
+    let mut written = ack(ENTITY, TESTER);
+    written.extend(diagnostic(ENTITY, TESTER, &[0x62; SMALL_PDU]));
+    assert_eq!(peer.take_written(), written);
 }
 
 /// REQ 3.DoIP-092: a tester that has stopped reading is replaced by one activating its
@@ -1779,8 +1819,8 @@ fn a_tester_that_stops_reading_is_replaced_after_t_tcp_alive_check() {
     let mut entity = Entity::<_, 1, 64, 2>::new(&stack, address(), two_testers());
     let stalled = activated(&stack, &mut entity, TESTER);
     stalled.stall_writes();
-    request(&mut entity, TESTER, &[0x11; 40]).unwrap();
-    request(&mut entity, TESTER, &[0x22; 40]).unwrap();
+    request(&mut entity, TESTER, &[0x11; 30]).unwrap();
+    request(&mut entity, TESTER, &[0x22; 30]).unwrap();
 
     let newcomer = stack.dial();
     newcomer.send(&activation_from(TESTER, 0));
@@ -1869,7 +1909,10 @@ fn a_request_that_cannot_be_held_is_refused() {
 
     assert_eq!(
         request(&mut entity, TESTER, &[0; 60]),
-        Err(Error::PduTooLarge { len: 60, max: 52 })
+        Err(Error::PduTooLarge {
+            len: 60,
+            max: SMALL_PDU
+        })
     );
     assert_eq!(request(&mut entity, TESTER, &[]), Err(Error::EmptyPdu));
     {

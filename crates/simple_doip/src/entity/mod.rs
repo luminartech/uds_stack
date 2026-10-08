@@ -1165,8 +1165,13 @@ impl<
     const CONNECTIONS: usize = MCTS + 1;
 
     /// `MAX_MESSAGE` less what a diagnostic message adds to its PDU,
-    /// [`DIAGNOSTIC_MESSAGE_OVERHEAD`].
-    const MAX_PDU: usize = MAX_MESSAGE.saturating_sub(DIAGNOSTIC_MESSAGE_OVERHEAD);
+    /// [`DIAGNOSTIC_MESSAGE_OVERHEAD`], and less the diagnostic message
+    /// acknowledgement that is still queued when a response answers a request at
+    /// once: the acknowledgement goes first (ISO 13400-2:2019 REQ 7.DoIP-067), and a
+    /// response of this length fits beside it.
+    const MAX_PDU: usize = MAX_MESSAGE
+        .saturating_sub(DIAGNOSTIC_MESSAGE_OVERHEAD)
+        .saturating_sub(handler::DIAGNOSTIC_ACK);
 
     /// Queues `pdu` on the connection that registered `ta`. Its confirm is
     /// [`DoIpResult::Ok`] once [`DiagnosticEntity::next_event`] has written it.
