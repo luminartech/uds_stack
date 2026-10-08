@@ -838,7 +838,7 @@ macro_rules! uds_server {
 /// ```
 /// # use uds_services::{
 /// #     Address, AfterSend, Ai, DataIdentifier, KeepAlive, PhysicalKeepAlive, RecordError,
-/// #     Reloads, Spacing, Timestamp, TransportEvent, UdsTransport, uds_client,
+/// #     Reloads, ClientTiming, Timestamp, TransportEvent, UdsTransport, uds_client,
 /// # };
 /// # #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 /// # enum Did { VehicleSpeed, VinNumber }
@@ -894,7 +894,7 @@ macro_rules! uds_server {
 ///     DoIpTransport,
 ///     Address(0x0E00),
 ///     KeepAlive::physical(2_000),
-///     Spacing { physical: 10, functional: 10 },
+///     ClientTiming { physical_spacing: 10, functional_spacing: 10, network_delay: 50 },
 /// );
 /// # let _ = &TESTER;
 /// ```

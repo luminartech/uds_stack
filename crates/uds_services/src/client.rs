@@ -205,16 +205,20 @@ impl KeepAlive<FunctionalKeepAlive> {
     }
 }
 
-/// The minimum time between the end of one request and the next on a channel.
-///
-/// ISO 14229-2:2021 9.7 client policy (``UDSS_LLR_0165``), in milliseconds. A request
-/// that would break it is held until it may go, never reported.
+/// The client's timing policy: what ISO 14229-2:2021 9.7 and Table 4 leave to the
+/// client rather than the transport, in milliseconds.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct Spacing {
-    /// `tP3_Client_Phys`, for physically addressed requests.
-    pub physical: u32,
-    /// `tP3_Client_Func`, for functionally addressed requests.
-    pub functional: u32,
+pub struct ClientTiming {
+    /// `tP3_Client_Phys`, the minimum time between physically addressed requests on a
+    /// channel (``UDSS_LLR_0165``). A request that would break it is held until it may
+    /// go, never reported.
+    pub physical_spacing: u32,
+    /// `tP3_Client_Func`, the same for functionally addressed requests.
+    pub functional_spacing: u32,
+    /// `ΔtP6`, the network's worst-case delay plus margin (REQ 5.21), added to the
+    /// `P2*Server_max` a server advertises to give the wait after a response-pending
+    /// message (`tP6*_Client`). Vehicle-specific; ISO 14229-2 gives no default.
+    pub network_delay: u32,
 }
 
 /// What one server said.
@@ -355,6 +359,7 @@ impl<
             return Some(Err(error));
         }
         if let Err(error) = self.client.drain_window().await {
+            self.client.exchange = None;
             return Some(Err(error));
         }
         let answered = match self.client.advance().await? {
@@ -470,7 +475,7 @@ pub struct Client<
     /// This client's own `S_AI[SA]`.
     tester: Address,
     keep_alive: K::Setting,
-    spacing: Spacing,
+    timing: ClientTiming,
     book: Book<PHYS, FUNC>,
     /// The request in progress, if any; see the `driver` module.
     exchange: Option<Exchange>,
@@ -506,12 +511,12 @@ impl<
     /// * `transport` - what the client's requests go over.
     /// * `tester` - this client's own `S_AI[SA]`, the source of every request.
     /// * `keep_alive` - the keep-alive mode and its `tS3_Client`; see [`KeepAlive`].
-    /// * `spacing` - the minimum time between requests; see [`Spacing`].
+    /// * `timing` - the client's own timing policy; see [`ClientTiming`].
     pub const fn new(
         transport: T,
         tester: Address,
         keep_alive: KeepAlive<K>,
-        spacing: Spacing,
+        timing: ClientTiming,
     ) -> Self {
         let KeepAlive { mode, setting } = keep_alive;
         Self {
@@ -524,7 +529,7 @@ impl<
             store: <C::Store as ClientStorage>::EMPTY,
             tester,
             keep_alive: setting,
-            spacing,
+            timing,
             book: Book::EMPTY,
             exchange: None,
             draining: None,
@@ -546,8 +551,8 @@ impl<
     ///
     /// A response-pending message (`0x78`) extends the wait to the enhanced response
     /// window, which [`Self::diagnostic_session_control`] sets from the server's own
-    /// `P2*Server_max`. A response longer than the client's buffer is
-    /// [`Response::Malformed`] with [`RecordError::Overlong`].
+    /// `P2*Server_max` and [`ClientTiming::network_delay`]. A response longer than the
+    /// client's buffer is [`Response::Malformed`] with [`RecordError::Overlong`].
     ///
     /// # Arguments
     ///
@@ -596,9 +601,10 @@ impl<
     /// Change one server's diagnostic session.
     ///
     /// ISO 14229-1:2020 10.2 — the positive response carries the session's
-    /// [`SessionTiming`], read in Table 29's units. Its `P2*Server_max` becomes the wait
-    /// this client allows after a response-pending message from `target`, where it is
-    /// longer than the transport's own (issue #17 item 4). Entering a non-default session
+    /// [`SessionTiming`], read in Table 29's units. Its `P2*Server_max`, plus
+    /// [`ClientTiming::network_delay`], becomes the wait this client allows after a
+    /// response-pending message from `target`, where that is longer than the transport's
+    /// own (issue #17 item 4). Entering a non-default session
     /// starts the keep-alive the client was built with, and the default session ends it.
     ///
     /// # Arguments
@@ -628,9 +634,13 @@ impl<
             )
             .await?;
         let message = answered_bytes(&mut self.store, &answered);
-        let response =
-            encode::session_timing(encode::final_response(message, answered.arrived));
-        if let Response::Positive(timing) = response {
+        let reply = encode::final_response(message, answered.arrived);
+        let response = encode::session_timing(reply);
+        if let encode::Final::Positive(_) = reply {
+            let timing = match response {
+                Response::Positive(timing) => Some(timing),
+                _ => None,
+            };
             self.entered(target, selection, timing);
         }
         Ok(response)
@@ -640,9 +650,11 @@ impl<
     ///
     /// The client's `sleep`: a keep-alive is only ever sent from inside a call, so an
     /// application with a server in a non-default session waits here between requests.
-    /// One that does not still sends an overdue keep-alive at the start of its next
-    /// call, since the session layer holds it until then. What arrives meanwhile is
-    /// handed to the session layer and otherwise discarded.
+    /// One that does not still has an overdue keep-alive sent during its next call, since
+    /// the session layer holds it until then: a physical one as soon as that call first
+    /// waits on the transport (to the server the call addresses, the request itself
+    /// stands in for it), the functional one once the call's exchange has ended. What
+    /// arrives meanwhile is handed to the session layer and otherwise discarded.
     ///
     /// # Arguments
     ///
@@ -689,22 +701,26 @@ impl<
         identifiers: &[C],
     ) -> Responses<'_, C, T, K, PHYS, FUNC, R> {
         self.retire();
-        let refused = self.functional_channel(target).and_then(|ai| {
-            let ClientBuffers { request, .. } = self.store.split();
-            let len = encode::read_data_by_identifier(request, identifiers)
-                .ok_or(ClientError::Request)?;
-            let sid = request.first().copied().unwrap_or_default();
-            let class = ClientTx::Request {
-                expected: ExpectedResponses::Unknown,
-                repeat: false,
-                session: None,
-            };
-            self.exchange = Some(Exchange::new(ai, len, sid, class));
-            Ok(())
-        });
+        let ai = self
+            .addressing(target)
+            .with_ta_type(uds_session::TaType::Functional);
+        let ClientBuffers { request, .. } = self.store.split();
+        let refused = match encode::read_data_by_identifier(request, identifiers) {
+            Some(len) => {
+                let sid = request.first().copied().unwrap_or_default();
+                let class = ClientTx::Request {
+                    expected: ExpectedResponses::Unknown,
+                    repeat: false,
+                    session: None,
+                };
+                self.exchange = Some(Exchange::new(ai, len, sid, class));
+                None
+            }
+            None => Some(ClientError::Request),
+        };
         Responses {
             client: self,
-            refused: refused.err(),
+            refused,
         }
     }
 
@@ -721,7 +737,9 @@ impl<
         let ClientBuffers { request, .. } = self.store.split();
         let len = encode(request).ok_or(ClientError::Request)?;
         let sid = request.first().copied().unwrap_or_default();
-        let ai = self.physical_channel(target)?;
+        let ai = self
+            .addressing(target)
+            .with_ta_type(uds_session::TaType::Physical);
         let class = ClientTx::Request {
             expected: ExpectedResponses::Exactly(core::num::NonZeroU16::MIN),
             repeat: false,
@@ -729,28 +747,35 @@ impl<
         };
         self.exchange = Some(Exchange::new(ai, len, sid, class));
         let answered = self.advance().await.unwrap_or(Err(ClientError::Timeout))?;
-        self.send_owed().await?;
+        // The answer stands: a keep-alive the transport fails to take now stays owed,
+        // and the failure meets the next call.
+        let _ = self.send_owed().await;
         Ok(answered)
     }
 
-    /// Record that `target` entered a session with `timing`: its keep-alive standing,
-    /// and its `P2*Server_max` as the enhanced response reload where that is longer.
+    /// Record that `target` answered a session change positively, as the session layer
+    /// classified it: its keep-alive standing, and, where its `timing` could be read,
+    /// `P2*Server_max` plus the network delay as the enhanced response reload, where that
+    /// is longer than the transport's (ISO 14229-2:2021 Table 4, `tP6*_Client`).
     fn entered(
         &mut self,
         target: Address,
         selection: uds_session::SessionSelection,
-        timing: SessionTiming,
+        timing: Option<SessionTiming>,
     ) {
         let now = self.transport.now();
         let floor = self.transport.channel_timing().enhanced_reload;
-        let enhanced = timing.p2_star_server_max().max(floor);
+        let delay = self.timing.network_delay;
         if let Some(o) = self.book.physical_to(target) {
             o.in_session = selection == uds_session::SessionSelection::NonDefault;
-            let parameter = ChannelParameter::EnhancedReload(enhanced);
-            let _ = self
-                .session
-                .set_physical_parameter(now, o.id, parameter)
-                .finish();
+            if let Some(timing) = timing {
+                let enhanced = timing.p2_star_server_max().saturating_add(delay).max(floor);
+                let parameter = ChannelParameter::EnhancedReload(enhanced);
+                let _ = self
+                    .session
+                    .set_physical_parameter(now, o.id, parameter)
+                    .finish();
+            }
         }
     }
 }

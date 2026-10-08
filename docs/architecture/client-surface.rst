@@ -145,7 +145,9 @@ The elements
    timeout after the last answer, a response-pending message holding it open meanwhile.
    Nothing is sent until the first answer is asked for. The request in progress is recorded
    in the client rather than in the sequence, so a sequence dropped part-way is drained by
-   the client's next call, and a late answer to it is never taken for the next request's.
+   the client's next call, and no answer arriving inside its window is taken for the next
+   request's. One arriving after the window closed is unsolicited unless it echoes the next
+   request's service; requirements open question ``:171`` records that limit.
 
 .. arch:: No response expected is a normal client outcome
    :id: UDSSVC_ARCH_0023

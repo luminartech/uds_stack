@@ -89,6 +89,10 @@ pub struct Script {
     /// Which addressing a transmission may carry; anything else fails the test.
     may_send: fn(Ai) -> bool,
     reloads: Reloads,
+    /// How many transmissions were asked for, refused ones included.
+    asked: usize,
+    /// Which of them `t_data_req` refuses with `Err`, recording nothing.
+    refused: Option<usize>,
 }
 
 impl Script {
@@ -112,7 +116,21 @@ impl Script {
                 default_reload: 50,
                 enhanced_reload: 5_000,
             },
+            asked: 0,
+            refused: None,
         }
+    }
+
+    /// The same, refusing the `i`th transmission asked for (from zero) with `Err`.
+    pub fn refusing(mut self, i: usize) -> Self {
+        self.refused = Some(i);
+        self
+    }
+
+    /// The same, with the clock starting at `now`.
+    pub fn starting_at(mut self, now: u32) -> Self {
+        self.now = now;
+        self
     }
 
     /// The same, failing the test on a transmission `may_send` refuses.
@@ -242,6 +260,11 @@ impl UdsTransport for Script {
         data: &[u8],
         after: AfterSend,
     ) -> impl Future<Output = Result<(), ()>> {
+        let asked = self.asked;
+        self.asked = asked.wrapping_add(1);
+        if self.refused == Some(asked) {
+            return ready(Err(()));
+        }
         self.record(ai, data, after);
         ready(Ok(()))
     }

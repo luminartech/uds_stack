@@ -22,11 +22,15 @@ use core::ops::Range;
 use uds_session::{
     Address, Ai, Cause, ChannelAddressing, ChannelId, ChannelParams, ClientOutput,
     ClientReaction, ClientTx, ExpectedResponses, Finished, FunctionalChannelId, Mtype,
-    PhysicalChannelId, Rejection, SResult, TaType, Timestamp,
+    PhysicalChannelId, Rejection, SResult, TaType, Timestamp, TransportError,
 };
 
 /// ISO 14229-2:2021 9.7 Table 9: a request is transmitted at most three times.
 const REPEATS: u8 = 2;
+
+/// What the client confirms to the session layer for a request the transport refused,
+/// since no confirmation of it will ever come. Not a value any transport reports.
+const REFUSED: SResult = SResult::Transport(TransportError(u16::MAX));
 
 /// One request's progress, kept in the client so that it outlives the call that made it.
 #[derive(Debug, Clone, Copy)]
@@ -54,6 +58,9 @@ pub(super) enum Phase {
     Sent,
     /// Confirmed sent; its response window is open.
     Open,
+    /// A functional window whose expiry was seen with its last answer: the next step
+    /// ends it.
+    Closed,
 }
 
 impl Exchange {
@@ -95,7 +102,7 @@ pub(super) struct Open<Id> {
     unconfirmed: bool,
     /// Its server was put in a non-default session through this client.
     pub(super) in_session: bool,
-    /// Its keep-alive fell due while an exchange ran, and has not been sent.
+    /// Its keep-alive fell due and has not been sent.
     owed: bool,
 }
 
@@ -120,8 +127,15 @@ impl<Id> Open<Id> {
 pub(super) struct Book<const PHYS: usize, const FUNC: usize> {
     physical: [Option<Open<PhysicalChannelId>>; PHYS],
     functional: [Option<Open<FunctionalChannelId>>; FUNC],
-    /// The client-wide keep-alive fell due while an exchange ran (functional keep-alive).
+    /// The client-wide keep-alive fell due and has not been sent (functional keep-alive).
     owed_functional: bool,
+    /// The functional keep-alive awaiting its confirmation, and how often it has been
+    /// repeated: ``UDSS_LLR_0157`` leaves the timer stopped after a failed one, and its
+    /// repeat to the client.
+    functional_keep_alive: Option<Ai>,
+    functional_repeats: u8,
+    /// A transmission the transport refused, still to be confirmed failed.
+    refused: Option<Ai>,
 }
 
 impl<const PHYS: usize, const FUNC: usize> Book<PHYS, FUNC> {
@@ -129,6 +143,9 @@ impl<const PHYS: usize, const FUNC: usize> Book<PHYS, FUNC> {
         physical: [const { None }; PHYS],
         functional: [const { None }; FUNC],
         owed_functional: false,
+        functional_keep_alive: None,
+        functional_repeats: 0,
+        refused: None,
     };
 
     pub(super) fn physical_to(
@@ -155,6 +172,15 @@ impl<const PHYS: usize, const FUNC: usize> Book<PHYS, FUNC> {
                 .find(|o| o.ai == ai)
                 .map(|o| o.id.into()),
             TaType::Functional => self.functional_by(ai).map(Into::into),
+        }
+    }
+
+    /// Owe the functional keep-alive again after a failed confirmation, up to Table 9's
+    /// repeats.
+    fn owe_functional_repeat(&mut self) {
+        if self.functional_repeats < REPEATS {
+            self.functional_repeats = self.functional_repeats.saturating_add(1);
+            self.owed_functional = true;
         }
     }
 
@@ -207,13 +233,22 @@ async fn drain<
     for out in reaction.outputs() {
         match out {
             ClientOutput::Transmit { ai, data, .. } => {
-                transport.t_data_req(ai, data, AfterSend::Continue).await?;
+                if let Err(error) =
+                    transport.t_data_req(ai, data, AfterSend::Continue).await
+                {
+                    book.refused = Some(ai);
+                    return Err(error);
+                }
                 book.awaiting(ai, true);
             }
             ClientOutput::Confirm { ai, result } => {
                 book.awaiting(ai, false);
+                let ok = result == SResult::Ok;
                 if exchange == Some(ai) {
-                    found.confirmed = Some(result == SResult::Ok);
+                    found.confirmed = Some(ok);
+                } else if book.functional_keep_alive.take_if(|k| *k == ai).is_some() && !ok
+                {
+                    book.owe_functional_repeat();
                 }
             }
             ClientOutput::ResponseTimeout { ai, .. } => {
@@ -224,7 +259,10 @@ async fn drain<
                     o.owed = true;
                 }
             }
-            ClientOutput::KeepAliveDue { channel: None } => book.owed_functional = true,
+            ClientOutput::KeepAliveDue { channel: None } => {
+                book.owed_functional = true;
+                book.functional_repeats = 0;
+            }
             // An indication's classification is the caller's, made before it was handed
             // in; a full responder table changes nothing here (UDSS_LLR_0143); and
             // whatever else UDSS_LLR_0012's open enumeration adds.
@@ -259,7 +297,7 @@ impl<
 > Client<C, T, K, PHYS, FUNC, R>
 {
     /// The addressing of this client's channel to `ta`, of either kind.
-    const fn addressing(&self, ta: Address) -> ChannelAddressing {
+    pub(super) const fn addressing(&self, ta: Address) -> ChannelAddressing {
         ChannelAddressing {
             mtype: Mtype::Diag,
             sa: self.tester,
@@ -296,7 +334,7 @@ impl<
         }
         let params = ChannelParams {
             reloads: self.transport.channel_timing(),
-            spacing: self.spacing.physical,
+            spacing: self.timing.physical_spacing,
         };
         let addressing = self.addressing(target);
         let id =
@@ -323,12 +361,13 @@ impl<
         }
         let now = self.transport.now();
         let keep = K::group(self.keep_alive);
+        let draining = self.draining.map(|e| e.ai);
         if self.book.functional.iter().all(Option::is_some) {
-            let idle = self
-                .book
-                .functional
-                .iter_mut()
-                .find(|s| s.is_some_and(|o| !o.unconfirmed && Some(o.ai.ta) != keep));
+            let idle = self.book.functional.iter_mut().find(|s| {
+                s.is_some_and(|o| {
+                    !o.unconfirmed && Some(o.ai.ta) != keep && Some(o.ai) != draining
+                })
+            });
             let Some(slot) = idle else {
                 return Err(ClientError::NoChannel);
             };
@@ -339,7 +378,7 @@ impl<
         }
         let params = ChannelParams {
             reloads: self.transport.channel_timing(),
-            spacing: self.spacing.functional,
+            spacing: self.timing.functional_spacing,
         };
         let Finished { outcome, rest: _ } = self
             .session
@@ -363,6 +402,16 @@ impl<
         }
     }
 
+    /// Confirm failed, to the session layer, a transmission the transport refused: its
+    /// association would otherwise stay outstanding for good (``UDSS_LLR_0060``).
+    fn confirm_refused(&mut self) {
+        if let Some(ai) = self.book.refused.take() {
+            let now = self.transport.now();
+            let _expiries_stay_in_the_session =
+                self.session.t_data_conf(now, ai, REFUSED).finish();
+        }
+    }
+
     /// Settle what a dropped call or [`super::Responses`] left: a request never sent is
     /// forgotten, a functional window still open is set aside to drain, and anything
     /// else is reset.
@@ -371,7 +420,7 @@ impl<
             return;
         };
         match e.phase {
-            Phase::Unsent => {}
+            Phase::Unsent | Phase::Closed => {}
             Phase::Open if e.functional() => {
                 if let Some(older) = self.draining.replace(e) {
                     self.abandon(older.ai);
@@ -385,7 +434,13 @@ impl<
     /// so none of them is taken for the next exchange's.
     pub(super) async fn drain_window(&mut self) -> Result<(), ClientError<T::Error>> {
         while let Some(e) = self.draining {
-            let seen = self.pump(Some(e), None).await?;
+            let seen = match self.pump(Some(e), None).await {
+                Ok(seen) => seen,
+                Err(error) => {
+                    self.draining = None;
+                    return Err(error);
+                }
+            };
             if seen.closed {
                 self.abandon(e.ai);
             }
@@ -415,11 +470,17 @@ impl<
             let ClientBuffers { request, .. } = self.store.split();
             let data = request.get(..e.len).unwrap_or(&[]);
             let reaction = self.session.s_data_req(now, e.ai, data, class);
-            let (_, outcome) = drain(reaction, &mut self.transport, &mut self.book, None)
-                .await
-                .map_err(ClientError::Transport)?;
+            let drained = drain(reaction, &mut self.transport, &mut self.book, None).await;
+            self.confirm_refused();
+            let (_, outcome) = drained.map_err(ClientError::Transport)?;
             match outcome {
                 Ok(()) => {
+                    // The request keeps its own server alive (UDSS_LLR_0160).
+                    if let Some(o) =
+                        self.book.physical_to(e.ai.ta).filter(|_| !e.functional())
+                    {
+                        o.owed = false;
+                    }
                     e.phase = Phase::Sent;
                     self.exchange = Some(e);
                     return Ok(e);
@@ -449,15 +510,31 @@ impl<
     ) -> Option<Result<Answered, ClientError<T::Error>>> {
         let mut e = self.exchange?;
         loop {
-            if e.phase == Phase::Unsent {
-                e = match self.submit(e).await {
-                    Ok(e) => e,
-                    Err(error) => return Some(self.fail(e, error)),
-                };
+            match e.phase {
+                Phase::Closed => {
+                    self.exchange = None;
+                    return self.send_owed().await.err().map(Err);
+                }
+                Phase::Unsent => {
+                    let opened = match self.book.channel(e.ai) {
+                        Some(_) => Ok(e.ai),
+                        None if e.functional() => self.functional_channel(e.ai.ta),
+                        None => self.physical_channel(e.ai.ta),
+                    };
+                    let submitted = match opened {
+                        Ok(_) => self.submit(e).await,
+                        Err(error) => Err(error),
+                    };
+                    e = match submitted {
+                        Ok(e) => e,
+                        Err(error) => return Some(self.fail(e, error)),
+                    };
+                }
+                Phase::Sent | Phase::Open => {}
             }
             let seen = match self.pump(Some(e), None).await {
                 Ok(seen) => seen,
-                Err(error) => return Some(Err(error)),
+                Err(error) => return Some(self.fail(e, error)),
             };
             if seen.confirmed == Some(true) {
                 e.phase = Phase::Open;
@@ -466,6 +543,9 @@ impl<
             if let Some(answered) = seen.answer {
                 if !e.functional() {
                     self.exchange = None;
+                } else if seen.timed_out {
+                    e.phase = Phase::Closed;
+                    self.exchange = Some(e);
                 }
                 return Some(Ok(answered));
             }
@@ -475,11 +555,15 @@ impl<
             let failure = if seen.confirmed == Some(false) {
                 ClientError::NotSent
             } else if seen.timed_out && e.functional() {
-                self.exchange = None;
-                return self.send_owed().await.err().map(Err);
+                e.phase = Phase::Closed;
+                self.exchange = Some(e);
+                continue;
             } else if seen.timed_out {
                 ClientError::Timeout
             } else {
+                if let Err(error) = self.send_owed().await {
+                    return Some(self.fail(e, error));
+                }
                 continue;
             };
             if e.repeats >= REPEATS {
@@ -502,12 +586,15 @@ impl<
         Err(error)
     }
 
-    /// Send every keep-alive that fell due while an exchange ran (issue #17 item 1),
-    /// once none is running. One the session layer refuses for now stays owed.
+    /// Send every keep-alive that has fallen due and that may go now. One the session
+    /// layer refuses for now stays owed.
+    ///
+    /// Issue #17 item 1: never one to a server a request is awaiting. Physically that is
+    /// only the exchange's own server, whose keep-alive its request stopped
+    /// (``UDSS_LLR_0160``); the functional keep-alive reaches every server, so it waits
+    /// until no exchange is running.
     pub(super) async fn send_owed(&mut self) -> Result<(), ClientError<T::Error>> {
-        if self.exchange.is_some() {
-            return Ok(());
-        }
+        let busy = self.exchange.map(|e| e.ai);
         for i in 0..PHYS {
             let owed = self
                 .book
@@ -515,7 +602,7 @@ impl<
                 .get(i)
                 .copied()
                 .flatten()
-                .filter(|o| o.owed);
+                .filter(|o| o.owed && Some(o.ai) != busy);
             if let Some(o) = owed
                 && self.keep_alive_on(o.ai).await?
                 && let Some(Some(o)) = self.book.physical.get_mut(i)
@@ -524,11 +611,13 @@ impl<
             }
         }
         if self.book.owed_functional
+            && busy.is_none()
             && let Some(group) = K::group(self.keep_alive)
             && let Ok(ai) = self.functional_channel(group)
             && self.keep_alive_on(ai).await?
         {
             self.book.owed_functional = false;
+            self.book.functional_keep_alive = Some(ai);
         }
         Ok(())
     }
@@ -541,9 +630,9 @@ impl<
             expected: ExpectedResponses::None,
         };
         let reaction = self.session.s_data_req(now, ai, &KEEP_ALIVE, class);
-        let (_, outcome) = drain(reaction, &mut self.transport, &mut self.book, None)
-            .await
-            .map_err(ClientError::Transport)?;
+        let drained = drain(reaction, &mut self.transport, &mut self.book, None).await;
+        self.confirm_refused();
+        let (_, outcome) = drained.map_err(ClientError::Transport)?;
         Ok(outcome.is_ok())
     }
 
@@ -621,14 +710,15 @@ impl<
             }
             Err(_) => self.session.tick(now),
         };
-        let (seen, _) = drain(
+        let drained = drain(
             reaction,
             &mut self.transport,
             &mut self.book,
             subject.map(|e| e.ai),
         )
-        .await
-        .map_err(ClientError::Transport)?;
+        .await;
+        self.confirm_refused();
+        let (seen, _) = drained.map_err(ClientError::Transport)?;
         Ok(Seen {
             answer,
             closed,
@@ -638,7 +728,9 @@ impl<
 }
 
 /// The channel a message from a server belongs to, and the exchange it may answer: the
-/// functional window's while one is open, else the physical channel to its sender's.
+/// functional window's while one is open, else the physical channel to its sender's. Only
+/// a confirmed request is answered: the session layer opens its window at the
+/// confirmation, so a response before it would leave that window open behind it.
 /// `None` for a message to another tester, or from a server no channel names.
 fn route<const PHYS: usize, const FUNC: usize>(
     book: &Book<PHYS, FUNC>,
@@ -649,9 +741,10 @@ fn route<const PHYS: usize, const FUNC: usize>(
     if ai.ta != tester {
         return None;
     }
+    let open = subject.filter(|e| e.phase == Phase::Open);
     if let Some(e) = subject.filter(|e| e.functional()) {
-        return Some((book.functional_by(e.ai)?.into(), Some(e)));
+        return Some((book.functional_by(e.ai)?.into(), open));
     }
     let o = book.physical.iter().flatten().find(|o| o.ai.ta == ai.sa)?;
-    Some((o.id.into(), subject.filter(|e| e.ai.ta == ai.sa)))
+    Some((o.id.into(), open.filter(|e| e.ai.ta == ai.sa)))
 }

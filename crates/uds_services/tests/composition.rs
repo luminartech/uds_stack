@@ -20,15 +20,15 @@ use uds_protocol::NegativeResponseCode as Nrc;
 use uds_services::pipeline::settle;
 use uds_services::{
     Access, Address, AfterSend, Ai, Answer, ClearDiagnosticInformation, ClientError,
-    ClientSet, ClientStorage, CommunicationControl, CommunicationControlType,
+    ClientSet, ClientStorage, ClientTiming, CommunicationControl, CommunicationControlType,
     CommunicationType, DataIdentifier, DataTransfer, Delay, DiagnosticSessionType,
     DtcRecord, DtcReportKind, DtcStatusMask, KeepAlive, KeyVerdict, Mtype,
     PhysicalKeepAlive, ReadDataByIdentifier, ReadDtcInfoReportType, ReadDtcInfoSubFunction,
     ReadDtcInformation, Received, RecordError, Reloads, Response, ResponseSink,
     SecurityAccess, SecurityLevel, SecurityPolicy, ServerParams, ServiceSet, SessionTiming,
-    SessionTransition, Sessions, Sink, Spacing, Storage, SubnetNumber, TaType,
-    TesterPresent, Timestamp, TransferRequest, TransportEvent, UdsServiceType,
-    UdsTransport, uds_client, uds_server,
+    SessionTransition, Sessions, Sink, Storage, SubnetNumber, TaType, TesterPresent,
+    Timestamp, TransferRequest, TransportEvent, UdsServiceType, UdsTransport, uds_client,
+    uds_server,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -504,9 +504,10 @@ static TESTER: Tester = Tester::new(
     FakeTransport,
     Address(0x0E00),
     KeepAlive::physical(2_000),
-    Spacing {
-        physical: 10,
-        functional: 10,
+    ClientTiming {
+        physical_spacing: 10,
+        functional_spacing: 10,
+        network_delay: 50,
     },
 );
 

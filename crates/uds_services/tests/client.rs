@@ -11,10 +11,9 @@ use common::{Script, Step, block_on};
 use core::future::Future;
 use core::task::Poll;
 use uds_services::{
-    Address, Ai, Answer, ClientError, DataIdentifier, DiagnosticSessionType,
+    Address, Ai, Answer, ClientError, ClientTiming, DataIdentifier, DiagnosticSessionType,
     FunctionalKeepAlive, KeepAlive, Mtype, NegativeResponseCode, PhysicalKeepAlive,
-    RecordError, Reloads, Response, SResult, SessionTiming, Spacing, TaType, Timestamp,
-    uds_client,
+    RecordError, Reloads, Response, SResult, SessionTiming, TaType, Timestamp, uds_client,
 };
 use uds_session::TransportError;
 
@@ -23,9 +22,10 @@ const ECU: Address = Address(0x0010);
 const OTHER_ECU: Address = Address(0x0011);
 const GROUP: Address = Address(0xE400);
 const S3_CLIENT: u32 = 2_000;
-const SPACING: Spacing = Spacing {
-    physical: 10,
-    functional: 10,
+const TIMING: ClientTiming = ClientTiming {
+    physical_spacing: 10,
+    functional_spacing: 10,
+    network_delay: 0,
 };
 
 /// The request to `ecu`, physically addressed.
@@ -120,7 +120,7 @@ fn tester(steps: &[Step]) -> Tester {
         Script::new(steps),
         TESTER,
         KeepAlive::physical(S3_CLIENT),
-        SPACING,
+        TIMING,
     )
 }
 
@@ -342,10 +342,19 @@ fn a_stale_response_to_another_service_is_not_the_answer() {
 #[test]
 fn a_response_from_another_server_is_not_the_answer() {
     let mut t = tester(&[
+        Step::Conf(to(OTHER_ECU), SResult::Ok),
+        Step::Ind(from(OTHER_ECU), &[0x62, 0xF4, 0x0D, 0x39]),
         Step::Conf(to(ECU), SResult::Ok),
         Step::Ind(from(OTHER_ECU), &[0x62, 0xF4, 0x0D, 0x41]),
         Step::Ind(from(ECU), SPEED),
     ]);
+    // The other server's channel is open, so its message is indicated, not dropped.
+    assert_eq!(
+        speed(block_on(
+            t.read_data_by_identifier(OTHER_ECU, &[Did::Speed])
+        )),
+        0x39
+    );
     assert_eq!(
         speed(block_on(t.read_data_by_identifier(ECU, &[Did::Speed]))),
         0x40
@@ -505,7 +514,7 @@ fn patient(steps: &[Step]) -> Tester {
         }),
         TESTER,
         KeepAlive::physical(S3_CLIENT),
-        SPACING,
+        TIMING,
     )
 }
 
@@ -700,7 +709,7 @@ fn a_functional_keep_alive_due_mid_exchange_waits_for_the_answer() {
         }),
         TESTER,
         KeepAlive::functional(S3_CLIENT, GROUP),
-        SPACING,
+        TIMING,
     );
     let _ = block_on(
         t.diagnostic_session_control(ECU, DiagnosticSessionType::ExtendedDiagnosticSession),
@@ -777,4 +786,317 @@ fn a_full_client_with_no_idle_channel_refuses_a_new_server() {
         Some(ClientError::NoChannel)
     );
     assert_eq!(t.transport().sent_count, 2);
+}
+
+const GROUP_2: Address = Address(0xE401);
+const FUNCTIONAL_2: Ai = Ai {
+    ta: GROUP_2,
+    ..FUNCTIONAL
+};
+
+/// A functional-keep-alive tester whose transport waits up to 3 s for a response.
+fn functional_patient(script: Script) -> FunctionalTester {
+    FunctionalTester::new(
+        script.with_reloads(Reloads {
+            default_reload: 3_000,
+            enhanced_reload: 1_000,
+        }),
+        TESTER,
+        KeepAlive::functional(S3_CLIENT, GROUP),
+        TIMING,
+    )
+}
+
+/// ``UDSS_LLR_0157`` — a functional keep-alive confirmed failed leaves the client-wide
+/// timer stopped, and its repeat is the client's: it is sent again once the spacing the
+/// failure started has run out, and its success restarts the timer.
+#[test]
+fn a_failed_functional_keep_alive_is_repeated() {
+    let mut t = functional_patient(Script::new(&[
+        ENTER[0],
+        ENTER[1],
+        Step::At(2_000),
+        Step::Conf(FUNCTIONAL, FAILED),
+        Step::At(2_010),
+        Step::Conf(FUNCTIONAL, SResult::Ok),
+        Step::At(4_010),
+        Step::Conf(FUNCTIONAL, SResult::Ok),
+        Step::At(4_100),
+    ]));
+    let _ = block_on(
+        t.diagnostic_session_control(ECU, DiagnosticSessionType::ExtendedDiagnosticSession),
+    );
+    assert_eq!(block_on(t.idle_until(Timestamp(4_100))), Ok(()));
+    let s = t.transport();
+    let at = |i| s.sent(i).map(|x| (x.ai, x.at));
+    assert_eq!(
+        [at(1), at(2), at(3)],
+        [
+            Some((FUNCTIONAL, 2_000)),
+            Some((FUNCTIONAL, 2_010)),
+            Some((FUNCTIONAL, 4_010))
+        ]
+    );
+    assert!(s.finished());
+}
+
+/// A request the transport refuses is confirmed failed to the session layer by the
+/// client, so the refusal ends that exchange and the next request to the server goes out.
+#[test]
+fn a_request_the_transport_refuses_does_not_block_the_next() {
+    let mut t = Tester::new(
+        Script::new(&[
+            Step::At(10), // the spacing its failed confirmation started
+            Step::Conf(to(ECU), SResult::Ok),
+            Step::Ind(from(ECU), SPEED),
+        ])
+        .refusing(0),
+        TESTER,
+        KeepAlive::physical(S3_CLIENT),
+        TIMING,
+    );
+    assert_eq!(
+        block_on(t.read_data_by_identifier(ECU, &[Did::Speed])).err(),
+        Some(ClientError::Transport(()))
+    );
+    assert_eq!(
+        speed(block_on(t.read_data_by_identifier(ECU, &[Did::Speed]))),
+        0x40
+    );
+    assert!(t.transport().finished());
+}
+
+/// An answer delivered with the clock already past the window lends the answer, and the
+/// window's expiry, seen in the same event, still closes the sequence.
+#[test]
+fn an_answer_arriving_as_the_window_closes_ends_the_sequence() {
+    let mut t = tester(&[
+        Step::Conf(FUNCTIONAL, SResult::Ok),
+        Step::IndAt(100, from(ECU), SPEED),
+    ]);
+    let mut answers = t.read_data_by_identifier_functional(GROUP, &[Did::Speed]);
+    assert!(matches!(
+        block_on(answers.next()),
+        Some(Ok(Answer::Positive { from: ECU, .. }))
+    ));
+    assert!(block_on(answers.next()).is_none());
+}
+
+/// A dropped window is drained before the next functional read opens its channel, so
+/// the channel it is draining on is not the one withdrawn to make room.
+#[test]
+fn a_functional_read_to_another_group_waits_for_the_dropped_window() {
+    let mut t = tester(&[
+        Step::Conf(FUNCTIONAL, SResult::Ok),
+        Step::Ind(from(ECU), SPEED),
+        Step::Ind(from(ECU), &[0x62, 0xF4, 0x0D, 0x41]),
+        Step::At(1_000),
+        Step::Conf(FUNCTIONAL_2, SResult::Ok),
+        Step::Ind(from(ECU), &[0x62, 0xF4, 0x0D, 0x42]),
+        Step::At(2_000),
+    ]);
+    {
+        let mut answers = t.read_data_by_identifier_functional(GROUP, &[Did::Speed]);
+        assert!(matches!(block_on(answers.next()), Some(Ok(_))));
+    }
+    let mut answers = t.read_data_by_identifier_functional(GROUP_2, &[Did::Speed]);
+    match block_on(answers.next()) {
+        Some(Ok(Answer::Positive { mut records, .. })) => {
+            assert_eq!(records.next(), Some((Did::Speed, &[0x42][..])));
+        }
+        other => panic!("expected the second window's answer, got {other:?}"),
+    }
+    assert!(block_on(answers.next()).is_none());
+    assert_eq!(t.transport().addressed(1), (Some(FUNCTIONAL_2), READ));
+}
+
+/// Issue #17 item 1 asks for no keep-alive to the server a request awaits. Another
+/// server's falls due on its own channel and goes out on time, mid-exchange.
+#[test]
+fn another_servers_keep_alive_is_not_held_by_an_exchange() {
+    let mut t = patient(&[
+        ENTER[0],
+        ENTER[1],
+        Step::Conf(to(OTHER_ECU), SResult::Ok),
+        Step::At(2_010),
+        Step::Conf(to(ECU), SResult::Ok),
+        Step::IndAt(2_600, from(OTHER_ECU), SPEED),
+    ]);
+    let _ = block_on(
+        t.diagnostic_session_control(ECU, DiagnosticSessionType::ExtendedDiagnosticSession),
+    );
+    assert_eq!(
+        speed(block_on(
+            t.read_data_by_identifier(OTHER_ECU, &[Did::Speed])
+        )),
+        0x40
+    );
+    let s = t.transport();
+    assert_eq!(s.addressed(2), (Some(to(ECU)), KEEP_ALIVE));
+    assert_eq!(s.sent(2).map(|x| x.at), Some(2_010));
+    assert!(s.finished());
+}
+
+/// An answer already received is returned even where the keep-alive held behind it then
+/// fails to go out.
+#[test]
+fn a_held_keep_alive_the_transport_refuses_does_not_lose_the_answer() {
+    let mut t = functional_patient(
+        Script::new(&[
+            ENTER[0],
+            ENTER[1],
+            Step::Conf(to(ECU), SResult::Ok),
+            Step::At(2_000),
+            Step::IndAt(2_050, from(ECU), SPEED),
+        ])
+        .refusing(2),
+    );
+    let _ = block_on(
+        t.diagnostic_session_control(ECU, DiagnosticSessionType::ExtendedDiagnosticSession),
+    );
+    let read = block_on(t.read_data_by_identifier(ECU, &[FunctionalDid::Speed]));
+    assert!(matches!(read, Ok(Response::Positive(_))), "{read:?}");
+}
+
+/// A positive session change the client cannot read still put the server in its session,
+/// as the session layer classified it, so its channel is not withdrawn to make room.
+#[test]
+fn an_unreadable_session_change_still_keeps_its_channel() {
+    let mut t = patient(&[
+        Step::Conf(to(ECU), SResult::Ok),
+        Step::IndAt(10, from(ECU), &[0x50, 0x03]),
+        Step::Conf(to(OTHER_ECU), SResult::Ok),
+        Step::Ind(from(OTHER_ECU), SPEED),
+        Step::Conf(to(THIRD_ECU), SResult::Ok),
+        Step::Ind(from(THIRD_ECU), SPEED),
+        Step::At(2_010),
+        Step::Conf(to(ECU), SResult::Ok),
+        Step::At(2_100),
+    ]);
+    let entered = block_on(
+        t.diagnostic_session_control(ECU, DiagnosticSessionType::ExtendedDiagnosticSession),
+    );
+    assert_eq!(entered.ok(), Some(Response::Malformed(RecordError::Short)));
+    assert_eq!(
+        speed(block_on(
+            t.read_data_by_identifier(OTHER_ECU, &[Did::Speed])
+        )),
+        0x40
+    );
+    assert_eq!(
+        speed(block_on(
+            t.read_data_by_identifier(THIRD_ECU, &[Did::Speed])
+        )),
+        0x40
+    );
+    assert_eq!(block_on(t.idle_until(Timestamp(2_100))), Ok(()));
+    assert_eq!(t.transport().addressed(3), (Some(to(ECU)), KEEP_ALIVE));
+}
+
+/// A connection closing during a functional window ends the sequence with the error.
+#[test]
+fn a_close_during_a_functional_window_ends_it() {
+    let mut t = tester(&[Step::Conf(FUNCTIONAL, SResult::Ok), Step::Close(ECU)]);
+    let mut answers = t.read_data_by_identifier_functional(GROUP, &[Did::Speed]);
+    assert_eq!(
+        block_on(answers.next()).map(Result::err),
+        Some(Some(ClientError::Closed))
+    );
+    assert!(block_on(answers.next()).is_none());
+}
+
+/// Table 9 — a functional request whose transmission fails is repeated, twice, and then
+/// the sequence ends with the failure.
+#[test]
+fn a_functional_request_that_fails_to_go_is_repeated_then_not_sent() {
+    let mut t = tester(&[
+        Step::Conf(FUNCTIONAL, FAILED),
+        Step::At(10),
+        Step::Conf(FUNCTIONAL, FAILED),
+        Step::At(20),
+        Step::Conf(FUNCTIONAL, FAILED),
+    ]);
+    let mut answers = t.read_data_by_identifier_functional(GROUP, &[Did::Speed]);
+    assert_eq!(
+        block_on(answers.next()).map(Result::err),
+        Some(Some(ClientError::NotSent))
+    );
+    assert!(block_on(answers.next()).is_none());
+    assert_eq!(t.transport().sent_count, 3);
+}
+
+/// A transport failure ends a functional sequence: the call after it returns `None`.
+#[test]
+fn a_transport_failure_ends_a_functional_sequence() {
+    let mut t = tester(&[Step::Conf(FUNCTIONAL, SResult::Ok)]);
+    let mut answers = t.read_data_by_identifier_functional(GROUP, &[Did::Speed]);
+    assert_eq!(
+        block_on(answers.next()).map(Result::err),
+        Some(Some(ClientError::Transport(())))
+    );
+    assert!(block_on(answers.next()).is_none());
+}
+
+/// ``UDSS_LLR_0019`` — repeats and their response windows are timed across the wrap of
+/// the 32-bit clock.
+#[test]
+fn repeats_are_timed_across_the_clock_wrap() {
+    let start = u32::MAX - 60;
+    let mut t = Tester::new(
+        Script::new(&[
+            Step::Conf(to(ECU), SResult::Ok),
+            Step::At(start.wrapping_add(50)), // inside the window
+            Step::At(start.wrapping_add(51)), // its end, past the wrap
+            Step::Conf(to(ECU), SResult::Ok),
+            Step::Ind(from(ECU), SPEED),
+        ])
+        .starting_at(start),
+        TESTER,
+        KeepAlive::physical(S3_CLIENT),
+        TIMING,
+    );
+    assert_eq!(
+        speed(block_on(t.read_data_by_identifier(ECU, &[Did::Speed]))),
+        0x40
+    );
+    let s = t.transport();
+    assert_eq!(s.deadlines, 1);
+    assert_eq!(s.sent(1).map(|x| x.at), Some(start.wrapping_add(51)));
+}
+
+/// ISO 14229-2:2021 Table 4 — after a response-pending message the client waits
+/// `P2*Server_max` plus the network delay (`tP6*_Client`), so a server answering at the
+/// edge of its own budget is not timed out by the time the answer takes to arrive.
+#[test]
+fn the_wait_after_a_response_pending_includes_the_network_delay() {
+    let steps = [
+        ENTER[0],
+        ENTER[1],
+        Step::Conf(to(ECU), SResult::Ok),
+        Step::IndAt(2_010, from(ECU), &[0x7F, 0x22, 0x78]),
+        Step::At(7_015), // past P2* alone, inside P2* plus the delay
+        Step::IndAt(7_060, from(ECU), SPEED), // 5 050 ms later: P2* plus 50 ms in transit
+    ];
+    let read = |network_delay| {
+        let mut t = Tester::new(
+            Script::new(&steps).with_reloads(Reloads {
+                default_reload: 3_000,
+                enhanced_reload: 1_000,
+            }),
+            TESTER,
+            KeepAlive::physical(S3_CLIENT),
+            ClientTiming {
+                network_delay,
+                ..TIMING
+            },
+        );
+        let _ = block_on(t.diagnostic_session_control(
+            ECU,
+            DiagnosticSessionType::ExtendedDiagnosticSession,
+        ));
+        block_on(t.read_data_by_identifier(ECU, &[Did::Speed]))
+            .map(|r| matches!(r, Response::Positive(_)))
+    };
+    assert_eq!(read(100), Ok(true));
+    assert_ne!(read(0), Ok(true));
 }
