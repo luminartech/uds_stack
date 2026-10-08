@@ -88,23 +88,24 @@ pub struct DoIpTransport<E, const CONNECTIONS: usize> {
     reloads: Reloads,
     testers: [Option<Tester>; CONNECTIONS],
     closing: Option<Closing>,
-    /// Requests the entity accepted and has not yet confirmed, to any tester.
-    outstanding: usize,
     /// Refused requests whose failed confirmation is not yet reported, oldest first.
     refused: [Option<Refused>; REFUSALS],
 }
 
 /// How many refused requests a [`DoIpTransport`] holds until it reports their failed
-/// confirmations.
+/// confirmations. `uds_session` has at most one message per addressing awaiting its
+/// confirmation (`UDSS_LLR_0060`), so a server cannot have more refusals outstanding
+/// than it has association slots, and a `PEERS == 1` server has fewer than this.
 const REFUSALS: usize = 4;
 
-/// A request the entity refused, and how many accepted before it are still to be
-/// confirmed: its failed confirmation follows theirs, so that the order of a tester's
-/// confirmations is the order of its requests.
+/// A request the entity refused, and how many requests to the same target, accepted
+/// before it, are still to be confirmed: its failed confirmation follows theirs, so that
+/// a tester's confirmations come in the order of its requests, as the entity's own do.
 #[derive(Debug, Clone, Copy)]
 struct Refused {
     confirmation: Confirmation,
-    behind: usize,
+    target: LogicalAddress,
+    behind: u8,
 }
 
 /// A tester with routing active on `connection`, and what its connection owes.
@@ -147,7 +148,6 @@ impl<E, const CONNECTIONS: usize> core::fmt::Debug for DoIpTransport<E, CONNECTI
             .field("reloads", &self.reloads)
             .field("testers", &self.testers)
             .field("closing", &self.closing)
-            .field("outstanding", &self.outstanding)
             .field("refused", &self.refused)
             .finish()
     }
@@ -228,7 +228,6 @@ impl<E: DiagnosticEntity, const CONNECTIONS: usize> DoIpTransport<E, CONNECTIONS
             reloads,
             testers: [None; CONNECTIONS],
             closing: None,
-            outstanding: 0,
             refused: [None; REFUSALS],
         }
     }
@@ -325,41 +324,58 @@ impl<E: DiagnosticEntity, const CONNECTIONS: usize> DoIpTransport<E, CONNECTIONS
         closing.confirmation.event()
     }
 
-    /// Holds the failed confirmation of a request the entity refused, behind those of
-    /// the requests it accepted before it; `Err` gives `error` back where
-    /// [`REFUSALS`] are already held.
-    fn refuse(&mut self, ai: Ai, error: E::Error) -> Result<(), E::Error> {
+    /// Holds the failed confirmation of a request to `target` the entity refused,
+    /// behind those of the requests to `target` it accepted before; `Err` gives `error`
+    /// back where [`REFUSALS`] are already held.
+    ///
+    /// The result is `DoIP_OUT_OF_MEMORY`: of the refusals
+    /// [`DiagnosticEntity::request`] allows, the empty PDU and the one over
+    /// [`DiagnosticEntity::MAX_PDU`] cannot come from a server, which never sends the
+    /// first and sizes its responses to the second, so a refusal here is the entity
+    /// having no room to remember the request.
+    fn refuse(
+        &mut self,
+        ai: Ai,
+        target: LogicalAddress,
+        error: E::Error,
+    ) -> Result<(), E::Error> {
+        let behind = self
+            .tester_mut(target)
+            .map_or(0, |tester| tester.unconfirmed);
         let Some(free) = self.refused.iter_mut().find(|held| held.is_none()) else {
             return Err(error);
         };
         *free = Some(Refused {
             confirmation: Confirmation {
                 ai,
-                result: s_result(DoIpResult::Error),
+                result: s_result(DoIpResult::OutOfMemory),
             },
-            behind: self.outstanding,
+            target,
+            behind,
         });
         Ok(())
     }
 
-    /// The oldest refusal's failed confirmation, once nothing accepted before it is
-    /// still to be confirmed.
+    /// The failed confirmation of the oldest refusal with nothing to its target still to
+    /// be confirmed ahead of it. A refusal to one tester never waits for another's.
     fn take_refusal(&mut self) -> Option<TransportEvent<'static>> {
-        let oldest = self.refused.first_mut()?;
-        if oldest.is_none_or(|refused| refused.behind > 0) {
-            return None;
-        }
-        let refused = oldest.take()?;
-        self.refused.rotate_left(1);
+        let at = self
+            .refused
+            .iter()
+            .position(|held| held.is_some_and(|refused| refused.behind == 0))?;
+        let held = self.refused.get_mut(at..)?;
+        let refused = held.first_mut()?.take()?;
+        held.rotate_left(1);
         Some(refused.confirmation.event())
     }
 
     async fn confirm(&mut self, ai: Ai, result: SResult) -> TransportEvent<'static> {
-        self.outstanding = self.outstanding.saturating_sub(1);
-        for refused in self.refused.iter_mut().flatten() {
-            refused.behind = refused.behind.saturating_sub(1);
-        }
         let target = to_logical(ai.ta);
+        for refused in self.refused.iter_mut().flatten() {
+            if refused.target == target {
+                refused.behind = refused.behind.saturating_sub(1);
+            }
+        }
         let ai = self
             .tester_mut(target)
             .and_then(|tester| tester.requested)
@@ -398,10 +414,11 @@ impl<E: DiagnosticEntity, const CONNECTIONS: usize> UdsTransport
     /// as given, whatever addressing the entity reports it with.
     ///
     /// A request the entity refuses, which [`DiagnosticEntity::request`] does not
-    /// confirm, is accepted here all the same and confirmed failed, as `DoIP_ERROR`,
-    /// by a later [`UdsTransport::next_event`], after every request accepted before
-    /// it: ISO 13400-2:2019 8.3.1 confirms every request, and a refusal is not the
-    /// end of the connection. It arms no close.
+    /// confirm, is accepted here all the same and confirmed failed, as
+    /// `DoIP_OUT_OF_MEMORY`, by a later [`UdsTransport::next_event`], after every
+    /// request to the same target accepted before it: ISO 13400-2:2019 8.3.1 confirms
+    /// every request, and a refusal is not the end of the connection. It arms no
+    /// close.
     ///
     /// # Errors
     ///
@@ -421,9 +438,8 @@ impl<E: DiagnosticEntity, const CONNECTIONS: usize> UdsTransport
             .request(to_logical(ai.sa), target, to_doip_ta_type(ai.ta_type), data)
             .await;
         if let Err(refused) = accepted {
-            return self.refuse(ai, refused).map_err(Error::Entity);
+            return self.refuse(ai, target, refused).map_err(Error::Entity);
         }
-        self.outstanding = self.outstanding.saturating_add(1);
         self.record_send(target, data, after);
         if let Some(tester) = self.tester_mut(target) {
             tester.requested = Some(ai);

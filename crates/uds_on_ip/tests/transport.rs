@@ -12,6 +12,7 @@
 #[allow(dead_code, reason = "each test binary uses part of the shared mock")]
 mod support;
 
+use simple_doip::LogicalAddress;
 use simple_doip::service::{ConnectionId, DoIpResult};
 use support::{Fault, MockEntity, TESTER, Tester, Wire, block_on, poll_once_and_drop};
 use uds_on_ip::profile::bench_reloads;
@@ -51,7 +52,7 @@ fn transport(script: impl IntoIterator<Item = Tester>) -> Transport {
 }
 
 /// The next event, with its data copied out so the buffer can go.
-fn next(t: &mut Transport<1>) -> Seen {
+fn next<const CONNECTIONS: usize>(t: &mut Transport<CONNECTIONS>) -> Seen {
     let mut buffer = [0u8; 16];
     let event = block_on(t.next_event(&mut buffer, None)).unwrap();
     Seen::from(event)
@@ -350,8 +351,9 @@ fn a_positive_response_that_fails_to_send_closes_nothing() {
 }
 
 /// ISO 13400-2:2019 8.3.1 confirms every request, so a request the entity refuses is
-/// confirmed failed rather than ending the server: nothing is sent, and a refused reset
-/// response closes nothing.
+/// confirmed failed, as out of memory, the one refusal a server's request can meet,
+/// rather than ending the server: nothing is sent, and a refused reset response closes
+/// nothing.
 #[test]
 fn a_refused_request_is_confirmed_failed() {
     let mut t = indicated_by(&[0x11, 0x01], |entity| {
@@ -363,7 +365,7 @@ fn a_refused_request_is_confirmed_failed() {
         next(&mut t),
         TransportEvent::DataConf {
             ai: response_ai(),
-            result: SResult::Transport(TransportError(11)),
+            result: SResult::Transport(TransportError(7)),
         }
     );
     assert_eq!(t.entity().wire, []);
@@ -391,12 +393,128 @@ fn a_refusal_is_confirmed_after_the_requests_accepted_before_it() {
         next(&mut t),
         TransportEvent::DataConf {
             ai: response_ai(),
-            result: SResult::Transport(TransportError(11)),
+            result: SResult::Transport(TransportError(7)),
         }
     );
     assert_eq!(
         t.entity().wire,
         [Wire::Data(CONNECTION, vec![0x7F, 0x22, 0x78])]
+    );
+}
+
+const OTHER: LogicalAddress = LogicalAddress(0x0E01);
+
+/// The entity's response to `tester`, as the driver sends it.
+fn response_to(tester: LogicalAddress) -> Ai {
+    Ai {
+        ta: Address(tester.0),
+        ..response_ai()
+    }
+}
+
+/// Tester `first` on connection 0 and tester `second` on connection 1, each with a
+/// request delivered to the driver, over an entity `configure` has prepared.
+fn two_indicated(
+    first: LogicalAddress,
+    second: LogicalAddress,
+    configure: impl FnOnce(&mut MockEntity<2>),
+) -> Transport<2> {
+    let mut entity = MockEntity::new([
+        Tester::Connects(first),
+        Tester::Connects(second),
+        Tester::Sends(first, vec![0x3E, 0x00]),
+        Tester::Sends(second, vec![0x3E, 0x00]),
+    ]);
+    configure(&mut entity);
+    let mut t = DoIpTransport::new(entity, bench_reloads());
+    for _ in 0..2 {
+        assert!(matches!(next(&mut t), Seen::DataInd { .. }));
+    }
+    t
+}
+
+fn failed(ai: Ai) -> TransportEvent<'static> {
+    TransportEvent::DataConf {
+        ai,
+        result: SResult::Transport(TransportError(7)),
+    }
+}
+
+fn confirmed(ai: Ai) -> TransportEvent<'static> {
+    TransportEvent::DataConf {
+        ai,
+        result: SResult::Ok,
+    }
+}
+
+/// A refusal waits for its own tester's earlier requests only: another tester's
+/// confirmation, though it comes first, does not release it ahead of them
+/// (`UDSS_LLR_0060`).
+#[test]
+fn a_refusal_waits_for_its_own_testers_requests_only() {
+    // OTHER holds connection 0, so its confirmations come first.
+    let mut t = two_indicated(OTHER, TESTER, |entity| {
+        entity.refuse.extend([false, true, false]);
+    });
+    block_on(t.t_data_req(response_ai(), &[0x7F, 0x3E, 0x78], AfterSend::Continue))
+        .unwrap();
+    block_on(t.t_data_req(response_ai(), &[0x7E, 0x00], AfterSend::Continue)).unwrap();
+    block_on(t.t_data_req(response_to(OTHER), &[0x7E, 0x00], AfterSend::Continue)).unwrap();
+
+    assert_eq!(next(&mut t), confirmed(response_to(OTHER)));
+    assert_eq!(next(&mut t), confirmed(response_ai()));
+    assert_eq!(next(&mut t), failed(response_ai()));
+}
+
+/// A refusal to one tester is not held up by another tester's requests still awaiting
+/// their confirmations.
+#[test]
+fn a_refusal_is_not_held_up_by_another_testers_requests() {
+    let mut t = two_indicated(TESTER, OTHER, |entity| {
+        entity.refuse.extend([false, true]);
+        entity.confirms_last = true;
+    });
+    block_on(t.t_data_req(response_ai(), &[0x7E, 0x00], AfterSend::Continue)).unwrap();
+    block_on(t.t_data_req(response_to(OTHER), &[0x7E, 0x00], AfterSend::Continue)).unwrap();
+
+    assert_eq!(next(&mut t), failed(response_to(OTHER)));
+    assert_eq!(next(&mut t), confirmed(response_ai()));
+}
+
+/// The refusals held are reported, and once reported make room for more.
+#[test]
+fn held_refusals_drain_and_make_room() {
+    let mut t = indicated_by(&[0x3E, 0x00], |entity| {
+        entity.refuse.extend([true; 5]);
+    });
+    for _ in 0..4 {
+        respond(&mut t, &[0x7E, 0x00]);
+    }
+    for _ in 0..4 {
+        assert_eq!(next(&mut t), failed(response_ai()));
+    }
+    respond(&mut t, &[0x7E, 0x00]);
+    assert_eq!(next(&mut t), failed(response_ai()));
+}
+
+/// A refusal made while a prescribed close is owed comes after the close and the
+/// confirmation it held back, and closes nothing more.
+#[test]
+fn a_refusal_while_a_close_is_owed_follows_the_close() {
+    let mut t = indicated_by(&[0x11, 0x01], |entity| {
+        entity.refuse.extend([false, true]);
+    });
+    respond(&mut t, &[0x51, 0x01]);
+    respond(&mut t, &[0x7E, 0x00]);
+
+    assert_eq!(next(&mut t), confirmed(response_ai()));
+    assert_eq!(next(&mut t), failed(response_ai()));
+    assert_eq!(
+        t.entity().wire,
+        [
+            Wire::Data(CONNECTION, vec![0x51, 0x01]),
+            Wire::Close(CONNECTION)
+        ]
     );
 }
 
