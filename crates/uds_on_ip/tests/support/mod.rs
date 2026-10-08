@@ -52,9 +52,9 @@ struct Slot {
 }
 
 #[derive(Debug)]
-pub struct MockEntity<const MCTS: usize> {
+pub struct MockEntity<const CONNECTIONS: usize> {
     pub script: VecDeque<Tester>,
-    table: [Option<Slot>; MCTS],
+    table: [Option<Slot>; CONNECTIONS],
     confirms: VecDeque<(LogicalAddress, LogicalAddress, TaType, DoIpResult)>,
     pub wire: Vec<Wire>,
     /// Every PDU `request` accepted, whether or not a connection carried it.
@@ -72,7 +72,7 @@ pub struct MockEntity<const MCTS: usize> {
     pub clock: u32,
 }
 
-impl<const MCTS: usize> MockEntity<MCTS> {
+impl<const CONNECTIONS: usize> MockEntity<CONNECTIONS> {
     pub fn new(script: impl IntoIterator<Item = Tester>) -> Self {
         Self {
             script: script.into_iter().collect(),
@@ -112,7 +112,7 @@ impl<const MCTS: usize> MockEntity<MCTS> {
     }
 }
 
-impl<const MCTS: usize> MockEntity<MCTS> {
+impl<const CONNECTIONS: usize> MockEntity<CONNECTIONS> {
     fn confirm(&mut self) -> Option<EntityEvent<'static>> {
         let (sa, ta, ta_type, result) = self.confirms.pop_front()?;
         Some(EntityEvent::Confirm {
@@ -145,9 +145,9 @@ impl Future for YieldOnce {
     clippy::unused_async_trait_impl,
     reason = "the mock has no sockets, so only a yielding close ever waits"
 )]
-impl<const MCTS: usize> DiagnosticEntity for MockEntity<MCTS> {
+impl<const CONNECTIONS: usize> DiagnosticEntity for MockEntity<CONNECTIONS> {
     type Error = Fault;
-    const CONNECTIONS: usize = MCTS;
+    const CONNECTIONS: usize = CONNECTIONS;
     const MAX_PDU: usize = usize::MAX;
 
     async fn request(
@@ -188,7 +188,7 @@ impl<const MCTS: usize> DiagnosticEntity for MockEntity<MCTS> {
         buf: &'b mut [u8],
         deadline_ms: Option<u32>,
     ) -> Result<EntityEvent<'b>, Self::Error> {
-        for index in 0..MCTS {
+        for index in 0..CONNECTIONS {
             self.flush(index);
         }
         if !self.confirms_last

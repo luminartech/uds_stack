@@ -29,11 +29,22 @@ use uds_session::{Ai, Reloads, SResult, Timestamp};
 /// Responses are routed by their target address, which routing activation
 /// registers on one connection only.
 ///
-/// `MCTS` sizes the table in which the transport remembers which tester arrived
+/// `CONNECTIONS` sizes the table in which the transport remembers which tester arrived
 /// on which connection, so that it can close the right one when
 /// ISO 14229-5:2022 REQ 7.9 or REQ 7.11 requires it. It must be at least the
 /// entity's [`DiagnosticEntity::CONNECTIONS`], which [`DoIpTransport::new`] checks
-/// at compile time.
+/// at compile time, and has no default: no one value is right for every entity.
+///
+/// Three numbers meet here, and are not the same number. At a sensor serving one tester:
+///
+/// - the entity's `MCTS`, the testers it serves at once (ISO 13400-2:2019 Table 11),
+///   is 1;
+/// - its connection table, [`DiagnosticEntity::CONNECTIONS`], counts the reserve socket
+///   too (REQ 4.DoIP-002), so it is 2, and so is this transport's `CONNECTIONS`;
+/// - the `uds_services::Server`'s `PEERS`, the testers it keeps a session for, is 1.
+///
+/// So the sensor's transport is `DoIpTransport<Entity<'_, A, 1, MAX_MESSAGE>, 2>`, with
+/// `simple_doip`'s `entity::Entity`.
 ///
 /// # The prescribed close
 ///
@@ -72,11 +83,11 @@ use uds_session::{Ai, Reloads, SResult, Timestamp};
 ///
 /// Time is the entity's: [`UdsTransport::now`] is [`DiagnosticEntity::now`], so a
 /// deadline the session layer computes means the same instant to the entity.
-pub struct DoIpTransport<E, const MCTS: usize = 1> {
+pub struct DoIpTransport<E, const CONNECTIONS: usize> {
     entity: E,
     reloads: Reloads,
     outbound_max: Option<usize>,
-    testers: [Option<Tester>; MCTS],
+    testers: [Option<Tester>; CONNECTIONS],
     closing: Option<Closing>,
 }
 
@@ -113,7 +124,7 @@ impl Confirmation {
     }
 }
 
-impl<E, const MCTS: usize> core::fmt::Debug for DoIpTransport<E, MCTS> {
+impl<E, const CONNECTIONS: usize> core::fmt::Debug for DoIpTransport<E, CONNECTIONS> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("DoIpTransport")
             .field("entity", &"..")
@@ -125,13 +136,13 @@ impl<E, const MCTS: usize> core::fmt::Debug for DoIpTransport<E, MCTS> {
     }
 }
 
-impl<E: DiagnosticEntity, const MCTS: usize> DoIpTransport<E, MCTS> {
+impl<E: DiagnosticEntity, const CONNECTIONS: usize> DoIpTransport<E, CONNECTIONS> {
     /// A transport over `entity`, loading the session layer's response timer
     /// with `reloads`.
     ///
     /// The peer's size bound starts unknown, because it is learned from the
     /// peer's entity status response rather than assumed. Does not compile
-    /// where `MCTS` is below [`DiagnosticEntity::CONNECTIONS`], or zero.
+    /// where `CONNECTIONS` is below [`DiagnosticEntity::CONNECTIONS`], or zero.
     ///
     /// # Arguments
     ///
@@ -143,7 +154,7 @@ impl<E: DiagnosticEntity, const MCTS: usize> DoIpTransport<E, MCTS> {
     ///
     /// # Examples
     ///
-    /// An entity with two connections does not fit the default table of one:
+    /// An entity with two connections does not fit a table of one:
     ///
     /// ```compile_fail
     /// # use simple_doip::service::{ConnectionId, DiagnosticEntity, EntityEvent};
@@ -180,28 +191,33 @@ impl<E: DiagnosticEntity, const MCTS: usize> DoIpTransport<E, MCTS> {
     /// #   }
     /// }
     ///
-    /// let transport: DoIpTransport<TwoSockets> = DoIpTransport::new(TwoSockets, bench_reloads());
+    /// let transport: DoIpTransport<TwoSockets, 1> = DoIpTransport::new(TwoSockets, bench_reloads());
     /// ```
     #[must_use]
     pub const fn new(entity: E, reloads: Reloads) -> Self {
-        const { assert!(MCTS > 0, "a transport serves at least one connection") };
         const {
             assert!(
-                MCTS >= E::CONNECTIONS,
-                "MCTS is below the entity's connection table"
+                CONNECTIONS > 0,
+                "a transport serves at least one connection"
+            );
+        };
+        const {
+            assert!(
+                CONNECTIONS >= E::CONNECTIONS,
+                "CONNECTIONS is below the entity's connection table"
             );
         };
         Self {
             entity,
             reloads,
             outbound_max: None,
-            testers: [None; MCTS],
+            testers: [None; CONNECTIONS],
             closing: None,
         }
     }
 }
 
-impl<E, const MCTS: usize> DoIpTransport<E, MCTS> {
+impl<E, const CONNECTIONS: usize> DoIpTransport<E, CONNECTIONS> {
     /// The entity, for inspection between events.
     #[must_use]
     pub const fn entity(&self) -> &E {
@@ -293,7 +309,7 @@ impl<E, const MCTS: usize> DoIpTransport<E, MCTS> {
     }
 }
 
-impl<E: DiagnosticEntity, const MCTS: usize> DoIpTransport<E, MCTS> {
+impl<E: DiagnosticEntity, const CONNECTIONS: usize> DoIpTransport<E, CONNECTIONS> {
     async fn close(&mut self, closing: Closing) -> TransportEvent<'static> {
         self.closing = Some(closing);
         self.forget(closing.connection);
@@ -323,7 +339,9 @@ impl<E: DiagnosticEntity, const MCTS: usize> DoIpTransport<E, MCTS> {
     }
 }
 
-impl<E: DiagnosticEntity, const MCTS: usize> UdsTransport for DoIpTransport<E, MCTS> {
+impl<E: DiagnosticEntity, const CONNECTIONS: usize> UdsTransport
+    for DoIpTransport<E, CONNECTIONS>
+{
     type Error = Error<E::Error>;
 
     /// The entity's [`DiagnosticEntity::MAX_PDU`], so [`uds_services::uds_server`]
@@ -510,7 +528,7 @@ mod tests {
     }
 
     /// A transport with tester `0x0E00` registered on connection 0.
-    fn serving_the_tester() -> DoIpTransport<Idle> {
+    fn serving_the_tester() -> DoIpTransport<Idle, 1> {
         let mut t = DoIpTransport::new(Idle, bench_reloads());
         t.register(CONNECTION, TESTER);
         t
@@ -521,14 +539,14 @@ mod tests {
     /// answer rather than a defect.
     #[test]
     fn an_unadvertised_max_data_size_is_none_not_a_guess() {
-        let t = DoIpTransport::<_>::new(Idle, bench_reloads());
+        let t = DoIpTransport::<_, 1>::new(Idle, bench_reloads());
         assert_eq!(t.outbound_max(), None);
     }
 
     /// What the peer advertised is what `outbound_max` reports.
     #[test]
     fn the_peers_bound_is_reported_once_it_is_learned() {
-        let mut t = DoIpTransport::<_>::new(Idle, bench_reloads());
+        let mut t = DoIpTransport::<_, 1>::new(Idle, bench_reloads());
         t.set_outbound_max(Some(4096));
         assert_eq!(t.outbound_max(), Some(4096));
     }
@@ -539,12 +557,12 @@ mod tests {
     /// past it.
     #[test]
     fn the_transport_carries_the_pdu_limit_of_its_entity() {
-        assert_eq!(<DoIpTransport<Idle> as UdsTransport>::MAX_PDU, 500);
+        assert_eq!(<DoIpTransport<Idle, 1> as UdsTransport>::MAX_PDU, 500);
     }
 
     #[test]
     fn the_reloads_reach_the_seam_unchanged() {
-        let t = DoIpTransport::<_>::new(Idle, bench_reloads());
+        let t = DoIpTransport::<_, 1>::new(Idle, bench_reloads());
         assert_eq!(t.channel_timing(), bench_reloads());
     }
 
@@ -554,7 +572,7 @@ mod tests {
     fn a_transport_over_an_opaque_entity_is_debug() {
         struct OpaqueEntity;
         const fn assert_debug<T: core::fmt::Debug>() {}
-        assert_debug::<DoIpTransport<OpaqueEntity>>();
+        assert_debug::<DoIpTransport<OpaqueEntity, 1>>();
     }
 
     /// ISO 14229-5:2022 REQ 7.11: a positive `ECUReset` response owes a close of

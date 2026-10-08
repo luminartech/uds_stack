@@ -53,7 +53,7 @@ impl DiagnosticEntity for OpaqueEntity {
     }
 }
 
-type Transport = DoIpTransport<OpaqueEntity>;
+type Transport = DoIpTransport<OpaqueEntity, 1>;
 type Error = uds_on_ip::Error<()>;
 
 /// The driver bounds its transport on nothing but the trait.

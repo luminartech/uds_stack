@@ -43,7 +43,8 @@ fn response_ai() -> Ai {
     }
 }
 
-type Transport<const MCTS: usize = 1> = DoIpTransport<MockEntity<MCTS>, MCTS>;
+type Transport<const CONNECTIONS: usize = 1> =
+    DoIpTransport<MockEntity<CONNECTIONS>, CONNECTIONS>;
 
 fn transport(script: impl IntoIterator<Item = Tester>) -> Transport {
     DoIpTransport::new(MockEntity::new(script), bench_reloads())

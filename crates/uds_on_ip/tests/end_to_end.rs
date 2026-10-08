@@ -27,7 +27,7 @@ use uds_services::{
 const ECU: Address = Address(0x0001);
 const CONNECTION: ConnectionId = ConnectionId::new(0);
 
-type Transport = DoIpTransport<MockEntity<1>>;
+type Transport = DoIpTransport<MockEntity<1>, 1>;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Did {

@@ -300,13 +300,13 @@ the seam with no I/O in it:
   `ConnectionId` it arrived on; `request` routes a response by its target
   address; `close(connection)` performs the close REQ 7.9 and REQ 7.11
   prescribe — this crate decides *when*, the entity performs *what*.
-  `DoIpTransport<E: DiagnosticEntity, MCTS>` drives it and feeds one
+  `DoIpTransport<E: DiagnosticEntity, CONNECTIONS>` drives it and feeds one
   `uds_services::Server`, because the session is the server's, not a
   connection's.
 - `DiagnosticConnection` — one connection, as a tester uses it. This crate's
   client role over it is not built yet.
 
-This transport's `MCTS` must be at least the entity's `CONNECTIONS`, the size of
+This transport's `CONNECTIONS` must be at least the entity's, the size of
 its connection table, reserve socket included (ISO 13400-2:2019 REQ 4.DoIP-002):
 the transport remembers which tester arrived on which connection, so that it can
 close the right one. `DoIpTransport::new` checks the two at compile time, so the
