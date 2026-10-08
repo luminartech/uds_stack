@@ -25,8 +25,11 @@ in parallel against one agreed set of boundaries.
 > mode this ordering exists to prevent. Read what follows as evidence about what
 > is *buildable*, never as evidence about what is *required*.
 
-> **Spec citations.** A numbered locator appears here only if it was checked
-> against a copy of the standard. Every one in this document was verified on
+> **Spec citations.** This crate is built against **ISO 14229-5:2022**: a
+> clause, table, figure or requirement cited with no document named is that
+> one's, and a citation of any other document names it and its edition. A
+> numbered locator appears here only if it was checked against a copy of the
+> standard. Every one in this document was verified on
 > 2026-09-10; two needed non-obvious lookups, because the PDF-to-markdown
 > conversion splits `REQ 4.4` across a table cell and line-breaks `REQ 5.9`'s
 > heading. If you cannot check a citation, delete it rather than soften it.
@@ -41,10 +44,11 @@ in parallel against one agreed set of boundaries.
 > remain ISO's; nothing here reproduces their text at length.
 
 > **This document is provisional.** Formal architecture and requirements for
-> this stack are being authored in sphinx-needs and will live under
-> `docs/architecture/`. That set supersedes this file when it lands. Until
-> then this is cut down to what still checks out against the code, not
-> migrated or rewritten wholesale.
+> this stack are authored in sphinx-needs under `docs/architecture/` and
+> `docs/requirements/`. That set will cover the whole stack; so far its
+> architecture covers `uds_services`, so for the rest of the stack, and for
+> this crate, this file is still the record, cut down to what checks out
+> against the code until its content moves there.
 
 ---
 
@@ -301,7 +305,9 @@ instead.
 
 **Built for the server role.** ISO 13400-2 is titled *Transport protocol and
 network layer services*; a TCP connection is its subject matter, so the sockets
-are `simple_doip`'s and this crate holds none. `simple_doip::service` declares
+are `simple_doip`'s and this crate holds none. A socket trait declared here was
+considered and rejected: it would have put ISO 13400-2's frame handling in the
+wrong crate. `simple_doip::service` declares
 the seam with no I/O in it:
 
 - `DiagnosticEntity` — a whole `DoIP` entity, every connection it has
@@ -353,7 +359,7 @@ ownership is stated explicitly.
 | Timer | Owner | Notes |
 | --- | --- | --- |
 | `tP_Client` | `uds_session` | One per logical communication channel, physical and functional alike (ISO 14229-2:2021 REQ 5.26, Table 7). Starts on `T_Data.conf`, stops on `T_Data.ind` (REQ 5.9, REQ 5.10). |
-| default / enhanced reload values | `uds_on_ip` | `tP6_Client_Max` / `tP6*_Client_Max`, because DoIP has no `T_DataSOM.ind` (REQ 5.11). |
+| default / enhanced reload values | `uds_on_ip` | `tP6_Client_Max` / `tP6*_Client_Max`, because DoIP has no `T_DataSOM.ind` (ISO 14229-2:2021 REQ 5.11). This crate names them as ISO 14229-2 does; clause 11's Figures 8 and 9 call the same timer `tP6_DoIP_Client`. |
 | `tP3_Client_Phys`, `tP3_Client_Func` | `uds_session` | One per physical and per functional channel respectively (ISO 14229-2:2021 REQ 5.26, Table 7). Minimum spacing before the next request when none is required. |
 | `tS3_Client`, `tS3_Server` | `uds_session` | One `tS3_Server` per server; a client needs one per point-to-point communication (ISO 14229-2:2021 REQ 5.26, Table 8). |
 | `tP2_Server`, `tP2*_Server` | `uds_session` | ISO 14229-2 timers, so they belong with the other session timers, not with the service that happens to be slow. See the response-pending note below. |
