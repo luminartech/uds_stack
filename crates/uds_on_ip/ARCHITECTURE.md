@@ -471,9 +471,11 @@ bytes in both directions and interprets neither.
 **Server, while occupied.** A driver serving a request offers only its small
 concurrent buffer, so an ordinary request arriving in that window is reported as
 `TransportEvent::DataTooLong`. That is the normal outcome there rather than a
-fault: ISO 14229-1 8.7.6 owes that request `busyRepeatRequest` (0x21), and
-composing one needs the service identifier and the addressing, both of which the
-truncated event carries.
+fault: ISO 14229-1 8.7.6 has the server occupied, though it names no answer.
+`busyRepeatRequest` (0x21), Figure 5's busy check, is the conforming one this stack
+composes, where Annex J would also let a server ignore the request; composing it
+needs the service identifier and the addressing, both of which the truncated event
+carries.
 
 **Periodic responses.** A server sends them as payload type `0x8004`
 (REQ 7.7, REQ 7.16), outside the request/response correlation path, and does not

@@ -453,9 +453,6 @@ The transport seam
           async fn next_event(&mut self, buffer: &mut [u8], deadline: Option<Timestamp>)
               -> Result<TransportEvent, Self::Error>;
 
-          /// The largest request this entity will accept, where it advertises one.
-          fn inbound_max(&self) -> Option<usize>;
-
           /// The largest response the peer will accept, where it advertised one.
           fn outbound_max(&self) -> Option<usize>;
 
@@ -468,7 +465,7 @@ The transport seam
 
    ``Ai``, ``SResult``, ``Reloads`` and ``Timestamp`` are ``uds_session``'s. **Nothing in
    the trait is DoIP-shaped, which is the test of whether it is the right seam** — a CAN
-   binding implements the same six methods, and ``uds_on_can`` becomes additive with no
+   binding implements the same five methods, and ``uds_on_can`` becomes additive with no
    change here.
 
    **Five changes from the version above, and the first is the one that mattered.**
@@ -489,25 +486,27 @@ The transport seam
    *``timeout_ms`` became a ``Timestamp`` deadline.* ``UDSSVC_ARCH_0041`` carries the
    argument and retires the one that put a duration here.
 
-   *``max_payload`` split into ``inbound_max`` and ``outbound_max``.* One number could not
+   *``max_payload`` became ``outbound_max``, and no ``inbound_max``.* One number could not
    answer both questions because the standard's number is **request-shaped**: ISO
    13400-2:2019 Table 11 defines *Max. data size* as "the maximum size of one logical
    request that this DoIP entity can process". A server asking what it may *send* is
    therefore asking about the client's advertisement, not its own, and the two are
    different values belonging to different entities. Collapsing them bounds a response by
    the server's own receive capacity, which is a limit nothing in the standard imposes.
-   The directions are also sourced differently: ``inbound_max`` is meant to be this crate's
-   in-flight buffer length handed *down* to the transport to advertise — a number the fold
-   derives, so a transport is told it rather than asked to invent it — while
-   ``outbound_max`` is what the peer advertised, read *up*. ``MAX_PDU`` is a third thing: a
+   ``outbound_max`` is what the peer advertised, read *up*; a tester never advertises one
+   to an entity, so over ``DoIP`` it is ``None``. ``MAX_PDU`` is a different thing: a
    protocol-fixed cap known at compile time, which is why it is an associated const and
    joins the fold.
 
-   **The ``inbound_max`` half of that is unbuilt**, and is marked rather than implied. The
-   trait has only a getter, and nothing in this crate calls it or supplies the number: the
-   driver reads ``outbound_max`` and never mentions ``inbound_max``, so a binding today has
-   to invent the very value this paragraph says it would be told. Closing it needs a route
-   for the crate to *state* the length — the fold knows it — not merely a method for asking.
+   **There is deliberately no ``inbound_max``.** It was meant to hand this crate's in-flight
+   buffer length down for the transport to refuse longer requests with, and built that way
+   (``luminartech/uds_stack#41``) it took the longest *well-formed* request as its limit, so
+   an over-long request for an unsupported service got a transport refusal where ISO
+   14229-1 has the server answer ``serviceNotSupported`` (0x11) before
+   ``incorrectMessageLengthOrInvalidFormat`` (0x13). A request longer than the in-flight
+   buffer instead reaches the server as ``TransportEvent::DataTooLong``, and the pipeline
+   answers it in that order; a transport refuses only what it cannot hold itself.
+   ``uds_on_ip``'s ``ARCHITECTURE.md`` §4.1 records the ``DoIP`` side.
 
    *``t_data_req`` gained ``after: AfterSend``.* ISO 14229-5:2022 REQ 7.9 has a server
    close its TCP connection after a ``DiagnosticSessionControl`` positive response *if* the
@@ -544,9 +543,9 @@ The transport seam
    complete message, whereas an unhandled variant drops a message the client is already
    required to repeat. One fails dangerous, the other safe. It is also not an error
    condition: a driver serving a request offers only the small concurrent buffer, so
-   truncation is the *normal* outcome there, and clause 8.7.6 already says what is owed —
-   the server is occupied, and ``busyRepeatRequest`` (0x21) needs only the service
-   identifier and the addressing.
+   truncation is the *normal* outcome there. Clause 8.7.6 has the server occupied and names
+   no answer; ``busyRepeatRequest`` (0x21), Figure 5's busy check, is the conforming one
+   this stack gives, and needs only the service identifier and the addressing.
 
    ``Periodic`` **cannot be a ``DataInd``**. ISO 14229-5:2022 REQ 7.20 requires a periodic
    response not to reset ``tS3_Server``, and ``DataInd`` is precisely what is fed to the

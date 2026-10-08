@@ -107,9 +107,15 @@ The traits
 
       uds_server! {
           Ecu: ReadDataByIdentifier, SecurityAccess, DataTransfer;
-          transport = DoIpTransport<TcpSocket>,
+          transport = DoIpTransport<Entity<'static, TcpAcceptor, 1, 4096>, 2>,
           peers = 1,
       }
+
+   Three numbers meet in that line, and are not the same number. At a sensor serving one
+   tester, the entity's ``MCTS``, the testers it serves at once (ISO 13400-2:2019 Table 11),
+   is 1; its connection table counts the reserve socket too (REQ 4.DoIP-002), so it and the
+   transport's ``CONNECTIONS`` are 2; and ``peers``, the testers the server keeps a session
+   for, is 1. ``DoIpTransport``'s rustdoc carries the detail.
 
    A service absent from the list is not supported, and a request naming it settles with
    ``serviceNotSupported`` (0x11) by the path in ``UDSSVC_ARCH_0006``.
@@ -243,7 +249,7 @@ Protocol state
 
       uds_server! {
           Ecu: ReadDataByIdentifier, SecurityAccess, DataTransfer;
-          transport = DoIpTransport<TcpSocket>,
+          transport = DoIpTransport<Entity<'static, TcpAcceptor, 1, 4096>, 2>,
           peers = 1,
       }
 

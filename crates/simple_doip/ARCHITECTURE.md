@@ -189,11 +189,14 @@ stateDiagram-v2
   is acknowledged positively and indicated: the entity's size limit is what it can
   hold, its `MAX_MESSAGE`, which Figure 16 enforces with header NACK `0x02`, so
   REQ 7.DoIP-072's `0x04` is never sent. One too long for the caller's buffer is
-  indicated truncated. That departs from REQ 7.DoIP-073, which has a NACK `0x05` for
-  it, from REQ 7.DoIP-074, and from what Table 24's code `0x00` means. The reason is
-  the layer above: a UDS server owes a request it can read only the start of an
-  answer by ISO 14229-1's rules, `busyRepeatRequest` while busy, `0x11` or `0x13`
-  otherwise, which `uds_on_ip` composes from the truncated event.
+  indicated truncated. That departs from REQ 7.DoIP-072, whose `0x04` is for a
+  message over a fixed limit such as the server's decode length; from REQ
+  7.DoIP-073, which has a NACK `0x05` for one over the buffer available; from REQ
+  7.DoIP-074; and from what Table 24's code `0x00` means. The reason is
+  the layer above: a UDS server answers a request it can read only the start of by
+  ISO 14229-1's rules, `0x11` or `0x13`, or `busyRepeatRequest` while busy, Figure
+  5's choice for a request ISO 14229-1 8.7.6 has wait, which `uds_on_ip` composes
+  from the truncated event.
 - **Requests wait for nothing.** A `request` is made by its future's first poll,
   which completes it, so one dropped unpolled makes none. It is queued on the
   connection that registered its target and confirmed `Ok` once written,

@@ -121,8 +121,9 @@ async fn a_request_can_be_answered_while_its_bytes_are_live(
 /// whenever it is serving a request and offers only its small concurrent
 /// buffer.
 ///
-/// ISO 14229-1 8.7.6 owes that request `busyRepeatRequest` (0x21), and
-/// composing one means transmitting while the fragment is still borrowed — so
+/// ISO 14229-1 8.7.6 has the server occupied, and the stack answers that request
+/// `busyRepeatRequest` (0x21), Figure 5's busy check. Composing it means
+/// transmitting while the fragment is still borrowed — so
 /// the case that is *expected* to occur under load is the case that most needs
 /// the borrow to be the buffer's.
 async fn a_truncated_request_can_also_be_answered(
