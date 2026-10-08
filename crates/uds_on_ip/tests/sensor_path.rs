@@ -23,15 +23,16 @@ use loopback::{
 };
 use simple_doip::TaType;
 use simple_doip::messages::RoutingActivationResponseCode;
+use simple_doip::service::DiagnosticEntity;
 use simple_doip::service::TesterConnection;
 use simple_doip::tester::ConnectError;
 use uds_on_ip::DoIpTransport;
 use uds_on_ip::profile::bench_reloads;
 use uds_protocol::NegativeResponseCode as Nrc;
 use uds_services::{
-    Access, Address, DiagnosticSessionControl, DiagnosticSessionType as S, EcuReset,
-    ResetType, ResponseSink, ServerParams, SessionTiming, SessionTransition, Sessions,
-    TesterPresent, uds_server,
+    Access, Address, DataIdentifier, DiagnosticSessionControl, DiagnosticSessionType as S,
+    EcuReset, ReadDataByIdentifier, RecordError, ResetType, ResponseSink, ServerParams,
+    SessionTiming, SessionTransition, Sessions, Sink, TesterPresent, uds_server,
 };
 
 /// The sensor's message size.
@@ -262,6 +263,107 @@ fn a_silent_first_connection_gives_way_to_the_second() {
                 answered(&[0x51, 0x01])
             );
             assert_eq!(next(&mut second).await, Then::Closed);
+        })
+        .await;
+    });
+}
+
+/// A sensor entity carrying messages of 64 bytes, so a response can outgrow it.
+type SmallEntity = SensorEntity<64>;
+
+/// The longest PDU the small entity carries.
+const SMALL_PDU: usize = <SmallEntity as DiagnosticEntity>::MAX_PDU;
+
+/// Two identifiers whose positive responses (`62`, the identifier, the record) are
+/// exactly the small entity's limit and one byte over it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Did {
+    Fits,
+    Overflows,
+}
+
+impl Did {
+    const fn record_len(self) -> usize {
+        match self {
+            Self::Fits => SMALL_PDU - 3,
+            Self::Overflows => SMALL_PDU - 2,
+        }
+    }
+}
+
+impl DataIdentifier for Did {
+    const MAX_RECORD_LEN: usize = SMALL_PDU - 2;
+    fn as_u16(self) -> u16 {
+        match self {
+            Self::Fits => 0xF190,
+            Self::Overflows => 0xF191,
+        }
+    }
+    fn from_u16(value: u16) -> Option<Self> {
+        match value {
+            0xF190 => Some(Self::Fits),
+            0xF191 => Some(Self::Overflows),
+            _ => None,
+        }
+    }
+    fn split_record(self, buf: &[u8]) -> Result<(&[u8], &[u8]), RecordError> {
+        buf.split_at_checked(self.record_len())
+            .ok_or(RecordError::Short)
+    }
+}
+
+/// An application with a record too long for its entity.
+#[derive(Debug, Default)]
+struct Reader;
+
+impl ReadDataByIdentifier for Reader {
+    type Did = Did;
+    const MAY_RESPOND_PENDING: bool = false;
+    const MAX_DIDS_PER_REQUEST: usize = 1;
+    fn read(
+        &mut self,
+        did: Did,
+        out: &mut ResponseSink<'_>,
+    ) -> impl Future<Output = Result<(), Nrc>> {
+        let written = out.write_all(&vec![0xA5; did.record_len()]);
+        core::future::ready(written.map_err(|_| Nrc::ResponseTooLong))
+    }
+}
+
+uds_server! {
+    Reader: ReadDataByIdentifier;
+    transport = DoIpTransport<SmallEntity, 2>,
+    peers = 1,
+    server = ReaderServer,
+}
+
+/// A response longer than the entity's [`DiagnosticEntity::MAX_PDU`] is answered
+/// `responseTooLong` (ISO 14229-1:2020 Table A.1, NRC `0x14`), because the server's
+/// response buffer is sized to what the entity carries (`UDSSVC_ARCH_0017`); a
+/// response exactly at the limit is sent whole.
+#[test]
+fn a_response_longer_than_the_entity_carries_is_answered_0x14() {
+    on_loopback(|loopback| async move {
+        let mut server = ReaderServer::new(
+            Reader,
+            DoIpTransport::new(loopback.entity(), bench_reloads()),
+            Address(ENTITY.0),
+            PARAMS,
+        );
+        serve_until(&mut server, async {
+            let mut tester = loopback.tester().await.expect("activated");
+            let fits = ask(&mut tester, &[0x22, 0xF1, 0x90]).await;
+            let Then::Response(_, response) = &fits.then else {
+                panic!("{fits:?}");
+            };
+            assert_eq!(response.len(), SMALL_PDU);
+            assert_eq!(response.get(..3), Some(&[0x62, 0xF1, 0x90][..]));
+
+            assert_eq!(
+                ask(&mut tester, &[0x22, 0xF1, 0x91]).await,
+                answered(&[0x7F, 0x22, 0x14])
+            );
+            tester.close().await.expect("closed");
         })
         .await;
     });

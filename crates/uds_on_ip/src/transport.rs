@@ -86,7 +86,6 @@ use uds_session::{Ai, Reloads, SResult, Timestamp};
 pub struct DoIpTransport<E, const CONNECTIONS: usize> {
     entity: E,
     reloads: Reloads,
-    outbound_max: Option<usize>,
     testers: [Option<Tester>; CONNECTIONS],
     closing: Option<Closing>,
 }
@@ -129,7 +128,6 @@ impl<E, const CONNECTIONS: usize> core::fmt::Debug for DoIpTransport<E, CONNECTI
         f.debug_struct("DoIpTransport")
             .field("entity", &"..")
             .field("reloads", &self.reloads)
-            .field("outbound_max", &self.outbound_max)
             .field("testers", &self.testers)
             .field("closing", &self.closing)
             .finish()
@@ -140,8 +138,7 @@ impl<E: DiagnosticEntity, const CONNECTIONS: usize> DoIpTransport<E, CONNECTIONS
     /// A transport over `entity`, loading the session layer's response timer
     /// with `reloads`.
     ///
-    /// The peer's size bound starts unknown, because it is learned from the
-    /// peer's entity status response rather than assumed. Does not compile
+    /// Does not compile
     /// where `CONNECTIONS` is below [`DiagnosticEntity::CONNECTIONS`], or zero.
     ///
     /// # Arguments
@@ -210,7 +207,6 @@ impl<E: DiagnosticEntity, const CONNECTIONS: usize> DoIpTransport<E, CONNECTIONS
         Self {
             entity,
             reloads,
-            outbound_max: None,
             testers: [None; CONNECTIONS],
             closing: None,
         }
@@ -222,17 +218,6 @@ impl<E, const CONNECTIONS: usize> DoIpTransport<E, CONNECTIONS> {
     #[must_use]
     pub const fn entity(&self) -> &E {
         &self.entity
-    }
-
-    /// Record the peer's advertised *Max. data size*, learned from the peer's
-    /// entity status response.
-    ///
-    /// A server typically has not requested one, which is why this stays
-    /// `None` and `responseTooLong` is then unreachable rather than fabricated.
-    /// This entity's *own* MDS is not this crate's to hold: `simple_doip`
-    /// answers the ISO 13400-2:2019 Table 11 entity status request itself.
-    pub fn set_outbound_max(&mut self, max: Option<usize>) {
-        self.outbound_max = max;
     }
 
     fn tester_mut(&mut self, address: LogicalAddress) -> Option<&mut Tester> {
@@ -456,12 +441,12 @@ impl<E: DiagnosticEntity, const CONNECTIONS: usize> UdsTransport
         })
     }
 
-    /// The largest `A_PDU` the peer will accept, where it has advertised one.
-    ///
-    /// ISO 13400-2:2019 Table 11 — support for *Max. data size* is
-    /// **optional**, so `None` is conformant.
+    /// `None`: a tester never advertises a *Max. data size* to an entity. MDS travels
+    /// in the entity status response, from entity to tester (ISO 13400-2:2019
+    /// Table 11), so a server has no peer bound to learn. What the entity can carry is
+    /// [`Self::MAX_PDU`].
     fn outbound_max(&self) -> Option<usize> {
-        self.outbound_max
+        None
     }
 
     /// The `tP_Client` reload pair this transport dictates: `DoIP` has no
@@ -534,25 +519,14 @@ mod tests {
         t
     }
 
-    /// ISO 13400-2:2019 Table 11 marks *Max. data size* support **optional**, so
-    /// a conformant `DoIP` entity need not advertise one and `None` is a correct
-    /// answer rather than a defect.
+    /// A tester advertises no *Max. data size* to an entity (ISO 13400-2:2019
+    /// Table 11), so there is no peer bound to report.
     #[test]
-    fn an_unadvertised_max_data_size_is_none_not_a_guess() {
+    fn a_server_has_no_peer_bound() {
         let t = DoIpTransport::<_, 1>::new(Idle, bench_reloads());
         assert_eq!(t.outbound_max(), None);
     }
 
-    /// What the peer advertised is what `outbound_max` reports.
-    #[test]
-    fn the_peers_bound_is_reported_once_it_is_learned() {
-        let mut t = DoIpTransport::<_, 1>::new(Idle, bench_reloads());
-        t.set_outbound_max(Some(4096));
-        assert_eq!(t.outbound_max(), Some(4096));
-    }
-
-    /// The reload pair crosses the seam unchanged, so `DoIP`'s choice of `tP6`
-    /// is what the session layer actually loads.
     /// The entity's PDU limit is the transport's, so `uds_server!` sizes no response
     /// past it.
     #[test]
@@ -560,6 +534,8 @@ mod tests {
         assert_eq!(<DoIpTransport<Idle, 1> as UdsTransport>::MAX_PDU, 500);
     }
 
+    /// The reload pair crosses the seam unchanged, so `DoIP`'s choice of `tP6`
+    /// is what the session layer actually loads.
     #[test]
     fn the_reloads_reach_the_seam_unchanged() {
         let t = DoIpTransport::<_, 1>::new(Idle, bench_reloads());
