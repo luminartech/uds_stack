@@ -1190,8 +1190,13 @@ dependencies = [
 name = "uds_on_ip"
 version = "0.7.0"
 dependencies = [
+ "critical-section",
+ "edge-nal",
+ "edge-nal-std",
+ "embassy-time",
  "simple_doip",
  "thiserror",
+ "tokio",
  "uds_protocol",
  "uds_services",
  "uds_session",

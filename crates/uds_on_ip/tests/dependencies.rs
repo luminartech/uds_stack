@@ -4,22 +4,27 @@
 //! AURIX `TC4x` is a qualification target. The codec vocabulary arrives
 //! through the layer below rather than around it.
 
-/// True if `name` is declared as a dependency, in either TOML form: an inline
-/// or dotted key (`tokio = { … }`, `tokio.version = "1"`) or a section header
-/// (`[dependencies.tokio]`, `[target.'cfg(…)'.dependencies.tokio]`). Checking
-/// for the bare substring instead would match this crate's own comments, which
-/// legitimately name both crates in explaining why they are absent.
+/// True if `name` is declared as a dependency of a build, in either TOML form: an
+/// inline or dotted key (`tokio = { … }`, `tokio.version = "1"`) in a dependency table,
+/// or a section header (`[dependencies.tokio]`, `[target.'cfg(…)'.dependencies.tokio]`).
+/// Checking for the bare substring instead would match this crate's own comments, which
+/// legitimately name both crates in explaining why they are absent. A
+/// `[dev-dependencies]` table is not a build's, so it is not read.
 fn declares_dependency(manifest: &str, name: &str) -> bool {
+    let builds = |section: &str| {
+        !section.contains("dev-dependencies") && section.contains("dependencies")
+    };
+    let mut section = "";
     manifest.lines().any(|line| {
         let line = line.trim_start();
-        line.starts_with(name)
-            || line
-                .strip_prefix('[')
-                .and_then(|section| section.strip_suffix(']'))
-                .is_some_and(|section| {
-                    section.contains("dependencies")
-                        && section.ends_with(&format!(".{name}"))
-                })
+        if let Some(header) = line
+            .strip_prefix('[')
+            .and_then(|header| header.strip_suffix(']'))
+        {
+            section = header;
+            return builds(header) && header.ends_with(&format!(".{name}"));
+        }
+        builds(section) && line.starts_with(name)
     })
 }
 
@@ -46,6 +51,20 @@ fn the_codec_vocabulary_comes_through_the_layer_below() {
          dependency means something new is wanted from it. Say what, in the \
          manifest comment, and change this assertion deliberately."
     );
+}
+
+/// A test drives its futures on a runtime, and a dev-dependency reaches no build of
+/// the crate, so only the tables a build reads are guarded.
+#[test]
+fn a_dev_dependency_is_not_a_build_dependency() {
+    let manifest =
+        "[dependencies]\nthiserror = \"2\"\n\n[dev-dependencies]\ntokio = \"1\"\n";
+    assert!(!declares_dependency(manifest, "tokio"));
+    assert!(declares_dependency(
+        "[dev-dependencies]\nanyhow = \"1\"\n[dependencies]\ntokio = \"1\"\n",
+        "tokio"
+    ));
+    assert!(!declares_dependency("[dev-dependencies.tokio]", "tokio"));
 }
 
 #[test]

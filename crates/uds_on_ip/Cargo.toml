@@ -44,6 +44,29 @@ thiserror = { workspace = true }
 default = []
 alloc = ["simple_doip/alloc", "uds_protocol/alloc"]
 std = ["alloc", "thiserror/std", "simple_doip/std", "uds_protocol/std"]
+# simple_doip's connection service implementations, its Entity and Tester, in the
+# same build. Nothing in this crate needs them; the loopback tests do, and they
+# are the only thing it gates. A feature rather than a dev-dependency, so that a
+# bare workspace build -- Miri's among them -- does not unify `connection` into
+# simple_doip, as the workspace manifest's default-members note explains.
+connection = ["simple_doip/connection"]
+
+[[test]]
+name = "sensor_path"
+required-features = ["connection"]
+
+[dev-dependencies]
+# The sensor's path end to end over loopback (tests/sensor_path.rs and
+# tests/loopback/): the real Entity and Tester on edge-nal-std sockets, behind
+# the `connection` feature below. tokio drives the test only; it reaches no
+# build of this crate.
+edge-nal = { workspace = true }
+edge-nal-std = { workspace = true }
+# The same time driver simple_doip's tests use: a workspace test build links one.
+embassy-time = { workspace = true, features = ["mock-driver", "generic-queue-8"] }
+# mock-driver takes its lock through critical-section, which a host test supplies.
+critical-section = { workspace = true, features = ["std"] }
+tokio = { workspace = true, features = ["macros", "rt", "time"] }
 
 [lints]
 workspace = true

@@ -82,6 +82,7 @@ this compares to the rest of the stack.
 |---------|---------|--------------------|
 | `std` *(off by default)* | `alloc` | `std::error::Error` for `Error`, and `std` on `simple_doip`/`uds_protocol`. |
 | `alloc` | — | The `alloc`-only layers of `simple_doip` and `uds_protocol`. Nothing in this crate's own code needs it. |
+| `connection` | — | `simple_doip`'s `connection` feature: its `Entity` and `Tester`, over `edge-nal`, still `no_std`. Nothing in this crate's own code needs it; the loopback tests of the sensor's path do. |
 
 `default = []`, so the crate is `no_std` out of the box.
 
