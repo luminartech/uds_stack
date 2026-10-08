@@ -3,6 +3,7 @@
 
 use embassy_time::Instant;
 
+use super::outbox::CONTROL_CAP;
 use super::table::{Activation, AliveCheck, Open, Phase, Slot};
 use super::{EntityAddress, GENERAL_INACTIVITY, expiry};
 use crate::messages::{
@@ -60,7 +61,9 @@ pub(super) fn handle<S, const CAP: usize>(
     buf: &mut [u8],
     now: Instant,
 ) -> Handled {
-    let Slot { open, rx, tx, .. } = slot;
+    let Slot { open, rx, out, .. } = slot;
+    // Everything the handlers send is the entity's own.
+    let tx = &mut out.control;
     let Some(open) = open.as_mut() else {
         return Handled::Waiting;
     };
@@ -110,7 +113,7 @@ pub(super) fn handle<S, const CAP: usize>(
                 return Handled::Waiting;
             }
             let (tester, target) = (message.source_address, message.target_address);
-            let nack = |tx: &mut TxQueue<CAP>, code| {
+            let nack = |tx: &mut TxQueue<CONTROL_CAP>, code| {
                 let nack = Message::diagnostic_message_nack(
                     open.version,
                     target,
@@ -156,7 +159,7 @@ pub(super) fn handle<S, const CAP: usize>(
 fn check_header<S, const CAP: usize>(
     open: &mut Open<S>,
     rx: &mut RxBuffer<CAP>,
-    tx: &mut TxQueue<CAP>,
+    tx: &mut TxQueue<CONTROL_CAP>,
     max_message: usize,
     memory: usize,
     now: Instant,
@@ -211,9 +214,9 @@ fn length_rule(payload_type: PayloadType) -> Option<fn(u32) -> bool> {
 }
 
 /// Generic header NACK `code`, then the socket is closed.
-fn refuse<S, const CAP: usize>(
+fn refuse<S>(
     open: &mut Open<S>,
-    tx: &mut TxQueue<CAP>,
+    tx: &mut TxQueue<CONTROL_CAP>,
     code: NackCode,
     now: Instant,
 ) -> Handled {
@@ -228,7 +231,7 @@ fn refuse<S, const CAP: usize>(
 /// Generic header NACK `code`, then the frame's payload is read and dropped.
 fn discard<S, const CAP: usize>(
     open: &mut Open<S>,
-    tx: &mut TxQueue<CAP>,
+    tx: &mut TxQueue<CONTROL_CAP>,
     rx: &mut RxBuffer<CAP>,
     header: &Header,
     code: NackCode,

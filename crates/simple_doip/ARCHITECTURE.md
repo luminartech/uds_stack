@@ -200,10 +200,12 @@ stateDiagram-v2
   `NoSocket` where no connection registered the target or the connection closes
   first, `UnknownSa` from a source address not the entity's, and `OutOfMemory` where
   the connection's queue has no room (ISO 13400-2:2019 8.3.1, 8.3.2). Requests to one
-  target are confirmed in the order they were made. `MAX_PDU` leaves room for one
-  diagnostic message acknowledgement, so the longest response fits behind its own
-  request's. A request is refused, with no confirm, only for an empty PDU, one over
-  `MAX_PDU`, or a full confirm queue; `uds_on_ip` confirms the last failed itself.
+  target are confirmed in the order they were made. A response queues apart from the
+  entity's own frames (acknowledgements, NACKs, routing activation responses and alive
+  check requests), which go first between frames, so a response of `MAX_PDU` fits
+  however many of them are waiting. A request is refused, with no confirm, only for an
+  empty PDU, one over `MAX_PDU`, or a full confirm queue; `uds_on_ip` confirms the
+  last failed itself.
 - **A deadline is judged after the input that beat it.** Before acting on a passed
   deadline, the entity reads and handles what the socket it judges has ready, so a
   caller slow to call `next_event` again does not cost a tester its registration.
@@ -396,6 +398,7 @@ the seam described in section 3 usable.
 | `src/entity/mod.rs` | `Entity`: accepting, the socket handler and its arbitration, the timers of Table 12, `DiagnosticEntity` |
 | `src/entity/handler.rs` | Figure 16's generic header handler and Figure 17's diagnostic message handler |
 | `src/entity/table.rs` | The connection table: each slot's socket, buffers and phase, and the reserve |
+| `src/entity/outbox.rs` | Each slot's two transmit queues, the entity's own frames and the responses, and which is written next, a frame at a time |
 | `src/entity/io.rs` | What each slot waits on from its socket: a write and a read at once on its split halves, or its close, applied in the poll that completes it |
 
 ### std / async layers

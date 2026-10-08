@@ -3,18 +3,19 @@
 
 use embassy_time::Instant;
 
+use super::outbox::Outbox;
 use super::{ABORT_LIMIT, ORDERLY_CLOSE_LIMIT, expiry};
 use crate::LogicalAddress;
 use crate::messages::{ActivationTypeCode, ProtocolVersion};
 use crate::stream::rx::RxBuffer;
-use crate::stream::tx::TxQueue;
 
-/// One position in the table. `CAP` sizes both buffers: a full message for a connection
-/// slot, a routing activation exchange for the reserve.
+/// One position in the table. `CAP` sizes the receive buffer and the transmit data
+/// queue: a full message for a connection slot, a routing activation exchange for the
+/// reserve.
 pub(super) struct Slot<S, const CAP: usize> {
     pub(super) open: Option<Open<S>>,
     pub(super) rx: RxBuffer<CAP>,
-    pub(super) tx: TxQueue<CAP>,
+    pub(super) out: Outbox<CAP>,
     pub(super) closed_unreported: bool,
 }
 
@@ -139,7 +140,7 @@ impl<S, const CAP: usize> Slot<S, CAP> {
         Self {
             open: None,
             rx: RxBuffer::new(),
-            tx: TxQueue::new(),
+            out: Outbox::new(),
             closed_unreported: false,
         }
     }
@@ -183,7 +184,7 @@ impl<S, const CAP: usize> Slot<S, CAP> {
 
     pub(super) fn open(&mut self, socket: S, deadline: Instant) {
         self.rx.clear();
-        self.tx.clear();
+        self.out.clear();
         self.open = Some(Open {
             socket,
             phase: Phase::Initialized,
@@ -215,7 +216,7 @@ impl<S, const CAP: usize> Slot<S, CAP> {
         );
         self.closed_unreported = open.named && !by_caller;
         self.rx.clear();
-        self.tx.clear();
+        self.out.clear();
         Some(open.socket)
     }
 }
