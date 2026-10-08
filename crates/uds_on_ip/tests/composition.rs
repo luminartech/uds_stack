@@ -122,7 +122,7 @@ async fn a_request_can_be_answered_while_its_bytes_are_live(
 /// buffer.
 ///
 /// ISO 14229-1:2020 8.7.6 has the server occupied, and the stack answers that
-/// request `busyRepeatRequest` (0x21), Figure 5's busy check. Composing it means
+/// request `busyRepeatRequest` (0x21), its Figure 5's busy check. Composing it means
 /// transmitting while the fragment is still borrowed — so
 /// the case that is *expected* to occur under load is the case that most needs
 /// the borrow to be the buffer's.

@@ -17,10 +17,9 @@ every input.
 
 ## Status
 
-Pre-implementation. The public surface is complete — every type and method a
-caller will use is already named and documented — but no behaviour is
-implemented yet: every entry point is `todo!()`, carrying the requirement it
-will satisfy. This crate is not yet published; see the
+Implemented, not yet published. Both roles, server and client, are built
+against the requirement set, and `uds_services` drives them end to end. This
+crate is not yet published; see the
 [workspace README](https://github.com/luminartech/uds_stack#status) for where
 it and its siblings stand.
 

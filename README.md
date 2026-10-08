@@ -42,9 +42,9 @@ maturities.
 | -------------- | ----------------------------------------------------------------------------- |
 | `uds_protocol` | Implemented.                                                                  |
 | `simple_doip`  | Implemented.                                                                  |
-| `uds_session`  | Pre-implementation: the public surface is complete, the bodies are `todo!()`. |
-| `uds_on_ip`    | Alpha: the API shape is settled, the transport bodies are `todo!()`.          |
-| `uds_services` | Pre-implementation.                                                           |
+| `uds_session`  | Implemented: the server and client roles.                                     |
+| `uds_on_ip`    | Alpha: the server transport is implemented; there is no client transport yet. |
+| `uds_services` | Alpha: server and client run end to end; `DataTransfer` is not staged (#50).  |
 
 The five crates release in lockstep: one version for the whole stack, every
 crate published at it together, one `v<version>` tag. The stack is at 0.7.0,

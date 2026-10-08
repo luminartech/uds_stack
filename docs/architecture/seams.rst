@@ -508,21 +508,21 @@ The transport seam
    answers it in that order; a transport refuses only what it cannot hold itself.
    ``uds_on_ip``'s ``ARCHITECTURE.md`` §4.1 records the ``DoIP`` side.
 
-   *``t_data_req`` gained ``after: AfterSend``.* ISO 14229-5:2022 REQ 7.9 has a server
-   close its TCP connection after a ``DiagnosticSessionControl`` positive response *if* the
+   *``t_data_req`` gained ``after: AfterSend``.* ISO 14229-5:2022 REQ 7.9 has a server close
+   its TCP connection after a ``DiagnosticSessionControl`` positive response *if* the
    session change disconnects it, and what disconnects it is the server leaving the software
-   it runs
-   — an application jumping to its bootloader, a bootloader restarting the application
-   (ISO 14229-1:2020 10.2.2.2 Table 25). That is a property of the server, not of the
-   response's octets, so a transport cannot derive it and the server says it:
+   it runs — an application jumping to its bootloader, a bootloader restarting the
+   application (ISO 14229-1:2020 10.2.2.2 Table 25). That is a property of the server, not
+   of the response's octets, so a transport cannot derive it and the server says it:
    ``ServerLeaves`` on the one final positive response whose session
    ``DiagnosticSessionControl::leaves_running_software``, ``Continue`` on everything else,
-   0x78 and negative responses included. An enum rather than a ``bool``, and transport-
-   neutral: a transport without connections ignores it, and this crate still names no
-   transport (``UDSSVC_ARCH_0002``). ``ECUReset`` is never flagged — REQ 7.11's close follows
-   *every* ``ECUReset`` positive response, so a ``DoIP`` transport keys it on ``0x51``
-   itself. A suppressed session change sends no response, so nothing carries the flag and
-   the connection drops unannounced; that is recorded at the method, with no mechanism.
+   0x78 and negative responses included. An enum rather than a ``bool``, and
+   transport-neutral: a transport without connections ignores it, and this crate still names
+   no transport (``UDSSVC_ARCH_0002``). ``ECUReset`` is never flagged — ISO 14229-5:2022 REQ
+   7.11's close follows *every* ``ECUReset`` positive response, so a ``DoIP`` transport keys
+   it on ``0x51`` itself. A suppressed session change sends no response, so nothing carries
+   the flag and the connection drops unannounced; that is recorded at the method, with no
+   mechanism.
 
    *``Closed`` gained ``peer: Address``.* A ``DoIP`` server carries several testers'
    connections behind one transport, and the driver ended the exchange it was serving on any
@@ -559,17 +559,17 @@ The transport seam
    flows — after every positive ``ECUReset`` response, and after the positive
    ``DiagnosticSessionControl`` response to a session change that leaves the running
    software, which the driver marks ``AfterSend::ServerLeaves`` — so an expected close is a
-   step in a prescribed sequence and not a failure. Typing
-   it as an error would put a conformant flow into the branch ``UDSSVC_ARCH_0016`` argues
-   callers learn to ignore — the same mistake, one seam lower. It carries whose connection
-   closed and whether the close was expected. The peer scopes it: a server serving one
-   client's request while another client's connection closes ends nothing, and a transport
-   that cannot name a connection's peer reports no close for it. Whether it was expected is
-   informational: re-establishing the connection is never this crate's. ISO 14229-5:2022
-   REQ 7.8 and REQ 7.10 have the client open a new connection and activate routing again,
-   so a server is reconnected *to* and never reconnects, and a client's own reconnection is its transport's business below this seam. A transport
-   with no connections never emits it, exactly as one that never truncates never emits
-   ``DataTooLong``.
+   step in a prescribed sequence and not a failure. Typing it as an error would put a
+   conformant flow into the branch ``UDSSVC_ARCH_0016`` argues callers learn to ignore — the
+   same mistake, one seam lower. It carries whose connection closed and whether the close
+   was expected. The peer scopes it: a server serving one client's request while another
+   client's connection closes ends nothing, and a transport that cannot name a connection's
+   peer reports no close for it. Whether it was expected is informational: re-establishing
+   the connection is never this crate's. ISO 14229-5:2022 REQ 7.8 and REQ 7.10 have the
+   client open a new connection and activate routing again, so a server is reconnected *to*
+   and never reconnects, and a client's own reconnection is its transport's business below
+   this seam. A transport with no connections never emits it, exactly as one that never
+   truncates never emits ``DataTooLong``.
 
    Rationale: this crate calls out to a transport, so this crate declares what it calls. The
    trait is a transport's whole obligation to the stack: carry bytes in both directions, say

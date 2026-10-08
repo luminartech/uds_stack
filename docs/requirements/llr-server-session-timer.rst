@@ -459,7 +459,8 @@ The timer's state
    request stopped the timer on its behalf, and ISO 14229-5:2022 8.9.2 forbids any
    unsolicited transmitted response message to restart ``tS3_Server``. Without the exclusion
    a periodic transmission that kept failing at an interval shorter than the session timeout
-   would hold the session open, the very latch-up 8.9.2 exists to prevent.
+   would hold the session open, the very latch-up ISO 14229-5:2022 8.9.2 exists to
+   prevent.
 
    The exclusion stops there: a failed transmission of a response-pending message restarts
    the timer as Table 10 states. Table 6's sentence that a negative response with code 78

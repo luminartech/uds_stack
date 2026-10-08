@@ -81,7 +81,7 @@ admissibility. Every response-pending message reaches this layer as an ``S_Data.
 caller supplies on the application's behalf: the session layer permits or refuses it and
 keeps the bookkeeping the window and the spacing need, and never composes one of its own.
 Whether a response-pending message is the right answer to a given request, and the octets
-that carry it, belong to the ISO 14229-1 clause 8.7 layer, which is also the layer that
+that carry it, belong to the ISO 14229-1:2020 clause 8.7 layer, which is also the layer that
 knows whether the service is supported — the predicate ISO 14229-2:2021 9.1.1 makes the
 admissibility turn on.
 
@@ -308,7 +308,8 @@ The response window
    ``UDSS_LLR_0107`` excludes. What remains for this requirement is a request received
    once the final response has been submitted and before its confirmation, which
    ISO 14229-2:2021 10.3 lets the client send and ``UDSS_LLR_0106`` and ``UDSS_LLR_0109``
-   provide for, and the OBD-range request 8.7.6 has abort the active service.
+   provide for, and the OBD-range request ISO 14229-1:2020 8.7.6 has abort the active
+   service.
    ISO 14229-2:2021 10.3 Figure 18 key f, which shows a server ignoring a request received
    while it is handling another, describes the hazard ``tP3_Client_Func`` exists to
    prevent rather than a rule for the server.

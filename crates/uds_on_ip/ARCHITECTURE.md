@@ -359,7 +359,7 @@ ownership is stated explicitly.
 
 | Timer | Owner | Notes |
 | --- | --- | --- |
-| `tP_Client` | `uds_session` | One per logical communication channel, physical and functional alike (ISO 14229-2:2021 REQ 5.26, Table 7). Starts on `T_Data.conf`, stops on `T_Data.ind` (REQ 5.9, REQ 5.10). |
+| `tP_Client` | `uds_session` | One per logical communication channel, physical and functional alike (ISO 14229-2:2021 REQ 5.26, Table 7). Starts on `T_Data.conf`, stops on `T_Data.ind` (ISO 14229-2:2021 REQ 5.9, REQ 5.10). |
 | default / enhanced reload values | `uds_on_ip` | `tP6_Client_Max` / `tP6*_Client_Max`, because DoIP has no `T_DataSOM.ind` (ISO 14229-2:2021 REQ 5.11). This crate names them as ISO 14229-2 does; ISO 14229-5:2022 clause 11's Figures 8 and 9 call the same timer `tP6_DoIP_Client`. |
 | `tP3_Client_Phys`, `tP3_Client_Func` | `uds_session` | One per physical and per functional channel respectively (ISO 14229-2:2021 REQ 5.26, Table 7). Minimum spacing before the next request when none is required. |
 | `tS3_Client`, `tS3_Server` | `uds_session` | One `tS3_Server` per server; a client needs one per point-to-point communication (ISO 14229-2:2021 REQ 5.26, Table 8). |
@@ -479,8 +479,8 @@ bytes in both directions and interprets neither.
 concurrent buffer, so an ordinary request arriving in that window is reported as
 `TransportEvent::DataTooLong`. That is the normal outcome there rather than a
 fault: ISO 14229-1:2020 8.7.6 has the server occupied, though it names no answer.
-`busyRepeatRequest` (0x21), Figure 5's busy check, is the conforming one this stack
-composes, where Annex J would also let a server ignore the request; composing it
+`busyRepeatRequest` (0x21), its Figure 5's busy check, is the conforming one this
+stack composes, where its Annex J would also let a server ignore the request; composing it
 needs the service identifier and the addressing, both of which the truncated event
 carries.
 

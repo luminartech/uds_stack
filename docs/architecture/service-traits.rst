@@ -421,7 +421,9 @@ Protocol state
    buffer holds produces a client that sends a block the server structurally cannot receive.
    As ``DataTransfer::MAX_BLOCK_LENGTH`` the value is declared once, folded into the buffer
    and composed into the response by this crate, so ``begin`` returns nothing and the two
-   cannot diverge. ``SUPPORTS_UPLOAD`` sits beside it for the same kind of reason: a
+   cannot diverge. They are one fact but not yet one number: 15.2.3.2's counts the service
+   identifier and the block sequence counter, which the const excludes, and that difference
+   is one of the problems open question 8 records. ``SUPPORTS_UPLOAD`` sits beside it for the same kind of reason: a
    download-only server never puts a block in a *response*, so it must not pay for a
    response buffer sized to hold one.
 

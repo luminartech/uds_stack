@@ -38,7 +38,7 @@ use crate::{LogicalAddress, TaType};
 /// handle.
 ///
 /// The standard names the values and leaves their meaning to its diagnostic message
-/// handler (Figure 17). Six of them answer a diagnostic message acknowledgement code
+/// handler (Figure 17). Seven of them answer a diagnostic message acknowledgement code
 /// one of its requirements defines, and each says which; the rest it defines by name
 /// only, and each says what this crate produces it for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -70,8 +70,9 @@ pub enum DoIpResult {
     UnknownTa,
     /// `DoIP_MESSAGE_TOO_LARGE`: the message exceeds the target's maximum length,
     /// answered with NACK code `0x04` (REQ 7.DoIP-072), or with generic header NACK
-    /// `0x02`. This crate's entity sends neither for a message it can hold
-    /// (`ARCHITECTURE.md` §2.3), so only a tester reports it.
+    /// `0x02`. Only a tester's request is confirmed so, on either NACK: an entity
+    /// refuses a response longer than its `MAX_PDU` (`Refusal::PduTooLarge`) rather
+    /// than confirming it.
     MessageTooLarge,
     /// `DoIP_OUT_OF_MEMORY`: the message cannot be copied into the destination buffer,
     /// answered with NACK code `0x05` (REQ 7.DoIP-073), or with generic header NACK

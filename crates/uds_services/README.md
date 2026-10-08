@@ -22,7 +22,9 @@ This crate never depends on a binding: the Cargo edge runs the other way.
 
 ## Status
 
-**Pre-implementation, not yet published.** It releases in lockstep with the rest
+**Alpha, not yet published.** The server and client roles run end to end over
+any `UdsTransport`; a listed `DataTransfer` answers `serviceNotSupported` until
+its design is settled (#50). It releases in lockstep with the rest
 of the stack, at 0.7.0, once the stack's functionality has been verified. See
 the
 [workspace README](https://github.com/luminartech/uds_stack#status) for how

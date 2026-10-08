@@ -649,9 +649,9 @@ Suppression
    ``MAY_RESPOND_PENDING`` is true (``UDSSVC_ARCH_0033``).
 
    Rationale: ISO 14229-2:2021 states the prohibition and states it in terms only this
-   layer can evaluate. REQ 5.6 requires that services the server does not support use a
+   layer can evaluate. Its REQ 5.6 requires that services the server does not support use a
    ``tP4_Server_Max`` equal to ``tP2_Server_Max`` and that a response-pending "shall not be
-   allowed" for them; REQ 5.4 gives that equality the same meaning "for the service in
+   allowed" for them; its REQ 5.4 gives that equality the same meaning "for the service in
    progress". *Does this server support this service* is the predicate, and it is the same
    fact, already computed, that produces ``serviceNotSupported`` (0x11) in
    ``UDSSVC_ARCH_0006``. A session layer cannot evaluate it — ``uds_session`` is forbidden

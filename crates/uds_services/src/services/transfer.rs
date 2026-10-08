@@ -66,9 +66,12 @@ pub trait DataTransfer {
     ///
     /// **This constant serves two purposes deliberately.** Clause 15.2.3.2 obliges the
     /// server to report `maxNumberOfBlockLength` in its `RequestDownload` positive
-    /// response, and this is that value; it is also what [`crate::uds_server`] folds into
-    /// the in-flight buffer. Declaring it once means the advertised number and the buffer
-    /// that must hold the block cannot disagree.
+    /// response, and that value is derived from this one; it is also what
+    /// [`crate::uds_server`] folds into the in-flight buffer. Declaring it once means the
+    /// advertised number and the buffer that must hold the block cannot disagree.
+    /// 15.2.3.2's value counts the service identifier and the block sequence counter,
+    /// which this one excludes, so the two differ by those two bytes; settling that is
+    /// one of the problems that keep `DataTransfer` unstaged (#50).
     const MAX_BLOCK_LENGTH: usize;
 
     /// Whether this server answers `RequestUpload`.
