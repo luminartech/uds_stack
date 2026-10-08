@@ -1,4 +1,5 @@
-# Command runner for the uds_stack workspace: five crates and one requirement set.
+# Command runner for the uds_stack workspace: five crates, an example crate and one
+# requirement set.
 #
 # The Python toolchain is pinned in pyproject.toml and locked in uv.lock, and every recipe
 # below runs it through `uv run --frozen`. `--frozen` is deliberate: needs.json is consumed
@@ -150,7 +151,7 @@ miri:
         cargo +nightly miri test --target {{ miri_target }}
     MIRIFLAGS="-Zmiri-tree-borrows" \
         cargo +nightly miri test --target {{ miri_target }} -p simple_doip --features connection \
-        --lib --test tester --test entity --test entity_cancel
+        --lib --test tester --test entity --test entity_cancel --test mock_stack
 
 # A guard rail is only verified by watching it fail, so each check in validate_needs.py is
 # demonstrated stopping something.

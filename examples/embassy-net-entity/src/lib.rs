@@ -28,9 +28,9 @@ use embassy_net::Stack;
 use embassy_net::tcp::{Error, State, TcpReader, TcpSocket, TcpWriter};
 use embassy_time::Duration;
 use embedded_io_async::{ErrorType, Read, Write};
-use simple_doip::TCP_PORT;
 use simple_doip::entity::{Entity, EntityAddress};
 use simple_doip::service::{DiagnosticEntity, EntityConfig, EntityEvent};
+use simple_doip::{TCP_PORT, TaType};
 
 /// How long a socket in the pool waits on a silent peer before it is aborted.
 pub const POOL_TIMEOUT: Duration = Duration::from_secs(10);
@@ -267,26 +267,16 @@ pub async fn serve(
     let mut entity =
         Entity::<_, MCTS, MAX_MESSAGE>::new(&acceptor, address, EntityConfig::default());
     let mut buf = [0u8; MAX_MESSAGE];
-    let mut answer = [0u8; MAX_MESSAGE];
     loop {
-        let length = match entity.next_event(&mut buf, None).await {
-            Ok(EntityEvent::Indication { sa, pdu, .. }) => answer
-                .get_mut(..pdu.len())
-                .map(|to| to.copy_from_slice(pdu))
-                .map(|()| (sa, pdu.len())),
-            Ok(_) => None,
+        match entity.next_event(&mut buf, None).await {
+            Ok(EntityEvent::Indication { sa, pdu, .. }) => {
+                entity
+                    .request(address.physical(), sa, TaType::Physical, pdu)
+                    .await
+                    .ok();
+            }
+            Ok(_) => {}
             Err(error) => return error,
-        };
-        if let Some((sa, length)) = length {
-            entity
-                .request(
-                    address.physical(),
-                    sa,
-                    simple_doip::TaType::Physical,
-                    answer.get(..length).unwrap_or_default(),
-                )
-                .await
-                .ok();
         }
     }
 }

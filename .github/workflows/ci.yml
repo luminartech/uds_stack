@@ -3,10 +3,11 @@
 # lint, build, no_std canary, unit/property tests with coverage, miri, MSRV, semver-checks,
 # security audit, docs, a publish dry run, and the release-plz automation.
 #
-# rust-ci.yml's commands are crate-shaped (no `--workspace`, no `package`/`members` input),
-# but that turns out not to matter here: this is a *virtual* workspace manifest (no root
-# [package]), and a bare `cargo <cmd>` with no `-p` at a virtual workspace root already
-# defaults to every member -- confirmed locally for build, clippy and test. The one job the
+# rust-ci.yml's commands are crate-shaped (no `--workspace`, no `package`/`members` input).
+# This is a *virtual* workspace manifest (no root [package]), so a bare `cargo <cmd>` with
+# no `-p` at the root runs on its default members, `crates/*`: the five crates. The
+# example member, examples/embassy-net-entity, is built by the hand-rolled `embedded` job
+# below instead; see the root Cargo.toml for why it is not a default member. The one job the
 # reusable workflow genuinely cannot reach is fuzzing: its fuzz-tests job runs
 # `cargo fuzz build`/`list`/`run` at the checkout root, which is where a single-crate repo's
 # `fuzz/` directory lives, and has no input to point it elsewhere. This workspace's two fuzz
@@ -220,9 +221,9 @@ jobs:
   # ===================================================================================
   # Every test behind simple_doip's `connection` feature is skipped by rust-ci.yml's
   # Miri job. These run on the mock stack, so Miri can interpret them; the tests on real
-  # sockets (entity_std, tester_interop, tester_late_ack) cannot be. Tree borrows,
-  # because stacked borrows rejects embassy-futures' select_array, which tree borrows
-  # accepts. See `just miri`.
+  # sockets (entity_std, entity_interop, tester_interop, tester_late_ack) cannot be.
+  # Tree borrows, because stacked borrows rejects embassy-futures' select_array, which
+  # tree borrows accepts. See `just miri`.
   miri-connection:
     name: Miri (simple_doip connection)
     runs-on: ubuntu-latest
@@ -242,7 +243,7 @@ jobs:
           MIRIFLAGS: -Zmiri-tree-borrows
         run: >-
           cargo miri test -p simple_doip --features connection
-          --lib --test tester --test entity --test entity_cancel
+          --lib --test tester --test entity --test entity_cancel --test mock_stack
 
   # ===================================================================================
   # Embedded (hand-rolled: the reusable workflow checks default members on the host)

@@ -17,7 +17,7 @@ have to read another standard to do its job has the wrong boundary.
 | [`uds_protocol`](crates/uds_protocol) | ISO 14229-1 (format)    | The message format. Encodes and decodes UDS requests and responses; no dispatch, no policy, no session state.                                                                                         |
 | [`uds_session`](crates/uds_session)   | ISO 14229-2             | The session layer, as a sans-io state machine. Never learns its transport, and never reads a clock.                                                                                                   |
 | [`uds_services`](crates/uds_services) | ISO 14229-1 (behaviour) | Everything in ISO 14229-1 that is not the format: typed service dispatch over caller-defined identifiers, and the clause 8.7 response rules. Declares the transport seam and implements no transport. |
-| [`simple_doip`](crates/simple_doip)   | ISO 13400-2             | DoIP. A `no_std`, zero-copy protocol core with optional async client and server.                                                                                                                      |
+| [`simple_doip`](crates/simple_doip)   | ISO 13400-2             | DoIP. A `no_std`, zero-copy protocol core; a `no_std` tester and entity over `edge-nal` sockets; and an optional async client and server.                                                             |
 | [`uds_on_ip`](crates/uds_on_ip)       | ISO 14229-5             | The UDSonIP application profile, and the mapping of UDS onto DoIP.                                                                                                                                    |
 
 ISO 14229-1 is the one document too large for that rule to settle on its own,

@@ -3,8 +3,13 @@
 //!
 //! The entity accepts connections, activates routing and checks that registered
 //! testers are alive by itself, inside [`DiagnosticEntity::next_event`], following
-//! ISO 13400-2:2019 Figures 16, 17, 22 and 26 to 28, and keeps the three `TCP_DATA`
+//! ISO 13400-2:2019 Figures 16, 17, 22 and 25 to 28, and keeps the three `TCP_DATA`
 //! timers of Table 12.
+//!
+//! It takes headers of ISO 13400-2:2012 and 2019 and answers each in the version it
+//! received; any other protocol version, the 2010 draft's included, is refused with
+//! [`IncorrectPatternFormat`](crate::messages::NackCode::IncorrectPatternFormat) and
+//! the socket closed.
 //!
 //! It activates routing for the two activation types Table 47 makes mandatory,
 //! [`ActivationTypeCode::Default`] and [`ActivationTypeCode::RegulationRequired`], and
@@ -1214,8 +1219,16 @@ impl<
 
     /// Writes what is queued on `connection`, then closes it.
     ///
-    /// The close is bounded: a socket that has not closed within a short limit is
-    /// aborted, and one whose abort has not finished within it again is dropped.
+    /// The close is bounded: a socket that has not closed within
+    /// [`TCP_TIMEOUT_ALIVE_CHECK`](crate::TCP_TIMEOUT_ALIVE_CHECK) is aborted, and one
+    /// whose abort has not finished within it again is dropped. Only `connection`'s own
+    /// timer is acted on meanwhile; every other socket's waits for the next
+    /// [`DiagnosticEntity::next_event`].
+    ///
+    /// # Errors
+    ///
+    /// None: the close is bounded instead, and `connection` has left the table when it
+    /// returns.
     async fn close(&mut self, connection: ConnectionId) -> Result<(), Self::Error> {
         let index = connection.index();
         let at = SlotRef::Connection(index);
