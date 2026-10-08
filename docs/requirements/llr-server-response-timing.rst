@@ -28,8 +28,8 @@ ISO 14229-2 does not impose on the session layer, and this set does not write re
 the standard does not directly require; it is recorded instead as an assumption of use in
 the qualification repository, where it is assessed from a safety perspective.
 
-Clause 8.7.6 excepts two cases. The first is the functionally addressed keep-alive
-TesterPresent, which the caller marks ``keep-alive`` under ``UDSS_LLR_0065``.
+ISO 14229-1:2020 8.7.6 excepts two cases. The first is the functionally addressed
+keep-alive TesterPresent, which the caller marks ``keep-alive`` under ``UDSS_LLR_0065``.
 :doc:`llr-server-session-timer` handles it instead.
 
 The second is a request in the OBD service range that, for a server supporting that range
@@ -48,9 +48,10 @@ where a response message is required, or the completion of any action caused by 
 request where none is required. ``UDSS_LLR_0089`` already cites that clause for the same
 definition.
 
-A request marked ``keep-alive`` is excluded from the term: 8.7.6 puts it outside the
-one-request-at-a-time model, and no requirement in this set treats it as the service in
-progress, so 10.1.4.1's extent is read here as bounding the requests the model admits.
+A request marked ``keep-alive`` is excluded from the term: ISO 14229-1:2020 8.7.6 puts it
+outside the one-request-at-a-time model, and no requirement in this set treats it as the
+service in progress, so ISO 14229-2:2021 10.1.4.1's extent is read here as bounding the
+requests the model admits.
 
 The model above is what guarantees there is at most one such service at a time.
 
@@ -553,11 +554,11 @@ The response window
    a marked keep-alive's report, which a caller may supply, is inert under ``UDSS_LLR_0096``
    and would otherwise end the window of the service actually in progress. Any other
    completion while a service is in progress is outside the preamble's assumption of use. A
-   completion report for a request that 8.7.6's second exception aborted answers no service
-   in progress where the OBD request came from another client, so this requirement does not
-   act on it: the aborted request's ending was the OBD request's reception, and this
-   requirement acts on the OBD request's own completion. The guard is what lets
-   :doc:`llr-server-session-timer`'s assumptions of use make that report optional;
+   completion report for a request that ISO 14229-1:2020 8.7.6's second exception aborted
+   answers no service in progress where the OBD request came from another client, so this
+   requirement does not act on it: the aborted request's ending was the OBD request's
+   reception, and this requirement acts on the OBD request's own completion. The guard is
+   what lets :doc:`llr-server-session-timer`'s assumptions of use make that report optional;
    ``UDSS_LLR_0106``'s match guards only the facts ``UDSS_LLR_0104`` keeps, and without the
    guard here the report would stop the window ``UDSS_LLR_0113`` opened for the OBD request.
 

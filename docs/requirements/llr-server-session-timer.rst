@@ -373,9 +373,9 @@ The timer's state
    transmission with an interval shorter than the session timeout would hold a non-default
    session open indefinitely.
 
-   Clause 8.9.2 states the rule for any unsolicited transmitted response message without
-   asking whether the transmission succeeded, and the failed case is named here so that a
-   periodic transmission that keeps failing cannot hold the session open through
+   ISO 14229-5:2022 8.9.2 states the rule for any unsolicited transmitted response message
+   without asking whether the transmission succeeded, and the failed case is named here so
+   that a periodic transmission that keeps failing cannot hold the session open through
    ``UDSS_LLR_0093`` instead.
 
 .. llr:: Reception errors restart the session timer
