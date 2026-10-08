@@ -88,8 +88,8 @@ pub struct DoIpTransport<E, const CONNECTIONS: usize> {
     reloads: Reloads,
     testers: [Option<Tester>; CONNECTIONS],
     closing: Option<Closing>,
-    /// Requests the entity accepted and has not yet confirmed.
-    unconfirmed: usize,
+    /// Requests the entity accepted and has not yet confirmed, to any tester.
+    outstanding: usize,
     /// Refused requests whose failed confirmation is not yet reported, oldest first.
     refused: [Option<Refused>; REFUSALS],
 }
@@ -147,7 +147,7 @@ impl<E, const CONNECTIONS: usize> core::fmt::Debug for DoIpTransport<E, CONNECTI
             .field("reloads", &self.reloads)
             .field("testers", &self.testers)
             .field("closing", &self.closing)
-            .field("unconfirmed", &self.unconfirmed)
+            .field("outstanding", &self.outstanding)
             .field("refused", &self.refused)
             .finish()
     }
@@ -157,8 +157,8 @@ impl<E: DiagnosticEntity, const CONNECTIONS: usize> DoIpTransport<E, CONNECTIONS
     /// A transport over `entity`, loading the session layer's response timer
     /// with `reloads`.
     ///
-    /// Does not compile
-    /// where `CONNECTIONS` is below [`DiagnosticEntity::CONNECTIONS`], or zero.
+    /// Does not compile where `CONNECTIONS` is below [`DiagnosticEntity::CONNECTIONS`],
+    /// or zero.
     ///
     /// # Arguments
     ///
@@ -229,7 +229,7 @@ impl<E: DiagnosticEntity, const CONNECTIONS: usize> DoIpTransport<E, CONNECTIONS
             reloads,
             testers: [None; CONNECTIONS],
             closing: None,
-            unconfirmed: 0,
+            outstanding: 0,
             refused: [None; REFUSALS],
         }
     }
@@ -338,7 +338,7 @@ impl<E: DiagnosticEntity, const CONNECTIONS: usize> DoIpTransport<E, CONNECTIONS
                 ai,
                 result: s_result(DoIpResult::Error),
             },
-            behind: self.unconfirmed,
+            behind: self.outstanding,
         });
         Ok(())
     }
@@ -356,7 +356,7 @@ impl<E: DiagnosticEntity, const CONNECTIONS: usize> DoIpTransport<E, CONNECTIONS
     }
 
     async fn confirm(&mut self, ai: Ai, result: SResult) -> TransportEvent<'static> {
-        self.unconfirmed = self.unconfirmed.saturating_sub(1);
+        self.outstanding = self.outstanding.saturating_sub(1);
         for refused in self.refused.iter_mut().flatten() {
             refused.behind = refused.behind.saturating_sub(1);
         }
@@ -398,8 +398,8 @@ impl<E: DiagnosticEntity, const CONNECTIONS: usize> UdsTransport
     /// [`DoIpTransport`]. The [`TransportEvent::DataConf`] that follows carries `ai`
     /// as given, whatever addressing the entity reports it with.
     ///
-    /// A request the entity refuses, which [`DiagnosticEntity::request`] confirms
-    /// never, is accepted here all the same and confirmed failed, as `DoIP_ERROR`,
+    /// A request the entity refuses, which [`DiagnosticEntity::request`] does not
+    /// confirm, is accepted here all the same and confirmed failed, as `DoIP_ERROR`,
     /// by a later [`UdsTransport::next_event`], after every request accepted before
     /// it: ISO 13400-2:2019 8.3.1 confirms every request, and a refusal is not the
     /// end of the connection. It arms no close.
@@ -424,7 +424,7 @@ impl<E: DiagnosticEntity, const CONNECTIONS: usize> UdsTransport
         if let Err(refused) = accepted {
             return self.refuse(ai, refused).map_err(Error::Entity);
         }
-        self.unconfirmed = self.unconfirmed.saturating_add(1);
+        self.outstanding = self.outstanding.saturating_add(1);
         self.record_send(target, data, after);
         if let Some(tester) = self.tester_mut(target) {
             tester.requested = Some(ai);
