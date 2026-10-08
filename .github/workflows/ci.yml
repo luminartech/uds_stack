@@ -252,7 +252,8 @@ jobs:
   # testing/doip-loopback runs the sensor's path end to end, uds_server! over
   # DoIpTransport over simple_doip's Entity, against simple_doip's Tester on loopback
   # sockets. It is not a default member, for the reason the embassy-net adapter is not:
-  # it enables simple_doip's `connection` feature. Not under Miri, which has no sockets.
+  # it enables simple_doip's `connection` feature, so rust-ci.yml's clippy never sees it
+  # either, and it is linted here. Not under Miri, which has no sockets.
   loopback:
     name: DoIP path over loopback
     runs-on: ubuntu-latest
@@ -265,7 +266,10 @@ jobs:
       - uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master 2026-07-14
         with:
           toolchain: stable
+          components: clippy
       - uses: Swatinem/rust-cache@v2
+      - name: Lint the loopback tests
+        run: cargo clippy -p doip-loopback --all-targets -- -D warnings
       - name: Run the loopback tests
         run: cargo test -p doip-loopback
 

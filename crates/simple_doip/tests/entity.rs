@@ -1489,6 +1489,41 @@ fn an_unregistered_socket_with_unread_nacks_does_not_hold_up_the_reserve() {
     assert!(!blocker.is_shut());
 }
 
+/// A newcomer on the reserve waiting for a slot is held up for at most
+/// `T_TCP_Alive_Check` by an unregistered socket that cannot move into the reserve: here
+/// one whose writes stall with its own frames' queue full, so a frame longer than the
+/// reserve's buffer stays unread. That socket is aborted, and the newcomer registered.
+#[test]
+fn an_unregistered_socket_that_cannot_move_into_the_reserve_is_aborted() {
+    let _clock = clock();
+    let stack = MockStack::new(4096);
+    let mut entity = OneSocket::new(&stack, address(), two_testers());
+    let blocker = stack.dial();
+    assert_eq!(events(&mut entity), []);
+    blocker.stall_writes();
+    // Seven header NACKs fill the 64 bytes, and the eighth frame waits for room.
+    for _ in 0..7 {
+        blocker.send(&raw(0x4001, &[]));
+    }
+    blocker.send(&diagnostic(TESTER, ENTITY, &[0x22; 36]));
+    assert_eq!(events(&mut entity), []);
+    let newcomer = stack.dial();
+    newcomer.send(&activation_from(TESTER, 0));
+    assert_eq!(events(&mut entity), []);
+    assert_eq!(newcomer.take_written(), []);
+
+    advance(ms(499));
+    assert_eq!(events(&mut entity), []);
+    assert!(!blocker.is_shut());
+    advance(ms(1));
+    assert_eq!(events(&mut entity), []);
+    assert!(blocker.is_aborted());
+    assert_eq!(
+        newcomer.take_written(),
+        activation_response_for(TESTER, ACTIVATED)
+    );
+}
+
 // --- Figure 17, diagnostic messages ------------------------------------------------------
 
 /// REQ 7.DoIP-067: a diagnostic message to the entity is indicated and acknowledged.

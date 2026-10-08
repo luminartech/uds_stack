@@ -165,6 +165,10 @@ fn a_response_does_not_wait_on_the_tester_acknowledging_its_acknowledgement() {
 /// A positive `ECUReset` response is followed by the entity closing the connection
 /// (ISO 14229-5:2022 REQ 7.11), and the tester then reconnects and activates routing
 /// again (REQ 7.10), on which it is served as before.
+///
+/// That the close is orderly rather than an abort is pinned against `simple_doip`'s
+/// mock stack, by `close_writes_what_was_queued_then_closes`: `edge-nal-std`'s abort
+/// does nothing, and the socket it drops closes as an orderly close does.
 #[test]
 fn a_reset_is_answered_then_closed_and_the_tester_reconnects() {
     on_loopback(|loopback| async move {
@@ -282,14 +286,13 @@ fn a_silent_first_connection_gives_way_to_the_second() {
             let mut second = tokio::select! {
                 second = loopback.tester() => second.expect("activated"),
                 // The clock moves in steps, giving the entity real time to act between
-                // them, to 1.5 s: past `T_TCP_Alive_Check` once the check is sent, and
-                // short of the second tester's own 2 s wait for its activation response.
+                // them, until the second is decided: past `T_TCP_Alive_Check` once the
+                // check is sent, however late the second's activation arrives.
                 () = async {
-                    for _ in 0..15 {
+                    loop {
                         tokio::time::sleep(std::time::Duration::from_millis(20)).await;
                         advance(embassy_time::Duration::from_millis(100));
                     }
-                    core::future::pending::<()>().await;
                 } => unreachable!(),
             };
             assert_eq!(
@@ -364,7 +367,9 @@ impl DataIdentifier for Did {
 }
 
 /// An application with a record too long for its entity, which reads up to eight
-/// identifiers at once, so its requests can outgrow the server's concurrent buffer.
+/// identifiers at once, so its requests can outgrow the server's concurrent buffer. It
+/// ignores a write the response buffer refuses, so the `0x14` that follows is the
+/// server's own.
 #[derive(Debug, Default)]
 struct Reader;
 
@@ -376,8 +381,8 @@ impl ReadDataByIdentifier for Reader {
         if did == Did::Gated {
             GATE.notified().await;
         }
-        out.write_all(&vec![0xA5; did.record_len()])
-            .map_err(|_| Nrc::ResponseTooLong)
+        let _refused_or_written = out.write_all(&vec![0xA5; did.record_len()]);
+        Ok(())
     }
 }
 
@@ -389,9 +394,9 @@ uds_server! {
 }
 
 /// A response longer than the entity's [`DiagnosticEntity::MAX_PDU`] is answered
-/// `responseTooLong` (ISO 14229-1:2020 Table A.1, NRC `0x14`), because the server's
-/// response buffer is sized to what the entity carries (`UDSSVC_ARCH_0017`); a
-/// response exactly at the limit is sent whole.
+/// `responseTooLong` (ISO 14229-1:2020 Table A.1, NRC `0x14`) by the server, whatever
+/// the handler said, because its response buffer is sized to what the entity carries
+/// (`UDSSVC_ARCH_0017`); a response exactly at the limit is sent whole.
 #[test]
 fn a_response_longer_than_the_entity_carries_is_answered_0x14() {
     on_loopback(|loopback| async move {
