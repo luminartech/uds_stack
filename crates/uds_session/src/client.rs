@@ -666,6 +666,10 @@ pub enum ClientOutput<'d, Tag = ()> {
         result: SResult,
     },
     /// `S_Data.conf` — ``UDSS_LLR_0037``.
+    ///
+    /// It names no channel (issue #12): ``UDSS_LLR_0059`` matches a confirmation to its
+    /// association by addressing, and ``UDSS_LLR_0122`` makes an addressing unique per
+    /// channel, so the addressing is what identifies it.
     Confirm {
         /// The addressing identifying the request confirmed, per ``UDSS_LLR_0059``.
         ai: Ai,
