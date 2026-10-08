@@ -34,7 +34,7 @@ use crate::messages::{
     ActivationTypeCode, Message, ProtocolVersion, RoutingActivationResponseCode,
 };
 use crate::service::{
-    ConnectionId, DiagnosticEntity, DoIpResult, EntityConfig, EntityEvent,
+    ConnectionId, DiagnosticEntity, DoIpResult, EntityConfig, EntityEvent, Millis,
 };
 use crate::stream::tx::Full;
 use crate::stream::{after, caller_deadline, millis};
@@ -1214,7 +1214,7 @@ impl<
         self.request_limit = max_pdu;
     }
 
-    fn now(&self) -> u32 {
+    fn now(&self) -> Millis {
         millis(Instant::now())
     }
 
@@ -1230,10 +1230,9 @@ impl<
     async fn next_event<'b>(
         &mut self,
         buf: &'b mut [u8],
-        deadline_ms: Option<u32>,
+        deadline: Option<Millis>,
     ) -> Result<EntityEvent<'b>, Self::Error> {
-        let until =
-            deadline_ms.map(|deadline_ms| caller_deadline(deadline_ms, Instant::now()));
+        let until = deadline.map(|deadline| caller_deadline(deadline, Instant::now()));
         loop {
             let now = Instant::now();
             if let Some(event) = self.owed_event() {

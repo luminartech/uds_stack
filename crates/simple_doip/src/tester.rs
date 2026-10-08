@@ -16,7 +16,8 @@ use crate::messages::{
     ProtocolVersion, RoutingActivationResponse, RoutingActivationResponseCode,
 };
 use crate::service::{
-    ConnectionEvent, DiagnosticConnection, DoIpResult, TesterAddress, TesterConnection,
+    ConnectionEvent, DiagnosticConnection, DoIpResult, Millis, TesterAddress,
+    TesterConnection,
 };
 use crate::wire::Decode;
 use crate::{LogicalAddress, TIMEOUT_DIAGNOSTIC_MESSAGE_RESPONSE, TaType};
@@ -579,7 +580,7 @@ impl<C: TcpConnect, const N: usize> DiagnosticConnection for Tester<'_, C, N> {
     }
 
     /// `embassy-time`'s clock, the one the tester's own timers run on.
-    fn now(&self) -> u32 {
+    fn now(&self) -> Millis {
         millis(Instant::now())
     }
 
@@ -595,7 +596,7 @@ impl<C: TcpConnect, const N: usize> DiagnosticConnection for Tester<'_, C, N> {
     /// acknowledgement on which the entity closes its socket: diagnostic `0x02`
     /// (REQ 7.DoIP-070), and generic header `0x00` and `0x04` (Table 19).
     ///
-    /// Once `deadline_ms` has passed, it still delivers what has arrived, reading the
+    /// Once `deadline` has passed, it still delivers what has arrived, reading the
     /// socket at most once more, and writes an alive check response it owes if the
     /// socket takes it at once, before reporting [`ConnectionEvent::Deadline`].
     ///
@@ -606,10 +607,9 @@ impl<C: TcpConnect, const N: usize> DiagnosticConnection for Tester<'_, C, N> {
     async fn next_event<'b>(
         &mut self,
         buf: &'b mut [u8],
-        deadline_ms: Option<u32>,
+        deadline: Option<Millis>,
     ) -> Result<ConnectionEvent<'b>, Self::Error> {
-        let until =
-            deadline_ms.map(|deadline_ms| caller_deadline(deadline_ms, Instant::now()));
+        let until = deadline.map(|deadline| caller_deadline(deadline, Instant::now()));
         let passed = || until.is_some_and(|until| until <= Instant::now());
         let mut read_since_passed = false;
         loop {

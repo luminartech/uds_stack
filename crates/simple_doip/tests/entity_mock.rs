@@ -8,7 +8,9 @@ use std::collections::VecDeque;
 
 use simple_doip::LogicalAddress;
 use simple_doip::TaType;
-use simple_doip::service::{ConnectionId, DiagnosticEntity, DoIpResult, EntityEvent};
+use simple_doip::service::{
+    ConnectionId, DiagnosticEntity, DoIpResult, EntityEvent, Millis,
+};
 
 const ENTITY: LogicalAddress = LogicalAddress(0x0001);
 const TESTER: LogicalAddress = LogicalAddress(0x0E00);
@@ -116,14 +118,14 @@ impl<const MCTS: usize> DiagnosticEntity for MockEntity<MCTS> {
         self.request_limit = Some(max_pdu);
     }
 
-    fn now(&self) -> u32 {
-        0
+    fn now(&self) -> Millis {
+        Millis(0)
     }
 
     async fn next_event<'b>(
         &mut self,
         buf: &'b mut [u8],
-        _deadline_ms: Option<u32>,
+        _deadline: Option<Millis>,
     ) -> Result<EntityEvent<'b>, Self::Error> {
         for index in 0..MCTS {
             self.flush(index);
@@ -204,7 +206,7 @@ async fn echo_until_idle<E: DiagnosticEntity>(entity: &mut E) -> Vec<EntityEvent
     let mut seen = Vec::new();
     loop {
         let mut buf = [0u8; 16];
-        match entity.next_event(&mut buf, Some(0)).await.unwrap() {
+        match entity.next_event(&mut buf, Some(Millis(0))).await.unwrap() {
             EntityEvent::Indication { sa, ta, pdu, .. } => {
                 entity.request(ta, sa, TaType::Physical, pdu).await.unwrap();
             }
@@ -269,12 +271,12 @@ async fn a_request_to_a_tester_that_has_left_is_confirmed_no_socket() {
     ]);
     let mut buf = [0u8; 16];
     assert!(matches!(
-        entity.next_event(&mut buf, Some(0)).await.unwrap(),
+        entity.next_event(&mut buf, Some(Millis(0))).await.unwrap(),
         EntityEvent::Indication { .. }
     ));
     entity.script.push_back(Tester::Leaves(TESTER));
     assert_eq!(
-        entity.next_event(&mut buf, Some(0)).await.unwrap(),
+        entity.next_event(&mut buf, Some(Millis(0))).await.unwrap(),
         EntityEvent::Closed {
             connection: ConnectionId::new(0)
         }
@@ -305,7 +307,7 @@ async fn a_connection_no_event_named_closes_unreported() {
         MockEntity::<1>::new([Tester::Connects(TESTER), Tester::Leaves(TESTER)]);
     let mut buf = [0u8; 16];
     assert_eq!(
-        entity.next_event(&mut buf, Some(0)).await.unwrap(),
+        entity.next_event(&mut buf, Some(Millis(0))).await.unwrap(),
         EntityEvent::Deadline
     );
 }
@@ -414,7 +416,7 @@ async fn closing_an_id_the_entity_never_issued_does_nothing() {
     let mut entity = MockEntity::<1>::new([Tester::Connects(TESTER)]);
     let mut buf = [0u8; 16];
     assert_eq!(
-        entity.next_event(&mut buf, Some(0)).await.unwrap(),
+        entity.next_event(&mut buf, Some(Millis(0))).await.unwrap(),
         EntityEvent::Deadline
     );
 

@@ -8,11 +8,11 @@
 
 use std::collections::VecDeque;
 
-use uds_session::Timestamp;
-
 use simple_doip::LogicalAddress;
 use simple_doip::TaType;
-use simple_doip::service::{ConnectionId, DiagnosticEntity, DoIpResult, EntityEvent};
+use simple_doip::service::{
+    ConnectionId, DiagnosticEntity, DoIpResult, EntityEvent, Millis,
+};
 
 pub const ENTITY: LogicalAddress = LogicalAddress(0x0001);
 pub const TESTER: LogicalAddress = LogicalAddress(0x0E00);
@@ -199,14 +199,14 @@ impl<const CONNECTIONS: usize> DiagnosticEntity for MockEntity<CONNECTIONS> {
         self.request_limit = Some(max_pdu);
     }
 
-    fn now(&self) -> u32 {
-        self.clock
+    fn now(&self) -> Millis {
+        Millis(self.clock)
     }
 
     async fn next_event<'b>(
         &mut self,
         buf: &'b mut [u8],
-        deadline_ms: Option<u32>,
+        deadline: Option<Millis>,
     ) -> Result<EntityEvent<'b>, Self::Error> {
         for index in 0..CONNECTIONS {
             self.flush(index);
@@ -282,9 +282,10 @@ impl<const CONNECTIONS: usize> DiagnosticEntity for MockEntity<CONNECTIONS> {
         if let Some(confirm) = self.confirm() {
             return Ok(confirm);
         }
-        let deadline = deadline_ms.ok_or(Fault::Exhausted)?;
-        let wait = Timestamp(self.clock).until(Timestamp(deadline));
-        self.clock = self.clock.wrapping_add(wait);
+        let deadline = deadline.ok_or(Fault::Exhausted)?;
+        self.clock = Millis(self.clock)
+            .after(Millis(self.clock).until(deadline))
+            .0;
         Ok(EntityEvent::Deadline)
     }
 
