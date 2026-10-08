@@ -168,6 +168,15 @@ discards the next completion, or an assumption of use that the caller resets onl
 transport has abandoned the message. Touches ``UDSS_LLR_0045``, ``UDSS_LLR_0138``,
 ``UDSS_LLR_0178`` and ``UDSS_LLR_0180``.
 
+The one caller, ``uds_services``' client, narrows it without closing it. It classifies a
+final response as ``solicited`` only where it echoes the service identifier of the request
+in progress (``UDSS_LLR_0071``), so a late reply to another service closes no window; and it
+drains a functional window a dropped call left open before sending anything else. A late
+reply to the same service, on a physical channel, is still taken for the new request's
+answer. That rests on an assumption of use the client states: its transport ends a
+connection whose request timed out rather than carrying the late reply into the next
+exchange (issue #17 item 3, the ``DoIP`` client transport's).
+
 A late confirmation can match a reopened channel's request
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
@@ -181,6 +190,9 @@ use — that the caller withdraws a channel only once its transport has reported
 every transmission on it — can be stated in the qualification repository. Touches
 ``UDSS_LLR_0059``, ``UDSS_LLR_0063`` and ``UDSS_LLR_0125``.
 
+``uds_services``' client discharges that assumption: it withdraws a channel only to make
+room for another, and never one with a transmission still awaiting its confirmation.
+
 Functional keep-alive falls due with no functional channel open
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
@@ -193,6 +205,10 @@ it. A client built with no functional channel at all is refused at compile time;
 one withdrawn is not. What is open is whether withdrawing the last functional channel should
 disengage the keep-alive. Touches ``UDSS_LLR_0150``, ``UDSS_LLR_0155``, ``UDSS_LLR_0158``
 and ``UDSS_LLR_0184``.
+
+``uds_services``' client never reaches the case. Its functional keep-alive is built with the
+functional address it is sent to, the channel to that address is opened when the keep-alive
+first falls due if it is not open already, and that channel is never withdrawn.
 
 Sequencing
 ----------
