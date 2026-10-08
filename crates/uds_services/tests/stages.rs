@@ -7,6 +7,9 @@
     reason = "the fixture's handlers answer at once; they are async because the traits are"
 )]
 
+mod common;
+
+use common::block_on;
 use uds_protocol::NegativeResponseCode as Nrc;
 use uds_services::pipeline::settle;
 use uds_services::{
@@ -624,17 +627,6 @@ const PHYSICAL: Ai = Ai {
     ta: Address(0x0010),
     ta_type: TaType::Physical,
 };
-
-#[allow(clippy::panic, reason = "a test harness for futures that never pend")]
-fn block_on<F: core::future::Future>(f: F) -> F::Output {
-    let waker = core::task::Waker::noop();
-    let mut cx = core::task::Context::from_waker(waker);
-    let mut f = core::pin::pin!(f);
-    match f.as_mut().poll(&mut cx) {
-        core::task::Poll::Ready(v) => v,
-        core::task::Poll::Pending => panic!("the fixture's handlers never pend"),
-    }
-}
 
 /// What one physically addressed request produced: the bytes written, or `None` where
 /// the response was suppressed.

@@ -12,6 +12,9 @@
               in test code"
 )]
 
+mod common;
+
+use common::block_on;
 use static_cell::ConstStaticCell;
 use uds_protocol::NegativeResponseCode as Nrc;
 use uds_services::pipeline::settle;
@@ -582,17 +585,6 @@ async fn read_the_vin_from_every_server(tester: &mut Tester) -> Result<(), ()> {
         }
     }
     Ok(())
-}
-
-#[allow(clippy::panic, reason = "a test harness for futures that never pend")]
-fn block_on<F: core::future::Future>(f: F) -> F::Output {
-    let waker = core::task::Waker::noop();
-    let mut cx = core::task::Context::from_waker(waker);
-    let mut f = core::pin::pin!(f);
-    match f.as_mut().poll(&mut cx) {
-        core::task::Poll::Ready(v) => v,
-        core::task::Poll::Pending => panic!("milestone-1 handlers never pend"),
-    }
 }
 
 /// ``UDSSVC_ARCH_0004`` through the assembled entry point: a read answers positively.

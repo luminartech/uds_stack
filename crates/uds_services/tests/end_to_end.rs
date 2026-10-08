@@ -6,15 +6,16 @@
     reason = "test harness: scripts are fixed arrays and futures complete in bounded polls"
 )]
 
-use core::future::{Future, poll_fn, ready};
-use core::task::Poll;
+mod common;
+
+use common::{PendN, Script, Step, block_on};
+use core::future::{Future, ready};
 use uds_protocol::NegativeResponseCode as Nrc;
 use uds_services::{
     Address, AfterSend, Ai, DataIdentifier, Delay, DiagnosticSessionControl,
     DiagnosticSessionType as S, KeyVerdict, Mtype, ReadDataByIdentifier, RecordError,
-    Reloads, ResponseSink, SResult, SecurityAccess, SecurityLevel, SecurityPolicy,
-    ServerParams, SessionTiming, SessionTransition, Sessions, Sink, TaType, TesterPresent,
-    Timestamp, TransportEvent, UdsTransport, uds_server,
+    ResponseSink, SResult, SecurityAccess, SecurityLevel, SecurityPolicy, ServerParams,
+    SessionTiming, SessionTransition, Sessions, Sink, TaType, TesterPresent, uds_server,
 };
 use uds_session::TransportError;
 
@@ -57,201 +58,30 @@ fn to_tester() -> Ai {
     to(TESTER)
 }
 
-/// One scripted step: what `next_event` yields, and the clock it yields it at.
-#[derive(Debug, Clone, Copy)]
-enum Ev {
-    Ind(TaType, &'static [u8]),
-    /// An indication arriving with the clock already at `now` — the coinciding case.
-    IndAt(u32, TaType, &'static [u8]),
-    Conf(SResult),
-    /// A physical indication from tester `sa`, arriving with the clock already at `now`.
-    IndFrom(u32, Address, &'static [u8]),
-    /// The confirmation of the response sent to tester `ta`.
-    ConfTo(Address, SResult),
-    /// Advance the clock. `next_event` reports `Deadline` only if that reaches the deadline
-    /// the driver asked for; otherwise the time passes with nothing to report, and the
-    /// next step is taken, as a real transport would go on waiting.
-    At(u32),
+/// A transport playing `steps`, which fails the test on a response sent anywhere but
+/// back to a tester, physically, from the ECU.
+fn script(steps: &[Step]) -> Script {
+    Script::new(steps).sending_only(|ai| ai == to_tester() || ai == to(OTHER))
 }
-
-const MAX_STEPS: usize = 16;
-const MAX_SENT: usize = 8;
-const MAX_FRAME: usize = 32;
-
-#[derive(Debug)]
-struct Scripted {
-    script: [Option<Ev>; MAX_STEPS],
-    /// How many steps the script has; [`run`] checks every one was consumed.
-    len: usize,
-    cursor: usize,
-    now: u32,
-    sent: [([u8; MAX_FRAME], usize); MAX_SENT],
-    /// For each transmission, how many script steps had been consumed when it was made.
-    sent_after: [usize; MAX_SENT],
-    sent_count: usize,
-    /// Each transmission's addressing.
-    sent_ai: [Option<Ai>; MAX_SENT],
-    /// What each transmission said follows it.
-    sent_then: [Option<AfterSend>; MAX_SENT],
-    /// How many `Deadline`s were reported: one per `At` that reached the driver's deadline.
-    deadlines: usize,
+/// A request from the tester.
+fn ind(ta_type: TaType, bytes: &'static [u8]) -> Step {
+    Step::Ind(from_tester(ta_type), bytes)
 }
-
-impl Scripted {
-    fn new(script: &[Ev]) -> Self {
-        assert!(
-            script.len() <= MAX_STEPS,
-            "script has more than {MAX_STEPS} steps"
-        );
-        let mut s = [None; MAX_STEPS];
-        for (slot, ev) in s.iter_mut().zip(script) {
-            *slot = Some(*ev);
-        }
-        Self {
-            script: s,
-            len: script.len(),
-            cursor: 0,
-            now: 0,
-            sent: [([0; MAX_FRAME], 0); MAX_SENT],
-            sent_after: [0; MAX_SENT],
-            sent_count: 0,
-            sent_ai: [None; MAX_SENT],
-            sent_then: [None; MAX_SENT],
-            deadlines: 0,
-        }
-    }
-    fn sent(&self, i: usize) -> &[u8] {
-        self.sent
-            .get(i)
-            .and_then(|(buf, n)| buf.get(..*n))
-            .unwrap_or(&[])
-    }
-    fn sent_then(&self, i: usize) -> Option<AfterSend> {
-        self.sent_then.get(i).copied().flatten()
-    }
-    fn sent_ai(&self, i: usize) -> Option<Ai> {
-        self.sent_ai.get(i).copied().flatten()
-    }
-    /// Record a transmission. Panics rather than erring on overflow: [`run`] reads every
-    /// transport error as the end of the script, so an error here would end a run
-    /// silently and hide the transmission that caused it.
-    fn record(&mut self, ai: Ai, data: &[u8]) {
-        let index = self.sent_count;
-        let Some((((buf, n), after), sent_ai)) = self
-            .sent
-            .get_mut(index)
-            .zip(self.sent_after.get_mut(index))
-            .zip(self.sent_ai.get_mut(index))
-        else {
-            panic!("transmission {index} ({data:02X?}) exceeds the {MAX_SENT} recorded");
-        };
-        let Some(head) = buf.get_mut(..data.len()) else {
-            panic!("transmission {index} ({data:02X?}) exceeds {MAX_FRAME} bytes");
-        };
-        head.copy_from_slice(data);
-        *n = data.len();
-        *after = self.cursor;
-        *sent_ai = Some(ai);
-        self.sent_count = self.sent_count.wrapping_add(1);
-    }
-    fn advance<'b>(
-        &mut self,
-        buffer: &'b mut [u8],
-        deadline: Option<Timestamp>,
-    ) -> Result<TransportEvent<'b>, ()> {
-        let ind = |buffer: &'b mut [u8], ai, bytes: &[u8]| {
-            let Some((head, _)) = buffer.split_at_mut_checked(bytes.len()) else {
-                panic!("indication {bytes:02X?} does not fit the driver's buffer");
-            };
-            head.copy_from_slice(bytes);
-            Ok(TransportEvent::DataInd { ai, data: head })
-        };
-        loop {
-            // The one error this transport returns: the script is exhausted.
-            let ev = self.script.get(self.cursor).copied().flatten().ok_or(())?;
-            self.cursor = self.cursor.wrapping_add(1);
-            match ev {
-                Ev::Ind(ta_type, bytes) => return ind(buffer, from_tester(ta_type), bytes),
-                Ev::IndAt(t, ta_type, bytes) => {
-                    self.now = t;
-                    return ind(buffer, from_tester(ta_type), bytes);
-                }
-                Ev::IndFrom(t, sa, bytes) => {
-                    self.now = t;
-                    return ind(buffer, from(sa, TaType::Physical), bytes);
-                }
-                Ev::Conf(result) => {
-                    return Ok(TransportEvent::DataConf {
-                        ai: to_tester(),
-                        result,
-                    });
-                }
-                Ev::ConfTo(ta, result) => {
-                    return Ok(TransportEvent::DataConf { ai: to(ta), result });
-                }
-                Ev::At(t) => {
-                    self.now = t;
-                    if deadline.is_some_and(|d| Timestamp(t).has_reached(d)) {
-                        self.deadlines = self.deadlines.wrapping_add(1);
-                        return Ok(TransportEvent::Deadline);
-                    }
-                }
-            }
-        }
-    }
+/// A request from the tester, arriving with the clock already at `t`.
+fn ind_at(t: u32, ta_type: TaType, bytes: &'static [u8]) -> Step {
+    Step::IndAt(t, from_tester(ta_type), bytes)
 }
-
-// Neither method is an `async fn`: one with no `.await` is
-// `clippy::unused_async_trait_impl`, and one returning an `async` block is
-// `clippy::manual_async_fn`. `next_event` must still be lazy: the driver creates a
-// `next_event` future and drops it unpolled whenever the handler wins its `select2`, and
-// a future that took its script step on creation would lose that step. `t_data_req`'s
-// future is always awaited at once, so `ready` serves.
-impl UdsTransport for Scripted {
-    type Error = ();
-    fn t_data_req(
-        &mut self,
-        ai: Ai,
-        data: &[u8],
-        after: AfterSend,
-    ) -> impl Future<Output = Result<(), ()>> {
-        if let Some(then) = self.sent_then.get_mut(self.sent_count) {
-            *then = Some(after);
-        }
-        assert!(
-            ai == to_tester() || ai == to(OTHER),
-            "responses go back to a tester, physically, from the ECU: {ai:?}"
-        );
-        self.record(ai, data);
-        ready(Ok(()))
-    }
-    fn next_event<'b>(
-        &mut self,
-        buffer: &'b mut [u8],
-        deadline: Option<Timestamp>,
-    ) -> impl Future<Output = Result<TransportEvent<'b>, ()>> {
-        let mut parts = Some((self, buffer));
-        poll_fn(move |_| {
-            Poll::Ready(
-                parts
-                    .take()
-                    .ok_or(())
-                    .and_then(|(t, b)| t.advance(b, deadline)),
-            )
-        })
-    }
-    fn outbound_max(&self) -> Option<usize> {
-        None
-    }
-    fn channel_timing(&self) -> Reloads {
-        Reloads {
-            default_reload: 50,
-            enhanced_reload: 5_000,
-        }
-    }
-    fn now(&self) -> Timestamp {
-        Timestamp(self.now)
-    }
+/// A physical request from tester `sa`, arriving with the clock already at `t`.
+fn ind_from(t: u32, sa: Address, bytes: &'static [u8]) -> Step {
+    Step::IndAt(t, from(sa, TaType::Physical), bytes)
+}
+/// The confirmation of the response sent to the tester.
+fn conf(result: SResult) -> Step {
+    Step::Conf(to_tester(), result)
+}
+/// The confirmation of the response sent to tester `ta`.
+fn conf_to(ta: Address, result: SResult) -> Step {
+    Step::Conf(to(ta), result)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -268,24 +98,6 @@ impl DataIdentifier for Did {
     }
     fn split_record(self, buf: &[u8]) -> Result<(&[u8], &[u8]), RecordError> {
         buf.split_at_checked(1).ok_or(RecordError::Short)
-    }
-}
-
-/// Pends `self.0` times before completing, waking itself each time.
-#[derive(Debug)]
-struct PendN(u8);
-impl Future for PendN {
-    type Output = ();
-    fn poll(
-        mut self: core::pin::Pin<&mut Self>,
-        cx: &mut core::task::Context<'_>,
-    ) -> core::task::Poll<()> {
-        if self.0 == 0 {
-            return core::task::Poll::Ready(());
-        }
-        self.0 = self.0.saturating_sub(1);
-        cx.waker().wake_by_ref();
-        core::task::Poll::Pending
     }
 }
 
@@ -412,7 +224,7 @@ impl SecurityAccess for Ecu {
 
 uds_server! {
     Ecu: ReadDataByIdentifier, DiagnosticSessionControl, TesterPresent, SecurityAccess;
-    transport = Scripted,
+    transport = Script,
     peers = 1,
     server = EcuServer,
 }
@@ -424,27 +236,12 @@ const PARAMS: ServerParams = ServerParams {
     response_pending_lead: 0,
 };
 
-/// Poll to completion with a no-op waker; every future here is ready within a bounded
-/// number of polls.
-fn block_on<F: Future>(f: F) -> F::Output {
-    let waker = core::task::Waker::noop();
-    let mut cx = core::task::Context::from_waker(waker);
-    let mut f = core::pin::pin!(f);
-    for _ in 0..64 {
-        if let core::task::Poll::Ready(v) = f.as_mut().poll(&mut cx) {
-            return v;
-        }
-    }
-    panic!("future did not complete in 64 polls");
-}
-
 /// Run until the transport errors, which it does only once the script is exhausted, and
 /// check that it was: a step left unconsumed means the driver stopped early.
 fn run(server: &mut EcuServer) {
     while block_on(server.step()).is_ok() {}
-    let t = server.transport();
-    assert_eq!(
-        t.cursor, t.len,
+    assert!(
+        server.transport().finished(),
         "the run ended with script steps unconsumed"
     );
 }
@@ -459,9 +256,9 @@ fn start_up_starts_an_owed_delay_once() {
             attempts: 3,
             ..Ecu::new()
         },
-        Scripted::new(&[
-            Ev::Ind(TaType::Physical, &[0x22, 0xF4, 0x0D]),
-            Ev::Conf(SResult::Ok),
+        script(&[
+            ind(TaType::Physical, &[0x22, 0xF4, 0x0D]),
+            conf(SResult::Ok),
         ]),
         ECU,
         PARAMS,
@@ -484,56 +281,56 @@ fn only_the_response_entering_a_leaving_session_says_the_server_leaves() {
             leaves: Some(S::ProgrammingSession),
             ..Ecu::new()
         },
-        Scripted::new(&[
-            Ev::Ind(TaType::Physical, &[0x10, 0x02]),
-            Ev::Conf(SResult::Ok),
-            Ev::Ind(TaType::Physical, &[0x10, 0x03]),
-            Ev::Conf(SResult::Ok),
-            Ev::Ind(TaType::Physical, &[0x10, 0x02]),
-            Ev::Conf(SResult::Ok),
+        script(&[
+            ind(TaType::Physical, &[0x10, 0x02]),
+            conf(SResult::Ok),
+            ind(TaType::Physical, &[0x10, 0x03]),
+            conf(SResult::Ok),
+            ind(TaType::Physical, &[0x10, 0x02]),
+            conf(SResult::Ok),
         ]),
         ECU,
         PARAMS,
     );
     run(&mut s);
     let t = s.transport();
-    assert_eq!(t.sent(0), &[0x7F, 0x10, 0x7E]);
-    assert_eq!(t.sent_then(0), Some(AfterSend::Continue));
-    assert_eq!(t.sent(1), &[0x50, 0x03, 0x00, 0x32, 0x01, 0xF4]);
-    assert_eq!(t.sent_then(1), Some(AfterSend::Continue));
-    assert_eq!(t.sent(2), &[0x50, 0x02, 0x00, 0x32, 0x01, 0xF4]);
-    assert_eq!(t.sent_then(2), Some(AfterSend::ServerLeaves));
+    assert_eq!(t.sent_bytes(0), &[0x7F, 0x10, 0x7E]);
+    assert_eq!(t.sent(0).map(|s| s.then), Some(AfterSend::Continue));
+    assert_eq!(t.sent_bytes(1), &[0x50, 0x03, 0x00, 0x32, 0x01, 0xF4]);
+    assert_eq!(t.sent(1).map(|s| s.then), Some(AfterSend::Continue));
+    assert_eq!(t.sent_bytes(2), &[0x50, 0x02, 0x00, 0x32, 0x01, 0xF4]);
+    assert_eq!(t.sent(2).map(|s| s.then), Some(AfterSend::ServerLeaves));
 }
 
 #[test]
 fn a_physical_read_is_answered() {
     let mut s = EcuServer::new(
         Ecu::new(),
-        Scripted::new(&[
-            Ev::Ind(TaType::Physical, &[0x22, 0xF4, 0x0D]),
-            Ev::Conf(SResult::Ok),
+        script(&[
+            ind(TaType::Physical, &[0x22, 0xF4, 0x0D]),
+            conf(SResult::Ok),
         ]),
         ECU,
         PARAMS,
     );
     run(&mut s);
-    assert_eq!(s.transport().sent(0), &[0x62, 0xF4, 0x0D, 0x40]);
+    assert_eq!(s.transport().sent_bytes(0), &[0x62, 0xF4, 0x0D, 0x40]);
 }
 
 #[test]
 fn an_unsupported_sid_gets_0x11_and_an_empty_request_nothing() {
     let mut s = EcuServer::new(
         Ecu::new(),
-        Scripted::new(&[
-            Ev::Ind(TaType::Physical, &[0x11, 0x01]),
-            Ev::Conf(SResult::Ok),
-            Ev::Ind(TaType::Physical, &[]),
+        script(&[
+            ind(TaType::Physical, &[0x11, 0x01]),
+            conf(SResult::Ok),
+            ind(TaType::Physical, &[]),
         ]),
         ECU,
         PARAMS,
     );
     run(&mut s);
-    assert_eq!(s.transport().sent(0), &[0x7F, 0x11, 0x11]);
+    assert_eq!(s.transport().sent_bytes(0), &[0x7F, 0x11, 0x11]);
     assert_eq!(s.transport().sent_count, 1);
 }
 
@@ -545,10 +342,10 @@ fn an_unsupported_sid_gets_0x11_and_an_empty_request_nothing() {
 fn a_malformed_request_for_an_unlisted_service_is_0x11_and_silent_when_functional() {
     let mut s = EcuServer::new(
         Ecu::new(),
-        Scripted::new(&[
-            Ev::Ind(TaType::Functional, &[0x11]),
-            Ev::Ind(TaType::Physical, &[0x11]),
-            Ev::Conf(SResult::Ok),
+        script(&[
+            ind(TaType::Functional, &[0x11]),
+            ind(TaType::Physical, &[0x11]),
+            conf(SResult::Ok),
         ]),
         ECU,
         PARAMS,
@@ -556,9 +353,9 @@ fn a_malformed_request_for_an_unlisted_service_is_0x11_and_silent_when_functiona
     run(&mut s);
     let t = s.transport();
     assert_eq!(t.sent_count, 1);
-    assert_eq!(t.sent(0), &[0x7F, 0x11, 0x11]);
+    assert_eq!(t.sent_bytes(0), &[0x7F, 0x11, 0x11]);
     // Sent after the physical indication, so the functional one was answered by nothing.
-    assert_eq!(t.sent_after.first(), Some(&2));
+    assert_eq!(t.sent(0).map(|s| s.after), Some(2));
 }
 
 /// ``UDSSVC_ARCH_0007`` — Figure 6 checks the sub-function (0x12) before the exact
@@ -570,12 +367,12 @@ fn a_malformed_request_for_an_unlisted_service_is_0x11_and_silent_when_functiona
 fn an_unsupported_sub_function_with_a_trailing_byte_is_0x12_not_0x13() {
     let mut s = EcuServer::new(
         Ecu::new(),
-        Scripted::new(&[
-            Ev::Ind(TaType::Functional, &[0x3E, 0x05, 0x00]),
-            Ev::Ind(TaType::Physical, &[0x3E, 0x05, 0x00]),
-            Ev::Conf(SResult::Ok),
-            Ev::Ind(TaType::Physical, &[0x10, 0x05, 0x00]),
-            Ev::Conf(SResult::Ok),
+        script(&[
+            ind(TaType::Functional, &[0x3E, 0x05, 0x00]),
+            ind(TaType::Physical, &[0x3E, 0x05, 0x00]),
+            conf(SResult::Ok),
+            ind(TaType::Physical, &[0x10, 0x05, 0x00]),
+            conf(SResult::Ok),
         ]),
         ECU,
         PARAMS,
@@ -583,10 +380,10 @@ fn an_unsupported_sub_function_with_a_trailing_byte_is_0x12_not_0x13() {
     run(&mut s);
     let t = s.transport();
     assert_eq!(t.sent_count, 2);
-    assert_eq!(t.sent(0), &[0x7F, 0x3E, 0x12]);
+    assert_eq!(t.sent_bytes(0), &[0x7F, 0x3E, 0x12]);
     // Sent after the physical indication, so the functional one was answered by nothing.
-    assert_eq!(t.sent_after.first(), Some(&2));
-    assert_eq!(t.sent(1), &[0x7F, 0x10, 0x12]);
+    assert_eq!(t.sent(0).map(|s| s.after), Some(2));
+    assert_eq!(t.sent_bytes(1), &[0x7F, 0x10, 0x12]);
 }
 
 /// ``UDSSVC_ARCH_0007`` row 4 — Figure 6's "`SubFunction` supported in active session?"
@@ -598,14 +395,14 @@ fn an_unsupported_sub_function_with_a_trailing_byte_is_0x12_not_0x13() {
 fn a_session_supported_only_from_another_is_0x7e_until_that_one_is_active() {
     let mut s = EcuServer::new(
         Ecu::new(),
-        Scripted::new(&[
-            Ev::Ind(TaType::Functional, &[0x10, 0x02]),
-            Ev::Ind(TaType::Physical, &[0x10, 0x02]),
-            Ev::Conf(SResult::Ok),
-            Ev::Ind(TaType::Physical, &[0x10, 0x03]),
-            Ev::Conf(SResult::Ok), // confirms 50 03 ...: extended now
-            Ev::Ind(TaType::Physical, &[0x10, 0x02]),
-            Ev::Conf(SResult::Ok), // confirms 50 02 ...: programming now
+        script(&[
+            ind(TaType::Functional, &[0x10, 0x02]),
+            ind(TaType::Physical, &[0x10, 0x02]),
+            conf(SResult::Ok),
+            ind(TaType::Physical, &[0x10, 0x03]),
+            conf(SResult::Ok), // confirms 50 03 ...: extended now
+            ind(TaType::Physical, &[0x10, 0x02]),
+            conf(SResult::Ok), // confirms 50 02 ...: programming now
         ]),
         ECU,
         PARAMS,
@@ -613,11 +410,11 @@ fn a_session_supported_only_from_another_is_0x7e_until_that_one_is_active() {
     run(&mut s);
     let t = s.transport();
     assert_eq!(t.sent_count, 3);
-    assert_eq!(t.sent(0), &[0x7F, 0x10, 0x7E]);
+    assert_eq!(t.sent_bytes(0), &[0x7F, 0x10, 0x7E]);
     // Sent after the physical indication, so the functional one was answered by nothing.
-    assert_eq!(t.sent_after.first(), Some(&2));
-    assert_eq!(t.sent(1), &[0x50, 0x03, 0x00, 0x32, 0x01, 0xF4]);
-    assert_eq!(t.sent(2), &[0x50, 0x02, 0x00, 0x32, 0x01, 0xF4]);
+    assert_eq!(t.sent(0).map(|s| s.after), Some(2));
+    assert_eq!(t.sent_bytes(1), &[0x50, 0x03, 0x00, 0x32, 0x01, 0xF4]);
+    assert_eq!(t.sent_bytes(2), &[0x50, 0x02, 0x00, 0x32, 0x01, 0xF4]);
     assert_eq!(
         s.services().transitions,
         [
@@ -633,19 +430,19 @@ fn a_session_supported_only_from_another_is_0x7e_until_that_one_is_active() {
 fn a_short_read_gets_0x13() {
     let mut s = EcuServer::new(
         Ecu::new(),
-        Scripted::new(&[Ev::Ind(TaType::Physical, &[0x22, 0xF4])]),
+        script(&[ind(TaType::Physical, &[0x22, 0xF4])]),
         ECU,
         PARAMS,
     );
     run(&mut s);
-    assert_eq!(s.transport().sent(0), &[0x7F, 0x22, 0x13]);
+    assert_eq!(s.transport().sent_bytes(0), &[0x7F, 0x22, 0x13]);
 }
 
 #[test]
 fn a_functional_unsupported_did_is_silent() {
     let mut s = EcuServer::new(
         Ecu::new(),
-        Scripted::new(&[Ev::Ind(TaType::Functional, &[0x22, 0x00, 0x01])]),
+        script(&[ind(TaType::Functional, &[0x22, 0x00, 0x01])]),
         ECU,
         PARAMS,
     );
@@ -658,11 +455,11 @@ fn a_second_request_is_accepted_after_the_first_is_confirmed() {
     let read: &[u8] = &[0x22, 0xF4, 0x0D];
     let mut s = EcuServer::new(
         Ecu::new(),
-        Scripted::new(&[
-            Ev::Ind(TaType::Physical, read),
-            Ev::Conf(SResult::Ok),
-            Ev::Ind(TaType::Physical, read),
-            Ev::Conf(SResult::Ok),
+        script(&[
+            ind(TaType::Physical, read),
+            conf(SResult::Ok),
+            ind(TaType::Physical, read),
+            conf(SResult::Ok),
         ]),
         ECU,
         PARAMS,
@@ -679,18 +476,18 @@ fn a_slow_handler_gets_a_response_pending_then_its_answer() {
     ecu.slow = 2;
     let mut s = EcuServer::new(
         ecu,
-        Scripted::new(&[
-            Ev::Ind(TaType::Physical, &[0x22, 0xF4, 0x0D]),
-            Ev::At(50),            // tP2_Server reached: 0x78 goes out
-            Ev::Conf(SResult::Ok), // its confirmation, consumed mid-handler
-            Ev::Conf(SResult::Ok), // the final response's confirmation
+        script(&[
+            ind(TaType::Physical, &[0x22, 0xF4, 0x0D]),
+            Step::At(50),      // tP2_Server reached: 0x78 goes out
+            conf(SResult::Ok), // its confirmation, consumed mid-handler
+            conf(SResult::Ok), // the final response's confirmation
         ]),
         ECU,
         PARAMS,
     );
     run(&mut s);
-    assert_eq!(s.transport().sent(0), &[0x7F, 0x22, 0x78]);
-    assert_eq!(s.transport().sent(1), &[0x62, 0xF4, 0x0D, 0x40]);
+    assert_eq!(s.transport().sent_bytes(0), &[0x7F, 0x22, 0x78]);
+    assert_eq!(s.transport().sent_bytes(1), &[0x62, 0xF4, 0x0D, 0x40]);
     assert_eq!(s.transport().sent_count, 2);
     // The driver asked for tP2_Server's deadline, and At(50) reached it.
     assert_eq!(s.transport().deadlines, 1);
@@ -705,12 +502,12 @@ fn a_response_pending_lead_sends_the_0x78_within_the_window() {
     ecu.slow = 2;
     let mut s = EcuServer::new(
         ecu,
-        Scripted::new(&[
-            Ev::Ind(TaType::Physical, &[0x22, 0xF4, 0x0D]),
-            Ev::At(39),            // short of the deadline: nothing to report
-            Ev::At(40),            // tP2_Server less the lead: 0x78 goes out
-            Ev::Conf(SResult::Ok), // its confirmation, consumed mid-handler
-            Ev::Conf(SResult::Ok), // the final response's confirmation
+        script(&[
+            ind(TaType::Physical, &[0x22, 0xF4, 0x0D]),
+            Step::At(39),      // short of the deadline: nothing to report
+            Step::At(40),      // tP2_Server less the lead: 0x78 goes out
+            conf(SResult::Ok), // its confirmation, consumed mid-handler
+            conf(SResult::Ok), // the final response's confirmation
         ]),
         ECU,
         ServerParams {
@@ -720,10 +517,10 @@ fn a_response_pending_lead_sends_the_0x78_within_the_window() {
     );
     run(&mut s);
     let t = s.transport();
-    assert_eq!(t.sent(0), &[0x7F, 0x22, 0x78]);
+    assert_eq!(t.sent_bytes(0), &[0x7F, 0x22, 0x78]);
     // Sent once the indication, At(39) and At(40) had been consumed.
-    assert_eq!(t.sent_after.first(), Some(&3));
-    assert_eq!(t.sent(1), &[0x62, 0xF4, 0x0D, 0x40]);
+    assert_eq!(t.sent(0).map(|s| s.after), Some(3));
+    assert_eq!(t.sent_bytes(1), &[0x62, 0xF4, 0x0D, 0x40]);
     assert_eq!(t.sent_count, 2);
     assert_eq!(t.deadlines, 1);
 }
@@ -741,22 +538,22 @@ fn a_final_response_after_a_pending_whose_confirmation_is_late_is_still_delivere
     ecu.slow = 1;
     let mut s = EcuServer::new(
         ecu,
-        Scripted::new(&[
-            Ev::Ind(TaType::Physical, &[0x22, 0xF4, 0x0D]),
-            Ev::At(50), // tP2_Server reached: 0x78 goes out; handler then done
-            Ev::Conf(SResult::Ok), // the 0x78's confirmation, drained after the handler
-            Ev::Conf(SResult::Ok), // the final response's confirmation
+        script(&[
+            ind(TaType::Physical, &[0x22, 0xF4, 0x0D]),
+            Step::At(50), // tP2_Server reached: 0x78 goes out; handler then done
+            conf(SResult::Ok), // the 0x78's confirmation, drained after the handler
+            conf(SResult::Ok), // the final response's confirmation
         ]),
         ECU,
         PARAMS,
     );
     run(&mut s);
     let t = s.transport();
-    assert_eq!(t.sent(0), &[0x7F, 0x22, 0x78]);
-    assert_eq!(t.sent(1), &[0x62, 0xF4, 0x0D, 0x40]);
+    assert_eq!(t.sent_bytes(0), &[0x7F, 0x22, 0x78]);
+    assert_eq!(t.sent_bytes(1), &[0x62, 0xF4, 0x0D, 0x40]);
     assert_eq!(t.sent_count, 2);
     // Indication, deadline and the 0x78's confirmation consumed before the final went out.
-    assert_eq!(t.sent_after.get(1), Some(&3));
+    assert_eq!(t.sent(1).map(|s| s.after), Some(3));
 }
 
 /// ``UDSS_LLR_0108``, ``UDSS_LLR_0109`` — a slow request from the same tester whose
@@ -778,13 +575,13 @@ fn a_request_before_the_previous_confirmation_keeps_its_response_timer() {
     ecu.slow = 3;
     let mut s = EcuServer::new(
         ecu,
-        Scripted::new(&[
-            Ev::Ind(TaType::Physical, &[0x3E, 0x00]), // 7E 00 submitted, unconfirmed
-            Ev::IndAt(10, TaType::Physical, &[0x22, 0xF4, 0x0D]), // pends three times
-            Ev::Conf(SResult::Ok), // confirms 7E 00, mid-handler: tP2_Server still runs
-            Ev::At(60),            // the read's tP2_Server reached: 0x78 goes out
-            Ev::Conf(SResult::Ok), // the 0x78's confirmation, mid-handler
-            Ev::Conf(SResult::Ok), // the final response's confirmation
+        script(&[
+            ind(TaType::Physical, &[0x3E, 0x00]), // 7E 00 submitted, unconfirmed
+            ind_at(10, TaType::Physical, &[0x22, 0xF4, 0x0D]), // pends three times
+            conf(SResult::Ok), // confirms 7E 00, mid-handler: tP2_Server still runs
+            Step::At(60),      // the read's tP2_Server reached: 0x78 goes out
+            conf(SResult::Ok), // the 0x78's confirmation, mid-handler
+            conf(SResult::Ok), // the final response's confirmation
         ]),
         ECU,
         PARAMS,
@@ -792,11 +589,11 @@ fn a_request_before_the_previous_confirmation_keeps_its_response_timer() {
     run(&mut s);
     let t = s.transport();
     assert_eq!(t.sent_count, 3);
-    assert_eq!(t.sent(0), &[0x7E, 0x00]);
-    assert_eq!(t.sent(1), &[0x7F, 0x22, 0x78]);
+    assert_eq!(t.sent_bytes(0), &[0x7E, 0x00]);
+    assert_eq!(t.sent_bytes(1), &[0x7F, 0x22, 0x78]);
     // Sent once the deadline was consumed, after the late confirmation.
-    assert_eq!(t.sent_after.get(1), Some(&4));
-    assert_eq!(t.sent(2), &[0x62, 0xF4, 0x0D, 0x40]);
+    assert_eq!(t.sent(1).map(|s| s.after), Some(4));
+    assert_eq!(t.sent_bytes(2), &[0x62, 0xF4, 0x0D, 0x40]);
     assert_eq!(t.deadlines, 1); // the read's tP2_Server, reached at 60
 }
 
@@ -817,18 +614,18 @@ fn a_late_confirmation_does_not_restart_the_session_timer_during_the_next_reques
     ecu.slow = 5;
     let mut s = EcuServer::new(
         ecu,
-        Scripted::new(&[
-            Ev::Ind(TaType::Physical, &[0x10, 0x03]),
-            Ev::Conf(SResult::Ok), // confirms 50 03 ...: extended, tS3 expiring at 5000
-            Ev::IndAt(1_000, TaType::Physical, &[0x3E, 0x00]), // 7E 00, unconfirmed
-            Ev::IndAt(1_010, TaType::Physical, &[0x22, 0xF4, 0x0D]), // pends five times
-            Ev::Conf(SResult::Ok), // confirms 7E 00, mid-handler: tS3 stays stopped
-            Ev::At(1_060),         // the read's tP2_Server reached: 0x78 goes out
-            Ev::Conf(SResult::Ok), // its confirmation: tP2*_Server due at 6060
-            Ev::At(6_060),         // tP2*_Server reached: a second 0x78
-            Ev::Conf(SResult::Ok), // its confirmation
-            Ev::Conf(SResult::Ok), // the final response's: tS3 restarted
-            Ev::Ind(TaType::Physical, &[0x27, 0x01]),
+        script(&[
+            ind(TaType::Physical, &[0x10, 0x03]),
+            conf(SResult::Ok), // confirms 50 03 ...: extended, tS3 expiring at 5000
+            ind_at(1_000, TaType::Physical, &[0x3E, 0x00]), // 7E 00, unconfirmed
+            ind_at(1_010, TaType::Physical, &[0x22, 0xF4, 0x0D]), // pends five times
+            conf(SResult::Ok), // confirms 7E 00, mid-handler: tS3 stays stopped
+            Step::At(1_060),   // the read's tP2_Server reached: 0x78 goes out
+            conf(SResult::Ok), // its confirmation: tP2*_Server due at 6060
+            Step::At(6_060),   // tP2*_Server reached: a second 0x78
+            conf(SResult::Ok), // its confirmation
+            conf(SResult::Ok), // the final response's: tS3 restarted
+            ind(TaType::Physical, &[0x27, 0x01]),
         ]),
         ECU,
         PARAMS,
@@ -836,12 +633,12 @@ fn a_late_confirmation_does_not_restart_the_session_timer_during_the_next_reques
     run(&mut s);
     let t = s.transport();
     assert_eq!(t.sent_count, 6);
-    assert_eq!(t.sent(0), &[0x50, 0x03, 0x00, 0x32, 0x01, 0xF4]);
-    assert_eq!(t.sent(1), &[0x7E, 0x00]);
-    assert_eq!(t.sent(2), &[0x7F, 0x22, 0x78]);
-    assert_eq!(t.sent(3), &[0x7F, 0x22, 0x78]);
-    assert_eq!(t.sent(4), &[0x62, 0xF4, 0x0D, 0x40]);
-    assert_eq!(t.sent(5), &SEED); // allowed in extended: the seed
+    assert_eq!(t.sent_bytes(0), &[0x50, 0x03, 0x00, 0x32, 0x01, 0xF4]);
+    assert_eq!(t.sent_bytes(1), &[0x7E, 0x00]);
+    assert_eq!(t.sent_bytes(2), &[0x7F, 0x22, 0x78]);
+    assert_eq!(t.sent_bytes(3), &[0x7F, 0x22, 0x78]);
+    assert_eq!(t.sent_bytes(4), &[0x62, 0xF4, 0x0D, 0x40]);
+    assert_eq!(t.sent_bytes(5), &SEED); // allowed in extended: the seed
     assert_eq!(t.deadlines, 2); // the read's tP2_Server and tP2*_Server only
     assert_eq!(
         s.services().transitions,
@@ -871,16 +668,16 @@ fn a_late_selection_confirmation_does_not_start_the_session_timer_during_the_nex
     ecu.slow = 5;
     let mut s = EcuServer::new(
         ecu,
-        Scripted::new(&[
-            Ev::Ind(TaType::Physical, &[0x10, 0x03]), // 50 03, unconfirmed
-            Ev::IndAt(10, TaType::Physical, &[0x22, 0xF4, 0x0D]), // pends five times
-            Ev::Conf(SResult::Ok), // confirms 50 03, mid-handler: extended, tS3 stopped
-            Ev::At(60),            // the read's tP2_Server reached: 0x78 goes out
-            Ev::Conf(SResult::Ok), // its confirmation: tP2*_Server due at 5060
-            Ev::At(5_060),         // tP2*_Server reached: a second 0x78
-            Ev::Conf(SResult::Ok), // its confirmation
-            Ev::Conf(SResult::Ok), // the final response's: tS3 started
-            Ev::Ind(TaType::Physical, &[0x27, 0x01]),
+        script(&[
+            ind(TaType::Physical, &[0x10, 0x03]), // 50 03, unconfirmed
+            ind_at(10, TaType::Physical, &[0x22, 0xF4, 0x0D]), // pends five times
+            conf(SResult::Ok), // confirms 50 03, mid-handler: extended, tS3 stopped
+            Step::At(60),      // the read's tP2_Server reached: 0x78 goes out
+            conf(SResult::Ok), // its confirmation: tP2*_Server due at 5060
+            Step::At(5_060),   // tP2*_Server reached: a second 0x78
+            conf(SResult::Ok), // its confirmation
+            conf(SResult::Ok), // the final response's: tS3 started
+            ind(TaType::Physical, &[0x27, 0x01]),
         ]),
         ECU,
         PARAMS,
@@ -888,11 +685,11 @@ fn a_late_selection_confirmation_does_not_start_the_session_timer_during_the_nex
     run(&mut s);
     let t = s.transport();
     assert_eq!(t.sent_count, 5);
-    assert_eq!(t.sent(0), &[0x50, 0x03, 0x00, 0x32, 0x01, 0xF4]);
-    assert_eq!(t.sent(1), &[0x7F, 0x22, 0x78]);
-    assert_eq!(t.sent(2), &[0x7F, 0x22, 0x78]);
-    assert_eq!(t.sent(3), &[0x62, 0xF4, 0x0D, 0x40]);
-    assert_eq!(t.sent(4), &SEED); // allowed in extended, so the seed
+    assert_eq!(t.sent_bytes(0), &[0x50, 0x03, 0x00, 0x32, 0x01, 0xF4]);
+    assert_eq!(t.sent_bytes(1), &[0x7F, 0x22, 0x78]);
+    assert_eq!(t.sent_bytes(2), &[0x7F, 0x22, 0x78]);
+    assert_eq!(t.sent_bytes(3), &[0x62, 0xF4, 0x0D, 0x40]);
+    assert_eq!(t.sent_bytes(4), &SEED); // allowed in extended, so the seed
     assert_eq!(t.deadlines, 2); // the read's tP2_Server and tP2*_Server only
     assert_eq!(
         s.services().transitions,
@@ -917,11 +714,11 @@ fn a_sent_response_pending_overrides_functional_silence() {
     ecu.refuse = Some(Nrc::RequestOutOfRange);
     let mut s = EcuServer::new(
         ecu,
-        Scripted::new(&[
-            Ev::Ind(TaType::Functional, &[0x22, 0xF4, 0x0D]),
-            Ev::At(50),            // tP2_Server reached: 0x78 goes out
-            Ev::Conf(SResult::Ok), // its confirmation, consumed mid-handler
-            Ev::Conf(SResult::Ok), // the final response's confirmation
+        script(&[
+            ind(TaType::Functional, &[0x22, 0xF4, 0x0D]),
+            Step::At(50),      // tP2_Server reached: 0x78 goes out
+            conf(SResult::Ok), // its confirmation, consumed mid-handler
+            conf(SResult::Ok), // the final response's confirmation
         ]),
         ECU,
         PARAMS,
@@ -929,10 +726,10 @@ fn a_sent_response_pending_overrides_functional_silence() {
     run(&mut s);
     let t = s.transport();
     assert_eq!(t.sent_count, 2);
-    assert_eq!(t.sent(0), &[0x7F, 0x22, 0x78]);
-    assert_eq!(t.sent(1), &[0x7F, 0x22, 0x31]);
+    assert_eq!(t.sent_bytes(0), &[0x7F, 0x22, 0x78]);
+    assert_eq!(t.sent_bytes(1), &[0x7F, 0x22, 0x31]);
     // UDSS_LLR_0051 — sent from the ECU's own address, not the functional group's.
-    let ai = t.sent_ai(1).unwrap();
+    let ai = t.sent(1).map(|s| s.ai).unwrap();
     assert_eq!((ai.sa, ai.ta, ai.ta_type), (ECU, TESTER, TaType::Physical));
 }
 
@@ -945,7 +742,7 @@ fn without_a_response_pending_the_functional_refusal_is_silent() {
     ecu.refuse = Some(Nrc::RequestOutOfRange);
     let mut s = EcuServer::new(
         ecu,
-        Scripted::new(&[Ev::Ind(TaType::Functional, &[0x22, 0xF4, 0x0D])]),
+        script(&[ind(TaType::Functional, &[0x22, 0xF4, 0x0D])]),
         ECU,
         PARAMS,
     );
@@ -957,22 +754,22 @@ fn without_a_response_pending_the_functional_refusal_is_silent() {
 fn a_session_change_takes_effect_on_confirmation_and_times_out() {
     let mut s = EcuServer::new(
         Ecu::new(),
-        Scripted::new(&[
-            Ev::Ind(TaType::Physical, &[0x10, 0x03]),
-            Ev::Conf(SResult::Ok), // confirms 50 03 ...: extended now
-            Ev::Ind(TaType::Physical, &[0x27, 0x01]),
-            Ev::Conf(SResult::Ok),
-            Ev::At(5_100), // past tS3_Server: default again
-            Ev::Ind(TaType::Physical, &[0x27, 0x01]),
+        script(&[
+            ind(TaType::Physical, &[0x10, 0x03]),
+            conf(SResult::Ok), // confirms 50 03 ...: extended now
+            ind(TaType::Physical, &[0x27, 0x01]),
+            conf(SResult::Ok),
+            Step::At(5_100), // past tS3_Server: default again
+            ind(TaType::Physical, &[0x27, 0x01]),
         ]),
         ECU,
         PARAMS,
     );
     run(&mut s);
     let t = s.transport();
-    assert_eq!(t.sent(0), &[0x50, 0x03, 0x00, 0x32, 0x01, 0xF4]);
-    assert_eq!(t.sent(1), &SEED); // allowed in extended: the seed
-    assert_eq!(t.sent(2), &[0x7F, 0x27, 0x7F]); // Table 23 refuses it in default
+    assert_eq!(t.sent_bytes(0), &[0x50, 0x03, 0x00, 0x32, 0x01, 0xF4]);
+    assert_eq!(t.sent_bytes(1), &SEED); // allowed in extended: the seed
+    assert_eq!(t.sent_bytes(2), &[0x7F, 0x27, 0x7F]); // Table 23 refuses it in default
     assert_eq!(t.deadlines, 1); // tS3_Server's, reached at 5100
     assert_eq!(
         s.services().transitions,
@@ -989,16 +786,16 @@ fn a_session_change_takes_effect_on_confirmation_and_times_out() {
 fn a_suppressed_session_change_enters_the_session() {
     let mut s = EcuServer::new(
         Ecu::new(),
-        Scripted::new(&[
-            Ev::Ind(TaType::Physical, &[0x10, 0x83]),
-            Ev::Ind(TaType::Physical, &[0x27, 0x01]),
+        script(&[
+            ind(TaType::Physical, &[0x10, 0x83]),
+            ind(TaType::Physical, &[0x27, 0x01]),
         ]),
         ECU,
         PARAMS,
     );
     run(&mut s);
     assert_eq!(s.transport().sent_count, 1);
-    assert_eq!(s.transport().sent(0), &SEED); // in extended
+    assert_eq!(s.transport().sent_bytes(0), &SEED); // in extended
     assert_eq!(
         s.services().transitions.first().copied().flatten(),
         Some(SessionTransition::DefaultToNonDefault)
@@ -1010,12 +807,12 @@ fn a_suppressed_session_change_enters_the_session() {
 fn keep_alive_server(tail: u32) -> EcuServer {
     EcuServer::new(
         Ecu::new(),
-        Scripted::new(&[
-            Ev::Ind(TaType::Physical, &[0x10, 0x03]),
+        script(&[
+            ind(TaType::Physical, &[0x10, 0x03]),
             // Extended: tS3_Server runs from 0 and, unless stopped, expires at 5000.
-            Ev::Conf(SResult::Ok),
-            Ev::IndAt(4_000, TaType::Physical, &[0x3E, 0x80]),
-            Ev::At(tail),
+            conf(SResult::Ok),
+            ind_at(4_000, TaType::Physical, &[0x3E, 0x80]),
+            Step::At(tail),
         ]),
         ECU,
         PARAMS,
@@ -1058,10 +855,10 @@ fn a_suppressed_keep_alive_restarts_the_session_timer() {
 fn a_timeout_coinciding_with_a_request_is_reported_first() {
     let mut s = EcuServer::new(
         Ecu::new(),
-        Scripted::new(&[
-            Ev::Ind(TaType::Physical, &[0x10, 0x03]),
-            Ev::Conf(SResult::Ok),
-            Ev::IndAt(5_000, TaType::Physical, &[0x27, 0x01]),
+        script(&[
+            ind(TaType::Physical, &[0x10, 0x03]),
+            conf(SResult::Ok),
+            ind_at(5_000, TaType::Physical, &[0x27, 0x01]),
         ]),
         ECU,
         PARAMS,
@@ -1071,7 +868,7 @@ fn a_timeout_coinciding_with_a_request_is_reported_first() {
         s.services().transitions.get(1).copied().flatten(),
         Some(SessionTransition::NonDefaultToDefault)
     );
-    assert_eq!(s.transport().sent(1), &[0x7F, 0x27, 0x7F]);
+    assert_eq!(s.transport().sent_bytes(1), &[0x7F, 0x27, 0x7F]);
 }
 
 /// ``UDSS_LLR_0085`` — a failed transmission of the session response changes nothing: the
@@ -1080,17 +877,17 @@ fn a_timeout_coinciding_with_a_request_is_reported_first() {
 fn a_failed_session_response_selects_nothing() {
     let mut s = EcuServer::new(
         Ecu::new(),
-        Scripted::new(&[
-            Ev::Ind(TaType::Physical, &[0x10, 0x03]),
-            Ev::Conf(SResult::Transport(TransportError(1))),
-            Ev::Ind(TaType::Physical, &[0x27, 0x01]),
+        script(&[
+            ind(TaType::Physical, &[0x10, 0x03]),
+            conf(SResult::Transport(TransportError(1))),
+            ind(TaType::Physical, &[0x27, 0x01]),
         ]),
         ECU,
         PARAMS,
     );
     run(&mut s);
     assert_eq!(s.services().transitions.first().copied().flatten(), None);
-    assert_eq!(s.transport().sent(1), &[0x7F, 0x27, 0x7F]);
+    assert_eq!(s.transport().sent_bytes(1), &[0x7F, 0x27, 0x7F]);
 }
 
 /// ``UDSS_LLR_0100`` — a `tS3_Server` expiry that surfaces while a handler is running is
@@ -1110,13 +907,13 @@ fn a_session_timeout_during_a_handler_is_applied_once() {
     ecu.slow = 1;
     let mut s = EcuServer::new(
         ecu,
-        Scripted::new(&[
-            Ev::Ind(TaType::Physical, &[0x10, 0x03]),
-            Ev::Conf(SResult::Ok), // confirms 50 03 ...: extended, tS3 expiring at 5000
-            Ev::IndFrom(4_990, OTHER, &[0x22, 0xF4, 0x0D]), // pends once
-            Ev::At(5_000),         // tS3_Server reached mid-handler; tP2_Server (5040) not
-            Ev::ConfTo(OTHER, SResult::Ok),
-            Ev::Ind(TaType::Physical, &[0x27, 0x01]),
+        script(&[
+            ind(TaType::Physical, &[0x10, 0x03]),
+            conf(SResult::Ok), // confirms 50 03 ...: extended, tS3 expiring at 5000
+            ind_from(4_990, OTHER, &[0x22, 0xF4, 0x0D]), // pends once
+            Step::At(5_000),   // tS3_Server reached mid-handler; tP2_Server (5040) not
+            conf_to(OTHER, SResult::Ok),
+            ind(TaType::Physical, &[0x27, 0x01]),
         ]),
         ECU,
         PARAMS,
@@ -1124,13 +921,13 @@ fn a_session_timeout_during_a_handler_is_applied_once() {
     run(&mut s);
     let t = s.transport();
     assert_eq!(t.sent_count, 3);
-    assert_eq!(t.sent(0), &[0x50, 0x03, 0x00, 0x32, 0x01, 0xF4]);
-    assert_eq!(t.sent(1), &[0x62, 0xF4, 0x0D, 0x40]);
-    assert_eq!(t.sent_ai(1), Some(to(OTHER)));
+    assert_eq!(t.sent_bytes(0), &[0x50, 0x03, 0x00, 0x32, 0x01, 0xF4]);
+    assert_eq!(t.sent_bytes(1), &[0x62, 0xF4, 0x0D, 0x40]);
+    assert_eq!(t.sent(1).map(|s| s.ai), Some(to(OTHER)));
     // Sent after the deadline was consumed: the handler answered after the expiry.
-    assert_eq!(t.sent_after.get(1), Some(&4));
-    assert_eq!(t.sent(2), &[0x7F, 0x27, 0x7F]); // Table 23 refuses it in default
-    assert_eq!(t.sent_ai(2), Some(to_tester()));
+    assert_eq!(t.sent(1).map(|s| s.after), Some(4));
+    assert_eq!(t.sent_bytes(2), &[0x7F, 0x27, 0x7F]); // Table 23 refuses it in default
+    assert_eq!(t.sent(2).map(|s| s.ai), Some(to_tester()));
     assert_eq!(t.deadlines, 1); // tS3_Server's, reached at 5000
     assert_eq!(
         s.services().transitions,
@@ -1159,13 +956,13 @@ fn a_session_confirmation_during_a_handler_is_applied_once() {
     ecu.slow = 1;
     let mut s = EcuServer::new(
         ecu,
-        Scripted::new(&[
-            Ev::Ind(TaType::Physical, &[0x10, 0x03]), // 50 03 ... submitted, unconfirmed
-            Ev::IndFrom(0, OTHER, &[0x22, 0xF4, 0x0D]), // pends once
-            Ev::Conf(SResult::Ok), // confirms 50 03 ... mid-handler: extended now
-            Ev::ConfTo(OTHER, SResult::Ok),
-            Ev::Ind(TaType::Physical, &[0x27, 0x01]),
-            Ev::Conf(SResult::Ok),
+        script(&[
+            ind(TaType::Physical, &[0x10, 0x03]), // 50 03 ... submitted, unconfirmed
+            ind_from(0, OTHER, &[0x22, 0xF4, 0x0D]), // pends once
+            conf(SResult::Ok), // confirms 50 03 ... mid-handler: extended now
+            conf_to(OTHER, SResult::Ok),
+            ind(TaType::Physical, &[0x27, 0x01]),
+            conf(SResult::Ok),
         ]),
         ECU,
         PARAMS,
@@ -1173,12 +970,12 @@ fn a_session_confirmation_during_a_handler_is_applied_once() {
     run(&mut s);
     let t = s.transport();
     assert_eq!(t.sent_count, 3);
-    assert_eq!(t.sent(0), &[0x50, 0x03, 0x00, 0x32, 0x01, 0xF4]);
-    assert_eq!(t.sent(1), &[0x62, 0xF4, 0x0D, 0x40]);
-    assert_eq!(t.sent_ai(1), Some(to(OTHER)));
+    assert_eq!(t.sent_bytes(0), &[0x50, 0x03, 0x00, 0x32, 0x01, 0xF4]);
+    assert_eq!(t.sent_bytes(1), &[0x62, 0xF4, 0x0D, 0x40]);
+    assert_eq!(t.sent(1).map(|s| s.ai), Some(to(OTHER)));
     // Sent after the 50 03's confirmation was consumed, mid-handler.
-    assert_eq!(t.sent_after.get(1), Some(&3));
-    assert_eq!(t.sent(2), &SEED); // allowed in extended: the seed
+    assert_eq!(t.sent(1).map(|s| s.after), Some(3));
+    assert_eq!(t.sent_bytes(2), &SEED); // allowed in extended: the seed
     assert_eq!(
         s.services().transitions,
         [
@@ -1195,7 +992,7 @@ fn a_session_confirmation_during_a_handler_is_applied_once() {
 #[test]
 fn the_step_future_is_send_and_its_size_is_known() {
     fn assert_send<F: Send>(_: &F) {}
-    let mut s = EcuServer::new(Ecu::new(), Scripted::new(&[]), ECU, PARAMS);
+    let mut s = EcuServer::new(Ecu::new(), script(&[]), ECU, PARAMS);
     let fut = s.step();
     assert_send(&fut);
     let size = core::mem::size_of_val(&fut);

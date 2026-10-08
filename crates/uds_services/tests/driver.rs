@@ -3,9 +3,12 @@
 //! An integration test rather than a unit test in `server.rs`: `uds_server!` cannot be
 //! invoked inside this crate, because the helper macros it calls through `$crate::` are
 //! themselves macro-expanded `macro_export` macros, which rustc refuses to resolve by an
-//! absolute path from their defining crate. The full scripted transport is
-//! `end_to_end.rs`'s; these are the cases that need a fixture of their own.
+//! absolute path from their defining crate. The scripted transport is
+//! `common`'s, shared with `end_to_end.rs`; `Spurious` is the one fixture of its own.
 
+mod common;
+
+use common::{PendN, STEPS, Script, Step, block_on};
 use uds_services::{
     Address, AfterSend, Ai, DiagnosticSessionType as S, Mtype, NegativeResponseCode as Nrc,
     Reloads, ResponseSink, SResult, ServerParams, SessionTiming, SessionTransition, Sink,
@@ -135,17 +138,6 @@ const PARAMS: ServerParams = ServerParams {
     response_pending_lead: 0,
 };
 
-#[allow(clippy::panic, reason = "a test harness for futures that never pend")]
-fn block_on<F: core::future::Future>(f: F) -> F::Output {
-    let waker = core::task::Waker::noop();
-    let mut cx = core::task::Context::from_waker(waker);
-    let mut f = core::pin::pin!(f);
-    match f.as_mut().poll(&mut cx) {
-        core::task::Poll::Ready(v) => v,
-        core::task::Poll::Pending => panic!("the fixtures never pend"),
-    }
-}
-
 /// A spurious confirmation is rejected by the session layer and the driver carries
 /// on: `step` returns `Ok`, not an error and not a panic.
 #[test]
@@ -188,191 +180,6 @@ const fn response_to(tester: Address) -> Ai {
         sa: ECU,
         ta: tester,
         ta_type: TaType::Physical,
-    }
-}
-
-/// One scripted step of [`Script`].
-#[derive(Debug, Clone, Copy)]
-enum Step {
-    /// A request arrives.
-    Ind(Ai, &'static [u8]),
-    /// A request longer than the buffer offered arrives: what fits, and its length.
-    TooLong(Ai, &'static [u8]),
-    /// The link to this client closes.
-    Close(Address),
-    /// A transmission to this addressing is confirmed sent.
-    Conf(Ai),
-    /// The clock advances to this instant. The deadline is reported only if that reaches
-    /// the one the driver asked for; otherwise the next step is taken.
-    At(u32),
-    /// The clock advances to this instant and the next step is taken, the deadline
-    /// unreported: what arrives next arrives at or after it.
-    Slip(u32),
-}
-
-const STEPS: usize = 10;
-const FRAMES: usize = 4;
-const FRAME: usize = 8;
-
-/// A transport that plays a fixed script and records what was sent, and to whom.
-#[derive(Debug)]
-struct Script {
-    steps: [Option<Step>; STEPS],
-    cursor: usize,
-    now: u32,
-    sent: [(Option<Ai>, [u8; FRAME], usize); FRAMES],
-    /// The clock when each frame was sent.
-    sent_at: [u32; FRAMES],
-    sent_count: usize,
-    /// How many `Deadline`s were reported.
-    deadlines: usize,
-}
-
-impl Script {
-    fn new(script: &[Step]) -> Self {
-        let mut steps = [None; STEPS];
-        for (slot, step) in steps.iter_mut().zip(script) {
-            *slot = Some(*step);
-        }
-        Self {
-            steps,
-            cursor: 0,
-            now: 0,
-            sent: [(None, [0; FRAME], 0); FRAMES],
-            sent_at: [0; FRAMES],
-            sent_count: 0,
-            deadlines: 0,
-        }
-    }
-
-    /// Transmission `i`: its addressing and its bytes.
-    fn sent(&self, i: usize) -> (Option<Ai>, &[u8]) {
-        self.sent.get(i).map_or((None, &[][..]), |(ai, buf, n)| {
-            (*ai, buf.get(..*n).unwrap_or(&[]))
-        })
-    }
-
-    /// The next step, or the one error this transport returns: the script is exhausted.
-    fn advance<'b>(
-        &mut self,
-        buffer: &'b mut [u8],
-        deadline: Option<Timestamp>,
-    ) -> Result<TransportEvent<'b>, ()> {
-        loop {
-            let step = self.steps.get(self.cursor).copied().flatten().ok_or(())?;
-            self.cursor = self.cursor.wrapping_add(1);
-            match step {
-                Step::Ind(ai, bytes) => {
-                    let (head, _) = buffer.split_at_mut_checked(bytes.len()).ok_or(())?;
-                    head.copy_from_slice(bytes);
-                    return Ok(TransportEvent::DataInd { ai, data: head });
-                }
-                Step::TooLong(ai, bytes) => {
-                    let fit = buffer.len().min(bytes.len());
-                    let (head, _) = buffer.split_at_mut(fit);
-                    head.copy_from_slice(bytes.get(..fit).ok_or(())?);
-                    return Ok(TransportEvent::DataTooLong {
-                        ai,
-                        data: head,
-                        declared: Some(bytes.len()),
-                    });
-                }
-                Step::Close(peer) => {
-                    return Ok(TransportEvent::Closed {
-                        peer,
-                        expected: false,
-                    });
-                }
-                Step::Conf(ai) => {
-                    return Ok(TransportEvent::DataConf {
-                        ai,
-                        result: SResult::Ok,
-                    });
-                }
-                Step::Slip(t) => self.now = t,
-                Step::At(t) => {
-                    self.now = t;
-                    // The comparison the seam doc prescribes, right across the wrap.
-                    if deadline.is_some_and(|d| Timestamp(t).has_reached(d)) {
-                        self.deadlines = self.deadlines.wrapping_add(1);
-                        return Ok(TransportEvent::Deadline);
-                    }
-                }
-            }
-        }
-    }
-}
-
-impl UdsTransport for Script {
-    type Error = ();
-    fn t_data_req(
-        &mut self,
-        ai: Ai,
-        data: &[u8],
-        _after: AfterSend,
-    ) -> impl core::future::Future<Output = Result<(), ()>> {
-        // A frame that does not fit is recorded with no bytes, so a test comparing them
-        // fails rather than passing on a truncation.
-        if let Some(at) = self.sent_at.get_mut(self.sent_count) {
-            *at = self.now;
-        }
-        if let Some((slot_ai, buf, n)) = self.sent.get_mut(self.sent_count) {
-            *slot_ai = Some(ai);
-            if let Some(head) = buf.get_mut(..data.len()) {
-                head.copy_from_slice(data);
-                *n = data.len();
-            }
-        }
-        self.sent_count = self.sent_count.wrapping_add(1);
-        core::future::ready(Ok(()))
-    }
-    // Lazy, as `end_to_end.rs`'s is: the driver drops this future unpolled whenever the
-    // handler wins its `select2`, and a step taken on creation would then be lost.
-    fn next_event<'b>(
-        &mut self,
-        buffer: &'b mut [u8],
-        deadline: Option<Timestamp>,
-    ) -> impl core::future::Future<Output = Result<TransportEvent<'b>, ()>> {
-        let mut parts = Some((self, buffer));
-        core::future::poll_fn(move |_| {
-            core::task::Poll::Ready(
-                parts
-                    .take()
-                    .ok_or(())
-                    .and_then(|(t, b)| t.advance(b, deadline)),
-            )
-        })
-    }
-    fn outbound_max(&self) -> Option<usize> {
-        None
-    }
-    fn channel_timing(&self) -> Reloads {
-        Reloads {
-            default_reload: 50,
-            enhanced_reload: 5_000,
-        }
-    }
-    fn now(&self) -> Timestamp {
-        Timestamp(self.now)
-    }
-}
-
-/// Pends `self.0` times before completing, waking itself each time.
-#[derive(Debug)]
-struct PendN(u8);
-
-impl core::future::Future for PendN {
-    type Output = ();
-    fn poll(
-        mut self: core::pin::Pin<&mut Self>,
-        cx: &mut core::task::Context<'_>,
-    ) -> core::task::Poll<()> {
-        if self.0 == 0 {
-            return core::task::Poll::Ready(());
-        }
-        self.0 = self.0.saturating_sub(1);
-        cx.waker().wake_by_ref();
-        core::task::Poll::Pending
     }
 }
 
@@ -468,7 +275,7 @@ fn a_service_that_may_not_pend_gets_no_response_pending() {
         Script::new(&[
             Step::Ind(request_from(TESTER), READ),
             Step::At(50), // tP2_Server reached, mid-handler
-            Step::Conf(response_to(TESTER)),
+            Step::Conf(response_to(TESTER), SResult::Ok),
         ]),
         ECU,
         PARAMS,
@@ -479,7 +286,7 @@ fn a_service_that_may_not_pend_gets_no_response_pending() {
     // tP2_Server's deadline was asked for and reached, and still no 0x78 went out.
     assert_eq!(t.deadlines, 1);
     assert_eq!(t.sent_count, 1);
-    assert_eq!(t.sent(0), (Some(response_to(TESTER)), POSITIVE));
+    assert_eq!(t.addressed(0), (Some(response_to(TESTER)), POSITIVE));
 }
 
 /// ``UDSS_LLR_0062`` — a final response refused because no association is free is waited
@@ -494,8 +301,8 @@ fn a_final_response_refused_for_want_of_an_association_is_still_delivered() {
         Script::new(&[
             Step::Ind(request_from(TESTER), READ),
             Step::Ind(request_from(OTHER_TESTER), READ),
-            Step::Conf(response_to(TESTER)), // frees the one association
-            Step::Conf(response_to(OTHER_TESTER)),
+            Step::Conf(response_to(TESTER), SResult::Ok), // frees the one association
+            Step::Conf(response_to(OTHER_TESTER), SResult::Ok),
         ]),
         ECU,
         PARAMS,
@@ -504,8 +311,8 @@ fn a_final_response_refused_for_want_of_an_association_is_still_delivered() {
     let t = server.transport();
     assert_eq!(t.cursor, 4, "the script was not consumed");
     assert_eq!(t.sent_count, 2);
-    assert_eq!(t.sent(0), (Some(response_to(TESTER)), POSITIVE));
-    assert_eq!(t.sent(1), (Some(response_to(OTHER_TESTER)), POSITIVE));
+    assert_eq!(t.addressed(0), (Some(response_to(TESTER)), POSITIVE));
+    assert_eq!(t.addressed(1), (Some(response_to(OTHER_TESTER)), POSITIVE));
 }
 
 /// ``UDSSVC_ARCH_0032`` while a refused final response is waited out: `tP2_Server`
@@ -524,8 +331,8 @@ fn a_service_that_may_not_pend_gets_no_response_pending_while_a_response_waits()
             Step::Ind(request_from(TESTER), READ),
             Step::Ind(request_from(OTHER_TESTER), READ),
             Step::At(50), // the second request's tP2_Server, mid-wait
-            Step::Conf(response_to(TESTER)),
-            Step::Conf(response_to(OTHER_TESTER)),
+            Step::Conf(response_to(TESTER), SResult::Ok),
+            Step::Conf(response_to(OTHER_TESTER), SResult::Ok),
         ]),
         ECU,
         PARAMS,
@@ -536,8 +343,8 @@ fn a_service_that_may_not_pend_gets_no_response_pending_while_a_response_waits()
     // The second request's tP2_Server deadline was asked for during the wait.
     assert_eq!(t.deadlines, 1);
     assert_eq!(t.sent_count, 2);
-    assert_eq!(t.sent(0), (Some(response_to(TESTER)), POSITIVE));
-    assert_eq!(t.sent(1), (Some(response_to(OTHER_TESTER)), POSITIVE));
+    assert_eq!(t.addressed(0), (Some(response_to(TESTER)), POSITIVE));
+    assert_eq!(t.addressed(1), (Some(response_to(OTHER_TESTER)), POSITIVE));
 }
 
 /// `7F 22 21` — `busyRepeatRequest` for a `ReadDataByIdentifier` request.
@@ -556,8 +363,8 @@ fn a_physical_request_mid_service_is_answered_busy() {
         Script::new(&[
             Step::Ind(request_from(TESTER), READ),
             Step::Ind(request_from(TESTER), READ_OTHER), // mid-handler
-            Step::Conf(response_to(TESTER)),             // the refusal's
-            Step::Conf(response_to(TESTER)),             // the final response's
+            Step::Conf(response_to(TESTER), SResult::Ok), // the refusal's
+            Step::Conf(response_to(TESTER), SResult::Ok), // the final response's
         ]),
         ECU,
         PARAMS,
@@ -566,8 +373,8 @@ fn a_physical_request_mid_service_is_answered_busy() {
     let t = server.transport();
     assert_eq!(t.cursor, 4, "the script was not consumed");
     assert_eq!(t.sent_count, 2);
-    assert_eq!(t.sent(0), (Some(response_to(TESTER)), BUSY));
-    assert_eq!(t.sent(1), (Some(response_to(TESTER)), POSITIVE));
+    assert_eq!(t.addressed(0), (Some(response_to(TESTER)), BUSY));
+    assert_eq!(t.addressed(1), (Some(response_to(TESTER)), POSITIVE));
 }
 
 /// Another client's link closing while the final response waits on the refusal's
@@ -580,8 +387,8 @@ fn another_clients_close_while_a_response_waits_ends_nothing() {
             Step::Ind(request_from(TESTER), READ),
             Step::Ind(request_from(TESTER), READ_OTHER), // mid-handler
             Step::Close(OTHER_TESTER),                   // while the response waits
-            Step::Conf(response_to(TESTER)),             // the refusal's
-            Step::Conf(response_to(TESTER)),             // the final response's
+            Step::Conf(response_to(TESTER), SResult::Ok), // the refusal's
+            Step::Conf(response_to(TESTER), SResult::Ok), // the final response's
         ]),
         ECU,
         PARAMS,
@@ -590,8 +397,8 @@ fn another_clients_close_while_a_response_waits_ends_nothing() {
     let t = server.transport();
     assert_eq!(t.cursor, 5, "the script was not consumed");
     assert_eq!(t.sent_count, 2);
-    assert_eq!(t.sent(0), (Some(response_to(TESTER)), BUSY));
-    assert_eq!(t.sent(1), (Some(response_to(TESTER)), POSITIVE));
+    assert_eq!(t.addressed(0), (Some(response_to(TESTER)), BUSY));
+    assert_eq!(t.addressed(1), (Some(response_to(TESTER)), POSITIVE));
 }
 
 /// ``UDSS_LLR_0187`` end to end — the refusal leaves the service in progress its window:
@@ -605,10 +412,10 @@ fn a_busy_refusal_leaves_the_service_in_progress_its_response_pending() {
         Script::new(&[
             Step::Ind(request_from(TESTER), READ),
             Step::Ind(request_from(TESTER), READ_OTHER), // mid-handler
-            Step::Conf(response_to(TESTER)),             // the refusal's
+            Step::Conf(response_to(TESTER), SResult::Ok), // the refusal's
             Step::At(50),                                // tP2_Server, mid-handler
-            Step::Conf(response_to(TESTER)),             // the 0x78's
-            Step::Conf(response_to(TESTER)),             // the final response's
+            Step::Conf(response_to(TESTER), SResult::Ok), // the 0x78's
+            Step::Conf(response_to(TESTER), SResult::Ok), // the final response's
         ]),
         ECU,
         PARAMS,
@@ -617,12 +424,12 @@ fn a_busy_refusal_leaves_the_service_in_progress_its_response_pending() {
     let t = server.transport();
     assert_eq!(t.cursor, 6, "the script was not consumed");
     assert_eq!(t.sent_count, 3);
-    assert_eq!(t.sent(0), (Some(response_to(TESTER)), BUSY));
+    assert_eq!(t.addressed(0), (Some(response_to(TESTER)), BUSY));
     assert_eq!(
-        t.sent(1),
+        t.addressed(1),
         (Some(response_to(TESTER)), &[0x7F, 0x22, 0x78][..])
     );
-    assert_eq!(t.sent(2), (Some(response_to(TESTER)), POSITIVE));
+    assert_eq!(t.addressed(2), (Some(response_to(TESTER)), POSITIVE));
 }
 
 /// A 0x78 that comes due while a busy refusal to the same client is unconfirmed is
@@ -636,9 +443,9 @@ fn a_response_pending_held_up_by_a_busy_refusal_still_goes_out() {
             Step::Ind(request_from(TESTER), READ),
             Step::Ind(request_from(TESTER), READ_OTHER), // mid-handler
             Step::At(50), // tP2_Server, the refusal unconfirmed
-            Step::Conf(response_to(TESTER)), // the refusal's
-            Step::Conf(response_to(TESTER)), // the 0x78's
-            Step::Conf(response_to(TESTER)), // the final response's
+            Step::Conf(response_to(TESTER), SResult::Ok), // the refusal's
+            Step::Conf(response_to(TESTER), SResult::Ok), // the 0x78's
+            Step::Conf(response_to(TESTER), SResult::Ok), // the final response's
         ]),
         ECU,
         PARAMS,
@@ -647,12 +454,12 @@ fn a_response_pending_held_up_by_a_busy_refusal_still_goes_out() {
     let t = server.transport();
     assert_eq!(t.cursor, 6, "the script was not consumed");
     assert_eq!(t.sent_count, 3);
-    assert_eq!(t.sent(0), (Some(response_to(TESTER)), BUSY));
+    assert_eq!(t.addressed(0), (Some(response_to(TESTER)), BUSY));
     assert_eq!(
-        t.sent(1),
+        t.addressed(1),
         (Some(response_to(TESTER)), &[0x7F, 0x22, 0x78][..])
     );
-    assert_eq!(t.sent(2), (Some(response_to(TESTER)), POSITIVE));
+    assert_eq!(t.addressed(2), (Some(response_to(TESTER)), POSITIVE));
 }
 
 /// ISO 14229-1:2020 8.7.6 — occupancy holds "regardless of addressing mode": a
@@ -665,8 +472,8 @@ fn a_functional_request_mid_service_is_answered_busy() {
         Script::new(&[
             Step::Ind(request_from(TESTER), READ),
             Step::Ind(functional_from(TESTER), READ_OTHER), // mid-handler
-            Step::Conf(response_to(TESTER)),
-            Step::Conf(response_to(TESTER)),
+            Step::Conf(response_to(TESTER), SResult::Ok),
+            Step::Conf(response_to(TESTER), SResult::Ok),
         ]),
         ECU,
         PARAMS,
@@ -675,8 +482,8 @@ fn a_functional_request_mid_service_is_answered_busy() {
     let t = server.transport();
     assert_eq!(t.cursor, 4, "the script was not consumed");
     assert_eq!(t.sent_count, 2);
-    assert_eq!(t.sent(0), (Some(response_to(TESTER)), BUSY));
-    assert_eq!(t.sent(1), (Some(response_to(TESTER)), POSITIVE));
+    assert_eq!(t.addressed(0), (Some(response_to(TESTER)), BUSY));
+    assert_eq!(t.addressed(1), (Some(response_to(TESTER)), POSITIVE));
 }
 
 /// ISO 14229-1:2020 8.7.6's first exception — the functionally addressed `3E 80`
@@ -690,7 +497,7 @@ fn a_functional_keep_alive_mid_service_bypasses_it() {
         Script::new(&[
             Step::Ind(request_from(TESTER), READ),
             Step::Ind(functional_from(TESTER), &[0x3E, 0x80]), // mid-handler
-            Step::Conf(response_to(TESTER)),
+            Step::Conf(response_to(TESTER), SResult::Ok),
         ]),
         ECU,
         PARAMS,
@@ -699,7 +506,7 @@ fn a_functional_keep_alive_mid_service_bypasses_it() {
     let t = server.transport();
     assert_eq!(t.cursor, 3, "the script was not consumed");
     assert_eq!(t.sent_count, 1);
-    assert_eq!(t.sent(0), (Some(response_to(TESTER)), POSITIVE));
+    assert_eq!(t.addressed(0), (Some(response_to(TESTER)), POSITIVE));
 
     for (ai, tester_present) in [
         (request_from(TESTER), &[0x3E, 0x80][..]),
@@ -710,8 +517,8 @@ fn a_functional_keep_alive_mid_service_bypasses_it() {
             Script::new(&[
                 Step::Ind(request_from(TESTER), READ),
                 Step::Ind(ai, tester_present), // mid-handler
-                Step::Conf(response_to(TESTER)),
-                Step::Conf(response_to(TESTER)),
+                Step::Conf(response_to(TESTER), SResult::Ok),
+                Step::Conf(response_to(TESTER), SResult::Ok),
             ]),
             ECU,
             PARAMS,
@@ -720,7 +527,7 @@ fn a_functional_keep_alive_mid_service_bypasses_it() {
         let t = server.transport();
         assert_eq!(t.sent_count, 2, "{ai:?} {tester_present:02X?}");
         assert_eq!(
-            t.sent(0),
+            t.addressed(0),
             (Some(response_to(TESTER)), &[0x7F, 0x3E, 0x21][..])
         );
     }
@@ -739,8 +546,8 @@ fn a_message_too_long_for_the_concurrent_buffer_is_answered_busy() {
                 request_from(TESTER),
                 &[0x2E, 0xF1, 0x90, 1, 2, 3, 4, 5, 6, 7, 8, 9],
             ), // mid-handler
-            Step::Conf(response_to(TESTER)),
-            Step::Conf(response_to(TESTER)),
+            Step::Conf(response_to(TESTER), SResult::Ok),
+            Step::Conf(response_to(TESTER), SResult::Ok),
         ]),
         ECU,
         PARAMS,
@@ -750,10 +557,10 @@ fn a_message_too_long_for_the_concurrent_buffer_is_answered_busy() {
     assert_eq!(t.cursor, 4, "the script was not consumed");
     assert_eq!(t.sent_count, 2);
     assert_eq!(
-        t.sent(0),
+        t.addressed(0),
         (Some(response_to(TESTER)), &[0x7F, 0x2E, 0x21][..])
     );
-    assert_eq!(t.sent(1), (Some(response_to(TESTER)), POSITIVE));
+    assert_eq!(t.addressed(1), (Some(response_to(TESTER)), POSITIVE));
 }
 
 /// Another client's link closing while a handler runs ends nothing: the request in
@@ -765,7 +572,7 @@ fn another_clients_close_mid_handler_leaves_the_request_in_progress() {
         Script::new(&[
             Step::Ind(request_from(TESTER), READ),
             Step::Close(OTHER_TESTER), // mid-handler
-            Step::Conf(response_to(TESTER)),
+            Step::Conf(response_to(TESTER), SResult::Ok),
         ]),
         ECU,
         PARAMS,
@@ -774,7 +581,7 @@ fn another_clients_close_mid_handler_leaves_the_request_in_progress() {
     let t = server.transport();
     assert_eq!(t.cursor, 3, "the script was not consumed");
     assert_eq!(t.sent_count, 1);
-    assert_eq!(t.sent(0), (Some(response_to(TESTER)), POSITIVE));
+    assert_eq!(t.addressed(0), (Some(response_to(TESTER)), POSITIVE));
 }
 
 /// A link closed while a handler runs ends the request with nothing sent, the abandoned
@@ -787,7 +594,7 @@ fn a_close_mid_handler_sends_nothing_and_the_server_carries_on() {
             Step::Ind(request_from(TESTER), READ),
             Step::Close(TESTER), // mid-handler
             Step::Ind(request_from(TESTER), READ),
-            Step::Conf(response_to(TESTER)),
+            Step::Conf(response_to(TESTER), SResult::Ok),
         ]),
         ECU,
         PARAMS,
@@ -796,7 +603,7 @@ fn a_close_mid_handler_sends_nothing_and_the_server_carries_on() {
     let t = server.transport();
     assert_eq!(t.cursor, 4, "the script was not consumed");
     assert_eq!(t.sent_count, 1);
-    assert_eq!(t.sent(0), (Some(response_to(TESTER)), POSITIVE));
+    assert_eq!(t.addressed(0), (Some(response_to(TESTER)), POSITIVE));
 }
 
 /// An application whose sessions time differently: the default session as [`PARAMS`]
@@ -861,14 +668,14 @@ fn the_confirmed_sessions_advertised_timing_is_enforced() {
         Timed { pends: 3 },
         Script::new(&[
             Step::Ind(request_from(TESTER), &[0x10, 0x03]),
-            Step::Conf(response_to(TESTER)), // the extended session takes effect
+            Step::Conf(response_to(TESTER), SResult::Ok), // the extended session takes effect
             Step::Ind(request_from(TESTER), READ),
             Step::At(50),  // PARAMS' tP2_Server would end here, mid-handler
             Step::At(100), // the extended session's does
-            Step::Conf(response_to(TESTER)), // the 0x78's: tP2*_Server starts
+            Step::Conf(response_to(TESTER), SResult::Ok), // the 0x78's: tP2*_Server starts
             Step::At(2_100), // the extended session's tP2*_Server ends
-            Step::Conf(response_to(TESTER)), // the second 0x78's
-            Step::Conf(response_to(TESTER)), // the final response's
+            Step::Conf(response_to(TESTER), SResult::Ok), // the second 0x78's
+            Step::Conf(response_to(TESTER), SResult::Ok), // the final response's
         ]),
         ECU,
         PARAMS,
@@ -878,11 +685,17 @@ fn the_confirmed_sessions_advertised_timing_is_enforced() {
     assert_eq!(t.cursor, 9, "the script was not consumed");
     assert_eq!(t.sent_count, 4);
     // Advertised: P2 100 ms, P2* 200 x 10 ms.
-    assert_eq!(t.sent(0).1, &[0x50, 0x03, 0x00, 0x64, 0x00, 0xC8]);
+    assert_eq!(t.addressed(0).1, &[0x50, 0x03, 0x00, 0x64, 0x00, 0xC8]);
     let pending = &[0x7F, 0x22, 0x78][..];
-    assert_eq!((t.sent(1).1, t.sent_at[1]), (pending, 100));
-    assert_eq!((t.sent(2).1, t.sent_at[2]), (pending, 2_100));
-    assert_eq!(t.sent(3).1, POSITIVE);
+    assert_eq!(
+        (t.addressed(1).1, t.sent(1).map_or(0, |s| s.at)),
+        (pending, 100)
+    );
+    assert_eq!(
+        (t.addressed(2).1, t.sent(2).map_or(0, |s| s.at)),
+        (pending, 2_100)
+    );
+    assert_eq!(t.addressed(3).1, POSITIVE);
 }
 
 /// A request longer than the in-flight buffer, with no service in progress, is checked as
@@ -917,7 +730,10 @@ fn a_request_too_long_for_any_service_is_refused_in_figure_5s_order() {
     ] {
         let mut server = TimedSrv::new(
             Timed { pends: 0 },
-            Script::new(&[Step::TooLong(ai, request), Step::Conf(response_to(TESTER))]),
+            Script::new(&[
+                Step::TooLong(ai, request),
+                Step::Conf(response_to(TESTER), SResult::Ok),
+            ]),
             ECU,
             PARAMS,
         );
@@ -930,7 +746,7 @@ fn a_request_too_long_for_any_service_is_refused_in_figure_5s_order() {
         );
         if !expected.is_empty() {
             assert_eq!(
-                t.sent(0),
+                t.addressed(0),
                 (Some(response_to(TESTER)), expected),
                 "{request:02X?}"
             );
@@ -946,7 +762,7 @@ fn an_over_long_request_whose_front_decodes_is_not_handled() {
         Slow { pends: 0 },
         Script::new(&[
             Step::TooLong(request_from(TESTER), &[0x22, 0xF4, 0x0D, 0xF4, 0x0E]),
-            Step::Conf(response_to(TESTER)),
+            Step::Conf(response_to(TESTER), SResult::Ok),
         ]),
         ECU,
         PARAMS,
@@ -955,7 +771,7 @@ fn an_over_long_request_whose_front_decodes_is_not_handled() {
     let t = server.transport();
     assert_eq!(t.sent_count, 1);
     assert_eq!(
-        t.sent(0),
+        t.addressed(0),
         (Some(response_to(TESTER)), &[0x7F, 0x22, 0x13][..])
     );
 }
@@ -969,9 +785,9 @@ fn an_over_long_request_for_a_sub_function_not_in_this_session_is_refused_0x7e()
         Timed { pends: 0 },
         Script::new(&[
             Step::Ind(request_from(TESTER), &[0x10, 0x03]),
-            Step::Conf(response_to(TESTER)), // the extended session takes effect
+            Step::Conf(response_to(TESTER), SResult::Ok), // the extended session takes effect
             Step::TooLong(request_from(TESTER), &[0x10, 0x03, 0, 0, 0, 0, 0]),
-            Step::Conf(response_to(TESTER)),
+            Step::Conf(response_to(TESTER), SResult::Ok),
         ]),
         ECU,
         PARAMS,
@@ -981,7 +797,7 @@ fn an_over_long_request_for_a_sub_function_not_in_this_session_is_refused_0x7e()
     assert_eq!(t.cursor, 4, "the script was not consumed");
     assert_eq!(t.sent_count, 2);
     assert_eq!(
-        t.sent(1),
+        t.addressed(1),
         (Some(response_to(TESTER)), &[0x7F, 0x10, 0x7E][..])
     );
 }
@@ -1001,8 +817,8 @@ fn a_request_arriving_at_the_response_deadline_does_not_cost_the_response_pendin
             Step::Ind(request_from(TESTER), READ),
             Step::Slip(50), // tP2_Server, unreported
             Step::Ind(request_from(TESTER), READ_OTHER), // mid-handler, at it
-            Step::Conf(response_to(TESTER)), // the 0x78's
-            Step::Conf(response_to(TESTER)), // the final response's
+            Step::Conf(response_to(TESTER), SResult::Ok), // the 0x78's
+            Step::Conf(response_to(TESTER), SResult::Ok), // the final response's
         ]),
         ECU,
         PARAMS,
@@ -1012,10 +828,10 @@ fn a_request_arriving_at_the_response_deadline_does_not_cost_the_response_pendin
     assert_eq!(t.cursor, 5, "the script was not consumed");
     assert_eq!(t.sent_count, 2);
     assert_eq!(
-        (t.sent(0), t.sent_at[0]),
+        (t.addressed(0), t.sent(0).map_or(0, |s| s.at)),
         ((Some(response_to(TESTER)), PENDING), 50)
     );
-    assert_eq!(t.sent(1), (Some(response_to(TESTER)), POSITIVE));
+    assert_eq!(t.addressed(1), (Some(response_to(TESTER)), POSITIVE));
 }
 
 /// The keep-alive `3E 80` arriving at `tP2_Server` does not cost the 0x78 either.
@@ -1027,8 +843,8 @@ fn a_keep_alive_arriving_at_the_response_deadline_does_not_cost_the_response_pen
             Step::Ind(request_from(TESTER), READ),
             Step::Slip(50),
             Step::Ind(functional_from(TESTER), &[0x3E, 0x80]),
-            Step::Conf(response_to(TESTER)), // the 0x78's
-            Step::Conf(response_to(TESTER)), // the final response's
+            Step::Conf(response_to(TESTER), SResult::Ok), // the 0x78's
+            Step::Conf(response_to(TESTER), SResult::Ok), // the final response's
         ]),
         ECU,
         PARAMS,
@@ -1038,10 +854,10 @@ fn a_keep_alive_arriving_at_the_response_deadline_does_not_cost_the_response_pen
     assert_eq!(t.cursor, 5, "the script was not consumed");
     assert_eq!(t.sent_count, 2);
     assert_eq!(
-        (t.sent(0), t.sent_at[0]),
+        (t.addressed(0), t.sent(0).map_or(0, |s| s.at)),
         ((Some(response_to(TESTER)), PENDING), 50)
     );
-    assert_eq!(t.sent(1), (Some(response_to(TESTER)), POSITIVE));
+    assert_eq!(t.addressed(1), (Some(response_to(TESTER)), POSITIVE));
 }
 
 /// A confirmation arriving at `tP2_Server` — here the busy refusal's — does not cost the
@@ -1055,9 +871,9 @@ fn a_confirmation_arriving_at_the_response_deadline_does_not_cost_the_response_p
             Step::Ind(request_from(TESTER), READ),
             Step::Ind(request_from(TESTER), READ_OTHER), // mid-handler
             Step::Slip(50),
-            Step::Conf(response_to(TESTER)), // the refusal's, at tP2_Server
-            Step::Conf(response_to(TESTER)), // the 0x78's
-            Step::Conf(response_to(TESTER)), // the final response's
+            Step::Conf(response_to(TESTER), SResult::Ok), // the refusal's, at tP2_Server
+            Step::Conf(response_to(TESTER), SResult::Ok), // the 0x78's
+            Step::Conf(response_to(TESTER), SResult::Ok), // the final response's
         ]),
         ECU,
         PARAMS,
@@ -1066,12 +882,12 @@ fn a_confirmation_arriving_at_the_response_deadline_does_not_cost_the_response_p
     let t = server.transport();
     assert_eq!(t.cursor, 6, "the script was not consumed");
     assert_eq!(t.sent_count, 3);
-    assert_eq!(t.sent(0), (Some(response_to(TESTER)), BUSY));
+    assert_eq!(t.addressed(0), (Some(response_to(TESTER)), BUSY));
     assert_eq!(
-        (t.sent(1), t.sent_at[1]),
+        (t.addressed(1), t.sent(1).map_or(0, |s| s.at)),
         ((Some(response_to(TESTER)), PENDING), 50)
     );
-    assert_eq!(t.sent(2), (Some(response_to(TESTER)), POSITIVE));
+    assert_eq!(t.addressed(2), (Some(response_to(TESTER)), POSITIVE));
 }
 
 /// The keep-alive is indicated as keep-alive, not as a request: one would replace the
@@ -1089,8 +905,8 @@ fn a_keep_alive_mid_service_leaves_the_response_window_where_it_was() {
             Step::Ind(functional_from(TESTER), &[0x3E, 0x80]), // mid-handler
             Step::At(50),
             Step::At(80),
-            Step::Conf(response_to(TESTER)), // the 0x78's
-            Step::Conf(response_to(TESTER)), // the final response's
+            Step::Conf(response_to(TESTER), SResult::Ok), // the 0x78's
+            Step::Conf(response_to(TESTER), SResult::Ok), // the final response's
         ]),
         ECU,
         PARAMS,
@@ -1099,8 +915,8 @@ fn a_keep_alive_mid_service_leaves_the_response_window_where_it_was() {
     let t = server.transport();
     assert_eq!(t.sent_count, 2);
     assert_eq!(
-        (t.sent(0), t.sent_at[0]),
+        (t.addressed(0), t.sent(0).map_or(0, |s| s.at)),
         ((Some(response_to(TESTER)), PENDING), 50)
     );
-    assert_eq!(t.sent(1), (Some(response_to(TESTER)), POSITIVE));
+    assert_eq!(t.addressed(1), (Some(response_to(TESTER)), POSITIVE));
 }
