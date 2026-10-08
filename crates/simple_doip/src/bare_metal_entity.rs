@@ -195,9 +195,7 @@ impl Entity {
         };
 
         let reply = match Payload::decode(frame.payload, frame.header.payload_type) {
-            // Payload::decode collapses all three VIR variants (plain,
-            // with-EID, with-VIN) into this unit variant, so EID/VIN filters
-            // cannot be checked and every variant gets the announcement.
+            // The EID and VIN variants are not answered: this entity does not match them.
             Ok(Payload::VehicleIdentificationRequest) => self.vehicle_announcement(),
             Ok(Payload::EntityStatusRequest) => self.entity_status(),
             Ok(_) => None,
@@ -247,7 +245,7 @@ impl Entity {
             entity_id: self.eid,
             group_id,
             further_action: FurtherActionRequired::NoFurtherActionRequired,
-            vin_gid_sync_status: VinGidSyncStatus::Synchronized,
+            vin_gid_sync_status: Some(VinGidSyncStatus::Synchronized),
         };
         framed(
             PayloadType::VehicleAnnouncement,
@@ -260,7 +258,7 @@ impl Entity {
             node_type: EntityStatusNodeType::DoIPNode,
             max_concurrent_tcp_sockets: 1,
             open_tcp_sockets: u8::from(self.active_tester.is_some()),
-            max_data_size: u32::try_from(MAX_RX_PAYLOAD).unwrap_or(u32::MAX),
+            max_data_size: Some(u32::try_from(MAX_RX_PAYLOAD).unwrap_or(u32::MAX)),
         };
         framed(
             PayloadType::DoIPEntityStatusResponse,

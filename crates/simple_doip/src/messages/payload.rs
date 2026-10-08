@@ -6,6 +6,7 @@ use crate::messages::{
 
 use super::traits::{Decode, Encode};
 use super::{NackCode, RoutingActivationRequest};
+use automotive_wire_codec::{read_array, write_bytes};
 
 /// Maps [`PayloadType`] to the corresponding `Payload` type when reading and writing
 /// messages. This is the main payload type for `DoIP` messages.
@@ -39,9 +40,11 @@ pub enum Payload<'a> {
     EntityStatusRequest,
     /// Response to an entity status request
     /// (`PayloadType::DoIPEntityStatusResponse`, 0x4002): node type, open/max
-    /// socket counts, and max data size. This implementation always requires and
-    /// emits the max data size field, giving a fixed 7-byte payload.
+    /// socket counts, and the optional max data size.
     EntityStatusResponse(EntityStatusResponse),
+    /// Request for the diagnostic power mode
+    /// ([`PayloadType::DiagnosticPowerModeInfoRequest`]). Carries no data.
+    PowerModeInfoRequest,
     /// Response to a diagnostic power mode information request
     /// (`PayloadType::DiagnosticPowerModeInfoResponse`, 0x4004): the vehicle's
     /// current power mode.
@@ -58,12 +61,15 @@ pub enum Payload<'a> {
     /// (`PayloadType::VehicleAnnouncement`, 0x0004). Shares the
     /// [`VehicleIdentificationResponse`] wire format.
     VehicleAnnouncement(VehicleIdentificationResponse),
-    /// Request for vehicle identification, in any of its three addressing forms
-    /// (`PayloadType::VehicleIdentificationRequest` 0x0001,
-    /// `..RequestWithEID` 0x0002, or `..RequestWithVIN` 0x0003 — this crate does not
-    /// distinguish which was received). Broadcast by a tester to discover `DoIP`
-    /// entities on the network. Carries no data.
+    /// Request for vehicle identification from every entity that receives it
+    /// ([`PayloadType::VehicleIdentificationRequest`]). Carries no data.
     VehicleIdentificationRequest,
+    /// Request for vehicle identification from the entity with this entity ID
+    /// ([`PayloadType::VehicleIdentificationRequestWithEID`]).
+    VehicleIdentificationRequestWithEid([u8; 6]),
+    /// Request for vehicle identification from the entities of the vehicle with this
+    /// VIN ([`PayloadType::VehicleIdentificationRequestWithVIN`]).
+    VehicleIdentificationRequestWithVin([u8; 17]),
     /// A directed reply to a specific vehicle identification request, as opposed
     /// to the unsolicited [`Payload::VehicleAnnouncement`]. ISO 13400-2 defines a
     /// single wire payload type (0x0004, "vehicle announcement/identification
@@ -100,6 +106,8 @@ pub enum OwnedPayload {
     EntityStatusRequest,
     /// Owned mirror of [`Payload::EntityStatusResponse`].
     EntityStatusResponse(EntityStatusResponse),
+    /// Owned mirror of [`Payload::PowerModeInfoRequest`].
+    PowerModeInfoRequest,
     /// Owned mirror of [`Payload::PowerModeInfoResponse`].
     PowerModeInfoResponse(DiagnosticPowerModeCode),
     /// Owned mirror of [`Payload::RoutingActivationRequest`].
@@ -112,6 +120,10 @@ pub enum OwnedPayload {
     VehicleAnnouncement(VehicleIdentificationResponse),
     /// Owned mirror of [`Payload::VehicleIdentificationRequest`].
     VehicleIdentificationRequest,
+    /// Owned mirror of [`Payload::VehicleIdentificationRequestWithEid`].
+    VehicleIdentificationRequestWithEid([u8; 6]),
+    /// Owned mirror of [`Payload::VehicleIdentificationRequestWithVin`].
+    VehicleIdentificationRequestWithVin([u8; 17]),
     /// Owned mirror of [`Payload::VehicleIdentificationResponse`].
     VehicleIdentificationResponse(VehicleIdentificationResponse),
 }
@@ -155,6 +167,13 @@ impl Payload<'_> {
             Payload::VehicleIdentificationRequest => {
                 OwnedPayload::VehicleIdentificationRequest
             }
+            Payload::VehicleIdentificationRequestWithEid(eid) => {
+                OwnedPayload::VehicleIdentificationRequestWithEid(*eid)
+            }
+            Payload::VehicleIdentificationRequestWithVin(vin) => {
+                OwnedPayload::VehicleIdentificationRequestWithVin(*vin)
+            }
+            Payload::PowerModeInfoRequest => OwnedPayload::PowerModeInfoRequest,
             Payload::VehicleIdentificationResponse(response) => {
                 OwnedPayload::VehicleIdentificationResponse(*response)
             }
@@ -201,6 +220,13 @@ impl OwnedPayload {
             OwnedPayload::VehicleIdentificationRequest => {
                 Payload::VehicleIdentificationRequest
             }
+            OwnedPayload::VehicleIdentificationRequestWithEid(eid) => {
+                Payload::VehicleIdentificationRequestWithEid(*eid)
+            }
+            OwnedPayload::VehicleIdentificationRequestWithVin(vin) => {
+                Payload::VehicleIdentificationRequestWithVin(*vin)
+            }
+            OwnedPayload::PowerModeInfoRequest => Payload::PowerModeInfoRequest,
             OwnedPayload::VehicleIdentificationResponse(response) => {
                 Payload::VehicleIdentificationResponse(*response)
             }
@@ -219,11 +245,14 @@ impl<'a> Payload<'a> {
                 Self::AliveCheckResponse(AliveCheckResponse::decode(buf)?.0)
             }
             PayloadType::NegativeAcknowledge => Self::DoIPNack(NackCode::decode(buf)?.0),
-            PayloadType::VehicleIdentificationRequest
-            | PayloadType::VehicleIdentificationRequestWithEID
-            | PayloadType::VehicleIdentificationRequestWithVIN => {
-                Self::VehicleIdentificationRequest
+            PayloadType::VehicleIdentificationRequest => Self::VehicleIdentificationRequest,
+            PayloadType::VehicleIdentificationRequestWithEID => {
+                Self::VehicleIdentificationRequestWithEid(read_array::<6>(buf)?.0)
             }
+            PayloadType::VehicleIdentificationRequestWithVIN => {
+                Self::VehicleIdentificationRequestWithVin(read_array::<17>(buf)?.0)
+            }
+            PayloadType::DiagnosticPowerModeInfoRequest => Self::PowerModeInfoRequest,
             PayloadType::VehicleAnnouncement => {
                 Self::VehicleAnnouncement(VehicleIdentificationResponse::decode(buf)?.0)
             }
@@ -250,12 +279,7 @@ impl<'a> Payload<'a> {
             PayloadType::DiagnosticMessageNegativeAcknowledge => {
                 Self::DiagnosticMessageNack(DiagnosticMessageNack::decode(buf)?.0)
             }
-            // `DiagnosticPowerModeInfoRequest` has no dedicated `Payload` variant, and the
-            // reserved ranges are not decodable. Return an error rather than panicking on
-            // peer-controlled input.
-            PayloadType::DiagnosticPowerModeInfoRequest
-            | PayloadType::Reserved(_)
-            | PayloadType::ReservedVehicleManufacturer(_) => {
+            PayloadType::Reserved(_) | PayloadType::ReservedVehicleManufacturer(_) => {
                 return Err(MessageError::UnsupportedPayloadType(payload_type));
             }
         })
@@ -270,7 +294,10 @@ impl Encode for Payload<'_> {
             Payload::DoIPNack(nack) => nack.encoded_size()?,
             Payload::AliveCheckRequest
             | Payload::EntityStatusRequest
+            | Payload::PowerModeInfoRequest
             | Payload::VehicleIdentificationRequest => 0,
+            Payload::VehicleIdentificationRequestWithEid(eid) => eid.len(),
+            Payload::VehicleIdentificationRequestWithVin(vin) => vin.len(),
             Payload::AliveCheckResponse(alive_check_response) => {
                 alive_check_response.encoded_size()?
             }
@@ -315,7 +342,16 @@ impl Encode for Payload<'_> {
             Payload::DoIPNack(nack) => nack.encode(writer)?,
             Payload::AliveCheckRequest
             | Payload::EntityStatusRequest
+            | Payload::PowerModeInfoRequest
             | Payload::VehicleIdentificationRequest => 0,
+            Payload::VehicleIdentificationRequestWithEid(eid) => {
+                write_bytes(writer, eid)?;
+                eid.len()
+            }
+            Payload::VehicleIdentificationRequestWithVin(vin) => {
+                write_bytes(writer, vin)?;
+                vin.len()
+            }
             Payload::AliveCheckResponse(alive_check_response) => {
                 alive_check_response.encode(writer)?
             }
@@ -368,13 +404,6 @@ mod tests {
             result,
             Err(MessageError::UnsupportedPayloadType(_))
         ));
-
-        // The power-mode info *request* has no payload variant and must also error.
-        let result = Payload::decode(&[], PayloadType::DiagnosticPowerModeInfoRequest);
-        assert!(matches!(
-            result,
-            Err(MessageError::UnsupportedPayloadType(_))
-        ));
     }
 
     /// ISO 13400-2:2019 Tables 24 and 26 give the positive and negative
@@ -420,6 +449,79 @@ mod tests {
         assert!(matches!(payload, Payload::EntityStatusRequest));
     }
 
+    /// ISO 13400-2:2019 Tables 3 and 4: the directed identification requests carry
+    /// the EID or VIN they name, and survive a round trip.
+    #[test]
+    fn directed_identification_requests_keep_what_they_name() {
+        let eid = [0x02, 0x00, 0x00, 0xAB, 0xCD, 0xEF];
+        let vin = *b"WVWZZZ1JZXW000001";
+        for (payload_type, payload, body) in [
+            (
+                PayloadType::VehicleIdentificationRequestWithEID,
+                Payload::VehicleIdentificationRequestWithEid(eid),
+                &eid[..],
+            ),
+            (
+                PayloadType::VehicleIdentificationRequestWithVIN,
+                Payload::VehicleIdentificationRequestWithVin(vin),
+                &vin[..],
+            ),
+        ] {
+            assert_eq!(Payload::decode(body, payload_type).unwrap(), payload);
+            let mut buf = [0u8; 32];
+            let written = payload.encode(&mut SliceSink::new(&mut buf)).unwrap();
+            assert_eq!(&buf[..written], body);
+            assert_eq!(payload.encoded_size().unwrap(), body.len());
+        }
+    }
+
+    /// A directed identification request too short for what it names is incomplete.
+    #[test]
+    fn a_short_directed_identification_request_is_incomplete() {
+        assert!(matches!(
+            Payload::decode(&[0; 5], PayloadType::VehicleIdentificationRequestWithEID),
+            Err(MessageError::Incomplete(_))
+        ));
+        assert!(matches!(
+            Payload::decode(&[0; 16], PayloadType::VehicleIdentificationRequestWithVIN),
+            Err(MessageError::Incomplete(_))
+        ));
+    }
+
+    /// ISO 13400-2:2019 Table 8: the power mode request carries no data.
+    #[test]
+    fn power_mode_request_decodes_empty() {
+        let payload =
+            Payload::decode(&[], PayloadType::DiagnosticPowerModeInfoRequest).unwrap();
+        assert_eq!(payload, Payload::PowerModeInfoRequest);
+        assert_eq!(payload.encoded_size().unwrap(), 0);
+    }
+
+    /// ISO 13400-2:2019 Tables 5 and 11: an entity may omit the sync status and the max
+    /// data size, and what it sends still decodes.
+    #[test]
+    fn optional_trailing_fields_may_be_absent() {
+        let status =
+            Payload::decode(&[0x01, 0x01, 0x00], PayloadType::DoIPEntityStatusResponse)
+                .unwrap();
+        assert!(matches!(
+            status,
+            Payload::EntityStatusResponse(EntityStatusResponse {
+                max_data_size: None,
+                ..
+            })
+        ));
+        let announcement =
+            Payload::decode(&[0x30; 32], PayloadType::VehicleAnnouncement).unwrap();
+        assert!(matches!(
+            announcement,
+            Payload::VehicleAnnouncement(VehicleIdentificationResponse {
+                vin_gid_sync_status: None,
+                ..
+            })
+        ));
+    }
+
     /// `VehicleAnnouncement` must round-trip encode -> decode (regression test for the
     /// `todo!()` encode arms that panicked on a value decode had produced).
     #[test]
@@ -430,7 +532,7 @@ mod tests {
             entity_id: [0x01, 0x02, 0x03, 0x04, 0x05, 0x06],
             group_id: Some([0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F]),
             further_action: FurtherActionRequired::NoFurtherActionRequired,
-            vin_gid_sync_status: VinGidSyncStatus::Synchronized,
+            vin_gid_sync_status: Some(VinGidSyncStatus::Synchronized),
         };
         let payload = Payload::VehicleAnnouncement(response);
 

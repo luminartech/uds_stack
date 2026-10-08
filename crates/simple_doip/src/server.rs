@@ -185,7 +185,7 @@ pub trait ServerConnectionHandler {
             vin: self.get_vin(),
             group_id: self.get_group_id(),
             further_action: FurtherActionRequired::NoFurtherActionRequired,
-            vin_gid_sync_status: VinGidSyncStatus::Synchronized,
+            vin_gid_sync_status: Some(VinGidSyncStatus::Synchronized),
         })
     }
     /// Identify vehicle by Entity ID (EID). Since the request includes the entity ID, my
@@ -207,7 +207,7 @@ pub trait ServerConnectionHandler {
                 vin: self.get_vin(),
                 group_id: self.get_group_id(),
                 further_action: FurtherActionRequired::NoFurtherActionRequired,
-                vin_gid_sync_status: VinGidSyncStatus::Synchronized,
+                vin_gid_sync_status: Some(VinGidSyncStatus::Synchronized),
             }))
         } else {
             // This wasn't for us, so we don't have a response
@@ -235,7 +235,7 @@ pub trait ServerConnectionHandler {
                 vin: self.get_vin(),
                 group_id: self.get_group_id(),
                 further_action: FurtherActionRequired::NoFurtherActionRequired,
-                vin_gid_sync_status: VinGidSyncStatus::Synchronized,
+                vin_gid_sync_status: Some(VinGidSyncStatus::Synchronized),
             }))
         } else {
             // This wasn't for us, so we don't have a response
@@ -426,17 +426,12 @@ where
     ///
     /// # Known limitation
     /// Only the plain request form (0x0001) is answered. The with-EID (0x0002)
-    /// and with-VIN (0x0003) forms name a specific entity, but [`Payload::decode`]
-    /// collapses all three into [`Payload::VehicleIdentificationRequest`] and
-    /// discards the EID or VIN bytes, so this responder cannot tell whether it is
-    /// the addressee. It stays silent rather than answering a probe that may have
-    /// been meant for a different entity: a wrong answer actively misleads a
-    /// tester, whereas silence degrades to a discovery timeout that testers
-    /// already handle. Consequently the
+    /// and with-VIN (0x0003) forms name a specific entity, and this responder
+    /// stays silent on them rather than answering a probe that may have been meant
+    /// for a different entity. The
     /// [`ServerConnectionHandler::vehicle_identification_with_eid`] and
     /// [`ServerConnectionHandler::vehicle_identification_with_vin`] hooks are
-    /// never consulted. Answering the directed forms requires [`Payload`] to
-    /// preserve the EID/VIN through decoding.
+    /// never consulted; `entity::Entity` answers the directed forms.
     ///
     /// # Errors
     /// This method does not currently return. Socket, decode, and handler errors
@@ -491,11 +486,10 @@ where
                 continue;
             }
 
-            // 0x0002/0x0003 name a specific entity by EID/VIN, but `Payload::decode`
-            // drops those bytes, so we cannot tell whether we are the addressee.
-            // Answering regardless would actively mislead a tester; staying quiet
-            // degrades to a timeout, which testers already handle. See the method's
-            // known-limitation note.
+            // 0x0002/0x0003 name a specific entity by EID/VIN, which this responder
+            // does not match. Answering regardless would actively mislead a tester;
+            // staying quiet degrades to a timeout, which testers already handle. See
+            // the method's known-limitation note.
             if !matches!(
                 message.header.payload_type,
                 PayloadType::VehicleIdentificationRequest
@@ -701,9 +695,13 @@ where
                     request_message.header.payload_type,
                 ))
             }
-            OwnedPayload::VehicleIdentificationRequest => {
+            OwnedPayload::VehicleIdentificationRequest
+            | OwnedPayload::VehicleIdentificationRequestWithEid(_)
+            | OwnedPayload::VehicleIdentificationRequestWithVin(_)
+            | OwnedPayload::PowerModeInfoRequest => {
                 warn!(
-                    "Vehicle Identification Request is not yet supported, ignoring. source: {client_socket_addr}"
+                    "UDP request {:?} on TCP is not supported, ignoring. source: {client_socket_addr}",
+                    request_message.header.payload_type
                 );
                 Ok(None)
             }

@@ -178,7 +178,7 @@ fn golden_entity_status_response() {
             node_type: EntityStatusNodeType::DoIPGateway,
             max_concurrent_tcp_sockets: 4,
             open_tcp_sockets: 0,
-            max_data_size: 0x0000_FFFF,
+            max_data_size: Some(0x0000_FFFF),
         },
     );
     check(
@@ -187,7 +187,7 @@ fn golden_entity_status_response() {
             node_type: EntityStatusNodeType::DoIPNode,
             max_concurrent_tcp_sockets: 1,
             open_tcp_sockets: 1,
-            max_data_size: 64,
+            max_data_size: Some(64),
         },
     );
     check(
@@ -196,7 +196,17 @@ fn golden_entity_status_response() {
             node_type: EntityStatusNodeType::DoIPNode,
             max_concurrent_tcp_sockets: 255,
             open_tcp_sockets: 255,
-            max_data_size: u32::MAX,
+            max_data_size: Some(u32::MAX),
+        },
+    );
+    // ISO 13400-2:2019 Table 11: the max data size is optional.
+    check(
+        "entity_status_node_no_mds",
+        &EntityStatusResponse {
+            node_type: EntityStatusNodeType::DoIPNode,
+            max_concurrent_tcp_sockets: 1,
+            open_tcp_sockets: 0,
+            max_data_size: None,
         },
     );
 }
@@ -341,7 +351,7 @@ fn golden_vehicle_identification_response() {
             entity_id: [0x01, 0x02, 0x03, 0x04, 0x05, 0x06],
             group_id: Some([0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F]),
             further_action: FurtherActionRequired::NoFurtherActionRequired,
-            vin_gid_sync_status: VinGidSyncStatus::Synchronized,
+            vin_gid_sync_status: Some(VinGidSyncStatus::Synchronized),
         },
     );
     check(
@@ -352,7 +362,7 @@ fn golden_vehicle_identification_response() {
             entity_id: [0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF],
             group_id: None,
             further_action: FurtherActionRequired::NoFurtherActionRequired,
-            vin_gid_sync_status: VinGidSyncStatus::Synchronized,
+            vin_gid_sync_status: Some(VinGidSyncStatus::Synchronized),
         },
     );
     check(
@@ -364,7 +374,19 @@ fn golden_vehicle_identification_response() {
             group_id: Some([1, 1, 1, 1, 1, 1]),
             further_action:
                 FurtherActionRequired::RoutingActivationRequiredToInitiateCentralSecurity,
-            vin_gid_sync_status: VinGidSyncStatus::Incomplete,
+            vin_gid_sync_status: Some(VinGidSyncStatus::Incomplete),
+        },
+    );
+    // ISO 13400-2:2019 Table 5: the VIN/GID sync status is optional.
+    check(
+        "vid_resp_no_sync_status",
+        &VehicleIdentificationResponse {
+            vin: *b"1HGCM82633A004352",
+            logical_address: LogicalAddress(0x1000),
+            entity_id: [0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF],
+            group_id: None,
+            further_action: FurtherActionRequired::NoFurtherActionRequired,
+            vin_gid_sync_status: None,
         },
     );
 }

@@ -938,7 +938,7 @@ choosing the crate; the mechanics are here:
 
 ## 8. Invariants to preserve when changing this crate
 
-1. **`tests/golden/` is frozen.** The 33 hex fixtures are the only external
+1. **`tests/golden/` is frozen.** The 35 hex fixtures are the only external
    check that the wire format did not drift. Never regenerate them to make a
    test pass; a diff there means the change alters the wire format and needs a
    deliberate decision.
