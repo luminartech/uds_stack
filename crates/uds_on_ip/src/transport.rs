@@ -192,6 +192,7 @@ impl<E: DiagnosticEntity, const CONNECTIONS: usize> DoIpTransport<E, CONNECTIONS
     /// #   ) -> Result<(), ()> {
     /// #       Ok(())
     /// #   }
+    /// #   fn limit_requests(&mut self, _: usize) {}
     /// #   fn now(&self) -> u32 {
     /// #       0
     /// #   }
@@ -565,6 +566,7 @@ mod tests {
         ) -> Result<(), Self::Error> {
             Ok(())
         }
+        fn limit_requests(&mut self, _max_pdu: usize) {}
         fn now(&self) -> u32 {
             0
         }

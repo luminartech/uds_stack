@@ -1556,6 +1556,71 @@ fn a_message_longer_than_the_callers_buffer_is_indicated_truncated() {
     );
 }
 
+/// REQ 7.DoIP-072 and 074: a diagnostic message longer than the layer above accepts is
+/// refused with code 0x04 and discarded, never acknowledged or indicated, and the
+/// connection goes on; one exactly at the limit is acknowledged and indicated.
+#[test]
+fn a_diagnostic_message_beyond_the_request_limit_is_nacked_0x04_and_discarded() {
+    let _clock = clock();
+    let stack = MockStack::new(4096);
+    let mut entity = OneSocket::new(&stack, address(), two_testers());
+    entity.limit_requests(4);
+    let peer = activated(&stack, &mut entity, TESTER);
+
+    peer.send(&diagnostic(TESTER, ENTITY, &[0x2E, 0xF1, 0x90, 0x01, 0x02]));
+    assert_eq!(events(&mut entity), []);
+    assert_eq!(peer.take_written(), nack(ENTITY, TESTER, 0x04));
+    assert!(!peer.is_shut());
+
+    peer.send(&diagnostic(TESTER, ENTITY, &[0x2E, 0xF1, 0x90, 0x01]));
+    assert!(matches!(
+        step(&mut entity),
+        Some(Ev::Indication { pdu, .. }) if pdu == [0x2E, 0xF1, 0x90, 0x01]
+    ));
+    assert_eq!(events(&mut entity), []);
+    assert_eq!(peer.take_written(), ack(ENTITY, TESTER));
+}
+
+/// Figure 17 checks the target before the length: a message both too long and to an
+/// unknown target is refused 0x03 (REQ 7.DoIP-071).
+#[test]
+fn an_unknown_ta_is_nacked_0x03_before_the_request_limit() {
+    let _clock = clock();
+    let stack = MockStack::new(4096);
+    let mut entity = OneSocket::new(&stack, address(), two_testers());
+    entity.limit_requests(1);
+    let peer = activated(&stack, &mut entity, TESTER);
+    let unknown = LogicalAddress(0x0002);
+    peer.send(&diagnostic(TESTER, unknown, &[0x3E, 0x00]));
+
+    assert_eq!(events(&mut entity), []);
+    assert_eq!(peer.take_written(), nack(unknown, TESTER, 0x03));
+}
+
+/// Within the request limit, a message longer than the buffer lent is still
+/// acknowledged and indicated truncated: the layer above answers what does not fit
+/// while it serves a request, and the entity cannot tell that buffer from its own.
+#[test]
+fn a_message_within_the_limit_but_beyond_the_buffer_is_still_indicated_truncated() {
+    let _clock = clock();
+    let stack = MockStack::new(4096);
+    let mut entity = OneSocket::new(&stack, address(), two_testers());
+    entity.limit_requests(16);
+    let peer = activated(&stack, &mut entity, TESTER);
+    peer.send(&diagnostic(TESTER, ENTITY, &[0x2E, 0xF1, 0x90, 0x01, 0x02]));
+
+    assert_eq!(
+        step_into(&mut entity, 3, None),
+        Some(Ev::Truncated {
+            connection: 0,
+            pdu: vec![0x2E, 0xF1, 0x90],
+            length: 5
+        })
+    );
+    assert_eq!(events(&mut entity), []);
+    assert_eq!(peer.take_written(), ack(ENTITY, TESTER));
+}
+
 /// A connection is read while what the entity sends it waits for the tester to read:
 /// neither direction holds the other up.
 #[test]

@@ -40,7 +40,7 @@ use crate::stream::tx::Full;
 use crate::stream::{after, caller_deadline, millis};
 use crate::tester::DIAGNOSTIC_MESSAGE_OVERHEAD;
 use crate::{LogicalAddress, TaType};
-use handler::{ALIVE_CHECK_REQUEST, Handled};
+use handler::{ALIVE_CHECK_REQUEST, Handled, Limits};
 use io::{Io, drive};
 use table::{
     Activation, AliveCheck, AliveCheckScope, Arbitration, Phase, Slot, SlotRef, Stage,
@@ -261,6 +261,9 @@ pub struct Entity<
     confirms: [Option<PendingConfirm>; CONFIRMS],
     /// Which source [`Self::wait`] polls first.
     turn: Turn,
+    /// The longest diagnostic message PDU the layer above accepts;
+    /// [`DiagnosticEntity::limit_requests`].
+    request_limit: usize,
 }
 
 /// A request awaiting its [`EntityEvent::Confirm`].
@@ -413,6 +416,7 @@ impl<
             arbitration: None,
             confirms: [None; CONFIRMS],
             turn: Turn::Connection(0),
+            request_limit: usize::MAX,
         }
     }
 
@@ -913,6 +917,11 @@ impl<
     /// Handles one buffered frame, from the first slot that has one.
     fn handle_one(&mut self, buf: &mut [u8], now: Instant) -> Step {
         let arbitrating = self.arbitration.map(|arbitration| arbitration.on);
+        let limits = Limits {
+            message: MAX_MESSAGE,
+            unregistered: RESERVE_CAP,
+            request: self.request_limit,
+        };
         for position in 0..=MCTS {
             let at = Self::slot_ref(position);
             if arbitrating == Some(at) {
@@ -923,8 +932,7 @@ impl<
                     Some(slot) => handler::handle(
                         slot,
                         self.address,
-                        MAX_MESSAGE,
-                        RESERVE_CAP,
+                        limits,
                         arbitrating.is_some(),
                         buf,
                         now,
@@ -934,8 +942,7 @@ impl<
                 SlotRef::Reserve => handler::handle(
                     &mut self.reserve,
                     self.address,
-                    MAX_MESSAGE,
-                    RESERVE_CAP,
+                    limits,
                     arbitrating.is_some(),
                     buf,
                     now,
@@ -1199,6 +1206,11 @@ impl<
         pdu: &[u8],
     ) -> impl Future<Output = Result<(), Self::Error>> {
         poll_fn(move |_| Poll::Ready(self.queue(sa, ta, ta_type, pdu)))
+    }
+
+    /// Takes effect for every message not yet handled, on every connection.
+    fn limit_requests(&mut self, max_pdu: usize) {
+        self.request_limit = max_pdu;
     }
 
     fn now(&self) -> u32 {

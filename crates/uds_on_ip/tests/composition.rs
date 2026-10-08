@@ -38,6 +38,7 @@ impl DiagnosticEntity for OpaqueEntity {
     ) -> Result<(), ()> {
         Ok(())
     }
+    fn limit_requests(&mut self, _max_pdu: usize) {}
     fn now(&self) -> u32 {
         0
     }
