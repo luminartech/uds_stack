@@ -175,25 +175,25 @@ stateDiagram-v2
   | `0x01` | A payload type the entity does not take on `TCP_DATA`, ISO 14229-5's periodic `0x8004` and the manufacturer range included (REQ 7.DoIP-042) | The frame is discarded |
   | `0x02` | A message, header included, over the entity's `MAX_MESSAGE`: a payload over `MAX_MESSAGE` − 8 (REQ 7.DoIP-043) | The frame is discarded |
   | `0x03` | Before activation, a frame within `MAX_MESSAGE` but over the 32 bytes a socket has until it may move into the reserve (REQ 7.DoIP-044) | The frame is discarded |
+  | `0x04` | A payload length wrong for its type (REQ 7.DoIP-045) | The socket is closed |
 
   The 32 bytes apply to every payload type, so before activation a diagnostic message
   with more than 24 bytes of user data is answered `0x03` and the socket kept open,
   where a shorter one reaches Figure 17 and is refused with diagnostic NACK `0x02` and
   a close (REQ 7.DoIP-070). This is a deviation: buffering the longer one would mean
   holding it where the reserve cannot.
-  | `0x04` | A payload length wrong for its type (REQ 7.DoIP-045) | The socket is closed |
 
 - **Figure 17, and one deviation.** A diagnostic message whose source address is
   not the one registered on its socket is refused with diagnostic NACK `0x02` and
   the socket closed; one to a target the entity does not answer, `0x03`. Every other
   is acknowledged positively and indicated: the entity's size limit is what it can
   hold, its `MAX_MESSAGE`, which Figure 16 enforces with header NACK `0x02`, so
-  REQ 7.DoIP-072's `0x04` is never sent. The acknowledgement comes before the entity
-  knows whether the caller's buffer holds the message, so one too long for it is
-  indicated truncated after a positive acknowledgement, where REQ 7.DoIP-073 has a
-  NACK `0x05`: a UDS server owes that request an answer by ISO 14229-1's rules,
-  `busyRepeatRequest` while busy, `0x11` or `0x13` otherwise, which `uds_on_ip`
-  composes from the truncated event.
+  REQ 7.DoIP-072's `0x04` is never sent. One too long for the caller's buffer is
+  indicated truncated. That departs from REQ 7.DoIP-073, which has a NACK `0x05` for
+  it, from REQ 7.DoIP-074, and from what Table 24's code `0x00` means. The reason is
+  the layer above: a UDS server owes a request it can read only the start of an
+  answer by ISO 14229-1's rules, `busyRepeatRequest` while busy, `0x11` or `0x13`
+  otherwise, which `uds_on_ip` composes from the truncated event.
 - **Requests wait for nothing.** A `request` is made by its future's first poll,
   which completes it, so one dropped unpolled makes none. It is queued on the
   connection that registered its target and confirmed `Ok` once written,

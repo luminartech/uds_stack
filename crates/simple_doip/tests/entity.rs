@@ -1430,11 +1430,13 @@ fn a_busy_first_connection_does_not_starve_the_reserve() {
     assert!(!busy.all_read());
 }
 
-/// A newcomer on the reserve waiting for a slot is held up for at most
-/// `T_TCP_Alive_Check` by an unregistered socket whose unread NACKs keep it from moving
-/// into the reserve: that socket is aborted, and the newcomer registered.
+/// An unregistered socket's unread NACKs do not keep it from moving into the reserve, so
+/// a newcomer waiting there for a slot is registered at once: the entity's own frames
+/// queue apart, in a queue every slot and the reserve have alike. The newcomer is then
+/// alive-checked for the unregistered socket's own activation, the table being full
+/// (REQ 3.DoIP-091).
 #[test]
-fn an_unregistered_socket_blocking_the_reserve_is_aborted() {
+fn an_unregistered_socket_with_unread_nacks_does_not_hold_up_the_reserve() {
     let _clock = clock();
     let stack = MockStack::new(4096);
     let mut entity = OneSocket::new(&stack, address(), two_testers());
@@ -1450,18 +1452,11 @@ fn an_unregistered_socket_blocking_the_reserve_is_aborted() {
     assert_eq!(events(&mut entity), []);
     blocker.send(&activation_from(OTHER, 0));
     assert_eq!(events(&mut entity), []);
-    assert_eq!(newcomer.take_written(), []);
 
-    advance(ms(499));
-    assert_eq!(events(&mut entity), []);
+    let mut expected = activation_response_for(TESTER, ACTIVATED);
+    expected.extend(alive_check_request());
+    assert_eq!(newcomer.take_written(), expected);
     assert!(!blocker.is_shut());
-    advance(ms(1));
-    assert_eq!(events(&mut entity), []);
-    assert!(blocker.is_aborted());
-    assert_eq!(
-        newcomer.take_written(),
-        activation_response_for(TESTER, ACTIVATED)
-    );
 }
 
 // --- Figure 17, diagnostic messages ------------------------------------------------------
