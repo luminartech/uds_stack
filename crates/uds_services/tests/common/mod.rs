@@ -37,6 +37,9 @@ pub enum Step {
     /// Advance the clock and take the next step, the deadline unreported: what arrives
     /// next arrives at or after it.
     Slip(u32),
+    /// `next_event` pends once, as a transport with nothing to report does, so a caller
+    /// can drop the future that awaits it.
+    Pend,
 }
 
 /// The most steps a script can have.
@@ -211,6 +214,7 @@ impl Script {
                     return Ok(TransportEvent::DataConf { ai, result });
                 }
                 Step::Slip(t) => self.now = t,
+                Step::Pend => {}
                 Step::At(t) => {
                     self.now = t;
                     // The comparison the seam doc prescribes, right across the wrap.
@@ -247,7 +251,14 @@ impl UdsTransport for Script {
         deadline: Option<Timestamp>,
     ) -> impl Future<Output = Result<TransportEvent<'b>, ()>> {
         let mut parts = Some((self, buffer));
-        poll_fn(move |_| {
+        poll_fn(move |cx| {
+            if let Some((t, _)) = parts.as_mut()
+                && matches!(t.steps.get(t.cursor).copied().flatten(), Some(Step::Pend))
+            {
+                t.cursor = t.cursor.wrapping_add(1);
+                cx.waker().wake_by_ref();
+                return Poll::Pending;
+            }
             Poll::Ready(
                 parts
                     .take()

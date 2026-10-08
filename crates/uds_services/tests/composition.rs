@@ -19,15 +19,16 @@ use static_cell::ConstStaticCell;
 use uds_protocol::NegativeResponseCode as Nrc;
 use uds_services::pipeline::settle;
 use uds_services::{
-    Access, Address, AfterSend, Ai, Answer, ClearDiagnosticInformation, ClientSet,
-    ClientStorage, CommunicationControl, CommunicationControlType, CommunicationType,
-    DataIdentifier, DataTransfer, Delay, DiagnosticSessionType, DtcRecord, DtcReportKind,
-    DtcStatusMask, KeyVerdict, Mtype, PhysicalKeepAlive, ReadDataByIdentifier,
-    ReadDtcInfoReportType, ReadDtcInfoSubFunction, ReadDtcInformation, Received,
-    RecordError, Reloads, Response, ResponseSink, SecurityAccess, SecurityLevel,
-    SecurityPolicy, ServerParams, ServiceSet, SessionTiming, SessionTransition, Sessions,
-    Sink, Storage, SubnetNumber, TaType, TesterPresent, Timestamp, TransferRequest,
-    TransportEvent, UdsServiceType, UdsTransport, uds_client, uds_server,
+    Access, Address, AfterSend, Ai, Answer, ClearDiagnosticInformation, ClientError,
+    ClientSet, ClientStorage, CommunicationControl, CommunicationControlType,
+    CommunicationType, DataIdentifier, DataTransfer, Delay, DiagnosticSessionType,
+    DtcRecord, DtcReportKind, DtcStatusMask, KeepAlive, KeyVerdict, Mtype,
+    PhysicalKeepAlive, ReadDataByIdentifier, ReadDtcInfoReportType, ReadDtcInfoSubFunction,
+    ReadDtcInformation, Received, RecordError, Reloads, Response, ResponseSink,
+    SecurityAccess, SecurityLevel, SecurityPolicy, ServerParams, ServiceSet, SessionTiming,
+    SessionTransition, Sessions, Sink, Spacing, Storage, SubnetNumber, TaType,
+    TesterPresent, Timestamp, TransferRequest, TransportEvent, UdsServiceType,
+    UdsTransport, uds_client, uds_server,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -499,7 +500,15 @@ uds_client! {
 
 /// A client constructs in a `static` for the same reason the server above does, and
 /// without the application naming `uds_session` to supply channel slots.
-static TESTER: Tester = Tester::new(FakeTransport, PhysicalKeepAlive);
+static TESTER: Tester = Tester::new(
+    FakeTransport,
+    Address(0x0E00),
+    KeepAlive::physical(2_000),
+    Spacing {
+        physical: 10,
+        functional: 10,
+    },
+);
 
 /// ``UDSSVC_ARCH_0024`` — the tester and the server size the same exchange from the same
 /// `Did` declaration. The request is the service identifier and two bytes per identifier;
@@ -529,15 +538,15 @@ fn the_client_constructs_in_a_static() {
 /// spelled a transport, a keep-alive mode and three counts.
 ///
 /// It also pins the borrow this crate could not express until the client owned storage —
-/// `Records<'_, Did>` borrows the response buffer out of `&mut Tester`. Never awaited, so
-/// the `todo!()` bodies are compiled and not run: compile-time assertions in a test's
-/// clothes, as `transport.rs`'s borrow test is.
+/// `Records<'_, Did>` borrows the response buffer out of `&mut Tester`. Never awaited:
+/// compile-time assertions in a test's clothes, as `transport.rs`'s borrow test is.
+/// `tests/client.rs` runs the same calls.
 ///
 /// What they assert beyond the borrow is the shape of a read. Reaching a record is a
 /// `match` and a `for`: the walk yields pairs rather than `Result`s, because the response
 /// was checked when it was built.
 #[expect(dead_code, reason = "compiled for its signature, never called")]
-async fn read_the_vin(tester: &mut Tester) -> Result<&'static str, ()> {
+async fn read_the_vin(tester: &mut Tester) -> Result<&'static str, ClientError<()>> {
     Ok(
         match tester
             .read_data_by_identifier(Address(0x0E00), &[Did::VinNumber])
@@ -566,7 +575,9 @@ async fn read_the_vin(tester: &mut Tester) -> Result<&'static str, ()> {
 /// every case names the server that gave it. There is no "nothing came back" arm, because
 /// a silent server produces no answer at all — the window closing is `None`.
 #[expect(dead_code, reason = "compiled for its signature, never called")]
-async fn read_the_vin_from_every_server(tester: &mut Tester) -> Result<(), ()> {
+async fn read_the_vin_from_every_server(
+    tester: &mut Tester,
+) -> Result<(), ClientError<()>> {
     let mut answers =
         tester.read_data_by_identifier_functional(Address(0x0E00), &[Did::VehicleSpeed]);
     while let Some(answer) = answers.next().await {

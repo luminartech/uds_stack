@@ -823,8 +823,11 @@ macro_rules! uds_server {
 /// The fold is [`crate::uds_server`]'s `ReadDataByIdentifier` arms, run against the
 /// client's side of the same exchange: a request is the service identifier and two bytes
 /// per identifier, and a response is the service identifier and each identifier beside
-/// its record. Naming the transport lets its
-/// [`MAX_PDU`](crate::UdsTransport::MAX_PDU) cap both, exactly as it does for a server.
+/// its record. Both are at least as long as a `DiagnosticSessionControl` exchange
+/// ([`crate::Client::diagnostic_session_control`]). Naming the transport lets its
+/// [`MAX_PDU`](crate::UdsTransport::MAX_PDU) cap both, exactly as it does for a server,
+/// and one whose cap leaves no room for that six-byte response fails to compile. Six
+/// bytes also hold every negative response.
 ///
 /// `client = Name` is the alias the client is reached through, so the channel counts and
 /// the keep-alive mode are written once, here, rather than at every signature that names
@@ -834,8 +837,8 @@ macro_rules! uds_server {
 ///
 /// ```
 /// # use uds_services::{
-/// #     AfterSend, Ai, DataIdentifier, PhysicalKeepAlive, RecordError, Reloads, Timestamp,
-/// #     TransportEvent, UdsTransport, uds_client,
+/// #     Address, AfterSend, Ai, DataIdentifier, KeepAlive, PhysicalKeepAlive, RecordError,
+/// #     Reloads, Spacing, Timestamp, TransportEvent, UdsTransport, uds_client,
 /// # };
 /// # #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 /// # enum Did { VehicleSpeed, VinNumber }
@@ -887,7 +890,12 @@ macro_rules! uds_server {
 ///     client = Tester,
 /// }
 ///
-/// static TESTER: Tester = Tester::new(DoIpTransport, PhysicalKeepAlive);
+/// static TESTER: Tester = Tester::new(
+///     DoIpTransport,
+///     Address(0x0E00),
+///     KeepAlive::physical(2_000),
+///     Spacing { physical: 10, functional: 10 },
+/// );
 /// # let _ = &TESTER;
 /// ```
 #[macro_export]
@@ -914,13 +922,23 @@ macro_rules! uds_client {
         >;
 
         const _: () = {
+            // A read, or the two-byte `DiagnosticSessionControl` request and its six-byte
+            // response, whichever is longer.
             const REQUEST: usize = $crate::assembly::min2(
-                1 + 2 * { $max_dids },
+                $crate::assembly::max_of(&[1 + 2 * { $max_dids }, 2]),
                 <$transport as $crate::UdsTransport>::MAX_PDU,
             );
             const RESPONSE: usize = $crate::assembly::min2(
-                1 + { $max_dids } * (2 + <$did as $crate::DataIdentifier>::MAX_RECORD_LEN),
+                $crate::assembly::max_of(&[
+                    1 + { $max_dids }
+                        * (2 + <$did as $crate::DataIdentifier>::MAX_RECORD_LEN),
+                    6,
+                ]),
                 <$transport as $crate::UdsTransport>::MAX_PDU,
+            );
+            ::core::assert!(
+                RESPONSE >= 6,
+                "the transport's MAX_PDU cannot carry a DiagnosticSessionControl response"
             );
 
             impl $crate::sealed::Sealed for $did {}

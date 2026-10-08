@@ -85,12 +85,19 @@ pub enum TransportEvent<'b> {
     /// executing the service. So a close is not a failure and must not arrive as `Err`.
     /// A transport with no connections never emits this, exactly as one that never
     /// truncates never emits [`Self::DataTooLong`].
+    ///
+    /// **Reported once per close.** It is an edge, not a state: after it, the next
+    /// [`UdsTransport::next_event`] waits for an event or the deadline as usual, and a
+    /// transport whose connection layer keeps reporting a closed connection until it
+    /// reconnects reports it here once. A request handed to the transport meanwhile is
+    /// still confirmed, failed, as the trait requires.
     Closed {
         /// The peer whose connection closed: for a server, the client whose requests
-        /// it carried. Only an exchange with this peer ends; a transport carrying
-        /// several peers' connections reports each close as its own peer's, and one
-        /// that cannot name the peer of a connection reports no close for it, because
-        /// nothing is waiting on a connection whose peer never spoke.
+        /// it carried; for a client, the server it sent them to. Only an exchange with
+        /// this peer ends; a transport carrying several peers' connections reports each
+        /// close as its own peer's, and one that cannot name the peer of a connection
+        /// reports no close for it, because nothing is waiting on a connection whose
+        /// peer never spoke.
         peer: Address,
         /// Whether the close was one the standard prescribes.
         ///

@@ -27,6 +27,17 @@ pub enum RecordError {
     /// *request* is `requestOutOfRange` (0x31), but in a response it is a server naming
     /// something that was never asked for.
     UnknownIdentifier,
+    /// A response was longer than the client's buffer, so it was not read at all.
+    ///
+    /// Only a client sees this: the buffer is folded from this vocabulary's declared
+    /// maxima, so only a server sending more than the vocabulary declares can overrun
+    /// it — a disagreement between the two applications, as [`Self::UnknownIdentifier`]
+    /// is. Its records are not walked: a cut at a record boundary would read as a
+    /// shorter, valid answer.
+    Overlong {
+        /// How long the response was, where the transport knew.
+        declared: Option<usize>,
+    },
 }
 
 /// A data identifier this application supports.
