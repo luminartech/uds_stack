@@ -1,0 +1,29 @@
+# Not published: the stack's DoIP path end to end over loopback sockets, kept out of the
+# published crates so that no published feature or dev-dependency exists only for it.
+# CI's `loopback` job runs it; `just test` covers it with the rest of the workspace.
+[package]
+name = "doip-loopback"
+version = "0.0.0"
+edition = "2024"
+rust-version.workspace = true
+publish = false
+description = "The DoIP server path, uds_server! over DoIpTransport over Entity, against simple_doip's Tester over loopback"
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+simple_doip = { workspace = true, features = ["connection"] }
+edge-nal = { workspace = true }
+edge-nal-std = { workspace = true }
+# The same time driver simple_doip's tests use: a workspace test build links one.
+embassy-time = { workspace = true, features = ["mock-driver", "generic-queue-8"] }
+# mock-driver takes its lock through critical-section, which a host test supplies.
+critical-section = { workspace = true, features = ["std"] }
+tokio = { workspace = true, features = ["macros", "rt", "sync", "time"] }
+uds_services = { workspace = true }
+
+[dev-dependencies]
+uds_on_ip = { path = "../../crates/uds_on_ip" }
+uds_protocol = { workspace = true }
+
+[lints]
+workspace = true

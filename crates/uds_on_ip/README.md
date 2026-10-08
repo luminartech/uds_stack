@@ -73,12 +73,13 @@ connection is closed after a positive `ECUReset` response (REQ 7.11) and after
 the positive `DiagnosticSessionControl` response to a session change the server
 says leaves its running software (REQ 7.9). A response longer than the entity
 can carry is answered `responseTooLong`, because the server's buffers are sized
-to the entity's `MAX_PDU`, and a request longer than the server accepts is
-refused by the entity with a `DoIP` diagnostic message NACK, before it is
-acknowledged (ISO 13400-2:2019 REQ 7.DoIP-072). Time is the `DoIP` entity's own
-clock, which it reports through `DiagnosticEntity::now`. The server role is
-tested end to end over loopback against `simple_doip`'s own entity and tester,
-behind the `connection` feature. The client role is not built. See the
+to the entity's `MAX_PDU`, and a request longer than the server decodes but
+within what the entity holds is answered by UDS in ISO 14229-1's order: `0x11`
+for a service the server does not support before `0x13` for a wrong length.
+Time is the `DoIP` entity's own clock, which it reports through
+`DiagnosticEntity::now`. The server role is tested end to end over loopback
+against `simple_doip`'s own entity and tester, in the workspace's unpublished
+`testing/doip-loopback` crate. The client role is not built. See the
 [workspace README](https://github.com/luminartech/uds_stack#status) for how
 this compares to the rest of the stack.
 
@@ -88,7 +89,6 @@ this compares to the rest of the stack.
 |---------|---------|--------------------|
 | `std` *(off by default)* | `alloc` | `std::error::Error` for `Error`, and `std` on `simple_doip`/`uds_protocol`. |
 | `alloc` | — | The `alloc`-only layers of `simple_doip` and `uds_protocol`. Nothing in this crate's own code needs it. |
-| `connection` | — | `simple_doip`'s `connection` feature: its `Entity` and `Tester`, over `edge-nal`, still `no_std`. Nothing in this crate's own code needs it; the loopback tests of the sensor's path do. |
 
 `default = []`, so the crate is `no_std` out of the box.
 

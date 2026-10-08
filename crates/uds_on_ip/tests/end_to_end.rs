@@ -226,18 +226,26 @@ fn a_refused_response_does_not_stop_the_server() {
     );
 }
 
-/// A request longer than the server's receive buffer is refused by the entity with the
-/// negative acknowledgement *diagnostic message too large* and discarded (ISO
-/// 13400-2:2019 REQ 7.DoIP-072, REQ 7.DoIP-074; #41): the server states its limit before
-/// it listens, so the request is never acknowledged, never served as a fragment, and
-/// never answered.
+/// A request longer than the server's receive buffer reaches the driver as
+/// `DataTooLong`, never as a request made of its first bytes, and is refused
+/// `incorrectMessageLengthOrInvalidFormat`.
 #[test]
-fn a_request_longer_than_the_server_accepts_is_refused_by_the_entity() {
+fn a_request_longer_than_the_server_accepts_is_refused_not_served_as_a_fragment() {
     let mut long = vec![0x22];
     long.extend([0xF4, 0x0D].repeat(100));
     let mut s = server([Tester::Connects(TESTER), Tester::Sends(TESTER, long)]);
     run(&mut s);
-    assert_eq!(wire(&s), [Wire::TooLarge(CONNECTION)]);
+    assert_eq!(
+        wire(&s),
+        [Wire::Data(
+            CONNECTION,
+            vec![
+                0x7F,
+                0x22,
+                Nrc::IncorrectMessageLengthOrInvalidFormat.into()
+            ]
+        )]
+    );
 }
 
 /// `10 03` is answered, the session change executes on the response's

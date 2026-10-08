@@ -559,25 +559,6 @@ pub trait DiagnosticEntity {
         pdu: &[u8],
     ) -> impl Future<Output = Result<(), Self::Error>>;
 
-    /// Refuse every diagnostic message whose PDU is longer than `max_pdu`, the longest
-    /// request the layer above accepts.
-    ///
-    /// Such a message, once its source and target addresses have passed, is answered
-    /// with the diagnostic message negative acknowledgement *diagnostic message too
-    /// large* and discarded (ISO 13400-2:2019 REQ 7.DoIP-072, REQ 7.DoIP-074), and
-    /// raises no event. A message within `max_pdu` but longer than the buffer lent to
-    /// [`Self::next_event`] is still acknowledged, and reported as
-    /// [`EntityEvent::IndicationTruncated`]: the layer above lends a smaller buffer while
-    /// it serves a request, and answers what does not fit there itself.
-    ///
-    /// Until this is called, only the entity's own receive limit applies, and a
-    /// `max_pdu` beyond that limit changes nothing.
-    ///
-    /// # Arguments
-    ///
-    /// * `max_pdu` - the longest PDU the layer above accepts, in bytes.
-    fn limit_requests(&mut self, max_pdu: usize);
-
     /// The current time on the clock a deadline is on.
     fn now(&self) -> Millis;
 

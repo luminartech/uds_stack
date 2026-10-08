@@ -8,9 +8,8 @@
 
 use uds_services::{
     Address, AfterSend, Ai, DiagnosticSessionType as S, Mtype, NegativeResponseCode as Nrc,
-    Reloads, ResponseSink, SResult, ServerParams, ServiceSet, SessionTiming,
-    SessionTransition, Sink, Storage, TaType, Timestamp, TransportEvent, UdsTransport,
-    uds_server,
+    Reloads, ResponseSink, SResult, ServerParams, SessionTiming, SessionTransition, Sink,
+    TaType, Timestamp, TransportEvent, UdsTransport, uds_server,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -75,8 +74,6 @@ impl uds_services::DiagnosticSessionControl for Ecu {
 #[derive(Debug)]
 struct Spurious {
     done: bool,
-    /// Every request limit the server stated.
-    limits: Vec<usize>,
 }
 
 impl UdsTransport for Spurious {
@@ -112,9 +109,6 @@ impl UdsTransport for Spurious {
     }
     fn outbound_max(&self) -> Option<usize> {
         None
-    }
-    fn limit_requests(&mut self, max: usize) {
-        self.limits.push(max);
     }
     fn channel_timing(&self) -> Reloads {
         Reloads {
@@ -156,31 +150,10 @@ fn block_on<F: core::future::Future>(f: F) -> F::Output {
 /// on: `step` returns `Ok`, not an error and not a panic.
 #[test]
 fn a_spurious_confirmation_is_survived() {
-    let mut server = Srv::new(Ecu, spurious(), Address(0x10), PARAMS);
+    let mut server = Srv::new(Ecu, Spurious { done: false }, Address(0x10), PARAMS);
     assert_eq!(block_on(server.step()), Ok(()));
     assert!(server.transport().done);
     assert_eq!(block_on(server.step()), Err(()));
-}
-
-const fn spurious() -> Spurious {
-    Spurious {
-        done: false,
-        limits: Vec::new(),
-    }
-}
-
-/// The server states the longest request it accepts, its in-flight buffer's length,
-/// once and before its first `next_event`, so a transport can refuse a longer one
-/// before accepting it (ISO 13400-2:2019 REQ 7.DoIP-072; #41).
-#[test]
-fn the_server_states_its_request_limit_once_before_it_listens() {
-    let mut server = Srv::new(Ecu, spurious(), Address(0x10), PARAMS);
-    let mut store = <<Ecu as ServiceSet>::Store as Storage>::EMPTY;
-    let in_flight = store.split().in_flight.len();
-    assert_eq!(block_on(server.step()), Ok(()));
-    assert_eq!(server.transport().limits, [in_flight]);
-    assert_eq!(block_on(server.step()), Err(()));
-    assert_eq!(server.transport().limits, [in_flight]);
 }
 
 const ECU: Address = Address(0x10);

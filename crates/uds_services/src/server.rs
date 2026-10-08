@@ -127,12 +127,9 @@ impl<A: ServiceSet, T: UdsTransport, const PEERS: usize> Server<A, T, PEERS> {
         &self.transport
     }
 
-    /// Run [`ServiceSet::start_up`], and tell the transport the longest request the
-    /// server accepts, the first time it is called, and never again.
+    /// Run [`ServiceSet::start_up`] the first time it is called, and never again.
     fn start_up(&mut self) {
         if !core::mem::replace(&mut self.started, true) {
-            let longest = self.store.split().in_flight.len();
-            self.transport.limit_requests(longest);
             self.services.start_up(&mut self.state);
         }
     }

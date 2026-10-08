@@ -1,9 +1,13 @@
-//! The sensor's path over loopback: a `uds_server!` server on `DoIpTransport` over
-//! `simple_doip`'s `Entity`, and `simple_doip`'s `Tester` at the other end of an
-//! `edge-nal-std` socket.
+//! The `DoIP` path over loopback: `simple_doip`'s `Entity` serving a `uds_server!` server
+//! through `uds_on_ip`'s `DoIpTransport`, and `simple_doip`'s `Tester` at the other end
+//! of an `edge-nal-std` socket.
 //!
-//! For any test that needs the real entity rather than the scripted mock in
-//! `tests/support`. Write the test as a plain `#[test]` that calls [`on_loopback`]: it
+//! A harness for any test that needs the real entity and tester rather than the scripted
+//! mocks in `uds_on_ip`'s and `simple_doip`'s own tests: this crate's `sensor_path`
+//! test, and the client transport's and the embedded probe's after it. Unpublished, so
+//! that no published crate carries a feature or dependency for it.
+//!
+//! Write the test as a plain `#[test]` that calls [`on_loopback`]: it
 //! takes the clock, binds a port, and runs the test's future on a current-thread
 //! runtime within [`PATIENCE`]. Inside, build the entity with [`Loopback::entity`],
 //! connect testers with [`Loopback::tester`], and race the server against the testers'
@@ -12,6 +16,12 @@
 //! Timers run on `embassy-time`'s mock clock, which moves only when a test calls
 //! [`advance`]. The clock is process-wide, so [`on_loopback`] holds it for the whole
 //! test, and the tests in one binary run one at a time.
+
+#![allow(
+    clippy::panic,
+    clippy::expect_used,
+    reason = "a test harness: a failed expectation is the test failing"
+)]
 
 use core::future::Future;
 use core::pin::Pin;
@@ -113,21 +123,33 @@ impl core::fmt::Debug for Loopback {
 }
 
 impl Loopback {
+    /// Binds a free loopback port. `edge-nal-std` cannot report the port it bound, so
+    /// one is found with a `std` listener first and bound again; another process can
+    /// take it in between, so a few ports are tried.
     async fn bind() -> Self {
-        let remote = std::net::TcpListener::bind("127.0.0.1:0")
-            .and_then(|listener| listener.local_addr())
-            .expect("a free loopback port");
+        const ATTEMPTS: usize = 8;
         let stack: &'static Stack = Box::leak(Box::new(Stack::new()));
-        let acceptor = stack.bind(remote).await.expect("the port binds");
-        Self {
-            stack,
-            acceptor: Box::leak(Box::new(acceptor)),
-            remote,
+        for _ in 0..ATTEMPTS {
+            let remote = std::net::TcpListener::bind("127.0.0.1:0")
+                .and_then(|listener| listener.local_addr())
+                .expect("a free loopback port");
+            if let Ok(acceptor) = stack.bind(remote).await {
+                return Self {
+                    stack,
+                    acceptor: Box::leak(Box::new(acceptor)),
+                    remote,
+                };
+            }
         }
+        panic!("no loopback port could be bound in {ATTEMPTS} attempts")
     }
 
     /// The sensor's entity on this port, answering [`ENTITY`] and [`FUNCTIONAL`] and
     /// accepting routing activation from [`TESTER`] only.
+    ///
+    /// # Panics
+    ///
+    /// Never: [`ENTITY`], [`FUNCTIONAL`] and [`TESTER`] are valid as what they are.
     #[must_use]
     pub fn entity<const MAX_MESSAGE: usize>(&self) -> SensorEntity<MAX_MESSAGE> {
         let address = EntityAddress::new(ENTITY, FUNCTIONAL).expect("entity addresses");
@@ -141,6 +163,10 @@ impl Loopback {
     /// # Errors
     ///
     /// Whatever [`Tester::connect`] returns.
+    ///
+    /// # Panics
+    ///
+    /// Never: [`TESTER`] is a tester's address.
     pub async fn tester(&self) -> Result<SensorTester, TesterConnectError> {
         let sa = TesterAddress::new(TESTER).expect("a tester address");
         Ok(Tester::connect(self.stack, self.remote, sa)
@@ -193,9 +219,12 @@ pub enum Then {
     Response(LogicalAddress, Vec<u8>),
     /// The connection closed.
     Closed,
+    /// Nothing: the request was not acknowledged, so no response follows it.
+    Refused,
 }
 
-/// Sends `pdu` to `ta`, then waits for the first response or close.
+/// Sends `pdu` to `ta`, then waits for the first response or close, or returns at once if
+/// the request is not acknowledged.
 ///
 /// # Panics
 ///
@@ -215,6 +244,12 @@ pub async fn exchange<C: DiagnosticConnection>(
     loop {
         let mut buf = vec![0u8; TESTER_MESSAGE];
         match tester.next_event(&mut buf, None).await.expect("the tester") {
+            ConnectionEvent::Confirm { result, .. } if result != DoIpResult::Ok => {
+                return Exchange {
+                    confirmed: Some(result),
+                    then: Then::Refused,
+                };
+            }
             ConnectionEvent::Confirm { result, .. } => confirmed = Some(result),
             ConnectionEvent::Indication { sa, pdu, .. } => {
                 return Exchange {

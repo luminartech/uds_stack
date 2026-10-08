@@ -47,8 +47,6 @@ pub(super) struct Limits {
     /// The largest frame on a socket that has not activated routing, which may have to
     /// move into the reserve.
     pub(super) unregistered: usize,
-    /// The longest diagnostic message PDU the layer above accepts.
-    pub(super) request: usize,
 }
 
 /// Handles the frame at the front of `slot`'s receive buffer, within `limits`.
@@ -125,13 +123,6 @@ pub(super) fn handle<S, const CAP: usize>(
             if registered != Some(tester) {
                 nack(tx, DiagnosticNackCode::InvalidSourceAddress);
                 open.finalize(false, false, now);
-                Handled::Done
-            } else if address.ta_type_of(target).is_some()
-                && message.user_data.len() > limits.request
-            {
-                // REQ 7.DoIP-072 and 074: longer than the layer above accepts, so refused
-                // and discarded rather than acknowledged.
-                nack(tx, DiagnosticNackCode::DiagnosticMessageTooLarge);
                 Handled::Done
             } else if let Some(ta_type) = address.ta_type_of(target) {
                 tx.push(&Message::diagnostic_message_ack(

@@ -45,8 +45,6 @@ pub enum Fault {
 pub enum Wire {
     Data(ConnectionId, Vec<u8>),
     Close(ConnectionId),
-    /// A diagnostic message refused as too large (ISO 13400-2:2019 REQ 7.DoIP-072).
-    TooLarge(ConnectionId),
 }
 
 #[derive(Debug)]
@@ -79,8 +77,6 @@ pub struct MockEntity<const CONNECTIONS: usize> {
     /// Whether each `request` in turn is refused, as a full queue refuses it; once
     /// spent, every request is accepted.
     pub refuse: VecDeque<bool>,
-    /// The longest request PDU the layer above accepts, once it has said.
-    pub request_limit: Option<usize>,
 }
 
 impl<const CONNECTIONS: usize> MockEntity<CONNECTIONS> {
@@ -97,7 +93,6 @@ impl<const CONNECTIONS: usize> MockEntity<CONNECTIONS> {
             confirms_last: false,
             clock: 0,
             refuse: VecDeque::new(),
-            request_limit: None,
         }
     }
 
@@ -195,10 +190,6 @@ impl<const CONNECTIONS: usize> DiagnosticEntity for MockEntity<CONNECTIONS> {
         Ok(())
     }
 
-    fn limit_requests(&mut self, max_pdu: usize) {
-        self.request_limit = Some(max_pdu);
-    }
-
     fn now(&self) -> Millis {
         Millis(self.clock)
     }
@@ -229,10 +220,6 @@ impl<const CONNECTIONS: usize> DiagnosticEntity for MockEntity<CONNECTIONS> {
                 Tester::Sends(sa, pdu) => {
                     let index = self.slot_of(sa).unwrap();
                     let connection = Self::id(index);
-                    if self.request_limit.is_some_and(|limit| pdu.len() > limit) {
-                        self.wire.push(Wire::TooLarge(connection));
-                        continue;
-                    }
                     self.table[index].as_mut().unwrap().named = true;
                     let fits = pdu.len().min(buf.len());
                     let delivered = &mut buf[..fits];

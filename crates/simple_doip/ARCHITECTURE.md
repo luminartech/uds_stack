@@ -185,14 +185,15 @@ stateDiagram-v2
 
 - **Figure 17, and one deviation.** A diagnostic message whose source address is
   not the one registered on its socket is refused with diagnostic NACK `0x02` and
-  the socket closed; one to a target the entity does not answer, `0x03`; one longer
-  than the layer above said it accepts, with `limit_requests`, `0x04` and discarded
-  (REQ 7.DoIP-072, 074). Every other is acknowledged positively and indicated. The
-  acknowledgement comes before the entity knows whether the caller's buffer holds
-  the message, so one within the limit but too long for the buffer lent is
+  the socket closed; one to a target the entity does not answer, `0x03`. Every other
+  is acknowledged positively and indicated: the entity's size limit is what it can
+  hold, its `MAX_MESSAGE`, which Figure 16 enforces with header NACK `0x02`, so
+  REQ 7.DoIP-072's `0x04` is never sent. The acknowledgement comes before the entity
+  knows whether the caller's buffer holds the message, so one too long for it is
   indicated truncated after a positive acknowledgement, where REQ 7.DoIP-073 has a
-  NACK `0x05`: a busy UDS server owes that request `busyRepeatRequest`, which
-  `uds_on_ip` composes from the truncated event.
+  NACK `0x05`: a UDS server owes that request an answer by ISO 14229-1's rules,
+  `busyRepeatRequest` while busy, `0x11` or `0x13` otherwise, which `uds_on_ip`
+  composes from the truncated event.
 - **Requests wait for nothing.** A `request` is made by its future's first poll,
   which completes it, so one dropped unpolled makes none. It is queued on the
   connection that registered its target and confirmed `Ok` once written,

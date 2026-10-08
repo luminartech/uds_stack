@@ -1,23 +1,19 @@
 //! The sensor's path end to end: `uds_server!` → `DoIpTransport` → `simple_doip`'s
 //! `Entity`, with `simple_doip`'s `Tester` at the other end of a loopback socket.
 //!
-//! `end_to_end.rs` runs the same server over a scripted entity; this runs it over the
-//! one the sensor ships, so what the entity does on the wire is what is tested.
+//! `uds_on_ip`'s `end_to_end.rs` runs the same server over a scripted entity; this runs
+//! it over the one the sensor ships, so what the entity does on the wire is what is
+//! tested.
 
-// Not under Miri, which has no sockets. The transport's own logic runs under Miri in
-// `end_to_end.rs` and `transport.rs`, over the scripted entity.
-#![cfg(not(miri))]
 #![allow(
     clippy::panic,
     clippy::expect_used,
     reason = "test harness: a failed expectation is the test failing"
 )]
 
-mod loopback;
-
 use core::future::Future;
 
-use loopback::{
+use doip_loopback::{
     ENTITY, FUNCTIONAL, Loopback, SensorEntity, Then, advance, answered, ask, exchange,
     next, on_loopback, send, serve_until,
 };
@@ -192,9 +188,10 @@ fn a_session_change_that_leaves_the_software_is_answered_then_closed() {
     });
 }
 
-/// A second connection activating routing for the tester's address, while the first
-/// still answers the alive check, is refused with `0x03` (ISO 13400-2:2019 Table 48,
-/// REQ 3.DoIP-091). The first is served as before.
+/// A second connection activating routing for the tester's address has the first
+/// alive-checked (ISO 13400-2:2019 REQ 3.DoIP-091), and waits while the first has not
+/// answered. Once it answers, the second is refused `0x03` (REQ 3.DoIP-093, Table 49),
+/// and the first is served as before.
 #[test]
 fn a_second_connection_from_the_tester_is_refused_while_the_first_answers() {
     on_loopback(|loopback| async move {
@@ -206,8 +203,16 @@ fn a_second_connection_from_the_tester_is_refused_while_the_first_answers() {
                 answered(&[0x7E, 0x00])
             );
 
+            let mut second = core::pin::pin!(loopback.tester());
+            // The first is not read, so its alive check goes unanswered, and the clock
+            // stands still, so the check does not time out: the second must wait.
+            tokio::select! {
+                biased;
+                decided = &mut second => panic!("decided before the first answered: {decided:?}"),
+                () = tokio::time::sleep(std::time::Duration::from_millis(50)) => {}
+            }
             let second = tokio::select! {
-                second = loopback.tester() => second,
+                second = second => second,
                 then = next(&mut first) => panic!("the first saw {then:?}"),
             };
             assert!(
@@ -229,10 +234,10 @@ fn a_second_connection_from_the_tester_is_refused_while_the_first_answers() {
     });
 }
 
-/// A first connection that does not answer the alive check within
-/// `T_TCP_Alive_Check` is closed, and the second takes its address (ISO 13400-2:2019
-/// REQ 3.DoIP-093). The transport then routes to the second, and an `ECUReset` there
-/// closes the second (ISO 14229-5:2022 REQ 7.11).
+/// A first connection alive-checked for a second's activation (ISO 13400-2:2019 REQ
+/// 3.DoIP-091) that does not answer within `T_TCP_Alive_Check` is closed, and the second
+/// takes its address (REQ 3.DoIP-092). The transport then routes to the second, and an
+/// `ECUReset` there closes the second (ISO 14229-5:2022 REQ 7.11).
 #[test]
 fn a_silent_first_connection_gives_way_to_the_second() {
     on_loopback(|loopback| async move {
@@ -246,11 +251,15 @@ fn a_silent_first_connection_gives_way_to_the_second() {
 
             let mut second = tokio::select! {
                 second = loopback.tester() => second.expect("activated"),
+                // The clock moves in steps, giving the entity real time to act between
+                // them, to 1.5 s: past `T_TCP_Alive_Check` once the check is sent, and
+                // short of the second tester's own 2 s wait for its activation response.
                 () = async {
-                    loop {
-                        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
-                        advance(embassy_time::Duration::from_millis(50));
+                    for _ in 0..15 {
+                        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+                        advance(embassy_time::Duration::from_millis(100));
                     }
+                    core::future::pending::<()>().await;
                 } => unreachable!(),
             };
             assert_eq!(
@@ -276,13 +285,14 @@ type SmallEntity = SensorEntity<64>;
 const SMALL_PDU: usize = <SmallEntity as DiagnosticEntity>::MAX_PDU;
 
 /// Two identifiers whose positive responses (`62`, the identifier, the record) are
-/// exactly the small entity's limit and one byte over it, and one whose read waits for
-/// [`GATE`].
+/// exactly the small entity's limit and one byte over it, one whose read waits for
+/// [`GATE`], and one with a one-byte record, eight of which fit one response.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Did {
     Fits,
     Overflows,
     Gated,
+    Short,
 }
 
 impl Did {
@@ -290,7 +300,7 @@ impl Did {
         match self {
             Self::Fits => SMALL_PDU - 3,
             Self::Overflows => SMALL_PDU - 2,
-            Self::Gated => 1,
+            Self::Gated | Self::Short => 1,
         }
     }
 }
@@ -305,6 +315,7 @@ impl DataIdentifier for Did {
             Self::Fits => 0xF190,
             Self::Overflows => 0xF191,
             Self::Gated => 0xF192,
+            Self::Short => 0xF193,
         }
     }
     fn from_u16(value: u16) -> Option<Self> {
@@ -312,6 +323,7 @@ impl DataIdentifier for Did {
             0xF190 => Some(Self::Fits),
             0xF191 => Some(Self::Overflows),
             0xF192 => Some(Self::Gated),
+            0xF193 => Some(Self::Short),
             _ => None,
         }
     }
@@ -388,33 +400,35 @@ fn reader_limit() -> usize {
     store.split().in_flight.len()
 }
 
-/// `22` and `count` identifiers: a request `1 + 2 × count` bytes long.
-fn read_of(count: usize) -> Vec<u8> {
+/// `22` and `count` of `did`: a request `1 + 2 × count` bytes long.
+fn read_of(did: Did, count: usize) -> Vec<u8> {
     let mut request = vec![0x22];
-    request.extend([0xF1, 0x90].repeat(count));
+    request.extend(did.as_u16().to_be_bytes().repeat(count));
     request
 }
 
-/// A request longer than the server accepts is refused by the entity with the negative
-/// acknowledgement *diagnostic message too large*, which the tester's confirm reports,
-/// and is not answered; the connection goes on (ISO 13400-2:2019 REQ 7.DoIP-072,
-/// REQ 7.DoIP-074; #41).
+/// A request longer than the server decodes, but within what the entity holds, is
+/// acknowledged and answered by UDS in ISO 14229-1:2020's order, not refused by `DoIP`:
+/// a service the server does not support `0x11`, one it does `0x13`, so an over-long
+/// request for an unsupported service is not mistaken for a malformed one (#41).
 #[test]
-fn an_over_long_request_is_nacked_0x04() {
+fn a_request_longer_than_the_server_decodes_is_answered_by_its_nrc() {
     on_loopback(|loopback| async move {
         let mut server = reader(&loopback);
         serve_until(&mut server, async {
             let mut tester = loopback.tester().await.expect("activated");
-            let too_long = read_of(reader_limit() / 2 + 1);
+            let too_long = read_of(Did::Short, reader_limit() / 2 + 1);
             assert!(too_long.len() > reader_limit());
             assert_eq!(
-                send(&mut tester, &too_long).await,
-                DoIpResult::MessageTooLarge
+                ask(&mut tester, &too_long).await,
+                answered(&[0x7F, 0x22, 0x13])
             );
 
+            let mut unsupported = vec![0x2E, 0xF1, 0x90];
+            unsupported.resize(reader_limit() + 1, 0x00);
             assert_eq!(
-                ask(&mut tester, &[0x22, 0xF1, 0x90]).await.confirmed,
-                Some(DoIpResult::Ok)
+                ask(&mut tester, &unsupported).await,
+                answered(&[0x7F, 0x2E, 0x11])
             );
             tester.close().await.expect("closed");
         })
@@ -422,32 +436,31 @@ fn an_over_long_request_is_nacked_0x04() {
     });
 }
 
-/// A request exactly as long as the server accepts is acknowledged and served, not
-/// refused: the limit is the in-flight buffer's length, not one less.
+/// The longest request the server decodes is served whole: its in-flight buffer holds
+/// it, not one byte less.
 #[test]
-fn a_request_at_the_limit_is_served() {
+fn the_longest_request_the_server_decodes_is_served() {
     on_loopback(|loopback| async move {
         let mut server = reader(&loopback);
         serve_until(&mut server, async {
             let mut tester = loopback.tester().await.expect("activated");
-            let at_limit = read_of((reader_limit() - 1) / 2);
-            assert_eq!(at_limit.len(), reader_limit());
-            let exchanged = ask(&mut tester, &at_limit).await;
-            assert_eq!(exchanged.confirmed, Some(DoIpResult::Ok));
-            assert!(
-                matches!(exchanged.then, Then::Response(..)),
-                "{exchanged:?}"
-            );
+            let count = (reader_limit() - 1) / 2;
+            let longest = read_of(Did::Short, count);
+            assert_eq!(longest.len(), reader_limit());
+
+            let mut response = vec![0x62];
+            response.extend([0xF1, 0x93, 0xA5].repeat(count));
+            assert_eq!(ask(&mut tester, &longest).await, answered(&response));
             tester.close().await.expect("closed");
         })
         .await;
     });
 }
 
-/// A request within the server's limit but too long for the buffer it lends while a
-/// service runs is acknowledged, not refused, and answered `busyRepeatRequest` (ISO
-/// 14229-1:2020 NRC `0x21`; #41 keeps the two apart); the running service then
-/// answers.
+/// A request the server would decode, but too long for the buffer it lends while a
+/// service runs, is acknowledged and answered `busyRepeatRequest` (ISO 14229-1:2020 NRC
+/// `0x21`), not `0x13`: it is turned away for the service in progress, not for its
+/// length. The running service then answers.
 #[test]
 fn a_long_request_while_a_service_runs_is_answered_busy() {
     on_loopback(|loopback| async move {
@@ -456,7 +469,7 @@ fn a_long_request_while_a_service_runs_is_answered_busy() {
             let mut tester = loopback.tester().await.expect("activated");
             assert_eq!(send(&mut tester, &[0x22, 0xF1, 0x92]).await, DoIpResult::Ok);
 
-            let long = read_of((reader_limit() - 1) / 2);
+            let long = read_of(Did::Short, (reader_limit() - 1) / 2);
             assert_eq!(ask(&mut tester, &long).await, answered(&[0x7F, 0x22, 0x21]));
 
             GATE.notify_one();

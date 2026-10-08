@@ -256,7 +256,6 @@ pub trait UdsTransport {
         -> impl Future<Output = Result<TransportEvent<'b>, Self::Error>>;
 
     fn outbound_max(&self) -> Option<usize>;
-    fn limit_requests(&mut self, max: usize) {}
     fn channel_timing(&self) -> Reloads;
     fn now(&self) -> Timestamp;
 }
@@ -275,15 +274,20 @@ Three properties of this shape are load-bearing:
   idiomatic destructuring and would silently discard a `truncated` flag,
   leaving a fragment decoded as a whole message. `DataTooLong` cannot be
   absorbed by an arm written for a whole message.
-- **Each limit travels the way it is known.** `MAX_PDU` is the transport's,
-  known when the server is assembled, so it is a constant `uds_server!` folds
-  into the buffers: `DoIpTransport` states its entity's, and a response that
-  would not fit is answered `responseTooLong`. The longest request is the
-  server's in-flight buffer, so the server states it, once, with
-  `limit_requests`, and a transport that can refuse a longer request before
-  accepting it does: the `DoIP` entity with a diagnostic message NACK `0x04`.
-  `outbound_max` is the peer's advertised *Max. data size*, which a tester never
-  sends an entity, so `DoIpTransport` reports `None`.
+- **The transport's limit is a constant; the server states none.** `MAX_PDU` is
+  known when the server is assembled, so `uds_server!` folds it into the
+  buffers: `DoIpTransport` states its entity's, and a response that would not
+  fit is answered `responseTooLong`. There is deliberately no request limit
+  for the transport to enforce. A request longer than the server decodes, but
+  one the entity can hold, still reaches the server, truncated, so that it is
+  answered in ISO 14229-1's order: an unsupported service `0x11` before a
+  wrong length `0x13`. A `DoIP` NACK `0x04` (ISO 13400-2:2019 REQ 7.DoIP-072)
+  at the server's decode length would answer the first with the second's
+  reason, so the entity's *Max. data size* is what it can hold, and beyond
+  that it refuses the frame itself (header NACK `0x02`). This is the answer to
+  #41, which asked for the NACK. `outbound_max` is the peer's
+  advertised *Max. data size*, which a tester never sends an entity, so
+  `DoIpTransport` reports `None`.
 
 **No close and no reconnect, by decision rather than omission.** A server is
 reconnected *to* and never reconnects — ISO 14229-5:2022 REQ 7.8 and REQ 7.10
@@ -306,8 +310,7 @@ the seam with no I/O in it:
   `ConnectionId` it arrived on; `request` routes a response by its target
   address; `close(connection)` performs the close REQ 7.9 and REQ 7.11
   prescribe — this crate decides *when*, the entity performs *what*.
-  `MAX_PDU` is the longest response it sends, and `limit_requests` the longest
-  request it acknowledges.
+  `MAX_PDU` is the longest response it sends.
   `DoIpTransport<E: DiagnosticEntity, CONNECTIONS>` drives it and feeds one
   `uds_services::Server`, because the session is the server's, not a
   connection's.
@@ -700,8 +703,8 @@ together, in dependency order, `uds_on_ip` last.
 Verified against the working tree on 2026-09-21, not recalled. Each entry names
 where it was checked. Re-checked on 2026-09-22, after the workspace merge, for
 the entries this revision touches, and on 2026-10-08, when the transport began to
-run over `simple_doip`'s real `Entity` and `Tester` (`tests/sensor_path.rs`) and an
-over-long request became the entity's `0x04` NACK.
+run over `simple_doip`'s real `Entity` and `Tester`, in the unpublished
+`testing/doip-loopback` crate.
 
 ### 9.1 Prerequisites — blocking, and not in this crate
 

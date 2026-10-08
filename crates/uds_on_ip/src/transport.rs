@@ -192,7 +192,6 @@ impl<E: DiagnosticEntity, const CONNECTIONS: usize> DoIpTransport<E, CONNECTIONS
     /// #   ) -> Result<(), ()> {
     /// #       Ok(())
     /// #   }
-    /// #   fn limit_requests(&mut self, _: usize) {}
     /// #   fn now(&self) -> Millis {
     /// #       Millis(0)
     /// #   }
@@ -518,14 +517,6 @@ impl<E: DiagnosticEntity, const CONNECTIONS: usize> UdsTransport
         None
     }
 
-    /// [`DiagnosticEntity::limit_requests`]: the entity refuses a longer diagnostic
-    /// message with the negative acknowledgement ISO 13400-2:2019 REQ 7.DoIP-072
-    /// prescribes, before acknowledging it, rather than delivering it as
-    /// [`TransportEvent::DataTooLong`] to be answered as malformed.
-    fn limit_requests(&mut self, max: usize) {
-        self.entity.limit_requests(max);
-    }
-
     /// The `tP_Client` reload pair this transport dictates: `DoIP` has no
     /// `T_DataSOM.ind`, so ISO 14229-2:2021 REQ 5.11 gives it `tP6` rather than
     /// `tP2`.
@@ -574,7 +565,6 @@ mod tests {
         ) -> Result<(), Self::Error> {
             Ok(())
         }
-        fn limit_requests(&mut self, _max_pdu: usize) {}
         fn now(&self) -> Millis {
             Millis(0)
         }

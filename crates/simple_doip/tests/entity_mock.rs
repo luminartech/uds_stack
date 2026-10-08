@@ -42,7 +42,6 @@ struct MockEntity<const MCTS: usize> {
     table: [Option<Slot>; MCTS],
     confirms: VecDeque<(LogicalAddress, LogicalAddress, TaType, DoIpResult)>,
     wire: Vec<Wire>,
-    request_limit: Option<usize>,
 }
 
 impl<const MCTS: usize> MockEntity<MCTS> {
@@ -52,7 +51,6 @@ impl<const MCTS: usize> MockEntity<MCTS> {
             table: core::array::from_fn(|_| None),
             confirms: VecDeque::new(),
             wire: Vec::new(),
-            request_limit: None,
         }
     }
 
@@ -112,10 +110,6 @@ impl<const MCTS: usize> DiagnosticEntity for MockEntity<MCTS> {
                 .push_back((sa, ta, ta_type, DoIpResult::NoSocket)),
         }
         Ok(())
-    }
-
-    fn limit_requests(&mut self, max_pdu: usize) {
-        self.request_limit = Some(max_pdu);
     }
 
     fn now(&self) -> Millis {

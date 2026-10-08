@@ -1,11 +1,12 @@
 # Cargo.toml
 [workspace]
 resolver = "3"
-members = ["crates/*", "examples/*"]
+members = ["crates/*", "examples/*", "testing/*"]
 # A bare `cargo` command at this root, which is how CI's reusable workflow runs every job,
-# covers the crates alone. The embassy-net adapter enables simple_doip's `connection`
-# feature, and as a default member it would unify that feature into every bare run,
-# Miri's included. `--workspace`, as the justfile passes, still covers it.
+# covers the crates alone. The embassy-net adapter and the loopback test crate enable
+# simple_doip's `connection` feature, and as default members they would unify that feature
+# into every bare run, Miri's included. `--workspace`, as the justfile passes, still covers
+# them.
 default-members = ["crates/*"]
 
 # The stack's version. The five crates release in lockstep, so the version is declared once
