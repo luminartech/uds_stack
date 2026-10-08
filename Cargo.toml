@@ -120,3 +120,11 @@ unimplemented = "deny"
 indexing_slicing = "deny"
 arithmetic_side_effects = "deny"
 as_conversions = "deny"
+
+# How firmware is linked: whole-program optimisation for size. `just size` measures the
+# embedded probe in it, so its baseline is the size an integrator's image would see.
+[profile.firmware]
+inherits = "release"
+lto = true
+codegen-units = 1
+opt-level = "s"

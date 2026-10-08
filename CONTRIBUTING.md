@@ -38,14 +38,15 @@ $ just check-all
 That runs the documentation checks, the test suite, clippy, and the bare-metal
 builds. Run it before pushing. Individually:
 
-| Recipe            | What it does                                                        |
-| ----------------- | ------------------------------------------------------------------- |
-| `just test`       | `cargo test --workspace --all-features`                             |
-| `just clippy`     | clippy over all targets, warnings denied                            |
-| `just embedded`   | builds the `no_std` crates for a bare-metal target                  |
-| `just check-docs` | requirement-set and governance checks, tool self-tests, needs build |
-| `just html`       | browsable documentation, which is how the set is meant to be read   |
-| `just check`      | every pre-commit hook over every file                               |
+| Recipe            | What it does                                                         |
+| ----------------- | -------------------------------------------------------------------- |
+| `just test`       | `cargo test --workspace --all-features`                              |
+| `just clippy`     | clippy over all targets, warnings denied                             |
+| `just embedded`   | builds the `no_std` crates for a bare-metal target, then `just size` |
+| `just size`       | holds the embedded probe's flash and RAM to its recorded baseline    |
+| `just check-docs` | requirement-set and governance checks, tool self-tests, needs build  |
+| `just html`       | browsable documentation, which is how the set is meant to be read    |
+| `just check`      | every pre-commit hook over every file                                |
 
 `just --list` shows the rest.
 
@@ -53,6 +54,11 @@ builds. Run it before pushing. Individually:
 unifies features across members, so a `std` dependency enabled by one crate can
 reach a `no_std` sibling and nothing a host build does will notice. That check
 is the only thing that catches it.
+
+**A size change is recorded in the commit that makes it.** `just size` fails
+when the probe's RAM changes at all or its flash grows past 5%. If the change
+is intended, `just size-baseline` records it, and the diff to
+`testing/embedded-probe/size-baseline.json` goes in the same commit.
 
 Install the hooks so the fast checks run on every commit:
 
