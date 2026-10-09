@@ -3,10 +3,10 @@
 //
 // The defensive three, `indexing_slicing`, `arithmetic_side_effects` and
 // `as_conversions`, are allowed on each module below that predates the standard, and on
-// no other: 13 sites in production code as of this writing.
+// no other.
 // Panic freedom holds in this crate's production code and is enforced there; its
-// test modules predate the standard and use `unwrap` as test code ordinarily does
-// (125 sites). Scoped to `test`, so the production build stays strict.
+// test modules predate the standard and use `unwrap` as test code ordinarily does.
+// Scoped to `test`, so the production build stays strict.
 #![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used, clippy::panic))]
 //! # Simple `DoIP`
 //!

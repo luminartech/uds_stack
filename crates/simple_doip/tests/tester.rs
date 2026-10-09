@@ -686,9 +686,9 @@ fn a_positive_ack_confirms_ok() {
     );
 }
 
-/// ISO 13400-2:2019 8.3.3: a diagnostic message is indicated whenever it arrives, so a
-/// response the entity sends before its acknowledgement is not lost, and the
-/// acknowledgement still confirms the request.
+/// `Tester`'s contract: a diagnostic message is indicated when it arrives, so a response
+/// the entity sends before its acknowledgement is not lost, and the acknowledgement still
+/// confirms the request.
 #[test]
 fn a_response_before_its_ack_is_indicated_and_the_ack_confirms() {
     let _clock = clock();
