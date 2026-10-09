@@ -14,7 +14,8 @@
 use core::future::{Future, poll_fn};
 use core::task::Poll;
 use uds_services::{
-    Address, AfterSend, Ai, Reloads, SResult, Timestamp, TransportEvent, UdsTransport,
+    Address, AfterSend, Ai, ClientTransport, Reloads, SResult, Timestamp, TransportEvent,
+    UdsTransport,
 };
 
 /// One scripted step: what `next_event` yields, and the clock it yields it at.
@@ -26,8 +27,11 @@ pub enum Step {
     IndAt(u32, Ai, &'static [u8]),
     /// A message longer than the buffer offered arrives: what fits, and its length.
     TooLong(Ai, &'static [u8]),
-    /// The connection to this peer closes.
+    /// The connection to this peer fails or is given up.
     Close(Address),
+    /// The connection to this peer closes as the standard prescribes, after a positive
+    /// `DiagnosticSessionControl` or `ECUReset` response.
+    Leave(Address),
     /// The transmission to this addressing completes with this result.
     Conf(Ai, SResult),
     /// Advance the clock. `next_event` reports `Deadline` only if that reaches the
@@ -98,6 +102,10 @@ pub struct Script {
     stalled: Option<usize>,
     /// How far the clock moves while a transmission is handed over.
     send_cost: u32,
+    /// How many times the client closed it.
+    pub closes: usize,
+    /// Whether closing fails.
+    failing_close: bool,
 }
 
 impl Script {
@@ -125,12 +133,20 @@ impl Script {
             refused: None,
             stalled: None,
             send_cost: 0,
+            closes: 0,
+            failing_close: false,
         }
     }
 
     /// The same, the clock moving `ms` while each transmission is handed over.
     pub fn costing(mut self, ms: u32) -> Self {
         self.send_cost = ms;
+        self
+    }
+
+    /// The same, failing to close.
+    pub fn failing_close(mut self) -> Self {
+        self.failing_close = true;
         self
     }
 
@@ -248,6 +264,12 @@ impl Script {
                         expected: false,
                     });
                 }
+                Step::Leave(peer) => {
+                    return Ok(TransportEvent::Closed {
+                        peer,
+                        expected: true,
+                    });
+                }
                 Step::Conf(ai, result) => {
                     return Ok(TransportEvent::DataConf { ai, result });
                 }
@@ -328,6 +350,13 @@ impl UdsTransport for Script {
     }
     fn now(&self) -> Timestamp {
         Timestamp(self.now)
+    }
+}
+
+impl ClientTransport for Script {
+    fn close(&mut self) -> impl Future<Output = Result<(), ()>> {
+        self.closes = self.closes.wrapping_add(1);
+        core::future::ready(if self.failing_close { Err(()) } else { Ok(()) })
     }
 }
 

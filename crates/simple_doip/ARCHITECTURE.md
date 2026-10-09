@@ -106,20 +106,28 @@ stateDiagram-v2
     Connected --> BackingOff: reconnect gives the old connection up
     Closed --> BackingOff: reconnect
     BackingOff --> Activating: the back-off since the last loss has passed
-    Activating --> Closed: reconnect fails or is dropped
-    BackingOff --> Closed: reconnect is dropped
+    Activating --> Closed: reconnect fails, is dropped, or its deadline passes
+    BackingOff --> Closed: reconnect is dropped, or its deadline passes
     note right of Closed
         A request awaiting its confirm is confirmed first,
         DoIP_NO_SOCKET or DoIP_ERROR. Then next_event
-        reports Closed on every call, and request is refused,
-        until a reconnect succeeds.
+        reports Closed once and waits for its deadline, and
+        request is refused, until a reconnect succeeds.
     end note
 ```
 
-- **Every end is `Closed`, never an `Err`.** A connection is lost when the entity
+- **Every end is one `Closed`, never an `Err`.** A connection is lost when the entity
   closes it, the socket fails, a request it carried is lost, or the entity sends a
   NACK it closes on. Where the socket failed, its error is kept in
-  `TesterConnection::io_error`.
+  `TesterConnection::io_error`. After it, `next_event` waits for the caller's
+  deadline, as an entity's does between events, so a caller that does not reconnect
+  at once needs no timer of its own to wait; `request`'s `NotConnected` says the
+  connection is still closed.
+- **A request is refused, with no confirm, only for a `service::Refusal`**, the
+  entity's vocabulary: `NotConnected` while the connection is closed (reconnect to
+  continue), `NoRoom` while an earlier request awaits its confirm (the tester carries
+  one at a time), `PduTooLarge` over `MAX_PDU`, and `EmptyPdu`. The layer above
+  tells them apart without naming the implementor.
 - **Reconnecting gives the old connection up before it waits, and waits before it
   connects** (issue #17 item 2): an entity may hold the tester's address for a
   while after its socket closes and refuse a second activation meanwhile. The
@@ -207,8 +215,9 @@ stateDiagram-v2
   ISO 14229-1's rules, `0x11` or `0x13`, or `busyRepeatRequest` while busy, its Figure
   5's choice for a request ISO 14229-1:2020 8.7.6 has wait, which `uds_on_ip`
   composes from the truncated event.
-- **Requests wait for nothing.** A `request` is made by its future's first poll,
-  which completes it, so one dropped unpolled makes none. It is queued on the
+- **Requests wait for nothing.** `request` is a plain function, not a future: the
+  request is accepted or refused when it returns, and there is nothing to drop
+  part-way. It is queued on the
   connection that registered its target and confirmed `Ok` once written,
   `NoSocket` where no connection registered the target or the connection closes
   first, `UnknownSa` from a source address not the entity's, and `OutOfMemory` where

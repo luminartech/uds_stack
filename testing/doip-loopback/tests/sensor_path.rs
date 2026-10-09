@@ -181,7 +181,7 @@ fn a_reset_is_answered_then_closed_and_the_tester_reconnects() {
             );
             assert_eq!(next(&mut tester).await, Then::Closed);
 
-            tester.reconnect().await.expect("reconnected");
+            tester.reconnect(None).await.expect("reconnected");
             assert_eq!(
                 ask(&mut tester, &[0x3E, 0x00]).await,
                 answered(&[0x7E, 0x00])
@@ -214,7 +214,7 @@ fn a_session_change_that_leaves_the_software_is_answered_then_closed() {
             );
             assert_eq!(next(&mut tester).await, Then::Closed);
 
-            tester.reconnect().await.expect("reconnected");
+            tester.reconnect(None).await.expect("reconnected");
             assert_eq!(ask(&mut tester, &[0x3E, 0x00]).await, answered(&[0x7E, 0x00]));
             tester.close().await.expect("closed");
         })

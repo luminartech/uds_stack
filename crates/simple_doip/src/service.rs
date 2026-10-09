@@ -100,7 +100,8 @@ pub enum DoIpResult {
     Error,
 }
 
-/// Why [`DiagnosticEntity::request`] refused a request. No confirm follows a refusal.
+/// Why [`DiagnosticEntity::request`] or [`DiagnosticConnection::request`] refused a
+/// request. No confirm follows a refusal.
 ///
 /// Exhaustive: these are the only cases in which the request is refused rather than
 /// accepted and confirmed, and a caller that confirms a refused request failed itself
@@ -111,18 +112,23 @@ pub enum Refusal {
     /// data mandatory, which this crate reads as at least one byte.
     #[error("the PDU is empty")]
     EmptyPdu,
-    /// The PDU is longer than [`DiagnosticEntity::MAX_PDU`].
+    /// The PDU is longer than [`DiagnosticEntity::MAX_PDU`] or
+    /// [`DiagnosticConnection::MAX_PDU`].
     #[error("a {len}-byte PDU exceeds the {max}-byte limit")]
     PduTooLarge {
         /// The PDU's length.
         len: usize,
-        /// [`DiagnosticEntity::MAX_PDU`].
+        /// [`DiagnosticEntity::MAX_PDU`] or [`DiagnosticConnection::MAX_PDU`].
         max: usize,
     },
-    /// The entity has no room left to remember another request until it is confirmed.
-    /// No connection ends for it.
+    /// There is no room to remember another request until an earlier one is confirmed:
+    /// an entity's are all taken, and a connection holds one. No connection ends for it.
     #[error("too many requests await their confirm")]
     NoRoom,
+    /// The connection is closed. A [`TesterConnection`] takes requests again once
+    /// [`TesterConnection::reconnect`] succeeds. A [`DiagnosticEntity`] never refuses so.
+    #[error("not connected")]
+    NotConnected,
 }
 
 /// A reading of a [`DiagnosticConnection`]'s or a [`DiagnosticEntity`]'s clock, or an
@@ -304,8 +310,8 @@ pub enum ConnectionEvent<'b> {
 ///   one where the connection closes before the request completed. The layer above
 ///   waits on that confirm.
 pub trait DiagnosticConnection {
-    /// What this connection's failures are. Never interpreted by the layer above, which
-    /// can only report it.
+    /// What this connection's failures are, other than a refusal. Never interpreted by
+    /// the layer above, which can only report it.
     type Error: core::fmt::Debug;
 
     /// The longest PDU [`Self::request`] accepts. A longer one is refused with
@@ -316,8 +322,9 @@ pub trait DiagnosticConnection {
     /// `DoIP_Data.request`: send `pdu` to `ta` (ISO 13400-2:2019 8.3.1).
     ///
     /// There is no source address: routing activation fixed it for the connection.
-    /// Completion is not awaited here. It is reported by a later
-    /// [`ConnectionEvent::Confirm`], because the confirm is what starts the layer
+    /// The request is accepted or refused on the spot and waits for nothing: the
+    /// connection holds it, [`Self::next_event`] writes it, and its completion is a later
+    /// [`ConnectionEvent::Confirm`] (8.3.2), because the confirm is what starts the layer
     /// above's response timer.
     ///
     /// # Arguments
@@ -328,13 +335,13 @@ pub trait DiagnosticConnection {
     ///
     /// # Errors
     ///
-    /// [`Self::Error`] where the request is not accepted; no confirm follows it.
+    /// A [`Refusal`] where the request is not accepted; no confirm follows it.
     fn request(
         &mut self,
         ta: LogicalAddress,
         ta_type: TaType,
         pdu: &[u8],
-    ) -> impl Future<Output = Result<(), Self::Error>>;
+    ) -> Result<(), Refusal>;
 
     /// The current time on the clock a deadline is on.
     fn now(&self) -> Timestamp;
@@ -375,9 +382,10 @@ pub trait DiagnosticConnection {
 /// - A request awaiting its confirm is confirmed before anything from a new
 ///   connection.
 /// - However it closed, a connection stays closed until a reconnect succeeds:
-///   [`DiagnosticConnection::next_event`] reports [`ConnectionEvent::Closed`] on every
-///   call, and [`DiagnosticConnection::request`] is refused. Dropping
-///   [`Self::reconnect`] leaves it so.
+///   [`DiagnosticConnection::next_event`] reports [`ConnectionEvent::Closed`] once for
+///   each end of an established connection and then waits for the caller's deadline,
+///   since nothing can arrive, and [`DiagnosticConnection::request`] is refused with
+///   [`Refusal::NotConnected`]. Dropping [`Self::reconnect`] leaves it so.
 pub trait TesterConnection: DiagnosticConnection {
     /// Why a reconnect failed. Never interpreted by the layer above, which can only
     /// report it.
@@ -391,6 +399,10 @@ pub trait TesterConnection: DiagnosticConnection {
     /// report it.
     type IoError: core::fmt::Debug;
 
+    /// The tester address routing activation registers: the source of every request,
+    /// and the target of every message meant for this tester.
+    fn address(&self) -> TesterAddress;
+
     /// The I/O failure that ended the last connection, until a reconnect succeeds.
     ///
     /// [`DiagnosticConnection::next_event`] reports every end as
@@ -400,13 +412,25 @@ pub trait TesterConnection: DiagnosticConnection {
     fn io_error(&self) -> Option<&Self::IoError>;
 
     /// Gives the connection up, if there is one, then opens a new TCP connection and
-    /// activates routing on it.
+    /// activates routing on it, or stops once `deadline` passes.
+    ///
+    /// Stopped at its deadline, or dropped, it leaves the connection closed, and the
+    /// back-off running from the loss, so a later reconnect takes up where it stopped
+    /// rather than waiting it out again.
+    ///
+    /// # Arguments
+    ///
+    /// * `deadline` - when to stop, on [`DiagnosticConnection::now`]'s clock; `None`
+    ///   waits as long as reconnecting takes.
     ///
     /// # Errors
     ///
     /// [`Self::ReconnectError`] where no connection could be opened and activated; the
     /// connection is then closed until a reconnect succeeds.
-    fn reconnect(&mut self) -> impl Future<Output = Result<(), Self::ReconnectError>>;
+    fn reconnect(
+        &mut self,
+        deadline: Option<Timestamp>,
+    ) -> impl Future<Output = Result<Reconnection, Self::ReconnectError>>;
 
     /// Closes the connection gracefully, if there is one, and leaves it closed until a
     /// [`Self::reconnect`] succeeds.
@@ -423,6 +447,15 @@ pub trait TesterConnection: DiagnosticConnection {
     ///
     /// [`Self::CloseError`] where closing fails. The connection is closed either way.
     fn close(&mut self) -> impl Future<Output = Result<(), Self::CloseError>>;
+}
+
+/// How a [`TesterConnection::reconnect`] that did not fail ended.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Reconnection {
+    /// A new connection is open, routing activated on it.
+    Connected,
+    /// The caller's deadline passed first; the connection is closed.
+    Deadline,
 }
 
 /// One connection in a [`DiagnosticEntity`]'s connection table.
@@ -576,16 +609,17 @@ pub trait DiagnosticEntity {
     const CONNECTIONS: usize;
 
     /// The longest PDU [`Self::request`] accepts. A longer one is refused with
-    /// [`Self::Error`], and no confirm follows it, so the layer above can refuse it
-    /// first.
+    /// [`Refusal::PduTooLarge`], and no confirm follows it, so the layer above can refuse
+    /// it first.
     const MAX_PDU: usize;
 
     /// `DoIP_Data.request`: send `pdu` from `sa` to `ta` on the connection whose
     /// routing activation registered `ta` (ISO 13400-2:2019 8.3.1).
     ///
     /// Routing activation registers each source address on one connection only, so
-    /// the target address alone chooses the connection. Completion is reported by a
-    /// later [`EntityEvent::Confirm`]: a request whose `sa` is not one of the
+    /// the target address alone chooses the connection. The request is accepted or
+    /// refused on the spot and waits for nothing; its completion is a later
+    /// [`EntityEvent::Confirm`] (8.3.2): a request whose `sa` is not one of the
     /// entity's own logical addresses is accepted, sends nothing, and is confirmed
     /// with [`DoIpResult::UnknownSa`].
     ///
@@ -610,7 +644,7 @@ pub trait DiagnosticEntity {
         ta: LogicalAddress,
         ta_type: TaType,
         pdu: &[u8],
-    ) -> impl Future<Output = Result<(), Refusal>>;
+    ) -> Result<(), Refusal>;
 
     /// The current time on the clock a deadline is on.
     fn now(&self) -> Timestamp;
@@ -804,12 +838,12 @@ mod tests {
         type Error = core::convert::Infallible;
         const MAX_PDU: usize = 8;
 
-        async fn request(
+        fn request(
             &mut self,
             ta: LogicalAddress,
             ta_type: TaType,
             pdu: &[u8],
-        ) -> Result<(), Self::Error> {
+        ) -> Result<(), Refusal> {
             let sent = self.sent.get_mut(..pdu.len()).unwrap();
             sent.copy_from_slice(pdu);
             self.sent_len = pdu.len();
@@ -856,7 +890,7 @@ mod tests {
         let ConnectionEvent::Indication { sa, pdu, .. } = event else {
             panic!("expected an indication, got {event:?}");
         };
-        connection.request(sa, TaType::Physical, pdu).await.unwrap();
+        connection.request(sa, TaType::Physical, pdu).unwrap();
         assert_eq!(connection.sent.get(..connection.sent_len), Some(pdu));
 
         let mut buf = [0u8; 8];

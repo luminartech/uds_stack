@@ -12,12 +12,12 @@
 
 use crate::error::Error;
 use crate::mapping::{
-    Inbound, PduOutsideBuffer, classify, from_logical, s_result, target_of,
+    Inbound, PduOutsideBuffer, classify, from_logical, refused, s_result, target_of,
     to_doip_ta_type, to_logical,
 };
 use crate::profile::{ConnectionAction, after_sending};
 use simple_doip::LogicalAddress;
-use simple_doip::service::{self, ConnectionId, DiagnosticEntity, DoIpResult, Refusal};
+use simple_doip::service::{self, ConnectionId, DiagnosticEntity, Refusal};
 use uds_services::{AfterSend, TransportEvent, UdsTransport};
 use uds_session::{Ai, Reloads, SResult, Timestamp};
 
@@ -201,7 +201,7 @@ impl<E: DiagnosticEntity, const CONNECTIONS: usize> DoIpTransport<E, CONNECTIONS
     ///     // ...
     /// #   const MAX_PDU: usize = 4084;
     /// #   type Error = ();
-    /// #   async fn request(
+    /// #   fn request(
     /// #       &mut self,
     /// #       _: LogicalAddress,
     /// #       _: LogicalAddress,
@@ -349,17 +349,37 @@ impl<E: DiagnosticEntity, const CONNECTIONS: usize> DoIpTransport<E, CONNECTIONS
     /// `uds_session` matches a confirmation to its request by addressing
     /// (`UDSS_LLR_0059`), and has one request per addressing outstanding at most.
     fn refuse(&mut self, ai: Ai, refusal: Refusal) -> Result<(), Error<E::Error>> {
-        let result = match refusal {
-            Refusal::NoRoom | Refusal::PduTooLarge { .. } => DoIpResult::OutOfMemory,
-            Refusal::EmptyPdu => DoIpResult::Error,
-        };
         let Some(free) = self.refused.iter_mut().find(|held| held.is_none()) else {
             return Err(Error::Refused(refusal));
         };
         *free = Some(Confirmation {
             ai,
-            result: s_result(result),
+            result: s_result(refused(refusal)),
         });
+        Ok(())
+    }
+
+    /// Hands a response to the entity, holding a refused one's failed confirmation.
+    fn send(
+        &mut self,
+        ai: Ai,
+        data: &[u8],
+        after: AfterSend,
+    ) -> Result<(), Error<E::Error>> {
+        let target = target_of(ai)?;
+        let accepted = self.entity.request(
+            to_logical(ai.sa),
+            target,
+            to_doip_ta_type(ai.ta_type),
+            data,
+        );
+        if let Err(refusal) = accepted {
+            return self.refuse(ai, refusal);
+        }
+        self.record_send(target, data, after);
+        if let Some(tester) = self.tester_mut(target) {
+            tester.requested = Some(ai);
+        }
         Ok(())
     }
 
@@ -422,25 +442,13 @@ impl<E: DiagnosticEntity, const CONNECTIONS: usize> UdsTransport
     /// message types have no `DoIP` representation. [`Error::Refused`] if the
     /// entity refuses the request while this transport already holds as many
     /// refusals as it can, none of them yet reported.
-    async fn t_data_req(
+    fn t_data_req(
         &mut self,
         ai: Ai,
         data: &[u8],
         after: AfterSend,
-    ) -> Result<(), Self::Error> {
-        let target = target_of(ai)?;
-        let accepted = self
-            .entity
-            .request(to_logical(ai.sa), target, to_doip_ta_type(ai.ta_type), data)
-            .await;
-        if let Err(refusal) = accepted {
-            return self.refuse(ai, refusal);
-        }
-        self.record_send(target, data, after);
-        if let Some(tester) = self.tester_mut(target) {
-            tester.requested = Some(ai);
-        }
-        Ok(())
+    ) -> impl core::future::Future<Output = Result<(), Self::Error>> {
+        core::future::ready(self.send(ai, data, after))
     }
 
     /// The next `T_Data.ind` or `T_Data.conf`, a closed connection, or
@@ -570,7 +578,7 @@ mod tests {
         type Error = core::convert::Infallible;
         const CONNECTIONS: usize = 1;
         const MAX_PDU: usize = 500;
-        async fn request(
+        fn request(
             &mut self,
             _sa: LogicalAddress,
             _ta: LogicalAddress,

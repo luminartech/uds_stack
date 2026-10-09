@@ -39,6 +39,59 @@ pub enum Error<E> {
     PduOutsideBuffer,
 }
 
+use simple_doip::service::TesterConnection;
+
+/// Errors raised by [`DoIpClientTransport`](crate::DoIpClientTransport) over the
+/// [`TesterConnection`] `C`, whose own errors each variant carries.
+#[derive(thiserror::Error)]
+#[non_exhaustive]
+pub enum ClientTransportError<C: TesterConnection> {
+    /// The connection failed other than by closing: its
+    /// [`DiagnosticConnection::Error`](simple_doip::service::DiagnosticConnection::Error).
+    #[error("the DoIP connection failed: {0:?}")]
+    Connection(C::Error),
+
+    /// No connection could be opened and activated for a waiting request: the
+    /// [`TesterConnection::ReconnectError`].
+    /// Every waiting request is confirmed failed, and the connection stays closed until a
+    /// later request's reconnect succeeds.
+    #[error("the DoIP connection could not be reopened: {0:?}")]
+    Reconnect(C::ReconnectError),
+
+    /// Closing the connection failed: the [`TesterConnection::CloseError`].
+    /// The connection is closed all the same.
+    #[error("the DoIP connection did not close cleanly: {0:?}")]
+    Close(C::CloseError),
+
+    /// The connection refused a request while the transport already held as many refused
+    /// requests' failed confirms as it can, none of them yet reported.
+    #[error("the DoIP connection refused a request with no room left to confirm it: {0}")]
+    Refused(simple_doip::service::Refusal),
+
+    /// The addressing cannot be carried over `DoIP`.
+    #[error(transparent)]
+    Mapping(#[from] crate::mapping::MappingError),
+
+    /// The connection reported a PDU outside the buffer it was lent, breaking
+    /// [`DiagnosticConnection::next_event`](simple_doip::service::DiagnosticConnection::next_event)'s
+    /// contract.
+    #[error("the DoIP connection reported a PDU outside the buffer it was lent")]
+    PduOutsideBuffer,
+}
+
+impl<C: TesterConnection> core::fmt::Debug for ClientTransportError<C> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::Connection(error) => f.debug_tuple("Connection").field(error).finish(),
+            Self::Reconnect(error) => f.debug_tuple("Reconnect").field(error).finish(),
+            Self::Close(error) => f.debug_tuple("Close").field(error).finish(),
+            Self::Refused(refusal) => f.debug_tuple("Refused").field(refusal).finish(),
+            Self::Mapping(error) => f.debug_tuple("Mapping").field(error).finish(),
+            Self::PduOutsideBuffer => f.write_str("PduOutsideBuffer"),
+        }
+    }
+}
+
 /// Compile-time proof that this crate's errors, and the upstream errors it
 /// composes, implement [`core::error::Error`] rather than `std::error::Error`.
 ///
@@ -48,6 +101,9 @@ pub enum Error<E> {
 /// exist — which is where a `*-none` target build would exercise it.
 const _: () = {
     const fn assert_core_error<T: core::error::Error>() {}
+    const fn _for_every_connection<C: TesterConnection>() {
+        assert_core_error::<ClientTransportError<C>>();
+    }
     assert_core_error::<uds_protocol::Error>();
     assert_core_error::<Error<core::convert::Infallible>>();
 };

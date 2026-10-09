@@ -24,10 +24,13 @@ mod encode;
 
 use crate::storage::{ClientBuffers, ClientStorage};
 use crate::{
-    DataIdentifier, DiagnosticSessionType, RecordError, SessionTiming, UdsServiceType,
-    UdsTransport,
+    ClientTransport, DataIdentifier, DiagnosticSessionType, RecordError, SessionTiming,
+    UdsServiceType,
 };
 use driver::{Answered, Book, Exchange};
+
+#[cfg(doc)]
+use crate::UdsTransport;
 use uds_protocol::NegativeResponseCode;
 use uds_session::{
     Address, ChannelAddressing, ChannelParameter, ChannelParams, ClientTx,
@@ -387,7 +390,7 @@ impl<D: DataIdentifier> Answer<'_, D> {
 pub struct Responses<
     'c,
     C: ClientSet,
-    T: UdsTransport,
+    T: ClientTransport,
     K: ClientKeepAlive,
     const PHYS: usize,
     const FUNC: usize,
@@ -400,7 +403,7 @@ pub struct Responses<
 
 impl<
     C: ClientSet,
-    T: UdsTransport,
+    T: ClientTransport,
     K: ClientKeepAlive,
     const PHYS: usize,
     const FUNC: usize,
@@ -542,7 +545,7 @@ impl<'d, D: DataIdentifier> Iterator for Records<'d, D> {
 #[derive(Debug)]
 pub struct Client<
     C: ClientSet,
-    T: UdsTransport,
+    T: ClientTransport,
     K: ClientKeepAlive,
     const PHYS: usize,
     const FUNC: usize,
@@ -565,7 +568,7 @@ pub struct Client<
 
 impl<
     C: ClientSet,
-    T: UdsTransport,
+    T: ClientTransport,
     K: ClientKeepAlive,
     const PHYS: usize,
     const FUNC: usize,
@@ -773,6 +776,36 @@ impl<
             }
             self.pump(None, Some(until)).await?;
         }
+    }
+
+    /// End the session: close the transport's connection, gracefully.
+    ///
+    /// A call dropped part-way is settled first, and every request still awaiting its
+    /// confirmation is confirmed, failed, before this returns, so the next call reads
+    /// nothing of them. No `TesterPresent` follows: every keep-alive ends with the
+    /// session (``UDSS_LLR_0184``). The next call opens a connection again, where the
+    /// transport has connections to open.
+    ///
+    /// # Errors
+    ///
+    /// [`ClientError::Transport`] where closing or reading the confirmations fails; the
+    /// connection is closed either way, and the confirmations are read even where closing
+    /// failed.
+    ///
+    /// # Cancel safety
+    ///
+    /// As [`Self::read_data_by_identifier`]'s.
+    pub async fn close(&mut self) -> Result<(), ClientError<T::Error>> {
+        self.retire();
+        if let Some(window) = self.draining.take() {
+            self.abandon(window.ai);
+        }
+        self.end_keep_alives();
+        let closed = self.transport.close().await;
+        while self.book.unconfirmed() {
+            self.pump(None, None).await?;
+        }
+        closed.map_err(ClientError::Transport)
     }
 
     /// Read one or more data identifiers from every server on a functional address.

@@ -48,7 +48,6 @@ async fn answer_one<E: DiagnosticEntity>(entity: &mut E) {
                 }
                 entity
                     .request(ENTITY, sa, TaType::Physical, &answer)
-                    .await
                     .unwrap();
             }
             EntityEvent::Confirm { result, .. } => {

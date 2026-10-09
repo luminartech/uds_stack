@@ -16,7 +16,8 @@
 
 use core::ops::Range;
 
-use simple_doip::service::{ConnectionId, DoIpResult, EntityEvent};
+use simple_doip::service::{ConnectionId, DoIpResult, EntityEvent, Refusal};
+use uds_protocol::UdsServiceType;
 use uds_session::{Address, Ai, Mtype, SResult, TaType, TransportError};
 
 /// A constraint of the `DoIP` mapping, not of the session layer.
@@ -127,11 +128,48 @@ pub(crate) const fn s_result(result: DoIpResult) -> SResult {
     SResult::Transport(TransportError(position))
 }
 
+/// The bytes of a diagnostic message's payload, or a periodic response's, before its
+/// user data: the source and target addresses (ISO 13400-2:2019 Table 21).
+pub(crate) const ADDRESSES: usize = 4;
+
+/// Whether `request` expects a response: its service has no sub-function, or its
+/// sub-function's suppressPosRspMsgIndicationBit is clear. A service ISO 14229-1:2020
+/// does not define, or one whose sub-function is missing, is not known to.
+pub(crate) fn awaits_response(request: &[u8]) -> bool {
+    const SUPPRESS_POSITIVE_RESPONSE: u8 = 0x80;
+    let Some((&sid, rest)) = request.split_first() else {
+        return false;
+    };
+    match UdsServiceType::from_request_sid(sid).has_sub_function() {
+        Some(true) => rest
+            .first()
+            .is_some_and(|sub_function| sub_function & SUPPRESS_POSITIVE_RESPONSE == 0),
+        Some(false) => true,
+        None => false,
+    }
+}
+
+/// Whether `response` is a negative response with code `0x78`, after which the final
+/// response is still to come (ISO 14229-1:2020 Table A.1,
+/// `requestCorrectlyReceived-ResponsePending`).
+pub(crate) fn response_pending(response: &[u8]) -> bool {
+    matches!(response, [0x7F, _, 0x78, ..])
+}
+
+/// The `DoIP_Result` a refused request is confirmed with.
+pub(crate) const fn refused(refusal: Refusal) -> DoIpResult {
+    match refusal {
+        Refusal::NoRoom | Refusal::PduTooLarge { .. } => DoIpResult::OutOfMemory,
+        Refusal::NotConnected => DoIpResult::NoSocket,
+        Refusal::EmptyPdu => DoIpResult::Error,
+    }
+}
+
 /// The addressing of a `DoIP_Data` primitive as ISO 14229-2's `S_AI`.
 ///
 /// Always [`Mtype::Diag`]: ISO 14229-5:2022 REQ 4.4 Table 5 maps `T_Ptype` onto
 /// nothing, so `DoIP` carries no message type to read.
-const fn ai(
+pub(crate) const fn ai(
     sa: simple_doip::LogicalAddress,
     ta: simple_doip::LogicalAddress,
     ta_type: simple_doip::TaType,
@@ -227,11 +265,11 @@ pub(crate) fn classify(
 #[cfg(test)]
 mod tests {
     use super::{
-        Inbound, MappingError, PduOutsideBuffer, classify, from_doip_ta_type, s_result,
-        target_of, to_doip_ta_type,
+        Inbound, MappingError, PduOutsideBuffer, classify, from_doip_ta_type, refused,
+        s_result, target_of, to_doip_ta_type,
     };
     use simple_doip::LogicalAddress;
-    use simple_doip::service::{ConnectionId, DoIpResult, EntityEvent};
+    use simple_doip::service::{ConnectionId, DoIpResult, EntityEvent, Refusal};
     use uds_session::{
         Address, AddressExtension, Ai, Mtype, SResult, TaType, TransportError,
     };
@@ -406,5 +444,19 @@ mod tests {
         };
         let after = elsewhere.as_ptr().addr().wrapping_add(1);
         assert_eq!(classify(event, after), Err(PduOutsideBuffer));
+    }
+
+    /// A refused request is confirmed failed with the `DoIP_Result` naming why: no room
+    /// and too long are out of memory, no connection is no socket, and an empty PDU,
+    /// which ISO 13400-2:2019 8.2.5 names nothing for, is a plain error.
+    #[test]
+    fn a_refusal_confirms_its_request_failed_with_the_result_naming_why() {
+        assert_eq!(refused(Refusal::NoRoom), DoIpResult::OutOfMemory);
+        assert_eq!(
+            refused(Refusal::PduTooLarge { len: 9, max: 8 }),
+            DoIpResult::OutOfMemory
+        );
+        assert_eq!(refused(Refusal::NotConnected), DoIpResult::NoSocket);
+        assert_eq!(refused(Refusal::EmptyPdu), DoIpResult::Error);
     }
 }
