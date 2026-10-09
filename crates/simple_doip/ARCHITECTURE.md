@@ -654,13 +654,13 @@ profile on Rust 1.91:
 | Probe | text | bss | `main`'s frame |
 |---|---|---|---|
 | Before this work | 49 020 | 9 308 | 8 824 |
-| `NoDiscovery` | 50 028 | 9 308 | 8 824 |
-| `with_discovery`, over a stub UDP socket | 53 760 | 9 628 | 9 160 |
+| `NoDiscovery` | 50 020 | 9 308 | 8 824 |
+| `with_discovery`, over a stub UDP socket | 54 004 | 9 628 | 9 160 |
 
-Of the 1 008 bytes an entity without discovery gains, 788 are the codec: the entity
+Of the 1 000 bytes an entity without discovery gains, most are the codec: the entity
 decodes every payload type it is sent, and three more now decode with what they carry,
-as do the optional trailing fields. The other 220 are the entity polling a source that
-never completes. Discovery itself is 3 732 bytes of code, building its identifiers
+as do the optional trailing fields. The rest are the entity polling a source that never
+completes. Discovery itself is 3 984 bytes of code, building its identifiers
 included, 320 of static RAM, and 336 of `main`'s frame, where the server, and with it
 the entity, is built. The probe as committed is the third row, so `just size` gates the
 entity with discovery; the second was measured with the probe built without it.
