@@ -18,15 +18,20 @@ use embassy_futures::select::{Either, select};
 use embassy_time::{Duration, Instant};
 
 use crate::messages::{
-    DiagnosticPowerModeCode, FurtherActionRequired, ProtocolVersion, VinGidSyncStatus,
+    DiagnosticPowerModeCode, FurtherActionRequired, Header, ProtocolVersion,
+    VinGidSyncStatus,
 };
 use crate::stream::after;
 use datagram::{Answer, FRAME_CAP, Owed, When};
 use sealed::DiscoveryIo;
 pub(super) use sealed::Facts;
 
-/// The receive buffer: the longest request the entity takes, with a VIN, is 25 bytes.
-const RX_CAP: usize = 32;
+/// The longest request the entity takes: identification by VIN.
+const LONGEST_REQUEST: usize = Header::SIZE + 17;
+/// The receive buffer: the longest request, and as much again, so that a datagram too
+/// long for its type is still read whole, and answered NACK `0x04`, on a socket that
+/// discards a datagram that does not fit.
+const RX_CAP: usize = 2 * LONGEST_REQUEST;
 /// Answers a [`Discovery`] holds until it sends them.
 const PENDING: usize = 4;
 /// `A_DoIP_Announce_Wait`'s upper bound, in milliseconds (ISO 13400-2:2019 Table 12).

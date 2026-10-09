@@ -570,8 +570,9 @@ request the entity answers is that long.
 #### 2.5.4 The UDP header handler
 
 Figure 16's order, the `TCP_DATA` handler's code where it applies, with UDP's own
-length rules. The receive buffer is 32 bytes: the longest request the entity takes,
-`0x0003`, is 25.
+length rules. The receive buffer is 50 bytes, twice the longest request the entity
+takes (`0x0003`, 25), so that a datagram too long for its type is read whole and
+answered `0x04` even on a socket that drops what does not fit.
 
 | Datagram | Answer |
 |---|---|
@@ -616,8 +617,8 @@ stays out of `uds_on_ip`.
 
 Under `connection`, with no new dependency: `edge-nal`'s UDP traits are in the crate
 already, and the seed replaces an RNG crate. With discovery the entity adds the UDP
-socket, a 32-byte receive buffer, a 41-byte scratch buffer, four pending answers, the
-seed and the identity: about 150 bytes besides the socket and `I`.
+socket, a 50-byte receive buffer, a 41-byte scratch buffer, four pending answers, the
+seed and the identity: about 170 bytes besides the socket and `I`.
 
 Measured on `testing/embedded-probe` for `thumbv7em-none-eabihf`, in its `firmware`
 profile on Rust 1.91:
@@ -631,9 +632,10 @@ profile on Rust 1.91:
 Of the 1 008 bytes an entity without discovery gains, 788 are the codec: the entity
 decodes every payload type it is sent, and three more now decode with what they carry,
 as do the optional trailing fields. The other 220 are the entity polling a source that
-never completes. Discovery itself is 3 652 bytes of code and 304 of RAM. The probe as
-committed builds without discovery; the third row is the probe with a stub UDP socket
-and `with_discovery`, built and measured, not kept.
+never completes. Discovery itself is 3 652 bytes of code and 304 of RAM, measured with a
+32-byte receive buffer, since grown to 50. The probe as committed builds without
+discovery; the third row is the probe with a stub UDP socket and `with_discovery`, built
+and measured, not kept.
 
 ---
 
