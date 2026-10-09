@@ -13,7 +13,9 @@ lists what an integrator supplies for them. Above them,
 carries `uds_services` clients and servers over DoIP.
 
 The protocol core (`messages`, `try_frame`, `wire`) and the `alloc`, `std` and `codec`
-features are unchanged, except that `OwnedMessage` no longer implements `Default`.
+features stay, with breaking changes of their own since 0.6.0: among them, a message
+encodes into a `wire::Sink`, and a negative diagnostic message acknowledgement is a
+message of its own. [`CHANGELOG.md`](CHANGELOG.md) lists each.
 
 On a host, the examples below take `edge-nal-std` as the backend and `embassy-time` with
 its `std` and `generic-queue-8` features as the clock:
