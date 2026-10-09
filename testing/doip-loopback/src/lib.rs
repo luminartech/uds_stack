@@ -4,8 +4,8 @@
 //!
 //! A harness for any test that needs the real entity and tester rather than the scripted
 //! mocks in `uds_on_ip`'s and `simple_doip`'s own tests: this crate's `sensor_path`
-//! test, and the client transport's and the embedded probe's after it. Unpublished, so
-//! that no published crate carries a feature or dependency for it.
+//! test, its `discovery` test, and the client transport's and the embedded probe's after
+//! it. Unpublished, so that no published crate carries a feature or dependency for it.
 //!
 //! Write the test as a plain `#[test]` that calls [`on_loopback`]: it
 //! takes the clock, binds a port, and runs the test's future on a current-thread
@@ -28,8 +28,8 @@ use core::pin::Pin;
 use std::net::SocketAddr;
 use std::sync::{Mutex, MutexGuard, PoisonError};
 
-use edge_nal::TcpBind;
-use edge_nal_std::{Stack, TcpAcceptor};
+use edge_nal::{TcpBind, UdpBind};
+use edge_nal_std::{Stack, TcpAcceptor, UdpSocket};
 use embassy_time::MockDriver;
 use simple_doip::entity::{Entity, EntityAddress};
 use simple_doip::service::{
@@ -133,7 +133,7 @@ impl Loopback {
             let remote = std::net::TcpListener::bind("127.0.0.1:0")
                 .and_then(|listener| listener.local_addr())
                 .expect("a free loopback port");
-            if let Ok(acceptor) = stack.bind(remote).await {
+            if let Ok(acceptor) = TcpBind::bind(stack, remote).await {
                 return Self {
                     stack,
                     acceptor: Box::leak(Box::new(acceptor)),
@@ -155,6 +155,27 @@ impl Loopback {
         let address = EntityAddress::new(ENTITY, FUNCTIONAL).expect("entity addresses");
         let tester = TesterAddress::new(TESTER).expect("a tester address");
         Entity::new(self.acceptor, address, EntityConfig::new([tester]))
+    }
+
+    /// A UDP socket on a free loopback port, able to broadcast, and its address.
+    ///
+    /// # Panics
+    ///
+    /// If no port can be bound.
+    pub async fn udp(&self) -> (UdpSocket, SocketAddr) {
+        let any_port = SocketAddr::from((std::net::Ipv4Addr::LOCALHOST, 0));
+        let socket = UdpBind::bind(self.stack, any_port)
+            .await
+            .expect("a loopback UDP port");
+        let local = socket.get_ref().local_addr().expect("its address");
+        (socket, local)
+    }
+
+    /// The address the entity takes `TCP_DATA` connections on: a free port, not
+    /// [`simple_doip::TCP_PORT`].
+    #[must_use]
+    pub const fn tcp_address(&self) -> SocketAddr {
+        self.remote
     }
 
     /// A tester connected as [`TESTER`], with routing activated. It reconnects with no
