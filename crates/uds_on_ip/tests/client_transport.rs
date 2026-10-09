@@ -80,6 +80,8 @@ struct Scripted {
     now: u32,
     /// How many times `next_event` was called while closed, its `Closed` reported.
     quiet_calls: usize,
+    /// How many times the next reconnect pends, after giving the old connection up.
+    pending_reconnects: usize,
 }
 
 impl Scripted {
@@ -94,6 +96,7 @@ impl Scripted {
             failing_reconnects: 0,
             now: 0,
             quiet_calls: 0,
+            pending_reconnects: 0,
         }
     }
 
@@ -254,6 +257,10 @@ impl TesterConnection for Scripted {
     async fn reconnect(&mut self) -> Result<(), Self::ReconnectError> {
         self.calls.push(Call::Reconnect);
         self.give_up(DoIpResult::NoSocket);
+        while self.pending_reconnects > 0 {
+            self.pending_reconnects = self.pending_reconnects.saturating_sub(1);
+            yield_once().await;
+        }
         if self.failing_reconnects > 0 {
             self.failing_reconnects = self.failing_reconnects.saturating_sub(1);
             return Err("refused");
@@ -275,6 +282,27 @@ fn copy<'b>(buf: &'b mut [u8], bytes: &[u8]) -> &'b [u8] {
     let (head, _) = buf.split_at_mut(n);
     head.copy_from_slice(&bytes[..n]);
     head
+}
+
+/// Pends once, as a reconnect waiting out its back-off does.
+async fn yield_once() {
+    let mut yielded = false;
+    std::future::poll_fn(|cx| {
+        if yielded {
+            return Poll::Ready(());
+        }
+        yielded = true;
+        cx.waker().wake_by_ref();
+        Poll::Pending
+    })
+    .await;
+}
+
+/// Polls `future` once, as an executor would before dropping it.
+fn poll_once<F: Future>(future: F) -> Poll<F::Output> {
+    pin!(future)
+        .as_mut()
+        .poll(&mut Context::from_waker(Waker::noop()))
 }
 
 /// Runs a future that never waits on anything outside the test.
@@ -593,8 +621,8 @@ fn a_close_after_a_later_answer_is_not_expected() {
 }
 
 /// ISO 14229-5:2022 REQ 7.8 and REQ 7.10: after a close, a new connection and routing
-/// activation come before diagnostic communication continues. The transport reconnects
-/// for the next request, and only then sends it.
+/// activation come before diagnostic communication continues. The transport accepts the
+/// next request at once, reconnects for it on the next event, and only then sends it.
 #[test]
 fn a_request_after_a_close_reconnects_first() {
     let mut t = transport([
@@ -607,6 +635,8 @@ fn a_request_after_a_close_reconnects_first() {
     assert_eq!(next(&mut t), Seen::Closed(Address(ENTITY.0), false));
 
     send(&mut t, TO_ENTITY, READ);
+    assert_eq!(t.connection().calls[1..], []);
+    assert_eq!(next(&mut t), Seen::Conf(TO_ENTITY, SResult::Ok));
     assert_eq!(
         t.connection().calls[1..],
         [
@@ -614,12 +644,12 @@ fn a_request_after_a_close_reconnects_first() {
             Call::Request(ENTITY, TaType::Physical, READ.to_vec())
         ]
     );
-    assert_eq!(next(&mut t), Seen::Conf(TO_ENTITY, SResult::Ok));
 }
 
 /// A connection that ended before its `Closed` was read is found closed by the request:
-/// the transport reconnects and sends, and reports the end it found before anything from
-/// the new connection, so the client hears of it and its request still goes.
+/// the transport accepts it, reports the end it found, then reconnects and sends it, so
+/// the client hears of the end before anything from the new connection, and its request
+/// still goes.
 #[test]
 fn a_request_finding_the_connection_ended_reconnects_and_reports_the_end() {
     let mut connection = Scripted::new([Entity::Acks(DoIpResult::Ok)]);
@@ -627,6 +657,8 @@ fn a_request_finding_the_connection_ended_reconnects_and_reports_the_end() {
     let mut t: Transport = DoIpClientTransport::new(connection, RELOADS);
 
     send(&mut t, TO_ENTITY, READ);
+    assert_eq!(next(&mut t), Seen::Closed(Address(ENTITY.0), false));
+    assert_eq!(next(&mut t), Seen::Conf(TO_ENTITY, SResult::Ok));
     assert_eq!(
         t.connection().calls,
         [
@@ -634,24 +666,31 @@ fn a_request_finding_the_connection_ended_reconnects_and_reports_the_end() {
             Call::Request(ENTITY, TaType::Physical, READ.to_vec())
         ]
     );
-    assert_eq!(next(&mut t), Seen::Closed(Address(ENTITY.0), false));
-    assert_eq!(next(&mut t), Seen::Conf(TO_ENTITY, SResult::Ok));
 }
 
-/// A reconnect that fails refuses the request with its error, and leaves the connection
-/// closed for a later request to try again.
+/// A reconnect that fails is the next event's error, and confirms the request waiting
+/// for it failed; the connection stays closed, and a later request tries again.
 #[test]
-fn a_failed_reconnect_refuses_the_request_and_the_next_tries_again() {
+fn a_failed_reconnect_fails_the_waiting_request_and_the_next_tries_again() {
     let mut connection = Scripted::new([Entity::Acks(DoIpResult::Ok)]);
     connection.connected = false;
     connection.failing_reconnects = 1;
     let mut t: Transport = DoIpClientTransport::new(connection, RELOADS);
 
+    send(&mut t, TO_ENTITY, READ);
+    assert_eq!(next(&mut t), Seen::Closed(Address(ENTITY.0), false));
+    let mut buf = [0; 32];
     assert!(matches!(
-        run(t.t_data_req(TO_ENTITY, READ, AfterSend::Continue)),
+        run(t.next_event(&mut buf, None)),
         Err(uds_on_ip::ClientTransportError::Reconnect("refused"))
     ));
+    assert_eq!(
+        next(&mut t),
+        Seen::Conf(TO_ENTITY, failed(DoIpResult::NoSocket))
+    );
+
     send(&mut t, TO_ENTITY, READ);
+    assert_eq!(next(&mut t), Seen::Conf(TO_ENTITY, SResult::Ok));
     assert_eq!(
         t.connection().calls,
         [
@@ -700,6 +739,8 @@ fn a_request_after_an_unanswered_one_goes_on_a_new_connection() {
     assert_eq!(next(&mut t), Seen::Conf(TO_ENTITY, SResult::Ok));
 
     send(&mut t, TO_ENTITY, READ);
+    assert_eq!(next(&mut t), Seen::Closed(Address(ENTITY.0), false));
+    assert_eq!(next(&mut t), Seen::Conf(TO_ENTITY, SResult::Ok));
     assert_eq!(
         t.connection().calls[1..],
         [
@@ -707,8 +748,6 @@ fn a_request_after_an_unanswered_one_goes_on_a_new_connection() {
             Call::Request(ENTITY, TaType::Physical, READ.to_vec())
         ]
     );
-    assert_eq!(next(&mut t), Seen::Closed(Address(ENTITY.0), false));
-    assert_eq!(next(&mut t), Seen::Conf(TO_ENTITY, SResult::Ok));
 }
 
 /// An answered request leaves nothing to arrive late.
@@ -728,6 +767,8 @@ fn a_request_after_only_a_response_pending_goes_on_a_new_connection() {
     send(&mut t, TO_ENTITY, READ);
     let _ = (next(&mut t), next(&mut t));
     send(&mut t, TO_ENTITY, READ);
+    assert_eq!(next(&mut t), Seen::Closed(Address(ENTITY.0), false));
+    let _ = next_until(&mut t, Some(uds_session::Timestamp(100)));
     assert_eq!(reconnects(&t), 1);
 }
 
@@ -819,4 +860,70 @@ fn outbound_max_is_the_max_data_size_less_the_addresses() {
     assert_eq!(t(None), None);
     assert_eq!(t(Some(4_092)), Some(4_088));
     assert_eq!(t(Some(2)), Some(0));
+}
+
+// --- what the review found ---------------------------------------------------------------
+
+/// A request is accepted on its first poll even where a reconnect must come first, and a
+/// reconnect dropped part-way leaves it owed its confirm: the next event reconnects and
+/// sends it. A caller bounds a call by dropping it, so a request lost in a dropped
+/// reconnect would leave its channel waiting for good.
+#[test]
+fn a_request_survives_a_dropped_reconnect() {
+    let mut connection = Scripted::new([Entity::Acks(DoIpResult::Ok)]);
+    connection.connected = false;
+    connection.closed_reported = true;
+    connection.pending_reconnects = 1;
+    let mut t: Transport = DoIpClientTransport::new(connection, RELOADS);
+
+    assert!(matches!(
+        poll_once(t.t_data_req(TO_ENTITY, READ, AfterSend::Continue)),
+        Poll::Ready(Ok(()))
+    ));
+    assert_eq!(next(&mut t), Seen::Closed(Address(ENTITY.0), false));
+    let mut buf = [0; 32];
+    assert!(poll_once(t.next_event(&mut buf, None)).is_pending());
+
+    assert_eq!(next(&mut t), Seen::Conf(TO_ENTITY, SResult::Ok));
+    assert_eq!(
+        t.connection().requests(),
+        [READ.to_vec()],
+        "sent once, on the connection the second reconnect opened"
+    );
+}
+
+/// The reconnect the late-reply guard makes is the transport's, not the server's, so its
+/// close is never the prescribed one, whatever the server last said.
+#[test]
+fn the_guards_reconnect_is_not_an_expected_close() {
+    let mut t = transport([
+        Entity::Acks(DoIpResult::Ok),
+        answer(&[0x50, 0x03, 0x00, 0x32, 0x01, 0xF4]),
+        Entity::Acks(DoIpResult::Ok),
+        Entity::Acks(DoIpResult::Ok),
+    ]);
+    send(&mut t, TO_ENTITY, &[0x10, 0x03]);
+    let _ = (next(&mut t), next(&mut t));
+    send(&mut t, TO_ENTITY, READ);
+    let _ = next(&mut t);
+
+    send(&mut t, TO_ENTITY, READ);
+    assert_eq!(next(&mut t), Seen::Closed(Address(ENTITY.0), false));
+}
+
+/// A request the entity acknowledged after the server's positive response shows the
+/// connection outlived that response, so a later end of it is not the prescribed close.
+#[test]
+fn an_acknowledged_request_after_the_response_makes_a_later_close_unexpected() {
+    let mut t = transport([
+        Entity::Acks(DoIpResult::Ok),
+        answer(&[0x50, 0x03, 0x00, 0x32, 0x01, 0xF4]),
+        Entity::Acks(DoIpResult::Ok),
+        Entity::Closes,
+    ]);
+    send(&mut t, TO_ENTITY, &[0x10, 0x03]);
+    let _ = (next(&mut t), next(&mut t));
+    send(&mut t, TO_ENTITY, KEEP_ALIVE);
+    assert_eq!(next(&mut t), Seen::Conf(TO_ENTITY, SResult::Ok));
+    assert_eq!(next(&mut t), Seen::Closed(Address(ENTITY.0), false));
 }

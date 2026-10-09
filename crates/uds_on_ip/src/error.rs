@@ -50,10 +50,10 @@ pub enum ClientTransportError<E, R, X> {
     #[error("the DoIP connection failed: {0:?}")]
     Connection(E),
 
-    /// No connection could be opened and activated for a request: the
+    /// No connection could be opened and activated for a waiting request: the
     /// [`TesterConnection::ReconnectError`](simple_doip::service::TesterConnection::ReconnectError).
-    /// The request was not accepted, and the connection stays closed until a later
-    /// request's reconnect succeeds.
+    /// Every waiting request is confirmed failed, and the connection stays closed until a
+    /// later request's reconnect succeeds.
     #[error("the DoIP connection could not be reopened: {0:?}")]
     Reconnect(R),
 

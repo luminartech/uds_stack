@@ -333,7 +333,9 @@ the seam with no I/O in it:
   and feeds one `uds_services::Client`. It holds a request made while the
   connection carries another in `QUEUE` bytes, so a keep-alive and a call's request
   never collide; reports a connection's end once per server addressed on it; and
-  reconnects for the next request that needs a connection (REQ 7.8, REQ 7.10).
+  reconnects, on the next event, for a request made while the connection is closed,
+  which it accepts at once so that a call dropped meanwhile leaves nothing unconfirmed
+  (REQ 7.8, REQ 7.10).
 
 This transport's `CONNECTIONS` must be at least the entity's, the size of
 its connection table, reserve socket included (ISO 13400-2:2019 REQ 4.DoIP-002):
@@ -472,9 +474,9 @@ message was a positive `DiagnosticSessionControl` or `ECUReset` response, and
 reconnects, through `TesterConnection::reconnect`, for the next request; what
 re-establishing does on the wire is `simple_doip`'s ([§3.6](#36-when-and-what)).
 The close is often found only by that next request, its `Closed` unread: the
-transport reconnects, sends, and reports the close ahead of anything from the new
-connection, and the client fails only an exchange whose response window is open,
-so the call goes through.
+transport accepts the request, reports the close, then reconnects and sends it, and
+the client fails only an exchange whose response window is open, so the call goes
+through.
 
 **Client, a lost response.** A response that arrives after the client's window
 closed would be taken for the next request's answer, and the client's own check

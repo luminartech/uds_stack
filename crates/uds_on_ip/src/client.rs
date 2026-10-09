@@ -31,11 +31,14 @@ use crate::mapping::{
 /// - **Its own address.** A message to any address but the tester's is not this
 ///   tester's to take, and is dropped.
 /// - **Reconnecting.** ISO 14229-5:2022 REQ 7.8 and REQ 7.10 have a client open a new
-///   connection and activate routing again after the server closes it. The transport
-///   does so for the next request that needs one, through
+///   connection and activate routing again after the server closes it. A request made
+///   while the connection is closed is accepted at once and waits; the next
+///   [`UdsTransport::next_event`] reconnects for it through
 ///   [`TesterConnection::reconnect`], which gives the old connection up and waits out its
-///   back-off first; a request withdrawn with `DoIP_TIMEOUT_A` leaves the connection up
-///   and reconnects nothing. Bound the wait by dropping the call.
+///   back-off first, and then sends it. That wait does not honour the call's deadline:
+///   bound it by dropping the call, which leaves the request waiting, owed its confirm,
+///   for the next event to reconnect for. A request withdrawn with `DoIP_TIMEOUT_A`
+///   leaves the connection up and reconnects nothing.
 /// - **A late reply.** A physical request that expects a response, to a server whose
 ///   last such request was confirmed and never answered, goes on a new connection, so
 ///   that answer, arriving after the client gave up on it, cannot be taken for this
@@ -242,6 +245,11 @@ impl<C, const QUEUE: usize> DoIpClientTransport<C, QUEUE> {
 
     /// Notes the confirm of `ai`'s request.
     fn confirmed(&mut self, ai: Ai, result: DoIpResult) {
+        if result == DoIpResult::Ok {
+            for peer in self.peers.iter_mut().flatten() {
+                peer.leaving = false;
+            }
+        }
         if ai.ta_type != TaType::Physical {
             return;
         }
@@ -299,6 +307,15 @@ impl<C, const QUEUE: usize> DoIpClientTransport<C, QUEUE> {
         }
     }
 
+    /// Ends the connection on the transport's own account: no close it reports is the one
+    /// a server prescribes.
+    fn give_up(&mut self) {
+        for peer in self.peers.iter_mut().flatten() {
+            peer.leaving = false;
+        }
+        self.end();
+    }
+
     /// Owes `ai`'s failed confirm for `refusal`; `Err` where nothing more can be owed.
     fn refuse<E, R, X>(
         &mut self,
@@ -314,43 +331,37 @@ impl<C, const QUEUE: usize> DoIpClientTransport<C, QUEUE> {
 }
 
 impl<C: TesterConnection, const QUEUE: usize> DoIpClientTransport<C, QUEUE> {
-    /// Hands `data` to the connection, reconnecting first where it has ended, or holds it
-    /// until the connection can take it.
+    /// Hands `data` to the connection, or holds it until the connection can take it,
+    /// reconnected where it has ended. Nothing here waits: the request is accepted before
+    /// any reconnect, which the next [`UdsTransport::next_event`] makes.
     async fn send(&mut self, ai: Ai, data: &[u8]) -> Result<(), TransportError<C>> {
         let ta = target_of(ai)?;
         let expects = awaits_response(data);
         if self.late_reply_possible(ai, expects) {
-            self.end();
+            self.give_up();
         }
-        for _ in 0..2 {
-            if self.link == Link::Closed {
-                self.connection
-                    .reconnect()
-                    .await
-                    .map_err(ClientTransportError::Reconnect)?;
-                self.link = Link::Up;
-            }
-            if ai.ta_type == TaType::Physical {
-                self.peer(ai.ta);
-            }
-            if self.sent.is_some() || !self.waiting.is_empty() {
-                return self.wait(ai, data, expects);
-            }
-            let request = self
-                .connection
-                .request(ta, to_doip_ta_type(ai.ta_type), data);
-            match request.await {
-                Ok(()) => {
-                    self.sent = Some(ai);
-                    self.requested(ai, expects);
-                    return Ok(());
-                }
-                Err(Refusal::NoRoom) => return self.wait(ai, data, expects),
-                Err(Refusal::NotConnected) => self.end(),
-                Err(refusal) => return self.refuse(ai, refusal),
-            }
+        if ai.ta_type == TaType::Physical {
+            self.peer(ai.ta);
         }
-        self.refuse(ai, Refusal::NotConnected)
+        if self.link == Link::Closed || self.sent.is_some() || !self.waiting.is_empty() {
+            return self.wait(ai, data, expects);
+        }
+        let request = self
+            .connection
+            .request(ta, to_doip_ta_type(ai.ta_type), data);
+        match request.await {
+            Ok(()) => {
+                self.sent = Some(ai);
+                self.requested(ai, expects);
+                Ok(())
+            }
+            Err(Refusal::NoRoom) => self.wait(ai, data, expects),
+            Err(Refusal::NotConnected) => {
+                self.end();
+                self.wait(ai, data, expects)
+            }
+            Err(refusal) => self.refuse(ai, refusal),
+        }
     }
 
     fn wait(
@@ -359,15 +370,31 @@ impl<C: TesterConnection, const QUEUE: usize> DoIpClientTransport<C, QUEUE> {
         data: &[u8],
         expects: bool,
     ) -> Result<(), TransportError<C>> {
-        if self.link == Link::Closed {
-            return self.refuse(ai, Refusal::NotConnected);
-        }
         if self.waiting.push(ai, data) {
             self.requested(ai, expects);
             Ok(())
         } else {
             self.refuse(ai, Refusal::NoRoom)
         }
+    }
+
+    /// Reconnects where the connection has ended and a request waits for it. A reconnect
+    /// that fails confirms every waiting request failed; one dropped part-way leaves them
+    /// waiting for the next.
+    async fn reconnect(&mut self) -> Result<(), TransportError<C>> {
+        if self.link == Link::Up || self.waiting.is_empty() {
+            return Ok(());
+        }
+        if let Err(error) = self.connection.reconnect().await {
+            while let Some((ai, _)) = self.waiting.front() {
+                self.owed
+                    .push(Event::Conf(ai, s_result(DoIpResult::NoSocket)));
+                self.waiting.pop();
+            }
+            return Err(ClientTransportError::Reconnect(error));
+        }
+        self.link = Link::Up;
+        Ok(())
     }
 
     /// Hands the oldest waiting request to the connection, if it can take one.
@@ -484,8 +511,8 @@ impl<C: TesterConnection, const QUEUE: usize> UdsTransport
     const MAX_PDU: usize = C::MAX_PDU;
 
     /// `T_Data.req` as `DoIP_Data.request` (ISO 14229-5:2022 REQ 4.3 Table 4), from the
-    /// address routing activation registered, on a new connection where the last one
-    /// ended.
+    /// address routing activation registered. Accepted on the first poll: where the last
+    /// connection ended, the request waits for the next event to reconnect.
     ///
     /// A request made while the connection carries another waits, and one the
     /// connection refuses is accepted all the same; either way the
@@ -494,10 +521,9 @@ impl<C: TesterConnection, const QUEUE: usize> UdsTransport
     ///
     /// # Errors
     ///
-    /// [`ClientTransportError::Mapping`] if the addressing cannot be carried,
-    /// [`ClientTransportError::Reconnect`] if no new connection could be opened for it,
-    /// and [`ClientTransportError::Refused`] if the connection refuses the request while
-    /// the transport already owes as many confirmations as it can hold.
+    /// [`ClientTransportError::Mapping`] if the addressing cannot be carried, and
+    /// [`ClientTransportError::Refused`] if the connection refuses the request while the
+    /// transport already owes as many confirmations as it can hold.
     async fn t_data_req(
         &mut self,
         ai: Ai,
@@ -518,7 +544,9 @@ impl<C: TesterConnection, const QUEUE: usize> UdsTransport
     /// # Errors
     ///
     /// [`ClientTransportError::Connection`] where the connection fails other than by
-    /// closing, and [`ClientTransportError::PduOutsideBuffer`] where it reports a PDU
+    /// closing, [`ClientTransportError::Reconnect`] where no new connection could be
+    /// opened for a waiting request, which is then confirmed failed, and
+    /// [`ClientTransportError::PduOutsideBuffer`] where the connection reports a PDU
     /// outside `buffer`.
     async fn next_event<'b>(
         &mut self,
@@ -530,6 +558,7 @@ impl<C: TesterConnection, const QUEUE: usize> UdsTransport
             if let Some(owed) = self.owed.pop() {
                 return Ok(owed.into());
             }
+            self.reconnect().await?;
             self.send_waiting().await;
             if let Some(owed) = self.owed.pop() {
                 return Ok(owed.into());

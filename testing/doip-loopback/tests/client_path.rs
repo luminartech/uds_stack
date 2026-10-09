@@ -283,3 +283,35 @@ fn a_reconnect_drops_backs_off_then_connects() {
         .await;
     });
 }
+
+/// A call bounded by dropping it while the transport reconnects for its request leaves
+/// that request owed its confirm, so the server's channel is not left waiting for good:
+/// the next read reconnects, and is answered.
+#[test]
+fn a_call_dropped_while_reconnecting_leaves_the_next_answered() {
+    const BACKOFF: Duration = Duration::from_millis(500);
+    on_loopback(|loopback| async move {
+        let mut server = server(&loopback);
+        serve_until(&mut server, async {
+            let mut c = client(&loopback, BACKOFF).await;
+            let slow = ticking(c.read_data_by_identifier(SERVER, &[Did::Slow]), STEP).await;
+            assert!(matches!(slow, Err(ClientError::Timeout)), "{slow:?}");
+
+            let dropped = tokio::select! {
+                read = c.read_data_by_identifier(SERVER, &[Did::Vin]) => Some(read.is_ok()),
+                () = async {
+                    for _ in 0..4 {
+                        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+                        doip_loopback::advance(STEP);
+                    }
+                } => None,
+            };
+            assert_eq!(dropped, None, "the read ended inside the back-off");
+
+            let read = ticking(c.read_data_by_identifier(SERVER, &[Did::Vin]), STEP).await;
+            assert_eq!(record(read, Did::Vin), VIN);
+            c.close().await.expect("closed");
+        })
+        .await;
+    });
+}
