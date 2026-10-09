@@ -57,10 +57,12 @@ pub struct Found {
 }
 
 impl Found {
-    /// The address the entity answered from.
+    /// Where the entity takes UDP requests: its address, on [`UDP_DISCOVERY_PORT`]
+    /// (REQ 4.DoIP-011), whatever port it answered from, which Table 41 lets it assign
+    /// dynamically.
     #[must_use]
     pub const fn address(&self) -> SocketAddr {
-        self.from
+        SocketAddr::new(self.from.ip(), UDP_DISCOVERY_PORT)
     }
 
     /// Where the entity takes `TCP_DATA` connections: its address, on
@@ -134,10 +136,10 @@ pub async fn identify<U: UdpSplit>(
         Request::Vin(_) => PayloadType::VehicleIdentificationRequestWithVIN,
     };
     found.fill(None);
-    let collect = |from, message: Message<'_>| {
+    let collect = |from: SocketAddr, message: Message<'_>| {
         if let Payload::VehicleAnnouncement(identification) = message.payload {
             let again = found.iter().flatten().any(|known| {
-                known.from == from
+                known.from.ip() == from.ip()
                     && known.identification.entity_id == identification.entity_id
             });
             if !again && let Some(slot) = found.iter_mut().find(|slot| slot.is_none()) {

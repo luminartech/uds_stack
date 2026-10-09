@@ -614,7 +614,9 @@ own `UdpSplit` socket, as three functions:
 - `identify` sends one of the three requests (`Request::All`, `Request::Eid(EntityId)`,
   `Request::Vin(Vin)`), to `BROADCAST` or one entity, and
   collects into the caller's `[Option<Found>]` every entity that answers within
-  `A_DoIP_Ctrl`, one per address and EID, from the front, returning how many. It waits
+  `A_DoIP_Ctrl`, one per IP address and EID, from the front, returning how many. A
+  `Found` entity's `address` is its IP on `UDP_DISCOVERY`, where it takes requests
+  (4.DoIP-011), whatever port it answered from (Table 41). It waits
   the whole `A_DoIP_Ctrl`, as any number of entities may answer (Figure 7), so its only
   error is the socket's: no answer is none found.
 - `entity_status` and `power_mode` ask one entity, and return at its answer, its header

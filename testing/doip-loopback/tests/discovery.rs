@@ -1,9 +1,12 @@
 //! A tester finds the sensor's entity over UDP and connects to it: `simple_doip`'s
 //! discovery at both ends of an `edge-nal-std` socket (ISO 13400-2:2019 7.4 to 7.6).
 //!
-//! The entity is asked at its own address rather than by broadcast, as a loopback test
-//! cannot take `UDP_DISCOVERY`'s fixed port. Its announcements still go to the limited
-//! broadcast address, where the host may refuse them; a refused one is given up.
+//! The entity is asked at its own address rather than by broadcast, and its status and
+//! power mode there rather than at the [`Found::address`] it is found at, as a loopback
+//! test cannot take `UDP_DISCOVERY`'s fixed port. Its announcements still go to the
+//! limited broadcast address, where the host may refuse them; a refused one is given up.
+//!
+//! [`Found::address`]: simple_doip::tester::discovery::Found::address
 
 #![allow(
     clippy::panic,
@@ -12,11 +15,11 @@
 )]
 
 use doip_loopback::{ENTITY, Loopback, SensorEntity, advance, on_loopback};
-use simple_doip::EntityId;
 use simple_doip::entity::{Discovery, Entity, FixedIdentity};
 use simple_doip::messages::DiagnosticPowerModeCode;
 use simple_doip::service::{DiagnosticEntity, TesterConnection};
 use simple_doip::tester::discovery::{self, Request};
+use simple_doip::{EntityId, UDP_DISCOVERY_PORT};
 
 const MAX_MESSAGE: usize = 4096;
 const EID: [u8; 6] = [0x02, 0x00, 0x00, 0xAB, 0xCD, 0xEF];
@@ -57,7 +60,8 @@ async fn tick() -> ! {
 }
 
 /// REQ 8.DoIP-046, 119 and 116: the tester identifies the entity, asks its status and
-/// the vehicle's power mode, and connects to the address it answered from.
+/// the vehicle's power mode, and connects to the address it answered from. A follow-up
+/// would go to `UDP_DISCOVERY` on that address (REQ 4.DoIP-011).
 #[test]
 fn a_tester_finds_the_entity_and_connects_to_it() {
     on_loopback(|loopback| async move {
@@ -73,23 +77,26 @@ fn a_tester_finds_the_entity_and_connects_to_it() {
             let [Some(sensor), None] = found else {
                 panic!("expected the entity alone, got {found:?}");
             };
-            assert_eq!(sensor.address(), entity_at);
+            assert_eq!(
+                sensor.address(),
+                std::net::SocketAddr::new(entity_at.ip(), UDP_DISCOVERY_PORT)
+            );
             assert_eq!(sensor.identification().entity_id, EID);
             assert_eq!(sensor.identification().logical_address, ENTITY);
 
-            let status = discovery::entity_status(&mut socket, sensor.address())
+            let status = discovery::entity_status(&mut socket, entity_at)
                 .await
                 .expect("a status");
             assert_eq!(status.max_data_size, Some(4088));
             assert_eq!(status.open_tcp_sockets, 0);
-            let mode = discovery::power_mode(&mut socket, sensor.address())
+            let mode = discovery::power_mode(&mut socket, entity_at)
                 .await
                 .expect("a power mode");
             assert_eq!(mode, DiagnosticPowerModeCode::Ready);
 
             assert_eq!(sensor.tcp_address().ip(), loopback.tcp_address().ip());
             let mut tester = loopback.tester().await.expect("activated");
-            let status = discovery::entity_status(&mut socket, sensor.address())
+            let status = discovery::entity_status(&mut socket, entity_at)
                 .await
                 .expect("a status");
             assert_eq!(status.open_tcp_sockets, 1);

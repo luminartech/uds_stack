@@ -125,6 +125,37 @@ fn a_directed_request_carries_what_it_names() {
     }
 }
 
+/// Table 41 and REQ 4.DoIP-011: an entity may answer from a dynamically assigned port,
+/// but takes requests on `UDP_DISCOVERY`, so that is where it is found; its answers from
+/// two ports are one entity.
+#[test]
+fn an_entity_answering_from_another_port_is_found_at_udp_discovery() {
+    let _clock = clock();
+    let udp = MockUdp::new();
+    let mut socket = udp.socket();
+    let mut found = [None; 2];
+    let dynamic = SocketAddr::new(entity_at(10).ip(), 50_000);
+    let kept = {
+        let mut identifying = pin!(discovery::identify(
+            &mut socket,
+            BROADCAST,
+            Request::All,
+            &mut found
+        ));
+        assert!(until_stalled(identifying.as_mut()).is_none());
+        udp.deliver(dynamic, &identification(0xE400, EID));
+        udp.deliver(entity_at(10), &identification(0xE400, EID));
+        advance(A_DOIP_CTRL);
+        until_stalled(identifying.as_mut())
+    };
+
+    assert_eq!(kept, Some(Ok(1)));
+    let [Some(only), None] = &found else {
+        panic!("expected one entity, got {found:?}");
+    };
+    assert_eq!(only.address(), entity_at(10));
+}
+
 /// Entities answering once `found` is full are not kept.
 #[test]
 fn identify_keeps_no_more_than_it_has_room_for() {
