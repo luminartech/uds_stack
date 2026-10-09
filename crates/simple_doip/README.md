@@ -1,8 +1,7 @@
 # simple_doip
 
 `simple_doip` owns ISO 13400-2:2019: Diagnostics over IP (DoIP). It is a `no_std`,
-zero-copy protocol core with optional async client and server, and a `no_std`
-tester and entity over `edge-nal`. In its documentation, a table, figure,
+zero-copy protocol core, and a `no_std` tester and entity over `edge-nal`. In its documentation, a table, figure,
 clause or requirement cited with no document named is ISO 13400-2:2019's; any
 other document is named where it is cited.
 
@@ -38,37 +37,28 @@ concerns, and this crate has no dependency on any of them.
 ## Status
 
 Released in lockstep with the rest of the stack, at one shared version; 0.7.0
-is not released yet, and 0.6.0 is the last release on crates.io. See the
+is not released yet, and 0.6.0 is the last release on crates.io. 0.7.0 removes
+the async client, the async server and `bare_metal_entity`;
+[`MIGRATING.md`](MIGRATING.md) maps each to what replaces it. See the
 [workspace README](https://github.com/luminartech/uds_stack#status) for where
 the other crates in the stack stand.
 
 ## Scope and limitations
 
 The protocol core — framing, message encode/decode — is golden-vector tested
-against the on-wire format. The async `client` and `server` cover the common
-case, within these bounds:
+against the on-wire format. The `connection` feature's `tester::Tester` and
+`entity::Entity` are a tester and an entity that allocate nothing; the crate
+documentation lists what their integrator supplies. The entity announces itself
+and answers vehicle identification, entity status and power mode over UDP, and
+`tester::discovery` finds entities and asks them the same. Within these bounds:
 
 - **No TLS.** Connections are in the clear on `TCP_PORT` (`13400`);
   `TCP_TLS_PORT` (`3496`) is defined by ISO 13400-2 and unused here.
-- **The server serves one TCP connection at a time.** A second client cannot
-  connect while the first is being served.
-- **The server sends no unsolicited UDP vehicle announcement.** A tester learns
-  of it only by asking, and identification is answered on the UDP path only, by
-  `Server::run_udp_responder` on a socket the caller binds and drives.
-- **The client requires the peer to acknowledge before it responds.** A
-  `DiagnosticMessage` that arrives while the client is waiting for the
-  acknowledgement is dropped, so a peer that answers first appears never to
-  answer at all.
+- **A tester carries one unconfirmed request at a time.** A second request
+  before the first is confirmed is refused.
 
 [`ARCHITECTURE.md`](ARCHITECTURE.md) §7 records these and the rest of the
 deferred work.
-
-None of this constrains bare-metal or single-client use. On bare metal, the
-`connection` feature's `tester::Tester` and `entity::Entity` are a tester and an
-entity that allocate nothing; the crate documentation lists what their integrator
-supplies. The entity announces itself and answers vehicle identification, entity
-status and power mode over UDP, and `tester::discovery` finds entities and asks
-them the same.
 
 ## Quickstart
 
@@ -105,8 +95,6 @@ The protocol core is `no_std` and zero-copy by default. Everything that pulls in
 | `alloc`  | Allocator-backed helpers                                    | —                                   |
 | `std`    | `std`-backed I/O and error traits                            | `alloc`                            |
 | `codec`  | The tokio-util `Encoder`/`Decoder` for DoIP frames           | `std`, `tokio`, `tokio-util`, `bytes` |
-| `client` | The async DoIP client                                        | `codec`, `async-trait`, `futures`  |
-| `server` | The async DoIP server                                        | `codec`, `async-trait`, `futures`  |
 | `connection` | The `no_std` tester and entity, `tester::Tester` and `entity::Entity`, over `edge-nal` | `edge-nal`, `embedded-io-async`, `embassy-time`, `embassy-futures` |
 
 `default = []`, so bare-metal / embedded targets should build with
@@ -118,10 +106,10 @@ borrowed message types — the practical reason to enable it is that you need a
 message to outlive the buffer it was decoded from (e.g. to move it across a
 queue or task boundary).
 
-For development and testing, enable `client` and `server`:
+For development and testing, enable every feature:
 
 ```sh
-cargo test --features client,server
+cargo test --all-features
 ```
 
 ## Examples
@@ -133,27 +121,13 @@ cargo test --features client,server
   cargo run --example bare_metal_codec --no-default-features
   ```
 
-- **`echo_server`** and **`simple_client`** — a matched pair, not standalone.
-  The server listens on `TCP_PORT` (`13400`); the client dials
-  `127.0.0.1:13400`. Run each in its own terminal, server first:
-
-  ```sh
-  cargo run --example echo_server --features server    # terminal 1
-  cargo run --example simple_client --features client   # terminal 2
-  ```
-
-  The client's `ConnectorSocket` refuses any `server_address` whose port is not
-  `TCP_PORT` (`13400`), returning `Error::InvalidPort` — pointing a client at a
-  non-standard port requires your own `Connector` implementation.
-
-  `echo_server` answers a diagnostic message the way DoIP prescribes: first a
-  positive acknowledgement carrying the received bytes back in its
-  previous-message-data field, then the echo itself as a separate
-  `DiagnosticMessage`. Both are written into the `ResponseWriter` the handler
-  is given, which is the shape a real UDS response takes.
-
-  `echo_server` calls `run_server`, so it serves TCP only and does not answer
-  UDP discovery probes; see `Server::run_udp_responder` for that half.
+- **A tester and an entity over loopback** are
+  [`tests/entity_std.rs`](tests/entity_std.rs).
+- **The whole server path**, a `uds_services` server over `uds_on_ip`'s
+  `DoIpTransport` over `Entity`, with `Tester` as the client, is the workspace's
+  [`testing/doip-loopback`](https://github.com/luminartech/uds_stack/tree/main/testing/doip-loopback).
+- **`Entity` on embassy-net**, for bare metal, is the workspace's
+  [`examples/embassy-net-entity`](https://github.com/luminartech/uds_stack/tree/main/examples/embassy-net-entity).
 
 ## Relationship to `automotive-wire-codec`
 

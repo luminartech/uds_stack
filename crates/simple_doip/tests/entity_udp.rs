@@ -608,7 +608,7 @@ fn a_wrong_length_is_answered_0x04() {
     assert_eq!(ask(&mut entity, &udp, &raw(0x4003, &[])).len(), 1);
 }
 
-/// ARCHITECTURE §2.5.4: a NACK raised once the request's protocol version is known is
+/// ARCHITECTURE §2.5.3: a NACK raised once the request's protocol version is known is
 /// sent in it, as the other answers are, so a tester of the 2012 edition can read it.
 #[test]
 fn a_nack_carries_the_requests_protocol_version() {
