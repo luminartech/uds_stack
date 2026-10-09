@@ -12,6 +12,7 @@
 
 use crate::pipeline::settle;
 use crate::select::{Either, select2};
+use crate::services::session::selection_of;
 use crate::services::{Responded, ServiceSet};
 use crate::state::ProtocolState;
 use crate::storage::{Buffers, Storage};
@@ -23,8 +24,7 @@ use uds_protocol::{DiagnosticSessionType, NegativeResponseCode, UdsServiceType};
 pub use uds_session::ServerParams;
 use uds_session::{
     Address, Ai, Association, Cause, Rejection, SResult, Server as SessionServer,
-    ServerOutput, ServerParameter, ServerRx, ServerTx, SessionSelection, Solicitation,
-    TaType, Timestamp,
+    ServerOutput, ServerParameter, ServerRx, ServerTx, Solicitation, TaType, Timestamp,
 };
 
 /// The UDS server: an application's services, its storage, a session layer and a
@@ -380,15 +380,6 @@ const fn reply_address(own: Address, request: Ai) -> Ai {
         ta: request.sa,
         ta_type: TaType::Physical,
         ..request
-    }
-}
-
-/// ``UDSS_LLR_0073`` — the session layer learns only default/non-default.
-fn selection_of(session: DiagnosticSessionType) -> SessionSelection {
-    if matches!(session, DiagnosticSessionType::DefaultSession) {
-        SessionSelection::Default
-    } else {
-        SessionSelection::NonDefault
     }
 }
 

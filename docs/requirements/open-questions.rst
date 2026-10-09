@@ -153,21 +153,6 @@ actually ran to completion, without a caller-supplied function reaching that dra
 shape is in hand, and the API is not to be contorted chasing one until there is. Touches
 ``UDSS_LLR_0081``, ``UDSS_LLR_0011`` and ``UDSS_LLR_0005``.
 
-Should a reset leave a physical keep-alive with no timer running?
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-``UDSS_LLR_0160`` stops a physical channel's ``tS3_Client`` when a request is sent, and the
-fifth bullet of ``UDSS_LLR_0161`` restarts it when a keep-alive's response window expires.
-A reset under ``UDSS_LLR_0180`` while that keep-alive is in progress ends the request with
-no expiry, and the confirmation of an abandoned association opens no window
-(``UDSS_LLR_0182``), so the restart never comes. The channel's session fact still holds, no
-timer runs, and no ``KeepAliveDue`` is indicated again until the application sends
-something on the channel; meanwhile the server's ``tS3_Server`` runs out. Each requirement
-reads as written. What is open is whether ``UDSS_LLR_0180`` should restart ``tS3_Client``
-where the session fact holds, and the same question for an abandoned confirmation of a
-keep-alive. Touches ``UDSS_LLR_0160``, ``UDSS_LLR_0161``, ``UDSS_LLR_0180`` and
-``UDSS_LLR_0182``.
-
 Should a reset discard a message already arriving?
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
@@ -183,6 +168,17 @@ discards the next completion, or an assumption of use that the caller resets onl
 transport has abandoned the message. Touches ``UDSS_LLR_0045``, ``UDSS_LLR_0138``,
 ``UDSS_LLR_0178`` and ``UDSS_LLR_0180``.
 
+The one caller, ``uds_services``' client, narrows it without closing it. It classifies a
+final response as ``solicited`` only where it echoes the service identifier of the request
+in progress (ISO 14229-1:2020 8.5 and 8.6), and a positive response to a session change only
+where it echoes the session requested, so a late reply to another service or session closes
+no window. That is the client's own policy, since ``UDSS_LLR_0065`` would call a late reply
+solicited. It also drains a functional window a dropped call left open before sending
+anything else. A late reply to the same service, on a physical channel, is still taken for
+the new request's answer. That rests on an assumption of use the client states: its
+transport ends a connection whose request timed out rather than carrying the late reply into
+the next exchange (issue #17 item 3, the ``DoIP`` client transport's).
+
 A late confirmation can match a reopened channel's request
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
@@ -196,6 +192,9 @@ use — that the caller withdraws a channel only once its transport has reported
 every transmission on it — can be stated in the qualification repository. Touches
 ``UDSS_LLR_0059``, ``UDSS_LLR_0063`` and ``UDSS_LLR_0125``.
 
+``uds_services``' client discharges that assumption: it withdraws a channel only to make
+room for another, and never one with a transmission still awaiting its confirmation.
+
 Functional keep-alive falls due with no functional channel open
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
@@ -208,6 +207,10 @@ it. A client built with no functional channel at all is refused at compile time;
 one withdrawn is not. What is open is whether withdrawing the last functional channel should
 disengage the keep-alive. Touches ``UDSS_LLR_0150``, ``UDSS_LLR_0155``, ``UDSS_LLR_0158``
 and ``UDSS_LLR_0184``.
+
+``uds_services``' client never reaches the case. Its functional keep-alive is built with the
+functional address it is sent to, the channel to that address is opened when the keep-alive
+first falls due if it is not open already, and that channel is never withdrawn.
 
 Sequencing
 ----------

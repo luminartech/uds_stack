@@ -8,6 +8,17 @@ use uds_protocol::{
     NegativeResponseCode, ResetType, SubnetNumber,
 };
 
+/// ``UDSS_LLR_0073`` — the session layer learns only default/non-default.
+pub(crate) fn selection_of(
+    session: DiagnosticSessionType,
+) -> uds_session::SessionSelection {
+    if matches!(session, DiagnosticSessionType::DefaultSession) {
+        uds_session::SessionSelection::Default
+    } else {
+        uds_session::SessionSelection::NonDefault
+    }
+}
+
 /// The `P2` pair a session advertises in its `DiagnosticSessionControl` response, and
 /// that [`crate::Server`] enforces while the session is in force.
 ///

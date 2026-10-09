@@ -80,7 +80,10 @@ pub use access::{Access, Levels, Sessions};
 pub mod assembly;
 
 pub mod client;
-pub use client::{Answer, Client, ClientSet, Records, Response, Responses};
+pub use client::{
+    Answer, Client, ClientError, ClientKeepAlive, ClientSet, ClientTiming, KeepAlive,
+    MalformedResponse, Records, Response, Responses,
+};
 
 pub mod server;
 pub use server::{Server, ServerParams};

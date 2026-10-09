@@ -4,8 +4,12 @@
 //! identifiers, and ``UDSSVC_ARCH_0024`` makes that the same vocabulary a server's
 //! handlers are written against. A client implements no service trait.
 //!
-//! ``UDSSVC_ARCH_0021`` — a negative response is interpreted here. The layer below
-//! declines it in writing, and there is no layer between the two.
+//! ``UDSSVC_ARCH_0021`` — a negative response is interpreted here; nothing below reads
+//! a response code.
+//!
+//! The exchanges themselves run in `client::driver` over `uds_session`'s client role and
+//! [`UdsTransport`], as [`crate::Server`]'s do; `client::encode` holds the sans-io halves
+//! (``UDSSVC_ARCH_0028``).
 //!
 //! **The storage shape mirrors `uds_session`'s.** That crate splits channels by kind:
 //! `PhysicalSlot` carries no responder table where `FunctionalSlot<R>` does, and a
@@ -15,10 +19,21 @@
 //! them — a physical-only client pays nothing for responder tables, and a functional
 //! channel cannot be given a session reload it has no use for.
 
-use crate::storage::ClientStorage;
-use crate::{DataIdentifier, RecordError, UdsTransport};
+mod driver;
+mod encode;
+
+use crate::storage::{ClientBuffers, ClientStorage};
+use crate::{
+    DataIdentifier, DiagnosticSessionType, RecordError, SessionTiming, UdsServiceType,
+    UdsTransport,
+};
+use driver::{Answered, Book, Exchange};
 use uds_protocol::NegativeResponseCode;
-use uds_session::{Address, KeepAliveMode};
+use uds_session::{
+    Address, ChannelAddressing, ChannelParameter, ChannelParams, ClientTx,
+    ExpectedResponses, FunctionalKeepAlive, KeepAliveMode, PhysicalChannelId,
+    PhysicalKeepAlive, Rejection, Reloads, Timestamp,
+};
 
 /// One application's identifier vocabulary, with the storage derived from it.
 ///
@@ -36,6 +51,244 @@ pub trait ClientSet: DataIdentifier + crate::sealed::Sealed {
     type Store: ClientStorage;
 }
 
+/// Why a call produced no response.
+///
+/// ``UDSSVC_ARCH_0023`` — a timeout is a fault, as are a request that could not be sent
+/// and a connection that closed under it. A negative response is not here: it is a
+/// response, [`Response::Negative`] or [`Answer::Negative`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum ClientError<E> {
+    /// The transport failed; see [`UdsTransport::Error`].
+    Transport(E),
+    /// No response came within `tP_Client`, after ISO 14229-2:2021 9.7 Table 9's two
+    /// repeats.
+    Timeout,
+    /// The request's last transmission was confirmed failed, after Table 9's repeats, or
+    /// the session layer refused the request outright, which is not repeated.
+    NotSent,
+    /// The connection to the server closed before it answered.
+    Closed,
+    /// Every channel slot was in use, and none was idle enough to withdraw.
+    NoChannel,
+    /// The request named no identifier, or more than the client's
+    /// `max_dids_per_request`; nothing was sent.
+    Request,
+}
+
+impl<E: core::fmt::Debug> core::fmt::Display for ClientError<E> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::Transport(error) => write!(f, "the transport failed: {error:?}"),
+            Self::Timeout => f.write_str("no response within the response window"),
+            Self::NotSent => f.write_str("the request could not be sent"),
+            Self::Closed => f.write_str("the connection closed before the response"),
+            Self::NoChannel => f.write_str("no channel slot is free"),
+            Self::Request => f.write_str("the request names no identifier, or too many"),
+        }
+    }
+}
+
+impl<E: core::fmt::Debug> core::error::Error for ClientError<E> {}
+
+/// A keep-alive mode a [`Client`] can be built in: [`FunctionalKeepAlive`] or
+/// [`PhysicalKeepAlive`], sealed to those two.
+///
+/// It says what a [`KeepAlive`] holds beside the mode and how a physical channel is
+/// opened in it, which is all the two modes differ in at this layer.
+pub trait ClientKeepAlive: KeepAliveMode + crate::sealed::Sealed + Sized {
+    /// What a [`KeepAlive`] in this mode holds beside the mode itself.
+    #[doc(hidden)]
+    type Setting: Copy + core::fmt::Debug;
+
+    /// Open a physical channel in this mode.
+    #[doc(hidden)]
+    fn open_physical<const PHYS: usize, const FUNC: usize, const R: usize>(
+        session: &mut uds_session::Client<Self, PHYS, FUNC, R>,
+        now: Timestamp,
+        addressing: ChannelAddressing,
+        params: ChannelParams,
+        setting: Self::Setting,
+    ) -> Result<PhysicalChannelId, Rejection>;
+
+    /// The functional address a keep-alive is sent to, in the mode that has one.
+    #[doc(hidden)]
+    fn group(setting: Self::Setting) -> Option<Address>;
+}
+
+impl crate::sealed::Sealed for FunctionalKeepAlive {}
+
+impl ClientKeepAlive for FunctionalKeepAlive {
+    type Setting = Address;
+
+    fn open_physical<const PHYS: usize, const FUNC: usize, const R: usize>(
+        session: &mut uds_session::Client<Self, PHYS, FUNC, R>,
+        now: Timestamp,
+        addressing: ChannelAddressing,
+        params: ChannelParams,
+        _group: Address,
+    ) -> Result<PhysicalChannelId, Rejection> {
+        let uds_session::Finished { outcome, rest: _ } = session
+            .open_physical_channel(now, addressing, params)
+            .finish();
+        outcome
+    }
+
+    fn group(group: Address) -> Option<Address> {
+        Some(group)
+    }
+}
+
+impl crate::sealed::Sealed for PhysicalKeepAlive {}
+
+impl ClientKeepAlive for PhysicalKeepAlive {
+    type Setting = u32;
+
+    fn open_physical<const PHYS: usize, const FUNC: usize, const R: usize>(
+        session: &mut uds_session::Client<Self, PHYS, FUNC, R>,
+        now: Timestamp,
+        addressing: ChannelAddressing,
+        params: ChannelParams,
+        s3_client: u32,
+    ) -> Result<PhysicalChannelId, Rejection> {
+        let uds_session::Finished { outcome, rest: _ } = session
+            .open_physical_channel(now, addressing, params, s3_client)
+            .finish();
+        outcome
+    }
+
+    fn group(_s3_client: u32) -> Option<Address> {
+        None
+    }
+}
+
+/// How a [`Client`] keeps a server's non-default session alive, fixed at creation.
+///
+/// ISO 14229-2:2021 9.5 Tables 5 and 6 — a `TesterPresent` every `tS3_Client` while a
+/// server is out of its default session. This client sends none to a server a request is
+/// awaiting a response from, the request keeping that server alive itself, and none
+/// while a functional window is open, since that awaits every server; one falling due
+/// meanwhile goes once it may. Any other goes out on time, mid-exchange. A failed one
+/// goes again one `tS3_Client` later; a functional one is also repeated up to
+/// ISO 14229-2:2021 9.7 Table 9's two times first. The mode is the type parameter, so a
+/// client is built in exactly one.
+#[derive(Debug)]
+pub struct KeepAlive<K: ClientKeepAlive> {
+    /// Never dropped, only moved into the session layer: a `const fn` cannot destructure
+    /// a value whose generic part might have a destructor.
+    mode: core::mem::ManuallyDrop<K>,
+    setting: K::Setting,
+}
+
+impl KeepAlive<PhysicalKeepAlive> {
+    /// One physically addressed `TesterPresent` per server in a non-default session.
+    ///
+    /// # Arguments
+    ///
+    /// * `s3_client` - `tS3_Client`, in milliseconds, for every physical channel.
+    #[must_use]
+    pub const fn physical(s3_client: u32) -> Self {
+        Self {
+            mode: core::mem::ManuallyDrop::new(PhysicalKeepAlive),
+            setting: s3_client,
+        }
+    }
+}
+
+impl KeepAlive<FunctionalKeepAlive> {
+    /// One functionally addressed `TesterPresent` for every server.
+    ///
+    /// # Arguments
+    ///
+    /// * `s3_client` - `tS3_Client`, in milliseconds.
+    /// * `group` - the functional address it is sent to. ISO 14229-2 names none; it is
+    ///   the bus's (`0xE400` on `DoIP` by convention).
+    #[must_use]
+    pub const fn functional(s3_client: u32, group: Address) -> Self {
+        Self {
+            mode: core::mem::ManuallyDrop::new(FunctionalKeepAlive::new(s3_client)),
+            setting: group,
+        }
+    }
+}
+
+/// The client's timing policy: what ISO 14229-2:2021 9.2 Tables 3 and 4 leave to the
+/// client rather than the transport, in milliseconds.
+///
+/// Built with [`Self::new`]; it may gain fields.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub struct ClientTiming {
+    /// `tP3_Client_Phys`, the minimum time after a physically addressed request that
+    /// expects no response before the next on the channel (ISO 14229-2:2021 10.3,
+    /// ``UDSS_LLR_0169``). A request that would break it is held until it may go, never
+    /// reported.
+    pub physical_spacing: u32,
+    /// `tP3_Client_Func`, the minimum time after a functionally addressed request before
+    /// the next on the channel (``UDSS_LLR_0170``).
+    pub functional_spacing: u32,
+    /// `ΔtP6`, the network's worst-case round trip plus margin (ISO 14229-2:2021 REQ 5.21,
+    /// Formula (2)). Added to the `P2Server_max` and `P2*Server_max` a server advertises
+    /// to give the waits for its response: Table 4's minimum for `tP6_Client`, and more
+    /// than its minimum for `tP6*_Client`, which adds only `ΔtP6_Response` and leaves a
+    /// longer wait to the client. Vehicle-specific; the standard gives no default.
+    pub network_delay: u32,
+}
+
+impl ClientTiming {
+    /// A timing policy.
+    ///
+    /// # Arguments
+    ///
+    /// * `physical_spacing` - see [`Self::physical_spacing`].
+    /// * `functional_spacing` - see [`Self::functional_spacing`].
+    /// * `network_delay` - see [`Self::network_delay`].
+    #[must_use]
+    pub const fn new(
+        physical_spacing: u32,
+        functional_spacing: u32,
+        network_delay: u32,
+    ) -> Self {
+        Self {
+            physical_spacing,
+            functional_spacing,
+            network_delay,
+        }
+    }
+}
+
+/// Why a response could not be read.
+///
+/// The server answered and the transport delivered what it sent, so this is a
+/// disagreement between two applications about the bytes, not a link fault: see
+/// [`Response::Malformed`] and [`Answer::Malformed`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum MalformedResponse {
+    /// A record the application's [`DataIdentifier::split_record`] rejected.
+    Record(RecordError),
+    /// The response named an identifier this application does not define, which a
+    /// server never asked for it can only have made up.
+    UnknownIdentifier,
+    /// The response was longer than the client's buffer, so it was not read at all.
+    ///
+    /// The buffer is folded from this vocabulary's declared maxima, so only a server
+    /// sending more than the vocabulary declares can overrun it. Its records are not
+    /// walked: a cut at a record boundary would read as a shorter, valid answer.
+    Overlong {
+        /// How long the response was, where the transport knew.
+        declared: Option<usize>,
+    },
+    /// The response was shorter than its service's fixed fields.
+    Short,
+}
+
+impl From<RecordError> for MalformedResponse {
+    fn from(error: RecordError) -> Self {
+        Self::Record(error)
+    }
+}
+
 /// What one server said.
 ///
 /// ``UDSSVC_ARCH_0021`` and ``UDSSVC_ARCH_0023`` — three cases, and none is an error.
@@ -51,10 +304,13 @@ pub enum Response<V> {
     ///
     /// Not an error, for the reason [`Answer::Malformed`] is not: the server answered and
     /// the transport delivered it intact.
-    Malformed(RecordError),
-    /// The exchange completed and nothing came back — the suppress bit, or a
-    /// functionally addressed request no server supports. Distinct from a timeout,
-    /// because a timeout is a fault and suppression is not.
+    Malformed(MalformedResponse),
+    /// The exchange completed and nothing came back, as a request with the suppress bit
+    /// set expects. Distinct from a timeout, because a timeout is a fault and suppression
+    /// is not.
+    ///
+    /// No call returns this yet: none sets the suppress bit, and a silent functional
+    /// window ends a [`Responses`] instead.
     NoResponseExpected,
 }
 
@@ -93,7 +349,7 @@ pub enum Answer<'d, D: DataIdentifier> {
         /// The responding server's `S_AI[SA]`.
         from: Address,
         /// Why the response could not be walked.
-        error: RecordError,
+        error: MalformedResponse,
     },
 }
 
@@ -118,27 +374,32 @@ impl<D: DataIdentifier> Answer<'_, D> {
 ///
 /// The sequence is **lending**: an answer borrows the receive buffer and is valid only
 /// until the next is taken. ``UDSSVC_ARCH_0017``'s reasoning — an owned sequence
-/// allocates per response. An inherent `async fn` rather than a `Stream`, for the same
-/// reason `uds_on_ip`'s equivalent is not one: a `Stream` item cannot borrow the receive
-/// buffer.
+/// allocates per response. An inherent `async fn` rather than a `Stream`, because a
+/// `Stream` item cannot borrow the receive buffer.
+///
+/// The request goes out on the first [`Self::next`]. The request in progress is recorded
+/// in the [`Client`], not here, so dropping this part-way is safe: the client's next call
+/// drains what is left of the window before anything else.
 #[derive(Debug)]
 #[must_use = "an undrained sequence discards the answers the request produced"]
 pub struct Responses<
     'c,
     C: ClientSet,
     T: UdsTransport,
-    K: KeepAliveMode,
+    K: ClientKeepAlive,
     const PHYS: usize,
     const FUNC: usize,
     const R: usize = 0,
 > {
     client: &'c mut Client<C, T, K, PHYS, FUNC, R>,
+    /// Why the request could not be made, reported by the first [`Self::next`].
+    refused: Option<ClientError<T::Error>>,
 }
 
 impl<
     C: ClientSet,
     T: UdsTransport,
-    K: KeepAliveMode,
+    K: ClientKeepAlive,
     const PHYS: usize,
     const FUNC: usize,
     const R: usize,
@@ -146,21 +407,41 @@ impl<
 {
     /// The next answer, or `None` when the response window has closed.
     ///
+    /// The first call sends the request. The window closes one response timeout after
+    /// the last answer, or after the request's confirmation where none came; a
+    /// response-pending message holds it open and is not an answer.
+    ///
     /// # Errors
     ///
-    /// [`UdsTransport::Error`] where the transport failed.
-    #[allow(
-        clippy::unused_async,
-        clippy::unused_async_trait_impl,
-        reason = "async is load-bearing: the body awaits the transport once it \
-                  replaces this todo!(), and neither lint can see past the stub"
-    )]
-    pub async fn next(&mut self) -> Option<Result<Answer<'_, C>, T::Error>> {
-        #[allow(clippy::todo, reason = "API stub; behaviour lands with its element")]
-        {
-            let _ = &mut *self.client;
-            todo!("UDSSVC_ARCH_0022: lend the next decoded answer")
+    /// Each an end of the sequence, so the call after it returns `None`:
+    ///
+    /// - [`ClientError::Transport`] where the transport failed;
+    /// - [`ClientError::NotSent`] where the request's last transmission failed;
+    /// - [`ClientError::NoChannel`] or [`ClientError::Request`] where the request could
+    ///   not be made at all.
+    ///
+    /// A server's connection closing ends nothing: the window awaits every server, and
+    /// closes at its own timeout.
+    ///
+    /// # Cancel safety
+    ///
+    /// As [`Client::read_data_by_identifier`]'s. Dropping this `Responses` part-way is
+    /// safe too: the next call on the client drains what is left of the window first.
+    pub async fn next(&mut self) -> Option<Result<Answer<'_, C>, ClientError<T::Error>>> {
+        if let Some(error) = self.refused.take() {
+            return Some(Err(error));
         }
+        if let Err(error) = self.client.drain_window().await {
+            self.client.exchange = None;
+            return Some(Err(error));
+        }
+        let answered = match self.client.advance().await? {
+            Ok(answered) => answered,
+            Err(error) => return Some(Err(error)),
+        };
+        let message = answered_bytes(&mut self.client.store, &answered);
+        let answer = encode::final_response(message, answered.arrived);
+        Some(Ok(encode::answer(answered.from, answer)))
     }
 }
 
@@ -172,7 +453,7 @@ impl<
 /// [`DataIdentifier::split_record`] is what makes it walkable.
 ///
 /// **Walking one cannot fail.** The whole response is checked when this is built, so a
-/// framing error is one [`RecordError`] reported once — as [`Answer::Malformed`] or
+/// framing error is one [`MalformedResponse`] reported once — as [`Answer::Malformed`] or
 /// [`Response::Malformed`] — rather than a `Result` at every step of a walk that could
 /// only ever fail once and then end. There is no half-walked response: either every pair
 /// is reachable or none is.
@@ -196,21 +477,20 @@ impl<'d, D: DataIdentifier> Records<'d, D> {
     ///
     /// # Errors
     ///
-    /// [`RecordError`] where an identifier is not one this application defines, or a
-    /// record is shorter than it declared, or bytes trail the last whole record.
-    #[allow(
-        dead_code,
-        reason = "no caller until the UDSSVC_ARCH_0020 read lands; the tests below \
-                  exercise it"
-    )]
-    pub(crate) fn validate(response: &'d [u8]) -> Result<Self, RecordError> {
+    /// [`MalformedResponse`] where `response` holds no record (ISO 14229-1:2020
+    /// Table 188), an identifier is not one this application defines, a record is
+    /// shorter than it declared or invalid, or bytes trail the last whole record.
+    pub(crate) fn validate(response: &'d [u8]) -> Result<Self, MalformedResponse> {
+        if response.is_empty() {
+            return Err(MalformedResponse::Short);
+        }
         let mut rest = response;
         while !rest.is_empty() {
             let Some((identifier, tail)) = rest.split_first_chunk::<2>() else {
-                return Err(RecordError::Short);
+                return Err(MalformedResponse::Short);
             };
             let Some(did) = D::from_u16(u16::from_be_bytes(*identifier)) else {
-                return Err(RecordError::UnknownIdentifier);
+                return Err(MalformedResponse::UnknownIdentifier);
             };
             let (_record, remainder) = did.split_record(tail)?;
             rest = remainder;
@@ -261,7 +541,7 @@ impl<'d, D: DataIdentifier> Iterator for Records<'d, D> {
 pub struct Client<
     C: ClientSet,
     T: UdsTransport,
-    K: KeepAliveMode,
+    K: ClientKeepAlive,
     const PHYS: usize,
     const FUNC: usize,
     const R: usize = 0,
@@ -269,12 +549,22 @@ pub struct Client<
     session: uds_session::Client<K, PHYS, FUNC, R>,
     transport: T,
     store: C::Store,
+    /// This client's own `S_AI[SA]`.
+    tester: Address,
+    keep_alive: K::Setting,
+    timing: ClientTiming,
+    book: Book<PHYS, FUNC>,
+    /// The request in progress, if any; see the `driver` module.
+    exchange: Option<Exchange>,
+    /// A functional window a dropped [`Responses`] left open, drained before anything
+    /// else.
+    draining: Option<Exchange>,
 }
 
 impl<
     C: ClientSet,
     T: UdsTransport,
-    K: KeepAliveMode,
+    K: ClientKeepAlive,
     const PHYS: usize,
     const FUNC: usize,
     const R: usize,
@@ -288,17 +578,45 @@ impl<
     ///
     /// The channel slots are built here rather than supplied, so an application never
     /// names `uds_session` — the same commitment [`crate::Server::new`] already makes by
-    /// building its own session.
-    pub const fn new(transport: T, keep_alive: K) -> Self {
+    /// building its own session. Channels are opened as calls need them, one per server
+    /// and kind, with the reloads [`UdsTransport::channel_timing`] dictates. No channel
+    /// handle crosses this API, so two clients cannot confuse each other's, and
+    /// `uds_session`'s handle tag is left at its default.
+    ///
+    /// # Arguments
+    ///
+    /// * `transport` - what the client's requests go over.
+    /// * `tester` - this client's own `S_AI[SA]`, the source of every request.
+    /// * `keep_alive` - the keep-alive mode and its `tS3_Client`; see [`KeepAlive`].
+    /// * `timing` - the client's own timing policy; see [`ClientTiming`].
+    pub const fn new(
+        transport: T,
+        tester: Address,
+        keep_alive: KeepAlive<K>,
+        timing: ClientTiming,
+    ) -> Self {
+        let KeepAlive { mode, setting } = keep_alive;
         Self {
             session: uds_session::Client::new(
                 [uds_session::PhysicalSlot::EMPTY; PHYS],
                 [uds_session::FunctionalSlot::EMPTY; FUNC],
-                keep_alive,
+                core::mem::ManuallyDrop::into_inner(mode),
             ),
             transport,
             store: <C::Store as ClientStorage>::EMPTY,
+            tester,
+            keep_alive: setting,
+            timing,
+            book: Book::EMPTY,
+            exchange: None,
+            draining: None,
         }
+    }
+
+    /// The transport this client sends over.
+    #[must_use]
+    pub const fn transport(&self) -> &T {
+        &self.transport
     }
 
     /// Read one or more data identifiers from one server.
@@ -308,31 +626,150 @@ impl<
     /// structure through [`DataIdentifier::split_record`], so re-walking the response by
     /// hand would be the caller redoing work this crate can do.
     ///
+    /// A response-pending message (`0x78`) extends the wait to the enhanced response
+    /// window, which [`Self::diagnostic_session_control`] sets from the server's own
+    /// `P2*Server_max` and [`ClientTiming::network_delay`]. A response longer than the
+    /// client's buffer is [`Response::Malformed`] with [`MalformedResponse::Overlong`].
+    ///
+    /// # Arguments
+    ///
+    /// * `target` - the server's `S_AI[TA]`.
+    /// * `identifiers` - what to read, at least one and at most the client's
+    ///   `max_dids_per_request` (see [`crate::uds_client`]).
+    ///
     /// # Errors
     ///
-    /// [`UdsTransport::Error`] where the transport failed. A negative response is **not**
-    /// an error — it arrives as [`Response::Negative`].
-    #[allow(
-        clippy::unused_async,
-        clippy::unused_async_trait_impl,
-        reason = "async is load-bearing: the body awaits the transport once it \
-                  replaces this todo!(), and neither lint can see past the stub"
-    )]
+    /// A negative response is **not** an error — it arrives as [`Response::Negative`].
+    ///
+    /// - [`ClientError::Request`] where `identifiers` is empty or too long; nothing is
+    ///   sent.
+    /// - [`ClientError::Timeout`] or [`ClientError::NotSent`] where ISO 14229-2:2021 9.7
+    ///   Table 9's repeats were spent.
+    /// - [`ClientError::Closed`] where the connection closed first.
+    /// - [`ClientError::NoChannel`] where no channel could be opened to `target`.
+    /// - [`ClientError::Transport`] where the transport failed.
+    ///
+    /// # Cancel safety
+    ///
+    /// Cancel-safe at every await but the transport's own
+    /// [`UdsTransport::t_data_req`]: the exchange is recorded in the client, and the next
+    /// call resets its channel. A future dropped inside `t_data_req` may leave a
+    /// transmission whose confirmation never comes, which nothing but the transport can
+    /// clear.
     pub async fn read_data_by_identifier(
         &mut self,
         target: Address,
         identifiers: &[C],
-    ) -> Result<Response<Records<'_, C>>, T::Error> {
-        #[allow(clippy::todo, reason = "API stub; behaviour lands with its element")]
-        {
-            let _ = (
-                &mut self.transport,
-                &mut self.session,
-                self.store.split(),
+    ) -> Result<Response<Records<'_, C>>, ClientError<T::Error>> {
+        let answered = self
+            .exchange_with(
                 target,
-                identifiers.len(),
-            );
-            todo!("UDSSVC_ARCH_0020: encode, exchange, interpret")
+                |request| encode::read_data_by_identifier(request, identifiers),
+                None,
+            )
+            .await?;
+        let message = answered_bytes(&mut self.store, &answered);
+        Ok(encode::records(encode::final_response(
+            message,
+            answered.arrived,
+        )))
+    }
+
+    /// Change one server's diagnostic session.
+    ///
+    /// ISO 14229-1:2020 10.2 — the positive response carries the session's
+    /// [`SessionTiming`], read in Table 29's units. Its `P2Server_max` and
+    /// `P2*Server_max`, each plus [`ClientTiming::network_delay`], become the waits this
+    /// client allows for a response from `target` and after a response-pending message
+    /// from it, each where it is longer than the transport's own. A positive response
+    /// echoing another session is a late reply to an earlier change and is not taken for
+    /// the answer. Entering a non-default session starts the keep-alive the
+    /// client was built with. Returning to the default session ends a physical
+    /// keep-alive for `target`, and the functional keep-alive once no server this client
+    /// put in a non-default session remains in one.
+    ///
+    /// # Arguments
+    ///
+    /// * `target` - the server's `S_AI[TA]`.
+    /// * `session` - the session to enter; see [`DiagnosticSessionType`].
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::read_data_by_identifier`]'s, but for [`ClientError::Request`], which
+    /// this cannot return. A negative response is **not** an error.
+    ///
+    /// # Cancel safety
+    ///
+    /// As [`Self::read_data_by_identifier`]'s.
+    pub async fn diagnostic_session_control(
+        &mut self,
+        target: Address,
+        session: DiagnosticSessionType,
+    ) -> Result<Response<SessionTiming>, ClientError<T::Error>> {
+        let selection = crate::services::session::selection_of(session);
+        let exchanged = self
+            .exchange_with(
+                target,
+                |request| encode::diagnostic_session_control(request, session),
+                Some(selection),
+            )
+            .await;
+        let answered = match exchanged {
+            Ok(answered) => answered,
+            Err(error) => {
+                self.settle_functional_keep_alive();
+                return Err(error);
+            }
+        };
+        let message = answered_bytes(&mut self.store, &answered);
+        let positive =
+            encode::is_positive(UdsServiceType::DiagnosticSessionControl, message);
+        let response =
+            encode::session_timing(encode::final_response(message, answered.arrived));
+        if positive {
+            let timing = match response {
+                Response::Positive(timing) => Some(timing),
+                _ => None,
+            };
+            self.entered(target, selection, timing);
+        }
+        self.settle_functional_keep_alive();
+        Ok(response)
+    }
+
+    /// Wait until `until`, sending every keep-alive that falls due meanwhile.
+    ///
+    /// The client's `sleep`: a keep-alive is only ever sent from inside a call, so an
+    /// application with a server in a non-default session waits here between requests.
+    /// One that does not still has an overdue keep-alive sent during its next call, since
+    /// the session layer holds it until then: a physical one as soon as that call first
+    /// waits on the transport (to the server the call addresses, the request itself
+    /// stands in for it), the functional one once the call's exchange has ended. What
+    /// arrives meanwhile is handed to the session layer and otherwise discarded.
+    ///
+    /// # Arguments
+    ///
+    /// * `until` - when to return, on the transport's clock ([`UdsTransport::now`]).
+    ///
+    /// # Errors
+    ///
+    /// [`ClientError::Transport`] where the transport failed.
+    ///
+    /// # Cancel safety
+    ///
+    /// As [`Self::read_data_by_identifier`]'s.
+    pub async fn idle_until(
+        &mut self,
+        until: Timestamp,
+    ) -> Result<(), ClientError<T::Error>> {
+        self.retire();
+        self.drain_window().await?;
+        loop {
+            self.send_owed().await.result?;
+            if self.transport.now().has_reached(until) {
+                return Ok(());
+            }
+            self.pump(None, Some(until)).await?;
         }
     }
 
@@ -341,25 +778,117 @@ impl<
     /// ``UDSSVC_ARCH_0022`` — a functional request reaches every server, so zero or
     /// more may answer and there is no single response to return. The answers come back
     /// as a lending sequence: this is the only way to obtain a [`Responses`], and
-    /// draining it is how each server's answer is read. Failures and negative responses
-    /// both surface there — a transport error per answer, and a negative response as
-    /// [`Response::Negative`], which is not an error.
+    /// draining it is how each server's answer is read. Nothing is sent until its first
+    /// [`Responses::next`], which is also where a refusal surfaces. A negative response is
+    /// [`Answer::Negative`], which is not an error.
+    ///
+    /// # Arguments
+    ///
+    /// * `target` - the functional address, `S_AI[TA]`.
+    /// * `identifiers` - as for [`Self::read_data_by_identifier`].
     pub fn read_data_by_identifier_functional(
         &mut self,
         target: Address,
         identifiers: &[C],
     ) -> Responses<'_, C, T, K, PHYS, FUNC, R> {
-        #[allow(clippy::todo, reason = "API stub; behaviour lands with its element")]
-        {
-            let _ = (&mut self.transport, target, identifiers.len());
-            todo!("UDSSVC_ARCH_0022: encode and open the response window")
+        self.retire();
+        let ai = self
+            .addressing(target)
+            .with_ta_type(uds_session::TaType::Functional);
+        let ClientBuffers { request, .. } = self.store.split();
+        let refused = match encode::read_data_by_identifier(request, identifiers) {
+            Some(len) => {
+                let sid = request.first().copied().unwrap_or_default();
+                let class = ClientTx::Request {
+                    expected: ExpectedResponses::Unknown,
+                    repeat: false,
+                    session: None,
+                };
+                self.exchange = Some(Exchange::new(ai, len, sid, None, class));
+                None
+            }
+            None => Some(ClientError::Request),
+        };
+        Responses {
+            client: self,
+            refused,
+        }
+    }
+
+    /// Run one physical exchange with `target`: settle what an earlier call left,
+    /// encode the request with `encode`, and wait for its answer.
+    async fn exchange_with(
+        &mut self,
+        target: Address,
+        encode: impl FnOnce(&mut [u8]) -> Option<usize>,
+        session: Option<uds_session::SessionSelection>,
+    ) -> Result<Answered, ClientError<T::Error>> {
+        self.retire();
+        self.drain_window().await?;
+        let ClientBuffers { request, .. } = self.store.split();
+        let len = encode(request).ok_or(ClientError::Request)?;
+        let sid = request.first().copied().unwrap_or_default();
+        let echo = session.and_then(|_| request.get(1).copied());
+        let ai = self
+            .addressing(target)
+            .with_ta_type(uds_session::TaType::Physical);
+        let class = ClientTx::Request {
+            expected: ExpectedResponses::Exactly(core::num::NonZeroU16::MIN),
+            repeat: false,
+            session,
+        };
+        self.exchange = Some(Exchange::new(ai, len, sid, echo, class));
+        let answered = self.advance().await.unwrap_or(Err(ClientError::Timeout))?;
+        // The answer stands: a keep-alive the transport fails to take now stays owed,
+        // and the failure meets the next call.
+        let _ = self.send_owed().await;
+        Ok(answered)
+    }
+
+    /// Record that `target` answered a session change positively, as the session layer
+    /// classified it: its keep-alive standing, and, where its `timing` could be read,
+    /// `P2Server_max` and `P2*Server_max` plus the network delay as the response
+    /// reloads, each where it is longer than the transport's (ISO 14229-2:2021 9.2
+    /// Table 4, `tP6_Client` and `tP6*_Client`).
+    fn entered(
+        &mut self,
+        target: Address,
+        selection: uds_session::SessionSelection,
+        timing: Option<SessionTiming>,
+    ) {
+        let now = self.transport.now();
+        let floor = self.transport.channel_timing();
+        let delay = self.timing.network_delay;
+        if let Some(o) = self.book.physical_to(target) {
+            o.in_session = selection == uds_session::SessionSelection::NonDefault;
+            if let Some(timing) = timing {
+                let wait =
+                    |server: u32, floor: u32| server.saturating_add(delay).max(floor);
+                let parameter = ChannelParameter::Reloads(Reloads {
+                    default_reload: wait(timing.p2_server_max(), floor.default_reload),
+                    enhanced_reload: wait(
+                        timing.p2_star_server_max(),
+                        floor.enhanced_reload,
+                    ),
+                });
+                let _ = self
+                    .session
+                    .set_physical_parameter(now, o.id, parameter)
+                    .finish();
+            }
         }
     }
 }
 
+/// The bytes `answered` occupies in the response buffer.
+fn answered_bytes<'s, S: ClientStorage>(store: &'s mut S, answered: &Answered) -> &'s [u8] {
+    let ClientBuffers { response, .. } = store.split();
+    response.get(answered.range.clone()).map_or(&[], |m| m)
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{Answer, Records, Response};
+    use super::{Answer, MalformedResponse, Records, Response};
     use crate::{DataIdentifier, RecordError};
     use uds_protocol::NegativeResponseCode;
     use uds_session::Address;
@@ -395,9 +924,8 @@ mod tests {
     }
 
     /// ``UDSSVC_ARCH_0021`` — a negative response is a response, and this crate is the
-    /// layer that interprets it. `uds_on_ip` says so from the other side: "A UDS
-    /// negative response is not an error: it is a response, and interpreting it belongs
-    /// to a higher layer." This is that layer.
+    /// layer that interprets it: `uds_session` indicates the message and `UdsTransport`
+    /// carries its bytes, and neither reads a response code.
     ///
     /// ``UDSSVC_ARCH_0023`` — and "completed, nothing came back" is a third case, not a
     /// timeout: the suppress bit, or a functional request no server supports. A timeout
@@ -425,7 +953,7 @@ mod tests {
         };
         let broken: Answer<'_, TestDid> = Answer::Malformed {
             from: Address(0x0E02),
-            error: RecordError::Short,
+            error: MalformedResponse::Short,
         };
         assert_eq!(declined.from(), Address(0x0E01));
         assert_eq!(broken.from(), Address(0x0E02));
@@ -456,14 +984,14 @@ mod tests {
         assert_eq!(records.next(), None);
     }
 
-    /// An empty response yields nothing rather than an error: a server that answered
-    /// positively with no records has answered.
+    /// ISO 14229-1:2020 Table 188 — a positive response carries at least one identifier
+    /// and its record, so one with none is too short rather than an empty answer.
     #[test]
-    fn an_empty_response_yields_no_records() {
-        let Ok(records) = Records::<TestDid>::validate(&[]) else {
-            return;
-        };
-        assert_eq!(records.count(), 0);
+    fn an_empty_response_is_short() {
+        assert_eq!(
+            Records::<TestDid>::validate(&[]),
+            Err(MalformedResponse::Short)
+        );
     }
 
     /// A record shorter than the application declared is rejected when the walk is
@@ -473,7 +1001,7 @@ mod tests {
     fn a_truncated_record_is_rejected_before_the_walk() {
         assert_eq!(
             Records::<TestDid>::validate(&[0xF1, 0x90, 0x00, 0x00]),
-            Err(RecordError::Short)
+            Err(MalformedResponse::Record(RecordError::Short))
         );
     }
 
@@ -484,7 +1012,7 @@ mod tests {
     fn an_identifier_the_application_does_not_define_is_rejected() {
         assert_eq!(
             Records::<TestDid>::validate(&[0xDE, 0xAD, 0x00]),
-            Err(RecordError::UnknownIdentifier)
+            Err(MalformedResponse::UnknownIdentifier)
         );
     }
 
@@ -497,7 +1025,7 @@ mod tests {
         let response = [0xF4, 0x0D, 0x40, 0xF1, 0x90, 0x00];
         assert_eq!(
             Records::<TestDid>::validate(&response),
-            Err(RecordError::Short)
+            Err(MalformedResponse::Record(RecordError::Short))
         );
     }
 }

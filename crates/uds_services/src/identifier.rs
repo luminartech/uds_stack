@@ -21,12 +21,6 @@ pub enum RecordError {
         /// `incorrectMessageLengthOrInvalidFormat` (0x13) before the record's content.
         len: usize,
     },
-    /// A response named an identifier this application does not define.
-    ///
-    /// Only a client sees this: [`DataIdentifier::from_u16`] returning `None` on a
-    /// *request* is `requestOutOfRange` (0x31), but in a response it is a server naming
-    /// something that was never asked for.
-    UnknownIdentifier,
 }
 
 /// A data identifier this application supports.

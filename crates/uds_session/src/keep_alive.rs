@@ -59,6 +59,10 @@ mod role {
         KeepAliveWindowExpired,
         /// The caller released the keep-alive (``UDSS_LLR_0184``).
         Released,
+        /// The caller reset the channel, or the confirmation of the association a reset
+        /// abandoned arrived (``UDSS_LLR_0180``, ``UDSS_LLR_0182``); `outstanding` where
+        /// that association still awaits its confirmation.
+        Reset { outstanding: bool },
     }
 
     /// ``UDSS_LLR_0151`` — a physical channel's `tS3_Client`, its reload and its
@@ -148,8 +152,8 @@ impl role::Role for FunctionalKeepAlive {
     fn on(&mut self, now: Timestamp, site: Site<'_, ()>, event: Event) {
         let functional = matches!(site, Site::Functional);
         match event {
-            Event::Confirmed { ok: true, class } => {
-                let selects = class.session_selection();
+            Event::Confirmed { ok, class } => {
+                let selects = class.session_selection().filter(|_| ok);
                 if selects == Some(SessionSelection::NonDefault) && !self.s3.is_running() {
                     self.keeping_alive = true; // UDSS_LLR_0155
                     self.s3.start(now, self.reload);
@@ -222,6 +226,8 @@ impl role::Role for PhysicalKeepAlive {
             Event::Confirmed { ok: false, .. }
             | Event::Received { ok: false, .. }
             | Event::KeepAliveWindowExpired => Some(None),
+            // UDSS_LLR_0180
+            Event::Reset { outstanding: false } if !s.s3.is_running() => Some(None),
             Event::Confirmed { ok: true, class }
                 if class.expected() == ExpectedResponses::None =>
             {
@@ -243,7 +249,7 @@ impl role::Role for PhysicalKeepAlive {
                 s.leave(); // UDSS_LLR_0184
                 None
             }
-            Event::Confirmed { .. } | Event::Received { .. } => None,
+            Event::Confirmed { .. } | Event::Received { .. } | Event::Reset { .. } => None,
         };
         match (s.in_session, completed) {
             (false, Some(Some(SessionSelection::NonDefault))) => {

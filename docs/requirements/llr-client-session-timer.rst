@@ -348,9 +348,9 @@ Functional keep-alive
    :tags: client; s3_client; keep-alive
 
    In functional keep-alive, while the keeping-alive fact holds, on ``T_Data.conf``
-   reporting the successful transmission on a functional channel of a request whose
-   classification states ``keep-alive``, the client shall start the ``tS3_Client`` timer
-   loaded with the reload parameter.
+   reporting the transmission, successful or failed, on a functional channel of a request
+   whose classification states ``keep-alive``, the client shall start the ``tS3_Client``
+   timer loaded with the reload parameter.
 
    Table 6's functional column restarts the timer on the ``T_Data.conf`` completing the
    functionally addressed TesterPresent transmitted at the timer's expiry, and on nothing
@@ -375,11 +375,18 @@ Functional keep-alive
    physically addressed message reaches one. The fact must hold so that a marked request
    sent in the default session starts nothing.
 
-   A ``T_Data.conf`` reporting a failed transmission leaves the timer stopped. Table 9's
+   A ``T_Data.conf`` reporting a failed transmission starts the timer as well. Table 9's
    functional column has the client repeat the request after "the time ``tS3_Client_Func``",
    a parameter defined nowhere in the standard; this set reads it as ``tP3_Client_Func``,
    the only functional spacing parameter 10.3 defines, and treats the text as a
-   typographical error. The repeat itself is :doc:`llr-client-error-handling`'s.
+   typographical error. The repeat itself is :doc:`llr-client-error-handling`'s, and it
+   goes out well inside the restarted timer; its own confirmation restarts the timer again.
+   Table 9 ends at the third transmission, and a timer left stopped after a failed one
+   would end the keep-alive for good once the repeats were spent: nothing but a further
+   session change (``UDSS_LLR_0155``) would start it, and every server would fall back to
+   its default session at ``tS3_Server`` with the keeping-alive fact still holding.
+   Restarting it keeps the keep-alive going one period on, as ``UDSS_LLR_0161`` does for a
+   failed transmission in physical keep-alive.
 
 .. llr:: Functional keep-alive disengages on return to the default session
    :id: UDSS_LLR_0158
