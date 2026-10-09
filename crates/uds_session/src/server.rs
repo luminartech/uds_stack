@@ -163,8 +163,9 @@ pub struct Server<const A: usize> {
     params: ServerParams,
     session: Session,
     service: Option<InProgress>,
-    /// Expiry snapshots: taken at the instant of expiry, because the expiry itself
-    /// discards the facts the indication names (``UDSS_LLR_0100``, ``UDSS_LLR_0117``).
+    /// Expiry snapshots: taken at the instant of expiry, because what the indication
+    /// names may be gone by the time it is drained (``UDSS_LLR_0100``,
+    /// ``UDSS_LLR_0108``, ``UDSS_LLR_0117``).
     s3_expiry: Option<PeerIdentity>,
     p2_expiry: Option<(PeerIdentity, ServerReload)>,
 }

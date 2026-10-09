@@ -25,11 +25,15 @@ in parallel against one agreed set of boundaries.
 > mode this ordering exists to prevent. Read what follows as evidence about what
 > is *buildable*, never as evidence about what is *required*.
 
-> **Spec citations.** A numbered locator appears here only if it was checked
-> against a copy of the standard. Every one in this document was verified on
+> **Spec citations.** This crate is built against **ISO 14229-5:2022**: a
+> clause, table, figure or requirement cited with no document named is that
+> one's, and a citation of any other document names it and its edition. A
+> numbered locator appears here only if it was checked against a copy of the
+> standard. Every one in this document was verified on
 > 2026-09-10; two needed non-obvious lookups, because the PDF-to-markdown
-> conversion splits `REQ 4.4` across a table cell and line-breaks `REQ 5.9`'s
-> heading. If you cannot check a citation, delete it rather than soften it.
+> conversion splits `REQ 4.4` across a table cell and line-breaks the heading
+> of ISO 14229-2:2021 `REQ 5.9`. If you cannot check a citation, delete it
+> rather than soften it.
 >
 > Re-checked on 2026-10-06 for the sections changed that day: ISO 14229-5:2022
 > REQ 7.7–7.20 and clause 8.8, and ISO 13400-2:2019 REQ 4.DoIP-002,
@@ -41,10 +45,11 @@ in parallel against one agreed set of boundaries.
 > remain ISO's; nothing here reproduces their text at length.
 
 > **This document is provisional.** Formal architecture and requirements for
-> this stack are being authored in sphinx-needs and will live under
-> `docs/architecture/`. That set supersedes this file when it lands. Until
-> then this is cut down to what still checks out against the code, not
-> migrated or rewritten wholesale.
+> this stack are authored in sphinx-needs under `docs/architecture/` and
+> `docs/requirements/`. That set will cover the whole stack; so far its
+> architecture covers `uds_services`, so for the rest of the stack, and for
+> this crate, this file is still the record, cut down to what checks out
+> against the code until its content moves there.
 
 ---
 
@@ -172,9 +177,9 @@ service, and the identifiers themselves are derived from `uds_protocol`'s
 ### 3.5 `uds_services` — ISO 14229-1's behaviour
 
 Owns the ergonomic layer — per-service handler traits, the dispatch table, and
-the negative-response rules of clause 8.7 — **and the driver**. It holds a
-`uds_session::Client` or `Server` by value, supplies its inputs, drains its
-actions, and calls a transport through the trait it declares.
+the negative-response rules of ISO 14229-1:2020 clause 8.7 — **and the
+driver**. It holds a `uds_session::Client` or `Server` by value, supplies its
+inputs, drains its actions, and calls a transport through the trait it declares.
 
 `UDSS_LLR_0029` fixes the role at creation, so a node acting as both holds two
 instances rather than one session object.
@@ -214,18 +219,18 @@ question. Stating the rule once means the next one does not have to be.
   `0x8004`, `simple_doip` sends it. The type is ISO 14229-5's; ISO 13400-2:2019
   stops at `0x8003`. Neither half is built
   ([§9.2](#92-design-gaps-in-this-crate)).
-- **Which `tP_Client` reload pair** (REQ 5.11) — `uds_on_ip` chooses,
-  `uds_session` runs the timer.
+- **Which `tP_Client` reload pair** (ISO 14229-2:2021 REQ 5.11) — `uds_on_ip`
+  chooses, `uds_session` runs the timer.
 
 The rule also says what must *not* happen. `uds_services` never decides when a
 connection closes: knowing that REQ 7.9 or 7.11 requires one is ISO 14229-5
 knowledge, and a "close" flag it set would carry the requirement, not just the
 plumbing. What it carries instead is the server's statement that it leaves its
 running software after this response — an ISO 14229-1 fact about the server,
-true on any transport, from which this crate derives REQ 7.9's close. And
-`simple_doip` never recognises a service identifier to decide it for itself —
-that is [§13](#13-invariants-to-preserve) invariant 2, already listed as
-violated and awaiting restoration.
+true on any transport, from which this crate derives ISO 14229-5:2022 REQ 7.9's
+close. And `simple_doip` never recognises a service identifier to decide it
+for itself — that is [§13](#13-invariants-to-preserve) invariant 2, already
+listed as violated and awaiting restoration.
 
 ## 4. The seams
 
@@ -301,7 +306,9 @@ instead.
 
 **Built for the server role.** ISO 13400-2 is titled *Transport protocol and
 network layer services*; a TCP connection is its subject matter, so the sockets
-are `simple_doip`'s and this crate holds none. `simple_doip::service` declares
+are `simple_doip`'s and this crate holds none. A socket trait declared here was
+considered and rejected: it would have put ISO 13400-2's frame handling in the
+wrong crate. `simple_doip::service` declares
 the seam with no I/O in it:
 
 - `DiagnosticEntity` — a whole `DoIP` entity, every connection it has
@@ -352,8 +359,8 @@ ownership is stated explicitly.
 
 | Timer | Owner | Notes |
 | --- | --- | --- |
-| `tP_Client` | `uds_session` | One per logical communication channel, physical and functional alike (ISO 14229-2:2021 REQ 5.26, Table 7). Starts on `T_Data.conf`, stops on `T_Data.ind` (REQ 5.9, REQ 5.10). |
-| default / enhanced reload values | `uds_on_ip` | `tP6_Client_Max` / `tP6*_Client_Max`, because DoIP has no `T_DataSOM.ind` (REQ 5.11). |
+| `tP_Client` | `uds_session` | One per logical communication channel, physical and functional alike (ISO 14229-2:2021 REQ 5.26, Table 7). Starts on `T_Data.conf`, stops on `T_Data.ind` (ISO 14229-2:2021 REQ 5.9, REQ 5.10). |
+| default / enhanced reload values | `uds_on_ip` | `tP6_Client_Max` / `tP6*_Client_Max`, because DoIP has no `T_DataSOM.ind` (ISO 14229-2:2021 REQ 5.11). This crate names them as ISO 14229-2 does. ISO 14229-5:2022 clause 11's Figures 8 and 9 name only the default, `tP6_DoIP_Client_Max`, and nothing there corresponds to `tP6*_Client_Max`. |
 | `tP3_Client_Phys`, `tP3_Client_Func` | `uds_session` | One per physical and per functional channel respectively (ISO 14229-2:2021 REQ 5.26, Table 7). Minimum spacing before the next request when none is required. |
 | `tS3_Client`, `tS3_Server` | `uds_session` | One `tS3_Server` per server; a client needs one per point-to-point communication (ISO 14229-2:2021 REQ 5.26, Table 8). |
 | `tP2_Server`, `tP2*_Server` | `uds_session` | ISO 14229-2 timers, so they belong with the other session timers, not with the service that happens to be slow. See the response-pending note below. |
@@ -409,11 +416,11 @@ sequenceDiagram
     D-->>M: DiagnosticMessageAck · 0x8002
     M-->>V: TransportEvent::DataConf
     V->>S: T_Data.conf
-    Note over S: tP_Client starts, loaded with<br/>tP6_Client_Max (REQ 5.9, REQ 5.11)
+    Note over S: tP_Client starts, loaded with<br/>tP6_Client_Max<br/>(ISO 14229-2:2021 REQ 5.9, REQ 5.11)
     D-->>M: DiagnosticMessage · 0x8001
     M-->>V: TransportEvent::DataInd
     V->>S: T_Data.ind
-    Note over S: tP_Client stops (REQ 5.10)
+    Note over S: tP_Client stops<br/>(ISO 14229-2:2021 REQ 5.10)
     S-->>V: S_Data.ind
     V-->>App: typed response
 ```
@@ -471,11 +478,12 @@ bytes in both directions and interprets neither.
 **Server, while occupied.** A driver serving a request offers only its small
 concurrent buffer, so an ordinary request arriving in that window is reported as
 `TransportEvent::DataTooLong`. That is the normal outcome there rather than a
-fault: ISO 14229-1 8.7.6 has the server occupied, though it names no answer.
-`busyRepeatRequest` (0x21), Figure 5's busy check, is the conforming one this stack
-composes, where Annex J would also let a server ignore the request; composing it
-needs the service identifier and the addressing, both of which the truncated event
-carries.
+fault: ISO 14229-1:2020 8.7.6 has the server occupied, though it names no answer.
+This stack answers every such request `busyRepeatRequest` (0x21). Its Figure 5's
+busy check, which is optional, gives that answer for a task in progress for a
+different client; for the same client's request the stack gives the same answer, and
+its Annex J would also let a server ignore the request. Composing the answer needs
+the service identifier and the addressing, both of which the truncated event carries.
 
 **Periodic responses.** A server sends them as payload type `0x8004`
 (REQ 7.7, REQ 7.16), outside the request/response correlation path, and does not
@@ -538,7 +546,7 @@ the Cargo graph in [§8.2](#82-cargo-dependency-graph) has no cycle and needs no
 feature gate to avoid one.
 
 Note also that the A_Data ↔ S_Data parameter mapping is specified by ISO
-14229-2 clause 7, not by -5. That mapping is `uds_session`'s; this crate meets
+14229-2:2021 clause 7, not by -5. That mapping is `uds_session`'s; this crate meets
 it at the S_Data boundary rather than reimplementing it.
 
 ### 8.2 Cargo dependency graph

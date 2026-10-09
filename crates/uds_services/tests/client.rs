@@ -267,8 +267,8 @@ fn an_unanswered_request_is_repeated_twice_then_times_out() {
     assert_eq!(s.deadlines, 3);
 }
 
-/// Table 9 and ``UDSS_LLR_0171`` — a failed transmission is repeated too, each repeat
-/// held until the spacing timer the failure started has run out, not reported.
+/// ISO 14229-2:2021 Table 9 and ``UDSS_LLR_0171`` — a failed transmission is repeated too,
+/// each repeat held until the spacing timer the failure started has run out, not reported.
 #[test]
 fn a_failed_transmission_is_repeated_after_the_spacing_then_not_sent() {
     let mut t = tester(&[
@@ -1043,8 +1043,8 @@ fn a_close_during_a_functional_window_does_not_end_it() {
     assert!(t.transport().finished());
 }
 
-/// Table 9 — a functional request whose transmission fails is repeated, twice, and then
-/// the sequence ends with the failure.
+/// ISO 14229-2:2021 Table 9 — a functional request whose transmission fails is repeated,
+/// twice, and then the sequence ends with the failure.
 #[test]
 fn a_functional_request_that_fails_to_go_is_repeated_then_not_sent() {
     let mut t = tester(&[
@@ -1140,9 +1140,9 @@ fn the_wait_after_a_response_pending_includes_the_network_delay() {
 const DEFAULT_SESSION: &[u8] = &[0x50, 0x01, 0x00, 0x32, 0x01, 0xF4];
 
 /// ``UDSS_LLR_0148`` — a response window that expires while the client is sending other
-/// servers' keep-alives is still the exchange's timeout, and Table 9's repeat follows. Here
-/// the first keep-alive takes the clock past the window, and the second's input is the one
-/// that finds it expired.
+/// servers' keep-alives is still the exchange's timeout, and ISO 14229-2:2021 Table 9's
+/// repeat follows. Here the first keep-alive takes the clock past the window, and the
+/// second's input is the one that finds it expired.
 #[test]
 fn a_timeout_found_while_sending_keep_alives_is_still_repeated() {
     let mut t = WideTester::new(
@@ -1280,9 +1280,9 @@ fn an_overlong_session_change_still_keeps_its_channel() {
     assert_eq!(t.transport().addressed(3), (Some(to(ECU)), KEEP_ALIVE));
 }
 
-/// Table 9 — a running exchange's response timeout found while a keep-alive is being
-/// sent survives the transport refusing that keep-alive, so the read is still repeated and
-/// then times out, rather than waiting for ever.
+/// ISO 14229-2:2021 Table 9 — a running exchange's response timeout found while a
+/// keep-alive is being sent survives the transport refusing that keep-alive, so the read is
+/// still repeated and then times out, rather than waiting for ever.
 #[test]
 fn a_timeout_found_while_a_keep_alive_is_refused_is_not_lost() {
     let mut t = WideTester::new(
@@ -1317,9 +1317,9 @@ fn a_timeout_found_while_a_keep_alive_is_refused_is_not_lost() {
     assert_eq!(read.map(|_| ()), Err(ClientError::Timeout));
 }
 
-/// ``UDSS_LLR_0157`` — a functional keep-alive still failing after Table 9's two repeats
-/// goes again one `tS3_Client` after the last failure, as a physical one does, rather than
-/// ending the keep-alive for good.
+/// ``UDSS_LLR_0157`` — a functional keep-alive still failing after
+/// ISO 14229-2:2021 Table 9's two repeats goes again one `tS3_Client` after the last
+/// failure, as a physical one does, rather than ending the keep-alive for good.
 #[test]
 fn a_functional_keep_alive_given_up_goes_again_a_period_later() {
     let mut t = functional_patient(Script::new(&[

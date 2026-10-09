@@ -28,8 +28,8 @@ ISO 14229-2 does not impose on the session layer, and this set does not write re
 the standard does not directly require; it is recorded instead as an assumption of use in
 the qualification repository, where it is assessed from a safety perspective.
 
-Clause 8.7.6 excepts two cases. The first is the functionally addressed keep-alive
-TesterPresent, which the caller marks ``keep-alive`` under ``UDSS_LLR_0065``.
+ISO 14229-1:2020 8.7.6 excepts two cases. The first is the functionally addressed
+keep-alive TesterPresent, which the caller marks ``keep-alive`` under ``UDSS_LLR_0065``.
 :doc:`llr-server-session-timer` handles it instead.
 
 The second is a request in the OBD service range that, for a server supporting that range
@@ -48,9 +48,10 @@ where a response message is required, or the completion of any action caused by 
 request where none is required. ``UDSS_LLR_0089`` already cites that clause for the same
 definition.
 
-A request marked ``keep-alive`` is excluded from the term: 8.7.6 puts it outside the
-one-request-at-a-time model, and no requirement in this set treats it as the service in
-progress, so 10.1.4.1's extent is read here as bounding the requests the model admits.
+A request marked ``keep-alive`` is excluded from the term: ISO 14229-1:2020 8.7.6 puts it
+outside the one-request-at-a-time model, and no requirement in this set treats it as the
+service in progress, so ISO 14229-2:2021 10.1.4.1's extent is read here as bounding the
+requests the model admits.
 
 The model above is what guarantees there is at most one such service at a time.
 
@@ -80,7 +81,7 @@ admissibility. Every response-pending message reaches this layer as an ``S_Data.
 caller supplies on the application's behalf: the session layer permits or refuses it and
 keeps the bookkeeping the window and the spacing need, and never composes one of its own.
 Whether a response-pending message is the right answer to a given request, and the octets
-that carry it, belong to the ISO 14229-1 clause 8.7 layer, which is also the layer that
+that carry it, belong to the ISO 14229-1:2020 clause 8.7 layer, which is also the layer that
 knows whether the service is supported — the predicate ISO 14229-2:2021 9.1.1 makes the
 admissibility turn on.
 
@@ -307,7 +308,8 @@ The response window
    ``UDSS_LLR_0107`` excludes. What remains for this requirement is a request received
    once the final response has been submitted and before its confirmation, which
    ISO 14229-2:2021 10.3 lets the client send and ``UDSS_LLR_0106`` and ``UDSS_LLR_0109``
-   provide for, and the OBD-range request 8.7.6 has abort the active service.
+   provide for, and the OBD-range request ISO 14229-1:2020 8.7.6 has abort the active
+   service.
    ISO 14229-2:2021 10.3 Figure 18 key f, which shows a server ignoring a request received
    while it is handling another, describes the hazard ``tP3_Client_Func`` exists to
    prevent rather than a rule for the server.
@@ -553,11 +555,11 @@ The response window
    a marked keep-alive's report, which a caller may supply, is inert under ``UDSS_LLR_0096``
    and would otherwise end the window of the service actually in progress. Any other
    completion while a service is in progress is outside the preamble's assumption of use. A
-   completion report for a request that 8.7.6's second exception aborted answers no service
-   in progress where the OBD request came from another client, so this requirement does not
-   act on it: the aborted request's ending was the OBD request's reception, and this
-   requirement acts on the OBD request's own completion. The guard is what lets
-   :doc:`llr-server-session-timer`'s assumptions of use make that report optional;
+   completion report for a request that ISO 14229-1:2020 8.7.6's second exception aborted
+   answers no service in progress where the OBD request came from another client, so this
+   requirement does not act on it: the aborted request's ending was the OBD request's
+   reception, and this requirement acts on the OBD request's own completion. The guard is
+   what lets :doc:`llr-server-session-timer`'s assumptions of use make that report optional;
    ``UDSS_LLR_0106``'s match guards only the facts ``UDSS_LLR_0104`` keeps, and without the
    guard here the report would stop the window ``UDSS_LLR_0113`` opened for the OBD request.
 
@@ -579,7 +581,7 @@ The response window
    Rationale: ISO 14229-1:2020 8.7.6 has a received message occupy the one diagnostic
    protocol instance until it is processed, so a request arriving while a service is in
    progress, other than the keep-alive TesterPresent, is refused with ``busyRepeatRequest``
-   (Annex A) and the service in progress continues. The refused request is not indicated as
+   (ISO 14229-1:2020 Annex A) and the service in progress continues. The refused request is not indicated as
    a request, so it starts no service under ``UDSS_LLR_0107`` and replaces none under
    ``UDSS_LLR_0108``; its refusal must leave the service it did not replace exactly as it
    was. ``tS3_Server`` is left alone because the refused request touched nothing on

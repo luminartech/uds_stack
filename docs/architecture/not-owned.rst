@@ -62,7 +62,7 @@ request for a response-pending to *arrive from its caller*, which it may then re
 ``UDSSVC_ARCH_0032`` now places the decision and the bytes here, on the standard's own
 grounds rather than on convenience: ISO 14229-2:2021 REQ 5.4 and REQ 5.6 make
 admissibility a per-service question turning on whether the server supports the service,
-which is a clause 8.7 fact this crate already computes.
+which is an ISO 14229-1:2020 clause 8.7 fact this crate already computes.
 
 **What remains not owned here is the timing**, and the division is clean:
 

@@ -1,17 +1,19 @@
 # simple_doip
 
-`simple_doip` owns ISO 13400-2: Diagnostics over IP (DoIP). It is a `no_std`,
+`simple_doip` owns ISO 13400-2:2019: Diagnostics over IP (DoIP). It is a `no_std`,
 zero-copy protocol core with optional async client and server, and a `no_std`
-tester and entity over `edge-nal`.
+tester and entity over `edge-nal`. In its documentation, a table, figure,
+clause or requirement cited with no document named is ISO 13400-2:2019's; any
+other document is named where it is cited.
 
 [`ARCHITECTURE.md`](ARCHITECTURE.md) describes how the crate is put together —
 the feature-gated layering, the sans-io framing/decode seam, the error taxonomy,
 the relationship to `automotive-wire-codec`, and the known issues and deferred
 refactors a new maintainer should read before changing anything.
-**Provisional**: it is being replaced by the sphinx-needs set under
+**Provisional**: the sphinx-needs set under
 [`docs/`](https://github.com/luminartech/uds_stack/tree/main/docs) at the
-[`uds_stack`](https://github.com/luminartech/uds_stack) workspace root, and
-where the two disagree, `docs/` wins.
+[`uds_stack`](https://github.com/luminartech/uds_stack) workspace root will
+take it in, and where the two disagree, `docs/` wins.
 
 ## Where this fits
 

@@ -44,6 +44,10 @@ pub trait Drain<'d, O>: Sealed {
 /// `()` elsewhere. `S` is a type parameter rather than a trait object so that the
 /// reaction keeps `Send`, the covariance of `'d`, and `Debug` for free.
 ///
+/// The input is applied before the reaction is returned; only reporting it is left to
+/// the drain. So the session's state is final whatever the caller then does with the
+/// reaction.
+///
 /// Dropping a `Reaction` without draining it discards the input's own outputs, which is
 /// why the type is `#[must_use]`. Expiry indications it was not drained of stay in the
 /// session and come first in the next input's drain.
@@ -122,6 +126,12 @@ impl<'s, 'd, O, S: Drain<'d, O>, T> Reaction<'s, 'd, O, S, T> {
 
     /// The outputs this input produced, in the order ``UDSS_LLR_0081`` requires:
     /// expiry indications first, then the input's own.
+    ///
+    /// Among expiries that fell due together the requirement fixes no order, and this
+    /// crate guarantees one, so a change to it is a breaking change. A server reports
+    /// `tS3_Server`'s before `tP2_Server`'s. A client reports its physical channels in
+    /// slot order, each one's response timeout before its keep-alive, then its
+    /// functional channels in slot order, then the client-wide keep-alive.
     ///
     /// ``UDSS_LLR_0011`` — the caller retrieves them; nothing is pushed. A drain that is
     /// not iterated leaves them for [`Reaction::finish`].

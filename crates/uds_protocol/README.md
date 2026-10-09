@@ -1,6 +1,6 @@
 # `uds_protocol`
 
-`uds_protocol` owns ISO 14229-1's message format: encoding and decoding UDS
+`uds_protocol` owns ISO 14229-1:2020's message format: encoding and decoding UDS
 requests and responses. It targets embedded ECU diagnostics and desktop
 tooling alike — `no_std` and allocation-free at its core, with no required
 allocator and no async runtime.
@@ -10,7 +10,9 @@ allocator and no async runtime.
 [![MIT License](https://img.shields.io/badge/license-MIT-blue.svg?style=for-the-badge)](LICENSE-MIT)
 [![APACHE License](https://img.shields.io/badge/license-APACHE-blue.svg?style=for-the-badge)](LICENSE-APACHE)
 
-This library is based on the ISO 14229-1:2020 standard.
+This library is built against ISO 14229-1:2020. In its documentation and
+source, a table, figure, clause or requirement cited with no document named is
+that one's, and any other document is named where it is cited.
 
 ## Where this fits
 

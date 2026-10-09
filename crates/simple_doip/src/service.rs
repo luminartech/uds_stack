@@ -36,37 +36,67 @@ use crate::{LogicalAddress, TaType};
 /// found at once, the one earliest in this list is reported. Exhaustive, as the
 /// standard's list is: an edition that adds a value is a change every caller must
 /// handle.
+///
+/// The standard names the values and points to its diagnostic message handler
+/// (Figure 17) for their meaning, but pairs none with an acknowledgement code. This
+/// crate pairs seven of them, by name, with the diagnostic message acknowledgement
+/// code a requirement defines, and each says which; each of the rest says what this
+/// crate produces it for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum DoIpResult {
-    /// `DoIP_OK`: the service completed.
+    /// `DoIP_OK`: the service completed. A tester's request is confirmed so on the
+    /// entity's positive acknowledgement (code `0x00`, REQ 7.DoIP-067), an entity's
+    /// response once its last byte is written.
     Ok,
-    /// `DoIP_HDR_ERROR`: the generic header was in error.
+    /// `DoIP_HDR_ERROR`, defined by name only. A tester's request is confirmed so on a
+    /// generic header NACK for an incorrect pattern, an unknown payload type or an
+    /// invalid payload length (`0x00`, `0x01`, `0x04`, Table 19).
     HdrError,
-    /// `DoIP_TIMEOUT_A`.
+    /// `DoIP_TIMEOUT_A`, defined by name only. A tester's request is confirmed so when
+    /// no acknowledgement came within `A_DoIP_Diagnostic_Message`
+    /// ([`crate::TIMEOUT_DIAGNOSTIC_MESSAGE_RESPONSE`], Table 12) of its last byte, or
+    /// when its bytes could not all be written within that time, so local backpressure
+    /// reads the same as an entity that never answered. The request then counts as
+    /// lost.
     TimeoutA,
-    /// `DoIP_UNKNOWN_SA`: the source address is not known.
+    /// `DoIP_UNKNOWN_SA`, defined by name only. An entity's response is confirmed so
+    /// when its source address is not the entity's own.
     UnknownSa,
-    /// `DoIP_INVALID_SA`: the source address is not valid on this connection.
+    /// `DoIP_INVALID_SA`: the source address is not the one routing activation
+    /// registered on the connection, answered with NACK code `0x02` (REQ 7.DoIP-070).
     ///
-    /// The connection does not survive it: an entity rejecting a diagnostic message whose
-    /// source address routing activation did not register on its socket also closes
-    /// that socket (ISO 13400-2:2019 REQ 7.DoIP-070). Nothing more can be sent on
-    /// the connection; a tester that wants to continue opens a new one and activates
-    /// routing again.
+    /// The connection does not survive it: the entity also closes the socket. Nothing
+    /// more can be sent on the connection; a tester that wants to continue opens a new
+    /// one and activates routing again.
     InvalidSa,
-    /// `DoIP_UNKNOWN_TA`: the target address is not known.
+    /// `DoIP_UNKNOWN_TA`: the target address is unknown, answered with NACK code `0x03`
+    /// (REQ 7.DoIP-071).
     UnknownTa,
-    /// `DoIP_MESSAGE_TOO_LARGE`: the message exceeds what can be carried.
+    /// `DoIP_MESSAGE_TOO_LARGE`: the message exceeds the target's maximum length,
+    /// answered with NACK code `0x04` (REQ 7.DoIP-072), or with generic header NACK
+    /// `0x02`. Only a tester's request is confirmed so, on either NACK: an entity
+    /// refuses a response longer than its `MAX_PDU` (`Refusal::PduTooLarge`) rather
+    /// than confirming it.
     MessageTooLarge,
-    /// `DoIP_OUT_OF_MEMORY`: the message exceeds the memory available for it.
+    /// `DoIP_OUT_OF_MEMORY`: the message cannot be copied into the destination buffer,
+    /// answered with NACK code `0x05` (REQ 7.DoIP-073), or with generic header NACK
+    /// `0x03`. An entity's response is confirmed so when its connection's queue has no
+    /// room for it.
     OutOfMemory,
-    /// `DoIP_TARGET_UNREACHABLE`: the target cannot currently be reached.
+    /// `DoIP_TARGET_UNREACHABLE`: the target cannot currently be reached, answered
+    /// with NACK code `0x06` (REQ 7.DoIP-103).
     TargetUnreachable,
-    /// `DoIP_NO_LINK`: there is no link.
+    /// `DoIP_NO_LINK`, defined by name only. This crate never produces it.
     NoLink,
-    /// `DoIP_NO_SOCKET`: there is no socket to carry the message.
+    /// `DoIP_NO_SOCKET`, defined by name only. A tester's request is confirmed so when
+    /// its connection was lost before its last byte left. An entity's response is
+    /// confirmed so when no connection has registered its target, or the connection
+    /// closed before the response was written.
     NoSocket,
-    /// `DoIP_ERROR`: any other failure.
+    /// `DoIP_ERROR`: any other failure. Answers NACK codes `0x07` and `0x08`
+    /// (REQ 7.DoIP-107) and every reserved code. A tester's request is also confirmed
+    /// so when its connection was lost after it was written but before it was
+    /// acknowledged.
     Error,
 }
 

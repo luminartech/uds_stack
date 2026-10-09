@@ -1,8 +1,10 @@
 # uds_session
 
-`uds_session` owns ISO 14229-2, the session layer: a transport-agnostic,
+`uds_session` owns ISO 14229-2:2021, the session layer: a transport-agnostic,
 `no_std`, allocation-free sans-io state machine implementing both the client
-and the server role.
+and the server role. In its documentation, a table, figure, clause or
+requirement cited with no document named is ISO 14229-2:2021's; any other
+document is named where it is cited.
 
 ## Where this fits
 
@@ -15,10 +17,9 @@ every input.
 
 ## Status
 
-Pre-implementation. The public surface is complete — every type and method a
-caller will use is already named and documented — but no behaviour is
-implemented yet: every entry point is `todo!()`, carrying the requirement it
-will satisfy. This crate is not yet published; see the
+Implemented. Both roles, server and client, are built
+against the requirement set, and `uds_services` drives them end to end. This
+crate is not yet published; see the
 [workspace README](https://github.com/luminartech/uds_stack#status) for where
 it and its siblings stand.
 

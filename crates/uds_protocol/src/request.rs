@@ -216,10 +216,10 @@ impl Request<'_> {
     /// confused with a real answer. `false` has no such property: fourteen services
     /// genuinely have no sub-function, so a bare `bool` cannot distinguish them from a
     /// service the crate knows nothing about. That distinction has teeth at a layer
-    /// boundary. ISO 14229-2 clause 10.3 gates `tP3_Client_Phys` on this bit, and whether a
-    /// response is expected decides whether `tP_Client` starts at all — so answering
-    /// `false` for a fire-and-forget vendor request costs three transmissions of a request
-    /// nobody wanted answered, per Table 9 retries.
+    /// boundary. ISO 14229-2:2021 clause 10.3 gates `tP3_Client_Phys` on this bit, and
+    /// whether a response is expected decides whether `tP_Client` starts at all — so
+    /// answering `false` for a fire-and-forget vendor request costs three transmissions of
+    /// a request nobody wanted answered, per ISO 14229-2:2021 Table 9 retries.
     #[must_use]
     pub fn is_positive_response_suppressed(&self) -> Option<bool> {
         match self {

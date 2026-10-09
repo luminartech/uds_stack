@@ -1,4 +1,8 @@
-//! ISO 14229-2 session layer services.
+//! ISO 14229-2:2021 session layer services.
+//!
+//! This crate is built against ISO 14229-2:2021: a table, figure, clause or requirement
+//! cited in it with no document named is that one's, and any other document is named
+//! where it is cited.
 //!
 //! A transport-agnostic session layer for UDS diagnostics, implemented as a sans-io state
 //! machine: no clock is read, no transport is called, and no executor is involved. The

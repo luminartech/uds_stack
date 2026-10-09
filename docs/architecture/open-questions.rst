@@ -54,6 +54,20 @@ mandatory check that is always true should be recorded as such, with the reason,
 point where 0x29 becomes implementable. ``Ctx``, which this question named as the carrier of
 the authentication input, no longer exists (question 6).
 
+**8. How is ``DataTransfer`` staged?** It is the one service with a trait and no stage, so
+a listed one answers ``serviceNotSupported`` (0x11). Four design problems block it, and
+each needs an answer before a stage is written:
+
+* Figure 31 checks address and size (0x31) before security (0x33), but address validity is
+  the handler's to decide.
+* ``RequestFileTransfer``'s positive response needs file sizes that ``pipeline::begin``
+  cannot return.
+* ``State`` holds no transfer.
+* 15.2.3.2's ``maxNumberOfBlockLength`` includes the service identifier and the block
+  sequence counter, and ``DataTransfer::MAX_BLOCK_LENGTH`` excludes them.
+
+Tracked as #50.
+
 Retired
 -------
 

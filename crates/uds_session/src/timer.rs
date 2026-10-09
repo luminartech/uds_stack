@@ -106,6 +106,9 @@ impl<R: Rule> Timer<R> {
     /// (``UDSS_LLR_0080``), or `None` while stopped. For a `Timer<Exceeds>` that is one
     /// millisecond past the boundary: reporting the boundary itself makes a caller that
     /// wakes exactly then tick, find nothing, and spin until the clock advances.
+    ///
+    /// Only this report forms an instant. Expiry itself compares elapsed time with the
+    /// loaded value, so it needs no addition that could overflow or misread the wrap.
     pub(crate) fn deadline(&self) -> Option<Timestamp> {
         self.deadline_by(0)
     }

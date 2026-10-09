@@ -11,7 +11,9 @@
 //! # Simple `DoIP`
 //!
 //! An implementation of Diagnostics over IP (`DoIP`), the vehicle-diagnostics transport
-//! specified in [ISO 13400-2](https://www.iso.org/standard/74785.html).
+//! specified in [ISO 13400-2:2019](https://www.iso.org/standard/74785.html). A table,
+//! figure, clause or requirement cited in this crate with no document named is that
+//! one's, and any other document is named where it is cited.
 //!
 //! ## Design
 //!

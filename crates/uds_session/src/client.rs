@@ -142,6 +142,9 @@ impl<const R: usize> FunctionalSlot<R> {
 /// promise: nothing about it is meaningful to a caller. `PartialOrd`/`Ord` are not
 /// implemented, since nothing needs them.
 ///
+/// The counter is a `u32`, shared with [`FunctionalChannelId`]. After 2^32 opens it is
+/// spent, and the client opens no more channels ([`crate::Cause::ChannelHandlesSpent`]).
+///
 /// `Tag` is the issuing client's tag — see [`Client`] — so a handle from a client with
 /// another tag does not type-check here. Its traits hold whatever the tag implements.
 pub struct PhysicalChannelId<Tag = ()>(u32, PhantomData<fn() -> Tag>);

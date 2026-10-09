@@ -64,8 +64,9 @@ pub enum ClientError<E> {
     /// No response came within `tP_Client`, after ISO 14229-2:2021 9.7 Table 9's two
     /// repeats.
     Timeout,
-    /// The request's last transmission was confirmed failed, after Table 9's repeats, or
-    /// the session layer refused the request outright, which is not repeated.
+    /// The request's last transmission was confirmed failed, after
+    /// ISO 14229-2:2021 Table 9's repeats, or the session layer refused the request
+    /// outright, which is not repeated.
     NotSent,
     /// The connection to the server closed before it answered.
     Closed,
@@ -228,10 +229,11 @@ pub struct ClientTiming {
     /// the next on the channel (``UDSS_LLR_0170``).
     pub functional_spacing: u32,
     /// `ΔtP6`, the network's worst-case round trip plus margin (ISO 14229-2:2021 REQ 5.21,
-    /// Formula (2)). Added to the `P2Server_max` and `P2*Server_max` a server advertises
-    /// to give the waits for its response: Table 4's minimum for `tP6_Client`, and more
-    /// than its minimum for `tP6*_Client`, which adds only `ΔtP6_Response` and leaves a
-    /// longer wait to the client. Vehicle-specific; the standard gives no default.
+    /// Formula (2)). Added to the `P2Server_max` and `P2*Server_max` a server advertises to
+    /// give the waits for its response: ISO 14229-2:2021 Table 4's minimum for
+    /// `tP6_Client`, and more than its minimum for `tP6*_Client`, which adds only
+    /// `ΔtP6_Response` and leaves a longer wait to the client. Vehicle-specific; the
+    /// standard gives no default.
     pub network_delay: u32,
 }
 
@@ -644,7 +646,7 @@ impl<
     /// - [`ClientError::Request`] where `identifiers` is empty or too long; nothing is
     ///   sent.
     /// - [`ClientError::Timeout`] or [`ClientError::NotSent`] where ISO 14229-2:2021 9.7
-    ///   Table 9's repeats were spent.
+    ///   ISO 14229-2:2021 Table 9's repeats were spent.
     /// - [`ClientError::Closed`] where the connection closed first.
     /// - [`ClientError::NoChannel`] where no channel could be opened to `target`.
     /// - [`ClientError::Transport`] where the transport failed.

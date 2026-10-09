@@ -469,7 +469,7 @@ made the two gaps above possible.
 `_ => false` for everything it did not name. Every `Request::Other` therefore reported "not
 suppressed", which is indistinguishable from the correct answer for a service that genuinely has
 no sub-function. For a vendor-specific service sent fire-and-forget that is wrong on the wire: a
-session layer reads it as response-expected, starts `tP_Client`, times out, and ISO 14229-2
+session layer reads it as response-expected, starts `tP_Client`, times out, and ISO 14229-2:2021
 Table 9 retries the request twice.
 
 **Breaking:** the method now returns `Option<bool>`. `None` means the question has no answer —

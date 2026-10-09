@@ -1,7 +1,23 @@
 Architecture
 ============
 
-What this crate is, how it is put together, and where its boundaries fall.
+How the stack's crates are put together, and where their boundaries fall.
+
+**What it covers so far.** The set will hold the architecture of every crate in the stack.
+It began with ``uds_services``, the one wholly new component, because working out its
+architecture was how the crates came to be tied together, so every element in it so far is
+``uds_services``' (``UDSSVC_ARCH_*``), and "this crate" below means ``uds_services``. Until
+each other crate's architecture moves here, it lives with the crate:
+
+* the stack as a whole, and ``uds_on_ip``: ``crates/uds_on_ip/ARCHITECTURE.md``, whose
+  crate map, seams and timing ownership are the stack-wide view;
+* ``simple_doip``: ``crates/simple_doip/ARCHITECTURE.md``;
+* ``uds_session``: its requirements, :doc:`../requirements/index`, and its README;
+* ``uds_protocol``: its README.
+
+Each crate is built against one ISO document and edition, which :doc:`../index` names. A
+table, figure, clause or requirement cited with no document named is that crate's
+document's; any other is named. For ``uds_services`` that is ISO 14229-1:2020.
 
 This is the prototype-phase architecture. It is not the SWE.2 architecture and carries no
 requirement IDs: it records structure and the reasoning behind it, so that the requirement
@@ -9,6 +25,7 @@ set authored next can be written against the standard rather than against the co
 
 .. toctree::
    :maxdepth: 1
+   :caption: uds_services
 
    stack-position
    message-vocabulary

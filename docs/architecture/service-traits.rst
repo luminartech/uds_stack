@@ -109,6 +109,7 @@ The traits
           Ecu: ReadDataByIdentifier, SecurityAccess, DataTransfer;
           transport = DoIpTransport<Entity<'static, TcpAcceptor, 1, 4096>, 2>,
           peers = 1,
+          server = EcuServer,
       }
 
    Three numbers meet in that line, and are not the same number. At a sensor serving one
@@ -192,17 +193,19 @@ The traits
 
    Rationale: the constant has no default because both defaults are traps, and choosing
    between them is choosing which failure to ship. A default of ``true`` sends 0x78 where
-   REQ 5.4 and REQ 5.6 forbid it. A default of ``false`` leaves slow handlers silently
-   never answering response-pending, which is invisible until a handler overruns
-   ``tP2_Server`` in the field. Requiring the value makes omission a compile error and
-   neither failure reachable — the same completeness argument ``UDSSVC_ARCH_0013`` makes
-   for the assembly list and ``UDSSVC_ARCH_0014`` for a fallible ``from_u16``. A defaulted
-   method would be the "override method 9 of 16" shape ``UDSSVC_ARCH_0012`` rejects.
+   ISO 14229-2:2021 REQ 5.4 and REQ 5.6 forbid it. A default of ``false`` leaves slow
+   handlers silently never answering response-pending, which is invisible until a handler
+   overruns ``tP2_Server`` in the field. Requiring the value makes omission a compile error
+   and neither failure reachable — the same completeness argument ``UDSSVC_ARCH_0013``
+   makes for the assembly list and ``UDSSVC_ARCH_0014`` for a fallible ``from_u16``. A
+   defaulted method would be the "override method 9 of 16" shape ``UDSSVC_ARCH_0012``
+   rejects.
 
    It is a constant rather than a method because the value is a property of the service as
    implemented, not of the request or the server's current state: admissibility folds at
-   compile time, and REQ 5.6's unsupported-service case needs no runtime check at all,
-   since a service that is not implemented has no impl to read the constant from.
+   compile time, and ISO 14229-2:2021 REQ 5.6's unsupported-service case needs no runtime
+   check at all, since a service that is not implemented has no impl to read the constant
+   from.
 
    **Two services do not carry it, and cannot.** A response-pending is what the driver
    sends while it is still awaiting a handler, so a service with nothing awaited has no
@@ -251,6 +254,7 @@ Protocol state
           Ecu: ReadDataByIdentifier, SecurityAccess, DataTransfer;
           transport = DoIpTransport<Entity<'static, TcpAcceptor, 1, 4096>, 2>,
           peers = 1,
+          server = EcuServer,
       }
 
    Rationale: ``UDSSVC_ARCH_0034`` puts protocol concerns in the stack, and a block sequence
@@ -337,6 +341,8 @@ Protocol state
    ``ServiceSet::State``, because the macro expands in the application's crate and a struct
    declared there could keep nothing private from it. ``Server`` holds the state in a
    private field and passes it to ``dispatch`` and to the two session hooks the macro emits.
+   Holding the state inside ``Store`` was rejected too: ``Store`` holds per-request buffers,
+   and state that outlives a request does not belong with them.
    The per-channel authentication table this element describes is still not built; nothing
    in scope needs it yet.
 
@@ -406,18 +412,20 @@ Protocol state
    accept a second transfer while one is live.
 
    **``maxNumberOfBlockLength`` is an associated const, not a value a handler returns**, and
-   the change removes a disagreement rather than saving a parameter. Clause 14.2 obliges the
-   server to report the number in its ``RequestDownload`` positive response, and
-   ``UDSSVC_ARCH_0013``'s fold needs the same number to size the buffer a block is decoded
+   the change removes a disagreement rather than saving a parameter. Clause 15.2.3.2 obliges
+   the server to report the number in its ``RequestDownload`` positive response, and
+   ``UDSSVC_ARCH_0013``'s fold needs the same fact to size the buffer a block is decoded
    into. Had ``begin`` returned it, those would be two statements of one fact made at two
-   different times — one at compile time in the array length, one per request from a
-   handler — with nothing obliging them to match, and a handler advertising more than the
-   buffer holds produces a client that sends a block the server structurally cannot receive.
-   As ``DataTransfer::MAX_BLOCK_LENGTH`` the value is declared once, folded into the buffer
-   and composed into the response by this crate, so ``begin`` returns nothing and the two
-   cannot diverge. ``SUPPORTS_UPLOAD`` sits beside it for the same kind of reason: a
-   download-only server never puts a block in a *response*, so it must not pay for a
-   response buffer sized to hold one.
+   different times — one at compile time in the array length, one per request from a handler
+   — with nothing obliging them to match, and a handler advertising more than the buffer
+   holds produces a client that sends a block the server structurally cannot receive. As
+   ``DataTransfer::MAX_BLOCK_LENGTH`` the fact is declared once and folded into the buffer,
+   so ``begin`` returns nothing. Deriving the advertised value from it is still to be done:
+   15.2.3.2's number counts the service identifier and the block sequence counter, which the
+   const excludes, and that is one of the problems open question 8 records (#50).
+   ``SUPPORTS_UPLOAD`` sits beside it for the same kind of reason: a download-only server
+   never puts a block in a *response*, so it must not pay for a response buffer sized to
+   hold one.
 
    **Direction is carried by ``TransferRequest`` rather than by a separate field**, which is
    what makes the paragraph above structural instead of advisory. The repeated-block rule
