@@ -403,10 +403,10 @@ the sensor forced. Raise any of them to overturn it.
 
 ### 2.5 An entity's UDP: discovery, status and power mode
 
-> **Design, not yet built** (issue #48). Until it is, the entity serves `TCP_DATA`
-> alone and §7.4 says so. Locators are ISO 13400-2:2019. Tables 5–12, 17, 19, 20 and
-> 41 and Figures 3, 7, 11, 13, 16, 20 and 21 were read in the PDF; the markdown copy
-> drops figures and table content.
+> **As built** (issue #48): `src/entity/discovery.rs` and `src/tester/discovery.rs`.
+> Locators are ISO 13400-2:2019. Tables 5–12, 17, 19, 20 and 41 and Figures 3, 7, 11,
+> 13, 16, 20 and 21 were read in the PDF; the markdown copy drops figures and table
+> content.
 
 #### 2.5.1 What the standard asks
 
@@ -534,33 +534,38 @@ let entity = Entity::<_, 1, 4096>::new(&acceptor, address, config)
   decorrelates entities powered up together, and a seed fixed across a fleet defeats it,
   which the docs say.
 - **The entity's own frames, apart.** Every UDP frame is the entity's own, so there is
-  one queue, not two: a fixed array of pending answers (`UDP_PENDING`, 4), each a kind,
+  one queue, not two: a fixed array of four pending answers, each a kind,
   a destination and when it is due. A frame is encoded when it is sent, into one
   41-byte scratch buffer, so a slow answer carries the identity as it is then. A
   request that finds the queue full is dropped unanswered: there is no room for its
   `0x03` either, and the tester repeats within `A_DoIP_Ctrl` (Figure 7).
 - **Time.** Internally on `embassy-time` `Instant`s, as the slots' timers are; nothing
-  new crosses the traits, so nothing new is `Millis`.
+  new crosses the traits, so nothing new is `Timestamp`.
 - **I/O errors are not fatal.** A failed receive or send loses that datagram, keeps the
   error for `Entity::discovery_error`, and rests the socket `A_DoIP_Announce_Interval`
   before using it again, so a socket failing at once cannot spin `next_event`
-  (invariant 7). `Error` gains no variant: `DoIpTransport` treats `next_event`'s `Err`
-  as fatal, and discovery failing must not take diagnosis down with it.
+  (invariant 7). A failed send is given up, not retried: the earliest frame due is sent first, so
+  an announcement a host cannot broadcast would otherwise hold back every answer behind
+  it. `Error` gains no variant: `DoIpTransport` treats `next_event`'s `Err` as fatal,
+  and discovery failing must not take diagnosis down with it.
 - **IPv4 only.** Announcements go to `255.255.255.255:13400`. IPv6 (`FF02::1`) waits
   for a target that needs it; all of a vehicle's entities use one IP version
   (3.DoIP-109).
 
 **Cancel safety, on the entity's terms.** The socket is split with `UdpSplit`; the
 receive half is `Readable`. `wait` waits on `readable` and on sending the head of the
-queue once it is due, and applies whichever completes in the poll that completes it,
-as `io.rs` does for `TCP_DATA`. The `connection` feature's integrator obligations grow
-one item: `UdpReceive::receive` after `readable` completes with the datagram, and a
-dropped `readable` or `send` moves no datagram. A dropped `send` that did send is
-harmless here: the answer is sent again, and every UDP answer is idempotent.
+queue once it is due, and applies whichever completes in the poll that completes it, as
+`io.rs` does for `TCP_DATA`. The `connection` feature's integrator obligations cover the
+UDP socket too: `UdpReceive::receive` after `readable` completes with the datagram, and
+a dropped `readable`, `receive` or `send` moves no datagram. A dropped `send` that did
+send is harmless here: the answer is sent again, and every UDP answer is idempotent.
 `edge-nal-std` 0.7.0 sets `SO_BROADCAST` when it binds; smoltcp, under
 `edge-nal-embassy` 0.9.0 or an adapter, needs nothing to send or receive broadcast.
 `edge-nal-embassy`'s UDP socket keeps its buffers through `dyn`, so the sensor example
-binds embassy-net's `UdpSocket` through a small adapter, as it does for TCP.
+binds embassy-net's `UdpSocket` through a small adapter, as it does for TCP. embassy-net
+discards a datagram too long for the buffer it is read into without saying where it came
+from, so the adapter passes such a datagram over, where Figure 16 owes `0x04`; no
+request the entity answers is that long.
 
 #### 2.5.4 The UDP header handler
 
@@ -589,23 +594,45 @@ announcements carry `0x03`.
 #### 2.5.5 The tester side
 
 `Tester` gains no discovery: it is one `TCP_DATA` connection, and discovery is a
-broadcast that comes before any. A separate, small `tester::discovery` module serves it
-over its own `UdpSplit` socket on an ephemeral port: `identify`, which sends one of the
-three requests and collects the identification responses that arrive within
-`A_DoIP_Ctrl` into the caller's array, and `entity_status` and `power_mode`, which ask
-one entity. It is what the loopback tests need anyway, it is what dft (issue #17) and
-W9's `outbound_max` (MDS − 4) need, and it shares the fixed `messages` codecs. It
+broadcast that comes before any. `tester::discovery` serves it over the integrator's
+own `UdpSplit` socket, as three functions:
+
+- `identify` sends one of the three requests, to `BROADCAST` or one entity, and
+  collects into the caller's `[Option<Found>]` every entity that answers within
+  `A_DoIP_Ctrl`, one per address and EID. It waits the whole `A_DoIP_Ctrl`, as any
+  number of entities may answer (Figure 7).
+- `entity_status` and `power_mode` ask one entity, and return at its answer, its header
+  NACK as `DiscoveryError::Refused`, or `NoAnswer` after `A_DoIP_Ctrl`.
+- A `Found` entity's `tcp_address` is its address on `TCP_PORT`, for
+  `Tester::connect`.
+
+Requests go out in protocol version `0x03`; `0xFF`, which 7.DoIP-156 lets an
+identification request carry, is not sent. The module is what the loopback tests, dft
+(issue #17) and W9's `outbound_max` (MDS − 4) need, shares the `messages` codecs, and
 stays out of `uds_on_ip`.
 
 #### 2.5.6 Gating and cost
 
 Under `connection`, with no new dependency: `edge-nal`'s UDP traits are in the crate
-already, and the seed replaces an RNG crate. `NoDiscovery` compiles the UDP paths out,
-so an entity built with `new` costs what it did. With discovery the entity adds the
-UDP socket, a 32-byte receive buffer, a 41-byte scratch buffer, four pending answers,
-the seed and the identity: about 150 bytes besides the socket and `I`. The code size
-for `thumbv7em-none-eabihf` is measured on `examples/embassy-net-entity` when it is
-built and recorded here.
+already, and the seed replaces an RNG crate. With discovery the entity adds the UDP
+socket, a 32-byte receive buffer, a 41-byte scratch buffer, four pending answers, the
+seed and the identity: about 150 bytes besides the socket and `I`.
+
+Measured on `testing/embedded-probe` for `thumbv7em-none-eabihf`, in its `firmware`
+profile on Rust 1.91:
+
+| Probe | text | bss |
+|---|---|---|
+| Before this work | 49 036 | 9 308 |
+| `NoDiscovery` | 50 044 | 9 308 |
+| `with_discovery`, over a stub UDP socket | 53 696 | 9 612 |
+
+Of the 1 008 bytes an entity without discovery gains, 788 are the codec: the entity
+decodes every payload type it is sent, and three more now decode with what they carry,
+as do the optional trailing fields. The other 220 are the entity polling a source that
+never completes. Discovery itself is 3 652 bytes of code and 304 of RAM. The probe as
+committed builds without discovery; the third row is the probe with a stub UDP socket
+and `with_discovery`, built and measured, not kept.
 
 ---
 
@@ -776,6 +803,7 @@ the seam described in section 3 usable.
 | `src/tester.rs` | `Tester`: connect, routing activation, `DiagnosticConnection`, the event loop and its reactions |
 | `src/tester/tx.rs` | `Outgoing<N>`, the diagnostic message being written, and `Control`, the activation request or alive check response written ahead of it |
 | `src/tester/confirm.rs` | NACK codes to `DoIpResult` |
+| `src/tester/discovery.rs` | Finding entities over UDP, and asking one its status or the power mode |
 | `src/stream.rs` | What either end of a `TCP_DATA` stream shares: the caller's deadline and other instants on `embassy-time`'s clock, and copying a PDU into the caller's buffer |
 | `src/stream/rx.rs` | `RxBuffer<N>`: bytes read and not yet consumed, and the skipping of a frame longer than `N` |
 | `src/stream/tx.rs` | `TxQueue<N>`: the entity's bytes waiting to be written, in order, with the count written |
@@ -784,6 +812,8 @@ the seam described in section 3 usable.
 | `src/entity/table.rs` | The connection table: each slot's socket, buffers and phase, and the reserve |
 | `src/entity/outbox.rs` | Each slot's two transmit queues, the entity's own frames and the responses, and what is written next: a frame part's rest, or one queue's whole frames |
 | `src/entity/io.rs` | What each slot waits on from its socket: a write and a read at once on its split halves, or its close, applied in the poll that completes it |
+| `src/entity/discovery.rs` | `UDP_DISCOVERY`: the announcement burst, the pending answers and their waits, `VehicleIdentity`, applied in the poll that completes them |
+| `src/entity/discovery/datagram.rs` | Figure 16's header handler for a datagram, Figure 13's, and the frames that answer them |
 
 ### std / async layers
 
@@ -847,12 +877,16 @@ new code reading `active_request` must preserve the restore-on-mismatch shape.
   clause, each citing it; `tests/entity_cancel.rs` drops every call at every await
   and checks nothing is lost; `tests/entity_mock.rs` pins the `DiagnosticEntity`
   contract against a socketless entity.
+- `tests/entity_udp.rs` — `Entity` with discovery on a scripted UDP socket, one test
+  per requirement; `tests/tester_udp.rs` — `tester::discovery` on the same socket.
+  `../../testing/doip-loopback`'s `discovery` test runs both ends over loopback.
 - `tests/entity_std.rs` — `Tester` against `Entity` over loopback;
   `tests/entity_interop.rs` drives `Entity` with a client framed by `MessageCodec`, so
   the two sides share no receive buffer. That independent framing is why
   `MessageCodec` stays once the old client and server go.
 - `../../examples/embassy-net-entity` — not part of this crate: `Entity` on
-  embassy-net through a cancel-safe acceptor, built for bare metal in CI.
+  embassy-net through a cancel-safe acceptor and UDP socket, built for bare metal in
+  CI.
 
 The `connection` tests on the mock run under Miri in CI, with tree borrows; see
 `just miri`.
@@ -893,10 +927,11 @@ Each should either be wired to something real or deleted.
 The README's **Scope and limitations** section names these for an integrator
 choosing the crate; the mechanics are here:
 
-- No TLS; no unsolicited UDP vehicle announcement at power-on (identification
-  requests over UDP *are* answered, but only by `Server::run_udp_responder` on
-  a socket the caller binds and drives, and only the broadcast `0x0001` form —
-  `run_server` binds TCP alone).
+- No TLS; `Server` sends no unsolicited UDP vehicle announcement at power-on
+  (identification requests over UDP *are* answered, but only by
+  `Server::run_udp_responder` on a socket the caller binds and drives, and only the
+  broadcast `0x0001` form — `run_server` binds TCP alone). `Entity` with discovery
+  does all of it (§2.5).
 - The server's accept loop serves one TCP connection at a time.
 - Entity status and vehicle identification requests over TCP are logged and
   silently dropped (`ServerConnectionHandler` has no hook for them yet).
@@ -924,8 +959,7 @@ choosing the crate; the mechanics are here:
   that a holder's loss either way.
 - The authentication and confirmation sub-states of a registered connection are
   passed through on the spot (REQ 3.DoIP-129, 130).
-- The entity serves `TCP_DATA` alone: no vehicle announcement or identification over
-  UDP.
+- Discovery is IPv4 only (§2.5.3), and an entity sends no sync status byte.
 - The embassy-net adapter has no test on its target; it is built, linted and
   documented for `thumbv7em-none-eabihf`. Two entities sharing one of its acceptors
   wake each other unreliably, and a socket whose `listen` fails, on a port of 0 or one

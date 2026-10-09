@@ -52,8 +52,8 @@ case, within these bounds:
   `TCP_TLS_PORT` (`3496`) is defined by ISO 13400-2 and unused here.
 - **The server serves one TCP connection at a time.** A second client cannot
   connect while the first is being served.
-- **No unsolicited UDP vehicle announcement.** A tester learns of an entity only
-  by asking, and identification is answered on the UDP path only, by
+- **The server sends no unsolicited UDP vehicle announcement.** A tester learns
+  of it only by asking, and identification is answered on the UDP path only, by
   `Server::run_udp_responder` on a socket the caller binds and drives.
 - **The client requires the peer to acknowledge before it responds.** A
   `DiagnosticMessage` that arrives while the client is waiting for the
@@ -66,7 +66,9 @@ deferred work.
 None of this constrains bare-metal or single-client use. On bare metal, the
 `connection` feature's `tester::Tester` and `entity::Entity` are a tester and an
 entity that allocate nothing; the crate documentation lists what their integrator
-supplies.
+supplies. The entity announces itself and answers vehicle identification, entity
+status and power mode over UDP, and `tester::discovery` finds entities and asks
+them the same.
 
 ## Quickstart
 

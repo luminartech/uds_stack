@@ -45,7 +45,9 @@
 //! clock trait of its own, so the integrator supplies both.
 //!
 //! 1. **An `edge-nal` 0.7 backend**: `TcpConnect` for a tester, `TcpBind` for an entity,
-//!    whose bound acceptor the entity borrows.
+//!    whose bound acceptor the entity borrows. For discovery, a bound `UdpSplit`
+//!    socket able to send to the limited broadcast address: an entity's on
+//!    [`UDP_DISCOVERY_PORT`], a tester's on any port.
 //!    `edge-nal-std` serves a host; on bare metal the backend is the integrator's.
 //! 2. **An `embassy-time` driver *and* a timer queue.** These are two settings, and
 //!    missing either is a *link* error, not a compile error. On a host:
@@ -56,13 +58,15 @@
 //!    await and call again — only if the backend's `embedded_io_async::Read::read`,
 //!    `embedded_io_async::Write::write`, `edge_nal::Readable::readable` and, for an
 //!    entity, `edge_nal::TcpAccept::accept` move no data and change no connection state
-//!    when dropped before completing, and `edge_nal::TcpShutdown::close` and `abort`,
-//!    which a dropped close calls again, may be called again. For an entity this holds
-//!    of the halves `edge_nal::TcpSplit::split` gives too, which it reads and writes at
-//!    the same time: each half must keep its own wakeup, so that one waiting does not
-//!    displace the other's, and the read half's `readable` must complete at end of
-//!    stream, as the socket's does. `embedded-io-async` encourages that but does not
-//!    require it, so it is the integrator's obligation:
+//!    when dropped before completing, nor do a UDP socket's
+//!    `edge_nal::UdpReceive::receive` and `edge_nal::UdpSend::send` move a datagram; and
+//!    `edge_nal::TcpShutdown::close` and `abort`, which a dropped close calls again, may
+//!    be called again. For an entity this holds of the halves `edge_nal::TcpSplit::split`
+//!    and `edge_nal::UdpSplit::split` give too, which it reads and writes at the same
+//!    time: each half must keep its own wakeup, so that one waiting does not displace
+//!    the other's, and a TCP read half's `readable` must complete at end of stream, as
+//!    the socket's does. `embedded-io-async` encourages that but does not require it,
+//!    so it is the integrator's obligation:
 //!    - `edge-nal-std` 0.7.0 meets it for all of these, and for the halves.
 //!    - `edge-nal-embassy` 0.9.0 meets it for `read`, `write`, `readable`, `close` and
 //!      `abort`, but its read half's `readable` misses an end of stream with nothing
@@ -70,12 +74,14 @@
 //!      the future, so a cancelled `accept` drops a connection that may already be
 //!      established. An entity on embassy-net accepts through an adapter over
 //!      embassy-net's own `TcpSocket` instead; the repository's
-//!      `examples/embassy-net-entity` crate is one.
+//!      `examples/embassy-net-entity` crate is one. Its UDP socket was not checked, and
+//!      that crate adapts embassy-net's own `UdpSocket`, which meets it.
 //! 4. **Reads and writes that wait on nothing else.** A `read` after `readable` has
-//!    reported data completes with it, and a `write` sends what it accepts without
-//!    waiting for `embedded_io_async::Write::flush`, which this feature never calls. A
-//!    backend that holds data back, such as a record layer buffering a whole record,
-//!    holds a request until it is lost, and a passed deadline until the data comes.
+//!    reported data completes with it, as does a UDP `receive` after `readable`, and a
+//!    `write` sends what it accepts without waiting for
+//!    `embedded_io_async::Write::flush`, which this feature never calls. A backend that
+//!    holds data back, such as a record layer buffering a whole record, holds a request
+//!    until it is lost, and a passed deadline until the data comes.
 //!    `edge-nal-std` 0.7.0 and `edge-nal-embassy` 0.9.0 meet it.
 //! 5. **For an entity, `MCTS + 1` sockets** from the backend: ISO 13400-2:2019 Table 11
 //!    counts the maximum concurrent `TCP_DATA` sockets excluding the reserve socket, on
@@ -83,7 +89,8 @@
 //!
 //! ## Where to start
 //!
-//! - **A `no_std` tester:** `tester::Tester` connects to an entity, activates routing
+//! - **A `no_std` tester:** `tester::discovery` finds the entities on a network and
+//!   asks one its status; `tester::Tester` connects to an entity, activates routing
 //!   and is then a [`service::TesterConnection`], a [`service::DiagnosticConnection`]
 //!   that can reconnect and close (requires the `connection` feature).
 //! - **Writing against the connection service:** [`service`] holds ISO 13400-2's own
@@ -91,8 +98,9 @@
 //!   connection and the [`service::DiagnosticEntity`] trait for a whole entity, with
 //!   no I/O.
 //! - **A `no_std` entity:** `entity::Entity` is an entity's `TCP_DATA` sockets behind
-//!   [`service::DiagnosticEntity`], over a bound `edge-nal` acceptor (requires the
-//!   `connection` feature).
+//!   [`service::DiagnosticEntity`], over a bound `edge-nal` acceptor, and with
+//!   `entity::Entity::with_discovery` its `UDP_DISCOVERY` socket too: announcement,
+//!   identification, entity status and power mode (requires the `connection` feature).
 //! - **Bare metal / sans-io:** [`try_frame`] delimits a frame from a byte buffer without
 //!   owning any I/O resource; [`messages::Payload::decode`] then interprets the body.
 //!   See `examples/bare_metal_codec.rs`.
