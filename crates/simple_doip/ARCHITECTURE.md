@@ -627,15 +627,14 @@ profile on Rust 1.91:
 |---|---|---|
 | Before this work | 49 036 | 9 308 |
 | `NoDiscovery` | 50 044 | 9 308 |
-| `with_discovery`, over a stub UDP socket | 53 696 | 9 612 |
+| `with_discovery`, over a stub UDP socket | 53 640 | 9 628 |
 
 Of the 1 008 bytes an entity without discovery gains, 788 are the codec: the entity
 decodes every payload type it is sent, and three more now decode with what they carry,
 as do the optional trailing fields. The other 220 are the entity polling a source that
-never completes. Discovery itself is 3 652 bytes of code and 304 of RAM, measured with a
-32-byte receive buffer, since grown to 50. The probe as committed builds without
-discovery; the third row is the probe with a stub UDP socket and `with_discovery`, built
-and measured, not kept.
+never completes. Discovery itself is 3 596 bytes of code and 320 of RAM. The probe as
+committed is the third row, so `just size` gates the entity with discovery; the second
+was measured with the probe built without it.
 
 ---
 

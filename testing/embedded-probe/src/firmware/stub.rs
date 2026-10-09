@@ -1,11 +1,13 @@
-//! A listening socket whose every answer is opaque to the optimizer, so that no path
-//! through the entity is compiled out.
+//! A listening socket and a datagram socket whose every answer is opaque to the
+//! optimizer, so that no path through the entity is compiled out.
 
 use core::future::{Future, Ready, ready};
 use core::hint::black_box;
 use core::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 
-use edge_nal::{Close, Readable, TcpAccept, TcpShutdown, TcpSplit};
+use edge_nal::{
+    Close, Readable, TcpAccept, TcpShutdown, TcpSplit, UdpReceive, UdpSend, UdpSplit,
+};
 use embedded_io_async::{ErrorKind, ErrorType, Read, Write};
 
 #[derive(Debug)]
@@ -13,6 +15,9 @@ pub(super) struct Acceptor;
 
 #[derive(Debug)]
 pub(super) struct Socket;
+
+#[derive(Debug)]
+pub(super) struct Datagrams;
 
 #[derive(Debug)]
 pub(super) struct Failed;
@@ -31,6 +36,13 @@ impl embedded_io_async::Error for Failed {
     }
 }
 
+fn peer() -> SocketAddr {
+    SocketAddr::V4(SocketAddrV4::new(
+        Ipv4Addr::from_bits(black_box(0)),
+        black_box(0),
+    ))
+}
+
 fn outcome<T>(value: T) -> Ready<Result<T, Failed>> {
     ready(if black_box(true) {
         Ok(value)
@@ -44,8 +56,7 @@ impl TcpAccept for Acceptor {
     type Socket<'a> = Socket;
 
     fn accept(&self) -> impl Future<Output = Result<(SocketAddr, Socket), Failed>> {
-        let peer = SocketAddrV4::new(Ipv4Addr::from_bits(black_box(0)), black_box(0));
-        outcome((SocketAddr::V4(peer), Socket))
+        outcome((peer(), Socket))
     }
 }
 
@@ -92,5 +103,45 @@ impl TcpShutdown for Socket {
 
     fn abort(&mut self) -> impl Future<Output = Result<(), Failed>> {
         outcome(())
+    }
+}
+
+impl ErrorType for Datagrams {
+    type Error = Failed;
+}
+
+impl UdpReceive for Datagrams {
+    fn receive(
+        &mut self,
+        buf: &mut [u8],
+    ) -> impl Future<Output = Result<(usize, SocketAddr), Failed>> {
+        buf.fill(black_box(0));
+        outcome((black_box(buf.len()), peer()))
+    }
+}
+
+impl Readable for Datagrams {
+    fn readable(&mut self) -> impl Future<Output = Result<(), Failed>> {
+        outcome(())
+    }
+}
+
+impl UdpSend for Datagrams {
+    fn send(
+        &mut self,
+        remote: SocketAddr,
+        data: &[u8],
+    ) -> impl Future<Output = Result<(), Failed>> {
+        black_box((remote, data));
+        outcome(())
+    }
+}
+
+impl UdpSplit for Datagrams {
+    type Receive<'a> = Datagrams;
+    type Send<'a> = Datagrams;
+
+    fn split(&mut self) -> (Datagrams, Datagrams) {
+        (Datagrams, Datagrams)
     }
 }

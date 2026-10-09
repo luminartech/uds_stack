@@ -6,7 +6,8 @@ mod stub;
 
 use cortex_m_rt::entry;
 use simple_doip::LogicalAddress;
-use simple_doip::entity::{Entity, EntityAddress};
+use simple_doip::entity::{Discovery, Entity, EntityAddress, FixedIdentity};
+use simple_doip::messages::DiagnosticPowerModeCode;
 use simple_doip::service::{EntityConfig, TesterAddress};
 use static_cell::StaticCell;
 use uds_on_ip::DoIpTransport;
@@ -19,8 +20,21 @@ const MAX_MESSAGE: usize = 4096;
 const ENTITY: LogicalAddress = LogicalAddress(0x0001);
 const FUNCTIONAL: LogicalAddress = LogicalAddress(0xE400);
 const TESTER: LogicalAddress = LogicalAddress(0x0E00);
+const IDENTITY: FixedIdentity = FixedIdentity::new(
+    [0x02, 0x00, 0x00, 0x00, 0x00, 0x01],
+    DiagnosticPowerModeCode::Ready,
+)
+.with_vin(*b"WVWZZZ1JZXW000001")
+.with_gid([0x02, 0x00, 0x00, 0x00, 0x00, 0x00]);
 
-type SensorEntity = Entity<'static, stub::Acceptor, 1, MAX_MESSAGE>;
+type SensorEntity = Entity<
+    'static,
+    stub::Acceptor,
+    1,
+    MAX_MESSAGE,
+    1,
+    Discovery<stub::Datagrams, FixedIdentity>,
+>;
 type Transport = DoIpTransport<SensorEntity, 2>;
 
 uds_server! {
@@ -63,7 +77,8 @@ fn main() -> ! {
         halt()
     };
     let server = SERVER.init_with(|| {
-        let entity = Entity::new(&ACCEPTOR, address, EntityConfig::new([tester]));
+        let entity = Entity::new(&ACCEPTOR, address, EntityConfig::new([tester]))
+            .with_discovery(stub::Datagrams, IDENTITY, core::hint::black_box(0));
         EcuServer::new(
             Ecu::new(),
             DoIpTransport::new(entity, bench_reloads()),
