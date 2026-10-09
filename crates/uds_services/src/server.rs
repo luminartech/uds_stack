@@ -75,8 +75,9 @@ impl<A: ServiceSet, T: UdsTransport, const PEERS: usize> Server<A, T, PEERS> {
     ///
     /// A transport built at run time, such as `uds_on_ip`'s `DoIpTransport` over
     /// `simple_doip`'s entity, cannot be in a `const` initialiser. Its server goes in a
-    /// `StaticCell` through `init_with(|| EcuServer::new(..))`, which lets the compiler
-    /// build it in the cell.
+    /// `StaticCell` through `init_with(|| EcuServer::new(..))`, and is built on the
+    /// caller's stack and copied in, so that stack holds the whole server once; see
+    /// `DoIpTransport`'s bare-metal notes for what that costs.
     ///
     /// The driver builds its own session, so an application never names `uds_session`.
     ///

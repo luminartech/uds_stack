@@ -82,10 +82,16 @@ use uds_session::{Ai, Reloads, SResult, Timestamp};
 /// A transport over `simple_doip`'s `entity::Entity` is built at run time, because
 /// the entity borrows an acceptor the network stack creates then, and
 /// `Entity::new` is not `const`. So the cell is a `static_cell::StaticCell`, filled
-/// with `init_with(|| Server::new(..))`, which lets the compiler build the server in
-/// the cell rather than on the stack, where `init(Server::new(..))` usually does not;
-/// `static_cell::ConstStaticCell`, which `uds_services::Server::new` shows, serves only
-/// a transport with a `const` constructor.
+/// with `init_with(|| Server::new(..))`; `static_cell::ConstStaticCell`, which
+/// `uds_services::Server::new` shows, serves only a transport with a `const`
+/// constructor.
+///
+/// `Entity::new` returns the entity by value, its buffers included, so the server is
+/// built on the caller's stack and then copied into the cell: the stack needs room for
+/// the whole server once, while it is built. The entity holds a receive buffer and a
+/// transmit queue of `MAX_MESSAGE` bytes for each of its `MCTS` connections. In the
+/// probe below, one connection of 4096 bytes makes `main`'s frame 8,824 bytes on
+/// `thumbv7em-none-eabihf`.
 ///
 /// The integrator supplies, for the target:
 ///
