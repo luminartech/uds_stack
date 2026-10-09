@@ -326,16 +326,17 @@ the seam with no I/O in it:
   connection's.
 - `DiagnosticConnection` — one connection, as a tester uses it, and
   `TesterConnection`, one it can replace (`reconnect`) and end (`close`). A
-  request is refused with a typed `service::Refusal`, so a layer generic over it
-  tells a closed connection (`NotConnected`: reconnect) from one carrying another
-  request (`NoRoom`: wait). It reports each end once, as `Closed`, then waits for
-  the caller's deadline. `DoIpClientTransport<C: TesterConnection, QUEUE>` drives it
-  and feeds one `uds_services::Client`. It holds a request made while the
+  request is a plain call, accepted or refused when it returns, never a future to
+  drop part-way; it is refused with a typed `service::Refusal`, so a layer generic
+  over it tells a closed connection (`NotConnected`: reconnect) from one carrying
+  another request (`NoRoom`: wait). It reports each end once, as `Closed`, then waits
+  for the caller's deadline. `DoIpClientTransport<C: TesterConnection, QUEUE, PEERS>`
+  drives it and feeds one `uds_services::Client`. It holds a request made while the
   connection carries another in `QUEUE` bytes, so a keep-alive and a call's request
-  never collide; reports a connection's end once per server addressed on it; and
-  reconnects, on the next event, for a request made while the connection is closed,
-  which it accepts at once so that a call dropped meanwhile leaves nothing unconfirmed
-  (REQ 7.8, REQ 7.10).
+  never collide; tracks up to `PEERS` servers behind the entity, reporting a
+  connection's end once per server tracked on it; and reconnects, on the next event,
+  for a request made while the connection is closed, which it accepts at once so that
+  a call dropped meanwhile leaves nothing unconfirmed (REQ 7.8, REQ 7.10).
 
 This transport's `CONNECTIONS` must be at least the entity's, the size of
 its connection table, reserve socket included (ISO 13400-2:2019 REQ 4.DoIP-002):
