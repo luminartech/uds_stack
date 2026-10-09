@@ -14,10 +14,9 @@ use embassy_time::Duration;
 use simple_doip::messages::{
     DiagnosticPowerModeCode, EntityStatusNodeType, EntityStatusResponse, NackCode,
 };
-use simple_doip::tester::discovery::{
-    self, A_DOIP_CTRL, BROADCAST, DiscoveryError, Request,
-};
+use simple_doip::tester::discovery::{self, BROADCAST, DiscoveryError, Request};
 use simple_doip::{EntityId, TCP_PORT, UDP_DISCOVERY_PORT, Vin};
+
 use support::mock_stack::{
     MockError, MockUdp, advance, clock, raw, until_stalled, versioned,
 };
@@ -25,6 +24,11 @@ use support::mock_stack::{
 const EID: [u8; 6] = [0x02, 0x00, 0x00, 0xAB, 0xCD, 0xEF];
 const OTHER_EID: [u8; 6] = [0x02, 0x00, 0x00, 0x12, 0x34, 0x56];
 const VIN: [u8; 17] = *b"WVWZZZ1JZXW000001";
+
+/// [`simple_doip::A_DOIP_CTRL`], on the mock clock.
+fn a_doip_ctrl() -> Duration {
+    Duration::try_from(simple_doip::A_DOIP_CTRL).unwrap()
+}
 
 fn entity_at(last: u8) -> SocketAddr {
     SocketAddr::new(
@@ -44,7 +48,7 @@ fn identification(address: u16, eid: [u8; 6]) -> Vec<u8> {
 }
 
 fn just_under_a_doip_ctrl() -> Duration {
-    A_DOIP_CTRL.checked_sub(Duration::from_millis(1)).unwrap()
+    a_doip_ctrl().checked_sub(Duration::from_millis(1)).unwrap()
 }
 
 /// REQ 4.DoIP-136, 7.DoIP-156 and Table 12: an identification request goes out once, in
@@ -120,7 +124,7 @@ fn a_directed_request_carries_what_it_names() {
             pin!(discovery::identify(&mut socket, to, request, &mut found));
         assert!(until_stalled(identifying.as_mut()).is_none());
         assert_eq!(udp.take_sent(), [(to, expected)]);
-        advance(A_DOIP_CTRL);
+        advance(a_doip_ctrl());
         assert_eq!(until_stalled(identifying.as_mut()), Some(Ok(0)));
     }
 }
@@ -145,7 +149,7 @@ fn an_entity_answering_from_another_port_is_found_at_udp_discovery() {
         assert!(until_stalled(identifying.as_mut()).is_none());
         udp.deliver(dynamic, &identification(0xE400, EID));
         udp.deliver(entity_at(10), &identification(0xE400, EID));
-        advance(A_DOIP_CTRL);
+        advance(a_doip_ctrl());
         until_stalled(identifying.as_mut())
     };
 
@@ -173,7 +177,7 @@ fn identify_keeps_no_more_than_it_has_room_for() {
         assert!(until_stalled(identifying.as_mut()).is_none());
         udp.deliver(entity_at(10), &identification(0xE400, EID));
         udp.deliver(entity_at(11), &identification(0xE401, OTHER_EID));
-        advance(A_DOIP_CTRL);
+        advance(a_doip_ctrl());
         until_stalled(identifying.as_mut())
     };
 
@@ -262,7 +266,7 @@ fn silence_for_a_doip_ctrl_is_no_answer() {
     );
 }
 
-/// A socket that fails is reported, on sending and on receiving.
+/// A socket that fails is reported, on sending and where it is not readable.
 #[test]
 fn a_failing_socket_is_an_io_error() {
     let _clock = clock();
@@ -287,4 +291,41 @@ fn a_failing_socket_is_an_io_error() {
     udp.fail_receives();
     udp.deliver(entity_at(10), &identification(0xE400, EID));
     assert_eq!(until_stalled(identifying.as_mut()), Some(Err(MockError)));
+}
+
+/// A receive that fails loses that datagram alone, as when a host reports an earlier
+/// request's ICMP port unreachable on the next receive: what is found is kept, and an
+/// answer still comes.
+#[test]
+fn a_failed_receive_ends_no_request() {
+    let _clock = clock();
+    let udp = MockUdp::new();
+    let mut socket = udp.socket();
+    let mut found = [None; 2];
+    let kept = {
+        let mut identifying = pin!(discovery::identify(
+            &mut socket,
+            BROADCAST,
+            Request::All,
+            &mut found
+        ));
+        assert!(until_stalled(identifying.as_mut()).is_none());
+        udp.deliver(entity_at(10), &identification(0xE400, EID));
+        assert!(until_stalled(identifying.as_mut()).is_none());
+        udp.fail_next_receive();
+        udp.deliver(entity_at(11), &identification(0xE401, OTHER_EID));
+        assert!(until_stalled(identifying.as_mut()).is_none());
+        advance(a_doip_ctrl());
+        until_stalled(identifying.as_mut())
+    };
+    assert_eq!(kept, Some(Ok(2)));
+
+    let mut asking = pin!(discovery::power_mode(&mut socket, entity_at(10)));
+    assert!(until_stalled(asking.as_mut()).is_none());
+    udp.fail_next_receive();
+    udp.deliver(entity_at(10), &raw(0x4004, &[0x01]));
+    assert_eq!(
+        until_stalled(asking.as_mut()),
+        Some(Ok(DiagnosticPowerModeCode::Ready))
+    );
 }

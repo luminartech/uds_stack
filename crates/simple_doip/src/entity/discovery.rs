@@ -17,11 +17,13 @@ use edge_nal::{Readable, UdpReceive, UdpSend, UdpSplit};
 use embassy_futures::select::{Either, select};
 use embassy_time::{Duration, Instant};
 
+use super::expiry;
 use crate::messages::{
     DiagnosticPowerModeCode, FurtherActionRequired, Header, ProtocolVersion,
     VinGidSyncStatus,
 };
 use crate::stream::after;
+use crate::{A_DOIP_ANNOUNCE_INTERVAL, A_DOIP_ANNOUNCE_NUM, A_DOIP_ANNOUNCE_WAIT_MAX};
 use crate::{EntityId, GroupId, Vin};
 use datagram::{Answer, FRAME_CAP, Owed, When};
 use sealed::DiscoveryIo;
@@ -35,14 +37,6 @@ const LONGEST_REQUEST: usize = Header::SIZE + 17;
 const RX_CAP: usize = 2 * LONGEST_REQUEST;
 /// Answers a [`Discovery`] holds until it sends them.
 const PENDING: usize = 4;
-/// `A_DoIP_Announce_Wait`'s upper bound, in milliseconds (Table 12).
-const ANNOUNCE_WAIT_MAX_MS: u32 = 500;
-/// `A_DoIP_Announce_Interval` (Table 12).
-const ANNOUNCE_INTERVAL: Duration = Duration::from_millis(500);
-/// `A_DoIP_Announce_Num` (Table 12).
-const ANNOUNCE_NUM: u8 = 3;
-/// How long a socket whose receive failed is left alone.
-const REST: Duration = ANNOUNCE_INTERVAL;
 /// Where an announcement goes: the IPv4 limited broadcast address (8.DoIP-125) and
 /// `UDP_DISCOVERY` (4.DoIP-009).
 const ANNOUNCE_TO: SocketAddr = SocketAddr::new(
@@ -259,7 +253,7 @@ impl<U: UdpSplit, I: VehicleIdentity> Discovery<U, I> {
             Due::Announcement => {
                 self.burst = match self.burst {
                     Burst::Next { left, .. } if left > 1 => Burst::Next {
-                        at: after(now, ANNOUNCE_INTERVAL),
+                        at: expiry(now, A_DOIP_ANNOUNCE_INTERVAL),
                         left: left.saturating_sub(1),
                     },
                     _ => Burst::Done,
@@ -273,10 +267,11 @@ impl<U: UdpSplit, I: VehicleIdentity> Discovery<U, I> {
         }
     }
 
-    /// Tells the identity of a failed receive, and leaves the socket alone for [`REST`].
+    /// Tells the identity of a failed receive, and leaves the socket alone for an
+    /// [`A_DOIP_ANNOUNCE_INTERVAL`].
     fn receive_failed(&mut self, error: &U::Error, now: Instant) {
         self.identity.discovery_failed(error);
-        self.rest_until = Some(after(now, REST));
+        self.rest_until = Some(expiry(now, A_DOIP_ANNOUNCE_INTERVAL));
     }
 
     /// The announcement or answer to send next, if one is due by `now`: the earliest.
@@ -362,7 +357,9 @@ impl Jitter {
         x ^= x >> 17;
         x ^= x << 5;
         self.0 = x;
-        Duration::from_millis(u64::from(x % (ANNOUNCE_WAIT_MAX_MS + 1)))
+        let range = A_DOIP_ANNOUNCE_WAIT_MAX.as_millis().saturating_add(1);
+        let wait = u128::from(x).checked_rem(range).unwrap_or(0);
+        Duration::from_millis(u64::try_from(wait).unwrap_or(u64::MAX))
     }
 }
 
@@ -438,7 +435,7 @@ impl<U: UdpSplit, I: VehicleIdentity> sealed::Discover for Discovery<U, I> {
         if self.burst == Burst::Unstarted {
             self.burst = Burst::Next {
                 at: after(now, self.jitter.announce_wait()),
-                left: ANNOUNCE_NUM,
+                left: A_DOIP_ANNOUNCE_NUM,
             };
         }
         if self.rest_until.is_some_and(|until| until <= now) {
@@ -553,7 +550,9 @@ mod tests {
     /// zero among them, which xorshift alone would never leave.
     #[test]
     fn the_announce_wait_covers_its_range_from_any_seed() {
-        let most = Duration::from_millis(u64::from(ANNOUNCE_WAIT_MAX_MS));
+        let most = Duration::from_millis(
+            u64::try_from(A_DOIP_ANNOUNCE_WAIT_MAX.as_millis()).unwrap_or(0),
+        );
         let eid = [0x02, 0, 0, 0, 0, 0x01];
         for seed in [0, 1, 0x1234_5678, u32::MAX] {
             let mut jitter = Jitter::new(seed, eid);

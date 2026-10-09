@@ -3,13 +3,18 @@
 //! UDP socket the integrator binds.
 //!
 //! Bind the socket on every address and a port in the dynamic range 49152 to 65535
-//! (REQ 4.DoIP-135), able to send to the limited broadcast address; `edge-nal-std` binds
-//! so. Each call sends its request, and listens on the same socket for the answers within
-//! `A_DoIP_Ctrl`, 2 s (Table 12, REQ 4.DoIP-136).
+//! (REQ 4.DoIP-135), able to send to the limited broadcast address. `edge-nal-std` allows
+//! broadcast when it binds, but binds the port it is given: pick one in the range, as a
+//! host's own ephemeral range may fall outside it. Each call sends its request, and
+//! listens on the same socket for the answers within [`A_DOIP_CTRL`] (REQ 4.DoIP-136).
+//! A datagram it fails to receive is lost alone; a socket that is not readable ends the
+//! call. An answer arriving late to an earlier request on the socket may be taken for a
+//! later one's, as UDP answers carry nothing to tell them apart: bind a socket per
+//! request where that matters.
 //!
 //! An identification request carries the default protocol version, `0xFF`, which an
-//! entity takes whichever edition it implements (REQ 7.DoIP-156), so entities of earlier
-//! editions are found too; the other requests carry this edition's, `0x03`.
+//! entity of this edition takes (REQ 7.DoIP-156), and one of an earlier edition may; the
+//! other requests carry this edition's, `0x03`, which such an entity may refuse.
 //!
 //! A [`Found`] entity is reached over `TCP_DATA` with
 //! [`Tester::connect`](super::Tester::connect) at [`Found::tcp_address`].
@@ -18,6 +23,7 @@ use core::net::{IpAddr, Ipv4Addr, SocketAddr};
 
 use edge_nal::{Readable, UdpReceive, UdpSend, UdpSplit};
 use embassy_futures::select::{Either, select};
+use embassy_futures::yield_now;
 use embassy_time::{Duration, Timer};
 
 use crate::messages::{
@@ -25,10 +31,7 @@ use crate::messages::{
     PayloadType, ProtocolVersion, VehicleIdentificationResponse,
 };
 use crate::wire::{Decode, Encode, SliceSink};
-use crate::{EntityId, TCP_PORT, UDP_DISCOVERY_PORT, Vin};
-
-/// `A_DoIP_Ctrl`: how long a tester waits for the answers to a UDP request (Table 12).
-pub const A_DOIP_CTRL: Duration = Duration::from_secs(2);
+use crate::{A_DOIP_CTRL, EntityId, TCP_PORT, UDP_DISCOVERY_PORT, Vin};
 
 /// Where a request to every entity on the network goes: the IPv4 limited broadcast
 /// address, on `UDP_DISCOVERY`.
@@ -113,8 +116,9 @@ pub enum DiscoveryError<E> {
 ///
 /// # Errors
 ///
-/// The socket's error where it fails. A datagram that is not an identification
-/// response is ignored, and no answer at all is `Ok(0)`.
+/// The socket's error where sending fails or it is not readable. A datagram that fails
+/// to be received, or is not an identification response, is passed over, and no answer
+/// at all is `Ok(0)`.
 ///
 /// # Cancel safety
 ///
@@ -160,9 +164,9 @@ pub async fn identify<U: UdpSplit>(
     Ok(found.iter().flatten().count())
 }
 
-/// Asks the entity at `entity` for its status (7.6), which includes the
-/// largest payload it takes: the longest diagnostic message's user data is that less the
-/// 4 bytes of its addresses.
+/// Asks the entity at `entity` for its status (7.6). Where it gives the largest payload
+/// it takes, an optional field (Table 11), the longest diagnostic message's user data is
+/// that less the 4 bytes of its addresses.
 ///
 /// # Arguments
 ///
@@ -171,7 +175,7 @@ pub async fn identify<U: UdpSplit>(
 ///
 /// # Errors
 ///
-/// - [`DiscoveryError::Io`] where the socket fails.
+/// - [`DiscoveryError::Io`] where sending fails or the socket is not readable.
 /// - [`DiscoveryError::Refused`] where the entity answers with a header NACK: an
 ///   entity need not support entity status.
 /// - [`DiscoveryError::NoAnswer`] where it does not answer within [`A_DOIP_CTRL`].
@@ -201,7 +205,7 @@ pub async fn entity_status<U: UdpSplit>(
 ///
 /// # Errors
 ///
-/// - [`DiscoveryError::Io`] where the socket fails.
+/// - [`DiscoveryError::Io`] where sending fails or the socket is not readable.
 /// - [`DiscoveryError::Refused`] where the entity answers with a header NACK.
 /// - [`DiscoveryError::NoAnswer`] where it does not answer within [`A_DOIP_CTRL`].
 pub async fn power_mode<U: UdpSplit>(
@@ -268,7 +272,10 @@ async fn exchange<U: UdpSplit, T>(
         let mut buf = [0u8; RX_CAP];
         loop {
             receiver.readable().await?;
-            let (length, from) = receiver.receive(&mut buf).await?;
+            let Ok((length, from)) = receiver.receive(&mut buf).await else {
+                yield_now().await;
+                continue;
+            };
             let Some(datagram) = buf.get(..length) else {
                 continue;
             };
@@ -279,7 +286,8 @@ async fn exchange<U: UdpSplit, T>(
             }
         }
     };
-    match select(listen, Timer::after(A_DOIP_CTRL)).await {
+    let ctrl = Duration::try_from(A_DOIP_CTRL).unwrap_or(Duration::MAX);
+    match select(listen, Timer::after(ctrl)).await {
         Either::First(taken) => taken.map(Some),
         Either::Second(()) => Ok(None),
     }

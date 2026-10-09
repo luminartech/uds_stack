@@ -552,6 +552,8 @@ struct UdpShared {
     inbound: VecDeque<(Vec<u8>, SocketAddr)>,
     sent: Vec<(SocketAddr, Vec<u8>)>,
     receive_error: bool,
+    /// The next receive fails, once, leaving its datagram queued.
+    receive_error_once: bool,
     send_error: bool,
     send_stall: bool,
     receiver: Option<Waker>,
@@ -606,6 +608,12 @@ impl MockUdp {
         });
     }
 
+    /// Fails the next receive alone, as a host does that reports an earlier send's ICMP
+    /// error on it.
+    pub fn fail_next_receive(&self) {
+        self.with(|u| u.receive_error_once = true);
+    }
+
     pub fn fail_sends(&self) {
         self.with(|u| u.send_error = true);
     }
@@ -637,6 +645,10 @@ impl MockUdp {
                 if u.receive_error {
                     return Poll::Ready(Err(MockError));
                 }
+                if u.receive_error_once && !u.inbound.is_empty() {
+                    u.receive_error_once = false;
+                    return Poll::Ready(Err(MockError));
+                }
                 let Some((datagram, from)) = u.inbound.pop_front() else {
                     u.receiver = Some(cx.waker().clone());
                     return Poll::Pending;
@@ -652,7 +664,9 @@ impl MockUdp {
     async fn readable(&self) -> Result<(), MockError> {
         poll_fn(|cx| {
             self.with(|u| {
-                if u.receive_error || !u.inbound.is_empty() {
+                if u.receive_error {
+                    Poll::Ready(Err(MockError))
+                } else if !u.inbound.is_empty() {
                     Poll::Ready(Ok(()))
                 } else {
                     u.receiver = Some(cx.waker().clone());

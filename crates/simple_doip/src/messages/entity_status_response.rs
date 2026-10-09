@@ -56,18 +56,21 @@ impl<'a> Decode<'a> for EntityStatusResponse {
     type Error = MessageError;
 
     /// Deserialize an entity status response from a byte slice: its three mandatory
-    /// bytes, and the max data size where four more bytes follow them.
+    /// bytes, and the max data size where four more bytes follow them (Table 11).
     ///
     /// # Errors
-    /// Returns [`MessageError::Incomplete`] if `buf` is too short
+    /// Returns [`MessageError::Incomplete`] if `buf` is too short, or holds one to three
+    /// bytes after the mandatory three, which is neither length Table 11 allows.
     fn decode(buf: &'a [u8]) -> Result<(Self, &'a [u8]), MessageError> {
         let (node_type, rest) = read_u8(buf)?;
         let node_type = EntityStatusNodeType::from(node_type);
         let (max_concurrent_tcp_sockets, rest) = read_u8(rest)?;
         let (open_tcp_sockets, rest) = read_u8(rest)?;
-        let (max_data_size, rest) = match read_u32_be(rest) {
-            Ok((max_data_size, rest)) => (Some(max_data_size), rest),
-            Err(_) => (None, rest),
+        let (max_data_size, rest) = if rest.is_empty() {
+            (None, rest)
+        } else {
+            let (max_data_size, rest) = read_u32_be(rest)?;
+            (Some(max_data_size), rest)
         };
         Ok((
             EntityStatusResponse {

@@ -47,7 +47,8 @@
 //! 1. **An `edge-nal` 0.7 backend**: `TcpConnect` for a tester, `TcpBind` for an entity,
 //!    whose bound acceptor the entity borrows. For discovery, a bound `UdpSplit`
 //!    socket able to send to the limited broadcast address: an entity's on
-//!    [`UDP_DISCOVERY_PORT`], a tester's on any port.
+//!    [`UDP_DISCOVERY_PORT`], a tester's on a port in 49152 to 65535, which the
+//!    integrator picks (REQ 4.DoIP-135).
 //!    `edge-nal-std` serves a host; on bare metal the backend is the integrator's.
 //! 2. **An `embassy-time` driver *and* a timer queue.** These are two settings, and
 //!    missing either is a *link* error, not a compile error. On a host:
@@ -239,6 +240,20 @@ pub const TIMEOUT_DIAGNOSTIC_MESSAGE_INITIAL: Duration = Duration::from_millis(5
 ///
 /// Ref: `A_DoIP_Diagnostic_Message`
 pub const TIMEOUT_DIAGNOSTIC_MESSAGE_RESPONSE: Duration = Duration::from_secs(2);
+
+/// `A_DoIP_Ctrl`: how long a tester waits for the answers to a UDP request (Table 12).
+pub const A_DOIP_CTRL: Duration = Duration::from_secs(2);
+
+/// `A_DoIP_Announce_Wait`'s upper bound: an entity waits a random time up to it before
+/// answering a vehicle identification request, and before its first announcement
+/// (Table 12).
+pub const A_DOIP_ANNOUNCE_WAIT_MAX: Duration = Duration::from_millis(500);
+
+/// `A_DoIP_Announce_Interval`: the time between an entity's announcements (Table 12).
+pub const A_DOIP_ANNOUNCE_INTERVAL: Duration = Duration::from_millis(500);
+
+/// `A_DoIP_Announce_Num`: how many announcements an entity sends (Table 12).
+pub const A_DOIP_ANNOUNCE_NUM: u8 = 3;
 
 #[cfg(test)]
 mod tests {

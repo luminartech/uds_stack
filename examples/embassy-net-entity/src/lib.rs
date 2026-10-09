@@ -252,9 +252,11 @@ impl TcpSplit for Accepted<'_, '_> {
 
 /// The entity's `UDP_DISCOVERY` socket.
 ///
-/// A datagram longer than the entity's receive buffer is passed over unanswered:
-/// embassy-net discards one that does not fit without saying where it came from. No
-/// request the entity answers is that long.
+/// A datagram longer than the entity's receive buffer is passed over unanswered, though
+/// Figure 16 may owe it a NACK: embassy-net discards one that does not fit without
+/// saying where it came from. Its `recv_from_with` reads a datagram whole with its
+/// source, but holds the socket mutably until one arrives, which the send half, waited
+/// on at the same time, cannot share.
 pub struct Udp<'d>(UdpSocket<'d>);
 
 impl fmt::Debug for Udp<'_> {

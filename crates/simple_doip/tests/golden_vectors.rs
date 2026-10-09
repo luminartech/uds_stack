@@ -29,7 +29,7 @@ use std::{env, fs};
 use automotive_wire_codec::SliceSink;
 use simple_doip::LogicalAddress;
 use simple_doip::messages::{
-    ActivationTypeCode, AliveCheckResponse, DiagnosticAckCode, DiagnosticMessage,
+    ActivationTypeCode, AliveCheckResponse, Decode, DiagnosticAckCode, DiagnosticMessage,
     DiagnosticMessageAck, DiagnosticMessageNack, DiagnosticNackCode,
     DiagnosticPowerModeCode, Encode, EntityStatusNodeType, EntityStatusResponse,
     FurtherActionRequired, Header, Message, MessageError, NackCode, PayloadType,
@@ -209,6 +209,15 @@ fn golden_entity_status_response() {
             max_data_size: None,
         },
     );
+}
+
+/// Table 11: an entity status response is 3 bytes, or 7 with the max data size; one,
+/// two or three bytes more than 3 is neither.
+#[test]
+fn an_entity_status_of_neither_length_is_refused() {
+    for bytes in [&[1, 1, 0, 0][..], &[1, 1, 0, 0, 0], &[1, 1, 0, 0, 0, 0]] {
+        assert!(EntityStatusResponse::decode(bytes).is_err(), "{bytes:02x?}");
+    }
 }
 
 #[test]
