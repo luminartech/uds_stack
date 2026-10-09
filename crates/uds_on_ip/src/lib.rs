@@ -42,8 +42,10 @@
 //! one session object — supplies its inputs, drains its actions, and calls this
 //! crate through the trait it declares.
 //!
-//! That trait is [`uds_services::UdsTransport`], and
-//! [`transport::DoIpTransport`] implements it. The dependency edge runs from
+//! That trait is [`uds_services::UdsTransport`]. [`transport::DoIpTransport`]
+//! implements it for a server over a `DoIP` entity, and
+//! [`client::DoIpClientTransport`] for a client over a tester connection, with
+//! [`uds_services::ClientTransport`] beside it. The dependency edge runs from
 //! here to `uds_services` and not the other way, because `uds_services` never
 //! names a transport (`UDSSVC_ARCH_0002`) — which is what keeps a binding
 //! additive at the application.
@@ -69,7 +71,8 @@
 //! ## Status
 //!
 //! **Alpha.** The public API is unstable. The server role is implemented over
-//! any `DiagnosticEntity`; the client role is not yet. Known gaps are recorded in
+//! any `DiagnosticEntity`, and the client role over any `TesterConnection`; fanning a
+//! functional request out to several entities is not. Known gaps are recorded in
 //! `ARCHITECTURE.md` §9, which ships with the package, and each one is also named
 //! at the item it affects — see [`mapping::PERIODIC_RESPONSE_PAYLOAD_TYPE`], a
 //! payload type a server built on this crate cannot yet send.

@@ -298,13 +298,16 @@ Three properties of this shape are load-bearing:
 reconnected *to* and never reconnects — ISO 14229-5:2022 REQ 7.8 and REQ 7.10
 have the connection re-established and routing activated anew, and the client
 entity sends the routing activation request — so a `reconnect()` would be a method
-the only existing driver must never call. A `close()` would require `uds_services` to
+a server driver must never call. A `close()` would require `uds_services` to
 know that REQ 7.9 demands one — see [§3.6](#36-when-and-what) for what it states
-instead.
+instead. Ending a session is the client role's alone, so it is stated there:
+`uds_services::ClientTransport`, a `UdsTransport` the client can close, which
+`uds_services::Client` requires and `Server` does not. The client's reconnecting
+stays below the seam, in `DoIpClientTransport` ([§4.2](#42-connection-seam--uds_on_ip--simple_doip)).
 
 ### 4.2 Connection seam — `uds_on_ip` → `simple_doip`
 
-**Built for the server role.** ISO 13400-2 is titled *Transport protocol and
+**Built for both roles.** ISO 13400-2 is titled *Transport protocol and
 network layer services*; a TCP connection is its subject matter, so the sockets
 are `simple_doip`'s and this crate holds none. A socket trait declared here was
 considered and rejected: it would have put ISO 13400-2's frame handling in the
@@ -321,8 +324,16 @@ the seam with no I/O in it:
   `DoIpTransport<E: DiagnosticEntity, CONNECTIONS>` drives it and feeds one
   `uds_services::Server`, because the session is the server's, not a
   connection's.
-- `DiagnosticConnection` — one connection, as a tester uses it. This crate's
-  client role over it is not built yet.
+- `DiagnosticConnection` — one connection, as a tester uses it, and
+  `TesterConnection`, one it can replace (`reconnect`) and end (`close`). A
+  request is refused with a typed `service::Refusal`, so a layer generic over it
+  tells a closed connection (`NotConnected`: reconnect) from one carrying another
+  request (`NoRoom`: wait). It reports each end once, as `Closed`, then waits for
+  the caller's deadline. `DoIpClientTransport<C: TesterConnection, QUEUE>` drives it
+  and feeds one `uds_services::Client`. It holds a request made while the
+  connection carries another in `QUEUE` bytes, so a keep-alive and a call's request
+  never collide; reports a connection's end once per server addressed on it; and
+  reconnects for the next request that needs a connection (REQ 7.8, REQ 7.10).
 
 This transport's `CONNECTIONS` must be at least the entity's, the size of
 its connection table, reserve socket included (ISO 13400-2:2019 REQ 4.DoIP-002):
@@ -456,8 +467,23 @@ yields a stream of responses, not one.
 after its positive response and before executing the service. A new connection
 and a repeated routing activation follow, before diagnostic communication
 continues (REQ 7.8–7.11). This is specified behaviour, not error recovery.
-`uds_on_ip` recognises the request it sent and reports the close as expected;
-re-establishing is `simple_doip`'s ([§3.6](#36-when-and-what)).
+`DoIpClientTransport` reports the close as expected where the server's last
+message was a positive `DiagnosticSessionControl` or `ECUReset` response, and
+reconnects, through `TesterConnection::reconnect`, for the next request; what
+re-establishing does on the wire is `simple_doip`'s ([§3.6](#36-when-and-what)).
+The close is often found only by that next request, its `Closed` unread: the
+transport reconnects, sends, and reports the close ahead of anything from the new
+connection, and the client fails only an exchange whose response window is open,
+so the call goes through.
+
+**Client, a lost response.** A response that arrives after the client's window
+closed would be taken for the next request's answer, and the client's own check
+of a response's service and first data byte passes it where two requests share
+both. `DoIpClientTransport` sends a physical request that expects a response on a
+new connection where its server's last such request was confirmed and never
+answered (a response-pending message is not an answer), so the late answer cannot
+reach it; a server whose tester's connection closes mid-request sends nothing. A
+request whose positive response is suppressed neither arms this nor triggers it.
 
 **Server, session change or ECU reset.** The mirror image, and the direction
 that is easy to miss: REQ 7.9 and REQ 7.11 require the *server* to initiate the
@@ -491,8 +517,9 @@ reset `tS3_Server` on them (REQ 7.20). Nothing here can send one yet
 ([§9.2](#92-design-gaps-in-this-crate)). One that a tester sends never reaches
 this crate: a server has no use for it, `simple_doip`'s `EntityEvent` has no event
 for it, and the entity answers it with a generic header NACK (ISO 13400-2:2019
-REQ 7.DoIP-042). Surfacing one as `TransportEvent::Periodic` belongs to the client
-role, which is not built.
+REQ 7.DoIP-042). A tester receives one: `DoIpClientTransport` reports a whole
+periodic response to its own address as `TransportEvent::Periodic`, never as
+`DataInd`, which the session layer would take for a response to a request.
 
 ## 8. Two different graphs
 
@@ -718,9 +745,6 @@ run over `simple_doip`'s real `Entity` and `Tester`, in the unpublished
 
 ### 9.1 Prerequisites — blocking, and not in this crate
 
-- **The client role is not built.** `DiagnosticConnection` is declared, and
-  `simple_doip`'s `tester::Tester` implements it behind the `connection` feature;
-  this crate's client role over it is not built.
 - **Two server seams.** `bare_metal_entity` owns the connection *and* dispatches
   UDS through `Callbacks::on_uds_request: fn(&[u8], &mut [u8]) -> i32`, one
   layer below the seam `uds_services` declares. [§13](#13-invariants-to-preserve)
@@ -749,8 +773,8 @@ run over `simple_doip`'s real `Entity` and `Tester`, in the unpublished
   Neither `UdsTransport::t_data_req` nor `DiagnosticEntity::request` can choose
   a payload type, so `ReadDataByPeriodicIdentifier` cannot be served over this
   crate. REQ 7.17's record length bound has no home either; it belongs where a
-  periodic record is accepted. A received `0x8004` is ignored, and its payload
-  layout is not written down.
+  periodic record is accepted. A server ignores a received `0x8004`; a client
+  reports it as `TransportEvent::Periodic`.
 - **Nothing sends a ResponseOnEvent response.** ISO 14229-5:2022 clause 8.8
   sends each serviceToRespondTo response only while the activating client's
   connection exists, and discards it otherwise. The send path does that already:
