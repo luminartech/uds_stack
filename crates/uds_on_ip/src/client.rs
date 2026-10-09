@@ -343,13 +343,13 @@ impl<C, const QUEUE: usize, const PEERS: usize> DoIpClientTransport<C, QUEUE, PE
         }
         self.end();
     }
+}
 
+impl<C: TesterConnection, const QUEUE: usize, const PEERS: usize>
+    DoIpClientTransport<C, QUEUE, PEERS>
+{
     /// Owes `ai`'s failed confirm for `refusal`; `Err` where nothing more can be owed.
-    fn refuse<E, R, X>(
-        &mut self,
-        ai: Ai,
-        refusal: Refusal,
-    ) -> Result<(), ClientTransportError<E, R, X>> {
+    fn refuse(&mut self, ai: Ai, refusal: Refusal) -> Result<(), ClientTransportError<C>> {
         if self.owed.may_refuse() {
             self.owed.confirm(ai, s_result(refused(refusal)));
             Ok(())
@@ -357,14 +357,10 @@ impl<C, const QUEUE: usize, const PEERS: usize> DoIpClientTransport<C, QUEUE, PE
             Err(ClientTransportError::Refused(refusal))
         }
     }
-}
 
-impl<C: TesterConnection, const QUEUE: usize, const PEERS: usize>
-    DoIpClientTransport<C, QUEUE, PEERS>
-{
     /// Hands `data` to the connection, or holds it until the connection can take it,
     /// reconnected by the next [`UdsTransport::next_event`] where it has ended.
-    fn send(&mut self, ai: Ai, data: &[u8]) -> Result<(), TransportError<C>> {
+    fn send(&mut self, ai: Ai, data: &[u8]) -> Result<(), ClientTransportError<C>> {
         let ta = target_of(ai)?;
         let expects = awaits_response(data);
         if self.late_reply_possible(ai, expects) {
@@ -399,7 +395,7 @@ impl<C: TesterConnection, const QUEUE: usize, const PEERS: usize>
         ai: Ai,
         data: &[u8],
         expects: bool,
-    ) -> Result<(), TransportError<C>> {
+    ) -> Result<(), ClientTransportError<C>> {
         if self.waiting.push(ai, data) {
             self.requested(ai, expects);
             Ok(())
@@ -411,7 +407,7 @@ impl<C: TesterConnection, const QUEUE: usize, const PEERS: usize>
     /// Reconnects where the connection has ended and a request waits for it. A reconnect
     /// that fails confirms every waiting request failed; one dropped part-way leaves them
     /// waiting for the next.
-    async fn reconnect(&mut self) -> Result<(), TransportError<C>> {
+    async fn reconnect(&mut self) -> Result<(), ClientTransportError<C>> {
         if self.link == Link::Up || self.waiting.is_empty() {
             return Ok(());
         }
@@ -456,9 +452,9 @@ impl<C: TesterConnection, const QUEUE: usize, const PEERS: usize>
         &mut self,
         event: ConnectionEvent<'_>,
         start: usize,
-    ) -> Result<Option<Received>, TransportError<C>> {
+    ) -> Result<Option<Received>, ClientTransportError<C>> {
         let own = self.connection.address().address();
-        let span = |pdu: &[u8]| -> Result<Range<usize>, TransportError<C>> {
+        let span = |pdu: &[u8]| -> Result<Range<usize>, ClientTransportError<C>> {
             let at = pdu
                 .as_ptr()
                 .addr()
@@ -516,12 +512,6 @@ impl<C: TesterConnection, const QUEUE: usize, const PEERS: usize>
     }
 }
 
-type TransportError<C> = ClientTransportError<
-    <C as service::DiagnosticConnection>::Error,
-    <C as TesterConnection>::ReconnectError,
-    <C as TesterConnection>::CloseError,
->;
-
 /// What the connection reported, the PDU held as its place in the caller's buffer.
 enum Received {
     Ind(Ai, Range<usize>, Option<usize>),
@@ -532,7 +522,7 @@ enum Received {
 impl<C: TesterConnection, const QUEUE: usize, const PEERS: usize> UdsTransport
     for DoIpClientTransport<C, QUEUE, PEERS>
 {
-    type Error = TransportError<C>;
+    type Error = ClientTransportError<C>;
 
     /// The connection's
     /// [`MAX_PDU`](simple_doip::service::DiagnosticConnection::MAX_PDU),

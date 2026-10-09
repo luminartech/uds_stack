@@ -20,7 +20,7 @@ use simple_doip::service::{
     TesterConnection, Timestamp,
 };
 use simple_doip::{LogicalAddress, TaType};
-use uds_on_ip::DoIpClientTransport;
+use uds_on_ip::{ClientTransportError, DoIpClientTransport};
 use uds_services::{AfterSend, ClientTransport, TransportEvent, UdsTransport};
 use uds_session::{Address, Ai, Mtype, Reloads, SResult, TransportError};
 
@@ -971,4 +971,24 @@ fn a_new_server_while_every_tracked_one_is_busy_is_refused() {
         Seen::Conf(TO_ENTITY_2, failed(DoIpResult::OutOfMemory))
     );
     assert_eq!(t.connection().requests(), [READ.to_vec()]);
+}
+
+// --- the error type ----------------------------------------------------------------------
+
+/// The transport's error is named by its connection alone: a caller writes
+/// `ClientTransportError<Scripted>`, never the three types the connection already
+/// determines.
+#[test]
+fn the_error_is_named_by_its_connection() {
+    fn transport_error(
+        error: <Transport as UdsTransport>::Error,
+    ) -> ClientTransportError<Scripted> {
+        error
+    }
+    let error = transport_error(ClientTransportError::Reconnect("refused"));
+    assert!(matches!(error, ClientTransportError::Reconnect("refused")));
+    assert_eq!(
+        error.to_string(),
+        "the DoIP connection could not be reopened: \"refused\""
+    );
 }
