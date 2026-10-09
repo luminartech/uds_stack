@@ -100,7 +100,8 @@ pub enum DoIpResult {
     Error,
 }
 
-/// Why [`DiagnosticEntity::request`] refused a request. No confirm follows a refusal.
+/// Why [`DiagnosticEntity::request`] or [`DiagnosticConnection::request`] refused a
+/// request. No confirm follows a refusal.
 ///
 /// Exhaustive: these are the only cases in which the request is refused rather than
 /// accepted and confirmed, and a caller that confirms a refused request failed itself
@@ -111,18 +112,23 @@ pub enum Refusal {
     /// data mandatory, which this crate reads as at least one byte.
     #[error("the PDU is empty")]
     EmptyPdu,
-    /// The PDU is longer than [`DiagnosticEntity::MAX_PDU`].
+    /// The PDU is longer than [`DiagnosticEntity::MAX_PDU`] or
+    /// [`DiagnosticConnection::MAX_PDU`].
     #[error("a {len}-byte PDU exceeds the {max}-byte limit")]
     PduTooLarge {
         /// The PDU's length.
         len: usize,
-        /// [`DiagnosticEntity::MAX_PDU`].
+        /// [`DiagnosticEntity::MAX_PDU`] or [`DiagnosticConnection::MAX_PDU`].
         max: usize,
     },
-    /// The entity has no room left to remember another request until it is confirmed.
-    /// No connection ends for it.
+    /// There is no room to remember another request until an earlier one is confirmed:
+    /// an entity's are all taken, and a connection holds one. No connection ends for it.
     #[error("too many requests await their confirm")]
     NoRoom,
+    /// The connection is closed. A [`TesterConnection`] takes requests again once
+    /// [`TesterConnection::reconnect`] succeeds. A [`DiagnosticEntity`] never refuses so.
+    #[error("not connected")]
+    NotConnected,
 }
 
 /// A reading of a [`DiagnosticConnection`]'s or a [`DiagnosticEntity`]'s clock, or an
@@ -304,8 +310,8 @@ pub enum ConnectionEvent<'b> {
 ///   one where the connection closes before the request completed. The layer above
 ///   waits on that confirm.
 pub trait DiagnosticConnection {
-    /// What this connection's failures are. Never interpreted by the layer above, which
-    /// can only report it.
+    /// What this connection's failures are, other than a refusal. Never interpreted by
+    /// the layer above, which can only report it.
     type Error: core::fmt::Debug;
 
     /// The longest PDU [`Self::request`] accepts. A longer one is refused with
@@ -328,13 +334,13 @@ pub trait DiagnosticConnection {
     ///
     /// # Errors
     ///
-    /// [`Self::Error`] where the request is not accepted; no confirm follows it.
+    /// A [`Refusal`] where the request is not accepted; no confirm follows it.
     fn request(
         &mut self,
         ta: LogicalAddress,
         ta_type: TaType,
         pdu: &[u8],
-    ) -> impl Future<Output = Result<(), Self::Error>>;
+    ) -> impl Future<Output = Result<(), Refusal>>;
 
     /// The current time on the clock a deadline is on.
     fn now(&self) -> Timestamp;
@@ -376,8 +382,8 @@ pub trait DiagnosticConnection {
 ///   connection.
 /// - However it closed, a connection stays closed until a reconnect succeeds:
 ///   [`DiagnosticConnection::next_event`] reports [`ConnectionEvent::Closed`] on every
-///   call, and [`DiagnosticConnection::request`] is refused. Dropping
-///   [`Self::reconnect`] leaves it so.
+///   call, and [`DiagnosticConnection::request`] is refused with
+///   [`Refusal::NotConnected`]. Dropping [`Self::reconnect`] leaves it so.
 pub trait TesterConnection: DiagnosticConnection {
     /// Why a reconnect failed. Never interpreted by the layer above, which can only
     /// report it.
@@ -390,6 +396,10 @@ pub trait TesterConnection: DiagnosticConnection {
     /// Why a connection failed. Never interpreted by the layer above, which can only
     /// report it.
     type IoError: core::fmt::Debug;
+
+    /// The tester address routing activation registers: the source of every request,
+    /// and the target of every message meant for this tester.
+    fn address(&self) -> TesterAddress;
 
     /// The I/O failure that ended the last connection, until a reconnect succeeds.
     ///
@@ -809,7 +819,7 @@ mod tests {
             ta: LogicalAddress,
             ta_type: TaType,
             pdu: &[u8],
-        ) -> Result<(), Self::Error> {
+        ) -> Result<(), Refusal> {
             let sent = self.sent.get_mut(..pdu.len()).unwrap();
             sent.copy_from_slice(pdu);
             self.sent_len = pdu.len();

@@ -16,7 +16,7 @@
 
 use core::ops::Range;
 
-use simple_doip::service::{ConnectionId, DoIpResult, EntityEvent};
+use simple_doip::service::{ConnectionId, DoIpResult, EntityEvent, Refusal};
 use uds_session::{Address, Ai, Mtype, SResult, TaType, TransportError};
 
 /// A constraint of the `DoIP` mapping, not of the session layer.
@@ -127,6 +127,15 @@ pub(crate) const fn s_result(result: DoIpResult) -> SResult {
     SResult::Transport(TransportError(position))
 }
 
+/// The `DoIP_Result` a refused request is confirmed with.
+pub(crate) const fn refused(refusal: Refusal) -> DoIpResult {
+    match refusal {
+        Refusal::NoRoom | Refusal::PduTooLarge { .. } => DoIpResult::OutOfMemory,
+        Refusal::NotConnected => DoIpResult::NoSocket,
+        Refusal::EmptyPdu => DoIpResult::Error,
+    }
+}
+
 /// The addressing of a `DoIP_Data` primitive as ISO 14229-2's `S_AI`.
 ///
 /// Always [`Mtype::Diag`]: ISO 14229-5:2022 REQ 4.4 Table 5 maps `T_Ptype` onto
@@ -227,11 +236,11 @@ pub(crate) fn classify(
 #[cfg(test)]
 mod tests {
     use super::{
-        Inbound, MappingError, PduOutsideBuffer, classify, from_doip_ta_type, s_result,
-        target_of, to_doip_ta_type,
+        Inbound, MappingError, PduOutsideBuffer, classify, from_doip_ta_type, refused,
+        s_result, target_of, to_doip_ta_type,
     };
     use simple_doip::LogicalAddress;
-    use simple_doip::service::{ConnectionId, DoIpResult, EntityEvent};
+    use simple_doip::service::{ConnectionId, DoIpResult, EntityEvent, Refusal};
     use uds_session::{
         Address, AddressExtension, Ai, Mtype, SResult, TaType, TransportError,
     };
@@ -406,5 +415,19 @@ mod tests {
         };
         let after = elsewhere.as_ptr().addr().wrapping_add(1);
         assert_eq!(classify(event, after), Err(PduOutsideBuffer));
+    }
+
+    /// A refused request is confirmed failed with the `DoIP_Result` naming why: no room
+    /// and too long are out of memory, no connection is no socket, and an empty PDU,
+    /// which ISO 13400-2:2019 8.2.5 names nothing for, is a plain error.
+    #[test]
+    fn a_refusal_confirms_its_request_failed_with_the_result_naming_why() {
+        assert_eq!(refused(Refusal::NoRoom), DoIpResult::OutOfMemory);
+        assert_eq!(
+            refused(Refusal::PduTooLarge { len: 9, max: 8 }),
+            DoIpResult::OutOfMemory
+        );
+        assert_eq!(refused(Refusal::NotConnected), DoIpResult::NoSocket);
+        assert_eq!(refused(Refusal::EmptyPdu), DoIpResult::Error);
     }
 }

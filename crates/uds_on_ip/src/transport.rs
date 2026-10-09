@@ -12,12 +12,12 @@
 
 use crate::error::Error;
 use crate::mapping::{
-    Inbound, PduOutsideBuffer, classify, from_logical, s_result, target_of,
+    Inbound, PduOutsideBuffer, classify, from_logical, refused, s_result, target_of,
     to_doip_ta_type, to_logical,
 };
 use crate::profile::{ConnectionAction, after_sending};
 use simple_doip::LogicalAddress;
-use simple_doip::service::{self, ConnectionId, DiagnosticEntity, DoIpResult, Refusal};
+use simple_doip::service::{self, ConnectionId, DiagnosticEntity, Refusal};
 use uds_services::{AfterSend, TransportEvent, UdsTransport};
 use uds_session::{Ai, Reloads, SResult, Timestamp};
 
@@ -349,16 +349,12 @@ impl<E: DiagnosticEntity, const CONNECTIONS: usize> DoIpTransport<E, CONNECTIONS
     /// `uds_session` matches a confirmation to its request by addressing
     /// (`UDSS_LLR_0059`), and has one request per addressing outstanding at most.
     fn refuse(&mut self, ai: Ai, refusal: Refusal) -> Result<(), Error<E::Error>> {
-        let result = match refusal {
-            Refusal::NoRoom | Refusal::PduTooLarge { .. } => DoIpResult::OutOfMemory,
-            Refusal::EmptyPdu => DoIpResult::Error,
-        };
         let Some(free) = self.refused.iter_mut().find(|held| held.is_none()) else {
             return Err(Error::Refused(refusal));
         };
         *free = Some(Confirmation {
             ai,
-            result: s_result(result),
+            result: s_result(refused(refusal)),
         });
         Ok(())
     }

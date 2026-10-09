@@ -120,6 +120,11 @@ stateDiagram-v2
   closes it, the socket fails, a request it carried is lost, or the entity sends a
   NACK it closes on. Where the socket failed, its error is kept in
   `TesterConnection::io_error`.
+- **A request is refused, with no confirm, only for a `service::Refusal`**, the
+  entity's vocabulary: `NotConnected` while the connection is closed (reconnect to
+  continue), `NoRoom` while an earlier request awaits its confirm (the tester carries
+  one at a time), `PduTooLarge` over `MAX_PDU`, and `EmptyPdu`. The layer above
+  tells them apart without naming the implementor.
 - **Reconnecting gives the old connection up before it waits, and waits before it
   connects** (issue #17 item 2): an entity may hold the tester's address for a
   while after its socket closes and refuse a second activation meanwhile. The

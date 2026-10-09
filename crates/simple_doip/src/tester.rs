@@ -16,8 +16,8 @@ use crate::messages::{
     ProtocolVersion, RoutingActivationResponse, RoutingActivationResponseCode,
 };
 use crate::service::{
-    ConnectionEvent, DiagnosticConnection, DoIpResult, TesterAddress, TesterConnection,
-    Timestamp,
+    ConnectionEvent, DiagnosticConnection, DoIpResult, Refusal, TesterAddress,
+    TesterConnection, Timestamp,
 };
 use crate::wire::Decode;
 use crate::{LogicalAddress, TIMEOUT_DIAGNOSTIC_MESSAGE_RESPONSE, TaType};
@@ -94,30 +94,6 @@ pub enum ConnectError<E> {
     InvalidMessage,
 }
 
-/// Why a tester did not accept a request. None is followed by a confirm.
-///
-/// A connection ending is never one of these: it is [`ConnectionEvent::Closed`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
-#[non_exhaustive]
-pub enum Error {
-    /// A request's [`ConnectionEvent::Confirm`] has not been reported yet; this one was
-    /// not accepted.
-    #[error("a request is still awaiting its confirm")]
-    RequestPending,
-    /// The PDU is longer than [`MAX_PDU`](DiagnosticConnection::MAX_PDU); it was not
-    /// accepted.
-    #[error("the PDU does not fit the tester's buffer")]
-    MessageTooLarge,
-    /// The PDU is empty; it was not accepted. ISO 13400-2:2019 Table 21 makes a
-    /// diagnostic message's user data mandatory, which this crate reads as at least one
-    /// byte.
-    #[error("the PDU is empty")]
-    EmptyPdu,
-    /// There is no connection: it closed, or a reconnect failed. Reconnect to continue.
-    #[error("not connected")]
-    NotConnected,
-}
-
 /// A `DoIP` tester: one TCP connection to one entity, with routing activated on it.
 ///
 /// `N` is the longest `DoIP` message, generic header included, that the tester sends or
@@ -136,7 +112,7 @@ pub enum Error {
 /// # What the caller owes
 ///
 /// - **One request at a time.** [`DiagnosticConnection::request`] is
-///   [`Error::RequestPending`] until the previous request's
+///   [`Refusal::NoRoom`] until the previous request's
 ///   [`ConnectionEvent::Confirm`] has been reported, so a caller that wants to send
 ///   another meanwhile, such as a keep-alive or a second channel's request, queues it.
 /// - **[`DiagnosticConnection::next_event`] kept polled.** The tester does its I/O only
@@ -162,23 +138,26 @@ pub enum Error {
 ///
 /// ```no_run
 /// use simple_doip::service::{
-///     ConnectionEvent, DiagnosticConnection, DoIpResult, TesterConnection,
+///     ConnectionEvent, DiagnosticConnection, DoIpResult, Refusal, TesterConnection,
 /// };
 /// use simple_doip::service::TesterAddress;
-/// use simple_doip::tester::{DIAGNOSTIC_MESSAGE_OVERHEAD, Error, Tester};
+/// use simple_doip::tester::{DIAGNOSTIC_MESSAGE_OVERHEAD, Tester};
 /// use simple_doip::{LogicalAddress, TCP_PORT, TaType};
 /// # #[derive(Debug)]
 /// # enum Failed {
 /// #     Connect(simple_doip::tester::ConnectError<std::io::Error>),
-/// #     Use(Error),
+/// #     Use(Refusal),
 /// #     Refused(DoIpResult),
 /// #     Close(std::io::Error),
 /// # }
 /// # impl From<simple_doip::tester::ConnectError<std::io::Error>> for Failed {
 /// #     fn from(e: simple_doip::tester::ConnectError<std::io::Error>) -> Self { Self::Connect(e) }
 /// # }
-/// # impl From<Error> for Failed {
-/// #     fn from(e: Error) -> Self { Self::Use(e) }
+/// # impl From<Refusal> for Failed {
+/// #     fn from(e: Refusal) -> Self { Self::Use(e) }
+/// # }
+/// # impl From<core::convert::Infallible> for Failed {
+/// #     fn from(never: core::convert::Infallible) -> Self { match never {} }
 /// # }
 /// # impl From<std::io::Error> for Failed {
 /// #     fn from(e: std::io::Error) -> Self { Self::Close(e) }
@@ -194,7 +173,7 @@ pub enum Error {
 /// let mut buf = [0; Tester::<edge_nal_std::Stack, N>::MAX_PDU];
 /// 'send: loop {
 ///     match tester.request(LogicalAddress(0x0001), TaType::Physical, &[0x3E, 0x00]).await {
-///         Err(Error::NotConnected) => {
+///         Err(Refusal::NotConnected) => {
 ///             tester.reconnect().await?;
 ///             continue 'send;
 ///         }
@@ -502,10 +481,10 @@ impl<'s, C: TcpConnect, const N: usize> Tester<'s, C, N> {
 /// tester gave it up, or the socket failed, whose error [`TesterConnection::io_error`]
 /// keeps. Every [`next_event`](DiagnosticConnection::next_event) after that reports
 /// `Closed` again, and [`request`](DiagnosticConnection::request) is
-/// [`Error::NotConnected`], until a reconnect succeeds. `next_event` never returns
+/// [`Refusal::NotConnected`], until a reconnect succeeds. `next_event` never returns
 /// `Err`.
 impl<C: TcpConnect, const N: usize> DiagnosticConnection for Tester<'_, C, N> {
-    type Error = Error;
+    type Error = core::convert::Infallible;
 
     /// The longest PDU a request may carry, and the longest an indication delivers
     /// whole: `N` less [`DIAGNOSTIC_MESSAGE_OVERHEAD`]. Naming it for an `N` below
@@ -543,11 +522,11 @@ impl<C: TcpConnect, const N: usize> DiagnosticConnection for Tester<'_, C, N> {
     /// # Errors
     ///
     /// None of these is followed by a confirm:
-    /// - [`Error::NotConnected`] once the connection has closed.
-    /// - [`Error::RequestPending`] until an earlier request's confirm has been reported.
-    /// - [`Error::MessageTooLarge`] for a `pdu` longer than
+    /// - [`Refusal::NotConnected`] once the connection has closed.
+    /// - [`Refusal::NoRoom`] until an earlier request's confirm has been reported.
+    /// - [`Refusal::PduTooLarge`] for a `pdu` longer than
     ///   [`MAX_PDU`](DiagnosticConnection::MAX_PDU).
-    /// - [`Error::EmptyPdu`] for an empty `pdu`.
+    /// - [`Refusal::EmptyPdu`] for an empty `pdu`.
     #[expect(
         clippy::unused_async_trait_impl,
         reason = "accepting on the first poll is the contract"
@@ -557,20 +536,23 @@ impl<C: TcpConnect, const N: usize> DiagnosticConnection for Tester<'_, C, N> {
         ta: LogicalAddress,
         ta_type: TaType,
         pdu: &[u8],
-    ) -> Result<(), Self::Error> {
+    ) -> Result<(), Refusal> {
         if self.socket.is_none() {
-            return Err(Error::NotConnected);
+            return Err(Refusal::NotConnected);
         }
         if self.exchange.outstanding.is_some() || self.owed.is_some() {
-            return Err(Error::RequestPending);
+            return Err(Refusal::NoRoom);
         }
         if pdu.is_empty() {
-            return Err(Error::EmptyPdu);
+            return Err(Refusal::EmptyPdu);
         }
         let message = Message::diagnostic_message(VERSION, self.sa.address(), ta, pdu);
         self.outgoing
             .load(&message)
-            .map_err(|TooLarge| Error::MessageTooLarge)?;
+            .map_err(|TooLarge| Refusal::PduTooLarge {
+                len: pdu.len(),
+                max: Self::MAX_PDU,
+            })?;
         self.exchange.outstanding = Some(Outstanding {
             ta,
             ta_type,
@@ -710,6 +692,10 @@ impl<C: TcpConnect, const N: usize> TesterConnection for Tester<'_, C, N> {
     type CloseError = C::Error;
     type IoError = C::Error;
 
+    fn address(&self) -> TesterAddress {
+        self.sa
+    }
+
     /// The socket error that ended the last connection, if one did, until a reconnect
     /// succeeds.
     fn io_error(&self) -> Option<&Self::IoError> {
@@ -742,7 +728,7 @@ impl<C: TcpConnect, const N: usize> TesterConnection for Tester<'_, C, N> {
     /// As for [`Tester::connect`]. After an error,
     /// [`next_event`](DiagnosticConnection::next_event) reports
     /// [`ConnectionEvent::Closed`] and [`request`](DiagnosticConnection::request) is
-    /// [`Error::NotConnected`] until a reconnect succeeds.
+    /// [`Refusal::NotConnected`] until a reconnect succeeds.
     async fn reconnect(&mut self) -> Result<(), Self::ReconnectError> {
         self.lose_connection(true, None).await;
         if let Some(lost_at) = self.lost_at {
