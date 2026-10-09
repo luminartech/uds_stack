@@ -412,20 +412,20 @@ Protocol state
    accept a second transfer while one is live.
 
    **``maxNumberOfBlockLength`` is an associated const, not a value a handler returns**, and
-   the change removes a disagreement rather than saving a parameter. Clause 15.2.3.2
-   obliges the server to report the number in its ``RequestDownload`` positive response, and
-   ``UDSSVC_ARCH_0013``'s fold needs the same number to size the buffer a block is decoded
+   the change removes a disagreement rather than saving a parameter. Clause 15.2.3.2 obliges
+   the server to report the number in its ``RequestDownload`` positive response, and
+   ``UDSSVC_ARCH_0013``'s fold needs the same fact to size the buffer a block is decoded
    into. Had ``begin`` returned it, those would be two statements of one fact made at two
-   different times — one at compile time in the array length, one per request from a
-   handler — with nothing obliging them to match, and a handler advertising more than the
-   buffer holds produces a client that sends a block the server structurally cannot receive.
-   As ``DataTransfer::MAX_BLOCK_LENGTH`` the value is declared once, folded into the buffer
-   and composed into the response by this crate, so ``begin`` returns nothing and the two
-   cannot diverge. They are one fact but not yet one number: 15.2.3.2's counts the service
-   identifier and the block sequence counter, which the const excludes, and that difference
-   is one of the problems open question 8 records. ``SUPPORTS_UPLOAD`` sits beside it for the same kind of reason: a
-   download-only server never puts a block in a *response*, so it must not pay for a
-   response buffer sized to hold one.
+   different times — one at compile time in the array length, one per request from a handler
+   — with nothing obliging them to match, and a handler advertising more than the buffer
+   holds produces a client that sends a block the server structurally cannot receive. As
+   ``DataTransfer::MAX_BLOCK_LENGTH`` the fact is declared once and folded into the buffer,
+   so ``begin`` returns nothing. Deriving the advertised value from it is still to be done:
+   15.2.3.2's number counts the service identifier and the block sequence counter, which the
+   const excludes, and that is one of the problems open question 8 records (#50).
+   ``SUPPORTS_UPLOAD`` sits beside it for the same kind of reason: a download-only server
+   never puts a block in a *response*, so it must not pay for a response buffer sized to
+   hold one.
 
    **Direction is carried by ``TransferRequest`` rather than by a separate field**, which is
    what makes the paragraph above structural instead of advisory. The repeated-block rule

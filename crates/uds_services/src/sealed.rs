@@ -4,7 +4,7 @@
 //! is what makes "never" a compile error rather than a request. What rests on it is the
 //! whole derivation argument: an application that writes its own
 //! `impl ServiceSet { type Store = Store<1, 1, 1>; .. }` compiles, truncates every request
-//! at one byte, and still advertises `MAX_BLOCK_LENGTH` over the wire.
+//! at one byte, and still advertises a block length taken from `MAX_BLOCK_LENGTH`.
 //!
 //! [`Storage`](crate::Storage) is sealed outright — `Store` is its only implementor and
 //! nothing outside this crate can add one. [`ClientStorage`](crate::ClientStorage) and

@@ -127,9 +127,11 @@ Scope
      They are fifteen normative figures the "Specific SID CHECK" box of Figures 5 and 6
      hands off to, and ``UDSSVC_ARCH_0042`` records that the ordering is normative and this
      crate's. Its seam is built, as typed pre-handler lookups that each stage asks in its
-     figure's order. Figures 20, 26, 28 and 30 and Annex I's Table I.2 are built that way.
-     Figures 11, 21, 22, 23, 27 and 29 belong to services with no trait, and Figures 31 to
-     35 to ``DataTransfer``, which has a trait and no stage (#50). For those, the order is
+     figure's order. Figures 26 and 30 and Annex I's Table I.2 are built that way. Figures
+     20 and 28 have stages but no lookups: the stage checks the request's length and
+     decoding, and every later check, with its order, is still the handler's. Figures 11,
+     21, 22, 23, 27 and 29 belong to services with no trait, and Figures 31 to 35 to
+     ``DataTransfer``, which has a trait and no stage (#50). For all of those, the order is
      still unbuilt.
    * **Clause 16**, the security sub-layer. Its 16.1.4 general server response behaviour is
      this crate's by the same argument as clause 8.7; its 16.1.3 access flow spans

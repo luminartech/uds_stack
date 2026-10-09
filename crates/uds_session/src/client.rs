@@ -142,12 +142,8 @@ impl<const R: usize> FunctionalSlot<R> {
 /// promise: nothing about it is meaningful to a caller. `PartialOrd`/`Ord` are not
 /// implemented, since nothing needs them.
 ///
-/// The counter is a `u32`, shared with [`FunctionalChannelId`], and when it is spent
-/// the client opens no more channels ([`crate::Cause::ChannelHandlesSpent`]). It lasts
-/// 49 days at one open a millisecond. A `u64` would cost eight bytes a slot to make an
-/// already specified rejection rarer. A slot index would let a stale handle address a
-/// later peer, and an index with a generation counter wraps, so either reissues a
-/// handle eventually.
+/// The counter is a `u32`, shared with [`FunctionalChannelId`]. After 2^32 opens it is
+/// spent, and the client opens no more channels ([`crate::Cause::ChannelHandlesSpent`]).
 ///
 /// `Tag` is the issuing client's tag — see [`Client`] — so a handle from a client with
 /// another tag does not type-check here. Its traits hold whatever the tag implements.

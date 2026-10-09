@@ -170,15 +170,17 @@ mod tests {
         }
     }
 
-    /// The constant that sizes the in-flight buffer is the same constant clause 15.2.3.2
-    /// obliges the server to advertise as maxNumberOfBlockLength. One value, so the
-    /// buffer and the advertisement cannot disagree — and a disagreement there is a
-    /// buffer overrun on the next `TransferData`.
+    /// One constant sizes the in-flight buffer and gives the value clause 15.2.3.2
+    /// obliges the server to advertise as maxNumberOfBlockLength, so the two cannot
+    /// disagree — and a disagreement there is a buffer overrun on the next
+    /// `TransferData`. They differ by two bytes: `MAX_BLOCK_LENGTH` is the block alone,
+    /// and 15.2.3.2's value, like the buffer, also counts the service identifier and the
+    /// block sequence counter. Deriving the advertisement is open question 8 (#50).
     #[test]
-    fn the_block_length_is_one_value_serving_two_purposes() {
-        const ADVERTISED: usize = <Ecu as DataTransfer>::MAX_BLOCK_LENGTH;
-        const REQUIRED_BUFFER: usize = 2 + ADVERTISED; // SID + block sequence counter
-        assert_eq!((ADVERTISED, REQUIRED_BUFFER), (1_024, 1_026));
+    fn the_block_length_gives_both_the_buffer_and_the_advertisement() {
+        const BLOCK: usize = <Ecu as DataTransfer>::MAX_BLOCK_LENGTH;
+        const ADVERTISED: usize = 2 + BLOCK; // SID + block sequence counter
+        assert_eq!((BLOCK, ADVERTISED), (1_024, 1_026));
     }
 
     /// A download-only server never puts a block in a *response*, so it must not carry a

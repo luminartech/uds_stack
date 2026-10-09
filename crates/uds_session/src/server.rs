@@ -164,11 +164,8 @@ pub struct Server<const A: usize> {
     session: Session,
     service: Option<InProgress>,
     /// Expiry snapshots: taken at the instant of expiry, because what the indication
-    /// names may be gone by the time it is drained. ``UDSS_LLR_0100``'s expiry discards
-    /// the controlling client its indication carries; ``UDSS_LLR_0117``'s names the
-    /// service in progress, which the very input that ran the expiry may replace under
-    /// ``UDSS_LLR_0108``. So each is a snapshot of the indication's facts, not a flag
-    /// that it is owed.
+    /// names may be gone by the time it is drained (``UDSS_LLR_0100``,
+    /// ``UDSS_LLR_0108``, ``UDSS_LLR_0117``).
     s3_expiry: Option<PeerIdentity>,
     p2_expiry: Option<(PeerIdentity, ServerReload)>,
 }
@@ -283,10 +280,6 @@ impl<const A: usize> Server<A> {
     }
 
     /// Every cause ``UDSS_LLR_0016`` requires the report to state, over `&self`.
-    ///
-    /// Validation borrows the server shared, so it cannot change state, and a rejected
-    /// input leaves the state as the expiries left it (``UDSS_LLR_0015``): the borrow
-    /// checker holds it, not a review.
     fn validate_req(
         &self,
         now: Timestamp,
