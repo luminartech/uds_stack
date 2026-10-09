@@ -224,7 +224,7 @@ jobs:
   # ===================================================================================
   # Every test behind simple_doip's `connection` feature is skipped by rust-ci.yml's
   # Miri job. These run on the mock stack, so Miri can interpret them; the tests on real
-  # sockets (entity_std, entity_interop, tester_interop, tester_late_ack) cannot be.
+  # sockets (entity_std, entity_interop, tester_late_ack) cannot be.
   # Tree borrows, because stacked borrows rejects embassy-futures' select_array, which
   # tree borrows accepts. See `just miri`.
   miri-connection:
