@@ -18,7 +18,9 @@ use simple_doip::tester::discovery::{
     self, A_DOIP_CTRL, BROADCAST, DiscoveryError, Request,
 };
 use simple_doip::{TCP_PORT, UDP_DISCOVERY_PORT};
-use support::mock_stack::{MockError, MockUdp, advance, clock, raw, until_stalled};
+use support::mock_stack::{
+    MockError, MockUdp, advance, clock, raw, until_stalled, versioned,
+};
 
 const EID: [u8; 6] = [0x02, 0x00, 0x00, 0xAB, 0xCD, 0xEF];
 const OTHER_EID: [u8; 6] = [0x02, 0x00, 0x00, 0x12, 0x34, 0x56];
@@ -46,9 +48,9 @@ fn just_under_a_doip_ctrl() -> Duration {
 }
 
 /// REQ 4.DoIP-136, 7.DoIP-156 and Table 12: an identification request goes out once, in
-/// this edition's protocol version, and every distinct entity answering within
-/// `A_DoIP_Ctrl` is found; a repeated answer, a frame of another type, and a datagram
-/// that is not a frame are passed over.
+/// the default protocol version, and every distinct entity answering within `A_DoIP_Ctrl`
+/// is found; a repeated answer, a frame of another type, and a datagram that is not a
+/// frame are passed over.
 #[test]
 fn identify_finds_each_entity_that_answers_within_a_doip_ctrl() {
     let _clock = clock();
@@ -65,7 +67,7 @@ fn identify_finds_each_entity_that_answers_within_a_doip_ctrl() {
         assert!(until_stalled(identifying.as_mut()).is_none());
         assert_eq!(
             udp.take_sent(),
-            [(BROADCAST, vec![0x03, 0xFC, 0x00, 0x01, 0, 0, 0, 0])]
+            [(BROADCAST, vec![0xFF, 0x00, 0x00, 0x01, 0, 0, 0, 0])]
         );
         udp.deliver(entity_at(10), &identification(0xE400, EID));
         udp.deliver(entity_at(10), &identification(0xE400, EID));
@@ -94,7 +96,8 @@ fn identify_finds_each_entity_that_answers_within_a_doip_ctrl() {
     );
 }
 
-/// ISO 13400-2:2019 Tables 3 and 4: a directed request carries the EID or VIN it names.
+/// ISO 13400-2:2019 Tables 3 and 4: a directed request carries the EID or VIN it names,
+/// in the default protocol version too.
 #[test]
 fn a_directed_request_carries_what_it_names() {
     let _clock = clock();
@@ -104,8 +107,8 @@ fn a_directed_request_carries_what_it_names() {
     let to = entity_at(10);
 
     for (request, expected) in [
-        (Request::Eid(EID), raw(0x0002, &EID)),
-        (Request::Vin(VIN), raw(0x0003, &VIN)),
+        (Request::Eid(EID), versioned(raw(0x0002, &EID), 0xFF)),
+        (Request::Vin(VIN), versioned(raw(0x0003, &VIN), 0xFF)),
     ] {
         let mut identifying =
             pin!(discovery::identify(&mut socket, to, request, &mut found));

@@ -606,8 +606,9 @@ own `UdpSplit` socket, as three functions:
 - A `Found` entity's `tcp_address` is its address on `TCP_PORT`, for
   `Tester::connect`.
 
-Requests go out in protocol version `0x03`; `0xFF`, which 7.DoIP-156 lets an
-identification request carry, is not sent. The module is what the loopback tests, dft
+An identification request goes out in the default protocol version `0xFF`, which
+7.DoIP-156 has every entity take on one, so an entity of an earlier edition is found
+too; entity status and power mode requests go out in `0x03`. The module is what the loopback tests, dft
 (issue #17) and W9's `outbound_max` (MDS − 4) need, shares the `messages` codecs, and
 stays out of `uds_on_ip`.
 

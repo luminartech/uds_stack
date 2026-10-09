@@ -7,6 +7,10 @@
 //! so. Each call sends its request, and listens on the same socket for the answers within
 //! `A_DoIP_Ctrl`, 2 s (Table 12, REQ 4.DoIP-136).
 //!
+//! An identification request carries the default protocol version, `0xFF`, which an
+//! entity takes whichever edition it implements (REQ 7.DoIP-156), so entities of earlier
+//! editions are found too; the other requests carry this edition's, `0x03`.
+//!
 //! A [`Found`] entity is reached over `TCP_DATA` with
 //! [`Tester::connect`](super::Tester::connect) at [`Found::tcp_address`].
 
@@ -145,7 +149,12 @@ pub async fn identify<U: UdpSplit>(
         }
         None::<()>
     };
-    exchange(socket, to, payload_type, payload, collect).await?;
+    let header = Header::new(
+        ProtocolVersion::VehicleIdentificationRequest,
+        payload_type,
+        0,
+    );
+    exchange(socket, to, header, payload, collect).await?;
     Ok(found.iter().flatten().count())
 }
 
@@ -229,25 +238,23 @@ async fn ask<U: UdpSplit, T>(
             payload => answer(payload).map(Ok),
         }
     };
-    exchange(socket, entity, payload_type, payload, take)
+    let header = Header::new(ProtocolVersion::V2019, payload_type, 0);
+    exchange(socket, entity, header, payload, take)
         .await?
         .unwrap_or(Err(DiscoveryError::NoAnswer))
 }
 
-/// Sends `payload` to `to`, then hands `take` each frame received within
+/// Sends `payload` under `header` to `to`, then hands `take` each frame received within
 /// [`A_DOIP_CTRL`] until it returns something.
 async fn exchange<U: UdpSplit, T>(
     socket: &mut U,
     to: SocketAddr,
-    payload_type: PayloadType,
+    header: Header,
     payload: Payload<'_>,
     mut take: impl FnMut(SocketAddr, Message<'_>) -> Option<T>,
 ) -> Result<Option<T>, DiscoveryError<U::Error>> {
     let (mut receiver, mut sender) = socket.split();
-    let message = Message {
-        header: Header::new(ProtocolVersion::V2019, payload_type, 0),
-        payload,
-    };
+    let message = Message { header, payload };
     let mut frame = [0u8; Header::SIZE + 17];
     let written = message
         .encode(&mut SliceSink::new(&mut frame))
