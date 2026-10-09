@@ -10,8 +10,7 @@ pub enum EntityStatusNodeType {
     /// A `DoIP` gateway: bridges the IP network to one or more in-vehicle
     /// diagnostic networks, and may have multiple concurrent TCP sockets.
     DoIPGateway = 0x00,
-    /// A `DoIP` node: a single ECU directly reachable over IP, supporting exactly
-    /// one diagnostic TCP socket.
+    /// A `DoIP` node: an entity with no vehicle sub-network behind it.
     DoIPNode = 0x01,
     /// A node type value outside the range this crate models.
     Reserved(u8),
@@ -48,23 +47,31 @@ pub struct EntityStatusResponse {
     pub max_concurrent_tcp_sockets: u8,
     /// The number of diagnostic TCP sockets currently open on this entity.
     pub open_tcp_sockets: u8,
-    /// The maximum diagnostic message payload size, in bytes, this entity can accept.
-    pub max_data_size: u32,
+    /// The largest payload, in bytes and without the generic header, the entity
+    /// processes (MDS), or `None` where the entity omits this optional field.
+    pub max_data_size: Option<u32>,
 }
 
 impl<'a> Decode<'a> for EntityStatusResponse {
     type Error = MessageError;
 
-    /// Deserialize an entity status response from a byte slice
+    /// Deserialize an entity status response from a byte slice: its three mandatory
+    /// bytes, and the max data size where four more bytes follow them (Table 11).
     ///
     /// # Errors
-    /// Returns [`MessageError::Incomplete`] if `buf` is too short
+    /// Returns [`MessageError::Incomplete`] if `buf` is too short, or holds one to three
+    /// bytes after the mandatory three, which is neither length Table 11 allows.
     fn decode(buf: &'a [u8]) -> Result<(Self, &'a [u8]), MessageError> {
         let (node_type, rest) = read_u8(buf)?;
         let node_type = EntityStatusNodeType::from(node_type);
         let (max_concurrent_tcp_sockets, rest) = read_u8(rest)?;
         let (open_tcp_sockets, rest) = read_u8(rest)?;
-        let (max_data_size, rest) = read_u32_be(rest)?;
+        let (max_data_size, rest) = if rest.is_empty() {
+            (None, rest)
+        } else {
+            let (max_data_size, rest) = read_u32_be(rest)?;
+            (Some(max_data_size), rest)
+        };
         Ok((
             EntityStatusResponse {
                 node_type,
@@ -81,7 +88,7 @@ impl Encode for EntityStatusResponse {
     type Error = MessageError;
 
     fn encoded_size(&self) -> Result<usize, MessageError> {
-        Ok(7)
+        Ok(if self.max_data_size.is_some() { 7 } else { 3 })
     }
 
     /// Serialize this entity status response into `writer`
@@ -95,7 +102,9 @@ impl Encode for EntityStatusResponse {
         write_u8(writer, self.node_type.into())?;
         write_u8(writer, self.max_concurrent_tcp_sockets)?;
         write_u8(writer, self.open_tcp_sockets)?;
-        write_u32_be(writer, self.max_data_size)?;
-        Ok(7)
+        if let Some(max_data_size) = self.max_data_size {
+            write_u32_be(writer, max_data_size)?;
+        }
+        self.encoded_size()
     }
 }

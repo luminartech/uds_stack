@@ -98,14 +98,16 @@ pub struct VehicleIdentificationResponse {
     /// Whether the tester must take further action (e.g. routing activation with
     /// central security) before diagnostics can proceed.
     pub further_action: FurtherActionRequired,
-    /// Indicates whether all entities have synced information about VIN or GID.
-    pub vin_gid_sync_status: VinGidSyncStatus,
+    /// Whether all entities have synchronised their VIN or GID, or `None` where the
+    /// entity omits this optional field.
+    pub vin_gid_sync_status: Option<VinGidSyncStatus>,
 }
 
 impl<'a> Decode<'a> for VehicleIdentificationResponse {
     type Error = MessageError;
 
-    /// Deserialize a vehicle identification response from a byte slice
+    /// Deserialize a vehicle identification response from a byte slice: its 32
+    /// mandatory bytes, and the VIN/GID sync status where a byte follows them.
     ///
     /// # Errors
     /// Returns [`MessageError::Incomplete`] if `buf` is too short
@@ -128,8 +130,10 @@ impl<'a> Decode<'a> for VehicleIdentificationResponse {
         let (further_action, rest) = read_u8(rest)?;
         let further_action = FurtherActionRequired::from(further_action);
 
-        let (vin_gid_sync_status, rest) = read_u8(rest)?;
-        let vin_gid_sync_status = VinGidSyncStatus::from(vin_gid_sync_status);
+        let (vin_gid_sync_status, rest) = match read_u8(rest) {
+            Ok((status, rest)) => (Some(VinGidSyncStatus::from(status)), rest),
+            Err(_) => (None, rest),
+        };
 
         Ok((
             Self {
@@ -149,7 +153,11 @@ impl Encode for VehicleIdentificationResponse {
     type Error = MessageError;
 
     fn encoded_size(&self) -> Result<usize, MessageError> {
-        Ok(33)
+        Ok(if self.vin_gid_sync_status.is_some() {
+            33
+        } else {
+            32
+        })
     }
 
     /// Serialize this vehicle identification response into `writer`
@@ -169,7 +177,9 @@ impl Encode for VehicleIdentificationResponse {
             write_bytes(writer, &[0x00; 6])?;
         }
         write_u8(writer, self.further_action.into())?;
-        write_u8(writer, self.vin_gid_sync_status.into())?;
-        Ok(33)
+        if let Some(status) = self.vin_gid_sync_status {
+            write_u8(writer, status.into())?;
+        }
+        self.encoded_size()
     }
 }

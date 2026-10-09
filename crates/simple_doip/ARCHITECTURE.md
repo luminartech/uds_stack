@@ -401,6 +401,268 @@ the sensor forced. Raise any of them to overturn it.
 - **Across the stack:** a suppressed `10 82` or `11 81` sends no response, so it makes
   no close (`uds_on_ip/ARCHITECTURE.md` §9.2).
 
+### 2.5 An entity's UDP: discovery, status and power mode
+
+> **As built**: `src/entity/discovery.rs` and `src/tester/discovery.rs`.
+> Locators are ISO 13400-2:2019. Tables 5–12, 17, 19, 20 and 41 and Figures 3, 7, 11,
+> 13, 16, 20 and 21 were read in the PDF; the markdown copy drops figures and table
+> content.
+
+#### 2.5.1 What the standard asks
+
+Discovery is how a tester finds an entity and maps its logical address to an IP
+address (6.2, 7.8). An entity whose interface has an address announces itself three
+times, and answers identification requests sent to it or broadcast (Figures 3, 11).
+Every UDP message carries the generic header and goes through Figure 16's handler, as
+`TCP_DATA` does (REQ 7.DoIP-036, 037).
+
+| REQ / locator | Requires | Sensor |
+|---|---|---|
+| 8.DoIP-046, Table 2 | Answer the plain identification request `0x0001` (empty payload) | Yes |
+| 8.DoIP-047, Table 3, Figure 13 | *If supported*, answer `0x0002` only when its 6-byte EID is the entity's; silence otherwise | Yes: it costs one comparison |
+| 8.DoIP-048, 052, Table 4, Figure 13 | Answer `0x0003` only when its 17-byte VIN is the entity's programmed VIN; silence otherwise, so never while no VIN is programmed | Yes |
+| 8.DoIP-049, Table 5 | Announcement and identification response `0x0004`: VIN 17, logical address 2, EID 6, GID 6, further action 1, VIN/GID sync status 1 (optional), so 32 or 33 bytes | Yes |
+| Table 1 | A VIN *should*, a GID *shall*, be all `0x00` or all `0xFF` while not set | Yes |
+| Tables 6, 7 | Further action `0x00`, or `0x10` (central security, activation type `0xE0`, 8.DoIP-144); sync status `0x00` or `0x10` | `0x00`; no sync status byte |
+| 8.DoIP-050, Table 12, Figure 11 | After a valid IP address is configured, `A_DoIP_Announce_Num` (3) announcements, `A_DoIP_Announce_Interval` (500 ms) apart | Yes |
+| 8.DoIP-125, Table 20 note 1, 4.DoIP-009 | An announcement goes to the IPv4 limited broadcast address, port `UDP_DISCOVERY` (13400) | Yes |
+| 8.DoIP-155 | On IPv6, to `FF02::1` | No: the sensor is IPv4 |
+| 8.DoIP-051, Table 12 | Delay an identification response by `A_DoIP_Announce_Wait`, random in 0–500 ms | Yes |
+| 8.DoIP-123, 142, 143 (7.3) | Identifiable by VIN or EID at any time; EID and GID where a VIN cannot be guaranteed; GID synchronisation where several entities share a vehicle without a guaranteed VIN. The synchronisation itself is left to the VM | EID and GID carried; synchronisation out of scope |
+| 8.DoIP-116 to 118, Tables 8, 9 | Power mode `0x4003` (empty) answered `0x4004` (1 byte: `0x00` not ready, `0x01` ready, `0x02` not supported) within `A_DoIP_Ctrl` (2 s). Mandatory (Table 17) | Yes |
+| 8.DoIP-119 to 121, Tables 10, 11 | *If supported*, entity status `0x4001` (empty) answered `0x4002` within `A_DoIP_Ctrl`: node type, MCTS, open sockets (NCTS), and optionally MDS (4 bytes) | Yes: the only place a tester learns MDS |
+| 4.DoIP-006 to 008, Table 41 | Listen on UDP 13400 | Yes |
+| 4.DoIP-137, Tables 20, 41, Figure 21 | Answer unicast to the request's source address and port (`UDP_TEST_EQUIPMENT_REQUEST`); the answer's source port may be 13400 | Yes |
+| 4.DoIP-161 | UDP is never secured | — |
+| 7.DoIP-122, 4.DoIP-122 | One DoIP message per datagram | Yes |
+| 7.DoIP-031 | Ignore a datagram whose source is a broadcast or multicast address | Yes |
+| 7.DoIP-156, Table 16 | Ignore protocol version `0xFF` on identification requests | Yes |
+| 7.DoIP-039, Figure 16 | Discard a received header NACK, announcement or identification response without a NACK | Yes |
+| 7.DoIP-041 to 045, 087, Table 19 | Header NACKs `0x00` to `0x04` | Yes, see 2.5.4 |
+
+The standard leaves four things open, and this design settles them:
+
+- **The first announcement waits.** 8.DoIP-050 says the announcements start
+  "immediately" after the address is configured; Table 12's `A_DoIP_Announce_Wait`,
+  Figure 11 and 6.3.2 put the random wait before the first. The entity waits: it
+  satisfies the three, and reads "immediately" as "triggered by".
+- **The wait applies to all three identification requests.** 8.DoIP-051 names Table 2
+  alone, but Table 12 defines the wait for "a vehicle identification request". A
+  directed request is still answered well within `A_DoIP_Ctrl`.
+- **NACKs on UDP** go where any answer goes, to the request's source (Table 17 lists
+  `0x0000` on both UDP ports). Table 19's "close socket" for `0x00` and `0x04` has no
+  socket to close; the datagram is discarded and the port keeps listening (4.DoIP-008).
+- **A `TCP_DATA` payload type on UDP** (`0x0005` to `0x0008`, `0x8001` to `0x8003`) is
+  one the entity does not take on that port, answered `0x01` (7.DoIP-042), as a UDP
+  type arriving on `TCP_DATA` already is.
+
+#### 2.5.2 What the old code did
+
+Neither `bare_metal_entity` nor `server::Server` is a model; the tests and the encoders
+hold what is worth keeping.
+
+- `bare_metal_entity::Entity::on_udp_rx` answers `0x0001`, and `0x0002` and `0x0003`
+  only on a matching EID or VIN (Figure 13), with the announcement body, at once and
+  without the wait. It answers power mode `0x4003` `0x02`, not supported (Table 9),
+  NACKs a known request of the wrong length `0x04`, and checks no protocol version. It
+  counts activated testers, not sockets, as NCTS. Its "announcement" is only ever a
+  reply: nothing sends one unasked. It replies to the source address and port. Halo
+  runs it until W13 replaces it.
+- `server::Server::run_udp_responder` answers `0x0001` only, at once, and is silent on
+  `0x0002` and `0x0003` (its `vehicle_identification_with_eid`/`_vin` hooks match
+  correctly but are never called), and on power mode and entity status. It sends no
+  NACK at all.
+- `tests/udp_identification.rs` holds two behaviors worth porting: a mismatched EID or
+  VIN gets silence (Figure 13), and a datagram the entity cannot answer does not stop
+  it answering the next. Its byte vectors port as they are. Its "no reply to an alive
+  check request on UDP" is the old shape: Figure 16 owes `0x01`.
+- The `messages` encoders need four fixes before an entity or a tester can use them.
+  `Payload::decode` folds `0x0001` to `0x0003` into one unit variant and drops the EID
+  or VIN. There is no variant for `0x4003`. `EntityStatusResponse` always carries MDS
+  and `VehicleIdentificationResponse` always the sync status byte, so a conformant
+  entity that omits either cannot be decoded. The golden vectors stay; the short forms
+  get fixtures of their own.
+
+#### 2.5.3 The shape
+
+**Part of `Entity`, not a type beside it.** `DoIpTransport` owns its entity by value, so
+nothing else can reach the connection table while the transport runs, and entity status
+must read the open sockets when it answers. A second type would need the table shared
+behind a cell, and a second task or a `select` the integrator writes. Inside, the UDP
+socket is one more source in `wait`'s rotation, its deadlines one more in `next_wake`,
+and `next_event` drives it as it drives the sockets. Nothing about it reaches the layer
+above: no `EntityEvent` is added, and neither `DiagnosticEntity` nor `uds_on_ip`
+changes. UDP is below the UDS seam.
+
+```rust
+let entity = Entity::<_, 1, 4096>::new(&acceptor, address, config)
+    .with_discovery(udp_socket, identity, seed);
+```
+
+- `Entity` gains a last type parameter, `D`, defaulting to `NoDiscovery`, which has no
+  socket and makes every UDP path dead code. `Entity::new` is unchanged, so the
+  existing tests and adapters are untouched. `with_discovery` turns an entity into
+  `Entity<'a, A, MCTS, MAX_MESSAGE, TESTERS, Discovery<U, I>>`, where `U` is the bound
+  socket, `edge_nal::UdpSplit`, owned the way each slot owns its accepted socket. No
+  `dyn`.
+- **The identity is a trait, read when a frame is built.** `VehicleIdentity` gives the
+  VIN (`Option<Vin>`, `None` sent as Table 1's all-`0x00`), the EID (`EntityId`), the
+  GID (`Option<GroupId>`, likewise), the further action code, the sync status (`Option`, omitted when `None`),
+  the power mode, and `matches_eid`, which defaults to comparing the EID and is
+  overridden by an entity with several interfaces (8.DoIP-053). The logical address is
+  `EntityAddress::physical`. A sensor whose VIN is written over UDS (`0x2E F190`) or
+  whose power mode changes implements the trait over its own atomics or
+  `critical_section` cell, because the entity is out of the integrator's reach while
+  the transport holds it. `FixedIdentity`, a struct of the six values, implements it for
+  an entity whose identity never changes. `EntityAddress` stays as it is.
+- **An identifier that is set cannot hold Table 1's "not set".** `Vin`, `EntityId` and
+  `GroupId` refuse all `0x00` and all `0xFF` when built, and `Vin` refuses a byte
+  outside ASCII (Tables 4 and 5), so `None` is the one way to say an identifier is not
+  set, and an entity cannot announce an EID that a tester reads as none. ISO 3779's own
+  rules for a VIN are not checked. The types are what an entity sends and a tester asks
+  for; `VehicleIdentificationResponse` keeps the bytes it was sent, as a tester reads
+  whatever an entity announces.
+- **Entity status reads the table.** NCTS is the count of connection slots holding a
+  socket, whatever its phase. Table 11 leaves the reserve out of MCTS and has NCTS count
+  the sockets established; this crate leaves the reserve out of NCTS too, so NCTS never
+  exceeds MCTS. MCTS is `MCTS`. MDS is always sent, and is
+  `MAX_MESSAGE − 8`: 7.DoIP-043 compares MDS with the *payload* length, and the entity's
+  `0x02` NACK refuses a message, header included, over `MAX_MESSAGE`. A tester's largest
+  UDS request is therefore MDS − 4 (a diagnostic message's addresses); W9's client
+  transport subtracts it. Node type is `0x01`, a DoIP node (`0x00` is a gateway, which
+  routes to sub-networks the entity does not have).
+- **The announcement burst starts at the first `next_event`.** The entity cannot see an
+  address being configured, but the integrator can, and builds the entity after it
+  (on embassy-net, after `Stack::wait_config_up`). A new address discards every
+  `TCP_DATA` socket (7.DoIP-030), so the integrator that re-addresses rebuilds the
+  entity, and the new entity announces. There is no `announce` method: through
+  `DoIpTransport` nothing could call it.
+- **Randomness is a seed.** `with_discovery` takes a `u32` the integrator draws from its
+  hardware RNG (embassy-net's stack needs one too), mixes the identity's EID into it, and
+  steps a xorshift from the result for each `A_DoIP_Announce_Wait`. No `rand_core`
+  dependency: the wait only decorrelates entities powered up together, and the EID,
+  unique to each entity (Table 5), keeps two given the same seed, or none, apart.
+- **The entity's own frames, apart.** Every UDP frame is the entity's own, so there is
+  one queue, not two: a fixed array of four pending answers, each a kind,
+  a destination and when it is due. A frame is encoded when it is sent, into one
+  41-byte scratch buffer, so a slow answer carries the identity as it is then. A
+  request owing what is already queued for its source is answered by that one, so a
+  tester repeating itself holds one slot, not four. A request that finds the queue full
+  is dropped unanswered: there is no room for a NACK either. The standard has no rule
+  for this; it takes four testers asking at once.
+- **Time.** Internally on `embassy-time` `Instant`s, as the slots' timers are; nothing
+  new crosses the traits, so nothing new is `Timestamp`.
+- **I/O errors are not fatal, and are told.** A failed receive or send loses that
+  datagram and hands the error to `VehicleIdentity::discovery_failed`. A failed receive
+  rests the socket `A_DoIP_Announce_Interval` before it is used again, so a socket
+  failing at once cannot spin `next_event` (invariant 7). A failed send rests nothing
+  and is given up, not retried: it may have failed only for its destination, which a
+  peer chooses, and the earliest frame due is sent first, so an announcement a host
+  cannot broadcast would otherwise hold back every answer behind it. A send cannot spin
+  either: each consumes the frame it was of. `Error` gains no variant: `DoIpTransport` treats
+  `next_event`'s `Err` as fatal, and discovery failing must not take diagnosis down with
+  it. The identity is told rather than the entity asked, because the entity is out of
+  the integrator's reach while the server runs; the identity is already the
+  integrator's shared state, and the default does nothing.
+- **IPv4 only.** Announcements go to `255.255.255.255:13400`. IPv6 (`FF02::1`) waits
+  for a target that needs it; all of a vehicle's entities use one IP version
+  (3.DoIP-109).
+
+**Cancel safety, on the entity's terms.** The socket is split with `UdpSplit`; the
+receive half is `Readable`. `wait` waits on sending the head of the queue once it is
+due, polled first, so datagrams arriving on every pass cannot hold it back, and on
+`readable`, and applies whichever completes in the poll that completes it, as `io.rs`
+does for `TCP_DATA`. The `connection` feature's integrator obligations cover the
+UDP socket too: `UdpReceive::receive` after `readable` completes with the datagram, and
+a dropped `readable`, `receive` or `send` moves no datagram. A dropped `send` that did
+send is harmless here: the answer is sent again, and every UDP answer is idempotent.
+`edge-nal-std` 0.7.0 sets `SO_BROADCAST` when it binds; smoltcp, under
+`edge-nal-embassy` 0.9.0 or an adapter, needs nothing to send or receive broadcast.
+`edge-nal-embassy`'s UDP socket keeps its buffers through `dyn`, so the sensor example
+binds embassy-net's `UdpSocket` through a small adapter, as it does for TCP. embassy-net
+discards a datagram too long for the buffer it is read into without saying where it came
+from, so the adapter passes such a datagram over, where Figure 16 may owe it `0x00`,
+`0x01`, `0x02` or `0x04`. `recv_from_with` reads a datagram whole with its source, but
+holds the socket mutably until one arrives, which the send half, waited on at the same
+time, cannot share.
+
+#### 2.5.4 The UDP header handler
+
+Figure 16's order, the `TCP_DATA` handler's code where it applies, with UDP's own
+length rules. The receive buffer is 50 bytes, twice the longest request the entity
+takes (`0x0003`, 25), so that a datagram too long for its type is read whole and
+answered `0x04` even on a socket that drops what does not fit.
+
+| Datagram | Answer |
+|---|---|
+| Source a broadcast or multicast address (7.DoIP-031), or under 8 bytes | Dropped |
+| Sync pattern wrong | NACK `0x00`, discarded |
+| `0x0000`, `0x0004`, `0x4002`, `0x4004`, in any version (7.DoIP-039, Figure 16) | Discarded silently: among them the entity's own announcements, and a NACK from a peer of another edition, which a NACK back could answer in turn |
+| A version other than `0x02`, `0x03`, or `0xFF` on `0x0001` to `0x0003` (7.DoIP-041, 156) | NACK `0x00`, discarded |
+| Any other type but `0x0001` to `0x0003`, `0x4001`, `0x4003` (7.DoIP-042) | NACK `0x01` |
+| Payload length over MDS (7.DoIP-043) | NACK `0x02` |
+| Payload length not 0, 6, 17, 0, 0 for `0x0001`, `0x0002`, `0x0003`, `0x4001`, `0x4003`, or a datagram longer or shorter than its header says (7.DoIP-045) | NACK `0x04`, discarded |
+| The same answer already queued for its source | Answered by that one, see 2.5.3 |
+| Pending queue full | Dropped, see 2.5.3 |
+| `0x0001` | Identification response after `A_DoIP_Announce_Wait` |
+| `0x0002` / `0x0003` matching | Identification response after `A_DoIP_Announce_Wait` |
+| `0x0002` / `0x0003` not matching | Silence (Figure 13) |
+| `0x4001` | Entity status at once |
+| `0x4003` | Power mode at once |
+
+Answers carry the request's protocol version, `0x03` for one sent with `0xFF`, as do
+the NACKs raised once it is known (`0x01`, `0x02`, `0x04`); a NACK `0x00`, whose
+datagram has no version the entity takes, and announcements carry `0x03`.
+
+#### 2.5.5 The tester side
+
+`Tester` gains no discovery: it is one `TCP_DATA` connection, and discovery is a
+broadcast that comes before any. `tester::discovery` serves it over the integrator's
+own `UdpSplit` socket, as three functions:
+
+- `identify` sends one of the three requests (`Request::All`, `Request::Eid(EntityId)`,
+  `Request::Vin(Vin)`), to `BROADCAST` or one entity, and
+  collects into the caller's `[Option<Found>]` every entity that answers within
+  `A_DoIP_Ctrl`, one per IP address and EID, from the front, returning how many. A
+  `Found` entity's `address` is its IP on `UDP_DISCOVERY`, where it takes requests
+  (4.DoIP-011), whatever port it answered from (Table 41). It waits
+  the whole `A_DoIP_Ctrl`, as any number of entities may answer (Figure 7), so its only
+  error is the socket's: no answer is none found.
+- `entity_status` and `power_mode` ask one entity, and return at its answer, its header
+  NACK as `DiscoveryError::Refused`, or `NoAnswer` after `A_DoIP_Ctrl`.
+- A `Found` entity's `tcp_address` is its address on `TCP_PORT`, for
+  `Tester::connect`.
+
+An identification request goes out in the default protocol version `0xFF`, which
+7.DoIP-156 has an entity of this edition take on one, and which an entity of an earlier
+edition may take too; entity status and power mode requests go out in `0x03`, which such
+an entity may refuse. The module is what the loopback tests, dft and W9's `outbound_max`
+(MDS − 4) need, shares the `messages` codecs, and stays out of `uds_on_ip`.
+
+#### 2.5.6 Gating and cost
+
+Under `connection`, with no new dependency: `edge-nal`'s UDP traits are in the crate
+already, and the seed replaces an RNG crate. With discovery the entity adds the UDP
+socket, a 50-byte receive buffer, a 41-byte scratch buffer, four pending answers, the
+seed and the identity: about 170 bytes besides the socket and `I`.
+
+Measured on `testing/embedded-probe` for `thumbv7em-none-eabihf`, in its `firmware`
+profile on Rust 1.91:
+
+| Probe | text | bss | `main`'s frame |
+|---|---|---|---|
+| Before this work | 49 020 | 9 308 | 8 824 |
+| `NoDiscovery` | 50 020 | 9 308 | 8 824 |
+| `with_discovery`, over a stub UDP socket | 54 004 | 9 628 | 9 160 |
+
+Of the 1 000 bytes an entity without discovery gains, most are the codec: the entity
+decodes every payload type it is sent, and three more now decode with what they carry,
+as do the optional trailing fields. The rest are the entity polling a source that never
+completes. Discovery itself is 3 984 bytes of code, building its identifiers
+included, 320 of static RAM, and 336 of `main`'s frame, where the server, and with it
+the entity, is built. The probe as committed is the third row, so `just size` gates the
+entity with discovery; the second was measured with the probe built without it.
+
 ---
 
 ## 3. The sans-io seam
@@ -553,6 +815,7 @@ carry a wildcard arm.
 | `src/messages/message_error.rs` | `MessageError` and `is_framing_fatal` |
 | `src/messages/traits.rs` | Re-export of `Decode`, `Encode`, `take` from the codec crate |
 | `src/messages/*.rs` (rest) | One file per concrete payload body (alive check, diagnostic message, routing activation, entity status, power mode, vehicle identification, NACK codes) |
+| `src/identifiers.rs` | `Vin`, `EntityId` and `GroupId`, refusing Table 1's "not set" |
 | `src/logical_address.rs` | `LogicalAddress` newtype plus tester-range validation |
 | `src/service.rs` | The connection service's vocabulary, with no I/O: `DiagnosticConnection` (with its `MAX_PDU`), `TesterConnection` (adding `reconnect`, `close` and `io_error`), `DiagnosticEntity` (with its `MAX_PDU`), their events, `DoIpResult`, `TesterAddress` |
 | `src/wire.rs` | Re-export surface for the codec crate's types |
@@ -570,6 +833,7 @@ the seam described in section 3 usable.
 | `src/tester.rs` | `Tester`: connect, routing activation, `DiagnosticConnection`, the event loop and its reactions |
 | `src/tester/tx.rs` | `Outgoing<N>`, the diagnostic message being written, and `Control`, the activation request or alive check response written ahead of it |
 | `src/tester/confirm.rs` | NACK codes to `DoIpResult` |
+| `src/tester/discovery.rs` | Finding entities over UDP, and asking one its status or the power mode |
 | `src/stream.rs` | What either end of a `TCP_DATA` stream shares: the caller's deadline and other instants on `embassy-time`'s clock, and copying a PDU into the caller's buffer |
 | `src/stream/rx.rs` | `RxBuffer<N>`: bytes read and not yet consumed, and the skipping of a frame longer than `N` |
 | `src/stream/tx.rs` | `TxQueue<N>`: the entity's bytes waiting to be written, in order, with the count written |
@@ -578,6 +842,8 @@ the seam described in section 3 usable.
 | `src/entity/table.rs` | The connection table: each slot's socket, buffers and phase, and the reserve |
 | `src/entity/outbox.rs` | Each slot's two transmit queues, the entity's own frames and the responses, and what is written next: a frame part's rest, or one queue's whole frames |
 | `src/entity/io.rs` | What each slot waits on from its socket: a write and a read at once on its split halves, or its close, applied in the poll that completes it |
+| `src/entity/discovery.rs` | `UDP_DISCOVERY`: the announcement burst, the pending answers and their waits, `VehicleIdentity`, applied in the poll that completes them |
+| `src/entity/discovery/datagram.rs` | Figure 16's header handler for a datagram, Figure 13's, and the frames that answer them |
 
 ### std / async layers
 
@@ -641,12 +907,16 @@ new code reading `active_request` must preserve the restore-on-mismatch shape.
   clause, each citing it; `tests/entity_cancel.rs` drops every call at every await
   and checks nothing is lost; `tests/entity_mock.rs` pins the `DiagnosticEntity`
   contract against a socketless entity.
+- `tests/entity_udp.rs` — `Entity` with discovery on a scripted UDP socket, one test
+  per requirement; `tests/tester_udp.rs` — `tester::discovery` on the same socket.
+  `../../testing/doip-loopback`'s `discovery` test runs both ends over loopback.
 - `tests/entity_std.rs` — `Tester` against `Entity` over loopback;
   `tests/entity_interop.rs` drives `Entity` with a client framed by `MessageCodec`, so
   the two sides share no receive buffer. That independent framing is why
   `MessageCodec` stays once the old client and server go.
 - `../../examples/embassy-net-entity` — not part of this crate: `Entity` on
-  embassy-net through a cancel-safe acceptor, built for bare metal in CI.
+  embassy-net through a cancel-safe acceptor and UDP socket, built for bare metal in
+  CI.
 
 The `connection` tests on the mock run under Miri in CI, with tree borrows; see
 `just miri`.
@@ -687,10 +957,11 @@ Each should either be wired to something real or deleted.
 The README's **Scope and limitations** section names these for an integrator
 choosing the crate; the mechanics are here:
 
-- No TLS; no unsolicited UDP vehicle announcement at power-on (identification
-  requests over UDP *are* answered, but only by `Server::run_udp_responder` on
-  a socket the caller binds and drives, and only the broadcast `0x0001` form —
-  `run_server` binds TCP alone).
+- No TLS; `Server` sends no unsolicited UDP vehicle announcement at power-on
+  (identification requests over UDP *are* answered, but only by
+  `Server::run_udp_responder` on a socket the caller binds and drives, and only the
+  broadcast `0x0001` form — `run_server` binds TCP alone). `Entity` with discovery
+  does all of it (§2.5).
 - The server's accept loop serves one TCP connection at a time.
 - Entity status and vehicle identification requests over TCP are logged and
   silently dropped (`ServerConnectionHandler` has no hook for them yet).
@@ -718,8 +989,8 @@ choosing the crate; the mechanics are here:
   that a holder's loss either way.
 - The authentication and confirmation sub-states of a registered connection are
   passed through on the spot (REQ 3.DoIP-129, 130).
-- The entity serves `TCP_DATA` alone: no vehicle announcement or identification over
-  UDP.
+- Discovery is IPv4 only (§2.5.3), and an entity sends no sync status byte unless its
+  `VehicleIdentity::sync_status` gives one.
 - The embassy-net adapter has no test on its target; it is built, linted and
   documented for `thumbv7em-none-eabihf`. Two entities sharing one of its acceptors
   wake each other unreliably, and a socket whose `listen` fails, on a port of 0 or one
@@ -732,7 +1003,7 @@ choosing the crate; the mechanics are here:
 
 ## 8. Invariants to preserve when changing this crate
 
-1. **`tests/golden/` is frozen.** The 33 hex fixtures are the only external
+1. **`tests/golden/` is frozen.** The 35 hex fixtures are the only external
    check that the wire format did not drift. Never regenerate them to make a
    test pass; a diff there means the change alters the wire format and needs a
    deliberate decision.

@@ -23,6 +23,7 @@ use crate::wire::Decode;
 use crate::{LogicalAddress, TIMEOUT_DIAGNOSTIC_MESSAGE_RESPONSE, TaType};
 
 mod confirm;
+pub mod discovery;
 mod tx;
 
 use crate::stream::rx::{Next, RxBuffer};

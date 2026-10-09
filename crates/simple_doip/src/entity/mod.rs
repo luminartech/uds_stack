@@ -17,6 +17,7 @@
 //! refuses every other with
 //! [`RoutingActivationResponseCode::DeniedUnsupportedRoutingActivationType`].
 
+mod discovery;
 mod handler;
 mod io;
 mod outbox;
@@ -27,13 +28,13 @@ use core::fmt;
 use core::future::{Future, pending, poll_fn};
 use core::pin::pin;
 use core::task::{Context, Poll};
-use edge_nal::TcpAccept;
+use edge_nal::{TcpAccept, UdpSplit};
 
 use embassy_futures::select::{Either, select, select_array};
 use embassy_time::{Duration, Instant, Timer};
 
 use crate::messages::{
-    ActivationTypeCode, Message, ProtocolVersion, RoutingActivationResponseCode,
+    ActivationTypeCode, Header, Message, ProtocolVersion, RoutingActivationResponseCode,
 };
 use crate::service::{
     ConnectionId, DiagnosticEntity, DoIpResult, EntityConfig, EntityEvent, Refusal,
@@ -43,6 +44,8 @@ use crate::stream::tx::Full;
 use crate::stream::{after, caller_deadline, timestamp};
 use crate::tester::DIAGNOSTIC_MESSAGE_OVERHEAD;
 use crate::{LogicalAddress, TaType};
+use discovery::Facts;
+pub use discovery::{Discover, Discovery, FixedIdentity, NoDiscovery, VehicleIdentity};
 use handler::{ALIVE_CHECK_REQUEST, Handled, Limits};
 use io::{Io, drive};
 use table::{
@@ -239,6 +242,7 @@ pub struct Entity<
     const MCTS: usize,
     const MAX_MESSAGE: usize,
     const TESTERS: usize = 1,
+    D: Discover = NoDiscovery,
 > {
     acceptor: &'a A,
     address: EntityAddress,
@@ -250,6 +254,7 @@ pub struct Entity<
     confirms: [Option<PendingConfirm>; CONFIRMS],
     /// Which source [`Self::wait`] polls first.
     turn: Turn,
+    discovery: D,
 }
 
 /// A request awaiting its [`EntityEvent::Confirm`].
@@ -319,20 +324,23 @@ enum Turn {
     Connection(usize),
     Reserve,
     Acceptor,
+    Discovery,
 }
 
-/// The three sources [`Entity::wait`] polls, in turn.
+/// The sources [`Entity::wait`] polls, in turn.
 #[derive(Clone, Copy)]
 enum Source {
     Connections,
     Reserve,
     Acceptor,
+    Discovery,
 }
 
 /// What woke the entity.
-enum Woke<S, E> {
+enum Woke<S, E, U> {
     Accepted(Result<S, E>),
     Socket(SlotRef, Io),
+    Discovery(U),
     Timer,
 }
 
@@ -342,7 +350,8 @@ impl<
     const MCTS: usize,
     const MAX_MESSAGE: usize,
     const TESTERS: usize,
-> fmt::Debug for Entity<'a, A, MCTS, MAX_MESSAGE, TESTERS>
+    D: Discover,
+> fmt::Debug for Entity<'a, A, MCTS, MAX_MESSAGE, TESTERS, D>
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Entity")
@@ -402,9 +411,60 @@ impl<
             arbitration: None,
             confirms: [None; CONFIRMS],
             turn: Turn::Connection(0),
+            discovery: NoDiscovery,
         }
     }
 
+    /// This entity, announcing itself on `socket` and answering vehicle identification,
+    /// entity status and diagnostic power mode there (7.4 to 7.6).
+    ///
+    /// The announcements start at the first [`DiagnosticEntity::next_event`], so build
+    /// the entity once the interface has a valid address (REQ 8.DoIP-050). A new address
+    /// discards every `TCP_DATA` socket (REQ 7.DoIP-030): build a new entity for it,
+    /// which announces again.
+    ///
+    /// A failing socket does not fail [`DiagnosticEntity::next_event`]; it is told to
+    /// [`VehicleIdentity::discovery_failed`], which [`FixedIdentity`] leaves empty.
+    ///
+    /// # Arguments
+    ///
+    /// * `socket` - a UDP socket bound to
+    ///   [`UDP_DISCOVERY_PORT`](crate::UDP_DISCOVERY_PORT) on every address, able to
+    ///   send to the limited broadcast address.
+    /// * `identity` - what the entity announces itself as.
+    /// * `seed` - a seed for the random waits of `A_DoIP_Announce_Wait`, from the
+    ///   target's random number generator. It is mixed with the identity's
+    ///   [`VehicleIdentity::eid`], so entities given the same seed still wait apart.
+    #[must_use]
+    pub fn with_discovery<U: UdpSplit, I: VehicleIdentity>(
+        self,
+        socket: U,
+        identity: I,
+        seed: u32,
+    ) -> Entity<'a, A, MCTS, MAX_MESSAGE, TESTERS, Discovery<U, I>> {
+        Entity {
+            acceptor: self.acceptor,
+            address: self.address,
+            config: self.config,
+            connections: self.connections,
+            reserve: self.reserve,
+            arbitration: self.arbitration,
+            confirms: self.confirms,
+            turn: self.turn,
+            discovery: Discovery::new(socket, identity, seed),
+        }
+    }
+}
+
+impl<
+    'a,
+    A: TcpAccept + 'a,
+    const MCTS: usize,
+    const MAX_MESSAGE: usize,
+    const TESTERS: usize,
+    D: Discover,
+> Entity<'a, A, MCTS, MAX_MESSAGE, TESTERS, D>
+{
     fn connection_id(index: usize) -> ConnectionId {
         ConnectionId::new(u8::try_from(index).unwrap_or(u8::MAX))
     }
@@ -1025,15 +1085,40 @@ impl<
         .await
     }
 
+    /// What entity status reports: the connection slots holding a socket, the reserve
+    /// not counted, so that NCTS never exceeds MCTS, and the largest payload, header
+    /// excluded, the entity takes (REQ 7.DoIP-043).
+    fn facts(&self) -> Facts {
+        let open = self
+            .connections
+            .iter()
+            .filter(|slot| slot.open.is_some())
+            .count();
+        Facts {
+            address: self.address.physical(),
+            mcts: u8::try_from(MCTS).unwrap_or(u8::MAX),
+            open: u8::try_from(open).unwrap_or(u8::MAX),
+            max_data_size: u32::try_from(MAX_MESSAGE.saturating_sub(Header::SIZE))
+                .unwrap_or(u32::MAX),
+        }
+    }
+
     /// Waits for whichever comes first: a connection, a socket's next read or write,
-    /// or `wake`. The source that wins is polled last next time, so none starves.
-    async fn wait(&mut self, wake: Option<Instant>) -> Woke<A::Socket<'a>, A::Error> {
-        use Source::{Acceptor, Connections, Reserve};
+    /// the UDP socket's, or `wake`. The source that wins is polled last next time, so
+    /// none starves.
+    async fn wait(
+        &mut self,
+        wake: Option<Instant>,
+        now: Instant,
+    ) -> Woke<A::Socket<'a>, A::Error, D::Io> {
+        use Source::{Acceptor, Connections, Discovery, Reserve};
         let (first, order) = match self.turn {
-            Turn::Connection(index) => (index, [Connections, Reserve, Acceptor]),
-            Turn::Reserve => (0, [Reserve, Acceptor, Connections]),
-            Turn::Acceptor => (0, [Acceptor, Connections, Reserve]),
+            Turn::Connection(index) => (index, [Connections, Reserve, Acceptor, Discovery]),
+            Turn::Reserve => (0, [Reserve, Acceptor, Discovery, Connections]),
+            Turn::Acceptor => (0, [Acceptor, Discovery, Connections, Reserve]),
+            Turn::Discovery => (0, [Discovery, Connections, Reserve, Acceptor]),
         };
+        let facts = self.facts();
         let winner = {
             let acceptor = self.acceptor;
             let mut accept = pin!(acceptor.accept());
@@ -1056,6 +1141,7 @@ impl<
                     }
                 })));
             let mut reserve = pin!(drive(&mut self.reserve));
+            let mut discovery = pin!(self.discovery.drive(now, facts));
             let mut timer = pin!(async {
                 match wake {
                     Some(wake) => Timer::at(wake).await,
@@ -1087,6 +1173,11 @@ impl<
                                 ));
                             }
                         }
+                        Discovery => {
+                            if let Poll::Ready(io) = discovery.as_mut().poll(cx) {
+                                return Poll::Ready(Woke::Discovery(io));
+                            }
+                        }
                     }
                 }
                 timer.as_mut().poll(cx).map(|()| Woke::Timer)
@@ -1099,7 +1190,8 @@ impl<
                 .filter(|next| *index >= first && *next < MCTS)
                 .map_or(Turn::Reserve, Turn::Connection),
             Woke::Socket(SlotRef::Reserve, _) => Turn::Acceptor,
-            Woke::Accepted(_) => Turn::Connection(0),
+            Woke::Accepted(_) => Turn::Discovery,
+            Woke::Discovery(_) => Turn::Connection(0),
             Woke::Timer => self.turn,
         };
         winner
@@ -1151,7 +1243,8 @@ impl<
     const MCTS: usize,
     const MAX_MESSAGE: usize,
     const TESTERS: usize,
-> DiagnosticEntity for Entity<'a, A, MCTS, MAX_MESSAGE, TESTERS>
+    D: Discover,
+> DiagnosticEntity for Entity<'a, A, MCTS, MAX_MESSAGE, TESTERS, D>
 {
     type Error = Error<A::Error>;
 
@@ -1213,6 +1306,7 @@ impl<
         let until = deadline.map(|deadline| caller_deadline(deadline, Instant::now()));
         loop {
             let now = Instant::now();
+            self.discovery.tick(now);
             if let Some(event) = self.owed_event() {
                 return Ok(event);
             }
@@ -1236,16 +1330,20 @@ impl<
             if until.is_some_and(|until| until <= now) {
                 return Ok(EntityEvent::Deadline);
             }
-            let alarm = match (self.next_wake(), until) {
-                (Some(timer), Some(until)) => Some(timer.min(until)),
-                (timer, until) => timer.or(until),
-            };
-            let woke = self.wait(alarm).await;
+            let alarm = [self.next_wake(), self.discovery.next_wake(now), until]
+                .into_iter()
+                .flatten()
+                .min();
+            let woke = self.wait(alarm, now).await;
             let now = Instant::now();
             match woke {
                 Woke::Accepted(Ok(socket)) => self.place(socket, now),
                 Woke::Accepted(Err(error)) => return Err(Error::Accept(error)),
                 Woke::Socket(at, io) => self.apply(at, io, now),
+                Woke::Discovery(io) => {
+                    let facts = self.facts();
+                    self.discovery.apply(io, now, facts);
+                }
                 Woke::Timer => {}
             }
         }

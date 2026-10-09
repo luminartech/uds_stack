@@ -1,21 +1,23 @@
 //! `Entity`'s `next_event`, `request` and `close` lose nothing when dropped at any
 //! await: each scenario runs once to completion, then again over sockets that move one
 //! byte per read or write, dropping the future after every number of polls in turn, and
-//! the events and the bytes on the wire must be the same.
+//! the events, the bytes on the wire and the datagrams sent must be the same.
 
 // Test code; see `golden_vectors.rs` for why the workspace lint standard is relaxed here.
 #![expect(clippy::unwrap_used)]
 
 mod support;
 
+use std::net::SocketAddr;
 use std::pin::pin;
 
 use embassy_time::Duration;
-use simple_doip::entity::{Entity, EntityAddress};
+use simple_doip::entity::{Entity, EntityAddress, FixedIdentity};
+use simple_doip::messages::DiagnosticPowerModeCode;
 use simple_doip::service::{ConnectionId, DiagnosticEntity, EntityConfig, EntityEvent};
-use simple_doip::{LogicalAddress, TaType};
+use simple_doip::{EntityId, LogicalAddress, TaType, UDP_DISCOVERY_PORT, Vin};
 use support::mock_stack::{
-    ENTITY, MockStack, TESTER, advance, alive_check_response, clock, diagnostic,
+    ENTITY, MockStack, MockUdp, TESTER, advance, alive_check_response, clock, diagnostic,
     poll_times, raw, until_stalled,
 };
 
@@ -57,7 +59,10 @@ fn describe(event: &EntityEvent<'_>) -> String {
 }
 
 /// Every event `next_event` returns before it waits on the test.
-fn drain(entity: &mut TestEntity<'_>, drive: Drive, seen: &mut Vec<String>) {
+fn drain<E: DiagnosticEntity>(entity: &mut E, drive: Drive, seen: &mut Vec<String>)
+where
+    E::Error: std::fmt::Debug,
+{
     let mut polls = 1;
     loop {
         let mut buf = [0u8; 64];
@@ -221,6 +226,46 @@ fn stalled_close_aborted(drive: Drive) -> (Vec<String>, Vec<u8>, bool) {
     (seen, peer.take_written(), peer.is_aborted())
 }
 
+/// A datagram the entity sent: the step it was sent at, where to, and the frame.
+type Datagram = (u32, SocketAddr, Vec<u8>);
+
+/// The entity announces itself while testers ask it to identify itself, plainly and by
+/// EID and VIN, each once the last is answered, and ask its power mode and status:
+/// every datagram it sends, and when.
+fn discovery_burst(drive: Drive) -> (Vec<String>, Vec<Datagram>) {
+    const EID: [u8; 6] = [0x02, 0x00, 0x00, 0xAB, 0xCD, 0xEF];
+    const VIN: [u8; 17] = *b"WVWZZZ1JZXW000001";
+    let stack = MockStack::new(1);
+    let udp = MockUdp::new();
+    let identity =
+        FixedIdentity::new(EntityId::new(EID).unwrap(), DiagnosticPowerModeCode::Ready)
+            .with_vin(Vin::new(VIN).unwrap());
+    let mut entity = new_entity(&stack).with_discovery(udp.socket(), identity, 0x1234_5678);
+    let tester: SocketAddr = ([192, 168, 0, 2], UDP_DISCOVERY_PORT).into();
+    let mut seen = Vec::new();
+    let mut sent = Vec::new();
+
+    for step in 0..=20 {
+        match step {
+            1 => udp.deliver(tester, &raw(0x0001, &[])),
+            4 => udp.deliver(tester, &raw(0x4003, &[])),
+            7 => udp.deliver(tester, &raw(0x0002, &EID)),
+            8 => udp.deliver(tester, &raw(0x4001, &[])),
+            13 => udp.deliver(tester, &raw(0x0003, &VIN)),
+            _ => {}
+        }
+        drain(&mut entity, drive, &mut seen);
+        sent.extend(
+            udp.take_sent()
+                .into_iter()
+                .map(|(to, frame)| (step, to, frame)),
+        );
+        advance(Duration::from_millis(100));
+    }
+
+    (seen, sent)
+}
+
 #[test]
 fn next_event_and_close_lose_nothing_when_dropped_at_any_await() {
     let _clock = clock();
@@ -288,4 +333,21 @@ fn a_close_that_cannot_finish_loses_nothing_when_dropped_at_any_await() {
     drop(first_run);
     let _clock = clock();
     assert_eq!(stalled_close_aborted(Drive::Dropped), whole);
+}
+
+#[test]
+fn discovery_loses_nothing_when_dropped_at_any_await() {
+    let first_run = clock();
+    let whole = discovery_burst(Drive::Whole);
+    assert!(whole.0.is_empty(), "UDP raises no event: {:?}", whole.0);
+    assert_eq!(
+        whole.1.len(),
+        8,
+        "three announcements and five answers: {:?}",
+        whole.1
+    );
+
+    drop(first_run);
+    let _clock = clock();
+    assert_eq!(discovery_burst(Drive::Dropped), whole);
 }

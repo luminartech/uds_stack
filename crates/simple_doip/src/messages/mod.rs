@@ -555,7 +555,7 @@ impl OwnedMessage {
     /// # Panics
     /// Panics if the payload's `encoded_size` errors, or if the resulting size
     /// does not fit in a `u32`. Neither is reachable here: the payload is fixed
-    /// size (33 bytes) and `encoded_size` is pure arithmetic over the struct's
+    /// size (32 or 33 bytes) and `encoded_size` is pure arithmetic over the struct's
     /// own fields, with no I/O to fail.
     #[must_use]
     pub fn vehicle_identification_response(
@@ -814,8 +814,9 @@ mod alloc_conversion_tests {
                 node_type: EntityStatusNodeType::DoIPGateway,
                 max_concurrent_tcp_sockets: 4,
                 open_tcp_sockets: 0,
-                max_data_size: 0x0000_FFFF,
+                max_data_size: Some(0x0000_FFFF),
             }),
+            Payload::PowerModeInfoRequest,
             Payload::PowerModeInfoResponse(DiagnosticPowerModeCode::Ready),
             Payload::RoutingActivationRequest(RoutingActivationRequest {
                 source_address: LogicalAddress(0x0E00),
@@ -837,20 +838,22 @@ mod alloc_conversion_tests {
                 entity_id: [0x01, 0x02, 0x03, 0x04, 0x05, 0x06],
                 group_id: Some([0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F]),
                 further_action: FurtherActionRequired::NoFurtherActionRequired,
-                vin_gid_sync_status: VinGidSyncStatus::Synchronized,
+                vin_gid_sync_status: Some(VinGidSyncStatus::Synchronized),
             }),
             Payload::VehicleIdentificationRequest,
+            Payload::VehicleIdentificationRequestWithEid([0x02, 0, 0, 0, 0, 1]),
+            Payload::VehicleIdentificationRequestWithVin(*b"1HGCM82633A004352"),
             Payload::VehicleIdentificationResponse(VehicleIdentificationResponse {
                 vin: *b"1HGCM82633A004352",
                 logical_address: LogicalAddress(0x1000),
                 entity_id: [0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF],
                 group_id: None,
                 further_action: FurtherActionRequired::NoFurtherActionRequired,
-                vin_gid_sync_status: VinGidSyncStatus::Synchronized,
+                vin_gid_sync_status: Some(VinGidSyncStatus::Synchronized),
             }),
         ];
 
-        assert_eq!(values.len(), 14, "expected one value per Payload variant");
+        assert_eq!(values.len(), 17, "expected one value per Payload variant");
 
         for p in &values {
             let owned = p.to_owned_payload();

@@ -202,7 +202,7 @@ proptest! {
         node_type in any::<u8>().prop_map(EntityStatusNodeType::from),
         max_concurrent_tcp_sockets in any::<u8>(),
         open_tcp_sockets in any::<u8>(),
-        max_data_size in any::<u32>(),
+        max_data_size in proptest::option::of(any::<u32>()),
     ) {
         let value = EntityStatusResponse {
             node_type,
@@ -259,8 +259,8 @@ proptest! {
         prop_assert_eq!(value, parsed);
     }
 
-    /// `group_id` is optional on the wire, so both shapes go through the same
-    /// property rather than needing a test each.
+    /// `group_id` and the sync status are optional on the wire, so every shape goes
+    /// through the same property rather than needing a test each.
     #[test]
     fn prop_vehicle_identification_response_roundtrip(
         vin in any::<[u8; 17]>(),
@@ -268,7 +268,7 @@ proptest! {
         entity_id in any::<[u8; 6]>(),
         group_id in proptest::option::of(any::<[u8; 6]>()),
         further_action in any::<u8>().prop_map(FurtherActionRequired::from),
-        vin_gid_sync_status in any::<u8>().prop_map(VinGidSyncStatus::from),
+        vin_gid_sync_status in proptest::option::of(any::<u8>().prop_map(VinGidSyncStatus::from)),
     ) {
         let value = VehicleIdentificationResponse {
             vin,

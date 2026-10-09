@@ -12,6 +12,10 @@
 //! peer vanished, or a close whose peer never closes its side, gives the socket back. A
 //! socket the entity holds has none: the entity keeps `DoIP`'s own timers.
 //!
+//! [`Udp`] is the entity's `UDP_DISCOVERY` socket, for [`Entity::with_discovery`]:
+//! embassy-net's own `UdpSocket`, whose every receive and send completes in the poll
+//! that returns it, so a dropped one moves no datagram.
+//!
 //! [`serve`] is what a firmware's task calls once its embassy-net `Stack` is up.
 
 #![no_std]
@@ -23,14 +27,17 @@ use core::net::{IpAddr, Ipv4Addr, SocketAddr};
 use core::pin::pin;
 use core::task::{Context, Poll};
 
-use edge_nal::{Close, Readable, TcpAccept, TcpShutdown, TcpSplit};
-use embassy_net::Stack;
+use edge_nal::{
+    Close, Readable, TcpAccept, TcpShutdown, TcpSplit, UdpReceive, UdpSend, UdpSplit,
+};
 use embassy_net::tcp::{Error, State, TcpReader, TcpSocket, TcpWriter};
+use embassy_net::udp::{BindError, RecvError, SendError, UdpSocket};
+use embassy_net::{IpEndpoint, Stack};
 use embassy_time::Duration;
 use embedded_io_async::{ErrorType, Read, Write};
-use simple_doip::entity::{Entity, EntityAddress};
+use simple_doip::entity::{Entity, EntityAddress, FixedIdentity};
 use simple_doip::service::{DiagnosticEntity, EntityConfig, EntityEvent};
-use simple_doip::{TCP_PORT, TaType};
+use simple_doip::{TCP_PORT, TaType, UDP_DISCOVERY_PORT};
 
 /// How long a socket in the pool waits on a silent peer before it is aborted.
 pub const POOL_TIMEOUT: Duration = Duration::from_secs(10);
@@ -243,6 +250,133 @@ impl TcpSplit for Accepted<'_, '_> {
     }
 }
 
+/// The entity's `UDP_DISCOVERY` socket.
+///
+/// A datagram longer than the entity's receive buffer is passed over unanswered, though
+/// Figure 16 may owe it a NACK: embassy-net discards one that does not fit without
+/// saying where it came from. Its `recv_from_with` reads a datagram whole with its
+/// source, but holds the socket mutably until one arrives, which the send half, waited
+/// on at the same time, cannot share.
+pub struct Udp<'d>(UdpSocket<'d>);
+
+impl fmt::Debug for Udp<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Udp")
+            .field("endpoint", &self.0.endpoint())
+            .finish()
+    }
+}
+
+impl<'d> Udp<'d> {
+    /// `socket`, bound to [`UDP_DISCOVERY_PORT`].
+    ///
+    /// # Errors
+    ///
+    /// Whatever [`UdpSocket::bind`] returns: the socket is already bound.
+    pub fn bind(mut socket: UdpSocket<'d>) -> Result<Self, BindError> {
+        socket.bind(UDP_DISCOVERY_PORT)?;
+        Ok(Self(socket))
+    }
+}
+
+/// The receiving half of [`Udp`].
+pub struct UdpReceiver<'a, 'd>(&'a UdpSocket<'d>);
+
+impl fmt::Debug for UdpReceiver<'_, '_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("UdpReceiver").finish_non_exhaustive()
+    }
+}
+
+/// The sending half of [`Udp`].
+pub struct UdpSender<'a, 'd>(&'a UdpSocket<'d>);
+
+impl fmt::Debug for UdpSender<'_, '_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("UdpSender").finish_non_exhaustive()
+    }
+}
+
+/// Why [`Udp`] could not send a datagram. A receive does not fail.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct UdpError(pub SendError);
+
+impl fmt::Display for UdpError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "the datagram was not sent: {:?}", self.0)
+    }
+}
+
+impl core::error::Error for UdpError {}
+
+impl embedded_io_async::Error for UdpError {
+    fn kind(&self) -> embedded_io_async::ErrorKind {
+        embedded_io_async::ErrorKind::Other
+    }
+}
+
+impl ErrorType for Udp<'_> {
+    type Error = UdpError;
+}
+
+impl ErrorType for UdpReceiver<'_, '_> {
+    type Error = UdpError;
+}
+
+impl ErrorType for UdpSender<'_, '_> {
+    type Error = UdpError;
+}
+
+impl UdpReceive for UdpReceiver<'_, '_> {
+    async fn receive(&mut self, buf: &mut [u8]) -> Result<(usize, SocketAddr), UdpError> {
+        loop {
+            match self.0.recv_from(buf).await {
+                Ok((length, meta)) => {
+                    let from =
+                        SocketAddr::new(meta.endpoint.addr.into(), meta.endpoint.port);
+                    return Ok((length, from));
+                }
+                Err(RecvError::Truncated) => {}
+            }
+        }
+    }
+}
+
+impl Readable for UdpReceiver<'_, '_> {
+    async fn readable(&mut self) -> Result<(), UdpError> {
+        self.0.wait_recv_ready().await;
+        Ok(())
+    }
+}
+
+impl UdpSend for UdpSender<'_, '_> {
+    /// [`SendError::NoRoute`] for an IPv6 address: the stack is IPv4 only.
+    async fn send(&mut self, to: SocketAddr, datagram: &[u8]) -> Result<(), UdpError> {
+        let SocketAddr::V4(to) = to else {
+            return Err(UdpError(SendError::NoRoute));
+        };
+        self.0
+            .send_to(datagram, IpEndpoint::from(to))
+            .await
+            .map_err(UdpError)
+    }
+}
+
+impl<'d> UdpSplit for Udp<'d> {
+    type Receive<'a>
+        = UdpReceiver<'a, 'd>
+    where
+        Self: 'a;
+    type Send<'a>
+        = UdpSender<'a, 'd>
+    where
+        Self: 'a;
+
+    fn split(&mut self) -> (UdpReceiver<'_, 'd>, UdpSender<'_, 'd>) {
+        (UdpReceiver(&self.0), UdpSender(&self.0))
+    }
+}
+
 /// The entity's one connection.
 pub const MCTS: usize = 1;
 /// The largest message the connection carries.
@@ -263,13 +397,20 @@ impl fmt::Debug for SocketBuffers {
 }
 
 /// Serves `DoIP` as `address` on `stack` with `MCTS + 1` sockets over `buffers`, to the
-/// testers `config` accepts, echoing every diagnostic message.
+/// testers `config` accepts, echoing every diagnostic message; and announces itself as
+/// `identity` on `udp`, answering testers looking for it.
+///
+/// `seed` sets the entity's random announce wait, with the identity's EID mixed in: draw
+/// it from a hardware RNG.
 ///
 /// Returns only when [`DiagnosticEntity::next_event`] fails, with its error.
 pub async fn serve(
     stack: Stack<'_>,
     address: EntityAddress,
     config: EntityConfig,
+    udp: Udp<'_>,
+    identity: FixedIdentity,
+    seed: u32,
     buffers: &mut [SocketBuffers; MCTS + 1],
 ) -> simple_doip::entity::Error<Error> {
     let [first, second] = buffers;
@@ -280,7 +421,8 @@ pub async fn serve(
             TcpSocket::new(stack, &mut second.rx, &mut second.tx),
         ],
     );
-    let mut entity = Entity::<_, MCTS, MAX_MESSAGE>::new(&acceptor, address, config);
+    let mut entity = Entity::<_, MCTS, MAX_MESSAGE>::new(&acceptor, address, config)
+        .with_discovery(udp, identity, seed);
     let mut buf = [0u8; MAX_MESSAGE];
     loop {
         match entity.next_event(&mut buf, None).await {

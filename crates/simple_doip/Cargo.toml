@@ -92,6 +92,14 @@ name = "entity_cancel"
 required-features = ["connection"]
 
 [[test]]
+name = "entity_udp"
+required-features = ["connection"]
+
+[[test]]
+name = "tester_udp"
+required-features = ["connection"]
+
+[[test]]
 name = "mock_stack"
 required-features = ["connection"]
 
