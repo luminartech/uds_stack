@@ -49,8 +49,7 @@ decision below follows from that.
 
 Capability is added in Cargo-feature tiers, each building on the previous.
 `default = []`, so the bare crate is the `no_std` core, running up through
-owned/alloc mirrors, `std` I/O and errors, the tokio-util codec, and finally the
-async client/server. `connection` stands apart: it builds on the core alone, and
+owned/alloc mirrors, `std` I/O and errors, and the tokio-util codec. `connection` stands apart: it builds on the core alone, and
 is `no_std` with no allocator:
 
 | Tier | Cargo feature | What it adds | Key files |
@@ -60,21 +59,14 @@ is `no_std` with no allocator:
 | Owned mirror | `alloc` | `OwnedMessage`, `OwnedPayload`, `OwnedDiagnosticMessage`, `OwnedDiagnosticMessageAck`, `OwnedDiagnosticMessageNack` | `src/messages/mod.rs`, `src/messages/payload.rs` |
 | std | `std` | `std::io::Error` interop (`MessageError::Std`), `std`-backed error traits | `src/messages/message_error.rs` |
 | Codec | `codec` | `MessageCodec`, a `tokio_util::codec` `Encoder`/`Decoder` | `src/message_codec.rs` |
-| Async client | `client` | `Client`, `Connector` (trait + `ConnectorSocket`) | `src/client.rs`, `src/client_inner.rs`, `src/socket_manager.rs`, `src/connection.rs` |
-| Async server | `server` | `Server`, `ServerConnectionHandler` | `src/server.rs` |
 | Connection service | `connection` | `tester::Tester`, a `TesterConnection` (a `DiagnosticConnection` that can reconnect and close), and `entity::Entity`, a `DiagnosticEntity`, over `edge-nal` and `embassy-time` | `src/tester.rs`, `src/tester/`, `src/entity/`, `src/stream.rs`, `src/stream/` |
 
 `connection` is a feature, not part of the core, so that the codec tier
 `uds_on_ip` builds with `default-features = false` keeps its own dependency set
 (§2.4).
 
-`client` and `server` are each `["codec", ...]` in `Cargo.toml`, so either one
-pulls in `codec` (and transitively `std`/`alloc`), but they do **not** pull in
-each other: `client_inner.rs`, `socket_manager.rs`, `connection.rs`, and
-`Connector` are gated on `client` only, so a `server`-only build gets none of
-them. `src/error.rs` (the `Error` type) is gated on `client` **or** `server`,
-so it is present in either build. Authorities: `Cargo.toml`'s `[features]`
-table and the `#[cfg(feature = ...)]` gating in `src/lib.rs`.
+Authorities: `Cargo.toml`'s `[features]` table and the `#[cfg(feature = ...)]`
+gating in `src/lib.rs`.
 
 ### 2.1 Why borrowed-first
 
@@ -447,7 +439,7 @@ Every UDP message carries the generic header and goes through Figure 16's handle
 | 7.DoIP-031 | Ignore a datagram whose source is a broadcast or multicast address | Yes |
 | 7.DoIP-156, Table 16 | Ignore protocol version `0xFF` on identification requests | Yes |
 | 7.DoIP-039, Figure 16 | Discard a received header NACK, announcement or identification response without a NACK | Yes |
-| 7.DoIP-041 to 045, 087, Table 19 | Header NACKs `0x00` to `0x04` | Yes, see 2.5.4 |
+| 7.DoIP-041 to 045, 087, Table 19 | Header NACKs `0x00` to `0x04` | Yes, see 2.5.3 |
 
 The standard leaves four things open, and this design settles them:
 
@@ -465,34 +457,7 @@ The standard leaves four things open, and this design settles them:
   one the entity does not take on that port, answered `0x01` (7.DoIP-042), as a UDP
   type arriving on `TCP_DATA` already is.
 
-#### 2.5.2 What the old code did
-
-Neither `bare_metal_entity` nor `server::Server` is a model; the tests and the encoders
-hold what is worth keeping.
-
-- `bare_metal_entity::Entity::on_udp_rx` answers `0x0001`, and `0x0002` and `0x0003`
-  only on a matching EID or VIN (Figure 13), with the announcement body, at once and
-  without the wait. It answers power mode `0x4003` `0x02`, not supported (Table 9),
-  NACKs a known request of the wrong length `0x04`, and checks no protocol version. It
-  counts activated testers, not sockets, as NCTS. Its "announcement" is only ever a
-  reply: nothing sends one unasked. It replies to the source address and port. Halo
-  runs it until W13 replaces it.
-- `server::Server::run_udp_responder` answers `0x0001` only, at once, and is silent on
-  `0x0002` and `0x0003` (its `vehicle_identification_with_eid`/`_vin` hooks match
-  correctly but are never called), and on power mode and entity status. It sends no
-  NACK at all.
-- `tests/udp_identification.rs` holds two behaviors worth porting: a mismatched EID or
-  VIN gets silence (Figure 13), and a datagram the entity cannot answer does not stop
-  it answering the next. Its byte vectors port as they are. Its "no reply to an alive
-  check request on UDP" is the old shape: Figure 16 owes `0x01`.
-- The `messages` encoders need four fixes before an entity or a tester can use them.
-  `Payload::decode` folds `0x0001` to `0x0003` into one unit variant and drops the EID
-  or VIN. There is no variant for `0x4003`. `EntityStatusResponse` always carries MDS
-  and `VehicleIdentificationResponse` always the sync status byte, so a conformant
-  entity that omits either cannot be decoded. The golden vectors stay; the short forms
-  get fixtures of their own.
-
-#### 2.5.3 The shape
+#### 2.5.2 The shape
 
 **Part of `Entity`, not a type beside it.** `DoIpTransport` owns its entity by value, so
 nothing else can reach the connection table while the transport runs, and entity status
@@ -537,8 +502,9 @@ let entity = Entity::<_, 1, 4096>::new(&acceptor, address, config)
   exceeds MCTS. MCTS is `MCTS`. MDS is always sent, and is
   `MAX_MESSAGE − 8`: 7.DoIP-043 compares MDS with the *payload* length, and the entity's
   `0x02` NACK refuses a message, header included, over `MAX_MESSAGE`. A tester's largest
-  UDS request is therefore MDS − 4 (a diagnostic message's addresses); W9's client
-  transport subtracts it. Node type is `0x01`, a DoIP node (`0x00` is a gateway, which
+  UDS request is therefore MDS − 4 (a diagnostic message's addresses), which
+  `uds_on_ip`'s `DoIpClientTransport::with_max_data_size` takes and reports as its
+  `outbound_max`. Node type is `0x01`, a DoIP node (`0x00` is a gateway, which
   routes to sub-networks the entity does not have).
 - **The announcement burst starts at the first `next_event`.** The entity cannot see an
   address being configured, but the integrator can, and builds the entity after it
@@ -595,7 +561,7 @@ from, so the adapter passes such a datagram over, where Figure 16 may owe it `0x
 holds the socket mutably until one arrives, which the send half, waited on at the same
 time, cannot share.
 
-#### 2.5.4 The UDP header handler
+#### 2.5.3 The UDP header handler
 
 Figure 16's order, the `TCP_DATA` handler's code where it applies, with UDP's own
 length rules. The receive buffer is 50 bytes, twice the longest request the entity
@@ -611,8 +577,8 @@ answered `0x04` even on a socket that drops what does not fit.
 | Any other type but `0x0001` to `0x0003`, `0x4001`, `0x4003` (7.DoIP-042) | NACK `0x01` |
 | Payload length over MDS (7.DoIP-043) | NACK `0x02` |
 | Payload length not 0, 6, 17, 0, 0 for `0x0001`, `0x0002`, `0x0003`, `0x4001`, `0x4003`, or a datagram longer or shorter than its header says (7.DoIP-045) | NACK `0x04`, discarded |
-| The same answer already queued for its source | Answered by that one, see 2.5.3 |
-| Pending queue full | Dropped, see 2.5.3 |
+| The same answer already queued for its source | Answered by that one, see 2.5.2 |
+| Pending queue full | Dropped, see 2.5.2 |
 | `0x0001` | Identification response after `A_DoIP_Announce_Wait` |
 | `0x0002` / `0x0003` matching | Identification response after `A_DoIP_Announce_Wait` |
 | `0x0002` / `0x0003` not matching | Silence (Figure 13) |
@@ -623,7 +589,7 @@ Answers carry the request's protocol version, `0x03` for one sent with `0xFF`, a
 the NACKs raised once it is known (`0x01`, `0x02`, `0x04`); a NACK `0x00`, whose
 datagram has no version the entity takes, and announcements carry `0x03`.
 
-#### 2.5.5 The tester side
+#### 2.5.4 The tester side
 
 `Tester` gains no discovery: it is one `TCP_DATA` connection, and discovery is a
 broadcast that comes before any. `tester::discovery` serves it over the integrator's
@@ -645,10 +611,10 @@ own `UdpSplit` socket, as three functions:
 An identification request goes out in the default protocol version `0xFF`, which
 7.DoIP-156 has an entity of this edition take on one, and which an entity of an earlier
 edition may take too; entity status and power mode requests go out in `0x03`, which such
-an entity may refuse. The module is what the loopback tests, dft and W9's `outbound_max`
-(MDS − 4) need, shares the `messages` codecs, and stays out of `uds_on_ip`.
+an entity may refuse. The module is what the loopback tests, dft and
+`DoIpClientTransport::with_max_data_size` (MDS − 4) need, shares the `messages` codecs, and stays out of `uds_on_ip`.
 
-#### 2.5.6 Gating and cost
+#### 2.5.5 Gating and cost
 
 Under `connection`, with no new dependency: `edge-nal`'s UDP traits are in the crate
 already, and the seed replaces an RNG crate. With discovery the entity adds the UDP
@@ -723,14 +689,10 @@ path is the one the codec and the bare-metal example use.
 
 ## 4. Error taxonomy
 
-There are **two** error types, and they are not tiers of each other:
-
-- **`MessageError`** (`src/messages/message_error.rs`) — wire-level encode/decode
-  failures from the `no_std` core. Available in every build.
-- **`Error`** (`src/error.rs`) — client/server transport and session failures:
-  socket I/O, timeouts, routing activation refused, invalid logical address,
-  unexpected message type for the current protocol state. Gated on
-  `client`/`server`. It wraps `MessageError` via a `From` impl.
+**`MessageError`** (`src/messages/message_error.rs`) is the wire-level encode/decode
+failure of the `no_std` core, available in every build. The `connection` feature's
+errors are each its own operation's, documented on the item: connecting, discovery, a
+refused request (`service::Refusal`), and each trait's `Error`.
 
 `MessageError`'s variants fall along **two orthogonal axes**, documented in the
 module header of `src/messages/message_error.rs`:
@@ -751,14 +713,11 @@ the caller can NACK, ignore, or skip.
 
 Both `Io` and `Std` exist because they carry different information: the
 `no_std` core can only produce a flattened `embedded_io::ErrorKind`, while the
-tokio layer has a real `std::io::Error` with an OS code and message that
-`src/socket_manager.rs` matches on to decide whether a read error means
-"connection reset".
+tokio layer has a real `std::io::Error` with an OS code and message, which
+`MessageCodec` must accept as its `Decoder`/`Encoder` error.
 
-`PayloadLengthTooShort` and `UnexpectedPayloadType` (on `MessageError`), and
-`UnexpectedAckMessage`, `ValueOutOfRange`, `NackReceived`, and
-`InvalidClientType` (on `Error`), are documented in-tree as currently
-unreachable — part of the public taxonomy but never produced by this crate.
+`PayloadLengthTooShort` and `UnexpectedPayloadType` are documented in-tree as
+currently unreachable — part of the public taxonomy but never produced by this crate.
 
 ### 4.1 `is_framing_fatal` is consumed by the codec
 
@@ -854,42 +813,11 @@ the seam described in section 3 usable.
 | `src/entity/discovery.rs` | `UDP_DISCOVERY`: the announcement burst, the pending answers and their waits, `VehicleIdentity`, applied in the poll that completes them |
 | `src/entity/discovery/datagram.rs` | Figure 16's header handler for a datagram, Figure 13's, and the frames that answer them |
 
-### std / async layers
+### `codec`
 
 | Path | Role |
 |---|---|
 | `src/message_codec.rs` | `MessageCodec`: `Decoder<Item = OwnedMessage>` and `Encoder<&OwnedMessage>` |
-| `src/error.rs` | `Error`, the transport/session error type (`#[non_exhaustive]`) |
-| `src/connection.rs` | `Connector` trait and the default `ConnectorSocket` (TCP, 64 KiB socket buffers, refuses any port but 13400) |
-| `src/socket_manager.rs` | Owns the spawned socket task; bridges `FramedRead`/`FramedWrite` to two mpsc channels; enforces the general inactivity timeout |
-| `src/client_inner.rs` | The client state machine: a `ControlMessage` enum plus a select loop matching responses to pending requests |
-| `src/client.rs` | Public `Client<Conn>` — connect, routing activation, send/receive diagnostic messages |
-| `src/server.rs` | `Server<T>`, `ServerConnectionHandler`, `ResponseWriter`, `ClientConnectionInfo` |
-
-The client is a channel sandwich, described in one comment at the top of
-`src/client_inner.rs`:
-
-```
-User → Client → control_sender → Inner → SocketManager.sender  → TCP → Server
-User ← Client ← update_receiver ← Inner ← SocketManager.receiver ← TCP ← Server
-```
-
-`Client` and `SocketManager` are generic over `Conn: Connector`, so a caller can
-substitute its own transport (TLS, a test double, a non-TCP link) without
-touching the protocol logic.
-
-#### The pending-request lifecycle
-
-`Inner` (`src/client_inner.rs`) tracks at most one in-flight request in
-`active_request: Option<ControlMessage>` (`AwaitAck` or `AwaitResponse`), each
-owning a oneshot `Sender` that completes the caller's `await`. Invariant: if a
-read of `active_request` finds the wrong variant, it must put the value back,
-not drop it — `Option::take` empties the field unconditionally, and discarding
-a non-matching value drops its `Sender`, which silently kills the in-flight
-request with no error. This was found as a real bug in the routing-activation
-path; `negative_ack_during_routing_activation_does_not_drop_pending_request`
-and two other regression tests in `tests/integration_test.rs` pin the fix. Any
-new code reading `active_request` must preserve the restore-on-mismatch shape.
 
 ### Tests and examples
 
@@ -897,21 +825,17 @@ new code reading `active_request` must preserve the restore-on-mismatch shape.
   exact encoded bytes of every wire type. **Do not regenerate them.** They
   cover bodies, plus whole frames where a constructor chooses the header
   (the diagnostic message acknowledgements' `0x8002`/`0x8003`).
-- `tests/integration_test.rs` — real client-against-real-server over loopback TCP.
-- `tests/udp_identification.rs` — drives `Server::run_udp_responder` on a
-  loopback `UdpSocket`.
 - `tests/nested_encode.rs` — permanent regression test for the encode hot path.
 - `examples/bare_metal_codec.rs` — encode/frame/decode into a `[u8; N]`, no
   allocator; builds and runs with `--no-default-features` as proof the core is
   genuinely allocator-free.
-- `examples/simple_client.rs` / `examples/echo_server.rs` — a matched async pair.
 - `tests/support/mock_stack.rs` — the scripted `edge-nal` backend the `connection`
   tests run on: sockets that move a set number of bytes per read or write and yield
   before each, and `until_stalled`, an executor that fails a test whose future keeps
   waking itself (on native runs; see invariant 7). `tests/mock_stack.rs` holds the mock to what the other tests rely
   on.
 - `tests/tester.rs`, `tests/tester_late_ack.rs` — `Tester` on the mock and on
-  loopback; `tests/tester_interop.rs` against this crate's `Server`.
+  loopback.
 - `tests/entity.rs` — `Entity` on the mock, one test per requirement or contract
   clause, each citing it; `tests/entity_cancel.rs` drops every call at every await
   and checks nothing is lost; `tests/entity_mock.rs` pins the `DiagnosticEntity`
@@ -921,8 +845,7 @@ new code reading `active_request` must preserve the restore-on-mismatch shape.
   `../../testing/doip-loopback`'s `discovery` test runs both ends over loopback.
 - `tests/entity_std.rs` — `Tester` against `Entity` over loopback;
   `tests/entity_interop.rs` drives `Entity` with a client framed by `MessageCodec`, so
-  the two sides share no receive buffer. That independent framing is why
-  `MessageCodec` stays once the old client and server go.
+  the two sides share no receive buffer.
 - `../../examples/embassy-net-entity` — not part of this crate: `Entity` on
   embassy-net through a cancel-safe acceptor and UDP socket, built for bare metal in
   CI.
@@ -942,39 +865,15 @@ None of this is scheduled; each is a decision for the crate's next owner.
 `self.header.payload_type` and never touches `self.payload` — it is a pure
 `PayloadType → PayloadType` relation wearing a `Message` method signature.
 Moving it to `PayloadType` would make the relation testable without
-constructing a `Message`, delete `OwnedMessage::is_response` (today a pure
-pass-through), and leave the one production call site
-(`Inner::process_received_message` in `client_inner.rs`) a one-line change.
+constructing a `Message`, and delete `OwnedMessage::is_response` (today a pure
+pass-through). Nothing in this crate calls either.
 
-### 7.2 Three write-only fields
-
-- **`SocketManager::session_id: u16`** (`src/socket_manager.rs`) — initialised
-  to `0`, incremented on every `send`, never read anywhere in the crate. Dead
-  state that silently wraps at 65536 sends.
-- **`Server::active_connections: AtomicUsize`** (`src/server.rs`) — incremented
-  and decremented by an RAII guard on every connection; loaded only by three
-  unit tests that pin the guard's RAII behavior, never by production code
-  (there is no connection limit or metric consuming it).
-- **`Inner::run: bool`** (`src/client_inner.rs`) — assigned in four places;
-  the select loop has no `while self.run` check. Shutdown actually happens via
-  the control channel closing or `process_received_message` returning `true`.
-
-Each should either be wired to something real or deleted.
-
-### 7.3 Other rough edges
+### 7.2 Other rough edges
 
 The README's **Scope and limitations** section names these for an integrator
 choosing the crate; the mechanics are here:
 
-- No TLS; `Server` sends no unsolicited UDP vehicle announcement at power-on
-  (identification requests over UDP *are* answered, but only by
-  `Server::run_udp_responder` on a socket the caller binds and drives, and only the
-  broadcast `0x0001` form — `run_server` binds TCP alone). `Entity` with discovery
-  does all of it (§2.5).
-- The server's accept loop serves one TCP connection at a time.
-- Entity status and vehicle identification requests over TCP are logged and
-  silently dropped (`ServerConnectionHandler` has no hook for them yet).
-- The handler passed to `Server::new` is not validated.
+- No TLS: `TCP_TLS_PORT` is named, and nothing serves it.
 - `Message::decode` accepts a header whose `payload_length` disagrees with what
   the payload actually occupies — it hands the payload exactly that many bytes
   and does not require them all to be consumed. `Message::encode` always
@@ -986,11 +885,8 @@ choosing the crate; the mechanics are here:
   field when it is `None`, writing 7 bytes instead of 11 — every golden vector
   agrees, but none exercises a peer that requires the long form
   (`src/messages/routing_activation_request.rs`).
-- A failed `accept()` no longer panics the server task (fixed in 0.4.0): both
-  the TCP accept loop and the UDP responder log the error, sleep briefly, and
-  continue.
 
-### 7.4 The entity
+### 7.3 The entity
 
 - `T_TCP_Alive_Check` runs from when an arbitration starts, not from when its alive
   check request is written, so a request held back by a full transmit queue has less
@@ -998,14 +894,14 @@ choosing the crate; the mechanics are here:
   that a holder's loss either way.
 - The authentication and confirmation sub-states of a registered connection are
   passed through on the spot (REQ 3.DoIP-129, 130).
-- Discovery is IPv4 only (§2.5.3), and an entity sends no sync status byte unless its
+- Discovery is IPv4 only (§2.5.2), and an entity sends no sync status byte unless its
   `VehicleIdentity::sync_status` gives one.
 - The embassy-net adapter has no test on its target; it is built, linted and
   documented for `thumbv7em-none-eabihf`. Two entities sharing one of its acceptors
   wake each other unreliably, and a socket whose `listen` fails, on a port of 0 or one
   already listening elsewhere, is not recovered.
 - The crate root allows `indexing_slicing`, `arithmetic_side_effects` and
-  `as_conversions` on the modules that predate the lint standard, 29 sites; every
+  `as_conversions` on the modules that predate the lint standard, 13 sites; every
   other module, `entity`, `stream` and `tester` among them, meets the standard.
 
 ---
