@@ -29,7 +29,10 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::task::{Context, Poll, Wake, Waker};
 
-use edge_nal::{Close, Readable, TcpAccept, TcpConnect, TcpShutdown, TcpSplit};
+use edge_nal::{
+    Close, Readable, TcpAccept, TcpConnect, TcpShutdown, TcpSplit, UdpReceive, UdpSend,
+    UdpSplit,
+};
 use embassy_time::{Duration, MockDriver};
 use embedded_io_async::{ErrorKind, ErrorType, Read, Write};
 use simple_doip::LogicalAddress;
@@ -539,6 +542,178 @@ impl TcpAccept for MockStack {
             Poll::Ready(Ok((([127, 0, 0, 1], 40_000).into(), MockSocket { peer })))
         })
         .await
+    }
+}
+
+// --- UDP -------------------------------------------------------------------------------
+
+#[derive(Debug, Default)]
+struct UdpShared {
+    inbound: VecDeque<(Vec<u8>, SocketAddr)>,
+    sent: Vec<(SocketAddr, Vec<u8>)>,
+    receive_error: bool,
+    send_error: bool,
+    send_stall: bool,
+    receiver: Option<Waker>,
+    sender: Option<Waker>,
+}
+
+/// A scripted UDP socket's far side: what it delivers to the socket, and what the
+/// socket sent. A send yields once before it completes, so it is an await point.
+#[derive(Debug, Clone, Default)]
+pub struct MockUdp(Rc<RefCell<UdpShared>>);
+
+impl MockUdp {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// The socket, for the entity.
+    pub fn socket(&self) -> MockUdpSocket {
+        MockUdpSocket(self.clone())
+    }
+
+    fn with<R>(&self, f: impl FnOnce(&mut UdpShared) -> R) -> R {
+        f(&mut self.0.borrow_mut())
+    }
+
+    /// A datagram from `from`.
+    pub fn deliver(&self, from: SocketAddr, datagram: &[u8]) {
+        self.with(|u| {
+            u.inbound.push_back((datagram.to_vec(), from));
+            if let Some(waker) = u.receiver.take() {
+                waker.wake();
+            }
+        });
+    }
+
+    /// Every datagram sent since the last call, with where it went.
+    pub fn take_sent(&self) -> Vec<(SocketAddr, Vec<u8>)> {
+        self.with(|u| std::mem::take(&mut u.sent))
+    }
+
+    /// Whether every datagram delivered has been received.
+    pub fn all_received(&self) -> bool {
+        self.with(|u| u.inbound.is_empty())
+    }
+
+    pub fn fail_receives(&self) {
+        self.with(|u| {
+            u.receive_error = true;
+            if let Some(waker) = u.receiver.take() {
+                waker.wake();
+            }
+        });
+    }
+
+    pub fn fail_sends(&self) {
+        self.with(|u| u.send_error = true);
+    }
+
+    /// Ends every failure.
+    pub fn heal(&self) {
+        self.with(|u| {
+            u.receive_error = false;
+            u.send_error = false;
+        });
+    }
+
+    pub fn stall_sends(&self) {
+        self.with(|u| u.send_stall = true);
+    }
+
+    pub fn resume_sends(&self) {
+        self.with(|u| {
+            u.send_stall = false;
+            if let Some(waker) = u.sender.take() {
+                waker.wake();
+            }
+        });
+    }
+
+    async fn receive(&self, buf: &mut [u8]) -> Result<(usize, SocketAddr), MockError> {
+        poll_fn(|cx| {
+            self.with(|u| {
+                if u.receive_error {
+                    return Poll::Ready(Err(MockError));
+                }
+                let Some((datagram, from)) = u.inbound.pop_front() else {
+                    u.receiver = Some(cx.waker().clone());
+                    return Poll::Pending;
+                };
+                let n = datagram.len().min(buf.len());
+                buf[..n].copy_from_slice(&datagram[..n]);
+                Poll::Ready(Ok((datagram.len(), from)))
+            })
+        })
+        .await
+    }
+
+    async fn readable(&self) -> Result<(), MockError> {
+        poll_fn(|cx| {
+            self.with(|u| {
+                if u.receive_error || !u.inbound.is_empty() {
+                    Poll::Ready(Ok(()))
+                } else {
+                    u.receiver = Some(cx.waker().clone());
+                    Poll::Pending
+                }
+            })
+        })
+        .await
+    }
+
+    async fn send(&self, to: SocketAddr, datagram: &[u8]) -> Result<(), MockError> {
+        yield_once().await;
+        poll_fn(|cx| {
+            self.with(|u| {
+                if u.send_error {
+                    return Poll::Ready(Err(MockError));
+                }
+                if u.send_stall {
+                    u.sender = Some(cx.waker().clone());
+                    return Poll::Pending;
+                }
+                u.sent.push((to, datagram.to_vec()));
+                Poll::Ready(Ok(()))
+            })
+        })
+        .await
+    }
+}
+
+/// The entity's end of a [`MockUdp`], and each half of it.
+#[derive(Debug)]
+pub struct MockUdpSocket(MockUdp);
+
+impl ErrorType for MockUdpSocket {
+    type Error = MockError;
+}
+
+impl UdpReceive for MockUdpSocket {
+    async fn receive(&mut self, buf: &mut [u8]) -> Result<(usize, SocketAddr), MockError> {
+        self.0.receive(buf).await
+    }
+}
+
+impl UdpSend for MockUdpSocket {
+    async fn send(&mut self, to: SocketAddr, datagram: &[u8]) -> Result<(), MockError> {
+        self.0.send(to, datagram).await
+    }
+}
+
+impl Readable for MockUdpSocket {
+    async fn readable(&mut self) -> Result<(), MockError> {
+        self.0.readable().await
+    }
+}
+
+impl UdpSplit for MockUdpSocket {
+    type Receive<'a> = MockUdpSocket;
+    type Send<'a> = MockUdpSocket;
+
+    fn split(&mut self) -> (MockUdpSocket, MockUdpSocket) {
+        (MockUdpSocket(self.0.clone()), MockUdpSocket(self.0.clone()))
     }
 }
 
