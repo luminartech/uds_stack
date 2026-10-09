@@ -90,7 +90,9 @@ pub trait VehicleIdentity {
     fn discovery_failed<E: embedded_io_async::Error>(&self, _error: &E) {}
 }
 
-/// A [`VehicleIdentity`] whose values are fixed when it is built.
+/// A [`VehicleIdentity`] whose values are fixed when it is built. It is told of no
+/// failing socket: an identity that implements
+/// [`VehicleIdentity::discovery_failed`] is.
 ///
 /// # Examples
 ///

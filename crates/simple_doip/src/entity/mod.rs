@@ -423,6 +423,9 @@ impl<
     /// discards every `TCP_DATA` socket (REQ 7.DoIP-030): build a new entity for it,
     /// which announces again.
     ///
+    /// A failing socket does not fail [`DiagnosticEntity::next_event`]; it is told to
+    /// [`VehicleIdentity::discovery_failed`], which [`FixedIdentity`] leaves empty.
+    ///
     /// # Arguments
     ///
     /// * `socket` - a UDP socket bound to
