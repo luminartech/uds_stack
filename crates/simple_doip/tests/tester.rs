@@ -163,8 +163,8 @@ fn an_alive_check_during_activation_is_answered() {
     assert_eq!(stack.latest().take_written(), expected);
 }
 
-/// `Tester::connect`'s contract: only a routing activation response answers the request,
-/// and any other well-formed message while it waits is passed over.
+/// `Tester::connect`'s contract: a message that is neither a routing activation response
+/// nor a header negative acknowledgement does not answer the request, and is passed over.
 #[test]
 fn other_messages_during_activation_are_passed_over() {
     let _clock = clock();
@@ -793,8 +793,8 @@ fn no_ack_within_a_doip_diagnostic_message_is_timeout_a() {
     );
 }
 
-/// ISO 13400-2:2019 Table 12: `A_DoIP_Diagnostic_Message` is the whole 2 s, so an
-/// acknowledgement late in it still confirms the request.
+/// Table 12: `A_DoIP_Diagnostic_Message` is the whole 2 s, so an acknowledgement late in
+/// it still confirms the request.
 #[test]
 fn an_ack_late_in_a_doip_diagnostic_message_confirms_ok() {
     let _clock = clock();
