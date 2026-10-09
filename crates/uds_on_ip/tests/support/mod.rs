@@ -8,11 +8,11 @@
 
 use std::collections::VecDeque;
 
-use uds_session::Timestamp;
-
 use simple_doip::LogicalAddress;
 use simple_doip::TaType;
-use simple_doip::service::{ConnectionId, DiagnosticEntity, DoIpResult, EntityEvent};
+use simple_doip::service::{
+    ConnectionId, DiagnosticEntity, DoIpResult, EntityEvent, Refusal, Timestamp,
+};
 
 pub const ENTITY: LogicalAddress = LogicalAddress(0x0001);
 pub const TESTER: LogicalAddress = LogicalAddress(0x0E00);
@@ -49,12 +49,14 @@ pub enum Wire {
 struct Slot {
     sa: LogicalAddress,
     outbound: VecDeque<(TaType, Vec<u8>)>,
+    /// Whether an event has named the connection, which a `Closed` for it requires.
+    named: bool,
 }
 
 #[derive(Debug)]
-pub struct MockEntity<const MCTS: usize> {
+pub struct MockEntity<const CONNECTIONS: usize> {
     pub script: VecDeque<Tester>,
-    table: [Option<Slot>; MCTS],
+    table: [Option<Slot>; CONNECTIONS],
     confirms: VecDeque<(LogicalAddress, LogicalAddress, TaType, DoIpResult)>,
     pub wire: Vec<Wire>,
     /// Every PDU `request` accepted, whether or not a connection carried it.
@@ -70,9 +72,12 @@ pub struct MockEntity<const MCTS: usize> {
     pub confirms_last: bool,
     /// The entity's clock, in milliseconds.
     pub clock: u32,
+    /// What each `request` in turn is refused for, if anything; once spent, every
+    /// request is accepted.
+    pub refuse: VecDeque<Option<Refusal>>,
 }
 
-impl<const MCTS: usize> MockEntity<MCTS> {
+impl<const CONNECTIONS: usize> MockEntity<CONNECTIONS> {
     pub fn new(script: impl IntoIterator<Item = Tester>) -> Self {
         Self {
             script: script.into_iter().collect(),
@@ -85,6 +90,7 @@ impl<const MCTS: usize> MockEntity<MCTS> {
             fail_next_close: false,
             confirms_last: false,
             clock: 0,
+            refuse: VecDeque::new(),
         }
     }
 
@@ -112,7 +118,7 @@ impl<const MCTS: usize> MockEntity<MCTS> {
     }
 }
 
-impl<const MCTS: usize> MockEntity<MCTS> {
+impl<const CONNECTIONS: usize> MockEntity<CONNECTIONS> {
     fn confirm(&mut self) -> Option<EntityEvent<'static>> {
         let (sa, ta, ta_type, result) = self.confirms.pop_front()?;
         Some(EntityEvent::Confirm {
@@ -145,9 +151,9 @@ impl Future for YieldOnce {
     clippy::unused_async_trait_impl,
     reason = "the mock has no sockets, so only a yielding close ever waits"
 )]
-impl<const MCTS: usize> DiagnosticEntity for MockEntity<MCTS> {
+impl<const CONNECTIONS: usize> DiagnosticEntity for MockEntity<CONNECTIONS> {
     type Error = Fault;
-    const CONNECTIONS: usize = MCTS;
+    const CONNECTIONS: usize = CONNECTIONS;
     const MAX_PDU: usize = usize::MAX;
 
     async fn request(
@@ -156,7 +162,10 @@ impl<const MCTS: usize> DiagnosticEntity for MockEntity<MCTS> {
         ta: LogicalAddress,
         ta_type: TaType,
         pdu: &[u8],
-    ) -> Result<(), Self::Error> {
+    ) -> Result<(), Refusal> {
+        if let Some(refusal) = self.refuse.pop_front().flatten() {
+            return Err(refusal);
+        }
         self.requested.push(pdu.to_vec());
         if sa != ENTITY {
             if let Some(index) = self.slot_of(ta) {
@@ -179,16 +188,16 @@ impl<const MCTS: usize> DiagnosticEntity for MockEntity<MCTS> {
         Ok(())
     }
 
-    fn now(&self) -> u32 {
-        self.clock
+    fn now(&self) -> Timestamp {
+        Timestamp(self.clock)
     }
 
     async fn next_event<'b>(
         &mut self,
         buf: &'b mut [u8],
-        deadline_ms: Option<u32>,
+        deadline: Option<Timestamp>,
     ) -> Result<EntityEvent<'b>, Self::Error> {
-        for index in 0..MCTS {
+        for index in 0..CONNECTIONS {
             self.flush(index);
         }
         if !self.confirms_last
@@ -203,10 +212,13 @@ impl<const MCTS: usize> DiagnosticEntity for MockEntity<MCTS> {
                     self.table[free] = Some(Slot {
                         sa,
                         outbound: VecDeque::new(),
+                        named: false,
                     });
                 }
                 Tester::Sends(sa, pdu) => {
-                    let connection = Self::id(self.slot_of(sa).unwrap());
+                    let index = self.slot_of(sa).unwrap();
+                    let connection = Self::id(index);
+                    self.table[index].as_mut().unwrap().named = true;
                     let fits = pdu.len().min(buf.len());
                     let delivered = &mut buf[..fits];
                     delivered.copy_from_slice(&pdu[..fits]);
@@ -231,7 +243,9 @@ impl<const MCTS: usize> DiagnosticEntity for MockEntity<MCTS> {
                     });
                 }
                 Tester::SendsOutsideBuffer(sa) => {
-                    let connection = Self::id(self.slot_of(sa).unwrap());
+                    let index = self.slot_of(sa).unwrap();
+                    self.table[index].as_mut().unwrap().named = true;
+                    let connection = Self::id(index);
                     return Ok(EntityEvent::Indication {
                         connection,
                         sa,
@@ -242,19 +256,21 @@ impl<const MCTS: usize> DiagnosticEntity for MockEntity<MCTS> {
                 }
                 Tester::Leaves(sa) => {
                     let index = self.slot_of(sa).unwrap();
-                    self.table[index] = None;
-                    return Ok(EntityEvent::Closed {
-                        connection: Self::id(index),
-                    });
+                    if self.table[index].take().unwrap().named {
+                        return Ok(EntityEvent::Closed {
+                            connection: Self::id(index),
+                        });
+                    }
                 }
             }
         }
         if let Some(confirm) = self.confirm() {
             return Ok(confirm);
         }
-        let deadline = deadline_ms.ok_or(Fault::Exhausted)?;
-        let wait = Timestamp(self.clock).until(Timestamp(deadline));
-        self.clock = self.clock.wrapping_add(wait);
+        let deadline = deadline.ok_or(Fault::Exhausted)?;
+        self.clock = Timestamp(self.clock)
+            .after(Timestamp(self.clock).until(deadline))
+            .0;
         Ok(EntityEvent::Deadline)
     }
 

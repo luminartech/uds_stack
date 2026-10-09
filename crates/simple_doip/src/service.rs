@@ -3,8 +3,10 @@
 //! [`DiagnosticConnection`] is one connection as the layer above sees it: the
 //! `DoIP_Data.request` primitive, and the confirm and indication primitives arriving as
 //! [`ConnectionEvent`]s whose outcome is a [`DoIpResult`] (ISO 13400-2:2019 8.3). The
-//! addressing model of a target is a [`TaType`], derived from the address by
-//! [`LogicalAddress::default_ta_type`].
+//! addressing model of a target is a [`TaType`]. On an indication it is the
+//! implementor's to report: an entity knows which of its own addresses were addressed,
+//! as `entity::Entity` does from its `EntityAddress`, and an implementor with no better
+//! knowledge derives it with [`LogicalAddress::default_ta_type`].
 //!
 //! [`DiagnosticEntity`] is a whole `DoIP` entity — every connection it has accepted —
 //! as the layer above drives it: events tagged with the [`ConnectionId`] they arrived
@@ -17,10 +19,11 @@
 //! # Time
 //!
 //! Every deadline here is on the implementor's own clock, which it reports as
-//! [`DiagnosticConnection::now`] or [`DiagnosticEntity::now`]: milliseconds,
-//! truncated to 32 bits and wrapping. The caller computes its deadlines from that
-//! reading, so a deadline means the same instant to the implementor whatever clock
-//! it runs on, and nothing here names a time source.
+//! [`DiagnosticConnection::now`] or [`DiagnosticEntity::now`]: a [`Timestamp`], which
+//! wraps.
+//! The caller computes its deadlines from that reading, so a deadline means the same
+//! instant to the implementor whatever clock it runs on, and nothing here names a time
+//! source.
 
 use core::future::Future;
 
@@ -67,6 +70,94 @@ pub enum DoIpResult {
     Error,
 }
 
+/// Why [`DiagnosticEntity::request`] refused a request. No confirm follows a refusal.
+///
+/// Exhaustive: these are the only cases in which the request is refused rather than
+/// accepted and confirmed, and a caller that confirms a refused request failed itself
+/// decides what each means.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, thiserror::Error)]
+pub enum Refusal {
+    /// The PDU is empty. ISO 13400-2:2019 Table 21 makes a diagnostic message's user
+    /// data mandatory, which this crate reads as at least one byte.
+    #[error("the PDU is empty")]
+    EmptyPdu,
+    /// The PDU is longer than [`DiagnosticEntity::MAX_PDU`].
+    #[error("a {len}-byte PDU exceeds the {max}-byte limit")]
+    PduTooLarge {
+        /// The PDU's length.
+        len: usize,
+        /// [`DiagnosticEntity::MAX_PDU`].
+        max: usize,
+    },
+    /// The entity has no room left to remember another request until it is confirmed.
+    /// No connection ends for it.
+    #[error("too many requests await their confirm")]
+    NoRoom,
+}
+
+/// A reading of a [`DiagnosticConnection`]'s or a [`DiagnosticEntity`]'s clock, or an
+/// instant on it: milliseconds, truncated to 32 bits, so it wraps every 49.7 days.
+///
+/// It has no order, because the raw order is wrong either side of the wrap. Two readings
+/// compare only by how far apart they are, which [`Self::has_reached`] and
+/// [`Self::until`] read correctly so long as they lie within half the range, about 24.8
+/// days, of each other: the rule its namesake `uds_session::Timestamp` keeps one layer
+/// up.
+///
+/// # Examples
+///
+/// ```
+/// use simple_doip::service::Timestamp;
+///
+/// let now = Timestamp(u32::MAX - 5);
+/// let deadline = now.after(16);
+/// assert_eq!(deadline, Timestamp(10));
+/// assert!(!now.has_reached(deadline));
+/// assert_eq!(now.until(deadline), 16);
+/// assert!(deadline.has_reached(now));
+/// ```
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct Timestamp(pub u32);
+
+impl Timestamp {
+    /// The instant `millis` milliseconds after `self`.
+    ///
+    /// # Arguments
+    ///
+    /// * `millis` - how long after `self`, in milliseconds.
+    #[must_use]
+    pub const fn after(self, millis: u32) -> Self {
+        Self(self.0.wrapping_add(millis))
+    }
+
+    /// Whether `self`, read as the current time, has reached `deadline`: whether the
+    /// interval since `deadline` is less than half the range.
+    ///
+    /// # Arguments
+    ///
+    /// * `deadline` - the instant to compare `self` against.
+    #[must_use]
+    pub const fn has_reached(self, deadline: Self) -> bool {
+        self.0.wrapping_sub(deadline.0) <= u32::MAX / 2
+    }
+
+    /// How long from `self` until `deadline`, in milliseconds: zero once
+    /// [`Self::has_reached`] says it has been reached, so a deadline already past never
+    /// becomes a wait of nearly 2^32 ms.
+    ///
+    /// # Arguments
+    ///
+    /// * `deadline` - the instant to wait for.
+    #[must_use]
+    pub const fn until(self, deadline: Self) -> u32 {
+        if self.has_reached(deadline) {
+            0
+        } else {
+            deadline.0.wrapping_sub(self.0)
+        }
+    }
+}
+
 /// What a [`DiagnosticConnection`] reports, or that the caller's deadline passed first.
 ///
 /// **The lifetime is the caller's buffer, never the connection.** A PDU arrives as the
@@ -87,8 +178,8 @@ pub enum ConnectionEvent<'b> {
         sa: LogicalAddress,
         /// The target the sender addressed.
         ta: LogicalAddress,
-        /// The target's addressing model:
-        /// [`ta.default_ta_type()`](LogicalAddress::default_ta_type).
+        /// How `ta` addresses the receiver: the implementor's own knowledge where it has
+        /// it, otherwise [`ta.default_ta_type()`](LogicalAddress::default_ta_type).
         ta_type: TaType,
         /// The PDU, in the caller's buffer.
         pdu: &'b [u8],
@@ -103,8 +194,8 @@ pub enum ConnectionEvent<'b> {
         sa: LogicalAddress,
         /// The target the sender addressed.
         ta: LogicalAddress,
-        /// The target's addressing model:
-        /// [`ta.default_ta_type()`](LogicalAddress::default_ta_type).
+        /// How `ta` addresses the receiver: the implementor's own knowledge where it has
+        /// it, otherwise [`ta.default_ta_type()`](LogicalAddress::default_ta_type).
         ta_type: TaType,
         /// The leading bytes of the PDU that fit both buffers.
         pdu: &'b [u8],
@@ -188,8 +279,8 @@ pub trait DiagnosticConnection {
     type Error: core::fmt::Debug;
 
     /// The longest PDU [`Self::request`] accepts. A longer one is refused with
-    /// [`Self::Error`], and no confirm follows it, so the layer above can refuse it
-    /// first.
+    /// [`Refusal::PduTooLarge`], and no confirm follows it, so the layer above can refuse
+    /// it first.
     const MAX_PDU: usize;
 
     /// `DoIP_Data.request`: send `pdu` to `ta` (ISO 13400-2:2019 8.3.1).
@@ -215,19 +306,18 @@ pub trait DiagnosticConnection {
         pdu: &[u8],
     ) -> impl Future<Output = Result<(), Self::Error>>;
 
-    /// The current time on the clock `deadline_ms` is on: milliseconds, truncated to
-    /// 32 bits and wrapping.
-    fn now(&self) -> u32;
+    /// The current time on the clock a deadline is on.
+    fn now(&self) -> Timestamp;
 
     /// The next event, written into `buf`, or [`ConnectionEvent::Deadline`] if
-    /// `deadline_ms` passes first.
+    /// `deadline` passes first.
     ///
     /// Cancel-safe; see the trait's obligations.
     ///
     /// # Arguments
     ///
     /// * `buf` - where a PDU is delivered; the event borrows it.
-    /// * `deadline_ms` - when to stop waiting, on [`Self::now`]'s clock. It may
+    /// * `deadline` - when to stop waiting, on [`Self::now`]'s clock. It may
     ///   already have passed. `None` waits for an event alone.
     ///
     /// # Errors
@@ -236,7 +326,7 @@ pub trait DiagnosticConnection {
     fn next_event<'b>(
         &mut self,
         buf: &'b mut [u8],
-        deadline_ms: Option<u32>,
+        deadline: Option<Timestamp>,
     ) -> impl Future<Output = Result<ConnectionEvent<'b>, Self::Error>>;
 }
 
@@ -348,8 +438,8 @@ pub enum EntityEvent<'b> {
         sa: LogicalAddress,
         /// The target the sender addressed.
         ta: LogicalAddress,
-        /// The target's addressing model:
-        /// [`ta.default_ta_type()`](LogicalAddress::default_ta_type).
+        /// How `ta` addresses the receiver: the implementor's own knowledge where it has
+        /// it, otherwise [`ta.default_ta_type()`](LogicalAddress::default_ta_type).
         ta_type: TaType,
         /// The PDU, in the caller's buffer.
         pdu: &'b [u8],
@@ -371,8 +461,8 @@ pub enum EntityEvent<'b> {
         sa: LogicalAddress,
         /// The target the sender addressed.
         ta: LogicalAddress,
-        /// The target's addressing model:
-        /// [`ta.default_ta_type()`](LogicalAddress::default_ta_type).
+        /// How `ta` addresses the receiver: the implementor's own knowledge where it has
+        /// it, otherwise [`ta.default_ta_type()`](LogicalAddress::default_ta_type).
         ta_type: TaType,
         /// The leading bytes of the PDU that fit both buffers.
         pdu: &'b [u8],
@@ -476,33 +566,34 @@ pub trait DiagnosticEntity {
     /// * `ta_type` - the target's addressing model.
     /// * `pdu` - the PDU to send.
     ///
+    /// A request is refused, rather than accepted and confirmed, only for a
+    /// [`Refusal`]. The caller that needs every request confirmed, as ISO 13400-2:2019
+    /// 8.3.1 has it, confirms a refused one failed itself.
+    ///
     /// # Errors
     ///
-    /// [`Self::Error`] where the request is not accepted; no confirm follows it. An
-    /// empty `pdu`, which no diagnostic message can carry, and one longer than
-    /// [`Self::MAX_PDU`] are not, whatever `sa` is. A target no connection registered is
-    /// not an error.
+    /// A [`Refusal`] where the request is refused, whatever `sa` is; no confirm follows
+    /// it. A target no connection registered is not an error.
     fn request(
         &mut self,
         sa: LogicalAddress,
         ta: LogicalAddress,
         ta_type: TaType,
         pdu: &[u8],
-    ) -> impl Future<Output = Result<(), Self::Error>>;
+    ) -> impl Future<Output = Result<(), Refusal>>;
 
-    /// The current time on the clock `deadline_ms` is on: milliseconds, truncated to
-    /// 32 bits and wrapping.
-    fn now(&self) -> u32;
+    /// The current time on the clock a deadline is on.
+    fn now(&self) -> Timestamp;
 
     /// The next event on any connection, written into `buf`, or
-    /// [`EntityEvent::Deadline`] if `deadline_ms` passes first.
+    /// [`EntityEvent::Deadline`] if `deadline` passes first.
     ///
     /// Cancel-safe; see the trait's obligations.
     ///
     /// # Arguments
     ///
     /// * `buf` - where a PDU is delivered; the event borrows it.
-    /// * `deadline_ms` - when to stop waiting, on [`Self::now`]'s clock. It may
+    /// * `deadline` - when to stop waiting, on [`Self::now`]'s clock. It may
     ///   already have passed. `None` waits for an event alone. The entity's own
     ///   timers run whatever it is.
     ///
@@ -513,7 +604,7 @@ pub trait DiagnosticEntity {
     fn next_event<'b>(
         &mut self,
         buf: &'b mut [u8],
-        deadline_ms: Option<u32>,
+        deadline: Option<Timestamp>,
     ) -> impl Future<Output = Result<EntityEvent<'b>, Self::Error>>;
 
     /// Close `connection` in an orderly way, as ISO 14229-5:2022 REQ 7.11 requires of a
@@ -625,7 +716,7 @@ impl core::fmt::Display for TesterAddress {
 /// use simple_doip::LogicalAddress;
 /// use simple_doip::service::{EntityConfig, TesterAddress};
 ///
-/// let config = EntityConfig::default();
+/// let config = EntityConfig::new([TesterAddress::new(LogicalAddress(0x0E00))?]);
 /// assert!(config.accepts(LogicalAddress(0x0E00)));
 /// assert!(!config.accepts(LogicalAddress(0x0E80)));
 ///
@@ -659,15 +750,6 @@ impl<const TESTERS: usize> EntityConfig<TESTERS> {
         self.accepted_testers
             .iter()
             .any(|tester| tester.address() == sa)
-    }
-}
-
-impl Default for EntityConfig {
-    /// Accepts the one tester `0x0E00`.
-    fn default() -> Self {
-        Self {
-            accepted_testers: [TesterAddress(LogicalAddress(0x0E00))],
-        }
     }
 }
 
@@ -705,14 +787,14 @@ mod tests {
             Ok(())
         }
 
-        fn now(&self) -> u32 {
-            0
+        fn now(&self) -> Timestamp {
+            Timestamp(0)
         }
 
         async fn next_event<'b>(
             &mut self,
             buf: &'b mut [u8],
-            _deadline_ms: Option<u32>,
+            _deadline: Option<Timestamp>,
         ) -> Result<ConnectionEvent<'b>, Self::Error> {
             if let Some((ta, ta_type)) = self.confirm.take() {
                 return Ok(ConnectionEvent::Confirm {
@@ -759,11 +841,44 @@ mod tests {
         );
     }
 
+    /// A deadline is reached at its own instant and after it, and not before.
+    #[test]
+    fn a_deadline_is_reached_at_and_after_its_instant() {
+        assert!(!Timestamp(99).has_reached(Timestamp(100)));
+        assert!(Timestamp(100).has_reached(Timestamp(100)));
+        assert!(Timestamp(101).has_reached(Timestamp(100)));
+        assert_eq!(Timestamp(90).until(Timestamp(100)), 10);
+        assert_eq!(Timestamp(100).until(Timestamp(100)), 0);
+        assert_eq!(Timestamp(150).until(Timestamp(100)), 0);
+    }
+
+    /// Across the wrap, a deadline just past it is still ahead of a time just before it,
+    /// and one just before it has been reached by a time just past it.
+    #[test]
+    fn a_deadline_holds_across_the_wrap() {
+        let before = Timestamp(u32::MAX - 5);
+        let after = Timestamp(10);
+        assert_eq!(before.after(16), after);
+        assert!(!before.has_reached(after));
+        assert_eq!(before.until(after), 16);
+        assert!(after.has_reached(before));
+        assert_eq!(after.until(before), 0);
+    }
+
+    /// Half the range away is still ahead; one more millisecond and it has been reached.
+    #[test]
+    fn half_the_range_is_the_horizon() {
+        let now = Timestamp(0);
+        assert!(now.has_reached(Timestamp(0_u32.wrapping_sub(u32::MAX / 2))));
+        assert!(!now.has_reached(Timestamp(0_u32.wrapping_sub(u32::MAX / 2 + 1))));
+    }
+
     /// The sensor's configuration: routing activation from `0x0E00` and no other
     /// tester.
     #[test]
-    fn the_default_entity_accepts_tester_0e00_only() {
-        let config = EntityConfig::default();
+    fn a_one_tester_entity_accepts_that_tester_only() {
+        let config =
+            EntityConfig::new([TesterAddress::new(LogicalAddress(0x0E00)).unwrap()]);
         assert!(config.accepts(LogicalAddress(0x0E00)));
         assert!(!config.accepts(LogicalAddress(0x0E01)));
         assert!(!config.accepts(LogicalAddress(0x0FFF)));

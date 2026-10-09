@@ -18,6 +18,7 @@
 
 mod handler;
 mod io;
+mod outbox;
 mod table;
 
 use core::fmt;
@@ -34,13 +35,14 @@ use crate::messages::{
     ActivationTypeCode, Message, ProtocolVersion, RoutingActivationResponseCode,
 };
 use crate::service::{
-    ConnectionId, DiagnosticEntity, DoIpResult, EntityConfig, EntityEvent,
+    ConnectionId, DiagnosticEntity, DoIpResult, EntityConfig, EntityEvent, Refusal,
+    Timestamp,
 };
 use crate::stream::tx::Full;
-use crate::stream::{after, caller_deadline, millis};
+use crate::stream::{after, caller_deadline, timestamp};
 use crate::tester::DIAGNOSTIC_MESSAGE_OVERHEAD;
 use crate::{LogicalAddress, TaType};
-use handler::{ALIVE_CHECK_REQUEST, Handled};
+use handler::{ALIVE_CHECK_REQUEST, Handled, Limits};
 use io::{Io, drive};
 use table::{
     Activation, AliveCheck, AliveCheckScope, Arbitration, Phase, Slot, SlotRef, Stage,
@@ -167,23 +169,6 @@ pub enum Error<E> {
     /// Accepting a connection failed. Every call after this may fail the same way.
     #[error("accepting a connection failed: {0:?}")]
     Accept(E),
-    /// Every confirm the entity holds is owed to an earlier request; this one was not
-    /// accepted.
-    #[error("too many requests await their confirm")]
-    RequestQueueFull,
-    /// The PDU is longer than [`DiagnosticEntity::MAX_PDU`]; it was not accepted.
-    #[error("a {len}-byte PDU exceeds the {max}-byte limit")]
-    PduTooLarge {
-        /// The PDU's length.
-        len: usize,
-        /// The longest PDU the entity sends.
-        max: usize,
-    },
-    /// The PDU is empty; it was not accepted. ISO 13400-2:2019 Table 21 makes a
-    /// diagnostic message's user data mandatory, which this crate reads as at least one
-    /// byte.
-    #[error("the PDU is empty")]
-    EmptyPdu,
 }
 
 /// A `DoIP` entity: the `TCP_DATA` sockets of ISO 13400-2:2019 12.6, behind
@@ -194,8 +179,9 @@ pub enum Error<E> {
 ///   all `MCTS` are in use, as the socket handler requires.
 /// - `MAX_MESSAGE` is the largest `DoIP` message, generic header included, the entity
 ///   receives or sends on a registered connection. Each of the `MCTS` connections holds
-///   one receive buffer and one transmit queue of that size; the reserve holds two
-///   small ones.
+///   one receive buffer and one transmit queue of that size, for the diagnostic messages
+///   it sends, and a small one apart for its own acknowledgements and other control
+///   frames; the reserve holds small ones only.
 /// - `TESTERS` is [`EntityConfig`]'s count of tester addresses.
 ///
 /// The acceptor is borrowed for `'a` because every socket it accepts borrows it; bind
@@ -207,10 +193,11 @@ pub enum Error<E> {
 /// # Memory
 ///
 /// The connections' buffers are most of an `Entity`: `2 × MCTS × MAX_MESSAGE` bytes.
-/// The reserve's two buffers and the bookkeeping add a few hundred bytes more, and
+/// Each slot's control queue, the reserve's buffers and the bookkeeping add a few
+/// hundred bytes more, and
 /// each of the `MCTS + 1` slots holds an accepted socket, [`TcpAccept::Socket`], inline
 /// beside about a hundred bytes of its own. With `MCTS` 1, `MAX_MESSAGE` 4096 and
-/// `edge-nal-std`'s sockets an `Entity` is about 8.4 KiB.
+/// `edge-nal-std`'s sockets an `Entity` is about 8.7 KiB.
 ///
 /// # Examples
 ///
@@ -219,14 +206,15 @@ pub enum Error<E> {
 /// ```no_run
 /// use edge_nal::TcpBind;
 /// use simple_doip::entity::{Entity, EntityAddress};
-/// use simple_doip::service::{DiagnosticEntity, EntityConfig, EntityEvent};
+/// use simple_doip::service::{DiagnosticEntity, EntityConfig, EntityEvent, TesterAddress};
 /// use simple_doip::{LogicalAddress, TCP_PORT, TaType};
 ///
 /// # async fn serve() -> anyhow::Result<()> {
 /// let stack = edge_nal_std::Stack::new();
 /// let acceptor = stack.bind(([0, 0, 0, 0], TCP_PORT).into()).await?;
 /// let address = EntityAddress::new(LogicalAddress(0x0001), LogicalAddress(0xE400))?;
-/// let mut entity = Entity::<_, 1, 4096>::new(&acceptor, address, EntityConfig::default());
+/// let config = EntityConfig::new([TesterAddress::new(LogicalAddress(0x0E00))?]);
+/// let mut entity = Entity::<_, 1, 4096>::new(&acceptor, address, config);
 /// let mut buf = [0u8; 4096];
 /// loop {
 ///     if let EntityEvent::Indication { sa, pdu, .. } = entity.next_event(&mut buf, None).await? {
@@ -494,7 +482,7 @@ impl<
             let result = confirm.result.or_else(|| {
                 self.connections
                     .get(confirm.connection)
-                    .filter(|slot| slot.tx.written_through(confirm.end))
+                    .filter(|slot| slot.out.data.written_through(confirm.end))
                     .map(|_| DoIpResult::Ok)
             })?;
             Some((at, result))
@@ -516,18 +504,18 @@ impl<
         ta: LogicalAddress,
         ta_type: TaType,
         pdu: &[u8],
-    ) -> Result<(), Error<A::Error>> {
+    ) -> Result<(), Refusal> {
         if pdu.is_empty() {
-            return Err(Error::EmptyPdu);
+            return Err(Refusal::EmptyPdu);
         }
         if pdu.len() > Self::MAX_PDU {
-            return Err(Error::PduTooLarge {
+            return Err(Refusal::PduTooLarge {
                 len: pdu.len(),
                 max: Self::MAX_PDU,
             });
         }
         let Some(free) = self.confirms.iter().position(Option::is_none) else {
-            return Err(Error::RequestQueueFull);
+            return Err(Refusal::NoRoom);
         };
         let mut confirm = PendingConfirm {
             connection: MCTS,
@@ -542,13 +530,13 @@ impl<
             if let Some(index) = self.holder_of(ta)
                 && let Some(Slot {
                     open: Some(open),
-                    tx,
+                    out,
                     ..
                 }) = self.connections.get_mut(index)
                 && matches!(open.phase, Phase::Registered { .. })
             {
                 let message = Message::diagnostic_message(open.version, sa, ta, pdu);
-                confirm = match tx.push(&message) {
+                confirm = match out.push(&message) {
                     Ok(end) => PendingConfirm {
                         connection: index,
                         end,
@@ -578,11 +566,12 @@ impl<
                 };
                 for confirm in self.confirms.iter_mut().flatten() {
                     if confirm.connection == index && confirm.result.is_none() {
-                        confirm.result = Some(if slot.tx.written_through(confirm.end) {
-                            DoIpResult::Ok
-                        } else {
-                            DoIpResult::NoSocket
-                        });
+                        confirm.result =
+                            Some(if slot.out.data.written_through(confirm.end) {
+                                DoIpResult::Ok
+                            } else {
+                                DoIpResult::NoSocket
+                            });
                     }
                 }
                 drop(slot.remove());
@@ -794,10 +783,11 @@ impl<
     fn send_alive_checks(&mut self) {
         for slot in &mut self.connections {
             if slot.alive_check() == Some(AliveCheck::Due)
-                && slot.tx.has_room_for(ALIVE_CHECK_REQUEST)
+                && slot.out.control.has_room_for(ALIVE_CHECK_REQUEST)
                 && let Some(open) = slot.open.as_ref()
             {
-                slot.tx
+                slot.out
+                    .control
                     .push(&Message::alive_check_request(open.version))
                     .ok();
                 slot.set_alive_check(AliveCheck::Asked);
@@ -913,6 +903,10 @@ impl<
     /// Handles one buffered frame, from the first slot that has one.
     fn handle_one(&mut self, buf: &mut [u8], now: Instant) -> Step {
         let arbitrating = self.arbitration.map(|arbitration| arbitration.on);
+        let limits = Limits {
+            message: MAX_MESSAGE,
+            unregistered: RESERVE_CAP,
+        };
         for position in 0..=MCTS {
             let at = Self::slot_ref(position);
             if arbitrating == Some(at) {
@@ -923,8 +917,7 @@ impl<
                     Some(slot) => handler::handle(
                         slot,
                         self.address,
-                        MAX_MESSAGE,
-                        RESERVE_CAP,
+                        limits,
                         arbitrating.is_some(),
                         buf,
                         now,
@@ -934,8 +927,7 @@ impl<
                 SlotRef::Reserve => handler::handle(
                     &mut self.reserve,
                     self.address,
-                    MAX_MESSAGE,
-                    RESERVE_CAP,
+                    limits,
                     arbitrating.is_some(),
                     buf,
                     now,
@@ -1133,7 +1125,7 @@ fn push_response<S, const CAP: usize>(
     let response = Message::routing_activation_response(
         version, request.sa, physical, code, [0; 4], None,
     );
-    slot.tx.push(&response).ok();
+    slot.out.control.push(&response).ok();
 }
 
 /// Exchanges `slot`'s socket and buffers with the reserve's, if both fit.
@@ -1144,7 +1136,7 @@ fn swap_with_reserve<S, const N: usize, const M: usize>(
     if slot.rx.swap(&mut reserve.rx).is_err() {
         return false;
     }
-    if slot.tx.swap(&mut reserve.tx).is_err() {
+    if slot.out.swap(&mut reserve.out).is_err() {
         slot.rx.swap(&mut reserve.rx).ok();
         return false;
     }
@@ -1165,7 +1157,9 @@ impl<
     const CONNECTIONS: usize = MCTS + 1;
 
     /// `MAX_MESSAGE` less what a diagnostic message adds to its PDU,
-    /// [`DIAGNOSTIC_MESSAGE_OVERHEAD`].
+    /// [`DIAGNOSTIC_MESSAGE_OVERHEAD`]. A response this long fits however many of the
+    /// entity's own frames, its acknowledgements among them, are queued ahead of it:
+    /// they queue apart.
     const MAX_PDU: usize = MAX_MESSAGE.saturating_sub(DIAGNOSTIC_MESSAGE_OVERHEAD);
 
     /// Queues `pdu` on the connection that registered `ta`. Its confirm is
@@ -1183,21 +1177,22 @@ impl<
     /// # Errors
     ///
     /// None of these is followed by a confirm:
-    /// - [`Error::PduTooLarge`] where `pdu` is longer than [`DiagnosticEntity::MAX_PDU`].
-    /// - [`Error::EmptyPdu`] where `pdu` is empty.
-    /// - [`Error::RequestQueueFull`] while too many earlier requests await their confirm.
+    /// - [`Refusal::PduTooLarge`] where `pdu` is longer than
+    ///   [`DiagnosticEntity::MAX_PDU`].
+    /// - [`Refusal::EmptyPdu`] where `pdu` is empty.
+    /// - [`Refusal::NoRoom`] while too many earlier requests await their confirm.
     fn request(
         &mut self,
         sa: LogicalAddress,
         ta: LogicalAddress,
         ta_type: TaType,
         pdu: &[u8],
-    ) -> impl Future<Output = Result<(), Self::Error>> {
+    ) -> impl Future<Output = Result<(), Refusal>> {
         poll_fn(move |_| Poll::Ready(self.queue(sa, ta, ta_type, pdu)))
     }
 
-    fn now(&self) -> u32 {
-        millis(Instant::now())
+    fn now(&self) -> Timestamp {
+        timestamp(Instant::now())
     }
 
     /// The next event on any connection.
@@ -1212,10 +1207,9 @@ impl<
     async fn next_event<'b>(
         &mut self,
         buf: &'b mut [u8],
-        deadline_ms: Option<u32>,
+        deadline: Option<Timestamp>,
     ) -> Result<EntityEvent<'b>, Self::Error> {
-        let until =
-            deadline_ms.map(|deadline_ms| caller_deadline(deadline_ms, Instant::now()));
+        let until = deadline.map(|deadline| caller_deadline(deadline, Instant::now()));
         loop {
             let now = Instant::now();
             if let Some(event) = self.owed_event() {

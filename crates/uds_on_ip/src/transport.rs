@@ -12,12 +12,12 @@
 
 use crate::error::Error;
 use crate::mapping::{
-    Inbound, PduOutsideBuffer, classify, from_logical, target_of, to_doip_ta_type,
-    to_logical,
+    Inbound, PduOutsideBuffer, classify, from_logical, s_result, target_of,
+    to_doip_ta_type, to_logical,
 };
 use crate::profile::{ConnectionAction, after_sending};
 use simple_doip::LogicalAddress;
-use simple_doip::service::{ConnectionId, DiagnosticEntity};
+use simple_doip::service::{self, ConnectionId, DiagnosticEntity, DoIpResult, Refusal};
 use uds_services::{AfterSend, TransportEvent, UdsTransport};
 use uds_session::{Ai, Reloads, SResult, Timestamp};
 
@@ -29,11 +29,22 @@ use uds_session::{Ai, Reloads, SResult, Timestamp};
 /// Responses are routed by their target address, which routing activation
 /// registers on one connection only.
 ///
-/// `MCTS` sizes the table in which the transport remembers which tester arrived
+/// `CONNECTIONS` sizes the table in which the transport remembers which tester arrived
 /// on which connection, so that it can close the right one when
 /// ISO 14229-5:2022 REQ 7.9 or REQ 7.11 requires it. It must be at least the
 /// entity's [`DiagnosticEntity::CONNECTIONS`], which [`DoIpTransport::new`] checks
-/// at compile time.
+/// at compile time, and has no default: no one value is right for every entity.
+///
+/// Three numbers meet here, and are not the same number. At a sensor serving one tester:
+///
+/// - the entity's `MCTS`, the testers it serves at once (ISO 13400-2:2019 Table 11),
+///   is 1;
+/// - its connection table, [`DiagnosticEntity::CONNECTIONS`], counts the reserve socket
+///   too (REQ 4.DoIP-002), so it is 2, and so is this transport's `CONNECTIONS`;
+/// - the `uds_services::Server`'s `PEERS`, the testers it keeps a session for, is 1.
+///
+/// So the sensor's transport is `DoIpTransport<Entity<'_, A, 1, MAX_MESSAGE>, 2>`, with
+/// `simple_doip`'s `entity::Entity`.
 ///
 /// # The prescribed close
 ///
@@ -72,13 +83,20 @@ use uds_session::{Ai, Reloads, SResult, Timestamp};
 ///
 /// Time is the entity's: [`UdsTransport::now`] is [`DiagnosticEntity::now`], so a
 /// deadline the session layer computes means the same instant to the entity.
-pub struct DoIpTransport<E, const MCTS: usize = 1> {
+pub struct DoIpTransport<E, const CONNECTIONS: usize> {
     entity: E,
     reloads: Reloads,
-    outbound_max: Option<usize>,
-    testers: [Option<Tester>; MCTS],
+    testers: [Option<Tester>; CONNECTIONS],
     closing: Option<Closing>,
+    /// The failed confirmations of refused requests not yet reported, oldest first.
+    refused: [Option<Confirmation>; REFUSALS],
 }
+
+/// How many refused requests a [`DoIpTransport`] holds until it reports their failed
+/// confirmations. `uds_session` has at most one message per addressing awaiting its
+/// confirmation (`UDSS_LLR_0061`), so a server cannot have more refusals outstanding
+/// than it has association slots, and a `PEERS == 1` server has fewer than this.
+const REFUSALS: usize = 4;
 
 /// A tester with routing active on `connection`, and what its connection owes.
 #[derive(Debug, Clone, Copy)]
@@ -113,25 +131,24 @@ impl Confirmation {
     }
 }
 
-impl<E, const MCTS: usize> core::fmt::Debug for DoIpTransport<E, MCTS> {
+impl<E, const CONNECTIONS: usize> core::fmt::Debug for DoIpTransport<E, CONNECTIONS> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("DoIpTransport")
             .field("entity", &"..")
             .field("reloads", &self.reloads)
-            .field("outbound_max", &self.outbound_max)
             .field("testers", &self.testers)
             .field("closing", &self.closing)
+            .field("refused", &self.refused)
             .finish()
     }
 }
 
-impl<E: DiagnosticEntity, const MCTS: usize> DoIpTransport<E, MCTS> {
+impl<E: DiagnosticEntity, const CONNECTIONS: usize> DoIpTransport<E, CONNECTIONS> {
     /// A transport over `entity`, loading the session layer's response timer
     /// with `reloads`.
     ///
-    /// The peer's size bound starts unknown, because it is learned from the
-    /// peer's entity status response rather than assumed. Does not compile
-    /// where `MCTS` is below [`DiagnosticEntity::CONNECTIONS`], or zero.
+    /// Does not compile where `CONNECTIONS` is below [`DiagnosticEntity::CONNECTIONS`],
+    /// or zero.
     ///
     /// # Arguments
     ///
@@ -143,10 +160,12 @@ impl<E: DiagnosticEntity, const MCTS: usize> DoIpTransport<E, MCTS> {
     ///
     /// # Examples
     ///
-    /// An entity with two connections does not fit the default table of one:
+    /// An entity with two connections does not fit a table of one:
     ///
     /// ```compile_fail
-    /// # use simple_doip::service::{ConnectionId, DiagnosticEntity, EntityEvent};
+    /// # use simple_doip::service::{
+    /// #     ConnectionId, DiagnosticEntity, EntityEvent, Refusal, Timestamp,
+    /// # };
     /// # use simple_doip::{LogicalAddress, TaType};
     /// # use uds_on_ip::{DoIpTransport, profile::bench_reloads};
     /// struct TwoSockets;
@@ -162,16 +181,16 @@ impl<E: DiagnosticEntity, const MCTS: usize> DoIpTransport<E, MCTS> {
     /// #       _: LogicalAddress,
     /// #       _: TaType,
     /// #       _: &[u8],
-    /// #   ) -> Result<(), ()> {
+    /// #   ) -> Result<(), Refusal> {
     /// #       Ok(())
     /// #   }
-    /// #   fn now(&self) -> u32 {
-    /// #       0
+    /// #   fn now(&self) -> Timestamp {
+    /// #       Timestamp(0)
     /// #   }
     /// #   async fn next_event<'b>(
     /// #       &mut self,
     /// #       _: &'b mut [u8],
-    /// #       _: Option<u32>,
+    /// #       _: Option<Timestamp>,
     /// #   ) -> Result<EntityEvent<'b>, ()> {
     /// #       Ok(EntityEvent::Deadline)
     /// #   }
@@ -180,43 +199,37 @@ impl<E: DiagnosticEntity, const MCTS: usize> DoIpTransport<E, MCTS> {
     /// #   }
     /// }
     ///
-    /// let transport: DoIpTransport<TwoSockets> = DoIpTransport::new(TwoSockets, bench_reloads());
+    /// let transport: DoIpTransport<TwoSockets, 1> = DoIpTransport::new(TwoSockets, bench_reloads());
     /// ```
     #[must_use]
     pub const fn new(entity: E, reloads: Reloads) -> Self {
-        const { assert!(MCTS > 0, "a transport serves at least one connection") };
         const {
             assert!(
-                MCTS >= E::CONNECTIONS,
-                "MCTS is below the entity's connection table"
+                CONNECTIONS > 0,
+                "a transport serves at least one connection"
+            );
+        };
+        const {
+            assert!(
+                CONNECTIONS >= E::CONNECTIONS,
+                "CONNECTIONS is below the entity's connection table"
             );
         };
         Self {
             entity,
             reloads,
-            outbound_max: None,
-            testers: [None; MCTS],
+            testers: [None; CONNECTIONS],
             closing: None,
+            refused: [None; REFUSALS],
         }
     }
 }
 
-impl<E, const MCTS: usize> DoIpTransport<E, MCTS> {
+impl<E, const CONNECTIONS: usize> DoIpTransport<E, CONNECTIONS> {
     /// The entity, for inspection between events.
     #[must_use]
     pub const fn entity(&self) -> &E {
         &self.entity
-    }
-
-    /// Record the peer's advertised *Max. data size*, learned from the peer's
-    /// entity status response.
-    ///
-    /// A server typically has not requested one, which is why this stays
-    /// `None` and `responseTooLong` is then unreachable rather than fabricated.
-    /// This entity's *own* MDS is not this crate's to hold: `simple_doip`
-    /// answers the ISO 13400-2:2019 Table 11 entity status request itself.
-    pub fn set_outbound_max(&mut self, max: Option<usize>) {
-        self.outbound_max = max;
     }
 
     fn tester_mut(&mut self, address: LogicalAddress) -> Option<&mut Tester> {
@@ -293,7 +306,7 @@ impl<E, const MCTS: usize> DoIpTransport<E, MCTS> {
     }
 }
 
-impl<E: DiagnosticEntity, const MCTS: usize> DoIpTransport<E, MCTS> {
+impl<E: DiagnosticEntity, const CONNECTIONS: usize> DoIpTransport<E, CONNECTIONS> {
     async fn close(&mut self, closing: Closing) -> TransportEvent<'static> {
         self.closing = Some(closing);
         self.forget(closing.connection);
@@ -301,6 +314,34 @@ impl<E: DiagnosticEntity, const MCTS: usize> DoIpTransport<E, MCTS> {
             self.entity.close(closing.connection).await;
         self.closing = None;
         closing.confirmation.event()
+    }
+
+    /// Holds the failed confirmation of a request the entity refused for `refusal`;
+    /// `Err` where [`REFUSALS`] are already held.
+    ///
+    /// It is reported ahead of any confirmation the entity holds for an earlier request:
+    /// `uds_session` matches a confirmation to its request by addressing
+    /// (`UDSS_LLR_0059`), and has one request per addressing outstanding at most.
+    fn refuse(&mut self, ai: Ai, refusal: Refusal) -> Result<(), Error<E::Error>> {
+        let result = match refusal {
+            Refusal::NoRoom | Refusal::PduTooLarge { .. } => DoIpResult::OutOfMemory,
+            Refusal::EmptyPdu => DoIpResult::Error,
+        };
+        let Some(free) = self.refused.iter_mut().find(|held| held.is_none()) else {
+            return Err(Error::Refused(refusal));
+        };
+        *free = Some(Confirmation {
+            ai,
+            result: s_result(result),
+        });
+        Ok(())
+    }
+
+    /// The failed confirmation of the oldest refusal.
+    fn take_refusal(&mut self) -> Option<TransportEvent<'static>> {
+        let confirmation = self.refused.first_mut()?.take()?;
+        self.refused.rotate_left(1);
+        Some(confirmation.event())
     }
 
     async fn confirm(&mut self, ai: Ai, result: SResult) -> TransportEvent<'static> {
@@ -323,7 +364,9 @@ impl<E: DiagnosticEntity, const MCTS: usize> DoIpTransport<E, MCTS> {
     }
 }
 
-impl<E: DiagnosticEntity, const MCTS: usize> UdsTransport for DoIpTransport<E, MCTS> {
+impl<E: DiagnosticEntity, const CONNECTIONS: usize> UdsTransport
+    for DoIpTransport<E, CONNECTIONS>
+{
     type Error = Error<E::Error>;
 
     /// The entity's [`DiagnosticEntity::MAX_PDU`], so [`uds_services::uds_server`]
@@ -340,11 +383,19 @@ impl<E: DiagnosticEntity, const MCTS: usize> UdsTransport for DoIpTransport<E, M
     /// [`DoIpTransport`]. The [`TransportEvent::DataConf`] that follows carries `ai`
     /// as given, whatever addressing the entity reports it with.
     ///
+    /// A request the entity refuses, which [`DiagnosticEntity::request`] does not
+    /// confirm, is accepted here all the same and confirmed failed by the next
+    /// [`UdsTransport::next_event`]: ISO 13400-2:2019 8.3.1 confirms every request, and
+    /// a refusal is not the end of the connection. [`Refusal::NoRoom`] and
+    /// [`Refusal::PduTooLarge`] are `DoIP_OUT_OF_MEMORY`, [`Refusal::EmptyPdu`]
+    /// `DoIP_ERROR`. It arms no close.
+    ///
     /// # Errors
     ///
     /// [`Error::Mapping`] if the addressing cannot be carried: the two remote
-    /// message types have no `DoIP` representation. [`Error::Entity`] if the
-    /// entity does not accept the request.
+    /// message types have no `DoIP` representation. [`Error::Refused`] if the
+    /// entity refuses the request while this transport already holds as many
+    /// refusals as it can, none of them yet reported.
     async fn t_data_req(
         &mut self,
         ai: Ai,
@@ -352,10 +403,13 @@ impl<E: DiagnosticEntity, const MCTS: usize> UdsTransport for DoIpTransport<E, M
         after: AfterSend,
     ) -> Result<(), Self::Error> {
         let target = target_of(ai)?;
-        self.entity
+        let accepted = self
+            .entity
             .request(to_logical(ai.sa), target, to_doip_ta_type(ai.ta_type), data)
-            .await
-            .map_err(Error::Entity)?;
+            .await;
+        if let Err(refusal) = accepted {
+            return self.refuse(ai, refusal);
+        }
         self.record_send(target, data, after);
         if let Some(tester) = self.tester_mut(target) {
             tester.requested = Some(ai);
@@ -392,11 +446,14 @@ impl<E: DiagnosticEntity, const MCTS: usize> UdsTransport for DoIpTransport<E, M
         if let Some(closing) = self.closing {
             return Ok(self.close(closing).await);
         }
+        if let Some(refusal) = self.take_refusal() {
+            return Ok(refusal);
+        }
         let buffer_start = buffer.as_ptr().addr();
         let (connection, ai, at, declared) = loop {
             let event = self
                 .entity
-                .next_event(&mut *buffer, deadline.map(|at| at.0))
+                .next_event(&mut *buffer, deadline.map(|at| service::Timestamp(at.0)))
                 .await
                 .map_err(Error::Entity)?;
             let inbound = classify(event, buffer_start)
@@ -438,12 +495,12 @@ impl<E: DiagnosticEntity, const MCTS: usize> UdsTransport for DoIpTransport<E, M
         })
     }
 
-    /// The largest `A_PDU` the peer will accept, where it has advertised one.
-    ///
-    /// ISO 13400-2:2019 Table 11 — support for *Max. data size* is
-    /// **optional**, so `None` is conformant.
+    /// `None`: a tester never advertises a *Max. data size* to an entity. MDS travels
+    /// in the entity status response, from entity to tester (ISO 13400-2:2019
+    /// Table 11), so a server has no peer bound to learn. What the entity can carry is
+    /// [`Self::MAX_PDU`].
     fn outbound_max(&self) -> Option<usize> {
-        self.outbound_max
+        None
     }
 
     /// The `tP_Client` reload pair this transport dictates: `DoIP` has no
@@ -457,7 +514,7 @@ impl<E: DiagnosticEntity, const MCTS: usize> UdsTransport for DoIpTransport<E, M
     /// deadline the session layer computes from this reaches the entity
     /// unconverted.
     fn now(&self) -> Timestamp {
-        Timestamp(self.entity.now())
+        Timestamp(self.entity.now().0)
     }
 }
 
@@ -465,7 +522,9 @@ impl<E: DiagnosticEntity, const MCTS: usize> UdsTransport for DoIpTransport<E, M
 mod tests {
     use super::DoIpTransport;
     use crate::profile::bench_reloads;
-    use simple_doip::service::{ConnectionId, DiagnosticEntity, EntityEvent};
+    use simple_doip::service::{
+        ConnectionId, DiagnosticEntity, EntityEvent, Refusal, Timestamp,
+    };
     use simple_doip::{LogicalAddress, TaType};
     use uds_services::{AfterSend, UdsTransport};
     use uds_session::{SResult, TransportError};
@@ -491,16 +550,16 @@ mod tests {
             _ta: LogicalAddress,
             _ta_type: TaType,
             _pdu: &[u8],
-        ) -> Result<(), Self::Error> {
+        ) -> Result<(), Refusal> {
             Ok(())
         }
-        fn now(&self) -> u32 {
-            0
+        fn now(&self) -> Timestamp {
+            Timestamp(0)
         }
         async fn next_event<'b>(
             &mut self,
             _buf: &'b mut [u8],
-            _deadline_ms: Option<u32>,
+            _deadline: Option<Timestamp>,
         ) -> Result<EntityEvent<'b>, Self::Error> {
             Ok(EntityEvent::Deadline)
         }
@@ -510,41 +569,32 @@ mod tests {
     }
 
     /// A transport with tester `0x0E00` registered on connection 0.
-    fn serving_the_tester() -> DoIpTransport<Idle> {
+    fn serving_the_tester() -> DoIpTransport<Idle, 1> {
         let mut t = DoIpTransport::new(Idle, bench_reloads());
         t.register(CONNECTION, TESTER);
         t
     }
 
-    /// ISO 13400-2:2019 Table 11 marks *Max. data size* support **optional**, so
-    /// a conformant `DoIP` entity need not advertise one and `None` is a correct
-    /// answer rather than a defect.
+    /// A tester advertises no *Max. data size* to an entity (ISO 13400-2:2019
+    /// Table 11), so there is no peer bound to report.
     #[test]
-    fn an_unadvertised_max_data_size_is_none_not_a_guess() {
-        let t = DoIpTransport::<_>::new(Idle, bench_reloads());
+    fn a_server_has_no_peer_bound() {
+        let t = DoIpTransport::<_, 1>::new(Idle, bench_reloads());
         assert_eq!(t.outbound_max(), None);
     }
 
-    /// What the peer advertised is what `outbound_max` reports.
-    #[test]
-    fn the_peers_bound_is_reported_once_it_is_learned() {
-        let mut t = DoIpTransport::<_>::new(Idle, bench_reloads());
-        t.set_outbound_max(Some(4096));
-        assert_eq!(t.outbound_max(), Some(4096));
-    }
-
-    /// The reload pair crosses the seam unchanged, so `DoIP`'s choice of `tP6`
-    /// is what the session layer actually loads.
     /// The entity's PDU limit is the transport's, so `uds_server!` sizes no response
     /// past it.
     #[test]
     fn the_transport_carries_the_pdu_limit_of_its_entity() {
-        assert_eq!(<DoIpTransport<Idle> as UdsTransport>::MAX_PDU, 500);
+        assert_eq!(<DoIpTransport<Idle, 1> as UdsTransport>::MAX_PDU, 500);
     }
 
+    /// The reload pair crosses the seam unchanged, so `DoIP`'s choice of `tP6`
+    /// is what the session layer actually loads.
     #[test]
     fn the_reloads_reach_the_seam_unchanged() {
-        let t = DoIpTransport::<_>::new(Idle, bench_reloads());
+        let t = DoIpTransport::<_, 1>::new(Idle, bench_reloads());
         assert_eq!(t.channel_timing(), bench_reloads());
     }
 
@@ -554,7 +604,7 @@ mod tests {
     fn a_transport_over_an_opaque_entity_is_debug() {
         struct OpaqueEntity;
         const fn assert_debug<T: core::fmt::Debug>() {}
-        assert_debug::<DoIpTransport<OpaqueEntity>>();
+        assert_debug::<DoIpTransport<OpaqueEntity, 1>>();
     }
 
     /// ISO 14229-5:2022 REQ 7.11: a positive `ECUReset` response owes a close of

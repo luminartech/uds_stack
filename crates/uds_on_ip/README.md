@@ -66,13 +66,20 @@ with no I/O in it — and the sockets, on whatever runtime, are the entity's.
 **Alpha, not yet published** (it releases in lockstep with the rest of the
 stack, at 0.7.0, once the stack's functionality has been verified). The public
 API shape is
-settled — `DoIpTransport<E: DiagnosticEntity>` implements
+settled — `DoIpTransport<E: DiagnosticEntity, CONNECTIONS>` implements
 `uds_services::UdsTransport` — and the server role is implemented: requests
 and responses map onto `DoIP_Data` (ISO 14229-5:2022 REQ 4.3, REQ 4.4), and the
 connection is closed after a positive `ECUReset` response (REQ 7.11) and after
 the positive `DiagnosticSessionControl` response to a session change the server
-says leaves its running software (REQ 7.9). Time is the `DoIP` entity's own clock, which it
-reports through `DiagnosticEntity::now`. The client role is not built. See the
+says leaves its running software (REQ 7.9). A response longer than the entity
+can carry is answered `responseTooLong`, because the server's buffers are sized
+to the entity's `MAX_PDU`, and a request longer than the server decodes but
+within what the entity holds is answered by UDS in ISO 14229-1's order: `0x11`
+for a service the server does not support before `0x13` for a wrong length.
+Time is the `DoIP` entity's own clock, which it reports through
+`DiagnosticEntity::now`. The server role is tested end to end over loopback
+against `simple_doip`'s own entity and tester, in the workspace's unpublished
+`testing/doip-loopback` crate. The client role is not built. See the
 [workspace README](https://github.com/luminartech/uds_stack#status) for how
 this compares to the rest of the stack.
 
@@ -103,10 +110,19 @@ use simple_doip::service::DiagnosticEntity;
 use uds_on_ip::DoIpTransport;
 use uds_on_ip::profile::bench_reloads;
 
-fn transport_over<E: DiagnosticEntity>(entity: E) -> DoIpTransport<E> {
+fn transport_over<E: DiagnosticEntity, const CONNECTIONS: usize>(
+    entity: E,
+) -> DoIpTransport<E, CONNECTIONS> {
     DoIpTransport::new(entity, bench_reloads())
 }
 ```
+
+`CONNECTIONS` sizes the transport's table of which tester is on which
+connection, and must be at least the entity's own
+`DiagnosticEntity::CONNECTIONS`, which counts the reserve socket. A sensor
+serving one tester runs `simple_doip`'s `Entity` with `MCTS` 1, so its table,
+and the transport's, is 2: `DoIpTransport<Entity<'_, A, 1, MAX_MESSAGE>, 2>`. Its
+`uds_server!` still declares `peers = 1`, the one tester it keeps a session for.
 
 `bench_reloads()` gives the conventional `tP6` reload pair for a desk setup —
 see its documentation for why it is not a configuration for a vehicle.

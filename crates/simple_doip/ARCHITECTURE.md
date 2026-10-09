@@ -175,29 +175,45 @@ stateDiagram-v2
   | `0x01` | A payload type the entity does not take on `TCP_DATA`, ISO 14229-5's periodic `0x8004` and the manufacturer range included (REQ 7.DoIP-042) | The frame is discarded |
   | `0x02` | A message, header included, over the entity's `MAX_MESSAGE`: a payload over `MAX_MESSAGE` − 8 (REQ 7.DoIP-043) | The frame is discarded |
   | `0x03` | Before activation, a frame within `MAX_MESSAGE` but over the 32 bytes a socket has until it may move into the reserve (REQ 7.DoIP-044) | The frame is discarded |
+  | `0x04` | A payload length wrong for its type (REQ 7.DoIP-045) | The socket is closed |
 
   The 32 bytes apply to every payload type, so before activation a diagnostic message
   with more than 24 bytes of user data is answered `0x03` and the socket kept open,
   where a shorter one reaches Figure 17 and is refused with diagnostic NACK `0x02` and
   a close (REQ 7.DoIP-070). This is a deviation: buffering the longer one would mean
   holding it where the reserve cannot.
-  | `0x04` | A payload length wrong for its type (REQ 7.DoIP-045) | The socket is closed |
 
 - **Figure 17, and one deviation.** A diagnostic message whose source address is
   not the one registered on its socket is refused with diagnostic NACK `0x02` and
   the socket closed; one to a target the entity does not answer, `0x03`. Every other
-  is acknowledged positively and indicated, one too long for the caller's buffer
-  truncated. That departs from REQ 7.DoIP-073, which has a NACK `0x05` for it, from
-  REQ 7.DoIP-074, and from what Table 24's code `0x00` means. The reason is the
-  layer above: a UDS server busy with a request it can read only the start of still
-  owes it `busyRepeatRequest`, which `uds_on_ip` composes from the truncated event.
+  is acknowledged positively and indicated: the entity's size limit is what it can
+  hold, its `MAX_MESSAGE`, which Figure 16 enforces with header NACK `0x02`, so
+  REQ 7.DoIP-072's `0x04` is never sent. One too long for the caller's buffer is
+  indicated truncated. That departs from REQ 7.DoIP-072, whose `0x04` is for a
+  message over a fixed limit such as the server's decode length; from REQ
+  7.DoIP-073, which has a NACK `0x05` for one over the buffer available; from REQ
+  7.DoIP-074; and from what Table 24's code `0x00` means. The reason is
+  the layer above: a UDS server answers a request it can read only the start of by
+  ISO 14229-1's rules, `0x11` or `0x13`, or `busyRepeatRequest` while busy, Figure
+  5's choice for a request ISO 14229-1 8.7.6 has wait, which `uds_on_ip` composes
+  from the truncated event.
 - **Requests wait for nothing.** A `request` is made by its future's first poll,
   which completes it, so one dropped unpolled makes none. It is queued on the
   connection that registered its target and confirmed `Ok` once written,
   `NoSocket` where no connection registered the target or the connection closes
   first, `UnknownSa` from a source address not the entity's, and `OutOfMemory` where
   the connection's queue has no room (ISO 13400-2:2019 8.3.1, 8.3.2). Requests to one
-  target are confirmed in the order they were made.
+  target are confirmed in the order they were made. A response queues apart from the
+  entity's own frames (acknowledgements, NACKs, routing activation responses and alive
+  check requests), which go first between frames, so a response of `MAX_PDU` fits
+  however many of them are waiting. A response queued while nothing is being written
+  and no other response waits takes the entity's frames queued ahead of it along, room
+  permitting, so an acknowledgement and the response to its request leave in one
+  write: neither backend disables Nagle's algorithm, and a second small write would
+  wait about 40 ms on the tester's delayed acknowledgement of the first. A request is
+  refused, with no confirm, only for a `service::Refusal`: an empty PDU, one over
+  `MAX_PDU`, or a full confirm queue. `uds_on_ip` confirms a refused request failed
+  itself.
 - **A deadline is judged after the input that beat it.** Before acting on a passed
   deadline, the entity reads and handles what the socket it judges has ready, so a
   caller slow to call `next_event` again does not cost a tester its registration.
@@ -390,6 +406,7 @@ the seam described in section 3 usable.
 | `src/entity/mod.rs` | `Entity`: accepting, the socket handler and its arbitration, the timers of Table 12, `DiagnosticEntity` |
 | `src/entity/handler.rs` | Figure 16's generic header handler and Figure 17's diagnostic message handler |
 | `src/entity/table.rs` | The connection table: each slot's socket, buffers and phase, and the reserve |
+| `src/entity/outbox.rs` | Each slot's two transmit queues, the entity's own frames and the responses, and what is written next: a frame part's rest, or one queue's whole frames |
 | `src/entity/io.rs` | What each slot waits on from its socket: a write and a read at once on its split halves, or its close, applied in the poll that completes it |
 
 ### std / async layers

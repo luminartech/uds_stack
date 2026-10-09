@@ -3,6 +3,7 @@
 
 use embassy_time::Instant;
 
+use super::outbox::CONTROL_CAP;
 use super::table::{Activation, AliveCheck, Open, Phase, Slot};
 use super::{EntityAddress, GENERAL_INACTIVITY, expiry};
 use crate::messages::{
@@ -39,22 +40,30 @@ pub(super) enum Handled {
     },
 }
 
-/// Handles the frame at the front of `slot`'s receive buffer.
-///
-/// `max_message` is the entity's largest message, beyond which a frame is refused on any
-/// socket; `limit` bounds a frame on a socket that has not activated routing, which may
-/// have to move into the reserve. Routing activation requests on such a socket wait
-/// while `arbitrating`.
+/// The sizes a received frame is held to.
+#[derive(Clone, Copy)]
+pub(super) struct Limits {
+    /// The entity's largest message, beyond which a frame is refused on any socket.
+    pub(super) message: usize,
+    /// The largest frame on a socket that has not activated routing, which may have to
+    /// move into the reserve.
+    pub(super) unregistered: usize,
+}
+
+/// Handles the frame at the front of `slot`'s receive buffer, within `limits`.
+/// Routing activation requests on a socket that has not activated routing wait while
+/// `arbitrating`.
 pub(super) fn handle<S, const CAP: usize>(
     slot: &mut Slot<S, CAP>,
     address: EntityAddress,
-    max_message: usize,
-    limit: usize,
+    limits: Limits,
     arbitrating: bool,
     buf: &mut [u8],
     now: Instant,
 ) -> Handled {
-    let Slot { open, rx, tx, .. } = slot;
+    let Slot { open, rx, out, .. } = slot;
+    // Everything the handlers send is the entity's own.
+    let tx = &mut out.control;
     let Some(open) = open.as_mut() else {
         return Handled::Waiting;
     };
@@ -66,9 +75,9 @@ pub(super) fn handle<S, const CAP: usize>(
     let memory = if registered.is_some() {
         CAP
     } else {
-        limit.min(CAP)
+        limits.unregistered.min(CAP)
     };
-    if let Err(handled) = check_header(open, rx, tx, max_message, memory, now) {
+    if let Err(handled) = check_header(open, rx, tx, limits.message, memory, now) {
         return handled;
     }
     let Ok(Next::Frame(frame, consumed)) = rx.next() else {
@@ -104,7 +113,7 @@ pub(super) fn handle<S, const CAP: usize>(
                 return Handled::Waiting;
             }
             let (tester, target) = (message.source_address, message.target_address);
-            let nack = |tx: &mut TxQueue<CAP>, code| {
+            let nack = |tx: &mut TxQueue<CONTROL_CAP>, code| {
                 let nack = Message::diagnostic_message_nack(
                     open.version,
                     target,
@@ -150,7 +159,7 @@ pub(super) fn handle<S, const CAP: usize>(
 fn check_header<S, const CAP: usize>(
     open: &mut Open<S>,
     rx: &mut RxBuffer<CAP>,
-    tx: &mut TxQueue<CAP>,
+    tx: &mut TxQueue<CONTROL_CAP>,
     max_message: usize,
     memory: usize,
     now: Instant,
@@ -205,9 +214,9 @@ fn length_rule(payload_type: PayloadType) -> Option<fn(u32) -> bool> {
 }
 
 /// Generic header NACK `code`, then the socket is closed.
-fn refuse<S, const CAP: usize>(
+fn refuse<S>(
     open: &mut Open<S>,
-    tx: &mut TxQueue<CAP>,
+    tx: &mut TxQueue<CONTROL_CAP>,
     code: NackCode,
     now: Instant,
 ) -> Handled {
@@ -222,7 +231,7 @@ fn refuse<S, const CAP: usize>(
 /// Generic header NACK `code`, then the frame's payload is read and dropped.
 fn discard<S, const CAP: usize>(
     open: &mut Open<S>,
-    tx: &mut TxQueue<CAP>,
+    tx: &mut TxQueue<CONTROL_CAP>,
     rx: &mut RxBuffer<CAP>,
     header: &Header,
     code: NackCode,

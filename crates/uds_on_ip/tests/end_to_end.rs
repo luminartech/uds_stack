@@ -12,7 +12,7 @@
 mod support;
 
 use core::future::Future;
-use simple_doip::service::ConnectionId;
+use simple_doip::service::{ConnectionId, Refusal};
 use support::{MockEntity, TESTER, Tester, Wire, block_on};
 use uds_on_ip::DoIpTransport;
 use uds_on_ip::profile::bench_reloads;
@@ -27,7 +27,7 @@ use uds_services::{
 const ECU: Address = Address(0x0001);
 const CONNECTION: ConnectionId = ConnectionId::new(0);
 
-type Transport = DoIpTransport<MockEntity<1>>;
+type Transport = DoIpTransport<MockEntity<1>, 1>;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Did {
@@ -196,6 +196,29 @@ fn a_physical_read_is_answered() {
         Tester::Connects(TESTER),
         Tester::Sends(TESTER, vec![0x22, 0xF4, 0x0D]),
     ]);
+    run(&mut s);
+    assert_eq!(
+        wire(&s),
+        [Wire::Data(CONNECTION, vec![0x62, 0xF4, 0x0D, 0x40])]
+    );
+}
+
+/// A response the entity refuses is confirmed failed (ISO 13400-2:2019 8.3.1), and
+/// the server carries on: the next request is answered.
+#[test]
+fn a_refused_response_does_not_stop_the_server() {
+    let mut entity = MockEntity::new([
+        Tester::Connects(TESTER),
+        Tester::Sends(TESTER, vec![0x22, 0xF4, 0x0D]),
+        Tester::Sends(TESTER, vec![0x22, 0xF4, 0x0D]),
+    ]);
+    entity.refuse.push_back(Some(Refusal::NoRoom));
+    let mut s = EcuServer::new(
+        Ecu::default(),
+        DoIpTransport::new(entity, bench_reloads()),
+        ECU,
+        PARAMS,
+    );
     run(&mut s);
     assert_eq!(
         wire(&s),

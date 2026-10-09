@@ -232,10 +232,11 @@ pub trait UdsTransport {
     /// conformant and leaves the response buffer as the only bound. MDS is defined for
     /// *requests*, so a server asking what it may send is asking about the client.
     ///
-    /// There is deliberately no `inbound_max`. This entity's own MDS is the in-flight
-    /// buffer's length, which [`crate::uds_server`] derives — so a transport that has to
-    /// advertise it needs the crate to *state* the number, not to be asked for it.
-    /// Stating it is a seam addition to make when a binding needs it.
+    /// There is deliberately no `inbound_max`. A request longer than the server's
+    /// in-flight buffer still reaches the server, as [`TransportEvent::DataTooLong`],
+    /// so the pipeline answers it in ISO 14229-1's order: an unsupported service
+    /// `0x11` before a wrong length `0x13`. A transport refuses only what it cannot
+    /// hold itself.
     fn outbound_max(&self) -> Option<usize>;
 
     /// The `tP_Client` reload pair this transport dictates.

@@ -13,11 +13,12 @@
 //! happens. Clause 8.7.6's two exceptions
 //! are the second reason, not the first.
 //!
-//! The in-flight buffer's length is also the entity's ISO 13400-2:2019 Table 11
-//! *Max. data size* — that table defines MDS as "the maximum size of one logical request
-//! that this `DoIP` entity can process", which is the array a full request is decoded
-//! from. Nothing carries the number across [`crate::UdsTransport`] yet; when a binding
-//! needs to advertise it, the seam gains a way for this crate to state it.
+//! The in-flight buffer bounds the request a handler decodes, not the request the server
+//! receives: a longer one arrives truncated, as
+//! [`crate::TransportEvent::DataTooLong`], and is answered by ISO 14229-1's rules, an
+//! unsupported service `0x11` before a wrong length `0x13`. What a transport can hold,
+//! a `DoIP` entity's ISO 13400-2:2019 Table 11 *Max. data size* among them, is the
+//! transport's.
 
 /// The three buffers, together.
 #[derive(Debug)]

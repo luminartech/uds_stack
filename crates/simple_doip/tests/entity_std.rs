@@ -4,17 +4,20 @@
 // Test code; see `golden_vectors.rs` for why the workspace lint standard is relaxed here.
 #![expect(clippy::unwrap_used, clippy::panic)]
 
+mod support;
+
 use std::net::SocketAddr;
 
 use edge_nal::TcpBind;
 use edge_nal_std::Stack;
 use simple_doip::entity::{Entity, EntityAddress};
 use simple_doip::service::{
-    ConnectionEvent, DiagnosticConnection, DiagnosticEntity, DoIpResult, EntityConfig,
-    EntityEvent, TesterAddress,
+    ConnectionEvent, DiagnosticConnection, DiagnosticEntity, DoIpResult, EntityEvent,
+    TesterAddress,
 };
 use simple_doip::tester::Tester;
 use simple_doip::{LogicalAddress, TaType};
+use support::the_tester;
 use tokio::io::AsyncReadExt;
 use tokio::net::TcpStream;
 use tokio::time::{Duration, timeout};
@@ -68,8 +71,7 @@ async fn a_tester_is_answered_over_loopback() {
     let local = free_local_address();
     let stack = Stack::new();
     let acceptor = stack.bind(local).await.unwrap();
-    let mut entity =
-        Entity::<_, 1, 4096>::new(&acceptor, address(), EntityConfig::default());
+    let mut entity = Entity::<_, 1, 4096>::new(&acceptor, address(), the_tester());
 
     let tester = Box::pin(async {
         let mut tester =
@@ -106,8 +108,7 @@ async fn a_surplus_connection_is_accepted_and_closed() {
     let local = free_local_address();
     let stack = Stack::new();
     let acceptor = stack.bind(local).await.unwrap();
-    let mut entity =
-        Entity::<_, 1, 4096>::new(&acceptor, address(), EntityConfig::default());
+    let mut entity = Entity::<_, 1, 4096>::new(&acceptor, address(), the_tester());
 
     let clients = async {
         let _first = TcpStream::connect(local).await.unwrap();

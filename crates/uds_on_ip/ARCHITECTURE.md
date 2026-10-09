@@ -274,10 +274,20 @@ Three properties of this shape are load-bearing:
   idiomatic destructuring and would silently discard a `truncated` flag,
   leaving a fragment decoded as a whole message. `DataTooLong` cannot be
   absorbed by an arm written for a whole message.
-- **There is deliberately no `inbound_max`.** This entity's own *Max. data
-  size* is ISO 13400-2 Table 11, answered by `simple_doip` from its own receive
-  capacity. A getter here had no producer above, no consumer below, and no
-  destination at all.
+- **The transport's limit is a constant; the server states none.** `MAX_PDU` is
+  known when the server is assembled, so `uds_server!` folds it into the
+  buffers: `DoIpTransport` states its entity's, and a response that would not
+  fit is answered `responseTooLong`. There is deliberately no request limit
+  for the transport to enforce. A request longer than the server decodes, but
+  one the entity can hold, still reaches the server, truncated, so that it is
+  answered in ISO 14229-1's order: an unsupported service `0x11` before a
+  wrong length `0x13`. A `DoIP` NACK `0x04` (ISO 13400-2:2019 REQ 7.DoIP-072)
+  at the server's decode length would answer the first with the second's
+  reason, so the entity's *Max. data size* is what it can hold, and beyond
+  that it refuses the frame itself (header NACK `0x02`). This is the answer to
+  #41, which asked for the NACK. `outbound_max` is the peer's
+  advertised *Max. data size*, which a tester never sends an entity, so
+  `DoIpTransport` reports `None`.
 
 **No close and no reconnect, by decision rather than omission.** A server is
 reconnected *to* and never reconnects — ISO 14229-5:2022 REQ 7.8 and REQ 7.10
@@ -300,24 +310,26 @@ the seam with no I/O in it:
   `ConnectionId` it arrived on; `request` routes a response by its target
   address; `close(connection)` performs the close REQ 7.9 and REQ 7.11
   prescribe — this crate decides *when*, the entity performs *what*.
-  `DoIpTransport<E: DiagnosticEntity, MCTS>` drives it and feeds one
+  `MAX_PDU` is the longest response it sends.
+  `DoIpTransport<E: DiagnosticEntity, CONNECTIONS>` drives it and feeds one
   `uds_services::Server`, because the session is the server's, not a
   connection's.
 - `DiagnosticConnection` — one connection, as a tester uses it. This crate's
   client role over it is not built yet.
 
-This transport's `MCTS` must be at least the entity's `CONNECTIONS`, the size of
+This transport's `CONNECTIONS` must be at least the entity's, the size of
 its connection table, reserve socket included (ISO 13400-2:2019 REQ 4.DoIP-002):
 the transport remembers which tester arrived on which connection, so that it can
 close the right one. `DoIpTransport::new` checks the two at compile time, so the
 mismatch cannot reach a running server.
 
-`deadline_ms` is deliberately not a UDS concept. It is `tP6_Client` arriving
-from ISO 14229-2 two layers above, and `simple_doip` must not learn what that
-is; "wait for an event, or until this instant" is an ordinary service-layer
-facility. Wrapping milliseconds are what `uds_session::Timestamp` already is, so
-the conversion at this crate's edge is a field access that cannot fail and
-neither crate learns about the other.
+The deadline `next_event` takes, a `simple_doip::service::Timestamp`, is
+deliberately not a UDS concept. It is `tP6_Client` arriving from ISO 14229-2 two
+layers above, and `simple_doip` must not learn what that is; "wait for an event,
+or until this instant" is an ordinary service-layer facility. It and its namesake
+`uds_session::Timestamp` are the same wrapping milliseconds, with the same rule
+for comparing across the wrap, so the conversion at this crate's edge is a field
+access that cannot fail and neither crate learns about the other.
 
 ### 4.3 `uds_session` is vocabulary, not a seam
 
@@ -459,9 +471,11 @@ bytes in both directions and interprets neither.
 **Server, while occupied.** A driver serving a request offers only its small
 concurrent buffer, so an ordinary request arriving in that window is reported as
 `TransportEvent::DataTooLong`. That is the normal outcome there rather than a
-fault: ISO 14229-1 8.7.6 owes that request `busyRepeatRequest` (0x21), and
-composing one needs the service identifier and the addressing, both of which the
-truncated event carries.
+fault: ISO 14229-1 8.7.6 has the server occupied, though it names no answer.
+`busyRepeatRequest` (0x21), Figure 5's busy check, is the conforming one this stack
+composes, where Annex J would also let a server ignore the request; composing it
+needs the service identifier and the addressing, both of which the truncated event
+carries.
 
 **Periodic responses.** A server sends them as payload type `0x8004`
 (REQ 7.7, REQ 7.16), outside the request/response correlation path, and does not
@@ -690,13 +704,12 @@ together, in dependency order, `uds_on_ip` last.
 
 Verified against the working tree on 2026-09-21, not recalled. Each entry names
 where it was checked. Re-checked on 2026-09-22, after the workspace merge, for
-the entries this revision touches.
+the entries this revision touches, and on 2026-10-08, when the transport began to
+run over `simple_doip`'s real `Entity` and `Tester`, in the unpublished
+`testing/doip-loopback` crate.
 
 ### 9.1 Prerequisites — blocking, and not in this crate
 
-- **The transport is tested only over a scripted mock.** `simple_doip`'s
-  `entity::Entity` implements `DiagnosticEntity` over real sockets, behind its
-  `connection` feature, but no test here runs the transport over it.
 - **The client role is not built.** `DiagnosticConnection` is declared, and
   `simple_doip`'s `tester::Tester` implements it behind the `connection` feature;
   this crate's client role over it is not built.
@@ -736,14 +749,6 @@ the entries this revision touches.
   a message to a tester with no connection is confirmed `DoIP_NO_SOCKET`. What
   is missing is above this crate: `uds_services` has no `ResponseOnEvent`
   service.
-- **An over-long request is answered `0x13`, not refused with a `DoIP` NACK.**
-  ISO 13400-2:2019 REQ 7.DoIP-072 and REQ 7.DoIP-073 have the entity refuse a
-  message larger than it accepts with a diagnostic message NACK (`0x04` or
-  `0x05`) and discard it. This crate passes the entity no inbound bound, so the
-  entity acknowledges the message, and the driver answers it UDS
-  `incorrectMessageLengthOrInvalidFormat`. The entity cannot infer the bound
-  from the buffer it is lent, since a driver serving a request lends a smaller
-  one and a message too large for it is owed `0x21`.
 - **Functional addressing has no fan-out test.** ISO 14229-5:2022 Figure 8 has
   several servers answering one functional request, with `tP_Client` expiry
   rather than a single response being the signal that no more are coming.

@@ -231,6 +231,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "doip-loopback"
+version = "0.0.0"
+dependencies = [
+ "critical-section",
+ "edge-nal",
+ "edge-nal-std",
+ "embassy-time",
+ "simple_doip",
+ "tokio",
+ "uds_on_ip",
+ "uds_protocol",
+ "uds_services",
+]
+
+[[package]]
 name = "edge-nal"
 version = "0.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"

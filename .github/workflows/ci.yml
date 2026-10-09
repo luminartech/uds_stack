@@ -7,7 +7,8 @@
 # This is a *virtual* workspace manifest (no root [package]), so a bare `cargo <cmd>` with
 # no `-p` at the root runs on its default members, `crates/*`: the five crates. The
 # example member, examples/embassy-net-entity, is built by the hand-rolled `embedded` job
-# below instead; see the root Cargo.toml for why it is not a default member. The one job the
+# below instead, and the loopback test member, testing/doip-loopback, is run by the
+# hand-rolled `loopback` job; see the root Cargo.toml for why neither is a default member. The one job the
 # reusable workflow genuinely cannot reach is fuzzing: its fuzz-tests job runs
 # `cargo fuzz build`/`list`/`run` at the checkout root, which is where a single-crate repo's
 # `fuzz/` directory lives, and has no input to point it elsewhere. This workspace's two fuzz
@@ -244,6 +245,33 @@ jobs:
         run: >-
           cargo miri test -p simple_doip --features connection
           --lib --test tester --test entity --test entity_cancel --test mock_stack
+
+  # ===================================================================================
+  # Loopback (hand-rolled: the reusable workflow tests default members only)
+  # ===================================================================================
+  # testing/doip-loopback runs the sensor's path end to end, uds_server! over
+  # DoIpTransport over simple_doip's Entity, against simple_doip's Tester on loopback
+  # sockets. It is not a default member, for the reason the embassy-net adapter is not:
+  # it enables simple_doip's `connection` feature, so rust-ci.yml's clippy never sees it
+  # either, and it is linted here. Not under Miri, which has no sockets.
+  loopback:
+    name: DoIP path over loopback
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master 2026-07-14
+        with:
+          toolchain: stable
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: Lint the loopback tests
+        run: cargo clippy -p doip-loopback --all-targets -- -D warnings
+      - name: Run the loopback tests
+        run: cargo test -p doip-loopback
 
   # ===================================================================================
   # Embedded (hand-rolled: the reusable workflow checks default members on the host)

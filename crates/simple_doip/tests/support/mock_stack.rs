@@ -71,6 +71,8 @@ struct Connection {
     close_stall: bool,
     abort_stall: bool,
     outbound: Vec<u8>,
+    /// How many bytes each write that wrote any carried.
+    writes: Vec<usize>,
     aborted: bool,
     closed: bool,
     dropped: bool,
@@ -263,6 +265,11 @@ impl MockPeer {
         self.with(|c| std::mem::take(&mut c.outbound))
     }
 
+    /// How many bytes each of the tester's writes carried, and forget them.
+    pub fn take_writes(&self) -> Vec<usize> {
+        self.with(|c| std::mem::take(&mut c.writes))
+    }
+
     /// Whether the tester aborted, closed or dropped this connection.
     pub fn is_shut(&self) -> bool {
         self.with(|c| c.aborted || c.closed || c.dropped)
@@ -368,6 +375,7 @@ impl MockPeer {
                     return Poll::Ready(Ok(0));
                 }
                 c.outbound.extend(&buf[..n]);
+                c.writes.push(n);
                 Poll::Ready(Ok(n))
             })
         })

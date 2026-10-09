@@ -8,9 +8,9 @@ use edge_nal::{Close, Readable, TcpShutdown, TcpSplit};
 use embassy_futures::select::{Either, select};
 use embedded_io_async::{Read, Write};
 
+use super::outbox::Outbox;
 use super::table::{Phase, Slot};
 use crate::stream::rx::RxBuffer;
-use crate::stream::tx::TxQueue;
 
 /// What a slot's socket did.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -33,7 +33,7 @@ pub(super) async fn drive<S, const CAP: usize>(slot: &mut Slot<S, CAP>) -> Io
 where
     S: TcpSplit + TcpShutdown,
 {
-    let Slot { open, rx, tx, .. } = slot;
+    let Slot { open, rx, out, .. } = slot;
     let Some(open) = open.as_mut() else {
         return pending().await;
     };
@@ -45,29 +45,30 @@ where
         Phase::Finalizing { abort: false, .. } => true,
         Phase::Initialized | Phase::Registered { .. } => false,
     };
-    if finalizing && tx.pending().is_empty() {
+    if finalizing && out.is_empty() {
         open.socket.close(Close::Both).await.ok();
         return Io::Closed;
     }
     let (mut reader, mut writer) = open.socket.split();
     let reading = !finalizing && !rx.free_to_frame_end().is_empty();
-    match (tx.pending().is_empty(), reading) {
+    match (out.is_empty(), reading) {
         (false, true) => {
-            match select(write(&mut writer, tx), read(&mut reader, rx)).await {
+            match select(write(&mut writer, out), read(&mut reader, rx)).await {
                 Either::First(io) | Either::Second(io) => io,
             }
         }
-        (false, false) => write(&mut writer, tx).await,
+        (false, false) => write(&mut writer, out).await,
         (true, true) => read(&mut reader, rx).await,
         (true, false) => pending().await,
     }
 }
 
-async fn write<W: Write, const CAP: usize>(writer: &mut W, tx: &mut TxQueue<CAP>) -> Io {
-    match writer.write(tx.pending()).await {
+async fn write<W: Write, const CAP: usize>(writer: &mut W, out: &mut Outbox<CAP>) -> Io {
+    let (frame, bytes) = out.next();
+    match writer.write(bytes).await {
         Ok(0) | Err(_) => Io::Lost,
         Ok(written) => {
-            tx.advance(written);
+            out.advance(frame, written);
             Io::Wrote
         }
     }

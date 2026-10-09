@@ -12,7 +12,8 @@
 #[allow(dead_code, reason = "each test binary uses part of the shared mock")]
 mod support;
 
-use simple_doip::service::{ConnectionId, DoIpResult};
+use simple_doip::LogicalAddress;
+use simple_doip::service::{ConnectionId, DoIpResult, Refusal};
 use support::{Fault, MockEntity, TESTER, Tester, Wire, block_on, poll_once_and_drop};
 use uds_on_ip::profile::bench_reloads;
 use uds_on_ip::{DoIpTransport, Error};
@@ -43,14 +44,15 @@ fn response_ai() -> Ai {
     }
 }
 
-type Transport<const MCTS: usize = 1> = DoIpTransport<MockEntity<MCTS>, MCTS>;
+type Transport<const CONNECTIONS: usize = 1> =
+    DoIpTransport<MockEntity<CONNECTIONS>, CONNECTIONS>;
 
 fn transport(script: impl IntoIterator<Item = Tester>) -> Transport {
     DoIpTransport::new(MockEntity::new(script), bench_reloads())
 }
 
 /// The next event, with its data copied out so the buffer can go.
-fn next(t: &mut Transport<1>) -> Seen {
+fn next<const CONNECTIONS: usize>(t: &mut Transport<CONNECTIONS>) -> Seen {
     let mut buffer = [0u8; 16];
     let event = block_on(t.next_event(&mut buffer, None)).unwrap();
     Seen::from(event)
@@ -192,7 +194,7 @@ fn a_response_is_sent_on_the_testers_connection_and_confirmed() {
     );
 }
 
-/// `UDSS_LLR_0060`: the confirmation carries the addressing the request was made
+/// `UDSS_LLR_0059`: the confirmation carries the addressing the request was made
 /// with, which the driver matches it by, though `DoIP` has no field for the message
 /// type.
 #[test]
@@ -346,6 +348,166 @@ fn a_positive_response_that_fails_to_send_closes_nothing() {
         }
     );
     assert_eq!(t.entity().wire, []);
+}
+
+/// ISO 13400-2:2019 8.3.1 confirms every request, so a request the entity refuses for
+/// want of room is confirmed failed, as out of memory, rather than ending the server:
+/// nothing is sent, and a refused reset response closes nothing.
+#[test]
+fn a_refused_request_is_confirmed_failed() {
+    let mut t = indicated_by(&[0x11, 0x01], |entity| {
+        entity.refuse.push_back(Some(Refusal::NoRoom));
+    });
+    respond(&mut t, &[0x51, 0x01]);
+
+    assert_eq!(
+        next(&mut t),
+        TransportEvent::DataConf {
+            ai: response_ai(),
+            result: SResult::Transport(TransportError(7)),
+        }
+    );
+    assert_eq!(t.entity().wire, []);
+    assert_nothing_follows(&mut t);
+}
+
+/// A refusal of an empty PDU, which no server sends, is confirmed failed as a `DoIP`
+/// error, and one of a PDU over the entity's limit as out of memory.
+#[test]
+fn each_refusal_is_confirmed_with_its_own_result() {
+    let mut t = indicated_by(&[0x3E, 0x00], |entity| {
+        entity.refuse.extend([
+            Some(Refusal::EmptyPdu),
+            Some(Refusal::PduTooLarge { len: 9, max: 8 }),
+        ]);
+    });
+    respond(&mut t, &[0x7E, 0x00]);
+    respond(&mut t, &[0x7E, 0x00]);
+
+    assert_eq!(
+        next(&mut t),
+        TransportEvent::DataConf {
+            ai: response_ai(),
+            result: SResult::Transport(TransportError(11)),
+        }
+    );
+    assert_eq!(next(&mut t), failed(response_ai()));
+    assert_eq!(t.entity().wire, []);
+}
+
+const OTHER: LogicalAddress = LogicalAddress(0x0E01);
+
+/// The entity's response to `tester`, as the driver sends it.
+fn response_to(tester: LogicalAddress) -> Ai {
+    Ai {
+        ta: Address(tester.0),
+        ..response_ai()
+    }
+}
+
+/// Tester `first` on connection 0 and tester `second` on connection 1, each with a
+/// request delivered to the driver, over an entity `configure` has prepared.
+fn two_indicated(
+    first: LogicalAddress,
+    second: LogicalAddress,
+    configure: impl FnOnce(&mut MockEntity<2>),
+) -> Transport<2> {
+    let mut entity = MockEntity::new([
+        Tester::Connects(first),
+        Tester::Connects(second),
+        Tester::Sends(first, vec![0x3E, 0x00]),
+        Tester::Sends(second, vec![0x3E, 0x00]),
+    ]);
+    configure(&mut entity);
+    let mut t = DoIpTransport::new(entity, bench_reloads());
+    for _ in 0..2 {
+        assert!(matches!(next(&mut t), Seen::DataInd { .. }));
+    }
+    t
+}
+
+fn failed(ai: Ai) -> TransportEvent<'static> {
+    TransportEvent::DataConf {
+        ai,
+        result: SResult::Transport(TransportError(7)),
+    }
+}
+
+fn confirmed(ai: Ai) -> TransportEvent<'static> {
+    TransportEvent::DataConf {
+        ai,
+        result: SResult::Ok,
+    }
+}
+
+/// A refusal is confirmed by the next event, ahead of the confirmations the entity still
+/// holds: `uds_session` matches a confirmation to its request by addressing
+/// (`UDSS_LLR_0059`) and has one request per addressing outstanding at most
+/// (`UDSS_LLR_0061`), so no order between them is owed.
+#[test]
+fn a_refusal_is_confirmed_ahead_of_the_confirmations_the_entity_holds() {
+    let mut t = two_indicated(TESTER, OTHER, |entity| {
+        entity.refuse.extend([None, Some(Refusal::NoRoom)]);
+    });
+    block_on(t.t_data_req(response_ai(), &[0x7E, 0x00], AfterSend::Continue)).unwrap();
+    block_on(t.t_data_req(response_to(OTHER), &[0x7E, 0x00], AfterSend::Continue)).unwrap();
+
+    assert_eq!(next(&mut t), failed(response_to(OTHER)));
+    assert_eq!(next(&mut t), confirmed(response_ai()));
+}
+
+/// The refusals held are reported, and once reported make room for more.
+#[test]
+fn held_refusals_drain_and_make_room() {
+    let mut t = indicated_by(&[0x3E, 0x00], |entity| {
+        entity.refuse.extend([Some(Refusal::NoRoom); 5]);
+    });
+    for _ in 0..4 {
+        respond(&mut t, &[0x7E, 0x00]);
+    }
+    for _ in 0..4 {
+        assert_eq!(next(&mut t), failed(response_ai()));
+    }
+    respond(&mut t, &[0x7E, 0x00]);
+    assert_eq!(next(&mut t), failed(response_ai()));
+}
+
+/// A refusal made while a prescribed close is owed closes nothing, and leaves the close
+/// to follow the confirmation it is owed after.
+#[test]
+fn a_refusal_while_a_close_is_owed_closes_nothing_more() {
+    let mut t = indicated_by(&[0x11, 0x01], |entity| {
+        entity.refuse.extend([None, Some(Refusal::NoRoom)]);
+    });
+    respond(&mut t, &[0x51, 0x01]);
+    respond(&mut t, &[0x7E, 0x00]);
+
+    assert_eq!(next(&mut t), failed(response_ai()));
+    assert_eq!(next(&mut t), confirmed(response_ai()));
+    assert_eq!(
+        t.entity().wire,
+        [
+            Wire::Data(CONNECTION, vec![0x51, 0x01]),
+            Wire::Close(CONNECTION)
+        ]
+    );
+}
+
+/// A refusal beyond those the transport can hold unreported is an error.
+#[test]
+fn a_refusal_beyond_those_held_is_an_error() {
+    let mut t = indicated_by(&[0x3E, 0x00], |entity| {
+        entity.refuse.extend([Some(Refusal::NoRoom); 5]);
+    });
+    for _ in 0..4 {
+        respond(&mut t, &[0x7E, 0x00]);
+    }
+    let error = block_on(t.t_data_req(response_ai(), &[0x7E, 0x00], AfterSend::Continue))
+        .unwrap_err();
+    assert!(
+        matches!(error, Error::Refused(Refusal::NoRoom)),
+        "{error:?}"
+    );
 }
 
 /// Dropped while the prescribed close is still in progress — as the driver drops the

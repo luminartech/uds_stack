@@ -5,6 +5,8 @@
 // Test code; see `golden_vectors.rs` for why the workspace lint standard is relaxed here.
 #![expect(clippy::unwrap_used, clippy::panic)]
 
+mod support;
+
 use std::net::SocketAddr;
 
 use bytes::BytesMut;
@@ -16,8 +18,9 @@ use simple_doip::messages::{
     ActivationTypeCode, DiagnosticAckCode, OwnedMessage, OwnedPayload, ProtocolVersion,
     RoutingActivationResponseCode,
 };
-use simple_doip::service::{DiagnosticEntity, DoIpResult, EntityConfig, EntityEvent};
+use simple_doip::service::{DiagnosticEntity, DoIpResult, EntityEvent};
 use simple_doip::{LogicalAddress, TaType};
+use support::the_tester;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio::time::{Duration, timeout};
@@ -93,7 +96,7 @@ async fn a_codec_framed_client_is_activated_acknowledged_and_answered() {
     let stack = Stack::new();
     let acceptor = stack.bind(local).await.unwrap();
     let address = EntityAddress::new(ENTITY, LogicalAddress(0xE400)).unwrap();
-    let mut entity = Entity::<_, 1, 4096>::new(&acceptor, address, EntityConfig::default());
+    let mut entity = Entity::<_, 1, 4096>::new(&acceptor, address, the_tester());
     let messages = [
         OwnedMessage::routing_activation_request(
             ProtocolVersion::V2019,
