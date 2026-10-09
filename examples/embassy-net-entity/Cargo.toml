@@ -6,7 +6,7 @@ version = "0.0.0"
 edition = "2024"
 rust-version.workspace = true
 publish = false
-description = "simple_doip's Entity on embassy-net, through a cancel-safe acceptor"
+description = "simple_doip's Entity on embassy-net, through a cancel-safe acceptor and UDP socket"
 license = "MIT OR Apache-2.0"
 
 [dependencies]
@@ -14,7 +14,7 @@ simple_doip = { workspace = true, features = ["connection"] }
 edge-nal = { workspace = true }
 embedded-io-async = { workspace = true }
 embassy-time = { workspace = true }
-embassy-net = { workspace = true, features = ["tcp", "proto-ipv4", "medium-ethernet"] }
+embassy-net = { workspace = true, features = ["tcp", "udp", "proto-ipv4", "medium-ethernet"] }
 
 [lints]
 workspace = true
