@@ -461,15 +461,13 @@ The standard leaves four things open, and this design settles them:
 Neither `bare_metal_entity` nor `server::Server` is a model; the tests and the encoders
 hold what is worth keeping.
 
-- `bare_metal_entity::Entity::on_udp_rx` answered `0x0001`, `0x0002` and `0x0003` alike
-  with the announcement body, checking neither EID nor VIN, at once and without the
-  wait. It NACKed the mandatory power mode request `0x01`, a malformed known type `0x01`
-  where `0x04` is owed, and checks no protocol version. It counts activated testers, not
-  sockets, as NCTS. Its "announcement" is only ever a reply: nothing sends one unasked.
-  It replies to the source address and port, which is right. Halo runs it until W13
-  replaces it, so the codec fixes below are carried into it: `0x0002` and `0x0003` are
-  answered only on a match (Figure 13), power mode `0x4003` is answered `0x02`, not
-  supported (Table 9), and a known request of the wrong length is NACKed `0x04`.
+- `bare_metal_entity::Entity::on_udp_rx` answers `0x0001`, and `0x0002` and `0x0003`
+  only on a matching EID or VIN (Figure 13), with the announcement body, at once and
+  without the wait. It answers power mode `0x4003` `0x02`, not supported (Table 9),
+  NACKs a known request of the wrong length `0x04`, and checks no protocol version. It
+  counts activated testers, not sockets, as NCTS. Its "announcement" is only ever a
+  reply: nothing sends one unasked. It replies to the source address and port. Halo
+  runs it until W13 replaces it.
 - `server::Server::run_udp_responder` answers `0x0001` only, at once, and is silent on
   `0x0002` and `0x0003` (its `vehicle_identification_with_eid`/`_vin` hooks match
   correctly but are never called), and on power mode and entity status. It sends no
