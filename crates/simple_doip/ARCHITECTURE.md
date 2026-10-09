@@ -49,8 +49,9 @@ decision below follows from that.
 
 Capability is added in Cargo-feature tiers, each building on the previous.
 `default = []`, so the bare crate is the `no_std` core, running up through
-owned/alloc mirrors, `std` I/O and errors, and the tokio-util codec. `connection` stands apart: it builds on the core alone, and
-is `no_std` with no allocator:
+owned/alloc mirrors, `std` I/O and errors, and the tokio-util codec.
+`connection` stands apart: it builds on the core alone, and is `no_std` with no
+allocator:
 
 | Tier | Cargo feature | What it adds | Key files |
 |---|---|---|---|
@@ -398,7 +399,7 @@ the sensor forced. Raise any of them to overturn it.
   - Before activation, it answers a frame over 32 bytes but within `MAX_MESSAGE` with
     header NACK `0x03` (§2.3).
   - It passes the authentication and confirmation sub-states straight through (REQ
-    3.DoIP-129, 130; §7.4).
+    3.DoIP-129, 130; §7.3).
 - **Across the stack:** a suppressed `10 82` or `11 81` sends no response, so it makes
   no close (`uds_on_ip/ARCHITECTURE.md` §9.2).
 
@@ -612,7 +613,8 @@ An identification request goes out in the default protocol version `0xFF`, which
 7.DoIP-156 has an entity of this edition take on one, and which an entity of an earlier
 edition may take too; entity status and power mode requests go out in `0x03`, which such
 an entity may refuse. The module is what the loopback tests, dft and
-`DoIpClientTransport::with_max_data_size` (MDS − 4) need, shares the `messages` codecs, and stays out of `uds_on_ip`.
+`DoIpClientTransport::with_max_data_size` (MDS − 4) need, shares the `messages` codecs,
+and stays out of `uds_on_ip`.
 
 #### 2.5.5 Gating and cost
 

@@ -269,8 +269,12 @@ let mut entity = Entity::<_, 1, 4096>::new(&acceptor, address, config)
     .with_discovery(Udp::bind(udp_socket)?, identity, seed);
 let mut buf = [0u8; 4096];
 loop {
-    if let EntityEvent::Indication { sa, pdu, .. } = entity.next_event(&mut buf, None).await? {
-        entity.request(address.physical(), sa, TaType::Physical, pdu).ok();
+    if let EntityEvent::Indication { sa, pdu, .. } =
+        entity.next_event(&mut buf, None).await?
+    {
+        entity
+            .request(address.physical(), sa, TaType::Physical, pdu)
+            .ok();
     }
 }
 ```

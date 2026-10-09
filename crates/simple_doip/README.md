@@ -1,9 +1,10 @@
 # simple_doip
 
-`simple_doip` owns ISO 13400-2:2019: Diagnostics over IP (DoIP). It is a `no_std`,
-zero-copy protocol core, and a `no_std` tester and entity over `edge-nal`. In its documentation, a table, figure,
-clause or requirement cited with no document named is ISO 13400-2:2019's; any
-other document is named where it is cited.
+`simple_doip` owns ISO 13400-2:2019: Diagnostics over IP (DoIP). It is a
+`no_std`, zero-copy protocol core, and a `no_std` tester and entity over
+`edge-nal`. In its documentation, a table, figure, clause or requirement cited
+with no document named is ISO 13400-2:2019's; any other document is named where
+it is cited.
 
 [`ARCHITECTURE.md`](ARCHITECTURE.md) describes how the crate is put together —
 the feature-gated layering, the sans-io framing/decode seam, the error taxonomy,

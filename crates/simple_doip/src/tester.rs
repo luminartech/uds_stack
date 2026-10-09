@@ -233,16 +233,15 @@ impl<'s, C: TcpConnect, const N: usize> Tester<'s, C, N> {
     /// Activation is the default type. An entity answering
     /// [`RoutingActivationResponseCode::RoutingSuccessfullyActivatedConfirmationRequired`]
     /// is asked again on the same connection every two seconds until it answers
-    /// otherwise, as ISO 13400-2:2019 REQ 3.DoIP-063 allows; alive checks are answered
-    /// meanwhile.
+    /// otherwise, as ISO 13400-2:2019 REQ 3.DoIP-063 allows. While it waits for an answer,
+    /// alive checks are answered, and a message that is neither a routing activation
+    /// response nor a header negative acknowledgement is passed over.
     ///
     /// # Cancel safety
     ///
     /// Waits as long as the entity takes, with no timer of its own: ISO 13400-2 gives a
     /// tester none for routing activation. Bound it by dropping the future, for example
-    /// with [`embassy_time::with_timeout`]; dropping it closes the connection. While it
-    /// waits, an alive check request is answered and any other well-formed message is
-    /// passed over.
+    /// with [`embassy_time::with_timeout`]; dropping it closes the connection.
     ///
     /// # Arguments
     ///
