@@ -119,6 +119,7 @@ test:
 [doc("Lint the workspace at the level pre-commit enforces")]
 clippy:
     cargo clippy --workspace --all-targets --all-features -- -D warnings
+    rustup target add {{ embedded_target }}
     cargo clippy -p embedded-probe --target {{ embedded_target }} -- -D warnings
 
 # A broken intra-doc link renders as plain text and fails nothing else, so a renamed item
@@ -131,8 +132,9 @@ doc:
 # members, so a std dependency enabled by one crate can reach a no_std sibling; nothing
 # below `cargo test` on the host would notice.
 #
-# Then the embedded probe, the sensor's whole server path linked as firmware, for both
-# bare-metal targets, and its size held to the recorded baseline.
+# Then the embedded probe, the sensor's whole server path linked as firmware: here for the
+# core without compare-and-swap, and by `size` for the other target, whose image it holds
+# to the recorded baseline.
 [doc("Build the no_std crates for a bare-metal target, and check the probe's size")]
 embedded: && size
     rustup target add {{ embedded_target }} {{ embedded_target_no_cas }}
@@ -144,25 +146,25 @@ embedded: && size
     cargo build -p embassy-net-entity --target {{ embedded_target }}
     cargo build -p uds_protocol --target {{ embedded_target }} --no-default-features --features alloc
     cargo build -p uds_on_ip    --target {{ embedded_target }} --no-default-features --features alloc
-    cargo build -p embedded-probe --target {{ embedded_target }}
     cargo build -p embedded-probe --target {{ embedded_target_no_cas }}
 
-# The probe's flash and RAM against testing/embedded-probe/size-baseline.json, in the
-# `firmware` profile on the pinned toolchain; tools/check_size.py says what fails. The
-# image's path is cargo's, so a CARGO_TARGET_DIR is honoured, and the llvm-size is the
-# toolchain's own, from its llvm-tools component.
+# The probe's flash, static RAM and main's stack frame against
+# testing/embedded-probe/size-baseline.json, in the `firmware` profile on the pinned
+# toolchain; tools/check_size.py says what fails. The image's path is cargo's, so a
+# CARGO_TARGET_DIR is honoured, and llvm-size and llvm-objdump are the toolchain's own,
+# from its llvm-tools component.
 [doc("Check the embedded probe's flash and RAM against the recorded baseline")]
 size *args:
     #!/usr/bin/env bash
     set -euo pipefail
-    rustup component add --toolchain {{ size_toolchain }} llvm-tools
-    rustup target add --toolchain {{ size_toolchain }} {{ embedded_target }}
+    rustup toolchain install {{ size_toolchain }} --profile minimal --component llvm-tools \
+        --target {{ embedded_target }} --no-self-update
     image=$(cargo +{{ size_toolchain }} build -p embedded-probe --profile firmware \
         --target {{ embedded_target }} --message-format=json-render-diagnostics \
         | python3 -c 'import json, sys; print([m["executable"] for m in map(json.loads, sys.stdin) if m.get("executable")][-1])')
     host=$(rustc +{{ size_toolchain }} -vV | sed -n 's/^host: //p')
     sysroot=$(rustc +{{ size_toolchain }} --print sysroot)
-    python3 tools/check_size.py --size-tool "$sysroot/lib/rustlib/$host/bin/llvm-size" \
+    python3 tools/check_size.py --llvm-bin "$sysroot/lib/rustlib/$host/bin" \
         {{ args }} testing/embedded-probe/size-baseline.json "$image"
 
 [doc("Record the embedded probe's current size as its baseline")]

@@ -2,20 +2,24 @@
 """Hold the embedded probe's image to its recorded size.
 
 ``testing/embedded-probe`` links the sensor's whole server path for bare metal, and this
-compares its sections, as ``llvm-size`` reports them, with the baseline recorded beside
-it. Nothing else in the gate notices a change that costs flash or RAM.
+compares it with the baseline recorded beside it: its sections, as ``llvm-size`` reports
+them, and the stack frame its ``main`` reserves, as ``llvm-objdump`` shows the prologue.
+Nothing else in the gate notices a change that costs flash or RAM.
 
-The two kinds of memory are held differently:
+They are held differently:
 
-  * **RAM** (``data`` and ``bss``) must match the baseline exactly. Their sizes follow
-    from type layouts, not from the optimizer, so they do not drift between toolchains,
-    and every change to them, either way, is recorded in the commit that makes it.
-  * **Flash** (``text``) may grow by up to ``TEXT_GROWTH_PERCENT`` before the check
-    fails, because code size moves with inlining decisions a change did not intend. A
-    shrink of more than that passes, with a reminder to record the smaller baseline.
+  * **RAM** must match the baseline exactly: static RAM (``data`` and ``bss``) and
+    ``main``'s frame, which holds the server while it is built and the future ``run``
+    returns. A change either way is recorded in the commit that makes it. The match can
+    be exact because the toolchain is pinned; layouts, inlining and which statics survive
+    linking all move with the compiler, so a toolchain bump re-records the baseline.
+  * **Flash** (``text``) may move by up to ``TEXT_TOLERANCE_PERCENT`` either way before the
+    check fails, because code size moves with inlining decisions a change did not intend.
+    A larger shrink fails too, so that the smaller baseline is recorded and later growth
+    is measured from it.
 
-The baseline is measured on one pinned toolchain (the MSRV); a different compiler gives a
-different ``text``.
+The stack ``main``'s callees use is not measured; ``main``'s own frame is, because it is
+where the probe's stack cost is.
 
 Stdlib only, so it needs no environment.
 """
@@ -24,25 +28,29 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import subprocess
 import sys
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
-TEXT_GROWTH_PERCENT = 5
+TEXT_TOLERANCE_PERCENT = 5
+
+MAIN_SYMBOL = "__cortex_m_rt_main"
 
 
 @dataclass(frozen=True)
-class Sections:
-    """An image's sizes in bytes, in ``llvm-size``'s Berkeley grouping."""
+class Sizes:
+    """An image's sizes in bytes: ``llvm-size``'s Berkeley grouping, and ``main``'s frame."""
 
     text: int
     data: int
     bss: int
+    main_frame: int
 
 
-def parse_berkeley(output: str) -> Sections:
-    """The sizes in ``llvm-size``'s default output for one file.
+def parse_berkeley(output: str) -> tuple[int, int, int]:
+    """``text``, ``data`` and ``bss`` from ``llvm-size``'s default output for one file.
 
     That is a header line, then ``text data bss dec hex filename``.
     """
@@ -50,62 +58,100 @@ def parse_berkeley(output: str) -> Sections:
     if len(lines) != 2 or lines[0][:3] != ["text", "data", "bss"]:
         raise ValueError(f"not llvm-size output for one file:\n{output}")
     text, data, bss = (int(field) for field in lines[1][:3])
-    return Sections(text=text, data=data, bss=bss)
+    return text, data, bss
 
 
-def compare(baseline: Sections, measured: Sections) -> tuple[list[str], list[str]]:
-    """What fails, then what only needs noting, when ``measured`` is held to ``baseline``."""
+_LABEL = re.compile(r"^[0-9a-f]+ <(?P<name>.+)>:$")
+_PUSH = re.compile(r"^v?push(\.w)?\s+\{(?P<regs>[^}]*)\}")
+_FRAME_POINTER = re.compile(r"^(add(\.w)?\s+r7, sp, #|mov\s+r7, sp$)")
+_SUB_SP = re.compile(r"^sub(\.w|w)?\s+sp, (sp, )?#(?P<imm>0x[0-9a-f]+|\d+)")
+
+
+def _register_bytes(register: str) -> int:
+    return 8 if register.startswith("d") else 4
+
+
+def parse_main_frame(disassembly: str) -> int:
+    """The bytes ``main``'s prologue reserves, from ``llvm-objdump -d --no-show-raw-insn``.
+
+    Those are its pushed registers and every ``sub sp`` before its first other
+    instruction.
+    """
+    lines = iter(disassembly.splitlines())
+    for line in lines:
+        label = _LABEL.match(line.strip())
+        if label and MAIN_SYMBOL in label["name"]:
+            break
+    else:
+        raise ValueError(f"no {MAIN_SYMBOL} in the disassembly")
+
+    frame = 0
+    for line in lines:
+        _, _, instruction = line.partition(":")
+        instruction = instruction.strip()
+        if push := _PUSH.match(instruction):
+            frame += sum(_register_bytes(r.strip()) for r in push["regs"].split(","))
+        elif sub := _SUB_SP.match(instruction):
+            frame += int(sub["imm"], 0)
+        elif not _FRAME_POINTER.match(instruction):
+            break
+    return frame
+
+
+def compare(baseline: Sizes, measured: Sizes) -> list[str]:
+    """What fails when ``measured`` is held to ``baseline``."""
     failures: list[str] = []
-    notes: list[str] = []
-    for name in ("data", "bss"):
+    for name in ("data", "bss", "main_frame"):
         was, now = getattr(baseline, name), getattr(measured, name)
         if now != was:
             failures.append(f"{name}: {now} bytes, baseline {was} ({now - was:+d})")
-    allowed = baseline.text * TEXT_GROWTH_PERCENT // 100
+    allowed = baseline.text * TEXT_TOLERANCE_PERCENT // 100
     change = measured.text - baseline.text
-    if change > allowed:
+    if abs(change) > allowed:
         failures.append(
             f"text: {measured.text} bytes, baseline {baseline.text} ({change:+d}), "
-            f"over the {TEXT_GROWTH_PERCENT}% allowed ({allowed} bytes)"
+            f"past the {TEXT_TOLERANCE_PERCENT}% allowed ({allowed} bytes)"
         )
-    elif -change > allowed:
-        notes.append(
-            f"text: {measured.text} bytes, baseline {baseline.text} ({change:+d}); "
-            "record the smaller baseline"
-        )
-    return failures, notes
+    return failures
 
 
-def _measure(size_tool: str, image: Path) -> Sections:
-    output = subprocess.run(
-        [size_tool, str(image)], check=True, capture_output=True, text=True
+def _run(tool: str, *args: str) -> str:
+    return subprocess.run(
+        [tool, *args], check=True, capture_output=True, text=True
     ).stdout
-    return parse_berkeley(output)
+
+
+def _measure(llvm_bin: Path, image: Path) -> Sizes:
+    text, data, bss = parse_berkeley(_run(str(llvm_bin / "llvm-size"), str(image)))
+    disassembly = _run(
+        str(llvm_bin / "llvm-objdump"), "-d", "--no-show-raw-insn", str(image)
+    )
+    return Sizes(text=text, data=data, bss=bss, main_frame=parse_main_frame(disassembly))
 
 
 def main(argv: list[str]) -> int:
     """Check ``image`` against ``baseline``, or with ``--record``, rewrite the baseline."""
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--size-tool", required=True, help="the llvm-size to run")
+    parser.add_argument(
+        "--llvm-bin", required=True, type=Path, help="where llvm-size and llvm-objdump are"
+    )
     parser.add_argument("--record", action="store_true", help="rewrite the baseline")
     parser.add_argument("baseline", type=Path)
     parser.add_argument("image", type=Path)
     args = parser.parse_args(argv)
 
-    measured = _measure(args.size_tool, args.image)
+    measured = _measure(args.llvm_bin, args.image)
     if args.record:
         args.baseline.write_text(json.dumps(asdict(measured), indent=2) + "\n")
         print(f"recorded {measured} in {args.baseline}")
         return 0
 
-    baseline = Sections(**json.loads(args.baseline.read_text(encoding="utf-8")))
-    failures, notes = compare(baseline, measured)
+    baseline = Sizes(**json.loads(args.baseline.read_text(encoding="utf-8")))
+    failures = compare(baseline, measured)
     print(f"{args.image}: {measured}")
-    for line in notes:
-        print(f"note: {line}")
     for line in failures:
         print(f"error: {line}", file=sys.stderr)
-    if failures or notes:
+    if failures:
         print(
             "\nIf the change is intended, record it in the same commit: "
             "`just size-baseline`.",

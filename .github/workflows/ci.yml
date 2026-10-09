@@ -8,14 +8,16 @@
 # no `-p` at the root runs on its default members, `crates/*`: the five crates. The
 # example member, examples/embassy-net-entity, is built by the hand-rolled `embedded` job
 # below instead, and the loopback test member, testing/doip-loopback, is run by the
-# hand-rolled `loopback` job; see the root Cargo.toml for why neither is a default member. The one job the
-# reusable workflow genuinely cannot reach is fuzzing: its fuzz-tests job runs
-# `cargo fuzz build`/`list`/`run` at the checkout root, which is where a single-crate repo's
-# `fuzz/` directory lives, and has no input to point it elsewhere. This workspace's two fuzz
-# targets live under crates/simple_doip/fuzz and crates/uds_protocol/fuzz instead, so
-# run-fuzz-tests is disabled below and replaced with the two hand-rolled jobs at the bottom
-# of this file. See task-14b-report.md for the rust_workflow change (a `fuzz-directory`
-# input) that would let this move back into the reusable workflow.
+# hand-rolled `loopback` job. The `embedded` job also builds, lints and size-checks the
+# embedded probe, testing/embedded-probe. See the root Cargo.toml for why none of the
+# three is a default member. The one job the reusable workflow genuinely cannot reach is
+# fuzzing: its fuzz-tests job runs `cargo fuzz build`/`list`/`run` at the checkout root,
+# which is where a single-crate repo's `fuzz/` directory lives, and has no input to point
+# it elsewhere. This workspace's two fuzz targets live under crates/simple_doip/fuzz and
+# crates/uds_protocol/fuzz instead, so run-fuzz-tests is disabled below and replaced with
+# the two hand-rolled jobs at the bottom of this file. See task-14b-report.md for the
+# rust_workflow change (a `fuzz-directory` input) that would let this move back into the
+# reusable workflow.
 name: CI
 
 on:

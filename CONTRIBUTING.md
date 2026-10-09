@@ -56,9 +56,12 @@ reach a `no_std` sibling and nothing a host build does will notice. That check
 is the only thing that catches it.
 
 **A size change is recorded in the commit that makes it.** `just size` fails
-when the probe's RAM changes at all or its flash grows past 5%. If the change
-is intended, `just size-baseline` records it, and the diff to
-`testing/embedded-probe/size-baseline.json` goes in the same commit.
+when the probe's static RAM (`data`, `bss`) or its `main`'s stack frame changes
+at all, or its flash moves past 5% either way. If the change is intended,
+`just size-baseline` records it, and the diff to
+`testing/embedded-probe/size-baseline.json` goes in the same commit. The stack
+that `main`'s callees use is not measured, and a toolchain bump re-records the
+baseline.
 
 Install the hooks so the fast checks run on every commit:
 

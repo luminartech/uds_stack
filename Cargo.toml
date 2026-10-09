@@ -5,8 +5,9 @@ members = ["crates/*", "examples/*", "testing/*"]
 # A bare `cargo` command at this root, which is how CI's reusable workflow runs every job,
 # covers the crates alone. The embassy-net adapter and the loopback test crate enable
 # simple_doip's `connection` feature, and as default members they would unify that feature
-# into every bare run, Miri's included. `--workspace`, as the justfile passes, still covers
-# them.
+# into every bare run, Miri's included. The embedded probe is an empty binary on a host,
+# so a bare run has nothing of it to check; CI's `embedded` job builds it for bare metal.
+# `--workspace`, as the justfile passes, still covers all three.
 default-members = ["crates/*"]
 
 # The stack's version. The five crates release in lockstep, so the version is declared once
