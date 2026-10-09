@@ -1,4 +1,4 @@
-//! The fixtures every driver test shares (#23 C37): one scripted transport, a future
+//! The fixtures every driver test shares: one scripted transport, a future
 //! that pends a set number of times, and an executor for futures that finish in bounded
 //! polls.
 
@@ -11,7 +11,7 @@
     reason = "test harness: an overflowing script or a stuck future fails the test loudly"
 )]
 
-use core::future::{Future, poll_fn, ready};
+use core::future::{Future, poll_fn};
 use core::task::Poll;
 use uds_services::{
     Address, AfterSend, Ai, Reloads, SResult, Timestamp, TransportEvent, UdsTransport,
@@ -93,6 +93,9 @@ pub struct Script {
     asked: usize,
     /// Which of them `t_data_req` refuses with `Err`, recording nothing.
     refused: Option<usize>,
+    /// Which of them `t_data_req` records and then pends once on, so a caller can drop
+    /// the future awaiting a transmission the transport has taken.
+    stalled: Option<usize>,
     /// How far the clock moves while a transmission is handed over.
     send_cost: u32,
 }
@@ -120,6 +123,7 @@ impl Script {
             },
             asked: 0,
             refused: None,
+            stalled: None,
             send_cost: 0,
         }
     }
@@ -133,6 +137,13 @@ impl Script {
     /// The same, refusing the `i`th transmission asked for (from zero) with `Err`.
     pub fn refusing(mut self, i: usize) -> Self {
         self.refused = Some(i);
+        self
+    }
+
+    /// The same, pending once on the `i`th transmission asked for (from zero), after
+    /// recording it.
+    pub fn stalling(mut self, i: usize) -> Self {
+        self.stalled = Some(i);
         self
     }
 
@@ -260,7 +271,7 @@ impl Script {
 // `clippy::manual_async_fn`. `next_event` must still be lazy: a driver creates a
 // `next_event` future and drops it unpolled whenever something else wins its race, and a
 // future that took its script step on creation would lose that step. `t_data_req`'s
-// future is always awaited at once, so `ready` serves.
+// future is always awaited at once, so it takes its effect on creation.
 impl UdsTransport for Script {
     type Error = ();
     fn t_data_req(
@@ -271,12 +282,21 @@ impl UdsTransport for Script {
     ) -> impl Future<Output = Result<(), ()>> {
         let asked = self.asked;
         self.asked = asked.wrapping_add(1);
-        if self.refused == Some(asked) {
-            return ready(Err(()));
-        }
-        self.record(ai, data, after);
-        self.now = self.now.wrapping_add(self.send_cost);
-        ready(Ok(()))
+        let result = if self.refused == Some(asked) {
+            Err(())
+        } else {
+            self.record(ai, data, after);
+            self.now = self.now.wrapping_add(self.send_cost);
+            Ok(())
+        };
+        let mut stall = self.stalled == Some(asked);
+        poll_fn(move |cx| {
+            if core::mem::take(&mut stall) {
+                cx.waker().wake_by_ref();
+                return Poll::Pending;
+            }
+            Poll::Ready(result)
+        })
     }
     fn next_event<'b>(
         &mut self,

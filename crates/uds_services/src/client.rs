@@ -32,7 +32,7 @@ use uds_protocol::NegativeResponseCode;
 use uds_session::{
     Address, ChannelAddressing, ChannelParameter, ChannelParams, ClientTx,
     ExpectedResponses, FunctionalKeepAlive, KeepAliveMode, PhysicalChannelId,
-    PhysicalKeepAlive, Rejection, Timestamp,
+    PhysicalKeepAlive, Rejection, Reloads, Timestamp,
 };
 
 /// One application's identifier vocabulary, with the storage derived from it.
@@ -64,7 +64,8 @@ pub enum ClientError<E> {
     /// No response came within `tP_Client`, after ISO 14229-2:2021 9.7 Table 9's two
     /// repeats.
     Timeout,
-    /// The request's last transmission was confirmed failed, after Table 9's repeats.
+    /// The request's last transmission was confirmed failed, after Table 9's repeats, or
+    /// the session layer refused the request outright, which is not repeated.
     NotSent,
     /// The connection to the server closed before it answered.
     Closed,
@@ -163,13 +164,14 @@ impl ClientKeepAlive for PhysicalKeepAlive {
 
 /// How a [`Client`] keeps a server's non-default session alive, fixed at creation.
 ///
-/// ISO 14229-2:2021 9.7 — a `TesterPresent` every `tS3_Client` while a server is out of
-/// its default session, never to a server a request is awaiting a response from (issue
-/// #17 item 1): physically, one falling due during another server's exchange goes out on
-/// time, and one during a functional window waits for it to close; the functional
-/// keep-alive, which reaches every server, waits for any exchange to end. One confirmed
-/// failed is repeated up to ISO 14229-2:2021 9.7 Table 9's two times, and then given up.
-/// The mode is the type parameter, so a client is built in exactly one.
+/// ISO 14229-2:2021 9.5 Tables 5 and 6 — a `TesterPresent` every `tS3_Client` while a
+/// server is out of its default session. This client sends none to a server a request is
+/// awaiting a response from, the request keeping that server alive itself, and none
+/// while a functional window is open, since that awaits every server; one falling due
+/// meanwhile goes once it may. Any other goes out on time, mid-exchange. A failed one
+/// goes again one `tS3_Client` later; a functional one is also repeated up to
+/// ISO 14229-2:2021 9.7 Table 9's two times first. The mode is the type parameter, so a
+/// client is built in exactly one.
 #[derive(Debug)]
 pub struct KeepAlive<K: ClientKeepAlive> {
     /// Never dropped, only moved into the session layer: a `const fn` cannot destructure
@@ -210,20 +212,81 @@ impl KeepAlive<FunctionalKeepAlive> {
     }
 }
 
-/// The client's timing policy: what ISO 14229-2:2021 9.7 and Table 4 leave to the
+/// The client's timing policy: what ISO 14229-2:2021 9.2 Tables 3 and 4 leave to the
 /// client rather than the transport, in milliseconds.
+///
+/// Built with [`Self::new`]; it may gain fields.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub struct ClientTiming {
-    /// `tP3_Client_Phys`, the minimum time between physically addressed requests on a
-    /// channel (``UDSS_LLR_0165``). A request that would break it is held until it may
-    /// go, never reported.
+    /// `tP3_Client_Phys`, the minimum time after a physically addressed request that
+    /// expects no response before the next on the channel (ISO 14229-2:2021 10.3,
+    /// ``UDSS_LLR_0169``). A request that would break it is held until it may go, never
+    /// reported.
     pub physical_spacing: u32,
-    /// `tP3_Client_Func`, the same for functionally addressed requests.
+    /// `tP3_Client_Func`, the minimum time after a functionally addressed request before
+    /// the next on the channel (``UDSS_LLR_0170``).
     pub functional_spacing: u32,
-    /// `ΔtP6`, the network's worst-case delay plus margin (REQ 5.21), added to the
-    /// `P2*Server_max` a server advertises to give the wait after a response-pending
-    /// message (`tP6*_Client`). Vehicle-specific; ISO 14229-2 gives no default.
+    /// `ΔtP6`, the network's worst-case round trip plus margin (ISO 14229-2:2021 REQ 5.21,
+    /// Formula (2)). Added to the `P2Server_max` and `P2*Server_max` a server advertises
+    /// to give the waits for its response: Table 4's minimum for `tP6_Client`, and more
+    /// than its minimum for `tP6*_Client`, which adds only `ΔtP6_Response` and leaves a
+    /// longer wait to the client. Vehicle-specific; the standard gives no default.
     pub network_delay: u32,
+}
+
+impl ClientTiming {
+    /// A timing policy.
+    ///
+    /// # Arguments
+    ///
+    /// * `physical_spacing` - see [`Self::physical_spacing`].
+    /// * `functional_spacing` - see [`Self::functional_spacing`].
+    /// * `network_delay` - see [`Self::network_delay`].
+    #[must_use]
+    pub const fn new(
+        physical_spacing: u32,
+        functional_spacing: u32,
+        network_delay: u32,
+    ) -> Self {
+        Self {
+            physical_spacing,
+            functional_spacing,
+            network_delay,
+        }
+    }
+}
+
+/// Why a response could not be read.
+///
+/// The server answered and the transport delivered what it sent, so this is a
+/// disagreement between two applications about the bytes, not a link fault: see
+/// [`Response::Malformed`] and [`Answer::Malformed`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum MalformedResponse {
+    /// A record the application's [`DataIdentifier::split_record`] rejected.
+    Record(RecordError),
+    /// The response named an identifier this application does not define, which a
+    /// server never asked for it can only have made up.
+    UnknownIdentifier,
+    /// The response was longer than the client's buffer, so it was not read at all.
+    ///
+    /// The buffer is folded from this vocabulary's declared maxima, so only a server
+    /// sending more than the vocabulary declares can overrun it. Its records are not
+    /// walked: a cut at a record boundary would read as a shorter, valid answer.
+    Overlong {
+        /// How long the response was, where the transport knew.
+        declared: Option<usize>,
+    },
+    /// The response was shorter than its service's fixed fields.
+    Short,
+}
+
+impl From<RecordError> for MalformedResponse {
+    fn from(error: RecordError) -> Self {
+        Self::Record(error)
+    }
 }
 
 /// What one server said.
@@ -241,10 +304,13 @@ pub enum Response<V> {
     ///
     /// Not an error, for the reason [`Answer::Malformed`] is not: the server answered and
     /// the transport delivered it intact.
-    Malformed(RecordError),
-    /// The exchange completed and nothing came back — the suppress bit, or a
-    /// functionally addressed request no server supports. Distinct from a timeout,
-    /// because a timeout is a fault and suppression is not.
+    Malformed(MalformedResponse),
+    /// The exchange completed and nothing came back, as a request with the suppress bit
+    /// set expects. Distinct from a timeout, because a timeout is a fault and suppression
+    /// is not.
+    ///
+    /// No call returns this yet: none sets the suppress bit, and a silent functional
+    /// window ends a [`Responses`] instead.
     NoResponseExpected,
 }
 
@@ -283,7 +349,7 @@ pub enum Answer<'d, D: DataIdentifier> {
         /// The responding server's `S_AI[SA]`.
         from: Address,
         /// Why the response could not be walked.
-        error: RecordError,
+        error: MalformedResponse,
     },
 }
 
@@ -351,9 +417,11 @@ impl<
     ///
     /// - [`ClientError::Transport`] where the transport failed;
     /// - [`ClientError::NotSent`] where the request's last transmission failed;
-    /// - [`ClientError::Closed`] where a connection closed while the window was open;
     /// - [`ClientError::NoChannel`] or [`ClientError::Request`] where the request could
     ///   not be made at all.
+    ///
+    /// A server's connection closing ends nothing: the window awaits every server, and
+    /// closes at its own timeout.
     ///
     /// # Cancel safety
     ///
@@ -385,7 +453,7 @@ impl<
 /// [`DataIdentifier::split_record`] is what makes it walkable.
 ///
 /// **Walking one cannot fail.** The whole response is checked when this is built, so a
-/// framing error is one [`RecordError`] reported once — as [`Answer::Malformed`] or
+/// framing error is one [`MalformedResponse`] reported once — as [`Answer::Malformed`] or
 /// [`Response::Malformed`] — rather than a `Result` at every step of a walk that could
 /// only ever fail once and then end. There is no half-walked response: either every pair
 /// is reachable or none is.
@@ -409,16 +477,20 @@ impl<'d, D: DataIdentifier> Records<'d, D> {
     ///
     /// # Errors
     ///
-    /// [`RecordError`] where an identifier is not one this application defines, or a
-    /// record is shorter than it declared, or bytes trail the last whole record.
-    pub(crate) fn validate(response: &'d [u8]) -> Result<Self, RecordError> {
+    /// [`MalformedResponse`] where `response` holds no record (ISO 14229-1:2020
+    /// Table 188), an identifier is not one this application defines, a record is
+    /// shorter than it declared or invalid, or bytes trail the last whole record.
+    pub(crate) fn validate(response: &'d [u8]) -> Result<Self, MalformedResponse> {
+        if response.is_empty() {
+            return Err(MalformedResponse::Short);
+        }
         let mut rest = response;
         while !rest.is_empty() {
             let Some((identifier, tail)) = rest.split_first_chunk::<2>() else {
-                return Err(RecordError::Short);
+                return Err(MalformedResponse::Short);
             };
             let Some(did) = D::from_u16(u16::from_be_bytes(*identifier)) else {
-                return Err(RecordError::UnknownIdentifier);
+                return Err(MalformedResponse::UnknownIdentifier);
             };
             let (_record, remainder) = did.split_record(tail)?;
             rest = remainder;
@@ -557,7 +629,7 @@ impl<
     /// A response-pending message (`0x78`) extends the wait to the enhanced response
     /// window, which [`Self::diagnostic_session_control`] sets from the server's own
     /// `P2*Server_max` and [`ClientTiming::network_delay`]. A response longer than the
-    /// client's buffer is [`Response::Malformed`] with [`RecordError::Overlong`].
+    /// client's buffer is [`Response::Malformed`] with [`MalformedResponse::Overlong`].
     ///
     /// # Arguments
     ///
@@ -583,7 +655,7 @@ impl<
     /// [`UdsTransport::t_data_req`]: the exchange is recorded in the client, and the next
     /// call resets its channel. A future dropped inside `t_data_req` may leave a
     /// transmission whose confirmation never comes, which nothing but the transport can
-    /// clear; tracked in `luminartech/uds_stack#19`.
+    /// clear.
     pub async fn read_data_by_identifier(
         &mut self,
         target: Address,
@@ -606,10 +678,12 @@ impl<
     /// Change one server's diagnostic session.
     ///
     /// ISO 14229-1:2020 10.2 — the positive response carries the session's
-    /// [`SessionTiming`], read in Table 29's units. Its `P2*Server_max`, plus
-    /// [`ClientTiming::network_delay`], becomes the wait this client allows after a
-    /// response-pending message from `target`, where that is longer than the transport's
-    /// own (issue #17 item 4). Entering a non-default session starts the keep-alive the
+    /// [`SessionTiming`], read in Table 29's units. Its `P2Server_max` and
+    /// `P2*Server_max`, each plus [`ClientTiming::network_delay`], become the waits this
+    /// client allows for a response from `target` and after a response-pending message
+    /// from it, each where it is longer than the transport's own. A positive response
+    /// echoing another session is a late reply to an earlier change and is not taken for
+    /// the answer. Entering a non-default session starts the keep-alive the
     /// client was built with. Returning to the default session ends a physical
     /// keep-alive for `target`, and the functional keep-alive once no server this client
     /// put in a non-default session remains in one.
@@ -633,13 +707,20 @@ impl<
         session: DiagnosticSessionType,
     ) -> Result<Response<SessionTiming>, ClientError<T::Error>> {
         let selection = crate::services::session::selection_of(session);
-        let answered = self
+        let exchanged = self
             .exchange_with(
                 target,
                 |request| encode::diagnostic_session_control(request, session),
                 Some(selection),
             )
-            .await?;
+            .await;
+        let answered = match exchanged {
+            Ok(answered) => answered,
+            Err(error) => {
+                self.settle_functional_keep_alive();
+                return Err(error);
+            }
+        };
         let message = answered_bytes(&mut self.store, &answered);
         let positive =
             encode::is_positive(UdsServiceType::DiagnosticSessionControl, message);
@@ -684,7 +765,7 @@ impl<
         self.retire();
         self.drain_window().await?;
         loop {
-            self.send_owed().await?;
+            self.send_owed().await.result?;
             if self.transport.now().has_reached(until) {
                 return Ok(());
             }
@@ -723,7 +804,7 @@ impl<
                     repeat: false,
                     session: None,
                 };
-                self.exchange = Some(Exchange::new(ai, len, sid, class));
+                self.exchange = Some(Exchange::new(ai, len, sid, None, class));
                 None
             }
             None => Some(ClientError::Request),
@@ -747,6 +828,7 @@ impl<
         let ClientBuffers { request, .. } = self.store.split();
         let len = encode(request).ok_or(ClientError::Request)?;
         let sid = request.first().copied().unwrap_or_default();
+        let echo = session.and_then(|_| request.get(1).copied());
         let ai = self
             .addressing(target)
             .with_ta_type(uds_session::TaType::Physical);
@@ -755,7 +837,7 @@ impl<
             repeat: false,
             session,
         };
-        self.exchange = Some(Exchange::new(ai, len, sid, class));
+        self.exchange = Some(Exchange::new(ai, len, sid, echo, class));
         let answered = self.advance().await.unwrap_or(Err(ClientError::Timeout))?;
         // The answer stands: a keep-alive the transport fails to take now stays owed,
         // and the failure meets the next call.
@@ -765,8 +847,9 @@ impl<
 
     /// Record that `target` answered a session change positively, as the session layer
     /// classified it: its keep-alive standing, and, where its `timing` could be read,
-    /// `P2*Server_max` plus the network delay as the enhanced response reload, where that
-    /// is longer than the transport's (ISO 14229-2:2021 Table 4, `tP6*_Client`).
+    /// `P2Server_max` and `P2*Server_max` plus the network delay as the response
+    /// reloads, each where it is longer than the transport's (ISO 14229-2:2021 9.2
+    /// Table 4, `tP6_Client` and `tP6*_Client`).
     fn entered(
         &mut self,
         target: Address,
@@ -774,13 +857,20 @@ impl<
         timing: Option<SessionTiming>,
     ) {
         let now = self.transport.now();
-        let floor = self.transport.channel_timing().enhanced_reload;
+        let floor = self.transport.channel_timing();
         let delay = self.timing.network_delay;
         if let Some(o) = self.book.physical_to(target) {
             o.in_session = selection == uds_session::SessionSelection::NonDefault;
             if let Some(timing) = timing {
-                let enhanced = timing.p2_star_server_max().saturating_add(delay).max(floor);
-                let parameter = ChannelParameter::EnhancedReload(enhanced);
+                let wait =
+                    |server: u32, floor: u32| server.saturating_add(delay).max(floor);
+                let parameter = ChannelParameter::Reloads(Reloads {
+                    default_reload: wait(timing.p2_server_max(), floor.default_reload),
+                    enhanced_reload: wait(
+                        timing.p2_star_server_max(),
+                        floor.enhanced_reload,
+                    ),
+                });
                 let _ = self
                     .session
                     .set_physical_parameter(now, o.id, parameter)
@@ -798,7 +888,7 @@ fn answered_bytes<'s, S: ClientStorage>(store: &'s mut S, answered: &Answered) -
 
 #[cfg(test)]
 mod tests {
-    use super::{Answer, Records, Response};
+    use super::{Answer, MalformedResponse, Records, Response};
     use crate::{DataIdentifier, RecordError};
     use uds_protocol::NegativeResponseCode;
     use uds_session::Address;
@@ -863,7 +953,7 @@ mod tests {
         };
         let broken: Answer<'_, TestDid> = Answer::Malformed {
             from: Address(0x0E02),
-            error: RecordError::Short,
+            error: MalformedResponse::Short,
         };
         assert_eq!(declined.from(), Address(0x0E01));
         assert_eq!(broken.from(), Address(0x0E02));
@@ -894,14 +984,14 @@ mod tests {
         assert_eq!(records.next(), None);
     }
 
-    /// An empty response yields nothing rather than an error: a server that answered
-    /// positively with no records has answered.
+    /// ISO 14229-1:2020 Table 188 — a positive response carries at least one identifier
+    /// and its record, so one with none is too short rather than an empty answer.
     #[test]
-    fn an_empty_response_yields_no_records() {
-        let Ok(records) = Records::<TestDid>::validate(&[]) else {
-            return;
-        };
-        assert_eq!(records.count(), 0);
+    fn an_empty_response_is_short() {
+        assert_eq!(
+            Records::<TestDid>::validate(&[]),
+            Err(MalformedResponse::Short)
+        );
     }
 
     /// A record shorter than the application declared is rejected when the walk is
@@ -911,7 +1001,7 @@ mod tests {
     fn a_truncated_record_is_rejected_before_the_walk() {
         assert_eq!(
             Records::<TestDid>::validate(&[0xF1, 0x90, 0x00, 0x00]),
-            Err(RecordError::Short)
+            Err(MalformedResponse::Record(RecordError::Short))
         );
     }
 
@@ -922,7 +1012,7 @@ mod tests {
     fn an_identifier_the_application_does_not_define_is_rejected() {
         assert_eq!(
             Records::<TestDid>::validate(&[0xDE, 0xAD, 0x00]),
-            Err(RecordError::UnknownIdentifier)
+            Err(MalformedResponse::UnknownIdentifier)
         );
     }
 
@@ -935,7 +1025,7 @@ mod tests {
         let response = [0xF4, 0x0D, 0x40, 0xF1, 0x90, 0x00];
         assert_eq!(
             Records::<TestDid>::validate(&response),
-            Err(RecordError::Short)
+            Err(MalformedResponse::Record(RecordError::Short))
         );
     }
 }

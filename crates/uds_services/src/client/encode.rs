@@ -4,22 +4,20 @@
 //! ``UDSSVC_ARCH_0020`` — the service identifiers and the negative response codes are
 //! `uds_protocol`'s; the bytes between them are this vocabulary's.
 
-use super::{Answer, Records, Response};
-use crate::{
-    DataIdentifier, DiagnosticSessionType, RecordError, SessionTiming, UdsServiceType,
-};
+use super::{Answer, MalformedResponse, Records, Response};
+use crate::{DataIdentifier, DiagnosticSessionType, SessionTiming, UdsServiceType};
 use uds_protocol::NegativeResponseCode;
 use uds_session::Address;
 use uds_session::{ClientRx, SessionSelection, Solicitation};
 
-/// The negative response service identifier (ISO 14229-1:2020 Table A.1).
+/// The negative response service identifier (8.5 Tables 2 and 3).
 const NEGATIVE: u8 = 0x7F;
 /// The offset from a request's service identifier to its positive response's.
 const POSITIVE_OFFSET: u8 = 0x40;
 /// `requestCorrectlyReceived-ResponsePending`.
 const PENDING: u8 = 0x78;
 
-/// The suppressed `TesterPresent` a keep-alive sends (ISO 14229-1:2020 10.5).
+/// The suppressed `TesterPresent` a keep-alive sends (10.7; the suppress bit, 9.2.2).
 pub(super) const KEEP_ALIVE: [u8; 2] = [0x3E, 0x80];
 
 /// The service identifier of `service`.
@@ -64,14 +62,19 @@ pub(super) fn diagnostic_session_control(
     Some(encoded.len())
 }
 
-/// How a message from a server answers the request whose service identifier is `sid`.
+/// How a message from a server answers the request `expected` describes: its service
+/// identifier, and the byte a positive response to it echoes after its own, where the
+/// service has one.
 ///
-/// ``UDSS_LLR_0071`` — a final response echoing `sid` answers the request; anything else
-/// was sent for some other reason, so it is unsolicited and closes no response window. A
-/// stale reply to an earlier request for another service is told apart this way; one
-/// for the same service cannot be. `session` is the selection a positive answer carries.
+/// A final response echoing the service answers the request (8.5, 8.6), and
+/// a positive one echoing another value of that byte does not. Anything else is
+/// classified unsolicited, so it closes no response window. That is this client's own
+/// policy: by ``UDSS_LLR_0065`` a late reply to an earlier request is solicited, but
+/// taking it for the current request's answer would hand the caller the wrong one. A late
+/// reply to the same service, echoing the same byte, cannot be told apart this way.
+/// `session` is the selection a positive answer carries.
 pub(super) fn classify(
-    sid: Option<u8>,
+    expected: Option<(u8, Option<u8>)>,
     message: &[u8],
     session: Option<SessionSelection>,
 ) -> ClientRx {
@@ -79,16 +82,17 @@ pub(super) fn classify(
         solicitation: Solicitation::Unsolicited,
         session: None,
     };
-    let Some(sid) = sid else {
+    let Some((sid, echo)) = expected else {
         return unsolicited;
     };
+    let echoes = |rest: &[u8]| echo.is_none_or(|e| rest.first().is_none_or(|b| *b == e));
     match message {
         [NEGATIVE, s, PENDING, ..] if *s == sid => ClientRx::ResponsePending,
         [NEGATIVE, s, ..] if *s == sid => ClientRx::FinalResponse {
             solicitation: Solicitation::Solicited,
             session: None,
         },
-        [p, ..] if Some(*p) == sid.checked_add(POSITIVE_OFFSET) => {
+        [p, rest @ ..] if Some(*p) == sid.checked_add(POSITIVE_OFFSET) && echoes(rest) => {
             ClientRx::FinalResponse {
                 solicitation: Solicitation::Solicited,
                 session,
@@ -133,7 +137,7 @@ pub(super) enum Final<'d> {
     /// A negative response's code.
     Negative(NegativeResponseCode),
     /// Neither could be read.
-    Malformed(RecordError),
+    Malformed(MalformedResponse),
 }
 
 /// Split a final response [`classify`] found solicited.
@@ -142,11 +146,11 @@ pub(super) enum Final<'d> {
 /// record boundary would read as a shorter answer.
 pub(super) fn final_response(message: &[u8], arrived: Arrived) -> Final<'_> {
     if let Arrived::TooLong(declared) = arrived {
-        return Final::Malformed(RecordError::Overlong { declared });
+        return Final::Malformed(MalformedResponse::Overlong { declared });
     }
     match message {
         [NEGATIVE, _, code, ..] => Final::Negative(NegativeResponseCode::from(*code)),
-        [NEGATIVE, ..] | [] => Final::Malformed(RecordError::Short),
+        [NEGATIVE, ..] | [] => Final::Malformed(MalformedResponse::Short),
         [_, rest @ ..] => Final::Positive(rest),
     }
 }
@@ -186,7 +190,7 @@ pub(super) fn session_timing(answer: Final<'_>) -> Response<SessionTiming> {
                 p2_star_server_max_10ms: u16::from_be_bytes([*star_hi, *star_lo]),
             })
         }
-        Final::Positive(_) => Response::Malformed(RecordError::Short),
+        Final::Positive(_) => Response::Malformed(MalformedResponse::Short),
         Final::Negative(code) => Response::Negative(code),
         Final::Malformed(error) => Response::Malformed(error),
     }
@@ -197,7 +201,7 @@ mod tests {
     use super::{
         Arrived, Final, classify, final_response, read_data_by_identifier, session_timing,
     };
-    use crate::client::Response;
+    use crate::client::{MalformedResponse, Response};
     use crate::{DataIdentifier, RecordError, SessionTiming};
     use uds_session::{ClientRx, SessionSelection, Solicitation};
 
@@ -234,8 +238,9 @@ mod tests {
         );
     }
 
-    /// ``UDSS_LLR_0071`` — only a reply echoing the request's service identifier answers
-    /// it; a stale reply to another service is unsolicited, and a 0x78 is pending.
+    /// 8.5, 8.6 — only a reply echoing the request's service identifier answers it, and a
+    /// positive one only where it echoes the request's sub-function too; a stale reply to
+    /// another service or session is unsolicited, and a 0x78 is pending.
     #[test]
     fn a_response_answers_the_request_only_where_it_echoes_its_service() {
         let solicited = ClientRx::FinalResponse {
@@ -247,20 +252,29 @@ mod tests {
             session: None,
         };
         assert_eq!(
-            classify(Some(0x22), &[0x62, 0xF4, 0x0D, 0x40], None),
+            classify(Some((0x22, None)), &[0x62, 0xF4, 0x0D, 0x40], None),
             solicited
         );
-        assert_eq!(classify(Some(0x22), &[0x7F, 0x22, 0x31], None), solicited);
         assert_eq!(
-            classify(Some(0x22), &[0x7F, 0x22, 0x78], None),
+            classify(Some((0x22, None)), &[0x7F, 0x22, 0x31], None),
+            solicited
+        );
+        assert_eq!(
+            classify(Some((0x22, None)), &[0x7F, 0x22, 0x78], None),
             ClientRx::ResponsePending
         );
-        assert_eq!(classify(Some(0x22), &[0x50, 0x03], None), unsolicited);
-        assert_eq!(classify(Some(0x22), &[0x7F, 0x10, 0x78], None), unsolicited);
+        assert_eq!(
+            classify(Some((0x22, None)), &[0x50, 0x03], None),
+            unsolicited
+        );
+        assert_eq!(
+            classify(Some((0x22, None)), &[0x7F, 0x10, 0x78], None),
+            unsolicited
+        );
         assert_eq!(classify(None, &[0x62, 0xF4, 0x0D, 0x40], None), unsolicited);
         assert_eq!(
             classify(
-                Some(0x10),
+                Some((0x10, Some(0x03))),
                 &[0x50, 0x03],
                 Some(SessionSelection::NonDefault)
             ),
@@ -269,9 +283,13 @@ mod tests {
                 session: Some(SessionSelection::NonDefault),
             }
         );
+        assert_eq!(
+            classify(Some((0x10, Some(0x03))), &[0x50, 0x02], None),
+            unsolicited
+        );
     }
 
-    /// #17 item 4, ISO 14229-1:2020 Table 29 — `P2*Server_max` is read in 10 ms units:
+    /// ISO 14229-1:2020 Table 29 — `P2*Server_max` is read in 10 ms units:
     /// `0x01F4` is five seconds, kept in the wire unit the type names.
     #[test]
     fn p2_star_is_read_in_ten_millisecond_units() {
@@ -285,7 +303,7 @@ mod tests {
         );
         assert!(matches!(
             final_response(&response, Arrived::TooLong(Some(9))),
-            Final::Malformed(RecordError::Overlong { declared: Some(9) })
+            Final::Malformed(MalformedResponse::Overlong { declared: Some(9) })
         ));
     }
 }

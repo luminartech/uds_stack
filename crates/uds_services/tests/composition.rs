@@ -504,11 +504,7 @@ static TESTER: Tester = Tester::new(
     FakeTransport,
     Address(0x0E00),
     KeepAlive::physical(2_000),
-    ClientTiming {
-        physical_spacing: 10,
-        functional_spacing: 10,
-        network_delay: 50,
-    },
+    ClientTiming::new(10, 10, 50),
 );
 
 /// ``UDSSVC_ARCH_0024`` — the tester and the server size the same exchange from the same

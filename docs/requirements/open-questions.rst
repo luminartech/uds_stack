@@ -170,12 +170,14 @@ transport has abandoned the message. Touches ``UDSS_LLR_0045``, ``UDSS_LLR_0138`
 
 The one caller, ``uds_services``' client, narrows it without closing it. It classifies a
 final response as ``solicited`` only where it echoes the service identifier of the request
-in progress (``UDSS_LLR_0071``), so a late reply to another service closes no window; and it
-drains a functional window a dropped call left open before sending anything else. A late
-reply to the same service, on a physical channel, is still taken for the new request's
-answer. That rests on an assumption of use the client states: its transport ends a
-connection whose request timed out rather than carrying the late reply into the next
-exchange (issue #17 item 3, the ``DoIP`` client transport's).
+in progress (ISO 14229-1:2020 8.5 and 8.6), and a positive response to a session change only
+where it echoes the session requested, so a late reply to another service or session closes
+no window. That is the client's own policy, since ``UDSS_LLR_0065`` would call a late reply
+solicited. It also drains a functional window a dropped call left open before sending
+anything else. A late reply to the same service, on a physical channel, is still taken for
+the new request's answer. That rests on an assumption of use the client states: its
+transport ends a connection whose request timed out rather than carrying the late reply into
+the next exchange (issue #17 item 3, the ``DoIP`` client transport's).
 
 A late confirmation can match a reopened channel's request
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

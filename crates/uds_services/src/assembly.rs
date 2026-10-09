@@ -894,7 +894,7 @@ macro_rules! uds_server {
 ///     DoIpTransport,
 ///     Address(0x0E00),
 ///     KeepAlive::physical(2_000),
-///     ClientTiming { physical_spacing: 10, functional_spacing: 10, network_delay: 50 },
+///     ClientTiming::new(10, 10, 50),
 /// );
 /// # let _ = &TESTER;
 /// ```
