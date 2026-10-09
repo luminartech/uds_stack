@@ -18,6 +18,11 @@ wildcards = "allow"
 
 [advisories]
 yanked = "warn"
+# cortex-m, which only the embedded probe brings in. No release of it is without
+# bare-metal; when one is, cargo-deny reports this entry as unused.
+ignore = [
+  { id = "RUSTSEC-2026-0110", reason = "bare-metal is unmaintained, not vulnerable; only cortex-m 0.7 pulls it in, for the unpublished embedded probe" },
+]
 
 [sources]
 unknown-registry = "deny"
