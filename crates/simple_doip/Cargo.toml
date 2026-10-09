@@ -3,7 +3,7 @@ name = "simple_doip"
 version.workspace = true
 edition = "2024"
 rust-version.workspace = true
-description = "An ISO 13400-2 (DoIP) implementation with a no_std, zero-copy protocol core and optional async client and server"
+description = "An ISO 13400-2 (DoIP) implementation with a no_std, zero-copy protocol core, and a no_std tester and entity"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/luminartech/uds_stack"
 readme = "README.md"
@@ -16,7 +16,7 @@ categories = ["network-programming", "embedded", "no-std"]
 exclude = [".vscode/"]
 
 # `default = []`, so docs.rs would otherwise build the no_std core alone and
-# publish a reference with no `client`, `server`, `codec`, `alloc` or `std`
+# publish a reference with no `connection`, `codec`, `alloc` or `std`
 # API in it -- most of what the README points a reader at. Every feature is
 # additive, so all of them can be on at once.
 [package.metadata.docs.rs]
@@ -28,9 +28,7 @@ strum = { workspace = true }
 thiserror = { workspace = true }
 tracing = { workspace = true, optional = true }
 # std-only, all optional
-async-trait = { workspace = true, optional = true }
 bytes = { workspace = true, optional = true }
-futures = { workspace = true, optional = true }
 tokio = { workspace = true, optional = true, features = [
     "macros",
     "rt",
@@ -59,8 +57,6 @@ default = []
 alloc = []
 std = ["alloc", "thiserror/std", "dep:tracing", "tracing/std"]
 codec = ["std", "dep:tokio", "dep:tokio-util", "dep:bytes"]
-client = ["codec", "dep:async-trait", "dep:futures"]
-server = ["codec", "dep:async-trait", "dep:futures"]
 connection = [
     "dep:edge-nal",
     "dep:embedded-io-async",
@@ -70,14 +66,6 @@ connection = [
 
 [[test]]
 name = "golden_vectors"
-
-[[test]]
-name = "integration_test"
-required-features = ["client", "server"]
-
-[[test]]
-name = "udp_identification"
-required-features = ["server"]
 
 [[test]]
 name = "tester"
@@ -108,24 +96,12 @@ name = "entity_std"
 required-features = ["connection"]
 
 [[test]]
-name = "tester_interop"
-required-features = ["connection", "server"]
-
-[[test]]
 name = "entity_interop"
 required-features = ["connection", "codec"]
 
 [[test]]
 name = "tester_late_ack"
 required-features = ["connection"]
-
-[[example]]
-name = "simple_client"
-required-features = ["client"]
-
-[[example]]
-name = "echo_server"
-required-features = ["server"]
 
 [lints]
 workspace = true

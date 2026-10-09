@@ -41,9 +41,7 @@ bitmask-enum = "2"
 thiserror = { version = "2", default-features = false }
 strum = { version = "0.27", default-features = false, features = ["derive"] }
 tracing = { version = "0.1", default-features = false }
-async-trait = "0.1"
 bytes = "1"
-futures = "0.3"
 tokio = "1"
 tokio-util = { version = "0.7", features = ["net", "codec"] }
 serde = { version = "1", default-features = false, features = ["derive"] }

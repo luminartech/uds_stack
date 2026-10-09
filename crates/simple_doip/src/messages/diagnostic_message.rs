@@ -19,8 +19,7 @@ pub struct DiagnosticMessage<'a> {
     pub user_data: &'a [u8],
 }
 
-/// Owned mirror of [`DiagnosticMessage`] for values that must outlive an RX buffer
-/// (tokio channels, `ServerConnectionHandler` responses).
+/// Owned mirror of [`DiagnosticMessage`] for values that must outlive an RX buffer.
 #[cfg(feature = "alloc")]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct OwnedDiagnosticMessage {
