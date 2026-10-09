@@ -9,6 +9,63 @@ pre-1.0 crates).
 
 ## [Unreleased]
 
+The version moves from 0.1.0 to 0.7.0 because `uds_protocol` now releases in lockstep
+with the rest of the `uds_stack` workspace (`uds_session`, `uds_services`,
+`simple_doip` and `uds_on_ip`): every release publishes all five crates at one shared
+version. The jump says nothing about how much this crate changed. The repository is
+now <https://github.com/luminartech/uds_stack>.
+
+### Added
+
+- `ReadDtcInfoReportType`, the `ReadDTCInformation` report type on its own, without
+  the parameters that come with it (clause 12.3.2.2, Table 317), with `value()`,
+  `From<ReadDtcInfoReportType> for u8` and `TryFrom<u8>`. A byte without bit 7 maps to
+  a named report type or to `IsoSaeReserved`; a byte with bit 7 set is
+  `Error::InvalidDtcSubfunctionType`. A server can use it to answer Figure 6's
+  sub-function checks (0x12, 0x7E) before it checks the request's length.
+- `ReadDtcInfoSubFunction::report_type()` turns a decoded sub-function into its
+  `ReadDtcInfoReportType`.
+- `RoutineControlSubFunction::IsoSaeReserved(u8)` holds a `routineControlType` that
+  Table 426 reserves (`0x00`, `0x04`–`0x7F`). It is skipped by `clap`, and `serde`
+  does not deserialize it.
+- `Error::Write(automotive_wire_codec::WriteError)`, with
+  `From<WriteError> for Error`, so `?` works directly on a failed sink write.
+
+### Changed
+
+- **Breaking:** the crate now uses `automotive-wire-codec` 0.4. The re-exported
+  `Encode`, `Decode` and `DecodeIter` are that version's traits, and
+  `Encode::encode` now writes into `&mut impl automotive_wire_codec::Sink` instead
+  of an `embedded_io::Write`. `&mut [u8]` and `Vec<u8>` are no longer sinks: to
+  encode into a caller-owned buffer, wrap it in `automotive_wire_codec::SliceSink`.
+  `uds_protocol` does not re-export `Sink` or `SliceSink`, so a caller that encodes
+  needs its own `automotive-wire-codec = "0.4"` dependency.
+- **Breaking:** the `embedded-io` dependency is gone.
+  `Error::IoError(embedded_io::ErrorKind)` is replaced by `Error::Write(WriteError)`,
+  and the `From<embedded_io::ErrorKind>` and `From<WriteUintError>` conversions are
+  removed. An invalid field width found
+  while encoding now arrives as `Error::Write(WriteError::InvalidWidth(_))`, where it
+  used to be `Error::InvalidWidth`. Decode-side width errors are still
+  `Error::InvalidWidth`. `Error::negative_response_code` returns `None` for
+  `Error::Write`, as it did for `IoError`. With `std`, `From<std::io::Error>` now
+  gives `Error::Write(WriteError::Io)` and drops the `io::ErrorKind`.
+- **Breaking:** `RoutineControlRequest` now decodes a reserved `routineControlType`
+  as `RoutineControlSubFunction::IsoSaeReserved` and no longer rejects it. Figure 30
+  answers it `subFunctionNotSupported` (0x12) only after the routine identifier's
+  0x31 and 0x33 checks, and a server can only make those checks on a request that
+  decoded. `RoutineControlSubFunction::try_from` now fails only when bit 7 is set,
+  which is the suppressPosRspMsgIndicationBit, and that error still maps to 0x12. A
+  positive response that echoes a reserved type is still rejected. Because the enum
+  now has a data-carrying variant, its variants can no longer be cast with `as`.
+- `CommunicationControlRequest` now decodes a `communicationType` whose reserved
+  bits 3-2 are set as `CommunicationType::IsoSaeReserved` and no longer rejects it.
+  Clause 8.7.5 checks the message length before any data parameter, so a request
+  with a stray trailing byte must reach the length check (0x13) before a server
+  answers the reserved value with 0x31. `CommunicationType::try_from` still rejects
+  such a byte.
+- **Breaking:** the minimum supported Rust version is now 1.91, up from 1.85. It is
+  the workspace MSRV, which all five crates share.
+
 ## [0.1.0](https://github.com/luminartech/uds_protocol/compare/v0.0.2...v0.1.0) - 2026-08-10
 
 ### Added

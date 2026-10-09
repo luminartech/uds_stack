@@ -3,10 +3,10 @@
 //
 // The defensive three, `indexing_slicing`, `arithmetic_side_effects` and
 // `as_conversions`, are allowed on each module below that predates the standard, and on
-// no other: 29 sites in production code as of this writing.
+// no other.
 // Panic freedom holds in this crate's production code and is enforced there; its
-// test modules predate the standard and use `unwrap` as test code ordinarily does
-// (49 sites). Scoped to `test`, so the production build stays strict.
+// test modules predate the standard and use `unwrap` as test code ordinarily does.
+// Scoped to `test`, so the production build stays strict.
 #![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used, clippy::panic))]
 //! # Simple `DoIP`
 //!
@@ -30,8 +30,6 @@
 //! | `alloc` | Owned mirrors (`messages::OwnedMessage`) that outlive the receive buffer |
 //! | `std` | `std`-backed I/O and error traits |
 //! | `codec` | `message_codec::MessageCodec`, a `tokio-util` `Encoder`/`Decoder` |
-//! | `client` | The async `client::Client` |
-//! | `server` | The async `server::Server` |
 //! | `connection` | The `no_std` connection service over `edge-nal`: `tester::Tester` and `entity::Entity` |
 //!
 //! `default = []`, so an embedded target gets the `no_std` core with no allocator and no
@@ -105,14 +103,6 @@
 //! - **Bare metal / sans-io:** [`try_frame`] delimits a frame from a byte buffer without
 //!   owning any I/O resource; [`messages::Payload::decode`] then interprets the body.
 //!   See `examples/bare_metal_codec.rs`.
-//! - **Bare-metal entity (server):** [`bare_metal_entity::Entity`] is a complete sans-io
-//!   ISO 13400-2 entity — vehicle announcement, routing activation, diagnostic-message
-//!   dispatch — driven through platform callbacks, for `no_std` targets with a single
-//!   diagnostic TCP socket.
-//! - **Async client:** `client::Client` handles connection, routing activation, and
-//!   acknowledgements (requires the `client` feature). See `examples/simple_client.rs`.
-//! - **Async server:** implement `server::ServerConnectionHandler` and hand it to
-//!   `server::Server` (requires the `server` feature). See `examples/echo_server.rs`.
 
 #![no_std]
 #![warn(missing_docs, missing_debug_implementations)]
@@ -122,12 +112,6 @@ extern crate alloc;
 #[cfg(feature = "std")]
 extern crate std;
 
-#[allow(
-    clippy::indexing_slicing,
-    clippy::arithmetic_side_effects,
-    clippy::as_conversions
-)]
-pub mod bare_metal_entity;
 #[cfg(feature = "connection")]
 pub mod entity;
 pub mod identifiers;
@@ -150,41 +134,16 @@ pub use logical_address::{LogicalAddress, TaType};
 mod framer;
 pub use framer::{RawFrame, try_frame};
 
-#[cfg(feature = "client")]
-pub mod client;
-#[cfg(feature = "client")]
-#[allow(
-    clippy::indexing_slicing,
-    clippy::arithmetic_side_effects,
-    clippy::as_conversions
-)]
-mod client_inner;
-#[cfg(feature = "client")]
-pub mod connection;
-#[cfg(any(feature = "client", feature = "server"))]
-mod error;
 #[cfg(feature = "codec")]
 pub mod message_codec;
-#[cfg(feature = "client")]
-#[allow(
-    clippy::indexing_slicing,
-    clippy::arithmetic_side_effects,
-    clippy::as_conversions
-)]
-mod socket_manager;
-#[cfg(any(feature = "client", feature = "server"))]
-pub use error::Error;
-#[cfg(feature = "server")]
-#[allow(
-    clippy::indexing_slicing,
-    clippy::arithmetic_side_effects,
-    clippy::as_conversions
-)]
-pub mod server;
 #[cfg(feature = "connection")]
 mod stream;
 #[cfg(feature = "connection")]
 pub mod tester;
+
+#[cfg(all(doctest, feature = "connection"))]
+#[doc = include_str!("../MIGRATING.md")]
+struct MigrationGuide;
 
 use core::time::Duration;
 

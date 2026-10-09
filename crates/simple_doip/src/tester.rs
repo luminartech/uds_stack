@@ -233,8 +233,9 @@ impl<'s, C: TcpConnect, const N: usize> Tester<'s, C, N> {
     /// Activation is the default type. An entity answering
     /// [`RoutingActivationResponseCode::RoutingSuccessfullyActivatedConfirmationRequired`]
     /// is asked again on the same connection every two seconds until it answers
-    /// otherwise, as ISO 13400-2:2019 REQ 3.DoIP-063 allows; alive checks are answered
-    /// meanwhile.
+    /// otherwise, as ISO 13400-2:2019 REQ 3.DoIP-063 allows. While it waits for an answer,
+    /// alive checks are answered, and a message that is neither a routing activation
+    /// response nor a header negative acknowledgement is passed over.
     ///
     /// # Cancel safety
     ///
@@ -256,8 +257,9 @@ impl<'s, C: TcpConnect, const N: usize> Tester<'s, C, N> {
     ///   [`RoutingActivationResponseCode::RoutingSuccessfullyActivatedConfirmationRequired`].
     /// - [`ConnectError::ActivationAnsweredForAnotherTester`],
     ///   [`ConnectError::HeaderNack`], [`ConnectError::Closed`] or
-    ///   [`ConnectError::InvalidMessage`] where the entity answers otherwise than with a
-    ///   response for `sa`.
+    ///   [`ConnectError::InvalidMessage`] where the entity answers with a response for
+    ///   another tester, a header negative acknowledgement, its close, or a malformed
+    ///   response.
     pub async fn connect(
         stack: &'s C,
         remote: SocketAddr,

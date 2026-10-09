@@ -80,9 +80,9 @@ pub enum Payload<'a> {
     VehicleIdentificationResponse(VehicleIdentificationResponse),
 }
 
-/// Owned mirror of [`Payload`] for values that must outlive an RX buffer (tokio
-/// channels, `ServerConnectionHandler` responses). Only the two data-carrying leaf
-/// variants need owned storage; every other variant is already fully owned.
+/// Owned mirror of [`Payload`] for values that must outlive an RX buffer. Only the two
+/// data-carrying leaf variants need owned storage; every other variant is already fully
+/// owned.
 #[cfg(feature = "alloc")]
 #[derive(Clone, Debug, Eq, PartialEq)]
 #[non_exhaustive]

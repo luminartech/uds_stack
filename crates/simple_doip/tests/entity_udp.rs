@@ -425,6 +425,28 @@ fn a_request_with_a_vin_is_answered_only_with_the_programmed_vin() {
     assert_eq!(ask(&mut unprogrammed, &udp, &raw(0x0003, &[0x00; 17])), []);
 }
 
+/// Figure 13: a request for another entity's EID or VIN is not this entity's to answer,
+/// and the silence does not stop it answering the next request.
+#[test]
+fn after_a_request_for_another_entity_the_next_is_answered() {
+    let _clock = clock();
+    let (stack, udp) = (MockStack::new(4096), MockUdp::new());
+    let mut entity = announced(&stack, &udp, identity().with_vin(vin()));
+
+    let another_eid = [0x11, 0x22, 0x33, 0x44, 0x55, 0x66];
+    let with_eid = versioned(raw(0x0002, &another_eid), 0x02);
+    let with_vin = versioned(raw(0x0003, b"OTHER000000000001"), 0x02);
+    assert_eq!(ask(&mut entity, &udp, &with_eid), []);
+    assert_eq!(ask(&mut entity, &udp, &with_vin), []);
+
+    let sent = ask(
+        &mut entity,
+        &udp,
+        &versioned(identification_request(), 0x02),
+    );
+    assert_eq!(identification(answer(&sent)).entity_id, EID);
+}
+
 // --- power mode and entity status ------------------------------------------------------
 
 /// REQ 8.DoIP-116 to 118: a power mode request is answered at once with the identity's
@@ -586,7 +608,7 @@ fn a_wrong_length_is_answered_0x04() {
     assert_eq!(ask(&mut entity, &udp, &raw(0x4003, &[])).len(), 1);
 }
 
-/// ARCHITECTURE §2.5.4: a NACK raised once the request's protocol version is known is
+/// ARCHITECTURE §2.5.3: a NACK raised once the request's protocol version is known is
 /// sent in it, as the other answers are, so a tester of the 2012 edition can read it.
 #[test]
 fn a_nack_carries_the_requests_protocol_version() {
@@ -620,6 +642,27 @@ fn a_datagram_with_nothing_to_answer_is_dropped() {
     assert_eq!(run_for(&mut entity, &udp, 1), []);
     assert_eq!(ask(&mut entity, &udp, &[0x03, 0xFC, 0x40]), []);
     assert_eq!(ask(&mut entity, &udp, &raw(0x4003, &[])).len(), 1);
+}
+
+/// REQ 7.DoIP-042, Figure 16: a truncated datagram gets nothing, an alive check request,
+/// which is not taken on UDP, gets NACK `0x01`, and neither stops the entity answering
+/// the identification request after them.
+#[test]
+fn a_datagram_the_entity_cannot_serve_does_not_stop_the_next() {
+    let _clock = clock();
+    let (stack, udp) = (MockStack::new(4096), MockUdp::new());
+    let mut entity = announced(&stack, &udp, identity());
+
+    assert_eq!(ask(&mut entity, &udp, &[0x02, 0xFD, 0x00]), []);
+    let sent = ask(&mut entity, &udp, &versioned(raw(0x0007, &[]), 0x02));
+    assert_eq!(nack(&sent), NackCode::UnknownPayloadType);
+
+    let sent = ask(
+        &mut entity,
+        &udp,
+        &versioned(identification_request(), 0x02),
+    );
+    assert_eq!(identification(answer(&sent)).entity_id, EID);
 }
 
 // --- what the socket does ----------------------------------------------------------------
