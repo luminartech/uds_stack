@@ -163,6 +163,21 @@ fn an_alive_check_during_activation_is_answered() {
     assert_eq!(stack.latest().take_written(), expected);
 }
 
+/// `Tester::connect`'s contract: only a routing activation response answers the request,
+/// and any other well-formed message while it waits is passed over.
+#[test]
+fn other_messages_during_activation_are_passed_over() {
+    let _clock = clock();
+    let stack = MockStack::new(usize::MAX);
+    let mut script = alive_check_response();
+    script.extend(nack(ENTITY, TESTER, 0x02));
+    script.extend(activation_response(0x10));
+    stack.script_next(&script);
+
+    assert!(connect(&stack).is_ok());
+    assert_eq!(stack.latest().take_written(), activation_request());
+}
+
 /// ISO 13400-2:2019 Table 48: the response names the tester that asked; one naming
 /// another is not this tester's activation.
 #[test]
@@ -748,6 +763,26 @@ fn no_ack_within_a_doip_diagnostic_message_is_timeout_a() {
     );
 }
 
+/// ISO 13400-2:2019 Table 12: `A_DoIP_Diagnostic_Message` is the whole 2 s, so an
+/// acknowledgement late in it still confirms the request.
+#[test]
+fn an_ack_late_in_a_doip_diagnostic_message_confirms_ok() {
+    let _clock = clock();
+    let stack = MockStack::new(usize::MAX);
+    let mut tester = active(&stack);
+    request(&mut tester).unwrap();
+    let mut buf = [0; 16];
+    let mut waiting = pin!(tester.next_event(&mut buf, None));
+
+    assert!(until_stalled(waiting.as_mut()).is_none());
+    advance(Duration::from_millis(1999));
+    stack.latest().send(&ack(ENTITY, TESTER));
+    assert_eq!(
+        until_stalled(waiting.as_mut()),
+        Some(Ok(confirm(DoIpResult::Ok)))
+    );
+}
+
 /// `A_DoIP_Diagnostic_Message` runs from the request's last byte: a request whose writing
 /// took a while gets its whole window after it.
 #[test]
@@ -959,6 +994,44 @@ fn the_entity_closing_with_a_request_outstanding_confirms_before_closed() {
     assert_eq!(
         next(&mut tester, &mut buf).unwrap(),
         confirm(DoIpResult::Error)
+    );
+    assert_eq!(
+        next(&mut tester, &mut buf).unwrap(),
+        ConnectionEvent::Closed
+    );
+}
+
+/// ISO 14229-5:2022 REQ 7.9: a server that changes session closes the connection right
+/// after its positive response. What arrived before the close is reported first: the
+/// request's confirm, the response, then `Closed`.
+#[test]
+fn what_arrived_before_the_entity_closed_is_reported_before_closed() {
+    let _clock = clock();
+    let stack = MockStack::new(usize::MAX);
+    let mut tester = active(&stack);
+    request(&mut tester).unwrap();
+    let mut buf = [0; 16];
+    assert!(until_stalled(pin!(tester.next_event(&mut buf, None))).is_none());
+    stack.latest().send(&ack(ENTITY, TESTER));
+    stack.latest().send(&diagnostic(
+        ENTITY,
+        TESTER,
+        &[0x50, 0x02, 0x00, 0x32, 0x01, 0xF4],
+    ));
+    stack.latest().eof();
+
+    assert_eq!(
+        next(&mut tester, &mut buf).unwrap(),
+        confirm(DoIpResult::Ok)
+    );
+    assert_eq!(
+        next(&mut tester, &mut buf).unwrap(),
+        ConnectionEvent::Indication {
+            sa: ENTITY,
+            ta: TESTER,
+            ta_type: TaType::Physical,
+            pdu: &[0x50, 0x02, 0x00, 0x32, 0x01, 0xF4],
+        }
     );
     assert_eq!(
         next(&mut tester, &mut buf).unwrap(),

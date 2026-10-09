@@ -240,7 +240,9 @@ impl<'s, C: TcpConnect, const N: usize> Tester<'s, C, N> {
     ///
     /// Waits as long as the entity takes, with no timer of its own: ISO 13400-2 gives a
     /// tester none for routing activation. Bound it by dropping the future, for example
-    /// with [`embassy_time::with_timeout`]; dropping it closes the connection.
+    /// with [`embassy_time::with_timeout`]; dropping it closes the connection. While it
+    /// waits, an alive check request is answered and any other well-formed message is
+    /// passed over.
     ///
     /// # Arguments
     ///
@@ -256,8 +258,9 @@ impl<'s, C: TcpConnect, const N: usize> Tester<'s, C, N> {
     ///   [`RoutingActivationResponseCode::RoutingSuccessfullyActivatedConfirmationRequired`].
     /// - [`ConnectError::ActivationAnsweredForAnotherTester`],
     ///   [`ConnectError::HeaderNack`], [`ConnectError::Closed`] or
-    ///   [`ConnectError::InvalidMessage`] where the entity answers otherwise than with a
-    ///   response for `sa`.
+    ///   [`ConnectError::InvalidMessage`] where the entity answers with a response for
+    ///   another tester, a header negative acknowledgement, its close, or a malformed
+    ///   response.
     pub async fn connect(
         stack: &'s C,
         remote: SocketAddr,

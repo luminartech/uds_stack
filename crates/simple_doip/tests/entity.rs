@@ -308,6 +308,25 @@ fn surplus_connections_are_accepted_and_dropped() {
     assert!(!reserve.is_shut());
 }
 
+/// REQ 4.DoIP-002: a connection that closes without sending a byte frees its socket, so
+/// many more of them than `MCTS + 1` leave room for a tester afterwards.
+#[test]
+fn connections_that_close_without_a_frame_free_their_sockets() {
+    let _clock = clock();
+    let stack = MockStack::new(4096);
+    let mut entity = OneSocket::new(&stack, address(), two_testers());
+
+    for _ in 0..3 {
+        let (first, second) = (stack.dial(), stack.dial());
+        first.eof();
+        second.eof();
+        assert_eq!(events(&mut entity), []);
+    }
+
+    let peer = activated(&stack, &mut entity, TESTER);
+    assert!(!peer.is_shut());
+}
+
 /// The `DiagnosticEntity` contract: a caller's deadline that has already passed returns
 /// at once, but only after what is owed: here, a request's confirm.
 #[test]
