@@ -16,8 +16,8 @@ use std::pin::pin;
 use std::task::{Context, Poll, Waker};
 
 use simple_doip::service::{
-    ConnectionEvent, DiagnosticConnection, DoIpResult, Refusal, TesterAddress,
-    TesterConnection, Timestamp,
+    ConnectionEvent, DiagnosticConnection, DoIpResult, Reconnection, Refusal,
+    TesterAddress, TesterConnection, Timestamp,
 };
 use simple_doip::{LogicalAddress, TaType};
 use uds_on_ip::{ClientTransportError, DoIpClientTransport};
@@ -257,11 +257,18 @@ impl TesterConnection for Scripted {
         None
     }
 
-    async fn reconnect(&mut self) -> Result<(), Self::ReconnectError> {
+    async fn reconnect(
+        &mut self,
+        deadline: Option<Timestamp>,
+    ) -> Result<Reconnection, Self::ReconnectError> {
         self.calls.push(Call::Reconnect);
         self.give_up(DoIpResult::NoSocket);
         while self.pending_reconnects > 0 {
             self.pending_reconnects = self.pending_reconnects.saturating_sub(1);
+            if let Some(deadline) = deadline {
+                self.now = deadline.0;
+                return Ok(Reconnection::Deadline);
+            }
             yield_once().await;
         }
         if self.failing_reconnects > 0 {
@@ -270,7 +277,7 @@ impl TesterConnection for Scripted {
         }
         self.connected = true;
         self.closed_reported = false;
-        Ok(())
+        Ok(Reconnection::Connected)
     }
 
     async fn close(&mut self) -> Result<(), Self::CloseError> {
@@ -1016,4 +1023,27 @@ fn a_close_dropped_part_way_reports_no_close() {
         next_until(&mut t, Some(uds_session::Timestamp(100))),
         Seen::Deadline
     );
+}
+
+/// A reconnect for a waiting request honours the call's deadline: where it passes first,
+/// the call reports `Deadline`, the request still waiting, and a later call reconnects
+/// and sends it. `idle_until` returns at its time even when a keep-alive needs a new
+/// connection.
+#[test]
+fn a_reconnect_stops_at_the_calls_deadline() {
+    let mut connection = Scripted::new([Entity::Acks(DoIpResult::Ok)]);
+    connection.connected = false;
+    connection.closed_reported = true;
+    connection.pending_reconnects = 1;
+    let mut t: Transport = DoIpClientTransport::new(connection, RELOADS);
+    send(&mut t, TO_ENTITY, READ);
+    assert_eq!(next(&mut t), Seen::Closed(Address(ENTITY.0), false));
+
+    assert_eq!(
+        next_until(&mut t, Some(uds_session::Timestamp(100))),
+        Seen::Deadline
+    );
+    assert_eq!(t.connection().requests(), Vec::<Vec<u8>>::new());
+
+    assert_eq!(next(&mut t), Seen::Conf(TO_ENTITY, SResult::Ok));
 }

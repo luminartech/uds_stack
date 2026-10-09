@@ -4,7 +4,9 @@ use core::future::Future;
 use core::ops::Range;
 
 use simple_doip::LogicalAddress;
-use simple_doip::service::{self, ConnectionEvent, DoIpResult, Refusal, TesterConnection};
+use simple_doip::service::{
+    self, ConnectionEvent, DoIpResult, Reconnection, Refusal, TesterConnection,
+};
 use uds_services::{AfterSend, ClientTransport, TransportEvent, UdsTransport};
 use uds_session::{Address, Ai, Reloads, SResult, TaType, Timestamp};
 
@@ -36,9 +38,9 @@ use crate::mapping::{
 ///   while the connection is closed is accepted at once and waits; the next
 ///   [`UdsTransport::next_event`] reconnects for it through
 ///   [`TesterConnection::reconnect`], which gives the old connection up and waits out its
-///   back-off first, and then sends it. That wait does not honour the call's deadline:
-///   bound it by dropping the call, which leaves the request waiting, owed its confirm,
-///   for the next event to reconnect for. A request withdrawn with `DoIP_TIMEOUT_A`
+///   back-off first, and then sends it. The reconnect stops at the call's deadline, and a
+///   call dropped meanwhile stops it too; either leaves the request waiting, owed its
+///   confirm, for a later event to reconnect for. A request withdrawn with `DoIP_TIMEOUT_A`
 ///   leaves the connection up and reconnects nothing.
 /// - **A late reply.** A physical request that expects a response, to a server whose
 ///   last such request was confirmed and never answered, goes on a new connection, so
@@ -161,8 +163,8 @@ impl<C: TesterConnection, const QUEUE: usize, const PEERS: usize>
     ///
     /// ```compile_fail
     /// # use simple_doip::service::{
-    /// #     ConnectionEvent, DiagnosticConnection, Refusal, TesterAddress,
-    /// #     TesterConnection, Timestamp,
+    /// #     ConnectionEvent, DiagnosticConnection, Reconnection, Refusal,
+    /// #     TesterAddress, TesterConnection, Timestamp,
     /// # };
     /// # use simple_doip::{LogicalAddress, TaType};
     /// # use uds_on_ip::{DoIpClientTransport, profile::bench_reloads};
@@ -186,7 +188,9 @@ impl<C: TesterConnection, const QUEUE: usize, const PEERS: usize>
     /// #       TesterAddress::new(LogicalAddress(0x0E00)).unwrap()
     /// #   }
     /// #   fn io_error(&self) -> Option<&()> { None }
-    /// #   async fn reconnect(&mut self) -> Result<(), ()> { Ok(()) }
+    /// #   async fn reconnect(&mut self, _: Option<Timestamp>) -> Result<Reconnection, ()> {
+    /// #       Ok(Reconnection::Connected)
+    /// #   }
     /// #   async fn close(&mut self) -> Result<(), ()> { Ok(()) }
     /// # }
     ///
@@ -404,22 +408,32 @@ impl<C: TesterConnection, const QUEUE: usize, const PEERS: usize>
         }
     }
 
-    /// Reconnects where the connection has ended and a request waits for it. A reconnect
-    /// that fails confirms every waiting request failed; one dropped part-way leaves them
-    /// waiting for the next.
-    async fn reconnect(&mut self) -> Result<(), ClientTransportError<C>> {
+    /// Reconnects where the connection has ended and a request waits for it, stopping at
+    /// `deadline`, and whether it stopped there. A reconnect that fails confirms every
+    /// waiting request failed; one stopped or dropped part-way leaves them waiting for
+    /// the next.
+    async fn reconnect(
+        &mut self,
+        deadline: Option<Timestamp>,
+    ) -> Result<Reconnection, ClientTransportError<C>> {
         if self.link == Link::Up || self.waiting.is_empty() {
-            return Ok(());
+            return Ok(Reconnection::Connected);
         }
-        if let Err(error) = self.connection.reconnect().await {
-            while let Some((ai, _)) = self.waiting.front() {
-                self.owed.confirm(ai, s_result(DoIpResult::NoSocket));
-                self.waiting.pop();
+        let deadline = deadline.map(|at| service::Timestamp(at.0));
+        match self.connection.reconnect(deadline).await {
+            Ok(Reconnection::Connected) => {
+                self.link = Link::Up;
+                Ok(Reconnection::Connected)
             }
-            return Err(ClientTransportError::Reconnect(error));
+            Ok(Reconnection::Deadline) => Ok(Reconnection::Deadline),
+            Err(error) => {
+                while let Some((ai, _)) = self.waiting.front() {
+                    self.owed.confirm(ai, s_result(DoIpResult::NoSocket));
+                    self.waiting.pop();
+                }
+                Err(ClientTransportError::Reconnect(error))
+            }
         }
-        self.link = Link::Up;
-        Ok(())
     }
 
     /// Hands the oldest waiting request to the connection, if it can take one.
@@ -578,7 +592,9 @@ impl<C: TesterConnection, const QUEUE: usize, const PEERS: usize> UdsTransport
             if let Some(owed) = self.owed.pop() {
                 return Ok(owed.into());
             }
-            self.reconnect().await?;
+            if self.reconnect(deadline).await? == Reconnection::Deadline {
+                return Ok(TransportEvent::Deadline);
+            }
             self.send_waiting();
             if let Some(owed) = self.owed.pop() {
                 return Ok(owed.into());

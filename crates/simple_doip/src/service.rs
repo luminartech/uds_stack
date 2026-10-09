@@ -412,13 +412,25 @@ pub trait TesterConnection: DiagnosticConnection {
     fn io_error(&self) -> Option<&Self::IoError>;
 
     /// Gives the connection up, if there is one, then opens a new TCP connection and
-    /// activates routing on it.
+    /// activates routing on it, or stops once `deadline` passes.
+    ///
+    /// Stopped at its deadline, or dropped, it leaves the connection closed, and the
+    /// back-off running from the loss, so a later reconnect takes up where it stopped
+    /// rather than waiting it out again.
+    ///
+    /// # Arguments
+    ///
+    /// * `deadline` - when to stop, on [`DiagnosticConnection::now`]'s clock; `None`
+    ///   waits as long as reconnecting takes.
     ///
     /// # Errors
     ///
     /// [`Self::ReconnectError`] where no connection could be opened and activated; the
     /// connection is then closed until a reconnect succeeds.
-    fn reconnect(&mut self) -> impl Future<Output = Result<(), Self::ReconnectError>>;
+    fn reconnect(
+        &mut self,
+        deadline: Option<Timestamp>,
+    ) -> impl Future<Output = Result<Reconnection, Self::ReconnectError>>;
 
     /// Closes the connection gracefully, if there is one, and leaves it closed until a
     /// [`Self::reconnect`] succeeds.
@@ -435,6 +447,15 @@ pub trait TesterConnection: DiagnosticConnection {
     ///
     /// [`Self::CloseError`] where closing fails. The connection is closed either way.
     fn close(&mut self) -> impl Future<Output = Result<(), Self::CloseError>>;
+}
+
+/// How a [`TesterConnection::reconnect`] that did not fail ended.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Reconnection {
+    /// A new connection is open, routing activated on it.
+    Connected,
+    /// The caller's deadline passed first; the connection is closed.
+    Deadline,
 }
 
 /// One connection in a [`DiagnosticEntity`]'s connection table.

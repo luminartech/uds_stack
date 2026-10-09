@@ -106,8 +106,8 @@ stateDiagram-v2
     Connected --> BackingOff: reconnect gives the old connection up
     Closed --> BackingOff: reconnect
     BackingOff --> Activating: the back-off since the last loss has passed
-    Activating --> Closed: reconnect fails or is dropped
-    BackingOff --> Closed: reconnect is dropped
+    Activating --> Closed: reconnect fails, is dropped, or its deadline passes
+    BackingOff --> Closed: reconnect is dropped, or its deadline passes
     note right of Closed
         A request awaiting its confirm is confirmed first,
         DoIP_NO_SOCKET or DoIP_ERROR. Then next_event

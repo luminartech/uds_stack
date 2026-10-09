@@ -117,7 +117,7 @@ async fn a_lost_request_leaves_nothing_for_the_next_one() {
         events.push(format!("{event:?}"));
     }
     MockDriver::get().advance(RECONNECT_BACKOFF);
-    timeout(PATIENCE, tester.reconnect())
+    timeout(PATIENCE, tester.reconnect(None))
         .await
         .unwrap()
         .unwrap();

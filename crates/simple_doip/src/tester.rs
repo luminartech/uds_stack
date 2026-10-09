@@ -16,8 +16,8 @@ use crate::messages::{
     ProtocolVersion, RoutingActivationResponse, RoutingActivationResponseCode,
 };
 use crate::service::{
-    ConnectionEvent, DiagnosticConnection, DoIpResult, Refusal, TesterAddress,
-    TesterConnection, Timestamp,
+    ConnectionEvent, DiagnosticConnection, DoIpResult, Reconnection, Refusal,
+    TesterAddress, TesterConnection, Timestamp,
 };
 use crate::wire::Decode;
 use crate::{LogicalAddress, TIMEOUT_DIAGNOSTIC_MESSAGE_RESPONSE, TaType};
@@ -174,7 +174,7 @@ pub enum ConnectError<E> {
 /// 'send: loop {
 ///     match tester.request(LogicalAddress(0x0001), TaType::Physical, &[0x3E, 0x00]) {
 ///         Err(Refusal::NotConnected) => {
-///             tester.reconnect().await?;
+///             tester.reconnect(None).await?;
 ///             continue 'send;
 ///         }
 ///         accepted => accepted?,
@@ -725,12 +725,14 @@ impl<C: TcpConnect, const N: usize> TesterConnection for Tester<'_, C, N> {
     /// [`next_event`](DiagnosticConnection::next_event), before anything from the new
     /// connection.
     ///
+    /// Where `deadline` passes first, during the back-off, the connect or routing
+    /// activation, it stops there and reports [`Reconnection::Deadline`], the tester
+    /// closed. A connection it opened and did not keep counts as a loss for the back-off,
+    /// as for any dropped reconnect.
+    ///
     /// # Cancel safety
     ///
-    /// As for [`Tester::connect`]: no timer bounds the attempt but the back-off, so
-    /// bound the whole of it by dropping the future, for example with
-    /// [`embassy_time::with_timeout`]. Dropped, or failed, it leaves the tester with no
-    /// connection.
+    /// Dropped, or failed, it leaves the tester with no connection.
     ///
     /// # Errors
     ///
@@ -739,12 +741,25 @@ impl<C: TcpConnect, const N: usize> TesterConnection for Tester<'_, C, N> {
     /// [`ConnectionEvent::Closed`] for the connection the reconnect gave up, if one was
     /// open and its end not yet reported, and [`request`](DiagnosticConnection::request)
     /// is [`Refusal::NotConnected`] until a reconnect succeeds.
-    async fn reconnect(&mut self) -> Result<(), Self::ReconnectError> {
-        self.lose_connection(true, None).await;
-        if let Some(lost_at) = self.lost_at {
-            Timer::at(after(lost_at, self.backoff)).await;
+    async fn reconnect(
+        &mut self,
+        deadline: Option<Timestamp>,
+    ) -> Result<Reconnection, Self::ReconnectError> {
+        let until = deadline.map(|deadline| caller_deadline(deadline, Instant::now()));
+        self.lose_connection(true, until).await;
+        let attempt = async {
+            if let Some(lost_at) = self.lost_at {
+                Timer::at(after(lost_at, self.backoff)).await;
+            }
+            self.establish().await
+        };
+        let Some(until) = until else {
+            return attempt.await.map(|()| Reconnection::Connected);
+        };
+        match with_deadline(until, attempt).await {
+            Ok(established) => established.map(|()| Reconnection::Connected),
+            Err(embassy_time::TimeoutError) => Ok(Reconnection::Deadline),
         }
-        self.establish().await
     }
 
     /// Closes the connection gracefully, if there is one, through the socket's
