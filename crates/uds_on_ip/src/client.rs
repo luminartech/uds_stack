@@ -643,17 +643,20 @@ impl<C: TesterConnection, const QUEUE: usize, const PEERS: usize> ClientTranspor
     for DoIpClientTransport<C, QUEUE, PEERS>
 {
     /// [`TesterConnection::close`]. A request the connection carries is confirmed failed
-    /// by it, and one waiting here by the transport; neither close is reported.
+    /// by it, and one waiting here by the transport; the close is reported by no
+    /// [`TransportEvent::Closed`], even where the future is dropped before it finishes.
     ///
     /// # Errors
     ///
     /// [`ClientTransportError::Close`] where closing fails; the connection is closed
     /// either way.
     async fn close(&mut self) -> Result<(), Self::Error> {
-        let closed = self.connection.close().await;
         self.peers = [None; PEERS];
         self.end();
-        closed.map_err(ClientTransportError::Close)
+        self.connection
+            .close()
+            .await
+            .map_err(ClientTransportError::Close)
     }
 }
 

@@ -82,6 +82,8 @@ struct Scripted {
     quiet_calls: usize,
     /// How many times the next reconnect pends, after giving the old connection up.
     pending_reconnects: usize,
+    /// How many times the next close pends, after giving the connection up.
+    pending_closes: usize,
 }
 
 impl Scripted {
@@ -97,6 +99,7 @@ impl Scripted {
             now: 0,
             quiet_calls: 0,
             pending_reconnects: 0,
+            pending_closes: 0,
         }
     }
 
@@ -273,6 +276,10 @@ impl TesterConnection for Scripted {
     async fn close(&mut self) -> Result<(), Self::CloseError> {
         self.calls.push(Call::Close);
         self.give_up(DoIpResult::NoSocket);
+        while self.pending_closes > 0 {
+            self.pending_closes = self.pending_closes.saturating_sub(1);
+            yield_once().await;
+        }
         Ok(())
     }
 }
@@ -990,5 +997,23 @@ fn the_error_is_named_by_its_connection() {
     assert_eq!(
         error.to_string(),
         "the DoIP connection could not be reopened: \"refused\""
+    );
+}
+
+/// A close dropped before it finished has still closed the connection, and the close the
+/// client asked for is reported by no `Closed`, however late the connection reports it.
+#[test]
+fn a_close_dropped_part_way_reports_no_close() {
+    let mut connection = Scripted::new([Entity::Acks(DoIpResult::Ok)]);
+    connection.pending_closes = 1;
+    let mut t: Transport = DoIpClientTransport::new(connection, RELOADS);
+    send(&mut t, TO_ENTITY, READ);
+    assert_eq!(next(&mut t), Seen::Conf(TO_ENTITY, SResult::Ok));
+
+    assert!(poll_once(ClientTransport::close(&mut t)).is_pending());
+
+    assert_eq!(
+        next_until(&mut t, Some(uds_session::Timestamp(100))),
+        Seen::Deadline
     );
 }
