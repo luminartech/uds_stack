@@ -901,7 +901,7 @@ choosing the crate; the mechanics are here:
   wake each other unreliably, and a socket whose `listen` fails, on a port of 0 or one
   already listening elsewhere, is not recovered.
 - The crate root allows `indexing_slicing`, `arithmetic_side_effects` and
-  `as_conversions` on the modules that predate the lint standard, 13 sites; every
+  `as_conversions` on the modules that predate the lint standard; every
   other module, `entity`, `stream` and `tester` among them, meets the standard.
 
 ---

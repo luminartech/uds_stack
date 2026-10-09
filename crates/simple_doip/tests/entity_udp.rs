@@ -644,9 +644,9 @@ fn a_datagram_with_nothing_to_answer_is_dropped() {
     assert_eq!(ask(&mut entity, &udp, &raw(0x4003, &[])).len(), 1);
 }
 
-/// REQ 7.DoIP-031 and 042, Figure 16: a truncated datagram gets nothing, an alive check
-/// request, which is not taken on UDP, gets NACK `0x01`, and neither stops the entity
-/// answering the identification request after them.
+/// REQ 7.DoIP-042, Figure 16: a truncated datagram gets nothing, an alive check request,
+/// which is not taken on UDP, gets NACK `0x01`, and neither stops the entity answering
+/// the identification request after them.
 #[test]
 fn a_datagram_the_entity_cannot_serve_does_not_stop_the_next() {
     let _clock = clock();
