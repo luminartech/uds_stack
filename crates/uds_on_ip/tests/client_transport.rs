@@ -319,6 +319,9 @@ fn run<F: Future>(future: F) -> F::Output {
 
 type Transport = DoIpClientTransport<Scripted, 256>;
 
+/// A transport to an entity with two servers behind it.
+type Gateway = DoIpClientTransport<Scripted, 256, 2>;
+
 fn transport(script: impl IntoIterator<Item = Entity>) -> Transport {
     DoIpClientTransport::new(Scripted::new(script), RELOADS)
 }
@@ -377,11 +380,14 @@ enum Seen {
     Deadline,
 }
 
-fn next(t: &mut Transport) -> Seen {
+fn next<const PEERS: usize>(t: &mut DoIpClientTransport<Scripted, 256, PEERS>) -> Seen {
     next_until(t, None)
 }
 
-fn next_until(t: &mut Transport, deadline: Option<uds_session::Timestamp>) -> Seen {
+fn next_until<const PEERS: usize>(
+    t: &mut DoIpClientTransport<Scripted, 256, PEERS>,
+    deadline: Option<uds_session::Timestamp>,
+) -> Seen {
     let mut buf = [0; 32];
     match run(t.next_event(&mut buf, deadline)).unwrap() {
         TransportEvent::DataInd { ai, data } => Seen::Ind(ai, data.to_vec()),
@@ -553,13 +559,16 @@ const TO_ENTITY_2: Ai = ai(ENTITY_2, uds_session::TaType::Physical);
 /// the deadline: the transport neither repeats it nor spins on the connection.
 #[test]
 fn an_end_is_one_closed_per_server_then_quiet() {
-    let mut t = transport([
-        Entity::Acks(DoIpResult::Ok),
-        Entity::Acks(DoIpResult::Ok),
-        Entity::Closes,
-    ]);
-    send(&mut t, TO_ENTITY, READ);
-    send(&mut t, TO_ENTITY_2, READ);
+    let mut t: Gateway = DoIpClientTransport::new(
+        Scripted::new([
+            Entity::Acks(DoIpResult::Ok),
+            Entity::Acks(DoIpResult::Ok),
+            Entity::Closes,
+        ]),
+        RELOADS,
+    );
+    run(t.t_data_req(TO_ENTITY, READ, AfterSend::Continue)).unwrap();
+    run(t.t_data_req(TO_ENTITY_2, READ, AfterSend::Continue)).unwrap();
     assert_eq!(next(&mut t), Seen::Conf(TO_ENTITY, SResult::Ok));
     assert_eq!(next(&mut t), Seen::Conf(TO_ENTITY_2, SResult::Ok));
 
@@ -926,4 +935,40 @@ fn an_acknowledged_request_after_the_response_makes_a_later_close_unexpected() {
     send(&mut t, TO_ENTITY, KEEP_ALIVE);
     assert_eq!(next(&mut t), Seen::Conf(TO_ENTITY, SResult::Ok));
     assert_eq!(next(&mut t), Seen::Closed(Address(ENTITY.0), false));
+}
+
+// --- how many servers a transport tracks ---------------------------------------------
+
+/// A server takes the place of one with nothing awaited and no prescribed close pending,
+/// whose close would change nothing at the client: the sensor's transport tracks one, and
+/// a client reading from a second server behind its entity loses nothing by it.
+#[test]
+fn a_new_server_takes_an_idle_ones_place() {
+    let mut t = transport([
+        Entity::Acks(DoIpResult::Ok),
+        answer(ANSWER),
+        Entity::Acks(DoIpResult::Ok),
+        Entity::Closes,
+    ]);
+    send(&mut t, TO_ENTITY, READ);
+    let _ = (next(&mut t), next(&mut t));
+    send(&mut t, TO_ENTITY_2, READ);
+    assert_eq!(next(&mut t), Seen::Conf(TO_ENTITY_2, SResult::Ok));
+    assert_eq!(next(&mut t), Seen::Closed(Address(ENTITY_2.0), false));
+}
+
+/// Where every server the transport tracks still awaits an answer, a request to another
+/// is refused, confirmed failed, rather than sent untracked: its late answer could not
+/// be guarded against, nor its connection's end reported.
+#[test]
+fn a_new_server_while_every_tracked_one_is_busy_is_refused() {
+    let mut t = transport([Entity::Acks(DoIpResult::Ok)]);
+    send(&mut t, TO_ENTITY, READ);
+    assert_eq!(next(&mut t), Seen::Conf(TO_ENTITY, SResult::Ok));
+    send(&mut t, TO_ENTITY_2, READ);
+    assert_eq!(
+        next(&mut t),
+        Seen::Conf(TO_ENTITY_2, failed(DoIpResult::OutOfMemory))
+    );
+    assert_eq!(t.connection().requests(), [READ.to_vec()]);
 }
