@@ -17,6 +17,7 @@
 use core::ops::Range;
 
 use simple_doip::service::{ConnectionId, DoIpResult, EntityEvent, Refusal};
+use uds_protocol::UdsServiceType;
 use uds_session::{Address, Ai, Mtype, SResult, TaType, TransportError};
 
 /// A constraint of the `DoIP` mapping, not of the session layer.
@@ -125,6 +126,34 @@ pub(crate) const fn s_result(result: DoIpResult) -> SResult {
         DoIpResult::Error => 11,
     };
     SResult::Transport(TransportError(position))
+}
+
+/// The bytes of a diagnostic message's payload, or a periodic response's, before its
+/// user data: the source and target addresses (ISO 13400-2:2019 Table 21).
+pub(crate) const ADDRESSES: usize = 4;
+
+/// Whether `request` expects a response: its service has no sub-function, or its
+/// sub-function's suppressPosRspMsgIndicationBit is clear. A service ISO 14229-1:2020
+/// does not define, or one whose sub-function is missing, is not known to.
+pub(crate) fn awaits_response(request: &[u8]) -> bool {
+    const SUPPRESS_POSITIVE_RESPONSE: u8 = 0x80;
+    let Some((&sid, rest)) = request.split_first() else {
+        return false;
+    };
+    match UdsServiceType::from_request_sid(sid).has_sub_function() {
+        Some(true) => rest
+            .first()
+            .is_some_and(|sub_function| sub_function & SUPPRESS_POSITIVE_RESPONSE == 0),
+        Some(false) => true,
+        None => false,
+    }
+}
+
+/// Whether `response` is a negative response with code `0x78`, after which the final
+/// response is still to come (ISO 14229-1:2020 Table A.1,
+/// `requestCorrectlyReceived-ResponsePending`).
+pub(crate) fn response_pending(response: &[u8]) -> bool {
+    matches!(response, [0x7F, _, 0x78, ..])
 }
 
 /// The `DoIP_Result` a refused request is confirmed with.

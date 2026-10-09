@@ -2,13 +2,15 @@
 
 use core::ops::Range;
 
+use simple_doip::LogicalAddress;
 use simple_doip::service::{self, ConnectionEvent, DoIpResult, Refusal, TesterConnection};
 use uds_services::{AfterSend, ClientTransport, TransportEvent, UdsTransport};
 use uds_session::{Address, Ai, Reloads, SResult, TaType, Timestamp};
 
 use crate::error::ClientTransportError;
 use crate::mapping::{
-    ai, from_logical, refused, s_result, target_of, to_doip_ta_type, to_logical,
+    ADDRESSES, PERIODIC_RESPONSE_PAYLOAD_TYPE, ai, awaits_response, from_logical, refused,
+    response_pending, s_result, target_of, to_doip_ta_type, to_logical,
 };
 
 /// ISO 14229-5:2022 over a `DoIP` tester connection: the client side of `UDSonIP`, for a
@@ -34,6 +36,16 @@ use crate::mapping::{
 ///   [`TesterConnection::reconnect`], which gives the old connection up and waits out its
 ///   back-off first; a request withdrawn with `DoIP_TIMEOUT_A` leaves the connection up
 ///   and reconnects nothing. Bound the wait by dropping the call.
+/// - **A late reply.** A physical request that expects a response, to a server whose
+///   last such request was confirmed and never answered, goes on a new connection, so
+///   that answer, arriving after the client gave up on it, cannot be taken for this
+///   one's. A response-pending message is not an answer. A request whose positive
+///   response is suppressed expects none, so it neither leaves a reply to arrive late
+///   nor gives up a connection a reply is awaited on.
+/// - **Periodic responses.** A message of ISO 14229-5:2022 REQ 7.16's payload type
+///   ([`PERIODIC_RESPONSE_PAYLOAD_TYPE`])
+///   to this tester is a [`TransportEvent::Periodic`]; one truncated or too short to
+///   carry an identifier is dropped.
 ///
 /// # Closes
 ///
@@ -52,6 +64,7 @@ use crate::mapping::{
 pub struct DoIpClientTransport<C, const QUEUE: usize> {
     connection: C,
     reloads: Reloads,
+    max_data_size: Option<u32>,
     link: Link,
     /// The request the connection carries, awaiting its confirm, as it was made.
     sent: Option<Ai>,
@@ -72,6 +85,14 @@ const RESETTING: u8 = 0x51;
 /// told its own close.
 const PEERS: usize = 4;
 
+/// Where a server's last request that expects an answer stands.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Awaiting {
+    Nothing,
+    Confirm,
+    Answer,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Link {
     Up,
@@ -81,6 +102,7 @@ enum Link {
 #[derive(Debug, Clone, Copy)]
 struct Peer {
     address: Address,
+    awaiting: Awaiting,
     /// Its last message was a positive response after which it may close the connection
     /// (ISO 14229-5:2022 REQ 7.9, REQ 7.11).
     leaving: bool,
@@ -160,6 +182,7 @@ impl<C: TesterConnection, const QUEUE: usize> DoIpClientTransport<C, QUEUE> {
         Self {
             connection,
             reloads,
+            max_data_size: None,
             link: Link::Up,
             sent: None,
             waiting: Waiting::EMPTY,
@@ -170,6 +193,21 @@ impl<C: TesterConnection, const QUEUE: usize> DoIpClientTransport<C, QUEUE> {
 }
 
 impl<C, const QUEUE: usize> DoIpClientTransport<C, QUEUE> {
+    /// The same transport, told the entity's *Max. data size* (ISO 13400-2:2019 Table 11),
+    /// which [`UdsTransport::outbound_max`] then reports less the diagnostic message's
+    /// addresses.
+    ///
+    /// # Arguments
+    ///
+    /// * `max_data_size` - the entity status response's *Max. data size*, as
+    ///   `simple_doip`'s `tester::discovery::entity_status` returns it; `None` where the
+    ///   entity reported none.
+    #[must_use]
+    pub const fn with_max_data_size(mut self, max_data_size: Option<u32>) -> Self {
+        self.max_data_size = max_data_size;
+        self
+    }
+
     /// The connection, for inspection between events.
     #[must_use]
     pub const fn connection(&self) -> &C {
@@ -182,6 +220,7 @@ impl<C, const QUEUE: usize> DoIpClientTransport<C, QUEUE> {
         {
             *free = Some(Peer {
                 address,
+                awaiting: Awaiting::Nothing,
                 leaving: false,
             });
         }
@@ -191,10 +230,52 @@ impl<C, const QUEUE: usize> DoIpClientTransport<C, QUEUE> {
             .find(|p| p.address == address)
     }
 
-    /// Notes what `data`, from `sender`, says of the connection's fate.
+    /// Notes what `data`, from `sender`, answers and says of the connection's fate.
     fn heard(&mut self, sender: Address, data: &[u8]) {
         if let Some(peer) = self.peer(sender) {
             peer.leaving = matches!(data.first(), Some(&(LEAVING_SESSION | RESETTING)));
+            if !response_pending(data) {
+                peer.awaiting = Awaiting::Nothing;
+            }
+        }
+    }
+
+    /// Notes the confirm of `ai`'s request.
+    fn confirmed(&mut self, ai: Ai, result: DoIpResult) {
+        if ai.ta_type != TaType::Physical {
+            return;
+        }
+        if let Some(peer) = self.peers.iter_mut().flatten().find(|p| p.address == ai.ta)
+            && peer.awaiting == Awaiting::Confirm
+        {
+            peer.awaiting = if result == DoIpResult::Ok {
+                Awaiting::Answer
+            } else {
+                Awaiting::Nothing
+            };
+        }
+    }
+
+    /// Whether a request to `ai` that `expects` an answer must go on a new connection: its
+    /// server's last request was confirmed and never answered, and that answer, arriving
+    /// late, would be taken for this one's.
+    fn late_reply_possible(&self, ai: Ai, expects: bool) -> bool {
+        expects
+            && ai.ta_type == TaType::Physical
+            && self
+                .peers
+                .iter()
+                .flatten()
+                .any(|p| p.address == ai.ta && p.awaiting == Awaiting::Answer)
+    }
+
+    /// Notes a request to `ai` that `expects` an answer, now accepted.
+    fn requested(&mut self, ai: Ai, expects: bool) {
+        if expects
+            && ai.ta_type == TaType::Physical
+            && let Some(peer) = self.peer(ai.ta)
+        {
+            peer.awaiting = Awaiting::Confirm;
         }
     }
 
@@ -237,6 +318,10 @@ impl<C: TesterConnection, const QUEUE: usize> DoIpClientTransport<C, QUEUE> {
     /// until the connection can take it.
     async fn send(&mut self, ai: Ai, data: &[u8]) -> Result<(), TransportError<C>> {
         let ta = target_of(ai)?;
+        let expects = awaits_response(data);
+        if self.late_reply_possible(ai, expects) {
+            self.end();
+        }
         for _ in 0..2 {
             if self.link == Link::Closed {
                 self.connection
@@ -249,7 +334,7 @@ impl<C: TesterConnection, const QUEUE: usize> DoIpClientTransport<C, QUEUE> {
                 self.peer(ai.ta);
             }
             if self.sent.is_some() || !self.waiting.is_empty() {
-                return self.wait(ai, data);
+                return self.wait(ai, data, expects);
             }
             let request = self
                 .connection
@@ -257,9 +342,10 @@ impl<C: TesterConnection, const QUEUE: usize> DoIpClientTransport<C, QUEUE> {
             match request.await {
                 Ok(()) => {
                     self.sent = Some(ai);
+                    self.requested(ai, expects);
                     return Ok(());
                 }
-                Err(Refusal::NoRoom) => return self.wait(ai, data),
+                Err(Refusal::NoRoom) => return self.wait(ai, data, expects),
                 Err(Refusal::NotConnected) => self.end(),
                 Err(refusal) => return self.refuse(ai, refusal),
             }
@@ -267,11 +353,17 @@ impl<C: TesterConnection, const QUEUE: usize> DoIpClientTransport<C, QUEUE> {
         self.refuse(ai, Refusal::NotConnected)
     }
 
-    fn wait(&mut self, ai: Ai, data: &[u8]) -> Result<(), TransportError<C>> {
+    fn wait(
+        &mut self,
+        ai: Ai,
+        data: &[u8],
+        expects: bool,
+    ) -> Result<(), TransportError<C>> {
         if self.link == Link::Closed {
             return self.refuse(ai, Refusal::NotConnected);
         }
         if self.waiting.push(ai, data) {
+            self.requested(ai, expects);
             Ok(())
         } else {
             self.refuse(ai, Refusal::NoRoom)
@@ -338,14 +430,27 @@ impl<C: TesterConnection, const QUEUE: usize> DoIpClientTransport<C, QUEUE> {
                 self.heard(from_logical(sa), pdu);
                 Some(Received::Ind(ai(sa, ta, ta_type), span(pdu)?, Some(length)))
             }
+            ConnectionEvent::Unmodelled {
+                payload_type: PERIODIC_RESPONSE_PAYLOAD_TYPE,
+                data,
+            } => match data {
+                [sa_high, sa_low, ta_high, ta_low, pdid, record @ ..]
+                    if LogicalAddress(u16::from_be_bytes([*ta_high, *ta_low])) == own =>
+                {
+                    let sa = LogicalAddress(u16::from_be_bytes([*sa_high, *sa_low]));
+                    let ai = ai(sa, own, own.default_ta_type());
+                    Some(Received::Periodic(ai, *pdid, span(record)?))
+                }
+                _ => None,
+            },
             ConnectionEvent::Indication { .. }
             | ConnectionEvent::IndicationTruncated { .. }
             | ConnectionEvent::Unmodelled { .. }
             | ConnectionEvent::UnmodelledTruncated { .. } => None,
-            ConnectionEvent::Confirm { result, .. } => self
-                .sent
-                .take()
-                .map(|ai| Received::Event(Event::Conf(ai, s_result(result)))),
+            ConnectionEvent::Confirm { result, .. } => self.sent.take().map(|ai| {
+                self.confirmed(ai, result);
+                Received::Event(Event::Conf(ai, s_result(result)))
+            }),
             ConnectionEvent::Closed => {
                 self.end();
                 None
@@ -364,6 +469,7 @@ type TransportError<C> = ClientTransportError<
 /// What the connection reported, the PDU held as its place in the caller's buffer.
 enum Received {
     Ind(Ai, Range<usize>, Option<usize>),
+    Periodic(Ai, u8, Range<usize>),
     Event(Event),
 }
 
@@ -420,7 +526,7 @@ impl<C: TesterConnection, const QUEUE: usize> UdsTransport
         deadline: Option<Timestamp>,
     ) -> Result<TransportEvent<'b>, Self::Error> {
         let start = buffer.as_ptr().addr();
-        let (ai, at, declared) = loop {
+        let found = loop {
             if let Some(owed) = self.owed.pop() {
                 return Ok(owed.into());
             }
@@ -434,28 +540,42 @@ impl<C: TesterConnection, const QUEUE: usize> UdsTransport
                 .await
                 .map_err(ClientTransportError::Connection)?;
             match self.receive(event, start)? {
-                Some(Received::Ind(ai, at, declared)) => break (ai, at, declared),
                 Some(Received::Event(event)) => return Ok(event.into()),
+                Some(found) => break found,
                 None => {}
             }
         };
         let buffer: &'b [u8] = buffer;
-        let data = buffer
-            .get(at)
-            .ok_or(ClientTransportError::PduOutsideBuffer)?;
-        Ok(match declared {
-            None => TransportEvent::DataInd { ai, data },
-            Some(declared) => TransportEvent::DataTooLong {
+        let data =
+            |at: Range<usize>| buffer.get(at).ok_or(ClientTransportError::PduOutsideBuffer);
+        Ok(match found {
+            Received::Ind(ai, at, None) => TransportEvent::DataInd {
                 ai,
-                data,
+                data: data(at)?,
+            },
+            Received::Ind(ai, at, Some(declared)) => TransportEvent::DataTooLong {
+                ai,
+                data: data(at)?,
                 declared: Some(declared),
             },
+            Received::Periodic(ai, pdid, at) => TransportEvent::Periodic {
+                ai,
+                pdid,
+                data: data(at)?,
+            },
+            Received::Event(event) => event.into(),
         })
     }
 
-    /// `None`: an entity reports its *Max. data size* only over UDP.
+    /// The *Max. data size* [`DoIpClientTransport::with_max_data_size`] was told, less
+    /// the diagnostic message's addresses; `None` until then, because an entity reports
+    /// it only over UDP, in its entity status response (ISO 13400-2:2019 Table 11).
     fn outbound_max(&self) -> Option<usize> {
-        None
+        self.max_data_size.map(|max_data_size| {
+            usize::try_from(max_data_size)
+                .unwrap_or(usize::MAX)
+                .saturating_sub(ADDRESSES)
+        })
     }
 
     /// The `tP6_Client` reload pair the transport was built with: `DoIP` has no

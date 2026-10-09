@@ -50,6 +50,10 @@ enum Entity {
         pdu: Vec<u8>,
         length: usize,
     },
+    /// Sends a message of a payload type the tester does not model.
+    SendsUnmodelled(u16, Vec<u8>),
+    /// Sends the same, longer than the caller's buffer.
+    SendsUnmodelledLong(u16, Vec<u8>, usize),
     /// The connection ends.
     Closes,
 }
@@ -205,6 +209,17 @@ impl DiagnosticConnection for Scripted {
                     ta,
                     ta_type: ta.default_ta_type(),
                     pdu,
+                    length,
+                }
+            }
+            Entity::SendsUnmodelled(payload_type, data) => ConnectionEvent::Unmodelled {
+                payload_type,
+                data: copy(buf, &data),
+            },
+            Entity::SendsUnmodelledLong(payload_type, data, length) => {
+                ConnectionEvent::UnmodelledTruncated {
+                    payload_type,
+                    data: copy(buf, &data),
                     length,
                 }
             }
@@ -662,4 +677,146 @@ fn a_timeout_a_alone_reconnects_nothing() {
     );
     send(&mut t, TO_ENTITY, READ);
     assert!(!t.connection().calls.contains(&Call::Reconnect));
+}
+
+// --- a late reply -----------------------------------------------------------------------
+
+fn reconnects(t: &Transport) -> usize {
+    t.connection()
+        .calls
+        .iter()
+        .filter(|call| **call == Call::Reconnect)
+        .count()
+}
+
+/// The open question "Should a reset discard a message already arriving?": a response
+/// that arrives after its window closed would be taken for the next request's. A request
+/// to a server whose last request was confirmed and never answered goes on a new
+/// connection, which the late response cannot reach, and the old one's end is reported.
+#[test]
+fn a_request_after_an_unanswered_one_goes_on_a_new_connection() {
+    let mut t = transport([Entity::Acks(DoIpResult::Ok), Entity::Acks(DoIpResult::Ok)]);
+    send(&mut t, TO_ENTITY, READ);
+    assert_eq!(next(&mut t), Seen::Conf(TO_ENTITY, SResult::Ok));
+
+    send(&mut t, TO_ENTITY, READ);
+    assert_eq!(
+        t.connection().calls[1..],
+        [
+            Call::Reconnect,
+            Call::Request(ENTITY, TaType::Physical, READ.to_vec())
+        ]
+    );
+    assert_eq!(next(&mut t), Seen::Closed(Address(ENTITY.0), false));
+    assert_eq!(next(&mut t), Seen::Conf(TO_ENTITY, SResult::Ok));
+}
+
+/// An answered request leaves nothing to arrive late.
+#[test]
+fn a_request_after_an_answered_one_keeps_the_connection() {
+    let mut t = transport([Entity::Acks(DoIpResult::Ok), answer(ANSWER)]);
+    send(&mut t, TO_ENTITY, READ);
+    let _ = (next(&mut t), next(&mut t));
+    send(&mut t, TO_ENTITY, READ);
+    assert_eq!(reconnects(&t), 0);
+}
+
+/// A response-pending message is not the answer: the final response may still come late.
+#[test]
+fn a_request_after_only_a_response_pending_goes_on_a_new_connection() {
+    let mut t = transport([Entity::Acks(DoIpResult::Ok), answer(&[0x7F, 0x22, 0x78])]);
+    send(&mut t, TO_ENTITY, READ);
+    let _ = (next(&mut t), next(&mut t));
+    send(&mut t, TO_ENTITY, READ);
+    assert_eq!(reconnects(&t), 1);
+}
+
+/// A request whose positive response is suppressed (ISO 14229-1:2020 9.2.2's SPRMIB)
+/// expects none, so it neither leaves a reply to arrive late nor, sent while a reply is
+/// awaited, gives up the connection that reply arrives on.
+#[test]
+fn a_suppressed_request_neither_arms_nor_triggers_the_guard() {
+    let mut t = transport([
+        Entity::Acks(DoIpResult::Ok),
+        Entity::Acks(DoIpResult::Ok),
+        Entity::Acks(DoIpResult::Ok),
+        Entity::Acks(DoIpResult::Ok),
+    ]);
+    send(&mut t, TO_ENTITY, KEEP_ALIVE);
+    let _ = next(&mut t);
+    send(&mut t, TO_ENTITY, &[0x10, 0x81]);
+    let _ = next(&mut t);
+    send(&mut t, TO_ENTITY, READ);
+    let _ = next(&mut t);
+    send(&mut t, TO_ENTITY, KEEP_ALIVE);
+    assert_eq!(reconnects(&t), 0);
+}
+
+/// A request the server never saw, its acknowledgement negative, has no reply to come.
+#[test]
+fn a_request_after_a_refused_one_keeps_the_connection() {
+    let mut t = transport([Entity::Acks(DoIpResult::UnknownTa)]);
+    send(&mut t, TO_ENTITY, READ);
+    let _ = next(&mut t);
+    send(&mut t, TO_ENTITY, READ);
+    assert_eq!(reconnects(&t), 0);
+}
+
+/// A functional request's answers end with its window, not with an answer, so it arms
+/// no guard: fanning out is not supported, and the client's own service check stands.
+#[test]
+fn a_functional_request_arms_no_guard() {
+    let group = ai(LogicalAddress(0xE400), uds_session::TaType::Functional);
+    let mut t = transport([Entity::Acks(DoIpResult::Ok)]);
+    send(&mut t, group, READ);
+    let _ = next(&mut t);
+    send(&mut t, group, READ);
+    assert_eq!(reconnects(&t), 0);
+}
+
+// --- periodic responses -----------------------------------------------------------------
+
+const PERIODIC: u16 = 0x8004;
+
+/// ISO 14229-5:2022 REQ 7.16: a periodic response is its own payload type, `0x8004`,
+/// formatted as a diagnostic message: addresses, then the periodic data identifier and
+/// its record. REQ 7.20 is why it is `Periodic` and never `DataInd`.
+#[test]
+fn a_periodic_response_to_the_tester_is_periodic() {
+    let mut t = transport([Entity::SendsUnmodelled(
+        PERIODIC,
+        vec![0x00, 0x01, 0x0E, 0x00, 0xF2, 0x01, 0x02],
+    )]);
+    assert_eq!(
+        next(&mut t),
+        Seen::Periodic(FROM_ENTITY, 0xF2, vec![0x01, 0x02])
+    );
+}
+
+/// What cannot be a whole periodic response to this tester is dropped: one to another
+/// tester, one too short to carry an identifier, one truncated, and any other payload
+/// type.
+#[test]
+fn what_is_not_a_whole_periodic_response_to_the_tester_is_dropped() {
+    let mut t = transport([
+        Entity::SendsUnmodelled(PERIODIC, vec![0x00, 0x01, 0x0E, 0x01, 0xF2, 0x01]),
+        Entity::SendsUnmodelled(PERIODIC, vec![0x00, 0x01, 0x0E, 0x00]),
+        Entity::SendsUnmodelledLong(PERIODIC, vec![0x00, 0x01, 0x0E, 0x00, 0xF2], 900),
+        Entity::SendsUnmodelled(0x8005, vec![0x00, 0x01, 0x0E, 0x00, 0xF2]),
+        answer(ANSWER),
+    ]);
+    assert_eq!(next(&mut t), Seen::Ind(FROM_ENTITY, ANSWER.to_vec()));
+}
+
+// --- the entity's maximum data size -----------------------------------------------------
+
+/// ISO 13400-2:2019 Table 11's *Max. data size* counts a diagnostic message's payload,
+/// its two addresses included; what a UDS message may take is the rest.
+#[test]
+fn outbound_max_is_the_max_data_size_less_the_addresses() {
+    let t = |mds| transport([]).with_max_data_size(mds).outbound_max();
+    assert_eq!(transport([]).outbound_max(), None);
+    assert_eq!(t(None), None);
+    assert_eq!(t(Some(4_092)), Some(4_088));
+    assert_eq!(t(Some(2)), Some(0));
 }
