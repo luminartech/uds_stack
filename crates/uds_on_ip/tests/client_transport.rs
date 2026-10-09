@@ -500,3 +500,166 @@ fn close_closes_the_connection_and_reports_no_close() {
         Seen::Deadline
     );
 }
+
+// --- closes and reconnecting ------------------------------------------------------------
+
+const ENTITY_2: LogicalAddress = LogicalAddress(0x0002);
+const TO_ENTITY_2: Ai = ai(ENTITY_2, uds_session::TaType::Physical);
+
+/// A connection's end is one `Closed` for each server addressed on it, then nothing but
+/// the deadline: the transport neither repeats it nor spins on the connection.
+#[test]
+fn an_end_is_one_closed_per_server_then_quiet() {
+    let mut t = transport([
+        Entity::Acks(DoIpResult::Ok),
+        Entity::Acks(DoIpResult::Ok),
+        Entity::Closes,
+    ]);
+    send(&mut t, TO_ENTITY, READ);
+    send(&mut t, TO_ENTITY_2, READ);
+    assert_eq!(next(&mut t), Seen::Conf(TO_ENTITY, SResult::Ok));
+    assert_eq!(next(&mut t), Seen::Conf(TO_ENTITY_2, SResult::Ok));
+
+    assert_eq!(next(&mut t), Seen::Closed(Address(ENTITY.0), false));
+    assert_eq!(next(&mut t), Seen::Closed(Address(ENTITY_2.0), false));
+    assert_eq!(
+        next_until(&mut t, Some(uds_session::Timestamp(100))),
+        Seen::Deadline
+    );
+    assert_eq!(t.connection().quiet_calls, 1);
+}
+
+/// A connection no request was addressed on names no server, so its end is reported by
+/// no `Closed`: nothing waits on it.
+#[test]
+fn an_end_with_no_server_addressed_reports_nothing() {
+    let mut t = transport([Entity::Closes]);
+    assert_eq!(
+        next_until(&mut t, Some(uds_session::Timestamp(100))),
+        Seen::Deadline
+    );
+}
+
+/// ISO 14229-5:2022 REQ 7.9 and REQ 7.11: a server closes the connection after a
+/// positive `DiagnosticSessionControl` response that leaves its software, and after every
+/// positive `ECUReset` response, so a close following either is the one the standard
+/// prescribes.
+#[test]
+fn a_close_after_a_session_change_or_reset_is_expected() {
+    for response in [&[0x50, 0x02, 0x00, 0x32, 0x01, 0xF4][..], &[0x51, 0x01]] {
+        let mut t = transport([
+            Entity::Acks(DoIpResult::Ok),
+            answer(response),
+            Entity::Closes,
+        ]);
+        send(&mut t, TO_ENTITY, &[response[0] - 0x40, response[1]]);
+        assert_eq!(next(&mut t), Seen::Conf(TO_ENTITY, SResult::Ok));
+        assert_eq!(next(&mut t), Seen::Ind(FROM_ENTITY, response.to_vec()));
+        assert_eq!(next(&mut t), Seen::Closed(Address(ENTITY.0), true));
+    }
+}
+
+/// A server that answers again after its positive response has not closed for it, so a
+/// later end is not the prescribed one.
+#[test]
+fn a_close_after_a_later_answer_is_not_expected() {
+    let mut t = transport([
+        Entity::Acks(DoIpResult::Ok),
+        answer(&[0x50, 0x03, 0x00, 0x32, 0x01, 0xF4]),
+        Entity::Acks(DoIpResult::Ok),
+        answer(ANSWER),
+        Entity::Closes,
+    ]);
+    send(&mut t, TO_ENTITY, &[0x10, 0x03]);
+    let _ = (next(&mut t), next(&mut t));
+    send(&mut t, TO_ENTITY, READ);
+    let _ = (next(&mut t), next(&mut t));
+    assert_eq!(next(&mut t), Seen::Closed(Address(ENTITY.0), false));
+}
+
+/// ISO 14229-5:2022 REQ 7.8 and REQ 7.10: after a close, a new connection and routing
+/// activation come before diagnostic communication continues. The transport reconnects
+/// for the next request, and only then sends it.
+#[test]
+fn a_request_after_a_close_reconnects_first() {
+    let mut t = transport([
+        Entity::Acks(DoIpResult::Ok),
+        Entity::Closes,
+        Entity::Acks(DoIpResult::Ok),
+    ]);
+    send(&mut t, TO_ENTITY, READ);
+    assert_eq!(next(&mut t), Seen::Conf(TO_ENTITY, SResult::Ok));
+    assert_eq!(next(&mut t), Seen::Closed(Address(ENTITY.0), false));
+
+    send(&mut t, TO_ENTITY, READ);
+    assert_eq!(
+        t.connection().calls[1..],
+        [
+            Call::Reconnect,
+            Call::Request(ENTITY, TaType::Physical, READ.to_vec())
+        ]
+    );
+    assert_eq!(next(&mut t), Seen::Conf(TO_ENTITY, SResult::Ok));
+}
+
+/// A connection that ended before its `Closed` was read is found closed by the request:
+/// the transport reconnects and sends, and reports the end it found before anything from
+/// the new connection, so the client hears of it and its request still goes.
+#[test]
+fn a_request_finding_the_connection_ended_reconnects_and_reports_the_end() {
+    let mut connection = Scripted::new([Entity::Acks(DoIpResult::Ok)]);
+    connection.connected = false;
+    let mut t: Transport = DoIpClientTransport::new(connection, RELOADS);
+
+    send(&mut t, TO_ENTITY, READ);
+    assert_eq!(
+        t.connection().calls,
+        [
+            Call::Reconnect,
+            Call::Request(ENTITY, TaType::Physical, READ.to_vec())
+        ]
+    );
+    assert_eq!(next(&mut t), Seen::Closed(Address(ENTITY.0), false));
+    assert_eq!(next(&mut t), Seen::Conf(TO_ENTITY, SResult::Ok));
+}
+
+/// A reconnect that fails refuses the request with its error, and leaves the connection
+/// closed for a later request to try again.
+#[test]
+fn a_failed_reconnect_refuses_the_request_and_the_next_tries_again() {
+    let mut connection = Scripted::new([Entity::Acks(DoIpResult::Ok)]);
+    connection.connected = false;
+    connection.failing_reconnects = 1;
+    let mut t: Transport = DoIpClientTransport::new(connection, RELOADS);
+
+    assert!(matches!(
+        run(t.t_data_req(TO_ENTITY, READ, AfterSend::Continue)),
+        Err(uds_on_ip::ClientTransportError::Reconnect("refused"))
+    ));
+    send(&mut t, TO_ENTITY, READ);
+    assert_eq!(
+        t.connection().calls,
+        [
+            Call::Reconnect,
+            Call::Reconnect,
+            Call::Request(ENTITY, TaType::Physical, READ.to_vec())
+        ]
+    );
+}
+
+/// A request none of which was written is withdrawn with `DoIP_TIMEOUT_A` and the
+/// connection stays up, so `TimeoutA` alone reconnects nothing.
+#[test]
+fn a_timeout_a_alone_reconnects_nothing() {
+    let mut t = transport([
+        Entity::Acks(DoIpResult::TimeoutA),
+        Entity::Acks(DoIpResult::Ok),
+    ]);
+    send(&mut t, TO_ENTITY, READ);
+    assert_eq!(
+        next(&mut t),
+        Seen::Conf(TO_ENTITY, failed(DoIpResult::TimeoutA))
+    );
+    send(&mut t, TO_ENTITY, READ);
+    assert!(!t.connection().calls.contains(&Call::Reconnect));
+}

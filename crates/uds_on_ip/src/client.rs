@@ -7,7 +7,9 @@ use uds_services::{AfterSend, ClientTransport, TransportEvent, UdsTransport};
 use uds_session::{Address, Ai, Reloads, SResult, TaType, Timestamp};
 
 use crate::error::ClientTransportError;
-use crate::mapping::{ai, refused, s_result, target_of, to_doip_ta_type, to_logical};
+use crate::mapping::{
+    ai, from_logical, refused, s_result, target_of, to_doip_ta_type, to_logical,
+};
 
 /// ISO 14229-5:2022 over a `DoIP` tester connection: the client side of `UDSonIP`, for a
 /// `uds_services::Client`.
@@ -26,6 +28,21 @@ use crate::mapping::{ai, refused, s_result, target_of, to_doip_ta_type, to_logic
 ///   confirms every request.
 /// - **Its own address.** A message to any address but the tester's is not this
 ///   tester's to take, and is dropped.
+/// - **Reconnecting.** ISO 14229-5:2022 REQ 7.8 and REQ 7.10 have a client open a new
+///   connection and activate routing again after the server closes it. The transport
+///   does so for the next request that needs one, through
+///   [`TesterConnection::reconnect`], which gives the old connection up and waits out its
+///   back-off first; a request withdrawn with `DoIP_TIMEOUT_A` leaves the connection up
+///   and reconnects nothing. Bound the wait by dropping the call.
+///
+/// # Closes
+///
+/// A connection's end is one [`TransportEvent::Closed`] for each server addressed on it,
+/// reported before anything from a new connection. Its `expected` is true where the
+/// server's last message was a positive `DiagnosticSessionControl` or `ECUReset`
+/// response, after which REQ 7.9 and REQ 7.11 have a server close: the server's session
+/// is then not the one the client knew. Any other end, a failure or a connection the
+/// tester gave up, is not expected.
 ///
 /// Functional addressing reaches the one entity the connection is to; fanning a request
 /// out to several entities is not supported.
@@ -43,6 +60,14 @@ pub struct DoIpClientTransport<C, const QUEUE: usize> {
     peers: [Option<Peer>; PEERS],
 }
 
+/// The first octet of a positive `DiagnosticSessionControl` response, after which a
+/// server leaving its software closes the connection (ISO 14229-5:2022 REQ 7.9).
+const LEAVING_SESSION: u8 = 0x50;
+
+/// The first octet of a positive `ECUReset` response, after which a server closes the
+/// connection (ISO 14229-5:2022 REQ 7.11).
+const RESETTING: u8 = 0x51;
+
 /// How many servers a transport remembers having addressed on one connection, each
 /// told its own close.
 const PEERS: usize = 4;
@@ -56,6 +81,9 @@ enum Link {
 #[derive(Debug, Clone, Copy)]
 struct Peer {
     address: Address,
+    /// Its last message was a positive response after which it may close the connection
+    /// (ISO 14229-5:2022 REQ 7.9, REQ 7.11).
+    leaving: bool,
 }
 
 impl<C, const QUEUE: usize> core::fmt::Debug for DoIpClientTransport<C, QUEUE> {
@@ -148,12 +176,25 @@ impl<C, const QUEUE: usize> DoIpClientTransport<C, QUEUE> {
         &self.connection
     }
 
-    fn address(&mut self, peer: Address) {
-        if self.peers.iter().flatten().any(|p| p.address == peer) {
-            return;
+    fn peer(&mut self, address: Address) -> Option<&mut Peer> {
+        if !self.peers.iter().flatten().any(|p| p.address == address)
+            && let Some(free) = self.peers.iter_mut().find(|p| p.is_none())
+        {
+            *free = Some(Peer {
+                address,
+                leaving: false,
+            });
         }
-        if let Some(free) = self.peers.iter_mut().find(|p| p.is_none()) {
-            *free = Some(Peer { address: peer });
+        self.peers
+            .iter_mut()
+            .flatten()
+            .find(|p| p.address == address)
+    }
+
+    /// Notes what `data`, from `sender`, says of the connection's fate.
+    fn heard(&mut self, sender: Address, data: &[u8]) {
+        if let Some(peer) = self.peer(sender) {
+            peer.leaving = matches!(data.first(), Some(&(LEAVING_SESSION | RESETTING)));
         }
     }
 
@@ -167,7 +208,7 @@ impl<C, const QUEUE: usize> DoIpClientTransport<C, QUEUE> {
         for peer in self.peers.iter_mut().filter_map(Option::take) {
             self.owed.push(Event::Closed {
                 peer: peer.address,
-                expected: false,
+                expected: peer.leaving,
             });
         }
         while let Some((ai, _)) = self.waiting.front() {
@@ -192,28 +233,38 @@ impl<C, const QUEUE: usize> DoIpClientTransport<C, QUEUE> {
 }
 
 impl<C: TesterConnection, const QUEUE: usize> DoIpClientTransport<C, QUEUE> {
-    /// Hands `data` to the connection, or holds it until the connection can take it.
+    /// Hands `data` to the connection, reconnecting first where it has ended, or holds it
+    /// until the connection can take it.
     async fn send(&mut self, ai: Ai, data: &[u8]) -> Result<(), TransportError<C>> {
         let ta = target_of(ai)?;
-        if self.sent.is_some() || !self.waiting.is_empty() {
-            return self.wait(ai, data);
-        }
-        match self
-            .connection
-            .request(ta, to_doip_ta_type(ai.ta_type), data)
-            .await
-        {
-            Ok(()) => {
-                self.sent = Some(ai);
-                Ok(())
+        for _ in 0..2 {
+            if self.link == Link::Closed {
+                self.connection
+                    .reconnect()
+                    .await
+                    .map_err(ClientTransportError::Reconnect)?;
+                self.link = Link::Up;
             }
-            Err(Refusal::NoRoom) => self.wait(ai, data),
-            Err(Refusal::NotConnected) => {
-                self.end();
-                self.refuse(ai, Refusal::NotConnected)
+            if ai.ta_type == TaType::Physical {
+                self.peer(ai.ta);
             }
-            Err(refusal) => self.refuse(ai, refusal),
+            if self.sent.is_some() || !self.waiting.is_empty() {
+                return self.wait(ai, data);
+            }
+            let request = self
+                .connection
+                .request(ta, to_doip_ta_type(ai.ta_type), data);
+            match request.await {
+                Ok(()) => {
+                    self.sent = Some(ai);
+                    return Ok(());
+                }
+                Err(Refusal::NoRoom) => return self.wait(ai, data),
+                Err(Refusal::NotConnected) => self.end(),
+                Err(refusal) => return self.refuse(ai, refusal),
+            }
         }
+        self.refuse(ai, Refusal::NotConnected)
     }
 
     fn wait(&mut self, ai: Ai, data: &[u8]) -> Result<(), TransportError<C>> {
@@ -273,7 +324,10 @@ impl<C: TesterConnection, const QUEUE: usize> DoIpClientTransport<C, QUEUE> {
                 ta,
                 ta_type,
                 pdu,
-            } if ta == own => Some(Received::Ind(ai(sa, ta, ta_type), span(pdu)?, None)),
+            } if ta == own => {
+                self.heard(from_logical(sa), pdu);
+                Some(Received::Ind(ai(sa, ta, ta_type), span(pdu)?, None))
+            }
             ConnectionEvent::IndicationTruncated {
                 sa,
                 ta,
@@ -281,6 +335,7 @@ impl<C: TesterConnection, const QUEUE: usize> DoIpClientTransport<C, QUEUE> {
                 pdu,
                 length,
             } if ta == own => {
+                self.heard(from_logical(sa), pdu);
                 Some(Received::Ind(ai(sa, ta, ta_type), span(pdu)?, Some(length)))
             }
             ConnectionEvent::Indication { .. }
@@ -323,7 +378,8 @@ impl<C: TesterConnection, const QUEUE: usize> UdsTransport
     const MAX_PDU: usize = C::MAX_PDU;
 
     /// `T_Data.req` as `DoIP_Data.request` (ISO 14229-5:2022 REQ 4.3 Table 4), from the
-    /// address routing activation registered.
+    /// address routing activation registered, on a new connection where the last one
+    /// ended.
     ///
     /// A request made while the connection carries another waits, and one the
     /// connection refuses is accepted all the same; either way the
@@ -332,18 +388,16 @@ impl<C: TesterConnection, const QUEUE: usize> UdsTransport
     ///
     /// # Errors
     ///
-    /// [`ClientTransportError::Mapping`] if the addressing cannot be carried, and
-    /// [`ClientTransportError::Refused`] if the connection refuses the request while the
-    /// transport already owes as many confirmations as it can hold.
+    /// [`ClientTransportError::Mapping`] if the addressing cannot be carried,
+    /// [`ClientTransportError::Reconnect`] if no new connection could be opened for it,
+    /// and [`ClientTransportError::Refused`] if the connection refuses the request while
+    /// the transport already owes as many confirmations as it can hold.
     async fn t_data_req(
         &mut self,
         ai: Ai,
         data: &[u8],
         _after: AfterSend,
     ) -> Result<(), Self::Error> {
-        if ai.ta_type == TaType::Physical {
-            self.address(ai.ta);
-        }
         self.send(ai, data).await
     }
 
