@@ -1,4 +1,4 @@
-//! Vehicle discovery for a tester (ISO 13400-2:2019 6.2, 7.4 to 7.6): finding the
+//! Vehicle discovery for a tester (6.2, 7.4 to 7.6): finding the
 //! entities on a network, and asking one its status or the vehicle's power mode, over a
 //! UDP socket the integrator binds.
 //!
@@ -27,8 +27,7 @@ use crate::messages::{
 use crate::wire::{Decode, Encode, SliceSink};
 use crate::{EntityId, TCP_PORT, UDP_DISCOVERY_PORT, Vin};
 
-/// `A_DoIP_Ctrl`: how long a tester waits for the answers to a UDP request
-/// (ISO 13400-2:2019 Table 12).
+/// `A_DoIP_Ctrl`: how long a tester waits for the answers to a UDP request (Table 12).
 pub const A_DOIP_CTRL: Duration = Duration::from_secs(2);
 
 /// Where a request to every entity on the network goes: the IPv4 limited broadcast
@@ -42,7 +41,7 @@ const RX_CAP: usize = Header::SIZE + 33;
 /// Which entities a vehicle identification request asks to answer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Request {
-    /// Every entity that receives it (ISO 13400-2:2019 Table 2).
+    /// Every entity that receives it (Table 2).
     All,
     /// The entity with this entity ID (Table 3). An entity may not support it.
     Eid(EntityId),
@@ -159,7 +158,7 @@ pub async fn identify<U: UdpSplit>(
     Ok(found.iter().flatten().count())
 }
 
-/// Asks the entity at `entity` for its status (ISO 13400-2:2019 7.6), which includes the
+/// Asks the entity at `entity` for its status (7.6), which includes the
 /// largest payload it takes: the longest diagnostic message's user data is that less the
 /// 4 bytes of its addresses.
 ///
@@ -191,8 +190,7 @@ pub async fn entity_status<U: UdpSplit>(
     .await
 }
 
-/// Asks the entity at `entity` for the vehicle's diagnostic power mode
-/// (ISO 13400-2:2019 7.5).
+/// Asks the entity at `entity` for the vehicle's diagnostic power mode (7.5).
 ///
 /// # Arguments
 ///

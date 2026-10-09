@@ -199,7 +199,7 @@ fn golden_entity_status_response() {
             max_data_size: Some(u32::MAX),
         },
     );
-    // ISO 13400-2:2019 Table 11: the max data size is optional.
+    // Table 11: the max data size is optional.
     check(
         "entity_status_node_no_mds",
         &EntityStatusResponse {
@@ -377,7 +377,7 @@ fn golden_vehicle_identification_response() {
             vin_gid_sync_status: Some(VinGidSyncStatus::Incomplete),
         },
     );
-    // ISO 13400-2:2019 Table 5: the VIN/GID sync status is optional.
+    // Table 5: the VIN/GID sync status is optional.
     check(
         "vid_resp_no_sync_status",
         &VehicleIdentificationResponse {

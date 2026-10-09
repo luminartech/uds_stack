@@ -1,5 +1,5 @@
 //! `Entity` with discovery against a scripted UDP socket: vehicle announcement and
-//! identification (ISO 13400-2:2019 7.4, Figure 13), diagnostic power mode (7.5), entity
+//! identification (7.4, Figure 13), diagnostic power mode (7.5), entity
 //! status (7.6), and Figure 16's generic header handler on `UDP_DISCOVERY`.
 
 // Test code; see `golden_vectors.rs` for why the workspace lint standard is relaxed here.
@@ -282,7 +282,7 @@ fn the_announce_wait_follows_the_seed() {
     assert!(not_all_equal(&waits), "{waits:?}");
 }
 
-/// ISO 13400-2:2019 Tables 1 and 5: what the announcement carries. A VIN not programmed
+/// Tables 1 and 5: what the announcement carries. A VIN not programmed
 /// is all `0x00`, a GID not set likewise, and the optional sync status is sent only where
 /// the identity has one.
 #[test]

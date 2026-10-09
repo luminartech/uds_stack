@@ -449,7 +449,7 @@ mod tests {
         assert!(matches!(payload, Payload::EntityStatusRequest));
     }
 
-    /// ISO 13400-2:2019 Tables 3 and 4: the directed identification requests carry
+    /// Tables 3 and 4: the directed identification requests carry
     /// the EID or VIN they name, and survive a round trip.
     #[test]
     fn directed_identification_requests_keep_what_they_name() {
@@ -488,7 +488,7 @@ mod tests {
         ));
     }
 
-    /// ISO 13400-2:2019 Table 8: the power mode request carries no data.
+    /// Table 8: the power mode request carries no data.
     #[test]
     fn power_mode_request_decodes_empty() {
         let payload =
@@ -497,7 +497,7 @@ mod tests {
         assert_eq!(payload.encoded_size().unwrap(), 0);
     }
 
-    /// ISO 13400-2:2019 Tables 5 and 11: an entity may omit the sync status and the max
+    /// Tables 5 and 11: an entity may omit the sync status and the max
     /// data size, and what it sends still decodes.
     #[test]
     fn optional_trailing_fields_may_be_absent() {

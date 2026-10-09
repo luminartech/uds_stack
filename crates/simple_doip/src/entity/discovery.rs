@@ -1,5 +1,5 @@
 //! An [`Entity`](super::Entity)'s UDP: vehicle announcement and identification, entity
-//! status and diagnostic power mode, on `UDP_DISCOVERY` (ISO 13400-2:2019 7.4 to 7.6).
+//! status and diagnostic power mode, on `UDP_DISCOVERY` (7.4 to 7.6).
 //!
 //! [`Entity::with_discovery`](super::Entity::with_discovery) gives an entity a bound UDP
 //! socket and a [`VehicleIdentity`]; [`DiagnosticEntity::next_event`] then announces the
@@ -35,7 +35,7 @@ const LONGEST_REQUEST: usize = Header::SIZE + 17;
 const RX_CAP: usize = 2 * LONGEST_REQUEST;
 /// Answers a [`Discovery`] holds until it sends them.
 const PENDING: usize = 4;
-/// `A_DoIP_Announce_Wait`'s upper bound, in milliseconds (ISO 13400-2:2019 Table 12).
+/// `A_DoIP_Announce_Wait`'s upper bound, in milliseconds (Table 12).
 const ANNOUNCE_WAIT_MAX_MS: u32 = 500;
 /// `A_DoIP_Announce_Interval` (Table 12).
 const ANNOUNCE_INTERVAL: Duration = Duration::from_millis(500);
@@ -58,7 +58,7 @@ const ANNOUNCE_TO: SocketAddr = SocketAddr::new(
 /// frame carries. [`FixedIdentity`] is one whose values never change.
 pub trait VehicleIdentity {
     /// The vehicle identification number, or `None` while none is programmed, which is
-    /// sent as ISO 13400-2:2019 Table 1's all-`0x00` and matches no request.
+    /// sent as Table 1's all-`0x00` and matches no request.
     fn vin(&self) -> Option<Vin>;
 
     /// The entity ID, usually the MAC address of the interface the entity answers on.
@@ -78,7 +78,7 @@ pub trait VehicleIdentity {
 
     /// Whether `eid`, from a request with an EID, names this entity: by default,
     /// whether it is [`VehicleIdentity::eid`]. An entity on several interfaces matches
-    /// each of their addresses (ISO 13400-2:2019 REQ 8.DoIP-053).
+    /// each of their addresses (REQ 8.DoIP-053).
     fn matches_eid(&self, eid: &[u8; 6]) -> bool {
         *eid == self.eid().to_bytes()
     }

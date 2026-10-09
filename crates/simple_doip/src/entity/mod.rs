@@ -416,7 +416,7 @@ impl<
     }
 
     /// This entity, announcing itself on `socket` and answering vehicle identification,
-    /// entity status and diagnostic power mode there (ISO 13400-2:2019 7.4 to 7.6).
+    /// entity status and diagnostic power mode there (7.4 to 7.6).
     ///
     /// The announcements start at the first [`DiagnosticEntity::next_event`], so build
     /// the entity once the interface has a valid address (REQ 8.DoIP-050). A new address
@@ -1083,7 +1083,7 @@ impl<
     }
 
     /// What entity status reports: the connection slots holding a socket, the reserve
-    /// not counted (ISO 13400-2:2019 Table 11), and the largest payload, header
+    /// not counted (Table 11), and the largest payload, header
     /// excluded, the entity takes (REQ 7.DoIP-043).
     fn facts(&self) -> Facts {
         let open = self

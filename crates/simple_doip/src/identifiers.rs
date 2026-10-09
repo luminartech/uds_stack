@@ -1,11 +1,11 @@
 //! The identifiers vehicle identification carries: [`Vin`], [`EntityId`] and
-//! [`GroupId`] (ISO 13400-2:2019 Tables 1 and 5).
+//! [`GroupId`] (Tables 1 and 5).
 //!
 //! Each holds a value that is set. Table 1 gives each identifier the bytes that say it is
 //! not: all `0x00` or all `0xFF`. Those are refused when one is built, so that `None`
 //! is the one way to say an identifier is not set.
 
-/// All `0x00` or all `0xFF`: the bytes ISO 13400-2:2019 Table 1 gives an identifier
+/// All `0x00` or all `0xFF`: the bytes Table 1 gives an identifier
 /// that is not set.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 #[error("all 0x00 or all 0xFF: ISO 13400-2 Table 1's value for an identifier not set")]
@@ -18,7 +18,7 @@ pub enum VinError {
     /// The bytes say no VIN is set.
     #[error(transparent)]
     NotSet(#[from] NotSet),
-    /// A byte is not ASCII, as ISO 13400-2 Tables 4 and 5 give a VIN.
+    /// A byte is not ASCII, as Tables 4 and 5 give a VIN.
     #[error("the VIN is not ASCII")]
     NotAscii,
 }
@@ -36,7 +36,7 @@ const fn not_set(bytes: &[u8]) -> bool {
     zeros || ones
 }
 
-/// A vehicle identification number (ISO 13400-2:2019 Tables 4 and 5): ISO 3779's,
+/// A vehicle identification number (Tables 4 and 5): ISO 3779's,
 /// in 17 ASCII bytes.
 ///
 /// # Examples
@@ -94,7 +94,7 @@ impl From<Vin> for [u8; 17] {
     }
 }
 
-/// An entity ID, the EID (ISO 13400-2:2019 Table 5): unique to its entity, and the MAC
+/// An entity ID, the EID (Table 5): unique to its entity, and the MAC
 /// address of one of its interfaces where it has one.
 ///
 /// # Examples
@@ -149,7 +149,7 @@ impl From<EntityId> for [u8; 6] {
     }
 }
 
-/// A group ID, the GID (ISO 13400-2:2019 Table 5): shared by the entities of one
+/// A group ID, the GID (Table 5): shared by the entities of one
 /// vehicle.
 ///
 /// # Examples

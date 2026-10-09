@@ -1,5 +1,5 @@
 //! The tester's discovery against a scripted UDP socket: vehicle identification
-//! (ISO 13400-2:2019 7.4), diagnostic power mode (7.5) and entity status (7.6), each
+//! (7.4), diagnostic power mode (7.5) and entity status (7.6), each
 //! waiting `A_DoIP_Ctrl` (Table 12).
 
 // Test code; see `golden_vectors.rs` for why the workspace lint standard is relaxed here.
@@ -96,7 +96,7 @@ fn identify_finds_each_entity_that_answers_within_a_doip_ctrl() {
     );
 }
 
-/// ISO 13400-2:2019 Tables 3 and 4: a directed request carries the EID or VIN it names,
+/// Tables 3 and 4: a directed request carries the EID or VIN it names,
 /// in the default protocol version too.
 #[test]
 fn a_directed_request_carries_what_it_names() {

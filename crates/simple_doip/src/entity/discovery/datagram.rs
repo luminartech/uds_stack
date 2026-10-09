@@ -1,4 +1,4 @@
-//! ISO 13400-2:2019 Figure 16's generic header handler for a datagram on
+//! Figure 16's generic header handler for a datagram on
 //! `UDP_DISCOVERY`, Figure 13's vehicle identification request handler, and the frames
 //! that answer them.
 
