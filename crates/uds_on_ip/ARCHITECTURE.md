@@ -94,22 +94,9 @@ identification, and the `DoIP_Data.req/.ind/.conf` primitives.
 the payload as an opaque byte string, and that is the property that keeps it
 reusable.
 
-**This does not hold today.** `src/bare_metal_entity.rs` is production code and
-exports `UDS_RESP_CAP`, `uds_resp_buf`, and
-`on_uds_request: fn(&[u8], &mut [u8]) -> i32` — a byte-level UDS request
-callback. That is a server seam one layer below the one `uds_services` declares
-([§4.1](#41-transport-seam--uds_services--uds_on_ip)), and it ships today.
-
-Two server seams a layer apart is a real collision, not a cosmetic one, and this
-document does not resolve it. Either the bare-metal entity's callback is the
-canonical server seam for `no_std` targets and the `uds_services` path is not
-for them, or it is a bare-metal-only convenience that should be documented as
-not composing with that path. Deciding it is a prerequisite for the server role,
-not a detail of it.
-
-The connection seam of [§4.2](#42-connection-seam--uds_on_ip--simple_doip) does
-not pass through it: `simple_doip::service::DiagnosticEntity` is declared beside
-the bare-metal entity, and carries no dispatch of its own.
+The connection seam of [§4.2](#42-connection-seam--uds_on_ip--simple_doip)
+carries no dispatch of its own: `simple_doip::service::DiagnosticEntity` hands a PDU
+up and takes one back, so `uds_services` is the one place a request is answered.
 
 ### 3.2 `uds_protocol` — ISO 14229-1 messages
 
@@ -748,12 +735,7 @@ run over `simple_doip`'s real `Entity` and `Tester`, in the unpublished
 
 ### 9.1 Prerequisites — blocking, and not in this crate
 
-- **Two server seams.** `bare_metal_entity` owns the connection *and* dispatches
-  UDS through `Callbacks::on_uds_request: fn(&[u8], &mut [u8]) -> i32`, one
-  layer below the seam `uds_services` declares. [§13](#13-invariants-to-preserve)
-  invariant 2. The connection service must be reachable without that callback
-  also being in play, or a server has two places to answer a request and no rule
-  saying which wins.
+None.
 
 ### 9.2 Design gaps in this crate
 
@@ -873,9 +855,8 @@ one line rather than an argument about policy.
 1. A crate's scope is decided by which standard specifies the behaviour, not by
    convenience. The sockets are ISO 13400-2's, so they are `simple_doip`'s
    ([§4.2](#42-connection-seam--uds_on_ip--simple_doip)).
-2. `simple_doip` never learns what a UDS message means. **Currently violated**
-   by the bare-metal entity's UDS callback ([§3.1](#31-simple_doip--iso-13400-2));
-   listed as an invariant to restore, not one that holds.
+2. `simple_doip` never learns what a UDS message means
+   ([§3.1](#31-simple_doip--iso-13400-2)).
 3. `uds_protocol` stays a codec — no dispatch, no policy, no session state.
 4. `uds_session` never learns its transport, and never reads a clock.
 5. `uds_on_ip` never learns what a service *is*. The service identifiers
