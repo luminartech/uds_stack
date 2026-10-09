@@ -5,8 +5,9 @@ members = ["crates/*", "examples/*", "testing/*"]
 # A bare `cargo` command at this root, which is how CI's reusable workflow runs every job,
 # covers the crates alone. The embassy-net adapter and the loopback test crate enable
 # simple_doip's `connection` feature, and as default members they would unify that feature
-# into every bare run, Miri's included. `--workspace`, as the justfile passes, still covers
-# them.
+# into every bare run, Miri's included. The embedded probe is an empty binary on a host,
+# so a bare run has nothing of it to check; CI's `embedded` job builds it for bare metal.
+# `--workspace`, as the justfile passes, still covers all three.
 default-members = ["crates/*"]
 
 # The stack's version. The five crates release in lockstep, so the version is declared once
@@ -58,6 +59,13 @@ embedded-io-async = { version = "0.7", default-features = false }
 embassy-futures = { version = "0.1", default-features = false }
 # The embassy-net entity adapter (examples/embassy-net-entity). no_std.
 embassy-net = { version = "0.9", default-features = false }
+# The embedded probe (testing/embedded-probe): a bare-metal image's time driver, timer
+# queue, runtime and critical section. no_std.
+embassy-time-driver = "0.2"
+embassy-time-queue-utils = "0.3"
+cortex-m = "0.7"
+cortex-m-rt = "0.7"
+portable-atomic = { version = "1", default-features = false }
 
 # dev-dependencies
 anyhow = "1"
@@ -113,3 +121,11 @@ unimplemented = "deny"
 indexing_slicing = "deny"
 arithmetic_side_effects = "deny"
 as_conversions = "deny"
+
+# How firmware is linked: whole-program optimisation for size. `just size` measures the
+# embedded probe in it, so its baseline is the size an integrator's image would see.
+[profile.firmware]
+inherits = "release"
+lto = true
+codegen-units = 1
+opt-level = "s"

@@ -73,6 +73,12 @@ impl<A: ServiceSet, T: UdsTransport, const PEERS: usize> Server<A, T, PEERS> {
     /// it. In a `ConstStaticCell` the server lives in initialised data, so its initial
     /// image, buffers included, is also stored in flash.
     ///
+    /// A transport built at run time, such as `uds_on_ip`'s `DoIpTransport` over
+    /// `simple_doip`'s entity, cannot be in a `const` initialiser. Its server goes in a
+    /// `StaticCell` through `init_with(|| EcuServer::new(..))`, and is built on the
+    /// caller's stack and copied in, so that stack holds the whole server once; see
+    /// `DoIpTransport`'s bare-metal notes for what that costs.
+    ///
     /// The driver builds its own session, so an application never names `uds_session`.
     ///
     /// `PEERS` must be 1, checked at compile time: milestone 1 keeps one slot for a

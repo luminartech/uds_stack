@@ -8,14 +8,16 @@
 # no `-p` at the root runs on its default members, `crates/*`: the five crates. The
 # example member, examples/embassy-net-entity, is built by the hand-rolled `embedded` job
 # below instead, and the loopback test member, testing/doip-loopback, is run by the
-# hand-rolled `loopback` job; see the root Cargo.toml for why neither is a default member. The one job the
-# reusable workflow genuinely cannot reach is fuzzing: its fuzz-tests job runs
-# `cargo fuzz build`/`list`/`run` at the checkout root, which is where a single-crate repo's
-# `fuzz/` directory lives, and has no input to point it elsewhere. This workspace's two fuzz
-# targets live under crates/simple_doip/fuzz and crates/uds_protocol/fuzz instead, so
-# run-fuzz-tests is disabled below and replaced with the two hand-rolled jobs at the bottom
-# of this file. See task-14b-report.md for the rust_workflow change (a `fuzz-directory`
-# input) that would let this move back into the reusable workflow.
+# hand-rolled `loopback` job. The `embedded` job also builds, lints and size-checks the
+# embedded probe, testing/embedded-probe. See the root Cargo.toml for why none of the
+# three is a default member. The one job the reusable workflow genuinely cannot reach is
+# fuzzing: its fuzz-tests job runs `cargo fuzz build`/`list`/`run` at the checkout root,
+# which is where a single-crate repo's `fuzz/` directory lives, and has no input to point
+# it elsewhere. This workspace's two fuzz targets live under crates/simple_doip/fuzz and
+# crates/uds_protocol/fuzz instead, so run-fuzz-tests is disabled below and replaced with
+# the two hand-rolled jobs at the bottom of this file. See task-14b-report.md for the
+# rust_workflow change (a `fuzz-directory` input) that would let this move back into the
+# reusable workflow.
 name: CI
 
 on:
@@ -279,9 +281,11 @@ jobs:
   # rust-ci.yml runs bare cargo at the root, which builds default members only, so it
   # never builds examples/embassy-net-entity, and its no_std canary never builds
   # simple_doip's `connection` feature. `just embedded` builds every no_std crate for
-  # bare metal, the adapter among them. On the MSRV: the adapter is what sets it.
+  # bare metal, the adapter among them. On the MSRV: the adapter is what sets it. Then
+  # it builds testing/embedded-probe, the sensor's server path linked as firmware, and
+  # `just size` holds the probe's flash and RAM to its recorded baseline.
   embedded:
-    name: Embedded build (thumbv7em-none-eabihf, MSRV)
+    name: Embedded build and size (thumbv7em-none-eabihf, MSRV)
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -304,6 +308,11 @@ jobs:
         run: >-
           cargo +stable clippy -p embassy-net-entity --target thumbv7em-none-eabihf
           -- -D warnings
+      # Empty on a host, so the workspace's clippy job never sees its code.
+      - name: Lint the embedded probe
+        run: >-
+          cargo +stable clippy -p embedded-probe --target thumbv7em-none-eabihf
+          -- -D warnings
       - name: Document the embassy-net adapter
         env:
           RUSTDOCFLAGS: -D rustdoc::broken_intra_doc_links -D warnings
@@ -313,8 +322,9 @@ jobs:
       - uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master 2026-07-14
         with:
           toolchain: '1.91'
-          targets: thumbv7em-none-eabihf
-      - name: Build the no_std crates for bare metal at the MSRV
+          targets: thumbv7em-none-eabihf, thumbv6m-none-eabi
+          components: llvm-tools
+      - name: Build the no_std crates for bare metal at the MSRV, and check the probe's size
         run: just embedded
 
   # ===================================================================================

@@ -1,5 +1,5 @@
-# Command runner for the uds_stack workspace: five crates, an example crate and one
-# requirement set.
+# Command runner for the uds_stack workspace: five crates, an example crate, two test
+# crates and one requirement set.
 #
 # The Python toolchain is pinned in pyproject.toml and locked in uv.lock, and every recipe
 # below runs it through `uv run --frozen`. `--frozen` is deliberate: needs.json is consumed
@@ -16,6 +16,14 @@ build_dir := "docs/_build"
 # The bare-metal target the no_std crates are checked against. thumbv7em-none-eabihf
 # stands in for AURIX TC4x, which rustup does not ship: no std, no alloc by default.
 embedded_target := "thumbv7em-none-eabihf"
+
+# A core without compare-and-swap atomics. The embedded probe is built for it too, so that
+# nothing on the sensor path comes to need them.
+embedded_target_no_cas := "thumbv6m-none-eabi"
+
+# The toolchain the size baseline is measured on: the MSRV, as `[workspace.package]`
+# declares it. Code size moves with the compiler, so the gate pins one.
+size_toolchain := "1.91"
 
 # The target CI's Miri job runs on; see `miri`.
 miri_target := "x86_64-unknown-linux-gnu"
@@ -106,9 +114,13 @@ test:
 
 # `-D warnings` promotes anything a crate's Cargo.toml lint table leaves at warn level, and
 # `--all-targets` means the lints are enforced in tests too, not just the libraries.
+#
+# The embedded probe is empty on a host, so it is linted again for bare metal.
 [doc("Lint the workspace at the level pre-commit enforces")]
 clippy:
     cargo clippy --workspace --all-targets --all-features -- -D warnings
+    rustup target add {{ embedded_target }}
+    cargo clippy -p embedded-probe --target {{ embedded_target }} -- -D warnings
 
 # A broken intra-doc link renders as plain text and fails nothing else, so a renamed item
 # leaves its references silently dangling. Denied here so the rename fails instead.
@@ -119,9 +131,13 @@ doc:
 # The check host builds cannot make. A workspace Cargo.lock unifies features across
 # members, so a std dependency enabled by one crate can reach a no_std sibling; nothing
 # below `cargo test` on the host would notice.
-[doc("Build the no_std crates for a bare-metal target")]
-embedded:
-    rustup target add {{ embedded_target }}
+#
+# Then the embedded probe, the sensor's whole server path linked as firmware: here for the
+# core without compare-and-swap, and by `size` for the other target, whose image it holds
+# to the recorded baseline.
+[doc("Build the no_std crates for a bare-metal target, and check the probe's size")]
+embedded: && size
+    rustup target add {{ embedded_target }} {{ embedded_target_no_cas }}
     cargo build -p uds_protocol --target {{ embedded_target }} --no-default-features
     cargo build -p uds_session  --target {{ embedded_target }} --no-default-features
     cargo build -p uds_services --target {{ embedded_target }} --no-default-features
@@ -130,6 +146,29 @@ embedded:
     cargo build -p embassy-net-entity --target {{ embedded_target }}
     cargo build -p uds_protocol --target {{ embedded_target }} --no-default-features --features alloc
     cargo build -p uds_on_ip    --target {{ embedded_target }} --no-default-features --features alloc
+    cargo build -p embedded-probe --target {{ embedded_target_no_cas }}
+
+# The probe's flash, static RAM and main's stack frame against
+# testing/embedded-probe/size-baseline.json, in the `firmware` profile on the pinned
+# toolchain; tools/check_size.py says what fails. The image's path is cargo's, so a
+# CARGO_TARGET_DIR is honoured, and llvm-size and llvm-objdump are the toolchain's own,
+# from its llvm-tools component.
+[doc("Check the embedded probe's flash and RAM against the recorded baseline")]
+size *args:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    rustup toolchain install {{ size_toolchain }} --profile minimal --component llvm-tools \
+        --target {{ embedded_target }} --no-self-update
+    image=$(cargo +{{ size_toolchain }} build -p embedded-probe --profile firmware \
+        --target {{ embedded_target }} --message-format=json-render-diagnostics \
+        | python3 -c 'import json, sys; print([m["executable"] for m in map(json.loads, sys.stdin) if m.get("executable")][-1])')
+    host=$(rustc +{{ size_toolchain }} -vV | sed -n 's/^host: //p')
+    sysroot=$(rustc +{{ size_toolchain }} --print sysroot)
+    python3 tools/check_size.py --llvm-bin "$sysroot/lib/rustlib/$host/bin" \
+        {{ args }} testing/embedded-probe/size-baseline.json "$image"
+
+[doc("Record the embedded probe's current size as its baseline")]
+size-baseline: (size "--record")
 
 # CI's Miri job, run as rust-ci.yml runs it: default members and features, with proptest
 # told not to write regression files from inside the interpreter, which has no filesystem
