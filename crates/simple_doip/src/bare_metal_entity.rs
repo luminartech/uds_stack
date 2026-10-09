@@ -24,9 +24,10 @@
 
 use crate::messages::{
     ActivationTypeCode, Decode, DiagnosticAckCode, DiagnosticMessage, DiagnosticNackCode,
-    Encode, EntityStatusNodeType, EntityStatusResponse, FurtherActionRequired, Header,
-    Message, NackCode, Payload, PayloadType, ProtocolVersion, RoutingActivationRequest,
-    VehicleIdentificationResponse, VinGidSyncStatus,
+    DiagnosticPowerModeCode, Encode, EntityStatusNodeType, EntityStatusResponse,
+    FurtherActionRequired, Header, Message, NackCode, Payload, PayloadType,
+    ProtocolVersion, RoutingActivationRequest, VehicleIdentificationResponse,
+    VinGidSyncStatus,
 };
 use crate::{LogicalAddress, try_frame};
 use automotive_wire_codec::SliceSink;
@@ -194,14 +195,35 @@ impl Entity {
             }
         };
 
+        let request = matches!(
+            frame.header.payload_type,
+            PayloadType::VehicleIdentificationRequest
+                | PayloadType::VehicleIdentificationRequestWithEID
+                | PayloadType::VehicleIdentificationRequestWithVIN
+                | PayloadType::DoIPEntityStatusRequest
+                | PayloadType::DiagnosticPowerModeInfoRequest
+        );
         let reply = match Payload::decode(frame.payload, frame.header.payload_type) {
-            // The EID and VIN variants are not answered: this entity does not match them.
             Ok(Payload::VehicleIdentificationRequest) => self.vehicle_announcement(),
+            Ok(Payload::VehicleIdentificationRequestWithEid(eid)) if eid == self.eid => {
+                self.vehicle_announcement()
+            }
+            Ok(Payload::VehicleIdentificationRequestWithVin(vin)) if vin == self.vin => {
+                self.vehicle_announcement()
+            }
             Ok(Payload::EntityStatusRequest) => self.entity_status(),
+            Ok(Payload::PowerModeInfoRequest) => framed(
+                PayloadType::DiagnosticPowerModeInfoResponse,
+                Payload::PowerModeInfoResponse(DiagnosticPowerModeCode::NotSupported),
+            ),
             Ok(_) => None,
             Err(_) => framed(
                 PayloadType::NegativeAcknowledge,
-                Payload::DoIPNack(NackCode::UnknownPayloadType),
+                Payload::DoIPNack(if request {
+                    NackCode::InvalidPayloadLength
+                } else {
+                    NackCode::UnknownPayloadType
+                }),
             ),
         };
         if let Some(msg) = reply {
@@ -498,6 +520,7 @@ mod tests {
     extern crate std;
 
     use std::sync::{Mutex, MutexGuard, PoisonError};
+    use std::vec;
     use std::vec::Vec;
 
     use super::*;
@@ -614,6 +637,73 @@ mod tests {
             }
             other => panic!("expected announcement, got {other:?}"),
         }
+    }
+
+    /// A version 2 frame of `payload_type` carrying `body`.
+    fn raw(payload_type: u16, body: &[u8]) -> Vec<u8> {
+        let mut frame = vec![0x02, 0xFD];
+        frame.extend(payload_type.to_be_bytes());
+        frame.extend(u32::try_from(body.len()).unwrap().to_be_bytes());
+        frame.extend(body);
+        frame
+    }
+
+    /// The one reply to `request`, decoded, or `None` for silence.
+    fn udp_reply(entity: &mut Entity, request: &[u8]) -> Option<(PayloadType, Vec<u8>)> {
+        entity.on_udp_rx(0x0A00_0001, 55555, request);
+        let udp = &capture().udp;
+        assert!(udp.len() <= 1, "one reply at most: {udp:?}");
+        udp.first().map(|(_, _, reply)| {
+            let (header, payload) = decode_single(reply);
+            (header.payload_type, payload)
+        })
+    }
+
+    /// Figure 13: a request naming this entity's EID or VIN is answered, one naming
+    /// another's is not.
+    #[test]
+    fn directed_identification_is_answered_only_on_a_match() {
+        let (_guard, mut entity) = fresh_entity();
+        let cases: [(u16, &[u8], bool); 4] = [
+            (0x0002, &[1, 2, 3, 4, 5, 6], true),
+            (0x0002, &[9; 6], false),
+            (0x0003, &VIN, true),
+            (0x0003, &[b'X'; 17], false),
+        ];
+        for (payload_type, body, answered) in cases {
+            *capture() = Capture::default();
+            let reply = udp_reply(&mut entity, &raw(payload_type, body));
+            assert_eq!(
+                reply.map(|(payload_type, _)| payload_type),
+                answered.then_some(PayloadType::VehicleAnnouncement),
+                "{payload_type:#06x} {body:?}"
+            );
+        }
+    }
+
+    /// Table 9: power mode is answered, as not supported, since this entity has none.
+    #[test]
+    fn power_mode_is_answered_not_supported() {
+        let (_guard, mut entity) = fresh_entity();
+        let request = encode(
+            PayloadType::DiagnosticPowerModeInfoRequest,
+            Payload::PowerModeInfoRequest,
+        );
+        assert_eq!(
+            udp_reply(&mut entity, &request),
+            Some((PayloadType::DiagnosticPowerModeInfoResponse, vec![0x02]))
+        );
+    }
+
+    /// Figure 16: a request of a known type with the wrong length is refused with NACK
+    /// `0x04`.
+    #[test]
+    fn a_request_of_the_wrong_length_is_refused_0x04() {
+        let (_guard, mut entity) = fresh_entity();
+        assert_eq!(
+            udp_reply(&mut entity, &raw(0x0002, &[1, 2, 3, 4, 5])),
+            Some((PayloadType::NegativeAcknowledge, vec![0x04]))
+        );
     }
 
     #[test]
