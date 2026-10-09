@@ -39,6 +39,46 @@ pub enum Error<E> {
     PduOutsideBuffer,
 }
 
+/// Errors raised by [`DoIpClientTransport`](crate::DoIpClientTransport) over a
+/// [`TesterConnection`](simple_doip::service::TesterConnection) that fails with `E`,
+/// reconnects failing with `R`, and closes failing with `X`.
+#[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
+pub enum ClientTransportError<E, R, X> {
+    /// The connection failed other than by closing: its
+    /// [`DiagnosticConnection::Error`](simple_doip::service::DiagnosticConnection::Error).
+    #[error("the DoIP connection failed: {0:?}")]
+    Connection(E),
+
+    /// No connection could be opened and activated for a request: the
+    /// [`TesterConnection::ReconnectError`](simple_doip::service::TesterConnection::ReconnectError).
+    /// The request was not accepted, and the connection stays closed until a later
+    /// request's reconnect succeeds.
+    #[error("the DoIP connection could not be reopened: {0:?}")]
+    Reconnect(R),
+
+    /// Closing the connection failed: the
+    /// [`TesterConnection::CloseError`](simple_doip::service::TesterConnection::CloseError).
+    /// The connection is closed all the same.
+    #[error("the DoIP connection did not close cleanly: {0:?}")]
+    Close(X),
+
+    /// The connection refused a request while the transport already owed as many
+    /// confirmations as it can hold, none of them yet reported.
+    #[error("the DoIP connection refused a request with no room left to confirm it: {0}")]
+    Refused(simple_doip::service::Refusal),
+
+    /// The addressing cannot be carried over `DoIP`.
+    #[error(transparent)]
+    Mapping(#[from] crate::mapping::MappingError),
+
+    /// The connection reported a PDU outside the buffer it was lent, breaking
+    /// [`DiagnosticConnection::next_event`](simple_doip::service::DiagnosticConnection::next_event)'s
+    /// contract.
+    #[error("the DoIP connection reported a PDU outside the buffer it was lent")]
+    PduOutsideBuffer,
+}
+
 /// Compile-time proof that this crate's errors, and the upstream errors it
 /// composes, implement [`core::error::Error`] rather than `std::error::Error`.
 ///
@@ -50,4 +90,11 @@ const _: () = {
     const fn assert_core_error<T: core::error::Error>() {}
     assert_core_error::<uds_protocol::Error>();
     assert_core_error::<Error<core::convert::Infallible>>();
+    assert_core_error::<
+        ClientTransportError<
+            core::convert::Infallible,
+            core::convert::Infallible,
+            core::convert::Infallible,
+        >,
+    >();
 };

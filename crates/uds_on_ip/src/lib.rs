@@ -92,12 +92,14 @@
 #![cfg_attr(not(feature = "std"), no_std)]
 #![forbid(unsafe_code)]
 
+pub mod client;
 pub mod error;
 pub mod mapping;
 pub mod profile;
 pub mod transport;
 
-pub use error::Error;
+pub use client::DoIpClientTransport;
+pub use error::{ClientTransportError, Error};
 pub use transport::DoIpTransport;
 
 // `TransportEvent` is deliberately not re-exported. It is

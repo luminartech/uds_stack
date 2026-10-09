@@ -140,7 +140,7 @@ pub(crate) const fn refused(refusal: Refusal) -> DoIpResult {
 ///
 /// Always [`Mtype::Diag`]: ISO 14229-5:2022 REQ 4.4 Table 5 maps `T_Ptype` onto
 /// nothing, so `DoIP` carries no message type to read.
-const fn ai(
+pub(crate) const fn ai(
     sa: simple_doip::LogicalAddress,
     ta: simple_doip::LogicalAddress,
     ta_type: simple_doip::TaType,
