@@ -37,10 +37,11 @@ use crate::{LogicalAddress, TaType};
 /// standard's list is: an edition that adds a value is a change every caller must
 /// handle.
 ///
-/// The standard names the values and leaves their meaning to its diagnostic message
-/// handler (Figure 17). Seven of them answer a diagnostic message acknowledgement code
-/// one of its requirements defines, and each says which; the rest it defines by name
-/// only, and each says what this crate produces it for.
+/// The standard names the values and points to its diagnostic message handler
+/// (Figure 17) for their meaning, but pairs none with an acknowledgement code. This
+/// crate pairs seven of them, by name, with the diagnostic message acknowledgement
+/// code a requirement defines, and each says which; each of the rest says what this
+/// crate produces it for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum DoIpResult {
     /// `DoIP_OK`: the service completed. A tester's request is confirmed so on the
@@ -52,8 +53,11 @@ pub enum DoIpResult {
     /// invalid payload length (`0x00`, `0x01`, `0x04`, Table 19).
     HdrError,
     /// `DoIP_TIMEOUT_A`, defined by name only. A tester's request is confirmed so when
-    /// no acknowledgement came within `A_DoIP_Diagnostic_Message` (2 s, Table 12),
-    /// after which the request counts as lost.
+    /// no acknowledgement came within `A_DoIP_Diagnostic_Message`
+    /// ([`crate::TIMEOUT_DIAGNOSTIC_MESSAGE_RESPONSE`], Table 12) of its last byte, or
+    /// when its bytes could not all be written within that time, so local backpressure
+    /// reads the same as an entity that never answered. The request then counts as
+    /// lost.
     TimeoutA,
     /// `DoIP_UNKNOWN_SA`, defined by name only. An entity's response is confirmed so
     /// when its source address is not the entity's own.

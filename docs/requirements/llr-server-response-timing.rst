@@ -581,7 +581,7 @@ The response window
    Rationale: ISO 14229-1:2020 8.7.6 has a received message occupy the one diagnostic
    protocol instance until it is processed, so a request arriving while a service is in
    progress, other than the keep-alive TesterPresent, is refused with ``busyRepeatRequest``
-   (Annex A) and the service in progress continues. The refused request is not indicated as
+   (ISO 14229-1:2020 Annex A) and the service in progress continues. The refused request is not indicated as
    a request, so it starts no service under ``UDSS_LLR_0107`` and replaces none under
    ``UDSS_LLR_0108``; its refusal must leave the service it did not replace exactly as it
    was. ``tS3_Server`` is left alone because the refused request touched nothing on

@@ -186,8 +186,8 @@ impl<const PHYS: usize, const FUNC: usize> Book<PHYS, FUNC> {
         }
     }
 
-    /// Owe the functional keep-alive again after a failed confirmation, up to Table 9's
-    /// repeats.
+    /// Owe the functional keep-alive again after a failed confirmation, up to
+    /// ISO 14229-2:2021 Table 9's repeats.
     fn owe_functional_repeat(&mut self) {
         if self.functional_repeats < REPEATS {
             self.functional_repeats = self.functional_repeats.saturating_add(1);
@@ -541,9 +541,9 @@ impl<
     /// `None` once a functional window has closed.
     ///
     /// Sends the request first if it is unsent. A failed transmission and, physically, an
-    /// expired response window are repeated up to Table 9's two times; after the last,
-    /// the channel is reset and the failure returned. A physical exchange ends at its
-    /// answer, a functional one at its window closing.
+    /// expired response window are repeated up to ISO 14229-2:2021 Table 9's two times;
+    /// after the last, the channel is reset and the failure returned. A physical exchange
+    /// ends at its answer, a functional one at its window closing.
     pub(super) async fn advance(
         &mut self,
     ) -> Option<Result<Answered, ClientError<T::Error>>> {

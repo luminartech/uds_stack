@@ -17,7 +17,7 @@ every input.
 
 ## Status
 
-Implemented, not yet published. Both roles, server and client, are built
+Implemented. Both roles, server and client, are built
 against the requirement set, and `uds_services` drives them end to end. This
 crate is not yet published; see the
 [workspace README](https://github.com/luminartech/uds_stack#status) for where

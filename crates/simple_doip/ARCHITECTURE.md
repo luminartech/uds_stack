@@ -16,7 +16,7 @@ For usage, feature flags, and the current gap list, see [`README.md`](README.md)
 > **A note on spec citations.** This crate is built against **ISO 13400-2:2019**,
 > and a clause, table, figure or requirement cited with no document named is
 > that one's. A citation of any other document names it and its edition
-> (`ISO 14229-5:2022 REQ 7.9`). Cite a locator only after reading it in the
+> (`ISO 14229-5:2022 REQ 7.9`). A § is a section of this file. Cite a locator only after reading it in the
 > standard's text. An earlier review of this crate found and removed
 > a batch of fabricated spec locators, written when no reader could check one; the
 > rule exists so that never recurs. A locator nobody has read is worse than none —
@@ -271,7 +271,8 @@ blocked inside `request` could not start it.
 
 **Addressing: `DoIP_TAtype` is not on the wire.** A diagnostic message carries `SA`
 and `TA` only, so the type is supplied on a request and derived on an indication.
-Table 13 settles it only partly: `0xE000` to `0xEFFF` is functional, and everything
+Table 13 settles it only partly: `0xE400` to `0xEFFF` is functional, this crate also
+treats the use-case-specific range `0xE000` to `0xE3FF` as functional, and everything
 else is physical unless the deployment says otherwise, so
 `LogicalAddress::default_ta_type` is a default an implementor may override. It
 cannot be dropped: DoIP has no multicast (7.8), so a client reaches a functional
@@ -341,9 +342,10 @@ tester, from `0x0E00` only, so `MCTS = 1` is what is built and tested, though `M
   a loop, not a second design.
 - **Which source addresses may activate is configuration**, in `EntityConfig`, which
   has no default.
-- **One server for every connection.** Session, security state and `tS3_Server` belong
-  to the ECU, not to a connection (`UDSS_LLR_0082`), so `uds_on_ip` drives the whole
-  entity into one `uds_services::Server`.
+- **One server for every connection.** The session and `tS3_Server` belong to the
+  ECU, not to a connection (`UDSS_LLR_0082`), and so does security state, held once
+  per server (`UDSSVC_ARCH_0035`). So `uds_on_ip` drives the whole entity into one
+  `uds_services::Server`.
 
 **Cancel safety is held in the entity, and costs a buffer per connection.**
 `uds_services` races `next_event` against a running handler and drops the loser, and

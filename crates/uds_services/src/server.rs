@@ -664,9 +664,10 @@ async fn serve<
             {
                 // The exchange is over either way: a server does not reconnect
                 // (ISO 14229-5:2022 REQ 7.8 and REQ 7.10 have the client reconnect and
-                // activate routing). A close reaching *this* arm is never REQ 7.9's or
-                // 7.11's — those follow a positive response, and nothing positive
-                // has been sent yet — so whether it was expected changes nothing.
+                // activate routing). A close reaching *this* arm is never
+                // ISO 14229-5:2022 REQ 7.9's or 7.11's — those follow a positive response,
+                // and nothing positive has been sent yet — so whether it was expected
+                // changes nothing.
                 return Ok(Served {
                     ended: Ended::Closed,
                     pending_sent,

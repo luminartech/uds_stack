@@ -59,10 +59,10 @@ pub enum TransportEvent<'b> {
     },
     /// A periodic response — ISO 14229-5:2022 REQ 7.16's `0x8004` payload type.
     ///
-    /// **Cannot be a [`Self::DataInd`].** REQ 7.20 requires a periodic response not to
-    /// reset `tS3_Server`, and `DataInd` is exactly what feeds the session layer and
-    /// resets it — so delivering one as a `DataInd` is a conformance failure, not a
-    /// shortcut. `DoIP`-specific in its *payload type* but not in its shape: a CAN
+    /// **Cannot be a [`Self::DataInd`].** ISO 14229-5:2022 REQ 7.20 requires a periodic
+    /// response not to reset `tS3_Server`, and `DataInd` is exactly what feeds the session
+    /// layer and resets it — so delivering one as a `DataInd` is a conformance failure, not
+    /// a shortcut. `DoIP`-specific in its *payload type* but not in its shape: a CAN
     /// binding implementing periodic responses reports the same three things.
     ///
     /// The driver carries this variant and does nothing with it yet:
@@ -129,10 +129,10 @@ pub enum TransportEvent<'b> {
 /// is disconnected due to a session change", so a `DoIP` transport closes on
 /// [`Self::ServerLeaves`] and not otherwise.
 ///
-/// **`ECUReset` is never flagged.** REQ 7.11 closes the connection after *every* `ECUReset`
-/// positive response, with no condition — including the resets that restart nothing — so
-/// a `DoIP` transport keys that close on the `0x51` itself. Flagging resets here would make
-/// an unconditional close depend on a fact it does not depend on.
+/// **`ECUReset` is never flagged.** ISO 14229-5:2022 REQ 7.11 closes the connection after
+/// *every* `ECUReset` positive response, with no condition — including the resets that
+/// restart nothing — so a `DoIP` transport keys that close on the `0x51` itself. Flagging
+/// resets here would make an unconditional close depend on a fact it does not depend on.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum AfterSend {
     /// The server carries on in the software it is running.
@@ -254,8 +254,10 @@ pub trait UdsTransport {
     /// The `tP_Client` reload pair this transport dictates.
     ///
     /// The pair alone: a transport dictates it — `DoIP` has no `T_DataSOM.ind`, hence
-    /// `tP6` rather than `tP2` — but has no view on `tP3` spacing, which ISO
-    /// 14229-2:2021 Table 3 leaves to the client.
+    /// `tP6` rather than `tP2`. `tP3` spacing is not part of it; the client configures it
+    /// in [`crate::ClientTiming`]. ISO 14229-2:2021 Table 4 sets its minimum per transport,
+    /// from the same network delay, and its footnotes d and e leave the maximum to the
+    /// client.
     fn channel_timing(&self) -> Reloads;
 
     /// Monotonic milliseconds, 32-bit and wrapping.
