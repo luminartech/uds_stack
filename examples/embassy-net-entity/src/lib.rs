@@ -406,7 +406,9 @@ pub async fn serve(
     stack: Stack<'_>,
     address: EntityAddress,
     config: EntityConfig,
-    (udp, identity, seed): (Udp<'_>, FixedIdentity, u32),
+    udp: Udp<'_>,
+    identity: FixedIdentity,
+    seed: u32,
     buffers: &mut [SocketBuffers; MCTS + 1],
 ) -> simple_doip::entity::Error<Error> {
     let [first, second] = buffers;
