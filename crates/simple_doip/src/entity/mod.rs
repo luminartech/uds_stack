@@ -257,27 +257,6 @@ pub struct Entity<
     discovery: D,
 }
 
-impl<
-    'a,
-    A: TcpAccept + 'a,
-    const MCTS: usize,
-    const MAX_MESSAGE: usize,
-    const TESTERS: usize,
-    U: UdpSplit,
-    I: VehicleIdentity,
-> Entity<'a, A, MCTS, MAX_MESSAGE, TESTERS, Discovery<U, I>>
-{
-    /// The error of the UDP socket's last failed receive or send, if one has failed.
-    ///
-    /// A failure loses the datagram it was receiving or sending, and the socket is left
-    /// alone for `A_DoIP_Announce_Interval` before the entity uses it again; nothing
-    /// else is affected, and [`DiagnosticEntity::next_event`] does not fail for it.
-    #[must_use]
-    pub fn discovery_error(&self) -> Option<&U::Error> {
-        self.discovery.error()
-    }
-}
-
 /// A request awaiting its [`EntityEvent::Confirm`].
 #[derive(Clone, Copy)]
 struct PendingConfirm {
@@ -451,8 +430,8 @@ impl<
     ///   send to the limited broadcast address.
     /// * `identity` - what the entity announces itself as.
     /// * `seed` - a seed for the random waits of `A_DoIP_Announce_Wait`, from the
-    ///   target's random number generator. Entities sharing a seed answer a broadcast
-    ///   request together, which the wait is there to prevent.
+    ///   target's random number generator. It is mixed with the identity's
+    ///   [`VehicleIdentity::eid`], so entities given the same seed still wait apart.
     #[must_use]
     pub fn with_discovery<U: UdpSplit, I: VehicleIdentity>(
         self,

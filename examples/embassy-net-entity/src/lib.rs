@@ -398,8 +398,8 @@ impl fmt::Debug for SocketBuffers {
 /// testers `config` accepts, echoing every diagnostic message; and announces itself as
 /// `identity` on `udp`, answering testers looking for it.
 ///
-/// `seed` sets the entity's random announce wait; give each entity on a network its own,
-/// such as from its serial number or a hardware RNG.
+/// `seed` sets the entity's random announce wait, with the identity's EID mixed in: draw
+/// it from a hardware RNG.
 ///
 /// Returns only when [`DiagnosticEntity::next_event`] fails, with its error.
 pub async fn serve(

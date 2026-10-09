@@ -7,11 +7,15 @@
 
 mod support;
 
+use std::cell::RefCell;
 use std::net::SocketAddr;
 use std::pin::pin;
 
 use embassy_time::Duration;
-use simple_doip::entity::{Discovery, Entity, EntityAddress, FixedIdentity};
+use embedded_io_async::ErrorKind;
+use simple_doip::entity::{
+    Discovery, Entity, EntityAddress, FixedIdentity, VehicleIdentity,
+};
 use simple_doip::messages::{
     DiagnosticPowerModeCode, EntityStatusNodeType, EntityStatusResponse,
     FurtherActionRequired, Message, NackCode, Payload, PayloadType, ProtocolVersion,
@@ -21,13 +25,13 @@ use simple_doip::service::DiagnosticEntity;
 use simple_doip::wire::Decode;
 use simple_doip::{EntityId, GroupId, LogicalAddress, UDP_DISCOVERY_PORT, Vin};
 use support::mock_stack::{
-    ENTITY, MockError, MockStack, MockUdp, MockUdpSocket, advance, clock, raw,
-    until_stalled, versioned,
+    ENTITY, MockStack, MockUdp, MockUdpSocket, advance, clock, raw, until_stalled,
+    versioned,
 };
 use support::the_tester;
 
-type Sensor<'a> =
-    Entity<'a, MockStack, 1, 4096, 1, Discovery<MockUdpSocket, FixedIdentity>>;
+type Sensor<'a, I = FixedIdentity> =
+    Entity<'a, MockStack, 1, 4096, 1, Discovery<MockUdpSocket, I>>;
 
 const EID: [u8; 6] = [0x02, 0x00, 0x00, 0xAB, 0xCD, 0xEF];
 const VIN: [u8; 17] = *b"WVWZZZ1JZXW000001";
@@ -51,16 +55,20 @@ fn identity() -> FixedIdentity {
     FixedIdentity::new(EntityId::new(EID).unwrap(), DiagnosticPowerModeCode::Ready)
 }
 
-fn sensor<'a>(stack: &'a MockStack, udp: &MockUdp, identity: FixedIdentity) -> Sensor<'a> {
+fn sensor<'a, I: VehicleIdentity>(
+    stack: &'a MockStack,
+    udp: &MockUdp,
+    identity: I,
+) -> Sensor<'a, I> {
     sensor_seeded(stack, udp, identity, SEED)
 }
 
-fn sensor_seeded<'a>(
+fn sensor_seeded<'a, I: VehicleIdentity>(
     stack: &'a MockStack,
     udp: &MockUdp,
-    identity: FixedIdentity,
+    identity: I,
     seed: u32,
-) -> Sensor<'a> {
+) -> Sensor<'a, I> {
     let address = EntityAddress::new(ENTITY, LogicalAddress(0xE400)).unwrap();
     Entity::new(stack, address, the_tester()).with_discovery(udp.socket(), identity, seed)
 }
@@ -68,6 +76,52 @@ fn sensor_seeded<'a>(
 /// Sets the clock back to zero, for a second entity in one test.
 fn restart_clock() {
     embassy_time::MockDriver::get().reset();
+}
+
+/// [`identity`], keeping the kind of each socket failure it is told of.
+#[derive(Debug)]
+struct Telling<'f> {
+    identity: FixedIdentity,
+    failures: &'f RefCell<Vec<ErrorKind>>,
+}
+
+impl<'f> Telling<'f> {
+    fn new(failures: &'f RefCell<Vec<ErrorKind>>) -> Self {
+        Self {
+            identity: identity(),
+            failures,
+        }
+    }
+}
+
+impl VehicleIdentity for Telling<'_> {
+    fn vin(&self) -> Option<Vin> {
+        self.identity.vin()
+    }
+
+    fn eid(&self) -> EntityId {
+        self.identity.eid()
+    }
+
+    fn gid(&self) -> Option<GroupId> {
+        self.identity.gid()
+    }
+
+    fn further_action(&self) -> FurtherActionRequired {
+        self.identity.further_action()
+    }
+
+    fn sync_status(&self) -> Option<VinGidSyncStatus> {
+        self.identity.sync_status()
+    }
+
+    fn power_mode(&self) -> DiagnosticPowerModeCode {
+        self.identity.power_mode()
+    }
+
+    fn discovery_failed<E: embedded_io_async::Error>(&self, error: &E) {
+        self.failures.borrow_mut().push(error.kind());
+    }
 }
 
 fn ms(millis: u64) -> Duration {
@@ -90,8 +144,8 @@ where
 
 /// Advances the clock a millisecond at a time for `millis`, settling at each, and returns
 /// what was sent with the milliseconds since the start it was sent at.
-fn run_for(
-    entity: &mut Sensor<'_>,
+fn run_for<I: VehicleIdentity>(
+    entity: &mut Sensor<'_, I>,
     udp: &MockUdp,
     millis: u64,
 ) -> Vec<(u64, SocketAddr, Vec<u8>)> {
@@ -111,19 +165,19 @@ fn run_for(
 }
 
 /// The entity, past its three announcements.
-fn announced<'a>(
+fn announced<'a, I: VehicleIdentity>(
     stack: &'a MockStack,
     udp: &MockUdp,
-    identity: FixedIdentity,
-) -> Sensor<'a> {
+    identity: I,
+) -> Sensor<'a, I> {
     let mut entity = sensor(stack, udp, identity);
     assert_eq!(run_for(&mut entity, udp, 1600).len(), 3);
     entity
 }
 
 /// A request from the tester, with what it was answered and how many milliseconds after.
-fn ask(
-    entity: &mut Sensor<'_>,
+fn ask<I: VehicleIdentity>(
+    entity: &mut Sensor<'_, I>,
     udp: &MockUdp,
     datagram: &[u8],
 ) -> Vec<(u64, SocketAddr, Vec<u8>)> {
@@ -563,19 +617,20 @@ fn requests_beyond_the_pending_answers_are_dropped() {
     assert!(udp.all_received());
 }
 
-/// A failed receive or send is kept for `discovery_error`, and the socket is left alone
-/// for 500 ms rather than retried at once; `next_event` neither fails nor spins, and the
+/// A failed receive or send is told to the identity, and the socket is left alone for
+/// 500 ms rather than retried at once; `next_event` neither fails nor spins, and the
 /// `TCP_DATA` side carries on.
 #[test]
 fn a_failing_socket_rests_and_recovers() {
     let _clock = clock();
     let (stack, udp) = (MockStack::new(4096), MockUdp::new());
-    let mut entity = announced(&stack, &udp, identity());
-    assert!(entity.discovery_error().is_none());
+    let failures = RefCell::new(Vec::new());
+    let mut entity = announced(&stack, &udp, Telling::new(&failures));
+    assert_eq!(*failures.borrow(), []);
 
     udp.fail_receives();
     settle(&mut entity);
-    assert_eq!(entity.discovery_error(), Some(&MockError));
+    assert_eq!(*failures.borrow(), [ErrorKind::Other]);
     let _peer = stack.dial();
     settle(&mut entity);
 
@@ -591,10 +646,11 @@ fn a_failing_socket_rests_and_recovers() {
 fn a_failed_send_is_given_up() {
     let _clock = clock();
     let (stack, udp) = (MockStack::new(4096), MockUdp::new());
-    let mut entity = sensor(&stack, &udp, identity());
+    let failures = RefCell::new(Vec::new());
+    let mut entity = sensor(&stack, &udp, Telling::new(&failures));
     udp.fail_sends();
     run_for(&mut entity, &udp, 500);
-    assert_eq!(entity.discovery_error(), Some(&MockError));
+    assert_eq!(*failures.borrow(), [ErrorKind::Other]);
 
     udp.heal();
     udp.deliver(tester_at(), &raw(0x4003, &[]));

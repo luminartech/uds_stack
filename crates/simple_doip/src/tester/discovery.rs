@@ -71,7 +71,7 @@ impl Found {
         SocketAddr::new(self.from.ip(), TCP_PORT)
     }
 
-    /// What the entity identified itself as: its logical address among it.
+    /// What the entity identified itself as, its logical address included.
     #[must_use]
     pub const fn identification(&self) -> &VehicleIdentificationResponse {
         &self.identification
@@ -97,9 +97,10 @@ pub enum DiscoveryError<E> {
 /// Asks the entities at `to` to identify themselves, and collects into `found` each one
 /// that answers within [`A_DOIP_CTRL`]: an entity answering twice is kept once.
 ///
-/// Empties `found` first, and returns how many it kept; an entity answering once `found`
-/// is full is not kept. Waits the whole [`A_DOIP_CTRL`], as many entities may answer one
-/// request (Figure 7).
+/// Returns how many it kept, `n`: the first `n` of `found` are [`Some`], in the order the
+/// entities answered, and the rest [`None`]. An entity answering once `found` is full is
+/// not kept. Waits the whole [`A_DOIP_CTRL`], as many entities may answer one request
+/// (Figure 7).
 ///
 /// # Arguments
 ///
@@ -111,8 +112,8 @@ pub enum DiscoveryError<E> {
 ///
 /// # Errors
 ///
-/// [`DiscoveryError::Io`] where the socket fails. A datagram that is not an
-/// identification response is ignored.
+/// The socket's error where it fails. A datagram that is not an identification
+/// response is ignored, and no answer at all is `Ok(0)`.
 ///
 /// # Cancel safety
 ///
@@ -122,7 +123,7 @@ pub async fn identify<U: UdpSplit>(
     to: SocketAddr,
     request: Request,
     found: &mut [Option<Found>],
-) -> Result<usize, DiscoveryError<U::Error>> {
+) -> Result<usize, U::Error> {
     let payload = match request {
         Request::All => Payload::VehicleIdentificationRequest,
         Request::Eid(eid) => Payload::VehicleIdentificationRequestWithEid(eid.to_bytes()),
@@ -158,9 +159,9 @@ pub async fn identify<U: UdpSplit>(
     Ok(found.iter().flatten().count())
 }
 
-/// Asks the entity at `entity` for its status (ISO 13400-2:2019 7.6): among it, the
-/// largest payload it takes, from which the longest diagnostic message's user data is
-/// that less the 4 bytes of its addresses.
+/// Asks the entity at `entity` for its status (ISO 13400-2:2019 7.6), which includes the
+/// largest payload it takes: the longest diagnostic message's user data is that less the
+/// 4 bytes of its addresses.
 ///
 /// # Arguments
 ///
@@ -240,7 +241,8 @@ async fn ask<U: UdpSplit, T>(
     };
     let header = Header::new(ProtocolVersion::V2019, payload_type, 0);
     exchange(socket, entity, header, payload, take)
-        .await?
+        .await
+        .map_err(DiscoveryError::Io)?
         .unwrap_or(Err(DiscoveryError::NoAnswer))
 }
 
@@ -252,7 +254,7 @@ async fn exchange<U: UdpSplit, T>(
     header: Header,
     payload: Payload<'_>,
     mut take: impl FnMut(SocketAddr, Message<'_>) -> Option<T>,
-) -> Result<Option<T>, DiscoveryError<U::Error>> {
+) -> Result<Option<T>, U::Error> {
     let (mut receiver, mut sender) = socket.split();
     let message = Message { header, payload };
     let mut frame = [0u8; Header::SIZE + 17];
@@ -261,8 +263,7 @@ async fn exchange<U: UdpSplit, T>(
         .unwrap_or_default();
     sender
         .send(to, frame.get(..written).unwrap_or_default())
-        .await
-        .map_err(DiscoveryError::Io)?;
+        .await?;
     let listen = async {
         let mut buf = [0u8; RX_CAP];
         loop {
@@ -279,7 +280,7 @@ async fn exchange<U: UdpSplit, T>(
         }
     };
     match select(listen, Timer::after(A_DOIP_CTRL)).await {
-        Either::First(taken) => taken.map(Some).map_err(DiscoveryError::Io),
+        Either::First(taken) => taken.map(Some),
         Either::Second(()) => Ok(None),
     }
 }

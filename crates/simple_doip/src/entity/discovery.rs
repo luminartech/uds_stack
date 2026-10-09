@@ -51,7 +51,7 @@ const ANNOUNCE_TO: SocketAddr = SocketAddr::new(
 );
 
 /// What an entity announces itself as, and answers vehicle identification, power mode
-/// and a directed request's EID with.
+/// and a directed request's EID with; and what it tells of a failing socket.
 ///
 /// Read whenever a frame is built, so an implementation over the integrator's own
 /// shared state, such as atomics or a `critical_section::Mutex`, changes what the next
@@ -82,6 +82,17 @@ pub trait VehicleIdentity {
     fn matches_eid(&self, eid: &[u8; 6]) -> bool {
         *eid == self.eid().to_bytes()
     }
+
+    /// Told each time the UDP socket fails to receive or send, with its error: by
+    /// default, nothing is done.
+    ///
+    /// The datagram is lost, and the entity leaves the socket alone for
+    /// `A_DoIP_Announce_Interval` before using it again.
+    /// [`DiagnosticEntity::next_event`] does not fail for it, so this is where a socket
+    /// that keeps failing, leaving the entity unseen by testers, shows.
+    ///
+    /// [`DiagnosticEntity::next_event`]: crate::service::DiagnosticEntity::next_event
+    fn discovery_failed<E: embedded_io_async::Error>(&self, _error: &E) {}
 }
 
 /// A [`VehicleIdentity`] whose values are fixed when it is built.
@@ -214,7 +225,6 @@ pub struct Discovery<U: UdpSplit, I> {
     burst: Burst,
     pending: [Option<Pending>; PENDING],
     rest_until: Option<Instant>,
-    error: Option<U::Error>,
 }
 
 impl<U: UdpSplit, I: fmt::Debug> fmt::Debug for Discovery<U, I> {
@@ -224,28 +234,22 @@ impl<U: UdpSplit, I: fmt::Debug> fmt::Debug for Discovery<U, I> {
             .field("burst", &self.burst)
             .field("pending", &self.pending)
             .field("rest_until", &self.rest_until)
-            .field("error", &self.error)
             .finish_non_exhaustive()
     }
 }
 
 impl<U: UdpSplit, I: VehicleIdentity> Discovery<U, I> {
-    pub(super) const fn new(socket: U, identity: I, seed: u32) -> Self {
+    pub(super) fn new(socket: U, identity: I, seed: u32) -> Self {
+        let jitter = Jitter::new(seed, identity.eid().to_bytes());
         Self {
             socket,
             identity,
-            jitter: Jitter::new(seed),
+            jitter,
             rx: [0; RX_CAP],
             burst: Burst::Unstarted,
             pending: [None; PENDING],
             rest_until: None,
-            error: None,
         }
-    }
-
-    /// The error of the socket's last failed receive or send.
-    pub(super) const fn error(&self) -> Option<&U::Error> {
-        self.error.as_ref()
     }
 
     /// Moves past `which`, sent or given up.
@@ -268,8 +272,8 @@ impl<U: UdpSplit, I: VehicleIdentity> Discovery<U, I> {
         }
     }
 
-    fn failed(&mut self, error: U::Error, now: Instant) {
-        self.error = Some(error);
+    fn failed(&mut self, error: &U::Error, now: Instant) {
+        self.identity.discovery_failed(error);
         self.rest_until = Some(after(now, REST));
     }
 
@@ -332,14 +336,22 @@ enum Due {
     Pending(usize),
 }
 
-/// A xorshift over the integrator's seed: each `A_DoIP_Announce_Wait`, decorrelating
-/// entities powered up together.
+/// A xorshift over the integrator's seed and the entity's EID: each
+/// `A_DoIP_Announce_Wait`, decorrelating entities powered up together.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct Jitter(u32);
 
 impl Jitter {
-    const fn new(seed: u32) -> Self {
-        Self(if seed == 0 { 0x9E37_79B9 } else { seed })
+    fn new(seed: u32, eid: [u8; 6]) -> Self {
+        let [oui_0, oui_1, oui_2, nic_0, nic_1, nic_2] = eid;
+        let folded = u32::from_be_bytes([oui_0 ^ nic_1, oui_1 ^ nic_2, oui_2, nic_0]);
+        let mut state = seed ^ folded;
+        state ^= state >> 16;
+        state = state.wrapping_mul(0x7FEB_352D);
+        state ^= state >> 15;
+        state = state.wrapping_mul(0x846C_A68B);
+        state ^= state >> 16;
+        Self(if state == 0 { 0x9E37_79B9 } else { state })
     }
 
     fn announce_wait(&mut self) -> Duration {
@@ -518,9 +530,9 @@ impl<U: UdpSplit, I: VehicleIdentity> sealed::Discover for Discovery<U, I> {
             Io::Sent(which) => self.done(which, now),
             Io::SendFailed(which, error) => {
                 self.done(which, now);
-                self.failed(error, now);
+                self.failed(&error, now);
             }
-            Io::ReceiveFailed(error) => self.failed(error, now),
+            Io::ReceiveFailed(error) => self.failed(&error, now),
         }
     }
 }
@@ -534,8 +546,9 @@ mod tests {
     #[test]
     fn the_announce_wait_covers_its_range_from_any_seed() {
         let most = Duration::from_millis(u64::from(ANNOUNCE_WAIT_MAX_MS));
+        let eid = [0x02, 0, 0, 0, 0, 0x01];
         for seed in [0, 1, 0x1234_5678, u32::MAX] {
-            let mut jitter = Jitter::new(seed);
+            let mut jitter = Jitter::new(seed, eid);
             let (mut shortest, mut longest) = (most, Duration::from_ticks(0));
             for _ in 0..10_000 {
                 let wait = jitter.announce_wait();
@@ -552,5 +565,18 @@ mod tests {
             );
             assert!(longest <= most, "{seed:#x}: {longest:?}");
         }
+    }
+
+    /// Entities given the same seed, as two left at zero are, still wait apart: their
+    /// EIDs differ, even in the last byte alone.
+    #[test]
+    fn entities_given_one_seed_wait_apart() {
+        let waits = |eid| {
+            let mut jitter = Jitter::new(0, eid);
+            [(); 8].map(|()| jitter.announce_wait())
+        };
+        let first = waits([0x02, 0, 0, 0xAB, 0xCD, 0x01]);
+        let second = waits([0x02, 0, 0, 0xAB, 0xCD, 0x02]);
+        assert_ne!(first, second);
     }
 }

@@ -536,10 +536,10 @@ let entity = Entity::<_, 1, 4096>::new(&acceptor, address, config)
   entity, and the new entity announces. There is no `announce` method: through
   `DoIpTransport` nothing could call it.
 - **Randomness is a seed.** `with_discovery` takes a `u32` the integrator draws from its
-  hardware RNG (embassy-net's stack needs one too); the entity steps a xorshift from it
-  for each `A_DoIP_Announce_Wait`. No `rand_core` dependency: the wait only
-  decorrelates entities powered up together, and a seed fixed across a fleet defeats it,
-  which the docs say.
+  hardware RNG (embassy-net's stack needs one too), mixes the identity's EID into it, and
+  steps a xorshift from the result for each `A_DoIP_Announce_Wait`. No `rand_core`
+  dependency: the wait only decorrelates entities powered up together, and the EID,
+  unique to each entity (Table 5), keeps two given the same seed, or none, apart.
 - **The entity's own frames, apart.** Every UDP frame is the entity's own, so there is
   one queue, not two: a fixed array of four pending answers, each a kind,
   a destination and when it is due. A frame is encoded when it is sent, into one
@@ -548,13 +548,16 @@ let entity = Entity::<_, 1, 4096>::new(&acceptor, address, config)
   `0x03` either, and the tester repeats within `A_DoIP_Ctrl` (Figure 7).
 - **Time.** Internally on `embassy-time` `Instant`s, as the slots' timers are; nothing
   new crosses the traits, so nothing new is `Timestamp`.
-- **I/O errors are not fatal.** A failed receive or send loses that datagram, keeps the
-  error for `Entity::discovery_error`, and rests the socket `A_DoIP_Announce_Interval`
-  before using it again, so a socket failing at once cannot spin `next_event`
-  (invariant 7). A failed send is given up, not retried: the earliest frame due is sent first, so
-  an announcement a host cannot broadcast would otherwise hold back every answer behind
-  it. `Error` gains no variant: `DoIpTransport` treats `next_event`'s `Err` as fatal,
-  and discovery failing must not take diagnosis down with it.
+- **I/O errors are not fatal, and are told.** A failed receive or send loses that
+  datagram, hands the error to `VehicleIdentity::discovery_failed`, and rests the socket
+  `A_DoIP_Announce_Interval` before using it again, so a socket failing at once cannot
+  spin `next_event` (invariant 7). A failed send is given up, not retried: the earliest
+  frame due is sent first, so an announcement a host cannot broadcast would otherwise
+  hold back every answer behind it. `Error` gains no variant: `DoIpTransport` treats
+  `next_event`'s `Err` as fatal, and discovery failing must not take diagnosis down with
+  it. The identity is told rather than the entity asked, because the entity is out of
+  the integrator's reach while the server runs; the identity is already the
+  integrator's shared state, and the default does nothing.
 - **IPv4 only.** Announcements go to `255.255.255.255:13400`. IPv6 (`FF02::1`) waits
   for a target that needs it; all of a vehicle's entities use one IP version
   (3.DoIP-109).
@@ -608,8 +611,9 @@ own `UdpSplit` socket, as three functions:
 - `identify` sends one of the three requests (`Request::All`, `Request::Eid(EntityId)`,
   `Request::Vin(Vin)`), to `BROADCAST` or one entity, and
   collects into the caller's `[Option<Found>]` every entity that answers within
-  `A_DoIP_Ctrl`, one per address and EID. It waits the whole `A_DoIP_Ctrl`, as any
-  number of entities may answer (Figure 7).
+  `A_DoIP_Ctrl`, one per address and EID, from the front, returning how many. It waits
+  the whole `A_DoIP_Ctrl`, as any number of entities may answer (Figure 7), so its only
+  error is the socket's: no answer is none found.
 - `entity_status` and `power_mode` ask one entity, and return at its answer, its header
   NACK as `DiscoveryError::Refused`, or `NoAnswer` after `A_DoIP_Ctrl`.
 - A `Found` entity's `tcp_address` is its address on `TCP_PORT`, for
@@ -631,18 +635,19 @@ seed and the identity: about 170 bytes besides the socket and `I`.
 Measured on `testing/embedded-probe` for `thumbv7em-none-eabihf`, in its `firmware`
 profile on Rust 1.91:
 
-| Probe | text | bss |
-|---|---|---|
-| Before this work | 49 036 | 9 308 |
-| `NoDiscovery` | 50 044 | 9 308 |
-| `with_discovery`, over a stub UDP socket | 53 752 | 9 628 |
+| Probe | text | bss | `main`'s frame |
+|---|---|---|---|
+| Before this work | 49 020 | 9 308 | 8 824 |
+| `NoDiscovery` | 50 028 | 9 308 | 8 824 |
+| `with_discovery`, over a stub UDP socket | 53 760 | 9 628 | 9 160 |
 
 Of the 1 008 bytes an entity without discovery gains, 788 are the codec: the entity
 decodes every payload type it is sent, and three more now decode with what they carry,
 as do the optional trailing fields. The other 220 are the entity polling a source that
-never completes. Discovery itself is 3 708 bytes of code, building its identifiers
-included, and 320 of RAM. The probe as committed is the third row, so `just size` gates
-the entity with discovery; the second was measured with the probe built without it.
+never completes. Discovery itself is 3 732 bytes of code, building its identifiers
+included, 320 of static RAM, and 336 of `main`'s frame, where the server, and with it
+the entity, is built. The probe as committed is the third row, so `just size` gates the
+entity with discovery; the second was measured with the probe built without it.
 
 ---
 

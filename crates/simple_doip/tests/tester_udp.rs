@@ -255,8 +255,5 @@ fn a_failing_socket_is_an_io_error() {
     assert!(until_stalled(identifying.as_mut()).is_none());
     udp.fail_receives();
     udp.deliver(entity_at(10), &identification(0xE400, EID));
-    assert_eq!(
-        until_stalled(identifying.as_mut()),
-        Some(Err(DiscoveryError::Io(MockError)))
-    );
+    assert_eq!(until_stalled(identifying.as_mut()), Some(Err(MockError)));
 }
