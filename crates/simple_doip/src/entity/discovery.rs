@@ -41,7 +41,7 @@ const ANNOUNCE_WAIT_MAX_MS: u32 = 500;
 const ANNOUNCE_INTERVAL: Duration = Duration::from_millis(500);
 /// `A_DoIP_Announce_Num` (Table 12).
 const ANNOUNCE_NUM: u8 = 3;
-/// How long a socket that failed is left alone.
+/// How long a socket whose receive failed is left alone.
 const REST: Duration = ANNOUNCE_INTERVAL;
 /// Where an announcement goes: the IPv4 limited broadcast address (8.DoIP-125) and
 /// `UDP_DISCOVERY` (4.DoIP-009).
@@ -86,8 +86,9 @@ pub trait VehicleIdentity {
     /// Told each time the UDP socket fails to receive or send, with its error: by
     /// default, nothing is done.
     ///
-    /// The datagram is lost, and the entity leaves the socket alone for
-    /// `A_DoIP_Announce_Interval` before using it again.
+    /// The datagram is lost. After a failed receive the entity leaves the socket alone
+    /// for `A_DoIP_Announce_Interval` before using it again; a failed send loses only
+    /// its frame, so a peer the socket cannot reach silences nothing else.
     /// [`DiagnosticEntity::next_event`] does not fail for it, so this is where a socket
     /// that keeps failing, leaving the entity unseen by testers, shows.
     ///
@@ -272,7 +273,8 @@ impl<U: UdpSplit, I: VehicleIdentity> Discovery<U, I> {
         }
     }
 
-    fn failed(&mut self, error: &U::Error, now: Instant) {
+    /// Tells the identity of a failed receive, and leaves the socket alone for [`REST`].
+    fn receive_failed(&mut self, error: &U::Error, now: Instant) {
         self.identity.discovery_failed(error);
         self.rest_until = Some(after(now, REST));
     }
@@ -495,7 +497,7 @@ impl<U: UdpSplit, I: VehicleIdentity> sealed::Discover for Discovery<U, I> {
                     Err(error) => Io::SendFailed(which, error),
                 }
             };
-            DiscoveryIo(match select(receive, send).await {
+            DiscoveryIo(match select(send, receive).await {
                 Either::First(io) | Either::Second(io) => io,
             })
         }
@@ -517,6 +519,12 @@ impl<U: UdpSplit, I: VehicleIdentity> sealed::Discover for Discovery<U, I> {
                     When::Now => now,
                     When::AfterAnnounceWait => after(now, self.jitter.announce_wait()),
                 };
+                let queued = self.pending.iter().flatten().any(|pending| {
+                    pending.to == from && pending.owed.answer == owed.answer
+                });
+                if queued {
+                    return;
+                }
                 if let Some(free) =
                     self.pending.iter_mut().find(|pending| pending.is_none())
                 {
@@ -530,9 +538,9 @@ impl<U: UdpSplit, I: VehicleIdentity> sealed::Discover for Discovery<U, I> {
             Io::Sent(which) => self.done(which, now),
             Io::SendFailed(which, error) => {
                 self.done(which, now);
-                self.failed(&error, now);
+                self.identity.discovery_failed(&error);
             }
-            Io::ReceiveFailed(error) => self.failed(&error, now),
+            Io::ReceiveFailed(error) => self.receive_failed(&error, now),
         }
     }
 }

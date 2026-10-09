@@ -526,8 +526,10 @@ fn what_testers_receive_is_discarded_silently() {
 
     for datagram in [
         raw(0x0000, &[0x01]),
+        versioned(raw(0x0000, &[0x00]), 0x01),
         own,
         raw(0x4002, &[0x01, 0x01, 0x00]),
+        versioned(raw(0x4004, &[0x01]), 0x04),
         raw(0x4004, &[0x01]),
     ] {
         udp.deliver(tester_at(), &datagram);
@@ -552,8 +554,8 @@ fn a_payload_over_the_max_data_size_is_answered_0x02() {
     );
 }
 
-/// REQ 7.DoIP-045 and 122: a payload length wrong for its type, or a datagram longer or
-/// shorter than its header says, is answered NACK `0x04`, and the port keeps listening.
+/// REQ 7.DoIP-045: a payload length wrong for its type, or a datagram longer or shorter
+/// than its header says, is answered NACK `0x04`, and the port keeps listening.
 #[test]
 fn a_wrong_length_is_answered_0x04() {
     let _clock = clock();
@@ -584,6 +586,27 @@ fn a_wrong_length_is_answered_0x04() {
     assert_eq!(ask(&mut entity, &udp, &raw(0x4003, &[])).len(), 1);
 }
 
+/// ARCHITECTURE §2.5.4: a NACK raised once the request's protocol version is known is
+/// sent in it, as the other answers are, so a tester of the 2012 edition can read it.
+#[test]
+fn a_nack_carries_the_requests_protocol_version() {
+    let _clock = clock();
+    let (stack, udp) = (MockStack::new(4096), MockUdp::new());
+    let mut entity = announced(&stack, &udp, identity());
+
+    for datagram in [
+        versioned(raw(0x4001, &[0x00]), 0x02),
+        versioned(raw(0x0005, &[]), 0x02),
+    ] {
+        let sent = ask(&mut entity, &udp, &datagram);
+        assert_eq!(
+            decode(answer(&sent)).header.protocol_version,
+            ProtocolVersion::V2012,
+            "{datagram:02x?}"
+        );
+    }
+}
+
 /// REQ 7.DoIP-031: a datagram from a broadcast or multicast address is ignored; one too
 /// short for a header has nothing to answer; and neither stops the next being answered.
 #[test]
@@ -601,20 +624,46 @@ fn a_datagram_with_nothing_to_answer_is_dropped() {
 
 // --- what the socket does ----------------------------------------------------------------
 
-/// Answers the entity cannot hold are dropped: four wait their `A_DoIP_Announce_Wait`,
-/// and a fifth arriving meanwhile is not answered.
+/// Answers the entity cannot hold are dropped: four testers' wait their
+/// `A_DoIP_Announce_Wait`, and a fifth's arriving meanwhile is not answered.
 #[test]
 fn requests_beyond_the_pending_answers_are_dropped() {
     let _clock = clock();
     let (stack, udp) = (MockStack::new(4096), MockUdp::new());
     let mut entity = announced(&stack, &udp, identity());
 
-    for _ in 0..5 {
-        udp.deliver(tester_at(), &identification_request());
+    for port in 50_001..=50_005 {
+        udp.deliver(([192, 168, 0, 2], port).into(), &identification_request());
     }
     let sent = run_for(&mut entity, &udp, 600);
     assert_eq!(sent.len(), 4, "{sent:?}");
     assert!(udp.all_received());
+}
+
+/// A tester repeating a request it is already owed an answer to is answered once, and
+/// holds no more of the queue: another's power mode request is answered at once
+/// (REQ 8.DoIP-118).
+#[test]
+fn a_repeated_request_is_answered_once_and_crowds_out_no_one() {
+    let _clock = clock();
+    let (stack, udp) = (MockStack::new(4096), MockUdp::new());
+    let mut entity = announced(&stack, &udp, identity());
+    let other: SocketAddr = ([192, 168, 0, 3], 50_000).into();
+
+    for _ in 0..5 {
+        udp.deliver(tester_at(), &identification_request());
+    }
+    udp.deliver(other, &raw(0x4003, &[]));
+    let sent = run_for(&mut entity, &udp, 600);
+
+    let to = |address| sent.iter().filter(|(_, to, _)| *to == address).count();
+    assert_eq!((to(tester_at()), to(other)), (1, 1), "{sent:?}");
+    assert_eq!(
+        sent.iter()
+            .find(|(_, to, _)| *to == other)
+            .map(|sent| sent.0),
+        Some(0)
+    );
 }
 
 /// A failed receive or send is told to the identity, and the socket is left alone for
@@ -658,6 +707,11 @@ fn a_failed_send_is_given_up() {
 
     let to = |address| sent.iter().filter(|(_, to, _)| *to == address).count();
     assert_eq!((to(tester_at()), to(broadcast())), (1, 2), "{sent:?}");
+    assert_eq!(
+        first_sent(&sent).0,
+        0,
+        "a failed send rests nothing: {sent:?}"
+    );
 }
 
 /// A send that does not complete holds back no `TCP_DATA` socket: a tester activates

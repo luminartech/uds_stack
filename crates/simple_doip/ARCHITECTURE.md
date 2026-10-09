@@ -403,7 +403,7 @@ the sensor forced. Raise any of them to overturn it.
 
 ### 2.5 An entity's UDP: discovery, status and power mode
 
-> **As built** (issue #48): `src/entity/discovery.rs` and `src/tester/discovery.rs`.
+> **As built**: `src/entity/discovery.rs` and `src/tester/discovery.rs`.
 > Locators are ISO 13400-2:2019. Tables 5–12, 17, 19, 20 and 41 and Figures 3, 7, 11,
 > 13, 16, 20 and 21 were read in the PDF; the markdown copy drops figures and table
 > content.
@@ -525,8 +525,9 @@ let entity = Entity::<_, 1, 4096>::new(&acceptor, address, config)
   for; `VehicleIdentificationResponse` keeps the bytes it was sent, as a tester reads
   whatever an entity announces.
 - **Entity status reads the table.** NCTS is the count of connection slots holding a
-  socket, whatever its phase; the reserve is not counted, so NCTS never exceeds MCTS
-  (Table 11 counts MCTS without the reserve). MCTS is `MCTS`. MDS is always sent, and is
+  socket, whatever its phase. Table 11 leaves the reserve out of MCTS and has NCTS count
+  the sockets established; this crate leaves the reserve out of NCTS too, so NCTS never
+  exceeds MCTS. MCTS is `MCTS`. MDS is always sent, and is
   `MAX_MESSAGE − 8`: 7.DoIP-043 compares MDS with the *payload* length, and the entity's
   `0x02` NACK refuses a message, header included, over `MAX_MESSAGE`. A tester's largest
   UDS request is therefore MDS − 4 (a diagnostic message's addresses); W9's client
@@ -547,16 +548,20 @@ let entity = Entity::<_, 1, 4096>::new(&acceptor, address, config)
   one queue, not two: a fixed array of four pending answers, each a kind,
   a destination and when it is due. A frame is encoded when it is sent, into one
   41-byte scratch buffer, so a slow answer carries the identity as it is then. A
-  request that finds the queue full is dropped unanswered: there is no room for its
-  `0x03` either, and the tester repeats within `A_DoIP_Ctrl` (Figure 7).
+  request owing what is already queued for its source is answered by that one, so a
+  tester repeating itself holds one slot, not four. A request that finds the queue full
+  is dropped unanswered: there is no room for a NACK either. The standard has no rule
+  for this; it takes four testers asking at once.
 - **Time.** Internally on `embassy-time` `Instant`s, as the slots' timers are; nothing
   new crosses the traits, so nothing new is `Timestamp`.
 - **I/O errors are not fatal, and are told.** A failed receive or send loses that
-  datagram, hands the error to `VehicleIdentity::discovery_failed`, and rests the socket
-  `A_DoIP_Announce_Interval` before using it again, so a socket failing at once cannot
-  spin `next_event` (invariant 7). A failed send is given up, not retried: the earliest
-  frame due is sent first, so an announcement a host cannot broadcast would otherwise
-  hold back every answer behind it. `Error` gains no variant: `DoIpTransport` treats
+  datagram and hands the error to `VehicleIdentity::discovery_failed`. A failed receive
+  rests the socket `A_DoIP_Announce_Interval` before it is used again, so a socket
+  failing at once cannot spin `next_event` (invariant 7). A failed send rests nothing
+  and is given up, not retried: it may have failed only for its destination, which a
+  peer chooses, and the earliest frame due is sent first, so an announcement a host
+  cannot broadcast would otherwise hold back every answer behind it. A send cannot spin
+  either: each consumes the frame it was of. `Error` gains no variant: `DoIpTransport` treats
   `next_event`'s `Err` as fatal, and discovery failing must not take diagnosis down with
   it. The identity is told rather than the entity asked, because the entity is out of
   the integrator's reach while the server runs; the identity is already the
@@ -566,9 +571,10 @@ let entity = Entity::<_, 1, 4096>::new(&acceptor, address, config)
   (3.DoIP-109).
 
 **Cancel safety, on the entity's terms.** The socket is split with `UdpSplit`; the
-receive half is `Readable`. `wait` waits on `readable` and on sending the head of the
-queue once it is due, and applies whichever completes in the poll that completes it, as
-`io.rs` does for `TCP_DATA`. The `connection` feature's integrator obligations cover the
+receive half is `Readable`. `wait` waits on sending the head of the queue once it is
+due, polled first, so datagrams arriving on every pass cannot hold it back, and on
+`readable`, and applies whichever completes in the poll that completes it, as `io.rs`
+does for `TCP_DATA`. The `connection` feature's integrator obligations cover the
 UDP socket too: `UdpReceive::receive` after `readable` completes with the datagram, and
 a dropped `readable`, `receive` or `send` moves no datagram. A dropped `send` that did
 send is harmless here: the answer is sent again, and every UDP answer is idempotent.
@@ -577,8 +583,10 @@ send is harmless here: the answer is sent again, and every UDP answer is idempot
 `edge-nal-embassy`'s UDP socket keeps its buffers through `dyn`, so the sensor example
 binds embassy-net's `UdpSocket` through a small adapter, as it does for TCP. embassy-net
 discards a datagram too long for the buffer it is read into without saying where it came
-from, so the adapter passes such a datagram over, where Figure 16 owes `0x04`; no
-request the entity answers is that long.
+from, so the adapter passes such a datagram over, where Figure 16 may owe it `0x00`,
+`0x01`, `0x02` or `0x04`. `recv_from_with` reads a datagram whole with its source, but
+holds the socket mutably until one arrives, which the send half, waited on at the same
+time, cannot share.
 
 #### 2.5.4 The UDP header handler
 
@@ -590,20 +598,23 @@ answered `0x04` even on a socket that drops what does not fit.
 | Datagram | Answer |
 |---|---|
 | Source a broadcast or multicast address (7.DoIP-031), or under 8 bytes | Dropped |
-| Sync pattern wrong, or a version other than `0x02`, `0x03`, or `0xFF` on `0x0001` to `0x0003` (7.DoIP-041, 156) | NACK `0x00`, discarded |
-| `0x0000`, `0x0004`, `0x4002`, `0x4004` (7.DoIP-039, Figure 16) | Discarded silently: among them the entity's own announcements |
+| Sync pattern wrong | NACK `0x00`, discarded |
+| `0x0000`, `0x0004`, `0x4002`, `0x4004`, in any version (7.DoIP-039, Figure 16) | Discarded silently: among them the entity's own announcements, and a NACK from a peer of another edition, which a NACK back could answer in turn |
+| A version other than `0x02`, `0x03`, or `0xFF` on `0x0001` to `0x0003` (7.DoIP-041, 156) | NACK `0x00`, discarded |
 | Any other type but `0x0001` to `0x0003`, `0x4001`, `0x4003` (7.DoIP-042) | NACK `0x01` |
 | Payload length over MDS (7.DoIP-043) | NACK `0x02` |
-| Pending queue full (7.DoIP-044) | Dropped, see 2.5.3 |
-| Payload length not 0, 6, 17, 0, 0 for `0x0001`, `0x0002`, `0x0003`, `0x4001`, `0x4003`, or a datagram longer or shorter than its header says (7.DoIP-045, 122) | NACK `0x04`, discarded |
+| Payload length not 0, 6, 17, 0, 0 for `0x0001`, `0x0002`, `0x0003`, `0x4001`, `0x4003`, or a datagram longer or shorter than its header says (7.DoIP-045) | NACK `0x04`, discarded |
+| The same answer already queued for its source | Answered by that one, see 2.5.3 |
+| Pending queue full | Dropped, see 2.5.3 |
 | `0x0001` | Identification response after `A_DoIP_Announce_Wait` |
 | `0x0002` / `0x0003` matching | Identification response after `A_DoIP_Announce_Wait` |
 | `0x0002` / `0x0003` not matching | Silence (Figure 13) |
 | `0x4001` | Entity status at once |
 | `0x4003` | Power mode at once |
 
-Answers carry the request's protocol version, `0x03` for one sent with `0xFF`;
-announcements carry `0x03`.
+Answers carry the request's protocol version, `0x03` for one sent with `0xFF`, as do
+the NACKs raised once it is known (`0x01`, `0x02`, `0x04`); a NACK `0x00`, whose
+datagram has no version the entity takes, and announcements carry `0x03`.
 
 #### 2.5.5 The tester side
 
@@ -625,10 +636,10 @@ own `UdpSplit` socket, as three functions:
   `Tester::connect`.
 
 An identification request goes out in the default protocol version `0xFF`, which
-7.DoIP-156 has every entity take on one, so an entity of an earlier edition is found
-too; entity status and power mode requests go out in `0x03`. The module is what the loopback tests, dft
-(issue #17) and W9's `outbound_max` (MDS − 4) need, shares the `messages` codecs, and
-stays out of `uds_on_ip`.
+7.DoIP-156 has an entity of this edition take on one, and which an entity of an earlier
+edition may take too; entity status and power mode requests go out in `0x03`, which such
+an entity may refuse. The module is what the loopback tests, dft and W9's `outbound_max`
+(MDS − 4) need, shares the `messages` codecs, and stays out of `uds_on_ip`.
 
 #### 2.5.6 Gating and cost
 
@@ -980,7 +991,8 @@ choosing the crate; the mechanics are here:
   that a holder's loss either way.
 - The authentication and confirmation sub-states of a registered connection are
   passed through on the spot (REQ 3.DoIP-129, 130).
-- Discovery is IPv4 only (§2.5.3), and an entity sends no sync status byte.
+- Discovery is IPv4 only (§2.5.3), and an entity sends no sync status byte unless its
+  `VehicleIdentity::sync_status` gives one.
 - The embassy-net adapter has no test on its target; it is built, linted and
   documented for `thumbv7em-none-eabihf`. Two entities sharing one of its acceptors
   wake each other unreliably, and a socket whose `listen` fails, on a port of 0 or one

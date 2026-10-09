@@ -74,6 +74,15 @@ pub(super) fn handle<I: VehicleIdentity>(
     let Ok((header, payload)) = Header::decode(datagram) else {
         return Some(Owed::nack(NackCode::IncorrectPatternFormat));
     };
+    if matches!(
+        header.payload_type,
+        PayloadType::NegativeAcknowledge
+            | PayloadType::VehicleAnnouncement
+            | PayloadType::DoIPEntityStatusResponse
+            | PayloadType::DiagnosticPowerModeInfoResponse
+    ) {
+        return None;
+    }
     let identification = matches!(
         header.payload_type,
         PayloadType::VehicleIdentificationRequest
@@ -87,26 +96,23 @@ pub(super) fn handle<I: VehicleIdentity>(
         }
         _ => return Some(Owed::nack(NackCode::IncorrectPatternFormat)),
     };
+    let refused = |code| Some(Owed::now(Answer::Nack(code), version));
     let expected = match header.payload_type {
-        PayloadType::NegativeAcknowledge
-        | PayloadType::VehicleAnnouncement
-        | PayloadType::DoIPEntityStatusResponse
-        | PayloadType::DiagnosticPowerModeInfoResponse => return None,
         PayloadType::VehicleIdentificationRequest
         | PayloadType::DoIPEntityStatusRequest
         | PayloadType::DiagnosticPowerModeInfoRequest => 0,
         PayloadType::VehicleIdentificationRequestWithEID => 6,
         PayloadType::VehicleIdentificationRequestWithVIN => 17,
-        _ => return Some(Owed::nack(NackCode::UnknownPayloadType)),
+        _ => return refused(NackCode::UnknownPayloadType),
     };
     if header.payload_length > max_data_size {
-        return Some(Owed::nack(NackCode::MessageTooLarge));
+        return refused(NackCode::MessageTooLarge);
     }
     let whole = usize::try_from(header.payload_length).is_ok_and(|declared| {
         declared == expected && Some(length) == expected.checked_add(Header::SIZE)
     });
     if !whole {
-        return Some(Owed::nack(NackCode::InvalidPayloadLength));
+        return refused(NackCode::InvalidPayloadLength);
     }
     let identified = Owed {
         answer: Answer::Identification,

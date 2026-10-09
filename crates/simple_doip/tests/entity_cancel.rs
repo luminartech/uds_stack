@@ -230,7 +230,8 @@ fn stalled_close_aborted(drive: Drive) -> (Vec<String>, Vec<u8>, bool) {
 type Datagram = (u32, SocketAddr, Vec<u8>);
 
 /// The entity announces itself while testers ask it to identify itself, plainly and by
-/// EID and VIN, and ask its power mode and status: every datagram it sends, and when.
+/// EID and VIN, each once the last is answered, and ask its power mode and status:
+/// every datagram it sends, and when.
 fn discovery_burst(drive: Drive) -> (Vec<String>, Vec<Datagram>) {
     const EID: [u8; 6] = [0x02, 0x00, 0x00, 0xAB, 0xCD, 0xEF];
     const VIN: [u8; 17] = *b"WVWZZZ1JZXW000001";
@@ -247,10 +248,10 @@ fn discovery_burst(drive: Drive) -> (Vec<String>, Vec<Datagram>) {
     for step in 0..=20 {
         match step {
             1 => udp.deliver(tester, &raw(0x0001, &[])),
-            3 => udp.deliver(tester, &raw(0x0002, &EID)),
             4 => udp.deliver(tester, &raw(0x4003, &[])),
-            6 => udp.deliver(tester, &raw(0x0003, &VIN)),
+            7 => udp.deliver(tester, &raw(0x0002, &EID)),
             8 => udp.deliver(tester, &raw(0x4001, &[])),
+            13 => udp.deliver(tester, &raw(0x0003, &VIN)),
             _ => {}
         }
         drain(&mut entity, drive, &mut seen);

@@ -1083,7 +1083,7 @@ impl<
     }
 
     /// What entity status reports: the connection slots holding a socket, the reserve
-    /// not counted (Table 11), and the largest payload, header
+    /// not counted, so that NCTS never exceeds MCTS, and the largest payload, header
     /// excluded, the entity takes (REQ 7.DoIP-043).
     fn facts(&self) -> Facts {
         let open = self
