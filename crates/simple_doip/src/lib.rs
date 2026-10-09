@@ -141,6 +141,10 @@ mod stream;
 #[cfg(feature = "connection")]
 pub mod tester;
 
+#[cfg(all(doctest, feature = "connection"))]
+#[doc = include_str!("../MIGRATING.md")]
+struct MigrationGuide;
+
 use core::time::Duration;
 
 /// Default TCP port for `DoIP`
