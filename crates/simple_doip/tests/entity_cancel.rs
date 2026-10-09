@@ -105,13 +105,9 @@ fn close(entity: &mut TestEntity<'_>, drive: Drive, connection: ConnectionId) {
     }
 }
 
-/// Requests `pdu` for `ta`, first dropping the request unpolled when `drive` drops.
-fn request(entity: &mut TestEntity<'_>, drive: Drive, ta: LogicalAddress, pdu: &[u8]) {
-    if let Drive::Dropped = drive {
-        drop(entity.request(ENTITY, ta, TaType::Physical, pdu));
-    }
-    let future = pin!(entity.request(ENTITY, ta, TaType::Physical, pdu));
-    until_stalled(future).unwrap().unwrap();
+/// Requests `pdu` for `ta`. A request waits on nothing, so there is no future to drop.
+fn request(entity: &mut TestEntity<'_>, ta: LogicalAddress, pdu: &[u8]) {
+    entity.request(ENTITY, ta, TaType::Physical, pdu).unwrap();
 }
 
 /// Closes `connection` once its writes have stalled: the close waits out its limit,
@@ -151,7 +147,7 @@ fn activate_echo_close(drive: Drive) -> (Vec<String>, Vec<u8>, bool) {
     let mut seen = Vec::new();
 
     drain(&mut entity, drive, &mut seen);
-    request(&mut entity, drive, TESTER, &[0x51, 0x01]);
+    request(&mut entity, TESTER, &[0x51, 0x01]);
     drain(&mut entity, drive, &mut seen);
     close(&mut entity, drive, ConnectionId::new(0));
     drain(&mut entity, drive, &mut seen);
@@ -219,7 +215,7 @@ fn stalled_close_aborted(drive: Drive) -> (Vec<String>, Vec<u8>, bool) {
     drain(&mut entity, drive, &mut seen);
     peer.stall_writes();
 
-    request(&mut entity, drive, TESTER, &[0x51, 0x01]);
+    request(&mut entity, TESTER, &[0x51, 0x01]);
     close_stalled(&mut entity, drive, ConnectionId::new(0));
     drain(&mut entity, drive, &mut seen);
 

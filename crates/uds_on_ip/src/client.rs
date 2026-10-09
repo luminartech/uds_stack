@@ -1,5 +1,6 @@
 //! The client side of `UDSonIP`: ISO 14229-5:2022 over one `DoIP` tester connection.
 
+use core::future::Future;
 use core::ops::Range;
 
 use simple_doip::LogicalAddress;
@@ -153,7 +154,7 @@ impl<C: TesterConnection, const QUEUE: usize> DoIpClientTransport<C, QUEUE> {
     ///     const MAX_PDU: usize = 4084;
     ///     // ...
     /// #   type Error = ();
-    /// #   async fn request(&mut self, _: LogicalAddress, _: TaType, _: &[u8])
+    /// #   fn request(&mut self, _: LogicalAddress, _: TaType, _: &[u8])
     /// #       -> Result<(), Refusal> { Ok(()) }
     /// #   fn now(&self) -> Timestamp { Timestamp(0) }
     /// #   async fn next_event<'b>(&mut self, _: &'b mut [u8], _: Option<Timestamp>)
@@ -332,9 +333,8 @@ impl<C, const QUEUE: usize> DoIpClientTransport<C, QUEUE> {
 
 impl<C: TesterConnection, const QUEUE: usize> DoIpClientTransport<C, QUEUE> {
     /// Hands `data` to the connection, or holds it until the connection can take it,
-    /// reconnected where it has ended. Nothing here waits: the request is accepted before
-    /// any reconnect, which the next [`UdsTransport::next_event`] makes.
-    async fn send(&mut self, ai: Ai, data: &[u8]) -> Result<(), TransportError<C>> {
+    /// reconnected by the next [`UdsTransport::next_event`] where it has ended.
+    fn send(&mut self, ai: Ai, data: &[u8]) -> Result<(), TransportError<C>> {
         let ta = target_of(ai)?;
         let expects = awaits_response(data);
         if self.late_reply_possible(ai, expects) {
@@ -346,10 +346,10 @@ impl<C: TesterConnection, const QUEUE: usize> DoIpClientTransport<C, QUEUE> {
         if self.link == Link::Closed || self.sent.is_some() || !self.waiting.is_empty() {
             return self.wait(ai, data, expects);
         }
-        let request = self
+        match self
             .connection
-            .request(ta, to_doip_ta_type(ai.ta_type), data);
-        match request.await {
+            .request(ta, to_doip_ta_type(ai.ta_type), data)
+        {
             Ok(()) => {
                 self.sent = Some(ai);
                 self.requested(ai, expects);
@@ -398,17 +398,17 @@ impl<C: TesterConnection, const QUEUE: usize> DoIpClientTransport<C, QUEUE> {
     }
 
     /// Hands the oldest waiting request to the connection, if it can take one.
-    async fn send_waiting(&mut self) {
+    fn send_waiting(&mut self) {
         if self.sent.is_some() || self.link == Link::Closed {
             return;
         }
         let Some((ai, data)) = self.waiting.front_bytes() else {
             return;
         };
-        let request =
-            self.connection
-                .request(to_logical(ai.ta), to_doip_ta_type(ai.ta_type), data);
-        match request.await {
+        match self
+            .connection
+            .request(to_logical(ai.ta), to_doip_ta_type(ai.ta_type), data)
+        {
             Ok(()) => {
                 self.sent = Some(ai);
                 self.waiting.pop();
@@ -511,8 +511,9 @@ impl<C: TesterConnection, const QUEUE: usize> UdsTransport
     const MAX_PDU: usize = C::MAX_PDU;
 
     /// `T_Data.req` as `DoIP_Data.request` (ISO 14229-5:2022 REQ 4.3 Table 4), from the
-    /// address routing activation registered. Accepted on the first poll: where the last
-    /// connection ended, the request waits for the next event to reconnect.
+    /// address routing activation registered. Accepted or refused when called, waiting on
+    /// nothing: where the last connection ended, the request waits for the next event to
+    /// reconnect.
     ///
     /// A request made while the connection carries another waits, and one the
     /// connection refuses is accepted all the same; either way the
@@ -524,13 +525,13 @@ impl<C: TesterConnection, const QUEUE: usize> UdsTransport
     /// [`ClientTransportError::Mapping`] if the addressing cannot be carried, and
     /// [`ClientTransportError::Refused`] if the connection refuses the request while the
     /// transport already owes as many confirmations as it can hold.
-    async fn t_data_req(
+    fn t_data_req(
         &mut self,
         ai: Ai,
         data: &[u8],
         _after: AfterSend,
-    ) -> Result<(), Self::Error> {
-        self.send(ai, data).await
+    ) -> impl Future<Output = Result<(), Self::Error>> {
+        core::future::ready(self.send(ai, data))
     }
 
     /// The next `T_Data.ind` or `T_Data.conf`, a closed connection, or
@@ -559,7 +560,7 @@ impl<C: TesterConnection, const QUEUE: usize> UdsTransport
                 return Ok(owed.into());
             }
             self.reconnect().await?;
-            self.send_waiting().await;
+            self.send_waiting();
             if let Some(owed) = self.owed.pop() {
                 return Ok(owed.into());
             }

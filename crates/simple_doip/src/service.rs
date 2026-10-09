@@ -322,8 +322,9 @@ pub trait DiagnosticConnection {
     /// `DoIP_Data.request`: send `pdu` to `ta` (ISO 13400-2:2019 8.3.1).
     ///
     /// There is no source address: routing activation fixed it for the connection.
-    /// Completion is not awaited here. It is reported by a later
-    /// [`ConnectionEvent::Confirm`], because the confirm is what starts the layer
+    /// The request is accepted or refused on the spot and waits for nothing: the
+    /// connection holds it, [`Self::next_event`] writes it, and its completion is a later
+    /// [`ConnectionEvent::Confirm`] (8.3.2), because the confirm is what starts the layer
     /// above's response timer.
     ///
     /// # Arguments
@@ -340,7 +341,7 @@ pub trait DiagnosticConnection {
         ta: LogicalAddress,
         ta_type: TaType,
         pdu: &[u8],
-    ) -> impl Future<Output = Result<(), Refusal>>;
+    ) -> Result<(), Refusal>;
 
     /// The current time on the clock a deadline is on.
     fn now(&self) -> Timestamp;
@@ -587,16 +588,17 @@ pub trait DiagnosticEntity {
     const CONNECTIONS: usize;
 
     /// The longest PDU [`Self::request`] accepts. A longer one is refused with
-    /// [`Self::Error`], and no confirm follows it, so the layer above can refuse it
-    /// first.
+    /// [`Refusal::PduTooLarge`], and no confirm follows it, so the layer above can refuse
+    /// it first.
     const MAX_PDU: usize;
 
     /// `DoIP_Data.request`: send `pdu` from `sa` to `ta` on the connection whose
     /// routing activation registered `ta` (ISO 13400-2:2019 8.3.1).
     ///
     /// Routing activation registers each source address on one connection only, so
-    /// the target address alone chooses the connection. Completion is reported by a
-    /// later [`EntityEvent::Confirm`]: a request whose `sa` is not one of the
+    /// the target address alone chooses the connection. The request is accepted or
+    /// refused on the spot and waits for nothing; its completion is a later
+    /// [`EntityEvent::Confirm`] (8.3.2): a request whose `sa` is not one of the
     /// entity's own logical addresses is accepted, sends nothing, and is confirmed
     /// with [`DoIpResult::UnknownSa`].
     ///
@@ -621,7 +623,7 @@ pub trait DiagnosticEntity {
         ta: LogicalAddress,
         ta_type: TaType,
         pdu: &[u8],
-    ) -> impl Future<Output = Result<(), Refusal>>;
+    ) -> Result<(), Refusal>;
 
     /// The current time on the clock a deadline is on.
     fn now(&self) -> Timestamp;
@@ -815,7 +817,7 @@ mod tests {
         type Error = core::convert::Infallible;
         const MAX_PDU: usize = 8;
 
-        async fn request(
+        fn request(
             &mut self,
             ta: LogicalAddress,
             ta_type: TaType,
@@ -867,7 +869,7 @@ mod tests {
         let ConnectionEvent::Indication { sa, pdu, .. } = event else {
             panic!("expected an indication, got {event:?}");
         };
-        connection.request(sa, TaType::Physical, pdu).await.unwrap();
+        connection.request(sa, TaType::Physical, pdu).unwrap();
         assert_eq!(connection.sent.get(..connection.sent_len), Some(pdu));
 
         let mut buf = [0u8; 8];

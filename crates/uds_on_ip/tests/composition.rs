@@ -31,7 +31,7 @@ impl DiagnosticEntity for OpaqueEntity {
     type Error = ();
     const CONNECTIONS: usize = 1;
     const MAX_PDU: usize = usize::MAX;
-    async fn request(
+    fn request(
         &mut self,
         _sa: LogicalAddress,
         _ta: LogicalAddress,

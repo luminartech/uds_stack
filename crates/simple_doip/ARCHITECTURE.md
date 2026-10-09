@@ -215,8 +215,9 @@ stateDiagram-v2
   ISO 14229-1's rules, `0x11` or `0x13`, or `busyRepeatRequest` while busy, its Figure
   5's choice for a request ISO 14229-1:2020 8.7.6 has wait, which `uds_on_ip`
   composes from the truncated event.
-- **Requests wait for nothing.** A `request` is made by its future's first poll,
-  which completes it, so one dropped unpolled makes none. It is queued on the
+- **Requests wait for nothing.** `request` is a plain function, not a future: the
+  request is accepted or refused when it returns, and there is nothing to drop
+  part-way. It is queued on the
   connection that registered its target and confirmed `Ok` once written,
   `NoSocket` where no connection registered the target or the connection closes
   first, `UnknownSa` from a source address not the entity's, and `OutOfMemory` where

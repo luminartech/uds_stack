@@ -316,7 +316,6 @@ pub async fn exchange<C: DiagnosticConnection>(
 ) -> Exchange {
     tester
         .request(ta, ta_type, pdu)
-        .await
         .expect("the tester accepts the request");
     let mut confirmed = None;
     loop {
@@ -355,7 +354,6 @@ pub async fn exchange<C: DiagnosticConnection>(
 pub async fn send<C: DiagnosticConnection>(tester: &mut C, pdu: &[u8]) -> DoIpResult {
     tester
         .request(ENTITY, TaType::Physical, pdu)
-        .await
         .expect("the tester accepts the request");
     let mut buf = vec![0u8; TESTER_MESSAGE];
     match tester.next_event(&mut buf, None).await.expect("the tester") {

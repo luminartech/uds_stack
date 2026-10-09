@@ -131,7 +131,7 @@ impl DiagnosticConnection for Scripted {
     type Error = core::convert::Infallible;
     const MAX_PDU: usize = MAX_PDU;
 
-    async fn request(
+    fn request(
         &mut self,
         ta: LogicalAddress,
         ta_type: TaType,

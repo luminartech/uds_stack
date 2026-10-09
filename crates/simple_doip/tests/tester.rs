@@ -602,7 +602,7 @@ fn a_failed_read_is_closed_and_keeps_its_error() {
 const PDU: [u8; 3] = [0x22, 0xF1, 0x90];
 
 fn request(tester: &mut ActiveTester<'_>) -> Result<(), Refusal> {
-    run(tester.request(ENTITY, TaType::Physical, &PDU))
+    tester.request(ENTITY, TaType::Physical, &PDU)
 }
 
 /// A closed tester whose `Closed` was reported waits for the caller's deadline, and
@@ -801,7 +801,9 @@ fn a_functional_requests_ack_from_any_source_confirms() {
     let _clock = clock();
     let stack = MockStack::new(usize::MAX);
     let mut tester = active(&stack);
-    run(tester.request(LogicalAddress(0xE400), TaType::Functional, &PDU)).unwrap();
+    tester
+        .request(LogicalAddress(0xE400), TaType::Functional, &PDU)
+        .unwrap();
     stack.latest().send(&ack(LogicalAddress(0x0002), TESTER));
     let mut buf = [0; 16];
 
@@ -873,13 +875,17 @@ fn a_pdu_longer_than_max_pdu_is_refused() {
     assert_eq!(MAX_PDU, N - 12);
 
     assert_eq!(
-        run(tester.request(ENTITY, TaType::Physical, &[0x2E; MAX_PDU + 1])).unwrap_err(),
+        tester
+            .request(ENTITY, TaType::Physical, &[0x2E; MAX_PDU + 1])
+            .unwrap_err(),
         Refusal::PduTooLarge {
             len: MAX_PDU + 1,
             max: MAX_PDU
         }
     );
-    run(tester.request(ENTITY, TaType::Physical, &[0x2E; MAX_PDU])).unwrap();
+    tester
+        .request(ENTITY, TaType::Physical, &[0x2E; MAX_PDU])
+        .unwrap();
     let mut buf = [0; 16];
     let mut waiting = pin!(tester.next_event(&mut buf, None));
     assert!(until_stalled(waiting.as_mut()).is_none());
@@ -899,7 +905,7 @@ fn an_empty_pdu_is_refused() {
     let mut tester = active(&stack);
 
     assert_eq!(
-        run(tester.request(ENTITY, TaType::Physical, &[])).unwrap_err(),
+        tester.request(ENTITY, TaType::Physical, &[]).unwrap_err(),
         Refusal::EmptyPdu
     );
     let mut buf = [0; 16];
@@ -909,28 +915,6 @@ fn an_empty_pdu_is_refused() {
     }
     assert_eq!(stack.latest().take_written(), []);
     request(&mut tester).unwrap();
-}
-
-/// `request` completes on its first poll, so a request is accepted exactly when it
-/// returned `Ok`: one dropped unpolled queued nothing.
-#[test]
-fn an_unpolled_request_is_not_accepted() {
-    let _clock = clock();
-    let stack = MockStack::new(usize::MAX);
-    let mut tester = active(&stack);
-    {
-        let mut requesting = pin!(tester.request(ENTITY, TaType::Physical, &[0x3E, 0x00]));
-        assert!(poll_times(requesting.as_mut(), 0).is_none());
-    }
-
-    request(&mut tester).unwrap();
-    let mut buf = [0; 16];
-    let mut waiting = pin!(tester.next_event(&mut buf, None));
-    assert!(until_stalled(waiting.as_mut()).is_none());
-    assert_eq!(
-        stack.latest().take_written(),
-        diagnostic(TESTER, ENTITY, &PDU)
-    );
 }
 
 #[test]
@@ -1129,7 +1113,7 @@ fn an_alive_check_between_a_request_and_its_ack_is_answered_once() {
     let _clock = clock();
     drop_at_every_poll(
         |stack, tester| {
-            run(tester.request(ENTITY, TaType::Physical, &PDU)).unwrap();
+            tester.request(ENTITY, TaType::Physical, &PDU).unwrap();
             sent(stack, tester);
             stack.latest().send(&alive_check_request());
             stack.latest().send(&ack(ENTITY, TESTER));

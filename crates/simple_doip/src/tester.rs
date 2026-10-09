@@ -172,7 +172,7 @@ pub enum ConnectError<E> {
 ///
 /// let mut buf = [0; Tester::<edge_nal_std::Stack, N>::MAX_PDU];
 /// 'send: loop {
-///     match tester.request(LogicalAddress(0x0001), TaType::Physical, &[0x3E, 0x00]).await {
+///     match tester.request(LogicalAddress(0x0001), TaType::Physical, &[0x3E, 0x00]) {
 ///         Err(Refusal::NotConnected) => {
 ///             tester.reconnect().await?;
 ///             continue 'send;
@@ -532,11 +532,6 @@ impl<C: TcpConnect, const N: usize> DiagnosticConnection for Tester<'_, C, N> {
     /// otherwise the tester gives the connection up, so that neither a late
     /// acknowledgement nor a late response can be taken for a later request's.
     ///
-    /// # Cancel safety
-    ///
-    /// The future completes the first time it is polled, so the request is accepted
-    /// exactly when it returns `Ok(())`. Dropped before that, nothing was queued.
-    ///
     /// # Errors
     ///
     /// None of these is followed by a confirm:
@@ -545,11 +540,7 @@ impl<C: TcpConnect, const N: usize> DiagnosticConnection for Tester<'_, C, N> {
     /// - [`Refusal::PduTooLarge`] for a `pdu` longer than
     ///   [`MAX_PDU`](DiagnosticConnection::MAX_PDU).
     /// - [`Refusal::EmptyPdu`] for an empty `pdu`.
-    #[expect(
-        clippy::unused_async_trait_impl,
-        reason = "accepting on the first poll is the contract"
-    )]
-    async fn request(
+    fn request(
         &mut self,
         ta: LogicalAddress,
         ta_type: TaType,
