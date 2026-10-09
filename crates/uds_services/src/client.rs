@@ -789,7 +789,8 @@ impl<
     /// # Errors
     ///
     /// [`ClientError::Transport`] where closing or reading the confirmations fails; the
-    /// connection is closed either way.
+    /// connection is closed either way, and the confirmations are read even where closing
+    /// failed.
     ///
     /// # Cancel safety
     ///
@@ -800,14 +801,11 @@ impl<
             self.abandon(window.ai);
         }
         self.end_keep_alives();
-        self.transport
-            .close()
-            .await
-            .map_err(ClientError::Transport)?;
+        let closed = self.transport.close().await;
         while self.book.unconfirmed() {
             self.pump(None, None).await?;
         }
-        Ok(())
+        closed.map_err(ClientError::Transport)
     }
 
     /// Read one or more data identifiers from every server on a functional address.

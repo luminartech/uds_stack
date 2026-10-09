@@ -1639,3 +1639,19 @@ fn an_expected_close_ends_the_keep_alive() {
     assert_eq!(block_on(t.idle_until(Timestamp(4_500))), Ok(()));
     assert_eq!(t.transport().sent_count, 1);
 }
+
+/// A close that fails has still closed the connection, so the confirmations it owes are
+/// read before its error is returned, as after any close.
+#[test]
+fn a_failed_close_still_reads_the_confirms_owed() {
+    let mut t = Tester::new(
+        Script::new(&[Step::Pend, Step::Conf(to(ECU), FAILED)]).failing_close(),
+        TESTER,
+        KeepAlive::physical(S3_CLIENT),
+        TIMING,
+    );
+    assert!(poll_once(t.read_data_by_identifier(ECU, &[Did::Speed])).is_pending());
+
+    assert_eq!(block_on(t.close()), Err(ClientError::Transport(())));
+    assert_eq!(t.transport().cursor, 2);
+}

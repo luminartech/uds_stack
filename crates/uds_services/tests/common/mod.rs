@@ -104,6 +104,8 @@ pub struct Script {
     send_cost: u32,
     /// How many times the client closed it.
     pub closes: usize,
+    /// Whether closing fails.
+    failing_close: bool,
 }
 
 impl Script {
@@ -132,12 +134,19 @@ impl Script {
             stalled: None,
             send_cost: 0,
             closes: 0,
+            failing_close: false,
         }
     }
 
     /// The same, the clock moving `ms` while each transmission is handed over.
     pub fn costing(mut self, ms: u32) -> Self {
         self.send_cost = ms;
+        self
+    }
+
+    /// The same, failing to close.
+    pub fn failing_close(mut self) -> Self {
+        self.failing_close = true;
         self
     }
 
@@ -347,7 +356,7 @@ impl UdsTransport for Script {
 impl ClientTransport for Script {
     fn close(&mut self) -> impl Future<Output = Result<(), ()>> {
         self.closes = self.closes.wrapping_add(1);
-        core::future::ready(Ok(()))
+        core::future::ready(if self.failing_close { Err(()) } else { Ok(()) })
     }
 }
 
