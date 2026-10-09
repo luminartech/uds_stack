@@ -686,6 +686,36 @@ fn a_positive_ack_confirms_ok() {
     );
 }
 
+/// ISO 13400-2:2019 8.3.3: a diagnostic message is indicated whenever it arrives, so a
+/// response the entity sends before its acknowledgement is not lost, and the
+/// acknowledgement still confirms the request.
+#[test]
+fn a_response_before_its_ack_is_indicated_and_the_ack_confirms() {
+    let _clock = clock();
+    let stack = MockStack::new(usize::MAX);
+    let mut tester = active(&stack);
+    request(&mut tester).unwrap();
+    stack
+        .latest()
+        .send(&diagnostic(ENTITY, TESTER, &[0x62, 0xF1, 0x90]));
+    stack.latest().send(&ack(ENTITY, TESTER));
+    let mut buf = [0; 16];
+
+    assert_eq!(
+        next(&mut tester, &mut buf).unwrap(),
+        ConnectionEvent::Indication {
+            sa: ENTITY,
+            ta: TESTER,
+            ta_type: TaType::Physical,
+            pdu: &[0x62, 0xF1, 0x90],
+        }
+    );
+    assert_eq!(
+        next(&mut tester, &mut buf).unwrap(),
+        confirm(DoIpResult::Ok)
+    );
+}
+
 /// ISO 13400-2:2019 Table 26 against 8.2.5: each negative acknowledgement code confirms
 /// with the `DoIP_Result` that names it, and `DoIP_ERROR` where none does.
 #[test]
