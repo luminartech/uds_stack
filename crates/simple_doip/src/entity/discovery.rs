@@ -515,3 +515,33 @@ impl<U: UdpSplit, I: VehicleIdentity> sealed::Discover for Discovery<U, I> {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Table 12: `A_DoIP_Announce_Wait` is random over 0 to 500 ms, from any seed,
+    /// zero among them, which xorshift alone would never leave.
+    #[test]
+    fn the_announce_wait_covers_its_range_from_any_seed() {
+        let most = Duration::from_millis(u64::from(ANNOUNCE_WAIT_MAX_MS));
+        for seed in [0, 1, 0x1234_5678, u32::MAX] {
+            let mut jitter = Jitter::new(seed);
+            let (mut shortest, mut longest) = (most, Duration::from_ticks(0));
+            for _ in 0..10_000 {
+                let wait = jitter.announce_wait();
+                shortest = shortest.min(wait);
+                longest = longest.max(wait);
+            }
+            assert!(
+                shortest <= Duration::from_millis(5),
+                "{seed:#x}: {shortest:?}"
+            );
+            assert!(
+                longest >= Duration::from_millis(495),
+                "{seed:#x}: {longest:?}"
+            );
+            assert!(longest <= most, "{seed:#x}: {longest:?}");
+        }
+    }
+}
