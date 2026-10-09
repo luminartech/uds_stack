@@ -1465,13 +1465,14 @@ fn a_session_change_that_times_out_releases_functional_keep_alive() {
     assert_eq!(t.transport().sent_count, 3);
 }
 
-/// ``UDSS_LLR_0184`` — so does a close taking the last server in session out of it.
+/// ``UDSS_LLR_0184`` — so does a prescribed close taking the last server in session out
+/// of it.
 #[test]
 fn a_close_of_the_last_server_in_session_releases_functional_keep_alive() {
     let mut t = functional_patient(Script::new(&[
         ENTER[0],
         ENTER[1],
-        Step::Close(ECU),
+        Step::Leave(ECU),
         Step::At(10_000),
     ]));
     let _ = block_on(
@@ -1513,7 +1514,7 @@ fn a_close_during_a_session_change_keeps_functional_keep_alive() {
             ENTER[0],
             ENTER[1],
             Step::Conf(to(OTHER_ECU), SResult::Ok),
-            Step::Close(ECU),
+            Step::Leave(ECU),
             Step::IndAt(20, from(OTHER_ECU), EXTENDED),
             Step::At(2_000),
             Step::Conf(FUNCTIONAL, SResult::Ok),
@@ -1570,6 +1571,71 @@ fn close_ends_the_keep_alive() {
     );
 
     assert_eq!(block_on(t.close()), Ok(()));
+    assert_eq!(block_on(t.idle_until(Timestamp(4_500))), Ok(()));
+    assert_eq!(t.transport().sent_count, 1);
+}
+
+/// A close reported before the request's confirmation ends nothing yet: the
+/// confirmation, which the transport still owes, says whether the request went, and the
+/// request is answered on the transport's next connection.
+#[test]
+fn a_close_before_the_confirmation_waits_for_it() {
+    let mut t = tester(&[
+        Step::Close(ECU),
+        Step::Conf(to(ECU), SResult::Ok),
+        Step::Ind(from(ECU), SPEED),
+    ]);
+    assert_eq!(
+        speed(block_on(t.read_data_by_identifier(ECU, &[Did::Speed]))),
+        0x40
+    );
+}
+
+/// ...and a confirmation that says it did not go is repeated, as any failed one is
+/// (ISO 14229-2:2021 9.7 Table 9).
+#[test]
+fn a_close_before_a_failed_confirmation_repeats_the_request() {
+    let mut t = tester(&[
+        Step::Close(ECU),
+        Step::Conf(to(ECU), FAILED),
+        Step::At(100),
+        Step::Conf(to(ECU), SResult::Ok),
+        Step::Ind(from(ECU), SPEED),
+    ]);
+    assert_eq!(
+        speed(block_on(t.read_data_by_identifier(ECU, &[Did::Speed]))),
+        0x40
+    );
+    assert_eq!(t.transport().sent_count, 2);
+}
+
+/// A connection that failed, or that the transport gave up, ends no session: the server's
+/// session outlives its connection, so the keep-alive goes on over the next one.
+#[test]
+fn an_unexpected_close_keeps_the_keep_alive() {
+    let mut t = patient(&[
+        ENTER[0],
+        ENTER[1],
+        Step::Close(ECU),
+        Step::At(2_010),
+        Step::Conf(to(ECU), SResult::Ok),
+        Step::At(2_100),
+    ]);
+    let _ = block_on(
+        t.diagnostic_session_control(ECU, DiagnosticSessionType::ExtendedDiagnosticSession),
+    );
+    assert_eq!(block_on(t.idle_until(Timestamp(2_100))), Ok(()));
+    assert_eq!(t.transport().addressed(1), (Some(to(ECU)), KEEP_ALIVE));
+}
+
+/// ``UDSS_LLR_0184`` — a prescribed close ends the server's session as the client knew
+/// it, and with it the keep-alive.
+#[test]
+fn an_expected_close_ends_the_keep_alive() {
+    let mut t = patient(&[ENTER[0], ENTER[1], Step::Leave(ECU), Step::At(4_500)]);
+    let _ = block_on(
+        t.diagnostic_session_control(ECU, DiagnosticSessionType::ExtendedDiagnosticSession),
+    );
     assert_eq!(block_on(t.idle_until(Timestamp(4_500))), Ok(()));
     assert_eq!(t.transport().sent_count, 1);
 }

@@ -748,12 +748,16 @@ impl<
     /// its sender's; one from a server no channel names is not indicated at all.
     /// It answers `subject` only where it echoes its service; see [`encode::classify`].
     ///
-    /// A close releases the keep-alive of every channel to that peer (``UDSS_LLR_0184``):
-    /// the server's session went with the connection, so a `TesterPresent` would keep
-    /// nothing alive, and the functional keep-alive goes once no server is left in session,
-    /// unless a session change is running, which settles it when it ends. A close ends a
-    /// physical exchange with that peer, but not a functional window, which awaits every
-    /// server and closes at its own timeout.
+    /// An expected close releases the keep-alive of every channel to that peer
+    /// (``UDSS_LLR_0184``): the server's session ended with the connection, so a
+    /// `TesterPresent` would keep nothing alive, and the functional keep-alive goes once no
+    /// server is left in session, unless a session change is running, which settles it
+    /// when it ends. Any other close ends no session, since a server's session outlives its
+    /// connection, and the keep-alive goes on over the next one. A close ends a physical
+    /// exchange with that peer whose window is open, since its answer cannot come, but not
+    /// one awaiting its confirmation, which the transport still owes and which says
+    /// whether the request went; nor a functional window, which awaits every server and
+    /// closes at its own timeout.
     pub(super) async fn pump(
         &mut self,
         subject: Option<Exchange>,
@@ -802,20 +806,22 @@ impl<
             Err(TransportEvent::DataConf { ai, result }) => {
                 self.session.t_data_conf(now, ai, result)
             }
-            Err(TransportEvent::Closed { peer, .. }) => {
-                for o in self
+            Err(TransportEvent::Closed { peer, expected }) => {
+                let ended = self
                     .book
                     .physical
                     .iter_mut()
                     .flatten()
-                    .filter(|o| o.ai.ta == peer)
-                {
+                    .filter(|o| expected && o.ai.ta == peer);
+                for o in ended {
                     let _ = self.session.release_keep_alive(now, o.id).finish();
                     left |= o.in_session;
                     o.in_session = false;
                     o.owed = false;
                 }
-                closed = subject.is_some_and(|e| !e.functional() && e.ai.ta == peer);
+                closed = subject.is_some_and(|e| {
+                    !e.functional() && e.ai.ta == peer && e.phase == Phase::Open
+                });
                 self.session.tick(now)
             }
             Err(_) => self.session.tick(now),

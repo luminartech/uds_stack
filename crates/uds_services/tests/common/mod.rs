@@ -27,8 +27,11 @@ pub enum Step {
     IndAt(u32, Ai, &'static [u8]),
     /// A message longer than the buffer offered arrives: what fits, and its length.
     TooLong(Ai, &'static [u8]),
-    /// The connection to this peer closes.
+    /// The connection to this peer fails or is given up.
     Close(Address),
+    /// The connection to this peer closes as the standard prescribes, after a positive
+    /// `DiagnosticSessionControl` or `ECUReset` response.
+    Leave(Address),
     /// The transmission to this addressing completes with this result.
     Conf(Ai, SResult),
     /// Advance the clock. `next_event` reports `Deadline` only if that reaches the
@@ -250,6 +253,12 @@ impl Script {
                     return Ok(TransportEvent::Closed {
                         peer,
                         expected: false,
+                    });
+                }
+                Step::Leave(peer) => {
+                    return Ok(TransportEvent::Closed {
+                        peer,
+                        expected: true,
                     });
                 }
                 Step::Conf(ai, result) => {

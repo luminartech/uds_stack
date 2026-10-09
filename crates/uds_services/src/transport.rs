@@ -100,7 +100,11 @@ pub enum TransportEvent<'b> {
         /// name the peer of a connection reports no close for it, because nothing is
         /// waiting on a connection whose peer never spoke.
         peer: Address,
-        /// Whether the close was one the standard prescribes.
+        /// Whether the close was one the standard prescribes, which ends the server's
+        /// session: for a server, one it owed its client; for a client, one following the
+        /// server's positive `DiagnosticSessionControl` or `ECUReset` response
+        /// (ISO 14229-5:2022 REQ 7.9, REQ 7.11). Any other close, a failure or a connection
+        /// given up, ends a connection and not a session.
         ///
         /// **Informational: re-establishing the connection is never this crate's.**
         /// ISO 14229-5:2022 REQ 7.8 and REQ 7.10 have the client open a new connection
