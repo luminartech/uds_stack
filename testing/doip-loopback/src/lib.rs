@@ -37,7 +37,8 @@ use simple_doip::service::{
 };
 use simple_doip::tester::{ConnectError, Tester};
 use simple_doip::{LogicalAddress, TaType};
-use uds_services::{Server, ServiceSet, UdsTransport};
+use uds_on_ip::DoIpClientTransport;
+use uds_services::{Reloads, Server, ServiceSet, UdsTransport};
 
 /// The entity's physical address.
 pub const ENTITY: LogicalAddress = LogicalAddress(0x0001);
@@ -63,6 +64,10 @@ pub type SensorTester = Tester<'static, Stack, TESTER_MESSAGE>;
 
 /// Why a tester could not connect.
 pub type TesterConnectError = ConnectError<std::io::Error>;
+
+/// The client side of the sensor path: `uds_on_ip`'s client transport over a
+/// [`SensorTester`], queueing up to a whole message behind the tester's one request.
+pub type SensorClientTransport = DoIpClientTransport<SensorTester, TESTER_MESSAGE>;
 
 static CLOCK: Mutex<()> = Mutex::new(());
 
@@ -189,10 +194,62 @@ impl Loopback {
     ///
     /// Never: [`TESTER`] is a tester's address.
     pub async fn tester(&self) -> Result<SensorTester, TesterConnectError> {
+        self.tester_backing_off(embassy_time::Duration::from_ticks(0))
+            .await
+    }
+
+    /// A tester connected as [`TESTER`], with routing activated, that waits `backoff`
+    /// after a connection is lost before it connects again.
+    ///
+    /// # Errors
+    ///
+    /// Whatever [`Tester::connect`] returns.
+    ///
+    /// # Panics
+    ///
+    /// Never: [`TESTER`] is a tester's address.
+    pub async fn tester_backing_off(
+        &self,
+        backoff: embassy_time::Duration,
+    ) -> Result<SensorTester, TesterConnectError> {
         let sa = TesterAddress::new(TESTER).expect("a tester address");
         Ok(Tester::connect(self.stack, self.remote, sa)
             .await?
-            .with_reconnect_backoff(embassy_time::Duration::from_ticks(0)))
+            .with_reconnect_backoff(backoff))
+    }
+
+    /// The client transport over a tester from [`Self::tester_backing_off`], its
+    /// response timer loaded with `reloads`.
+    ///
+    /// # Errors
+    ///
+    /// Whatever [`Tester::connect`] returns.
+    pub async fn client_transport(
+        &self,
+        backoff: embassy_time::Duration,
+        reloads: Reloads,
+    ) -> Result<SensorClientTransport, TesterConnectError> {
+        Ok(DoIpClientTransport::new(
+            self.tester_backing_off(backoff).await?,
+            reloads,
+        ))
+    }
+}
+
+/// Runs `future` while the mock clock moves on, `step` at a time, with real time between
+/// the steps for the sockets to act in, and returns what it returned.
+///
+/// For a call that waits on a timer: a response window, a back-off.
+pub async fn ticking<F: Future>(future: F, step: embassy_time::Duration) -> F::Output {
+    tokio::select! {
+        biased;
+        output = future => output,
+        () = async {
+            loop {
+                tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+                advance(step);
+            }
+        } => unreachable!("the clock never stops"),
     }
 }
 

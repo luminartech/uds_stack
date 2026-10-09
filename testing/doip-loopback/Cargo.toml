@@ -20,9 +20,9 @@ embassy-time = { workspace = true, features = ["mock-driver", "generic-queue-8"]
 critical-section = { workspace = true, features = ["std"] }
 tokio = { workspace = true, features = ["macros", "rt", "sync", "time"] }
 uds_services = { workspace = true }
+uds_on_ip = { path = "../../crates/uds_on_ip" }
 
 [dev-dependencies]
-uds_on_ip = { path = "../../crates/uds_on_ip" }
 uds_protocol = { workspace = true }
 
 [lints]
