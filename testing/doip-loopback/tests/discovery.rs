@@ -12,6 +12,7 @@
 )]
 
 use doip_loopback::{ENTITY, Loopback, SensorEntity, advance, on_loopback};
+use simple_doip::EntityId;
 use simple_doip::entity::{Discovery, Entity, FixedIdentity};
 use simple_doip::messages::DiagnosticPowerModeCode;
 use simple_doip::service::{DiagnosticEntity, TesterConnection};
@@ -32,7 +33,10 @@ type Discovering = Entity<
 async fn entity(loopback: &Loopback) -> (Discovering, std::net::SocketAddr) {
     let (socket, at) = loopback.udp().await;
     let sensor: SensorEntity<MAX_MESSAGE> = loopback.entity();
-    let identity = FixedIdentity::new(EID, DiagnosticPowerModeCode::Ready);
+    let identity = FixedIdentity::new(
+        EntityId::new(EID).expect("EID is set"),
+        DiagnosticPowerModeCode::Ready,
+    );
     (sensor.with_discovery(socket, identity, 0x5EED), at)
 }
 

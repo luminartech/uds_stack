@@ -15,7 +15,7 @@ use embassy_time::Duration;
 use simple_doip::entity::{Entity, EntityAddress, FixedIdentity};
 use simple_doip::messages::DiagnosticPowerModeCode;
 use simple_doip::service::{ConnectionId, DiagnosticEntity, EntityConfig, EntityEvent};
-use simple_doip::{LogicalAddress, TaType, UDP_DISCOVERY_PORT};
+use simple_doip::{EntityId, LogicalAddress, TaType, UDP_DISCOVERY_PORT, Vin};
 use support::mock_stack::{
     ENTITY, MockStack, MockUdp, TESTER, advance, alive_check_response, clock, diagnostic,
     poll_times, raw, until_stalled,
@@ -236,7 +236,9 @@ fn discovery_burst(drive: Drive) -> (Vec<String>, Vec<Datagram>) {
     const VIN: [u8; 17] = *b"WVWZZZ1JZXW000001";
     let stack = MockStack::new(1);
     let udp = MockUdp::new();
-    let identity = FixedIdentity::new(EID, DiagnosticPowerModeCode::Ready).with_vin(VIN);
+    let identity =
+        FixedIdentity::new(EntityId::new(EID).unwrap(), DiagnosticPowerModeCode::Ready)
+            .with_vin(Vin::new(VIN).unwrap());
     let mut entity = new_entity(&stack).with_discovery(udp.socket(), identity, 0x1234_5678);
     let tester: SocketAddr = ([192, 168, 0, 2], UDP_DISCOVERY_PORT).into();
     let mut seen = Vec::new();

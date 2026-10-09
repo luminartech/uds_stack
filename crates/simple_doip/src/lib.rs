@@ -129,6 +129,7 @@ extern crate std;
 pub mod bare_metal_entity;
 #[cfg(feature = "connection")]
 pub mod entity;
+pub mod identifiers;
 pub mod logical_address;
 #[allow(
     clippy::indexing_slicing,
@@ -138,6 +139,7 @@ pub mod logical_address;
 pub mod messages;
 pub mod service;
 pub mod wire;
+pub use identifiers::{EntityId, GroupId, NotSet, Vin, VinError};
 pub use logical_address::{LogicalAddress, TaType};
 #[allow(
     clippy::indexing_slicing,

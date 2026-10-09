@@ -17,7 +17,7 @@ use simple_doip::messages::{
 use simple_doip::tester::discovery::{
     self, A_DOIP_CTRL, BROADCAST, DiscoveryError, Request,
 };
-use simple_doip::{TCP_PORT, UDP_DISCOVERY_PORT};
+use simple_doip::{EntityId, TCP_PORT, UDP_DISCOVERY_PORT, Vin};
 use support::mock_stack::{
     MockError, MockUdp, advance, clock, raw, until_stalled, versioned,
 };
@@ -107,8 +107,14 @@ fn a_directed_request_carries_what_it_names() {
     let to = entity_at(10);
 
     for (request, expected) in [
-        (Request::Eid(EID), versioned(raw(0x0002, &EID), 0xFF)),
-        (Request::Vin(VIN), versioned(raw(0x0003, &VIN), 0xFF)),
+        (
+            Request::Eid(EntityId::new(EID).unwrap()),
+            versioned(raw(0x0002, &EID), 0xFF),
+        ),
+        (
+            Request::Vin(Vin::new(VIN).unwrap()),
+            versioned(raw(0x0003, &VIN), 0xFF),
+        ),
     ] {
         let mut identifying =
             pin!(discovery::identify(&mut socket, to, request, &mut found));

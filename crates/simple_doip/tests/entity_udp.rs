@@ -19,7 +19,7 @@ use simple_doip::messages::{
 };
 use simple_doip::service::DiagnosticEntity;
 use simple_doip::wire::Decode;
-use simple_doip::{LogicalAddress, UDP_DISCOVERY_PORT};
+use simple_doip::{EntityId, GroupId, LogicalAddress, UDP_DISCOVERY_PORT, Vin};
 use support::mock_stack::{
     ENTITY, MockError, MockStack, MockUdp, MockUdpSocket, advance, clock, raw,
     until_stalled, versioned,
@@ -43,8 +43,12 @@ fn broadcast() -> SocketAddr {
     ([255, 255, 255, 255], UDP_DISCOVERY_PORT).into()
 }
 
+fn vin() -> Vin {
+    Vin::new(VIN).unwrap()
+}
+
 fn identity() -> FixedIdentity {
-    FixedIdentity::new(EID, DiagnosticPowerModeCode::Ready)
+    FixedIdentity::new(EntityId::new(EID).unwrap(), DiagnosticPowerModeCode::Ready)
 }
 
 fn sensor<'a>(stack: &'a MockStack, udp: &MockUdp, identity: FixedIdentity) -> Sensor<'a> {
@@ -250,8 +254,8 @@ fn the_announcement_carries_the_identity() {
     restart_clock();
     let (stack, udp) = (MockStack::new(4096), MockUdp::new());
     let full = identity()
-        .with_vin(VIN)
-        .with_gid([1, 2, 3, 4, 5, 6])
+        .with_vin(vin())
+        .with_gid(GroupId::new([1, 2, 3, 4, 5, 6]).unwrap())
         .with_sync_status(VinGidSyncStatus::Incomplete);
     let mut entity = sensor(&stack, &udp, full);
     let sent = run_for(&mut entity, &udp, 500);
@@ -317,7 +321,7 @@ fn identification_answers_are_spread_by_the_announce_wait() {
 fn the_default_protocol_version_is_taken_on_identification_requests() {
     let _clock = clock();
     let (stack, udp) = (MockStack::new(4096), MockUdp::new());
-    let mut entity = announced(&stack, &udp, identity().with_vin(VIN));
+    let mut entity = announced(&stack, &udp, identity().with_vin(vin()));
 
     for request in [
         identification_request(),
@@ -352,7 +356,7 @@ fn a_request_with_an_eid_is_answered_only_by_that_entity() {
 fn a_request_with_a_vin_is_answered_only_with_the_programmed_vin() {
     let _clock = clock();
     let (stack, udp) = (MockStack::new(4096), MockUdp::new());
-    let mut entity = announced(&stack, &udp, identity().with_vin(VIN));
+    let mut entity = announced(&stack, &udp, identity().with_vin(vin()));
 
     let sent = ask(&mut entity, &udp, &raw(0x0003, &VIN));
     assert_eq!(identification(answer(&sent)).vin, VIN);
@@ -500,7 +504,7 @@ fn a_payload_over_the_max_data_size_is_answered_0x02() {
 fn a_wrong_length_is_answered_0x04() {
     let _clock = clock();
     let (stack, udp) = (MockStack::new(4096), MockUdp::new());
-    let mut entity = announced(&stack, &udp, identity().with_vin(VIN));
+    let mut entity = announced(&stack, &udp, identity().with_vin(vin()));
     let mut trailing = raw(0x4003, &[]);
     trailing.push(0x00);
     let mut truncated = raw(0x0003, &VIN);

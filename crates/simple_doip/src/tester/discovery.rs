@@ -25,7 +25,7 @@ use crate::messages::{
     PayloadType, ProtocolVersion, VehicleIdentificationResponse,
 };
 use crate::wire::{Decode, Encode, SliceSink};
-use crate::{TCP_PORT, UDP_DISCOVERY_PORT};
+use crate::{EntityId, TCP_PORT, UDP_DISCOVERY_PORT, Vin};
 
 /// `A_DoIP_Ctrl`: how long a tester waits for the answers to a UDP request
 /// (ISO 13400-2:2019 Table 12).
@@ -45,9 +45,9 @@ pub enum Request {
     /// Every entity that receives it (ISO 13400-2:2019 Table 2).
     All,
     /// The entity with this entity ID (Table 3). An entity may not support it.
-    Eid([u8; 6]),
+    Eid(EntityId),
     /// The entities of the vehicle with this VIN (Table 4).
-    Vin([u8; 17]),
+    Vin(Vin),
 }
 
 /// An entity that answered a vehicle identification request.
@@ -125,8 +125,8 @@ pub async fn identify<U: UdpSplit>(
 ) -> Result<usize, DiscoveryError<U::Error>> {
     let payload = match request {
         Request::All => Payload::VehicleIdentificationRequest,
-        Request::Eid(eid) => Payload::VehicleIdentificationRequestWithEid(eid),
-        Request::Vin(vin) => Payload::VehicleIdentificationRequestWithVin(vin),
+        Request::Eid(eid) => Payload::VehicleIdentificationRequestWithEid(eid.to_bytes()),
+        Request::Vin(vin) => Payload::VehicleIdentificationRequestWithVin(vin.to_bytes()),
     };
     let payload_type = match request {
         Request::All => PayloadType::VehicleIdentificationRequest,

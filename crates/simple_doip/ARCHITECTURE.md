@@ -505,8 +505,8 @@ let entity = Entity::<_, 1, 4096>::new(&acceptor, address, config)
   socket, `edge_nal::UdpSplit`, owned the way each slot owns its accepted socket. No
   `dyn`.
 - **The identity is a trait, read when a frame is built.** `VehicleIdentity` gives the
-  VIN (`Option<[u8; 17]>`, `None` sent as Table 1's all-`0x00`), the EID, the GID
-  (`Option`), the further action code, the sync status (`Option`, omitted when `None`),
+  VIN (`Option<Vin>`, `None` sent as Table 1's all-`0x00`), the EID (`EntityId`), the
+  GID (`Option<GroupId>`, likewise), the further action code, the sync status (`Option`, omitted when `None`),
   the power mode, and `matches_eid`, which defaults to comparing the EID and is
   overridden by an entity with several interfaces (8.DoIP-053). The logical address is
   `EntityAddress::physical`. A sensor whose VIN is written over UDS (`0x2E F190`) or
@@ -514,6 +514,13 @@ let entity = Entity::<_, 1, 4096>::new(&acceptor, address, config)
   `critical_section` cell, because the entity is out of the integrator's reach while
   the transport holds it. `FixedIdentity`, a struct of the six values, implements it for
   an entity whose identity never changes. `EntityAddress` stays as it is.
+- **An identifier that is set cannot hold Table 1's "not set".** `Vin`, `EntityId` and
+  `GroupId` refuse all `0x00` and all `0xFF` when built, and `Vin` refuses a byte
+  outside ASCII (Tables 4 and 5), so `None` is the one way to say an identifier is not
+  set, and an entity cannot announce an EID that a tester reads as none. ISO 3779's own
+  rules for a VIN are not checked. The types are what an entity sends and a tester asks
+  for; `VehicleIdentificationResponse` keeps the bytes it was sent, as a tester reads
+  whatever an entity announces.
 - **Entity status reads the table.** NCTS is the count of connection slots holding a
   socket, whatever its phase; the reserve is not counted, so NCTS never exceeds MCTS
   (Table 11 counts MCTS without the reserve). MCTS is `MCTS`. MDS is always sent, and is
@@ -598,7 +605,8 @@ announcements carry `0x03`.
 broadcast that comes before any. `tester::discovery` serves it over the integrator's
 own `UdpSplit` socket, as three functions:
 
-- `identify` sends one of the three requests, to `BROADCAST` or one entity, and
+- `identify` sends one of the three requests (`Request::All`, `Request::Eid(EntityId)`,
+  `Request::Vin(Vin)`), to `BROADCAST` or one entity, and
   collects into the caller's `[Option<Found>]` every entity that answers within
   `A_DoIP_Ctrl`, one per address and EID. It waits the whole `A_DoIP_Ctrl`, as any
   number of entities may answer (Figure 7).
@@ -627,14 +635,14 @@ profile on Rust 1.91:
 |---|---|---|
 | Before this work | 49 036 | 9 308 |
 | `NoDiscovery` | 50 044 | 9 308 |
-| `with_discovery`, over a stub UDP socket | 53 640 | 9 628 |
+| `with_discovery`, over a stub UDP socket | 53 752 | 9 628 |
 
 Of the 1 008 bytes an entity without discovery gains, 788 are the codec: the entity
 decodes every payload type it is sent, and three more now decode with what they carry,
 as do the optional trailing fields. The other 220 are the entity polling a source that
-never completes. Discovery itself is 3 596 bytes of code and 320 of RAM. The probe as
-committed is the third row, so `just size` gates the entity with discovery; the second
-was measured with the probe built without it.
+never completes. Discovery itself is 3 708 bytes of code, building its identifiers
+included, and 320 of RAM. The probe as committed is the third row, so `just size` gates
+the entity with discovery; the second was measured with the probe built without it.
 
 ---
 
@@ -788,6 +796,7 @@ carry a wildcard arm.
 | `src/messages/message_error.rs` | `MessageError` and `is_framing_fatal` |
 | `src/messages/traits.rs` | Re-export of `Decode`, `Encode`, `take` from the codec crate |
 | `src/messages/*.rs` (rest) | One file per concrete payload body (alive check, diagnostic message, routing activation, entity status, power mode, vehicle identification, NACK codes) |
+| `src/identifiers.rs` | `Vin`, `EntityId` and `GroupId`, refusing Table 1's "not set" |
 | `src/logical_address.rs` | `LogicalAddress` newtype plus tester-range validation |
 | `src/service.rs` | The connection service's vocabulary, with no I/O: `DiagnosticConnection` (with its `MAX_PDU`), `TesterConnection` (adding `reconnect`, `close` and `io_error`), `DiagnosticEntity` (with its `MAX_PDU`), their events, `DoIpResult`, `TesterAddress` |
 | `src/wire.rs` | Re-export surface for the codec crate's types |

@@ -22,6 +22,7 @@ use crate::messages::{
     VinGidSyncStatus,
 };
 use crate::stream::after;
+use crate::{EntityId, GroupId, Vin};
 use datagram::{Answer, FRAME_CAP, Owed, When};
 use sealed::DiscoveryIo;
 pub(super) use sealed::Facts;
@@ -58,13 +59,13 @@ const ANNOUNCE_TO: SocketAddr = SocketAddr::new(
 pub trait VehicleIdentity {
     /// The vehicle identification number, or `None` while none is programmed, which is
     /// sent as ISO 13400-2:2019 Table 1's all-`0x00` and matches no request.
-    fn vin(&self) -> Option<[u8; 17]>;
+    fn vin(&self) -> Option<Vin>;
 
     /// The entity ID, usually the MAC address of the interface the entity answers on.
-    fn eid(&self) -> [u8; 6];
+    fn eid(&self) -> EntityId;
 
-    /// The group ID, or `None` while none is set.
-    fn gid(&self) -> Option<[u8; 6]>;
+    /// The group ID, or `None` while none is set, which is sent as Table 1's all-`0x00`.
+    fn gid(&self) -> Option<GroupId>;
 
     /// What a tester must do before diagnostics can proceed.
     fn further_action(&self) -> FurtherActionRequired;
@@ -79,7 +80,7 @@ pub trait VehicleIdentity {
     /// whether it is [`VehicleIdentity::eid`]. An entity on several interfaces matches
     /// each of their addresses (ISO 13400-2:2019 REQ 8.DoIP-053).
     fn matches_eid(&self, eid: &[u8; 6]) -> bool {
-        *eid == self.eid()
+        *eid == self.eid().to_bytes()
     }
 }
 
@@ -90,17 +91,20 @@ pub trait VehicleIdentity {
 /// ```
 /// use simple_doip::entity::{FixedIdentity, VehicleIdentity};
 /// use simple_doip::messages::DiagnosticPowerModeCode;
+/// use simple_doip::{EntityId, Vin};
 ///
-/// let identity = FixedIdentity::new([0x02, 0, 0, 0, 0, 0x01], DiagnosticPowerModeCode::Ready)
-///     .with_vin(*b"WVWZZZ1JZXW000001");
-/// assert_eq!(identity.vin(), Some(*b"WVWZZZ1JZXW000001"));
+/// let eid = EntityId::new([0x02, 0, 0, 0, 0, 0x01])?;
+/// let vin = Vin::new(*b"WVWZZZ1JZXW000001")?;
+/// let identity = FixedIdentity::new(eid, DiagnosticPowerModeCode::Ready).with_vin(vin);
+/// assert_eq!(identity.vin(), Some(vin));
 /// assert_eq!(identity.gid(), None);
+/// # Ok::<(), simple_doip::VinError>(())
 /// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct FixedIdentity {
-    vin: Option<[u8; 17]>,
-    eid: [u8; 6],
-    gid: Option<[u8; 6]>,
+    vin: Option<Vin>,
+    eid: EntityId,
+    gid: Option<GroupId>,
     further_action: FurtherActionRequired,
     sync_status: Option<VinGidSyncStatus>,
     power_mode: DiagnosticPowerModeCode,
@@ -114,7 +118,7 @@ impl FixedIdentity {
     /// * `eid` - the entity ID; see [`VehicleIdentity::eid`].
     /// * `power_mode` - the diagnostic power mode.
     #[must_use]
-    pub const fn new(eid: [u8; 6], power_mode: DiagnosticPowerModeCode) -> Self {
+    pub const fn new(eid: EntityId, power_mode: DiagnosticPowerModeCode) -> Self {
         Self {
             vin: None,
             eid,
@@ -127,7 +131,7 @@ impl FixedIdentity {
 
     /// This identity with `vin` programmed.
     #[must_use]
-    pub const fn with_vin(self, vin: [u8; 17]) -> Self {
+    pub const fn with_vin(self, vin: Vin) -> Self {
         Self {
             vin: Some(vin),
             ..self
@@ -136,7 +140,7 @@ impl FixedIdentity {
 
     /// This identity with `gid` set.
     #[must_use]
-    pub const fn with_gid(self, gid: [u8; 6]) -> Self {
+    pub const fn with_gid(self, gid: GroupId) -> Self {
         Self {
             gid: Some(gid),
             ..self
@@ -163,15 +167,15 @@ impl FixedIdentity {
 }
 
 impl VehicleIdentity for FixedIdentity {
-    fn vin(&self) -> Option<[u8; 17]> {
+    fn vin(&self) -> Option<Vin> {
         self.vin
     }
 
-    fn eid(&self) -> [u8; 6] {
+    fn eid(&self) -> EntityId {
         self.eid
     }
 
-    fn gid(&self) -> Option<[u8; 6]> {
+    fn gid(&self) -> Option<GroupId> {
         self.gid
     }
 

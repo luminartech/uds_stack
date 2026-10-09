@@ -10,6 +10,7 @@ use crate::messages::{
     PayloadType, ProtocolVersion, VehicleIdentificationResponse,
 };
 use crate::wire::{Decode, Encode, SliceSink};
+use crate::{GroupId, Vin};
 
 /// The longest frame the entity sends on UDP: an announcement with its sync status.
 pub(super) const FRAME_CAP: usize = Header::SIZE + 33;
@@ -117,9 +118,10 @@ pub(super) fn handle<I: VehicleIdentity>(
         Payload::VehicleIdentificationRequestWithEid(eid) => {
             identity.matches_eid(&eid).then_some(identified)
         }
-        Payload::VehicleIdentificationRequestWithVin(vin) => {
-            (identity.vin() == Some(vin)).then_some(identified)
-        }
+        Payload::VehicleIdentificationRequestWithVin(vin) => identity
+            .vin()
+            .is_some_and(|own| own.to_bytes() == vin)
+            .then_some(identified),
         Payload::EntityStatusRequest => Some(Owed::now(Answer::EntityStatus, version)),
         Payload::PowerModeInfoRequest => Some(Owed::now(Answer::PowerMode, version)),
         _ => None,
@@ -135,10 +137,10 @@ pub(super) fn frame<'b, I: VehicleIdentity>(
     buf: &'b mut [u8; FRAME_CAP],
 ) -> &'b [u8] {
     let identification = || VehicleIdentificationResponse {
-        vin: identity.vin().unwrap_or([0x00; 17]),
+        vin: identity.vin().map_or([0x00; 17], Vin::to_bytes),
         logical_address: facts.address,
-        entity_id: identity.eid(),
-        group_id: identity.gid(),
+        entity_id: identity.eid().to_bytes(),
+        group_id: identity.gid().map(GroupId::to_bytes),
         further_action: identity.further_action(),
         vin_gid_sync_status: identity.sync_status(),
     };
