@@ -1941,6 +1941,21 @@ mod functional_keep_alive {
         assert_eq!(tick(&mut c, 4_100), only(DUE));
     }
 
+    /// ``UDSS_LLR_0157`` — so does a failed one, so that the keep-alive goes again a
+    /// period later once the caller's Table 9 repeats are spent, as a physical one does
+    /// under ``UDSS_LLR_0161``.
+    #[test]
+    fn a_failed_keep_alive_restarts_the_timer_too() {
+        let (mut c, _, _) = engaged(Timestamp(0));
+        assert_eq!(tick(&mut c, 2_000), only(DUE));
+        let (_, sent) = outputs(c.s_data_req(Timestamp(2_000), func(), &DATA, KEEP_ALIVE));
+        assert_eq!(sent, Ok(()));
+        let (_, confirmed) = outputs(c.t_data_conf(Timestamp(2_010), func(), FAILED));
+        assert_eq!(confirmed, Ok(()));
+        assert_eq!(tick(&mut c, 4_009), NOTHING);
+        assert_eq!(tick(&mut c, 4_010), only(DUE));
+    }
+
     /// ``UDSS_LLR_0157`` — so does one sent before the timer expired.
     #[test]
     fn an_early_keep_alive_restarts_it_too() {
@@ -2275,7 +2290,7 @@ mod physical_keep_alive {
 
     /// ``UDSS_LLR_0180`` (fifth effect) — a reset ending the keep-alive's response window
     /// starts the timer that ``UDSS_LLR_0160`` stopped, since it forecloses the expiry
-    /// ``UDSS_LLR_0161`` would have restarted it on. Raised on #30.
+    /// ``UDSS_LLR_0161`` would have restarted it on.
     #[test]
     fn a_reset_after_the_confirmation_restarts_keep_alive() {
         let (mut c, id) = engaged();
@@ -2288,18 +2303,20 @@ mod physical_keep_alive {
         assert_eq!(tick(&mut c, 4_010), only(due(id)));
     }
 
-    /// ``UDSS_LLR_0180`` (fifth effect) — so does one abandoning the keep-alive's
-    /// association, whose confirmation then opens no window (``UDSS_LLR_0182``). Raised
-    /// on #30.
+    /// ``UDSS_LLR_0180`` (fifth effect), ``UDSS_LLR_0182`` — one abandoning the
+    /// keep-alive's association starts the timer at its confirmation, which then opens no
+    /// window, and not before: the request may still be on the wire, and
+    /// ``UDSS_LLR_0160`` keeps the timer stopped while it is.
     #[test]
-    fn a_reset_before_the_confirmation_restarts_keep_alive() {
+    fn a_reset_before_the_confirmation_restarts_keep_alive_at_the_confirmation() {
         let (mut c, id) = engaged();
         assert_eq!(tick(&mut c, 2_000), only(due(id)));
         send(&mut c, 2_000, AWAITED_KEEP_ALIVE);
         reset(&mut c, 2_001, id);
+        assert_eq!(c.next_deadline(), None);
         confirm(&mut c, 2_002, SResult::Ok);
-        assert_eq!(c.next_deadline(), Some(Timestamp(4_001)));
-        assert_eq!(tick(&mut c, 4_001), only(due(id)));
+        assert_eq!(c.next_deadline(), Some(Timestamp(4_002)));
+        assert_eq!(tick(&mut c, 4_002), only(due(id)));
     }
 
     /// ``UDSS_LLR_0180`` (fifth effect) — any request stops the timer

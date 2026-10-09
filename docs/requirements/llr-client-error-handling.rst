@@ -332,9 +332,10 @@ Giving a server up
    * where the channel is physical, close its open start-of-message, and where functional,
      release every entry of its responder table;
    * set the channel's repeat count to zero;
-   * in physical keep-alive, where the channel is physical, its session fact holds and its
-     ``tS3_Client`` timer is not running, start that timer loaded with the reload
-     parameter.
+   * in physical keep-alive, where the channel is physical, its session fact holds, its
+     ``tS3_Client`` timer is not running and no association on it is abandoned awaiting
+     its ``T_Data.conf``, start that timer loaded with the reload parameter; where one is,
+     this effect waits for that confirmation (``UDSS_LLR_0182``).
 
    The reset shall produce no output to the application and none to the transport layer.
 
@@ -349,8 +350,10 @@ Giving a server up
    application has reset the channel. ``UDSS_LLR_0160`` stopped the channel's
    ``tS3_Client`` when a request went out, and only the events of ``UDSS_LLR_0161`` start
    it again. The first two effects foreclose them for a request in flight: its response
-   window ends without an indication, and an abandoned association's confirmation completes
-   nothing when a response was expected (``UDSS_LLR_0182``). For a request whose response
+   window ends without an indication, and an abandoned association's confirmation reporting
+   the successful transmission of a request that expected a response restarts nothing under
+   ``UDSS_LLR_0161`` (``UDSS_LLR_0182``), a failed one or one expecting none still
+   restarting it. For a request whose response
    window already expired, ``UDSS_LLR_0161`` restarts the timer only where the request was a
    keep-alive, Table 9 leaving every other request to be repeated; the reset is how the
    application stops repeating, so it is the last input that can restart it. Without the
@@ -358,9 +361,14 @@ Giving a server up
    the server's ``tS3_Server`` runs out, which is the outcome ``UDSS_LLR_0161``'s fifth
    bullet exists to prevent. The reset is treated as completing the exchange, as that
    bullet treats a lost response. A running timer is left alone: restarting it would only
-   stretch the interval. Functional keep-alive needs no counterpart: no transmission stops
-   its timer, and an abandoned keep-alive's confirmation restarts it under
-   ``UDSS_LLR_0157``.
+   stretch the interval. Where the reset abandons an association, the request may still be
+   on the wire, and ``UDSS_LLR_0160`` rests on 14229-2 9.5 keeping the timer stopped while a
+   request is outstanding; starting it at the reset would contradict that, and a keep-alive
+   indicated before the confirmation would be refused under ``UDSS_LLR_0061``. So the effect
+   waits for the confirmation, which ends the outstanding request either way. Functional
+   keep-alive needs no counterpart: no transmission stops its timer, and the keep-alive's
+   confirmation restarts it under ``UDSS_LLR_0157`` whether it reports success or failure,
+   abandoned or not.
 
    The effects above are the state a reset clears or restarts, and the list is closed so
    that a document adding state per channel must amend this requirement to say whether the
@@ -410,6 +418,8 @@ Giving a server up
    two conditions — a failed transmission, or the successful transmission of a request whose
    expected response count is ``none`` — and ``UDSS_LLR_0155``, ``UDSS_LLR_0157``,
    ``UDSS_LLR_0158``, ``UDSS_LLR_0159``, ``UDSS_LLR_0161`` and ``UDSS_LLR_0163`` act on it.
+   It also completes the fifth effect of ``UDSS_LLR_0180`` where the reset left that effect
+   waiting for it.
 
    Rationale: the confirmation is delivered because the transport's report of the outcome
    is real and ``UDSS_LLR_0037`` promises it, regardless of the reset.

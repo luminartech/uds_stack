@@ -667,7 +667,7 @@ pub enum ClientOutput<'d, Tag = ()> {
     },
     /// `S_Data.conf` — ``UDSS_LLR_0037``.
     ///
-    /// It names no channel (issue #12): ``UDSS_LLR_0059`` matches a confirmation to its
+    /// It names no channel: ``UDSS_LLR_0059`` matches a confirmation to its
     /// association by addressing, and ``UDSS_LLR_0122`` makes an addressing unique per
     /// channel, so the addressing is what identifies it.
     Confirm {
@@ -1164,7 +1164,9 @@ impl<K: KeepAliveMode, const PHYS: usize, const FUNC: usize, const R: usize, Tag
     /// In physical keep-alive, on a physical channel in a non-default session whose
     /// `tS3_Client` is not running, it starts that timer: a request stopped it
     /// (``UDSS_LLR_0160``), and once the server is reset or given up nothing else would
-    /// start it again (``UDSS_LLR_0161``). It produces no output.
+    /// start it again (``UDSS_LLR_0161``). Where the association it abandons is still
+    /// unconfirmed, that start waits for the confirmation (``UDSS_LLR_0182``). It
+    /// produces no output.
     /// ISO 14229-2:2021 9.7 Table 9 ends at the third transmission and says nothing of
     /// what the client concludes, so something the caller invokes has to clear the state
     /// that persists on its own. ``UDSS_LLR_0183`` rejects a reset naming no existing
@@ -1180,17 +1182,20 @@ impl<K: KeepAliveMode, const PHYS: usize, const FUNC: usize, const R: usize, Tag
             ChannelId::Physical(id) => self.physical_mut(id).map(|p| {
                 p.som_open = false;
                 p.core.reset();
+                p.core.sent.is_some()
             }),
             ChannelId::Functional(id) => self.functional_mut(id).map(|s| {
                 s.responders = [ResponderSlot::EMPTY; R];
-                if let Some(c) = s.channel.as_mut() {
+                s.channel.as_mut().is_some_and(|c| {
                     c.reset();
-                }
+                    c.sent.is_some()
+                })
             }),
         };
         let outcome = match found {
-            Some(()) => {
-                self.keep_alive_on(now, channel, Event::Reset); // UDSS_LLR_0180
+            Some(outstanding) => {
+                let reset = Event::Reset { outstanding };
+                self.keep_alive_on(now, channel, reset); // UDSS_LLR_0180
                 Ok(())
             }
             None => Err(NO_SUCH_CHANNEL), // UDSS_LLR_0183
@@ -1378,6 +1383,10 @@ impl<K: KeepAliveMode, const PHYS: usize, const FUNC: usize, const R: usize, Tag
         }
         let handle = channel.handle();
         self.keep_alive_on(now, handle, Event::Confirmed { ok, class }); // UDSS_LLR_0182
+        if abandoned {
+            let completed = Event::Reset { outstanding: false };
+            self.keep_alive_on(now, handle, completed); // UDSS_LLR_0180
+        }
         Reaction::new(
             self,
             [Some(ClientOutput::Confirm { ai, result }), None],
