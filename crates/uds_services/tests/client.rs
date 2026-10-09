@@ -1530,3 +1530,46 @@ fn a_close_during_a_session_change_keeps_functional_keep_alive() {
     assert_eq!(block_on(t.idle_until(Timestamp(2_100))), Ok(()));
     assert_eq!(t.transport().addressed(2), (Some(FUNCTIONAL), KEEP_ALIVE));
 }
+
+/// Ending a session closes the transport, once.
+#[test]
+fn close_closes_the_transport_once() {
+    let mut t = tester(&[]);
+    assert_eq!(block_on(t.close()), Ok(()));
+    assert_eq!(t.transport().closes, 1);
+}
+
+/// A request a dropped call left unconfirmed is confirmed failed before `close`
+/// returns, so nothing about it is left for the next call to read.
+#[test]
+fn close_reads_the_confirm_a_dropped_call_left_owed() {
+    let mut t = tester(&[
+        Step::Pend,
+        Step::Conf(to(ECU), FAILED),
+        Step::At(100),
+        Step::Conf(to(ECU), SResult::Ok),
+        Step::Ind(from(ECU), SPEED),
+    ]);
+    assert!(poll_once(t.read_data_by_identifier(ECU, &[Did::Speed])).is_pending());
+
+    assert_eq!(block_on(t.close()), Ok(()));
+    assert_eq!(t.transport().cursor, 2);
+    assert_eq!(
+        speed(block_on(t.read_data_by_identifier(ECU, &[Did::Speed]))),
+        0x40
+    );
+}
+
+/// ``UDSS_LLR_0184`` — a client that ends its session keeps nothing alive: no
+/// `TesterPresent` follows the close.
+#[test]
+fn close_ends_the_keep_alive() {
+    let mut t = patient(&[ENTER[0], ENTER[1], Step::At(4_500)]);
+    let _ = block_on(
+        t.diagnostic_session_control(ECU, DiagnosticSessionType::ExtendedDiagnosticSession),
+    );
+
+    assert_eq!(block_on(t.close()), Ok(()));
+    assert_eq!(block_on(t.idle_until(Timestamp(4_500))), Ok(()));
+    assert_eq!(t.transport().sent_count, 1);
+}

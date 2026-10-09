@@ -14,7 +14,8 @@
 use core::future::{Future, poll_fn};
 use core::task::Poll;
 use uds_services::{
-    Address, AfterSend, Ai, Reloads, SResult, Timestamp, TransportEvent, UdsTransport,
+    Address, AfterSend, Ai, ClientTransport, Reloads, SResult, Timestamp, TransportEvent,
+    UdsTransport,
 };
 
 /// One scripted step: what `next_event` yields, and the clock it yields it at.
@@ -98,6 +99,8 @@ pub struct Script {
     stalled: Option<usize>,
     /// How far the clock moves while a transmission is handed over.
     send_cost: u32,
+    /// How many times the client closed it.
+    pub closes: usize,
 }
 
 impl Script {
@@ -125,6 +128,7 @@ impl Script {
             refused: None,
             stalled: None,
             send_cost: 0,
+            closes: 0,
         }
     }
 
@@ -328,6 +332,13 @@ impl UdsTransport for Script {
     }
     fn now(&self) -> Timestamp {
         Timestamp(self.now)
+    }
+}
+
+impl ClientTransport for Script {
+    fn close(&mut self) -> impl Future<Output = Result<(), ()>> {
+        self.closes = self.closes.wrapping_add(1);
+        core::future::ready(Ok(()))
     }
 }
 

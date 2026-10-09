@@ -17,7 +17,7 @@
 use super::encode::{self, Arrived, KEEP_ALIVE};
 use super::{Client, ClientError, ClientKeepAlive, ClientSet};
 use crate::storage::{ClientBuffers, ClientStorage};
-use crate::{AfterSend, TransportEvent, UdsTransport};
+use crate::{AfterSend, ClientTransport, TransportEvent};
 use core::ops::Range;
 use uds_session::{
     Address, Ai, Cause, ChannelAddressing, ChannelId, ChannelParams, ClientOutput,
@@ -195,6 +195,12 @@ impl<const PHYS: usize, const FUNC: usize> Book<PHYS, FUNC> {
         }
     }
 
+    /// Whether any channel's transmission awaits its confirmation.
+    pub(super) fn unconfirmed(&self) -> bool {
+        self.physical.iter().flatten().any(|o| o.unconfirmed)
+            || self.functional.iter().flatten().any(|o| o.unconfirmed)
+    }
+
     /// Mark every channel with this addressing as awaiting a confirmation or not.
     fn awaiting(&mut self, ai: Ai, unconfirmed: bool) {
         let physical = self.physical.iter_mut().flatten().filter(|o| o.ai == ai);
@@ -246,7 +252,7 @@ struct Drained<X, E> {
 /// response timeout it reports is not lost. A `KeepAliveDue` is booked as owed rather than
 /// answered, for [`Client::send_owed`] to send.
 async fn drain<
-    T: UdsTransport,
+    T: ClientTransport,
     K: ClientKeepAlive,
     X,
     const PHYS: usize,
@@ -323,7 +329,7 @@ fn locate(base: usize, data: &[u8]) -> Range<usize> {
 
 impl<
     C: ClientSet,
-    T: UdsTransport,
+    T: ClientTransport,
     K: ClientKeepAlive,
     const PHYS: usize,
     const FUNC: usize,
@@ -428,7 +434,7 @@ impl<
 
     /// Reset the channel `ai` names, ending whatever it had in progress
     /// (``UDSS_LLR_0180``).
-    fn abandon(&mut self, ai: Ai) {
+    pub(super) fn abandon(&mut self, ai: Ai) {
         if let Some(channel) = self.book.channel(ai) {
             let now = self.transport.now();
             let _expiries_stay_in_the_session =
@@ -671,6 +677,18 @@ impl<
             self.book.functional_keep_alive = Some(ai);
         }
         Ok(())
+    }
+
+    /// End every keep-alive, as the session ends (``UDSS_LLR_0184``).
+    pub(super) fn end_keep_alives(&mut self) {
+        let now = self.transport.now();
+        for o in self.book.physical.iter_mut().flatten() {
+            let _expiries_stay_in_the_session =
+                self.session.release_keep_alive(now, o.id).finish();
+            o.in_session = false;
+            o.owed = false;
+        }
+        self.settle_functional_keep_alive();
     }
 
     /// Release the functional keep-alive once no server this client put in a

@@ -264,6 +264,28 @@ pub trait UdsTransport {
     fn now(&self) -> Timestamp;
 }
 
+/// A transport a client sends over: a [`UdsTransport`] whose connection the client can
+/// end.
+///
+/// Ending a session is the client's alone. A server is closed *to*, and the one close it
+/// makes, the prescribed close of ISO 14229-5:2022 REQ 7.9 and REQ 7.11, its transport
+/// makes itself on [`AfterSend::ServerLeaves`] or a positive `ECUReset` response. So
+/// [`crate::Client`] needs this and [`crate::Server`] does not.
+pub trait ClientTransport: UdsTransport {
+    /// Ends the connection to the server gracefully, if there is one.
+    ///
+    /// A request accepted and not yet confirmed is still confirmed, failed, by a later
+    /// [`UdsTransport::next_event`]. The close is reported by no
+    /// [`TransportEvent::Closed`]: the caller made it. A transport with nothing to close
+    /// returns `Ok`. The next [`UdsTransport::t_data_req`] opens a connection again
+    /// where the transport has connections to open.
+    ///
+    /// # Errors
+    ///
+    /// [`UdsTransport::Error`] where closing fails; the connection is closed either way.
+    fn close(&mut self) -> impl core::future::Future<Output = Result<(), Self::Error>>;
+}
+
 #[cfg(test)]
 #[allow(
     clippy::unused_async_trait_impl,

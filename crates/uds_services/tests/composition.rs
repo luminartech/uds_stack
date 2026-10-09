@@ -20,15 +20,15 @@ use uds_protocol::NegativeResponseCode as Nrc;
 use uds_services::pipeline::settle;
 use uds_services::{
     Access, Address, AfterSend, Ai, Answer, ClearDiagnosticInformation, ClientError,
-    ClientSet, ClientStorage, ClientTiming, CommunicationControl, CommunicationControlType,
-    CommunicationType, DataIdentifier, DataTransfer, Delay, DiagnosticSessionType,
-    DtcRecord, DtcReportKind, DtcStatusMask, KeepAlive, KeyVerdict, Mtype,
-    PhysicalKeepAlive, ReadDataByIdentifier, ReadDtcInfoReportType, ReadDtcInfoSubFunction,
-    ReadDtcInformation, Received, RecordError, Reloads, Response, ResponseSink,
-    SecurityAccess, SecurityLevel, SecurityPolicy, ServerParams, ServiceSet, SessionTiming,
-    SessionTransition, Sessions, Sink, Storage, SubnetNumber, TaType, TesterPresent,
-    Timestamp, TransferRequest, TransportEvent, UdsServiceType, UdsTransport, uds_client,
-    uds_server,
+    ClientSet, ClientStorage, ClientTiming, ClientTransport, CommunicationControl,
+    CommunicationControlType, CommunicationType, DataIdentifier, DataTransfer, Delay,
+    DiagnosticSessionType, DtcRecord, DtcReportKind, DtcStatusMask, KeepAlive, KeyVerdict,
+    Mtype, PhysicalKeepAlive, ReadDataByIdentifier, ReadDtcInfoReportType,
+    ReadDtcInfoSubFunction, ReadDtcInformation, Received, RecordError, Reloads, Response,
+    ResponseSink, SecurityAccess, SecurityLevel, SecurityPolicy, ServerParams, ServiceSet,
+    SessionTiming, SessionTransition, Sessions, Sink, Storage, SubnetNumber, TaType,
+    TesterPresent, Timestamp, TransferRequest, TransportEvent, UdsServiceType,
+    UdsTransport, uds_client, uds_server,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -292,6 +292,12 @@ impl UdsTransport for FakeTransport {
     }
     fn now(&self) -> Timestamp {
         Timestamp(0)
+    }
+}
+
+impl ClientTransport for FakeTransport {
+    async fn close(&mut self) -> Result<(), ()> {
+        Ok(())
     }
 }
 
