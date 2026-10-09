@@ -210,6 +210,7 @@ pub struct Tester<'s, C: TcpConnect + 's, const N: usize> {
     outgoing: Outgoing<N>,
     exchange: Exchange,
     owed: Option<ConnectionEvent<'static>>,
+    closed_reported: bool,
     io_error: Option<C::Error>,
     lost_at: Option<Instant>,
     backoff: Duration,
@@ -275,6 +276,7 @@ impl<'s, C: TcpConnect, const N: usize> Tester<'s, C, N> {
             outgoing: Outgoing::new(),
             exchange: Exchange::default(),
             owed: None,
+            closed_reported: false,
             io_error: None,
             lost_at: None,
             backoff: RECONNECT_BACKOFF,
@@ -308,6 +310,7 @@ impl<'s, C: TcpConnect, const N: usize> Tester<'s, C, N> {
             rx,
             control,
             outgoing,
+            closed_reported,
             io_error,
             lost_at,
             ..
@@ -319,6 +322,7 @@ impl<'s, C: TcpConnect, const N: usize> Tester<'s, C, N> {
             Ok(()) => {
                 opened.kept();
                 *kept = Some(socket);
+                *closed_reported = false;
                 *io_error = None;
                 Ok(())
             }
@@ -446,6 +450,20 @@ impl<'s, C: TcpConnect, const N: usize> Tester<'s, C, N> {
         socket
     }
 
+    /// What a closed tester reports: [`ConnectionEvent::Closed`] once per end, then the
+    /// caller's deadline.
+    async fn closed(&mut self, until: Option<Instant>) -> ConnectionEvent<'static> {
+        if !self.closed_reported {
+            self.closed_reported = true;
+            return ConnectionEvent::Closed;
+        }
+        match until {
+            Some(until) => Timer::at(until).await,
+            None => core::future::pending().await,
+        }
+        ConnectionEvent::Deadline
+    }
+
     /// Owes the outstanding request `DoIP_TIMEOUT_A` once its time is up, and whether it
     /// did.
     ///
@@ -479,10 +497,10 @@ impl<'s, C: TcpConnect, const N: usize> Tester<'s, C, N> {
 /// A connection ending is an event, never an `Err`: the confirm a request awaiting one is
 /// owed, then [`ConnectionEvent::Closed`], whether the entity closed the connection, the
 /// tester gave it up, or the socket failed, whose error [`TesterConnection::io_error`]
-/// keeps. Every [`next_event`](DiagnosticConnection::next_event) after that reports
-/// `Closed` again, and [`request`](DiagnosticConnection::request) is
-/// [`Refusal::NotConnected`], until a reconnect succeeds. `next_event` never returns
-/// `Err`.
+/// keeps. Every [`next_event`](DiagnosticConnection::next_event) after that waits for
+/// its deadline, reporting [`ConnectionEvent::Deadline`], and
+/// [`request`](DiagnosticConnection::request) is [`Refusal::NotConnected`], until a
+/// reconnect succeeds. `next_event` never returns `Err`.
 impl<C: TcpConnect, const N: usize> DiagnosticConnection for Tester<'_, C, N> {
     type Error = core::convert::Infallible;
 
@@ -600,7 +618,7 @@ impl<C: TcpConnect, const N: usize> DiagnosticConnection for Tester<'_, C, N> {
                 return Ok(owed);
             }
             if self.socket.is_none() {
-                return Ok(ConnectionEvent::Closed);
+                return Ok(self.closed(until).await);
             }
             if self.time_out(until).await {
                 continue;
@@ -725,10 +743,11 @@ impl<C: TcpConnect, const N: usize> TesterConnection for Tester<'_, C, N> {
     ///
     /// # Errors
     ///
-    /// As for [`Tester::connect`]. After an error,
+    /// As for [`Tester::connect`]. After an error the tester is closed:
     /// [`next_event`](DiagnosticConnection::next_event) reports
-    /// [`ConnectionEvent::Closed`] and [`request`](DiagnosticConnection::request) is
-    /// [`Refusal::NotConnected`] until a reconnect succeeds.
+    /// [`ConnectionEvent::Closed`] for the connection the reconnect gave up, if one was
+    /// open and its end not yet reported, and [`request`](DiagnosticConnection::request)
+    /// is [`Refusal::NotConnected`] until a reconnect succeeds.
     async fn reconnect(&mut self) -> Result<(), Self::ReconnectError> {
         self.lose_connection(true, None).await;
         if let Some(lost_at) = self.lost_at {

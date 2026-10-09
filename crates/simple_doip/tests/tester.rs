@@ -501,22 +501,21 @@ fn a_deadline_from_now_is_on_the_testers_clock() {
     );
 }
 
-/// A connection ending is an event, never an `Err`: `Closed`, and `Closed` again on
-/// every call until a reconnect succeeds.
+/// A connection ending is an event, never an `Err`: `Closed` once, then nothing but
+/// the caller's deadline until a reconnect succeeds.
 #[test]
-fn the_entity_closing_is_closed_until_a_reconnect() {
+fn the_entity_closing_is_closed_once_until_a_reconnect() {
     let _clock = clock();
     let stack = MockStack::new(usize::MAX);
     let mut tester = active(&stack);
     stack.latest().eof();
     let mut buf = [0; 16];
 
-    for _ in 0..3 {
-        assert_eq!(
-            next(&mut tester, &mut buf).unwrap(),
-            ConnectionEvent::Closed
-        );
-    }
+    assert_eq!(
+        next(&mut tester, &mut buf).unwrap(),
+        ConnectionEvent::Closed
+    );
+    assert_quiet_until_the_deadline(&mut tester);
     assert_eq!(tester.io_error(), None);
     assert!(stack.latest().is_shut());
     assert!(
@@ -589,10 +588,7 @@ fn a_failed_read_is_closed_and_keeps_its_error() {
         next(&mut tester, &mut buf).unwrap(),
         ConnectionEvent::Closed
     );
-    assert_eq!(
-        next(&mut tester, &mut buf).unwrap(),
-        ConnectionEvent::Closed
-    );
+    assert_quiet_until_the_deadline(&mut tester);
     assert_eq!(tester.io_error(), Some(&MockError));
     assert!(stack.latest().is_shut());
     assert!(
@@ -607,6 +603,24 @@ const PDU: [u8; 3] = [0x22, 0xF1, 0x90];
 
 fn request(tester: &mut ActiveTester<'_>) -> Result<(), Refusal> {
     run(tester.request(ENTITY, TaType::Physical, &PDU))
+}
+
+/// A closed tester whose `Closed` was reported waits for the caller's deadline, and
+/// with none, for good: nothing can arrive before a reconnect.
+fn assert_quiet_until_the_deadline(tester: &mut ActiveTester<'_>) {
+    let mut buf = [0; 16];
+    {
+        let mut waiting = pin!(tester.next_event(&mut buf, None));
+        assert!(until_stalled(waiting.as_mut()).is_none());
+    }
+    let deadline = tester.now().after(100);
+    let mut waiting = pin!(tester.next_event(&mut buf, Some(deadline)));
+    assert!(until_stalled(waiting.as_mut()).is_none());
+    advance(Duration::from_millis(100));
+    assert_eq!(
+        until_stalled(waiting.as_mut()),
+        Some(Ok(ConnectionEvent::Deadline))
+    );
 }
 
 fn confirm(result: DoIpResult) -> ConnectionEvent<'static> {
@@ -985,10 +999,7 @@ fn a_failed_write_confirms_no_socket() {
         next(&mut tester, &mut buf).unwrap(),
         ConnectionEvent::Closed
     );
-    assert_eq!(
-        next(&mut tester, &mut buf).unwrap(),
-        ConnectionEvent::Closed
-    );
+    assert_quiet_until_the_deadline(&mut tester);
     assert_eq!(tester.io_error(), Some(&MockError));
 }
 
@@ -1295,10 +1306,7 @@ fn a_failed_reconnect_leaves_the_tester_closed() {
             RoutingActivationResponseCode::DeniedUnknownSourceAddress
         )
     );
-    assert_eq!(
-        next(&mut tester, &mut buf).unwrap(),
-        ConnectionEvent::Closed
-    );
+    assert_quiet_until_the_deadline(&mut tester);
     assert_eq!(request(&mut tester).unwrap_err(), Refusal::NotConnected);
 }
 
@@ -1318,12 +1326,11 @@ fn a_dropped_reconnect_leaves_the_tester_closed() {
     let mut buf = [0; 16];
 
     assert!(stack.peer(1).is_shut());
-    for _ in 0..2 {
-        assert_eq!(
-            next(&mut tester, &mut buf).unwrap(),
-            ConnectionEvent::Closed
-        );
-    }
+    assert_eq!(
+        next(&mut tester, &mut buf).unwrap(),
+        ConnectionEvent::Closed
+    );
+    assert_quiet_until_the_deadline(&mut tester);
 }
 
 /// Issue #17 item 2: a socket dropped mid-activation may still hold the tester's address
@@ -1876,7 +1883,7 @@ fn a_reconnect_dropped_at_any_await_leaves_a_consistent_tester() {
         );
         assert_eq!(
             run(tester.next_event(&mut buf, Some(Timestamp(0)))).unwrap(),
-            ConnectionEvent::Closed,
+            ConnectionEvent::Deadline,
             "dropped after {polls} polls"
         );
         assert!(stack.peer(0).is_shut(), "dropped after {polls} polls");
@@ -2451,7 +2458,7 @@ fn a_manufacturer_payload_type_is_reported() {
 // --- close ----------------------------------------------------------------------------
 
 /// `close` ends the connection gracefully rather than aborting or merely dropping it, and
-/// leaves the tester closed: `Closed` on every `next_event`, `NotConnected` for a request.
+/// leaves the tester closed: `Closed` once, then quiet, and `NotConnected` for a request.
 #[test]
 fn close_shuts_the_connection_gracefully_and_leaves_it_closed() {
     let _clock = clock();
@@ -2463,12 +2470,11 @@ fn close_shuts_the_connection_gracefully_and_leaves_it_closed() {
     assert!(stack.latest().is_closed());
     assert!(!stack.latest().is_aborted());
     let mut buf = [0; 16];
-    for _ in 0..2 {
-        assert_eq!(
-            next(&mut tester, &mut buf).unwrap(),
-            ConnectionEvent::Closed
-        );
-    }
+    assert_eq!(
+        next(&mut tester, &mut buf).unwrap(),
+        ConnectionEvent::Closed
+    );
+    assert_quiet_until_the_deadline(&mut tester);
     assert_eq!(request(&mut tester).unwrap_err(), Refusal::NotConnected);
 }
 
@@ -2539,7 +2545,7 @@ fn a_dropped_close_drops_the_socket() {
     );
 }
 
-/// Closing twice, or with no connection, does nothing.
+/// Closing twice, or with no connection, does nothing: no second `Closed` follows.
 #[test]
 fn closing_a_closed_tester_does_nothing() {
     let _clock = clock();
@@ -2556,10 +2562,7 @@ fn closing_a_closed_tester_does_nothing() {
     run(tester.close()).unwrap();
 
     assert!(!stack.latest().is_closed());
-    assert_eq!(
-        next(&mut tester, &mut buf).unwrap(),
-        ConnectionEvent::Closed
-    );
+    assert_quiet_until_the_deadline(&mut tester);
 }
 
 /// A closed tester is revived by a reconnect, after the back-off from the close.

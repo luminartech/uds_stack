@@ -111,15 +111,18 @@ stateDiagram-v2
     note right of Closed
         A request awaiting its confirm is confirmed first,
         DoIP_NO_SOCKET or DoIP_ERROR. Then next_event
-        reports Closed on every call, and request is refused,
-        until a reconnect succeeds.
+        reports Closed once and waits for its deadline, and
+        request is refused, until a reconnect succeeds.
     end note
 ```
 
-- **Every end is `Closed`, never an `Err`.** A connection is lost when the entity
+- **Every end is one `Closed`, never an `Err`.** A connection is lost when the entity
   closes it, the socket fails, a request it carried is lost, or the entity sends a
   NACK it closes on. Where the socket failed, its error is kept in
-  `TesterConnection::io_error`.
+  `TesterConnection::io_error`. After it, `next_event` waits for the caller's
+  deadline, as an entity's does between events, so a caller that does not reconnect
+  at once needs no timer of its own to wait; `request`'s `NotConnected` says the
+  connection is still closed.
 - **A request is refused, with no confirm, only for a `service::Refusal`**, the
   entity's vocabulary: `NotConnected` while the connection is closed (reconnect to
   continue), `NoRoom` while an earlier request awaits its confirm (the tester carries

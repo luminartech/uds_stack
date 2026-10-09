@@ -381,8 +381,9 @@ pub trait DiagnosticConnection {
 /// - A request awaiting its confirm is confirmed before anything from a new
 ///   connection.
 /// - However it closed, a connection stays closed until a reconnect succeeds:
-///   [`DiagnosticConnection::next_event`] reports [`ConnectionEvent::Closed`] on every
-///   call, and [`DiagnosticConnection::request`] is refused with
+///   [`DiagnosticConnection::next_event`] reports [`ConnectionEvent::Closed`] once for
+///   each end of an established connection and then waits for the caller's deadline,
+///   since nothing can arrive, and [`DiagnosticConnection::request`] is refused with
 ///   [`Refusal::NotConnected`]. Dropping [`Self::reconnect`] leaves it so.
 pub trait TesterConnection: DiagnosticConnection {
     /// Why a reconnect failed. Never interpreted by the layer above, which can only
