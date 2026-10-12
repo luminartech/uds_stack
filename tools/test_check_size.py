@@ -16,9 +16,13 @@ from check_size import (
     compare,
     parse_berkeley,
     parse_main_frame,
+    parse_symbol,
+    parse_word,
 )
 
-BASELINE = Sizes(text=48_000, data=0, bss=9_324, main_frame=8_824)
+BASELINE = Sizes(
+    text=48_000, data=0, bss=9_324, main_frame=8_824, client_transport=12_632
+)
 ALLOWED = BASELINE.text * TEXT_TOLERANCE_PERCENT // 100
 
 MAIN = """
@@ -75,6 +79,48 @@ class MainsFrameIsReadFromItsPrologue(unittest.TestCase):
             parse_main_frame(other)
 
 
+SYMBOLS = """
+00000000 l    df *ABS*	00000000 embedded_probe.a9b2c3d4-cgu.0
+0000d140 l     O .rodata	00000004 embedded_probe::firmware::CLIENT_TRANSPORT_SIZE::heb9dc9c1c89416ea
+000098d2 g     F .text	000000a6 embedded_probe::firmware::__cortex_m_rt_main::h4a350782847883a9
+"""
+
+RODATA = """
+target/embedded-probe:	file format elf32-littlearm
+Contents of section .rodata:
+ d130 88130000 32000000 88130000 00000000  ....2...........
+ d140 58310000 00000000 00000000 5756575a  X1..........WVWZ
+"""
+
+
+class TheClientTransportsSizeIsReadFromTheImage(unittest.TestCase):
+    def test_the_symbol_is_found_with_its_hash_and_section(self) -> None:
+        self.assertEqual(
+            parse_symbol(SYMBOLS, "CLIENT_TRANSPORT_SIZE"), (0xD140, ".rodata")
+        )
+
+    def test_a_symbol_whose_name_merely_contains_it_is_not_taken(self) -> None:
+        table = SYMBOLS + "0000d150 l     O .rodata\t00000004 x::CLIENT_TRANSPORT_SIZE_2\n"
+        self.assertEqual(parse_symbol(table, "CLIENT_TRANSPORT_SIZE")[0], 0xD140)
+
+    def test_no_symbol_or_two_is_refused(self) -> None:
+        """Otherwise a renamed static would be read as a size of nothing."""
+        with self.assertRaises(ValueError):
+            parse_symbol(SYMBOLS, "CLIENT_SIZE")
+        with self.assertRaises(ValueError):
+            parse_symbol(SYMBOLS + SYMBOLS, "CLIENT_TRANSPORT_SIZE")
+
+    def test_the_word_at_the_address_is_read_little_endian(self) -> None:
+        self.assertEqual(parse_word(RODATA, 0xD140), 0x3158)
+
+    def test_a_word_within_a_line_is_read(self) -> None:
+        self.assertEqual(parse_word(RODATA, 0xD134), 0x32)
+
+    def test_an_address_the_dump_lacks_is_refused(self) -> None:
+        with self.assertRaises(ValueError):
+            parse_word(RODATA, 0xD200)
+
+
 class RamMustMatch(unittest.TestCase):
     def test_bss_growth_fails(self) -> None:
         failures = compare(BASELINE, replace(BASELINE, bss=BASELINE.bss + 4))
@@ -94,6 +140,15 @@ class RamMustMatch(unittest.TestCase):
         failures = compare(BASELINE, replace(BASELINE, main_frame=BASELINE.main_frame + 8))
         self.assertEqual(len(failures), 1)
         self.assertIn("main_frame", failures[0])
+
+    def test_a_client_transport_change_either_way_fails(self) -> None:
+        for change in (4, -4):
+            failures = compare(
+                BASELINE,
+                replace(BASELINE, client_transport=BASELINE.client_transport + change),
+            )
+            self.assertEqual(len(failures), 1)
+            self.assertIn("client_transport", failures[0])
 
 
 class FlashMayDriftWithinTheTolerance(unittest.TestCase):

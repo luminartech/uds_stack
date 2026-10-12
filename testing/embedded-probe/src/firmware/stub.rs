@@ -1,17 +1,21 @@
-//! A listening socket and a datagram socket whose every answer is opaque to the
-//! optimizer, so that no path through the entity is compiled out.
+//! A listening socket, a connecting one and a datagram socket whose every answer is
+//! opaque to the optimizer, so that no path through the entity is compiled out.
 
 use core::future::{Future, Ready, ready};
 use core::hint::black_box;
 use core::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 
 use edge_nal::{
-    Close, Readable, TcpAccept, TcpShutdown, TcpSplit, UdpReceive, UdpSend, UdpSplit,
+    Close, Readable, TcpAccept, TcpConnect, TcpShutdown, TcpSplit, UdpReceive, UdpSend,
+    UdpSplit,
 };
 use embedded_io_async::{ErrorKind, ErrorType, Read, Write};
 
 #[derive(Debug)]
 pub(super) struct Acceptor;
+
+#[derive(Debug)]
+pub(super) struct Connector;
 
 #[derive(Debug)]
 pub(super) struct Socket;
@@ -57,6 +61,16 @@ impl TcpAccept for Acceptor {
 
     fn accept(&self) -> impl Future<Output = Result<(SocketAddr, Socket), Failed>> {
         outcome((peer(), Socket))
+    }
+}
+
+impl TcpConnect for Connector {
+    type Error = Failed;
+    type Socket<'a> = Socket;
+
+    fn connect(&self, remote: SocketAddr) -> impl Future<Output = Result<Socket, Failed>> {
+        black_box(remote);
+        outcome(Socket)
     }
 }
 

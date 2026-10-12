@@ -3,16 +3,18 @@
 
 ``testing/embedded-probe`` links the sensor's whole server path for bare metal, and this
 compares it with the baseline recorded beside it: its sections, as ``llvm-size`` reports
-them, and the stack frame its ``main`` reserves, as ``llvm-objdump`` shows the prologue.
+them, the stack frame its ``main`` reserves, as ``llvm-objdump`` shows the prologue, and
+the client transport's size, which the probe keeps in a ``static`` for this to read.
 Nothing else in the gate notices a change that costs flash or RAM.
 
 They are held differently:
 
-  * **RAM** must match the baseline exactly: static RAM (``data`` and ``bss``) and
+  * **RAM** must match the baseline exactly: static RAM (``data`` and ``bss``),
     ``main``'s frame, which holds the server while it is built and the future ``run``
-    returns. A change either way is recorded in the commit that makes it. The match can
-    be exact because the toolchain is pinned; layouts, inlining and which statics survive
-    linking all move with the compiler, so a toolchain bump re-records the baseline.
+    returns, and the client transport, which a tester holds by value. A change either
+    way is recorded in the commit that makes it. The match can be exact because the
+    toolchain is pinned; layouts, inlining and which statics survive linking all move
+    with the compiler, so a toolchain bump re-records the baseline.
   * **Flash** (``text``) may move by up to ``TEXT_TOLERANCE_PERCENT`` either way before the
     check fails, because code size moves with inlining decisions a change did not intend.
     A larger shrink fails too, so that the smaller baseline is recorded and later growth
@@ -38,15 +40,19 @@ TEXT_TOLERANCE_PERCENT = 5
 
 MAIN_SYMBOL = "__cortex_m_rt_main"
 
+CLIENT_TRANSPORT_SYMBOL = "CLIENT_TRANSPORT_SIZE"
+
 
 @dataclass(frozen=True)
 class Sizes:
-    """An image's sizes in bytes: ``llvm-size``'s Berkeley grouping, and ``main``'s frame."""
+    """An image's sizes in bytes: ``llvm-size``'s Berkeley grouping, ``main``'s frame, and
+    the client transport's ``size_of``."""
 
     text: int
     data: int
     bss: int
     main_frame: int
+    client_transport: int
 
 
 def parse_berkeley(output: str) -> tuple[int, int, int]:
@@ -98,10 +104,38 @@ def parse_main_frame(disassembly: str) -> int:
     return frame
 
 
+def parse_symbol(table: str, name: str) -> tuple[int, str]:
+    """Where the one symbol whose demangled name is ``name``, in any module and with or
+    without the compiler's hash, is, and in which section, from
+    ``llvm-objdump -t --demangle``: ``address flags section size name``."""
+    named = re.compile(rf"(^|::){re.escape(name)}(::h[0-9a-f]+)?$")
+    found = [
+        (int(fields[0], 16), fields[-3])
+        for line in table.splitlines()
+        if len(fields := line.split()) >= 4 and named.search(fields[-1])
+    ]
+    if len(found) != 1:
+        raise ValueError(f"{len(found)} symbols named {name} in the image")
+    return found[0]
+
+
+def parse_word(contents: str, at: int) -> int:
+    """The little-endian 32-bit word at ``at``, a ``usize`` on the probe's target, from
+    ``llvm-objdump -s``'s dump of its section: sixteen bytes a line as four hex words,
+    the line's address first."""
+    base = at & ~0xF
+    for line in contents.splitlines():
+        fields = line.split()
+        if len(fields) >= 2 and fields[0] == f"{base:x}":
+            word = fields[1:5][(at - base) // 4]
+            return int.from_bytes(bytes.fromhex(word), "little")
+    raise ValueError(f"no line at {base:#x} in the dump:\n{contents}")
+
+
 def compare(baseline: Sizes, measured: Sizes) -> list[str]:
     """What fails when ``measured`` is held to ``baseline``."""
     failures: list[str] = []
-    for name in ("data", "bss", "main_frame"):
+    for name in ("data", "bss", "main_frame", "client_transport"):
         was, now = getattr(baseline, name), getattr(measured, name)
         if now != was:
             failures.append(f"{name}: {now} bytes, baseline {was} ({now - was:+d})")
@@ -122,11 +156,22 @@ def _run(tool: str, *args: str) -> str:
 
 
 def _measure(llvm_bin: Path, image: Path) -> Sizes:
+    objdump = str(llvm_bin / "llvm-objdump")
     text, data, bss = parse_berkeley(_run(str(llvm_bin / "llvm-size"), str(image)))
-    disassembly = _run(
-        str(llvm_bin / "llvm-objdump"), "-d", "--no-show-raw-insn", str(image)
+    disassembly = _run(objdump, "-d", "--no-show-raw-insn", str(image))
+    at, section = parse_symbol(
+        _run(objdump, "-t", "--demangle", str(image)), CLIENT_TRANSPORT_SYMBOL
     )
-    return Sizes(text=text, data=data, bss=bss, main_frame=parse_main_frame(disassembly))
+    client_transport = parse_word(
+        _run(objdump, "-s", f"--section={section}", str(image)), at
+    )
+    return Sizes(
+        text=text,
+        data=data,
+        bss=bss,
+        main_frame=parse_main_frame(disassembly),
+        client_transport=client_transport,
+    )
 
 
 def main(argv: list[str]) -> int:

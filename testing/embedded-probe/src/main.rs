@@ -7,6 +7,9 @@
 //! here too: a `critical-section` implementation, an `embassy-time` driver with its timer
 //! queue, and a `static` the server is built in.
 //!
+//! The client role is not run, but its transport's size is in the image, so that the
+//! gate records what a tester holds by value.
+//!
 //! Built for bare metal only; on a host the binary is empty.
 
 #![cfg_attr(target_os = "none", no_std, no_main)]
