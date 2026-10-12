@@ -160,7 +160,6 @@ pub(crate) fn response_pending(response: &[u8]) -> bool {
 pub(crate) const fn refused(refusal: Refusal) -> DoIpResult {
     match refusal {
         Refusal::NoRoom | Refusal::PduTooLarge { .. } => DoIpResult::OutOfMemory,
-        Refusal::NotConnected => DoIpResult::NoSocket,
         Refusal::EmptyPdu => DoIpResult::Error,
     }
 }
@@ -456,7 +455,6 @@ mod tests {
             refused(Refusal::PduTooLarge { len: 9, max: 8 }),
             DoIpResult::OutOfMemory
         );
-        assert_eq!(refused(Refusal::NotConnected), DoIpResult::NoSocket);
         assert_eq!(refused(Refusal::EmptyPdu), DoIpResult::Error);
     }
 }

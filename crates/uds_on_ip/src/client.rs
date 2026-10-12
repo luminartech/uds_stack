@@ -5,7 +5,8 @@ use core::ops::Range;
 
 use simple_doip::LogicalAddress;
 use simple_doip::service::{
-    self, ConnectionEvent, DoIpResult, Reconnection, Refusal, TesterConnection,
+    self, ConnectionEvent, ConnectionRefusal, DoIpResult, Reconnection, Refusal,
+    TesterConnection,
 };
 use uds_services::{AfterSend, ClientTransport, TransportEvent, UdsTransport};
 use uds_session::{Address, Ai, Reloads, SResult, TaType, Timestamp};
@@ -197,7 +198,7 @@ impl<C: TesterConnection, const QUEUE: usize, const PEERS: usize, const WAITING:
     ///
     /// ```compile_fail
     /// # use simple_doip::service::{
-    /// #     ConnectionEvent, DiagnosticConnection, Reconnection, Refusal,
+    /// #     ConnectionEvent, ConnectionRefusal, DiagnosticConnection, Reconnection,
     /// #     TesterAddress, TesterConnection, Timestamp,
     /// # };
     /// # use simple_doip::{LogicalAddress, TaType};
@@ -209,7 +210,7 @@ impl<C: TesterConnection, const QUEUE: usize, const PEERS: usize, const WAITING:
     ///     // ...
     /// #   type Error = ();
     /// #   fn request(&mut self, _: LogicalAddress, _: TaType, _: &[u8])
-    /// #       -> Result<(), Refusal> { Ok(()) }
+    /// #       -> Result<(), ConnectionRefusal> { Ok(()) }
     /// #   fn now(&self) -> Timestamp { Timestamp(0) }
     /// #   async fn next_event<'b>(&mut self, _: &'b mut [u8], _: Option<Timestamp>)
     /// #       -> Result<ConnectionEvent<'b>, ()> { Ok(ConnectionEvent::Deadline) }
@@ -407,12 +408,14 @@ impl<C: TesterConnection, const QUEUE: usize, const PEERS: usize, const WAITING:
                 self.requested(ai, expects);
                 Ok(())
             }
-            Err(Refusal::NoRoom) => self.wait(ai, data, expects),
-            Err(Refusal::NotConnected) => {
+            Err(ConnectionRefusal::Refused(Refusal::NoRoom)) => {
+                self.wait(ai, data, expects)
+            }
+            Err(ConnectionRefusal::Closed) => {
                 self.end();
                 self.wait(ai, data, expects)
             }
-            Err(refusal) => self.refuse(ai, refusal),
+            Err(ConnectionRefusal::Refused(refusal)) => self.refuse(ai, refusal),
         }
     }
 
@@ -482,9 +485,9 @@ impl<C: TesterConnection, const QUEUE: usize, const PEERS: usize, const WAITING:
                 self.sent = Some(ai);
                 self.waiting.pop();
             }
-            Err(Refusal::NoRoom) => {}
-            Err(Refusal::NotConnected) => self.end(),
-            Err(refusal) => {
+            Err(ConnectionRefusal::Refused(Refusal::NoRoom)) => {}
+            Err(ConnectionRefusal::Closed) => self.end(),
+            Err(ConnectionRefusal::Refused(refusal)) => {
                 self.waiting.fail_front(s_result(refused(refusal)));
                 confirmed(&mut self.peers, ai, refused(refusal));
             }

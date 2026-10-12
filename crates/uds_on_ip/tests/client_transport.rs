@@ -16,8 +16,8 @@ use std::pin::pin;
 use std::task::{Context, Poll, Waker};
 
 use simple_doip::service::{
-    ConnectionEvent, DiagnosticConnection, DoIpResult, Reconnection, Refusal,
-    TesterAddress, TesterConnection, Timestamp,
+    ConnectionEvent, ConnectionRefusal, DiagnosticConnection, DoIpResult, Reconnection,
+    Refusal, TesterAddress, TesterConnection, Timestamp,
 };
 use simple_doip::{LogicalAddress, TaType};
 use uds_on_ip::{ClientTransportError, DoIpClientTransport};
@@ -139,21 +139,22 @@ impl DiagnosticConnection for Scripted {
         ta: LogicalAddress,
         ta_type: TaType,
         pdu: &[u8],
-    ) -> Result<(), Refusal> {
+    ) -> Result<(), ConnectionRefusal> {
         if !self.connected {
-            return Err(Refusal::NotConnected);
+            return Err(ConnectionRefusal::Closed);
         }
         if self.outstanding.is_some() || !self.owed.is_empty() {
-            return Err(Refusal::NoRoom);
+            return Err(Refusal::NoRoom.into());
         }
         if pdu.is_empty() {
-            return Err(Refusal::EmptyPdu);
+            return Err(Refusal::EmptyPdu.into());
         }
         if pdu.len() > MAX_PDU {
             return Err(Refusal::PduTooLarge {
                 len: pdu.len(),
                 max: MAX_PDU,
-            });
+            }
+            .into());
         }
         self.outstanding = Some((ta, ta_type));
         self.calls.push(Call::Request(ta, ta_type, pdu.to_vec()));

@@ -17,8 +17,8 @@ use std::pin::pin;
 use embassy_time::Duration;
 use simple_doip::messages::{NackCode, RoutingActivationResponseCode};
 use simple_doip::service::{
-    ConnectionEvent, DiagnosticConnection, DoIpResult, NotATesterAddress, Reconnection,
-    Refusal, TesterAddress, TesterConnection, Timestamp,
+    ConnectionEvent, ConnectionRefusal, DiagnosticConnection, DoIpResult,
+    NotATesterAddress, Reconnection, Refusal, TesterAddress, TesterConnection, Timestamp,
 };
 use simple_doip::tester::{ConnectError, MIN_N, RECONNECT_BACKOFF, Tester};
 use simple_doip::{LogicalAddress, TaType};
@@ -603,7 +603,7 @@ fn a_failed_read_is_closed_and_keeps_its_error() {
 
 const PDU: [u8; 3] = [0x22, 0xF1, 0x90];
 
-fn request(tester: &mut ActiveTester<'_>) -> Result<(), Refusal> {
+fn request(tester: &mut ActiveTester<'_>) -> Result<(), ConnectionRefusal> {
     tester.request(ENTITY, TaType::Physical, &PDU)
 }
 
@@ -847,7 +847,10 @@ fn a_second_request_before_the_confirm_is_refused() {
     let mut tester = active(&stack);
     request(&mut tester).unwrap();
 
-    assert_eq!(request(&mut tester).unwrap_err(), Refusal::NoRoom);
+    assert_eq!(
+        request(&mut tester).unwrap_err(),
+        ConnectionRefusal::Refused(Refusal::NoRoom)
+    );
 
     stack.latest().send(&ack(ENTITY, TESTER));
     let mut buf = [0; 16];
@@ -880,10 +883,10 @@ fn a_pdu_longer_than_max_pdu_is_refused() {
         tester
             .request(ENTITY, TaType::Physical, &[0x2E; MAX_PDU + 1])
             .unwrap_err(),
-        Refusal::PduTooLarge {
+        ConnectionRefusal::Refused(Refusal::PduTooLarge {
             len: MAX_PDU + 1,
             max: MAX_PDU
-        }
+        })
     );
     tester
         .request(ENTITY, TaType::Physical, &[0x2E; MAX_PDU])
@@ -908,7 +911,7 @@ fn an_empty_pdu_is_refused() {
 
     assert_eq!(
         tester.request(ENTITY, TaType::Physical, &[]).unwrap_err(),
-        Refusal::EmptyPdu
+        ConnectionRefusal::Refused(Refusal::EmptyPdu)
     );
     let mut buf = [0; 16];
     {
@@ -931,7 +934,7 @@ fn a_request_when_closed_is_not_connected() {
         ConnectionEvent::Closed
     );
 
-    assert_eq!(request(&mut tester).unwrap_err(), Refusal::NotConnected);
+    assert_eq!(request(&mut tester).unwrap_err(), ConnectionRefusal::Closed);
 }
 
 /// The address routing activation registered, which a caller checks an indication's
@@ -1293,7 +1296,7 @@ fn a_failed_reconnect_leaves_the_tester_closed() {
         )
     );
     assert_quiet_until_the_deadline(&mut tester);
-    assert_eq!(request(&mut tester).unwrap_err(), Refusal::NotConnected);
+    assert_eq!(request(&mut tester).unwrap_err(), ConnectionRefusal::Closed);
 }
 
 /// A reconnect dropped before routing is active leaves no connection behind: the old
@@ -1388,7 +1391,7 @@ fn timeout_a_gives_up_the_connection() {
         ConnectionEvent::Closed
     );
     assert!(stack.latest().is_aborted());
-    assert_eq!(request(&mut tester).unwrap_err(), Refusal::NotConnected);
+    assert_eq!(request(&mut tester).unwrap_err(), ConnectionRefusal::Closed);
 }
 
 /// ISO 13400-2:2019 Table 12: the timeout is not put off by traffic that keeps the
@@ -1475,7 +1478,10 @@ fn a_request_while_a_confirm_is_owed_is_pending() {
     stack.script_next(&activation_response(0x10));
     reconnect(&mut tester).unwrap();
 
-    assert_eq!(request(&mut tester).unwrap_err(), Refusal::NoRoom);
+    assert_eq!(
+        request(&mut tester).unwrap_err(),
+        ConnectionRefusal::Refused(Refusal::NoRoom)
+    );
 }
 
 /// The caller's deadline is kept while an acknowledgement is awaited, even though
@@ -2464,7 +2470,7 @@ fn close_shuts_the_connection_gracefully_and_leaves_it_closed() {
         ConnectionEvent::Closed
     );
     assert_quiet_until_the_deadline(&mut tester);
-    assert_eq!(request(&mut tester).unwrap_err(), Refusal::NotConnected);
+    assert_eq!(request(&mut tester).unwrap_err(), ConnectionRefusal::Closed);
 }
 
 /// A request unconfirmed at the close still gets its one confirm, from the next
@@ -2593,7 +2599,7 @@ fn a_reconnect_stops_at_its_deadline_and_a_later_one_connects() {
         );
     }
     assert_eq!(stack.connects(), 1);
-    assert_eq!(request(&mut tester).unwrap_err(), Refusal::NotConnected);
+    assert_eq!(request(&mut tester).unwrap_err(), ConnectionRefusal::Closed);
 
     let mut reconnecting = pin!(tester.reconnect(None));
     assert!(until_stalled(reconnecting.as_mut()).is_none());

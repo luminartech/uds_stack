@@ -327,8 +327,8 @@ the seam with no I/O in it:
 - `DiagnosticConnection` — one connection, as a tester uses it, and
   `TesterConnection`, one it can replace (`reconnect`) and end (`close`). A
   request is a plain call, accepted or refused when it returns, never a future to
-  drop part-way; it is refused with a typed `service::Refusal`, so a layer generic
-  over it tells a closed connection (`NotConnected`: reconnect) from one carrying
+  drop part-way; it is refused with a typed `service::ConnectionRefusal`, so a layer
+  generic over it tells a closed connection (`Closed`: reconnect) from one carrying
   another request (`NoRoom`: wait). It reports each end once, as `Closed`, then waits
   for the caller's deadline.
   `DoIpClientTransport<C: TesterConnection, QUEUE, PEERS, WAITING>` drives it and

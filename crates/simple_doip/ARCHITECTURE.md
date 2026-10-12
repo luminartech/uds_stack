@@ -121,13 +121,14 @@ stateDiagram-v2
   NACK it closes on. Where the socket failed, its error is kept in
   `TesterConnection::io_error`. After it, `next_event` waits for the caller's
   deadline, as an entity's does between events, so a caller that does not reconnect
-  at once needs no timer of its own to wait; `request`'s `NotConnected` says the
-  connection is still closed.
-- **A request is refused, with no confirm, only for a `service::Refusal`**, the
-  entity's vocabulary: `NotConnected` while the connection is closed (reconnect to
-  continue), `NoRoom` while an earlier request awaits its confirm (the tester carries
-  one at a time), `PduTooLarge` over `MAX_PDU`, and `EmptyPdu`. The layer above
-  tells them apart without naming the implementor.
+  at once needs no timer of its own to wait; `request`'s `ConnectionRefusal::Closed`
+  says the connection is still closed.
+- **A request is refused, with no confirm, only for a `service::ConnectionRefusal`**:
+  `Closed` while the connection is closed (reconnect to continue), and otherwise the
+  entity's vocabulary, `service::Refusal`: `NoRoom` while an earlier request awaits
+  its confirm (the tester carries one at a time), `PduTooLarge` over `MAX_PDU`, and
+  `EmptyPdu`. The layer above tells them apart without naming the implementor, and
+  the entity's vocabulary carries nothing for a connection it does not have.
 - **Reconnecting gives the old connection up before it waits, and waits before it
   connects** (issue #17 item 2): an entity may hold the tester's address for a
   while after its socket closes and refuse a second activation meanwhile. The

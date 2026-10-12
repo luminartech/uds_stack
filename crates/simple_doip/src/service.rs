@@ -100,8 +100,9 @@ pub enum DoIpResult {
     Error,
 }
 
-/// Why [`DiagnosticEntity::request`] or [`DiagnosticConnection::request`] refused a
-/// request. No confirm follows a refusal.
+/// Why [`DiagnosticEntity::request`] refused a request, and why
+/// [`DiagnosticConnection::request`] did other than for a closed connection
+/// ([`ConnectionRefusal`]). No confirm follows a refusal.
 ///
 /// Exhaustive: these are the only cases in which the request is refused rather than
 /// accepted and confirmed, and a caller that confirms a refused request failed itself
@@ -125,10 +126,23 @@ pub enum Refusal {
     /// an entity's are all taken, and a connection holds one. No connection ends for it.
     #[error("too many requests await their confirm")]
     NoRoom,
+}
+
+/// Why [`DiagnosticConnection::request`] refused a request. No confirm follows a
+/// refusal.
+///
+/// Exhaustive, as [`Refusal`] is: a layer generic over the connection tells a closed
+/// connection, to reconnect, from one carrying another request, to wait, from a
+/// request refused for itself.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, thiserror::Error)]
+pub enum ConnectionRefusal {
     /// The connection is closed. A [`TesterConnection`] takes requests again once
-    /// [`TesterConnection::reconnect`] succeeds. A [`DiagnosticEntity`] never refuses so.
+    /// [`TesterConnection::reconnect`] succeeds.
     #[error("not connected")]
-    NotConnected,
+    Closed,
+    /// Refused as an entity refuses.
+    #[error(transparent)]
+    Refused(#[from] Refusal),
 }
 
 /// A reading of a [`DiagnosticConnection`]'s or a [`DiagnosticEntity`]'s clock, or an
@@ -335,13 +349,13 @@ pub trait DiagnosticConnection {
     ///
     /// # Errors
     ///
-    /// A [`Refusal`] where the request is not accepted; no confirm follows it.
+    /// A [`ConnectionRefusal`] where the request is not accepted; no confirm follows it.
     fn request(
         &mut self,
         ta: LogicalAddress,
         ta_type: TaType,
         pdu: &[u8],
-    ) -> Result<(), Refusal>;
+    ) -> Result<(), ConnectionRefusal>;
 
     /// The current time on the clock a deadline is on.
     fn now(&self) -> Timestamp;
@@ -385,7 +399,7 @@ pub trait DiagnosticConnection {
 ///   [`DiagnosticConnection::next_event`] reports [`ConnectionEvent::Closed`] once for
 ///   each end of an established connection and then waits for the caller's deadline,
 ///   since nothing can arrive, and [`DiagnosticConnection::request`] is refused with
-///   [`Refusal::NotConnected`]. Dropping [`Self::reconnect`] leaves it so.
+///   [`ConnectionRefusal::Closed`]. Dropping [`Self::reconnect`] leaves it so.
 pub trait TesterConnection: DiagnosticConnection {
     /// Why a reconnect failed. Never interpreted by the layer above, which can only
     /// report it.
@@ -843,7 +857,7 @@ mod tests {
             ta: LogicalAddress,
             ta_type: TaType,
             pdu: &[u8],
-        ) -> Result<(), Refusal> {
+        ) -> Result<(), ConnectionRefusal> {
             let sent = self.sent.get_mut(..pdu.len()).unwrap();
             sent.copy_from_slice(pdu);
             self.sent_len = pdu.len();
