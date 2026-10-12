@@ -16,6 +16,10 @@
 //! Timers run on `embassy-time`'s mock clock, which moves only when a test calls
 //! [`advance`]. The clock is process-wide, so [`on_loopback`] holds it for the whole
 //! test, and the tests in one binary run one at a time.
+//!
+//! `simple_doip`'s `MIGRATING.md` is compiled here too, as doctests: its examples reach
+//! `uds_on_ip`, `uds_services` and the embassy-net adapter, which no published crate
+//! can depend on for a guide.
 
 #![allow(
     clippy::panic,
@@ -38,6 +42,10 @@ use simple_doip::service::{
 use simple_doip::tester::{ConnectError, Tester};
 use simple_doip::{LogicalAddress, TaType};
 use uds_on_ip::DoIpClientTransport;
+
+#[cfg(doctest)]
+#[doc = include_str!("../../../crates/simple_doip/MIGRATING.md")]
+struct MigrationGuide;
 use uds_services::{Reloads, Server, ServiceSet, UdsTransport};
 
 /// The entity's physical address.

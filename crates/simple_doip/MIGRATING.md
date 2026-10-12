@@ -30,21 +30,21 @@ embassy-time = { version = "0.5", features = ["std", "generic-queue-8"] }
 
 ## `client::Client` → `tester::Tester`
 
-| 0.6                                                                | 0.7                                                                                                                                                                     |
-| ------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `Client::connect(ClientOptions)`                                   | `Tester::connect(&stack, remote, sa)`, which connects and activates routing                                                                                             |
-| `ClientOptions::server_address`                                    | `remote`, any `SocketAddr`, usually on `TCP_PORT`                                                                                                                       |
-| `ClientOptions::client_logical_address`                            | `sa`, a `TesterAddress`, which refuses an address outside the tester range                                                                                              |
-| `ClientOptions::server_logical_address`, `server_physical_address` | the `ta` of each request                                                                                                                                                |
-| `ClientOptions::protocol_version`                                  | none: requests go out in `0x03`, and an entity's answer in its own version is read                                                                                      |
-| `ClientOptions::diagnostic_message_timeout`                        | none: the acknowledgement timer is Table 12's 2 s; bound the wait with `next_event`'s deadline                                                                          |
-| `RoutingActivationOptions`                                         | none: activation type `0x00`, no OEM-specific field                                                                                                                     |
-| `Connector`, `ConnectorSocket`                                     | the `edge-nal` stack passed to `connect`: any `TcpConnect`                                                                                                              |
-| `send_diagnostic_message(AddressType, bytes)`                      | `request(ta, TaType, pdu)`, then a `ConnectionEvent::Confirm` from `next_event`                                                                                         |
-| `receive_diagnostic_response()`                                    | `ConnectionEvent::Indication` from `next_event`                                                                                                                         |
-| `reconnect()`                                                      | `TesterConnection::reconnect(deadline)`, after `RECONNECT_BACKOFF` since the loss                                                                                       |
-| `shut_down()`, `unbind_socket()`                                   | `TesterConnection::close()`                                                                                                                                             |
-| `Error`                                                            | `ConnectError` from `connect`, `service::Refusal` from `request`, a `DoIpResult` in each confirm, and `ConnectionEvent::Closed` with `io_error()` for a lost connection |
+| 0.6                                                                | 0.7                                                                                                                                                                               |
+| ------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `Client::connect(ClientOptions)`                                   | `Tester::connect(&stack, remote, sa)`, which connects and activates routing                                                                                                       |
+| `ClientOptions::server_address`                                    | `remote`, any `SocketAddr`, usually on `TCP_PORT`                                                                                                                                 |
+| `ClientOptions::client_logical_address`                            | `sa`, a `TesterAddress`, which refuses an address outside the tester range                                                                                                        |
+| `ClientOptions::server_logical_address`, `server_physical_address` | the `ta` of each request                                                                                                                                                          |
+| `ClientOptions::protocol_version`                                  | none: requests go out in `0x03`, and an entity's answer in its own version is read                                                                                                |
+| `ClientOptions::diagnostic_message_timeout`                        | none: the acknowledgement timer is Table 12's 2 s; bound the wait with `next_event`'s deadline                                                                                    |
+| `RoutingActivationOptions`                                         | none: activation type `0x00`, no OEM-specific field                                                                                                                               |
+| `Connector`, `ConnectorSocket`                                     | the `edge-nal` stack passed to `connect`: any `TcpConnect`                                                                                                                        |
+| `send_diagnostic_message(AddressType, bytes)`                      | `request(ta, TaType, pdu)`, then a `ConnectionEvent::Confirm` from `next_event`                                                                                                   |
+| `receive_diagnostic_response()`                                    | `ConnectionEvent::Indication` from `next_event`                                                                                                                                   |
+| `reconnect()`                                                      | `TesterConnection::reconnect(deadline)`, after `RECONNECT_BACKOFF` since the loss                                                                                                 |
+| `shut_down()`, `unbind_socket()`                                   | `TesterConnection::close()`                                                                                                                                                       |
+| `Error`                                                            | `ConnectError` from `connect`, `service::ConnectionRefusal` from `request`, a `DoIpResult` in each confirm, and `ConnectionEvent::Closed` with `io_error()` for a lost connection |
 
 Unlike `Client`, a `Tester` does nothing between calls: everything it reads or writes
 happens inside `next_event`, which a caller keeps calling. A request's acknowledgement is
@@ -95,7 +95,36 @@ the connected `Tester`. The client's services, response timing and reconnection 
 above the tester, so the application calls services rather than sending bytes. As in
 `testing/doip-loopback/tests/client_path.rs`:
 
-```rust,ignore
+```rust,no_run
+# use edge_nal_std::Stack;
+# use simple_doip::service::TesterAddress;
+# use simple_doip::tester::Tester;
+# use simple_doip::{LogicalAddress, TCP_PORT};
+# use uds_on_ip::DoIpClientTransport;
+# use uds_on_ip::profile::bench_reloads;
+# use uds_services::{
+#     Address, ClientTiming, DataIdentifier, KeepAlive, PhysicalKeepAlive, RecordError,
+#     Response, uds_client,
+# };
+#
+# #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+# enum Did {
+#     Vin,
+# }
+#
+# impl DataIdentifier for Did {
+#     const MAX_RECORD_LEN: usize = 17;
+#     fn as_u16(self) -> u16 {
+#         0xF190
+#     }
+#     fn from_u16(value: u16) -> Option<Self> {
+#         (value == 0xF190).then_some(Self::Vin)
+#     }
+#     fn split_record(self, buf: &[u8]) -> Result<(&[u8], &[u8]), RecordError> {
+#         buf.split_at_checked(17).ok_or(RecordError::Short)
+#     }
+# }
+#
 uds_client! {
     Did;
     transport = DoIpClientTransport<Tester<'static, Stack, 4096>, 4096>,
@@ -107,15 +136,32 @@ uds_client! {
     client = Diagnoser,
 }
 
-let tester = Tester::connect(&stack, remote, sa).await?;
+# #[tokio::main(flavor = "current_thread")]
+# async fn main() {
+# let stack: &'static Stack = Box::leak(Box::new(Stack::new()));
+# let remote = ([192, 168, 0, 10], TCP_PORT).into();
+# let sa = TesterAddress::new(LogicalAddress(0x0E00)).expect("a tester address");
+# let reloads = bench_reloads();
+let tester = Tester::connect(stack, remote, sa)
+    .await
+    .expect("connected and activated");
 let mut client = Diagnoser::new(
     DoIpClientTransport::new(tester, reloads),
     Address(0x0E00),
     KeepAlive::physical(2_000),
     ClientTiming::new(0, 0, 0),
 );
-let vin = client.read_data_by_identifier(Address(0x0001), &[Did::Vin]).await?;
-client.close().await?;
+if let Response::Positive(mut records) = client
+    .read_data_by_identifier(Address(0x0001), &[Did::Vin])
+    .await
+    .expect("answered")
+{
+    if let Some((Did::Vin, vin)) = records.next() {
+        println!("VIN {vin:02x?}");
+    }
+}
+client.close().await.expect("closed");
+# }
 ```
 
 `DoIpClientTransport::with_max_data_size` takes the *Max. data size* that
@@ -191,7 +237,71 @@ entity. `uds_services` dispatches each request to the application's service trai
 keeps the session, its timing and the response pending. As in
 `testing/doip-loopback/tests/sensor_path.rs`:
 
-```rust,ignore
+```rust,no_run
+# use core::future::Future;
+#
+# use edge_nal::TcpBind;
+# use edge_nal_std::{Stack, TcpAcceptor};
+# use simple_doip::entity::{Entity, EntityAddress};
+# use simple_doip::service::{EntityConfig, TesterAddress};
+# use simple_doip::{LogicalAddress, TCP_PORT};
+# use uds_on_ip::DoIpTransport;
+# use uds_on_ip::profile::bench_reloads;
+# use uds_protocol::NegativeResponseCode as Nrc;
+# use uds_services::{
+#     Access, Address, DiagnosticSessionControl, DiagnosticSessionType as S, EcuReset,
+#     ResetType, ResponseSink, ServerParams, SessionTiming, SessionTransition, Sessions,
+#     TesterPresent, uds_server,
+# };
+#
+# #[derive(Debug, Default)]
+# struct Ecu;
+#
+# impl DiagnosticSessionControl for Ecu {
+#     const MAX_RESPONSE_LEN: usize = 0;
+#     fn supports(&self, s: S) -> bool {
+#         matches!(s, S::DefaultSession | S::ExtendedDiagnosticSession)
+#     }
+#     fn supported_from(&self, _s: S, _active: S) -> bool {
+#         true
+#     }
+#     fn leaves_running_software(&self, _s: S) -> bool {
+#         false
+#     }
+#     fn timing(&self, _s: S) -> SessionTiming {
+#         SessionTiming {
+#             p2_server_max_ms: 50,
+#             p2_star_server_max_10ms: 500,
+#         }
+#     }
+#     fn on_transition(&mut self, _t: SessionTransition, _entered: S, _relocked: bool) {}
+# }
+#
+# impl EcuReset for Ecu {
+#     const MAY_RESPOND_PENDING: bool = false;
+#     fn access(&self, _kind: ResetType) -> Option<Access> {
+#         Some(Access::new(Sessions::ALL))
+#     }
+#     fn reset(
+#         &mut self,
+#         _kind: ResetType,
+#         _out: &mut ResponseSink<'_>,
+#     ) -> impl Future<Output = Result<(), Nrc>> {
+#         core::future::ready(Ok(()))
+#     }
+# }
+#
+# impl TesterPresent for Ecu {
+#     fn on_tester_present(&mut self) {}
+# }
+#
+# const PARAMS: ServerParams = ServerParams {
+#     s3_server: 5_000,
+#     p2_server_max: 50,
+#     p2_star_server_max: 5_000,
+#     response_pending_lead: 0,
+# };
+#
 uds_server! {
     Ecu: DiagnosticSessionControl, EcuReset, TesterPresent;
     transport = DoIpTransport<Entity<'static, TcpAcceptor, 1, 4096>, 2>,
@@ -199,14 +309,28 @@ uds_server! {
     server = EcuServer,
 }
 
-let entity = Entity::new(&acceptor, address, testers);
+# #[tokio::main(flavor = "current_thread")]
+# async fn main() {
+# let stack = Stack::new();
+# let acceptor: &'static TcpAcceptor = Box::leak(Box::new(
+#     TcpBind::bind(&stack, ([0, 0, 0, 0], TCP_PORT).into())
+#         .await
+#         .expect("bound"),
+# ));
+# let address = EntityAddress::new(LogicalAddress(0x0001), LogicalAddress(0xE400))
+#     .expect("entity addresses");
+# let testers = EntityConfig::new([TesterAddress::new(LogicalAddress(0x0E00))
+#     .expect("a tester address")]);
+# let reloads = bench_reloads();
+let entity = Entity::new(acceptor, address, testers);
 let mut server = EcuServer::new(
     Ecu,
     DoIpTransport::new(entity, reloads),
     Address(0x0001),
     PARAMS,
 );
-server.run().await?;
+server.run().await.expect("serving");
+# }
 ```
 
 ## `bare_metal_entity::Entity` → `entity::Entity` on bare metal
@@ -257,7 +381,25 @@ A firmware that moves sees these changes on the wire:
 
 An entity that echoes every diagnostic message, on embassy-net, is the adapter's `serve`:
 
-```rust,ignore
+```rust,no_run
+# use embassy_net::Stack;
+# use embassy_net::tcp::TcpSocket;
+# use embassy_net::udp::UdpSocket;
+# use embassy_net_entity::{Acceptor, SocketBuffers, Udp};
+# use simple_doip::entity::{Entity, EntityAddress, FixedIdentity};
+# use simple_doip::service::{DiagnosticEntity, EntityConfig, EntityEvent};
+# use simple_doip::{TCP_PORT, TaType};
+#
+# async fn serve(
+#     stack: Stack<'_>,
+#     address: EntityAddress,
+#     config: EntityConfig,
+#     udp_socket: UdpSocket<'_>,
+#     identity: FixedIdentity,
+#     seed: u32,
+#     buffers: &mut [SocketBuffers; 2],
+# ) -> Result<(), simple_doip::entity::Error<embassy_net::tcp::Error>> {
+# let [first, second] = buffers;
 let acceptor = Acceptor::new(
     TCP_PORT,
     [
@@ -266,7 +408,7 @@ let acceptor = Acceptor::new(
     ],
 );
 let mut entity = Entity::<_, 1, 4096>::new(&acceptor, address, config)
-    .with_discovery(Udp::bind(udp_socket)?, identity, seed);
+    .with_discovery(Udp::bind(udp_socket).expect("bound"), identity, seed);
 let mut buf = [0u8; 4096];
 loop {
     if let EntityEvent::Indication { sa, pdu, .. } =
@@ -277,4 +419,5 @@ loop {
             .ok();
     }
 }
+# }
 ```

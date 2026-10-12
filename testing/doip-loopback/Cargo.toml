@@ -24,6 +24,10 @@ uds_on_ip = { path = "../../crates/uds_on_ip" }
 
 [dev-dependencies]
 uds_protocol = { workspace = true }
+# simple_doip's MIGRATING.md is compiled as this crate's doctests, and its last example
+# is on embassy-net.
+embassy-net-entity = { path = "../../examples/embassy-net-entity" }
+embassy-net = { workspace = true, features = ["tcp", "udp", "proto-ipv4", "medium-ethernet"] }
 
 [lints]
 workspace = true
