@@ -23,9 +23,10 @@ use crate::mapping::{
 /// through it. It absorbs what the connection asks of its caller:
 ///
 /// - **One request at a time.** A request made while the connection carries another
-///   waits in the transport, in up to `QUEUE` bytes, and is sent once the one before it
-///   is confirmed, so a keep-alive and a call's request never collide. `QUEUE` is at
-///   least [`MAX_PDU`](simple_doip::service::DiagnosticConnection::MAX_PDU),
+///   waits in the transport, up to `WAITING` of them in up to `QUEUE` bytes, and is sent
+///   once the one before it is confirmed, so a keep-alive and a call's request never
+///   collide. `QUEUE` is at least
+///   [`MAX_PDU`](simple_doip::service::DiagnosticConnection::MAX_PDU),
 ///   which [`Self::new`] checks at compile time, so a request always finds room behind a
 ///   keep-alive.
 /// - **Refusals.** A request the connection refuses is accepted here all the same and
@@ -53,7 +54,7 @@ use crate::mapping::{
 ///   to this tester is a [`TransportEvent::Periodic`]; one truncated or too short to
 ///   carry an identifier is dropped.
 ///
-/// # Servers
+/// # Servers, and the requests waiting
 ///
 /// `PEERS` is how many servers behind the entity the transport tracks at once, for the
 /// late-reply guard and for their closes: one for a sensor, and for a client of a gateway
@@ -61,6 +62,12 @@ use crate::mapping::{
 /// server takes the place of one with nothing awaited and no prescribed close pending,
 /// whose close would change nothing at the client. A physical request to a server when
 /// every tracked one is busy is refused, confirmed failed, rather than sent untracked.
+///
+/// `WAITING` is how many requests wait behind the one the connection carries. A
+/// `uds_services::uds_client` client sends a keep-alive per server back to back, with a
+/// functional one beside them, and makes a call's request behind them, so it has one
+/// waiting per server tracked and one more: `WAITING` is at least `PEERS + 1`, which
+/// [`Self::new`] checks at compile time.
 ///
 /// # Closes
 ///
@@ -77,14 +84,19 @@ use crate::mapping::{
 ///
 /// Time is the connection's: [`UdsTransport::now`] is
 /// [`now`](simple_doip::service::DiagnosticConnection::now).
-pub struct DoIpClientTransport<C, const QUEUE: usize, const PEERS: usize = 1> {
+pub struct DoIpClientTransport<
+    C,
+    const QUEUE: usize,
+    const PEERS: usize = 1,
+    const WAITING: usize = 2,
+> {
     connection: C,
     reloads: Reloads,
     max_data_size: Option<u32>,
     link: Link,
     /// The request the connection carries, awaiting its confirm, as it was made.
     sent: Option<Ai>,
-    waiting: Waiting<QUEUE>,
+    waiting: Waiting<QUEUE, WAITING>,
     owed: Owed<PEERS>,
     peers: [Option<Peer>; PEERS],
 }
@@ -128,8 +140,29 @@ impl Peer {
     }
 }
 
-impl<C, const QUEUE: usize, const PEERS: usize> core::fmt::Debug
-    for DoIpClientTransport<C, QUEUE, PEERS>
+/// Notes in `peers` the confirm of `ai`'s request.
+fn confirmed(peers: &mut [Option<Peer>], ai: Ai, result: DoIpResult) {
+    if result == DoIpResult::Ok {
+        for peer in peers.iter_mut().flatten() {
+            peer.leaving = false;
+        }
+    }
+    if ai.ta_type != TaType::Physical {
+        return;
+    }
+    if let Some(peer) = peers.iter_mut().flatten().find(|p| p.address == ai.ta)
+        && peer.awaiting == Awaiting::Confirm
+    {
+        peer.awaiting = if result == DoIpResult::Ok {
+            Awaiting::Answer
+        } else {
+            Awaiting::Nothing
+        };
+    }
+}
+
+impl<C, const QUEUE: usize, const PEERS: usize, const WAITING: usize> core::fmt::Debug
+    for DoIpClientTransport<C, QUEUE, PEERS, WAITING>
 {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("DoIpClientTransport")
@@ -142,14 +175,15 @@ impl<C, const QUEUE: usize, const PEERS: usize> core::fmt::Debug
     }
 }
 
-impl<C: TesterConnection, const QUEUE: usize, const PEERS: usize>
-    DoIpClientTransport<C, QUEUE, PEERS>
+impl<C: TesterConnection, const QUEUE: usize, const PEERS: usize, const WAITING: usize>
+    DoIpClientTransport<C, QUEUE, PEERS, WAITING>
 {
     /// A transport over `connection`, loading the session layer's response timer with
     /// `reloads`.
     ///
     /// Does not compile where `QUEUE` is below the connection's
-    /// [`MAX_PDU`](simple_doip::service::DiagnosticConnection::MAX_PDU).
+    /// [`MAX_PDU`](simple_doip::service::DiagnosticConnection::MAX_PDU), or `WAITING`
+    /// below `PEERS + 1`.
     ///
     /// # Arguments
     ///
@@ -204,6 +238,10 @@ impl<C: TesterConnection, const QUEUE: usize, const PEERS: usize>
                 QUEUE >= C::MAX_PDU,
                 "QUEUE is below the connection's MAX_PDU"
             );
+            assert!(
+                WAITING > PEERS,
+                "WAITING is below PEERS + 1: a keep-alive per server and a request"
+            );
         };
         Self {
             connection,
@@ -218,7 +256,9 @@ impl<C: TesterConnection, const QUEUE: usize, const PEERS: usize>
     }
 }
 
-impl<C, const QUEUE: usize, const PEERS: usize> DoIpClientTransport<C, QUEUE, PEERS> {
+impl<C, const QUEUE: usize, const PEERS: usize, const WAITING: usize>
+    DoIpClientTransport<C, QUEUE, PEERS, WAITING>
+{
     /// The same transport, told the entity's *Max. data size* (ISO 13400-2:2019 Table 11),
     /// which [`UdsTransport::outbound_max`] then reports less the diagnostic message's
     /// addresses.
@@ -279,27 +319,6 @@ impl<C, const QUEUE: usize, const PEERS: usize> DoIpClientTransport<C, QUEUE, PE
         }
     }
 
-    /// Notes the confirm of `ai`'s request.
-    fn confirmed(&mut self, ai: Ai, result: DoIpResult) {
-        if result == DoIpResult::Ok {
-            for peer in self.peers.iter_mut().flatten() {
-                peer.leaving = false;
-            }
-        }
-        if ai.ta_type != TaType::Physical {
-            return;
-        }
-        if let Some(peer) = self.peers.iter_mut().flatten().find(|p| p.address == ai.ta)
-            && peer.awaiting == Awaiting::Confirm
-        {
-            peer.awaiting = if result == DoIpResult::Ok {
-                Awaiting::Answer
-            } else {
-                Awaiting::Nothing
-            };
-        }
-    }
-
     /// Whether a request to `ai` that `expects` an answer must go on a new connection: its
     /// server's last request was confirmed and never answered, and that answer, arriving
     /// late, would be taken for this one's.
@@ -330,19 +349,17 @@ impl<C, const QUEUE: usize, const PEERS: usize> DoIpClientTransport<C, QUEUE, PE
             return;
         }
         self.link = Link::Closed;
-        for peer in self.peers.iter_mut().filter_map(Option::take) {
-            self.owed.close(peer.address, peer.leaving);
-        }
+        self.owed
+            .end(core::mem::replace(&mut self.peers, [None; PEERS]));
         self.fail_waiting();
     }
 
     /// Every waiting request is owed its failed confirm, and its server awaits nothing.
     fn fail_waiting(&mut self) {
-        while let Some((ai, _)) = self.waiting.front() {
-            self.waiting.pop();
-            self.owed.confirm(ai, s_result(DoIpResult::NoSocket));
-            self.confirmed(ai, DoIpResult::NoSocket);
-        }
+        let peers = &mut self.peers;
+        self.waiting.fail(s_result(DoIpResult::NoSocket), |ai| {
+            confirmed(peers, ai, DoIpResult::NoSocket);
+        });
     }
 
     /// Ends the connection on the transport's own account: no close it reports is the one
@@ -355,13 +372,12 @@ impl<C, const QUEUE: usize, const PEERS: usize> DoIpClientTransport<C, QUEUE, PE
     }
 }
 
-impl<C: TesterConnection, const QUEUE: usize, const PEERS: usize>
-    DoIpClientTransport<C, QUEUE, PEERS>
+impl<C: TesterConnection, const QUEUE: usize, const PEERS: usize, const WAITING: usize>
+    DoIpClientTransport<C, QUEUE, PEERS, WAITING>
 {
     /// Owes `ai`'s failed confirm for `refusal`; `Err` where nothing more can be owed.
     fn refuse(&mut self, ai: Ai, refusal: Refusal) -> Result<(), ClientTransportError<C>> {
-        if self.owed.may_refuse() {
-            self.owed.confirm(ai, s_result(refused(refusal)));
+        if self.owed.refuse(ai, s_result(refused(refusal))) {
             Ok(())
         } else {
             Err(ClientTransportError::Refused(refusal))
@@ -439,6 +455,17 @@ impl<C: TesterConnection, const QUEUE: usize, const PEERS: usize>
         }
     }
 
+    /// The oldest event owed: a close, then a waiting request's failed confirm, then a
+    /// refused request's.
+    fn owed_event(&mut self) -> Option<Event> {
+        self.owed.close_owed().or_else(|| {
+            self.waiting
+                .pop_failed()
+                .or_else(|| self.owed.refused())
+                .map(|(ai, result)| Event::Conf(ai, result))
+        })
+    }
+
     /// Hands the oldest waiting request to the connection, if it can take one.
     fn send_waiting(&mut self) {
         if self.sent.is_some() || self.link == Link::Closed {
@@ -458,9 +485,8 @@ impl<C: TesterConnection, const QUEUE: usize, const PEERS: usize>
             Err(Refusal::NoRoom) => {}
             Err(Refusal::NotConnected) => self.end(),
             Err(refusal) => {
-                self.waiting.pop();
-                self.owed.confirm(ai, s_result(refused(refusal)));
-                self.confirmed(ai, refused(refusal));
+                self.waiting.fail_front(s_result(refused(refusal)));
+                confirmed(&mut self.peers, ai, refused(refusal));
             }
         }
     }
@@ -518,7 +544,7 @@ impl<C: TesterConnection, const QUEUE: usize, const PEERS: usize>
             | ConnectionEvent::Unmodelled { .. }
             | ConnectionEvent::UnmodelledTruncated { .. } => None,
             ConnectionEvent::Confirm { result, .. } => self.sent.take().map(|ai| {
-                self.confirmed(ai, result);
+                confirmed(&mut self.peers, ai, result);
                 Received::Event(Event::Conf(ai, s_result(result)))
             }),
             ConnectionEvent::Closed => {
@@ -537,8 +563,8 @@ enum Received {
     Event(Event),
 }
 
-impl<C: TesterConnection, const QUEUE: usize, const PEERS: usize> UdsTransport
-    for DoIpClientTransport<C, QUEUE, PEERS>
+impl<C: TesterConnection, const QUEUE: usize, const PEERS: usize, const WAITING: usize>
+    UdsTransport for DoIpClientTransport<C, QUEUE, PEERS, WAITING>
 {
     type Error = ClientTransportError<C>;
 
@@ -593,14 +619,14 @@ impl<C: TesterConnection, const QUEUE: usize, const PEERS: usize> UdsTransport
     ) -> Result<TransportEvent<'b>, Self::Error> {
         let start = buffer.as_ptr().addr();
         let found = loop {
-            if let Some(owed) = self.owed.pop() {
+            if let Some(owed) = self.owed_event() {
                 return Ok(owed.into());
             }
             if self.reconnect(deadline).await? == Reconnection::Deadline {
                 return Ok(TransportEvent::Deadline);
             }
             self.send_waiting();
-            if let Some(owed) = self.owed.pop() {
+            if let Some(owed) = self.owed_event() {
                 return Ok(owed.into());
             }
             let event = self
@@ -659,8 +685,8 @@ impl<C: TesterConnection, const QUEUE: usize, const PEERS: usize> UdsTransport
     }
 }
 
-impl<C: TesterConnection, const QUEUE: usize, const PEERS: usize> ClientTransport
-    for DoIpClientTransport<C, QUEUE, PEERS>
+impl<C: TesterConnection, const QUEUE: usize, const PEERS: usize, const WAITING: usize>
+    ClientTransport for DoIpClientTransport<C, QUEUE, PEERS, WAITING>
 {
     /// [`TesterConnection::close`]. A request the connection carries is confirmed failed
     /// by it, and one waiting here by the transport; the close is reported by no
@@ -702,54 +728,52 @@ impl From<Event> for TransportEvent<'_> {
 /// How many refused requests' failed confirms the transport holds at once.
 const REFUSALS: usize = 4;
 
-/// How many failed confirms the transport holds: one for each waiting request a
-/// connection's end fails, with [`REFUSALS`] beside them.
-const CONFIRMS: usize = WAITING + REFUSALS;
-
-/// The events owed: closes, each for a server tracked when its connection ended, then
-/// failed confirms, oldest first.
+/// What the transport owes without the connection: a close for each server tracked when
+/// its connection ended, and the failed confirm of each request refused on the spot.
 ///
-/// Neither overflows. A connection ends at most once between reconnects, and the
-/// transport reconnects only once nothing is owed, so at an end the closes are empty
-/// and the confirms hold only refusals, which [`Owed::may_refuse`] keeps to
-/// [`REFUSALS`].
+/// The closes are set as a connection ends and reported before it is replaced, so they
+/// are empty whenever they are set. The refusals are held to [`REFUSALS`]: one past them
+/// is not owed, and its caller is told so.
 #[derive(Debug)]
 struct Owed<const PEERS: usize> {
     closes: [Option<(Address, bool)>; PEERS],
-    confirms: [Option<(Ai, SResult)>; CONFIRMS],
+    refused: [Option<(Ai, SResult)>; REFUSALS],
 }
 
 impl<const PEERS: usize> Owed<PEERS> {
     const EMPTY: Self = Self {
         closes: [None; PEERS],
-        confirms: [None; CONFIRMS],
+        refused: [None; REFUSALS],
     };
 
-    fn close(&mut self, peer: Address, expected: bool) {
-        let free = self.closes.iter_mut().find(|slot| slot.is_none());
-        debug_assert!(free.is_some(), "a close owed past PEERS");
-        if let Some(free) = free {
-            *free = Some((peer, expected));
+    /// Owes a close for each of `peers`, with whether its server prescribed it.
+    fn end(&mut self, peers: [Option<Peer>; PEERS]) {
+        debug_assert!(
+            self.closes.iter().all(Option::is_none),
+            "a connection ended with the last one's closes unreported"
+        );
+        self.closes = peers.map(|peer| peer.map(|peer| (peer.address, peer.leaving)));
+    }
+
+    /// Owes `ai`'s failed confirm for a refusal; `false`, owing nothing, past
+    /// [`REFUSALS`].
+    fn refuse(&mut self, ai: Ai, result: SResult) -> bool {
+        match self.refused.iter_mut().find(|slot| slot.is_none()) {
+            Some(free) => {
+                *free = Some((ai, result));
+                true
+            }
+            None => false,
         }
     }
 
-    fn confirm(&mut self, ai: Ai, result: SResult) {
-        let free = self.confirms.iter_mut().find(|slot| slot.is_none());
-        debug_assert!(free.is_some(), "a confirm owed past CONFIRMS");
-        if let Some(free) = free {
-            *free = Some((ai, result));
-        }
+    fn close_owed(&mut self) -> Option<Event> {
+        take_first(&mut self.closes)
+            .map(|(peer, expected)| Event::Closed { peer, expected })
     }
 
-    fn may_refuse(&self) -> bool {
-        self.confirms.iter().flatten().count() < REFUSALS
-    }
-
-    fn pop(&mut self) -> Option<Event> {
-        if let Some((peer, expected)) = take_first(&mut self.closes) {
-            return Some(Event::Closed { peer, expected });
-        }
-        take_first(&mut self.confirms).map(|(ai, result)| Event::Conf(ai, result))
+    fn refused(&mut self) -> Option<(Ai, SResult)> {
+        take_first(&mut self.refused)
     }
 }
 
@@ -760,18 +784,25 @@ fn take_first<T, const N: usize>(slots: &mut [Option<T>; N]) -> Option<T> {
     Some(taken)
 }
 
-/// How many requests can wait behind the one the connection carries: one per addressing
-/// a client has outstanding at once, a call's request and its keep-alives.
-const WAITING: usize = 4;
-
-/// Requests waiting for the connection, oldest first, their bytes packed into `QUEUE`.
-#[derive(Debug)]
-struct Waiting<const QUEUE: usize> {
-    bytes: [u8; QUEUE],
-    entries: [Option<(Ai, usize)>; WAITING],
+/// A request waiting for the connection.
+#[derive(Debug, Clone, Copy)]
+enum Queued {
+    /// This many of its bytes, behind those of the requests before it.
+    Bytes(usize),
+    /// It failed waiting, and is owed this confirm; its bytes are released.
+    Failed(SResult),
 }
 
-impl<const QUEUE: usize> Waiting<QUEUE> {
+/// Requests waiting for the connection, oldest first, their bytes packed into `QUEUE`.
+/// A request fails only with every one before it, so the failed ones are a prefix, and
+/// are popped before any request is sent.
+#[derive(Debug)]
+struct Waiting<const QUEUE: usize, const WAITING: usize> {
+    bytes: [u8; QUEUE],
+    entries: [Option<(Ai, Queued)>; WAITING],
+}
+
+impl<const QUEUE: usize, const WAITING: usize> Waiting<QUEUE, WAITING> {
     const EMPTY: Self = Self {
         bytes: [0; QUEUE],
         entries: [None; WAITING],
@@ -782,7 +813,14 @@ impl<const QUEUE: usize> Waiting<QUEUE> {
     }
 
     fn used(&self) -> usize {
-        self.entries.iter().flatten().map(|(_, len)| len).sum()
+        self.entries
+            .iter()
+            .flatten()
+            .map(|(_, queued)| match queued {
+                Queued::Bytes(len) => *len,
+                Queued::Failed(_) => 0,
+            })
+            .sum()
     }
 
     fn push(&mut self, ai: Ai, data: &[u8]) -> bool {
@@ -794,27 +832,60 @@ impl<const QUEUE: usize> Waiting<QUEUE> {
             return false;
         };
         room.copy_from_slice(data);
-        *free = Some((ai, data.len()));
+        *free = Some((ai, Queued::Bytes(data.len())));
         true
     }
 
-    fn front(&self) -> Option<(Ai, usize)> {
-        self.entries.first().copied().flatten()
-    }
-
+    /// The oldest request's bytes, where it has not failed.
     fn front_bytes(&self) -> Option<(Ai, &[u8])> {
-        let (ai, len) = self.front()?;
-        Some((ai, self.bytes.get(..len)?))
+        match self.entries.first().copied().flatten()? {
+            (ai, Queued::Bytes(len)) => Some((ai, self.bytes.get(..len)?)),
+            (_, Queued::Failed(_)) => None,
+        }
     }
 
+    /// Drops the oldest request, sent.
     fn pop(&mut self) {
-        let Some((_, len)) = self.front() else {
+        let Some((_, Queued::Bytes(len))) = self.entries.first().copied().flatten() else {
             return;
         };
         self.bytes.copy_within(len.., 0);
+        self.drop_front();
+    }
+
+    /// The oldest request's owed confirm, where it failed, taken out.
+    fn pop_failed(&mut self) -> Option<(Ai, SResult)> {
+        let (ai, Queued::Failed(result)) = self.entries.first().copied().flatten()? else {
+            return None;
+        };
+        self.drop_front();
+        Some((ai, result))
+    }
+
+    fn drop_front(&mut self) {
         if let Some(first) = self.entries.first_mut() {
             *first = None;
         }
         self.entries.rotate_left(1);
+    }
+
+    /// The oldest request failed with `result`, its bytes released.
+    fn fail_front(&mut self, result: SResult) {
+        if let Some(Some((_, queued))) = self.entries.first_mut()
+            && let Queued::Bytes(len) = *queued
+        {
+            self.bytes.copy_within(len.., 0);
+            *queued = Queued::Failed(result);
+        }
+    }
+
+    /// Every request not yet failed fails with `result`, `failed` told of each.
+    fn fail(&mut self, result: SResult, mut failed: impl FnMut(Ai)) {
+        for (ai, queued) in self.entries.iter_mut().flatten() {
+            if let Queued::Bytes(_) = queued {
+                *queued = Queued::Failed(result);
+                failed(*ai);
+            }
+        }
     }
 }

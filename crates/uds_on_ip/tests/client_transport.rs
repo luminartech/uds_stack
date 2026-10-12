@@ -334,7 +334,7 @@ fn run<F: Future>(future: F) -> F::Output {
 type Transport = DoIpClientTransport<Scripted, 256>;
 
 /// A transport to an entity with two servers behind it.
-type Gateway = DoIpClientTransport<Scripted, 256, 2>;
+type Gateway = DoIpClientTransport<Scripted, 256, 2, 3>;
 
 fn transport(script: impl IntoIterator<Item = Entity>) -> Transport {
     DoIpClientTransport::new(Scripted::new(script), RELOADS)
@@ -394,12 +394,14 @@ enum Seen {
     Deadline,
 }
 
-fn next<const PEERS: usize>(t: &mut DoIpClientTransport<Scripted, 256, PEERS>) -> Seen {
+fn next<const Q: usize, const P: usize, const W: usize>(
+    t: &mut DoIpClientTransport<Scripted, Q, P, W>,
+) -> Seen {
     next_until(t, None)
 }
 
-fn next_until<const PEERS: usize>(
-    t: &mut DoIpClientTransport<Scripted, 256, PEERS>,
+fn next_until<const Q: usize, const P: usize, const W: usize>(
+    t: &mut DoIpClientTransport<Scripted, Q, P, W>,
     deadline: Option<uds_session::Timestamp>,
 ) -> Seen {
     let mut buf = [0; 32];
@@ -513,6 +515,57 @@ fn a_second_request_waits_for_the_first_ones_confirm() {
         t.connection().requests(),
         [READ.to_vec(), KEEP_ALIVE.to_vec()]
     );
+}
+
+/// `WAITING` requests wait behind the one the connection carries; one more is refused,
+/// confirmed failed, and the ones waiting are sent in their turn.
+#[test]
+fn one_request_past_waiting_is_refused() {
+    let group = ai(LogicalAddress(0xE400), uds_session::TaType::Functional);
+    let mut t = transport([
+        Entity::Acks(DoIpResult::Ok),
+        Entity::Acks(DoIpResult::Ok),
+        Entity::Acks(DoIpResult::Ok),
+    ]);
+    send(&mut t, TO_ENTITY, READ);
+    send(&mut t, group, KEEP_ALIVE);
+    send(&mut t, TO_ENTITY, KEEP_ALIVE);
+    send(&mut t, TO_ENTITY, READ);
+
+    assert_eq!(
+        next(&mut t),
+        Seen::Conf(TO_ENTITY, failed(DoIpResult::OutOfMemory))
+    );
+    assert_eq!(next(&mut t), Seen::Conf(TO_ENTITY, SResult::Ok));
+    assert_eq!(next(&mut t), Seen::Conf(group, SResult::Ok));
+    assert_eq!(next(&mut t), Seen::Conf(TO_ENTITY, SResult::Ok));
+    assert_eq!(
+        t.connection().requests(),
+        [READ.to_vec(), KEEP_ALIVE.to_vec(), KEEP_ALIVE.to_vec()]
+    );
+}
+
+/// A request that failed waiting holds no bytes: the queue it filled takes another
+/// before its failed confirm is reported.
+#[test]
+fn a_failed_request_releases_its_bytes() {
+    let mut connection = Scripted::new([Entity::Acks(DoIpResult::Ok)]);
+    connection.connected = false;
+    connection.closed_reported = true;
+    let mut t: DoIpClientTransport<Scripted, MAX_PDU> =
+        DoIpClientTransport::new(connection, RELOADS);
+    let long = [0x22; MAX_PDU];
+    run(t.t_data_req(TO_ENTITY, &long, AfterSend::Continue)).unwrap();
+    run(ClientTransport::close(&mut t)).unwrap();
+
+    run(t.t_data_req(TO_ENTITY, &long, AfterSend::Continue)).unwrap();
+    assert_eq!(next(&mut t), Seen::Closed(Address(ENTITY.0), false));
+    assert_eq!(
+        next(&mut t),
+        Seen::Conf(TO_ENTITY, failed(DoIpResult::NoSocket))
+    );
+    assert_eq!(next(&mut t), Seen::Conf(TO_ENTITY, SResult::Ok));
+    assert_eq!(t.connection().requests(), [long.to_vec()]);
 }
 
 /// A request waiting behind another when the connection ends is confirmed failed, once.
