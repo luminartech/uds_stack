@@ -333,9 +333,15 @@ impl<C, const QUEUE: usize, const PEERS: usize> DoIpClientTransport<C, QUEUE, PE
         for peer in self.peers.iter_mut().filter_map(Option::take) {
             self.owed.close(peer.address, peer.leaving);
         }
+        self.fail_waiting();
+    }
+
+    /// Every waiting request is owed its failed confirm, and its server awaits nothing.
+    fn fail_waiting(&mut self) {
         while let Some((ai, _)) = self.waiting.front() {
-            self.owed.confirm(ai, s_result(DoIpResult::NoSocket));
             self.waiting.pop();
+            self.owed.confirm(ai, s_result(DoIpResult::NoSocket));
+            self.confirmed(ai, DoIpResult::NoSocket);
         }
     }
 
@@ -427,10 +433,7 @@ impl<C: TesterConnection, const QUEUE: usize, const PEERS: usize>
             }
             Ok(Reconnection::Deadline) => Ok(Reconnection::Deadline),
             Err(error) => {
-                while let Some((ai, _)) = self.waiting.front() {
-                    self.owed.confirm(ai, s_result(DoIpResult::NoSocket));
-                    self.waiting.pop();
-                }
+                self.fail_waiting();
                 Err(ClientTransportError::Reconnect(error))
             }
         }
@@ -457,6 +460,7 @@ impl<C: TesterConnection, const QUEUE: usize, const PEERS: usize>
             Err(refusal) => {
                 self.waiting.pop();
                 self.owed.confirm(ai, s_result(refused(refusal)));
+                self.confirmed(ai, refused(refusal));
             }
         }
     }
@@ -668,7 +672,8 @@ impl<C: TesterConnection, const QUEUE: usize, const PEERS: usize> ClientTranspor
     /// either way.
     async fn close(&mut self) -> Result<(), Self::Error> {
         self.peers = [None; PEERS];
-        self.end();
+        self.link = Link::Closed;
+        self.fail_waiting();
         self.connection
             .close()
             .await

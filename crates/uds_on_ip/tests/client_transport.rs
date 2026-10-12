@@ -564,6 +564,38 @@ fn close_closes_the_connection_and_reports_no_close() {
     );
 }
 
+/// A close with requests waiting for a reconnect fails them, and reconnects for none of
+/// them: the caller asked to end the session, not to open a new connection.
+#[test]
+fn a_close_fails_the_requests_waiting_for_a_reconnect() {
+    let mut connection = Scripted::new([Entity::Acks(DoIpResult::Ok)]);
+    connection.connected = false;
+    connection.closed_reported = true;
+    let mut t: Transport = DoIpClientTransport::new(connection, RELOADS);
+    send(&mut t, TO_ENTITY, READ);
+    assert_eq!(
+        next_until(&mut t, Some(uds_session::Timestamp(1))),
+        Seen::Closed(Address(ENTITY.0), false)
+    );
+    send(&mut t, TO_ENTITY, READ);
+
+    run(ClientTransport::close(&mut t)).unwrap();
+
+    assert_eq!(
+        next(&mut t),
+        Seen::Conf(TO_ENTITY, failed(DoIpResult::NoSocket))
+    );
+    assert_eq!(
+        next(&mut t),
+        Seen::Conf(TO_ENTITY, failed(DoIpResult::NoSocket))
+    );
+    assert_eq!(
+        next_until(&mut t, Some(uds_session::Timestamp(100))),
+        Seen::Deadline
+    );
+    assert_eq!(t.connection().calls, [Call::Close]);
+}
+
 // --- closes and reconnecting ------------------------------------------------------------
 
 const ENTITY_2: LogicalAddress = LogicalAddress(0x0002);
@@ -722,6 +754,49 @@ fn a_failed_reconnect_fails_the_waiting_request_and_the_next_tries_again() {
             Call::Request(ENTITY, TaType::Physical, READ.to_vec())
         ]
     );
+}
+
+/// A waiting request a failed reconnect fails leaves its server with nothing awaited, so
+/// the server's place can go to another.
+#[test]
+fn a_failed_reconnect_frees_the_waiting_requests_server() {
+    let mut connection = Scripted::new([Entity::Acks(DoIpResult::Ok)]);
+    connection.connected = false;
+    connection.failing_reconnects = 1;
+    let mut t: Transport = DoIpClientTransport::new(connection, RELOADS);
+    send(&mut t, TO_ENTITY, READ);
+    assert_eq!(next(&mut t), Seen::Closed(Address(ENTITY.0), false));
+    let mut buf = [0; 32];
+    assert!(matches!(
+        run(t.next_event(&mut buf, None)),
+        Err(uds_on_ip::ClientTransportError::Reconnect("refused"))
+    ));
+    assert_eq!(
+        next(&mut t),
+        Seen::Conf(TO_ENTITY, failed(DoIpResult::NoSocket))
+    );
+
+    send(&mut t, TO_ENTITY_2, READ);
+    assert_eq!(next(&mut t), Seen::Conf(TO_ENTITY_2, SResult::Ok));
+    assert_eq!(t.connection().requests(), [READ.to_vec()]);
+}
+
+/// A waiting request the connection refuses when its turn comes leaves its server with
+/// nothing awaited, as a refusal on the spot does.
+#[test]
+fn a_waiting_request_the_connection_refuses_frees_its_server() {
+    let group = ai(LogicalAddress(0xE400), uds_session::TaType::Functional);
+    let mut t = transport([Entity::Acks(DoIpResult::Ok), Entity::Acks(DoIpResult::Ok)]);
+    send(&mut t, group, KEEP_ALIVE);
+    send(&mut t, TO_ENTITY, &[0x22; MAX_PDU + 1]);
+    assert_eq!(next(&mut t), Seen::Conf(group, SResult::Ok));
+    assert_eq!(
+        next(&mut t),
+        Seen::Conf(TO_ENTITY, failed(DoIpResult::OutOfMemory))
+    );
+
+    send(&mut t, TO_ENTITY_2, READ);
+    assert_eq!(next(&mut t), Seen::Conf(TO_ENTITY_2, SResult::Ok));
 }
 
 /// A request none of which was written is withdrawn with `DoIP_TIMEOUT_A` and the
