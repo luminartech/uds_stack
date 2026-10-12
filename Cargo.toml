@@ -72,7 +72,6 @@ critical-section = "1"
 static_cell = "2"
 proptest = "1"
 serde_json = "1"
-tracing-subscriber = { version = "0.3", features = ["fmt"] }
 
 # One quality standard for every crate here, declared once. A crate opts in with
 # `[lints] workspace = true`, and Cargo forbids a crate from inheriting this table

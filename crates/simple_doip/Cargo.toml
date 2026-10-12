@@ -29,12 +29,6 @@ thiserror = { workspace = true }
 tracing = { workspace = true, optional = true }
 # std-only, all optional
 bytes = { workspace = true, optional = true }
-tokio = { workspace = true, optional = true, features = [
-    "macros",
-    "rt",
-    "rt-multi-thread",
-    "time",
-] }
 tokio-util = { workspace = true, optional = true }
 # the `connection` feature, no_std
 edge-nal = { workspace = true, optional = true }
@@ -46,7 +40,6 @@ embassy-futures = { workspace = true, optional = true }
 anyhow = { workspace = true }
 proptest = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "net", "io-util", "time"] }
-tracing-subscriber = { workspace = true }
 edge-nal-std = { workspace = true }
 embassy-time = { workspace = true, features = ["mock-driver", "generic-queue-8"] }
 # mock-driver takes its lock through critical-section, which a host test must supply
@@ -56,7 +49,7 @@ critical-section = { workspace = true, features = ["std"] }
 default = []
 alloc = []
 std = ["alloc", "thiserror/std", "dep:tracing", "tracing/std"]
-codec = ["std", "dep:tokio", "dep:tokio-util", "dep:bytes"]
+codec = ["std", "dep:tokio-util", "dep:bytes"]
 connection = [
     "dep:edge-nal",
     "dep:embedded-io-async",
