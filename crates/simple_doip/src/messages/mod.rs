@@ -81,8 +81,8 @@ pub struct Message<'a> {
     pub payload: Payload<'a>,
 }
 
-/// Fully owned `DoIP` message for values that must outlive an RX buffer (tokio
-/// channels, spawned tasks, `ServerConnectionHandler` responses).
+/// Fully owned `DoIP` message for values that must outlive an RX buffer, such as the
+/// items the `codec` feature's `MessageCodec` yields.
 #[cfg(feature = "alloc")]
 #[derive(Clone, Debug, PartialEq)]
 pub struct OwnedMessage {
@@ -591,23 +591,6 @@ impl Encode for OwnedMessage {
         writer: &mut impl automotive_wire_codec::Sink,
     ) -> Result<usize, MessageError> {
         self.as_ref().encode(writer)
-    }
-}
-
-/// Create a default diagnostic message (used as a placeholder when waiting for any
-/// response — `client_inner.rs`). `Message<'a>` deliberately has no `Default`; the
-/// placeholder needs owned (empty) data.
-#[cfg(feature = "alloc")]
-impl Default for OwnedMessage {
-    fn default() -> Self {
-        OwnedMessage {
-            header: Header::new(ProtocolVersion::V2012, PayloadType::DiagnosticMessage, 0),
-            payload: OwnedPayload::DiagnosticMessage(OwnedDiagnosticMessage {
-                source_address: LogicalAddress(0),
-                target_address: LogicalAddress(0),
-                user_data: alloc::vec::Vec::new(),
-            }),
-        }
     }
 }
 

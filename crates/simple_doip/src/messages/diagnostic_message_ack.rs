@@ -121,8 +121,7 @@ pub struct DiagnosticMessageAck<'a> {
     pub previous_message_data: &'a [u8],
 }
 
-/// Owned mirror of [`DiagnosticMessageAck`] for values that must outlive an RX buffer
-/// (tokio channels, `ServerConnectionHandler` responses).
+/// Owned mirror of [`DiagnosticMessageAck`] for values that must outlive an RX buffer.
 #[cfg(feature = "alloc")]
 #[derive(Clone, Eq, PartialEq)]
 pub struct OwnedDiagnosticMessageAck {
@@ -270,8 +269,7 @@ pub struct DiagnosticMessageNack<'a> {
     pub previous_message_data: &'a [u8],
 }
 
-/// Owned mirror of [`DiagnosticMessageNack`] for values that must outlive an RX buffer
-/// (tokio channels, `ServerConnectionHandler` responses).
+/// Owned mirror of [`DiagnosticMessageNack`] for values that must outlive an RX buffer.
 #[cfg(feature = "alloc")]
 #[derive(Clone, Eq, PartialEq)]
 pub struct OwnedDiagnosticMessageNack {

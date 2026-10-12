@@ -524,10 +524,11 @@ inspecting the request bytes would reveal.
    :tags: scope; dependencies; async
 
    Rationale: the layers below are already asynchronous and not optionally so:
-   ``simple_doip``'s ``client`` and ``server`` features each require its ``codec`` feature,
-   which requires ``std`` and tokio; ``uds_on_ip``'s ``client`` and ``server`` each imply
-   ``std`` and tokio in turn. A configuration with no executor cannot reach a transport, so
-   this crate is not designed around one.
+   ``simple_doip``'s ``connection`` feature, its ``Tester`` and ``Entity``, drives
+   ``edge-nal`` sockets and ``embassy-time`` timers from ``async`` functions, with no
+   runtime of its own and no ``std``; ``uds_on_ip``'s transports are ``async`` over them in
+   turn. A configuration with no executor cannot reach a transport, so this crate is not
+   designed around one.
 
    Every deployment of this stack is assumed to have an async executor available — tokio
    on a host, ``embassy`` or equivalent on an embedded target. This crate exposes
