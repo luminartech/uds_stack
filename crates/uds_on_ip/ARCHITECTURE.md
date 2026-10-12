@@ -151,10 +151,12 @@ Owns three things:
    an entity's response, which a tester does not acknowledge, from the
    completed write.
 3. **The UDSonIP profile.** REQ 7.8–7.11: TCP close and re-activation around
-   `DiagnosticSessionControl` and `ECUReset`. The periodic-response
-   requirements — REQ 7.7 and REQ 7.16 (payload type `0x8004`) and REQ 7.17
-   (record length) — are this crate's too, and are not implemented
-   ([§9.2](#92-design-gaps-in-this-crate)). REQ 7.20, that an unsolicited
+   `DiagnosticSessionControl` and `ECUReset`, the client's side of which
+   [§7.3](#73-client-transport-the-connections-states) draws. The
+   periodic-response requirements — REQ 7.7 and REQ 7.16 (payload type `0x8004`)
+   and REQ 7.17 (record length) — are this crate's too; a client receives one, and
+   a server cannot yet send one ([§9.2](#92-design-gaps-in-this-crate)). REQ 7.20,
+   that an unsolicited
    response does not reset `tS3_Server`, constrains that send path, but the
    timer it protects belongs to `uds_session` ([§6](#6-timing-ownership)).
 
@@ -524,6 +526,61 @@ for it, and the entity answers it with a generic header NACK (ISO 13400-2:2019
 REQ 7.DoIP-042). A tester receives one: `DoIpClientTransport` reports a whole
 periodic response to its own address as `TransportEvent::Periodic`, never as
 `DataInd`, which the session layer would take for a response to a request.
+
+### 7.3 Client transport: the connection's states
+
+`DoIpClientTransport` is where the client's REQ 7.8–7.11 behaviour lives, and it
+is one state machine over the connection. The state is the link; the events owed
+on the edge into `Closed` are what the session layer sees of it.
+
+```mermaid
+stateDiagram-v2
+    direction LR
+    [*] --> Up : new() · connected, routing activated
+    Up --> Up : t_data_req · sent, or waits behind the one carried
+    Up --> Closed : connection reports Closed
+    Up --> Closed : request refused Closed
+    Up --> Closed : late-reply guard · give up
+    Up --> Closed : close()
+    Closed --> Closed : t_data_req · accepted, waits
+    Closed --> Closed : reconnect() stops at the deadline, or fails
+    Closed --> Up : next_event with a request waiting · reconnect()
+    note right of Closed
+        Into Closed, owed before anything else:
+        one TransportEvent::Closed per server tracked,
+        expected where its last response was 0x50 or 0x51;
+        then every waiting request's DataConf, NoSocket.
+        close() owes no Closed.
+    end note
+```
+
+What each edge means, and where it comes from:
+
+- **Connection reports `Closed`.** The entity closed after a session change or
+  reset (REQ 7.9, REQ 7.11), the socket failed, or the tester gave the
+  connection up on a lost acknowledgement; `simple_doip` reports each once.
+  Which one it was is in `expected`.
+- **Request refused `Closed`.** The connection had ended and its `Closed` was
+  not yet read, which is the common case for the prescribed close: the next
+  request finds it. The request is accepted and waits.
+- **Late-reply guard.** A physical request that expects a response, to a server
+  whose last such request was confirmed and never answered, gives the connection
+  up first, so that the late answer cannot be taken for this one's
+  ([§7.2](#72-other-paths)). Its `Closed` is never expected.
+- **`close()`.** The client ends its session: the servers are forgotten, so no
+  `Closed` is reported; a request the connection carried is confirmed failed by
+  it, and one waiting here by the transport. A request made after it waits for a
+  reconnect, as after any other end.
+- **`reconnect()`.** Only `next_event` reconnects, and only for a request
+  waiting, bounded by the call's deadline (REQ 7.8, REQ 7.10): the old connection
+  is given up, the back-off waited out, a new one connected and routing activated.
+  Stopped at the deadline, the request keeps waiting for a later call; failed, the
+  waiting requests are confirmed failed and the next request tries again.
+
+A request's fate is the same in either state. It is accepted on the spot and
+confirmed later, by the connection's acknowledgement or by the transport, failed:
+`NoRoom` from the connection means it waits, any other refusal is its failed
+confirm, and `WAITING` such requests fit behind the one carried.
 
 ## 8. Two different graphs
 
