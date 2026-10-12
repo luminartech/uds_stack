@@ -838,7 +838,8 @@ macro_rules! uds_server {
 /// ```
 /// # use uds_services::{
 /// #     Address, AfterSend, Ai, DataIdentifier, KeepAlive, PhysicalKeepAlive, RecordError,
-/// #     Reloads, ClientTiming, Timestamp, TransportEvent, UdsTransport, uds_client,
+/// #     Reloads, ClientTiming, ClientTransport, Timestamp, TransportEvent, UdsTransport,
+/// #     uds_client,
 /// # };
 /// # #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 /// # enum Did { VehicleSpeed, VinNumber }
@@ -878,6 +879,9 @@ macro_rules! uds_server {
 /// #         Reloads { default_reload: 2_000, enhanced_reload: 5_000 }
 /// #     }
 /// #     fn now(&self) -> Timestamp { Timestamp(0) }
+/// # }
+/// # impl ClientTransport for DoIpTransport {
+/// #     async fn close(&mut self) -> Result<(), ()> { Ok(()) }
 /// # }
 /// uds_client! {
 ///     Did;

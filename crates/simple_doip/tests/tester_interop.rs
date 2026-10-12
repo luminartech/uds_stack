@@ -118,13 +118,9 @@ async fn tester_and_tokio_server_exchange_a_request_over_loopback() {
     .unwrap();
     let mut buf = [0; 64];
 
-    timeout(
-        PATIENCE,
-        tester.request(ENTITY, TaType::Physical, &[0x3E, 0x00]),
-    )
-    .await
-    .unwrap()
-    .unwrap();
+    tester
+        .request(ENTITY, TaType::Physical, &[0x3E, 0x00])
+        .unwrap();
 
     assert_eq!(
         timeout(PATIENCE, tester.next_event(&mut buf, None))

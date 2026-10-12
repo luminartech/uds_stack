@@ -1,4 +1,5 @@
-//! The firmware: the server assembled in a `static`, run from reset.
+//! The firmware: the server assembled in a `static`, run from reset; and the client
+//! transport's size, kept in the image for the size gate to read.
 
 mod clock;
 mod services;
@@ -8,10 +9,11 @@ use cortex_m_rt::entry;
 use simple_doip::entity::{Discovery, Entity, EntityAddress, FixedIdentity};
 use simple_doip::messages::DiagnosticPowerModeCode;
 use simple_doip::service::{EntityConfig, TesterAddress};
+use simple_doip::tester::{DIAGNOSTIC_MESSAGE_OVERHEAD, Tester};
 use simple_doip::{EntityId, GroupId, LogicalAddress, Vin};
 use static_cell::StaticCell;
-use uds_on_ip::DoIpTransport;
 use uds_on_ip::profile::bench_reloads;
+use uds_on_ip::{DoIpClientTransport, DoIpTransport};
 use uds_services::{Address, ServerParams, uds_server};
 
 use services::Ecu;
@@ -33,6 +35,20 @@ type SensorEntity = Entity<
     Discovery<stub::Datagrams, FixedIdentity>,
 >;
 type Transport = DoIpTransport<SensorEntity, 2>;
+
+/// The sensor's tester: one message of up to `MAX_MESSAGE` bytes, header included.
+type SensorTester =
+    Tester<'static, stub::Connector, { MAX_MESSAGE + DIAGNOSTIC_MESSAGE_OVERHEAD }>;
+
+/// The client role's transport over it, queueing a whole message behind the one the
+/// tester carries. Nothing here runs it: its size is what the gate records, because an
+/// integrator holds one by value and `new` returns it so.
+type SensorClientTransport = DoIpClientTransport<SensorTester, MAX_MESSAGE>;
+
+/// `size_of::<SensorClientTransport>()`, read out of the image by `tools/check_size.py`
+/// as `client_transport`: a 32-bit target's `usize`. `main` takes its address so the
+/// linker keeps it.
+static CLIENT_TRANSPORT_SIZE: usize = size_of::<SensorClientTransport>();
 
 uds_server! {
     Ecu: DiagnosticSessionControl, EcuReset, TesterPresent, SecurityAccess,
@@ -89,6 +105,7 @@ fn main() -> ! {
             PARAMS,
         )
     });
+    core::hint::black_box(&CLIENT_TRANSPORT_SIZE);
     let _ = embassy_futures::block_on(server.run());
     halt()
 }

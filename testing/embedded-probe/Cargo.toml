@@ -1,6 +1,7 @@
 # Not published: the sensor's whole server path assembled as bare-metal firmware, so that
-# `just embedded` builds what the sensor links and `just size` measures it. Every
-# dependency is the bare-metal build's; on a host the binary is empty.
+# `just embedded` builds what the sensor links and `just size` measures it, with the
+# client transport's size beside it. Every dependency is the bare-metal build's; on a host
+# the binary is empty.
 [package]
 name = "embedded-probe"
 version = "0.0.0"

@@ -97,7 +97,6 @@ async fn a_lost_request_leaves_nothing_for_the_next_one() {
 
     tester
         .request(ENTITY, TaType::Physical, &[0x3E, 0x00])
-        .await
         .unwrap();
     let writing = timeout(
         StdDuration::from_millis(200),
@@ -118,13 +117,12 @@ async fn a_lost_request_leaves_nothing_for_the_next_one() {
         events.push(format!("{event:?}"));
     }
     MockDriver::get().advance(RECONNECT_BACKOFF);
-    timeout(PATIENCE, tester.reconnect())
+    timeout(PATIENCE, tester.reconnect(None))
         .await
         .unwrap()
         .unwrap();
     tester
         .request(ENTITY, TaType::Physical, &[0x22, 0xF1, 0x90])
-        .await
         .unwrap();
     for _ in 0..2 {
         let event = timeout(PATIENCE, tester.next_event(&mut buf, None))

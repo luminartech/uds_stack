@@ -85,7 +85,7 @@ impl<const MCTS: usize> DiagnosticEntity for MockEntity<MCTS> {
     const CONNECTIONS: usize = MCTS;
     const MAX_PDU: usize = usize::MAX;
 
-    async fn request(
+    fn request(
         &mut self,
         sa: LogicalAddress,
         ta: LogicalAddress,
@@ -206,7 +206,7 @@ async fn echo_until_idle<E: DiagnosticEntity>(entity: &mut E) -> Vec<EntityEvent
             .unwrap()
         {
             EntityEvent::Indication { sa, ta, pdu, .. } => {
-                entity.request(ta, sa, TaType::Physical, pdu).await.unwrap();
+                entity.request(ta, sa, TaType::Physical, pdu).unwrap();
             }
             EntityEvent::Deadline => return seen,
             EntityEvent::Confirm {
@@ -288,7 +288,6 @@ async fn a_request_to_a_tester_that_has_left_is_confirmed_no_socket() {
 
     entity
         .request(ENTITY, TESTER, TaType::Physical, &[0x7E, 0x00])
-        .await
         .unwrap();
 
     assert_eq!(
@@ -337,7 +336,6 @@ async fn the_prescribed_close_follows_the_response_and_reports_nothing() {
 
     entity
         .request(ENTITY, sa, TaType::Physical, &[0x50, 0x02])
-        .await
         .unwrap();
     entity.close(connection).await.unwrap();
     entity.close(connection).await.unwrap();

@@ -4,7 +4,7 @@
 //! `DiagnosticEntity` contract.
 
 // Test code; see `golden_vectors.rs` for why the workspace lint standard is relaxed here.
-#![expect(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+#![expect(clippy::unwrap_used, clippy::panic)]
 
 mod support;
 
@@ -167,8 +167,7 @@ fn request<E: DiagnosticEntity>(
     ta: LogicalAddress,
     pdu: &[u8],
 ) -> Result<(), Refusal> {
-    let future = pin!(entity.request(ENTITY, ta, TaType::Physical, pdu));
-    until_stalled(future).expect("the request waits on nothing here")
+    entity.request(ENTITY, ta, TaType::Physical, pdu)
 }
 
 fn confirm(sa: LogicalAddress, ta_type: TaType, result: DoIpResult) -> Ev {
@@ -1781,10 +1780,9 @@ fn a_request_from_another_sa_is_confirmed_unknown_sa() {
     let mut entity = OneSocket::new(&stack, address(), two_testers());
     let peer = activated(&stack, &mut entity, TESTER);
 
-    {
-        let future = pin!(entity.request(FUNCTIONAL, TESTER, TaType::Physical, &[0x7E]));
-        until_stalled(future).unwrap().unwrap();
-    }
+    entity
+        .request(FUNCTIONAL, TESTER, TaType::Physical, &[0x7E])
+        .unwrap();
 
     assert_eq!(
         events(&mut entity),
@@ -1970,10 +1968,9 @@ fn a_settled_request_is_confirmed_after_an_unwritten_one_ahead() {
     let peer = activated(&stack, &mut entity, TESTER);
     peer.stall_writes();
     request(&mut entity, TESTER, &[0x50, 0x01]).unwrap();
-    {
-        let future = pin!(entity.request(FUNCTIONAL, TESTER, TaType::Physical, &[0x50]));
-        until_stalled(future).unwrap().unwrap();
-    }
+    entity
+        .request(FUNCTIONAL, TESTER, TaType::Physical, &[0x50])
+        .unwrap();
     assert_eq!(events(&mut entity), []);
     peer.resume_writes();
 
@@ -2002,10 +1999,9 @@ fn a_later_request_is_confirmed_after_every_earlier_one() {
         events(&mut entity),
         [confirm(ENTITY, TaType::Physical, DoIpResult::Ok)]
     );
-    {
-        let future = pin!(entity.request(ENTITY, TESTER, TaType::Functional, &[0x03]));
-        until_stalled(future).unwrap().unwrap();
-    }
+    entity
+        .request(ENTITY, TESTER, TaType::Functional, &[0x03])
+        .unwrap();
     peer.resume_writes();
 
     assert_eq!(
@@ -2033,10 +2029,10 @@ fn a_request_that_cannot_be_held_is_refused() {
         })
     );
     assert_eq!(request(&mut entity, TESTER, &[]), Err(Refusal::EmptyPdu));
-    {
-        let not_ours = pin!(entity.request(OTHER, TESTER, TaType::Physical, &[]));
-        assert_eq!(until_stalled(not_ours), Some(Err(Refusal::EmptyPdu)));
-    }
+    assert_eq!(
+        entity.request(OTHER, TESTER, TaType::Physical, &[]),
+        Err(Refusal::EmptyPdu)
+    );
     for _ in 0..4 {
         request(&mut entity, TESTER, &[0x7E, 0x00]).unwrap();
     }
@@ -2098,21 +2094,6 @@ fn closing_a_connection_that_is_not_there_does_nothing() {
         until_stalled(closing).unwrap().unwrap();
     }
     assert_eq!(events(&mut entity), []);
-}
-
-/// `Entity`'s cancel safety: a request dropped before it is polled was never made;
-/// nothing is sent and nothing confirmed.
-#[test]
-fn a_request_dropped_unpolled_is_not_made() {
-    let _clock = clock();
-    let stack = MockStack::new(4096);
-    let mut entity = OneSocket::new(&stack, address(), two_testers());
-    let peer = activated(&stack, &mut entity, TESTER);
-
-    drop(entity.request(ENTITY, TESTER, TaType::Physical, &[0x62, 0x01]));
-
-    assert_eq!(events(&mut entity), []);
-    assert_eq!(peer.take_written(), []);
 }
 
 /// A close that has to wait out its own limits acts on no other socket's timer: another

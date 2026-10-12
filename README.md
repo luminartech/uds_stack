@@ -38,13 +38,13 @@ edge runs from implementor to declarer.
 Under active development, and honest about it: the crates are at different
 maturities.
 
-| Crate          | Where it stands                                                               |
-| -------------- | ----------------------------------------------------------------------------- |
-| `uds_protocol` | Implemented.                                                                  |
-| `simple_doip`  | Implemented.                                                                  |
-| `uds_session`  | Implemented: the server and client roles.                                     |
-| `uds_on_ip`    | Alpha: the server transport is implemented; there is no client transport yet. |
-| `uds_services` | Alpha: server and client run end to end; `DataTransfer` is not staged (#50).  |
+| Crate          | Where it stands                                                              |
+| -------------- | ---------------------------------------------------------------------------- |
+| `uds_protocol` | Implemented.                                                                 |
+| `simple_doip`  | Implemented.                                                                 |
+| `uds_session`  | Implemented: the server and client roles.                                    |
+| `uds_on_ip`    | Alpha: the server and client transports are implemented.                     |
+| `uds_services` | Alpha: server and client run end to end; `DataTransfer` is not staged (#50). |
 
 The five crates release in lockstep: one version for the whole stack, every
 crate published at it together, one `v<version>` tag. The stack is at 0.7.0,

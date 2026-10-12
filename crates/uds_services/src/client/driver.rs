@@ -17,7 +17,7 @@
 use super::encode::{self, Arrived, KEEP_ALIVE};
 use super::{Client, ClientError, ClientKeepAlive, ClientSet};
 use crate::storage::{ClientBuffers, ClientStorage};
-use crate::{AfterSend, TransportEvent, UdsTransport};
+use crate::{AfterSend, ClientTransport, TransportEvent};
 use core::ops::Range;
 use uds_session::{
     Address, Ai, Cause, ChannelAddressing, ChannelId, ChannelParams, ClientOutput,
@@ -195,6 +195,12 @@ impl<const PHYS: usize, const FUNC: usize> Book<PHYS, FUNC> {
         }
     }
 
+    /// Whether any channel's transmission awaits its confirmation.
+    pub(super) fn unconfirmed(&self) -> bool {
+        self.physical.iter().flatten().any(|o| o.unconfirmed)
+            || self.functional.iter().flatten().any(|o| o.unconfirmed)
+    }
+
     /// Mark every channel with this addressing as awaiting a confirmation or not.
     fn awaiting(&mut self, ai: Ai, unconfirmed: bool) {
         let physical = self.physical.iter_mut().flatten().filter(|o| o.ai == ai);
@@ -246,7 +252,7 @@ struct Drained<X, E> {
 /// response timeout it reports is not lost. A `KeepAliveDue` is booked as owed rather than
 /// answered, for [`Client::send_owed`] to send.
 async fn drain<
-    T: UdsTransport,
+    T: ClientTransport,
     K: ClientKeepAlive,
     X,
     const PHYS: usize,
@@ -323,7 +329,7 @@ fn locate(base: usize, data: &[u8]) -> Range<usize> {
 
 impl<
     C: ClientSet,
-    T: UdsTransport,
+    T: ClientTransport,
     K: ClientKeepAlive,
     const PHYS: usize,
     const FUNC: usize,
@@ -428,7 +434,7 @@ impl<
 
     /// Reset the channel `ai` names, ending whatever it had in progress
     /// (``UDSS_LLR_0180``).
-    fn abandon(&mut self, ai: Ai) {
+    pub(super) fn abandon(&mut self, ai: Ai) {
         if let Some(channel) = self.book.channel(ai) {
             let now = self.transport.now();
             let _expiries_stay_in_the_session =
@@ -673,6 +679,18 @@ impl<
         Ok(())
     }
 
+    /// End every keep-alive, as the session ends (``UDSS_LLR_0184``).
+    pub(super) fn end_keep_alives(&mut self) {
+        let now = self.transport.now();
+        for o in self.book.physical.iter_mut().flatten() {
+            let _expiries_stay_in_the_session =
+                self.session.release_keep_alive(now, o.id).finish();
+            o.in_session = false;
+            o.owed = false;
+        }
+        self.settle_functional_keep_alive();
+    }
+
     /// Release the functional keep-alive once no server this client put in a
     /// non-default session is still in one (``UDSS_LLR_0184``). It reaches every server,
     /// so only the last one leaving ends it; ``UDSS_LLR_0158`` would read only a
@@ -730,12 +748,16 @@ impl<
     /// its sender's; one from a server no channel names is not indicated at all.
     /// It answers `subject` only where it echoes its service; see [`encode::classify`].
     ///
-    /// A close releases the keep-alive of every channel to that peer (``UDSS_LLR_0184``):
-    /// the server's session went with the connection, so a `TesterPresent` would keep
-    /// nothing alive, and the functional keep-alive goes once no server is left in session,
-    /// unless a session change is running, which settles it when it ends. A close ends a
-    /// physical exchange with that peer, but not a functional window, which awaits every
-    /// server and closes at its own timeout.
+    /// An expected close releases the keep-alive of every channel to that peer
+    /// (``UDSS_LLR_0184``): the server's session ended with the connection, so a
+    /// `TesterPresent` would keep nothing alive, and the functional keep-alive goes once no
+    /// server is left in session, unless a session change is running, which settles it
+    /// when it ends. Any other close ends no session, since a server's session outlives its
+    /// connection, and the keep-alive goes on over the next one. A close ends a physical
+    /// exchange with that peer whose window is open, since its answer cannot come, but not
+    /// one awaiting its confirmation, which the transport still owes and which says
+    /// whether the request went; nor a functional window, which awaits every server and
+    /// closes at its own timeout.
     pub(super) async fn pump(
         &mut self,
         subject: Option<Exchange>,
@@ -784,20 +806,22 @@ impl<
             Err(TransportEvent::DataConf { ai, result }) => {
                 self.session.t_data_conf(now, ai, result)
             }
-            Err(TransportEvent::Closed { peer, .. }) => {
-                for o in self
+            Err(TransportEvent::Closed { peer, expected }) => {
+                let ended = self
                     .book
                     .physical
                     .iter_mut()
                     .flatten()
-                    .filter(|o| o.ai.ta == peer)
-                {
+                    .filter(|o| expected && o.ai.ta == peer);
+                for o in ended {
                     let _ = self.session.release_keep_alive(now, o.id).finish();
                     left |= o.in_session;
                     o.in_session = false;
                     o.owed = false;
                 }
-                closed = subject.is_some_and(|e| !e.functional() && e.ai.ta == peer);
+                closed = subject.is_some_and(|e| {
+                    !e.functional() && e.ai.ta == peer && e.phase == Phase::Open
+                });
                 self.session.tick(now)
             }
             Err(_) => self.session.tick(now),

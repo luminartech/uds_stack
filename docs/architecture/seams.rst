@@ -22,6 +22,11 @@ the driver, which settles who declares what by settling who calls whom:
      - this crate
      - a binding (``uds_on_ip``, ``uds_on_can``)
      - ``UDSSVC_ARCH_0029``, and ``UDSSVC_ARCH_0041`` for the time on it
+   * - ``ClientTransport``, a ``UdsTransport`` the client can close
+     - this crate
+     - a binding's client transport (``uds_on_ip``'s over a ``TesterConnection``)
+     - ``UDSSVC_ARCH_0029``: ending a session is the client role's alone, so the
+       client's bound states it and the shared seam does not
    * - The response sink
      - ``automotive-wire-codec``
      - this crate's own buffer

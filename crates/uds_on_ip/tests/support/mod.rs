@@ -156,7 +156,7 @@ impl<const CONNECTIONS: usize> DiagnosticEntity for MockEntity<CONNECTIONS> {
     const CONNECTIONS: usize = CONNECTIONS;
     const MAX_PDU: usize = usize::MAX;
 
-    async fn request(
+    fn request(
         &mut self,
         sa: LogicalAddress,
         ta: LogicalAddress,

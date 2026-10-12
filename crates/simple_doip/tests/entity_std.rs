@@ -53,7 +53,6 @@ async fn echo<E: DiagnosticEntity>(entity: &mut E, answers: usize) {
                 }
                 entity
                     .request(ENTITY, sa, TaType::Physical, &answer)
-                    .await
                     .unwrap();
             }
             EntityEvent::Confirm { result, .. } => {
@@ -80,7 +79,6 @@ async fn a_tester_is_answered_over_loopback() {
                 .unwrap();
         tester
             .request(ENTITY, TaType::Physical, &[0x3E, 0x00])
-            .await
             .unwrap();
         let mut buf = [0u8; 64];
         loop {

@@ -32,7 +32,8 @@
 //! `tests/end_to_end.rs`), and every service trait but `DataTransfer` has a pipeline
 //! stage (see `tests/stages.rs`). A listed `DataTransfer` answers
 //! `serviceNotSupported` until its design problems are settled (#50). The client role
-//! runs end to end over any `UdsTransport` too (see `tests/client.rs`).
+//! runs end to end over any `ClientTransport`, a `UdsTransport` it can close (see
+//! `tests/client.rs`).
 //! `tests/composition.rs` assembles a server against the whole surface.
 //!
 //! # Scope
@@ -150,8 +151,8 @@ pub use automotive_wire_codec::{Encode, InsufficientBuffer, Sink, WriteError};
 
 pub mod transport;
 pub use transport::{
-    Address, AfterSend, Ai, Mtype, Reloads, SResult, TaType, Timestamp, TransportEvent,
-    UdsTransport,
+    Address, AfterSend, Ai, ClientTransport, Mtype, Reloads, SResult, TaType, Timestamp,
+    TransportEvent, UdsTransport,
 };
 
 /// The keep-alive modes a client is built in, from `uds_session`.

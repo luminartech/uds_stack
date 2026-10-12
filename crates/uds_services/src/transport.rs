@@ -100,7 +100,11 @@ pub enum TransportEvent<'b> {
         /// name the peer of a connection reports no close for it, because nothing is
         /// waiting on a connection whose peer never spoke.
         peer: Address,
-        /// Whether the close was one the standard prescribes.
+        /// Whether the close was one the standard prescribes, which ends the server's
+        /// session: for a server, one it owed its client; for a client, one following the
+        /// server's positive `DiagnosticSessionControl` or `ECUReset` response
+        /// (ISO 14229-5:2022 REQ 7.9, REQ 7.11). Any other close, a failure or a connection
+        /// given up, ends a connection and not a session.
         ///
         /// **Informational: re-establishing the connection is never this crate's.**
         /// ISO 14229-5:2022 REQ 7.8 and REQ 7.10 have the client open a new connection
@@ -262,6 +266,28 @@ pub trait UdsTransport {
 
     /// Monotonic milliseconds, 32-bit and wrapping.
     fn now(&self) -> Timestamp;
+}
+
+/// A transport a client sends over: a [`UdsTransport`] whose connection the client can
+/// end.
+///
+/// Ending a session is the client's alone. A server is closed *to*, and the one close it
+/// makes, the prescribed close of ISO 14229-5:2022 REQ 7.9 and REQ 7.11, its transport
+/// makes itself on [`AfterSend::ServerLeaves`] or a positive `ECUReset` response. So
+/// [`crate::Client`] needs this and [`crate::Server`] does not.
+pub trait ClientTransport: UdsTransport {
+    /// Ends the connection to the server gracefully, if there is one.
+    ///
+    /// A request accepted and not yet confirmed is still confirmed, failed, by a later
+    /// [`UdsTransport::next_event`]. The close is reported by no
+    /// [`TransportEvent::Closed`]: the caller made it. A transport with nothing to close
+    /// returns `Ok`. The next [`UdsTransport::t_data_req`] opens a connection again
+    /// where the transport has connections to open.
+    ///
+    /// # Errors
+    ///
+    /// [`UdsTransport::Error`] where closing fails; the connection is closed either way.
+    fn close(&mut self) -> impl core::future::Future<Output = Result<(), Self::Error>>;
 }
 
 #[cfg(test)]

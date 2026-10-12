@@ -222,9 +222,7 @@ pub enum Error<E> {
 /// let mut buf = [0u8; 4096];
 /// loop {
 ///     if let EntityEvent::Indication { sa, pdu, .. } = entity.next_event(&mut buf, None).await? {
-///         entity
-///             .request(address.physical(), sa, TaType::Physical, pdu)
-///             .await?;
+///         entity.request(address.physical(), sa, TaType::Physical, pdu)?;
 ///     }
 /// }
 /// # }
@@ -232,8 +230,8 @@ pub enum Error<E> {
 ///
 /// # Cancel safety
 ///
-/// [`DiagnosticEntity::next_event`], [`DiagnosticEntity::request`] and
-/// [`DiagnosticEntity::close`] may each be dropped at any await and called again,
+/// [`DiagnosticEntity::next_event`] and [`DiagnosticEntity::close`] may each be
+/// dropped at any await and called again,
 /// provided the acceptor and its sockets meet the crate's `connection` feature
 /// conditions.
 pub struct Entity<
@@ -1262,8 +1260,7 @@ impl<
     /// The entity's own logical address is its [`EntityAddress::physical`]; a request
     /// from any other `sa` sends nothing and is confirmed [`DoIpResult::UnknownSa`].
     ///
-    /// Waits for nothing: the request is made by the future's first poll, which
-    /// completes it, so a future dropped unpolled makes none. Where the connection's
+    /// Where the connection's
     /// queue has no room for `pdu`, nothing is sent and the request is confirmed
     /// [`DoIpResult::OutOfMemory`]. Requests to one target are confirmed in the order
     /// they were made.
@@ -1281,8 +1278,8 @@ impl<
         ta: LogicalAddress,
         ta_type: TaType,
         pdu: &[u8],
-    ) -> impl Future<Output = Result<(), Refusal>> {
-        poll_fn(move |_| Poll::Ready(self.queue(sa, ta, ta_type, pdu)))
+    ) -> Result<(), Refusal> {
+        self.queue(sa, ta, ta_type, pdu)
     }
 
     fn now(&self) -> Timestamp {

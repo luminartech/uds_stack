@@ -429,7 +429,6 @@ pub async fn serve(
             Ok(EntityEvent::Indication { sa, pdu, .. }) => {
                 entity
                     .request(address.physical(), sa, TaType::Physical, pdu)
-                    .await
                     .ok();
             }
             Ok(_) => {}
