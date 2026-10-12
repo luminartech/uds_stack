@@ -71,8 +71,9 @@ example for each.
   - `DoIpResult`, the twelve `DoIP_Result` values of 8.2.5.
   - `request` is a plain function, not a future: it accepts or refuses the PDU when
     it returns, and the outcome of an accepted one arrives later as exactly one
-    `Confirm`. A refusal is a `Refusal` (`EmptyPdu`, `PduTooLarge`, `NoRoom`,
-    `NotConnected`), and no confirm follows it.
+    `Confirm`. A refusal is a `Refusal` (`EmptyPdu`, `PduTooLarge`, `NoRoom`), or for
+    a connection a `ConnectionRefusal` (`Closed`, or `Refused(Refusal)`), and no
+    confirm follows it.
   - `Timestamp`, a wrapping 32-bit millisecond reading of the implementor's clock,
     which `now` returns and `next_event` takes as its deadline.
   - `TesterAddress`, a logical address in the tester range, and
@@ -118,8 +119,8 @@ example for each.
 
 ### Changed
 
-- **Breaking:** `automotive-wire-codec` 0.4, and `embedded-io` is gone.
-  `Encode::encode` writes into `&mut impl wire::Sink` instead of an
+- **Breaking:** `automotive-wire-codec` is 0.4, and `embedded-io` is no longer a
+  dependency. `Encode::encode` writes into `&mut impl wire::Sink` instead of an
   `embedded_io::Write`; to encode into a `&mut [u8]`, wrap it in
   `wire::SliceSink::new`. `MessageError::Io` carries a `wire::WriteError` instead of
   an `embedded_io::ErrorKind`. The `alloc` and `std` features no longer enable

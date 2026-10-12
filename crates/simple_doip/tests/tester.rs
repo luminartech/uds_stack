@@ -2556,7 +2556,7 @@ fn a_manufacturer_payload_type_is_reported() {
 // --- close ----------------------------------------------------------------------------
 
 /// `close` ends the connection gracefully rather than aborting or merely dropping it, and
-/// leaves the tester closed: `Closed` once, then quiet, and `NotConnected` for a request.
+/// leaves the tester closed: `Closed` once, then quiet, and a request refused `Closed`.
 #[test]
 fn close_shuts_the_connection_gracefully_and_leaves_it_closed() {
     let _clock = clock();
