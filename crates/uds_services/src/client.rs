@@ -851,7 +851,8 @@ impl<
     ///
     /// A positive response to `enableRapidPowerShutDown` carries the server's
     /// power-down time; any other carries `None`. The server closes its connection after
-    /// a positive response (ISO 14229-5:2022 REQ 7.11); the next call reconnects.
+    /// a positive response (ISO 14229-5:2022 REQ 7.11), which
+    /// [`Self::connection_replaced`] reports from now; the next call reconnects.
     ///
     /// # Arguments
     ///
@@ -874,6 +875,9 @@ impl<
             .exchange_with(target, |request| encode::ecu_reset(request, kind), None)
             .await?;
         let message = answered_bytes(&mut self.store, &answered);
+        if encode::is_positive(UdsServiceType::EcuReset, message) {
+            self.book.foresee_close(target);
+        }
         Ok(encode::decoded::<EcuResetResponse>(encode::final_response(
             message,
             answered.arrived,
@@ -1360,20 +1364,20 @@ impl<
     }
 
     /// Whether the connection to `target` was replaced since this was last asked, or
-    /// since the channel to it was opened: the transport reported it closed, whether
-    /// the server prescribed the close or not.
+    /// since the channel to it was opened.
     ///
-    /// A close is observed only while the client awaits the transport, which the call
-    /// that provoked it does not do after its answer. So this first settles what an
-    /// earlier call left, waiting out a functional window a dropped call left open, then
-    /// hands the transport one wait bounded by the current time, as [`Self::idle_until`]
-    /// does, and answers. That wait ends at the first event or at once, so it observes at
-    /// most one event the transport already holds: a close is seen only once the
-    /// transport has been polled since it arrived, by [`Self::idle_until`] or any call.
-    /// Asked once with nothing polled in between, this may answer `false` for a close
-    /// that has already happened on the wire.
-    /// Asking clears it. `false` where no channel to `target` is open, and where the
-    /// channel was withdrawn for another server before the asking.
+    /// A positive [`Self::ecu_reset`] response is reported from that exchange itself,
+    /// before the transport reports the close, since the server always closes after one
+    /// (ISO 14229-5:2022 REQ 7.11); the close the transport reports for it later is the
+    /// same replacement, not another. Any other close, one a session change prescribes
+    /// or one nothing prescribed, is reported once the transport has been polled since it
+    /// arrived: by [`Self::idle_until`], by any call, or by this one.
+    ///
+    /// This first settles what an earlier call left, waiting out a functional window a
+    /// dropped call left open, then takes every event the transport already holds, until
+    /// it reports the current time as its deadline, and answers. Asking clears the report.
+    /// `false` where no channel to `target` is open, and where the channel was withdrawn
+    /// for another server before the asking.
     ///
     /// # Arguments
     ///
@@ -1394,7 +1398,7 @@ impl<
         self.retire();
         self.drain_window().await?;
         let now = self.transport.now();
-        self.pump(None, Some(now)).await?;
+        while !self.pump(None, Some(now)).await?.quiet {}
         Ok(self.book.take_replaced(target))
     }
 

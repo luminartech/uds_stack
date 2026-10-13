@@ -2210,18 +2210,73 @@ fn a_replaced_connection_is_reported_once() {
         Step::At(1),
         Step::At(2),
         Step::Close(OTHER_ECU),
-        Step::Close(ECU),
         Step::At(3),
+        Step::Close(ECU),
+        Step::At(4),
+        Step::At(5),
     ]);
     speed(block_on(t.read_data_by_identifier(ECU, &[Did::Speed])));
-    // The `Leave` is observed by this ask's own pump.
+    // The `Leave` is observed by this ask's own look at the transport.
     assert_eq!(block_on(t.connection_replaced(ECU)), Ok(true));
     assert_eq!(block_on(t.connection_replaced(ECU)), Ok(false));
-    assert_eq!(block_on(t.connection_replaced(ECU)), Ok(false));
-    // This ask's pump observes the other server's close.
+    // This ask observes the other server's close.
     assert_eq!(block_on(t.connection_replaced(ECU)), Ok(false));
     // An unprescribed close is a replacement as well.
     assert_eq!(block_on(t.connection_replaced(ECU)), Ok(true));
+    assert_eq!(block_on(t.connection_replaced(ECU)), Ok(false));
+}
+
+/// One ask takes every event the transport already holds, not one: two closes waiting
+/// are one replacement, and the next ask finds nothing.
+#[test]
+fn one_ask_drains_every_close_the_transport_holds() {
+    let mut t = tester(&[
+        Step::Conf(to(ECU), SResult::Ok),
+        Step::Ind(from(ECU), SPEED),
+        Step::Close(ECU),
+        Step::Close(ECU),
+        Step::At(1),
+        Step::At(2),
+    ]);
+    speed(block_on(t.read_data_by_identifier(ECU, &[Did::Speed])));
+    assert_eq!(block_on(t.connection_replaced(ECU)), Ok(true));
+    assert_eq!(block_on(t.connection_replaced(ECU)), Ok(false));
+    assert!(t.transport().finished());
+}
+
+/// A positive `ECUReset` response is reported as a replacement by the exchange itself
+/// (ISO 14229-5:2022 REQ 7.11), before the transport reports the close; the close
+/// the transport then reports is that one, not another.
+#[test]
+fn a_positive_reset_is_a_replacement_before_its_close_arrives() {
+    let mut t = tester(&[
+        Step::Conf(to(ECU), SResult::Ok),
+        Step::Ind(from(ECU), RESETTING),
+        Step::At(1),
+        Step::Leave(ECU),
+        Step::At(2),
+    ]);
+    assert_eq!(
+        block_on(t.ecu_reset(ECU, ResetType::HardReset)),
+        Ok(Response::Positive(None))
+    );
+    assert_eq!(block_on(t.connection_replaced(ECU)), Ok(true));
+    assert_eq!(block_on(t.connection_replaced(ECU)), Ok(false));
+    assert!(t.transport().finished());
+}
+
+/// A refused reset closes nothing, so it replaces nothing.
+#[test]
+fn a_refused_reset_is_no_replacement() {
+    let mut t = tester(&[
+        Step::Conf(to(ECU), SResult::Ok),
+        Step::Ind(from(ECU), &[0x7F, 0x11, 0x22]),
+        Step::At(1),
+    ]);
+    assert_eq!(
+        block_on(t.ecu_reset(ECU, ResetType::HardReset)),
+        Ok(Response::Negative(NegativeResponseCode::from(0x22)))
+    );
     assert_eq!(block_on(t.connection_replaced(ECU)), Ok(false));
 }
 

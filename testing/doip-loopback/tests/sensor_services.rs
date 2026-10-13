@@ -397,6 +397,26 @@ fn the_prescribed_close_is_reported_as_a_replacement_once() {
     });
 }
 
+/// A positive reset is reported as a replacement at once, with nothing between: the
+/// exchange itself reports it, before the transport reports the close. The close the
+/// transport reports later, by the time the next call has reconnected, is that same
+/// replacement, not a second one.
+#[test]
+fn a_positive_reset_is_reported_as_a_replacement_at_once() {
+    with_sensor(|mut c| async move {
+        let reset = c.ecu_reset(SERVER, ResetType::HardReset).await;
+        assert_eq!(reset.expect("answered"), Response::Positive(None));
+        assert!(c.connection_replaced(SERVER).await.expect("asked"));
+        assert!(!c.connection_replaced(SERVER).await.expect("asked"));
+        let read = c
+            .read_data_by_identifier(SERVER, &[SdkDid(Did::Mode)])
+            .await;
+        assert!(matches!(read, Ok(Response::Positive(_))), "{read:?}");
+        assert!(!c.connection_replaced(SERVER).await.expect("asked"));
+        c.close().await.expect("closed");
+    });
+}
+
 /// The keep-alive is the `TesterPresent` the client sends: idling in the extended
 /// session past several keep-alive intervals and past the server's S3, the session
 /// survives, so a service the default session refuses is still answered positively.

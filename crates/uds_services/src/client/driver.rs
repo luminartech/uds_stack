@@ -126,6 +126,14 @@ enum Replaced {
     No,
     /// The transport reported the connection closed, and no one has asked.
     Unasked,
+    /// A positive `ECUReset` response prescribed a close the transport has yet to report
+    /// (ISO 14229-5:2022 REQ 7.11). It is a replacement from the response on, `told`
+    /// once someone has asked, and the prescribed close the transport reports later is
+    /// that same replacement.
+    Foreseen {
+        /// Someone has asked since the response.
+        told: bool,
+    },
 }
 
 impl<Id> Open<Id> {
@@ -178,10 +186,42 @@ impl<const PHYS: usize, const FUNC: usize> Book<PHYS, FUNC> {
         self.physical.iter_mut().flatten().find(|o| o.ai.ta == ta)
     }
 
+    /// Record that `ta` answered an `ECUReset` positively, after which it closes its
+    /// connection (ISO 14229-5:2022 REQ 7.11): a replacement from now, and the close the
+    /// transport reports as prescribed later is that same one.
+    pub(super) fn foresee_close(&mut self, ta: Address) {
+        if let Some(o) = self.physical_to(ta) {
+            o.replaced = Replaced::Foreseen { told: false };
+        }
+    }
+
+    /// Record that the transport reported `peer`'s connection closed, `expected` where
+    /// the standard prescribes the close: a replacement, unless it is the close a
+    /// positive `ECUReset` response already reported and someone already asked about.
+    fn closed(&mut self, peer: Address, expected: bool) {
+        for o in self
+            .physical
+            .iter_mut()
+            .flatten()
+            .filter(|o| o.ai.ta == peer)
+        {
+            o.replaced = match o.replaced {
+                Replaced::Foreseen { told: true } if expected => Replaced::No,
+                _ => Replaced::Unasked,
+            };
+        }
+    }
+
     /// Whether `ta`'s connection was replaced since last asked, cleared by the asking.
     pub(super) fn take_replaced(&mut self, ta: Address) -> bool {
         self.physical_to(ta).is_some_and(|o| {
-            core::mem::replace(&mut o.replaced, Replaced::No) == Replaced::Unasked
+            let (now, told) = match o.replaced {
+                Replaced::No => (Replaced::No, false),
+                Replaced::Unasked => (Replaced::No, true),
+                Replaced::Foreseen { told } => (Replaced::Foreseen { told: true }, !told),
+            };
+            o.replaced = now;
+            told
         })
     }
 
@@ -244,6 +284,8 @@ pub(super) struct Seen {
     pub(super) answer: Option<Answered>,
     /// The connection the exchange ran over closed.
     pub(super) closed: bool,
+    /// The transport reported its deadline: it held nothing more to report.
+    pub(super) quiet: bool,
 }
 
 /// What sending the owed keep-alives produced.
@@ -792,6 +834,7 @@ impl<
             .await
             .map_err(ClientError::Transport)?;
         let now = self.transport.now();
+        let quiet = matches!(event, TransportEvent::Deadline);
         let mut answer = None;
         let mut closed = false;
         let mut left = false;
@@ -826,11 +869,7 @@ impl<
                 self.session.t_data_conf(now, ai, result)
             }
             Err(TransportEvent::Closed { peer, expected }) => {
-                for o in self.book.physical.iter_mut().flatten() {
-                    if o.ai.ta == peer {
-                        o.replaced = Replaced::Unasked;
-                    }
-                }
+                self.book.closed(peer, expected);
                 let ended = self
                     .book
                     .physical
@@ -870,6 +909,7 @@ impl<
         Ok(Seen {
             answer,
             closed,
+            quiet,
             ..drained.seen
         })
     }
