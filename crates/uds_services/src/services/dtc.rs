@@ -7,10 +7,11 @@ use uds_protocol::{
 
 /// Which shape of `ReadDTCInformation` response a report type produces.
 ///
-/// ISO 14229-1:2020 clause 12.3 gives each report type one of five response layouts, and
-/// the layout fixes the header and record widths — they are not the application's to
-/// choose. A server declares the layouts it answers in [`ReadDtcInformation::REPORTS`]
-/// and [`crate::uds_server`] folds the widest of them into the response buffer.
+/// Each ISO 14229-1:2020 clause 12.3 report type named here has one of seven response
+/// layouts, and the layout fixes the header and record widths — they are not the
+/// application's to choose. A server declares the layouts it answers in
+/// [`ReadDtcInformation::REPORTS`] and [`crate::uds_server`] folds the widest of them into
+/// the response buffer.
 ///
 /// Each corresponds to one or more of [`uds_protocol::ReadDtcInfoResponse`]'s variants,
 /// which is where the widths below are read from rather than restated.

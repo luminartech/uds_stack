@@ -69,6 +69,19 @@ lockstep with the rest of the `uds_stack` workspace (`uds_protocol`, `uds_sessio
 - `no_std` and allocation-free in every configuration, with no Cargo features.
   Responses are written into caller-owned storage, and no public type carries a
   `Vec` or `String`. No async runtime is named. `unsafe` is forbidden. MSRV 1.91.
+- `Client` calls for every service the sensor stages, and the transfer steps:
+  `write_data_by_identifier`, `read_dtc_information`, `clear_diagnostic_information`,
+  `security_access_seed` and `security_access_key`, `routine_control`, `ecu_reset`,
+  `request_download`, `transfer_data`, `request_transfer_exit`, `communication_control`
+  and `control_dtc_setting`. Each encodes its request through `uds_protocol`, decodes
+  the reply exactly, and answers a wrong echo with `MalformedResponse::Echo`. No call
+  sets the suppress-positive-response bit.
+- `Client::connection_replaced`, whether a server's connection was replaced since last
+  asked.
+- `Response::map`, and `MalformedResponse::Echo` and `Decode`.
+- Re-exports of `uds_protocol`'s `ReadDtcInfoResponse`, `DataFormatIdentifier`,
+  `DtcSnapshotRecordNumber` and `DtcExtDataRecordNumber`, which the new calls take or
+  return.
 
 ### Changed
 
@@ -86,7 +99,8 @@ lockstep with the rest of the `uds_stack` workspace (`uds_protocol`, `uds_sessio
   count fails to compile.
 - The upload/download services (0x34–0x38) are not served yet. The `DataTransfer`
   trait exists, but a server that lists it answers `serviceNotSupported`.
-- The client supports `ReadDataByIdentifier` and `DiagnosticSessionControl`, plus
-  `TesterPresent` keep-alives.
+- The client sends `TesterPresent` only as its keep-alive, and sets the
+  suppress-positive-response bit on no request. The transfer calls are single
+  exchanges: the block sequence and any orchestration above them are the caller's.
 - An `Err` from `Server::step` or `Server::run` is terminal for that server
   instance, and neither future is cancel-safe. Drop `step` only between calls.

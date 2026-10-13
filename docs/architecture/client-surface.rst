@@ -330,8 +330,9 @@ The programming process
    specific, and lets a programme choose a functionally or a physically oriented vehicle
    approach for them. Only the standardized steps are common across programmes, so only
    they are library-able; the rest is a vehicle programme's own sequence expressed over
-   ``UDSSVC_ARCH_0028``'s client. Building the orchestration before there is a client that
-   can execute one step of it would be designing against nothing.
+   ``UDSSVC_ARCH_0028``'s client. The client executes the standardized transfer steps as
+   single calls, ``request_download``, ``transfer_data`` and ``request_transfer_exit``, and
+   the orchestration above them remains deferred.
 
    The "master execute" coordination of 17.1, where steps are functionally addressed to
    every node and their results reconciled, is the same problem ``UDSSVC_ARCH_0022`` already

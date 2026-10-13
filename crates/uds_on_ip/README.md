@@ -83,8 +83,8 @@ Time is the `DoIP` entity's own clock, which it reports through
 against `simple_doip`'s own entity and tester, in the workspace's unpublished
 `testing/doip-loopback` crate. The client role, `DoIpClientTransport` over any
 `TesterConnection`, is tested there too: a `uds_client!` client reads from that
-server, survives the prescribed close by reconnecting, and takes no late answer for
-a later request's. See the
+server, drives every service the sensor stages, survives the prescribed close by
+reconnecting, and takes no late answer for a later request's. See the
 [workspace README](https://github.com/luminartech/uds_stack#status) for how
 this compares to the rest of the stack.
 

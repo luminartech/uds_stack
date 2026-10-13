@@ -509,6 +509,10 @@ macro_rules! __uds_stage {
 /// owns, and `server = Name` is the alias it is reached through — the macro emits
 /// `type Name = Server<Ecu, Transport, N>`, so the count is written once, where it acts.
 ///
+/// The application type must be defined in the crate that invokes the macro, because the
+/// macro implements this crate's sealed [`ServiceSet`](crate::ServiceSet) for it; a type
+/// from another crate needs a local newtype.
+///
 /// **Milestone 1 accepts `peers = 1` only**, and any other count fails to compile. The
 /// driver keeps one slot for a `DiagnosticSessionControl` response awaiting its
 /// confirmation, and with a second tester that tester's selecting response could
@@ -913,6 +917,10 @@ macro_rules! uds_server {
 /// `client = Name` is the alias the client is reached through, so the channel counts and
 /// the keep-alive mode are written once, here, rather than at every signature that names
 /// a client.
+///
+/// The identifier type must be defined in the crate that invokes the macro, because the
+/// macro implements this crate's sealed [`ClientSet`](crate::ClientSet) for it; a type
+/// from another crate needs a local newtype.
 ///
 /// # Examples
 ///
