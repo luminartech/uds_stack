@@ -94,6 +94,11 @@ lockstep with the rest of the `uds_stack` workspace (`uds_protocol`, `uds_sessio
   `AddressAndLengthFormatIdentifier`, `DtcSnapshotRecordNumber` and
   `DtcExtDataRecordNumber`, which the new calls take or
   return.
+- `ClientTiming::repeats`, the most times the client repeats a physically addressed
+  request whose response window expired: ISO 14229-2:2021 Table 9's two by default,
+  set by `ClientTiming::with_repeats`, read and changed through `Client::timing` and
+  `Client::timing_mut`. A failed transmission is repeated to two regardless, and
+  functionally addressed requests are not under it.
 
 ### Changed
 

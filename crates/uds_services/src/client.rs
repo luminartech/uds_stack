@@ -97,8 +97,8 @@ pub trait ClientSet: DataIdentifier + crate::sealed::Sealed {
 pub enum ClientError<E> {
     /// The transport failed; see [`UdsTransport::Error`].
     Transport(E),
-    /// No response came within `tP_Client`, after ISO 14229-2:2021 9.7 Table 9's two
-    /// repeats.
+    /// No response came within `tP_Client`, after the repeats [`ClientTiming::repeats`]
+    /// allows (ISO 14229-2:2021 9.7 Table 9's two by default).
     Timeout,
     /// The request's last transmission was confirmed failed, after
     /// ISO 14229-2:2021 Table 9's repeats, or the session layer refused the request
@@ -145,7 +145,8 @@ pub enum Replaced {
     /// gone.
     Prescribed,
     /// Any other close: the server dropped it, or this client reconnected to repeat an
-    /// unanswered request (ISO 14229-2:2021 Table 9) or after a cancelled call. The
+    /// unanswered request (ISO 14229-2:2021 Table 9, under [`ClientTiming::repeats`]) or
+    /// after a cancelled call. The
     /// server's session and security may be intact. A session change's close is this
     /// where the transport acknowledged a request between the response and the close, a
     /// keep-alive included; a caller that knows its session change leaves the server's
@@ -771,8 +772,9 @@ impl<
     ///
     /// - [`ClientError::Request`] where `identifiers` is empty or too long; nothing is
     ///   sent.
-    /// - [`ClientError::Timeout`] or [`ClientError::NotSent`] where ISO 14229-2:2021 9.7
-    ///   ISO 14229-2:2021 Table 9's repeats were spent.
+    /// - [`ClientError::Timeout`] or [`ClientError::NotSent`] where the repeats were spent:
+    ///   [`ClientTiming::repeats`] for an expired window, ISO 14229-2:2021 9.7 Table 9's
+    ///   two for a failed transmission.
     /// - [`ClientError::Closed`] where the connection closed first.
     /// - [`ClientError::NoChannel`] where no channel could be opened to `target`.
     /// - [`ClientError::Transport`] where the transport failed.
@@ -957,7 +959,9 @@ impl<
     ///
     /// The seed is in the response, so the suppress bit is never set on this request.
     /// The client keeps no security state: compute the key and send it with
-    /// [`Self::security_access_key`].
+    /// [`Self::security_access_key`]. A repeated request (under
+    /// [`ClientTiming::repeats`]) is harmless: a level already unlocked answers a zero
+    /// seed (10.4).
     ///
     /// # Arguments
     ///
@@ -1006,6 +1010,11 @@ impl<
     ///
     /// [`ClientError::Request`] where the key does not fit the request buffer;
     /// otherwise as [`Self::read_data_by_identifier`]'s.
+    ///
+    /// A repeated key (under [`ClientTiming::repeats`]), after a positive response was
+    /// lost, reaches a server already unlocked with no seed outstanding and earns
+    /// [`NegativeResponseCode::RequestSequenceError`] (ISO 14229-1:2020 10.4); a ceiling
+    /// of zero reports the first window instead.
     ///
     /// # Cancel safety
     ///
@@ -1515,7 +1524,8 @@ impl<
     /// as the std `DoIP` stack's is, one poll may not reach it.
     ///
     /// [`Replaced::Other`] is the normal result of an ISO 14229-2:2021 Table 9 repeat
-    /// over `DoIP`, whose transport repeats an unanswered request on a new connection, and
+    /// over `DoIP`, where [`ClientTiming::repeats`] allows one, whose transport repeats an
+    /// unanswered request on a new connection, and
     /// of a call cancelled after its request went. The server's session and security may
     /// survive such a close, so it is no reason on its own to enter the session again,
     /// which would relock security and end a transfer in progress.
