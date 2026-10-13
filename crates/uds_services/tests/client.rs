@@ -335,6 +335,160 @@ fn a_failed_transmission_is_repeated_after_the_spacing_then_not_sent() {
     assert_eq!(s.sent(2).map(|x| x.at), Some(20));
 }
 
+/// A tester whose ceiling on ISO 14229-2:2021 Table 9's response-timeout repeat is
+/// `repeats`.
+fn tester_repeating(steps: &[Step], repeats: u8) -> Tester {
+    Tester::new(
+        Script::new(steps),
+        TESTER,
+        KeepAlive::physical(S3_CLIENT),
+        TIMING.with_repeats(repeats),
+    )
+}
+
+/// `ClientTiming::repeats` at zero — an unanswered request is sent once and reports the
+/// first expired window; the channel is reset, so the next request is sent and answered.
+#[test]
+fn a_ceiling_of_zero_reports_the_first_expired_window() {
+    let mut t = tester_repeating(
+        &[
+            Step::Conf(to(ECU), SResult::Ok),
+            Step::At(100),
+            Step::Conf(to(ECU), SResult::Ok),
+            Step::Ind(from(ECU), SPEED),
+        ],
+        0,
+    );
+    assert_eq!(
+        block_on(t.read_data_by_identifier(ECU, &[Did::Speed])).err(),
+        Some(ClientError::Timeout)
+    );
+    assert_eq!(t.transport().sent_count, 1);
+    assert_eq!(t.transport().deadlines, 1);
+    assert_eq!(
+        speed(block_on(t.read_data_by_identifier(ECU, &[Did::Speed]))),
+        0x40
+    );
+    assert_eq!(t.transport().sent_count, 2);
+}
+
+/// A ceiling of one repeats once; a ceiling above two acts as Table 9's two.
+#[test]
+fn a_ceiling_caps_the_repeats_under_table_9s_two() {
+    let mut t = tester_repeating(
+        &[
+            Step::Conf(to(ECU), SResult::Ok),
+            Step::At(100),
+            Step::Conf(to(ECU), SResult::Ok),
+            Step::At(200),
+        ],
+        1,
+    );
+    assert_eq!(
+        block_on(t.read_data_by_identifier(ECU, &[Did::Speed])).err(),
+        Some(ClientError::Timeout)
+    );
+    assert_eq!(t.transport().sent_count, 2);
+
+    let mut t = tester_repeating(
+        &[
+            Step::Conf(to(ECU), SResult::Ok),
+            Step::At(100),
+            Step::Conf(to(ECU), SResult::Ok),
+            Step::At(200),
+            Step::Conf(to(ECU), SResult::Ok),
+            Step::At(300),
+        ],
+        7,
+    );
+    assert_eq!(
+        block_on(t.read_data_by_identifier(ECU, &[Did::Speed])).err(),
+        Some(ClientError::Timeout)
+    );
+    assert_eq!(t.transport().sent_count, 3);
+}
+
+/// Table 9's transmission-failure cell is the link's, not the request's: a failed
+/// transmission is repeated twice whatever the ceiling.
+#[test]
+fn a_ceiling_of_zero_still_repeats_a_failed_transmission() {
+    let mut t = tester_repeating(
+        &[
+            Step::Conf(to(ECU), FAILED),
+            Step::At(10),
+            Step::Conf(to(ECU), FAILED),
+            Step::At(20),
+            Step::Conf(to(ECU), FAILED),
+        ],
+        0,
+    );
+    assert_eq!(
+        block_on(t.read_data_by_identifier(ECU, &[Did::Speed])).err(),
+        Some(ClientError::NotSent)
+    );
+    assert_eq!(t.transport().sent_count, 3);
+}
+
+/// A functionally addressed read is not under the ceiling: its window closes and its
+/// answers are collected as before.
+#[test]
+fn a_ceiling_of_zero_leaves_a_functional_read_alone() {
+    let mut t = tester_repeating(
+        &[
+            Step::Conf(FUNCTIONAL, SResult::Ok),
+            Step::Ind(from(ECU), SPEED),
+            Step::At(1_000),
+        ],
+        0,
+    );
+    let mut answers = t.read_data_by_identifier_functional(GROUP, &[Did::Speed]);
+    assert!(matches!(
+        block_on(answers.next()),
+        Some(Ok(Answer::Positive { from: ECU, .. }))
+    ));
+    assert!(block_on(answers.next()).is_none());
+    drop(answers);
+    assert_eq!(t.transport().sent_count, 1);
+}
+
+/// A close mid-exchange is still `Closed`, not `Timeout`, under a ceiling of zero.
+#[test]
+fn a_ceiling_of_zero_still_reports_a_close_mid_exchange() {
+    let mut t = tester_repeating(&[Step::Conf(to(ECU), SResult::Ok), Step::Close(ECU)], 0);
+    assert_eq!(
+        block_on(t.read_data_by_identifier(ECU, &[Did::Speed])).err(),
+        Some(ClientError::Closed)
+    );
+}
+
+/// The ceiling is read when a window expires, so one set through `timing_mut` between
+/// two calls applies to the second.
+#[test]
+fn the_ceiling_changed_between_calls_applies_to_the_next() {
+    let mut t = tester(&[
+        Step::Conf(to(ECU), SResult::Ok),
+        Step::At(100),
+        Step::Conf(to(ECU), SResult::Ok),
+        Step::At(200),
+        Step::Conf(to(ECU), SResult::Ok),
+        Step::At(300),
+        Step::Conf(to(ECU), SResult::Ok),
+        Step::At(400),
+    ]);
+    assert_eq!(t.timing().repeats, 2);
+    assert_eq!(
+        block_on(t.read_data_by_identifier(ECU, &[Did::Speed])).err(),
+        Some(ClientError::Timeout)
+    );
+    assert_eq!(t.transport().sent_count, 3);
+    t.timing_mut().repeats = 0;
+    assert_eq!(
+        block_on(t.read_data_by_identifier(ECU, &[Did::Speed])).err(),
+        Some(ClientError::Timeout)
+    );
+    assert_eq!(t.transport().sent_count, 4);
+}
+
 /// A connection closing mid-exchange ends it with an outcome rather than a wait for
 /// `tP_Client`; the next call runs over whatever connection the transport has by then.
 #[test]

@@ -296,6 +296,14 @@ pub struct ClientTiming {
     /// `ΔtP6_Response` and leaves a longer wait to the client. Vehicle-specific; the
     /// standard gives no default.
     pub network_delay: u32,
+    /// The most times a physically addressed request whose response window expired is
+    /// repeated before [`ClientError::Timeout`]. ISO 14229-2:2021 9.7 Table 9 has the
+    /// client repeat it, at most twice, and leaves performing the repeat to the
+    /// application (``UDSS_LLR_0177`` caps it). [`Self::new`] sets Table 9's two; a value
+    /// above two acts as two; zero reports the first expired window. A failed
+    /// transmission is repeated to two regardless, Table 9's transmission cell being the
+    /// link's, not the request's; functionally addressed requests are not under it.
+    pub repeats: u8,
 }
 
 impl ClientTiming {
@@ -306,6 +314,9 @@ impl ClientTiming {
     /// * `physical_spacing` - see [`Self::physical_spacing`].
     /// * `functional_spacing` - see [`Self::functional_spacing`].
     /// * `network_delay` - see [`Self::network_delay`].
+    ///
+    /// [`Self::repeats`] is ISO 14229-2:2021 Table 9's two; [`Self::with_repeats`]
+    /// overrides it.
     #[must_use]
     pub const fn new(
         physical_spacing: u32,
@@ -316,7 +327,15 @@ impl ClientTiming {
             physical_spacing,
             functional_spacing,
             network_delay,
+            repeats: 2,
         }
+    }
+
+    /// This policy with [`Self::repeats`] set to `repeats`.
+    #[must_use]
+    pub const fn with_repeats(mut self, repeats: u8) -> Self {
+        self.repeats = repeats;
+        self
     }
 }
 
@@ -712,6 +731,20 @@ impl<
     #[must_use]
     pub const fn transport(&self) -> &T {
         &self.transport
+    }
+
+    /// This client's timing policy.
+    #[must_use]
+    pub const fn timing(&self) -> &ClientTiming {
+        &self.timing
+    }
+
+    /// This client's timing policy, to change between calls. A change to
+    /// [`ClientTiming::repeats`] applies to the next request whose response window
+    /// expires.
+    #[must_use]
+    pub fn timing_mut(&mut self) -> &mut ClientTiming {
+        &mut self.timing
     }
 
     /// Read one or more data identifiers from one server.
