@@ -292,6 +292,11 @@ pub enum MalformedResponse {
     },
     /// The response was shorter than its service's fixed fields.
     Short,
+    /// The response echoed a sub-function, identifier or counter other than the
+    /// request's: it answers some other request.
+    Echo,
+    /// The response's bytes do not decode as its service's positive response.
+    Decode,
 }
 
 impl From<RecordError> for MalformedResponse {
@@ -323,6 +328,29 @@ pub enum Response<V> {
     /// No call returns this yet: none sets the suppress bit, and a silent functional
     /// window ends a [`Responses`] instead.
     NoResponseExpected,
+}
+
+impl<V> Response<V> {
+    /// The positive payload transformed; every other case unchanged.
+    pub fn map<U>(self, f: impl FnOnce(V) -> U) -> Response<U> {
+        match self {
+            Self::Positive(value) => Response::Positive(f(value)),
+            Self::Negative(code) => Response::Negative(code),
+            Self::Malformed(error) => Response::Malformed(error),
+            Self::NoResponseExpected => Response::NoResponseExpected,
+        }
+    }
+
+    /// A positive payload that fails `matches` is [`MalformedResponse::Echo`].
+    #[expect(dead_code, reason = "called by the service calls that follow")]
+    pub(crate) fn echoing(self, matches: impl FnOnce(&V) -> bool) -> Self {
+        match self {
+            Self::Positive(value) if !matches(&value) => {
+                Self::Malformed(MalformedResponse::Echo)
+            }
+            other => other,
+        }
+    }
 }
 
 /// One server's answer to a functionally addressed request.
@@ -879,7 +907,13 @@ impl<
         let ClientBuffers { request, .. } = self.store.split();
         let len = encode(request).ok_or(ClientError::Request)?;
         let sid = request.first().copied().unwrap_or_default();
-        let echo = session.and_then(|_| request.get(1).copied());
+        let sub_function =
+            UdsServiceType::from_request_sid(sid).has_sub_function() == Some(true);
+        let echo = if session.is_some() || sub_function {
+            request.get(1).copied()
+        } else {
+            None
+        };
         let ai = self
             .addressing(target)
             .with_ta_type(uds_session::TaType::Physical);

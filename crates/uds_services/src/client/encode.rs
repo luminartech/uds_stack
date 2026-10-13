@@ -6,7 +6,7 @@
 
 use super::{Answer, MalformedResponse, Records, Response};
 use crate::{DataIdentifier, DiagnosticSessionType, SessionTiming, UdsServiceType};
-use uds_protocol::NegativeResponseCode;
+use uds_protocol::{Decode, Encode, NegativeResponseCode, Request};
 use uds_session::Address;
 use uds_session::{ClientRx, SessionSelection, Solicitation};
 
@@ -49,6 +49,16 @@ pub(super) fn read_data_by_identifier<D: DataIdentifier>(
         *slot = did.as_u16().to_be_bytes();
     }
     identifiers.len().checked_mul(2)?.checked_add(1)
+}
+
+/// Encode `request`, service identifier first, into `buffer`: its length, or `None`
+/// where it does not fit, so nothing is sent.
+#[cfg_attr(
+    not(test),
+    expect(dead_code, reason = "called by the service calls that follow")
+)]
+pub(super) fn request(buffer: &mut [u8], request: &Request<'_>) -> Option<usize> {
+    request.encode_to_slice(buffer).ok()
 }
 
 /// Encode a `DiagnosticSessionControl` request for `session` into `request`.
@@ -157,6 +167,29 @@ pub(super) fn final_response(message: &[u8], arrived: Arrived) -> Final<'_> {
     }
 }
 
+/// A final response read as `R`, exactly: one the decoder cannot read whole is
+/// malformed, short where it ran out of bytes.
+#[cfg_attr(
+    not(test),
+    expect(dead_code, reason = "called by the service calls that follow")
+)]
+pub(super) fn decoded<'d, R>(answer: Final<'d>) -> Response<R>
+where
+    R: Decode<'d, Error = uds_protocol::Error>,
+{
+    match answer {
+        Final::Positive(rest) => match R::decode_exact(rest) {
+            Ok(value) => Response::Positive(value),
+            Err(uds_protocol::Error::InsufficientData(_)) => {
+                Response::Malformed(MalformedResponse::Short)
+            }
+            Err(_) => Response::Malformed(MalformedResponse::Decode),
+        },
+        Final::Negative(code) => Response::Negative(code),
+        Final::Malformed(error) => Response::Malformed(error),
+    }
+}
+
 /// A `ReadDataByIdentifier` response, read against this vocabulary.
 pub(super) fn records<D: DataIdentifier>(answer: Final<'_>) -> Response<Records<'_, D>> {
     match answer {
@@ -201,10 +234,12 @@ pub(super) fn session_timing(answer: Final<'_>) -> Response<SessionTiming> {
 #[cfg(test)]
 mod tests {
     use super::{
-        Arrived, Final, classify, final_response, read_data_by_identifier, session_timing,
+        Arrived, Final, classify, decoded, final_response, read_data_by_identifier,
+        request, session_timing,
     };
     use crate::client::{MalformedResponse, Response};
     use crate::{DataIdentifier, RecordError, SessionTiming};
+    use uds_protocol::NegativeResponseCode;
     use uds_session::{ClientRx, SessionSelection, Solicitation};
 
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -292,6 +327,54 @@ mod tests {
         assert_eq!(
             classify(Some((0x10, Some(0x03))), &[0x50, 0x02], None),
             unsolicited
+        );
+        assert_eq!(
+            classify(Some((0x27, Some(0x01))), &[0x67, 0x02, 0x00, 0x00], None),
+            unsolicited
+        );
+    }
+
+    /// A request is the service identifier then the struct's own bytes, and one the
+    /// buffer cannot hold is refused before anything is sent.
+    #[test]
+    fn a_request_is_encoded_whole_or_not_at_all() {
+        use uds_protocol::{EcuResetRequest, Request, ResetType};
+        let reset = Request::EcuReset(EcuResetRequest::new(false, ResetType::HardReset));
+        let mut buffer = [0; 2];
+        assert_eq!(request(&mut buffer, &reset), Some(2));
+        assert_eq!(buffer, [0x11, 0x01]);
+        let mut short = [0; 1];
+        assert_eq!(request(&mut short, &reset), None);
+    }
+
+    /// A positive reply is decoded exactly; a short one is `Short`, trailing bytes are
+    /// `Decode`, and a negative reply is its code.
+    #[test]
+    fn a_reply_is_decoded_exactly() {
+        use uds_protocol::{EcuResetResponse, ResetType};
+        let whole =
+            decoded::<EcuResetResponse>(final_response(&[0x51, 0x01], Arrived::Whole));
+        assert_eq!(
+            whole,
+            Response::Positive(EcuResetResponse::new(ResetType::HardReset))
+        );
+        assert_eq!(
+            decoded::<EcuResetResponse>(final_response(&[0x51], Arrived::Whole)),
+            Response::Malformed(MalformedResponse::Short)
+        );
+        assert_eq!(
+            decoded::<EcuResetResponse>(final_response(
+                &[0x51, 0x01, 0x05, 0x06],
+                Arrived::Whole
+            )),
+            Response::Malformed(MalformedResponse::Decode)
+        );
+        assert_eq!(
+            decoded::<EcuResetResponse>(final_response(
+                &[0x7F, 0x11, 0x22],
+                Arrived::Whole
+            )),
+            Response::Negative(NegativeResponseCode::from(0x22))
         );
     }
 
