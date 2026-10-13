@@ -104,7 +104,9 @@ lockstep with the rest of the `uds_stack` workspace (`uds_protocol`, `uds_sessio
   `max_seed_len`, `max_key_len`, `max_option_len` and `max_block_len`, and folds the
   client's buffers from them as `uds_server!` folds a server's from its service traits.
   `ClientSet` gains `type Routine`, `const MAX_DIDS_PER_REQUEST` and
-  `const MAX_BLOCK_LEN`, the most data bytes one `TransferData` block carries.
+  `const MAX_BLOCK_LEN`, the most data bytes one `TransferData` block carries. A
+  transport whose `MAX_PDU` cannot carry a request of the declared maxima fails to
+  compile, naming the input.
 
 ### Known limitations
 
