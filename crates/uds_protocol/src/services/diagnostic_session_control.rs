@@ -67,18 +67,25 @@ pub enum DiagnosticSessionType {
     SystemSupplierSpecificSession(u8),
 }
 
-impl From<DiagnosticSessionType> for u8 {
-    #[allow(clippy::match_same_arms)]
-    fn from(value: DiagnosticSessionType) -> Self {
-        match value {
-            DiagnosticSessionType::IsoSaeReserved(value) => value,
-            DiagnosticSessionType::DefaultSession => 0x01,
-            DiagnosticSessionType::ProgrammingSession => 0x02,
-            DiagnosticSessionType::ExtendedDiagnosticSession => 0x03,
-            DiagnosticSessionType::SafetySystemDiagnosticSession => 0x04,
-            DiagnosticSessionType::VehicleManufacturerSpecificSession(value) => value,
-            DiagnosticSessionType::SystemSupplierSpecificSession(value) => value,
+impl DiagnosticSessionType {
+    /// The `diagnosticSessionType` byte (ISO 14229-1:2020 Table 24).
+    #[must_use]
+    pub const fn value(self) -> u8 {
+        match self {
+            Self::IsoSaeReserved(value)
+            | Self::VehicleManufacturerSpecificSession(value)
+            | Self::SystemSupplierSpecificSession(value) => value,
+            Self::DefaultSession => 0x01,
+            Self::ProgrammingSession => 0x02,
+            Self::ExtendedDiagnosticSession => 0x03,
+            Self::SafetySystemDiagnosticSession => 0x04,
         }
+    }
+}
+
+impl From<DiagnosticSessionType> for u8 {
+    fn from(value: DiagnosticSessionType) -> Self {
+        value.value()
     }
 }
 

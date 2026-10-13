@@ -44,18 +44,27 @@ pub struct Entered {
     pub security_relocked: bool,
 }
 
-/// Enter `to`, locking every security level (ISO 14229-1:2020 Annex I transition 6), and
-/// say what that did. With [`restart`], the only places the session field is written; the
-/// macro's hooks call these and nothing else, so `State`'s accessors stay crate-private
-/// and no clause 10.2 logic is emitted into the application's crate.
+/// Enter `to`, locking every security level (ISO 14229-1:2020 Annex I transition 6) and
+/// ending a transfer Figure 7 does not keep, and say what that did. With [`restart`], the
+/// only places the session field is written; the macro's hooks call these and nothing
+/// else, so `State`'s accessors stay crate-private and no clause 10.2 logic is emitted
+/// into the application's crate.
 #[doc(hidden)]
 pub fn transition(state: &mut State, to: DiagnosticSessionType) -> Entered {
     let from = state.session();
     state.set_session(to);
+    let security_relocked = state.lock();
+    // Figure 7 keys 1 and 4 end it in the default session; key 3(iii) keeps it only
+    // where it is supported in the new one. Key 3(ii) is `lock`'s.
+    if matches!(to, DiagnosticSessionType::DefaultSession)
+        || state.transfer().is_some_and(|t| !t.sessions.contains(to))
+    {
+        state.close_transfer();
+    }
     Entered {
         transition: SessionTransition::classify(from, to),
         session: to,
-        security_relocked: state.lock(),
+        security_relocked,
     }
 }
 
@@ -1863,5 +1872,31 @@ mod tests {
             }
         );
         assert_eq!(out.written_bytes(), &[0x7F, 0x11, 0x11]);
+    }
+
+    /// Figure 7 — a transfer is ended on entering the default session (keys 1 and 4) and
+    /// on entering a session it is not available in (key 3(iii)); otherwise it survives.
+    #[test]
+    fn a_session_change_keeps_a_transfer_only_where_figure_7_does() {
+        use crate::state::Transfer;
+        let both = Sessions::of(&[S::ProgrammingSession, S::ExtendedDiagnosticSession]);
+        let opened = || {
+            let mut s = State::INITIAL;
+            let _ = super::transition(&mut s, S::ExtendedDiagnosticSession);
+            s.open_transfer(Transfer::new(both, None, None));
+            s
+        };
+        let mut s = opened();
+        let _ = super::transition(&mut s, S::ProgrammingSession);
+        assert!(
+            s.transfer().is_some(),
+            "available in the new session, ungated"
+        );
+        let mut s = opened();
+        let _ = super::transition(&mut s, S::SafetySystemDiagnosticSession);
+        assert_eq!(s.transfer(), None, "not available in the new session");
+        let mut s = opened();
+        let _ = super::transition(&mut s, S::DefaultSession);
+        assert_eq!(s.transfer(), None, "the default session");
     }
 }
