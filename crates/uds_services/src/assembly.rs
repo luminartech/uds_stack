@@ -461,58 +461,76 @@ macro_rules! __uds_before_length {
 macro_rules! __uds_stage {
     ($self:ident, $state:ident, $out:ident, $req:ident, ReadDataByIdentifier) => {
         if let $crate::Request::ReadDataByIdentifier(ref r) = $req {
-            return $crate::pipeline::read_data_by_identifier($self, r, $out).await;
+            return $crate::pipeline::read_data_by_identifier($self, r, $out)
+                .await
+                .map($crate::Effect::from);
         }
     };
     ($self:ident, $state:ident, $out:ident, $req:ident, DiagnosticSessionControl) => {
         if let $crate::Request::DiagnosticSessionControl(ref r) = $req {
-            return $crate::pipeline::diagnostic_session_control($self, r, $out);
+            return $crate::pipeline::diagnostic_session_control($self, r, $out)
+                .map($crate::Effect::from);
         }
     };
     ($self:ident, $state:ident, $out:ident, $req:ident, TesterPresent) => {
         if let $crate::Request::TesterPresent(_) = $req {
-            return $crate::pipeline::tester_present($self, $out);
+            return $crate::pipeline::tester_present($self, $out).map($crate::Effect::from);
         }
     };
     ($self:ident, $state:ident, $out:ident, $req:ident, EcuReset) => {
         if let $crate::Request::EcuReset(ref r) = $req {
-            return $crate::pipeline::ecu_reset($self, r, $out).await;
+            return $crate::pipeline::ecu_reset($self, r, $out)
+                .await
+                .map($crate::Effect::from);
         }
     };
     ($self:ident, $state:ident, $out:ident, $req:ident, SecurityAccess) => {
         if let $crate::Request::SecurityAccess(ref r) = $req {
-            return $crate::pipeline::security_access($self, $state, r, $out).await;
+            return $crate::pipeline::security_access($self, $state, r, $out)
+                .await
+                .map($crate::Effect::from);
         }
     };
     ($self:ident, $state:ident, $out:ident, $req:ident, ControlDtcSetting) => {
         if let $crate::Request::ControlDtcSetting(ref r) = $req {
-            return $crate::pipeline::control_dtc_setting($self, r, $out).await;
+            return $crate::pipeline::control_dtc_setting($self, r, $out)
+                .await
+                .map($crate::Effect::from);
         }
     };
     ($self:ident, $state:ident, $out:ident, $req:ident, CommunicationControl) => {
         if let $crate::Request::CommunicationControl(ref r) = $req {
-            return $crate::pipeline::communication_control($self, r, $out).await;
+            return $crate::pipeline::communication_control($self, r, $out)
+                .await
+                .map($crate::Effect::from);
         }
     };
     ($self:ident, $state:ident, $out:ident, $req:ident, WriteDataByIdentifier) => {
         if let $crate::Request::WriteDataByIdentifier(ref r) = $req {
             return $crate::pipeline::write_data_by_identifier($self, $state, r, $out)
-                .await;
+                .await
+                .map($crate::Effect::from);
         }
     };
     ($self:ident, $state:ident, $out:ident, $req:ident, ClearDiagnosticInformation) => {
         if let $crate::Request::ClearDiagnosticInfo(ref r) = $req {
-            return $crate::pipeline::clear_diagnostic_information($self, r, $out).await;
+            return $crate::pipeline::clear_diagnostic_information($self, r, $out)
+                .await
+                .map($crate::Effect::from);
         }
     };
     ($self:ident, $state:ident, $out:ident, $req:ident, ReadDtcInformation) => {
         if let $crate::Request::ReadDtcInfo(ref r) = $req {
-            return $crate::pipeline::read_dtc_information($self, r, $out).await;
+            return $crate::pipeline::read_dtc_information($self, r, $out)
+                .await
+                .map($crate::Effect::from);
         }
     };
     ($self:ident, $state:ident, $out:ident, $req:ident, RoutineControl) => {
         if let $crate::Request::RoutineControl(ref r) = $req {
-            return $crate::pipeline::routine_control($self, $state, r, $out).await;
+            return $crate::pipeline::routine_control($self, $state, r, $out)
+                .await
+                .map($crate::Effect::from);
         }
     };
     ($self:ident, $state:ident, $out:ident, $req:ident, $svc:ident) => {};

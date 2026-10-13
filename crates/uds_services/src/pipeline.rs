@@ -10,7 +10,7 @@
 //! `uds_session::Ai`, which ISO 14229-1:2020 clause 7.4.1 makes a mandatory parameter of
 //! every application layer service primitive anyway.
 
-use crate::services::SessionTransition;
+use crate::services::{Effect, SessionTransition};
 use crate::state::State;
 use crate::{Access, Responded, ResponseSink, Sessions, Unsettled};
 use crate::{
@@ -363,7 +363,9 @@ pub fn settle(
 ) -> Responded {
     // ``UDSSVC_ARCH_0005`` — no service identifier: complete, and no rule reaches it.
     let Some((settling, outcome)) = unsettled.parts() else {
-        return Responded::Suppressed { session: None };
+        return Responded::Suppressed {
+            effect: Effect::None,
+        };
     };
     let Settling { sid, suppress_bit } = settling;
     let outcome = if out.refused() {
@@ -372,18 +374,20 @@ pub fn settle(
         outcome
     };
     match outcome {
-        Ok(session) => {
+        Ok(effect) => {
             // Rule 2: the bit silences positive responses; rule 3: not after a 0x78.
             if suppress_bit && !pending_sent {
-                Responded::Suppressed { session }
+                Responded::Suppressed { effect }
             } else {
-                Responded::Yes { session }
+                Responded::Yes { effect }
             }
         }
         Err(nrc) => {
             // Rule 1, overridden by rule 3.
             if suppresses(nrc, ai) && !pending_sent {
-                return Responded::Suppressed { session: None };
+                return Responded::Suppressed {
+                    effect: Effect::None,
+                };
             }
             out.rewind();
             // `NegativeResponse::encode` writes `[sid, nrc]`; the 0x7F service byte is
@@ -392,7 +396,9 @@ pub fn settle(
             // `ResponseSink::new` holds the bound to it.
             let _ = out.write_all(&[0x7F]);
             let _ = NegativeResponse::new_with_sid(sid, nrc).encode(out);
-            Responded::Yes { session: None }
+            Responded::Yes {
+                effect: Effect::None,
+            }
         }
     }
 }
@@ -969,6 +975,7 @@ mod tests {
         Settling, Stage, allowed_in_session, begin, session_access, settle, suppresses,
         zero_sub_function,
     };
+    use crate::services::Effect;
     use crate::state::{ProtocolState, State};
     use crate::{Access, Sessions};
     use crate::{Responded, ResponseSink, Unsettled};
@@ -1613,7 +1620,12 @@ mod tests {
             false,
             &mut out,
         );
-        assert_eq!(r, Responded::Suppressed { session: None });
+        assert_eq!(
+            r,
+            Responded::Suppressed {
+                effect: Effect::None
+            }
+        );
         assert_eq!(out.written_bytes(), &[0_u8; 0]);
         let r = settle(
             ai(TaType::Physical),
@@ -1621,7 +1633,12 @@ mod tests {
             false,
             &mut out,
         );
-        assert_eq!(r, Responded::Yes { session: None });
+        assert_eq!(
+            r,
+            Responded::Yes {
+                effect: Effect::None
+            }
+        );
         assert_eq!(out.written_bytes(), &[0x7F, 0x10, 0x7E]);
     }
 
@@ -1670,7 +1687,12 @@ mod tests {
             false,
             &mut out,
         );
-        assert_eq!(r, Responded::Yes { session: None });
+        assert_eq!(
+            r,
+            Responded::Yes {
+                effect: Effect::None
+            }
+        );
         assert_eq!(out.written_bytes(), &[0x7F, 0x22, 0x31]);
     }
 
@@ -1685,14 +1707,24 @@ mod tests {
             false,
             &mut out,
         );
-        assert_eq!(r, Responded::Suppressed { session: None });
+        assert_eq!(
+            r,
+            Responded::Suppressed {
+                effect: Effect::None
+            }
+        );
         let r = settle(
             ai(TaType::Functional),
             Unsettled::handled(sid(0x22), Err(N::RequestOutOfRange)),
             true,
             &mut out,
         );
-        assert_eq!(r, Responded::Yes { session: None });
+        assert_eq!(
+            r,
+            Responded::Yes {
+                effect: Effect::None
+            }
+        );
     }
 
     /// `settle`: rule 2 — the suppress bit silences a positive response only.
@@ -1707,14 +1739,14 @@ mod tests {
         };
         let r = settle(
             ai(TaType::Physical),
-            Unsettled::handled(bit, Ok(Some(S::ExtendedDiagnosticSession))),
+            Unsettled::handled(bit, Ok(Effect::Session(S::ExtendedDiagnosticSession))),
             false,
             &mut out,
         );
         assert_eq!(
             r,
             Responded::Suppressed {
-                session: Some(S::ExtendedDiagnosticSession)
+                effect: Effect::Session(S::ExtendedDiagnosticSession)
             }
         );
         let r = settle(
@@ -1723,7 +1755,12 @@ mod tests {
             false,
             &mut out,
         );
-        assert_eq!(r, Responded::Yes { session: None });
+        assert_eq!(
+            r,
+            Responded::Yes {
+                effect: Effect::None
+            }
+        );
     }
 
     /// ``UDSSVC_ARCH_0017`` — a refused write becomes 0x14 whatever the handler said.
@@ -1734,11 +1771,16 @@ mod tests {
         let _ = out.write_all(&[0x62, 0xF1, 0x90, 1, 2]);
         let r = settle(
             ai(TaType::Physical),
-            Unsettled::handled(sid(0x22), Ok(None)),
+            Unsettled::handled(sid(0x22), Ok(Effect::None)),
             false,
             &mut out,
         );
-        assert_eq!(r, Responded::Yes { session: None });
+        assert_eq!(
+            r,
+            Responded::Yes {
+                effect: Effect::None
+            }
+        );
         assert_eq!(out.written_bytes(), &[0x7F, 0x22, 0x14]);
     }
 
@@ -1753,7 +1795,7 @@ mod tests {
             sid: 0x10,
             suppress_bit: true,
         };
-        let outcome = Ok(Some(S::ExtendedDiagnosticSession));
+        let outcome = Ok(Effect::Session(S::ExtendedDiagnosticSession));
         let r = settle(
             ai(TaType::Physical),
             Unsettled::handled(bit, outcome),
@@ -1763,7 +1805,7 @@ mod tests {
         assert_eq!(
             r,
             Responded::Yes {
-                session: Some(S::ExtendedDiagnosticSession)
+                effect: Effect::Session(S::ExtendedDiagnosticSession)
             }
         );
         assert_eq!(out.written_bytes(), &[0x50, 0x03, 0, 50, 1, 244]);
@@ -1782,7 +1824,12 @@ mod tests {
                 pending_sent,
                 &mut out,
             );
-            assert_eq!(r, Responded::Suppressed { session: None });
+            assert_eq!(
+                r,
+                Responded::Suppressed {
+                    effect: Effect::None
+                }
+            );
             assert_eq!(out.written_bytes(), &[0_u8; 0]);
         }
     }
@@ -1795,9 +1842,19 @@ mod tests {
         let mut out = ResponseSink::new(&mut buf, None);
         let refused = Unsettled::refused(0x11, N::ServiceNotSupported);
         let r = settle(ai(TaType::Functional), refused, false, &mut out);
-        assert_eq!(r, Responded::Suppressed { session: None });
+        assert_eq!(
+            r,
+            Responded::Suppressed {
+                effect: Effect::None
+            }
+        );
         let r = settle(ai(TaType::Physical), refused, false, &mut out);
-        assert_eq!(r, Responded::Yes { session: None });
+        assert_eq!(
+            r,
+            Responded::Yes {
+                effect: Effect::None
+            }
+        );
         assert_eq!(out.written_bytes(), &[0x7F, 0x11, 0x11]);
     }
 }

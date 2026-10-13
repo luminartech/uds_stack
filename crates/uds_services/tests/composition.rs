@@ -644,7 +644,12 @@ fn the_assembled_dispatch_answers_a_read() {
         &mut out,
     ));
     let r = settle(ai, unsettled, false, &mut out);
-    assert_eq!(r, uds_services::Responded::Yes { session: None });
+    assert_eq!(
+        r,
+        uds_services::Responded::Yes {
+            effect: uds_services::Effect::None
+        }
+    );
     assert_eq!(out.written_bytes(), &[0x62, 0xF4, 0x0D, 0x40]);
 }
 
@@ -666,7 +671,12 @@ fn unsupported_services_settle_0x11_or_silence() {
     let unsettled =
         block_on(ecu.dispatch(&mut state, phys, Received::Whole(&[0x11, 0x01]), &mut out));
     let r = settle(phys, unsettled, false, &mut out);
-    assert_eq!(r, uds_services::Responded::Yes { session: None });
+    assert_eq!(
+        r,
+        uds_services::Responded::Yes {
+            effect: uds_services::Effect::None
+        }
+    );
     assert_eq!(out.written_bytes(), &[0x7F, 0x11, 0x11]);
     // Listed, so `begin` passes it; no stage, so the fall-through settles it. Table 23
     // refuses the transfer services in the default session, so it is asked from another.
@@ -679,7 +689,12 @@ fn unsupported_services_settle_0x11_or_silence() {
     let unsettled =
         block_on(ecu.dispatch(&mut extended, phys, Received::Whole(&request), &mut out));
     let r = settle(phys, unsettled, false, &mut out);
-    assert_eq!(r, uds_services::Responded::Yes { session: None });
+    assert_eq!(
+        r,
+        uds_services::Responded::Yes {
+            effect: uds_services::Effect::None
+        }
+    );
     assert_eq!(out.written_bytes(), &[0x7F, 0x36, 0x11]);
     let func = Ai {
         ta_type: TaType::Functional,
@@ -688,7 +703,12 @@ fn unsupported_services_settle_0x11_or_silence() {
     let unsettled =
         block_on(ecu.dispatch(&mut state, func, Received::Whole(&[0x11, 0x01]), &mut out));
     let r = settle(func, unsettled, false, &mut out);
-    assert_eq!(r, uds_services::Responded::Suppressed { session: None });
+    assert_eq!(
+        r,
+        uds_services::Responded::Suppressed {
+            effect: uds_services::Effect::None
+        }
+    );
 }
 
 /// Figure 5's `serviceNotSupportedInActiveSession` (0x7F) precedes
@@ -710,6 +730,11 @@ fn an_over_long_request_for_a_service_not_in_this_session_is_refused_0x7f() {
     let truncated = Received::Truncated(&[0x27, 0x02, 0, 0, 0, 0]);
     let unsettled = block_on(ecu.dispatch(&mut state, phys, truncated, &mut out));
     let r = settle(phys, unsettled, false, &mut out);
-    assert_eq!(r, uds_services::Responded::Yes { session: None });
+    assert_eq!(
+        r,
+        uds_services::Responded::Yes {
+            effect: uds_services::Effect::None
+        }
+    );
     assert_eq!(out.written_bytes(), &[0x7F, 0x27, 0x7F]);
 }

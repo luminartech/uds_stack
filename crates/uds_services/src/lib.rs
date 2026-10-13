@@ -179,7 +179,7 @@ pub use identifier::{DataIdentifier, RecordError, RoutineIdentifier};
 pub mod services;
 pub use services::{
     ClearDiagnosticInformation, CommunicationControl, ControlDtcSetting, DataTransfer,
-    Delay, DiagnosticSessionControl, DtcReportKind, EcuReset, KeyVerdict,
+    Delay, DiagnosticSessionControl, DtcReportKind, EcuReset, Effect, KeyVerdict,
     ReadDataByIdentifier, ReadDtcInformation, Received, Responded, RoutineControl,
     SecurityAccess, SecurityLevel, SecurityPolicy, ServiceSet, SessionTiming,
     SessionTransition, TesterPresent, TransferRequest, Unsettled, WriteDataByIdentifier,

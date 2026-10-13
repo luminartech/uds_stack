@@ -13,14 +13,14 @@
 use crate::pipeline::settle;
 use crate::select::{Either, select2};
 use crate::services::session::selection_of;
-use crate::services::{Responded, ServiceSet};
+use crate::services::{Effect, Responded, ServiceSet};
 use crate::state::ProtocolState;
 use crate::storage::{Buffers, Storage};
 use crate::transport::{TransportEvent, UdsTransport};
 use crate::{AfterSend, Received, ResponseSink, Unsettled};
 use core::future::Future;
 use core::pin::Pin;
-use uds_protocol::{DiagnosticSessionType, NegativeResponseCode, UdsServiceType};
+use uds_protocol::{NegativeResponseCode, UdsServiceType};
 pub use uds_session::ServerParams;
 use uds_session::{
     Address, Ai, Association, Cause, Rejection, SResult, Server as SessionServer,
@@ -350,10 +350,10 @@ async fn retime<A: ServiceSet, T: UdsTransport, const PEERS: usize>(
     Ok(())
 }
 
-/// The `DiagnosticSessionControl` response in flight: its session takes effect on the
-/// `Confirm` that reports it sent (``UDSS_LLR_0085``). One slot: a server
-/// answers one request at a time (``UDSS_LLR_0108``), so with one peer one selecting
-/// response is in flight at most.
+/// The response in flight that carries an effect, such as a `DiagnosticSessionControl`
+/// response's session: the effect takes place on the `Confirm` that reports it sent
+/// (``UDSS_LLR_0085``). One slot: a server answers one request at a time
+/// (``UDSS_LLR_0108``), so with one peer one such response is in flight at most.
 ///
 /// **Milestone 1 accepts `peers = 1` only** ([`Server::new`] fails to compile for any
 /// other `PEERS`). A server answers one request at a time, but a response awaiting its
@@ -365,8 +365,8 @@ async fn retime<A: ServiceSet, T: UdsTransport, const PEERS: usize>(
 struct Pending {
     /// The response's addressing, exactly as submitted: `t_data_conf` matches by it.
     ai: Ai,
-    /// The session the response selected.
-    selected: DiagnosticSessionType,
+    /// What the response does once confirmed.
+    effect: Effect,
 }
 
 /// Where a response to `request` goes: the request went tester -> ECU, the response goes
@@ -395,8 +395,8 @@ const fn reply_address(own: Address, request: Ai) -> Ai {
 struct Deferred {
     /// `tS3_Server` expired (``UDSS_LLR_0100``).
     timed_out: bool,
-    /// A selecting response was confirmed sent, or its suppression completed.
-    confirmed: Option<DiagnosticSessionType>,
+    /// A response with an effect was confirmed sent, or its suppression completed.
+    confirmed: Option<Effect>,
 }
 
 impl Deferred {
@@ -494,7 +494,7 @@ async fn drain<'d, T: UdsTransport, const PEERS: usize>(
                 {
                     *pending = None;
                     if result == SResult::Ok {
-                        found.deferred.confirmed = Some(p.selected);
+                        found.deferred.confirmed = Some(p.effect);
                     }
                 }
             }
@@ -527,7 +527,7 @@ fn apply<A: ServiceSet>(services: &mut A, state: &mut A::State, d: Deferred) {
     if d.timed_out {
         services.session_timed_out(state);
     }
-    if let Some(selected) = d.confirmed {
+    if let Some(Effect::Session(selected)) = d.confirmed {
         services.session_confirmed(state, selected);
     }
 }
@@ -573,10 +573,12 @@ impl Serving {
     /// `services` leave the running software to enter.
     fn leaving_if<A: ServiceSet>(self, services: &A, served: &Served) -> Self {
         Self {
-            leaving: served
-                .selected()
-                .filter(|&selected| services.leaves_running_software(selected))
-                .map(|_| self.reply_to),
+            leaving: match served.effect() {
+                Effect::Session(selected) if services.leaves_running_software(selected) => {
+                    Some(self.reply_to)
+                }
+                _ => None,
+            },
             ..self
         }
     }
@@ -592,13 +594,14 @@ enum Ended {
 }
 
 impl Served {
-    /// The session the handler's outcome selects, where it finished and selects one.
-    fn selected(&self) -> Option<DiagnosticSessionType> {
+    /// The handler's effect, where it finished positively.
+    fn effect(&self) -> Effect {
         match self.ended {
             Ended::Finished(unsettled) => unsettled
                 .parts()
-                .and_then(|(_, outcome)| outcome.ok().flatten()),
-            Ended::Closed => None,
+                .and_then(|(_, outcome)| outcome.ok())
+                .unwrap_or(Effect::None),
+            Ended::Closed => Effect::None,
         }
     }
 }
@@ -799,7 +802,9 @@ async fn conclude<A: ServiceSet, T: UdsTransport, const PEERS: usize>(
             )
             .await
         }
-        Ended::Closed => complete(session, transport, pending, serving.ai, None).await,
+        Ended::Closed => {
+            complete(session, transport, pending, serving.ai, Effect::None).await
+        }
     }
 }
 
@@ -825,14 +830,13 @@ async fn answer<A: ServiceSet, T: UdsTransport, const PEERS: usize>(
     serving: Serving,
     response: &[u8],
 ) -> Result<Deferred, T::Error> {
-    let selected = match outcome {
-        Responded::Yes { session: selected } => selected,
-        Responded::Suppressed { session: selected } => {
-            return complete(session, transport, pending, serving.ai, selected).await;
-        }
-    };
+    let effect = outcome.effect();
+    if let Responded::Suppressed { .. } = outcome {
+        return complete(session, transport, pending, serving.ai, effect).await;
+    }
     let now = transport.now();
-    let reaction = final_response(session, now, serving.reply_to, response, selected);
+    let reaction =
+        final_response(session, now, serving.reply_to, response, selection(effect));
     // milestone-1 limit: an `Err` at any `?` below drops what was recorded; see
     // `Server::step`'s doc.
     let mut d = drain(reaction, transport, pending, serving.leaving).await?;
@@ -850,12 +854,14 @@ async fn answer<A: ServiceSet, T: UdsTransport, const PEERS: usize>(
         );
         let Some(waited) = waited.await? else {
             // The link closed first, as in `serve`'s `Ended::Closed`.
-            let closed = complete(session, transport, pending, serving.ai, None).await?;
+            let closed =
+                complete(session, transport, pending, serving.ai, Effect::None).await?;
             return Ok(deferred.merge(closed));
         };
         deferred = deferred.merge(waited);
         let now = transport.now();
-        let reaction = final_response(session, now, serving.reply_to, response, selected);
+        let reaction =
+            final_response(session, now, serving.reply_to, response, selection(effect));
         d = drain(reaction, transport, pending, serving.leaving).await?;
         deferred = deferred.merge(d.deferred);
     }
@@ -864,10 +870,10 @@ async fn answer<A: ServiceSet, T: UdsTransport, const PEERS: usize>(
         // leaves a pending selection behind, and never disturbs one already in
         // flight. `reply_to` is the association `t_data_conf` will match.
         None => {
-            if let Some(selected) = selected {
+            if effect != Effect::None {
                 *pending = Some(Pending {
                     ai: serving.reply_to,
-                    selected,
+                    effect,
                 });
             }
         }
@@ -886,7 +892,7 @@ fn final_response<'s, 'd, const PEERS: usize>(
     now: Timestamp,
     reply_to: Ai,
     response: &'d [u8],
-    selected: Option<DiagnosticSessionType>,
+    selection: Option<uds_session::SessionSelection>,
 ) -> uds_session::ServerReaction<'s, 'd, PEERS> {
     session.s_data_req(
         now,
@@ -894,9 +900,18 @@ fn final_response<'s, 'd, const PEERS: usize>(
         response,
         ServerTx::FinalResponse {
             solicitation: Solicitation::Solicited,
-            session: selected.map(selection_of),
+            session: selection,
         },
     )
+}
+
+/// The session the session layer is told a response or completion report selects
+/// (``UDSS_LLR_0085``/``0086``).
+fn selection(effect: Effect) -> Option<uds_session::SessionSelection> {
+    match effect {
+        Effect::Session(session) => Some(selection_of(session)),
+        Effect::None => None,
+    }
 }
 
 /// ``UDSS_LLR_0074`` — report a request complete with no response, and with it the
@@ -909,17 +924,17 @@ async fn complete<T: UdsTransport, const PEERS: usize>(
     transport: &mut T,
     pending: &mut Option<Pending>,
     ai: Ai,
-    selected: Option<DiagnosticSessionType>,
+    effect: Effect,
 ) -> Result<Deferred, T::Error> {
     let now = transport.now();
     let class = ServerRx::Request {
-        session: selected.map(selection_of),
+        session: selection(effect),
     };
     let reaction = session.completion_report(now, ai, class);
     let d = drain(reaction, transport, pending, None).await?;
     Ok(d.deferred.merge(Deferred {
         timed_out: false,
-        confirmed: selected,
+        confirmed: (effect != Effect::None).then_some(effect),
     }))
 }
 
@@ -1098,6 +1113,7 @@ async fn submit_pending<T: UdsTransport, const PEERS: usize>(
 mod tests {
     use super::{Deferred, after_send};
     use crate::AfterSend;
+    use crate::services::Effect;
     use uds_protocol::DiagnosticSessionType as S;
     use uds_session::{Address, Ai, Mtype, TaType};
 
@@ -1148,7 +1164,7 @@ mod tests {
     const fn confirm(session: S) -> Deferred {
         Deferred {
             timed_out: false,
-            confirmed: Some(session),
+            confirmed: Some(Effect::Session(session)),
         }
     }
 
@@ -1169,7 +1185,10 @@ mod tests {
     fn a_later_confirmation_after_a_timeout_keeps_both() {
         let merged = TIMEOUT.merge(confirm(S::ExtendedDiagnosticSession));
         assert!(merged.timed_out);
-        assert_eq!(merged.confirmed, Some(S::ExtendedDiagnosticSession));
+        assert_eq!(
+            merged.confirmed,
+            Some(Effect::Session(S::ExtendedDiagnosticSession))
+        );
     }
 
     /// Of two confirmations, the later is the session in force.
@@ -1178,6 +1197,6 @@ mod tests {
         let merged =
             confirm(S::ExtendedDiagnosticSession).merge(confirm(S::DefaultSession));
         assert!(!merged.timed_out);
-        assert_eq!(merged.confirmed, Some(S::DefaultSession));
+        assert_eq!(merged.confirmed, Some(Effect::Session(S::DefaultSession)));
     }
 }
