@@ -384,9 +384,10 @@ pub(super) fn request_transfer_exit(
     request(buffer, &Request::RequestTransferExit(exit))
 }
 
-/// A `maxNumberOfBlockLength` as a number, `None` where it is wider than eight bytes.
+/// A `maxNumberOfBlockLength` as a number, `None` where it is empty or wider than eight
+/// bytes.
 pub(super) fn block_length(bytes: &[u8]) -> Option<u64> {
-    if bytes.len() > 8 {
+    if bytes.is_empty() || bytes.len() > 8 {
         return None;
     }
     Some(bytes.iter().fold(0_u64, |n, b| (n << 8) | u64::from(*b)))
@@ -560,6 +561,8 @@ mod tests {
     #[test]
     fn a_block_length_is_read_as_a_number() {
         assert_eq!(block_length(&[0x04, 0x00]), Some(0x0400));
+        assert_eq!(block_length(&[0xFF; 8]), Some(u64::MAX));
         assert_eq!(block_length(&[1; 9]), None);
+        assert_eq!(block_length(&[]), None);
     }
 }

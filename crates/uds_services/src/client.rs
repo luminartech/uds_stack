@@ -1205,8 +1205,8 @@ impl<
     /// # Errors
     ///
     /// [`ClientError::Request`] where `address` is wider than five bytes; otherwise as
-    /// [`Self::read_data_by_identifier`]'s. A block length wider than eight bytes is
-    /// [`MalformedResponse::Decode`].
+    /// [`Self::read_data_by_identifier`]'s. A block length that is empty or wider than
+    /// eight bytes is [`MalformedResponse::Decode`].
     ///
     /// # Cancel safety
     ///
