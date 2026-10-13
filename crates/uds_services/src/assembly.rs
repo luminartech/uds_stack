@@ -633,7 +633,7 @@ macro_rules! __uds_stage {
 /// [`sessions`]: crate::SecurityAccess::sessions
 /// [`EcuReset`]: crate::EcuReset
 ///
-// The syntax is `Ecu: ..; transport = T, ..` rather than `Ecu over T: ..` because
+/// The syntax is `Ecu: ..; transport = T, ..` rather than `Ecu over T: ..` because
 /// `$ty:ty` cannot be followed by a bare identifier — the legal followers are
 /// `{ [ => , > = : ; | as where`.
 ///

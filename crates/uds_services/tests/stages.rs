@@ -622,6 +622,9 @@ impl DataTransfer for Ecu {
             TransferRequest::Download {
                 address: 0x3000, ..
             } => Some(only_in(S::ProgrammingSession)),
+            TransferRequest::Download {
+                address: 0x5000, ..
+            } => Some(everywhere()),
             _ => None,
         }
     }
@@ -2789,5 +2792,49 @@ fn figure_7_decides_what_a_session_or_level_change_leaves_of_a_transfer() {
         exchange(&mut ecu, &mut locked, &BLOCKS[0]).as_deref(),
         Some(&[0x7F, 0x36, 0x24][..]),
         "Annex I transition 10"
+    );
+}
+
+/// Figure 7 key 3(iii) — a transfer stays only in the sessions of `Access::sessions`
+/// intersected with `DataTransfer::SESSIONS`. A region available only in the programming
+/// session ends when the session changes to the extended one, though a session change
+/// to a session the service allows would otherwise leave an ungated transfer open; and a
+/// region available everywhere ends on entering the safety system session, which
+/// `SESSIONS` excludes, so it is gone on returning to the programming session.
+#[test]
+fn a_transfer_stays_only_in_the_sessions_both_the_region_and_the_service_allow() {
+    let mut ecu = Ecu::default();
+    let mut state = in_session(&mut ecu, S::ProgrammingSession);
+    assert_eq!(
+        exchange(
+            &mut ecu,
+            &mut state,
+            &[0x34, 0x00, 0x22, 0x30, 0x00, 0x00, 0x18]
+        )
+        .as_deref(),
+        Some(&DOWNLOAD_ACCEPTED[..])
+    );
+    ecu.session_confirmed(&mut state, S::ExtendedDiagnosticSession);
+    assert_eq!(
+        exchange(&mut ecu, &mut state, &BLOCKS[0]).as_deref(),
+        Some(&[0x7F, 0x36, 0x24][..]),
+        "0x3000 is the programming session's only"
+    );
+    let mut state = extended(&mut ecu);
+    assert_eq!(
+        exchange(
+            &mut ecu,
+            &mut state,
+            &[0x34, 0x00, 0x22, 0x50, 0x00, 0x00, 0x18]
+        )
+        .as_deref(),
+        Some(&DOWNLOAD_ACCEPTED[..])
+    );
+    ecu.session_confirmed(&mut state, S::SafetySystemDiagnosticSession);
+    ecu.session_confirmed(&mut state, S::ProgrammingSession);
+    assert_eq!(
+        exchange(&mut ecu, &mut state, &BLOCKS[0]).as_deref(),
+        Some(&[0x7F, 0x36, 0x24][..]),
+        "SESSIONS narrows an everywhere region"
     );
 }
