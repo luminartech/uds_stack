@@ -32,9 +32,11 @@ use driver::{Answered, Book, Exchange};
 #[cfg(doc)]
 use crate::UdsTransport;
 use uds_protocol::{
-    ClearDiagnosticInfoResponse, DtcRecord, EcuResetResponse, NegativeResponseCode,
-    ReadDtcInfoResponse, ReadDtcInfoSubFunction, ResetType, RoutineControlResponse,
-    RoutineControlSubFunction, SecurityAccessResponse, WriteDataByIdentifierResponse,
+    ClearDiagnosticInfoResponse, CommunicationControlResponse, CommunicationControlType,
+    CommunicationType, ControlDtcSettingResponse, DtcRecord, DtcSettingType,
+    EcuResetResponse, NegativeResponseCode, ReadDtcInfoResponse, ReadDtcInfoSubFunction,
+    ResetType, RoutineControlResponse, RoutineControlSubFunction, SecurityAccessResponse,
+    SubnetNumber, WriteDataByIdentifierResponse,
 };
 use uds_session::{
     Address, ChannelAddressing, ChannelParameter, ChannelParams, ClientTx,
@@ -85,8 +87,10 @@ pub enum ClientError<E> {
     Closed,
     /// Every channel slot was in use, and none was idle enough to withdraw.
     NoChannel,
-    /// The request named no identifier, or more than the client's
-    /// `max_dids_per_request`; nothing was sent.
+    /// The request could not be formed or does not fit the request buffer: it names no
+    /// identifier or more than the client's `max_dids_per_request`, a record is empty
+    /// where the service requires one, a node identifier disagrees with the control
+    /// type, or an address is wider than its format admits. Nothing was sent.
     Request,
 }
 
@@ -98,7 +102,9 @@ impl<E: core::fmt::Debug> core::fmt::Display for ClientError<E> {
             Self::NotSent => f.write_str("the request could not be sent"),
             Self::Closed => f.write_str("the connection closed before the response"),
             Self::NoChannel => f.write_str("no channel slot is free"),
-            Self::Request => f.write_str("the request names no identifier, or too many"),
+            Self::Request => {
+                f.write_str("the request could not be formed, or does not fit")
+            }
         }
     }
 }
@@ -1066,6 +1072,100 @@ impl<
                 message,
                 answered.arrived,
             ))
+            .map(|_| ()),
+        )
+    }
+
+    /// Enable or disable `target`'s transmission and reception on a communication type
+    /// (ISO 14229-1:2020 10.5).
+    ///
+    /// # Arguments
+    ///
+    /// * `target` - the server's address.
+    /// * `control` - what to enable or disable.
+    /// * `communication` - which messages it applies to.
+    /// * `subnet` - which subnet, or all.
+    /// * `node_id` - the node, for the two enhanced-address control types only.
+    ///
+    /// # Errors
+    ///
+    /// [`ClientError::Request`] where `node_id` is given for a plain control type or
+    /// missing for an enhanced-address one; otherwise as
+    /// [`Self::read_data_by_identifier`]'s.
+    ///
+    /// # Cancel safety
+    ///
+    /// As [`Self::read_data_by_identifier`]'s.
+    pub async fn communication_control(
+        &mut self,
+        target: Address,
+        control: CommunicationControlType,
+        communication: CommunicationType,
+        subnet: SubnetNumber,
+        node_id: Option<u16>,
+    ) -> Result<Response<()>, ClientError<T::Error>> {
+        let answered = self
+            .exchange_with(
+                target,
+                |request| {
+                    encode::communication_control(
+                        request,
+                        control,
+                        communication,
+                        subnet,
+                        node_id,
+                    )
+                },
+                None,
+            )
+            .await?;
+        let message = answered_bytes(&mut self.store, &answered);
+        Ok(
+            encode::decoded::<CommunicationControlResponse>(encode::final_response(
+                message,
+                answered.arrived,
+            ))
+            .echoing(|r| r.control_type == control)
+            .map(|_| ()),
+        )
+    }
+
+    /// Turn `target`'s DTC setting on or off (ISO 14229-1:2020 10.9).
+    ///
+    /// # Arguments
+    ///
+    /// * `target` - the server's address.
+    /// * `setting` - on, off, or a manufacturer's own.
+    /// * `option_record` - the `DTCSettingControlOptionRecord`, possibly empty.
+    ///
+    /// # Errors
+    ///
+    /// [`ClientError::Request`] where the record does not fit the request buffer;
+    /// otherwise as [`Self::read_data_by_identifier`]'s.
+    ///
+    /// # Cancel safety
+    ///
+    /// As [`Self::read_data_by_identifier`]'s.
+    pub async fn control_dtc_setting(
+        &mut self,
+        target: Address,
+        setting: DtcSettingType,
+        option_record: &[u8],
+    ) -> Result<Response<()>, ClientError<T::Error>> {
+        let answered = self
+            .exchange_with(
+                target,
+                |request| encode::control_dtc_setting(request, setting, option_record),
+                None,
+            )
+            .await?;
+        let message = answered_bytes(&mut self.store, &answered);
+        Ok(
+            encode::decoded::<ControlDtcSettingResponse>(encode::final_response(
+                message,
+                answered.arrived,
+            ))
+            .echoing(|r| r.setting == setting)
             .map(|_| ()),
         )
     }

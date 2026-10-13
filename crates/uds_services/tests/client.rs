@@ -11,12 +11,13 @@ use common::{Script, Step, block_on};
 use core::future::Future;
 use core::task::Poll;
 use uds_services::{
-    Address, Ai, Answer, CLEAR_ALL_DTCS, ClientError, ClientTiming, DataIdentifier,
-    DiagnosticSessionType, DtcRecord, DtcSnapshotRecordNumber, DtcStatusMask,
-    FunctionalKeepAlive, KeepAlive, MalformedResponse, Mtype, NegativeResponseCode,
-    PhysicalKeepAlive, ReadDtcInfoResponse, ReadDtcInfoSubFunction, RecordError, Reloads,
-    ResetType, Response, RoutineControlSubFunction, RoutineIdentifier, SResult,
-    SecurityLevel, SessionTiming, TaType, Timestamp, uds_client,
+    Address, Ai, Answer, CLEAR_ALL_DTCS, ClientError, ClientTiming,
+    CommunicationControlType, CommunicationType, DataIdentifier, DiagnosticSessionType,
+    DtcRecord, DtcSettingType, DtcSnapshotRecordNumber, DtcStatusMask, FunctionalKeepAlive,
+    KeepAlive, MalformedResponse, Mtype, NegativeResponseCode, PhysicalKeepAlive,
+    ReadDtcInfoResponse, ReadDtcInfoSubFunction, RecordError, Reloads, ResetType, Response,
+    RoutineControlSubFunction, RoutineIdentifier, SResult, SecurityLevel, SessionTiming,
+    SubnetNumber, TaType, Timestamp, uds_client,
 };
 use uds_session::TransportError;
 
@@ -1997,5 +1998,91 @@ fn a_clear_is_confirmed_bare() {
     assert_eq!(
         t.transport().addressed(1),
         (Some(to(ECU)), &[0x14, 0xFF, 0xFF, 0xFF, 0x01][..])
+    );
+}
+
+/// `CommunicationControl` (10.5) is its type, the communication type and subnet byte,
+/// and for an enhanced-address type the node identifier; its response echoes the type.
+#[test]
+fn communication_is_controlled_with_or_without_a_node() {
+    let mut t = tester(&[
+        Step::Conf(to(ECU), SResult::Ok),
+        Step::Ind(from(ECU), &[0x68, 0x00]),
+        Step::Conf(to(ECU), SResult::Ok),
+        Step::Ind(from(ECU), &[0x68, 0x04]),
+    ]);
+    assert_eq!(
+        block_on(t.communication_control(
+            ECU,
+            CommunicationControlType::EnableRxAndTx,
+            CommunicationType::Normal,
+            SubnetNumber::AllConnectedNetworks,
+            None,
+        )),
+        Ok(Response::Positive(()))
+    );
+    assert_eq!(
+        block_on(t.communication_control(
+            ECU,
+            CommunicationControlType::EnableRxAndDisableTxWithEnhancedAddressInfo,
+            CommunicationType::Normal,
+            SubnetNumber::AllConnectedNetworks,
+            Some(0x1234),
+        )),
+        Ok(Response::Positive(()))
+    );
+    assert_eq!(
+        t.transport().addressed(0),
+        (Some(to(ECU)), &[0x28, 0x00, 0x01][..])
+    );
+    assert_eq!(
+        t.transport().addressed(1),
+        (Some(to(ECU)), &[0x28, 0x04, 0x01, 0x12, 0x34][..])
+    );
+}
+
+/// A node identifier for a plain type, or none for an enhanced one, cannot be encoded
+/// and sends nothing.
+#[test]
+fn a_node_that_disagrees_with_the_type_sends_nothing() {
+    let mut t = tester(&[]);
+    assert_eq!(
+        block_on(t.communication_control(
+            ECU,
+            CommunicationControlType::EnableRxAndTx,
+            CommunicationType::Normal,
+            SubnetNumber::AllConnectedNetworks,
+            Some(1),
+        )),
+        Err(ClientError::Request)
+    );
+    assert_eq!(
+        block_on(t.communication_control(
+            ECU,
+            CommunicationControlType::EnableRxAndTxWithEnhancedAddressInfo,
+            CommunicationType::Normal,
+            SubnetNumber::AllConnectedNetworks,
+            None,
+        )),
+        Err(ClientError::Request)
+    );
+    assert!(t.transport().finished());
+}
+
+/// `ControlDTCSetting` (10.9) is the setting then the option record, echoed by the
+/// setting.
+#[test]
+fn dtc_setting_is_controlled() {
+    let mut t = tester(&[
+        Step::Conf(to(ECU), SResult::Ok),
+        Step::Ind(from(ECU), &[0xC5, 0x02]),
+    ]);
+    assert_eq!(
+        block_on(t.control_dtc_setting(ECU, DtcSettingType::Off, &[0x01, 0x02])),
+        Ok(Response::Positive(()))
+    );
+    assert_eq!(
+        t.transport().addressed(0),
+        (Some(to(ECU)), &[0x85, 0x02, 0x01, 0x02][..])
     );
 }

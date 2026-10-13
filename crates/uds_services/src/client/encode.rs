@@ -8,10 +8,12 @@ use super::{Answer, MalformedResponse, Records, Response};
 use crate::{DataIdentifier, DiagnosticSessionType, SessionTiming, UdsServiceType};
 use crate::{RoutineIdentifier, SecurityLevel};
 use uds_protocol::{
-    ClearDiagnosticInfoRequest, Decode, DtcRecord, EcuResetRequest, Encode,
-    NegativeResponseCode, ReadDtcInfoRequest, ReadDtcInfoSubFunction, Request, ResetType,
-    RoutineControlRequest, RoutineControlSubFunction, SecurityAccessRequest,
-    SecurityAccessType, WriteDataByIdentifierRequest,
+    ClearDiagnosticInfoRequest, CommunicationControlRequest, CommunicationControlType,
+    CommunicationType, ControlDtcSettingRequest, Decode, DtcRecord, DtcSettingType,
+    EcuResetRequest, Encode, NegativeResponseCode, ReadDtcInfoRequest,
+    ReadDtcInfoSubFunction, Request, ResetType, RoutineControlRequest,
+    RoutineControlSubFunction, SecurityAccessRequest, SecurityAccessType, SubnetNumber,
+    WriteDataByIdentifierRequest,
 };
 use uds_session::Address;
 use uds_session::{ClientRx, SessionSelection, Solicitation};
@@ -55,6 +57,40 @@ pub(super) fn read_data_by_identifier<D: DataIdentifier>(
         *slot = did.as_u16().to_be_bytes();
     }
     identifiers.len().checked_mul(2)?.checked_add(1)
+}
+
+/// Encode a `CommunicationControl` request into `buffer`. `None` where `node_id`
+/// disagrees with `control`: a plain type takes none, an enhanced-address type needs
+/// one.
+pub(super) fn communication_control(
+    buffer: &mut [u8],
+    control: CommunicationControlType,
+    communication: CommunicationType,
+    subnet: SubnetNumber,
+    node_id: Option<u16>,
+) -> Option<usize> {
+    let built = match node_id {
+        Some(node) => CommunicationControlRequest::new_with_node_id(
+            false,
+            control,
+            communication,
+            node,
+        ),
+        None => CommunicationControlRequest::new(false, control, communication),
+    };
+    let control = built.ok()?.with_subnet(subnet);
+    request(buffer, &Request::CommunicationControl(control))
+}
+
+/// Encode a `ControlDTCSetting` request into `buffer`.
+pub(super) fn control_dtc_setting(
+    buffer: &mut [u8],
+    setting: DtcSettingType,
+    option_record: &[u8],
+) -> Option<usize> {
+    let control =
+        ControlDtcSettingRequest::new_with_option_record(false, setting, option_record);
+    request(buffer, &Request::ControlDtcSetting(control))
 }
 
 /// Encode `request`, service identifier first, into `buffer`: its length, or `None`
