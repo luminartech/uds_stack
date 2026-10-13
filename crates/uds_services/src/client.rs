@@ -144,13 +144,14 @@ pub enum Replaced {
     /// (ISO 14229-5:2022 REQ 7.9 and REQ 7.11). The server's session and security are
     /// gone.
     Prescribed,
-    /// Any other close: the server dropped it, or this client reconnected to repeat an
-    /// unanswered request (ISO 14229-2:2021 Table 9, under [`ClientTiming::repeats`]) or
-    /// after a cancelled call. The
-    /// server's session and security may be intact. A session change's close is this
-    /// where the transport acknowledged a request between the response and the close, a
-    /// keep-alive included; a caller that knows its session change leaves the server's
-    /// software treats the next replacement of either kind as the session lost.
+    /// Any other close: the server dropped it, or this client's transport reconnected for
+    /// the first request after an unanswered one, whether to repeat it (ISO 14229-2:2021
+    /// Table 9, under [`ClientTiming::repeats`]) or because a late answer could be taken
+    /// for the next request's, or after a cancelled call. The server's session and
+    /// security may be intact. A session change's close is this where the transport
+    /// acknowledged a request between the response and the close, a keep-alive included;
+    /// a caller that knows its session change leaves the server's software treats the
+    /// next replacement of either kind as the session lost.
     Other,
 }
 
@@ -276,7 +277,8 @@ impl KeepAlive<FunctionalKeepAlive> {
 }
 
 /// The client's timing policy: what ISO 14229-2:2021 9.2 Tables 3 and 4 leave to the
-/// client rather than the transport, in milliseconds.
+/// client rather than the transport, in milliseconds, and the ceiling on 9.7 Table 9's
+/// response-timeout repeat.
 ///
 /// Built with [`Self::new`]; it may gain fields.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -740,9 +742,12 @@ impl<
         &self.timing
     }
 
-    /// This client's timing policy, to change between calls. A change to
-    /// [`ClientTiming::repeats`] applies to the next request whose response window
-    /// expires.
+    /// This client's timing policy, to change between calls. When a change takes effect:
+    /// [`ClientTiming::repeats`] on the next request whose response window expires;
+    /// [`ClientTiming::network_delay`] on the next session the client enters, which sets
+    /// the response windows; [`ClientTiming::physical_spacing`] and
+    /// [`ClientTiming::functional_spacing`] on channels opened afterwards, a channel
+    /// already open keeping the spacing it was opened with.
     #[must_use]
     pub fn timing_mut(&mut self) -> &mut ClientTiming {
         &mut self.timing
@@ -960,8 +965,8 @@ impl<
     /// The seed is in the response, so the suppress bit is never set on this request.
     /// The client keeps no security state: compute the key and send it with
     /// [`Self::security_access_key`]. A repeated request (under
-    /// [`ClientTiming::repeats`]) is harmless: a level already unlocked answers a zero
-    /// seed (10.4).
+    /// [`ClientTiming::repeats`]) is answered with a seed again (Annex I Table I.2), a
+    /// zero seed where the level is already unlocked (10.4).
     ///
     /// # Arguments
     ///
@@ -1523,12 +1528,14 @@ impl<
     /// after such a poll; on a transport whose first poll after a close may be `Pending`,
     /// as the std `DoIP` stack's is, one poll may not reach it.
     ///
-    /// [`Replaced::Other`] is the normal result of an ISO 14229-2:2021 Table 9 repeat
-    /// over `DoIP`, where [`ClientTiming::repeats`] allows one, whose transport repeats an
-    /// unanswered request on a new connection, and
-    /// of a call cancelled after its request went. The server's session and security may
-    /// survive such a close, so it is no reason on its own to enter the session again,
-    /// which would relock security and end a transfer in progress.
+    /// [`Replaced::Other`] is the normal result of a request that went unanswered over
+    /// `DoIP`: its transport puts the first request after it, the repeat ISO 14229-2:2021
+    /// Table 9 asks for where [`ClientTiming::repeats`] allows one or the next call where
+    /// it does not, on a new connection, so a late answer cannot be taken for that
+    /// request's. It is also the result of a call cancelled after its request went. The
+    /// server's session and security may survive such a close, so it is no reason on its
+    /// own to enter the session again, which would relock security and end a transfer in
+    /// progress.
     ///
     /// Where both kinds of close happened since the last asking, the answer is
     /// [`Replaced::Prescribed`], once.
