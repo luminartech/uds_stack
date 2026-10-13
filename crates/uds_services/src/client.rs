@@ -305,7 +305,12 @@ pub struct ClientTiming {
     /// application (``UDSS_LLR_0177`` caps it). [`Self::new`] sets Table 9's two; a value
     /// above two acts as two; zero reports the first expired window. A failed
     /// transmission is repeated to two regardless, Table 9's transmission cell being the
-    /// link's, not the request's; functionally addressed requests are not under it.
+    /// link's, not the request's, and one count covers both cells, so a failed
+    /// transmission's repeat counts against the ceiling; functionally addressed requests
+    /// are not under it. A ceiling of zero also forgoes the one repeat the standard
+    /// designs a server to absorb, a [`Client::transfer_data`] block with the same
+    /// counter (ISO 14229-1:2020 15.4); set it, call, and restore it where that repeat is
+    /// wanted.
     pub repeats: u8,
 }
 
@@ -1016,10 +1021,11 @@ impl<
     /// [`ClientError::Request`] where the key does not fit the request buffer;
     /// otherwise as [`Self::read_data_by_identifier`]'s.
     ///
-    /// A repeated key (under [`ClientTiming::repeats`]), after a positive response was
-    /// lost, reaches a server already unlocked with no seed outstanding and earns
-    /// [`NegativeResponseCode::RequestSequenceError`] (ISO 14229-1:2020 10.4); a ceiling
-    /// of zero reports the first window instead.
+    /// A repeated key (under [`ClientTiming::repeats`]), whatever answer was lost, reaches
+    /// a server with no seed outstanding, since a key of valid length discards the seed
+    /// (ISO 14229-1:2020 10.4, Annex I Table I.2), and earns
+    /// [`NegativeResponseCode::RequestSequenceError`] in place of the first answer; a
+    /// ceiling of zero reports the first window instead.
     ///
     /// # Cancel safety
     ///
@@ -1396,6 +1402,11 @@ impl<
 
     /// Send one block of a transfer to `target` (ISO 14229-1:2020 15.4). The response
     /// echoes `counter`, then carries the server's `transferResponseParameterRecord`.
+    ///
+    /// This is the one request the standard designs a repeat for: a server that already
+    /// wrote the block answers its repeat, same `counter`, without writing again (15.4).
+    /// A caller holding [`ClientTiming::repeats`] at zero sets it for the blocks, through
+    /// [`Self::timing_mut`], and restores it after.
     ///
     /// # Arguments
     ///

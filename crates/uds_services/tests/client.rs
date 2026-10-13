@@ -429,6 +429,42 @@ fn a_ceiling_of_zero_still_repeats_a_failed_transmission() {
     assert_eq!(t.transport().sent_count, 3);
 }
 
+/// One count covers both of Table 9's cells: a failed transmission's repeat counts against
+/// the ceiling, so at zero a failed transmission then an expired window is two
+/// transmissions and `Timeout`, and at one the expired window is not repeated at all.
+#[test]
+fn a_failed_transmissions_repeat_counts_against_the_ceiling() {
+    let mut t = tester_repeating(
+        &[
+            Step::Conf(to(ECU), FAILED),
+            Step::At(10),
+            Step::Conf(to(ECU), SResult::Ok),
+            Step::At(110),
+        ],
+        0,
+    );
+    assert_eq!(
+        block_on(t.read_data_by_identifier(ECU, &[Did::Speed])).err(),
+        Some(ClientError::Timeout)
+    );
+    assert_eq!(t.transport().sent_count, 2);
+
+    let mut t = tester_repeating(
+        &[
+            Step::Conf(to(ECU), FAILED),
+            Step::At(10),
+            Step::Conf(to(ECU), SResult::Ok),
+            Step::At(110),
+        ],
+        1,
+    );
+    assert_eq!(
+        block_on(t.read_data_by_identifier(ECU, &[Did::Speed])).err(),
+        Some(ClientError::Timeout)
+    );
+    assert_eq!(t.transport().sent_count, 2);
+}
+
 /// A functionally addressed read is not under the ceiling: its window closes and its
 /// answers are collected as before.
 #[test]
@@ -474,6 +510,12 @@ fn the_ceiling_changed_between_calls_applies_to_the_next() {
         Step::At(300),
         Step::Conf(to(ECU), SResult::Ok),
         Step::At(400),
+        Step::Conf(to(ECU), SResult::Ok),
+        Step::At(500),
+        Step::Conf(to(ECU), SResult::Ok),
+        Step::At(600),
+        Step::Conf(to(ECU), SResult::Ok),
+        Step::At(700),
     ]);
     assert_eq!(t.timing().repeats, 2);
     assert_eq!(
@@ -487,6 +529,12 @@ fn the_ceiling_changed_between_calls_applies_to_the_next() {
         Some(ClientError::Timeout)
     );
     assert_eq!(t.transport().sent_count, 4);
+    t.timing_mut().repeats = 2;
+    assert_eq!(
+        block_on(t.read_data_by_identifier(ECU, &[Did::Speed])).err(),
+        Some(ClientError::Timeout)
+    );
+    assert_eq!(t.transport().sent_count, 7);
 }
 
 /// A connection closing mid-exchange ends it with an outcome rather than a wait for

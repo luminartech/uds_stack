@@ -636,8 +636,8 @@ impl<
     /// Sends the request first if it is unsent. A failed transmission is repeated up to
     /// ISO 14229-2:2021 Table 9's two times, and, physically, an expired response window
     /// up to the lesser of that and `ClientTiming::repeats`; after the last, the channel
-    /// is reset and the failure returned. A physical exchange
-    /// ends at its answer, a functional one at its window closing.
+    /// is reset and the failure returned. A physical exchange ends at its answer, a
+    /// functional one at its window closing.
     pub(super) async fn advance(
         &mut self,
     ) -> Option<Result<Answered, ClientError<T::Error>>> {
