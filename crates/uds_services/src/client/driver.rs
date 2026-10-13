@@ -115,6 +115,17 @@ pub(super) struct Open<Id> {
     pub(super) in_session: bool,
     /// Its keep-alive fell due and has not been sent.
     owed: bool,
+    /// Whether its server's connection closed since the last asking.
+    replaced: Replaced,
+}
+
+/// What a caller has yet to be told of an open channel's connection.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Replaced {
+    /// Nothing: no close was reported since the channel opened or since the last asking.
+    No,
+    /// The transport reported the connection closed, and no one has asked.
+    Unasked,
 }
 
 impl<Id> Open<Id> {
@@ -125,6 +136,7 @@ impl<Id> Open<Id> {
             unconfirmed: false,
             in_session: false,
             owed: false,
+            replaced: Replaced::No,
         }
     }
 
@@ -164,6 +176,13 @@ impl<const PHYS: usize, const FUNC: usize> Book<PHYS, FUNC> {
         ta: Address,
     ) -> Option<&mut Open<PhysicalChannelId>> {
         self.physical.iter_mut().flatten().find(|o| o.ai.ta == ta)
+    }
+
+    /// Whether `ta`'s connection was replaced since last asked, cleared by the asking.
+    pub(super) fn take_replaced(&mut self, ta: Address) -> bool {
+        self.physical_to(ta).is_some_and(|o| {
+            core::mem::replace(&mut o.replaced, Replaced::No) == Replaced::Unasked
+        })
     }
 
     fn functional_by(&self, ai: Ai) -> Option<FunctionalChannelId> {
@@ -807,6 +826,11 @@ impl<
                 self.session.t_data_conf(now, ai, result)
             }
             Err(TransportEvent::Closed { peer, expected }) => {
+                for o in self.book.physical.iter_mut().flatten() {
+                    if o.ai.ta == peer {
+                        o.replaced = Replaced::Unasked;
+                    }
+                }
                 let ended = self
                     .book
                     .physical

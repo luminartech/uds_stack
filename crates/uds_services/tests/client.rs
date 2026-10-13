@@ -2165,3 +2165,32 @@ fn a_transfer_exits_with_its_records() {
         (Some(to(ECU)), &[0x37, 0x01][..])
     );
 }
+
+/// A close the transport reports, prescribed or not, is a replacement the caller can
+/// ask about once; asking clears it, and another server's close is not this one's.
+#[test]
+fn a_replaced_connection_is_reported_once() {
+    let mut t = tester(&[
+        Step::Conf(to(ECU), SResult::Ok),
+        Step::Ind(from(ECU), SPEED),
+        Step::Leave(ECU),
+        Step::At(1),
+        Step::At(2),
+        Step::Close(OTHER_ECU),
+        Step::At(3),
+    ]);
+    speed(block_on(t.read_data_by_identifier(ECU, &[Did::Speed])));
+    // The `Leave` is observed by this ask's own pump.
+    assert_eq!(block_on(t.connection_replaced(ECU)), Ok(true));
+    assert_eq!(block_on(t.connection_replaced(ECU)), Ok(false));
+    assert_eq!(block_on(t.connection_replaced(ECU)), Ok(false));
+    // This ask's pump observes the other server's close.
+    assert_eq!(block_on(t.connection_replaced(ECU)), Ok(false));
+}
+
+/// A server with no open channel was replaced by nothing.
+#[test]
+fn an_unknown_server_was_not_replaced() {
+    let mut t = tester(&[Step::At(0)]);
+    assert_eq!(block_on(t.connection_replaced(ECU)), Ok(false));
+}

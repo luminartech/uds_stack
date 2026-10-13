@@ -1341,6 +1341,39 @@ impl<
         }
     }
 
+    /// Whether the connection to `target` was replaced since this was last asked, or
+    /// since the channel to it was opened: the transport reported it closed, whether
+    /// the server prescribed the close or not.
+    ///
+    /// A close is observed only while the client awaits the transport, which the call
+    /// that provoked it does not do after its answer, so this looks at the transport
+    /// once, as [`Self::idle_until`] does with the current time, before answering.
+    /// Asking clears it. `false` where no channel to `target` is open, and where the
+    /// channel was withdrawn for another server before the asking.
+    ///
+    /// # Arguments
+    ///
+    /// * `target` - the server's address.
+    ///
+    /// # Errors
+    ///
+    /// [`ClientError::Transport`] where the transport failed.
+    ///
+    /// # Cancel safety
+    ///
+    /// As [`Self::read_data_by_identifier`]'s.
+    #[must_use = "asking clears the report"]
+    pub async fn connection_replaced(
+        &mut self,
+        target: Address,
+    ) -> Result<bool, ClientError<T::Error>> {
+        self.retire();
+        self.drain_window().await?;
+        let now = self.transport.now();
+        self.pump(None, Some(now)).await?;
+        Ok(self.book.take_replaced(target))
+    }
+
     /// End the session: close the transport's connection, gracefully.
     ///
     /// A call dropped part-way is settled first, and every request still awaiting its
