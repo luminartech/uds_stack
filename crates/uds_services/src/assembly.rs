@@ -582,6 +582,27 @@ macro_rules! __uds_stage {
     ($self:ident, $state:ident, $out:ident, $req:ident, $svc:ident) => {};
 }
 
+/// The compile-time checks one listed service adds to the assembly: `DataTransfer`'s
+/// advertised block must reach the transport whole (15.2.3.2), and its
+/// `maxNumberOfBlockLength` must fit the four bytes a download-only response holds.
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __uds_assert {
+    ($ty:ty, $transport:ty, DataTransfer) => {
+        const _: () = ::core::assert!(
+            <$transport as $crate::UdsTransport>::MAX_PDU
+                >= 2 + <$ty as $crate::DataTransfer>::MAX_BLOCK_LENGTH,
+            "the transport's MAX_PDU cannot carry a TransferData block of \
+             MAX_BLOCK_LENGTH, which ISO 14229-1:2020 15.2.3.2 obliges the server to accept",
+        );
+        const _: () = ::core::assert!(
+            <$ty as $crate::DataTransfer>::MAX_BLOCK_LENGTH <= 0xFFFF_FFFD,
+            "maxNumberOfBlockLength (MAX_BLOCK_LENGTH + 2) must fit in four bytes",
+        );
+    };
+    ($ty:ty, $transport:ty, $svc:ident) => {};
+}
+
 /// Assemble a server from the services it implements.
 ///
 /// ``UDSSVC_ARCH_0013``, ``UDSSVC_ARCH_0035``.
@@ -608,6 +629,137 @@ macro_rules! __uds_stage {
 /// [`MAX_PDU`](crate::UdsTransport::MAX_PDU), is shorter than
 /// [`ResponseSink::MIN_BOUND`](crate::ResponseSink::MIN_BOUND), because a negative
 /// response would then not fit.
+///
+/// Where `DataTransfer` is listed, it also fails to compile where the transport's
+/// [`MAX_PDU`](crate::UdsTransport::MAX_PDU) is shorter than `MAX_BLOCK_LENGTH + 2`:
+/// ISO 14229-1:2020 15.2.3.2, "A server is required to accept transferData requests that
+/// are equal in length to its reported maxNumberOfBlockLength".
+///
+/// ```compile_fail,E0080
+/// # use uds_services::{
+/// #     Access, Address, AfterSend, Ai, DataFormatIdentifier, DataIdentifier, DataTransfer,
+/// #     ReadDataByIdentifier, RecordError, Reloads, ResponseSink, ServerParams, ServiceSet,
+/// #     Sessions, Storage, Timestamp, TransferRequest, TransportEvent, UdsTransport,
+/// #     uds_server,
+/// # };
+/// # use uds_protocol::NegativeResponseCode as Nrc;
+/// use static_cell::ConstStaticCell;
+/// #
+/// # #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// # enum Did { VehicleSpeed, VinNumber }
+/// #
+/// # impl DataIdentifier for Did {
+/// #     const MAX_RECORD_LEN: usize = 17;
+/// #     fn as_u16(self) -> u16 {
+/// #         match self { Self::VehicleSpeed => 0xF4_0D, Self::VinNumber => 0xF1_90 }
+/// #     }
+/// #     fn from_u16(v: u16) -> Option<Self> {
+/// #         match v {
+/// #             0xF4_0D => Some(Self::VehicleSpeed),
+/// #             0xF1_90 => Some(Self::VinNumber),
+/// #             _ => None,
+/// #         }
+/// #     }
+/// #     fn split_record(self, buf: &[u8]) -> Result<(&[u8], &[u8]), RecordError> {
+/// #         let width = match self { Self::VehicleSpeed => 1, Self::VinNumber => 17 };
+/// #         buf.split_at_checked(width).ok_or(RecordError::Short)
+/// #     }
+/// # }
+/// #
+/// # #[derive(Debug)]
+/// # struct Ecu;
+/// #
+/// # impl Ecu {
+/// #     const fn new() -> Self { Self }
+/// # }
+/// #
+/// # impl ReadDataByIdentifier for Ecu {
+/// #     type Did = Did;
+/// #     const MAY_RESPOND_PENDING: bool = false;
+/// #     const MAX_DIDS_PER_REQUEST: usize = 4;
+/// #     async fn read(
+/// #         &mut self,
+/// #         _did: Did,
+/// #         _out: &mut ResponseSink<'_>,
+/// #     ) -> Result<(), Nrc> { Ok(()) }
+/// # }
+/// #
+/// # impl DataTransfer for Ecu {
+/// #     const MAY_RESPOND_PENDING: bool = true;
+/// #     const MAX_BLOCK_LENGTH: usize = 1 << 20;
+/// #     const SUPPORTS_UPLOAD: bool = false;
+/// #     const SESSIONS: Sessions = Sessions::ALL;
+/// #     fn format_supported(&self, _format: DataFormatIdentifier) -> bool { true }
+/// #     fn access(&self, _r: &TransferRequest<'_>) -> Option<Access> {
+/// #         Some(Access::new(Sessions::ALL))
+/// #     }
+/// #     async fn begin(&mut self, _r: TransferRequest<'_>) -> Result<(), Nrc> { Ok(()) }
+/// #     async fn block(
+/// #         &mut self,
+/// #         _data: &[u8],
+/// #         _out: &mut ResponseSink<'_>,
+/// #     ) -> Result<(), Nrc> { Ok(()) }
+/// #     async fn exit(
+/// #         &mut self,
+/// #         _record: &[u8],
+/// #         _out: &mut ResponseSink<'_>,
+/// #     ) -> Result<(), Nrc> { Ok(()) }
+/// # }
+/// #
+/// # #[derive(Debug)]
+/// # struct DoIpTransport;
+/// #
+/// # impl UdsTransport for DoIpTransport {
+/// #     type Error = ();
+/// #     async fn t_data_req(&mut self, _: Ai, _: &[u8], _: AfterSend) -> Result<(), ()> {
+/// #         Ok(())
+/// #     }
+/// #     async fn next_event<'b>(
+/// #         &mut self,
+/// #         _buffer: &'b mut [u8],
+/// #         _deadline: Option<Timestamp>,
+/// #     ) -> Result<TransportEvent<'b>, ()> { Ok(TransportEvent::Deadline) }
+/// # const MAX_PDU: usize = 4_096;
+/// #     fn outbound_max(&self) -> Option<usize> { None }
+/// #     fn channel_timing(&self) -> Reloads {
+/// #         Reloads { default_reload: 2_000, enhanced_reload: 5_000 }
+/// #     }
+/// #     fn now(&self) -> Timestamp { Timestamp(0) }
+/// # }
+/// #
+/// # const PARAMS: ServerParams = ServerParams {
+/// #     s3_server: 5_000,
+/// #     p2_server_max: 50,
+/// #     p2_star_server_max: 5_000,
+/// #     response_pending_lead: 0,
+/// # };
+/// uds_server! {
+///     Ecu: ReadDataByIdentifier, DataTransfer;
+///     transport = DoIpTransport,
+///     peers = 1,
+///     server = EcuServer,
+/// }
+///
+/// // Constructed in place: no stack temporary holds the buffers on the way in. The cell
+/// // hands out the `&'static mut` that `step` needs, once.
+/// static SERVER: ConstStaticCell<EcuServer> = ConstStaticCell::new(EcuServer::new(
+///     Ecu::new(),
+///     DoIpTransport,
+///     Address(0x0E00),
+///     PARAMS,
+/// ));
+///
+/// let server: &'static mut EcuServer = SERVER.take();
+/// // One step, polled by hand here; an executor's task would `server.run().await`.
+/// let mut step = core::pin::pin!(server.step());
+/// let mut cx = core::task::Context::from_waker(core::task::Waker::noop());
+/// assert!(step.as_mut().poll(&mut cx).is_ready());
+///
+/// let mut store = <<Ecu as ServiceSet>::Store as Storage>::EMPTY;
+/// let buffers = store.split();
+/// assert_eq!(buffers.in_flight.len(), 1_026);
+/// assert_eq!(buffers.response.len(), 77);
+/// ```
 ///
 /// The emitted `dispatch` only routes: `pipeline::begin`, then the listed service's
 /// stage, and it returns what they left as an [`Unsettled`](crate::Unsettled). It calls
@@ -814,6 +966,7 @@ macro_rules! uds_server {
                 RESPONSE >= $crate::ResponseSink::MIN_BOUND,
                 "the response buffer cannot hold a negative response",
             );
+            $( $crate::__uds_assert!($ty, $transport, $svc); )+
             // Milestone 1 keeps one slot for a selecting response awaiting confirmation,
             // so a second peer could overwrite it; zero peers can never answer.
             const _: () = ::core::assert!(
