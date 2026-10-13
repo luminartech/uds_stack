@@ -94,27 +94,48 @@ pub const fn client_request_bound(
     ])
 }
 
+/// The maxima a client's response bound is folded from, as `uds_client!` declares them.
+///
+/// `#[doc(hidden)]`: macro plumbing, as [`max_of`] is.
+#[doc(hidden)]
+#[derive(Debug, Clone, Copy)]
+pub struct ClientResponseMaxima {
+    /// The most identifiers one read names.
+    pub max_dids: usize,
+    /// The longest record of any identifier.
+    pub max_record_len: usize,
+    /// The most DTC records one list response carries.
+    pub max_dtcs: usize,
+    /// The most record bytes one snapshot or extended data response carries.
+    pub max_dtc_record_len: usize,
+    /// The longest `SecurityAccess` seed.
+    pub max_seed_len: usize,
+    /// The longest routine status record.
+    pub max_status_len: usize,
+    /// The longest transfer-exit parameter record.
+    pub max_option_len: usize,
+    /// The longest `TransferData` block.
+    pub max_block_len: usize,
+}
+
 /// The response bound of a client: the widest response among its services.
 ///
 /// The fixed-size responses' widest is `RequestDownload`'s at 17: the identifier, the
 /// length format byte and up to fifteen bytes of block length.
 #[doc(hidden)]
 #[must_use]
-#[allow(
-    clippy::too_many_arguments,
-    reason = "one argument per declared maximum"
-)]
-pub const fn client_response_bound(
-    max_dids: usize,
-    max_record_len: usize,
-    max_dtcs: usize,
-    max_dtc_record_len: usize,
-    max_seed_len: usize,
-    max_status_len: usize,
-    max_option_len: usize,
-    max_block_len: usize,
-) -> usize {
+pub const fn client_response_bound(maxima: ClientResponseMaxima) -> usize {
     use crate::DtcReportKind as K;
+    let ClientResponseMaxima {
+        max_dids,
+        max_record_len,
+        max_dtcs,
+        max_dtc_record_len,
+        max_seed_len,
+        max_status_len,
+        max_option_len,
+        max_block_len,
+    } = maxima;
     max_of(&[
         1_usize.saturating_add(
             max_dids.saturating_mul(2_usize.saturating_add(max_record_len)),
@@ -905,8 +926,8 @@ macro_rules! uds_server {
 ///   carries after its six-byte header.
 /// - `max_seed_len`: the longest `SecurityAccess` seed.
 /// - `max_key_len`: the longest `SecurityAccess` key.
-/// - `max_option_len`: the longest routine control option record, and the longest
-///   transfer-exit parameter record.
+/// - `max_option_len`: the longest routine control option record, the longest
+///   `ControlDTCSetting` option record, and the longest transfer-exit parameter record.
 /// - `max_block_len`: the longest `TransferData` block.
 ///
 /// Naming the transport lets its [`MAX_PDU`](crate::UdsTransport::MAX_PDU) cap both,
@@ -1050,14 +1071,16 @@ macro_rules! uds_client {
             );
             const RESPONSE: usize = $crate::assembly::min2(
                 $crate::assembly::client_response_bound(
-                    { $max_dids },
-                    <$did as $crate::DataIdentifier>::MAX_RECORD_LEN,
-                    { $max_dtcs },
-                    { $max_dtc_record_len },
-                    { $max_seed_len },
-                    <$rid as $crate::RoutineIdentifier>::MAX_STATUS_LEN,
-                    { $max_option_len },
-                    { $max_block_len },
+                    $crate::assembly::ClientResponseMaxima {
+                        max_dids: $max_dids,
+                        max_record_len: <$did as $crate::DataIdentifier>::MAX_RECORD_LEN,
+                        max_dtcs: $max_dtcs,
+                        max_dtc_record_len: $max_dtc_record_len,
+                        max_seed_len: $max_seed_len,
+                        max_status_len: <$rid as $crate::RoutineIdentifier>::MAX_STATUS_LEN,
+                        max_option_len: $max_option_len,
+                        max_block_len: $max_block_len,
+                    },
                 ),
                 <$transport as $crate::UdsTransport>::MAX_PDU,
             );
@@ -1080,20 +1103,42 @@ macro_rules! uds_client {
 #[cfg(test)]
 mod tests {
     use super::{
-        client_request_bound, client_response_bound, dtc_response_bound, max_of, min2,
+        ClientResponseMaxima, client_request_bound, client_response_bound,
+        dtc_response_bound, max_of, min2,
     };
     use crate::DtcReportKind;
+
+    /// One of everything that is sized, and no DTC records.
+    const LEAST: ClientResponseMaxima = ClientResponseMaxima {
+        max_dids: 1,
+        max_record_len: 1,
+        max_dtcs: 0,
+        max_dtc_record_len: 0,
+        max_seed_len: 1,
+        max_status_len: 1,
+        max_option_len: 1,
+        max_block_len: 1,
+    };
 
     /// The client's bounds are the widest request and the widest response among its
     /// services: here the transfer block wins both.
     #[test]
     fn the_client_bounds_are_the_widest_service() {
         const REQUEST: usize = client_request_bound(2, 17, 2, 4, 64);
-        const RESPONSE: usize = client_response_bound(2, 17, 3, 20, 2, 1, 4, 64);
+        const RESPONSE: usize = client_response_bound(ClientResponseMaxima {
+            max_dids: 2,
+            max_record_len: 17,
+            max_dtcs: 3,
+            max_dtc_record_len: 20,
+            max_seed_len: 2,
+            max_status_len: 1,
+            max_option_len: 4,
+            max_block_len: 64,
+        });
         assert_eq!(REQUEST, 2 + 64);
         assert_eq!(RESPONSE, 2 + 64);
         assert_eq!(client_request_bound(1, 1, 1, 1, 1), 12);
-        assert_eq!(client_response_bound(1, 1, 0, 0, 1, 1, 1, 1), 17);
+        assert_eq!(client_response_bound(LEAST), 17);
     }
 
     /// Each request term is the bound when its maximum is the large one.
@@ -1114,19 +1159,53 @@ mod tests {
     fn each_response_term_can_set_the_bound() {
         // A read of two seventeen-byte records.
         assert_eq!(
-            client_response_bound(2, 17, 0, 0, 1, 1, 1, 1),
+            client_response_bound(ClientResponseMaxima {
+                max_dids: 2,
+                max_record_len: 17,
+                ..LEAST
+            }),
             1 + 2 * (2 + 17)
         );
         // A DTC list of ten: `SeverityList`'s six-byte records are the widest.
-        assert_eq!(client_response_bound(1, 1, 10, 0, 1, 1, 1, 1), 3 + 10 * 6);
+        assert_eq!(
+            client_response_bound(ClientResponseMaxima {
+                max_dtcs: 10,
+                ..LEAST
+            }),
+            3 + 10 * 6
+        );
         // A snapshot or extended data response of thirty record bytes.
-        assert_eq!(client_response_bound(1, 1, 0, 30, 1, 1, 1, 1), 6 + 30);
+        assert_eq!(
+            client_response_bound(ClientResponseMaxima {
+                max_dtc_record_len: 30,
+                ..LEAST
+            }),
+            6 + 30
+        );
         // A thirty-byte seed.
-        assert_eq!(client_response_bound(1, 1, 0, 0, 30, 1, 1, 1), 2 + 30);
+        assert_eq!(
+            client_response_bound(ClientResponseMaxima {
+                max_seed_len: 30,
+                ..LEAST
+            }),
+            2 + 30
+        );
         // A routine status record of thirty bytes.
-        assert_eq!(client_response_bound(1, 1, 0, 0, 1, 30, 1, 1), 5 + 30);
+        assert_eq!(
+            client_response_bound(ClientResponseMaxima {
+                max_status_len: 30,
+                ..LEAST
+            }),
+            5 + 30
+        );
         // A transfer exit with a thirty-byte parameter record.
-        assert_eq!(client_response_bound(1, 1, 0, 0, 1, 1, 30, 1), 1 + 30);
+        assert_eq!(
+            client_response_bound(ClientResponseMaxima {
+                max_option_len: 30,
+                ..LEAST
+            }),
+            1 + 30
+        );
     }
 
     /// The widest layout wins, and it is not always the one with the widest records: a
