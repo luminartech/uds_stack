@@ -122,14 +122,25 @@ def parse_symbol(table: str, name: str) -> tuple[int, str]:
 def parse_word(contents: str, at: int) -> int:
     """The little-endian 32-bit word at ``at``, a ``usize`` on the probe's target, from
     ``llvm-objdump -s``'s dump of its section: sixteen bytes a line as four hex words,
-    the line's address first."""
-    base = at & ~0xF
+    the line's address first. Lines start at the section's address, which need not be
+    16-aligned, so the word is read from the line whose sixteen bytes hold ``at``; ``at``
+    must sit on a word of that line."""
     for line in contents.splitlines():
         fields = line.split()
-        if len(fields) >= 2 and fields[0] == f"{base:x}":
-            word = fields[1:5][(at - base) // 4]
-            return int.from_bytes(bytes.fromhex(word), "little")
-    raise ValueError(f"no line at {base:#x} in the dump:\n{contents}")
+        if len(fields) < 2:
+            continue
+        try:
+            start = int(fields[0], 16)
+        except ValueError:
+            continue
+        if not start <= at < start + 16:
+            continue
+        offset = at - start
+        words = fields[1:5]
+        if offset % 4 != 0 or offset // 4 >= len(words):
+            raise ValueError(f"{at:#x} is not a word of the line at {start:#x}")
+        return int.from_bytes(bytes.fromhex(words[offset // 4]), "little")
+    raise ValueError(f"no line holds {at:#x} in the dump:\n{contents}")
 
 
 def compare(baseline: Sizes, measured: Sizes) -> list[str]:
