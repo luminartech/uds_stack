@@ -112,14 +112,15 @@ macro_rules! ecu {
             use ::uds_services::NegativeResponseCode as Nrc;
             use ::uds_services::{
                 Access, AfterReset, ClearDiagnosticInformation, CommunicationControl,
-                CommunicationControlType, CommunicationType, ControlDtcSetting, Delay,
-                DiagnosticSessionControl, DiagnosticSessionType as S, DtcRecord,
-                DtcReportKind, DtcSettingType, DtcStatusMask, EcuReset, KeyVerdict, Levels,
-                ReadDataByIdentifier, ReadDtcInfoReportType, ReadDtcInfoSubFunction,
-                ReadDtcInformation, ResetType, ResponseSink, RoutineControl,
-                RoutineControlSubFunction, SecurityAccess, SecurityLevel, SecurityPolicy,
-                SessionTiming, SessionTransition, Sessions, Sink, SubnetNumber,
-                TesterPresent, WriteDataByIdentifier,
+                CommunicationControlType, CommunicationType, ControlDtcSetting,
+                DataFormatIdentifier, DataTransfer, Delay, DiagnosticSessionControl,
+                DiagnosticSessionType as S, DtcRecord, DtcReportKind, DtcSettingType,
+                DtcStatusMask, EcuReset, KeyVerdict, Levels, ReadDataByIdentifier,
+                ReadDtcInfoReportType, ReadDtcInfoSubFunction, ReadDtcInformation,
+                ResetType, ResponseSink, RoutineControl, RoutineControlSubFunction,
+                SecurityAccess, SecurityLevel, SecurityPolicy, SessionTiming,
+                SessionTransition, Sessions, Sink, SubnetNumber, TesterPresent,
+                TransferRequest, WriteDataByIdentifier,
             };
 
             use $crate::{DTCS, Did, Rid, VIN};
@@ -135,6 +136,8 @@ macro_rules! ecu {
                 started: Option<Rid>,
                 communication: Option<CommunicationControlType>,
                 dtc_setting: Option<DtcSettingType>,
+                downloaded: u32,
+                digest: u32,
             }
 
             impl Ecu {
@@ -150,7 +153,16 @@ macro_rules! ecu {
                         started: None,
                         communication: None,
                         dtc_setting: None,
+                        downloaded: 0,
+                        digest: 0,
                     }
+                }
+
+                /// The bytes downloaded and their wrapping sum, for a test to compare
+                /// with what it sent.
+                #[must_use]
+                pub const fn downloaded(&self) -> (u32, u32) {
+                    (self.downloaded, self.digest)
                 }
 
                 fn seed_of(&self, level: SecurityLevel) -> u16 {
@@ -533,6 +545,56 @@ macro_rules! ecu {
                     ready(Ok(()))
                 }
             }
+
+            /// The sensor's flash, as the SDK's simulator serves it: 0x20-byte blocks
+            /// (`maxNumberOfBlockLength` 0x22), uncompressed only, 64 KiB at `0x0010_0000`,
+            /// in the programming session with level 0x03 unlocked.
+            impl DataTransfer for Ecu {
+                const MAY_RESPOND_PENDING: bool = true;
+                const MAX_BLOCK_LENGTH: usize = 0x20;
+                const SUPPORTS_UPLOAD: bool = false;
+                const SESSIONS: Sessions = Sessions::NONE.with(S::ProgrammingSession);
+                fn format_supported(&self, format: DataFormatIdentifier) -> bool {
+                    format == DataFormatIdentifier::NONE
+                }
+                fn access(&self, request: &TransferRequest<'_>) -> Option<Access> {
+                    match *request {
+                        TransferRequest::Download {
+                            address: 0x0010_0000,
+                            size: 1..=0x0001_0000,
+                            ..
+                        } => Some(by_level_3(only_in(S::ProgrammingSession))),
+                        _ => None,
+                    }
+                }
+                fn begin(
+                    &mut self,
+                    _request: TransferRequest<'_>,
+                ) -> impl Future<Output = Result<(), Nrc>> {
+                    self.downloaded = 0;
+                    self.digest = 0;
+                    ready(Ok(()))
+                }
+                fn block(
+                    &mut self,
+                    data: &[u8],
+                    _out: &mut ResponseSink<'_>,
+                ) -> impl Future<Output = Result<(), Nrc>> {
+                    let len = u32::try_from(data.len()).unwrap_or(u32::MAX);
+                    self.downloaded = self.downloaded.saturating_add(len);
+                    self.digest = data
+                        .iter()
+                        .fold(self.digest, |sum, &byte| sum.wrapping_add(u32::from(byte)));
+                    ready(Ok(()))
+                }
+                fn exit(
+                    &mut self,
+                    _record: &[u8],
+                    _out: &mut ResponseSink<'_>,
+                ) -> impl Future<Output = Result<(), Nrc>> {
+                    ready(Ok(()))
+                }
+            }
         }
 
         use sensor_application::Ecu;
@@ -548,5 +610,6 @@ mod expanded {
     #[test]
     fn the_expansion_assembles_an_application() {
         assert!(Ecu::default().supports(DiagnosticSessionType::DefaultSession));
+        assert_eq!(Ecu::default().downloaded(), (0, 0));
     }
 }
