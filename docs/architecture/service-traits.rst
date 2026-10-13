@@ -366,6 +366,12 @@ Protocol state
    all of it is this crate's under ``UDSSVC_ARCH_0034``, held in the state of
    ``UDSSVC_ARCH_0035``.
 
+   The download half is staged. The transfer lives in the protocol state: ``RequestDownload``
+   opens it, ``TransferData`` runs it (the counter from 1, ``FF`` to ``00``, a repeat of the
+   last block answered without the handler) and ``RequestTransferExit`` closes it, kept open
+   after 0x24. A session or level change ends it as Figure 7 says. Upload and file transfer
+   remain unstaged.
+
    .. uml::
       :align: center
       :caption: The transfer state machine. Every transition labelled with a code is
@@ -449,6 +455,34 @@ Protocol state
    clause 17's programming process, the condition belongs to a layer this crate does not yet
    have, and the element changes. It is worth settling against a reviewer who has run a
    programming sequence in anger.
+
+.. arch:: A transfer is admitted by its memory interval
+   :id: UDSSVC_ARCH_0044
+   :depends_on: UDSSVC_ARCH_0036
+   :status: draft
+   :origin: application-layer-standard
+   :source: ISO 14229-1:2020 15.2 Figure 31; ISO 14229-1:2020 15.2 Table 441; ISO 14229-1:2020 Figure 5
+   :tags: api; traits; security
+
+   Figure 31's security node is per requested interval, so ``DataTransfer::access`` answers
+   address, size and security for the request in one ``Access``. ``format_supported``
+   answers Figure 31's second node ahead of the full length. ``SESSIONS`` gives Figure 5's
+   0x7F. The crate counts bytes against ``memorySize`` only for format ``0x00``, because
+   Table 441 leaves the compressed case to the manufacturer.
+
+.. arch:: The application says what a reset does; the server performs it on confirmation and stops
+   :id: UDSSVC_ARCH_0045
+   :depends_on: UDSSVC_ARCH_0038
+   :status: draft
+   :origin: application-layer-standard
+   :source: ISO 14229-1:2020 10.3.1; ISO 14229-1:2020 Figure 7
+   :tags: api; traits; state
+
+   ``EcuReset::reset`` returns ``AfterReset``. On the confirmation, or the suppressed
+   request's completion report, ``confirmed`` is called, and a ``Restart`` returns the
+   protocol state to the power-up one through Figure 7 key 4, re-arms start-up, and ends
+   ``run`` with ``Stopped``. No request is served between a restart's response and its
+   confirmation (10.3.1).
 
 .. arch:: The security access sequence is a state machine this crate owns
    :id: UDSSVC_ARCH_0037

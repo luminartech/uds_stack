@@ -449,9 +449,9 @@ fn the_keep_alive_holds_the_extended_session_past_s3() {
     });
 }
 
-/// 15.2 to 15.5 — the SDK's client downloads 80 bytes to the sensor in the programming
-/// session, level 0x03 unlocked, in blocks of `maxNumberOfBlockLength - 2`; the sensor's
-/// handler receives exactly the bytes sent.
+/// 15.2, 15.4 and 15.5 — the SDK's client downloads 80 bytes to the sensor in the
+/// programming session, level 0x03 unlocked, in blocks of `maxNumberOfBlockLength - 2`;
+/// the sensor's handler receives exactly the bytes sent.
 #[test]
 fn the_client_downloads_to_the_sensor() {
     on_loopback(|loopback| async move {

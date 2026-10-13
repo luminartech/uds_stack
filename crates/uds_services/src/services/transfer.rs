@@ -57,6 +57,17 @@ pub enum TransferRequest<'a> {
 /// `wrongBlockSequenceCounter` (0x73), the `0xFF → 0x00` roll, and rejecting a
 /// `TransferData` with no transfer in progress. One trait rather than four, because the
 /// services are one state machine and implementing three of them would be meaningless.
+///
+/// A response lost after it settled is not undone: a lost `TransferData` response is
+/// recovered by the client repeating the block, which is answered without calling
+/// [`Self::block`] again; a lost `RequestDownload` response leaves the download in
+/// progress, so the client's repeat is `conditionsNotCorrect` (0x22, Table 444) until it
+/// sends `RequestTransferExit` or changes session.
+///
+/// Where `SUPPORTS_UPLOAD` is `false` and no other listed service needs more, the response
+/// buffer is 6 bytes, so the `transferResponseParameterRecord` [`Self::block`] writes
+/// after `76 <counter>` is at most 4 bytes and the one [`Self::exit`] writes after `77` at
+/// most 5; a longer one is `responseTooLong` (0x14).
 pub trait DataTransfer {
     /// ``UDSSVC_ARCH_0033`` — erasing flash before a download usually needs one.
     const MAY_RESPOND_PENDING: bool;

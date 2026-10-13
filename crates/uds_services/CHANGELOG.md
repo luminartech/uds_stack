@@ -102,6 +102,10 @@ lockstep with the rest of the `uds_stack` workspace (`uds_protocol`, `uds_sessio
   changed through `Client::timing` and `Client::timing_mut`. It counts every repeat of
   the request, as Table 9 does. A failed transmission is repeated to two regardless,
   and functionally addressed requests are not under it.
+- `DataTransfer` serves a download: `RequestDownload`, `TransferData` and
+  `RequestTransferExit`, with the transfer held in the protocol state.
+- `DataTransfer::SESSIONS`, `DataTransfer::format_supported` and `DataTransfer::access`.
+- `AfterReset`, `EcuReset::confirmed`, `Stopped`, and `Server::into_parts`.
 
 ### Changed
 
@@ -116,13 +120,27 @@ lockstep with the rest of the `uds_stack` workspace (`uds_protocol`, `uds_sessio
   `TransferData` block carries. Each call refuses an input past its maximum as
   `ClientError::Request` before sending. A transport whose `MAX_PDU` cannot carry a
   request of the declared maxima fails to compile, naming the input.
+- **Breaking:** `DataTransfer` requires `SESSIONS`, `format_supported` and `access`.
+  Migrate: declare the sessions the three services are served in, accept the formats you
+  support, and return the `Access` of each memory interval (`None` for an invalid one).
+- **Breaking:** `EcuReset::reset` returns `Result<AfterReset, NegativeResponseCode>`, and
+  `EcuReset::confirmed` is required. Migrate: return `AfterReset::Restart` for a reset that
+  restarts the server, `AfterReset::Continue` otherwise; start any post-response action in
+  `confirmed`.
+- **Breaking:** `Server::step` returns `Result<Option<Stopped>, _>` and `Server::run`
+  returns `Result<Stopped, _>` once a restarting reset is confirmed. Migrate: loop on
+  `run`, or act on `Stopped` (rebind, delay) and call `run` again.
+- **Breaking:** `Responded` carries an `Effect` in place of a session and is hidden from the
+  documentation; applications never built or read it.
+- `uds_server!` fails to compile where the transport cannot carry a `TransferData` block
+  of `MAX_BLOCK_LENGTH`.
 
 ### Known limitations
 
 - A server serves one tester: `uds_server!` accepts only `peers = 1`, and any other
   count fails to compile.
-- The upload/download services (0x34–0x38) are not served yet. The `DataTransfer`
-  trait exists, but a server that lists it answers `serviceNotSupported`.
+- Upload and file transfer (0x35, 0x38) are not served: a server that lists `DataTransfer`
+  answers `serviceNotSupported` to them.
 - The client sends `TesterPresent` only as its keep-alive. The transfer calls are
   single exchanges: the block sequence and any orchestration above them are the caller's.
 - An `Err` from `Server::step` or `Server::run` is terminal for that server
