@@ -146,7 +146,10 @@ pub enum Replaced {
     Prescribed,
     /// Any other close: the server dropped it, or this client reconnected to repeat an
     /// unanswered request (ISO 14229-2:2021 Table 9) or after a cancelled call. The
-    /// server's session and security may be intact.
+    /// server's session and security may be intact. A session change's close is this
+    /// where the transport acknowledged a request between the response and the close, a
+    /// keep-alive included; a caller that knows its session change leaves the server's
+    /// software treats the next replacement of either kind as the session lost.
     Other,
 }
 
@@ -1468,9 +1471,13 @@ impl<
     /// always closes after one (ISO 14229-5:2022 REQ 7.11); the next close the transport
     /// reports to `target` is that same one, not another. Any other close is reported
     /// once the transport has been polled past it, by [`Self::idle_until`] or by any
-    /// call: [`Replaced::Prescribed`] where the transport marks it expected, as it does
-    /// for the close that follows a positive `DiagnosticSessionControl` (REQ 7.9), and
-    /// [`Replaced::Other`] otherwise. A session change's close is therefore certain only
+    /// call: [`Replaced::Prescribed`] where the transport marks it expected, as the
+    /// `DoIP` transport marks the close that follows a positive `DiagnosticSessionControl`
+    /// (REQ 7.9), and [`Replaced::Other`] otherwise. That transport stops marking it once
+    /// any request is acknowledged between the response and the close, a keep-alive
+    /// falling due included, so that close can be [`Replaced::Other`]; a caller that knows
+    /// its session change leaves the server's software treats the next replacement of
+    /// either kind as the session lost. A session change's close is therefore certain only
     /// after such a poll; on a transport whose first poll after a close may be `Pending`,
     /// as the std `DoIP` stack's is, one poll may not reach it.
     ///
