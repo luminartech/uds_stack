@@ -290,6 +290,7 @@ dependencies = [
  "embassy-net",
  "embassy-net-entity",
  "embassy-time",
+ "sensor-services",
  "simple_doip",
  "tokio",
  "uds_on_ip",
@@ -489,6 +490,7 @@ dependencies = [
  "embassy-time-queue-utils",
  "embedded-io-async",
  "portable-atomic",
+ "sensor-services",
  "simple_doip",
  "static_cell",
  "uds_on_ip",
@@ -906,6 +908,13 @@ name = "semver-parser"
 version = "0.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "388a1df253eca08550bef6c72392cfe7c30914bf41df5269b68cbd6ff8f570a3"
+
+[[package]]
+name = "sensor-services"
+version = "0.0.0"
+dependencies = [
+ "uds_services",
+]
 
 [[package]]
 name = "serde"

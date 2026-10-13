@@ -2,7 +2,6 @@
 //! transport's size, kept in the image for the size gate to read.
 
 mod clock;
-mod services;
 mod stub;
 
 use cortex_m_rt::entry;
@@ -15,8 +14,6 @@ use static_cell::StaticCell;
 use uds_on_ip::profile::bench_reloads;
 use uds_on_ip::{DoIpClientTransport, DoIpTransport};
 use uds_services::{Address, ServerParams, uds_server};
-
-use services::Ecu;
 
 const MAX_MESSAGE: usize = 4096;
 const ENTITY: LogicalAddress = LogicalAddress(0x0001);
@@ -49,6 +46,8 @@ type SensorClientTransport = DoIpClientTransport<SensorTester, MAX_MESSAGE>;
 /// as `client_transport`: a 32-bit target's `usize`. `main` takes its address so the
 /// linker keeps it.
 static CLIENT_TRANSPORT_SIZE: usize = size_of::<SensorClientTransport>();
+
+sensor_services::ecu!();
 
 uds_server! {
     Ecu: DiagnosticSessionControl, EcuReset, TesterPresent, SecurityAccess,

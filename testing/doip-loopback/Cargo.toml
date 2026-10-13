@@ -28,6 +28,7 @@ uds_protocol = { workspace = true }
 # is on embassy-net.
 embassy-net-entity = { path = "../../examples/embassy-net-entity" }
 embassy-net = { workspace = true, features = ["tcp", "udp", "proto-ipv4", "medium-ethernet"] }
+sensor-services = { path = "../sensor-services" }
 
 [lints]
 workspace = true
