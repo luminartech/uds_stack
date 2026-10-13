@@ -6,9 +6,11 @@
 
 use super::{Answer, MalformedResponse, Records, Response};
 use crate::{DataIdentifier, DiagnosticSessionType, SessionTiming, UdsServiceType};
+use crate::{RoutineIdentifier, SecurityLevel};
 use uds_protocol::{
     Decode, EcuResetRequest, Encode, NegativeResponseCode, Request, ResetType,
-    WriteDataByIdentifierRequest,
+    RoutineControlRequest, RoutineControlSubFunction, SecurityAccessRequest,
+    SecurityAccessType, WriteDataByIdentifierRequest,
 };
 use uds_session::Address;
 use uds_session::{ClientRx, SessionSelection, Solicitation};
@@ -79,6 +81,49 @@ pub(super) fn ecu_reset(buffer: &mut [u8], kind: ResetType) -> Option<usize> {
         buffer,
         &Request::EcuReset(EcuResetRequest::new(false, kind)),
     )
+}
+
+/// The access type for `sub_function`, one of a level's two, which cannot fail on the
+/// range [`SecurityLevel`] admits.
+fn access_type(sub_function: u8) -> Option<SecurityAccessType> {
+    SecurityAccessType::try_from(sub_function).ok()
+}
+
+/// Encode a seed request for `level` into `buffer`: no record, no suppress bit.
+pub(super) fn security_access_seed(
+    buffer: &mut [u8],
+    level: SecurityLevel,
+) -> Option<usize> {
+    let access = access_type(level.request_seed())?;
+    request(
+        buffer,
+        &Request::SecurityAccess(SecurityAccessRequest::new(false, access, &[])),
+    )
+}
+
+/// Encode a send-key request for `level` with `key` into `buffer`.
+pub(super) fn security_access_key(
+    buffer: &mut [u8],
+    level: SecurityLevel,
+    key: &[u8],
+) -> Option<usize> {
+    let access = access_type(level.send_key())?;
+    request(
+        buffer,
+        &Request::SecurityAccess(SecurityAccessRequest::new(false, access, key)),
+    )
+}
+
+/// Encode a `RoutineControl` request into `buffer`.
+pub(super) fn routine_control<R: RoutineIdentifier>(
+    buffer: &mut [u8],
+    control: RoutineControlSubFunction,
+    routine: R,
+    option_record: &[u8],
+) -> Option<usize> {
+    let control =
+        RoutineControlRequest::new(false, control, routine.as_u16(), option_record);
+    request(buffer, &Request::RoutineControl(control))
 }
 
 /// Encode a `DiagnosticSessionControl` request for `session` into `request`.

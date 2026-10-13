@@ -13,8 +13,9 @@ use core::task::Poll;
 use uds_services::{
     Address, Ai, Answer, ClientError, ClientTiming, DataIdentifier, DiagnosticSessionType,
     FunctionalKeepAlive, KeepAlive, MalformedResponse, Mtype, NegativeResponseCode,
-    PhysicalKeepAlive, RecordError, Reloads, ResetType, Response, RoutineIdentifier,
-    SResult, SessionTiming, TaType, Timestamp, uds_client,
+    PhysicalKeepAlive, RecordError, Reloads, ResetType, Response,
+    RoutineControlSubFunction, RoutineIdentifier, SResult, SecurityLevel, SessionTiming,
+    TaType, Timestamp, uds_client,
 };
 use uds_session::TransportError;
 
@@ -1776,4 +1777,112 @@ fn a_refused_reset_is_a_negative_response() {
         block_on(t.ecu_reset(ECU, ResetType::HardReset)),
         Ok(Response::Negative(NegativeResponseCode::from(0x22)))
     );
+}
+
+const LEVEL_1: SecurityLevel = match SecurityLevel::from_request_seed(0x01) {
+    Some(level) => level,
+    None => panic!("level 1"),
+};
+
+/// Annex I: the seed request carries no record and no suppress bit, and its positive
+/// response is the seed.
+#[test]
+fn a_seed_is_requested_and_read() {
+    let mut t = tester(&[
+        Step::Conf(to(ECU), SResult::Ok),
+        Step::Ind(from(ECU), &[0x67, 0x01, 0x36, 0x57]),
+    ]);
+    let seed = block_on(t.security_access_seed(ECU, LEVEL_1));
+    assert_eq!(seed, Ok(Response::Positive(&[0x36, 0x57][..])));
+    assert_eq!(
+        t.transport().addressed(0),
+        (Some(to(ECU)), &[0x27, 0x01][..])
+    );
+}
+
+/// A seed reply to the send-key sub-function is a stale reply, not this request's
+/// answer: the response window stays open, so the request is repeated and times out.
+#[test]
+fn a_reply_to_another_sub_function_is_not_the_answer() {
+    let mut t = tester(&[
+        Step::Conf(to(ECU), SResult::Ok),
+        Step::Ind(from(ECU), &[0x67, 0x02]),
+        Step::At(100),
+        Step::Conf(to(ECU), SResult::Ok),
+        Step::At(200),
+        Step::Conf(to(ECU), SResult::Ok),
+        Step::At(300),
+    ]);
+    let seed = block_on(t.security_access_seed(ECU, LEVEL_1));
+    assert!(matches!(seed, Err(ClientError::Timeout)), "{seed:?}");
+}
+
+/// A seed longer than the client declared arrives truncated and is reported overlong,
+/// never read as a shorter seed.
+#[test]
+fn an_overlong_seed_is_malformed() {
+    let mut t = tester(&[
+        Step::Conf(to(ECU), SResult::Ok),
+        Step::TooLong(from(ECU), &[0x67, 0x01, 0x36, 0x57, 0x00, 0x00]),
+    ]);
+    let seed = block_on(t.security_access_seed(ECU, LEVEL_1));
+    assert!(
+        matches!(
+            seed,
+            Ok(Response::Malformed(MalformedResponse::Overlong { .. }))
+        ),
+        "{seed:?}"
+    );
+}
+
+/// The key goes on the level's even sub-function and is confirmed by its echo.
+#[test]
+fn a_key_is_sent_on_the_next_sub_function() {
+    let mut t = tester(&[
+        Step::Conf(to(ECU), SResult::Ok),
+        Step::Ind(from(ECU), &[0x67, 0x02]),
+    ]);
+    let unlocked = block_on(t.security_access_key(ECU, LEVEL_1, &[0xC9, 0xA9]));
+    assert_eq!(unlocked, Ok(Response::Positive(())));
+    assert_eq!(
+        t.transport().addressed(0),
+        (Some(to(ECU)), &[0x27, 0x02, 0xC9, 0xA9][..])
+    );
+}
+
+/// A routine's positive response echoes its sub-function and identifier; what
+/// follows is handed back whole, `routineInfo` first where the server sends one.
+#[test]
+fn a_routine_is_started_and_its_status_read() {
+    let mut t = tester(&[
+        Step::Conf(to(ECU), SResult::Ok),
+        Step::Ind(from(ECU), &[0x71, 0x01, 0x02, 0x01, 0x00, 0x5A]),
+    ]);
+    let started = block_on(t.routine_control(
+        ECU,
+        RoutineControlSubFunction::StartRoutine,
+        Rid::SelfTest,
+        &[0x07],
+    ));
+    assert_eq!(started, Ok(Response::Positive(&[0x00, 0x5A][..])));
+    assert_eq!(
+        t.transport().addressed(0),
+        (Some(to(ECU)), &[0x31, 0x01, 0x02, 0x01, 0x07][..])
+    );
+}
+
+/// A routine response echoing another routine's identifier is malformed.
+#[test]
+fn a_routine_response_for_another_routine_is_malformed() {
+    let mut t = tester(&[
+        Step::Conf(to(ECU), SResult::Ok),
+        Step::Ind(from(ECU), &[0x71, 0x01, 0xFF, 0x00, 0x00]),
+    ]);
+    let started = block_on(t.routine_control(
+        ECU,
+        RoutineControlSubFunction::StartRoutine,
+        Rid::SelfTest,
+        &[],
+    ));
+    assert_eq!(started, Ok(Response::Malformed(MalformedResponse::Echo)));
 }

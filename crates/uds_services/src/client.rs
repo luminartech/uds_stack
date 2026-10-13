@@ -25,14 +25,15 @@ mod encode;
 use crate::storage::{ClientBuffers, ClientStorage};
 use crate::{
     ClientTransport, DataIdentifier, DiagnosticSessionType, RecordError, RoutineIdentifier,
-    SessionTiming, UdsServiceType,
+    SecurityLevel, SessionTiming, UdsServiceType,
 };
 use driver::{Answered, Book, Exchange};
 
 #[cfg(doc)]
 use crate::UdsTransport;
 use uds_protocol::{
-    EcuResetResponse, NegativeResponseCode, ResetType, WriteDataByIdentifierResponse,
+    EcuResetResponse, NegativeResponseCode, ResetType, RoutineControlResponse,
+    RoutineControlSubFunction, SecurityAccessResponse, WriteDataByIdentifierResponse,
 };
 use uds_session::{
     Address, ChannelAddressing, ChannelParameter, ChannelParams, ClientTx,
@@ -58,7 +59,7 @@ pub trait ClientSet: DataIdentifier + crate::sealed::Sealed {
     /// [`crate::uds_client`]'s `max_dids_per_request`.
     const MAX_DIDS_PER_REQUEST: usize;
     /// The routine vocabulary the client's `RoutineControl` requests name, declared
-    /// through [`crate::uds_client`]'s `routines`.
+    /// through [`crate::uds_client`]'s `routines`; see [`Client::routine_control`].
     type Routine: RoutineIdentifier;
 }
 
@@ -857,6 +858,133 @@ impl<
         ))
         .echoing(|reset| reset.reset_type == kind)
         .map(|reset| reset.power_down_time))
+    }
+
+    /// Request `level`'s seed from `target` (ISO 14229-1:2020 10.4, Annex I).
+    ///
+    /// The seed is in the response, so the suppress bit is never set on this request.
+    /// The client keeps no security state: compute the key and send it with
+    /// [`Self::security_access_key`].
+    ///
+    /// # Arguments
+    ///
+    /// * `target` - the server's address.
+    /// * `level` - the security level, named by its seed sub-function.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::read_data_by_identifier`]'s.
+    ///
+    /// # Cancel safety
+    ///
+    /// As [`Self::read_data_by_identifier`]'s.
+    pub async fn security_access_seed(
+        &mut self,
+        target: Address,
+        level: SecurityLevel,
+    ) -> Result<Response<&[u8]>, ClientError<T::Error>> {
+        let answered = self
+            .exchange_with(
+                target,
+                |request| encode::security_access_seed(request, level),
+                None,
+            )
+            .await?;
+        let message = answered_bytes(&mut self.store, &answered);
+        Ok(
+            encode::decoded::<SecurityAccessResponse<'_>>(encode::final_response(
+                message,
+                answered.arrived,
+            ))
+            .echoing(|seed| u8::from(seed.access_type) == level.request_seed())
+            .map(|seed| seed.security_seed),
+        )
+    }
+
+    /// Send `level`'s key to `target` (ISO 14229-1:2020 10.4).
+    ///
+    /// # Arguments
+    ///
+    /// * `target` - the server's address.
+    /// * `level` - the level whose seed was requested.
+    /// * `key` - the key computed from the seed.
+    ///
+    /// # Errors
+    ///
+    /// [`ClientError::Request`] where the key does not fit the request buffer;
+    /// otherwise as [`Self::read_data_by_identifier`]'s.
+    ///
+    /// # Cancel safety
+    ///
+    /// As [`Self::read_data_by_identifier`]'s.
+    pub async fn security_access_key(
+        &mut self,
+        target: Address,
+        level: SecurityLevel,
+        key: &[u8],
+    ) -> Result<Response<()>, ClientError<T::Error>> {
+        let answered = self
+            .exchange_with(
+                target,
+                |request| encode::security_access_key(request, level, key),
+                None,
+            )
+            .await?;
+        let message = answered_bytes(&mut self.store, &answered);
+        Ok(
+            encode::decoded::<SecurityAccessResponse<'_>>(encode::final_response(
+                message,
+                answered.arrived,
+            ))
+            .echoing(|unlocked| u8::from(unlocked.access_type) == level.send_key())
+            .map(|_| ()),
+        )
+    }
+
+    /// Start, stop or read the results of `routine` on `target` (ISO 14229-1:2020 10.6).
+    ///
+    /// The positive payload is everything after the echoed routine identifier:
+    /// `routineInfo` first where the server sends one, which Table 428 leaves to the
+    /// server, then the status record. This stack's servers always send it.
+    ///
+    /// # Arguments
+    ///
+    /// * `target` - the server's address.
+    /// * `control` - start, stop or request results.
+    /// * `routine` - the routine.
+    /// * `option_record` - the `routineControlOptionRecord`, possibly empty.
+    ///
+    /// # Errors
+    ///
+    /// [`ClientError::Request`] where the record does not fit the request buffer;
+    /// otherwise as [`Self::read_data_by_identifier`]'s.
+    ///
+    /// # Cancel safety
+    ///
+    /// As [`Self::read_data_by_identifier`]'s.
+    pub async fn routine_control(
+        &mut self,
+        target: Address,
+        control: RoutineControlSubFunction,
+        routine: C::Routine,
+        option_record: &[u8],
+    ) -> Result<Response<&[u8]>, ClientError<T::Error>> {
+        let answered = self
+            .exchange_with(
+                target,
+                |request| encode::routine_control(request, control, routine, option_record),
+                None,
+            )
+            .await?;
+        let message = answered_bytes(&mut self.store, &answered);
+        Ok(
+            encode::decoded::<RoutineControlResponse<'_>>(encode::final_response(
+                message,
+                answered.arrived,
+            ))
+            .echoing(|r| r.sub_function == control && r.routine_id == routine.as_u16())
+            .map(|r| r.status_record),
+        )
     }
 
     /// Wait until `until`, sending every keep-alive that falls due meanwhile.
