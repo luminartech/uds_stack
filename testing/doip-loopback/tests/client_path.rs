@@ -187,6 +187,17 @@ async fn client(loopback: &Loopback, backoff: Duration) -> Diagnoser {
     )
 }
 
+/// A client whose response-timeout repeat is capped at `repeats`.
+async fn client_repeating(
+    loopback: &Loopback,
+    backoff: Duration,
+    repeats: u8,
+) -> Diagnoser {
+    let mut c = client(loopback, backoff).await;
+    c.timing_mut().repeats = repeats;
+    c
+}
+
 /// The record a positive read of `did` returned, or a panic naming what came instead.
 fn record(
     read: Result<
@@ -299,6 +310,44 @@ fn a_reconnect_drops_backs_off_then_connects() {
             assert!(
                 u64::from(waited) >= BACKOFF.as_millis(),
                 "connected {waited} ms after the drop"
+            );
+            c.close().await.expect("closed");
+        })
+        .await;
+    });
+}
+
+/// `ClientTiming::repeats` at zero over `DoIP`: the slow read reports the first expired
+/// window, and the late-reply guard still holds, so the next read goes on a new
+/// connection after one back-off and the slow read's late answer reaches neither read.
+#[test]
+fn a_ceiling_of_zero_times_out_after_one_window_and_one_backoff() {
+    const BACKOFF: Duration = Duration::from_millis(500);
+    on_loopback(|loopback| async move {
+        let mut server = server(&loopback);
+        serve_until(&mut server, async {
+            let mut c = client_repeating(&loopback, BACKOFF, 0).await;
+            let before = c.transport().now();
+            let slow = ticking(c.read_data_by_identifier(SERVER, &[Did::Slow]), STEP).await;
+            assert!(matches!(slow, Err(ClientError::Timeout)), "{slow:?}");
+            let window = c.transport().now().0.wrapping_sub(before.0);
+            // One window (`RELOADS.default_reload`), not three plus two back-offs.
+            assert!(
+                u64::from(window) < 2 * u64::from(RELOADS.default_reload),
+                "timed out {window} ms after the request"
+            );
+
+            let before = c.transport().now();
+            for _ in 0..2 {
+                let read =
+                    ticking(c.read_data_by_identifier(SERVER, &[Did::Vin]), STEP).await;
+                assert_eq!(record(read, Did::Vin), VIN);
+            }
+            let waited = c.transport().now().0.wrapping_sub(before.0);
+            assert!(
+                u64::from(waited) >= BACKOFF.as_millis()
+                    && u64::from(waited) < 2 * BACKOFF.as_millis(),
+                "the reads took {waited} ms: expected exactly one back-off"
             );
             c.close().await.expect("closed");
         })
