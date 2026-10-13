@@ -6,7 +6,10 @@
 
 use super::{Answer, MalformedResponse, Records, Response};
 use crate::{DataIdentifier, DiagnosticSessionType, SessionTiming, UdsServiceType};
-use uds_protocol::{Decode, Encode, NegativeResponseCode, Request};
+use uds_protocol::{
+    Decode, EcuResetRequest, Encode, NegativeResponseCode, Request, ResetType,
+    WriteDataByIdentifierRequest,
+};
 use uds_session::Address;
 use uds_session::{ClientRx, SessionSelection, Solicitation};
 
@@ -53,12 +56,29 @@ pub(super) fn read_data_by_identifier<D: DataIdentifier>(
 
 /// Encode `request`, service identifier first, into `buffer`: its length, or `None`
 /// where it does not fit, so nothing is sent.
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "called by the service calls that follow")
-)]
 pub(super) fn request(buffer: &mut [u8], request: &Request<'_>) -> Option<usize> {
     request.encode_to_slice(buffer).ok()
+}
+
+/// Encode a `WriteDataByIdentifier` request for `did` with `record` into `buffer`.
+///
+/// `None` for an empty record, which Table 218 makes mandatory, or one that does not
+/// fit.
+pub(super) fn write_data_by_identifier<D: DataIdentifier>(
+    buffer: &mut [u8],
+    did: D,
+    record: &[u8],
+) -> Option<usize> {
+    let write = WriteDataByIdentifierRequest::new(did.as_u16(), record).ok()?;
+    request(buffer, &Request::WriteDataByIdentifier(write))
+}
+
+/// Encode an `ECUReset` request for `kind` into `buffer`.
+pub(super) fn ecu_reset(buffer: &mut [u8], kind: ResetType) -> Option<usize> {
+    request(
+        buffer,
+        &Request::EcuReset(EcuResetRequest::new(false, kind)),
+    )
 }
 
 /// Encode a `DiagnosticSessionControl` request for `session` into `request`.
@@ -169,10 +189,6 @@ pub(super) fn final_response(message: &[u8], arrived: Arrived) -> Final<'_> {
 
 /// A final response read as `R`, exactly: one the decoder cannot read whole is
 /// malformed, short where it ran out of bytes.
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "called by the service calls that follow")
-)]
 pub(super) fn decoded<'d, R>(answer: Final<'d>) -> Response<R>
 where
     R: Decode<'d, Error = uds_protocol::Error>,

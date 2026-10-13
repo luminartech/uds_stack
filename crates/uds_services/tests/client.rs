@@ -13,8 +13,8 @@ use core::task::Poll;
 use uds_services::{
     Address, Ai, Answer, ClientError, ClientTiming, DataIdentifier, DiagnosticSessionType,
     FunctionalKeepAlive, KeepAlive, MalformedResponse, Mtype, NegativeResponseCode,
-    PhysicalKeepAlive, RecordError, Reloads, Response, RoutineIdentifier, SResult,
-    SessionTiming, TaType, Timestamp, uds_client,
+    PhysicalKeepAlive, RecordError, Reloads, ResetType, Response, RoutineIdentifier,
+    SResult, SessionTiming, TaType, Timestamp, uds_client,
 };
 use uds_session::TransportError;
 
@@ -1697,4 +1697,83 @@ fn a_failed_close_still_reads_the_confirms_owed() {
 
     assert_eq!(block_on(t.close()), Err(ClientError::Transport(())));
     assert_eq!(t.transport().cursor, 2);
+}
+
+const WRITE_SPEED: &[u8] = &[0x2E, 0xF4, 0x0D, 0x40];
+const WROTE_SPEED: &[u8] = &[0x6E, 0xF4, 0x0D];
+const HARD_RESET: &[u8] = &[0x11, 0x01];
+const RESETTING: &[u8] = &[0x51, 0x01];
+const RAPID_SHUTDOWN: &[u8] = &[0x11, 0x04];
+const SHUTTING_DOWN_IN: &[u8] = &[0x51, 0x04, 0x0A];
+
+/// A write is the identifier then the record, and its positive response echoes the
+/// identifier (ISO 14229-1:2020 Table 219).
+#[test]
+fn a_write_is_answered_by_its_identifiers_echo() {
+    let mut t = tester(&[
+        Step::Conf(to(ECU), SResult::Ok),
+        Step::Ind(from(ECU), WROTE_SPEED),
+    ]);
+    let written = block_on(t.write_data_by_identifier(ECU, Did::Speed, &[0x40]));
+    assert_eq!(written, Ok(Response::Positive(())));
+    assert_eq!(t.transport().addressed(0), (Some(to(ECU)), WRITE_SPEED));
+}
+
+/// A positive write response echoing another identifier is not this write's answer
+/// in substance: it is malformed, not positive.
+#[test]
+fn a_write_echoing_another_identifier_is_malformed() {
+    let mut t = tester(&[
+        Step::Conf(to(ECU), SResult::Ok),
+        Step::Ind(from(ECU), &[0x6E, 0xF1, 0xA0]),
+    ]);
+    let written = block_on(t.write_data_by_identifier(ECU, Did::Speed, &[0x40]));
+    assert_eq!(written, Ok(Response::Malformed(MalformedResponse::Echo)));
+}
+
+/// An empty record is refused before anything is sent (Table 218 makes the record
+/// mandatory).
+#[test]
+fn a_write_of_nothing_sends_nothing() {
+    let mut t = tester(&[]);
+    assert_eq!(
+        block_on(t.write_data_by_identifier(ECU, Did::Speed, &[])),
+        Err(ClientError::Request)
+    );
+    assert!(t.transport().finished());
+}
+
+/// A reset's positive response carries the power-down time only for
+/// `enableRapidPowerShutDown` (Table 79).
+#[test]
+fn a_reset_reads_its_power_down_time_where_there_is_one() {
+    let mut t = tester(&[
+        Step::Conf(to(ECU), SResult::Ok),
+        Step::Ind(from(ECU), RESETTING),
+        Step::Conf(to(ECU), SResult::Ok),
+        Step::Ind(from(ECU), SHUTTING_DOWN_IN),
+    ]);
+    assert_eq!(
+        block_on(t.ecu_reset(ECU, ResetType::HardReset)),
+        Ok(Response::Positive(None))
+    );
+    assert_eq!(
+        block_on(t.ecu_reset(ECU, ResetType::EnableRapidPowerShutDown)),
+        Ok(Response::Positive(Some(0x0A)))
+    );
+    assert_eq!(t.transport().addressed(0), (Some(to(ECU)), HARD_RESET));
+    assert_eq!(t.transport().addressed(1), (Some(to(ECU)), RAPID_SHUTDOWN));
+}
+
+/// A negative response to a reset is a response.
+#[test]
+fn a_refused_reset_is_a_negative_response() {
+    let mut t = tester(&[
+        Step::Conf(to(ECU), SResult::Ok),
+        Step::Ind(from(ECU), &[0x7F, 0x11, 0x22]),
+    ]);
+    assert_eq!(
+        block_on(t.ecu_reset(ECU, ResetType::HardReset)),
+        Ok(Response::Negative(NegativeResponseCode::from(0x22)))
+    );
 }

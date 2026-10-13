@@ -31,7 +31,9 @@ use driver::{Answered, Book, Exchange};
 
 #[cfg(doc)]
 use crate::UdsTransport;
-use uds_protocol::NegativeResponseCode;
+use uds_protocol::{
+    EcuResetResponse, NegativeResponseCode, ResetType, WriteDataByIdentifierResponse,
+};
 use uds_session::{
     Address, ChannelAddressing, ChannelParameter, ChannelParams, ClientTx,
     ExpectedResponses, FunctionalKeepAlive, KeepAliveMode, PhysicalChannelId,
@@ -342,7 +344,6 @@ impl<V> Response<V> {
     }
 
     /// A positive payload that fails `matches` is [`MalformedResponse::Echo`].
-    #[expect(dead_code, reason = "called by the service calls that follow")]
     pub(crate) fn echoing(self, matches: impl FnOnce(&V) -> bool) -> Self {
         match self {
             Self::Positive(value) if !matches(&value) => {
@@ -780,6 +781,82 @@ impl<
         }
         self.settle_functional_keep_alive();
         Ok(response)
+    }
+
+    /// Write one data identifier's record on `target` (ISO 14229-1:2020 11.3).
+    ///
+    /// # Arguments
+    ///
+    /// * `target` - the server's address, `S_AI[TA]`.
+    /// * `did` - the identifier to write.
+    /// * `record` - its new record, at least one byte.
+    ///
+    /// # Errors
+    ///
+    /// [`ClientError::Request`] for an empty record or one the request buffer cannot
+    /// hold; otherwise as [`Self::read_data_by_identifier`]'s. A positive response
+    /// echoing another identifier is [`MalformedResponse::Echo`].
+    ///
+    /// # Cancel safety
+    ///
+    /// As [`Self::read_data_by_identifier`]'s.
+    pub async fn write_data_by_identifier(
+        &mut self,
+        target: Address,
+        did: C,
+        record: &[u8],
+    ) -> Result<Response<()>, ClientError<T::Error>> {
+        let answered = self
+            .exchange_with(
+                target,
+                |request| encode::write_data_by_identifier(request, did, record),
+                None,
+            )
+            .await?;
+        let message = answered_bytes(&mut self.store, &answered);
+        Ok(
+            encode::decoded::<WriteDataByIdentifierResponse>(encode::final_response(
+                message,
+                answered.arrived,
+            ))
+            .echoing(|written| written.identifier == did.as_u16())
+            .map(|_| ()),
+        )
+    }
+
+    /// Reset `target` (ISO 14229-1:2020 10.3).
+    ///
+    /// A positive response to `enableRapidPowerShutDown` carries the server's
+    /// power-down time; any other carries `None`. The server closes its connection after
+    /// a positive response (ISO 14229-5:2022 REQ 7.11); the next call reconnects.
+    ///
+    /// # Arguments
+    ///
+    /// * `target` - the server's address.
+    /// * `kind` - the reset.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::read_data_by_identifier`]'s.
+    ///
+    /// # Cancel safety
+    ///
+    /// As [`Self::read_data_by_identifier`]'s.
+    pub async fn ecu_reset(
+        &mut self,
+        target: Address,
+        kind: ResetType,
+    ) -> Result<Response<Option<u8>>, ClientError<T::Error>> {
+        let answered = self
+            .exchange_with(target, |request| encode::ecu_reset(request, kind), None)
+            .await?;
+        let message = answered_bytes(&mut self.store, &answered);
+        Ok(encode::decoded::<EcuResetResponse>(encode::final_response(
+            message,
+            answered.arrived,
+        ))
+        .echoing(|reset| reset.reset_type == kind)
+        .map(|reset| reset.power_down_time))
     }
 
     /// Wait until `until`, sending every keep-alive that falls due meanwhile.
