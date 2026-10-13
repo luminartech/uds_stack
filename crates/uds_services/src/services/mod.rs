@@ -21,7 +21,9 @@ use crate::pipeline::Settling;
 use crate::state::ProtocolState;
 use crate::storage::Storage;
 use crate::{Ai, ResponseSink};
-use uds_protocol::{DiagnosticSessionType, NegativeResponseCode, UdsServiceType};
+use uds_protocol::{
+    DiagnosticSessionType, NegativeResponseCode, ResetType, UdsServiceType,
+};
 
 pub mod data;
 pub mod dtc;
@@ -35,13 +37,13 @@ pub use dtc::{ClearDiagnosticInformation, DtcReportKind, ReadDtcInformation};
 pub use routine::RoutineControl;
 pub use security::{Delay, KeyVerdict, SecurityAccess, SecurityLevel, SecurityPolicy};
 pub use session::{
-    CommunicationControl, ControlDtcSetting, DiagnosticSessionControl, EcuReset,
-    SessionTiming, TesterPresent,
+    AfterReset, CommunicationControl, ControlDtcSetting, DiagnosticSessionControl,
+    EcuReset, SessionTiming, TesterPresent,
 };
 pub use transfer::{DataTransfer, TransferRequest};
 
 /// What a positive outcome does once its response is sent, or its suppression
-/// completed: nothing, or a change of session (``UDSS_LLR_0085``/``0086``).
+/// completed: nothing, a change of session, or a reset (``UDSS_LLR_0085``/``0086``).
 ///
 /// Public only because [`Responded`] names it; an application never builds or reads one.
 #[doc(hidden)]
@@ -51,6 +53,13 @@ pub enum Effect {
     None,
     /// The response selected this session.
     Session(DiagnosticSessionType),
+    /// An accepted `ECUReset`, performed on the confirmation (``UDSSVC_ARCH_0045``).
+    Reset {
+        /// The reset accepted.
+        kind: ResetType,
+        /// What follows it.
+        after: AfterReset,
+    },
 }
 
 impl From<Option<DiagnosticSessionType>> for Effect {
@@ -316,6 +325,24 @@ pub trait ServiceSet: crate::sealed::Sealed {
         &mut self,
         state: &mut Self::State,
         selected: DiagnosticSessionType,
+    );
+
+    /// The response accepting the reset `kind` was confirmed sent, or its suppression
+    /// completed: tell the application, and for [`AfterReset::Restart`] return to the
+    /// default session (telling the application, Figure 7 key 4) and then to
+    /// [`ProtocolState::INITIAL`]. ``UDSSVC_ARCH_0045``. Emitted by the assembly; called
+    /// only where `EcuReset` is listed.
+    ///
+    /// # Arguments
+    ///
+    /// * `state` - the [`ProtocolState`] of this assembly, held by [`crate::Server`]
+    /// * `kind` - the reset accepted; see [`ResetType`]
+    /// * `after` - what [`crate::EcuReset::reset`] said follows it
+    fn reset_confirmed(
+        &mut self,
+        state: &mut Self::State,
+        kind: ResetType,
+        after: AfterReset,
     );
 
     /// The `P2` pair of the session `state` is in, which [`crate::Server`] enforces for

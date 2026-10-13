@@ -327,6 +327,17 @@ macro_rules! __uds_session_hook {
     ($self:ident, $entered:expr, $svc:ident) => {};
 }
 
+/// `ServiceSet::reset_confirmed`'s call into the application, for one listed service:
+/// only `EcuReset` has one.
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __uds_reset_hook {
+    ($self:ident, $kind:ident, EcuReset) => {
+        <Self as $crate::EcuReset>::confirmed($self, $kind);
+    };
+    ($self:ident, $kind:ident, $svc:ident) => {};
+}
+
 /// The `P2` pair of the session in force, for one listed service: only
 /// `DiagnosticSessionControl` states one, and any other listed service emits nothing.
 #[doc(hidden)]
@@ -479,9 +490,7 @@ macro_rules! __uds_stage {
     };
     ($self:ident, $state:ident, $out:ident, $req:ident, EcuReset) => {
         if let $crate::Request::EcuReset(ref r) = $req {
-            return $crate::pipeline::ecu_reset($self, r, $out)
-                .await
-                .map($crate::Effect::from);
+            return $crate::pipeline::ecu_reset($self, r, $out).await;
         }
     };
     ($self:ident, $state:ident, $out:ident, $req:ident, SecurityAccess) => {
@@ -889,6 +898,24 @@ macro_rules! uds_server {
                 ) {
                     let entered = $crate::pipeline::transition(state, selected);
                     $( $crate::__uds_session_hook!(self, entered, $svc); )+
+                }
+
+                #[allow(unused_variables, reason = "only an assembly with EcuReset reads it")]
+                fn reset_confirmed(
+                    &mut self,
+                    state: &mut Self::State,
+                    kind: $crate::ResetType,
+                    after: $crate::AfterReset,
+                ) {
+                    $( $crate::__uds_reset_hook!(self, kind, $svc); )+
+                    if ::core::matches!(after, $crate::AfterReset::Restart) {
+                        let entered = $crate::pipeline::transition(
+                            state,
+                            $crate::DiagnosticSessionType::DefaultSession,
+                        );
+                        $( $crate::__uds_session_hook!(self, entered, $svc); )+
+                        $crate::pipeline::restart(state);
+                    }
                 }
 
                 #[allow(

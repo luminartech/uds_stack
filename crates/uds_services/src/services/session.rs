@@ -166,6 +166,23 @@ pub trait DiagnosticSessionControl {
     );
 }
 
+/// What an accepted reset does once its response is sent (``UDSSVC_ARCH_0045``).
+///
+/// The application says, per request: the crate holds no table of which reset types
+/// restart, because the manufacturer- and supplier-specific ones have no standard answer.
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum AfterReset {
+    /// The server restarts: `hardReset`, `keyOffOnReset`, `softReset`, and any specific
+    /// reset that restarts. Once the response is confirmed the protocol state returns to
+    /// the power-up state and [`Server::step`](crate::Server::step) reports
+    /// [`Stopped::Reset`](crate::Stopped::Reset).
+    Restart,
+    /// The server keeps serving: `enableRapidPowerShutDown`,
+    /// `disableRapidPowerShutDown`.
+    Continue,
+}
+
 /// `EcuReset` (0x11).
 ///
 /// ISO 14229-1:2020 clause 10.3. The pipeline writes the positive response's service
@@ -194,7 +211,8 @@ pub trait EcuReset {
     ///
     /// **Must not perform the reset before returning.** ISO 14229-1:2020 clause 10.3.1
     /// strongly recommends that the positive response is sent before the reset is
-    /// executed, and it is sent only after this returns `Ok`.
+    /// executed, and it is sent only after this returns `Ok`. Return what follows the
+    /// response: [`AfterReset`].
     ///
     /// # Arguments
     ///
@@ -216,7 +234,20 @@ pub trait EcuReset {
         &mut self,
         kind: ResetType,
         out: &mut ResponseSink<'_>,
-    ) -> impl core::future::Future<Output = Result<(), NegativeResponseCode>>;
+    ) -> impl core::future::Future<Output = Result<AfterReset, NegativeResponseCode>>;
+
+    /// The positive response to `kind` was confirmed sent, or its suppression completed
+    /// (``UDSS_LLR_0085``/``0086``). Where a reset starts something after its response,
+    /// it starts here: ISO 14229-1:2020 Table 34, "the server shall send the positive
+    /// response message prior to the start of the 'rapid power shut down' function".
+    ///
+    /// Called for every accepted reset, before the protocol state returns to the power-up
+    /// state for an [`AfterReset::Restart`]. Not called where the confirmation failed.
+    ///
+    /// # Arguments
+    ///
+    /// * `kind` - the reset whose response was confirmed; see [`ResetType`].
+    fn confirmed(&mut self, kind: ResetType);
 }
 
 /// `TesterPresent` (0x3E).
@@ -366,7 +397,7 @@ pub trait ControlDtcSetting {
               a real defect in test code"
 )]
 mod tests {
-    use super::{DiagnosticSessionControl, EcuReset, SessionTiming};
+    use super::{AfterReset, DiagnosticSessionControl, EcuReset, SessionTiming};
     use crate::{ResponseSink, SessionTransition};
     use uds_protocol::{DiagnosticSessionType, NegativeResponseCode, ResetType};
 
@@ -417,9 +448,10 @@ mod tests {
             &mut self,
             _k: ResetType,
             _o: &mut ResponseSink<'_>,
-        ) -> Result<(), NegativeResponseCode> {
-            Ok(())
+        ) -> Result<AfterReset, NegativeResponseCode> {
+            Ok(AfterReset::Restart)
         }
+        fn confirmed(&mut self, _k: ResetType) {}
     }
 
     /// ``UDSSVC_ARCH_0038`` — the application receives a classified transition, not a

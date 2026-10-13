@@ -13,15 +13,15 @@ use common::block_on;
 use uds_protocol::NegativeResponseCode as Nrc;
 use uds_services::pipeline::settle;
 use uds_services::{
-    Access, Address, AfterSend, Ai, ClearDiagnosticInformation, CommunicationControl,
-    CommunicationControlType, CommunicationType, ControlDtcSetting, DataIdentifier, Delay,
-    DiagnosticSessionType as S, DtcRecord, DtcReportKind, DtcSettingType, DtcStatusMask,
-    EcuReset, KeyVerdict, Levels, Mtype, ProtocolState, ReadDtcInfoReportType,
-    ReadDtcInfoSubFunction, ReadDtcInformation, Received, RecordError, ResetType,
-    Responded, ResponseSink, RoutineControl, RoutineControlSubFunction, RoutineIdentifier,
-    SecurityAccess, SecurityLevel, SecurityPolicy, ServiceSet, SessionTiming,
-    SessionTransition, Sessions, Sink, SubnetNumber, TaType, TesterPresent,
-    WriteDataByIdentifier, uds_server,
+    Access, Address, AfterReset, AfterSend, Ai, ClearDiagnosticInformation,
+    CommunicationControl, CommunicationControlType, CommunicationType, ControlDtcSetting,
+    DataIdentifier, Delay, DiagnosticSessionType as S, DtcRecord, DtcReportKind,
+    DtcSettingType, DtcStatusMask, EcuReset, KeyVerdict, Levels, Mtype, ProtocolState,
+    ReadDtcInfoReportType, ReadDtcInfoSubFunction, ReadDtcInformation, Received,
+    RecordError, ResetType, Responded, ResponseSink, RoutineControl,
+    RoutineControlSubFunction, RoutineIdentifier, SecurityAccess, SecurityLevel,
+    SecurityPolicy, ServiceSet, SessionTiming, SessionTransition, Sessions, Sink,
+    SubnetNumber, TaType, TesterPresent, WriteDataByIdentifier, uds_server,
 };
 
 /// The test server's data identifiers.
@@ -221,7 +221,7 @@ impl EcuReset for Ecu {
         &mut self,
         kind: ResetType,
         out: &mut ResponseSink<'_>,
-    ) -> Result<(), Nrc> {
+    ) -> Result<AfterReset, Nrc> {
         if core::mem::take(&mut self.refuse) {
             return Err(Nrc::ConditionsNotCorrect);
         }
@@ -229,8 +229,13 @@ impl EcuReset for Ecu {
             let _ = out.write_all(&[0x0A]);
         }
         self.accepted = Some(kind);
-        Ok(())
+        Ok(if matches!(kind, ResetType::EnableRapidPowerShutDown) {
+            AfterReset::Continue
+        } else {
+            AfterReset::Restart
+        })
     }
+    fn confirmed(&mut self, _kind: ResetType) {}
 }
 
 /// Level 0x01 counts attempts, three before a delay; level 0x03 counts none; level 0x05

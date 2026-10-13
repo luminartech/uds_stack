@@ -460,7 +460,10 @@ fn the_server_in_a_static_can_be_stepped() {
     let server: &'static mut EcuServer = SERVER.take();
     let mut step = core::pin::pin!(server.step());
     let mut cx = core::task::Context::from_waker(core::task::Waker::noop());
-    assert_eq!(step.as_mut().poll(&mut cx), core::task::Poll::Ready(Ok(())));
+    assert_eq!(
+        step.as_mut().poll(&mut cx),
+        core::task::Poll::Ready(Ok(None))
+    );
 }
 
 /// The handler seam speaks `uds_protocol`'s vocabulary, so a sub-function is a named

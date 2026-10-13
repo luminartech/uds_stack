@@ -98,7 +98,7 @@ pub use client::{
 };
 
 pub mod server;
-pub use server::{Server, ServerParams};
+pub use server::{Server, ServerParams, Stopped};
 
 pub mod storage;
 pub use storage::{Buffers, ClientBuffers, ClientStorage, ClientStore, Storage, Store};
@@ -178,11 +178,12 @@ pub use identifier::{DataIdentifier, RecordError, RoutineIdentifier};
 
 pub mod services;
 pub use services::{
-    ClearDiagnosticInformation, CommunicationControl, ControlDtcSetting, DataTransfer,
-    Delay, DiagnosticSessionControl, DtcReportKind, EcuReset, Effect, KeyVerdict,
-    ReadDataByIdentifier, ReadDtcInformation, Received, Responded, RoutineControl,
-    SecurityAccess, SecurityLevel, SecurityPolicy, ServiceSet, SessionTiming,
-    SessionTransition, TesterPresent, TransferRequest, Unsettled, WriteDataByIdentifier,
+    AfterReset, ClearDiagnosticInformation, CommunicationControl, ControlDtcSetting,
+    DataTransfer, Delay, DiagnosticSessionControl, DtcReportKind, EcuReset, Effect,
+    KeyVerdict, ReadDataByIdentifier, ReadDtcInformation, Received, Responded,
+    RoutineControl, SecurityAccess, SecurityLevel, SecurityPolicy, ServiceSet,
+    SessionTiming, SessionTransition, TesterPresent, TransferRequest, Unsettled,
+    WriteDataByIdentifier,
 };
 
 /// The protocol vocabulary this crate's handler signatures are written in.

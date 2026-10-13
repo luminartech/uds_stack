@@ -111,7 +111,7 @@ macro_rules! ecu {
 
             use ::uds_services::NegativeResponseCode as Nrc;
             use ::uds_services::{
-                Access, ClearDiagnosticInformation, CommunicationControl,
+                Access, AfterReset, ClearDiagnosticInformation, CommunicationControl,
                 CommunicationControlType, CommunicationType, ControlDtcSetting, Delay,
                 DiagnosticSessionControl, DiagnosticSessionType as S, DtcRecord,
                 DtcReportKind, DtcSettingType, DtcStatusMask, EcuReset, KeyVerdict, Levels,
@@ -236,12 +236,15 @@ macro_rules! ecu {
                     &mut self,
                     kind: ResetType,
                     out: &mut ResponseSink<'_>,
-                ) -> impl Future<Output = Result<(), Nrc>> {
-                    if matches!(kind, ResetType::EnableRapidPowerShutDown) {
+                ) -> impl Future<Output = Result<AfterReset, Nrc>> {
+                    ready(Ok(if matches!(kind, ResetType::EnableRapidPowerShutDown) {
                         let _ = out.write_all(&[0x0A]);
-                    }
-                    ready(Ok(()))
+                        AfterReset::Continue
+                    } else {
+                        AfterReset::Restart
+                    }))
                 }
+                fn confirmed(&mut self, _kind: ResetType) {}
             }
 
             impl SecurityAccess for Ecu {

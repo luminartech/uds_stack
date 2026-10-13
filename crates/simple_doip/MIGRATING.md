@@ -271,9 +271,9 @@ keeps the session, its timing and the response pending. As in
 # use uds_on_ip::profile::bench_reloads;
 # use uds_protocol::NegativeResponseCode as Nrc;
 # use uds_services::{
-#     Access, Address, DiagnosticSessionControl, DiagnosticSessionType as S, EcuReset,
-#     ResetType, ResponseSink, ServerParams, SessionTiming, SessionTransition, Sessions,
-#     TesterPresent, uds_server,
+#     Access, Address, AfterReset, DiagnosticSessionControl, DiagnosticSessionType as S,
+#     EcuReset, ResetType, ResponseSink, ServerParams, SessionTiming, SessionTransition,
+#     Sessions, TesterPresent, uds_server,
 # };
 #
 # #[derive(Debug, Default)]
@@ -308,9 +308,10 @@ keeps the session, its timing and the response pending. As in
 #         &mut self,
 #         _kind: ResetType,
 #         _out: &mut ResponseSink<'_>,
-#     ) -> impl Future<Output = Result<(), Nrc>> {
-#         core::future::ready(Ok(()))
+#     ) -> impl Future<Output = Result<AfterReset, Nrc>> {
+#         core::future::ready(Ok(AfterReset::Restart))
 #     }
+#     fn confirmed(&mut self, _kind: ResetType) {}
 # }
 #
 # impl TesterPresent for Ecu {

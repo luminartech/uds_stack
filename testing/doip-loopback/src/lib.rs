@@ -290,7 +290,7 @@ pub async fn ticking<F: Future>(future: F, step: embassy_time::Duration) -> F::O
 ///
 /// # Panics
 ///
-/// If the server fails.
+/// If the server's transport fails.
 pub fn serve_until<'s, A, T, const PEERS: usize, C>(
     server: &'s mut Server<A, T, PEERS>,
     client: C,
@@ -304,7 +304,14 @@ where
         tokio::select! {
             biased;
             output = client => output,
-            failed = server.run() => panic!("the server stopped: {failed:?}"),
+            failed = async {
+                // A confirmed restart hands control back; the sensor serves again.
+                loop {
+                    if let Err(failed) = server.run().await {
+                        break failed;
+                    }
+                }
+            } => panic!("the server failed: {failed:?}"),
         }
     })
 }

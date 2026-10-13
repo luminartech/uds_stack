@@ -45,9 +45,9 @@ pub struct Entered {
 }
 
 /// Enter `to`, locking every security level (ISO 14229-1:2020 Annex I transition 6), and
-/// say what that did. The one place the session field is written; the macro's hooks call
-/// this and nothing else, so `State`'s accessors stay crate-private and no clause 10.2
-/// logic is emitted into the application's crate.
+/// say what that did. With [`restart`], the only places the session field is written; the
+/// macro's hooks call these and nothing else, so `State`'s accessors stay crate-private
+/// and no clause 10.2 logic is emitted into the application's crate.
 #[doc(hidden)]
 pub fn transition(state: &mut State, to: DiagnosticSessionType) -> Entered {
     let from = state.session();
@@ -57,6 +57,13 @@ pub fn transition(state: &mut State, to: DiagnosticSessionType) -> Entered {
         session: to,
         security_relocked: state.lock(),
     }
+}
+
+/// ISO 14229-1:2020 10.3, Annex I transition 1: the protocol state a restarting reset
+/// leaves, the power-up one. With [`transition`], the only writes of the session field.
+#[doc(hidden)]
+pub fn restart(state: &mut State) {
+    *state = <State as crate::state::ProtocolState>::INITIAL;
 }
 
 /// The `P2` pair of the session `state` is in, as `services` states it. Read through here
@@ -661,11 +668,11 @@ pub async fn ecu_reset<A: EcuReset>(
     services: &mut A,
     request: &EcuResetRequest,
     out: &mut ResponseSink<'_>,
-) -> Result<Option<DiagnosticSessionType>, NegativeResponseCode> {
+) -> Result<Effect, NegativeResponseCode> {
     let kind = request.reset_type;
     let _ = out.write_all(&[0x51, u8::from(kind)]);
-    services.reset(kind, out).await?;
-    Ok(None)
+    let after = services.reset(kind, out).await?;
+    Ok(Effect::Reset { kind, after })
 }
 
 /// ISO 14229-1:2020 clause 10.4 and Annex I — `SecurityAccess`'s own stage
