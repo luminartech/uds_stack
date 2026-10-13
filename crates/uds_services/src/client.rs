@@ -341,8 +341,13 @@ pub enum MalformedResponse {
     },
     /// The response was shorter than its service's fixed fields.
     Short,
-    /// The response echoed a sub-function, identifier or counter other than the
-    /// request's: it answers some other request.
+    /// The response echoed an identifier or DTC other than the request's: it answers
+    /// some other request.
+    ///
+    /// A positive response echoing another sub-function or `TransferData` block sequence
+    /// counter is never this: it is skipped as a stale reply, and the call waits for its
+    /// own answer. A negative response carries no echo, so a stale one to an earlier
+    /// request of the same service cannot be told apart and is taken as the answer.
     Echo,
     /// The response's bytes do not decode as its service's positive response.
     Decode,
@@ -1054,7 +1059,8 @@ impl<
     ///
     /// # Errors
     ///
-    /// As [`Self::read_data_by_identifier`]'s.
+    /// As [`Self::read_data_by_identifier`]'s. A positive response to a report by DTC
+    /// number that names another DTC is [`MalformedResponse::Echo`].
     ///
     /// # Cancel safety
     ///
@@ -1065,6 +1071,13 @@ impl<
         report: ReadDtcInfoSubFunction,
     ) -> Result<Response<ReadDtcInfoResponse<'_>>, ClientError<T::Error>> {
         let sub_function = u8::from(report.report_type());
+        let asked = match report {
+            ReadDtcInfoSubFunction::ReportDtcSnapshotRecordByDtcNumber(dtc, _)
+            | ReadDtcInfoSubFunction::ReportDtcExtDataRecordByDtcNumber(dtc, _) => {
+                Some(dtc)
+            }
+            _ => None,
+        };
         let answered = self
             .exchange_with(
                 target,
@@ -1078,7 +1091,10 @@ impl<
                 message,
                 answered.arrived,
             ))
-            .echoing(|_| message.get(1).copied() == Some(sub_function)),
+            .echoing(|r| {
+                message.get(1).copied() == Some(sub_function)
+                    && asked.is_none_or(|asked| records_dtc(r) == Some(asked))
+            }),
         )
     }
 
@@ -1574,6 +1590,13 @@ impl<
 
     /// Run one physical exchange with `target`: settle what an earlier call left,
     /// encode the request with `encode`, and wait for its answer.
+    ///
+    /// A positive response answers it only where it echoes the request's second byte,
+    /// for a service that echoes one: the sub-function, or `TransferData`'s block
+    /// sequence counter. A positive response that echoes another is a stale reply to an
+    /// earlier request and is skipped. A negative response carries no echo, so one to an
+    /// earlier request of the same service cannot be told from this one's answer, and
+    /// answers it.
     async fn exchange_with(
         &mut self,
         target: Address,
@@ -1585,9 +1608,11 @@ impl<
         let ClientBuffers { request, .. } = self.store.split();
         let len = encode(request).ok_or(ClientError::Request)?;
         let sid = request.first().copied().unwrap_or_default();
-        let sub_function =
-            UdsServiceType::from_request_sid(sid).has_sub_function() == Some(true);
-        let echo = if session.is_some() || sub_function {
+        let service = UdsServiceType::from_request_sid(sid);
+        let echoed = session.is_some()
+            || service.has_sub_function() == Some(true)
+            || service == UdsServiceType::TransferData;
+        let echo = if echoed {
             request.get(1).copied()
         } else {
             None
@@ -1640,6 +1665,15 @@ impl<
                     .finish();
             }
         }
+    }
+}
+
+/// The DTC a report by DTC number answers for; `None` for any other layout.
+const fn records_dtc(response: &ReadDtcInfoResponse<'_>) -> Option<DtcRecord> {
+    match response {
+        ReadDtcInfoResponse::DtcSnapshotRecords { dtc, .. }
+        | ReadDtcInfoResponse::DtcExtDataRecords { dtc, .. } => Some(*dtc),
+        _ => None,
     }
 }
 

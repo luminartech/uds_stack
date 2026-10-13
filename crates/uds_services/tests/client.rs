@@ -1975,6 +1975,34 @@ fn a_snapshot_by_dtc_number_is_read_raw() {
     );
 }
 
+/// Records by DTC number for another DTC answer some other request.
+#[test]
+fn records_for_another_dtc_are_malformed() {
+    let mut t = tester(&[
+        Step::Conf(to(ECU), SResult::Ok),
+        Step::Ind(from(ECU), &[0x59, 0x04, 0xAB, 0xCD, 0xEF, 0x24]),
+        Step::Conf(to(ECU), SResult::Ok),
+        Step::Ind(from(ECU), &[0x59, 0x06, 0xAB, 0xCD, 0xEF, 0x24]),
+    ]);
+    let asked = DtcRecord::new(0x12, 0x34, 0x56);
+    let snapshot = block_on(t.read_dtc_information(
+        ECU,
+        ReadDtcInfoSubFunction::ReportDtcSnapshotRecordByDtcNumber(
+            asked,
+            DtcSnapshotRecordNumber::new(0xFF),
+        ),
+    ));
+    assert_eq!(snapshot, Ok(Response::Malformed(MalformedResponse::Echo)));
+    let ext_data = block_on(t.read_dtc_information(
+        ECU,
+        ReadDtcInfoSubFunction::ReportDtcExtDataRecordByDtcNumber(
+            asked,
+            DtcExtDataRecordNumber::new(0xFF),
+        ),
+    ));
+    assert_eq!(ext_data, Ok(Response::Malformed(MalformedResponse::Echo)));
+}
+
 /// Extended data by DTC number comes back as the DTC, its status and the raw records:
 /// example #7 (12.3.5.8, Tables 361 and 362), every record asked for with `0xFF`.
 #[test]
@@ -2212,8 +2240,9 @@ fn the_declared_block_maximum_is_exposed() {
     assert_eq!(<Did as ClientSet>::MAX_BLOCK_LEN, 16);
 }
 
-/// A block goes with its counter and the response echoes it; a block one byte past the
-/// declared maximum is refused before anything is sent.
+/// A block goes with its counter and the response echoes it; a reply echoing another
+/// counter is not its answer; a block one byte past the declared maximum is refused before
+/// anything is sent.
 #[test]
 fn a_block_is_transferred_and_the_counter_echoed() {
     let mut t = tester(&[
@@ -2221,6 +2250,7 @@ fn a_block_is_transferred_and_the_counter_echoed() {
         Step::Ind(from(ECU), &[0x76, 0x01]),
         Step::Conf(to(ECU), SResult::Ok),
         Step::Ind(from(ECU), &[0x76, 0x03]),
+        Step::Ind(from(ECU), &[0x76, 0x02]),
     ]);
     let block = [0xAA; 16];
     assert_eq!(
@@ -2229,7 +2259,7 @@ fn a_block_is_transferred_and_the_counter_echoed() {
     );
     assert_eq!(
         block_on(t.transfer_data(ECU, 0x02, &block)),
-        Ok(Response::Malformed(MalformedResponse::Echo))
+        Ok(Response::Positive(&[][..]))
     );
     let too_long = [0xAA; 17];
     assert_eq!(
@@ -2239,6 +2269,30 @@ fn a_block_is_transferred_and_the_counter_echoed() {
     let sent = t.transport().sent_bytes(0);
     assert_eq!(sent.get(..2), Some(&[0x36, 0x01][..]));
     assert_eq!(sent.len(), 18);
+}
+
+/// A late reply to a repeated block names that block's counter, so it is not the next
+/// block's answer: the next block waits for its own.
+#[test]
+fn a_late_reply_to_a_repeated_block_does_not_answer_the_next() {
+    let mut t = tester(&[
+        Step::Conf(to(ECU), SResult::Ok),
+        Step::At(100),
+        Step::Conf(to(ECU), SResult::Ok),
+        Step::Ind(from(ECU), &[0x76, 0x01]),
+        Step::Conf(to(ECU), SResult::Ok),
+        Step::Ind(from(ECU), &[0x76, 0x01]),
+        Step::Ind(from(ECU), &[0x76, 0x02]),
+    ]);
+    assert_eq!(
+        block_on(t.transfer_data(ECU, 0x01, &[0xAA])),
+        Ok(Response::Positive(&[][..]))
+    );
+    assert_eq!(
+        block_on(t.transfer_data(ECU, 0x02, &[0xBB])),
+        Ok(Response::Positive(&[][..]))
+    );
+    assert!(t.transport().finished());
 }
 
 /// The transfer's exit carries a parameter record each way.
