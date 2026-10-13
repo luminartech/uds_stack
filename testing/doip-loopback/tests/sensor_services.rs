@@ -84,6 +84,9 @@ const RELOADS: Reloads = Reloads {
     enhanced_reload: 5_000,
 };
 
+/// How often the client sends its physical keep-alive, `TesterPresent`, in ms.
+const KEEP_ALIVE_MS: u32 = 2_000;
+
 /// How far [`ticking`] moves the clock at a time.
 const STEP: Duration = Duration::from_millis(20);
 
@@ -104,7 +107,7 @@ async fn sdk(loopback: &Loopback) -> Sdk {
     Sdk::new(
         transport,
         TESTER,
-        KeepAlive::physical(2_000),
+        KeepAlive::physical(KEEP_ALIVE_MS),
         ClientTiming::new(0, 0, 0),
     )
 }
@@ -165,9 +168,9 @@ fn a_write_in_the_right_session_is_positive_and_a_forbidden_one_negative() {
         let forbidden = c
             .write_data_by_identifier(SERVER, SdkDid(Did::VehicleSpeed), &[0x00])
             .await;
-        assert!(
-            matches!(forbidden, Ok(Response::Negative(_))),
-            "{forbidden:?}"
+        assert_eq!(
+            forbidden.expect("answered"),
+            Response::Negative(Nrc::RequestOutOfRange)
         );
         c.close().await.expect("closed");
     });
@@ -233,7 +236,10 @@ fn a_routine_is_started_and_its_results_read() {
                 &[],
             )
             .await;
-        assert!(matches!(stopped, Ok(Response::Negative(_))), "{stopped:?}");
+        assert_eq!(
+            stopped.expect("answered"),
+            Response::Negative(Nrc::SubFunctionNotSupported)
+        );
         c.close().await.expect("closed");
     });
 }
@@ -311,7 +317,10 @@ fn supported_dtcs_need_the_extended_session() {
         let outside = c
             .read_dtc_information(SERVER, ReadDtcInfoSubFunction::ReportSupportedDtc)
             .await;
-        assert!(matches!(outside, Ok(Response::Negative(_))), "{outside:?}");
+        assert_eq!(
+            outside.expect("answered"),
+            Response::Negative(Nrc::SubFunctionNotSupportedInActiveSession)
+        );
         let entered = c
             .diagnostic_session_control(SERVER, S::ExtendedDiagnosticSession)
             .await;
@@ -378,12 +387,38 @@ fn the_prescribed_close_is_reported_as_a_replacement_once() {
             let changed = c.diagnostic_session_control(SERVER, session).await;
             assert!(matches!(changed, Ok(Response::Positive(_))), "{changed:?}");
         }
-        // The close is observed only while the client awaits the transport.
-        ticking(c.idle_until(in_ms(100)), STEP)
+        // The close is seen once the transport has been polled after it arrived.
+        ticking(c.idle_until(in_ms(500)), STEP)
             .await
             .expect("idled");
         assert!(c.connection_replaced(SERVER).await.expect("asked"));
         assert!(!c.connection_replaced(SERVER).await.expect("asked"));
+        c.close().await.expect("closed");
+    });
+}
+
+/// The keep-alive is the `TesterPresent` the client sends: idling in the extended
+/// session past several keep-alive intervals and past the server's S3, the session
+/// survives, so a service the default session refuses is still answered positively.
+#[test]
+fn the_keep_alive_holds_the_extended_session_past_s3() {
+    with_sensor(|mut c| async move {
+        extended(&mut c).await;
+        let idle = u64::from(PARAMS.s3_server) + 1_000;
+        assert!(idle > 2 * u64::from(KEEP_ALIVE_MS));
+        ticking(c.idle_until(in_ms(idle)), STEP)
+            .await
+            .expect("idled");
+        let inside = c
+            .read_dtc_information(SERVER, ReadDtcInfoSubFunction::ReportSupportedDtc)
+            .await;
+        assert!(
+            matches!(
+                inside,
+                Ok(Response::Positive(ReadDtcInfoResponse::DtcList { .. }))
+            ),
+            "{inside:?}"
+        );
         c.close().await.expect("closed");
     });
 }
