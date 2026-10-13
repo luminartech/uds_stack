@@ -5,8 +5,10 @@
 //! `uds_protocol`'s; the bytes between them are this vocabulary's.
 
 use super::{Answer, MalformedResponse, Records, Response};
-use crate::{DataIdentifier, DiagnosticSessionType, SessionTiming, UdsServiceType};
-use crate::{RoutineIdentifier, SecurityLevel};
+use crate::{
+    DataIdentifier, DiagnosticSessionType, RoutineIdentifier, SecurityLevel, SessionTiming,
+    UdsServiceType,
+};
 use uds_protocol::{
     ClearDiagnosticInfoRequest, CommunicationControlRequest, CommunicationControlType,
     CommunicationType, ControlDtcSettingRequest, DataFormatIdentifier, Decode, DtcRecord,

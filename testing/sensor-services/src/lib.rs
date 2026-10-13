@@ -107,7 +107,7 @@ macro_rules! ecu {
     () => {
         /// The sensor's application, expanded by `sensor_services::ecu!`.
         mod sensor_application {
-            use core::future::{Future, ready};
+            use ::core::future::{Future, ready};
 
             use ::uds_services::NegativeResponseCode as Nrc;
             use ::uds_services::{

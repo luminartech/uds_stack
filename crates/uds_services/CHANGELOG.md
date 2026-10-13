@@ -43,8 +43,10 @@ lockstep with the rest of the `uds_stack` workspace (`uds_protocol`, `uds_sessio
   into a `ResponseSink`.
 - `uds_client!`, which builds a client from the same identifier enumeration the
   server's handlers use. Changing that enumeration on only one side fails to
-  compile. It emits a `Client` alias with the channel counts and keep-alive mode
-  set.
+  compile. `uds_client!` implements `ClientSet` for the identifier type in the
+  crate that invokes it, so an enumeration shared with the server side and defined
+  in another crate is newtyped on the client side. It emits a `Client` alias with
+  the channel counts and keep-alive mode set.
 - `Client`, the async client driver over `uds_session`'s client role:
   `read_data_by_identifier` (physical, returning the declared identifier/record
   pairs as `Records`), `read_data_by_identifier_functional` (a `Responses` stream

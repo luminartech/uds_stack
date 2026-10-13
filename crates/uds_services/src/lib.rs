@@ -77,10 +77,10 @@
 //! and on nothing else, for the same reason.
 //!
 //! So a caller matches every other enumeration exhaustively, and a new variant stops
-//! their build. That is the
-//! correct signal: it says a requirement changed and their handling needs revisiting.
-//! `#[non_exhaustive]` would turn it into a wildcard arm that absorbs the change in
-//! silence, which is the same failure as a hand-maintained variant list.
+//! their build. That is the correct signal: it says a requirement changed and their
+//! handling needs revisiting. `#[non_exhaustive]` would turn it into a wildcard arm that
+//! absorbs the change in silence, which is the same failure as a hand-maintained variant
+//! list.
 
 #![no_std]
 #![forbid(unsafe_code)]

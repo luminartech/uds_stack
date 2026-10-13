@@ -979,7 +979,9 @@ impl<
     /// # Errors
     ///
     /// [`ClientError::Request`] where the record does not fit the request buffer;
-    /// otherwise as [`Self::read_data_by_identifier`]'s.
+    /// otherwise as [`Self::read_data_by_identifier`]'s. A positive response echoing
+    /// another control type or another routine's identifier is
+    /// [`MalformedResponse::Echo`].
     ///
     /// # Cancel safety
     ///
@@ -1362,12 +1364,14 @@ impl<
     /// the server prescribed the close or not.
     ///
     /// A close is observed only while the client awaits the transport, which the call
-    /// that provoked it does not do after its answer, so this looks at the transport
-    /// once, as [`Self::idle_until`] does with the current time, before answering.
-    /// That look is non-blocking: it takes only what the transport already reports, so a
-    /// close is seen only once the transport has been polled since it arrived, by
-    /// [`Self::idle_until`] or any call. Asked once with nothing polled in between, this
-    /// may answer `false` for a close that has already happened on the wire.
+    /// that provoked it does not do after its answer. So this first settles what an
+    /// earlier call left, waiting out a functional window a dropped call left open, then
+    /// hands the transport one wait bounded by the current time, as [`Self::idle_until`]
+    /// does, and answers. That wait ends at the first event or at once, so it observes at
+    /// most one event the transport already holds: a close is seen only once the
+    /// transport has been polled since it arrived, by [`Self::idle_until`] or any call.
+    /// Asked once with nothing polled in between, this may answer `false` for a close
+    /// that has already happened on the wire.
     /// Asking clears it. `false` where no channel to `target` is open, and where the
     /// channel was withdrawn for another server before the asking.
     ///
