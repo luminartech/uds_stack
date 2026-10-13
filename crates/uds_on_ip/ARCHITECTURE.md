@@ -484,9 +484,9 @@ close, after sending the positive response and before executing the service.
 `uds_on_ip` recognises a positive `ECUReset` response going out, or is told by
 `AfterSend::ServerLeaves` that the server leaves its running software after
 this `DiagnosticSessionControl` response, and once that response is confirmed
-sent, closes the connection before reporting the confirmation. The driver
-executes a session change on that confirmation, so the close precedes it. A
-reset it does not yet execute there (see [§9.2](#92-design-gaps-in-this-crate)).
+sent, closes the connection before reporting the confirmation. `uds_services`
+acts on that report: it applies a session change, runs `EcuReset::confirmed`
+and, for a restart, reports `Stopped`, so the close precedes each.
 
 **Server, ordinary request.** A diagnostic message arrives, becomes
 `TransportEvent::DataInd`, and the driver offers it to the session layer, which
@@ -805,12 +805,6 @@ None.
   `DiagnosticSessionControl::leaves_running_software`; there is no mechanism,
   and a client that needs the close must not suppress the response. `11 81`,
   a suppressed reset, is the same: no `51` is sent, so no close is made.
-- **A reset is not executed on its confirmation.** REQ 7.11 orders the close
-  before the reset. This crate holds the confirmation back until the close is
-  made, but `uds_services` has no hook that runs the reset on that confirmation,
-  and its `EcuReset::reset` must not reset before returning, so an application
-  has no signal that the response was sent and the connection closed. Tracked in
-  `uds_services` as #38.
 - **A server cannot send a periodic response.** REQ 7.7 and REQ 7.16 have it
   sent as payload type `0x8004`, from the periodic-specific source address.
   Neither `UdsTransport::t_data_req` nor `DiagnosticEntity::request` can choose

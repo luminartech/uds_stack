@@ -63,8 +63,8 @@ use uds_session::{Ai, Reloads, SResult, Timestamp};
 /// confirmation: `uds_services::Server` executes a session change there. It
 /// executes an accepted reset on that confirmation (`EcuReset::confirmed`, and
 /// `Stopped` for a restart), so the reset follows the close; a suppressed reset
-/// sends nothing and closes nothing. A message whose
-/// confirmation fails closes nothing.
+/// sends nothing and closes nothing. A message whose confirmation fails closes
+/// nothing.
 ///
 /// The close follows the armed message's own confirmation, told apart from the
 /// tester's others by the order the entity confirms them in. A message sent to the
