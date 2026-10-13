@@ -132,8 +132,9 @@ lockstep with the rest of the `uds_stack` workspace (`uds_protocol`, `uds_sessio
   `run`, or act on `Stopped` (rebind, delay) and call `run` again.
 - **Breaking:** `Responded` carries an `Effect` in place of a session and is hidden from the
   documentation; applications never built or read it.
-- `uds_server!` fails to compile where the transport cannot carry a `TransferData` block
-  of `MAX_BLOCK_LENGTH`.
+- **Breaking:** `uds_server!` fails to compile where the transport cannot carry a
+  `TransferData` block of `MAX_BLOCK_LENGTH`, which an assembly may have compiled before.
+  Migrate: raise the transport's message size or lower `MAX_BLOCK_LENGTH`.
 
 ### Known limitations
 

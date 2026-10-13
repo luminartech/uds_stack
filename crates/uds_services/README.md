@@ -34,7 +34,7 @@ The architecture is authored as a sphinx-needs set under
 [`docs/architecture/`](https://github.com/luminartech/uds_stack/tree/main/docs/architecture)
 at the workspace root — not inside this crate's own directory — and is meant to
 be read rendered, at <https://luminartech.github.io/uds_stack/>. It carries
-forty-two architecture elements (`UDSSVC_ARCH_####`), each recording either
+forty-five architecture elements (`UDSSVC_ARCH_####`), each recording either
 the clause that forces it or the reasoning behind choosing it, and an
 [open questions](https://github.com/luminartech/uds_stack/blob/main/docs/architecture/open-questions.rst)
 page for what is still unsettled. That set is provisional in the same sense as

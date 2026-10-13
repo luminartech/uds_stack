@@ -61,7 +61,8 @@ block them, and each needs an answer before a stage is written:
 * ``RequestFileTransfer``'s positive response needs file sizes that ``pipeline::begin``
   cannot return.
 * Figure 31's order, which ``DataTransfer::access`` and ``DataTransfer::format_supported``
-  settle for ``RequestDownload`` (``UDSSVC_ARCH_0044``), is unsettled for ``RequestUpload``.
+  settle for ``RequestDownload`` (``UDSSVC_ARCH_0044``), is unsettled for ``RequestUpload``
+  (Figure 32).
 
 Retired
 -------

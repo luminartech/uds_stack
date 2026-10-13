@@ -487,11 +487,11 @@ macro_rules! __uds_before_length {
     ($self:ident, $state:ident, $req:ident, $svc:ident) => {};
 }
 
-/// One match arm per listed service, routing its decoded request to its stage. A listed
-/// service with no stage yet hits the wildcard, which emits nothing; the request then
-/// reaches the fall-through after every arm in `dispatch`, an outcome of 0x11 that the
-/// driver settles. That is the milestone-1 limit, and it makes "listed but unimplemented"
-/// visible on the wire rather than a panic. A stage whose handler is `async` is awaited;
+/// One match arm per listed service, routing its decoded request to its stage. A service
+/// with no arm hits the wildcard, which emits nothing; the request then reaches the
+/// fall-through after every arm in `dispatch`, an outcome of 0x11 that the driver settles.
+/// `RequestUpload` and `RequestFileTransfer` are such services: `DataTransfer`'s list does
+/// not name them. A stage whose handler is `async` is awaited;
 /// the others are plain calls.
 #[doc(hidden)]
 #[macro_export]
@@ -620,8 +620,8 @@ macro_rules! __uds_assert {
 /// from another crate needs a local newtype.
 ///
 /// **Milestone 1 accepts `peers = 1` only**, and any other count fails to compile. The
-/// driver keeps one slot for a `DiagnosticSessionControl` response awaiting its
-/// confirmation, and with a second tester that tester's selecting response could
+/// driver keeps one slot for a `DiagnosticSessionControl` or `ECUReset` response awaiting
+/// its confirmation, and with a second tester that tester's selecting response could
 /// overwrite the slot while the first is still unconfirmed, so the first session would
 /// never be applied. With no peer at all, no response could ever be sent.
 ///

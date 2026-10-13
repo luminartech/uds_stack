@@ -114,8 +114,8 @@ fn a_tester_finds_the_entity_and_connects_to_it() {
     });
 }
 
-/// One assembly serves with and without discovery: with none, the entity answers no UDP
-/// and is still found over TCP, where routing activation succeeds.
+/// One assembly serves with and without discovery: with none, the entity still serves
+/// TCP, where routing activation succeeds.
 #[test]
 fn an_entity_without_discovery_still_serves_tcp() {
     on_loopback(|loopback| async move {

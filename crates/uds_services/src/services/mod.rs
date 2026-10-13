@@ -287,11 +287,11 @@ pub trait ServiceSet: crate::sealed::Sealed {
 
     /// The server is starting: what Annex I transition 1 owes at start-up.
     ///
-    /// [`crate::Server`] calls it once, on its first step, because
-    /// [`Server::new`](crate::Server::new) is a `const fn` and cannot call into the
-    /// application. Emitted by the assembly; where `SecurityAccess` is listed, it starts
-    /// the delay of every level whose stored attempt count is at its limit (see
-    /// [`crate::SecurityAccess::delay`]), and otherwise it does
+    /// [`crate::Server`] calls it on its first step and on the first step after a
+    /// [`Stopped`](crate::Stopped), because [`Server::new`](crate::Server::new) is a
+    /// `const fn` and cannot call into the application. Emitted by the assembly; where
+    /// `SecurityAccess` is listed, it starts the delay of every level whose stored attempt
+    /// count is at its limit (see [`crate::SecurityAccess::delay`]), and otherwise it does
     /// nothing.
     ///
     /// # Arguments

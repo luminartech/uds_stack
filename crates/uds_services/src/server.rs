@@ -48,12 +48,13 @@ pub struct Server<A: ServiceSet, T: UdsTransport, const PEERS: usize> {
     transport: T,
     /// The address every response is sent from (its `S_SA`, ``UDSS_LLR_0051``).
     own: Address,
-    /// The `DiagnosticSessionControl` response awaiting its confirmation, if any.
+    /// The response awaiting its confirmation, if any: a `DiagnosticSessionControl`
+    /// response or an `ECUReset` one.
     pending: Option<Pending>,
     /// The parameters the server was built with, against which each session's `P2` pair is
     /// checked in debug builds.
     params: ServerParams,
-    /// Whether [`ServiceSet::start_up`] has run.
+    /// Whether [`ServiceSet::start_up`] has run since the server was built or last stopped.
     started: bool,
 }
 
@@ -133,7 +134,8 @@ impl<A: ServiceSet, T: UdsTransport, const PEERS: usize> Server<A, T, PEERS> {
         &self.transport
     }
 
-    /// Run [`ServiceSet::start_up`] the first time it is called, and never again.
+    /// Run [`ServiceSet::start_up`] on the first step, and again on the first step after a
+    /// [`Stopped`].
     fn start_up(&mut self) {
         if !core::mem::replace(&mut self.started, true) {
             self.services.start_up(&mut self.state);
@@ -240,6 +242,8 @@ impl<A: ServiceSet, T: UdsTransport, const PEERS: usize> Server<A, T, PEERS> {
         let Some((ai, _)) = d.indication else {
             return Ok(stopped);
         };
+        // Defensive: `retime` and the indication drain yield no `Confirm`, so `stopped` is
+        // `None` here, and no handler is dispatched while a restart awaits confirmation.
         if stopped.is_some() || restarting(self.pending) {
             // 10.3.1: no request is served between a restart's response and its
             // confirmation, nor after the restart within this step.
@@ -274,6 +278,8 @@ impl<A: ServiceSet, T: UdsTransport, const PEERS: usize> Server<A, T, PEERS> {
         // Recorded mid-handler, applied now that `&mut services`/`&mut state` are free.
         stopped = stopped.or(apply(&mut self.services, &mut self.state, served.deferred));
         if stopped.is_some() {
+            // Defensive: no handler is dispatched while a restart awaits confirmation, so
+            // nothing reaches this today.
             // The restart overtook the handler: its request ends with no response.
             return Ok(stopped.or(self.unanswered(serving.ai).await?));
         }

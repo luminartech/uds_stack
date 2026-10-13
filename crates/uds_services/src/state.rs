@@ -40,7 +40,7 @@ pub trait ProtocolState: private::Sealed + core::fmt::Debug {
 
 /// The active diagnostic session and the security access state. ``UDSSVC_ARCH_0035``.
 ///
-/// And the download in progress, if any (``UDSSVC_ARCH_0036``).
+/// It also holds the download in progress, if any (``UDSSVC_ARCH_0036``).
 #[derive(Debug)]
 pub struct State {
     session: DiagnosticSessionType,

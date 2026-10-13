@@ -60,9 +60,17 @@ pub enum TransferRequest<'a> {
 ///
 /// A response lost after it settled is not undone: a lost `TransferData` response is
 /// recovered by the client repeating the block, which is answered without calling
-/// [`Self::block`] again; a lost `RequestDownload` response leaves the download in
-/// progress, so the client's repeat is `conditionsNotCorrect` (0x22, Table 444) until it
-/// sends `RequestTransferExit` or changes session.
+/// [`Self::block`] again, as `76 <counter>` without any `transferResponseParameterRecord`
+/// the first answer carried (a CRC, say), so the repeat's answer can differ from the
+/// first. A lost `RequestDownload` response leaves the download in progress, so the
+/// client's repeat is `conditionsNotCorrect` (0x22, Table 444). The client leaves that by
+/// sending its blocks from counter 0x01, the download being open; by a change to the
+/// default session; for a transfer admitted under a security level, by any session
+/// change (Figure 7 key 3(ii)); or by a session outside [`Self::SESSIONS`] (key 3(iii)).
+/// `RequestTransferExit` closes it only where it is not answered `requestSequenceError`
+/// (0x24): a compressed format, or all `memorySize` bytes received. A lost `77` leaves the
+/// transfer closed, so the client's repeated exit is 0x24 (Table 459, Figure 34) although
+/// the download succeeded.
 ///
 /// Where `SUPPORTS_UPLOAD` is `false` and no other listed service needs more, the response
 /// buffer is 6 bytes, so the `transferResponseParameterRecord` [`Self::block`] writes
@@ -85,7 +93,8 @@ pub trait DataTransfer {
     /// subtracts two to size its blocks.
     const MAX_BLOCK_LENGTH: usize;
 
-    /// Whether this server answers `RequestUpload`.
+    /// Whether the response buffer is sized for an upload's block, which is not yet served:
+    /// `RequestUpload` is always `serviceNotSupported` (0x11).
     ///
     /// A download-only server — the flashing case — never puts a block in a *response*,
     /// so it must not carry a response buffer sized for one.
