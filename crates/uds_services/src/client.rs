@@ -806,7 +806,7 @@ impl<
         Ok(response)
     }
 
-    /// Write one data identifier's record on `target` (ISO 14229-1:2020 11.3).
+    /// Write one data identifier's record on `target` (ISO 14229-1:2020 11.7).
     ///
     /// # Arguments
     ///
@@ -963,7 +963,7 @@ impl<
         )
     }
 
-    /// Start, stop or read the results of `routine` on `target` (ISO 14229-1:2020 10.6).
+    /// Start, stop or read the results of `routine` on `target` (ISO 14229-1:2020 14.2).
     ///
     /// The positive payload is everything after the echoed routine identifier:
     /// `routineInfo` first where the server sends one, which Table 428 leaves to the
@@ -1145,7 +1145,7 @@ impl<
         )
     }
 
-    /// Turn `target`'s DTC setting on or off (ISO 14229-1:2020 10.9).
+    /// Turn `target`'s DTC setting on or off (ISO 14229-1:2020 10.8).
     ///
     /// # Arguments
     ///
@@ -1186,8 +1186,10 @@ impl<
     }
 
     /// Ask `target` to take a download of `size` bytes to `address` (ISO 14229-1:2020
-    /// 14.2): the first of clause 17's standardized transfer steps. The response is the
-    /// most bytes one [`Self::transfer_data`] block may carry, counter included.
+    /// 15.2): the first of clause 17's standardized transfer steps. The response is the
+    /// server's `maxNumberOfBlockLength`: the most bytes one `TransferData` request may
+    /// hold, service identifier and counter included (Table 443), so the `data` of a
+    /// [`Self::transfer_data`] block is at most this minus two.
     ///
     /// The client keeps no transfer state: the caller owns the block sequence counter
     /// and its roll from `0xFF` to `0x00`.
@@ -1240,7 +1242,7 @@ impl<
         )
     }
 
-    /// Send one block of a transfer to `target` (ISO 14229-1:2020 14.4). The response
+    /// Send one block of a transfer to `target` (ISO 14229-1:2020 15.4). The response
     /// echoes `counter`, then carries the server's `transferResponseParameterRecord`.
     ///
     /// # Arguments
@@ -1281,7 +1283,7 @@ impl<
         )
     }
 
-    /// End the transfer with `target` (ISO 14229-1:2020 14.5), with a parameter record
+    /// End the transfer with `target` (ISO 14229-1:2020 15.5), with a parameter record
     /// each way.
     ///
     /// # Arguments

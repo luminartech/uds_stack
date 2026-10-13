@@ -13,12 +13,12 @@ use core::task::Poll;
 use uds_services::{
     Address, Ai, Answer, CLEAR_ALL_DTCS, ClientError, ClientTiming,
     CommunicationControlType, CommunicationType, DataFormatIdentifier, DataIdentifier,
-    DiagnosticSessionType, DtcRecord, DtcSettingType, DtcSnapshotRecordNumber,
-    DtcStatusMask, FunctionalKeepAlive, KeepAlive, MalformedResponse, Mtype,
-    NegativeResponseCode, PhysicalKeepAlive, ReadDtcInfoResponse, ReadDtcInfoSubFunction,
-    RecordError, Reloads, ResetType, Response, RoutineControlSubFunction,
-    RoutineIdentifier, SResult, SecurityLevel, SessionTiming, SubnetNumber, TaType,
-    Timestamp, uds_client,
+    DiagnosticSessionType, DtcExtDataRecordNumber, DtcRecord, DtcSettingType,
+    DtcSnapshotRecordNumber, DtcStatusMask, FunctionalKeepAlive, KeepAlive,
+    MalformedResponse, Mtype, NegativeResponseCode, PhysicalKeepAlive, ReadDtcInfoResponse,
+    ReadDtcInfoSubFunction, RecordError, Reloads, ResetType, Response,
+    RoutineControlSubFunction, RoutineIdentifier, SResult, SecurityLevel, SessionTiming,
+    SubnetNumber, TaType, Timestamp, uds_client,
 };
 use uds_session::TransportError;
 
@@ -1711,7 +1711,7 @@ const RAPID_SHUTDOWN: &[u8] = &[0x11, 0x04];
 const SHUTTING_DOWN_IN: &[u8] = &[0x51, 0x04, 0x0A];
 
 /// A write is the identifier then the record, and its positive response echoes the
-/// identifier (ISO 14229-1:2020 Table 219).
+/// identifier (ISO 14229-1:2020 Tables 277 and 279).
 #[test]
 fn a_write_is_answered_by_its_identifiers_echo() {
     let mut t = tester(&[
@@ -1735,7 +1735,7 @@ fn a_write_echoing_another_identifier_is_malformed() {
     assert_eq!(written, Ok(Response::Malformed(MalformedResponse::Echo)));
 }
 
-/// An empty record is refused before anything is sent (Table 218 makes the record
+/// An empty record is refused before anything is sent (Table 277 makes the record
 /// mandatory).
 #[test]
 fn a_write_of_nothing_sends_nothing() {
@@ -1748,7 +1748,7 @@ fn a_write_of_nothing_sends_nothing() {
 }
 
 /// A reset's positive response carries the power-down time only for
-/// `enableRapidPowerShutDown` (Table 79).
+/// `enableRapidPowerShutDown` (Table 35).
 #[test]
 fn a_reset_reads_its_power_down_time_where_there_is_one() {
     let mut t = tester(&[
@@ -1938,8 +1938,8 @@ fn a_dtc_count_is_read() {
     );
 }
 
-/// A snapshot by DTC number (12.3.5.5) comes back as the DTC, its status and the raw
-/// records, since no server here answers it.
+/// A snapshot by DTC number comes back as the DTC, its status and the raw records,
+/// since no server here answers it: example #5 (12.3.5.6, Tables 354 and 355).
 #[test]
 fn a_snapshot_by_dtc_number_is_read_raw() {
     let mut t = tester(&[
@@ -1947,7 +1947,8 @@ fn a_snapshot_by_dtc_number_is_read_raw() {
         Step::Ind(
             from(ECU),
             &[
-                0x59, 0x04, 0x12, 0x34, 0x56, 0x24, 0x01, 0x01, 0xF4, 0x0D, 0x40,
+                0x59, 0x04, 0x12, 0x34, 0x56, 0x24, 0x02, 0x01, 0x47, 0x11, 0xA6, 0x66,
+                0x07, 0x50, 0x20,
             ],
         ),
     ]);
@@ -1955,7 +1956,7 @@ fn a_snapshot_by_dtc_number_is_read_raw() {
         ECU,
         ReadDtcInfoSubFunction::ReportDtcSnapshotRecordByDtcNumber(
             DtcRecord::new(0x12, 0x34, 0x56),
-            DtcSnapshotRecordNumber::new(0x01),
+            DtcSnapshotRecordNumber::new(0x02),
         ),
     ));
     assert_eq!(
@@ -1964,13 +1965,45 @@ fn a_snapshot_by_dtc_number_is_read_raw() {
             ReadDtcInfoResponse::DtcSnapshotRecords {
                 dtc: DtcRecord::new(0x12, 0x34, 0x56),
                 status: DtcStatusMask::from(0x24),
-                raw_records: &[0x01, 0x01, 0xF4, 0x0D, 0x40],
+                raw_records: &[0x02, 0x01, 0x47, 0x11, 0xA6, 0x66, 0x07, 0x50, 0x20],
             }
         ))
     );
     assert_eq!(
         t.transport().addressed(0),
-        (Some(to(ECU)), &[0x19, 0x04, 0x12, 0x34, 0x56, 0x01][..])
+        (Some(to(ECU)), &[0x19, 0x04, 0x12, 0x34, 0x56, 0x02][..])
+    );
+}
+
+/// Extended data by DTC number comes back as the DTC, its status and the raw records:
+/// example #7 (12.3.5.8, Tables 361 and 362), every record asked for with `0xFF`.
+#[test]
+fn ext_data_by_dtc_number_is_read_raw() {
+    let mut t = tester(&[
+        Step::Conf(to(ECU), SResult::Ok),
+        Step::Ind(
+            from(ECU),
+            &[0x59, 0x06, 0x12, 0x34, 0x56, 0x24, 0x05, 0x17, 0x10, 0x79],
+        ),
+    ]);
+    let ext_data = block_on(t.read_dtc_information(
+        ECU,
+        ReadDtcInfoSubFunction::ReportDtcExtDataRecordByDtcNumber(
+            DtcRecord::new(0x12, 0x34, 0x56),
+            DtcExtDataRecordNumber::new(0xFF),
+        ),
+    ));
+    assert_eq!(
+        ext_data,
+        Ok(Response::Positive(ReadDtcInfoResponse::DtcExtDataRecords {
+            dtc: DtcRecord::new(0x12, 0x34, 0x56),
+            status: DtcStatusMask::from(0x24),
+            raw_records: &[0x05, 0x17, 0x10, 0x79],
+        }))
+    );
+    assert_eq!(
+        t.transport().addressed(0),
+        (Some(to(ECU)), &[0x19, 0x06, 0x12, 0x34, 0x56, 0xFF][..])
     );
 }
 
@@ -2070,7 +2103,7 @@ fn a_node_that_disagrees_with_the_type_sends_nothing() {
     assert!(t.transport().finished());
 }
 
-/// `ControlDTCSetting` (10.9) is the setting then the option record, echoed by the
+/// `ControlDTCSetting` (10.8) is the setting then the option record, echoed by the
 /// setting.
 #[test]
 fn dtc_setting_is_controlled() {
@@ -2088,7 +2121,7 @@ fn dtc_setting_is_controlled() {
     );
 }
 
-/// `RequestDownload` (14.2) carries the format identifiers derived from the address's
+/// `RequestDownload` (15.2) carries the format identifiers derived from the address's
 /// and size's widths, and reads the block length back as a number.
 #[test]
 fn a_download_is_requested_and_the_block_length_read() {

@@ -2057,14 +2057,15 @@ mod by_dtc_number {
     use super::ReadDtcInfoResponse;
     use crate::{Decode, DtcRecord, DtcStatusMask, Encode, Error, Incomplete};
 
-    /// ISO 14229-1:2020 12.3.5.5: `59 04`, then the DTC and its status, then each
-    /// snapshot record as its number, its identifier count and its identifier/data pairs.
-    const SNAPSHOT: [u8; 13] = [
-        0x04, 0x12, 0x34, 0x56, 0x24, 0x01, 0x01, 0x47, 0x11, 0xA6, 0x66, 0x07, 0x50,
+    /// ISO 14229-1:2020 12.3.5.6 Table 355: `59 04`, then the DTC and its status, then
+    /// each snapshot record as its number, its identifier count and its identifier/data
+    /// pairs.
+    const SNAPSHOT: [u8; 14] = [
+        0x04, 0x12, 0x34, 0x56, 0x24, 0x02, 0x01, 0x47, 0x11, 0xA6, 0x66, 0x07, 0x50, 0x20,
     ];
-    /// 12.3.5.7: `59 06`, the DTC and status, then each extended record as its number
-    /// and its bytes.
-    const EXT_DATA: [u8; 8] = [0x06, 0x12, 0x34, 0x56, 0x24, 0x05, 0x17, 0x30];
+    /// 12.3.5.8 Table 362: `59 06`, the DTC and status, then each extended record as its
+    /// number and its bytes.
+    const EXT_DATA: [u8; 9] = [0x06, 0x12, 0x34, 0x56, 0x24, 0x05, 0x17, 0x10, 0x79];
 
     #[test]
     fn a_snapshot_response_decodes_to_its_dtc_status_and_raw_records() {

@@ -101,7 +101,7 @@ pub(super) fn request(buffer: &mut [u8], request: &Request<'_>) -> Option<usize>
 
 /// Encode a `WriteDataByIdentifier` request for `did` with `record` into `buffer`.
 ///
-/// `None` for an empty record, which Table 218 makes mandatory, or one that does not
+/// `None` for an empty record, which Table 277 makes mandatory, or one that does not
 /// fit.
 pub(super) fn write_data_by_identifier<D: DataIdentifier>(
     buffer: &mut [u8],
