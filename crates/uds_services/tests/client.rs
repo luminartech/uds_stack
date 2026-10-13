@@ -11,11 +11,12 @@ use common::{Script, Step, block_on};
 use core::future::Future;
 use core::task::Poll;
 use uds_services::{
-    Address, Ai, Answer, ClientError, ClientTiming, DataIdentifier, DiagnosticSessionType,
+    Address, Ai, Answer, CLEAR_ALL_DTCS, ClientError, ClientTiming, DataIdentifier,
+    DiagnosticSessionType, DtcRecord, DtcSnapshotRecordNumber, DtcStatusMask,
     FunctionalKeepAlive, KeepAlive, MalformedResponse, Mtype, NegativeResponseCode,
-    PhysicalKeepAlive, RecordError, Reloads, ResetType, Response,
-    RoutineControlSubFunction, RoutineIdentifier, SResult, SecurityLevel, SessionTiming,
-    TaType, Timestamp, uds_client,
+    PhysicalKeepAlive, ReadDtcInfoResponse, ReadDtcInfoSubFunction, RecordError, Reloads,
+    ResetType, Response, RoutineControlSubFunction, RoutineIdentifier, SResult,
+    SecurityLevel, SessionTiming, TaType, Timestamp, uds_client,
 };
 use uds_session::TransportError;
 
@@ -1885,4 +1886,116 @@ fn a_routine_response_for_another_routine_is_malformed() {
         &[],
     ));
     assert_eq!(started, Ok(Response::Malformed(MalformedResponse::Echo)));
+}
+
+/// A count by status mask (12.3.5.2) is sent with its mask, even an empty one, and the
+/// count read back.
+#[test]
+fn a_dtc_count_is_read() {
+    let mut t = tester(&[
+        Step::Conf(to(ECU), SResult::Ok),
+        Step::Ind(from(ECU), &[0x59, 0x01, 0x2F, 0x01, 0x00, 0x03]),
+        Step::Conf(to(ECU), SResult::Ok),
+        Step::Ind(from(ECU), &[0x59, 0x01, 0x2F, 0x01, 0x00, 0x00]),
+    ]);
+    let counted = block_on(t.read_dtc_information(
+        ECU,
+        ReadDtcInfoSubFunction::ReportNumberOfDtcByStatusMask(DtcStatusMask::from(0xFF)),
+    ));
+    assert!(
+        matches!(
+            counted,
+            Ok(Response::Positive(ReadDtcInfoResponse::NumberOfDtcs {
+                count: 3,
+                ..
+            }))
+        ),
+        "{counted:?}"
+    );
+    let none = block_on(t.read_dtc_information(
+        ECU,
+        ReadDtcInfoSubFunction::ReportNumberOfDtcByStatusMask(DtcStatusMask::from(0x00)),
+    ));
+    assert!(
+        matches!(
+            none,
+            Ok(Response::Positive(ReadDtcInfoResponse::NumberOfDtcs {
+                count: 0,
+                ..
+            }))
+        ),
+        "{none:?}"
+    );
+    assert_eq!(
+        t.transport().addressed(0),
+        (Some(to(ECU)), &[0x19, 0x01, 0xFF][..])
+    );
+    assert_eq!(
+        t.transport().addressed(1),
+        (Some(to(ECU)), &[0x19, 0x01, 0x00][..])
+    );
+}
+
+/// A snapshot by DTC number (12.3.5.5) comes back as the DTC, its status and the raw
+/// records, since no server here answers it.
+#[test]
+fn a_snapshot_by_dtc_number_is_read_raw() {
+    let mut t = tester(&[
+        Step::Conf(to(ECU), SResult::Ok),
+        Step::Ind(
+            from(ECU),
+            &[
+                0x59, 0x04, 0x12, 0x34, 0x56, 0x24, 0x01, 0x01, 0xF4, 0x0D, 0x40,
+            ],
+        ),
+    ]);
+    let snapshot = block_on(t.read_dtc_information(
+        ECU,
+        ReadDtcInfoSubFunction::ReportDtcSnapshotRecordByDtcNumber(
+            DtcRecord::new(0x12, 0x34, 0x56),
+            DtcSnapshotRecordNumber::new(0x01),
+        ),
+    ));
+    assert_eq!(
+        snapshot,
+        Ok(Response::Positive(
+            ReadDtcInfoResponse::DtcSnapshotRecords {
+                dtc: DtcRecord::new(0x12, 0x34, 0x56),
+                status: DtcStatusMask::from(0x24),
+                raw_records: &[0x01, 0x01, 0xF4, 0x0D, 0x40],
+            }
+        ))
+    );
+    assert_eq!(
+        t.transport().addressed(0),
+        (Some(to(ECU)), &[0x19, 0x04, 0x12, 0x34, 0x56, 0x01][..])
+    );
+}
+
+/// Clearing a group (12.2) is four bytes, five with a memory selection, and its
+/// positive response is bare.
+#[test]
+fn a_clear_is_confirmed_bare() {
+    let mut t = tester(&[
+        Step::Conf(to(ECU), SResult::Ok),
+        Step::Ind(from(ECU), &[0x54]),
+        Step::Conf(to(ECU), SResult::Ok),
+        Step::Ind(from(ECU), &[0x7F, 0x14, 0x31]),
+    ]);
+    assert_eq!(
+        block_on(t.clear_diagnostic_information(ECU, CLEAR_ALL_DTCS, None)),
+        Ok(Response::Positive(()))
+    );
+    assert_eq!(
+        block_on(t.clear_diagnostic_information(ECU, CLEAR_ALL_DTCS, Some(0x01))),
+        Ok(Response::Negative(NegativeResponseCode::from(0x31)))
+    );
+    assert_eq!(
+        t.transport().addressed(0),
+        (Some(to(ECU)), &[0x14, 0xFF, 0xFF, 0xFF][..])
+    );
+    assert_eq!(
+        t.transport().addressed(1),
+        (Some(to(ECU)), &[0x14, 0xFF, 0xFF, 0xFF, 0x01][..])
+    );
 }

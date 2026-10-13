@@ -189,8 +189,9 @@ pub use services::{
 /// reaches a handler.
 pub use uds_protocol::{
     CLEAR_ALL_DTCS, CommunicationControlType, CommunicationType, DiagnosticSessionType,
-    DtcRecord, DtcSettingType, DtcStatusMask, FileOperationMode, FunctionalGroupIdentifier,
-    NegativeResponseCode, ReadDtcInfoReportType, ReadDtcInfoSubFunction, ResetType,
+    DtcExtDataRecordNumber, DtcRecord, DtcSettingType, DtcSnapshotRecordNumber,
+    DtcStatusMask, FileOperationMode, FunctionalGroupIdentifier, NegativeResponseCode,
+    ReadDtcInfoReportType, ReadDtcInfoResponse, ReadDtcInfoSubFunction, ResetType,
     RoutineControlSubFunction, SubnetNumber, UdsServiceType,
 };
 

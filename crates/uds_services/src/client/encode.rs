@@ -8,7 +8,8 @@ use super::{Answer, MalformedResponse, Records, Response};
 use crate::{DataIdentifier, DiagnosticSessionType, SessionTiming, UdsServiceType};
 use crate::{RoutineIdentifier, SecurityLevel};
 use uds_protocol::{
-    Decode, EcuResetRequest, Encode, NegativeResponseCode, Request, ResetType,
+    ClearDiagnosticInfoRequest, Decode, DtcRecord, EcuResetRequest, Encode,
+    NegativeResponseCode, ReadDtcInfoRequest, ReadDtcInfoSubFunction, Request, ResetType,
     RoutineControlRequest, RoutineControlSubFunction, SecurityAccessRequest,
     SecurityAccessType, WriteDataByIdentifierRequest,
 };
@@ -124,6 +125,32 @@ pub(super) fn routine_control<R: RoutineIdentifier>(
     let control =
         RoutineControlRequest::new(false, control, routine.as_u16(), option_record);
     request(buffer, &Request::RoutineControl(control))
+}
+
+/// Encode a `ReadDTCInformation` request for `report` into `buffer`.
+pub(super) fn read_dtc_information(
+    buffer: &mut [u8],
+    report: ReadDtcInfoSubFunction,
+) -> Option<usize> {
+    request(
+        buffer,
+        &Request::ReadDtcInfo(ReadDtcInfoRequest::new(false, report)),
+    )
+}
+
+/// Encode a `ClearDiagnosticInformation` request into `buffer`.
+pub(super) fn clear_diagnostic_information(
+    buffer: &mut [u8],
+    group: DtcRecord,
+    memory_selection: Option<u8>,
+) -> Option<usize> {
+    let clear = match memory_selection {
+        Some(memory) => {
+            ClearDiagnosticInfoRequest::new_with_memory_selection(group, memory)
+        }
+        None => ClearDiagnosticInfoRequest::new(group),
+    };
+    request(buffer, &Request::ClearDiagnosticInfo(clear))
 }
 
 /// Encode a `DiagnosticSessionControl` request for `session` into `request`.

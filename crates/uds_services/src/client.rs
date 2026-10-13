@@ -32,7 +32,8 @@ use driver::{Answered, Book, Exchange};
 #[cfg(doc)]
 use crate::UdsTransport;
 use uds_protocol::{
-    EcuResetResponse, NegativeResponseCode, ResetType, RoutineControlResponse,
+    ClearDiagnosticInfoResponse, DtcRecord, EcuResetResponse, NegativeResponseCode,
+    ReadDtcInfoResponse, ReadDtcInfoSubFunction, ResetType, RoutineControlResponse,
     RoutineControlSubFunction, SecurityAccessResponse, WriteDataByIdentifierResponse,
 };
 use uds_session::{
@@ -984,6 +985,88 @@ impl<
             ))
             .echoing(|r| r.sub_function == control && r.routine_id == routine.as_u16())
             .map(|r| r.status_record),
+        )
+    }
+
+    /// Read DTC information from `target` (ISO 14229-1:2020 12.3).
+    ///
+    /// `report` names the sub-function and carries its parameters; the response is the
+    /// layout that sub-function answers with, borrowing the response buffer. A snapshot
+    /// or extended data record's bytes are the application's to split.
+    ///
+    /// # Arguments
+    ///
+    /// * `target` - the server's address.
+    /// * `report` - the report and its parameters.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::read_data_by_identifier`]'s.
+    ///
+    /// # Cancel safety
+    ///
+    /// As [`Self::read_data_by_identifier`]'s.
+    pub async fn read_dtc_information(
+        &mut self,
+        target: Address,
+        report: ReadDtcInfoSubFunction,
+    ) -> Result<Response<ReadDtcInfoResponse<'_>>, ClientError<T::Error>> {
+        let sub_function = u8::from(report.report_type());
+        let answered = self
+            .exchange_with(
+                target,
+                |request| encode::read_dtc_information(request, report),
+                None,
+            )
+            .await?;
+        let message = answered_bytes(&mut self.store, &answered);
+        Ok(
+            encode::decoded::<ReadDtcInfoResponse<'_>>(encode::final_response(
+                message,
+                answered.arrived,
+            ))
+            .echoing(|_| message.get(1).copied() == Some(sub_function)),
+        )
+    }
+
+    /// Clear `group`'s stored diagnostic information on `target` (ISO 14229-1:2020
+    /// 12.2); [`crate::CLEAR_ALL_DTCS`] clears everything.
+    ///
+    /// # Arguments
+    ///
+    /// * `target` - the server's address.
+    /// * `group` - the DTC group.
+    /// * `memory_selection` - the `MemorySelection` byte, where the server has one.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::read_data_by_identifier`]'s.
+    ///
+    /// # Cancel safety
+    ///
+    /// As [`Self::read_data_by_identifier`]'s.
+    pub async fn clear_diagnostic_information(
+        &mut self,
+        target: Address,
+        group: DtcRecord,
+        memory_selection: Option<u8>,
+    ) -> Result<Response<()>, ClientError<T::Error>> {
+        let answered = self
+            .exchange_with(
+                target,
+                |request| {
+                    encode::clear_diagnostic_information(request, group, memory_selection)
+                },
+                None,
+            )
+            .await?;
+        let message = answered_bytes(&mut self.store, &answered);
+        Ok(
+            encode::decoded::<ClearDiagnosticInfoResponse>(encode::final_response(
+                message,
+                answered.arrived,
+            ))
+            .map(|_| ()),
         )
     }
 
