@@ -11,15 +11,16 @@
 //! [`UdsTransport`], as [`crate::Server`]'s do; `client::encode` holds the sans-io halves
 //! (``UDSSVC_ARCH_0028``).
 //!
-//! [`Client`] has a call for every service the sensor stages, each one physical
-//! exchange: [`Client::read_data_by_identifier`], [`Client::diagnostic_session_control`],
-//! [`Client::write_data_by_identifier`], [`Client::ecu_reset`],
-//! [`Client::security_access_seed`], [`Client::security_access_key`],
-//! [`Client::routine_control`], [`Client::read_dtc_information`],
-//! [`Client::clear_diagnostic_information`], [`Client::communication_control`] and
-//! [`Client::control_dtc_setting`]; the transfer steps [`Client::request_download`],
-//! [`Client::transfer_data`] and [`Client::request_transfer_exit`]; and
-//! [`Client::read_data_by_identifier_functional`] for every server at once.
+//! [`Client`] has a call for every service the sensor stages, each one physical exchange
+//! with one server: [`Client::read_data_by_identifier`],
+//! [`Client::diagnostic_session_control`], [`Client::write_data_by_identifier`],
+//! [`Client::ecu_reset`], [`Client::security_access_seed`],
+//! [`Client::security_access_key`], [`Client::routine_control`],
+//! [`Client::read_dtc_information`], [`Client::clear_diagnostic_information`],
+//! [`Client::communication_control`] and [`Client::control_dtc_setting`]; the transfer
+//! steps [`Client::request_download`], [`Client::transfer_data`] and
+//! [`Client::request_transfer_exit`]. [`Client::read_data_by_identifier_functional`] is one
+//! functional exchange with every server at once. Beside the exchanges,
 //! [`Client::idle_until`] sends the `TesterPresent` keep-alives as they fall due,
 //! [`Client::connection_replaced`] reports a server's connection replaced, and
 //! [`Client::close`] ends the session.
@@ -1361,9 +1362,9 @@ impl<
     /// A close is observed only while the client awaits the transport, which the call
     /// that provoked it does not do after its answer, so this looks at the transport
     /// once, as [`Self::idle_until`] does with the current time, before answering.
-    /// That look does not wait, so a close is seen only once the transport has been
-    /// polled since it arrived, by [`Self::idle_until`] or any call: asked once with
-    /// nothing polled in between, this
+    /// That look is non-blocking: it takes only what the transport already reports, so a
+    /// close is seen only once the transport has been polled since it arrived, by
+    /// [`Self::idle_until`] or any call. Asked once with nothing polled in between, this
     /// may answer `false` for a close that has already happened on the wire.
     /// Asking clears it. `false` where no channel to `target` is open, and where the
     /// channel was withdrawn for another server before the asking.

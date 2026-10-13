@@ -99,8 +99,7 @@ lockstep with the rest of the `uds_stack` workspace (`uds_protocol`, `uds_sessio
   count fails to compile.
 - The upload/download services (0x34–0x38) are not served yet. The `DataTransfer`
   trait exists, but a server that lists it answers `serviceNotSupported`.
-- The client sends `TesterPresent` only as its keep-alive, and sets the
-  suppress-positive-response bit on no request. The transfer calls are single
-  exchanges: the block sequence and any orchestration above them are the caller's.
+- The client sends `TesterPresent` only as its keep-alive. The transfer calls are
+  single exchanges: the block sequence and any orchestration above them are the caller's.
 - An `Err` from `Server::step` or `Server::run` is terminal for that server
   instance, and neither future is cancel-safe. Drop `step` only between calls.
