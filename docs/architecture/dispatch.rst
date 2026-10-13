@@ -720,8 +720,9 @@ The service-specific check
    (``ClearDiagnosticInformation``) and Figure 30 (``RoutineControl``), and Annex I's Table
    I.2 for ``SecurityAccess``. A handler is asked only for what its figure leaves to it, and
    its trait says which codes those are. Figures 11, 21, 22, 23, 27 and 29 belong to
-   services this crate has no trait for, and Figures 31 to 35 to ``DataTransfer``, which
-   has a trait and no stage; for those the order is still unbuilt.
+   services this crate has no trait for, and for those the order is still unbuilt. Figures
+   31 to 35 belong to ``DataTransfer``, whose download stage follows them
+   (``UDSSVC_ARCH_0044``); its upload and file transfer have none.
 
    **The seam is the second of the candidates an earlier draft weighed** — a fixed set of
    typed pre-handler lookups per service, rather than a declared sequence of predicates per

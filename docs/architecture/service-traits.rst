@@ -426,9 +426,9 @@ Protocol state
    — with nothing obliging them to match, and a handler advertising more than the buffer
    holds produces a client that sends a block the server structurally cannot receive. As
    ``DataTransfer::MAX_BLOCK_LENGTH`` the fact is declared once and folded into the buffer,
-   so ``begin`` returns nothing. Deriving the advertised value from it is still to be done:
-   15.2.3.2's number counts the service identifier and the block sequence counter, which the
-   const excludes, and that is one of the problems open question 8 records (#50).
+   so ``begin`` returns nothing. The ``RequestDownload`` response advertises
+   ``MAX_BLOCK_LENGTH + 2``, because 15.2.3.2's number counts the service identifier and
+   the block sequence counter, which the const excludes.
    ``SUPPORTS_UPLOAD`` sits beside it for the same kind of reason: a download-only server
    never puts a block in a *response*, so it must not pay for a response buffer sized to
    hold one.
