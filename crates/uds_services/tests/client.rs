@@ -12,12 +12,13 @@ use core::future::Future;
 use core::task::Poll;
 use uds_services::{
     Address, Ai, Answer, CLEAR_ALL_DTCS, ClientError, ClientTiming,
-    CommunicationControlType, CommunicationType, DataIdentifier, DiagnosticSessionType,
-    DtcRecord, DtcSettingType, DtcSnapshotRecordNumber, DtcStatusMask, FunctionalKeepAlive,
-    KeepAlive, MalformedResponse, Mtype, NegativeResponseCode, PhysicalKeepAlive,
-    ReadDtcInfoResponse, ReadDtcInfoSubFunction, RecordError, Reloads, ResetType, Response,
-    RoutineControlSubFunction, RoutineIdentifier, SResult, SecurityLevel, SessionTiming,
-    SubnetNumber, TaType, Timestamp, uds_client,
+    CommunicationControlType, CommunicationType, DataFormatIdentifier, DataIdentifier,
+    DiagnosticSessionType, DtcRecord, DtcSettingType, DtcSnapshotRecordNumber,
+    DtcStatusMask, FunctionalKeepAlive, KeepAlive, MalformedResponse, Mtype,
+    NegativeResponseCode, PhysicalKeepAlive, ReadDtcInfoResponse, ReadDtcInfoSubFunction,
+    RecordError, Reloads, ResetType, Response, RoutineControlSubFunction,
+    RoutineIdentifier, SResult, SecurityLevel, SessionTiming, SubnetNumber, TaType,
+    Timestamp, uds_client,
 };
 use uds_session::TransportError;
 
@@ -2084,5 +2085,83 @@ fn dtc_setting_is_controlled() {
     assert_eq!(
         t.transport().addressed(0),
         (Some(to(ECU)), &[0x85, 0x02, 0x01, 0x02][..])
+    );
+}
+
+/// `RequestDownload` (14.2) carries the format identifiers derived from the address's
+/// and size's widths, and reads the block length back as a number.
+#[test]
+fn a_download_is_requested_and_the_block_length_read() {
+    let mut t = tester(&[
+        Step::Conf(to(ECU), SResult::Ok),
+        Step::Ind(from(ECU), &[0x74, 0x20, 0x04, 0x00]),
+    ]);
+    assert_eq!(
+        block_on(t.request_download(ECU, DataFormatIdentifier::NONE, 0x0001_0000, 0x0400)),
+        Ok(Response::Positive(0x0400))
+    );
+    assert_eq!(
+        t.transport().addressed(0),
+        (
+            Some(to(ECU)),
+            &[0x34, 0x00, 0x23, 0x01, 0x00, 0x00, 0x04, 0x00][..]
+        )
+    );
+}
+
+/// An address wider than five bytes cannot be carried and sends nothing.
+#[test]
+fn a_download_of_an_unaddressable_memory_sends_nothing() {
+    let mut t = tester(&[]);
+    assert_eq!(
+        block_on(t.request_download(ECU, DataFormatIdentifier::NONE, 0x0100_0000_0000, 1)),
+        Err(ClientError::Request)
+    );
+    assert!(t.transport().finished());
+}
+
+/// A block goes with its counter and the response echoes it; a block one byte past the
+/// declared maximum is refused before anything is sent.
+#[test]
+fn a_block_is_transferred_and_the_counter_echoed() {
+    let mut t = tester(&[
+        Step::Conf(to(ECU), SResult::Ok),
+        Step::Ind(from(ECU), &[0x76, 0x01]),
+        Step::Conf(to(ECU), SResult::Ok),
+        Step::Ind(from(ECU), &[0x76, 0x03]),
+    ]);
+    let block = [0xAA; 16];
+    assert_eq!(
+        block_on(t.transfer_data(ECU, 0x01, &block)),
+        Ok(Response::Positive(&[][..]))
+    );
+    assert_eq!(
+        block_on(t.transfer_data(ECU, 0x02, &block)),
+        Ok(Response::Malformed(MalformedResponse::Echo))
+    );
+    let too_long = [0xAA; 17];
+    assert_eq!(
+        block_on(t.transfer_data(ECU, 0x03, &too_long)),
+        Err(ClientError::Request)
+    );
+    let sent = t.transport().sent_bytes(0);
+    assert_eq!(sent.get(..2), Some(&[0x36, 0x01][..]));
+    assert_eq!(sent.len(), 18);
+}
+
+/// The transfer's exit carries a parameter record each way.
+#[test]
+fn a_transfer_exits_with_its_records() {
+    let mut t = tester(&[
+        Step::Conf(to(ECU), SResult::Ok),
+        Step::Ind(from(ECU), &[0x77, 0xBE, 0xEF]),
+    ]);
+    assert_eq!(
+        block_on(t.request_transfer_exit(ECU, &[0x01])),
+        Ok(Response::Positive(&[0xBE, 0xEF][..]))
+    );
+    assert_eq!(
+        t.transport().addressed(0),
+        (Some(to(ECU)), &[0x37, 0x01][..])
     );
 }

@@ -33,10 +33,11 @@ use driver::{Answered, Book, Exchange};
 use crate::UdsTransport;
 use uds_protocol::{
     ClearDiagnosticInfoResponse, CommunicationControlResponse, CommunicationControlType,
-    CommunicationType, ControlDtcSettingResponse, DtcRecord, DtcSettingType,
-    EcuResetResponse, NegativeResponseCode, ReadDtcInfoResponse, ReadDtcInfoSubFunction,
+    CommunicationType, ControlDtcSettingResponse, DataFormatIdentifier, DtcRecord,
+    DtcSettingType, EcuResetResponse, NegativeResponseCode, ReadDtcInfoResponse,
+    ReadDtcInfoSubFunction, RequestDownloadResponse, RequestTransferExitResponse,
     ResetType, RoutineControlResponse, RoutineControlSubFunction, SecurityAccessResponse,
-    SubnetNumber, WriteDataByIdentifierResponse,
+    SubnetNumber, TransferDataResponse, WriteDataByIdentifierResponse,
 };
 use uds_session::{
     Address, ChannelAddressing, ChannelParameter, ChannelParams, ClientTx,
@@ -1167,6 +1168,140 @@ impl<
             ))
             .echoing(|r| r.setting == setting)
             .map(|_| ()),
+        )
+    }
+
+    /// Ask `target` to take a download of `size` bytes to `address` (ISO 14229-1:2020
+    /// 14.2): the first of clause 17's standardized transfer steps. The response is the
+    /// most bytes one [`Self::transfer_data`] block may carry, counter included.
+    ///
+    /// The client keeps no transfer state: the caller owns the block sequence counter
+    /// and its roll from `0xFF` to `0x00`.
+    ///
+    /// # Arguments
+    ///
+    /// * `target` - the server's address.
+    /// * `data_format` - compression and encryption, [`DataFormatIdentifier::NONE`] for
+    ///   neither.
+    /// * `address` - `memoryAddress`, up to five bytes wide.
+    /// * `size` - `memorySize`.
+    ///
+    /// # Errors
+    ///
+    /// [`ClientError::Request`] where `address` is wider than five bytes; otherwise as
+    /// [`Self::read_data_by_identifier`]'s. A block length wider than eight bytes is
+    /// [`MalformedResponse::Decode`].
+    ///
+    /// # Cancel safety
+    ///
+    /// As [`Self::read_data_by_identifier`]'s.
+    pub async fn request_download(
+        &mut self,
+        target: Address,
+        data_format: DataFormatIdentifier,
+        address: u64,
+        size: u32,
+    ) -> Result<Response<u64>, ClientError<T::Error>> {
+        let answered = self
+            .exchange_with(
+                target,
+                |request| encode::request_download(request, data_format, address, size),
+                None,
+            )
+            .await?;
+        let message = answered_bytes(&mut self.store, &answered);
+        Ok(
+            match encode::decoded::<RequestDownloadResponse<'_>>(encode::final_response(
+                message,
+                answered.arrived,
+            )) {
+                Response::Positive(r) => {
+                    match encode::block_length(r.max_number_of_block_length()) {
+                        Some(length) => Response::Positive(length),
+                        None => Response::Malformed(MalformedResponse::Decode),
+                    }
+                }
+                other => other.map(|_| 0),
+            },
+        )
+    }
+
+    /// Send one block of a transfer to `target` (ISO 14229-1:2020 14.4). The response
+    /// echoes `counter`, then carries the server's `transferResponseParameterRecord`.
+    ///
+    /// # Arguments
+    ///
+    /// * `target` - the server's address.
+    /// * `counter` - the `blockSequenceCounter`, the caller's to advance.
+    /// * `data` - the block, at most the `max_block_len` the client declared.
+    ///
+    /// # Errors
+    ///
+    /// [`ClientError::Request`] where the block does not fit the request buffer;
+    /// otherwise as [`Self::read_data_by_identifier`]'s.
+    ///
+    /// # Cancel safety
+    ///
+    /// As [`Self::read_data_by_identifier`]'s.
+    pub async fn transfer_data(
+        &mut self,
+        target: Address,
+        counter: u8,
+        data: &[u8],
+    ) -> Result<Response<&[u8]>, ClientError<T::Error>> {
+        let answered = self
+            .exchange_with(
+                target,
+                |request| encode::transfer_data(request, counter, data),
+                None,
+            )
+            .await?;
+        let message = answered_bytes(&mut self.store, &answered);
+        Ok(
+            encode::decoded::<TransferDataResponse<'_>>(encode::final_response(
+                message,
+                answered.arrived,
+            ))
+            .echoing(|r| r.block_sequence_counter == counter)
+            .map(|r| r.data),
+        )
+    }
+
+    /// End the transfer with `target` (ISO 14229-1:2020 14.5), with a parameter record
+    /// each way.
+    ///
+    /// # Arguments
+    ///
+    /// * `target` - the server's address.
+    /// * `parameter_record` - the `transferRequestParameterRecord`, possibly empty.
+    ///
+    /// # Errors
+    ///
+    /// [`ClientError::Request`] where the record does not fit the request buffer;
+    /// otherwise as [`Self::read_data_by_identifier`]'s.
+    ///
+    /// # Cancel safety
+    ///
+    /// As [`Self::read_data_by_identifier`]'s.
+    pub async fn request_transfer_exit(
+        &mut self,
+        target: Address,
+        parameter_record: &[u8],
+    ) -> Result<Response<&[u8]>, ClientError<T::Error>> {
+        let answered = self
+            .exchange_with(
+                target,
+                |request| encode::request_transfer_exit(request, parameter_record),
+                None,
+            )
+            .await?;
+        let message = answered_bytes(&mut self.store, &answered);
+        Ok(
+            encode::decoded::<RequestTransferExitResponse<'_>>(encode::final_response(
+                message,
+                answered.arrived,
+            ))
+            .map(|r| r.parameter_record),
         )
     }
 

@@ -188,11 +188,12 @@ pub use services::{
 /// them can carry `suppressPosRspMsgIndication`: that bit is the pipeline's and never
 /// reaches a handler.
 pub use uds_protocol::{
-    CLEAR_ALL_DTCS, CommunicationControlType, CommunicationType, DiagnosticSessionType,
-    DtcExtDataRecordNumber, DtcRecord, DtcSettingType, DtcSnapshotRecordNumber,
-    DtcStatusMask, FileOperationMode, FunctionalGroupIdentifier, NegativeResponseCode,
-    ReadDtcInfoReportType, ReadDtcInfoResponse, ReadDtcInfoSubFunction, ResetType,
-    RoutineControlSubFunction, SubnetNumber, UdsServiceType,
+    CLEAR_ALL_DTCS, CommunicationControlType, CommunicationType, DataFormatIdentifier,
+    DiagnosticSessionType, DtcExtDataRecordNumber, DtcRecord, DtcSettingType,
+    DtcSnapshotRecordNumber, DtcStatusMask, FileOperationMode, FunctionalGroupIdentifier,
+    NegativeResponseCode, ReadDtcInfoReportType, ReadDtcInfoResponse,
+    ReadDtcInfoSubFunction, ResetType, RoutineControlSubFunction, SubnetNumber,
+    UdsServiceType,
 };
 
 /// Re-exported only so `uds_server!`'s expansion can name it; not part of the API.

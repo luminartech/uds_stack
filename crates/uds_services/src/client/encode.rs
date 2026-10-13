@@ -9,11 +9,11 @@ use crate::{DataIdentifier, DiagnosticSessionType, SessionTiming, UdsServiceType
 use crate::{RoutineIdentifier, SecurityLevel};
 use uds_protocol::{
     ClearDiagnosticInfoRequest, CommunicationControlRequest, CommunicationControlType,
-    CommunicationType, ControlDtcSettingRequest, Decode, DtcRecord, DtcSettingType,
-    EcuResetRequest, Encode, NegativeResponseCode, ReadDtcInfoRequest,
-    ReadDtcInfoSubFunction, Request, ResetType, RoutineControlRequest,
-    RoutineControlSubFunction, SecurityAccessRequest, SecurityAccessType, SubnetNumber,
-    WriteDataByIdentifierRequest,
+    CommunicationType, ControlDtcSettingRequest, DataFormatIdentifier, Decode, DtcRecord,
+    DtcSettingType, EcuResetRequest, Encode, NegativeResponseCode, ReadDtcInfoRequest,
+    ReadDtcInfoSubFunction, Request, RequestDownloadRequest, RequestTransferExitRequest,
+    ResetType, RoutineControlRequest, RoutineControlSubFunction, SecurityAccessRequest,
+    SecurityAccessType, SubnetNumber, TransferDataRequest, WriteDataByIdentifierRequest,
 };
 use uds_session::Address;
 use uds_session::{ClientRx, SessionSelection, Solicitation};
@@ -355,11 +355,48 @@ pub(super) fn session_timing(answer: Final<'_>) -> Response<SessionTiming> {
     }
 }
 
+/// Encode a `RequestDownload` into `buffer`. `None` where `address` is wider than the
+/// five bytes the format identifier admits.
+pub(super) fn request_download(
+    buffer: &mut [u8],
+    data_format: DataFormatIdentifier,
+    address: u64,
+    size: u32,
+) -> Option<usize> {
+    let download = RequestDownloadRequest::new(data_format, address, size).ok()?;
+    request(buffer, &Request::RequestDownload(download))
+}
+
+/// Encode a `TransferData` block into `buffer`.
+pub(super) fn transfer_data(buffer: &mut [u8], counter: u8, data: &[u8]) -> Option<usize> {
+    request(
+        buffer,
+        &Request::TransferData(TransferDataRequest::new(counter, data)),
+    )
+}
+
+/// Encode a `RequestTransferExit` into `buffer`.
+pub(super) fn request_transfer_exit(
+    buffer: &mut [u8],
+    parameter_record: &[u8],
+) -> Option<usize> {
+    let exit = RequestTransferExitRequest::new(parameter_record);
+    request(buffer, &Request::RequestTransferExit(exit))
+}
+
+/// A `maxNumberOfBlockLength` as a number, `None` where it is wider than eight bytes.
+pub(super) fn block_length(bytes: &[u8]) -> Option<u64> {
+    if bytes.len() > 8 {
+        return None;
+    }
+    Some(bytes.iter().fold(0_u64, |n, b| (n << 8) | u64::from(*b)))
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        Arrived, Final, classify, decoded, final_response, read_data_by_identifier,
-        request, session_timing,
+        Arrived, Final, block_length, classify, decoded, final_response,
+        read_data_by_identifier, request, session_timing,
     };
     use crate::client::{MalformedResponse, Response};
     use crate::{DataIdentifier, RecordError, SessionTiming};
@@ -518,5 +555,11 @@ mod tests {
             final_response(&response, Arrived::TooLong(Some(9))),
             Final::Malformed(MalformedResponse::Overlong { declared: Some(9) })
         ));
+    }
+
+    #[test]
+    fn a_block_length_is_read_as_a_number() {
+        assert_eq!(block_length(&[0x04, 0x00]), Some(0x0400));
+        assert_eq!(block_length(&[1; 9]), None);
     }
 }
