@@ -452,6 +452,34 @@ impl<
             discovery: Discovery::new(socket, identity, seed),
         }
     }
+
+    /// The entity with discovery where `discovery` is `Some` and none where it is `None`,
+    /// as one type: for an application that serves both from one assembly. The tuple is
+    /// [`Self::with_discovery`]'s arguments.
+    ///
+    /// # Arguments
+    ///
+    /// * `discovery` - the UDP socket, the identity and the seed, as
+    ///   [`Self::with_discovery`] takes them, or `None` for an entity that serves
+    ///   `TCP_DATA` alone.
+    #[must_use]
+    pub fn with_optional_discovery<U: UdpSplit, I: VehicleIdentity>(
+        self,
+        discovery: Option<(U, I, u32)>,
+    ) -> Entity<'a, A, MCTS, MAX_MESSAGE, TESTERS, Option<Discovery<U, I>>> {
+        Entity {
+            acceptor: self.acceptor,
+            address: self.address,
+            config: self.config,
+            connections: self.connections,
+            reserve: self.reserve,
+            arbitration: self.arbitration,
+            confirms: self.confirms,
+            turn: self.turn,
+            discovery: discovery
+                .map(|(socket, identity, seed)| Discovery::new(socket, identity, seed)),
+        }
+    }
 }
 
 impl<

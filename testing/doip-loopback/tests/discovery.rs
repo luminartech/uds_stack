@@ -30,7 +30,7 @@ type Discovering = Entity<
     1,
     MAX_MESSAGE,
     1,
-    Discovery<edge_nal_std::UdpSocket, FixedIdentity>,
+    Option<Discovery<edge_nal_std::UdpSocket, FixedIdentity>>,
 >;
 
 async fn entity(loopback: &Loopback) -> (Discovering, std::net::SocketAddr) {
@@ -40,7 +40,10 @@ async fn entity(loopback: &Loopback) -> (Discovering, std::net::SocketAddr) {
         EntityId::new(EID).expect("EID is set"),
         DiagnosticPowerModeCode::Ready,
     );
-    (sensor.with_discovery(socket, identity, 0x5EED), at)
+    (
+        sensor.with_optional_discovery(Some((socket, identity, 0x5EED))),
+        at,
+    )
 }
 
 /// Runs the entity: it raises no event here, as no tester sends a diagnostic message.
@@ -100,6 +103,27 @@ fn a_tester_finds_the_entity_and_connects_to_it() {
                 .await
                 .expect("a status");
             assert_eq!(status.open_tcp_sockets, 1);
+            tester.close().await.expect("closed");
+        };
+        tokio::select! {
+            biased;
+            () = script => {}
+            never = serve(entity) => match never {},
+            never = tick() => match never {},
+        }
+    });
+}
+
+/// One assembly serves with and without discovery: with none, the entity answers no UDP
+/// and is still found over TCP, where routing activation succeeds.
+#[test]
+fn an_entity_without_discovery_still_serves_tcp() {
+    on_loopback(|loopback| async move {
+        let sensor: SensorEntity<MAX_MESSAGE> = loopback.entity();
+        let entity: Discovering = sensor
+            .with_optional_discovery(None::<(edge_nal_std::UdpSocket, FixedIdentity, u32)>);
+        let script = async {
+            let mut tester = loopback.tester().await.expect("activated");
             tester.close().await.expect("closed");
         };
         tokio::select! {
