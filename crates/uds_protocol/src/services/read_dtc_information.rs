@@ -1209,6 +1209,34 @@ pub enum ReadDtcInfoResponse<'a> {
         #[cfg_attr(feature = "serde", serde(borrow))]
         raw_records: &'a [u8],
     },
+    /// Sub-function 0x04: one DTC, its status, and its snapshot records.
+    ///
+    /// Each record is its `DTCSnapshotRecordNumber`, its
+    /// `DTCSnapshotRecordNumberOfIdentifiers`, then that many identifier/data pairs,
+    /// whose data widths only the application's identifiers know, so the records are
+    /// handed back raw.
+    DtcSnapshotRecords {
+        /// The DTC the records belong to.
+        dtc: DtcRecord,
+        /// Its status.
+        status: DtcStatusMask,
+        /// The records, raw, in the order the server sent them.
+        #[cfg_attr(feature = "serde", serde(borrow))]
+        raw_records: &'a [u8],
+    },
+    /// Sub-function 0x06: one DTC, its status, and its extended data records.
+    ///
+    /// Each record is its `DTCExtDataRecordNumber` then its bytes, whose width only
+    /// the application knows, so the records are handed back raw.
+    DtcExtDataRecords {
+        /// The DTC the records belong to.
+        dtc: DtcRecord,
+        /// Its status.
+        status: DtcStatusMask,
+        /// The records, raw, in the order the server sent them.
+        #[cfg_attr(feature = "serde", serde(borrow))]
+        raw_records: &'a [u8],
+    },
     /// Sub-functions 0x08, 0x09: list of DTC severity records.
     DtcSeverityList {
         /// Sub-function byte echo.
@@ -1305,6 +1333,38 @@ fn whole_records(raw: &[u8], record_len: usize) -> Result<&[u8], Error> {
         Ok(raw)
     } else {
         Err(Error::IncorrectMessageLengthOrInvalidFormat)
+    }
+}
+
+impl<'a> ReadDtcInfoResponse<'a> {
+    /// Decode the bytes after sub-function `0x04` or `0x06`: a DTC, its status, then the
+    /// records, left raw.
+    fn decode_by_dtc_number(
+        subfunction_id: u8,
+        buf: &'a [u8],
+    ) -> Result<(Self, &'a [u8]), Error> {
+        let [d0, d1, d2, status, raw_records @ ..] = buf else {
+            return Err(Error::InsufficientData(Incomplete {
+                needed: 4,
+                available: buf.len(),
+            }));
+        };
+        let dtc = DtcRecord::new(*d0, *d1, *d2);
+        let status = DtcStatusMask::from(*status);
+        let response = if subfunction_id == 0x04 {
+            Self::DtcSnapshotRecords {
+                dtc,
+                status,
+                raw_records,
+            }
+        } else {
+            Self::DtcExtDataRecords {
+                dtc,
+                status,
+                raw_records,
+            }
+        };
+        Ok((response, &[]))
     }
 }
 
@@ -1406,6 +1466,7 @@ impl<'a> Decode<'a> for ReadDtcInfoResponse<'a> {
                     &[],
                 ))
             }
+            0x04 | 0x06 => Self::decode_by_dtc_number(subfunction_id, buf),
             _ => Err(Error::InvalidDtcSubfunctionType(subfunction_id)),
         }
     }
@@ -1471,6 +1532,40 @@ impl Encode for ReadDtcInfoResponse<'_> {
                         status_availability_mask.bits(),
                         severity_availability_mask.bits(),
                         u8::from(*format_identifier),
+                    ],
+                )?;
+                written += write_bytes(writer, raw_records)?;
+            }
+            Self::DtcSnapshotRecords {
+                dtc,
+                status,
+                raw_records,
+            } => {
+                written += write_bytes(
+                    writer,
+                    &[
+                        0x04,
+                        dtc.high_byte(),
+                        dtc.middle_byte(),
+                        dtc.low_byte(),
+                        status.bits(),
+                    ],
+                )?;
+                written += write_bytes(writer, raw_records)?;
+            }
+            Self::DtcExtDataRecords {
+                dtc,
+                status,
+                raw_records,
+            } => {
+                written += write_bytes(
+                    writer,
+                    &[
+                        0x06,
+                        dtc.high_byte(),
+                        dtc.middle_byte(),
+                        dtc.low_byte(),
+                        status.bits(),
                     ],
                 )?;
                 written += write_bytes(writer, raw_records)?;
@@ -1955,4 +2050,86 @@ mod iter_tests {
         }
     }
     use heapless_vec::CollectBounded;
+}
+
+#[cfg(test)]
+mod by_dtc_number {
+    use super::ReadDtcInfoResponse;
+    use crate::{Decode, DtcRecord, DtcStatusMask, Encode, Error, Incomplete};
+
+    /// ISO 14229-1:2020 12.3.5.5: `59 04`, then the DTC and its status, then each
+    /// snapshot record as its number, its identifier count and its identifier/data pairs.
+    const SNAPSHOT: [u8; 13] = [
+        0x04, 0x12, 0x34, 0x56, 0x24, 0x01, 0x01, 0x47, 0x11, 0xA6, 0x66, 0x07, 0x50,
+    ];
+    /// 12.3.5.7: `59 06`, the DTC and status, then each extended record as its number
+    /// and its bytes.
+    const EXT_DATA: [u8; 8] = [0x06, 0x12, 0x34, 0x56, 0x24, 0x05, 0x17, 0x30];
+
+    #[test]
+    fn a_snapshot_response_decodes_to_its_dtc_status_and_raw_records() {
+        let decoded = ReadDtcInfoResponse::decode_exact(&SNAPSHOT).unwrap();
+        assert_eq!(
+            decoded,
+            ReadDtcInfoResponse::DtcSnapshotRecords {
+                dtc: DtcRecord::new(0x12, 0x34, 0x56),
+                status: DtcStatusMask::from(0x24),
+                raw_records: &SNAPSHOT[5..],
+            }
+        );
+        let mut buf = [0u8; 16];
+        let written = decoded.encode_to_slice(&mut buf).unwrap();
+        assert_eq!(&buf[..written], &SNAPSHOT);
+    }
+
+    #[test]
+    fn an_ext_data_response_decodes_to_its_dtc_status_and_raw_records() {
+        let decoded = ReadDtcInfoResponse::decode_exact(&EXT_DATA).unwrap();
+        assert_eq!(
+            decoded,
+            ReadDtcInfoResponse::DtcExtDataRecords {
+                dtc: DtcRecord::new(0x12, 0x34, 0x56),
+                status: DtcStatusMask::from(0x24),
+                raw_records: &EXT_DATA[5..],
+            }
+        );
+        let mut buf = [0u8; 16];
+        let written = decoded.encode_to_slice(&mut buf).unwrap();
+        assert_eq!(&buf[..written], &EXT_DATA);
+    }
+
+    #[test]
+    fn fewer_than_four_bytes_after_the_sub_function_is_incomplete() {
+        for sub_function in [0x04, 0x06] {
+            let short = [sub_function, 0x12, 0x34, 0x56];
+            assert!(matches!(
+                ReadDtcInfoResponse::decode(&short),
+                Err(Error::InsufficientData(Incomplete {
+                    needed: 4,
+                    available: 3
+                }))
+            ));
+        }
+    }
+
+    #[test]
+    fn no_records_is_a_valid_answer() {
+        let none = [0x04, 0x12, 0x34, 0x56, 0x24];
+        let decoded = ReadDtcInfoResponse::decode_exact(&none).unwrap();
+        assert!(matches!(
+            decoded,
+            ReadDtcInfoResponse::DtcSnapshotRecords {
+                raw_records: &[],
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn the_iterator_accessors_decline_both() {
+        let decoded = ReadDtcInfoResponse::decode_exact(&EXT_DATA).unwrap();
+        assert!(decoded.dtc_and_status_iter().is_none());
+        assert!(decoded.dtc_fault_detection_iter().is_none());
+        assert!(decoded.wwh_obd_dtc_severity_iter().is_none());
+    }
 }

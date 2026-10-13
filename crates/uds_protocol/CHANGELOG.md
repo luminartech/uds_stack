@@ -17,6 +17,9 @@ now <https://github.com/luminartech/uds_stack>.
 
 ### Added
 
+- `ReadDtcInfoResponse::DtcSnapshotRecords` and `DtcExtDataRecords`, the responses to
+  sub-functions `0x04` and `0x06`: the DTC, its status, and the records raw, whose
+  widths are the application's identifiers' to know.
 - `ReadDtcInfoReportType`, the `ReadDTCInformation` report type on its own, without
   the parameters that come with it (clause 12.3.2.2, Table 317), with `value()`,
   `From<ReadDtcInfoReportType> for u8` and `TryFrom<u8>`. A byte without bit 7 maps to
