@@ -664,9 +664,9 @@ fn the_assembled_dispatch_answers_a_read() {
     assert_eq!(out.written_bytes(), &[0x62, 0xF4, 0x0D, 0x40]);
 }
 
-/// A listed service whose stage is not yet written (`DataTransfer`), and an unlisted one,
-/// both settle 0x11 — physically; functionally they are silenced (``UDSSVC_ARCH_0009``
-/// rule 1).
+/// An unlisted service settles 0x11 — physically; functionally it is silenced
+/// (``UDSSVC_ARCH_0009`` rule 1). A listed `DataTransfer` serves `TransferData`: with no
+/// download in progress it is 0x24 (Table 454).
 #[test]
 fn unsupported_services_settle_0x11_or_silence() {
     let mut ecu = Ecu::new();
@@ -689,7 +689,7 @@ fn unsupported_services_settle_0x11_or_silence() {
         }
     );
     assert_eq!(out.written_bytes(), &[0x7F, 0x11, 0x11]);
-    // Listed, so `begin` passes it; no stage, so the fall-through settles it. Table 23
+    // Listed, so `begin` passes it; its stage finds no download open. Table 23
     // refuses the transfer services in the default session, so it is asked from another.
     let mut extended = <<Ecu as ServiceSet>::State as uds_services::ProtocolState>::INITIAL;
     ecu.session_confirmed(
@@ -706,7 +706,7 @@ fn unsupported_services_settle_0x11_or_silence() {
             effect: uds_services::Effect::None
         }
     );
-    assert_eq!(out.written_bytes(), &[0x7F, 0x36, 0x11]);
+    assert_eq!(out.written_bytes(), &[0x7F, 0x36, 0x24]);
     let func = Ai {
         ta_type: TaType::Functional,
         ..phys

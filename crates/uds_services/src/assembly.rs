@@ -456,8 +456,8 @@ macro_rules! __uds_ahead_of_decode {
 /// fails, from the closure the truncated branch of `dispatch` calls. Only a service whose
 /// stage checks something before the length emits one — an identifier in its
 /// data-parameters (WDBI, RoutineControl) or the request sequence (SecurityAccess's
-/// 0x24); for the others `begin` has already asked every such question, and the request
-/// is 0x13.
+/// and the transfer services' 0x24, `TransferData`'s 0x73 and 0x31); for the others
+/// `begin` has already asked every such question, and the request is 0x13.
 #[doc(hidden)]
 #[macro_export]
 macro_rules! __uds_before_length {
@@ -474,6 +474,14 @@ macro_rules! __uds_before_length {
     ($self:ident, $state:ident, $req:ident, SecurityAccess) => {
         if let $crate::Request::SecurityAccess(ref r) = $req {
             return $crate::pipeline::key_in_sequence($state, r);
+        }
+    };
+    ($self:ident, $state:ident, $req:ident, DataTransfer) => {
+        if ::core::matches!(
+            $req,
+            $crate::Request::TransferData(_) | $crate::Request::RequestTransferExit(_)
+        ) {
+            return $crate::pipeline::transfer_before_length($state, &$req);
         }
     };
     ($self:ident, $state:ident, $req:ident, $svc:ident) => {};
@@ -564,6 +572,12 @@ macro_rules! __uds_stage {
         if let $crate::Request::RequestDownload(ref r) = $req {
             return $crate::pipeline::request_download($self, $state, r, $out).await;
         }
+        if let $crate::Request::TransferData(ref r) = $req {
+            return $crate::pipeline::transfer_data($self, $state, r, $out).await;
+        }
+        if let $crate::Request::RequestTransferExit(ref r) = $req {
+            return $crate::pipeline::request_transfer_exit($self, $state, r, $out).await;
+        }
     };
     ($self:ident, $state:ident, $out:ident, $req:ident, $svc:ident) => {};
 }
@@ -619,13 +633,7 @@ macro_rules! __uds_stage {
 /// [`sessions`]: crate::SecurityAccess::sessions
 /// [`EcuReset`]: crate::EcuReset
 ///
-/// **Staging limit:** `DataTransfer` has no stage. Listed, it is accepted by the list
-/// (so it is not refused by the support check), and outside the default session, where
-/// Table 23 refuses it, its request reaches the decode and settles `serviceNotSupported`
-/// (0x11), or the code `uds_protocol` assigns the failure if it does not decode —
-/// visible on the wire rather than a panic.
-///
-/// The syntax is `Ecu: ..; transport = T, ..` rather than `Ecu over T: ..` because
+// The syntax is `Ecu: ..; transport = T, ..` rather than `Ecu over T: ..` because
 /// `$ty:ty` cannot be followed by a bare identifier — the legal followers are
 /// `{ [ => , > = : ; | as where`.
 ///

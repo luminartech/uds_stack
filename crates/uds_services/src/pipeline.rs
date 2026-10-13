@@ -29,8 +29,8 @@ use uds_protocol::{
     ClearDiagnosticInfoRequest, CommunicationControlRequest, CommunicationType,
     ControlDtcSettingRequest, DiagnosticSessionControlRequest, EcuResetRequest,
     ReadDataByIdentifierRequest, ReadDtcInfoRequest, RequestDownloadRequest,
-    RoutineControlRequest, RoutineControlSubFunction, SecurityAccessRequest,
-    WriteDataByIdentifierRequest,
+    RequestTransferExitRequest, RoutineControlRequest, RoutineControlSubFunction,
+    SecurityAccessRequest, TransferDataRequest, WriteDataByIdentifierRequest,
 };
 use uds_session::{Ai, TaType};
 
@@ -797,6 +797,127 @@ pub async fn request_download<A: DataTransfer>(
         state.open_transfer(Transfer::new(sessions, gated_by, size));
     }
     Ok(Effect::None)
+}
+
+/// ISO 14229-1:2020 clause 15.4 — `TransferData`'s own stage (``UDSSVC_ARCH_0036``), in
+/// Figure 33's order: no download in progress, or all of a known `memorySize` received
+/// and the block not a repeat, is `requestSequenceError` (0x24, Table 454); an empty block
+/// is 0x13 (key 1); a repeat of the last accepted block (15.4.4, the 0x73 row) longer than
+/// `MAX_BLOCK_LENGTH` is 0x31, otherwise answered `76 <counter>` without `block`; a block
+/// passing a known `memorySize` is `transferDataSuspended` (0x71); a counter other than
+/// the expected one is `wrongBlockSequenceCounter` (0x73); more than `MAX_BLOCK_LENGTH`
+/// data bytes is 0x31; then `block`. The counter advances, and the bytes count, only where
+/// the response settles positive.
+#[doc(hidden)]
+pub async fn transfer_data<A: DataTransfer>(
+    services: &mut A,
+    state: &mut State,
+    request: &TransferDataRequest<'_>,
+    out: &mut ResponseSink<'_>,
+) -> Result<Effect, NegativeResponseCode> {
+    let Some(transfer) = state.transfer() else {
+        return Err(NegativeResponseCode::RequestSequenceError);
+    };
+    let counter = request.block_sequence_counter;
+    let data = request.data;
+    if data.is_empty() {
+        return Err(NegativeResponseCode::IncorrectMessageLengthOrInvalidFormat);
+    }
+    let repeat = transfer.is_repeat(counter);
+    if !repeat && transfer.all_received() {
+        return Err(NegativeResponseCode::RequestSequenceError);
+    }
+    let over_long = data.len() > A::MAX_BLOCK_LENGTH;
+    if repeat {
+        if over_long {
+            return Err(NegativeResponseCode::RequestOutOfRange);
+        }
+        let _ = out.write_all(&[0x76, counter]);
+        return Ok(Effect::None);
+    }
+    if transfer.would_exceed(data.len()) {
+        return Err(NegativeResponseCode::TransferDataSuspended);
+    }
+    if counter != transfer.next {
+        return Err(NegativeResponseCode::WrongBlockSequenceCounter);
+    }
+    if over_long {
+        return Err(NegativeResponseCode::RequestOutOfRange);
+    }
+    let _ = out.write_all(&[0x76, counter]);
+    services.block(data, out).await?;
+    if !out.refused() {
+        state.accept_block(data.len());
+    }
+    Ok(Effect::None)
+}
+
+/// ISO 14229-1:2020 clause 15.5 — `RequestTransferExit`'s own stage, in Figure 34's order:
+/// no download in progress, or less than a known `memorySize` received ("the programming
+/// process is not completed", Table 459), is `requestSequenceError` (0x24); then `exit`.
+/// After a 0x24, whoever answered it, the transfer stays open so the client can send what
+/// is missing; after any other answer it closes, except a positive one that settles 0x14.
+#[doc(hidden)]
+pub async fn request_transfer_exit<A: DataTransfer>(
+    services: &mut A,
+    state: &mut State,
+    request: &RequestTransferExitRequest<'_>,
+    out: &mut ResponseSink<'_>,
+) -> Result<Effect, NegativeResponseCode> {
+    let Some(transfer) = state.transfer() else {
+        return Err(NegativeResponseCode::RequestSequenceError);
+    };
+    if transfer.incomplete() {
+        return Err(NegativeResponseCode::RequestSequenceError);
+    }
+    let _ = out.write_all(&[0x77]);
+    let exited = services.exit(request.parameter_record, out).await;
+    let keep = match exited {
+        Err(NegativeResponseCode::RequestSequenceError) => true,
+        Ok(()) => out.refused(),
+        Err(_) => false,
+    };
+    if !keep {
+        state.close_transfer();
+    }
+    exited.map(|()| Effect::None)
+}
+
+/// Figures 33 and 34 for a transfer request too long for the in-flight buffer: a block is
+/// 0x24 under [`transfer_data`]'s conditions, 0x73 where its counter is neither the
+/// expected one nor a repeat, and otherwise 0x31, repeats included (the transport drops the
+/// declared length, so 0x71 is not asked); an exit is 0x24 with no download in progress.
+/// Anything else passes to the 0x13 every truncated request ends with.
+///
+/// # Errors
+///
+/// `requestSequenceError` (0x24), `wrongBlockSequenceCounter` (0x73) or
+/// `requestOutOfRange` (0x31), as above.
+#[doc(hidden)]
+pub fn transfer_before_length(
+    state: &State,
+    request: &Request<'_>,
+) -> Result<(), NegativeResponseCode> {
+    match request {
+        Request::TransferData(block) => {
+            let Some(transfer) = state.transfer() else {
+                return Err(NegativeResponseCode::RequestSequenceError);
+            };
+            let counter = block.block_sequence_counter;
+            let repeat = transfer.is_repeat(counter);
+            if !repeat && transfer.all_received() {
+                return Err(NegativeResponseCode::RequestSequenceError);
+            }
+            if !repeat && counter != transfer.next {
+                return Err(NegativeResponseCode::WrongBlockSequenceCounter);
+            }
+            Err(NegativeResponseCode::RequestOutOfRange)
+        }
+        Request::RequestTransferExit(_) if state.transfer().is_none() => {
+            Err(NegativeResponseCode::RequestSequenceError)
+        }
+        _ => Ok(()),
+    }
 }
 
 /// ISO 14229-1:2020 clause 10.4 and Annex I — `SecurityAccess`'s own stage
