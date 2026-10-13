@@ -11,8 +11,8 @@ use crate::{
 };
 use uds_protocol::{
     ClearDiagnosticInfoRequest, CommunicationControlRequest, CommunicationControlType,
-    CommunicationType, ControlDtcSettingRequest, DataFormatIdentifier, Decode, DtcRecord,
-    DtcSettingType, EcuResetRequest, Encode, NegativeResponseCode, ReadDtcInfoRequest,
+    CommunicationType, ControlDtcSettingRequest, Decode, DtcRecord, DtcSettingType,
+    EcuResetRequest, Encode, NegativeResponseCode, ReadDtcInfoRequest,
     ReadDtcInfoSubFunction, Request, RequestDownloadRequest, RequestTransferExitRequest,
     ResetType, RoutineControlRequest, RoutineControlSubFunction, SecurityAccessRequest,
     SecurityAccessType, SubnetNumber, TransferDataRequest, WriteDataByIdentifierRequest,
@@ -357,15 +357,11 @@ pub(super) fn session_timing(answer: Final<'_>) -> Response<SessionTiming> {
     }
 }
 
-/// Encode a `RequestDownload` into `buffer`. `None` where `address` is wider than the
-/// five bytes the format identifier admits.
+/// Encode a `RequestDownload` into `buffer`.
 pub(super) fn request_download(
     buffer: &mut [u8],
-    data_format: DataFormatIdentifier,
-    address: u64,
-    size: u32,
+    download: RequestDownloadRequest,
 ) -> Option<usize> {
-    let download = RequestDownloadRequest::new(data_format, address, size).ok()?;
     request(buffer, &Request::RequestDownload(download))
 }
 

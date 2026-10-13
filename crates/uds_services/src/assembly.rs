@@ -928,7 +928,10 @@ macro_rules! uds_server {
 /// - `max_key_len`: the longest `SecurityAccess` key.
 /// - `max_option_len`: the longest routine control option record, the longest
 ///   `ControlDTCSetting` option record, and the longest transfer-exit parameter record.
-/// - `max_block_len`: the longest `TransferData` block.
+/// - `max_block_len`: the most data bytes one `TransferData` block carries, its service
+///   identifier and block sequence counter not counted; at least the server's
+///   `maxNumberOfBlockLength` minus two, or a full block cannot be sent. It is
+///   [`ClientSet::MAX_BLOCK_LEN`](crate::ClientSet::MAX_BLOCK_LEN).
 ///
 /// Naming the transport lets its [`MAX_PDU`](crate::UdsTransport::MAX_PDU) cap both,
 /// exactly as it does for a server, and one whose cap leaves no room for a six-byte
@@ -1095,6 +1098,7 @@ macro_rules! uds_client {
                 type Store = $crate::ClientStore<REQUEST, RESPONSE>;
                 type Routine = $rid;
                 const MAX_DIDS_PER_REQUEST: usize = { $max_dids };
+                const MAX_BLOCK_LEN: usize = { $max_block_len };
             }
         };
     };

@@ -74,8 +74,10 @@ lockstep with the rest of the `uds_stack` workspace (`uds_protocol`, `uds_sessio
 - `Client` calls for every service the sensor stages, and the transfer steps:
   `write_data_by_identifier`, `read_dtc_information`, `clear_diagnostic_information`,
   `security_access_seed` and `security_access_key`, `routine_control`, `ecu_reset`,
-  `request_download`, `transfer_data`, `request_transfer_exit`, `communication_control`
-  and `control_dtc_setting`. Each encodes its request through `uds_protocol`, decodes
+  `request_download` (narrowest address and size widths) and
+  `request_download_with_format` (a caller-chosen `addressAndLengthFormatIdentifier`),
+  `transfer_data`, `request_transfer_exit`, `communication_control` and
+  `control_dtc_setting`. Each encodes its request through `uds_protocol`, decodes
   the reply exactly, and answers a wrong echo with `MalformedResponse::Echo`. No call
   sets the suppress-positive-response bit.
 - `Client::connection_replaced` and `Replaced`: why a server's connection is not the one
@@ -89,7 +91,8 @@ lockstep with the rest of the `uds_stack` workspace (`uds_protocol`, `uds_sessio
   asks. One ask takes every event the transport already holds.
 - `Response::map`, and `MalformedResponse::Echo` and `Decode`.
 - Re-exports of `uds_protocol`'s `ReadDtcInfoResponse`, `DataFormatIdentifier`,
-  `DtcSnapshotRecordNumber` and `DtcExtDataRecordNumber`, which the new calls take or
+  `AddressAndLengthFormatIdentifier`, `DtcSnapshotRecordNumber` and
+  `DtcExtDataRecordNumber`, which the new calls take or
   return.
 
 ### Changed
@@ -100,7 +103,8 @@ lockstep with the rest of the `uds_stack` workspace (`uds_protocol`, `uds_sessio
 - **Breaking:** `uds_client!` takes `routines`, `max_dtcs`, `max_dtc_record_len`,
   `max_seed_len`, `max_key_len`, `max_option_len` and `max_block_len`, and folds the
   client's buffers from them as `uds_server!` folds a server's from its service traits.
-  `ClientSet` gains `type Routine` and `const MAX_DIDS_PER_REQUEST`.
+  `ClientSet` gains `type Routine`, `const MAX_DIDS_PER_REQUEST` and
+  `const MAX_BLOCK_LEN`, the most data bytes one `TransferData` block carries.
 
 ### Known limitations
 

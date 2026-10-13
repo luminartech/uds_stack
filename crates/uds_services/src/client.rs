@@ -46,10 +46,11 @@ use driver::{Answered, Book, Exchange};
 #[cfg(doc)]
 use crate::UdsTransport;
 use uds_protocol::{
-    ClearDiagnosticInfoResponse, CommunicationControlResponse, CommunicationControlType,
-    CommunicationType, ControlDtcSettingResponse, DataFormatIdentifier, DtcRecord,
-    DtcSettingType, EcuResetResponse, NegativeResponseCode, ReadDtcInfoResponse,
-    ReadDtcInfoSubFunction, RequestDownloadResponse, RequestTransferExitResponse,
+    AddressAndLengthFormatIdentifier, ClearDiagnosticInfoResponse,
+    CommunicationControlResponse, CommunicationControlType, CommunicationType,
+    ControlDtcSettingResponse, DataFormatIdentifier, DtcRecord, DtcSettingType,
+    EcuResetResponse, NegativeResponseCode, ReadDtcInfoResponse, ReadDtcInfoSubFunction,
+    RequestDownloadRequest, RequestDownloadResponse, RequestTransferExitResponse,
     ResetType, RoutineControlResponse, RoutineControlSubFunction, SecurityAccessResponse,
     SubnetNumber, TransferDataResponse, WriteDataByIdentifierResponse,
 };
@@ -76,6 +77,11 @@ pub trait ClientSet: DataIdentifier + crate::sealed::Sealed {
     /// The most identifiers one `ReadDataByIdentifier` request names, declared through
     /// [`crate::uds_client`]'s `max_dids_per_request`.
     const MAX_DIDS_PER_REQUEST: usize;
+    /// The most data bytes one `TransferData` block carries, declared through
+    /// [`crate::uds_client`]'s `max_block_len`: at least the server's
+    /// `maxNumberOfBlockLength` minus two, or a full block cannot be sent; see
+    /// [`Client::request_download`].
+    const MAX_BLOCK_LEN: usize;
     /// The routine vocabulary the client's `RoutineControl` requests name, declared
     /// through [`crate::uds_client`]'s `routines`; see [`Client::routine_control`].
     type Routine: RoutineIdentifier;
@@ -1212,10 +1218,18 @@ impl<
     }
 
     /// Ask `target` to take a download of `size` bytes to `address` (ISO 14229-1:2020
-    /// 15.2): the first of clause 17's standardized transfer steps. The response is the
-    /// server's `maxNumberOfBlockLength`: the most bytes one `TransferData` request may
-    /// hold, service identifier and counter included (Table 443), so the `data` of a
-    /// [`Self::transfer_data`] block is at most this minus two.
+    /// 15.2): the first of clause 17's standardized transfer steps. The
+    /// `addressAndLengthFormatIdentifier` declares the narrowest widths that hold
+    /// `address` and `size`; [`Self::request_download_with_format`] fixes them instead.
+    ///
+    /// The response is the server's `maxNumberOfBlockLength`: the length of one
+    /// `TransferData` request, service identifier and counter included (Table 443), so
+    /// each [`Self::transfer_data`] block carries exactly this minus two data bytes,
+    /// except possibly the last. The server need accept nothing shorter: "A server is
+    /// required to accept transferData requests that are equal in length to its reported
+    /// maxNumberOfBlockLength. It is server specific what transferData request lengths
+    /// less than maxNumberOfBlockLength are accepted (if any)." A block longer than the
+    /// client's [`ClientSet::MAX_BLOCK_LEN`] cannot be sent.
     ///
     /// The client keeps no transfer state: the caller owns the block sequence counter
     /// and its roll from `0xFF` to `0x00`.
@@ -1244,10 +1258,56 @@ impl<
         address: u64,
         size: u32,
     ) -> Result<Response<u64>, ClientError<T::Error>> {
+        let download = RequestDownloadRequest::new(data_format, address, size).ok();
+        self.download(target, download).await
+    }
+
+    /// [`Self::request_download`] with a caller-chosen `addressAndLengthFormatIdentifier`
+    /// (ISO 14229-1:2020 15.2.2, Table 441): `address` and `size` are sent at the widths
+    /// `format` declares, padded with leading zeros, for a server that accepts only
+    /// fixed widths.
+    ///
+    /// # Arguments
+    ///
+    /// * `target` - the server's address.
+    /// * `data_format` - compression and encryption, [`DataFormatIdentifier::NONE`] for
+    ///   neither.
+    /// * `format` - the widths of `memoryAddress` and `memorySize`.
+    /// * `address` - `memoryAddress`.
+    /// * `size` - `memorySize`.
+    ///
+    /// # Errors
+    ///
+    /// [`ClientError::Request`] where `address` or `size` is wider than `format`
+    /// declares for it; otherwise as [`Self::request_download`]'s.
+    ///
+    /// # Cancel safety
+    ///
+    /// As [`Self::read_data_by_identifier`]'s.
+    pub async fn request_download_with_format(
+        &mut self,
+        target: Address,
+        data_format: DataFormatIdentifier,
+        format: AddressAndLengthFormatIdentifier,
+        address: u64,
+        size: u32,
+    ) -> Result<Response<u64>, ClientError<T::Error>> {
+        let download =
+            RequestDownloadRequest::new_with_alfid(data_format, format, address, size).ok();
+        self.download(target, download).await
+    }
+
+    /// Exchange `download` with `target` and read the block length back; `None` where
+    /// the request could not be formed, refused as [`ClientError::Request`].
+    async fn download(
+        &mut self,
+        target: Address,
+        download: Option<RequestDownloadRequest>,
+    ) -> Result<Response<u64>, ClientError<T::Error>> {
         let answered = self
             .exchange_with(
                 target,
-                |request| encode::request_download(request, data_format, address, size),
+                |request| encode::request_download(request, download?),
                 None,
             )
             .await?;
@@ -1275,12 +1335,13 @@ impl<
     ///
     /// * `target` - the server's address.
     /// * `counter` - the `blockSequenceCounter`, the caller's to advance.
-    /// * `data` - the block, at most the `max_block_len` the client declared.
+    /// * `data` - the block: exactly `maxNumberOfBlockLength` minus two bytes, except
+    ///   possibly the last; see [`Self::request_download`].
     ///
     /// # Errors
     ///
-    /// [`ClientError::Request`] where the block does not fit the request buffer;
-    /// otherwise as [`Self::read_data_by_identifier`]'s.
+    /// [`ClientError::Request`] where `data` is longer than [`ClientSet::MAX_BLOCK_LEN`],
+    /// and nothing is sent; otherwise as [`Self::read_data_by_identifier`]'s.
     ///
     /// # Cancel safety
     ///

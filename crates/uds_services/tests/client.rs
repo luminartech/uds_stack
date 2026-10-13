@@ -11,14 +11,14 @@ use common::{Script, Step, block_on};
 use core::future::Future;
 use core::task::Poll;
 use uds_services::{
-    Address, Ai, Answer, CLEAR_ALL_DTCS, ClientError, ClientTiming,
-    CommunicationControlType, CommunicationType, DataFormatIdentifier, DataIdentifier,
-    DiagnosticSessionType, DtcExtDataRecordNumber, DtcRecord, DtcSettingType,
-    DtcSnapshotRecordNumber, DtcStatusMask, FunctionalKeepAlive, KeepAlive,
-    MalformedResponse, Mtype, NegativeResponseCode, PhysicalKeepAlive, ReadDtcInfoResponse,
-    ReadDtcInfoSubFunction, RecordError, Reloads, Replaced, ResetType, Response,
-    RoutineControlSubFunction, RoutineIdentifier, SResult, SecurityLevel, SessionTiming,
-    SubnetNumber, TaType, Timestamp, uds_client,
+    Address, AddressAndLengthFormatIdentifier, Ai, Answer, CLEAR_ALL_DTCS, ClientError,
+    ClientSet, ClientTiming, CommunicationControlType, CommunicationType,
+    DataFormatIdentifier, DataIdentifier, DiagnosticSessionType, DtcExtDataRecordNumber,
+    DtcRecord, DtcSettingType, DtcSnapshotRecordNumber, DtcStatusMask, FunctionalKeepAlive,
+    KeepAlive, MalformedResponse, Mtype, NegativeResponseCode, PhysicalKeepAlive,
+    ReadDtcInfoResponse, ReadDtcInfoSubFunction, RecordError, Reloads, Replaced, ResetType,
+    Response, RoutineControlSubFunction, RoutineIdentifier, SResult, SecurityLevel,
+    SessionTiming, SubnetNumber, TaType, Timestamp, uds_client,
 };
 use uds_session::TransportError;
 
@@ -2151,6 +2151,65 @@ fn a_download_of_an_unaddressable_memory_sends_nothing() {
         Err(ClientError::Request)
     );
     assert!(t.transport().finished());
+}
+
+/// ISO 14229-1:2020 15.2.2 — a caller-chosen `addressAndLengthFormatIdentifier` fixes
+/// the widths: `0x44` sends a four-byte address and a four-byte size, padded with zeros.
+#[test]
+fn a_download_with_a_fixed_format_pads_the_address_and_size() {
+    let mut t = tester(&[
+        Step::Conf(to(ECU), SResult::Ok),
+        Step::Ind(from(ECU), &[0x74, 0x20, 0x04, 0x00]),
+    ]);
+    let Ok(format) = AddressAndLengthFormatIdentifier::new(4, 4) else {
+        panic!("0x44 is a valid format identifier");
+    };
+    assert_eq!(
+        block_on(t.request_download_with_format(
+            ECU,
+            DataFormatIdentifier::NONE,
+            format,
+            0x0001_0000,
+            0x0400
+        )),
+        Ok(Response::Positive(0x0400))
+    );
+    assert_eq!(
+        t.transport().addressed(0),
+        (
+            Some(to(ECU)),
+            &[
+                0x34, 0x00, 0x44, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x04, 0x00
+            ][..]
+        )
+    );
+}
+
+/// A value wider than the chosen format declares for it cannot be carried and sends
+/// nothing.
+#[test]
+fn a_download_too_wide_for_its_format_sends_nothing() {
+    let mut t = tester(&[]);
+    let Ok(format) = AddressAndLengthFormatIdentifier::new(1, 2) else {
+        panic!("0x12 is a valid format identifier");
+    };
+    assert_eq!(
+        block_on(t.request_download_with_format(
+            ECU,
+            DataFormatIdentifier::NONE,
+            format,
+            0x0001_0000,
+            1
+        )),
+        Err(ClientError::Request)
+    );
+    assert!(t.transport().finished());
+}
+
+/// The declared block maximum is the client's, readable to clamp a transfer against.
+#[test]
+fn the_declared_block_maximum_is_exposed() {
+    assert_eq!(<Did as ClientSet>::MAX_BLOCK_LEN, 16);
 }
 
 /// A block goes with its counter and the response echoes it; a block one byte past the
