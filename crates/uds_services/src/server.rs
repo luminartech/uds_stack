@@ -582,9 +582,11 @@ async fn drain<'d, T: UdsTransport, const PEERS: usize>(
 ///
 /// That fixed order is the arrival order. Within one drain, ``UDSS_LLR_0081`` puts the
 /// expiry snapshots ahead of the input's own outputs, so a `SessionTimeout` always
-/// precedes the `Confirm` beside it. Across drains, [`Deferred::merge`] drops a
-/// confirmation that a later timeout overtook, so whatever survives to here is a
-/// timeout followed by a confirmation, or only one of them.
+/// precedes the `Confirm` beside it. Across drains, [`Deferred::merge`] drops a session
+/// confirmation that a later timeout overtook, so a surviving session confirmation is
+/// one a timeout preceded. A reset confirmation is kept, since its response was sent,
+/// and running it after a timeout that overtook it ends in the same state: a restart
+/// ends in the default session either way, and a continuing reset changes no session.
 fn apply<A: ServiceSet>(
     services: &mut A,
     state: &mut A::State,
