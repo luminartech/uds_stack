@@ -10,8 +10,9 @@
 //! `uds_session::Ai`, which ISO 14229-1:2020 clause 7.4.1 makes a mandatory parameter of
 //! every application layer service primitive anyway.
 
+use crate::services::transfer::{DataTransfer, TransferRequest};
 use crate::services::{Effect, SessionTransition};
-use crate::state::State;
+use crate::state::{State, Transfer};
 use crate::{Access, Responded, ResponseSink, Sessions, Unsettled};
 use crate::{
     ClearDiagnosticInformation, CommunicationControl, ControlDtcSetting, DataIdentifier,
@@ -21,14 +22,15 @@ use crate::{
 };
 use automotive_wire_codec::Sink;
 use uds_protocol::{
-    ClearDiagnosticInfoRequest, CommunicationControlRequest, CommunicationType,
-    ControlDtcSettingRequest, DiagnosticSessionControlRequest, EcuResetRequest,
-    ReadDataByIdentifierRequest, ReadDtcInfoRequest, RoutineControlRequest,
-    RoutineControlSubFunction, SecurityAccessRequest, WriteDataByIdentifierRequest,
+    AddressAndLengthFormatIdentifier, DataFormatIdentifier, Decode, DiagnosticSessionType,
+    Encode, NegativeResponse, NegativeResponseCode, Request, UdsServiceType,
 };
 use uds_protocol::{
-    Decode, DiagnosticSessionType, Encode, NegativeResponse, NegativeResponseCode, Request,
-    UdsServiceType,
+    ClearDiagnosticInfoRequest, CommunicationControlRequest, CommunicationType,
+    ControlDtcSettingRequest, DiagnosticSessionControlRequest, EcuResetRequest,
+    ReadDataByIdentifierRequest, ReadDtcInfoRequest, RequestDownloadRequest,
+    RoutineControlRequest, RoutineControlSubFunction, SecurityAccessRequest,
+    WriteDataByIdentifierRequest,
 };
 use uds_session::{Ai, TaType};
 
@@ -116,6 +118,10 @@ pub enum Stage<'a> {
 ///    does not name, settles `serviceNotSupported` (0x11).
 /// 3. Supported in the active session? Table 23's refusals settle
 ///    `serviceNotSupportedInActiveSession` (0x7F).
+/// 3a. The service's checks ahead of its decode (`ahead`): `DataTransfer::SESSIONS`'s
+///    0x7F for the three staged transfer services, and Figure 31's minimum length (0x13)
+///    and format checks (0x31) for `RequestDownload`, both before its full length (see
+///    [`transfer_ahead_of_decode`]).
 /// 4. For a service with a sub-function, other than 0x31, Figure 6's sub-function checks
 ///    (``UDSSVC_ARCH_0007``), in its order, from the one [`Access`] `access` returns: no
 ///    access settles `subFunctionNotSupported` (0x12) (row 2); an active session outside
@@ -144,15 +150,17 @@ pub enum Stage<'a> {
 /// identifier in its data-parameters checks it in its own stage.
 #[doc(hidden)]
 #[must_use]
-pub fn begin<'a, F, G>(
+pub fn begin_with<'a, F, G, H>(
     state: &State,
     request: &'a [u8],
     supports: F,
     access: G,
+    ahead: H,
 ) -> Stage<'a>
 where
     F: Fn(UdsServiceType) -> bool,
     G: Fn(UdsServiceType, u8, DiagnosticSessionType) -> Option<Access>,
+    H: Fn(UdsServiceType, DiagnosticSessionType, &[u8]) -> Option<NegativeResponseCode>,
 {
     let Some((&sid, parameters)) = request.split_first() else {
         return Stage::Empty;
@@ -170,6 +178,11 @@ where
             sid,
             nrc: NegativeResponseCode::ServiceNotSupportedInActiveSession,
         };
+    }
+    // Checks a service asks of the raw request between Table 23 and its decode:
+    // `DataTransfer::SESSIONS`'s 0x7F, and Figure 31's first two nodes.
+    if let Some(nrc) = ahead(service, state.session(), request) {
+        return Stage::Settle { sid, nrc };
     }
     if enters_sub_function_stage(service)
         && let Some(&byte) = parameters.first()
@@ -216,6 +229,55 @@ where
                 .unwrap_or(NegativeResponseCode::IncorrectMessageLengthOrInvalidFormat),
         },
     }
+}
+
+/// [`begin_with`] with no service-specific checks ahead of the decode.
+#[doc(hidden)]
+#[must_use]
+pub fn begin<'a, F, G>(
+    state: &State,
+    request: &'a [u8],
+    supports: F,
+    access: G,
+) -> Stage<'a>
+where
+    F: Fn(UdsServiceType) -> bool,
+    G: Fn(UdsServiceType, u8, DiagnosticSessionType) -> Option<Access>,
+{
+    begin_with(state, request, supports, access, |_, _, _| None)
+}
+
+/// ISO 14229-1:2020 Figure 5's 0x7F for `DataTransfer::SESSIONS`, then Figure 31's two
+/// nodes ahead of the full length for `RequestDownload`: shorter than 5 bytes (key 1,
+/// "SI + DFI_ + ALFID + minimum MA_ + minimum MS_") is 0x13, and an unsupported
+/// `dataFormatIdentifier` or an invalid `addressAndLengthFormatIdentifier` is 0x31.
+#[doc(hidden)]
+pub fn transfer_ahead_of_decode<A: DataTransfer>(
+    services: &A,
+    service: UdsServiceType,
+    active: DiagnosticSessionType,
+    request: &[u8],
+) -> Option<NegativeResponseCode> {
+    if !matches!(
+        service,
+        UdsServiceType::RequestDownload
+            | UdsServiceType::TransferData
+            | UdsServiceType::RequestTransferExit
+    ) {
+        return None;
+    }
+    if !A::SESSIONS.contains(active) {
+        return Some(NegativeResponseCode::ServiceNotSupportedInActiveSession);
+    }
+    if !matches!(service, UdsServiceType::RequestDownload) {
+        return None;
+    }
+    let [_, format, alfid, _, _, ..] = *request else {
+        return Some(NegativeResponseCode::IncorrectMessageLengthOrInvalidFormat);
+    };
+    let valid = services.format_supported(DataFormatIdentifier::from(format))
+        && AddressAndLengthFormatIdentifier::try_from(alfid).is_ok();
+    (!valid).then_some(NegativeResponseCode::RequestOutOfRange)
 }
 
 /// The sub-function's value bits: bit 7 of the byte is `suppressPosRspMsgIndicationBit`
@@ -682,6 +744,59 @@ pub async fn ecu_reset<A: EcuReset>(
     let _ = out.write_all(&[0x51, u8::from(kind)]);
     let after = services.reset(kind, out).await?;
     Ok(Effect::Reset { kind, after })
+}
+
+/// ISO 14229-1:2020 clause 15.2 — `RequestDownload`'s own stage (``UDSSVC_ARCH_0036``,
+/// ``UDSSVC_ARCH_0044``), Figure 31 after the decode: `access` `None` or an active session
+/// outside its sessions is `requestOutOfRange` (0x31); none of its levels unlocked is
+/// `securityAccessDenied` (0x33); a download already in progress is
+/// `conditionsNotCorrect` (0x22, Table 444); then `begin`.
+///
+/// The positive response is `74 <lengthFormatIdentifier> <maxNumberOfBlockLength>`, the
+/// value `MAX_BLOCK_LENGTH + 2` (15.2.3.2) in the fewest bytes, the identifier's high
+/// nibble that count. The transfer opens only where the response settles positive.
+#[doc(hidden)]
+pub async fn request_download<A: DataTransfer>(
+    services: &mut A,
+    state: &mut State,
+    request: &RequestDownloadRequest,
+    out: &mut ResponseSink<'_>,
+) -> Result<Effect, NegativeResponseCode> {
+    let data_format = request.data_format_identifier();
+    let transfer = TransferRequest::Download {
+        data_format,
+        address: request.memory_address(),
+        size: request.memory_size(),
+    };
+    let Some(access) = services.access(&transfer) else {
+        return Err(NegativeResponseCode::RequestOutOfRange);
+    };
+    if !access.sessions().contains(state.session()) {
+        return Err(NegativeResponseCode::RequestOutOfRange);
+    }
+    if !access.admits(state.unlocked()) {
+        return Err(NegativeResponseCode::SecurityAccessDenied);
+    }
+    if state.transfer().is_some() {
+        return Err(NegativeResponseCode::ConditionsNotCorrect);
+    }
+    services.begin(transfer).await?;
+    let advertised = A::MAX_BLOCK_LENGTH.saturating_add(2).to_be_bytes();
+    let leading = advertised.iter().take_while(|&&byte| byte == 0).count();
+    let length = advertised
+        .get(leading.min(advertised.len().saturating_sub(1))..)
+        .unwrap_or(&advertised);
+    let identifier = u8::try_from(length.len() << 4).unwrap_or(0xF0);
+    let _ = out.write_all(&[0x74, identifier]);
+    let _ = out.write_all(length);
+    if !out.refused() {
+        let gated_by = access.levels().and(state.unlocked());
+        let size =
+            (data_format == DataFormatIdentifier::NONE).then_some(request.memory_size());
+        let sessions = access.sessions().intersection(A::SESSIONS);
+        state.open_transfer(Transfer::new(sessions, gated_by, size));
+    }
+    Ok(Effect::None)
 }
 
 /// ISO 14229-1:2020 clause 10.4 and Annex I — `SecurityAccess`'s own stage

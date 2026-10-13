@@ -197,10 +197,8 @@ macro_rules! __uds_sids {
     (DataTransfer) => {
         [
             $crate::UdsServiceType::RequestDownload,
-            $crate::UdsServiceType::RequestUpload,
             $crate::UdsServiceType::TransferData,
             $crate::UdsServiceType::RequestTransferExit,
-            $crate::UdsServiceType::RequestFileTransfer,
         ]
     };
     (TesterPresent) => {
@@ -221,8 +219,13 @@ macro_rules! __uds_sids {
 #[macro_export]
 #[rustfmt::skip]
 macro_rules! __uds_request_bound {
+    // `RequestDownload` is at most 12 bytes: SID, DFI, ALFID, a 5-byte address and a
+    // 4-byte size (Table H.1).
     ($ty:ty, DataTransfer) => {
-        2 + <$ty as $crate::DataTransfer>::MAX_BLOCK_LENGTH
+        $crate::assembly::max_of(&[
+            2 + <$ty as $crate::DataTransfer>::MAX_BLOCK_LENGTH,
+            12,
+        ])
     };
     ($ty:ty, ReadDataByIdentifier) => {
         1 + 2 * <$ty as $crate::ReadDataByIdentifier>::MAX_DIDS_PER_REQUEST
@@ -433,6 +436,21 @@ macro_rules! __uds_sub_function_access {
     ($self:ident, $service:ident, $value:ident, $active:ident, $svc:ident) => {};
 }
 
+/// The checks one listed service asks of the raw request between Table 23 and its decode,
+/// for `pipeline::begin_with`'s `ahead`: only `DataTransfer` has any.
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __uds_ahead_of_decode {
+    ($self:ident, $service:ident, $active:ident, $bytes:ident, DataTransfer) => {
+        if let ::core::option::Option::Some(nrc) =
+            $crate::pipeline::transfer_ahead_of_decode($self, $service, $active, $bytes)
+        {
+            return ::core::option::Option::Some(nrc);
+        }
+    };
+    ($self:ident, $service:ident, $active:ident, $bytes:ident, $svc:ident) => {};
+}
+
 /// The checks a listed service's stage makes ahead of the request's total length, for a
 /// request too long to have been received whole: an early `return` of the first one that
 /// fails, from the closure the truncated branch of `dispatch` calls. Only a service whose
@@ -542,6 +560,11 @@ macro_rules! __uds_stage {
                 .map($crate::Effect::from);
         }
     };
+    ($self:ident, $state:ident, $out:ident, $req:ident, DataTransfer) => {
+        if let $crate::Request::RequestDownload(ref r) = $req {
+            return $crate::pipeline::request_download($self, $state, r, $out).await;
+        }
+    };
     ($self:ident, $state:ident, $out:ident, $req:ident, $svc:ident) => {};
 }
 
@@ -619,9 +642,10 @@ macro_rules! __uds_stage {
 ///
 /// ```
 /// # use uds_services::{
-/// #     Address, AfterSend, Ai, DataIdentifier, DataTransfer, ReadDataByIdentifier, RecordError,
-/// #     Reloads, ResponseSink, ServerParams, ServiceSet, Storage, Timestamp,
-/// #     TransferRequest, TransportEvent, UdsTransport, uds_server,
+/// #     Access, Address, AfterSend, Ai, DataFormatIdentifier, DataIdentifier, DataTransfer,
+/// #     ReadDataByIdentifier, RecordError, Reloads, ResponseSink, ServerParams, ServiceSet,
+/// #     Sessions, Storage, Timestamp, TransferRequest, TransportEvent, UdsTransport,
+/// #     uds_server,
 /// # };
 /// # use uds_protocol::NegativeResponseCode as Nrc;
 /// use static_cell::ConstStaticCell;
@@ -669,6 +693,11 @@ macro_rules! __uds_stage {
 /// #     const MAY_RESPOND_PENDING: bool = true;
 /// #     const MAX_BLOCK_LENGTH: usize = 1_024;
 /// #     const SUPPORTS_UPLOAD: bool = false;
+/// #     const SESSIONS: Sessions = Sessions::ALL;
+/// #     fn format_supported(&self, _format: DataFormatIdentifier) -> bool { true }
+/// #     fn access(&self, _r: &TransferRequest<'_>) -> Option<Access> {
+/// #         Some(Access::new(Sessions::ALL))
+/// #     }
 /// #     async fn begin(&mut self, _r: TransferRequest<'_>) -> Result<(), Nrc> { Ok(()) }
 /// #     async fn block(
 /// #         &mut self,
@@ -815,11 +844,22 @@ macro_rules! uds_server {
                                 $crate::Sessions::ALL,
                             ))
                         };
-                        let (sid, decoded) = match $crate::pipeline::begin(
+                        #[allow(unused_variables, reason = "used only by some assemblies")]
+                        let ahead = |service: $crate::UdsServiceType,
+                                     active: $crate::DiagnosticSessionType,
+                                     bytes: &[u8]|
+                         -> ::core::option::Option<$crate::NegativeResponseCode> {
+                            $( $crate::__uds_ahead_of_decode!(
+                                self, service, active, bytes, $svc
+                            ); )+
+                            ::core::option::Option::None
+                        };
+                        let (sid, decoded) = match $crate::pipeline::begin_with(
                             state,
                             received.bytes(),
                             |s| <Self as $crate::ServiceSet>::supports(self, s),
                             access,
+                            ahead,
                         ) {
                             $crate::pipeline::Stage::Empty => {
                                 return $crate::Unsettled::empty();

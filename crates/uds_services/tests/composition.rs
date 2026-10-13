@@ -21,14 +21,15 @@ use uds_services::pipeline::settle;
 use uds_services::{
     Access, Address, AfterSend, Ai, Answer, ClearDiagnosticInformation, ClientError,
     ClientSet, ClientStorage, ClientTiming, ClientTransport, CommunicationControl,
-    CommunicationControlType, CommunicationType, DataIdentifier, DataTransfer, Delay,
-    DiagnosticSessionType, DtcRecord, DtcReportKind, DtcStatusMask, KeepAlive, KeyVerdict,
-    Mtype, PhysicalKeepAlive, ReadDataByIdentifier, ReadDtcInfoReportType,
-    ReadDtcInfoSubFunction, ReadDtcInformation, Received, RecordError, Reloads, Response,
-    ResponseSink, RoutineIdentifier, SecurityAccess, SecurityLevel, SecurityPolicy,
-    ServerParams, ServiceSet, SessionTiming, SessionTransition, Sessions, Sink, Storage,
-    SubnetNumber, TaType, TesterPresent, Timestamp, TransferRequest, TransportEvent,
-    UdsServiceType, UdsTransport, uds_client, uds_server,
+    CommunicationControlType, CommunicationType, DataFormatIdentifier, DataIdentifier,
+    DataTransfer, Delay, DiagnosticSessionType, DtcRecord, DtcReportKind, DtcStatusMask,
+    KeepAlive, KeyVerdict, Mtype, PhysicalKeepAlive, ReadDataByIdentifier,
+    ReadDtcInfoReportType, ReadDtcInfoSubFunction, ReadDtcInformation, Received,
+    RecordError, Reloads, Response, ResponseSink, RoutineIdentifier, SecurityAccess,
+    SecurityLevel, SecurityPolicy, ServerParams, ServiceSet, SessionTiming,
+    SessionTransition, Sessions, Sink, Storage, SubnetNumber, TaType, TesterPresent,
+    Timestamp, TransferRequest, TransportEvent, UdsServiceType, UdsTransport, uds_client,
+    uds_server,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -174,6 +175,13 @@ impl DataTransfer for Ecu {
     const MAY_RESPOND_PENDING: bool = true;
     const MAX_BLOCK_LENGTH: usize = 1_024;
     const SUPPORTS_UPLOAD: bool = false;
+    const SESSIONS: Sessions = Sessions::ALL;
+    fn format_supported(&self, _format: DataFormatIdentifier) -> bool {
+        true
+    }
+    fn access(&self, _r: &TransferRequest<'_>) -> Option<Access> {
+        Some(Access::new(Sessions::ALL))
+    }
     async fn begin(&mut self, _r: TransferRequest<'_>) -> Result<(), Nrc> {
         Ok(())
     }
