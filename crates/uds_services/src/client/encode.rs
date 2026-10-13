@@ -27,13 +27,15 @@ const fn sid(service: UdsServiceType) -> u8 {
 
 /// Encode a `ReadDataByIdentifier` request for `identifiers` into `request`.
 ///
-/// `None` where `identifiers` is empty, or names more than `request` holds — which is
-/// more than the `max_dids_per_request` [`crate::uds_client`] folded it from.
+/// `None` where `identifiers` is empty, names more than `max_dids` (the
+/// `max_dids_per_request` given to [`crate::uds_client`]), or names more than `request`
+/// holds.
 pub(super) fn read_data_by_identifier<D: DataIdentifier>(
     request: &mut [u8],
     identifiers: &[D],
+    max_dids: usize,
 ) -> Option<usize> {
-    if identifiers.is_empty() {
+    if identifiers.is_empty() || identifiers.len() > max_dids {
         return None;
     }
     let (head, body) = request.split_first_mut()?;
@@ -221,19 +223,23 @@ mod tests {
     }
 
     /// ``UDSSVC_ARCH_0020`` — the request is the service identifier and each identifier
-    /// big-endian, and one naming no identifier or more than the buffer holds is refused
-    /// before anything is sent.
+    /// big-endian, and one naming no identifier, more than the declared maximum, or more
+    /// than the buffer holds is refused before anything is sent.
     #[test]
     fn a_read_encodes_its_identifiers_big_endian_and_refuses_what_does_not_fit() {
-        let mut request = [0; 5];
+        let mut request = [0; 7];
         assert_eq!(
-            read_data_by_identifier(&mut request, &[Did(0xF40D), Did(0xF190)]),
+            read_data_by_identifier(&mut request, &[Did(0xF40D), Did(0xF190)], 2),
             Some(5)
         );
-        assert_eq!(request, [0x22, 0xF4, 0x0D, 0xF1, 0x90]);
-        assert_eq!(read_data_by_identifier::<Did>(&mut request, &[]), None);
+        assert_eq!(request.get(..5), Some(&[0x22, 0xF4, 0x0D, 0xF1, 0x90][..]));
+        assert_eq!(read_data_by_identifier::<Did>(&mut request, &[], 2), None);
         assert_eq!(
-            read_data_by_identifier(&mut request, &[Did(1), Did(2), Did(3)]),
+            read_data_by_identifier(&mut request, &[Did(1), Did(2), Did(3)], 2),
+            None
+        );
+        assert_eq!(
+            read_data_by_identifier(&mut request, &[Did(1), Did(2), Did(3), Did(4)], 4),
             None
         );
     }

@@ -104,7 +104,7 @@ above the tester, so the application calls services rather than sending bytes. A
 # use uds_on_ip::profile::bench_reloads;
 # use uds_services::{
 #     Address, ClientTiming, DataIdentifier, KeepAlive, PhysicalKeepAlive, RecordError,
-#     Response, uds_client,
+#     Response, RoutineIdentifier, uds_client,
 # };
 #
 # #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -125,10 +125,32 @@ above the tester, so the application calls services rather than sending bytes. A
 #     }
 # }
 #
+# #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+# enum Rid {
+#     SelfTest,
+# }
+#
+# impl RoutineIdentifier for Rid {
+#     const MAX_STATUS_LEN: usize = 1;
+#     fn as_u16(self) -> u16 {
+#         0x0201
+#     }
+#     fn from_u16(value: u16) -> Option<Self> {
+#         (value == 0x0201).then_some(Self::SelfTest)
+#     }
+# }
+#
 uds_client! {
     Did;
     transport = DoIpClientTransport<Tester<'static, Stack, 4096>, 4096>,
     max_dids_per_request = 1,
+    routines = Rid,
+    max_dtcs = 4,
+    max_dtc_record_len = 16,
+    max_seed_len = 2,
+    max_key_len = 2,
+    max_option_len = 4,
+    max_block_len = 16,
     physical = 1,
     functional = 1,
     responders = 1,

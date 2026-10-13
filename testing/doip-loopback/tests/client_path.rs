@@ -19,8 +19,8 @@ use uds_protocol::NegativeResponseCode as Nrc;
 use uds_services::{
     Address, ClientError, ClientTiming, DataIdentifier, DiagnosticSessionControl,
     DiagnosticSessionType as S, KeepAlive, PhysicalKeepAlive, ReadDataByIdentifier,
-    RecordError, Reloads, Response, ResponseSink, ServerParams, SessionTiming,
-    SessionTransition, Sink, UdsTransport, uds_client, uds_server,
+    RecordError, Reloads, Response, ResponseSink, RoutineIdentifier, ServerParams,
+    SessionTiming, SessionTransition, Sink, UdsTransport, uds_client, uds_server,
 };
 
 /// Two identifiers sharing a service and a high byte, so a positive response to one
@@ -58,6 +58,21 @@ impl DataIdentifier for Did {
             Self::Slow => 1,
         };
         buf.split_at_checked(len).ok_or(RecordError::Short)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Rid {
+    SelfTest,
+}
+
+impl RoutineIdentifier for Rid {
+    const MAX_STATUS_LEN: usize = 1;
+    fn as_u16(self) -> u16 {
+        0x0201
+    }
+    fn from_u16(v: u16) -> Option<Self> {
+        (v == 0x0201).then_some(Self::SelfTest)
     }
 }
 
@@ -117,6 +132,13 @@ uds_client! {
     Did;
     transport = SensorClientTransport,
     max_dids_per_request = 1,
+    routines = Rid,
+    max_dtcs = 4,
+    max_dtc_record_len = 16,
+    max_seed_len = 2,
+    max_key_len = 2,
+    max_option_len = 4,
+    max_block_len = 64,
     physical = 1,
     functional = 1,
     responders = 1,

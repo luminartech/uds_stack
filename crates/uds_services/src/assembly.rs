@@ -69,6 +69,75 @@ pub const fn dtc_response_bound(
     best
 }
 
+/// The request bound of a client: the widest request among its services.
+///
+/// `#[doc(hidden)]`: macro plumbing, as [`max_of`] is. The fixed-size requests' widest
+/// is `RequestDownload` at 12: the identifier, two format bytes, a five-byte address
+/// and a four-byte size, the widest the format identifier admits.
+#[doc(hidden)]
+#[must_use]
+pub const fn client_request_bound(
+    max_dids: usize,
+    max_record_len: usize,
+    max_key_len: usize,
+    max_option_len: usize,
+    max_block_len: usize,
+) -> usize {
+    max_of(&[
+        1_usize.saturating_add(max_dids.saturating_mul(2)),
+        3_usize.saturating_add(max_record_len),
+        2_usize.saturating_add(max_key_len),
+        4_usize.saturating_add(max_option_len),
+        2_usize.saturating_add(max_block_len),
+        1_usize.saturating_add(max_option_len),
+        12,
+    ])
+}
+
+/// The response bound of a client: the widest response among its services.
+///
+/// The fixed-size responses' widest is `RequestDownload`'s at 17: the identifier, the
+/// length format byte and up to fifteen bytes of block length.
+#[doc(hidden)]
+#[must_use]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "one argument per declared maximum"
+)]
+pub const fn client_response_bound(
+    max_dids: usize,
+    max_record_len: usize,
+    max_dtcs: usize,
+    max_dtc_record_len: usize,
+    max_seed_len: usize,
+    max_status_len: usize,
+    max_option_len: usize,
+    max_block_len: usize,
+) -> usize {
+    use crate::DtcReportKind as K;
+    max_of(&[
+        1_usize.saturating_add(
+            max_dids.saturating_mul(2_usize.saturating_add(max_record_len)),
+        ),
+        dtc_response_bound(
+            &[
+                K::Count,
+                K::DtcList,
+                K::FaultDetectionCounters,
+                K::SeverityList,
+                K::WwhObdSeverity,
+            ],
+            max_dtcs,
+        ),
+        dtc_response_bound(&[K::SnapshotRecords, K::ExtDataRecords], max_dtc_record_len),
+        2_usize.saturating_add(max_seed_len),
+        5_usize.saturating_add(max_status_len),
+        2_usize.saturating_add(max_block_len),
+        1_usize.saturating_add(max_option_len),
+        17,
+    ])
+}
+
 /// Every service a service trait covers, named rather than spelled as a wire byte.
 ///
 /// The byte for each is `uds_protocol`'s to know (``UDSSVC_ARCH_0001`` gives it the
@@ -820,14 +889,26 @@ macro_rules! uds_server {
 /// are written against names a client's requests, so a vehicle programme that builds both
 /// from one definition gets a compile error when only one was updated.
 ///
-/// The fold is [`crate::uds_server`]'s `ReadDataByIdentifier` arms, run against the
-/// client's side of the same exchange: a request is the service identifier and two bytes
-/// per identifier, and a response is the service identifier and each identifier beside
-/// its record. Both are at least as long as a `DiagnosticSessionControl` exchange
-/// ([`crate::Client::diagnostic_session_control`]). Naming the transport lets its
-/// [`MAX_PDU`](crate::UdsTransport::MAX_PDU) cap both, exactly as it does for a server,
-/// and one whose cap leaves no room for that six-byte response fails to compile. Six
-/// bytes also hold every negative response.
+/// The client's buffers are folded from its declared maxima as [`crate::uds_server`]
+/// folds a server's from its service traits: the request buffer holds the widest request
+/// among the client's services, and the response buffer the widest response. The
+/// maxima, after `max_dids_per_request` (the most identifiers one read names):
+///
+/// - `routines`: the [`RoutineIdentifier`](crate::RoutineIdentifier) vocabulary routine
+///   control takes; its `MAX_STATUS_LEN` sizes the routine response.
+/// - `max_dtcs`: the most DTC records one `ReadDTCInformation` list response carries.
+/// - `max_dtc_record_len`: the most record bytes one snapshot or extended data response
+///   carries after its six-byte header.
+/// - `max_seed_len`: the longest `SecurityAccess` seed.
+/// - `max_key_len`: the longest `SecurityAccess` key.
+/// - `max_option_len`: the longest routine control option record, and the longest
+///   transfer-exit parameter record.
+/// - `max_block_len`: the longest `TransferData` block.
+///
+/// Naming the transport lets its [`MAX_PDU`](crate::UdsTransport::MAX_PDU) cap both,
+/// exactly as it does for a server, and one whose cap leaves no room for a six-byte
+/// `DiagnosticSessionControl` response ([`crate::Client::diagnostic_session_control`])
+/// fails to compile. Six bytes also hold every negative response.
 ///
 /// `client = Name` is the alias the client is reached through, so the channel counts and
 /// the keep-alive mode are written once, here, rather than at every signature that names
@@ -838,8 +919,8 @@ macro_rules! uds_server {
 /// ```
 /// # use uds_services::{
 /// #     Address, AfterSend, Ai, DataIdentifier, KeepAlive, PhysicalKeepAlive, RecordError,
-/// #     Reloads, ClientTiming, ClientTransport, Timestamp, TransportEvent, UdsTransport,
-/// #     uds_client,
+/// #     Reloads, RoutineIdentifier, ClientTiming, ClientTransport, Timestamp, TransportEvent,
+/// #     UdsTransport, uds_client,
 /// # };
 /// # #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 /// # enum Did { VehicleSpeed, VinNumber }
@@ -883,10 +964,26 @@ macro_rules! uds_server {
 /// # impl ClientTransport for DoIpTransport {
 /// #     async fn close(&mut self) -> Result<(), ()> { Ok(()) }
 /// # }
+/// #
+/// # #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// # enum Rid { SelfTest }
+/// #
+/// # impl RoutineIdentifier for Rid {
+/// #     const MAX_STATUS_LEN: usize = 1;
+/// #     fn as_u16(self) -> u16 { 0x02_01 }
+/// #     fn from_u16(v: u16) -> Option<Self> { (v == 0x02_01).then_some(Self::SelfTest) }
+/// # }
 /// uds_client! {
 ///     Did;
 ///     transport = DoIpTransport,
 ///     max_dids_per_request = 4,
+///     routines = Rid,
+///     max_dtcs = 4,
+///     max_dtc_record_len = 16,
+///     max_seed_len = 2,
+///     max_key_len = 2,
+///     max_option_len = 4,
+///     max_block_len = 64,
 ///     physical = 2,
 ///     functional = 1,
 ///     responders = 4,
@@ -908,6 +1005,13 @@ macro_rules! uds_client {
         $did:ty ;
         transport = $transport:ty,
         max_dids_per_request = $max_dids:expr,
+        routines = $rid:ty,
+        max_dtcs = $max_dtcs:expr,
+        max_dtc_record_len = $max_dtc_record_len:expr,
+        max_seed_len = $max_seed_len:expr,
+        max_key_len = $max_key_len:expr,
+        max_option_len = $max_option_len:expr,
+        max_block_len = $max_block_len:expr,
         physical = $phys:expr,
         functional = $func:expr,
         responders = $responders:expr,
@@ -926,29 +1030,44 @@ macro_rules! uds_client {
         >;
 
         const _: () = {
-            // A read, or the two-byte `DiagnosticSessionControl` request and its six-byte
-            // response, whichever is longer.
             const REQUEST: usize = $crate::assembly::min2(
-                $crate::assembly::max_of(&[1 + 2 * { $max_dids }, 2]),
+                $crate::assembly::client_request_bound(
+                    { $max_dids },
+                    <$did as $crate::DataIdentifier>::MAX_RECORD_LEN,
+                    { $max_key_len },
+                    { $max_option_len },
+                    { $max_block_len },
+                ),
                 <$transport as $crate::UdsTransport>::MAX_PDU,
             );
             const RESPONSE: usize = $crate::assembly::min2(
-                $crate::assembly::max_of(&[
-                    1 + { $max_dids }
-                        * (2 + <$did as $crate::DataIdentifier>::MAX_RECORD_LEN),
-                    6,
-                ]),
+                $crate::assembly::client_response_bound(
+                    { $max_dids },
+                    <$did as $crate::DataIdentifier>::MAX_RECORD_LEN,
+                    { $max_dtcs },
+                    { $max_dtc_record_len },
+                    { $max_seed_len },
+                    <$rid as $crate::RoutineIdentifier>::MAX_STATUS_LEN,
+                    { $max_option_len },
+                    { $max_block_len },
+                ),
                 <$transport as $crate::UdsTransport>::MAX_PDU,
             );
             ::core::assert!(
                 RESPONSE >= 6,
                 "the transport's MAX_PDU cannot carry a DiagnosticSessionControl response"
             );
+            ::core::assert!(
+                RESPONSE >= 3,
+                "the transport's MAX_PDU cannot carry a negative response"
+            );
 
             impl $crate::sealed::Sealed for $did {}
 
             impl $crate::ClientSet for $did {
                 type Store = $crate::ClientStore<REQUEST, RESPONSE>;
+                type Routine = $rid;
+                const MAX_DIDS_PER_REQUEST: usize = { $max_dids };
             }
         };
     };
@@ -956,8 +1075,22 @@ macro_rules! uds_client {
 
 #[cfg(test)]
 mod tests {
-    use super::{dtc_response_bound, max_of, min2};
+    use super::{
+        client_request_bound, client_response_bound, dtc_response_bound, max_of, min2,
+    };
     use crate::DtcReportKind;
+
+    /// The client's bounds are the widest request and the widest response among its
+    /// services: here the transfer block wins the request and the DTC list the response.
+    #[test]
+    fn the_client_bounds_are_the_widest_service() {
+        const REQUEST: usize = client_request_bound(2, 17, 2, 4, 64);
+        const RESPONSE: usize = client_response_bound(2, 17, 3, 20, 2, 1, 4, 64);
+        assert_eq!(REQUEST, 2 + 64);
+        assert_eq!(RESPONSE, 2 + 64);
+        assert_eq!(client_request_bound(1, 1, 1, 1, 1), 12);
+        assert_eq!(client_response_bound(1, 1, 0, 0, 1, 1, 1, 1), 17);
+    }
 
     /// The widest layout wins, and it is not always the one with the widest records: a
     /// `SeverityList` of ten beats a `DtcList` of ten on record width, and `Count` beats

@@ -13,8 +13,8 @@ use core::task::Poll;
 use uds_services::{
     Address, Ai, Answer, ClientError, ClientTiming, DataIdentifier, DiagnosticSessionType,
     FunctionalKeepAlive, KeepAlive, MalformedResponse, Mtype, NegativeResponseCode,
-    PhysicalKeepAlive, RecordError, Reloads, Response, SResult, SessionTiming, TaType,
-    Timestamp, uds_client,
+    PhysicalKeepAlive, RecordError, Reloads, Response, RoutineIdentifier, SResult,
+    SessionTiming, TaType, Timestamp, uds_client,
 };
 use uds_session::TransportError;
 
@@ -87,6 +87,21 @@ macro_rules! vocabulary {
     };
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Rid {
+    SelfTest,
+}
+
+impl RoutineIdentifier for Rid {
+    const MAX_STATUS_LEN: usize = 2;
+    fn as_u16(self) -> u16 {
+        0x0201
+    }
+    fn from_u16(v: u16) -> Option<Self> {
+        (v == 0x0201).then_some(Self::SelfTest)
+    }
+}
+
 vocabulary!(Did);
 vocabulary!(FunctionalDid);
 vocabulary!(WideDid);
@@ -96,6 +111,13 @@ uds_client! {
     Did;
     transport = Script,
     max_dids_per_request = 2,
+    routines = Rid,
+    max_dtcs = 4,
+    max_dtc_record_len = 16,
+    max_seed_len = 2,
+    max_key_len = 2,
+    max_option_len = 4,
+    max_block_len = 16,
     physical = 2,
     functional = 1,
     responders = 1,
@@ -107,6 +129,13 @@ uds_client! {
     FunctionalDid;
     transport = Script,
     max_dids_per_request = 2,
+    routines = Rid,
+    max_dtcs = 4,
+    max_dtc_record_len = 16,
+    max_seed_len = 2,
+    max_key_len = 2,
+    max_option_len = 4,
+    max_block_len = 16,
     physical = 1,
     functional = 1,
     responders = 2,
@@ -118,6 +147,13 @@ uds_client! {
     WideDid;
     transport = Script,
     max_dids_per_request = 2,
+    routines = Rid,
+    max_dtcs = 4,
+    max_dtc_record_len = 16,
+    max_seed_len = 2,
+    max_key_len = 2,
+    max_option_len = 4,
+    max_block_len = 16,
     physical = 3,
     functional = 1,
     responders = 1,
@@ -129,6 +165,13 @@ uds_client! {
     WideFunctionalDid;
     transport = Script,
     max_dids_per_request = 2,
+    routines = Rid,
+    max_dtcs = 4,
+    max_dtc_record_len = 16,
+    max_seed_len = 2,
+    max_key_len = 2,
+    max_option_len = 4,
+    max_block_len = 16,
     physical = 2,
     functional = 1,
     responders = 2,

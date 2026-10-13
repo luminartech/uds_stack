@@ -24,8 +24,8 @@ mod encode;
 
 use crate::storage::{ClientBuffers, ClientStorage};
 use crate::{
-    ClientTransport, DataIdentifier, DiagnosticSessionType, RecordError, SessionTiming,
-    UdsServiceType,
+    ClientTransport, DataIdentifier, DiagnosticSessionType, RecordError, RoutineIdentifier,
+    SessionTiming, UdsServiceType,
 };
 use driver::{Answered, Book, Exchange};
 
@@ -52,6 +52,12 @@ use uds_session::{
 pub trait ClientSet: DataIdentifier + crate::sealed::Sealed {
     /// The storage whose lengths were folded from this vocabulary's declared maxima.
     type Store: ClientStorage;
+    /// The most identifiers one `ReadDataByIdentifier` request names, declared through
+    /// [`crate::uds_client`]'s `max_dids_per_request`.
+    const MAX_DIDS_PER_REQUEST: usize;
+    /// The routine vocabulary the client's `RoutineControl` requests name, declared
+    /// through [`crate::uds_client`]'s `routines`.
+    type Routine: RoutineIdentifier;
 }
 
 /// Why a call produced no response.
@@ -669,7 +675,13 @@ impl<
         let answered = self
             .exchange_with(
                 target,
-                |request| encode::read_data_by_identifier(request, identifiers),
+                |request| {
+                    encode::read_data_by_identifier(
+                        request,
+                        identifiers,
+                        C::MAX_DIDS_PER_REQUEST,
+                    )
+                },
                 None,
             )
             .await?;
@@ -831,7 +843,11 @@ impl<
             .addressing(target)
             .with_ta_type(uds_session::TaType::Functional);
         let ClientBuffers { request, .. } = self.store.split();
-        let refused = match encode::read_data_by_identifier(request, identifiers) {
+        let refused = match encode::read_data_by_identifier(
+            request,
+            identifiers,
+            C::MAX_DIDS_PER_REQUEST,
+        ) {
             Some(len) => {
                 let sid = request.first().copied().unwrap_or_default();
                 let class = ClientTx::Request {

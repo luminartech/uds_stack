@@ -75,6 +75,10 @@ lockstep with the rest of the `uds_stack` workspace (`uds_protocol`, `uds_sessio
 - **Breaking:** `DtcReportKind` is `#[non_exhaustive]` and gains `SnapshotRecords` and
   `ExtDataRecords`, sub-functions `0x04` and `0x06`, bounded in record bytes. A server
   cannot yet answer them; a client reads them.
+- **Breaking:** `uds_client!` takes `routines`, `max_dtcs`, `max_dtc_record_len`,
+  `max_seed_len`, `max_key_len`, `max_option_len` and `max_block_len`, and folds the
+  client's buffers from them as `uds_server!` folds a server's from its service traits.
+  `ClientSet` gains `type Routine`.
 
 ### Known limitations
 
