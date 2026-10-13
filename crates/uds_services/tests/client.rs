@@ -16,7 +16,7 @@ use uds_services::{
     DiagnosticSessionType, DtcExtDataRecordNumber, DtcRecord, DtcSettingType,
     DtcSnapshotRecordNumber, DtcStatusMask, FunctionalKeepAlive, KeepAlive,
     MalformedResponse, Mtype, NegativeResponseCode, PhysicalKeepAlive, ReadDtcInfoResponse,
-    ReadDtcInfoSubFunction, RecordError, Reloads, ResetType, Response,
+    ReadDtcInfoSubFunction, RecordError, Reloads, Replaced, ResetType, Response,
     RoutineControlSubFunction, RoutineIdentifier, SResult, SecurityLevel, SessionTiming,
     SubnetNumber, TaType, Timestamp, uds_client,
 };
@@ -2199,8 +2199,9 @@ fn a_transfer_exits_with_its_records() {
     );
 }
 
-/// A close the transport reports, prescribed or not, is a replacement the caller can
-/// ask about once; asking clears it, and another server's close is not this one's.
+/// A close the transport reports is a replacement the caller can ask about once, of the
+/// kind the transport marked it; asking clears it, and another server's close is not this
+/// one's.
 #[test]
 fn a_replaced_connection_is_reported_once() {
     let mut t = tester(&[
@@ -2217,13 +2218,66 @@ fn a_replaced_connection_is_reported_once() {
     ]);
     speed(block_on(t.read_data_by_identifier(ECU, &[Did::Speed])));
     // The `Leave` is observed by this ask's own look at the transport.
-    assert_eq!(block_on(t.connection_replaced(ECU)), Ok(true));
-    assert_eq!(block_on(t.connection_replaced(ECU)), Ok(false));
+    assert_eq!(
+        block_on(t.connection_replaced(ECU)),
+        Ok(Replaced::Prescribed)
+    );
+    assert_eq!(block_on(t.connection_replaced(ECU)), Ok(Replaced::No));
     // This ask observes the other server's close.
-    assert_eq!(block_on(t.connection_replaced(ECU)), Ok(false));
-    // An unprescribed close is a replacement as well.
-    assert_eq!(block_on(t.connection_replaced(ECU)), Ok(true));
-    assert_eq!(block_on(t.connection_replaced(ECU)), Ok(false));
+    assert_eq!(block_on(t.connection_replaced(ECU)), Ok(Replaced::No));
+    // An unprescribed close is a replacement of the other kind.
+    assert_eq!(block_on(t.connection_replaced(ECU)), Ok(Replaced::Other));
+    assert_eq!(block_on(t.connection_replaced(ECU)), Ok(Replaced::No));
+}
+
+/// A prescribed and an unprescribed close between two asks are reported once, as the
+/// prescribed one, whichever came first.
+#[test]
+fn both_kinds_of_close_are_reported_as_the_prescribed_one() {
+    let mut t = tester(&[
+        Step::Conf(to(ECU), SResult::Ok),
+        Step::Ind(from(ECU), SPEED),
+        Step::Close(ECU),
+        Step::Leave(ECU),
+        Step::At(1),
+        Step::Leave(ECU),
+        Step::Close(ECU),
+        Step::At(2),
+        Step::At(3),
+    ]);
+    speed(block_on(t.read_data_by_identifier(ECU, &[Did::Speed])));
+    assert_eq!(
+        block_on(t.connection_replaced(ECU)),
+        Ok(Replaced::Prescribed)
+    );
+    assert_eq!(
+        block_on(t.connection_replaced(ECU)),
+        Ok(Replaced::Prescribed)
+    );
+    assert_eq!(block_on(t.connection_replaced(ECU)), Ok(Replaced::No));
+}
+
+/// ISO 14229-2:2021 Table 9 — the reconnect a `DoIP` transport makes to repeat an
+/// unanswered request is reported as a close of the other kind, not a prescribed one: the
+/// server's session may have survived it.
+#[test]
+fn a_reconnect_to_repeat_a_request_is_not_a_prescribed_close() {
+    let mut t = tester(&[
+        Step::Conf(to(ECU), SResult::Ok),
+        Step::At(100),
+        Step::Close(ECU),
+        Step::Conf(to(ECU), SResult::Ok),
+        Step::Ind(from(ECU), &[0x76, 0x01]),
+        Step::At(101),
+        Step::At(102),
+    ]);
+    assert_eq!(
+        block_on(t.transfer_data(ECU, 1, &[0xAA])),
+        Ok(Response::Positive(&[][..]))
+    );
+    assert_eq!(t.transport().sent_count, 2);
+    assert_eq!(block_on(t.connection_replaced(ECU)), Ok(Replaced::Other));
+    assert_eq!(block_on(t.connection_replaced(ECU)), Ok(Replaced::No));
 }
 
 /// One ask takes every event the transport already holds, not one: two closes waiting
@@ -2239,8 +2293,8 @@ fn one_ask_drains_every_close_the_transport_holds() {
         Step::At(2),
     ]);
     speed(block_on(t.read_data_by_identifier(ECU, &[Did::Speed])));
-    assert_eq!(block_on(t.connection_replaced(ECU)), Ok(true));
-    assert_eq!(block_on(t.connection_replaced(ECU)), Ok(false));
+    assert_eq!(block_on(t.connection_replaced(ECU)), Ok(Replaced::Other));
+    assert_eq!(block_on(t.connection_replaced(ECU)), Ok(Replaced::No));
     assert!(t.transport().finished());
 }
 
@@ -2260,8 +2314,11 @@ fn a_positive_reset_is_a_replacement_before_its_close_arrives() {
         block_on(t.ecu_reset(ECU, ResetType::HardReset)),
         Ok(Response::Positive(None))
     );
-    assert_eq!(block_on(t.connection_replaced(ECU)), Ok(true));
-    assert_eq!(block_on(t.connection_replaced(ECU)), Ok(false));
+    assert_eq!(
+        block_on(t.connection_replaced(ECU)),
+        Ok(Replaced::Prescribed)
+    );
+    assert_eq!(block_on(t.connection_replaced(ECU)), Ok(Replaced::No));
     assert!(t.transport().finished());
 }
 
@@ -2277,12 +2334,35 @@ fn a_refused_reset_is_no_replacement() {
         block_on(t.ecu_reset(ECU, ResetType::HardReset)),
         Ok(Response::Negative(NegativeResponseCode::from(0x22)))
     );
-    assert_eq!(block_on(t.connection_replaced(ECU)), Ok(false));
+    assert_eq!(block_on(t.connection_replaced(ECU)), Ok(Replaced::No));
 }
 
 /// A server with no open channel was replaced by nothing.
 #[test]
 fn an_unknown_server_was_not_replaced() {
     let mut t = tester(&[Step::At(0)]);
-    assert_eq!(block_on(t.connection_replaced(ECU)), Ok(false));
+    assert_eq!(block_on(t.connection_replaced(ECU)), Ok(Replaced::No));
+}
+
+/// A positive reset's close is one replacement, however the transport marks the close
+/// that follows it.
+#[test]
+fn a_reset_close_marked_unprescribed_is_not_reported_again() {
+    let mut t = tester(&[
+        Step::Conf(to(ECU), SResult::Ok),
+        Step::Ind(from(ECU), RESETTING),
+        Step::At(1),
+        Step::Close(ECU),
+        Step::At(2),
+    ]);
+    assert_eq!(
+        block_on(t.ecu_reset(ECU, ResetType::HardReset)),
+        Ok(Response::Positive(None))
+    );
+    assert_eq!(
+        block_on(t.connection_replaced(ECU)),
+        Ok(Replaced::Prescribed)
+    );
+    assert_eq!(block_on(t.connection_replaced(ECU)), Ok(Replaced::No));
+    assert!(t.transport().finished());
 }

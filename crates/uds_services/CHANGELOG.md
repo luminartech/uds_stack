@@ -78,10 +78,15 @@ lockstep with the rest of the `uds_stack` workspace (`uds_protocol`, `uds_sessio
   and `control_dtc_setting`. Each encodes its request through `uds_protocol`, decodes
   the reply exactly, and answers a wrong echo with `MalformedResponse::Echo`. No call
   sets the suppress-positive-response bit.
-- `Client::connection_replaced`, whether a server's connection was replaced since last
-  asked. A positive `ecu_reset` response is reported at once; any other close once the
-  transport has been polled since it arrived, and one ask takes every event the
-  transport already holds.
+- `Client::connection_replaced` and `Replaced`: why a server's connection is not the one
+  the last ask saw. `Replaced::Prescribed` is a close the protocol prescribes, after a
+  positive `ecu_reset` or a positive `diagnostic_session_control` the transport marked
+  as leaving, so the server's session and security are gone; `Replaced::Other` is any
+  other close, including the client's own reconnect to repeat an unanswered request,
+  after which they may be intact; `Replaced::No` is none. A positive `ecu_reset` is
+  reported at once and its later close not again; any other close once the transport
+  has been polled since it arrived, the stronger kind once where both happen between
+  asks. One ask takes every event the transport already holds.
 - `Response::map`, and `MalformedResponse::Echo` and `Decode`.
 - Re-exports of `uds_protocol`'s `ReadDtcInfoResponse`, `DataFormatIdentifier`,
   `DtcSnapshotRecordNumber` and `DtcExtDataRecordNumber`, which the new calls take or

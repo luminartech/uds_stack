@@ -22,7 +22,7 @@
 //! [`Client::request_transfer_exit`]. [`Client::read_data_by_identifier_functional`] is one
 //! functional exchange with every server at once. Beside the exchanges,
 //! [`Client::idle_until`] sends the `TesterPresent` keep-alives as they fall due,
-//! [`Client::connection_replaced`] reports a server's connection replaced, and
+//! [`Client::connection_replaced`] reports why a server's connection was replaced, and
 //! [`Client::close`] ends the session.
 //!
 //! **The storage shape mirrors `uds_session`'s.** That crate splits channels by kind:
@@ -125,6 +125,24 @@ impl<E: core::fmt::Debug> core::fmt::Display for ClientError<E> {
 }
 
 impl<E: core::fmt::Debug> core::error::Error for ClientError<E> {}
+
+/// Why a server's connection is not the one the last ask saw; see
+/// [`Client::connection_replaced`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum Replaced {
+    /// The connection the last ask saw is still the one in use.
+    No,
+    /// The server closed it as its protocol prescribes: after a positive `ECUReset`, or
+    /// after a positive `DiagnosticSessionControl` the transport marked as leaving
+    /// (ISO 14229-5:2022 REQ 7.9 and REQ 7.11). The server's session and security are
+    /// gone.
+    Prescribed,
+    /// Any other close: the server dropped it, or this client reconnected to repeat an
+    /// unanswered request (ISO 14229-2:2021 Table 9) or after a cancelled call. The
+    /// server's session and security may be intact.
+    Other,
+}
 
 /// A keep-alive mode a [`Client`] can be built in: [`FunctionalKeepAlive`] or
 /// [`PhysicalKeepAlive`], sealed to those two.
@@ -852,7 +870,9 @@ impl<
     /// A positive response to `enableRapidPowerShutDown` carries the server's
     /// power-down time; any other carries `None`. The server closes its connection after
     /// a positive response (ISO 14229-5:2022 REQ 7.11), which
-    /// [`Self::connection_replaced`] reports from now; the next call reconnects.
+    /// [`Self::connection_replaced`] reports [`Replaced::Prescribed`] from now. The next
+    /// call opens a new connection, which fails with [`ClientError::Transport`] while the
+    /// server restarts; retry it after a back-off.
     ///
     /// # Arguments
     ///
@@ -1363,21 +1383,34 @@ impl<
         }
     }
 
-    /// Whether the connection to `target` was replaced since this was last asked, or
-    /// since the channel to it was opened.
+    /// Why the connection to `target` is not the one this last asked about, or the one
+    /// the channel to it was opened over.
     ///
-    /// A positive [`Self::ecu_reset`] response is reported from that exchange itself,
-    /// before the transport reports the close, since the server always closes after one
-    /// (ISO 14229-5:2022 REQ 7.11); the close the transport reports for it later is the
-    /// same replacement, not another. Any other close, one a session change prescribes
-    /// or one nothing prescribed, is reported once the transport has been polled since it
-    /// arrived: by [`Self::idle_until`], by any call, or by this one.
+    /// A positive [`Self::ecu_reset`] response is reported [`Replaced::Prescribed`] from
+    /// that exchange itself, before the transport reports the close, since the server
+    /// always closes after one (ISO 14229-5:2022 REQ 7.11); the next close the transport
+    /// reports to `target` is that same one, not another. Any other close is reported
+    /// once the transport has been polled past it, by [`Self::idle_until`] or by any
+    /// call: [`Replaced::Prescribed`] where the transport marks it expected, as it does
+    /// for the close that follows a positive `DiagnosticSessionControl` (REQ 7.9), and
+    /// [`Replaced::Other`] otherwise. A session change's close is therefore certain only
+    /// after such a poll; on a transport whose first poll after a close may be `Pending`,
+    /// as the std `DoIP` stack's is, one poll may not reach it.
+    ///
+    /// [`Replaced::Other`] is the normal result of an ISO 14229-2:2021 Table 9 repeat
+    /// over `DoIP`, whose transport repeats an unanswered request on a new connection, and
+    /// of a call cancelled after its request went. The server's session and security may
+    /// survive such a close, so it is no reason on its own to enter the session again,
+    /// which would relock security and end a transfer in progress.
+    ///
+    /// Where both kinds of close happened since the last asking, the answer is
+    /// [`Replaced::Prescribed`], once.
     ///
     /// This first settles what an earlier call left, waiting out a functional window a
     /// dropped call left open, then takes every event the transport already holds, until
     /// it reports the current time as its deadline, and answers. Asking clears the report.
-    /// `false` where no channel to `target` is open, and where the channel was withdrawn
-    /// for another server before the asking.
+    /// [`Replaced::No`] where no channel to `target` is open, and where the channel was
+    /// withdrawn for another server before the asking.
     ///
     /// # Arguments
     ///
@@ -1394,7 +1427,7 @@ impl<
     pub async fn connection_replaced(
         &mut self,
         target: Address,
-    ) -> Result<bool, ClientError<T::Error>> {
+    ) -> Result<Replaced, ClientError<T::Error>> {
         self.retire();
         self.drain_window().await?;
         let now = self.transport.now();

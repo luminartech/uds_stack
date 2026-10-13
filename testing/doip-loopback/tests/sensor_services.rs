@@ -19,7 +19,7 @@ use uds_services::{
     Address, CLEAR_ALL_DTCS, ClientTiming, CommunicationControlType, CommunicationType,
     DataIdentifier, DiagnosticSessionType as S, DtcRecord, DtcSettingType, DtcStatusMask,
     KeepAlive, NegativeResponseCode as Nrc, PhysicalKeepAlive, ReadDtcInfoResponse,
-    ReadDtcInfoSubFunction, RecordError, Reloads, ResetType, Response,
+    ReadDtcInfoSubFunction, RecordError, Reloads, Replaced, ResetType, Response,
     RoutineControlSubFunction, SecurityLevel, ServerParams, SubnetNumber, Timestamp,
     uds_client, uds_server,
 };
@@ -382,7 +382,8 @@ fn communication_and_dtc_setting_are_controlled() {
 #[test]
 fn the_prescribed_close_is_reported_as_a_replacement_once() {
     with_sensor(|mut c| async move {
-        assert!(!c.connection_replaced(SERVER).await.expect("asked"));
+        let none = c.connection_replaced(SERVER).await;
+        assert_eq!(none.expect("asked"), Replaced::No);
         for session in [S::ExtendedDiagnosticSession, S::ProgrammingSession] {
             let changed = c.diagnostic_session_control(SERVER, session).await;
             assert!(matches!(changed, Ok(Response::Positive(_))), "{changed:?}");
@@ -391,8 +392,10 @@ fn the_prescribed_close_is_reported_as_a_replacement_once() {
         ticking(c.idle_until(in_ms(500)), STEP)
             .await
             .expect("idled");
-        assert!(c.connection_replaced(SERVER).await.expect("asked"));
-        assert!(!c.connection_replaced(SERVER).await.expect("asked"));
+        let left = c.connection_replaced(SERVER).await;
+        assert_eq!(left.expect("asked"), Replaced::Prescribed);
+        let again = c.connection_replaced(SERVER).await;
+        assert_eq!(again.expect("asked"), Replaced::No);
         c.close().await.expect("closed");
     });
 }
@@ -406,13 +409,16 @@ fn a_positive_reset_is_reported_as_a_replacement_at_once() {
     with_sensor(|mut c| async move {
         let reset = c.ecu_reset(SERVER, ResetType::HardReset).await;
         assert_eq!(reset.expect("answered"), Response::Positive(None));
-        assert!(c.connection_replaced(SERVER).await.expect("asked"));
-        assert!(!c.connection_replaced(SERVER).await.expect("asked"));
+        let left = c.connection_replaced(SERVER).await;
+        assert_eq!(left.expect("asked"), Replaced::Prescribed);
+        let again = c.connection_replaced(SERVER).await;
+        assert_eq!(again.expect("asked"), Replaced::No);
         let read = c
             .read_data_by_identifier(SERVER, &[SdkDid(Did::Mode)])
             .await;
         assert!(matches!(read, Ok(Response::Positive(_))), "{read:?}");
-        assert!(!c.connection_replaced(SERVER).await.expect("asked"));
+        let after = c.connection_replaced(SERVER).await;
+        assert_eq!(after.expect("asked"), Replaced::No);
         c.close().await.expect("closed");
     });
 }

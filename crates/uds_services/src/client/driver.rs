@@ -15,7 +15,7 @@
 //! (``UDSS_LLR_0137``, ``UDSS_LLR_0146``).
 
 use super::encode::{self, Arrived, KEEP_ALIVE};
-use super::{Client, ClientError, ClientKeepAlive, ClientSet};
+use super::{Client, ClientError, ClientKeepAlive, ClientSet, Replaced};
 use crate::storage::{ClientBuffers, ClientStorage};
 use crate::{AfterSend, ClientTransport, TransportEvent};
 use core::ops::Range;
@@ -115,25 +115,39 @@ pub(super) struct Open<Id> {
     pub(super) in_session: bool,
     /// Its keep-alive fell due and has not been sent.
     owed: bool,
-    /// Whether its server's connection closed since the last asking.
-    replaced: Replaced,
+    /// What its caller has yet to be told of its server's connection.
+    untold: Untold,
 }
 
 /// What a caller has yet to be told of an open channel's connection.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Replaced {
-    /// Nothing: no close was reported since the channel opened or since the last asking.
-    No,
-    /// The transport reported the connection closed, and no one has asked.
-    Unasked,
+struct Untold {
+    /// The replacement to report at the next asking: the stronger of every close since
+    /// the channel opened or since the last asking.
+    replaced: Replaced,
     /// A positive `ECUReset` response prescribed a close the transport has yet to report
-    /// (ISO 14229-5:2022 REQ 7.11). It is a replacement from the response on, `told`
-    /// once someone has asked, and the prescribed close the transport reports later is
-    /// that same replacement.
-    Foreseen {
-        /// Someone has asked since the response.
-        told: bool,
-    },
+    /// (ISO 14229-5:2022 REQ 7.11). The response itself recorded the replacement, so the
+    /// next close the transport reports to this server is that same one, however the
+    /// transport marks it.
+    foreseen: bool,
+}
+
+impl Untold {
+    const NOTHING: Self = Self {
+        replaced: Replaced::No,
+        foreseen: false,
+    };
+}
+
+impl Replaced {
+    /// The stronger of two reports: a prescribed close over any other.
+    const fn or(self, other: Self) -> Self {
+        match (self, other) {
+            (Self::Prescribed, _) | (_, Self::Prescribed) => Self::Prescribed,
+            (Self::Other, _) | (_, Self::Other) => Self::Other,
+            (Self::No, Self::No) => Self::No,
+        }
+    }
 }
 
 impl<Id> Open<Id> {
@@ -144,7 +158,7 @@ impl<Id> Open<Id> {
             unconfirmed: false,
             in_session: false,
             owed: false,
-            replaced: Replaced::No,
+            untold: Untold::NOTHING,
         }
     }
 
@@ -187,41 +201,53 @@ impl<const PHYS: usize, const FUNC: usize> Book<PHYS, FUNC> {
     }
 
     /// Record that `ta` answered an `ECUReset` positively, after which it closes its
-    /// connection (ISO 14229-5:2022 REQ 7.11): a replacement from now, and the close the
-    /// transport reports as prescribed later is that same one.
+    /// connection (ISO 14229-5:2022 REQ 7.11): a prescribed replacement from now, and the
+    /// next close the transport reports is that same one.
     pub(super) fn foresee_close(&mut self, ta: Address) {
         if let Some(o) = self.physical_to(ta) {
-            o.replaced = Replaced::Foreseen { told: false };
+            o.untold = Untold {
+                replaced: o.untold.replaced.or(Replaced::Prescribed),
+                foreseen: true,
+            };
         }
     }
 
     /// Record that the transport reported `peer`'s connection closed, `expected` where
-    /// the standard prescribes the close: a replacement, unless it is the close a
-    /// positive `ECUReset` response already reported and someone already asked about.
+    /// the standard prescribes the close: a replacement of that kind, unless a positive
+    /// `ECUReset` response foresaw it.
     fn closed(&mut self, peer: Address, expected: bool) {
+        let kind = if expected {
+            Replaced::Prescribed
+        } else {
+            Replaced::Other
+        };
         for o in self
             .physical
             .iter_mut()
             .flatten()
             .filter(|o| o.ai.ta == peer)
         {
-            o.replaced = match o.replaced {
-                Replaced::Foreseen { told: true } if expected => Replaced::No,
-                _ => Replaced::Unasked,
+            o.untold = if o.untold.foreseen {
+                Untold {
+                    foreseen: false,
+                    ..o.untold
+                }
+            } else {
+                Untold {
+                    replaced: o.untold.replaced.or(kind),
+                    foreseen: false,
+                }
             };
         }
     }
 
-    /// Whether `ta`'s connection was replaced since last asked, cleared by the asking.
-    pub(super) fn take_replaced(&mut self, ta: Address) -> bool {
-        self.physical_to(ta).is_some_and(|o| {
-            let (now, told) = match o.replaced {
-                Replaced::No => (Replaced::No, false),
-                Replaced::Unasked => (Replaced::No, true),
-                Replaced::Foreseen { told } => (Replaced::Foreseen { told: true }, !told),
-            };
-            o.replaced = now;
-            told
+    /// Why `ta`'s connection was replaced since last asked, cleared by the asking;
+    /// [`Replaced::No`] where no channel to `ta` is open.
+    pub(super) fn take_replaced(&mut self, ta: Address) -> Replaced {
+        self.physical_to(ta).map_or(Replaced::No, |o| {
+            let replaced = o.untold.replaced;
+            o.untold.replaced = Replaced::No;
+            replaced
         })
     }
 
