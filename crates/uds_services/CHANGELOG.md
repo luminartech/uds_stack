@@ -78,7 +78,7 @@ lockstep with the rest of the `uds_stack` workspace (`uds_protocol`, `uds_sessio
 - **Breaking:** `uds_client!` takes `routines`, `max_dtcs`, `max_dtc_record_len`,
   `max_seed_len`, `max_key_len`, `max_option_len` and `max_block_len`, and folds the
   client's buffers from them as `uds_server!` folds a server's from its service traits.
-  `ClientSet` gains `type Routine`.
+  `ClientSet` gains `type Routine` and `const MAX_DIDS_PER_REQUEST`.
 
 ### Known limitations
 

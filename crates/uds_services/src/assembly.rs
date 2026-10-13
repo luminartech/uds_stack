@@ -1057,10 +1057,6 @@ macro_rules! uds_client {
                 RESPONSE >= 6,
                 "the transport's MAX_PDU cannot carry a DiagnosticSessionControl response"
             );
-            ::core::assert!(
-                RESPONSE >= 3,
-                "the transport's MAX_PDU cannot carry a negative response"
-            );
 
             impl $crate::sealed::Sealed for $did {}
 
@@ -1081,7 +1077,7 @@ mod tests {
     use crate::DtcReportKind;
 
     /// The client's bounds are the widest request and the widest response among its
-    /// services: here the transfer block wins the request and the DTC list the response.
+    /// services: here the transfer block wins both.
     #[test]
     fn the_client_bounds_are_the_widest_service() {
         const REQUEST: usize = client_request_bound(2, 17, 2, 4, 64);
@@ -1090,6 +1086,39 @@ mod tests {
         assert_eq!(RESPONSE, 2 + 64);
         assert_eq!(client_request_bound(1, 1, 1, 1, 1), 12);
         assert_eq!(client_response_bound(1, 1, 0, 0, 1, 1, 1, 1), 17);
+    }
+
+    /// Each request term is the bound when its maximum is the large one.
+    #[test]
+    fn each_request_term_can_set_the_bound() {
+        // A read of twenty identifiers.
+        assert_eq!(client_request_bound(20, 1, 1, 1, 1), 1 + 2 * 20);
+        // A write of a thirty-byte record.
+        assert_eq!(client_request_bound(1, 30, 1, 1, 1), 3 + 30);
+        // A twenty-byte key.
+        assert_eq!(client_request_bound(1, 1, 20, 1, 1), 2 + 20);
+        // A routine control with a twenty-byte option record.
+        assert_eq!(client_request_bound(1, 1, 1, 20, 1), 4 + 20);
+    }
+
+    /// Each response term is the bound when its maximum is the large one.
+    #[test]
+    fn each_response_term_can_set_the_bound() {
+        // A read of two seventeen-byte records.
+        assert_eq!(
+            client_response_bound(2, 17, 0, 0, 1, 1, 1, 1),
+            1 + 2 * (2 + 17)
+        );
+        // A DTC list of ten: `SeverityList`'s six-byte records are the widest.
+        assert_eq!(client_response_bound(1, 1, 10, 0, 1, 1, 1, 1), 3 + 10 * 6);
+        // A snapshot or extended data response of thirty record bytes.
+        assert_eq!(client_response_bound(1, 1, 0, 30, 1, 1, 1, 1), 6 + 30);
+        // A thirty-byte seed.
+        assert_eq!(client_response_bound(1, 1, 0, 0, 30, 1, 1, 1), 2 + 30);
+        // A routine status record of thirty bytes.
+        assert_eq!(client_response_bound(1, 1, 0, 0, 1, 30, 1, 1), 5 + 30);
+        // A transfer exit with a thirty-byte parameter record.
+        assert_eq!(client_response_bound(1, 1, 0, 0, 1, 1, 30, 1), 1 + 30);
     }
 
     /// The widest layout wins, and it is not always the one with the widest records: a
