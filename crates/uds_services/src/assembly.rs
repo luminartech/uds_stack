@@ -980,6 +980,15 @@ mod tests {
         assert_eq!((COUNT, WWH), (6, 6 + 50));
     }
 
+    /// The by-DTC-number layouts are bounded in bytes: six of header, then as many
+    /// record bytes as the caller declares.
+    #[test]
+    fn a_by_dtc_number_layout_is_bounded_by_its_record_bytes() {
+        const SNAPSHOT: usize = dtc_response_bound(&[DtcReportKind::SnapshotRecords], 20);
+        const EXT: usize = dtc_response_bound(&[DtcReportKind::ExtDataRecords], 20);
+        assert_eq!((SNAPSHOT, EXT), (26, 26));
+    }
+
     /// A server declaring no report types folds to zero, as an empty service set does.
     #[test]
     fn no_declared_layout_folds_to_zero() {

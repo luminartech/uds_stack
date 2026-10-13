@@ -70,6 +70,12 @@ lockstep with the rest of the `uds_stack` workspace (`uds_protocol`, `uds_sessio
   Responses are written into caller-owned storage, and no public type carries a
   `Vec` or `String`. No async runtime is named. `unsafe` is forbidden. MSRV 1.91.
 
+### Changed
+
+- **Breaking:** `DtcReportKind` is `#[non_exhaustive]` and gains `SnapshotRecords` and
+  `ExtDataRecords`, sub-functions `0x04` and `0x06`, bounded in record bytes. A server
+  cannot yet answer them; a client reads them.
+
 ### Known limitations
 
 - A server serves one tester: `uds_server!` accepts only `peers = 1`, and any other
