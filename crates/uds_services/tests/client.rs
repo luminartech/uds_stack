@@ -2177,6 +2177,7 @@ fn a_replaced_connection_is_reported_once() {
         Step::At(1),
         Step::At(2),
         Step::Close(OTHER_ECU),
+        Step::Close(ECU),
         Step::At(3),
     ]);
     speed(block_on(t.read_data_by_identifier(ECU, &[Did::Speed])));
@@ -2185,6 +2186,9 @@ fn a_replaced_connection_is_reported_once() {
     assert_eq!(block_on(t.connection_replaced(ECU)), Ok(false));
     assert_eq!(block_on(t.connection_replaced(ECU)), Ok(false));
     // This ask's pump observes the other server's close.
+    assert_eq!(block_on(t.connection_replaced(ECU)), Ok(false));
+    // An unprescribed close is a replacement as well.
+    assert_eq!(block_on(t.connection_replaced(ECU)), Ok(true));
     assert_eq!(block_on(t.connection_replaced(ECU)), Ok(false));
 }
 
