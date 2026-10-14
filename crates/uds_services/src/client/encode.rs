@@ -316,11 +316,16 @@ where
     }
 }
 
-/// A `ReadDataByIdentifier` response, read against this vocabulary.
-pub(super) fn records<D: DataIdentifier>(answer: Final<'_>) -> Response<Records<'_, D>> {
+/// A `ReadDataByIdentifier` response to a request for `asked`, read against this
+/// vocabulary.
+pub(super) fn records<'r, D: DataIdentifier>(
+    answer: Final<'r>,
+    asked: &[[u8; 2]],
+) -> Response<Records<'r, D>> {
     match answer {
         Final::Positive(rest) => match Records::validate(rest) {
-            Ok(records) => Response::Positive(records),
+            Ok(records) if answers(&records, asked) => Response::Positive(records),
+            Ok(_) => Response::Malformed(MalformedResponse::Echo),
             Err(error) => Response::Malformed(error),
         },
         Final::Negative(code) => Response::Negative(code),
@@ -328,17 +333,43 @@ pub(super) fn records<D: DataIdentifier>(answer: Final<'_>) -> Response<Records<
     }
 }
 
-/// One server's answer to a functional `ReadDataByIdentifier`, read against this
-/// vocabulary.
-pub(super) fn answer<D: DataIdentifier>(from: Address, answer: Final<'_>) -> Answer<'_, D> {
+/// One server's answer to a functional `ReadDataByIdentifier` for `asked`, read against
+/// this vocabulary.
+pub(super) fn answer<'r, D: DataIdentifier>(
+    from: Address,
+    answer: Final<'r>,
+    asked: &[[u8; 2]],
+) -> Answer<'r, D> {
     match answer {
         Final::Positive(rest) => match Records::validate(rest) {
-            Ok(records) => Answer::Positive { from, records },
+            Ok(records) if answers(&records, asked) => Answer::Positive { from, records },
+            Ok(_) => Answer::Malformed {
+                from,
+                error: MalformedResponse::Echo,
+            },
             Err(error) => Answer::Malformed { from, error },
         },
         Final::Negative(code) => Answer::Negative { from, code },
         Final::Malformed(error) => Answer::Malformed { from, error },
     }
+}
+
+/// Whether `records` answers a request for `asked`: each identifier it carries was asked
+/// for, and no more often than it was asked for.
+///
+/// ISO 14229-1:2020 Table 190 has a server answer `requestOutOfRange` only where it
+/// supports none of the identifiers, so one supporting some answers with those: a
+/// record may be missing, but none may be extra.
+fn answers<D: DataIdentifier>(records: &Records<'_, D>, asked: &[[u8; 2]]) -> bool {
+    records.clone().enumerate().all(|(at, (did, _))| {
+        let identifier = did.as_u16().to_be_bytes();
+        let before = records
+            .clone()
+            .take(at)
+            .filter(|(earlier, _)| earlier.as_u16().to_be_bytes() == identifier)
+            .count();
+        before < asked.iter().filter(|wanted| **wanted == identifier).count()
+    })
 }
 
 /// A `DiagnosticSessionControl` response: the session echo, then ISO 14229-1:2020

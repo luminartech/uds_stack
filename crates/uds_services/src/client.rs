@@ -487,7 +487,7 @@ pub enum Answer<'d, D: DataIdentifier> {
         code: NegativeResponseCode,
     },
     /// A positive response whose bytes do not parse against this application's
-    /// identifiers.
+    /// identifiers, or that carries a record the request did not ask for.
     ///
     /// Not a [`UdsTransport::Error`]: the transport delivered the message intact and the
     /// server answered. What failed is the agreement about what the bytes mean, which is
@@ -541,6 +541,8 @@ pub struct Responses<
     client: &'c mut Client<C, T, K, PHYS, FUNC, R>,
     /// Why the request could not be made, reported by the first [`Self::next`].
     refused: Option<ClientError<T::Error>>,
+    /// How many identifiers the request names.
+    asked: usize,
 }
 
 impl<
@@ -586,9 +588,9 @@ impl<
             Ok(answered) => answered,
             Err(error) => return Some(Err(error)),
         };
-        let message = answered_bytes(&mut self.client.store, &answered);
+        let (asked, message) = answered_read(&mut self.client.store, &answered, self.asked);
         let answer = encode::final_response(message, answered.arrived);
-        Some(Ok(encode::answer(answered.from, answer)))
+        Some(Ok(encode::answer(answered.from, answer, asked)))
     }
 }
 
@@ -794,6 +796,9 @@ impl<
     /// window, which [`Self::diagnostic_session_control`] sets from the server's own
     /// `P2*Server_max` and [`ClientTiming::network_delay`]. A response longer than the
     /// client's buffer is [`Response::Malformed`] with [`MalformedResponse::Overlong`].
+    /// A positive response may leave out identifiers the server does not support; one
+    /// carrying an identifier not in `identifiers`, or more often than it appears there,
+    /// is [`Response::Malformed`] with [`MalformedResponse::Echo`].
     ///
     /// # Arguments
     ///
@@ -839,11 +844,11 @@ impl<
                 None,
             )
             .await?;
-        let message = answered_bytes(&mut self.store, &answered);
-        Ok(encode::records(encode::final_response(
-            message,
-            answered.arrived,
-        )))
+        let (asked, message) = answered_read(&mut self.store, &answered, identifiers.len());
+        Ok(encode::records(
+            encode::final_response(message, answered.arrived),
+            asked,
+        ))
     }
 
     /// Change one server's diagnostic session.
@@ -1691,6 +1696,7 @@ impl<
         Responses {
             client: self,
             refused,
+            asked: identifiers.len(),
         }
     }
 
@@ -1790,6 +1796,24 @@ const fn within(len: usize, max: usize) -> Option<()> {
 }
 
 /// The bytes `answered` occupies in the response buffer.
+/// The response `answered` holds, with the identifiers of the `ReadDataByIdentifier`
+/// request it answers: the first `count` pairs after the request's service identifier,
+/// which nothing overwrites until the next request is encoded.
+fn answered_read<'s, S: ClientStorage>(
+    store: &'s mut S,
+    answered: &Answered,
+    count: usize,
+) -> (&'s [[u8; 2]], &'s [u8]) {
+    let ClientBuffers { request, response } = store.split();
+    let request: &'s [u8] = request;
+    let response: &'s [u8] = response;
+    let (pairs, _) = request.get(1..).unwrap_or_default().as_chunks::<2>();
+    (
+        pairs.get(..count).unwrap_or_default(),
+        response.get(answered.range.clone()).unwrap_or_default(),
+    )
+}
+
 fn answered_bytes<'s, S: ClientStorage>(store: &'s mut S, answered: &Answered) -> &'s [u8] {
     let ClientBuffers { response, .. } = store.split();
     response.get(answered.range.clone()).map_or(&[], |m| m)
@@ -1797,7 +1821,7 @@ fn answered_bytes<'s, S: ClientStorage>(store: &'s mut S, answered: &Answered) -
 
 #[cfg(test)]
 mod tests {
-    use super::{Answer, MalformedResponse, Records, Response};
+    use super::{Answer, MalformedResponse, Records, Response, encode};
     use crate::{DataIdentifier, RecordError};
     use uds_protocol::NegativeResponseCode;
     use uds_session::Address;
@@ -1935,6 +1959,60 @@ mod tests {
         assert_eq!(
             Records::<TestDid>::validate(&response),
             Err(MalformedResponse::Record(RecordError::Short))
+        );
+    }
+
+    const SPEED: [u8; 2] = [0xF4, 0x0D];
+    const VIN: [u8; 2] = [0xF1, 0x90];
+
+    /// The read's verdict on `response` as the answer to a request for `asked`.
+    fn read(response: &[u8], asked: &[[u8; 2]]) -> Option<MalformedResponse> {
+        match encode::records::<TestDid>(encode::Final::Positive(response), asked) {
+            Response::Malformed(error) => Some(error),
+            _ => None,
+        }
+    }
+
+    /// A response naming an identifier the request did not is some other request's:
+    /// both are in the vocabulary, so only the request can tell them apart.
+    #[test]
+    fn a_record_the_request_did_not_ask_for_is_an_echo_error() {
+        assert_eq!(
+            read(&[0xF4, 0x0D, 0x40], &[VIN]),
+            Some(MalformedResponse::Echo)
+        );
+    }
+
+    /// ISO 14229-1:2020 Table 190: a server supporting some of the identifiers answers
+    /// with those, so a record may be missing.
+    #[test]
+    fn a_record_the_server_left_out_is_not_an_error() {
+        assert_eq!(read(&[0xF4, 0x0D, 0x40], &[VIN, SPEED]), None);
+    }
+
+    /// An identifier asked for twice may be answered twice (11.2.1), but not three
+    /// times.
+    #[test]
+    fn a_record_is_answered_at_most_as_often_as_asked() {
+        let twice = [0xF4, 0x0D, 0x40, 0xF4, 0x0D, 0x41];
+        assert_eq!(read(&twice, &[SPEED, SPEED]), None);
+        assert_eq!(read(&twice, &[SPEED]), Some(MalformedResponse::Echo));
+    }
+
+    /// A functionally addressed read applies the same check to each server's answer.
+    #[test]
+    fn a_functional_answer_naming_another_record_is_malformed() {
+        let answer = encode::answer::<TestDid>(
+            Address(0x0E01),
+            encode::Final::Positive(&[0xF4, 0x0D, 0x40]),
+            &[VIN],
+        );
+        assert_eq!(
+            answer,
+            Answer::Malformed {
+                from: Address(0x0E01),
+                error: MalformedResponse::Echo,
+            }
         );
     }
 }

@@ -49,7 +49,8 @@ lockstep with the rest of the `uds_stack` workspace (`uds_protocol`, `uds_sessio
   the channel counts and keep-alive mode set.
 - `Client`, the async client driver over `uds_session`'s client role:
   `read_data_by_identifier` (physical, returning the declared identifier/record
-  pairs as `Records`), `read_data_by_identifier_functional` (a `Responses` stream
+  pairs as `Records`; a reply carrying a record not asked for is malformed),
+  `read_data_by_identifier_functional` (a `Responses` stream
   with one `Answer` per responding server), `diagnostic_session_control`,
   `idle_until` (waits and sends `TesterPresent` keep-alives as they fall due) and
   `close`. Negative responses are returned as values (`Response::Negative`,
