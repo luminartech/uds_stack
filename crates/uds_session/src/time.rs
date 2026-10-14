@@ -8,13 +8,41 @@
 /// ``UDSS_LLR_0018`` — a 32-bit unsigned count of milliseconds. ``UDSS_LLR_0020``
 /// accompanies every input with one.
 ///
-/// The derived `Ord` compares the raw counts, which is not the order in time once the
-/// count wraps, every 2^32 ms (about 49.7 days). Compare against a deadline with
-/// [`Self::has_reached`], and turn one into a wait with [`Self::until`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+/// It has no order, because the raw order is wrong either side of the wrap, every 2^32
+/// ms (about 49.7 days). Two timestamps compare by how far apart they are, which
+/// [`Self::has_reached`], [`Self::until`] and [`Self::earlier`] read correctly so long as
+/// they lie within half the range, about 24.8 days, of each other.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Timestamp(pub u32);
 
 impl Timestamp {
+    /// The instant `millis` milliseconds after `self`.
+    ///
+    /// # Arguments
+    ///
+    /// * `millis` - how long after `self`, in milliseconds.
+    #[must_use]
+    pub const fn after(self, millis: u32) -> Self {
+        Self(self.0.wrapping_add(millis))
+    }
+
+    /// The earlier of `self` and `other` on the wrapping timebase.
+    ///
+    /// ``UDSS_LLR_0019`` — `self` is earlier when the modular difference `self - other`
+    /// lands in the upper half of the range.
+    ///
+    /// # Arguments
+    ///
+    /// * `other` - the [`Timestamp`] to compare `self` against.
+    #[must_use]
+    pub const fn earlier(self, other: Self) -> Self {
+        if self.0.wrapping_sub(other.0) > u32::MAX / 2 {
+            self
+        } else {
+            other
+        }
+    }
+
     /// The elapsed time since `earlier`, in milliseconds.
     ///
     /// ``UDSS_LLR_0019`` — the difference modulo 2^32, so a timebase that wraps yields
@@ -29,8 +57,7 @@ impl Timestamp {
     /// ``UDSS_LLR_0019`` — on the wrapping timebase, `deadline` has been reached when the
     /// interval since it is less than half the range (2^31 ms), and is still ahead
     /// otherwise. This is how a transport decides that the deadline the driver handed it
-    /// has passed: `now >= deadline` through the derived `Ord` gets the answer wrong
-    /// whenever the two lie either side of the wrap.
+    /// has passed.
     ///
     /// # Arguments
     ///
@@ -57,30 +84,21 @@ impl Timestamp {
     }
 }
 
-/// The earlier of two wrapping timestamps (``UDSS_LLR_0019``): `a` is earlier when the
-/// modular difference `a - b` lands in the upper half of the range.
-pub(crate) const fn earlier(a: Timestamp, b: Timestamp) -> Timestamp {
-    if a.0.wrapping_sub(b.0) > u32::MAX / 2 {
-        a
-    } else {
-        b
-    }
-}
-
 #[cfg(test)]
 mod tests {
-    use super::{Timestamp, earlier};
+    use super::Timestamp;
 
     /// ``UDSS_LLR_0019`` — the earlier deadline is chosen by modular distance, so one
     /// just past the wrap is later than one just before it.
     #[test]
     fn the_earlier_deadline_is_chosen_across_the_wrap() {
-        assert_eq!(earlier(Timestamp(10), Timestamp(20)), Timestamp(10));
-        assert_eq!(earlier(Timestamp(20), Timestamp(10)), Timestamp(10));
+        assert_eq!(Timestamp(10).earlier(Timestamp(20)), Timestamp(10));
+        assert_eq!(Timestamp(20).earlier(Timestamp(10)), Timestamp(10));
         let before = Timestamp(u32::MAX - 5);
-        let after = Timestamp(5);
-        assert_eq!(earlier(before, after), before);
-        assert_eq!(earlier(after, before), before);
+        let after = before.after(11);
+        assert_eq!(after, Timestamp(5));
+        assert_eq!(before.earlier(after), before);
+        assert_eq!(after.earlier(before), before);
     }
 
     /// ``UDSS_LLR_0019`` — the interval is the modular difference.
@@ -115,19 +133,22 @@ mod tests {
 
     /// ``UDSS_LLR_0019`` — across the wrap, a deadline just past it is still ahead of a
     /// time just before it, and one just before it has been reached by a time just past
-    /// it. The derived `Ord` says the opposite of both.
+    /// it. The raw counts say the opposite of both.
     #[test]
     fn has_reached_and_until_hold_across_the_wrap() {
         let before = Timestamp(u32::MAX - 5);
         let after = Timestamp(10);
         assert!(!before.has_reached(after));
         assert!(
-            before >= after,
+            before.0 >= after.0,
             "the raw order, which is not the time order"
         );
         assert_eq!(before.until(after), 16);
         assert!(after.has_reached(before));
-        assert!(after < before, "the raw order, which is not the time order");
+        assert!(
+            after.0 < before.0,
+            "the raw order, which is not the time order"
+        );
         assert_eq!(after.until(before), 0);
     }
 

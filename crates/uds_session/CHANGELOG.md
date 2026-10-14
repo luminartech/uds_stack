@@ -53,8 +53,8 @@ is released in lockstep with the rest of the `uds_stack` workspace (`uds_protoco
   (`ClientTx`, `ClientRx`, `ServerTx`, `ServerRx`, `ExpectedResponses`,
   `SessionSelection`, `Solicitation`) and results (`SResult`, `TransportError`).
 - `Timestamp`: a caller-supplied 32-bit millisecond count that wraps.
-  `interval_since`, `has_reached` and `until` handle the wrap; the derived `Ord`
-  does not.
+  `interval_since`, `has_reached`, `until`, `earlier` and `after` handle the wrap.
+  It has no order, because the order of the raw counts is wrong across the wrap.
 - `no_std` with no allocation and no dependencies. Storage is supplied by the caller
   through const generics. No clock is read, no transport is called and no executor
   is needed. `unsafe` is forbidden.

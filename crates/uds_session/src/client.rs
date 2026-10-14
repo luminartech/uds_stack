@@ -52,7 +52,7 @@ use crate::params::{ChannelParameter, ChannelParams, ChannelReload};
 use crate::reaction::Reaction;
 use crate::rejection::{Cause, Content, Rejection};
 use crate::result::SResult;
-use crate::time::{Timestamp, earlier};
+use crate::time::Timestamp;
 use crate::timer::{Exceeds, Reaches, Timer};
 use core::marker::PhantomData;
 
@@ -1434,7 +1434,7 @@ impl<K: KeepAliveMode, const PHYS: usize, const FUNC: usize, const R: usize, Tag
             .chain(physical)
             .chain([self.keep_alive.deadline()])
             .flatten()
-            .reduce(earlier)
+            .reduce(Timestamp::earlier)
     }
 }
 

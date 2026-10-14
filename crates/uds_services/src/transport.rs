@@ -226,9 +226,9 @@ pub trait UdsTransport {
     /// untouched, and the transport is the side that compares it with the clock. The
     /// clock wraps (``UDSS_LLR_0019``), so the comparison is
     /// [`now.has_reached(deadline)`](Timestamp::has_reached) and the time left to wait
-    /// is [`now.until(deadline)`](Timestamp::until); never `now >= deadline`, whose
-    /// derived order is wrong either side of the wrap and either spins or misses the
-    /// deadline by 49.7 days. The deadline may already have been reached when this is
+    /// is [`now.until(deadline)`](Timestamp::until), never a comparison of the raw counts,
+    /// which is wrong either side of the wrap and either spins or misses the deadline by
+    /// 49.7 days. The deadline may already have been reached when this is
     /// called, and `until` is then zero. `None` means no timer is running: wait for an
     /// event alone.
     ///

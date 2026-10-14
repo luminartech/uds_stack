@@ -411,7 +411,7 @@ async fn drain<
 /// The earlier of two optional deadlines on the wrapping timebase.
 fn earliest(a: Option<Timestamp>, b: Option<Timestamp>) -> Option<Timestamp> {
     match (a, b) {
-        (Some(a), Some(b)) => Some(if b.has_reached(a) { a } else { b }),
+        (Some(a), Some(b)) => Some(a.earlier(b)),
         (a, b) => a.or(b),
     }
 }

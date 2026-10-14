@@ -118,8 +118,9 @@ impl<R: Rule> Timer<R> {
     /// earlier, but never before the start.
     pub(crate) fn deadline_by(&self, lead: u32) -> Option<Timestamp> {
         self.running.map(|r| {
-            let at = r.start.0.wrapping_add(r.loaded.saturating_sub(lead));
-            Timestamp(at.wrapping_add(u32::from(R::EXCEEDS)))
+            r.start
+                .after(r.loaded.saturating_sub(lead))
+                .after(u32::from(R::EXCEEDS))
         })
     }
 }

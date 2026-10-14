@@ -13,7 +13,7 @@ use crate::params::{ServerParameter, ServerParams, ServerReload};
 use crate::reaction::Reaction;
 use crate::rejection::{Cause, Rejection};
 use crate::result::SResult;
-use crate::time::{Timestamp, earlier};
+use crate::time::Timestamp;
 use crate::timer::{Reaches, Timer};
 
 /// One transmission between its `S_Data.req` and its `T_Data.conf`.
@@ -677,7 +677,7 @@ impl<const A: usize> Server<A> {
         };
         let p2 = self.service.and_then(|s| s.p2.deadline_by(s.lead));
         match (s3, p2) {
-            (Some(a), Some(b)) => Some(earlier(a, b)),
+            (Some(a), Some(b)) => Some(a.earlier(b)),
             (a, b) => a.or(b),
         }
     }
