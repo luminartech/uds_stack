@@ -26,10 +26,13 @@ transport for both roles. It is released in lockstep with the rest of the
   (REQ 7.11) and after a positive `DiagnosticSessionControl` response to a session
   change that leaves the running software (REQ 7.9). `CONNECTIONS` must be at
   least the entity's own connection count, which is checked at compile time.
-- `DoIpClientTransport<C, QUEUE, PEERS>`, the client-side
+- `DoIpClientTransport<C, QUEUE, PEERS, WAITING>`, the client-side
   `uds_services::UdsTransport` and `ClientTransport` over any
-  `simple_doip::service::TesterConnection`. It queues one request behind another,
-  turns a refused request into a failed confirmation, and reconnects and
+  `simple_doip::service::TesterConnection`. It queues up to `WAITING` requests in
+  `QUEUE` bytes behind the one the connection carries; `QUEUE` must be at least
+  the connection's `MAX_PDU` plus `KEEP_ALIVE_LEN` for each other request waiting,
+  which is checked at compile time. It turns a refused request into a failed
+  confirmation, and reconnects and
   re-activates routing after a server closes the connection (REQ 7.8, REQ 7.10).
   It reports each close as expected or unexpected, and sends a request on a new
   connection when a late reply to an earlier one could otherwise be mistaken for

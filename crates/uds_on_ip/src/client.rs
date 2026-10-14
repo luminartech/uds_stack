@@ -17,6 +17,10 @@ use crate::mapping::{
     response_pending, s_result, target_of, to_doip_ta_type, to_logical,
 };
 
+/// The length of the keep-alive a `uds_services` client sends, `3E 80`: what each request
+/// waiting ahead of a call's request takes of a [`DoIpClientTransport`]'s `QUEUE`.
+pub const KEEP_ALIVE_LEN: usize = 2;
+
 /// ISO 14229-5:2022 over a `DoIP` tester connection: the client side of `UDSonIP`, for a
 /// `uds_services::Client`.
 ///
@@ -27,9 +31,10 @@ use crate::mapping::{
 ///   waits in the transport, up to `WAITING` of them in up to `QUEUE` bytes, and is sent
 ///   once the one before it is confirmed, so a keep-alive and a call's request never
 ///   collide. `QUEUE` is at least
-///   [`MAX_PDU`](simple_doip::service::DiagnosticConnection::MAX_PDU),
-///   which [`Self::new`] checks at compile time, so a request always finds room behind a
-///   keep-alive.
+///   [`MAX_PDU`](simple_doip::service::DiagnosticConnection::MAX_PDU) plus
+///   [`KEEP_ALIVE_LEN`] for each of the other `WAITING - 1` requests, which
+///   [`Self::new`] checks at compile time, so a request of any length finds room behind
+///   the keep-alives waiting ahead of it.
 /// - **Refusals.** A request the connection refuses is accepted here all the same and
 ///   confirmed failed by the next [`UdsTransport::next_event`], as ISO 13400-2:2019 8.3.1
 ///   confirms every request.
@@ -184,9 +189,9 @@ impl<C: TesterConnection, const QUEUE: usize, const PEERS: usize, const WAITING:
     /// A transport over `connection`, loading the session layer's response timer with
     /// `reloads`.
     ///
-    /// Does not compile where `QUEUE` is below the connection's
-    /// [`MAX_PDU`](simple_doip::service::DiagnosticConnection::MAX_PDU), or `WAITING`
-    /// below `PEERS + 1`.
+    /// Does not compile where `WAITING` is below `PEERS + 1`, or `QUEUE` is below the
+    /// connection's [`MAX_PDU`](simple_doip::service::DiagnosticConnection::MAX_PDU)
+    /// plus [`KEEP_ALIVE_LEN`] × (`WAITING` − 1).
     ///
     /// # Arguments
     ///
@@ -240,12 +245,15 @@ impl<C: TesterConnection, const QUEUE: usize, const PEERS: usize, const WAITING:
     pub const fn new(connection: C, reloads: Reloads) -> Self {
         const {
             assert!(
-                QUEUE >= C::MAX_PDU,
-                "QUEUE is below the connection's MAX_PDU"
-            );
-            assert!(
                 WAITING > PEERS,
                 "WAITING is below PEERS + 1: a keep-alive per server and a request"
+            );
+            assert!(
+                QUEUE
+                    >= C::MAX_PDU.saturating_add(
+                        KEEP_ALIVE_LEN.saturating_mul(WAITING.saturating_sub(1))
+                    ),
+                "QUEUE is below MAX_PDU plus a keep-alive for each other request waiting"
             );
         };
         Self {

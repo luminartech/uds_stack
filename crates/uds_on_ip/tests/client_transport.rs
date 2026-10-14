@@ -20,7 +20,7 @@ use simple_doip::service::{
     Refusal, TesterAddress, TesterConnection, Timestamp,
 };
 use simple_doip::{LogicalAddress, TaType};
-use uds_on_ip::{ClientTransportError, DoIpClientTransport};
+use uds_on_ip::{ClientTransportError, DoIpClientTransport, KEEP_ALIVE_LEN};
 use uds_services::{AfterSend, ClientTransport, TransportEvent, UdsTransport};
 use uds_session::{Address, Ai, Mtype, Reloads, SResult, TransportError};
 
@@ -360,6 +360,7 @@ const FROM_ENTITY: Ai = Ai {
 const READ: &[u8] = &[0x22, 0xF1, 0x90];
 const ANSWER: &[u8] = &[0x62, 0xF1, 0x90, 0x41];
 const KEEP_ALIVE: &[u8] = &[0x3E, 0x80];
+const _: () = assert!(KEEP_ALIVE.len() == KEEP_ALIVE_LEN);
 
 /// `DoIP_Result`'s position in ISO 13400-2:2019 8.2.5's order, as `s_result` maps it.
 const fn failed(result: DoIpResult) -> SResult {
@@ -546,6 +547,37 @@ fn one_request_past_waiting_is_refused() {
     );
 }
 
+/// The smallest `QUEUE` that builds with the default `WAITING` of two: the longest
+/// request and one keep-alive ahead of it.
+const AT_THE_BOUND: usize = MAX_PDU + KEEP_ALIVE_LEN;
+
+/// At the smallest `QUEUE` that builds, a request of `MAX_PDU` bytes waits behind a
+/// keep-alive, behind the request the connection carries, rather than being refused.
+#[test]
+fn a_longest_request_fits_behind_a_keep_alive_at_the_bound() {
+    let group = ai(LogicalAddress(0xE400), uds_session::TaType::Functional);
+    let mut t: DoIpClientTransport<Scripted, AT_THE_BOUND> = DoIpClientTransport::new(
+        Scripted::new([
+            Entity::Acks(DoIpResult::Ok),
+            Entity::Acks(DoIpResult::Ok),
+            Entity::Acks(DoIpResult::Ok),
+        ]),
+        RELOADS,
+    );
+    let long = [0x2E; MAX_PDU];
+    run(t.t_data_req(TO_ENTITY, READ, AfterSend::Continue)).unwrap();
+    run(t.t_data_req(group, KEEP_ALIVE, AfterSend::Continue)).unwrap();
+    run(t.t_data_req(TO_ENTITY, &long, AfterSend::Continue)).unwrap();
+
+    assert_eq!(next(&mut t), Seen::Conf(TO_ENTITY, SResult::Ok));
+    assert_eq!(next(&mut t), Seen::Conf(group, SResult::Ok));
+    assert_eq!(next(&mut t), Seen::Conf(TO_ENTITY, SResult::Ok));
+    assert_eq!(
+        t.connection().requests(),
+        [READ.to_vec(), KEEP_ALIVE.to_vec(), long.to_vec()]
+    );
+}
+
 /// A request that failed waiting holds no bytes: the queue it filled takes another
 /// before its failed confirm is reported.
 #[test]
@@ -553,7 +585,7 @@ fn a_failed_request_releases_its_bytes() {
     let mut connection = Scripted::new([Entity::Acks(DoIpResult::Ok)]);
     connection.connected = false;
     connection.closed_reported = true;
-    let mut t: DoIpClientTransport<Scripted, MAX_PDU> =
+    let mut t: DoIpClientTransport<Scripted, AT_THE_BOUND> =
         DoIpClientTransport::new(connection, RELOADS);
     let long = [0x22; MAX_PDU];
     run(t.t_data_req(TO_ENTITY, &long, AfterSend::Continue)).unwrap();

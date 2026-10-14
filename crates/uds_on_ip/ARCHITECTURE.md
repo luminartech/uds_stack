@@ -323,7 +323,9 @@ the seam with no I/O in it:
   `DoIpClientTransport<C: TesterConnection, QUEUE, PEERS, WAITING>` drives it and
   feeds one `uds_services::Client`. It holds up to `WAITING` requests made while the
   connection carries another, in `QUEUE` bytes, so a keep-alive and a call's request
-  never collide; tracks up to `PEERS` servers behind the entity, reporting a
+  never collide. `QUEUE` holds the longest request behind a keep-alive for each other
+  request waiting (`MAX_PDU` + `KEEP_ALIVE_LEN` × (`WAITING` − 1)), checked when
+  the transport is built. It tracks up to `PEERS` servers behind the entity, reporting a
   connection's end once per server tracked on it; and reconnects, on the next event,
   for a request made while the connection is closed, which it accepts at once so that
   a call dropped meanwhile leaves nothing unconfirmed (REQ 7.8, REQ 7.10).
