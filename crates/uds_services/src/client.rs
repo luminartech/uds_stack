@@ -543,6 +543,7 @@ impl From<RecordError> for MalformedResponse {
 ///
 /// ``UDSSVC_ARCH_0021`` — three cases, and none is an error.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum Response<V> {
     /// A positive response, decoded.
     Positive(V),
@@ -587,6 +588,7 @@ impl<V> Response<V> {
 /// silent produces no answer at all, which is the response window closing rather than a
 /// value to match on.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum Answer<'d, D: DataIdentifier> {
     /// A positive response, its records already validated against this vocabulary.
     Positive {

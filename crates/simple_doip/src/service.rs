@@ -104,10 +104,9 @@ pub enum DoIpResult {
 /// [`DiagnosticConnection::request`] did other than for a closed connection
 /// ([`ConnectionRefusal`]). No confirm follows a refusal.
 ///
-/// Exhaustive: these are the only cases in which the request is refused rather than
-/// accepted and confirmed, and a caller that confirms a refused request failed itself
-/// decides what each means.
+/// A caller that confirms a refused request failed itself decides what each means.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, thiserror::Error)]
+#[non_exhaustive]
 pub enum Refusal {
     /// The PDU is empty. ISO 13400-2:2019 Table 21 makes a diagnostic message's user
     /// data mandatory, which this crate reads as at least one byte.
@@ -131,10 +130,10 @@ pub enum Refusal {
 /// Why [`DiagnosticConnection::request`] refused a request. No confirm follows a
 /// refusal.
 ///
-/// Exhaustive, as [`Refusal`] is: a layer generic over the connection tells a closed
-/// connection, to reconnect, from one carrying another request, to wait, from a
-/// request refused for itself.
+/// A layer generic over the connection tells a closed connection, to reconnect, from
+/// one carrying another request, to wait, from a request refused for itself.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, thiserror::Error)]
+#[non_exhaustive]
 pub enum ConnectionRefusal {
     /// The connection is closed. A [`TesterConnection`] takes requests again once
     /// [`TesterConnection::reconnect`] succeeds.
@@ -215,9 +214,8 @@ impl Timestamp {
 /// occupies, so the connection is free to be used again while the PDU is still live —
 /// which is what lets a server answer the request it has just received.
 ///
-/// Exhaustive: an event added later is a change every caller must handle, so it stops
-/// their build rather than reaching a wildcard arm.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum ConnectionEvent<'b> {
     /// `DoIP_Data.indication`: a diagnostic message arrived (ISO 13400-2:2019 8.3.3).
     ///
@@ -465,6 +463,7 @@ pub trait TesterConnection: DiagnosticConnection {
 
 /// How a [`TesterConnection::reconnect`] that did not fail ended.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum Reconnection {
     /// A new connection is open, routing activated on it.
     Connected,
@@ -503,8 +502,9 @@ impl ConnectionId {
 ///
 /// [`ConnectionEvent`]'s variants, with the [`ConnectionId`] each arrived on wherever one
 /// did. **The lifetime is the caller's buffer, never the entity**, exactly as for
-/// [`ConnectionEvent`]. Exhaustive, as [`ConnectionEvent`] is.
+/// [`ConnectionEvent`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum EntityEvent<'b> {
     /// `DoIP_Data.indication` on `connection`; see [`ConnectionEvent::Indication`].
     Indication {

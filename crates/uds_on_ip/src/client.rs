@@ -29,6 +29,7 @@ pub const KEEP_ALIVE_LEN: usize = 2;
 /// Neither ISO 14229-5 nor ISO 13400-2 says;
 /// [`DoIpClientTransport::with_late_reply_guard`] chooses.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum LateReplyGuard {
     /// The request goes on a new connection, so a late answer cannot arrive on it. The
     /// client sees the old connection's [`TransportEvent::Closed`] and pays a routing
@@ -451,11 +452,13 @@ impl<C: TesterConnection, const QUEUE: usize, const PEERS: usize, const WAITING:
             Err(ConnectionRefusal::Refused(Refusal::NoRoom)) => {
                 self.wait(ai, data, expects)
             }
-            Err(ConnectionRefusal::Closed) => {
+            Err(ConnectionRefusal::Refused(refusal)) => self.refuse(ai, refusal),
+            // Closed, or a refusal this binding does not name: give the connection up and
+            // send on a new one.
+            Err(_) => {
                 self.end();
                 self.wait(ai, data, expects)
             }
-            Err(ConnectionRefusal::Refused(refusal)) => self.refuse(ai, refusal),
         }
     }
 
@@ -490,7 +493,7 @@ impl<C: TesterConnection, const QUEUE: usize, const PEERS: usize, const WAITING:
                 self.link = Link::Up;
                 Ok(Reconnection::Connected)
             }
-            Ok(Reconnection::Deadline) => Ok(Reconnection::Deadline),
+            Ok(other) => Ok(other),
             Err(error) => {
                 self.fail_waiting();
                 Err(ClientTransportError::Reconnect(error))
@@ -526,11 +529,12 @@ impl<C: TesterConnection, const QUEUE: usize, const PEERS: usize, const WAITING:
                 self.waiting.pop();
             }
             Err(ConnectionRefusal::Refused(Refusal::NoRoom)) => {}
-            Err(ConnectionRefusal::Closed) => self.end(),
             Err(ConnectionRefusal::Refused(refusal)) => {
                 self.waiting.fail_front(s_result(refused(refusal)));
                 confirmed(&mut self.peers, ai, refused(refusal));
             }
+            // Closed, or a refusal this binding does not name.
+            Err(_) => self.end(),
         }
     }
 
@@ -582,10 +586,6 @@ impl<C: TesterConnection, const QUEUE: usize, const PEERS: usize, const WAITING:
                 }
                 _ => None,
             },
-            ConnectionEvent::Indication { .. }
-            | ConnectionEvent::IndicationTruncated { .. }
-            | ConnectionEvent::Unmodelled { .. }
-            | ConnectionEvent::UnmodelledTruncated { .. } => None,
             ConnectionEvent::Confirm { result, .. } => self.sent.take().map(|ai| {
                 confirmed(&mut self.peers, ai, result);
                 Received::Event(Event::Conf(ai, s_result(result)))
@@ -595,6 +595,12 @@ impl<C: TesterConnection, const QUEUE: usize, const PEERS: usize, const WAITING:
                 None
             }
             ConnectionEvent::Deadline => Some(Received::Event(Event::Deadline)),
+            // Not this tester's, or an event this binding does not name.
+            ConnectionEvent::Indication { .. }
+            | ConnectionEvent::IndicationTruncated { .. }
+            | ConnectionEvent::Unmodelled { .. }
+            | ConnectionEvent::UnmodelledTruncated { .. }
+            | _ => None,
         })
     }
 }

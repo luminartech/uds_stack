@@ -427,11 +427,7 @@ pub async fn next<C: DiagnosticConnection>(tester: &mut C) -> Then {
                 return Then::Response(sa, pdu.to_vec());
             }
             ConnectionEvent::Closed => return Then::Closed,
-            ConnectionEvent::Confirm { .. }
-            | ConnectionEvent::IndicationTruncated { .. }
-            | ConnectionEvent::Unmodelled { .. }
-            | ConnectionEvent::UnmodelledTruncated { .. }
-            | ConnectionEvent::Deadline => {}
+            _ => {}
         }
     }
 }

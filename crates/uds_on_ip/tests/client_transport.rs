@@ -420,6 +420,7 @@ fn next_until<const Q: usize, const P: usize, const W: usize>(
         }
         TransportEvent::Closed { peer, expected } => Seen::Closed(peer, expected),
         TransportEvent::Deadline => Seen::Deadline,
+        other => panic!("an event this test does not model: {other:?}"),
     }
 }
 

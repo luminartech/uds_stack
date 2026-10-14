@@ -516,6 +516,7 @@ impl<E: DiagnosticEntity, const CONNECTIONS: usize> UdsTransport
                     }
                 }
                 Inbound::Deadline => return Ok(TransportEvent::Deadline),
+                Inbound::Ignored => {}
             }
         };
         self.register(connection, to_logical(ai.sa));

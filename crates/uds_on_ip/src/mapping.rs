@@ -160,7 +160,8 @@ pub(crate) fn response_pending(response: &[u8]) -> bool {
 pub(crate) const fn refused(refusal: Refusal) -> DoIpResult {
     match refusal {
         Refusal::NoRoom | Refusal::PduTooLarge { .. } => DoIpResult::OutOfMemory,
-        Refusal::EmptyPdu => DoIpResult::Error,
+        // An empty PDU, or a refusal this binding does not name.
+        Refusal::EmptyPdu | _ => DoIpResult::Error,
     }
 }
 
@@ -207,6 +208,8 @@ pub(crate) enum Inbound {
         connection: ConnectionId,
     },
     Deadline,
+    /// An event this binding does not act on.
+    Ignored,
 }
 
 /// An entity reported a PDU outside the buffer it was lent.
@@ -258,6 +261,7 @@ pub(crate) fn classify(
         },
         EntityEvent::Closed { connection } => Inbound::Closed { connection },
         EntityEvent::Deadline => Inbound::Deadline,
+        _ => Inbound::Ignored,
     })
 }
 

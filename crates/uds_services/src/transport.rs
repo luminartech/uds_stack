@@ -18,6 +18,7 @@ pub use uds_session::{Address, Ai, Mtype, Reloads, SResult, TaType, Timestamp};
 /// would put that tie in prose: the driver would have to re-slice its own buffer and
 /// defend against a length larger than what it lent.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum TransportEvent<'b> {
     /// A complete inbound message.
     DataInd {
@@ -138,6 +139,7 @@ pub enum TransportEvent<'b> {
 /// restart nothing — so a `DoIP` transport keys that close on the `0x51` itself. Flagging
 /// resets here would make an unconditional close depend on a fact it does not depend on.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum AfterSend {
     /// The server carries on in the software it is running.
     Continue,

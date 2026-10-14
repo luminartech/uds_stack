@@ -592,6 +592,7 @@ async fn read_the_vin(tester: &mut Tester) -> Result<&'static str, ClientError<(
                 let _ = error;
                 "unreadable"
             }
+            _ => "unrecognised",
         },
     )
 }
@@ -618,6 +619,7 @@ async fn read_the_vin_from_every_server(
             Answer::Malformed { from, error } => {
                 let _ = (from, error);
             }
+            _ => {}
         }
     }
     Ok(())

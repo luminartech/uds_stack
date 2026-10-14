@@ -113,6 +113,11 @@ lockstep with the rest of the `uds_stack` workspace (`uds_protocol`, `uds_sessio
 
 ### Changed
 
+- **Breaking:** an enumeration is exhaustive only where ISO 14229 fixes its set
+  (`SessionTransition`, `KeyVerdict`, `Repeats`, `Delay`, `TransferRequest`). The
+  crate's own outcomes and events — `Response`, `Answer`, `TransportEvent`,
+  `AfterSend`, `RecordError` and `Received` — are `#[non_exhaustive]`. Migrate: add a
+  wildcard arm where one of these is matched.
 - **Breaking:** `TransferRequest`'s `size` and `Client::request_download`'s `size` are
   `u64`, and a request may declare up to eight bytes each of address and size. A wider
   declaration is answered `requestOutOfRange` (0x31) before any handler is asked. A

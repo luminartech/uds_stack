@@ -70,9 +70,11 @@ example for each.
     they arrived on, a request is routed by target address, and `close` is the close
     ISO 14229-5 prescribes after a reset or a session change that leaves the running
     software.
-  - `ConnectionEvent` and `EntityEvent`, both exhaustive, so a new event stops the
-    build of the layer that must handle it. An indication longer than the caller's
-    buffer arrives as `IndicationTruncated`.
+  - `ConnectionEvent` and `EntityEvent`, `#[non_exhaustive]` as this crate's own
+    events. An indication longer than the caller's buffer arrives as
+    `IndicationTruncated`. `Refusal`, `ConnectionRefusal` and `Reconnection` are
+    `#[non_exhaustive]` too; the code enums mirroring a table of ISO 13400-2:2019, and
+    `DoIpResult` (8.2.5), are exhaustive.
   - `DoIpResult`, the twelve `DoIP_Result` values of 8.2.5.
   - `request` is a plain function, not a future: it accepts or refuses the PDU when
     it returns, and the outcome of an accepted one arrives later as exactly one

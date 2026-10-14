@@ -102,6 +102,7 @@ impl From<TransportEvent<'_>> for Seen {
                 Self::Bare(TransportEvent::Closed { peer, expected })
             }
             TransportEvent::Deadline => Self::Bare(TransportEvent::Deadline),
+            other => panic!("an event this test does not model: {other:?}"),
         }
     }
 }

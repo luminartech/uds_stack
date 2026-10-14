@@ -48,6 +48,7 @@ pub use transfer::{DataTransfer, TransferRequest};
 /// Public only because [`Responded`] names it; an application never builds or reads one.
 #[doc(hidden)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum Effect {
     /// Nothing follows the response.
     None,
@@ -224,6 +225,7 @@ impl SessionTransition {
 /// A request as the transport delivered it: whole, or only the front of a message longer
 /// than the buffer it was received into.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum Received<'a> {
     /// The whole request, service identifier first.
     Whole(&'a [u8]),

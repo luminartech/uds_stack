@@ -17,7 +17,7 @@ use super::traits::{Decode, Encode};
 pub enum ProtocolVersion {
     /// Reserved by ISO 13400-2; not a valid version for a `DoIP` entity to send.
     Reserved = 0x00,
-    /// ISO 13400-2:2010
+    /// ISO/DIS 13400-2:2010
     V2010 = 0x01,
     /// ISO 13400-2:2012
     V2012 = 0x02,

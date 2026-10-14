@@ -375,11 +375,10 @@ it on the connection named. It takes no reason, because why the close happens is
 reason. A tester reconnects through `TesterConnection::reconnect`, which an entity
 has no use for, so it is not on the shared trait.
 
-**`Err` never means closed, and the events are exhaustive.** A connection ending is
-the event `Closed`, after every accepted request has had its one `Confirm`, so a
-caller has one path for an end however it came about. The event enums and
-`DoIpResult` have no `#[non_exhaustive]`, because an edition of the standard that adds
-a value is a change every caller must handle.
+**`Err` never means closed.** A connection ending is the event `Closed`, after every
+accepted request has had its one `Confirm`, so a caller has one path for an end
+however it came about. The event and refusal enums are this crate's own and
+`#[non_exhaustive]`; `DoIpResult` mirrors 8.2.5's list and is exhaustive.
 
 **Decided by default.** Each of these is a choice the standard leaves open or that
 the sensor forced. Raise any of them to overturn it.

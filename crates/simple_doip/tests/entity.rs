@@ -110,6 +110,7 @@ fn owned(event: EntityEvent<'_>) -> Ev {
         },
         EntityEvent::Closed { connection } => Ev::Closed(connection.index()),
         EntityEvent::Deadline => Ev::Deadline,
+        other => panic!("an event this test does not model: {other:?}"),
     }
 }
 

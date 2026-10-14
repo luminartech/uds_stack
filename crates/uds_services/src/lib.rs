@@ -60,28 +60,12 @@
 //!
 //! # Exhaustive matching
 //!
-//! Only what may grow is `#[non_exhaustive]`, and that is a decision rather than an
-//! omission. Five types are:
-//!
-//! - [`DtcReportKind`] names only the clause 12.3 layouts this crate sizes, so it grows
-//!   as more are sized.
-//! - [`ClientError`] may gain a class of failure for which a call produced no response.
-//! - [`MalformedResponse`] may gain a way in which a server's reply disagrees with this
-//!   application about the bytes.
-//! - [`Replaced`] may gain a replacement a transport learns to tell apart from these.
-//! - [`ClientTiming`] may gain a parameter of the timing ISO 14229-2 leaves to the
-//!   client.
-//!
-//! Every other enumeration here is closed by ISO 14229 or by the architecture, from
-//! [`SessionTransition`]'s four transitions of clause 10.2 Figure 7 onward. `uds_session`
-//! keeps the attribute on exactly the two outputs its own requirement set leaves open,
-//! and on nothing else, for the same reason.
-//!
-//! So a caller matches every other enumeration exhaustively, and a new variant stops
-//! their build. That is the correct signal: it says a requirement changed and their
-//! handling needs revisiting. `#[non_exhaustive]` would turn it into a wildcard arm that
-//! absorbs the change in silence, which is the same failure as a hand-maintained variant
-//! list.
+//! An enumeration is exhaustive only where ISO 14229 fixes the set it mirrors, such as
+//! [`SessionTransition`]'s four transitions of clause 10.2 Figure 7, [`KeyVerdict`]'s
+//! Annex I key outcomes, or [`Repeats`]'s ISO 14229-2:2021 Table 9 range. Every other
+//! one — an error, an outcome of a call, an event at the transport seam, a set this
+//! crate chose — is `#[non_exhaustive]`, because it can grow without a new edition of
+//! the standard.
 
 #![no_std]
 #![forbid(unsafe_code)]

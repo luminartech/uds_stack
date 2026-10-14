@@ -27,7 +27,7 @@ pub enum Frame {
         error: MessageError,
     },
     /// A frame whose header declares a payload longer than
-    /// [`MessageCodec::max_payload_length`]: ISO 13400-2:2019 Table 16's
+    /// [`MessageCodec::max_payload_length`]: ISO 13400-2:2019 Table 19's
     /// "message too large" (`0x02`). Its payload is discarded as it arrives, so the
     /// frame after it decodes.
     TooLarge {
