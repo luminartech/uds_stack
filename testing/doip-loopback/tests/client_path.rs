@@ -13,14 +13,15 @@ use doip_loopback::{
     ticking,
 };
 use embassy_time::Duration;
-use uds_on_ip::DoIpTransport;
+use simple_doip::tester::TesterVersion;
 use uds_on_ip::profile::bench_reloads;
+use uds_on_ip::{DoIpClientTransport, DoIpTransport};
 use uds_protocol::NegativeResponseCode as Nrc;
 use uds_services::{
     Address, ClientError, ClientTiming, DataIdentifier, DiagnosticSessionControl,
     DiagnosticSessionType as S, KeepAlive, PhysicalKeepAlive, ReadDataByIdentifier,
-    RecordError, Reloads, Response, ResponseSink, ServerParams, SessionTiming,
-    SessionTransition, Sink, UdsTransport, uds_client, uds_server,
+    RecordError, Reloads, Repeats, Response, ResponseSink, RoutineIdentifier, ServerParams,
+    SessionTiming, SessionTransition, Sink, UdsTransport, uds_client, uds_server,
 };
 
 /// Two identifiers sharing a service and a high byte, so a positive response to one
@@ -58,6 +59,21 @@ impl DataIdentifier for Did {
             Self::Slow => 1,
         };
         buf.split_at_checked(len).ok_or(RecordError::Short)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Rid {
+    SelfTest,
+}
+
+impl RoutineIdentifier for Rid {
+    const MAX_STATUS_LEN: usize = 1;
+    fn as_u16(self) -> u16 {
+        0x0201
+    }
+    fn from_u16(v: u16) -> Option<Self> {
+        (v == 0x0201).then_some(Self::SelfTest)
     }
 }
 
@@ -117,6 +133,13 @@ uds_client! {
     Did;
     transport = SensorClientTransport,
     max_dids_per_request = 1,
+    routines = Rid,
+    max_dtcs = 4,
+    max_dtc_record_len = 16,
+    max_seed_len = 2,
+    max_key_len = 2,
+    max_option_len = 4,
+    max_block_len = 64,
     physical = 1,
     functional = 1,
     responders = 1,
@@ -165,6 +188,17 @@ async fn client(loopback: &Loopback, backoff: Duration) -> Diagnoser {
     )
 }
 
+/// A client whose response-timeout repeat is capped at `repeats`.
+async fn client_repeating(
+    loopback: &Loopback,
+    backoff: Duration,
+    repeats: Repeats,
+) -> Diagnoser {
+    let mut c = client(loopback, backoff).await;
+    c.timing_mut().repeats = repeats;
+    c
+}
+
 /// The record a positive read of `did` returned, or a panic naming what came instead.
 fn record(
     read: Result<
@@ -190,6 +224,36 @@ fn a_client_reads_a_did_over_loopback() {
         let mut server = server(&loopback);
         serve_until(&mut server, async {
             let mut c = client(&loopback, Duration::from_ticks(0)).await;
+            assert_eq!(
+                record(
+                    c.read_data_by_identifier(SERVER, &[Did::Vin]).await,
+                    Did::Vin
+                ),
+                VIN
+            );
+            c.close().await.expect("closed");
+        })
+        .await;
+    });
+}
+
+/// A client whose tester sends ISO 13400-2:2012's protocol version reads from the
+/// sensor's server, which implements both it and ISO 13400-2:2019's (Table 16).
+#[test]
+fn a_client_sending_2012_reads_a_did_over_loopback() {
+    on_loopback(|loopback| async move {
+        let mut server = server(&loopback);
+        serve_until(&mut server, async {
+            let tester = loopback
+                .tester_sending(TesterVersion::V2012, Duration::from_ticks(0))
+                .await
+                .expect("activated");
+            let mut c = Diagnoser::new(
+                DoIpClientTransport::new(tester, RELOADS),
+                TESTER,
+                KeepAlive::physical(2_000),
+                ClientTiming::new(0, 0, 0),
+            );
             assert_eq!(
                 record(
                     c.read_data_by_identifier(SERVER, &[Did::Vin]).await,
@@ -277,6 +341,44 @@ fn a_reconnect_drops_backs_off_then_connects() {
             assert!(
                 u64::from(waited) >= BACKOFF.as_millis(),
                 "connected {waited} ms after the drop"
+            );
+            c.close().await.expect("closed");
+        })
+        .await;
+    });
+}
+
+/// `ClientTiming::repeats` at `Repeats::Never` over `DoIP`: the slow read reports the first
+/// expired window, and the late-reply guard still holds, so the next read goes on a new
+/// connection after one back-off and the slow read's late answer reaches neither read.
+#[test]
+fn a_ceiling_of_zero_times_out_after_one_window_and_one_backoff() {
+    const BACKOFF: Duration = Duration::from_millis(500);
+    on_loopback(|loopback| async move {
+        let mut server = server(&loopback);
+        serve_until(&mut server, async {
+            let mut c = client_repeating(&loopback, BACKOFF, Repeats::Never).await;
+            let before = c.transport().now();
+            let slow = ticking(c.read_data_by_identifier(SERVER, &[Did::Slow]), STEP).await;
+            assert!(matches!(slow, Err(ClientError::Timeout)), "{slow:?}");
+            let window = c.transport().now().0.wrapping_sub(before.0);
+            // One window (`RELOADS.default_reload`), not three plus two back-offs.
+            assert!(
+                u64::from(window) < 2 * u64::from(RELOADS.default_reload),
+                "timed out {window} ms after the request"
+            );
+
+            let before = c.transport().now();
+            for _ in 0..2 {
+                let read =
+                    ticking(c.read_data_by_identifier(SERVER, &[Did::Vin]), STEP).await;
+                assert_eq!(record(read, Did::Vin), VIN);
+            }
+            let waited = c.transport().now().0.wrapping_sub(before.0);
+            assert!(
+                u64::from(waited) >= BACKOFF.as_millis()
+                    && u64::from(waited) < 2 * BACKOFF.as_millis(),
+                "the reads took {waited} ms: expected exactly one back-off"
             );
             c.close().await.expect("closed");
         })

@@ -1,0 +1,17 @@
+# Not published: the sensor's application, every staged service implemented as a
+# sensor's would, shared by the bare-metal probe that measures it and the loopback tests
+# that drive it from a client.
+[package]
+name = "sensor-services"
+version = "0.0.0"
+edition = "2024"
+rust-version.workspace = true
+publish = false
+description = "The sensor's eleven UDS service implementations, for the probe and the loopback tests"
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+uds_services = { workspace = true }
+
+[lints]
+workspace = true

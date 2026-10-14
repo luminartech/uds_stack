@@ -60,19 +60,28 @@
 //!
 //! # Exhaustive matching
 //!
-//! Nothing here is `#[non_exhaustive]`, and that is a decision rather than an omission.
+//! Only what may grow is `#[non_exhaustive]`, and that is a decision rather than an
+//! omission. Five types are:
 //!
-//! The attribute rests on a requirement stating an *open* enumeration. No requirement in
-//! this crate's set states one: every enumeration here is closed by ISO 14229 or by the
-//! architecture, from [`SessionTransition`]'s four transitions of clause 10.2 Figure 7 to
-//! [`DtcReportKind`]'s five response layouts of clause 12.3. `uds_session` keeps the
-//! attribute on exactly the two outputs its own requirement set leaves open, and on
-//! nothing else, for the same reason.
+//! - [`DtcReportKind`] names only the clause 12.3 layouts this crate sizes, so it grows
+//!   as more are sized.
+//! - [`ClientError`] may gain a class of failure for which a call produced no response.
+//! - [`MalformedResponse`] may gain a way in which a server's reply disagrees with this
+//!   application about the bytes.
+//! - [`Replaced`] may gain a replacement a transport learns to tell apart from these.
+//! - [`ClientTiming`] may gain a parameter of the timing ISO 14229-2 leaves to the
+//!   client.
 //!
-//! So a caller matches exhaustively and a new variant stops their build. That is the
-//! correct signal: it says a requirement changed and their handling needs revisiting.
-//! `#[non_exhaustive]` would turn it into a wildcard arm that absorbs the change in
-//! silence, which is the same failure as a hand-maintained variant list.
+//! Every other enumeration here is closed by ISO 14229 or by the architecture, from
+//! [`SessionTransition`]'s four transitions of clause 10.2 Figure 7 onward. `uds_session`
+//! keeps the attribute on exactly the two outputs its own requirement set leaves open,
+//! and on nothing else, for the same reason.
+//!
+//! So a caller matches every other enumeration exhaustively, and a new variant stops
+//! their build. That is the correct signal: it says a requirement changed and their
+//! handling needs revisiting. `#[non_exhaustive]` would turn it into a wildcard arm that
+//! absorbs the change in silence, which is the same failure as a hand-maintained variant
+//! list.
 
 #![no_std]
 #![forbid(unsafe_code)]
@@ -85,7 +94,7 @@ pub mod assembly;
 pub mod client;
 pub use client::{
     Answer, Client, ClientError, ClientKeepAlive, ClientSet, ClientTiming, KeepAlive,
-    MalformedResponse, Records, Response, Responses,
+    MalformedResponse, Records, Repeats, Replaced, Response, Responses,
 };
 
 pub mod server;
@@ -188,10 +197,12 @@ pub use services::{
 /// them can carry `suppressPosRspMsgIndication`: that bit is the pipeline's and never
 /// reaches a handler.
 pub use uds_protocol::{
-    CLEAR_ALL_DTCS, CommunicationControlType, CommunicationType, DiagnosticSessionType,
-    DtcRecord, DtcSettingType, DtcStatusMask, FileOperationMode, FunctionalGroupIdentifier,
-    NegativeResponseCode, ReadDtcInfoReportType, ReadDtcInfoSubFunction, ResetType,
-    RoutineControlSubFunction, SubnetNumber, UdsServiceType,
+    AddressAndLengthFormatIdentifier, CLEAR_ALL_DTCS, CommunicationControlType,
+    CommunicationType, DataFormatIdentifier, DiagnosticSessionType, DtcExtDataRecordNumber,
+    DtcRecord, DtcSettingType, DtcSnapshotRecordNumber, DtcStatusMask, FileOperationMode,
+    FunctionalGroupIdentifier, NegativeResponseCode, ReadDtcInfoReportType,
+    ReadDtcInfoResponse, ReadDtcInfoSubFunction, ResetType, RoutineControlSubFunction,
+    SubnetNumber, UdsServiceType,
 };
 
 /// Re-exported only so `uds_server!`'s expansion can name it; not part of the API.

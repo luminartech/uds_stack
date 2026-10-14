@@ -43,8 +43,10 @@ lockstep with the rest of the `uds_stack` workspace (`uds_protocol`, `uds_sessio
   into a `ResponseSink`.
 - `uds_client!`, which builds a client from the same identifier enumeration the
   server's handlers use. Changing that enumeration on only one side fails to
-  compile. It emits a `Client` alias with the channel counts and keep-alive mode
-  set.
+  compile. `uds_client!` implements `ClientSet` for the identifier type in the
+  crate that invokes it, so an enumeration shared with the server side and defined
+  in another crate is newtyped on the client side. It emits a `Client` alias with
+  the channel counts and keep-alive mode set.
 - `Client`, the async client driver over `uds_session`'s client role:
   `read_data_by_identifier` (physical, returning the declared identifier/record
   pairs as `Records`), `read_data_by_identifier_functional` (a `Responses` stream
@@ -69,6 +71,51 @@ lockstep with the rest of the `uds_stack` workspace (`uds_protocol`, `uds_sessio
 - `no_std` and allocation-free in every configuration, with no Cargo features.
   Responses are written into caller-owned storage, and no public type carries a
   `Vec` or `String`. No async runtime is named. `unsafe` is forbidden. MSRV 1.91.
+- `Client` calls for every service the sensor stages, and the transfer steps:
+  `write_data_by_identifier`, `read_dtc_information`, `clear_diagnostic_information`,
+  `security_access_seed` and `security_access_key`, `routine_control`, `ecu_reset`,
+  `request_download` (narrowest address and size widths) and
+  `request_download_with_format` (a caller-chosen `addressAndLengthFormatIdentifier`),
+  `transfer_data`, `request_transfer_exit`, `communication_control` and
+  `control_dtc_setting`. Each encodes its request through `uds_protocol`, decodes
+  the reply exactly, and answers a wrong echo with `MalformedResponse::Echo`. No call
+  sets the suppress-positive-response bit.
+- `Client::connection_replaced` and `Replaced`: why a server's connection is not the one
+  the last ask saw. `Replaced::SessionLost` is a close the protocol prescribes, after a
+  positive `ecu_reset` or a positive `diagnostic_session_control` the transport marked
+  as leaving, so the server's session and security are gone;
+  `Replaced::SessionUnknown` is any other close, including the client's own reconnect
+  to repeat an unanswered request, after which they may be intact; `Replaced::No` is
+  none. A positive `ecu_reset` is reported at once and its later close not again,
+  unless the server answers first; any other close once the transport has been polled
+  since it arrived, `SessionLost` once where both kinds happen between asks. One ask
+  takes the events the transport holds when it is made, and sends a keep-alive that
+  fell due.
+- `Response::map`, and `MalformedResponse::Echo` and `Decode`.
+- Re-exports of `uds_protocol`'s `ReadDtcInfoResponse`, `DataFormatIdentifier`,
+  `AddressAndLengthFormatIdentifier`, `DtcSnapshotRecordNumber` and
+  `DtcExtDataRecordNumber`, which the new calls take or
+  return.
+- `ClientTiming::repeats`, a `Repeats` ceiling on a physically addressed request's
+  repeats under which an expired response window is repeated: ISO 14229-2:2021 Table
+  9's two (`Repeats::Twice`) by default, set by `ClientTiming::with_repeats`, read and
+  changed through `Client::timing` and `Client::timing_mut`. It counts every repeat of
+  the request, as Table 9 does. A failed transmission is repeated to two regardless,
+  and functionally addressed requests are not under it.
+
+### Changed
+
+- **Breaking:** `DtcReportKind` is `#[non_exhaustive]` and gains `SnapshotRecords` and
+  `ExtDataRecords`, sub-functions `0x04` and `0x06`, bounded in record bytes. A server
+  cannot yet answer them; a client reads them.
+- **Breaking:** `uds_client!` takes `routines`, `max_dtcs`, `max_dtc_record_len`,
+  `max_seed_len`, `max_key_len`, `max_option_len` and `max_block_len`, and folds the
+  client's buffers from them as `uds_server!` folds a server's from its service traits.
+  `ClientSet` gains `type Routine`, `const MAX_DIDS_PER_REQUEST`, `const MAX_KEY_LEN`,
+  `const MAX_OPTION_LEN` and `const MAX_BLOCK_LEN`, the most data bytes one
+  `TransferData` block carries. Each call refuses an input past its maximum as
+  `ClientError::Request` before sending. A transport whose `MAX_PDU` cannot carry a
+  request of the declared maxima fails to compile, naming the input.
 
 ### Known limitations
 
@@ -76,7 +123,7 @@ lockstep with the rest of the `uds_stack` workspace (`uds_protocol`, `uds_sessio
   count fails to compile.
 - The upload/download services (0x34–0x38) are not served yet. The `DataTransfer`
   trait exists, but a server that lists it answers `serviceNotSupported`.
-- The client supports `ReadDataByIdentifier` and `DiagnosticSessionControl`, plus
-  `TesterPresent` keep-alives.
+- The client sends `TesterPresent` only as its keep-alive. The transfer calls are
+  single exchanges: the block sequence and any orchestration above them are the caller's.
 - An `Err` from `Server::step` or `Server::run` is terminal for that server
   instance, and neither future is cancel-safe. Drop `step` only between calls.

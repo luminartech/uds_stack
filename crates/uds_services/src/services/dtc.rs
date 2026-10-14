@@ -7,14 +7,16 @@ use uds_protocol::{
 
 /// Which shape of `ReadDTCInformation` response a report type produces.
 ///
-/// ISO 14229-1:2020 clause 12.3 gives each report type one of five response layouts, and
-/// the layout fixes the header and record widths — they are not the application's to
-/// choose. A server declares the layouts it answers in [`ReadDtcInformation::REPORTS`]
-/// and [`crate::uds_server`] folds the widest of them into the response buffer.
+/// Each ISO 14229-1:2020 clause 12.3 report type named here has one of seven response
+/// layouts, and the layout fixes the header and record widths — they are not the
+/// application's to choose. A server declares the layouts it answers in
+/// [`ReadDtcInformation::REPORTS`] and [`crate::uds_server`] folds the widest of them into
+/// the response buffer.
 ///
-/// The five correspond one-to-one to [`uds_protocol::ReadDtcInfoResponse`]'s variants,
+/// Each corresponds to one or more of [`uds_protocol::ReadDtcInfoResponse`]'s variants,
 /// which is where the widths below are read from rather than restated.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum DtcReportKind {
     /// A count and no records — sub-functions `0x01` and `0x07`.
     Count,
@@ -27,6 +29,12 @@ pub enum DtcReportKind {
     SeverityList,
     /// WWH-OBD severity records — `0x42`.
     WwhObdSeverity,
+    /// One DTC's snapshot records, raw — `0x04`. Bounded in bytes, not records: a
+    /// record's width is the application's identifiers' to know.
+    SnapshotRecords,
+    /// One DTC's extended data records, raw — `0x06`. Bounded in bytes, as
+    /// [`Self::SnapshotRecords`] is.
+    ExtDataRecords,
 }
 
 impl DtcReportKind {
@@ -35,7 +43,10 @@ impl DtcReportKind {
     #[must_use]
     pub const fn header_len(self) -> usize {
         match self {
-            Self::Count | Self::WwhObdSeverity => 6,
+            Self::Count
+            | Self::WwhObdSeverity
+            | Self::SnapshotRecords
+            | Self::ExtDataRecords => 6,
             Self::DtcList | Self::SeverityList => 3,
             Self::FaultDetectionCounters => 2,
         }
@@ -46,6 +57,7 @@ impl DtcReportKind {
     pub const fn record_len(self) -> usize {
         match self {
             Self::Count => 0,
+            Self::SnapshotRecords | Self::ExtDataRecords => 1,
             Self::DtcList | Self::FaultDetectionCounters => 4,
             Self::WwhObdSeverity => 5,
             Self::SeverityList => 6,

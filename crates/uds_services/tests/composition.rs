@@ -25,10 +25,10 @@ use uds_services::{
     DiagnosticSessionType, DtcRecord, DtcReportKind, DtcStatusMask, KeepAlive, KeyVerdict,
     Mtype, PhysicalKeepAlive, ReadDataByIdentifier, ReadDtcInfoReportType,
     ReadDtcInfoSubFunction, ReadDtcInformation, Received, RecordError, Reloads, Response,
-    ResponseSink, SecurityAccess, SecurityLevel, SecurityPolicy, ServerParams, ServiceSet,
-    SessionTiming, SessionTransition, Sessions, Sink, Storage, SubnetNumber, TaType,
-    TesterPresent, Timestamp, TransferRequest, TransportEvent, UdsServiceType,
-    UdsTransport, uds_client, uds_server,
+    ResponseSink, RoutineIdentifier, SecurityAccess, SecurityLevel, SecurityPolicy,
+    ServerParams, ServiceSet, SessionTiming, SessionTransition, Sessions, Sink, Storage,
+    SubnetNumber, TaType, TesterPresent, Timestamp, TransferRequest, TransportEvent,
+    UdsServiceType, UdsTransport, uds_client, uds_server,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -58,6 +58,21 @@ impl DataIdentifier for Did {
             Self::VinNumber => 17,
         };
         buf.split_at_checked(w).ok_or(RecordError::Short)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Rid {
+    SelfTest,
+}
+
+impl RoutineIdentifier for Rid {
+    const MAX_STATUS_LEN: usize = 1;
+    fn as_u16(self) -> u16 {
+        0x0201
+    }
+    fn from_u16(v: u16) -> Option<Self> {
+        (v == 0x0201).then_some(Self::SelfTest)
     }
 }
 
@@ -497,6 +512,13 @@ uds_client! {
     Did;
     transport = FakeTransport,
     max_dids_per_request = 4,
+    routines = Rid,
+    max_dtcs = 4,
+    max_dtc_record_len = 16,
+    max_seed_len = 2,
+    max_key_len = 2,
+    max_option_len = 4,
+    max_block_len = 16,
     physical = 2,
     functional = 1,
     responders = 4,
@@ -514,9 +536,10 @@ static TESTER: Tester = Tester::new(
 );
 
 /// ``UDSSVC_ARCH_0024`` — the tester and the server size the same exchange from the same
-/// `Did` declaration. The request is the service identifier and two bytes per identifier;
-/// the response is the service identifier and each identifier beside its record, which is
-/// the same `1 + 4 * (2 + 17)` the server folded in for `ReadDataByIdentifier`.
+/// `Did` declaration. The widest request is a write of the widest record, the service
+/// identifier and the identifier beside it; the widest response is a read, the service
+/// identifier and each identifier beside its record, which is the same `1 + 4 * (2 + 17)`
+/// the server folded in for `ReadDataByIdentifier`.
 ///
 /// **If these disagree, one side of the vocabulary moved without the other.** That is the
 /// compile error one identifier catalogue serving both roles exists to produce.
@@ -524,7 +547,7 @@ static TESTER: Tester = Tester::new(
 fn the_client_buffers_are_derived_from_the_same_declaration() {
     let mut store = <<Did as ClientSet>::Store as ClientStorage>::EMPTY;
     let b = store.split();
-    assert_eq!(b.request.len(), 1 + 2 * 4);
+    assert_eq!(b.request.len(), 3 + 17);
     assert_eq!(b.response.len(), 1 + 4 * (2 + 17));
 
     let mut server_store = <<Ecu as ServiceSet>::Store as Storage>::EMPTY;

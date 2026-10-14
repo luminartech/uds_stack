@@ -190,7 +190,9 @@ impl<C: TesterConnection, const QUEUE: usize, const PEERS: usize, const WAITING:
     ///
     /// # Arguments
     ///
-    /// * `connection` - a connected [`TesterConnection`], routing activated.
+    /// * `connection` - a connected [`TesterConnection`], routing activated. It sends
+    ///   every request, and opens every later connection, in the protocol version it was
+    ///   given (`simple_doip`'s `Tester::connect_with_version`).
     /// * `reloads` - the `tP6_Client` pair; see
     ///   [`profile::bench_reloads`](crate::profile::bench_reloads).
     ///

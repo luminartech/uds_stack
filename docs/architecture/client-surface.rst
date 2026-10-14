@@ -168,8 +168,9 @@ The elements
    or clause 8.7 required it.
 
    This mirrors ``Responded::Suppressed`` on the server side (``UDSSVC_ARCH_0016``). The
-   faults are the client's ``ClientError``: a response window that expired after
-   ISO 14229-2:2021 9.7 Table 9's repeats, a transmission that failed after them, and a
+   faults are the client's ``ClientError``: a response window that expired after the
+   repeats the integration's ceiling allows, Table 9's two by default
+   (``UDSSVC_ARCH_0043``), a transmission that failed after Table 9's two, and a
    connection that closed first.
 
 .. arch:: One identifier vocabulary serves both roles
@@ -190,6 +191,31 @@ The elements
    type cannot be an associated type of a *server* trait alone, because client code that
    implements no server trait must still be able to name it. Where it is declared instead
    is unsettled — see :doc:`open-questions`.
+
+.. arch:: The repeat is the integration's; the client performs it under a ceiling
+   :id: UDSSVC_ARCH_0043
+   :depends_on: UDSSVC_ARCH_0023
+   :status: draft
+   :origin: session-layer-standard
+   :source: ISO 14229-2:2021 9.7 Table 9
+   :tags: client; error-handling
+
+   ISO 14229-2:2021 9.7 Table 9 has a client repeat a physically addressed request whose
+   response window expired, at most twice, and the session layer leaves performing the
+   repeat to the application (``UDSS_LLR_0177`` caps it). ``uds_services::Client`` is the
+   application's proxy for it: it performs the repeat, under a ceiling the integration
+   sets in ``ClientTiming::repeats``, Table 9's two by default.
+
+   The ceiling exists because a repeat is not free on every transport and not harmless for
+   every service: over ``DoIP`` each repeat goes on a new connection after the tester's
+   back-off, and a repeated ``SecurityAccess`` key reaches an unlocked server as a sequence
+   error. Which requests to repeat is the integration's knowledge, not the crate's, so the
+   crate ships the standard's figure and the knob, and decides nothing further. A failed
+   transmission is repeated to Table 9's two regardless, that cell being the link's; a
+   functionally addressed request is not under the ceiling.
+
+   A per-service repeat class, set where the client is assembled and read under this
+   ceiling, is the next step and is not designed here.
 
 Two layers
 ----------
@@ -330,8 +356,9 @@ The programming process
    specific, and lets a programme choose a functionally or a physically oriented vehicle
    approach for them. Only the standardized steps are common across programmes, so only
    they are library-able; the rest is a vehicle programme's own sequence expressed over
-   ``UDSSVC_ARCH_0028``'s client. Building the orchestration before there is a client that
-   can execute one step of it would be designing against nothing.
+   ``UDSSVC_ARCH_0028``'s client. The client executes the standardized transfer steps as
+   single calls, ``request_download``, ``transfer_data`` and ``request_transfer_exit``, and
+   the orchestration above them remains deferred.
 
    The "master execute" coordination of 17.1, where steps are functionally addressed to
    every node and their results reconciled, is the same problem ``UDSSVC_ARCH_0022`` already

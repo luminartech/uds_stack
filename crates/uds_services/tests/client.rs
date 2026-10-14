@@ -11,10 +11,14 @@ use common::{Script, Step, block_on};
 use core::future::Future;
 use core::task::Poll;
 use uds_services::{
-    Address, Ai, Answer, ClientError, ClientTiming, DataIdentifier, DiagnosticSessionType,
-    FunctionalKeepAlive, KeepAlive, MalformedResponse, Mtype, NegativeResponseCode,
-    PhysicalKeepAlive, RecordError, Reloads, Response, SResult, SessionTiming, TaType,
-    Timestamp, uds_client,
+    Address, AddressAndLengthFormatIdentifier, Ai, Answer, CLEAR_ALL_DTCS, ClientError,
+    ClientSet, ClientTiming, CommunicationControlType, CommunicationType,
+    DataFormatIdentifier, DataIdentifier, DiagnosticSessionType, DtcExtDataRecordNumber,
+    DtcRecord, DtcSettingType, DtcSnapshotRecordNumber, DtcStatusMask, FunctionalKeepAlive,
+    KeepAlive, MalformedResponse, Mtype, NegativeResponseCode, PhysicalKeepAlive,
+    ReadDtcInfoResponse, ReadDtcInfoSubFunction, RecordError, Reloads, Repeats, Replaced,
+    ResetType, Response, RoutineControlSubFunction, RoutineIdentifier, SResult,
+    SecurityLevel, SessionTiming, SubnetNumber, TaType, Timestamp, uds_client,
 };
 use uds_session::TransportError;
 
@@ -87,15 +91,38 @@ macro_rules! vocabulary {
     };
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Rid {
+    SelfTest,
+}
+
+impl RoutineIdentifier for Rid {
+    const MAX_STATUS_LEN: usize = 2;
+    fn as_u16(self) -> u16 {
+        0x0201
+    }
+    fn from_u16(v: u16) -> Option<Self> {
+        (v == 0x0201).then_some(Self::SelfTest)
+    }
+}
+
 vocabulary!(Did);
 vocabulary!(FunctionalDid);
 vocabulary!(WideDid);
 vocabulary!(WideFunctionalDid);
+vocabulary!(NarrowBlockDid);
 
 uds_client! {
     Did;
     transport = Script,
     max_dids_per_request = 2,
+    routines = Rid,
+    max_dtcs = 4,
+    max_dtc_record_len = 16,
+    max_seed_len = 2,
+    max_key_len = 2,
+    max_option_len = 4,
+    max_block_len = 16,
     physical = 2,
     functional = 1,
     responders = 1,
@@ -107,6 +134,13 @@ uds_client! {
     FunctionalDid;
     transport = Script,
     max_dids_per_request = 2,
+    routines = Rid,
+    max_dtcs = 4,
+    max_dtc_record_len = 16,
+    max_seed_len = 2,
+    max_key_len = 2,
+    max_option_len = 4,
+    max_block_len = 16,
     physical = 1,
     functional = 1,
     responders = 2,
@@ -118,6 +152,13 @@ uds_client! {
     WideDid;
     transport = Script,
     max_dids_per_request = 2,
+    routines = Rid,
+    max_dtcs = 4,
+    max_dtc_record_len = 16,
+    max_seed_len = 2,
+    max_key_len = 2,
+    max_option_len = 4,
+    max_block_len = 16,
     physical = 3,
     functional = 1,
     responders = 1,
@@ -129,11 +170,36 @@ uds_client! {
     WideFunctionalDid;
     transport = Script,
     max_dids_per_request = 2,
+    routines = Rid,
+    max_dtcs = 4,
+    max_dtc_record_len = 16,
+    max_seed_len = 2,
+    max_key_len = 2,
+    max_option_len = 4,
+    max_block_len = 16,
     physical = 2,
     functional = 1,
     responders = 2,
     keep_alive = FunctionalKeepAlive,
     client = WideFunctionalTester,
+}
+
+uds_client! {
+    NarrowBlockDid;
+    transport = Script,
+    max_dids_per_request = 2,
+    routines = Rid,
+    max_dtcs = 4,
+    max_dtc_record_len = 16,
+    max_seed_len = 2,
+    max_key_len = 2,
+    max_option_len = 4,
+    max_block_len = 2,
+    physical = 1,
+    functional = 1,
+    responders = 1,
+    keep_alive = PhysicalKeepAlive,
+    client = NarrowBlockTester,
 }
 
 fn tester(steps: &[Step]) -> Tester {
@@ -286,6 +352,213 @@ fn a_failed_transmission_is_repeated_after_the_spacing_then_not_sent() {
     assert_eq!(s.sent_count, 3);
     assert_eq!(s.sent(1).map(|x| x.at), Some(10));
     assert_eq!(s.sent(2).map(|x| x.at), Some(20));
+}
+
+/// A tester whose ceiling on ISO 14229-2:2021 Table 9's response-timeout repeat is
+/// `repeats`.
+fn tester_repeating(steps: &[Step], repeats: Repeats) -> Tester {
+    Tester::new(
+        Script::new(steps),
+        TESTER,
+        KeepAlive::physical(S3_CLIENT),
+        TIMING.with_repeats(repeats),
+    )
+}
+
+/// `ClientTiming::repeats` at `Repeats::Never` — an unanswered request is sent once and
+/// reports the first expired window; the channel is reset, so the next request is sent
+/// and answered.
+#[test]
+fn a_ceiling_of_zero_reports_the_first_expired_window() {
+    let mut t = tester_repeating(
+        &[
+            Step::Conf(to(ECU), SResult::Ok),
+            Step::At(100),
+            Step::Conf(to(ECU), SResult::Ok),
+            Step::Ind(from(ECU), SPEED),
+        ],
+        Repeats::Never,
+    );
+    assert_eq!(
+        block_on(t.read_data_by_identifier(ECU, &[Did::Speed])).err(),
+        Some(ClientError::Timeout)
+    );
+    assert_eq!(t.transport().sent_count, 1);
+    assert_eq!(t.transport().deadlines, 1);
+    assert_eq!(
+        speed(block_on(t.read_data_by_identifier(ECU, &[Did::Speed]))),
+        0x40
+    );
+    assert_eq!(t.transport().sent_count, 2);
+}
+
+/// A ceiling of one repeats once; a ceiling of two repeats twice, Table 9's most.
+#[test]
+fn a_ceiling_caps_the_repeats_under_table_9s_two() {
+    let mut t = tester_repeating(
+        &[
+            Step::Conf(to(ECU), SResult::Ok),
+            Step::At(100),
+            Step::Conf(to(ECU), SResult::Ok),
+            Step::At(200),
+        ],
+        Repeats::Once,
+    );
+    assert_eq!(
+        block_on(t.read_data_by_identifier(ECU, &[Did::Speed])).err(),
+        Some(ClientError::Timeout)
+    );
+    assert_eq!(t.transport().sent_count, 2);
+
+    let mut t = tester_repeating(
+        &[
+            Step::Conf(to(ECU), SResult::Ok),
+            Step::At(100),
+            Step::Conf(to(ECU), SResult::Ok),
+            Step::At(200),
+            Step::Conf(to(ECU), SResult::Ok),
+            Step::At(300),
+        ],
+        Repeats::Twice,
+    );
+    assert_eq!(
+        block_on(t.read_data_by_identifier(ECU, &[Did::Speed])).err(),
+        Some(ClientError::Timeout)
+    );
+    assert_eq!(t.transport().sent_count, 3);
+}
+
+/// Table 9's transmission-failure cell is the link's, not the request's: a failed
+/// transmission is repeated twice whatever the ceiling.
+#[test]
+fn a_ceiling_of_zero_still_repeats_a_failed_transmission() {
+    let mut t = tester_repeating(
+        &[
+            Step::Conf(to(ECU), FAILED),
+            Step::At(10),
+            Step::Conf(to(ECU), FAILED),
+            Step::At(20),
+            Step::Conf(to(ECU), FAILED),
+        ],
+        Repeats::Never,
+    );
+    assert_eq!(
+        block_on(t.read_data_by_identifier(ECU, &[Did::Speed])).err(),
+        Some(ClientError::NotSent)
+    );
+    assert_eq!(t.transport().sent_count, 3);
+}
+
+/// One count covers both of Table 9's cells: a failed transmission's repeat counts against
+/// the ceiling, so at `Repeats::Never` a failed transmission then an expired window is two
+/// transmissions and `Timeout`, and at `Repeats::Once` the expired window is not repeated
+/// at all.
+#[test]
+fn a_failed_transmissions_repeat_counts_against_the_ceiling() {
+    let mut t = tester_repeating(
+        &[
+            Step::Conf(to(ECU), FAILED),
+            Step::At(10),
+            Step::Conf(to(ECU), SResult::Ok),
+            Step::At(110),
+        ],
+        Repeats::Never,
+    );
+    assert_eq!(
+        block_on(t.read_data_by_identifier(ECU, &[Did::Speed])).err(),
+        Some(ClientError::Timeout)
+    );
+    assert_eq!(t.transport().sent_count, 2);
+
+    let mut t = tester_repeating(
+        &[
+            Step::Conf(to(ECU), FAILED),
+            Step::At(10),
+            Step::Conf(to(ECU), SResult::Ok),
+            Step::At(110),
+        ],
+        Repeats::Once,
+    );
+    assert_eq!(
+        block_on(t.read_data_by_identifier(ECU, &[Did::Speed])).err(),
+        Some(ClientError::Timeout)
+    );
+    assert_eq!(t.transport().sent_count, 2);
+}
+
+/// A functionally addressed read is not under the ceiling: its window closes and its
+/// answers are collected as before.
+#[test]
+fn a_ceiling_of_zero_leaves_a_functional_read_alone() {
+    let mut t = tester_repeating(
+        &[
+            Step::Conf(FUNCTIONAL, SResult::Ok),
+            Step::Ind(from(ECU), SPEED),
+            Step::At(1_000),
+        ],
+        Repeats::Never,
+    );
+    let mut answers = t.read_data_by_identifier_functional(GROUP, &[Did::Speed]);
+    assert!(matches!(
+        block_on(answers.next()),
+        Some(Ok(Answer::Positive { from: ECU, .. }))
+    ));
+    assert!(block_on(answers.next()).is_none());
+    drop(answers);
+    assert_eq!(t.transport().sent_count, 1);
+}
+
+/// A close mid-exchange is still `Closed`, not `Timeout`, under a ceiling of zero.
+#[test]
+fn a_ceiling_of_zero_still_reports_a_close_mid_exchange() {
+    let mut t = tester_repeating(
+        &[Step::Conf(to(ECU), SResult::Ok), Step::Close(ECU)],
+        Repeats::Never,
+    );
+    assert_eq!(
+        block_on(t.read_data_by_identifier(ECU, &[Did::Speed])).err(),
+        Some(ClientError::Closed)
+    );
+}
+
+/// The ceiling is read when a window expires, so one set through `timing_mut` between
+/// two calls applies to the second.
+#[test]
+fn the_ceiling_changed_between_calls_applies_to_the_next() {
+    let mut t = tester(&[
+        Step::Conf(to(ECU), SResult::Ok),
+        Step::At(100),
+        Step::Conf(to(ECU), SResult::Ok),
+        Step::At(200),
+        Step::Conf(to(ECU), SResult::Ok),
+        Step::At(300),
+        Step::Conf(to(ECU), SResult::Ok),
+        Step::At(400),
+        Step::Conf(to(ECU), SResult::Ok),
+        Step::At(500),
+        Step::Conf(to(ECU), SResult::Ok),
+        Step::At(600),
+        Step::Conf(to(ECU), SResult::Ok),
+        Step::At(700),
+    ]);
+    assert_eq!(t.timing().repeats, Repeats::Twice);
+    assert_eq!(
+        block_on(t.read_data_by_identifier(ECU, &[Did::Speed])).err(),
+        Some(ClientError::Timeout)
+    );
+    assert_eq!(t.transport().sent_count, 3);
+    t.timing_mut().repeats = Repeats::Never;
+    assert_eq!(
+        block_on(t.read_data_by_identifier(ECU, &[Did::Speed])).err(),
+        Some(ClientError::Timeout)
+    );
+    assert_eq!(t.transport().sent_count, 4);
+    t.timing_mut().repeats = Repeats::Twice;
+    assert_eq!(
+        block_on(t.read_data_by_identifier(ECU, &[Did::Speed])).err(),
+        Some(ClientError::Timeout)
+    );
+    assert_eq!(t.transport().sent_count, 7);
 }
 
 /// A connection closing mid-exchange ends it with an outcome rather than a wait for
@@ -583,6 +856,20 @@ fn idling_sends_a_keep_alive_every_s3_client() {
         (Some(2_010), Some(4_010))
     );
     assert_eq!(s.sent_count, 3);
+}
+
+/// Asking whether the connection was replaced sends a `TesterPresent` that fell due on
+/// the way, so a caller polling it between waits of its own keeps the session.
+#[test]
+fn asking_after_a_replacement_sends_a_keep_alive_that_fell_due() {
+    let mut t = patient(&[ENTER[0], ENTER[1], Step::At(2_010), Step::At(2_010)]);
+    let _ = block_on(
+        t.diagnostic_session_control(ECU, DiagnosticSessionType::ExtendedDiagnosticSession),
+    );
+    assert_eq!(block_on(t.connection_replaced(ECU)), Ok(Replaced::No));
+    let s = t.transport();
+    assert_eq!(s.addressed(1), (Some(to(ECU)), KEEP_ALIVE));
+    assert_eq!(s.sent(1).map(|x| x.at), Some(2_010));
 }
 
 /// No `TesterPresent` while a request awaits its response, even a
@@ -1654,4 +1941,880 @@ fn a_failed_close_still_reads_the_confirms_owed() {
 
     assert_eq!(block_on(t.close()), Err(ClientError::Transport(())));
     assert_eq!(t.transport().cursor, 2);
+}
+
+const WRITE_SPEED: &[u8] = &[0x2E, 0xF4, 0x0D, 0x40];
+const WROTE_SPEED: &[u8] = &[0x6E, 0xF4, 0x0D];
+const HARD_RESET: &[u8] = &[0x11, 0x01];
+const RESETTING: &[u8] = &[0x51, 0x01];
+const RAPID_SHUTDOWN: &[u8] = &[0x11, 0x04];
+const SHUTTING_DOWN_IN: &[u8] = &[0x51, 0x04, 0x0A];
+
+/// A write is the identifier then the record, and its positive response echoes the
+/// identifier (ISO 14229-1:2020 Tables 277 and 279).
+#[test]
+fn a_write_is_answered_by_its_identifiers_echo() {
+    let mut t = tester(&[
+        Step::Conf(to(ECU), SResult::Ok),
+        Step::Ind(from(ECU), WROTE_SPEED),
+    ]);
+    let written = block_on(t.write_data_by_identifier(ECU, Did::Speed, &[0x40]));
+    assert_eq!(written, Ok(Response::Positive(())));
+    assert_eq!(t.transport().addressed(0), (Some(to(ECU)), WRITE_SPEED));
+}
+
+/// A positive write response echoing another identifier is not this write's answer
+/// in substance: it is malformed, not positive.
+#[test]
+fn a_write_echoing_another_identifier_is_malformed() {
+    let mut t = tester(&[
+        Step::Conf(to(ECU), SResult::Ok),
+        Step::Ind(from(ECU), &[0x6E, 0xF1, 0xA0]),
+    ]);
+    let written = block_on(t.write_data_by_identifier(ECU, Did::Speed, &[0x40]));
+    assert_eq!(written, Ok(Response::Malformed(MalformedResponse::Echo)));
+}
+
+/// An empty record is refused before anything is sent (Table 277 makes the record
+/// mandatory).
+#[test]
+fn a_write_of_nothing_sends_nothing() {
+    let mut t = tester(&[]);
+    assert_eq!(
+        block_on(t.write_data_by_identifier(ECU, Did::Speed, &[])),
+        Err(ClientError::Request)
+    );
+    assert!(t.transport().finished());
+}
+
+/// A reset's positive response carries the power-down time only for
+/// `enableRapidPowerShutDown` (Table 35).
+#[test]
+fn a_reset_reads_its_power_down_time_where_there_is_one() {
+    let mut t = tester(&[
+        Step::Conf(to(ECU), SResult::Ok),
+        Step::Ind(from(ECU), RESETTING),
+        Step::Conf(to(ECU), SResult::Ok),
+        Step::Ind(from(ECU), SHUTTING_DOWN_IN),
+    ]);
+    assert_eq!(
+        block_on(t.ecu_reset(ECU, ResetType::HardReset)),
+        Ok(Response::Positive(None))
+    );
+    assert_eq!(
+        block_on(t.ecu_reset(ECU, ResetType::EnableRapidPowerShutDown)),
+        Ok(Response::Positive(Some(0x0A)))
+    );
+    assert_eq!(t.transport().addressed(0), (Some(to(ECU)), HARD_RESET));
+    assert_eq!(t.transport().addressed(1), (Some(to(ECU)), RAPID_SHUTDOWN));
+}
+
+/// A negative response to a reset is a response.
+#[test]
+fn a_refused_reset_is_a_negative_response() {
+    let mut t = tester(&[
+        Step::Conf(to(ECU), SResult::Ok),
+        Step::Ind(from(ECU), &[0x7F, 0x11, 0x22]),
+    ]);
+    assert_eq!(
+        block_on(t.ecu_reset(ECU, ResetType::HardReset)),
+        Ok(Response::Negative(NegativeResponseCode::from(0x22)))
+    );
+}
+
+const LEVEL_1: SecurityLevel = match SecurityLevel::from_request_seed(0x01) {
+    Some(level) => level,
+    None => panic!("level 1"),
+};
+
+/// Annex I: the seed request carries no record and no suppress bit, and its positive
+/// response is the seed.
+#[test]
+fn a_seed_is_requested_and_read() {
+    let mut t = tester(&[
+        Step::Conf(to(ECU), SResult::Ok),
+        Step::Ind(from(ECU), &[0x67, 0x01, 0x36, 0x57]),
+    ]);
+    let seed = block_on(t.security_access_seed(ECU, LEVEL_1));
+    assert_eq!(seed, Ok(Response::Positive(&[0x36, 0x57][..])));
+    assert_eq!(
+        t.transport().addressed(0),
+        (Some(to(ECU)), &[0x27, 0x01][..])
+    );
+}
+
+/// A seed reply to the send-key sub-function is a stale reply, not this request's
+/// answer: the response window stays open, so the request is repeated and times out.
+#[test]
+fn a_reply_to_another_sub_function_is_not_the_answer() {
+    let mut t = tester(&[
+        Step::Conf(to(ECU), SResult::Ok),
+        Step::Ind(from(ECU), &[0x67, 0x02]),
+        Step::At(100),
+        Step::Conf(to(ECU), SResult::Ok),
+        Step::At(200),
+        Step::Conf(to(ECU), SResult::Ok),
+        Step::At(300),
+    ]);
+    let seed = block_on(t.security_access_seed(ECU, LEVEL_1));
+    assert!(matches!(seed, Err(ClientError::Timeout)), "{seed:?}");
+}
+
+/// A seed longer than the client declared arrives truncated and is reported overlong,
+/// never read as a shorter seed.
+#[test]
+fn an_overlong_seed_is_malformed() {
+    let mut t = tester(&[
+        Step::Conf(to(ECU), SResult::Ok),
+        Step::TooLong(from(ECU), &[0x67, 0x01, 0x36, 0x57, 0x00, 0x00]),
+    ]);
+    let seed = block_on(t.security_access_seed(ECU, LEVEL_1));
+    assert!(
+        matches!(
+            seed,
+            Ok(Response::Malformed(MalformedResponse::Overlong { .. }))
+        ),
+        "{seed:?}"
+    );
+}
+
+/// The key goes on the level's even sub-function and is confirmed by its echo.
+#[test]
+fn a_key_is_sent_on_the_next_sub_function() {
+    let mut t = tester(&[
+        Step::Conf(to(ECU), SResult::Ok),
+        Step::Ind(from(ECU), &[0x67, 0x02]),
+    ]);
+    let unlocked = block_on(t.security_access_key(ECU, LEVEL_1, &[0xC9, 0xA9]));
+    assert_eq!(unlocked, Ok(Response::Positive(())));
+    assert_eq!(
+        t.transport().addressed(0),
+        (Some(to(ECU)), &[0x27, 0x02, 0xC9, 0xA9][..])
+    );
+}
+
+/// A routine's positive response echoes its sub-function and identifier; what
+/// follows is handed back whole, `routineInfo` first where the server sends one.
+#[test]
+fn a_routine_is_started_and_its_status_read() {
+    let mut t = tester(&[
+        Step::Conf(to(ECU), SResult::Ok),
+        Step::Ind(from(ECU), &[0x71, 0x01, 0x02, 0x01, 0x00, 0x5A]),
+    ]);
+    let started = block_on(t.routine_control(
+        ECU,
+        RoutineControlSubFunction::StartRoutine,
+        Rid::SelfTest,
+        &[0x07],
+    ));
+    assert_eq!(started, Ok(Response::Positive(&[0x00, 0x5A][..])));
+    assert_eq!(
+        t.transport().addressed(0),
+        (Some(to(ECU)), &[0x31, 0x01, 0x02, 0x01, 0x07][..])
+    );
+}
+
+/// A routine response echoing another routine's identifier is malformed.
+#[test]
+fn a_routine_response_for_another_routine_is_malformed() {
+    let mut t = tester(&[
+        Step::Conf(to(ECU), SResult::Ok),
+        Step::Ind(from(ECU), &[0x71, 0x01, 0xFF, 0x00, 0x00]),
+    ]);
+    let started = block_on(t.routine_control(
+        ECU,
+        RoutineControlSubFunction::StartRoutine,
+        Rid::SelfTest,
+        &[],
+    ));
+    assert_eq!(started, Ok(Response::Malformed(MalformedResponse::Echo)));
+}
+
+/// A count by status mask (12.3.5.2) is sent with its mask, even an empty one, and the
+/// count read back.
+#[test]
+fn a_dtc_count_is_read() {
+    let mut t = tester(&[
+        Step::Conf(to(ECU), SResult::Ok),
+        Step::Ind(from(ECU), &[0x59, 0x01, 0x2F, 0x01, 0x00, 0x03]),
+        Step::Conf(to(ECU), SResult::Ok),
+        Step::Ind(from(ECU), &[0x59, 0x01, 0x2F, 0x01, 0x00, 0x00]),
+    ]);
+    let counted = block_on(t.read_dtc_information(
+        ECU,
+        ReadDtcInfoSubFunction::ReportNumberOfDtcByStatusMask(DtcStatusMask::from(0xFF)),
+    ));
+    assert!(
+        matches!(
+            counted,
+            Ok(Response::Positive(ReadDtcInfoResponse::NumberOfDtcs {
+                count: 3,
+                ..
+            }))
+        ),
+        "{counted:?}"
+    );
+    let none = block_on(t.read_dtc_information(
+        ECU,
+        ReadDtcInfoSubFunction::ReportNumberOfDtcByStatusMask(DtcStatusMask::from(0x00)),
+    ));
+    assert!(
+        matches!(
+            none,
+            Ok(Response::Positive(ReadDtcInfoResponse::NumberOfDtcs {
+                count: 0,
+                ..
+            }))
+        ),
+        "{none:?}"
+    );
+    assert_eq!(
+        t.transport().addressed(0),
+        (Some(to(ECU)), &[0x19, 0x01, 0xFF][..])
+    );
+    assert_eq!(
+        t.transport().addressed(1),
+        (Some(to(ECU)), &[0x19, 0x01, 0x00][..])
+    );
+}
+
+/// A snapshot by DTC number comes back as the DTC, its status and the raw records,
+/// since no server here answers it: example #5 (12.3.5.6, Tables 354 and 355).
+#[test]
+fn a_snapshot_by_dtc_number_is_read_raw() {
+    let mut t = tester(&[
+        Step::Conf(to(ECU), SResult::Ok),
+        Step::Ind(
+            from(ECU),
+            &[
+                0x59, 0x04, 0x12, 0x34, 0x56, 0x24, 0x02, 0x01, 0x47, 0x11, 0xA6, 0x66,
+                0x07, 0x50, 0x20,
+            ],
+        ),
+    ]);
+    let snapshot = block_on(t.read_dtc_information(
+        ECU,
+        ReadDtcInfoSubFunction::ReportDtcSnapshotRecordByDtcNumber(
+            DtcRecord::new(0x12, 0x34, 0x56),
+            DtcSnapshotRecordNumber::new(0x02),
+        ),
+    ));
+    assert_eq!(
+        snapshot,
+        Ok(Response::Positive(
+            ReadDtcInfoResponse::DtcSnapshotRecords {
+                dtc: DtcRecord::new(0x12, 0x34, 0x56),
+                status: DtcStatusMask::from(0x24),
+                raw_records: &[0x02, 0x01, 0x47, 0x11, 0xA6, 0x66, 0x07, 0x50, 0x20],
+            }
+        ))
+    );
+    assert_eq!(
+        t.transport().addressed(0),
+        (Some(to(ECU)), &[0x19, 0x04, 0x12, 0x34, 0x56, 0x02][..])
+    );
+}
+
+/// Records by DTC number for another DTC answer some other request.
+#[test]
+fn records_for_another_dtc_are_malformed() {
+    let mut t = tester(&[
+        Step::Conf(to(ECU), SResult::Ok),
+        Step::Ind(from(ECU), &[0x59, 0x04, 0xAB, 0xCD, 0xEF, 0x24]),
+        Step::Conf(to(ECU), SResult::Ok),
+        Step::Ind(from(ECU), &[0x59, 0x06, 0xAB, 0xCD, 0xEF, 0x24]),
+    ]);
+    let asked = DtcRecord::new(0x12, 0x34, 0x56);
+    let snapshot = block_on(t.read_dtc_information(
+        ECU,
+        ReadDtcInfoSubFunction::ReportDtcSnapshotRecordByDtcNumber(
+            asked,
+            DtcSnapshotRecordNumber::new(0xFF),
+        ),
+    ));
+    assert_eq!(snapshot, Ok(Response::Malformed(MalformedResponse::Echo)));
+    let ext_data = block_on(t.read_dtc_information(
+        ECU,
+        ReadDtcInfoSubFunction::ReportDtcExtDataRecordByDtcNumber(
+            asked,
+            DtcExtDataRecordNumber::new(0xFF),
+        ),
+    ));
+    assert_eq!(ext_data, Ok(Response::Malformed(MalformedResponse::Echo)));
+}
+
+/// Extended data by DTC number comes back as the DTC, its status and the raw records:
+/// example #7 (12.3.5.8, Tables 361 and 362), every record asked for with `0xFF`.
+#[test]
+fn ext_data_by_dtc_number_is_read_raw() {
+    let mut t = tester(&[
+        Step::Conf(to(ECU), SResult::Ok),
+        Step::Ind(
+            from(ECU),
+            &[0x59, 0x06, 0x12, 0x34, 0x56, 0x24, 0x05, 0x17, 0x10, 0x79],
+        ),
+    ]);
+    let ext_data = block_on(t.read_dtc_information(
+        ECU,
+        ReadDtcInfoSubFunction::ReportDtcExtDataRecordByDtcNumber(
+            DtcRecord::new(0x12, 0x34, 0x56),
+            DtcExtDataRecordNumber::new(0xFF),
+        ),
+    ));
+    assert_eq!(
+        ext_data,
+        Ok(Response::Positive(ReadDtcInfoResponse::DtcExtDataRecords {
+            dtc: DtcRecord::new(0x12, 0x34, 0x56),
+            status: DtcStatusMask::from(0x24),
+            raw_records: &[0x05, 0x17, 0x10, 0x79],
+        }))
+    );
+    assert_eq!(
+        t.transport().addressed(0),
+        (Some(to(ECU)), &[0x19, 0x06, 0x12, 0x34, 0x56, 0xFF][..])
+    );
+}
+
+/// Clearing a group (12.2) is four bytes, five with a memory selection, and its
+/// positive response is bare.
+#[test]
+fn a_clear_is_confirmed_bare() {
+    let mut t = tester(&[
+        Step::Conf(to(ECU), SResult::Ok),
+        Step::Ind(from(ECU), &[0x54]),
+        Step::Conf(to(ECU), SResult::Ok),
+        Step::Ind(from(ECU), &[0x7F, 0x14, 0x31]),
+    ]);
+    assert_eq!(
+        block_on(t.clear_diagnostic_information(ECU, CLEAR_ALL_DTCS, None)),
+        Ok(Response::Positive(()))
+    );
+    assert_eq!(
+        block_on(t.clear_diagnostic_information(ECU, CLEAR_ALL_DTCS, Some(0x01))),
+        Ok(Response::Negative(NegativeResponseCode::from(0x31)))
+    );
+    assert_eq!(
+        t.transport().addressed(0),
+        (Some(to(ECU)), &[0x14, 0xFF, 0xFF, 0xFF][..])
+    );
+    assert_eq!(
+        t.transport().addressed(1),
+        (Some(to(ECU)), &[0x14, 0xFF, 0xFF, 0xFF, 0x01][..])
+    );
+}
+
+/// `CommunicationControl` (10.5) is its type, the communication type and subnet byte,
+/// and for an enhanced-address type the node identifier; its response echoes the type.
+#[test]
+fn communication_is_controlled_with_or_without_a_node() {
+    let mut t = tester(&[
+        Step::Conf(to(ECU), SResult::Ok),
+        Step::Ind(from(ECU), &[0x68, 0x00]),
+        Step::Conf(to(ECU), SResult::Ok),
+        Step::Ind(from(ECU), &[0x68, 0x04]),
+    ]);
+    assert_eq!(
+        block_on(t.communication_control(
+            ECU,
+            CommunicationControlType::EnableRxAndTx,
+            CommunicationType::Normal,
+            SubnetNumber::AllConnectedNetworks,
+            None,
+        )),
+        Ok(Response::Positive(()))
+    );
+    assert_eq!(
+        block_on(t.communication_control(
+            ECU,
+            CommunicationControlType::EnableRxAndDisableTxWithEnhancedAddressInfo,
+            CommunicationType::Normal,
+            SubnetNumber::AllConnectedNetworks,
+            Some(0x1234),
+        )),
+        Ok(Response::Positive(()))
+    );
+    assert_eq!(
+        t.transport().addressed(0),
+        (Some(to(ECU)), &[0x28, 0x00, 0x01][..])
+    );
+    assert_eq!(
+        t.transport().addressed(1),
+        (Some(to(ECU)), &[0x28, 0x04, 0x01, 0x12, 0x34][..])
+    );
+}
+
+/// A node identifier for a plain type, or none for an enhanced one, cannot be encoded
+/// and sends nothing.
+#[test]
+fn a_node_that_disagrees_with_the_type_sends_nothing() {
+    let mut t = tester(&[]);
+    assert_eq!(
+        block_on(t.communication_control(
+            ECU,
+            CommunicationControlType::EnableRxAndTx,
+            CommunicationType::Normal,
+            SubnetNumber::AllConnectedNetworks,
+            Some(1),
+        )),
+        Err(ClientError::Request)
+    );
+    assert_eq!(
+        block_on(t.communication_control(
+            ECU,
+            CommunicationControlType::EnableRxAndTxWithEnhancedAddressInfo,
+            CommunicationType::Normal,
+            SubnetNumber::AllConnectedNetworks,
+            None,
+        )),
+        Err(ClientError::Request)
+    );
+    assert!(t.transport().finished());
+}
+
+/// `ControlDTCSetting` (10.8) is the setting then the option record, echoed by the
+/// setting.
+#[test]
+fn dtc_setting_is_controlled() {
+    let mut t = tester(&[
+        Step::Conf(to(ECU), SResult::Ok),
+        Step::Ind(from(ECU), &[0xC5, 0x02]),
+    ]);
+    assert_eq!(
+        block_on(t.control_dtc_setting(ECU, DtcSettingType::Off, &[0x01, 0x02])),
+        Ok(Response::Positive(()))
+    );
+    assert_eq!(
+        t.transport().addressed(0),
+        (Some(to(ECU)), &[0x85, 0x02, 0x01, 0x02][..])
+    );
+}
+
+/// `RequestDownload` (15.2) carries the format identifiers derived from the address's
+/// and size's widths, and reads the block length back as a number.
+#[test]
+fn a_download_is_requested_and_the_block_length_read() {
+    let mut t = tester(&[
+        Step::Conf(to(ECU), SResult::Ok),
+        Step::Ind(from(ECU), &[0x74, 0x20, 0x04, 0x00]),
+    ]);
+    assert_eq!(
+        block_on(t.request_download(ECU, DataFormatIdentifier::NONE, 0x0001_0000, 0x0400)),
+        Ok(Response::Positive(0x0400))
+    );
+    assert_eq!(
+        t.transport().addressed(0),
+        (
+            Some(to(ECU)),
+            &[0x34, 0x00, 0x23, 0x01, 0x00, 0x00, 0x04, 0x00][..]
+        )
+    );
+}
+
+/// An address wider than five bytes cannot be carried and sends nothing.
+#[test]
+fn a_download_of_an_unaddressable_memory_sends_nothing() {
+    let mut t = tester(&[]);
+    assert_eq!(
+        block_on(t.request_download(ECU, DataFormatIdentifier::NONE, 0x0100_0000_0000, 1)),
+        Err(ClientError::Request)
+    );
+    assert!(t.transport().finished());
+}
+
+/// ISO 14229-1:2020 15.2.2 — a caller-chosen `addressAndLengthFormatIdentifier` fixes
+/// the widths: `0x44` sends a four-byte address and a four-byte size, padded with zeros.
+#[test]
+fn a_download_with_a_fixed_format_pads_the_address_and_size() {
+    let mut t = tester(&[
+        Step::Conf(to(ECU), SResult::Ok),
+        Step::Ind(from(ECU), &[0x74, 0x20, 0x04, 0x00]),
+    ]);
+    let Ok(format) = AddressAndLengthFormatIdentifier::new(4, 4) else {
+        panic!("0x44 is a valid format identifier");
+    };
+    assert_eq!(
+        block_on(t.request_download_with_format(
+            ECU,
+            DataFormatIdentifier::NONE,
+            format,
+            0x0001_0000,
+            0x0400
+        )),
+        Ok(Response::Positive(0x0400))
+    );
+    assert_eq!(
+        t.transport().addressed(0),
+        (
+            Some(to(ECU)),
+            &[
+                0x34, 0x00, 0x44, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x04, 0x00
+            ][..]
+        )
+    );
+}
+
+/// A value wider than the chosen format declares for it cannot be carried and sends
+/// nothing.
+#[test]
+fn a_download_too_wide_for_its_format_sends_nothing() {
+    let mut t = tester(&[]);
+    let Ok(format) = AddressAndLengthFormatIdentifier::new(1, 2) else {
+        panic!("0x12 is a valid format identifier");
+    };
+    assert_eq!(
+        block_on(t.request_download_with_format(
+            ECU,
+            DataFormatIdentifier::NONE,
+            format,
+            0x0001_0000,
+            1
+        )),
+        Err(ClientError::Request)
+    );
+    assert!(t.transport().finished());
+}
+
+/// The declared block maximum is the client's, readable to clamp a transfer against.
+#[test]
+fn the_declared_block_maximum_is_exposed() {
+    assert_eq!(<Did as ClientSet>::MAX_BLOCK_LEN, 16);
+}
+
+/// A block goes with its counter and the response echoes it; a reply echoing another
+/// counter is not its answer; a block one byte past the declared maximum is refused before
+/// anything is sent.
+#[test]
+fn a_block_is_transferred_and_the_counter_echoed() {
+    let mut t = tester(&[
+        Step::Conf(to(ECU), SResult::Ok),
+        Step::Ind(from(ECU), &[0x76, 0x01]),
+        Step::Conf(to(ECU), SResult::Ok),
+        Step::Ind(from(ECU), &[0x76, 0x03]),
+        Step::Ind(from(ECU), &[0x76, 0x02]),
+    ]);
+    let block = [0xAA; 16];
+    assert_eq!(
+        block_on(t.transfer_data(ECU, 0x01, &block)),
+        Ok(Response::Positive(&[][..]))
+    );
+    assert_eq!(
+        block_on(t.transfer_data(ECU, 0x02, &block)),
+        Ok(Response::Positive(&[][..]))
+    );
+    let too_long = [0xAA; 17];
+    assert_eq!(
+        block_on(t.transfer_data(ECU, 0x03, &too_long)),
+        Err(ClientError::Request)
+    );
+    let sent = t.transport().sent_bytes(0);
+    assert_eq!(sent.get(..2), Some(&[0x36, 0x01][..]));
+    assert_eq!(sent.len(), 18);
+}
+
+/// A late reply to a repeated block names that block's counter, so it is not the next
+/// block's answer: the next block waits for its own.
+#[test]
+fn a_late_reply_to_a_repeated_block_does_not_answer_the_next() {
+    let mut t = tester(&[
+        Step::Conf(to(ECU), SResult::Ok),
+        Step::At(100),
+        Step::Conf(to(ECU), SResult::Ok),
+        Step::Ind(from(ECU), &[0x76, 0x01]),
+        Step::Conf(to(ECU), SResult::Ok),
+        Step::Ind(from(ECU), &[0x76, 0x01]),
+        Step::Ind(from(ECU), &[0x76, 0x02]),
+    ]);
+    assert_eq!(
+        block_on(t.transfer_data(ECU, 0x01, &[0xAA])),
+        Ok(Response::Positive(&[][..]))
+    );
+    assert_eq!(
+        block_on(t.transfer_data(ECU, 0x02, &[0xBB])),
+        Ok(Response::Positive(&[][..]))
+    );
+    assert!(t.transport().finished());
+}
+
+/// The transfer's exit carries a parameter record each way.
+#[test]
+fn a_transfer_exits_with_its_records() {
+    let mut t = tester(&[
+        Step::Conf(to(ECU), SResult::Ok),
+        Step::Ind(from(ECU), &[0x77, 0xBE, 0xEF]),
+    ]);
+    assert_eq!(
+        block_on(t.request_transfer_exit(ECU, &[0x01])),
+        Ok(Response::Positive(&[0xBE, 0xEF][..]))
+    );
+    assert_eq!(
+        t.transport().addressed(0),
+        (Some(to(ECU)), &[0x37, 0x01][..])
+    );
+}
+
+/// A close the transport reports is a replacement the caller can ask about once, of the
+/// kind the transport marked it; asking clears it, and another server's close is not this
+/// one's.
+#[test]
+fn a_replaced_connection_is_reported_once() {
+    let mut t = tester(&[
+        Step::Conf(to(ECU), SResult::Ok),
+        Step::Ind(from(ECU), SPEED),
+        Step::Leave(ECU),
+        Step::At(1),
+        Step::At(2),
+        Step::Close(OTHER_ECU),
+        Step::At(3),
+        Step::Close(ECU),
+        Step::At(4),
+        Step::At(5),
+    ]);
+    speed(block_on(t.read_data_by_identifier(ECU, &[Did::Speed])));
+    // The `Leave` is observed by this ask's own look at the transport.
+    assert_eq!(
+        block_on(t.connection_replaced(ECU)),
+        Ok(Replaced::SessionLost)
+    );
+    assert_eq!(block_on(t.connection_replaced(ECU)), Ok(Replaced::No));
+    // This ask observes the other server's close.
+    assert_eq!(block_on(t.connection_replaced(ECU)), Ok(Replaced::No));
+    // An unprescribed close is a replacement of the other kind.
+    assert_eq!(
+        block_on(t.connection_replaced(ECU)),
+        Ok(Replaced::SessionUnknown)
+    );
+    assert_eq!(block_on(t.connection_replaced(ECU)), Ok(Replaced::No));
+}
+
+/// A prescribed and an unprescribed close between two asks are reported once, as the
+/// prescribed one, whichever came first.
+#[test]
+fn both_kinds_of_close_are_reported_as_the_prescribed_one() {
+    let mut t = tester(&[
+        Step::Conf(to(ECU), SResult::Ok),
+        Step::Ind(from(ECU), SPEED),
+        Step::Close(ECU),
+        Step::Leave(ECU),
+        Step::At(1),
+        Step::Leave(ECU),
+        Step::Close(ECU),
+        Step::At(2),
+        Step::At(3),
+    ]);
+    speed(block_on(t.read_data_by_identifier(ECU, &[Did::Speed])));
+    assert_eq!(
+        block_on(t.connection_replaced(ECU)),
+        Ok(Replaced::SessionLost)
+    );
+    assert_eq!(
+        block_on(t.connection_replaced(ECU)),
+        Ok(Replaced::SessionLost)
+    );
+    assert_eq!(block_on(t.connection_replaced(ECU)), Ok(Replaced::No));
+}
+
+/// ISO 14229-2:2021 Table 9 — the reconnect a `DoIP` transport makes to repeat an
+/// unanswered request is reported as a close of the other kind, not a prescribed one: the
+/// server's session may have survived it.
+#[test]
+fn a_reconnect_to_repeat_a_request_is_not_a_prescribed_close() {
+    let mut t = tester(&[
+        Step::Conf(to(ECU), SResult::Ok),
+        Step::At(100),
+        Step::Close(ECU),
+        Step::Conf(to(ECU), SResult::Ok),
+        Step::Ind(from(ECU), &[0x76, 0x01]),
+        Step::At(101),
+        Step::At(102),
+    ]);
+    assert_eq!(
+        block_on(t.transfer_data(ECU, 1, &[0xAA])),
+        Ok(Response::Positive(&[][..]))
+    );
+    assert_eq!(t.transport().sent_count, 2);
+    assert_eq!(
+        block_on(t.connection_replaced(ECU)),
+        Ok(Replaced::SessionUnknown)
+    );
+    assert_eq!(block_on(t.connection_replaced(ECU)), Ok(Replaced::No));
+}
+
+/// One ask takes every event the transport already holds, not one: two closes waiting
+/// are one replacement, and the next ask finds nothing.
+#[test]
+fn one_ask_drains_every_close_the_transport_holds() {
+    let mut t = tester(&[
+        Step::Conf(to(ECU), SResult::Ok),
+        Step::Ind(from(ECU), SPEED),
+        Step::Close(ECU),
+        Step::Close(ECU),
+        Step::At(1),
+        Step::At(2),
+    ]);
+    speed(block_on(t.read_data_by_identifier(ECU, &[Did::Speed])));
+    assert_eq!(
+        block_on(t.connection_replaced(ECU)),
+        Ok(Replaced::SessionUnknown)
+    );
+    assert_eq!(block_on(t.connection_replaced(ECU)), Ok(Replaced::No));
+    assert!(t.transport().finished());
+}
+
+/// A positive `ECUReset` response is reported as a replacement by the exchange itself
+/// (ISO 14229-5:2022 REQ 7.11), before the transport reports the close; the close
+/// the transport then reports is that one, not another.
+#[test]
+fn a_positive_reset_is_a_replacement_before_its_close_arrives() {
+    let mut t = tester(&[
+        Step::Conf(to(ECU), SResult::Ok),
+        Step::Ind(from(ECU), RESETTING),
+        Step::At(1),
+        Step::Leave(ECU),
+        Step::At(2),
+    ]);
+    assert_eq!(
+        block_on(t.ecu_reset(ECU, ResetType::HardReset)),
+        Ok(Response::Positive(None))
+    );
+    assert_eq!(
+        block_on(t.connection_replaced(ECU)),
+        Ok(Replaced::SessionLost)
+    );
+    assert_eq!(block_on(t.connection_replaced(ECU)), Ok(Replaced::No));
+    assert!(t.transport().finished());
+}
+
+/// A refused reset closes nothing, so it replaces nothing.
+#[test]
+fn a_refused_reset_is_no_replacement() {
+    let mut t = tester(&[
+        Step::Conf(to(ECU), SResult::Ok),
+        Step::Ind(from(ECU), &[0x7F, 0x11, 0x22]),
+        Step::At(1),
+    ]);
+    assert_eq!(
+        block_on(t.ecu_reset(ECU, ResetType::HardReset)),
+        Ok(Response::Negative(NegativeResponseCode::from(0x22)))
+    );
+    assert_eq!(block_on(t.connection_replaced(ECU)), Ok(Replaced::No));
+}
+
+/// A server with no open channel was replaced by nothing.
+#[test]
+fn an_unknown_server_was_not_replaced() {
+    let mut t = tester(&[Step::At(0)]);
+    assert_eq!(block_on(t.connection_replaced(ECU)), Ok(Replaced::No));
+}
+
+/// A positive reset's close is one replacement, however the transport marks the close
+/// that follows it.
+#[test]
+fn a_reset_close_marked_unprescribed_is_not_reported_again() {
+    let mut t = tester(&[
+        Step::Conf(to(ECU), SResult::Ok),
+        Step::Ind(from(ECU), RESETTING),
+        Step::At(1),
+        Step::Close(ECU),
+        Step::At(2),
+    ]);
+    assert_eq!(
+        block_on(t.ecu_reset(ECU, ResetType::HardReset)),
+        Ok(Response::Positive(None))
+    );
+    assert_eq!(
+        block_on(t.connection_replaced(ECU)),
+        Ok(Replaced::SessionLost)
+    );
+    assert_eq!(block_on(t.connection_replaced(ECU)), Ok(Replaced::No));
+    assert!(t.transport().finished());
+}
+
+/// A reset whose close never comes foresees nothing past the server's next answer: that
+/// answer came over the connection the reset left open, so a later close is another.
+#[test]
+fn a_reset_answered_past_is_no_longer_foreseen() {
+    let mut t = tester(&[
+        Step::Conf(to(ECU), SResult::Ok),
+        Step::Ind(from(ECU), RESETTING),
+        Step::At(1),
+        Step::Conf(to(ECU), SResult::Ok),
+        Step::Ind(from(ECU), SPEED),
+        Step::Close(ECU),
+        Step::At(2),
+    ]);
+    assert_eq!(
+        block_on(t.ecu_reset(ECU, ResetType::HardReset)),
+        Ok(Response::Positive(None))
+    );
+    assert_eq!(
+        block_on(t.connection_replaced(ECU)),
+        Ok(Replaced::SessionLost)
+    );
+    speed(block_on(t.read_data_by_identifier(ECU, &[Did::Speed])));
+    assert_eq!(
+        block_on(t.connection_replaced(ECU)),
+        Ok(Replaced::SessionUnknown)
+    );
+    assert!(t.transport().finished());
+}
+
+/// An ask takes what the transport held when it was made: a server that keeps sending
+/// does not hold it past the moment the transport's clock moves on.
+#[test]
+fn an_ask_ends_once_the_clock_passes_it() {
+    let mut t = tester(&[
+        Step::Conf(to(ECU), SResult::Ok),
+        Step::Ind(from(ECU), SPEED),
+        Step::IndAt(1, from(ECU), SPEED),
+        Step::IndAt(2, from(ECU), SPEED),
+    ]);
+    speed(block_on(t.read_data_by_identifier(ECU, &[Did::Speed])));
+    assert_eq!(block_on(t.connection_replaced(ECU)), Ok(Replaced::No));
+    assert!(!t.transport().finished());
+}
+
+/// Each declared maximum a request carries limits that request, in an assembly whose
+/// request buffer, folded to the widest request, would hold more: nothing is sent.
+#[test]
+fn a_request_past_its_declared_maximum_is_refused() {
+    let mut t = tester(&[]);
+    assert_eq!(
+        block_on(t.write_data_by_identifier(ECU, Did::Speed, &[0x01, 0x02])),
+        Err(ClientError::Request)
+    );
+    assert_eq!(
+        block_on(t.security_access_key(ECU, LEVEL_1, &[0x01, 0x02, 0x03])),
+        Err(ClientError::Request)
+    );
+    let option = [0x01; 5];
+    assert_eq!(
+        block_on(t.routine_control(
+            ECU,
+            RoutineControlSubFunction::StartRoutine,
+            Rid::SelfTest,
+            &option,
+        )),
+        Err(ClientError::Request)
+    );
+    assert_eq!(
+        block_on(t.control_dtc_setting(ECU, DtcSettingType::Off, &option)),
+        Err(ClientError::Request)
+    );
+    assert_eq!(
+        block_on(t.request_transfer_exit(ECU, &option)),
+        Err(ClientError::Request)
+    );
+    assert_eq!(t.transport().sent_count, 0);
+
+    let mut narrow = NarrowBlockTester::new(
+        Script::new(&[]),
+        TESTER,
+        KeepAlive::physical(S3_CLIENT),
+        TIMING,
+    );
+    assert_eq!(
+        block_on(narrow.transfer_data(ECU, 0x01, &[0xAA; 3])),
+        Err(ClientError::Request)
+    );
+    assert_eq!(narrow.transport().sent_count, 0);
 }

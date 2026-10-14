@@ -39,7 +39,7 @@ use simple_doip::entity::{Entity, EntityAddress};
 use simple_doip::service::{
     ConnectionEvent, DiagnosticConnection, DoIpResult, EntityConfig, TesterAddress,
 };
-use simple_doip::tester::{ConnectError, Tester};
+use simple_doip::tester::{ConnectError, Tester, TesterVersion};
 use simple_doip::{LogicalAddress, TaType};
 use uds_on_ip::DoIpClientTransport;
 
@@ -220,10 +220,30 @@ impl Loopback {
         &self,
         backoff: embassy_time::Duration,
     ) -> Result<SensorTester, TesterConnectError> {
+        self.tester_sending(TesterVersion::default(), backoff).await
+    }
+
+    /// A tester connected as [`TESTER`], with routing activated, that sends `version`
+    /// and waits `backoff` after a connection is lost before it connects again.
+    ///
+    /// # Errors
+    ///
+    /// Whatever [`Tester::connect_with_version`] returns.
+    ///
+    /// # Panics
+    ///
+    /// Never: [`TESTER`] is a tester's address.
+    pub async fn tester_sending(
+        &self,
+        version: TesterVersion,
+        backoff: embassy_time::Duration,
+    ) -> Result<SensorTester, TesterConnectError> {
         let sa = TesterAddress::new(TESTER).expect("a tester address");
-        Ok(Tester::connect(self.stack, self.remote, sa)
-            .await?
-            .with_reconnect_backoff(backoff))
+        Ok(
+            Tester::connect_with_version(self.stack, self.remote, sa, version)
+                .await?
+                .with_reconnect_backoff(backoff),
+        )
     }
 
     /// The client transport over a tester from [`Self::tester_backing_off`], its

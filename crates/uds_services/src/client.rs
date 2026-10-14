@@ -11,6 +11,20 @@
 //! [`UdsTransport`], as [`crate::Server`]'s do; `client::encode` holds the sans-io halves
 //! (``UDSSVC_ARCH_0028``).
 //!
+//! [`Client`] has a call for every service the sensor stages, each one physical exchange
+//! with one server: [`Client::read_data_by_identifier`],
+//! [`Client::diagnostic_session_control`], [`Client::write_data_by_identifier`],
+//! [`Client::ecu_reset`], [`Client::security_access_seed`],
+//! [`Client::security_access_key`], [`Client::routine_control`],
+//! [`Client::read_dtc_information`], [`Client::clear_diagnostic_information`],
+//! [`Client::communication_control`] and [`Client::control_dtc_setting`]; the transfer
+//! steps [`Client::request_download`], [`Client::transfer_data`] and
+//! [`Client::request_transfer_exit`]. [`Client::read_data_by_identifier_functional`] is one
+//! functional exchange with every server at once. Beside the exchanges,
+//! [`Client::idle_until`] sends the `TesterPresent` keep-alives as they fall due,
+//! [`Client::connection_replaced`] reports why a server's connection was replaced, and
+//! [`Client::close`] ends the session.
+//!
 //! **The storage shape mirrors `uds_session`'s.** That crate splits channels by kind:
 //! `PhysicalSlot` carries no responder table where `FunctionalSlot<R>` does, and a
 //! physical channel's `tS3_Client` is an argument of `open_physical_channel` in physical
@@ -24,14 +38,22 @@ mod encode;
 
 use crate::storage::{ClientBuffers, ClientStorage};
 use crate::{
-    ClientTransport, DataIdentifier, DiagnosticSessionType, RecordError, SessionTiming,
-    UdsServiceType,
+    ClientTransport, DataIdentifier, DiagnosticSessionType, RecordError, RoutineIdentifier,
+    SecurityLevel, SessionTiming, UdsServiceType,
 };
 use driver::{Answered, Book, Exchange};
 
 #[cfg(doc)]
 use crate::UdsTransport;
-use uds_protocol::NegativeResponseCode;
+use uds_protocol::{
+    AddressAndLengthFormatIdentifier, ClearDiagnosticInfoResponse,
+    CommunicationControlResponse, CommunicationControlType, CommunicationType,
+    ControlDtcSettingResponse, DataFormatIdentifier, DtcRecord, DtcSettingType,
+    EcuResetResponse, NegativeResponseCode, ReadDtcInfoResponse, ReadDtcInfoSubFunction,
+    RequestDownloadRequest, RequestDownloadResponse, RequestTransferExitResponse,
+    ResetType, RoutineControlResponse, RoutineControlSubFunction, SecurityAccessResponse,
+    SubnetNumber, TransferDataResponse, WriteDataByIdentifierResponse,
+};
 use uds_session::{
     Address, ChannelAddressing, ChannelParameter, ChannelParams, ClientTx,
     ExpectedResponses, FunctionalKeepAlive, KeepAliveMode, PhysicalChannelId,
@@ -52,6 +74,24 @@ use uds_session::{
 pub trait ClientSet: DataIdentifier + crate::sealed::Sealed {
     /// The storage whose lengths were folded from this vocabulary's declared maxima.
     type Store: ClientStorage;
+    /// The most identifiers one `ReadDataByIdentifier` request names, declared through
+    /// [`crate::uds_client`]'s `max_dids_per_request`.
+    const MAX_DIDS_PER_REQUEST: usize;
+    /// The longest `SecurityAccess` key [`Client::security_access_key`] sends, declared
+    /// through [`crate::uds_client`]'s `max_key_len`.
+    const MAX_KEY_LEN: usize;
+    /// The longest option or parameter record [`Client::routine_control`],
+    /// [`Client::control_dtc_setting`] and [`Client::request_transfer_exit`] send,
+    /// declared through [`crate::uds_client`]'s `max_option_len`.
+    const MAX_OPTION_LEN: usize;
+    /// The most data bytes one `TransferData` block carries, declared through
+    /// [`crate::uds_client`]'s `max_block_len`: at least the server's
+    /// `maxNumberOfBlockLength` minus two, or a full block cannot be sent; see
+    /// [`Client::request_download`].
+    const MAX_BLOCK_LEN: usize;
+    /// The routine vocabulary the client's `RoutineControl` requests name, declared
+    /// through [`crate::uds_client`]'s `routines`; see [`Client::routine_control`].
+    type Routine: RoutineIdentifier;
 }
 
 /// Why a call produced no response.
@@ -64,8 +104,8 @@ pub trait ClientSet: DataIdentifier + crate::sealed::Sealed {
 pub enum ClientError<E> {
     /// The transport failed; see [`UdsTransport::Error`].
     Transport(E),
-    /// No response came within `tP_Client`, after ISO 14229-2:2021 9.7 Table 9's two
-    /// repeats.
+    /// No response came within `tP_Client`, after the repeats [`ClientTiming::repeats`]
+    /// allows (ISO 14229-2:2021 9.7 Table 9's two by default).
     Timeout,
     /// The request's last transmission was confirmed failed, after
     /// ISO 14229-2:2021 Table 9's repeats, or the session layer refused the request
@@ -75,8 +115,10 @@ pub enum ClientError<E> {
     Closed,
     /// Every channel slot was in use, and none was idle enough to withdraw.
     NoChannel,
-    /// The request named no identifier, or more than the client's
-    /// `max_dids_per_request`; nothing was sent.
+    /// The request could not be formed or does not fit the request buffer: it names no
+    /// identifier or more than the client's `max_dids_per_request`, a record is empty
+    /// where the service requires one, a node identifier disagrees with the control
+    /// type, or an address is wider than its format admits. Nothing was sent.
     Request,
 }
 
@@ -88,12 +130,32 @@ impl<E: core::fmt::Debug> core::fmt::Display for ClientError<E> {
             Self::NotSent => f.write_str("the request could not be sent"),
             Self::Closed => f.write_str("the connection closed before the response"),
             Self::NoChannel => f.write_str("no channel slot is free"),
-            Self::Request => f.write_str("the request names no identifier, or too many"),
+            Self::Request => {
+                f.write_str("the request could not be formed, or does not fit")
+            }
         }
     }
 }
 
 impl<E: core::fmt::Debug> core::error::Error for ClientError<E> {}
+
+/// Why a server's connection is not the one the last ask saw; see
+/// [`Client::connection_replaced`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum Replaced {
+    /// The connection the last ask saw is still the one in use.
+    No,
+    /// The server's session and security are gone: it closed the connection as its
+    /// protocol prescribes after a reset or a session change (ISO 14229-5:2022 REQ 7.9
+    /// and REQ 7.11). A caller enters its session again and unlocks again.
+    SessionLost,
+    /// The connection was replaced, and the server's session and security may be intact
+    /// or gone. A caller that needs to know asks the server, reading its active session
+    /// (ISO 14229-1:2020 C.1, `0xF186`), before entering a session again, which would
+    /// relock security and end a transfer in progress.
+    SessionUnknown,
+}
 
 /// A keep-alive mode a [`Client`] can be built in: [`FunctionalKeepAlive`] or
 /// [`PhysicalKeepAlive`], sealed to those two.
@@ -217,7 +279,8 @@ impl KeepAlive<FunctionalKeepAlive> {
 }
 
 /// The client's timing policy: what ISO 14229-2:2021 9.2 Tables 3 and 4 leave to the
-/// client rather than the transport, in milliseconds.
+/// client rather than the transport, in milliseconds, and the ceiling on 9.7 Table 9's
+/// response-timeout repeat.
 ///
 /// Built with [`Self::new`]; it may gain fields.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -238,6 +301,19 @@ pub struct ClientTiming {
     /// `ΔtP6_Response` and leaves a longer wait to the client. Vehicle-specific; the
     /// standard gives no default.
     pub network_delay: u32,
+    /// The ceiling on a physically addressed request's repeats under which an expired
+    /// response window is repeated rather than reported as [`ClientError::Timeout`].
+    /// ISO 14229-2:2021 9.7 Table 9 has the client repeat it and leaves performing the
+    /// repeat to the application (``UDSS_LLR_0177`` caps it). Table 9 performs its error
+    /// handling "for a maximum of two times" whatever the error, so the ceiling counts
+    /// every repeat of the request: a failed transmission's repeat leaves one fewer for
+    /// an expired window. A failed transmission is itself repeated up to Table 9's two
+    /// whatever this is, that cell being the link's, not the request's; functionally
+    /// addressed requests are not under it. [`Self::new`] sets [`Repeats::Twice`].
+    /// [`Repeats::Never`] also forgoes the one repeat the standard designs a server to
+    /// absorb, a [`Client::transfer_data`] block with the same counter (ISO 14229-1:2020
+    /// 15.4); set it, call, and restore it where that repeat is wanted.
+    pub repeats: Repeats,
 }
 
 impl ClientTiming {
@@ -248,6 +324,8 @@ impl ClientTiming {
     /// * `physical_spacing` - see [`Self::physical_spacing`].
     /// * `functional_spacing` - see [`Self::functional_spacing`].
     /// * `network_delay` - see [`Self::network_delay`].
+    ///
+    /// [`Self::repeats`] is [`Repeats::Twice`]; [`Self::with_repeats`] overrides it.
     #[must_use]
     pub const fn new(
         physical_spacing: u32,
@@ -258,6 +336,38 @@ impl ClientTiming {
             physical_spacing,
             functional_spacing,
             network_delay,
+            repeats: Repeats::Twice,
+        }
+    }
+
+    /// This policy with [`Self::repeats`] set to `repeats`.
+    #[must_use]
+    pub const fn with_repeats(mut self, repeats: Repeats) -> Self {
+        self.repeats = repeats;
+        self
+    }
+}
+
+/// A ceiling on a request's repeats, within ISO 14229-2:2021 9.7 Table 9's two; see
+/// [`ClientTiming::repeats`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum Repeats {
+    /// No expired window is repeated: the first is reported.
+    Never,
+    /// An expired window is repeated only where the request has not been repeated yet.
+    Once,
+    /// An expired window is repeated while the request has been repeated fewer than two
+    /// times: Table 9's ceiling.
+    Twice,
+}
+
+impl Repeats {
+    /// The ceiling as a count of repeats.
+    pub(crate) const fn count(self) -> u8 {
+        match self {
+            Self::Never => 0,
+            Self::Once => 1,
+            Self::Twice => 2,
         }
     }
 }
@@ -286,6 +396,16 @@ pub enum MalformedResponse {
     },
     /// The response was shorter than its service's fixed fields.
     Short,
+    /// The response echoed an identifier or DTC other than the request's: it answers
+    /// some other request.
+    ///
+    /// A positive response echoing another sub-function or `TransferData` block sequence
+    /// counter is never this: it is skipped as a stale reply, and the call waits for its
+    /// own answer. A negative response carries no echo, so a stale one to an earlier
+    /// request of the same service cannot be told apart and is taken as the answer.
+    Echo,
+    /// The response's bytes do not decode as its service's positive response.
+    Decode,
 }
 
 impl From<RecordError> for MalformedResponse {
@@ -317,6 +437,28 @@ pub enum Response<V> {
     /// No call returns this yet: none sets the suppress bit, and a silent functional
     /// window ends a [`Responses`] instead.
     NoResponseExpected,
+}
+
+impl<V> Response<V> {
+    /// The positive payload transformed; every other case unchanged.
+    pub fn map<U>(self, f: impl FnOnce(V) -> U) -> Response<U> {
+        match self {
+            Self::Positive(value) => Response::Positive(f(value)),
+            Self::Negative(code) => Response::Negative(code),
+            Self::Malformed(error) => Response::Malformed(error),
+            Self::NoResponseExpected => Response::NoResponseExpected,
+        }
+    }
+
+    /// A positive payload that fails `matches` is [`MalformedResponse::Echo`].
+    pub(crate) fn echoing(self, matches: impl FnOnce(&V) -> bool) -> Self {
+        match self {
+            Self::Positive(value) if !matches(&value) => {
+                Self::Malformed(MalformedResponse::Echo)
+            }
+            other => other,
+        }
+    }
 }
 
 /// One server's answer to a functionally addressed request.
@@ -624,6 +766,23 @@ impl<
         &self.transport
     }
 
+    /// This client's timing policy.
+    #[must_use]
+    pub const fn timing(&self) -> &ClientTiming {
+        &self.timing
+    }
+
+    /// This client's timing policy, to change between calls. When a change takes effect:
+    /// [`ClientTiming::repeats`] on the next request whose response window expires;
+    /// [`ClientTiming::network_delay`] on the next session the client enters, which sets
+    /// the response windows; [`ClientTiming::physical_spacing`] and
+    /// [`ClientTiming::functional_spacing`] on channels opened afterwards, a channel
+    /// already open keeping the spacing it was opened with.
+    #[must_use]
+    pub fn timing_mut(&mut self) -> &mut ClientTiming {
+        &mut self.timing
+    }
+
     /// Read one or more data identifiers from one server.
     ///
     /// The response comes back as [`Records`], the identifier/record pairs it carries,
@@ -648,8 +807,9 @@ impl<
     ///
     /// - [`ClientError::Request`] where `identifiers` is empty or too long; nothing is
     ///   sent.
-    /// - [`ClientError::Timeout`] or [`ClientError::NotSent`] where ISO 14229-2:2021 9.7
-    ///   ISO 14229-2:2021 Table 9's repeats were spent.
+    /// - [`ClientError::Timeout`] or [`ClientError::NotSent`] where the repeats were spent:
+    ///   [`ClientTiming::repeats`] for an expired window, ISO 14229-2:2021 9.7 Table 9's
+    ///   two for a failed transmission.
     /// - [`ClientError::Closed`] where the connection closed first.
     /// - [`ClientError::NoChannel`] where no channel could be opened to `target`.
     /// - [`ClientError::Transport`] where the transport failed.
@@ -669,7 +829,13 @@ impl<
         let answered = self
             .exchange_with(
                 target,
-                |request| encode::read_data_by_identifier(request, identifiers),
+                |request| {
+                    encode::read_data_by_identifier(
+                        request,
+                        identifiers,
+                        C::MAX_DIDS_PER_REQUEST,
+                    )
+                },
                 None,
             )
             .await?;
@@ -742,6 +908,619 @@ impl<
         Ok(response)
     }
 
+    /// Write one data identifier's record on `target` (ISO 14229-1:2020 11.7).
+    ///
+    /// # Arguments
+    ///
+    /// * `target` - the server's address, `S_AI[TA]`.
+    /// * `did` - the identifier to write.
+    /// * `record` - its new record, at least one byte.
+    ///
+    /// # Errors
+    ///
+    /// [`ClientError::Request`] for an empty record or one longer than
+    /// [`DataIdentifier::MAX_RECORD_LEN`], and nothing is sent; otherwise as
+    /// [`Self::read_data_by_identifier`]'s. A positive response echoing another
+    /// identifier is [`MalformedResponse::Echo`].
+    ///
+    /// # Cancel safety
+    ///
+    /// As [`Self::read_data_by_identifier`]'s.
+    pub async fn write_data_by_identifier(
+        &mut self,
+        target: Address,
+        did: C,
+        record: &[u8],
+    ) -> Result<Response<()>, ClientError<T::Error>> {
+        let answered = self
+            .exchange_with(
+                target,
+                |request| {
+                    within(record.len(), C::MAX_RECORD_LEN)?;
+                    encode::write_data_by_identifier(request, did, record)
+                },
+                None,
+            )
+            .await?;
+        let message = answered_bytes(&mut self.store, &answered);
+        Ok(
+            encode::decoded::<WriteDataByIdentifierResponse>(encode::final_response(
+                message,
+                answered.arrived,
+            ))
+            .echoing(|written| written.identifier == did.as_u16())
+            .map(|_| ()),
+        )
+    }
+
+    /// Reset `target` (ISO 14229-1:2020 10.3).
+    ///
+    /// A positive response to `enableRapidPowerShutDown` carries the server's
+    /// power-down time; any other carries `None`. The server closes its connection after
+    /// a positive response (ISO 14229-5:2022 REQ 7.11), which
+    /// [`Self::connection_replaced`] reports [`Replaced::SessionLost`] from now. The next
+    /// call opens a new connection, which fails with [`ClientError::Transport`] while the
+    /// server restarts; retry it after a back-off.
+    ///
+    /// # Arguments
+    ///
+    /// * `target` - the server's address.
+    /// * `kind` - the reset.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::read_data_by_identifier`]'s.
+    ///
+    /// # Cancel safety
+    ///
+    /// As [`Self::read_data_by_identifier`]'s.
+    pub async fn ecu_reset(
+        &mut self,
+        target: Address,
+        kind: ResetType,
+    ) -> Result<Response<Option<u8>>, ClientError<T::Error>> {
+        let answered = self
+            .exchange_with(target, |request| encode::ecu_reset(request, kind), None)
+            .await?;
+        let message = answered_bytes(&mut self.store, &answered);
+        if encode::is_positive(UdsServiceType::EcuReset, message) {
+            self.book.foresee_close(target);
+        }
+        Ok(encode::decoded::<EcuResetResponse>(encode::final_response(
+            message,
+            answered.arrived,
+        ))
+        .map(|reset| reset.power_down_time))
+    }
+
+    /// Request `level`'s seed from `target` (ISO 14229-1:2020 10.4, Annex I).
+    ///
+    /// The seed is in the response, so the suppress bit is never set on this request.
+    /// The client keeps no security state: compute the key and send it with
+    /// [`Self::security_access_key`]. A repeated request (under
+    /// [`ClientTiming::repeats`]) is answered with a seed again (Annex I Table I.2), a
+    /// zero seed where the level is already unlocked (10.4).
+    ///
+    /// # Arguments
+    ///
+    /// * `target` - the server's address.
+    /// * `level` - the security level, named by its seed sub-function.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::read_data_by_identifier`]'s.
+    ///
+    /// # Cancel safety
+    ///
+    /// As [`Self::read_data_by_identifier`]'s.
+    pub async fn security_access_seed(
+        &mut self,
+        target: Address,
+        level: SecurityLevel,
+    ) -> Result<Response<&[u8]>, ClientError<T::Error>> {
+        let answered = self
+            .exchange_with(
+                target,
+                |request| encode::security_access_seed(request, level),
+                None,
+            )
+            .await?;
+        let message = answered_bytes(&mut self.store, &answered);
+        Ok(
+            encode::decoded::<SecurityAccessResponse<'_>>(encode::final_response(
+                message,
+                answered.arrived,
+            ))
+            .map(|seed| seed.security_seed),
+        )
+    }
+
+    /// Send `level`'s key to `target` (ISO 14229-1:2020 10.4).
+    ///
+    /// # Arguments
+    ///
+    /// * `target` - the server's address.
+    /// * `level` - the level whose seed was requested.
+    /// * `key` - the key computed from the seed.
+    ///
+    /// # Errors
+    ///
+    /// [`ClientError::Request`] where `key` is longer than [`ClientSet::MAX_KEY_LEN`], and
+    /// nothing is sent; otherwise as [`Self::read_data_by_identifier`]'s.
+    ///
+    /// A repeated key (under [`ClientTiming::repeats`]), whatever answer was lost, reaches
+    /// a server with no seed outstanding, since a key of valid length discards the seed
+    /// (ISO 14229-1:2020 10.4, Annex I Table I.2), and earns
+    /// [`NegativeResponseCode::RequestSequenceError`] in place of the first answer;
+    /// [`Repeats::Never`] reports the first window instead.
+    ///
+    /// # Cancel safety
+    ///
+    /// As [`Self::read_data_by_identifier`]'s.
+    pub async fn security_access_key(
+        &mut self,
+        target: Address,
+        level: SecurityLevel,
+        key: &[u8],
+    ) -> Result<Response<()>, ClientError<T::Error>> {
+        let answered = self
+            .exchange_with(
+                target,
+                |request| {
+                    within(key.len(), C::MAX_KEY_LEN)?;
+                    encode::security_access_key(request, level, key)
+                },
+                None,
+            )
+            .await?;
+        let message = answered_bytes(&mut self.store, &answered);
+        Ok(
+            encode::decoded::<SecurityAccessResponse<'_>>(encode::final_response(
+                message,
+                answered.arrived,
+            ))
+            .map(|_| ()),
+        )
+    }
+
+    /// Start, stop or read the results of `routine` on `target` (ISO 14229-1:2020 14.2).
+    ///
+    /// The positive payload is everything after the echoed routine identifier:
+    /// `routineInfo` first where the server sends one, which Table 428 leaves to the
+    /// server, then the status record. This stack's servers always send it.
+    ///
+    /// # Arguments
+    ///
+    /// * `target` - the server's address.
+    /// * `control` - start, stop or request results.
+    /// * `routine` - the routine.
+    /// * `option_record` - the `routineControlOptionRecord`, possibly empty.
+    ///
+    /// # Errors
+    ///
+    /// [`ClientError::Request`] where the record is longer than
+    /// [`ClientSet::MAX_OPTION_LEN`], and nothing is sent; otherwise as
+    /// [`Self::read_data_by_identifier`]'s. A positive response echoing another
+    /// routine's identifier is [`MalformedResponse::Echo`].
+    ///
+    /// # Cancel safety
+    ///
+    /// As [`Self::read_data_by_identifier`]'s.
+    pub async fn routine_control(
+        &mut self,
+        target: Address,
+        control: RoutineControlSubFunction,
+        routine: C::Routine,
+        option_record: &[u8],
+    ) -> Result<Response<&[u8]>, ClientError<T::Error>> {
+        let answered = self
+            .exchange_with(
+                target,
+                |request| {
+                    within(option_record.len(), C::MAX_OPTION_LEN)?;
+                    encode::routine_control(request, control, routine, option_record)
+                },
+                None,
+            )
+            .await?;
+        let message = answered_bytes(&mut self.store, &answered);
+        Ok(
+            encode::decoded::<RoutineControlResponse<'_>>(encode::final_response(
+                message,
+                answered.arrived,
+            ))
+            .echoing(|r| r.routine_id == routine.as_u16())
+            .map(|r| r.status_record),
+        )
+    }
+
+    /// Read DTC information from `target` (ISO 14229-1:2020 12.3).
+    ///
+    /// `report` names the sub-function and carries its parameters; the response is the
+    /// layout that sub-function answers with, borrowing the response buffer. A snapshot
+    /// or extended data record's bytes are the application's to split.
+    ///
+    /// # Arguments
+    ///
+    /// * `target` - the server's address.
+    /// * `report` - the report and its parameters.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::read_data_by_identifier`]'s. A positive response to a report by DTC
+    /// number that names another DTC is [`MalformedResponse::Echo`].
+    ///
+    /// # Cancel safety
+    ///
+    /// As [`Self::read_data_by_identifier`]'s.
+    pub async fn read_dtc_information(
+        &mut self,
+        target: Address,
+        report: ReadDtcInfoSubFunction,
+    ) -> Result<Response<ReadDtcInfoResponse<'_>>, ClientError<T::Error>> {
+        let asked = match report {
+            ReadDtcInfoSubFunction::ReportDtcSnapshotRecordByDtcNumber(dtc, _)
+            | ReadDtcInfoSubFunction::ReportDtcExtDataRecordByDtcNumber(dtc, _) => {
+                Some(dtc)
+            }
+            _ => None,
+        };
+        let answered = self
+            .exchange_with(
+                target,
+                |request| encode::read_dtc_information(request, report),
+                None,
+            )
+            .await?;
+        let message = answered_bytes(&mut self.store, &answered);
+        Ok(
+            encode::decoded::<ReadDtcInfoResponse<'_>>(encode::final_response(
+                message,
+                answered.arrived,
+            ))
+            .echoing(|r| asked.is_none_or(|asked| records_dtc(r) == Some(asked))),
+        )
+    }
+
+    /// Clear `group`'s stored diagnostic information on `target` (ISO 14229-1:2020
+    /// 12.2); [`crate::CLEAR_ALL_DTCS`] clears everything.
+    ///
+    /// # Arguments
+    ///
+    /// * `target` - the server's address.
+    /// * `group` - the DTC group.
+    /// * `memory_selection` - the `MemorySelection` byte, where the server has one.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::read_data_by_identifier`]'s.
+    ///
+    /// # Cancel safety
+    ///
+    /// As [`Self::read_data_by_identifier`]'s.
+    pub async fn clear_diagnostic_information(
+        &mut self,
+        target: Address,
+        group: DtcRecord,
+        memory_selection: Option<u8>,
+    ) -> Result<Response<()>, ClientError<T::Error>> {
+        let answered = self
+            .exchange_with(
+                target,
+                |request| {
+                    encode::clear_diagnostic_information(request, group, memory_selection)
+                },
+                None,
+            )
+            .await?;
+        let message = answered_bytes(&mut self.store, &answered);
+        Ok(
+            encode::decoded::<ClearDiagnosticInfoResponse>(encode::final_response(
+                message,
+                answered.arrived,
+            ))
+            .map(|_| ()),
+        )
+    }
+
+    /// Enable or disable `target`'s transmission and reception on a communication type
+    /// (ISO 14229-1:2020 10.5).
+    ///
+    /// # Arguments
+    ///
+    /// * `target` - the server's address.
+    /// * `control` - what to enable or disable.
+    /// * `communication` - which messages it applies to.
+    /// * `subnet` - which subnet, or all.
+    /// * `node_id` - the node, for the two enhanced-address control types only.
+    ///
+    /// # Errors
+    ///
+    /// [`ClientError::Request`] where `node_id` is given for a plain control type or
+    /// missing for an enhanced-address one; otherwise as
+    /// [`Self::read_data_by_identifier`]'s.
+    ///
+    /// # Cancel safety
+    ///
+    /// As [`Self::read_data_by_identifier`]'s.
+    pub async fn communication_control(
+        &mut self,
+        target: Address,
+        control: CommunicationControlType,
+        communication: CommunicationType,
+        subnet: SubnetNumber,
+        node_id: Option<u16>,
+    ) -> Result<Response<()>, ClientError<T::Error>> {
+        let answered = self
+            .exchange_with(
+                target,
+                |request| {
+                    encode::communication_control(
+                        request,
+                        control,
+                        communication,
+                        subnet,
+                        node_id,
+                    )
+                },
+                None,
+            )
+            .await?;
+        let message = answered_bytes(&mut self.store, &answered);
+        Ok(
+            encode::decoded::<CommunicationControlResponse>(encode::final_response(
+                message,
+                answered.arrived,
+            ))
+            .map(|_| ()),
+        )
+    }
+
+    /// Turn `target`'s DTC setting on or off (ISO 14229-1:2020 10.8).
+    ///
+    /// # Arguments
+    ///
+    /// * `target` - the server's address.
+    /// * `setting` - on, off, or a manufacturer's own.
+    /// * `option_record` - the `DTCSettingControlOptionRecord`, possibly empty.
+    ///
+    /// # Errors
+    ///
+    /// [`ClientError::Request`] where the record is longer than
+    /// [`ClientSet::MAX_OPTION_LEN`], and nothing is sent; otherwise as
+    /// [`Self::read_data_by_identifier`]'s.
+    ///
+    /// # Cancel safety
+    ///
+    /// As [`Self::read_data_by_identifier`]'s.
+    pub async fn control_dtc_setting(
+        &mut self,
+        target: Address,
+        setting: DtcSettingType,
+        option_record: &[u8],
+    ) -> Result<Response<()>, ClientError<T::Error>> {
+        let answered = self
+            .exchange_with(
+                target,
+                |request| {
+                    within(option_record.len(), C::MAX_OPTION_LEN)?;
+                    encode::control_dtc_setting(request, setting, option_record)
+                },
+                None,
+            )
+            .await?;
+        let message = answered_bytes(&mut self.store, &answered);
+        Ok(
+            encode::decoded::<ControlDtcSettingResponse>(encode::final_response(
+                message,
+                answered.arrived,
+            ))
+            .map(|_| ()),
+        )
+    }
+
+    /// Ask `target` to take a download of `size` bytes to `address` (ISO 14229-1:2020
+    /// 15.2): the first of clause 17's standardized transfer steps. The
+    /// `addressAndLengthFormatIdentifier` declares the narrowest widths that hold
+    /// `address` and `size`; [`Self::request_download_with_format`] fixes them instead.
+    ///
+    /// The response is the server's `maxNumberOfBlockLength`: the length of one
+    /// `TransferData` request, service identifier and counter included (Table 443), so
+    /// each [`Self::transfer_data`] block carries exactly this minus two data bytes,
+    /// except possibly the last. The server need accept nothing shorter: "A server is
+    /// required to accept transferData requests that are equal in length to its reported
+    /// maxNumberOfBlockLength. It is server specific what transferData request lengths
+    /// less than maxNumberOfBlockLength are accepted (if any)." A block longer than the
+    /// client's [`ClientSet::MAX_BLOCK_LEN`] cannot be sent.
+    ///
+    /// The client keeps no transfer state: the caller owns the block sequence counter
+    /// and its roll from `0xFF` to `0x00`.
+    ///
+    /// # Arguments
+    ///
+    /// * `target` - the server's address.
+    /// * `data_format` - compression and encryption, [`DataFormatIdentifier::NONE`] for
+    ///   neither.
+    /// * `address` - `memoryAddress`, up to five bytes wide.
+    /// * `size` - `memorySize`.
+    ///
+    /// # Errors
+    ///
+    /// [`ClientError::Request`] where `address` is wider than five bytes; otherwise as
+    /// [`Self::read_data_by_identifier`]'s. A block length that is empty or wider than
+    /// eight bytes is [`MalformedResponse::Decode`].
+    ///
+    /// # Cancel safety
+    ///
+    /// As [`Self::read_data_by_identifier`]'s.
+    pub async fn request_download(
+        &mut self,
+        target: Address,
+        data_format: DataFormatIdentifier,
+        address: u64,
+        size: u32,
+    ) -> Result<Response<u64>, ClientError<T::Error>> {
+        let download = RequestDownloadRequest::new(data_format, address, size).ok();
+        self.download(target, download).await
+    }
+
+    /// [`Self::request_download`] with a caller-chosen `addressAndLengthFormatIdentifier`
+    /// (ISO 14229-1:2020 15.2.2, Table 441): `address` and `size` are sent at the widths
+    /// `format` declares, padded with leading zeros, for a server that accepts only
+    /// fixed widths.
+    ///
+    /// # Arguments
+    ///
+    /// * `target` - the server's address.
+    /// * `data_format` - compression and encryption, [`DataFormatIdentifier::NONE`] for
+    ///   neither.
+    /// * `format` - the widths of `memoryAddress` and `memorySize`.
+    /// * `address` - `memoryAddress`.
+    /// * `size` - `memorySize`.
+    ///
+    /// # Errors
+    ///
+    /// [`ClientError::Request`] where `address` or `size` is wider than `format`
+    /// declares for it; otherwise as [`Self::request_download`]'s.
+    ///
+    /// # Cancel safety
+    ///
+    /// As [`Self::read_data_by_identifier`]'s.
+    pub async fn request_download_with_format(
+        &mut self,
+        target: Address,
+        data_format: DataFormatIdentifier,
+        format: AddressAndLengthFormatIdentifier,
+        address: u64,
+        size: u32,
+    ) -> Result<Response<u64>, ClientError<T::Error>> {
+        let download =
+            RequestDownloadRequest::new_with_alfid(data_format, format, address, size).ok();
+        self.download(target, download).await
+    }
+
+    /// Exchange `download` with `target` and read the block length back; `None` where
+    /// the request could not be formed, refused as [`ClientError::Request`].
+    async fn download(
+        &mut self,
+        target: Address,
+        download: Option<RequestDownloadRequest>,
+    ) -> Result<Response<u64>, ClientError<T::Error>> {
+        let answered = self
+            .exchange_with(
+                target,
+                |request| encode::request_download(request, download?),
+                None,
+            )
+            .await?;
+        let message = answered_bytes(&mut self.store, &answered);
+        Ok(
+            match encode::decoded::<RequestDownloadResponse<'_>>(encode::final_response(
+                message,
+                answered.arrived,
+            )) {
+                Response::Positive(r) => {
+                    match encode::block_length(r.max_number_of_block_length()) {
+                        Some(length) => Response::Positive(length),
+                        None => Response::Malformed(MalformedResponse::Decode),
+                    }
+                }
+                other => other.map(|_| 0),
+            },
+        )
+    }
+
+    /// Send one block of a transfer to `target` (ISO 14229-1:2020 15.4). The response
+    /// echoes `counter`, then carries the server's `transferResponseParameterRecord`.
+    ///
+    /// This is the one request the standard designs a repeat for: a server that already
+    /// wrote the block answers its repeat, same `counter`, without writing again (15.4).
+    /// A caller holding [`ClientTiming::repeats`] at [`Repeats::Never`] raises it for the
+    /// blocks, through [`Self::timing_mut`], and restores it after.
+    ///
+    /// # Arguments
+    ///
+    /// * `target` - the server's address.
+    /// * `counter` - the `blockSequenceCounter`, the caller's to advance.
+    /// * `data` - the block: exactly `maxNumberOfBlockLength` minus two bytes, except
+    ///   possibly the last; see [`Self::request_download`].
+    ///
+    /// # Errors
+    ///
+    /// [`ClientError::Request`] where `data` is longer than [`ClientSet::MAX_BLOCK_LEN`],
+    /// and nothing is sent; otherwise as [`Self::read_data_by_identifier`]'s.
+    ///
+    /// # Cancel safety
+    ///
+    /// As [`Self::read_data_by_identifier`]'s.
+    pub async fn transfer_data(
+        &mut self,
+        target: Address,
+        counter: u8,
+        data: &[u8],
+    ) -> Result<Response<&[u8]>, ClientError<T::Error>> {
+        let answered = self
+            .exchange_with(
+                target,
+                |request| {
+                    within(data.len(), C::MAX_BLOCK_LEN)?;
+                    encode::transfer_data(request, counter, data)
+                },
+                None,
+            )
+            .await?;
+        let message = answered_bytes(&mut self.store, &answered);
+        Ok(
+            encode::decoded::<TransferDataResponse<'_>>(encode::final_response(
+                message,
+                answered.arrived,
+            ))
+            .map(|r| r.data),
+        )
+    }
+
+    /// End the transfer with `target` (ISO 14229-1:2020 15.5), with a parameter record
+    /// each way.
+    ///
+    /// # Arguments
+    ///
+    /// * `target` - the server's address.
+    /// * `parameter_record` - the `transferRequestParameterRecord`, possibly empty.
+    ///
+    /// # Errors
+    ///
+    /// [`ClientError::Request`] where the record is longer than
+    /// [`ClientSet::MAX_OPTION_LEN`], and nothing is sent; otherwise as
+    /// [`Self::read_data_by_identifier`]'s.
+    ///
+    /// # Cancel safety
+    ///
+    /// As [`Self::read_data_by_identifier`]'s.
+    pub async fn request_transfer_exit(
+        &mut self,
+        target: Address,
+        parameter_record: &[u8],
+    ) -> Result<Response<&[u8]>, ClientError<T::Error>> {
+        let answered = self
+            .exchange_with(
+                target,
+                |request| {
+                    within(parameter_record.len(), C::MAX_OPTION_LEN)?;
+                    encode::request_transfer_exit(request, parameter_record)
+                },
+                None,
+            )
+            .await?;
+        let message = answered_bytes(&mut self.store, &answered);
+        Ok(
+            encode::decoded::<RequestTransferExitResponse<'_>>(encode::final_response(
+                message,
+                answered.arrived,
+            ))
+            .map(|r| r.parameter_record),
+        )
+    }
+
     /// Wait until `until`, sending every keep-alive that falls due meanwhile.
     ///
     /// The client's `sleep`: a keep-alive is only ever sent from inside a call, so an
@@ -776,6 +1555,67 @@ impl<
             }
             self.pump(None, Some(until)).await?;
         }
+    }
+
+    /// Why the connection to `target` is not the one this last asked about, or the one
+    /// the channel to it was opened over.
+    ///
+    /// A positive [`Self::ecu_reset`] response is reported [`Replaced::SessionLost`] from
+    /// that exchange itself, before the transport reports the close, since the server
+    /// always closes after one (ISO 14229-5:2022 REQ 7.11); the next close the transport
+    /// reports to `target` is that same one, unless the server answers first. Any other
+    /// close is reported once the transport has been polled past it, by
+    /// [`Self::idle_until`] or by any call: [`Replaced::SessionLost`] where the transport
+    /// marks it expected, and [`Replaced::SessionUnknown`] otherwise. The `DoIP`
+    /// transport marks the close that follows a positive `DiagnosticSessionControl`
+    /// (REQ 7.9), a close a server makes only where the change leaves its running
+    /// software, until it acknowledges any request between the response and the close,
+    /// a keep-alive falling due included; that close is then
+    /// [`Replaced::SessionUnknown`]. On a transport whose first poll after a close may be
+    /// `Pending`, as the std `DoIP` stack's is, one poll may not reach it.
+    ///
+    /// [`Replaced::SessionUnknown`] is the normal result of a request that went unanswered
+    /// over `DoIP`: its transport puts the first request after it, the repeat
+    /// ISO 14229-2:2021 Table 9 asks for where [`ClientTiming::repeats`] allows one or the
+    /// next call where it does not, on a new connection, so a late answer cannot be taken
+    /// for that request's. It is also the result of a call cancelled after its request
+    /// went.
+    ///
+    /// Where closes of both kinds happened since the last asking, the answer is
+    /// [`Replaced::SessionLost`], once.
+    ///
+    /// This first settles what an earlier call left, waiting out a functional window a
+    /// dropped call left open, then takes every event the transport holds at the asking,
+    /// until it reports the asking's time as its deadline or its clock passes it, sends a
+    /// keep-alive that fell due, and answers. Asking clears the report.
+    /// [`Replaced::No`] where no channel to `target` is open, and where the channel was
+    /// withdrawn for another server before the asking.
+    ///
+    /// # Arguments
+    ///
+    /// * `target` - the server's address.
+    ///
+    /// # Errors
+    ///
+    /// [`ClientError::Transport`] where the transport failed, a keep-alive's sending
+    /// included; the report is then kept for the next asking.
+    ///
+    /// # Cancel safety
+    ///
+    /// As [`Self::read_data_by_identifier`]'s.
+    #[must_use = "asking clears the report"]
+    pub async fn connection_replaced(
+        &mut self,
+        target: Address,
+    ) -> Result<Replaced, ClientError<T::Error>> {
+        self.retire();
+        self.drain_window().await?;
+        let asked = self.transport.now();
+        while !self.pump(None, Some(asked)).await?.quiet
+            && asked.has_reached(self.transport.now())
+        {}
+        self.send_owed().await.result?;
+        Ok(self.book.take_replaced(target))
     }
 
     /// End the session: close the transport's connection, gracefully.
@@ -831,7 +1671,11 @@ impl<
             .addressing(target)
             .with_ta_type(uds_session::TaType::Functional);
         let ClientBuffers { request, .. } = self.store.split();
-        let refused = match encode::read_data_by_identifier(request, identifiers) {
+        let refused = match encode::read_data_by_identifier(
+            request,
+            identifiers,
+            C::MAX_DIDS_PER_REQUEST,
+        ) {
             Some(len) => {
                 let sid = request.first().copied().unwrap_or_default();
                 let class = ClientTx::Request {
@@ -852,6 +1696,13 @@ impl<
 
     /// Run one physical exchange with `target`: settle what an earlier call left,
     /// encode the request with `encode`, and wait for its answer.
+    ///
+    /// A positive response answers it only where it echoes the request's second byte,
+    /// for a service that echoes one: the sub-function, or `TransferData`'s block
+    /// sequence counter. A positive response that echoes another is a stale reply to an
+    /// earlier request and is skipped. A negative response carries no echo, so one to an
+    /// earlier request of the same service cannot be told from this one's answer, and
+    /// answers it.
     async fn exchange_with(
         &mut self,
         target: Address,
@@ -863,7 +1714,15 @@ impl<
         let ClientBuffers { request, .. } = self.store.split();
         let len = encode(request).ok_or(ClientError::Request)?;
         let sid = request.first().copied().unwrap_or_default();
-        let echo = session.and_then(|_| request.get(1).copied());
+        let service = UdsServiceType::from_request_sid(sid);
+        let echoed = session.is_some()
+            || service.has_sub_function() == Some(true)
+            || service == UdsServiceType::TransferData;
+        let echo = if echoed {
+            request.get(1).copied()
+        } else {
+            None
+        };
         let ai = self
             .addressing(target)
             .with_ta_type(uds_session::TaType::Physical);
@@ -874,6 +1733,7 @@ impl<
         };
         self.exchange = Some(Exchange::new(ai, len, sid, echo, class));
         let answered = self.advance().await.unwrap_or(Err(ClientError::Timeout))?;
+        self.book.answered(target);
         // The answer stands: a keep-alive the transport fails to take now stays owed,
         // and the failure meets the next call.
         let _ = self.send_owed().await;
@@ -913,6 +1773,20 @@ impl<
             }
         }
     }
+}
+
+/// The DTC a report by DTC number answers for; `None` for any other layout.
+const fn records_dtc(response: &ReadDtcInfoResponse<'_>) -> Option<DtcRecord> {
+    match response {
+        ReadDtcInfoResponse::DtcSnapshotRecords { dtc, .. }
+        | ReadDtcInfoResponse::DtcExtDataRecords { dtc, .. } => Some(*dtc),
+        _ => None,
+    }
+}
+
+/// `Some` where a request input of `len` bytes is within its declared maximum `max`.
+const fn within(len: usize, max: usize) -> Option<()> {
+    if len <= max { Some(()) } else { None }
 }
 
 /// The bytes `answered` occupies in the response buffer.

@@ -69,6 +69,96 @@ pub const fn dtc_response_bound(
     best
 }
 
+/// The request bound of a client: the widest request among its services.
+///
+/// `#[doc(hidden)]`: macro plumbing, as [`max_of`] is. The fixed-size requests' widest
+/// is `RequestDownload` at 12: the identifier, two format bytes, a five-byte address
+/// and a four-byte size, the widest the format identifier admits.
+#[doc(hidden)]
+#[must_use]
+pub const fn client_request_bound(
+    max_dids: usize,
+    max_record_len: usize,
+    max_key_len: usize,
+    max_option_len: usize,
+    max_block_len: usize,
+) -> usize {
+    max_of(&[
+        1_usize.saturating_add(max_dids.saturating_mul(2)),
+        3_usize.saturating_add(max_record_len),
+        2_usize.saturating_add(max_key_len),
+        4_usize.saturating_add(max_option_len),
+        2_usize.saturating_add(max_block_len),
+        1_usize.saturating_add(max_option_len),
+        12,
+    ])
+}
+
+/// The maxima a client's response bound is folded from, as `uds_client!` declares them.
+///
+/// `#[doc(hidden)]`: macro plumbing, as [`max_of`] is.
+#[doc(hidden)]
+#[derive(Debug, Clone, Copy)]
+pub struct ClientResponseMaxima {
+    /// The most identifiers one read names.
+    pub max_dids: usize,
+    /// The longest record of any identifier.
+    pub max_record_len: usize,
+    /// The most DTC records one list response carries.
+    pub max_dtcs: usize,
+    /// The most record bytes one snapshot or extended data response carries.
+    pub max_dtc_record_len: usize,
+    /// The longest `SecurityAccess` seed.
+    pub max_seed_len: usize,
+    /// The longest routine status record.
+    pub max_status_len: usize,
+    /// The longest transfer-exit parameter record.
+    pub max_option_len: usize,
+    /// The longest `TransferData` block.
+    pub max_block_len: usize,
+}
+
+/// The response bound of a client: the widest response among its services.
+///
+/// The fixed-size responses' widest is `RequestDownload`'s at 17: the identifier, the
+/// length format byte and up to fifteen bytes of block length.
+#[doc(hidden)]
+#[must_use]
+pub const fn client_response_bound(maxima: ClientResponseMaxima) -> usize {
+    use crate::DtcReportKind as K;
+    let ClientResponseMaxima {
+        max_dids,
+        max_record_len,
+        max_dtcs,
+        max_dtc_record_len,
+        max_seed_len,
+        max_status_len,
+        max_option_len,
+        max_block_len,
+    } = maxima;
+    max_of(&[
+        1_usize.saturating_add(
+            max_dids.saturating_mul(2_usize.saturating_add(max_record_len)),
+        ),
+        dtc_response_bound(
+            &[
+                K::Count,
+                K::DtcList,
+                K::FaultDetectionCounters,
+                K::SeverityList,
+                K::WwhObdSeverity,
+            ],
+            max_dtcs,
+        ),
+        dtc_response_bound(&[K::SnapshotRecords, K::ExtDataRecords], max_dtc_record_len),
+        2_usize.saturating_add(max_seed_len),
+        5_usize.saturating_add(max_status_len),
+        2_usize.saturating_add(max_block_len),
+        1_usize.saturating_add(max_option_len),
+        17,
+    ])
+}
+
 /// Every service a service trait covers, named rather than spelled as a wire byte.
 ///
 /// The byte for each is `uds_protocol`'s to know (``UDSSVC_ARCH_0001`` gives it the
@@ -439,6 +529,10 @@ macro_rules! __uds_stage {
 /// `peers = N` sizes the association array of the `uds_session::Server<N>` the driver
 /// owns, and `server = Name` is the alias it is reached through — the macro emits
 /// `type Name = Server<Ecu, Transport, N>`, so the count is written once, where it acts.
+///
+/// The application type must be defined in the crate that invokes the macro, because the
+/// macro implements this crate's sealed [`ServiceSet`](crate::ServiceSet) for it; a type
+/// from another crate needs a local newtype.
 ///
 /// **Milestone 1 accepts `peers = 1` only**, and any other count fails to compile. The
 /// driver keeps one slot for a `DiagnosticSessionControl` response awaiting its
@@ -820,26 +914,59 @@ macro_rules! uds_server {
 /// are written against names a client's requests, so a vehicle programme that builds both
 /// from one definition gets a compile error when only one was updated.
 ///
-/// The fold is [`crate::uds_server`]'s `ReadDataByIdentifier` arms, run against the
-/// client's side of the same exchange: a request is the service identifier and two bytes
-/// per identifier, and a response is the service identifier and each identifier beside
-/// its record. Both are at least as long as a `DiagnosticSessionControl` exchange
-/// ([`crate::Client::diagnostic_session_control`]). Naming the transport lets its
-/// [`MAX_PDU`](crate::UdsTransport::MAX_PDU) cap both, exactly as it does for a server,
-/// and one whose cap leaves no room for that six-byte response fails to compile. Six
-/// bytes also hold every negative response.
+/// The client's buffers are folded from its declared maxima as [`crate::uds_server`]
+/// folds a server's from its service traits: the request buffer holds the widest request
+/// among the client's services, and the response buffer the widest response. The
+/// maxima, after `max_dids_per_request` (the most identifiers one read names):
+///
+/// - `routines`: the [`RoutineIdentifier`](crate::RoutineIdentifier) vocabulary routine
+///   control takes; its `MAX_STATUS_LEN` sizes the routine response.
+/// - `max_dtcs`: the most DTC records one `ReadDTCInformation` list response carries.
+/// - `max_dtc_record_len`: the most record bytes one snapshot or extended data response
+///   carries after its six-byte header.
+/// - `max_seed_len`: sizes the response buffer for a `SecurityAccess` seed of this
+///   length.
+/// - `max_key_len`: the longest `SecurityAccess` key the client sends. It is
+///   [`ClientSet::MAX_KEY_LEN`](crate::ClientSet::MAX_KEY_LEN).
+/// - `max_option_len`: the longest routine control option record, `ControlDTCSetting`
+///   option record and transfer-exit parameter record the client sends, and sizes the
+///   response buffer for a transfer-exit parameter record of this length. It is
+///   [`ClientSet::MAX_OPTION_LEN`](crate::ClientSet::MAX_OPTION_LEN).
+/// - `max_block_len`: the most data bytes one `TransferData` block carries, its service
+///   identifier and block sequence counter not counted; at least the server's
+///   `maxNumberOfBlockLength` minus two, or a full block cannot be sent. It is
+///   [`ClientSet::MAX_BLOCK_LEN`](crate::ClientSet::MAX_BLOCK_LEN).
+///
+/// A maximum a request carries limits it: a call given more than its maximum is
+/// [`ClientError::Request`](crate::ClientError::Request), and nothing is sent, whatever
+/// the other maxima make the request buffer. A response longer than the response buffer
+/// is [`MalformedResponse::Overlong`](crate::MalformedResponse::Overlong).
+///
+/// Naming the transport lets its [`MAX_PDU`](crate::UdsTransport::MAX_PDU) join the fold.
+/// A transport whose `MAX_PDU` cannot carry a request of the declared maxima fails to
+/// compile, naming the input it cannot carry, as does one with no room for a six-byte
+/// `DiagnosticSessionControl` response ([`crate::Client::diagnostic_session_control`]);
+/// six bytes also hold every negative response. The response buffer is capped at
+/// `MAX_PDU`, since no longer response can arrive.
 ///
 /// `client = Name` is the alias the client is reached through, so the channel counts and
 /// the keep-alive mode are written once, here, rather than at every signature that names
 /// a client.
+///
+/// The identifier type must be defined in the crate that invokes the macro, because the
+/// macro implements this crate's sealed [`ClientSet`](crate::ClientSet) for it; a type
+/// from another crate needs a local newtype. For the same reason one identifier type
+/// takes one invocation: a second over the same type is a conflicting implementation
+/// (E0119), so two clients, over two transports or in two keep-alive modes, need a
+/// newtype each.
 ///
 /// # Examples
 ///
 /// ```
 /// # use uds_services::{
 /// #     Address, AfterSend, Ai, DataIdentifier, KeepAlive, PhysicalKeepAlive, RecordError,
-/// #     Reloads, ClientTiming, ClientTransport, Timestamp, TransportEvent, UdsTransport,
-/// #     uds_client,
+/// #     Reloads, RoutineIdentifier, ClientTiming, ClientTransport, Timestamp, TransportEvent,
+/// #     UdsTransport, uds_client,
 /// # };
 /// # #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 /// # enum Did { VehicleSpeed, VinNumber }
@@ -883,10 +1010,26 @@ macro_rules! uds_server {
 /// # impl ClientTransport for DoIpTransport {
 /// #     async fn close(&mut self) -> Result<(), ()> { Ok(()) }
 /// # }
+/// #
+/// # #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// # enum Rid { SelfTest }
+/// #
+/// # impl RoutineIdentifier for Rid {
+/// #     const MAX_STATUS_LEN: usize = 1;
+/// #     fn as_u16(self) -> u16 { 0x02_01 }
+/// #     fn from_u16(v: u16) -> Option<Self> { (v == 0x02_01).then_some(Self::SelfTest) }
+/// # }
 /// uds_client! {
 ///     Did;
 ///     transport = DoIpTransport,
 ///     max_dids_per_request = 4,
+///     routines = Rid,
+///     max_dtcs = 4,
+///     max_dtc_record_len = 16,
+///     max_seed_len = 2,
+///     max_key_len = 2,
+///     max_option_len = 4,
+///     max_block_len = 64,
 ///     physical = 2,
 ///     functional = 1,
 ///     responders = 4,
@@ -902,12 +1045,99 @@ macro_rules! uds_server {
 /// );
 /// # let _ = &TESTER;
 /// ```
+///
+/// A 32-byte `MAX_PDU` cannot carry the 66-byte `TransferData` request `max_block_len = 64`
+/// declares, so this fails to compile:
+///
+/// ```compile_fail,E0080
+/// # use uds_services::{
+/// #     Address, AfterSend, Ai, DataIdentifier, KeepAlive, PhysicalKeepAlive, RecordError,
+/// #     Reloads, RoutineIdentifier, ClientTiming, ClientTransport, Timestamp, TransportEvent,
+/// #     UdsTransport, uds_client,
+/// # };
+/// # #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// # enum Did { VehicleSpeed, VinNumber }
+/// #
+/// # impl DataIdentifier for Did {
+/// #     const MAX_RECORD_LEN: usize = 17;
+/// #     fn as_u16(self) -> u16 {
+/// #         match self { Self::VehicleSpeed => 0xF4_0D, Self::VinNumber => 0xF1_90 }
+/// #     }
+/// #     fn from_u16(v: u16) -> Option<Self> {
+/// #         match v {
+/// #             0xF4_0D => Some(Self::VehicleSpeed),
+/// #             0xF1_90 => Some(Self::VinNumber),
+/// #             _ => None,
+/// #         }
+/// #     }
+/// #     fn split_record(self, buf: &[u8]) -> Result<(&[u8], &[u8]), RecordError> {
+/// #         let width = match self { Self::VehicleSpeed => 1, Self::VinNumber => 17 };
+/// #         buf.split_at_checked(width).ok_or(RecordError::Short)
+/// #     }
+/// # }
+/// #
+/// # #[derive(Debug)]
+/// # struct DoIpTransport;
+/// # impl UdsTransport for DoIpTransport {
+/// #     type Error = ();
+/// #     const MAX_PDU: usize = 32;
+/// #     async fn t_data_req(&mut self, _: Ai, _: &[u8], _: AfterSend) -> Result<(), ()> {
+/// #         Ok(())
+/// #     }
+/// #     async fn next_event<'b>(
+/// #         &mut self,
+/// #         _b: &'b mut [u8],
+/// #         _d: Option<Timestamp>,
+/// #     ) -> Result<TransportEvent<'b>, ()> { Ok(TransportEvent::Deadline) }
+/// #     fn outbound_max(&self) -> Option<usize> { None }
+/// #     fn channel_timing(&self) -> Reloads {
+/// #         Reloads { default_reload: 2_000, enhanced_reload: 5_000 }
+/// #     }
+/// #     fn now(&self) -> Timestamp { Timestamp(0) }
+/// # }
+/// # impl ClientTransport for DoIpTransport {
+/// #     async fn close(&mut self) -> Result<(), ()> { Ok(()) }
+/// # }
+/// #
+/// # #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// # enum Rid { SelfTest }
+/// #
+/// # impl RoutineIdentifier for Rid {
+/// #     const MAX_STATUS_LEN: usize = 1;
+/// #     fn as_u16(self) -> u16 { 0x02_01 }
+/// #     fn from_u16(v: u16) -> Option<Self> { (v == 0x02_01).then_some(Self::SelfTest) }
+/// # }
+/// uds_client! {
+///     Did;
+///     transport = DoIpTransport,
+///     max_dids_per_request = 4,
+///     routines = Rid,
+///     max_dtcs = 4,
+///     max_dtc_record_len = 16,
+///     max_seed_len = 2,
+///     max_key_len = 2,
+///     max_option_len = 4,
+///     max_block_len = 64,
+///     physical = 2,
+///     functional = 1,
+///     responders = 4,
+///     keep_alive = PhysicalKeepAlive,
+///     client = Tester,
+/// }
+/// ```
 #[macro_export]
 macro_rules! uds_client {
     (
         $did:ty ;
         transport = $transport:ty,
         max_dids_per_request = $max_dids:expr,
+        routines = $rid:ty,
+        max_dtcs = $max_dtcs:expr,
+        max_dtc_record_len = $max_dtc_record_len:expr,
+        max_seed_len = $max_seed_len:expr,
+        max_key_len = $max_key_len:expr,
+        max_option_len = $max_option_len:expr,
+        max_block_len = $max_block_len:expr,
         physical = $phys:expr,
         functional = $func:expr,
         responders = $responders:expr,
@@ -926,19 +1156,53 @@ macro_rules! uds_client {
         >;
 
         const _: () = {
-            // A read, or the two-byte `DiagnosticSessionControl` request and its six-byte
-            // response, whichever is longer.
-            const REQUEST: usize = $crate::assembly::min2(
-                $crate::assembly::max_of(&[1 + 2 * { $max_dids }, 2]),
-                <$transport as $crate::UdsTransport>::MAX_PDU,
+            const MAX_PDU: usize = <$transport as $crate::UdsTransport>::MAX_PDU;
+            ::core::assert!(
+                1_usize.saturating_add(2_usize.saturating_mul({ $max_dids })) <= MAX_PDU,
+                "the transport's MAX_PDU cannot carry a read of max_dids_per_request identifiers"
+            );
+            ::core::assert!(
+                3_usize.saturating_add(<$did as $crate::DataIdentifier>::MAX_RECORD_LEN)
+                    <= MAX_PDU,
+                "the transport's MAX_PDU cannot carry a write of the identifiers' MAX_RECORD_LEN"
+            );
+            ::core::assert!(
+                2_usize.saturating_add({ $max_key_len }) <= MAX_PDU,
+                "the transport's MAX_PDU cannot carry a key of max_key_len"
+            );
+            ::core::assert!(
+                4_usize.saturating_add({ $max_option_len }) <= MAX_PDU,
+                "the transport's MAX_PDU cannot carry an option record of max_option_len"
+            );
+            ::core::assert!(
+                2_usize.saturating_add({ $max_block_len }) <= MAX_PDU,
+                "the transport's MAX_PDU cannot carry a TransferData block of max_block_len"
+            );
+            ::core::assert!(
+                12 <= MAX_PDU,
+                "the transport's MAX_PDU cannot carry the widest RequestDownload request"
+            );
+            const REQUEST: usize = $crate::assembly::client_request_bound(
+                { $max_dids },
+                <$did as $crate::DataIdentifier>::MAX_RECORD_LEN,
+                { $max_key_len },
+                { $max_option_len },
+                { $max_block_len },
             );
             const RESPONSE: usize = $crate::assembly::min2(
-                $crate::assembly::max_of(&[
-                    1 + { $max_dids }
-                        * (2 + <$did as $crate::DataIdentifier>::MAX_RECORD_LEN),
-                    6,
-                ]),
-                <$transport as $crate::UdsTransport>::MAX_PDU,
+                $crate::assembly::client_response_bound(
+                    $crate::assembly::ClientResponseMaxima {
+                        max_dids: $max_dids,
+                        max_record_len: <$did as $crate::DataIdentifier>::MAX_RECORD_LEN,
+                        max_dtcs: $max_dtcs,
+                        max_dtc_record_len: $max_dtc_record_len,
+                        max_seed_len: $max_seed_len,
+                        max_status_len: <$rid as $crate::RoutineIdentifier>::MAX_STATUS_LEN,
+                        max_option_len: $max_option_len,
+                        max_block_len: $max_block_len,
+                    },
+                ),
+                MAX_PDU,
             );
             ::core::assert!(
                 RESPONSE >= 6,
@@ -949,6 +1213,11 @@ macro_rules! uds_client {
 
             impl $crate::ClientSet for $did {
                 type Store = $crate::ClientStore<REQUEST, RESPONSE>;
+                type Routine = $rid;
+                const MAX_DIDS_PER_REQUEST: usize = { $max_dids };
+                const MAX_KEY_LEN: usize = { $max_key_len };
+                const MAX_OPTION_LEN: usize = { $max_option_len };
+                const MAX_BLOCK_LEN: usize = { $max_block_len };
             }
         };
     };
@@ -956,8 +1225,111 @@ macro_rules! uds_client {
 
 #[cfg(test)]
 mod tests {
-    use super::{dtc_response_bound, max_of, min2};
+    use super::{
+        ClientResponseMaxima, client_request_bound, client_response_bound,
+        dtc_response_bound, max_of, min2,
+    };
     use crate::DtcReportKind;
+
+    /// One of everything that is sized, and no DTC records.
+    const LEAST: ClientResponseMaxima = ClientResponseMaxima {
+        max_dids: 1,
+        max_record_len: 1,
+        max_dtcs: 0,
+        max_dtc_record_len: 0,
+        max_seed_len: 1,
+        max_status_len: 1,
+        max_option_len: 1,
+        max_block_len: 1,
+    };
+
+    /// The client's bounds are the widest request and the widest response among its
+    /// services: here the transfer block wins both.
+    #[test]
+    fn the_client_bounds_are_the_widest_service() {
+        const REQUEST: usize = client_request_bound(2, 17, 2, 4, 64);
+        const RESPONSE: usize = client_response_bound(ClientResponseMaxima {
+            max_dids: 2,
+            max_record_len: 17,
+            max_dtcs: 3,
+            max_dtc_record_len: 20,
+            max_seed_len: 2,
+            max_status_len: 1,
+            max_option_len: 4,
+            max_block_len: 64,
+        });
+        assert_eq!(REQUEST, 2 + 64);
+        assert_eq!(RESPONSE, 2 + 64);
+        assert_eq!(client_request_bound(1, 1, 1, 1, 1), 12);
+        assert_eq!(client_response_bound(LEAST), 17);
+    }
+
+    /// Each request term is the bound when its maximum is the large one.
+    #[test]
+    fn each_request_term_can_set_the_bound() {
+        // A read of twenty identifiers.
+        assert_eq!(client_request_bound(20, 1, 1, 1, 1), 1 + 2 * 20);
+        // A write of a thirty-byte record.
+        assert_eq!(client_request_bound(1, 30, 1, 1, 1), 3 + 30);
+        // A twenty-byte key.
+        assert_eq!(client_request_bound(1, 1, 20, 1, 1), 2 + 20);
+        // A routine control with a twenty-byte option record.
+        assert_eq!(client_request_bound(1, 1, 1, 20, 1), 4 + 20);
+    }
+
+    /// Each response term is the bound when its maximum is the large one.
+    #[test]
+    fn each_response_term_can_set_the_bound() {
+        // A read of two seventeen-byte records.
+        assert_eq!(
+            client_response_bound(ClientResponseMaxima {
+                max_dids: 2,
+                max_record_len: 17,
+                ..LEAST
+            }),
+            1 + 2 * (2 + 17)
+        );
+        // A DTC list of ten: `SeverityList`'s six-byte records are the widest.
+        assert_eq!(
+            client_response_bound(ClientResponseMaxima {
+                max_dtcs: 10,
+                ..LEAST
+            }),
+            3 + 10 * 6
+        );
+        // A snapshot or extended data response of thirty record bytes.
+        assert_eq!(
+            client_response_bound(ClientResponseMaxima {
+                max_dtc_record_len: 30,
+                ..LEAST
+            }),
+            6 + 30
+        );
+        // A thirty-byte seed.
+        assert_eq!(
+            client_response_bound(ClientResponseMaxima {
+                max_seed_len: 30,
+                ..LEAST
+            }),
+            2 + 30
+        );
+        // A routine status record of thirty bytes.
+        assert_eq!(
+            client_response_bound(ClientResponseMaxima {
+                max_status_len: 30,
+                ..LEAST
+            }),
+            5 + 30
+        );
+        // A transfer exit with a thirty-byte parameter record.
+        assert_eq!(
+            client_response_bound(ClientResponseMaxima {
+                max_option_len: 30,
+                ..LEAST
+            }),
+            1 + 30
+        );
+    }
 
     /// The widest layout wins, and it is not always the one with the widest records: a
     /// `SeverityList` of ten beats a `DtcList` of ten on record width, and `Count` beats
@@ -978,6 +1350,15 @@ mod tests {
         const COUNT: usize = dtc_response_bound(&[DtcReportKind::Count], 10);
         const WWH: usize = dtc_response_bound(&[DtcReportKind::WwhObdSeverity], 10);
         assert_eq!((COUNT, WWH), (6, 6 + 50));
+    }
+
+    /// The by-DTC-number layouts are bounded in bytes: six of header, then as many
+    /// record bytes as the caller declares.
+    #[test]
+    fn a_by_dtc_number_layout_is_bounded_by_its_record_bytes() {
+        const SNAPSHOT: usize = dtc_response_bound(&[DtcReportKind::SnapshotRecords], 20);
+        const EXT: usize = dtc_response_bound(&[DtcReportKind::ExtDataRecords], 20);
+        assert_eq!((SNAPSHOT, EXT), (26, 26));
     }
 
     /// A server declaring no report types folds to zero, as an empty service set does.

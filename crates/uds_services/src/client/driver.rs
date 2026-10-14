@@ -15,7 +15,7 @@
 //! (``UDSS_LLR_0137``, ``UDSS_LLR_0146``).
 
 use super::encode::{self, Arrived, KEEP_ALIVE};
-use super::{Client, ClientError, ClientKeepAlive, ClientSet};
+use super::{Client, ClientError, ClientKeepAlive, ClientSet, Replaced};
 use crate::storage::{ClientBuffers, ClientStorage};
 use crate::{AfterSend, ClientTransport, TransportEvent};
 use core::ops::Range;
@@ -115,6 +115,40 @@ pub(super) struct Open<Id> {
     pub(super) in_session: bool,
     /// Its keep-alive fell due and has not been sent.
     owed: bool,
+    /// What its caller has yet to be told of its server's connection.
+    untold: Untold,
+}
+
+/// What a caller has yet to be told of an open channel's connection.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Untold {
+    /// The replacement to report at the next asking: the stronger of every close since
+    /// the channel opened or since the last asking.
+    replaced: Replaced,
+    /// A positive `ECUReset` response prescribed a close the transport has yet to report
+    /// (ISO 14229-5:2022 REQ 7.11). The response itself recorded the replacement, so the
+    /// next close the transport reports to this server is that same one, however the
+    /// transport marks it, unless the server answers first: an answer comes over the
+    /// connection the reset did not close, so a later close is another.
+    foreseen: bool,
+}
+
+impl Untold {
+    const NOTHING: Self = Self {
+        replaced: Replaced::No,
+        foreseen: false,
+    };
+}
+
+impl Replaced {
+    /// The stronger of two reports: a prescribed close over any other.
+    const fn or(self, other: Self) -> Self {
+        match (self, other) {
+            (Self::SessionLost, _) | (_, Self::SessionLost) => Self::SessionLost,
+            (Self::SessionUnknown, _) | (_, Self::SessionUnknown) => Self::SessionUnknown,
+            (Self::No, Self::No) => Self::No,
+        }
+    }
 }
 
 impl<Id> Open<Id> {
@@ -125,6 +159,7 @@ impl<Id> Open<Id> {
             unconfirmed: false,
             in_session: false,
             owed: false,
+            untold: Untold::NOTHING,
         }
     }
 
@@ -164,6 +199,64 @@ impl<const PHYS: usize, const FUNC: usize> Book<PHYS, FUNC> {
         ta: Address,
     ) -> Option<&mut Open<PhysicalChannelId>> {
         self.physical.iter_mut().flatten().find(|o| o.ai.ta == ta)
+    }
+
+    /// Record that `ta` answered an `ECUReset` positively, after which it closes its
+    /// connection (ISO 14229-5:2022 REQ 7.11): a prescribed replacement from now, and the
+    /// next close the transport reports is that same one.
+    pub(super) fn foresee_close(&mut self, ta: Address) {
+        if let Some(o) = self.physical_to(ta) {
+            o.untold = Untold {
+                replaced: o.untold.replaced.or(Replaced::SessionLost),
+                foreseen: true,
+            };
+        }
+    }
+
+    /// Record that `ta` answered: a close foreseen and not yet reported will not come.
+    pub(super) fn answered(&mut self, ta: Address) {
+        if let Some(o) = self.physical_to(ta) {
+            o.untold.foreseen = false;
+        }
+    }
+
+    /// Record that the transport reported `peer`'s connection closed, `expected` where
+    /// the standard prescribes the close: a replacement of that kind, unless a positive
+    /// `ECUReset` response foresaw it.
+    fn closed(&mut self, peer: Address, expected: bool) {
+        let kind = if expected {
+            Replaced::SessionLost
+        } else {
+            Replaced::SessionUnknown
+        };
+        for o in self
+            .physical
+            .iter_mut()
+            .flatten()
+            .filter(|o| o.ai.ta == peer)
+        {
+            o.untold = if o.untold.foreseen {
+                Untold {
+                    foreseen: false,
+                    ..o.untold
+                }
+            } else {
+                Untold {
+                    replaced: o.untold.replaced.or(kind),
+                    foreseen: false,
+                }
+            };
+        }
+    }
+
+    /// Why `ta`'s connection was replaced since last asked, cleared by the asking;
+    /// [`Replaced::No`] where no channel to `ta` is open.
+    pub(super) fn take_replaced(&mut self, ta: Address) -> Replaced {
+        self.physical_to(ta).map_or(Replaced::No, |o| {
+            let replaced = o.untold.replaced;
+            o.untold.replaced = Replaced::No;
+            replaced
+        })
     }
 
     fn functional_by(&self, ai: Ai) -> Option<FunctionalChannelId> {
@@ -225,6 +318,8 @@ pub(super) struct Seen {
     pub(super) answer: Option<Answered>,
     /// The connection the exchange ran over closed.
     pub(super) closed: bool,
+    /// The transport reported its deadline: it held nothing more to report.
+    pub(super) quiet: bool,
 }
 
 /// What sending the owed keep-alives produced.
@@ -546,10 +641,11 @@ impl<
     /// Take the exchange one answer further: the next response that answers it, or
     /// `None` once a functional window has closed.
     ///
-    /// Sends the request first if it is unsent. A failed transmission and, physically, an
-    /// expired response window are repeated up to ISO 14229-2:2021 Table 9's two times;
-    /// after the last, the channel is reset and the failure returned. A physical exchange
-    /// ends at its answer, a functional one at its window closing.
+    /// Sends the request first if it is unsent. A failed transmission is repeated up to
+    /// ISO 14229-2:2021 Table 9's two times, and, physically, an expired response window
+    /// while the request's repeats are under `ClientTiming::repeats`; after the last, the
+    /// channel is reset and the failure returned. A physical exchange ends at its answer,
+    /// a functional one at its window closing.
     pub(super) async fn advance(
         &mut self,
     ) -> Option<Result<Answered, ClientError<T::Error>>> {
@@ -610,7 +706,14 @@ impl<
             } else {
                 continue;
             };
-            if e.repeats >= REPEATS {
+            // Table 9 caps the error handling at two times, whatever the error; the
+            // response-timeout repeat is also under the integration's ceiling
+            // (`ClientTiming::repeats`), the transmission-failure repeat is not.
+            let allowed = match failure {
+                ClientError::Timeout => self.timing.repeats.count(),
+                _ => REPEATS,
+            };
+            if e.repeats >= allowed {
                 return Some(self.fail(e, failure));
             }
             e.repeats = e.repeats.saturating_add(1);
@@ -773,6 +876,7 @@ impl<
             .await
             .map_err(ClientError::Transport)?;
         let now = self.transport.now();
+        let quiet = matches!(event, TransportEvent::Deadline);
         let mut answer = None;
         let mut closed = false;
         let mut left = false;
@@ -807,6 +911,7 @@ impl<
                 self.session.t_data_conf(now, ai, result)
             }
             Err(TransportEvent::Closed { peer, expected }) => {
+                self.book.closed(peer, expected);
                 let ended = self
                     .book
                     .physical
@@ -846,6 +951,7 @@ impl<
         Ok(Seen {
             answer,
             closed,
+            quiet,
             ..drained.seen
         })
     }
