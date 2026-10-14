@@ -108,10 +108,11 @@ lockstep with the rest of the `uds_stack` workspace (`uds_protocol`, `uds_sessio
 - **Breaking:** `uds_client!` takes `routines`, `max_dtcs`, `max_dtc_record_len`,
   `max_seed_len`, `max_key_len`, `max_option_len` and `max_block_len`, and folds the
   client's buffers from them as `uds_server!` folds a server's from its service traits.
-  `ClientSet` gains `type Routine`, `const MAX_DIDS_PER_REQUEST` and
-  `const MAX_BLOCK_LEN`, the most data bytes one `TransferData` block carries. A
-  transport whose `MAX_PDU` cannot carry a request of the declared maxima fails to
-  compile, naming the input.
+  `ClientSet` gains `type Routine`, `const MAX_DIDS_PER_REQUEST`, `const MAX_KEY_LEN`,
+  `const MAX_OPTION_LEN` and `const MAX_BLOCK_LEN`, the most data bytes one
+  `TransferData` block carries. Each call refuses an input past its maximum as
+  `ClientError::Request` before sending. A transport whose `MAX_PDU` cannot carry a
+  request of the declared maxima fails to compile, naming the input.
 
 ### Known limitations
 

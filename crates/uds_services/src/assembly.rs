@@ -926,20 +926,21 @@ macro_rules! uds_server {
 ///   carries after its six-byte header.
 /// - `max_seed_len`: sizes the response buffer for a `SecurityAccess` seed of this
 ///   length.
-/// - `max_key_len`: sizes the request buffer for a `SecurityAccess` key of this length.
-/// - `max_option_len`: sizes the buffers for a routine control option record, a
-///   `ControlDTCSetting` option record and a transfer-exit parameter record of this
-///   length.
+/// - `max_key_len`: the longest `SecurityAccess` key the client sends. It is
+///   [`ClientSet::MAX_KEY_LEN`](crate::ClientSet::MAX_KEY_LEN).
+/// - `max_option_len`: the longest routine control option record, `ControlDTCSetting`
+///   option record and transfer-exit parameter record the client sends, and sizes the
+///   response buffer for a transfer-exit parameter record of this length. It is
+///   [`ClientSet::MAX_OPTION_LEN`](crate::ClientSet::MAX_OPTION_LEN).
 /// - `max_block_len`: the most data bytes one `TransferData` block carries, its service
 ///   identifier and block sequence counter not counted; at least the server's
 ///   `maxNumberOfBlockLength` minus two, or a full block cannot be sent. It is
 ///   [`ClientSet::MAX_BLOCK_LEN`](crate::ClientSet::MAX_BLOCK_LEN).
 ///
-/// These three size buffers and limit nothing: the request buffer holds the widest of
-/// every request, so a longer key or option record is sent wherever it fits that buffer.
-/// A record that does not fit is [`ClientError::Request`](crate::ClientError::Request),
-/// and a response longer than the response buffer is
-/// [`MalformedResponse::Overlong`](crate::MalformedResponse::Overlong).
+/// A maximum a request carries limits it: a call given more than its maximum is
+/// [`ClientError::Request`](crate::ClientError::Request), and nothing is sent, whatever
+/// the other maxima make the request buffer. A response longer than the response buffer
+/// is [`MalformedResponse::Overlong`](crate::MalformedResponse::Overlong).
 ///
 /// Naming the transport lets its [`MAX_PDU`](crate::UdsTransport::MAX_PDU) join the fold.
 /// A transport whose `MAX_PDU` cannot carry a request of the declared maxima fails to
@@ -1214,6 +1215,8 @@ macro_rules! uds_client {
                 type Store = $crate::ClientStore<REQUEST, RESPONSE>;
                 type Routine = $rid;
                 const MAX_DIDS_PER_REQUEST: usize = { $max_dids };
+                const MAX_KEY_LEN: usize = { $max_key_len };
+                const MAX_OPTION_LEN: usize = { $max_option_len };
                 const MAX_BLOCK_LEN: usize = { $max_block_len };
             }
         };

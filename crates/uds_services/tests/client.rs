@@ -110,6 +110,7 @@ vocabulary!(Did);
 vocabulary!(FunctionalDid);
 vocabulary!(WideDid);
 vocabulary!(WideFunctionalDid);
+vocabulary!(NarrowBlockDid);
 
 uds_client! {
     Did;
@@ -181,6 +182,24 @@ uds_client! {
     responders = 2,
     keep_alive = FunctionalKeepAlive,
     client = WideFunctionalTester,
+}
+
+uds_client! {
+    NarrowBlockDid;
+    transport = Script,
+    max_dids_per_request = 2,
+    routines = Rid,
+    max_dtcs = 4,
+    max_dtc_record_len = 16,
+    max_seed_len = 2,
+    max_key_len = 2,
+    max_option_len = 4,
+    max_block_len = 2,
+    physical = 1,
+    functional = 1,
+    responders = 1,
+    keep_alive = PhysicalKeepAlive,
+    client = NarrowBlockTester,
 }
 
 fn tester(steps: &[Step]) -> Tester {
@@ -2735,4 +2754,50 @@ fn an_ask_ends_once_the_clock_passes_it() {
     speed(block_on(t.read_data_by_identifier(ECU, &[Did::Speed])));
     assert_eq!(block_on(t.connection_replaced(ECU)), Ok(Replaced::No));
     assert!(!t.transport().finished());
+}
+
+/// Each declared maximum a request carries limits that request, in an assembly whose
+/// request buffer, folded to the widest request, would hold more: nothing is sent.
+#[test]
+fn a_request_past_its_declared_maximum_is_refused() {
+    let mut t = tester(&[]);
+    assert_eq!(
+        block_on(t.write_data_by_identifier(ECU, Did::Speed, &[0x01, 0x02])),
+        Err(ClientError::Request)
+    );
+    assert_eq!(
+        block_on(t.security_access_key(ECU, LEVEL_1, &[0x01, 0x02, 0x03])),
+        Err(ClientError::Request)
+    );
+    let option = [0x01; 5];
+    assert_eq!(
+        block_on(t.routine_control(
+            ECU,
+            RoutineControlSubFunction::StartRoutine,
+            Rid::SelfTest,
+            &option,
+        )),
+        Err(ClientError::Request)
+    );
+    assert_eq!(
+        block_on(t.control_dtc_setting(ECU, DtcSettingType::Off, &option)),
+        Err(ClientError::Request)
+    );
+    assert_eq!(
+        block_on(t.request_transfer_exit(ECU, &option)),
+        Err(ClientError::Request)
+    );
+    assert_eq!(t.transport().sent_count, 0);
+
+    let mut narrow = NarrowBlockTester::new(
+        Script::new(&[]),
+        TESTER,
+        KeepAlive::physical(S3_CLIENT),
+        TIMING,
+    );
+    assert_eq!(
+        block_on(narrow.transfer_data(ECU, 0x01, &[0xAA; 3])),
+        Err(ClientError::Request)
+    );
+    assert_eq!(narrow.transport().sent_count, 0);
 }

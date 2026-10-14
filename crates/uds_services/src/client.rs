@@ -77,6 +77,13 @@ pub trait ClientSet: DataIdentifier + crate::sealed::Sealed {
     /// The most identifiers one `ReadDataByIdentifier` request names, declared through
     /// [`crate::uds_client`]'s `max_dids_per_request`.
     const MAX_DIDS_PER_REQUEST: usize;
+    /// The longest `SecurityAccess` key [`Client::security_access_key`] sends, declared
+    /// through [`crate::uds_client`]'s `max_key_len`.
+    const MAX_KEY_LEN: usize;
+    /// The longest option or parameter record [`Client::routine_control`],
+    /// [`Client::control_dtc_setting`] and [`Client::request_transfer_exit`] send,
+    /// declared through [`crate::uds_client`]'s `max_option_len`.
+    const MAX_OPTION_LEN: usize;
     /// The most data bytes one `TransferData` block carries, declared through
     /// [`crate::uds_client`]'s `max_block_len`: at least the server's
     /// `maxNumberOfBlockLength` minus two, or a full block cannot be sent; see
@@ -893,9 +900,10 @@ impl<
     ///
     /// # Errors
     ///
-    /// [`ClientError::Request`] for an empty record or one the request buffer cannot
-    /// hold; otherwise as [`Self::read_data_by_identifier`]'s. A positive response
-    /// echoing another identifier is [`MalformedResponse::Echo`].
+    /// [`ClientError::Request`] for an empty record or one longer than
+    /// [`DataIdentifier::MAX_RECORD_LEN`], and nothing is sent; otherwise as
+    /// [`Self::read_data_by_identifier`]'s. A positive response echoing another
+    /// identifier is [`MalformedResponse::Echo`].
     ///
     /// # Cancel safety
     ///
@@ -909,7 +917,10 @@ impl<
         let answered = self
             .exchange_with(
                 target,
-                |request| encode::write_data_by_identifier(request, did, record),
+                |request| {
+                    within(record.len(), C::MAX_RECORD_LEN)?;
+                    encode::write_data_by_identifier(request, did, record)
+                },
                 None,
             )
             .await?;
@@ -1016,8 +1027,8 @@ impl<
     ///
     /// # Errors
     ///
-    /// [`ClientError::Request`] where the key does not fit the request buffer;
-    /// otherwise as [`Self::read_data_by_identifier`]'s.
+    /// [`ClientError::Request`] where `key` is longer than [`ClientSet::MAX_KEY_LEN`], and
+    /// nothing is sent; otherwise as [`Self::read_data_by_identifier`]'s.
     ///
     /// A repeated key (under [`ClientTiming::repeats`]), whatever answer was lost, reaches
     /// a server with no seed outstanding, since a key of valid length discards the seed
@@ -1037,7 +1048,10 @@ impl<
         let answered = self
             .exchange_with(
                 target,
-                |request| encode::security_access_key(request, level, key),
+                |request| {
+                    within(key.len(), C::MAX_KEY_LEN)?;
+                    encode::security_access_key(request, level, key)
+                },
                 None,
             )
             .await?;
@@ -1066,9 +1080,10 @@ impl<
     ///
     /// # Errors
     ///
-    /// [`ClientError::Request`] where the record does not fit the request buffer;
-    /// otherwise as [`Self::read_data_by_identifier`]'s. A positive response echoing
-    /// another routine's identifier is [`MalformedResponse::Echo`].
+    /// [`ClientError::Request`] where the record is longer than
+    /// [`ClientSet::MAX_OPTION_LEN`], and nothing is sent; otherwise as
+    /// [`Self::read_data_by_identifier`]'s. A positive response echoing another
+    /// routine's identifier is [`MalformedResponse::Echo`].
     ///
     /// # Cancel safety
     ///
@@ -1083,7 +1098,10 @@ impl<
         let answered = self
             .exchange_with(
                 target,
-                |request| encode::routine_control(request, control, routine, option_record),
+                |request| {
+                    within(option_record.len(), C::MAX_OPTION_LEN)?;
+                    encode::routine_control(request, control, routine, option_record)
+                },
                 None,
             )
             .await?;
@@ -1250,8 +1268,9 @@ impl<
     ///
     /// # Errors
     ///
-    /// [`ClientError::Request`] where the record does not fit the request buffer;
-    /// otherwise as [`Self::read_data_by_identifier`]'s.
+    /// [`ClientError::Request`] where the record is longer than
+    /// [`ClientSet::MAX_OPTION_LEN`], and nothing is sent; otherwise as
+    /// [`Self::read_data_by_identifier`]'s.
     ///
     /// # Cancel safety
     ///
@@ -1265,7 +1284,10 @@ impl<
         let answered = self
             .exchange_with(
                 target,
-                |request| encode::control_dtc_setting(request, setting, option_record),
+                |request| {
+                    within(option_record.len(), C::MAX_OPTION_LEN)?;
+                    encode::control_dtc_setting(request, setting, option_record)
+                },
                 None,
             )
             .await?;
@@ -1422,7 +1444,10 @@ impl<
         let answered = self
             .exchange_with(
                 target,
-                |request| encode::transfer_data(request, counter, data),
+                |request| {
+                    within(data.len(), C::MAX_BLOCK_LEN)?;
+                    encode::transfer_data(request, counter, data)
+                },
                 None,
             )
             .await?;
@@ -1446,8 +1471,9 @@ impl<
     ///
     /// # Errors
     ///
-    /// [`ClientError::Request`] where the record does not fit the request buffer;
-    /// otherwise as [`Self::read_data_by_identifier`]'s.
+    /// [`ClientError::Request`] where the record is longer than
+    /// [`ClientSet::MAX_OPTION_LEN`], and nothing is sent; otherwise as
+    /// [`Self::read_data_by_identifier`]'s.
     ///
     /// # Cancel safety
     ///
@@ -1460,7 +1486,10 @@ impl<
         let answered = self
             .exchange_with(
                 target,
-                |request| encode::request_transfer_exit(request, parameter_record),
+                |request| {
+                    within(parameter_record.len(), C::MAX_OPTION_LEN)?;
+                    encode::request_transfer_exit(request, parameter_record)
+                },
                 None,
             )
             .await?;
@@ -1738,6 +1767,11 @@ const fn records_dtc(response: &ReadDtcInfoResponse<'_>) -> Option<DtcRecord> {
         | ReadDtcInfoResponse::DtcExtDataRecords { dtc, .. } => Some(*dtc),
         _ => None,
     }
+}
+
+/// `Some` where a request input of `len` bytes is within its declared maximum `max`.
+const fn within(len: usize, max: usize) -> Option<()> {
+    if len <= max { Some(()) } else { None }
 }
 
 /// The bytes `answered` occupies in the response buffer.
