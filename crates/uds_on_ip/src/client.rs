@@ -16,6 +16,7 @@ use crate::mapping::{
     ADDRESSES, PERIODIC_RESPONSE_PAYLOAD_TYPE, ai, awaits_response, from_logical, refused,
     response_pending, s_result, target_of, to_doip_ta_type, to_logical,
 };
+use crate::profile::server_may_close_after;
 
 /// The length of the keep-alive a `uds_services` client sends, `3E 80`: what each request
 /// waiting ahead of a call's request takes of a [`DoIpClientTransport`]'s `QUEUE`.
@@ -108,14 +109,6 @@ pub struct DoIpClientTransport<
     owed: Owed<PEERS>,
     peers: [Option<Peer>; PEERS],
 }
-
-/// The first octet of a positive `DiagnosticSessionControl` response, after which a
-/// server leaving its software closes the connection (ISO 14229-5:2022 REQ 7.9).
-const LEAVING_SESSION: u8 = 0x50;
-
-/// The first octet of a positive `ECUReset` response, after which a server closes the
-/// connection (ISO 14229-5:2022 REQ 7.11).
-const RESETTING: u8 = 0x51;
 
 /// Where a server's last request that expects an answer stands.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -325,7 +318,7 @@ impl<C, const QUEUE: usize, const PEERS: usize, const WAITING: usize>
     /// Notes what `data`, from `sender`, answers and says of the connection's fate.
     fn heard(&mut self, sender: Address, data: &[u8]) {
         if let Some(peer) = self.peer(sender) {
-            peer.leaving = matches!(data.first(), Some(&(LEAVING_SESSION | RESETTING)));
+            peer.leaving = server_may_close_after(data);
             if !response_pending(data) {
                 peer.awaiting = Awaiting::Nothing;
             }

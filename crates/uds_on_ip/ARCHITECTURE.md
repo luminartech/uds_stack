@@ -155,12 +155,18 @@ session layer by value and the storage with it
 **Must not learn what a service is.** No data identifier, routine identifier, or
 service-specific policy belongs here.
 
-The exception is narrow, forced, and exhaustively listed: clause 8 keys TCP
-connection handling on two service identifiers, `DiagnosticSessionControl` and
-`ECUReset`, in their request forms, and on `ECUReset`'s positive response. That is not
-service *semantics* — it is a clause 8 rule that happens to be keyed on a
-service, and the identifiers themselves are derived from `uds_protocol`'s
-`UdsServiceType` rather than written here as bytes. See
+The exception is narrow, forced, and exhaustively listed. The crate reads four
+things of a message:
+
+- the positive `DiagnosticSessionControl` and `ECUReset` responses, after which
+  clause 8 (REQ 7.9, REQ 7.11) has the server close the connection;
+- a request's suppressPosRspMsgIndicationBit, which says whether an answer is owed;
+- the response-pending negative response (`7F xx 78`), after which the final answer
+  is still owed.
+
+That is not service *semantics*: these are clause 8 and transport rules that happen
+to be keyed on a service. The identifiers are derived from `uds_protocol`'s
+`UdsServiceType` rather than written here as bytes (`profile::service_ids`). See
 [§3.6](#36-when-and-what) for why the rule lands here and not one layer up.
 
 ### 3.5 `uds_services` — ISO 14229-1's behaviour
@@ -913,10 +919,10 @@ one line rather than an argument about policy.
    ([§3.1](#31-simple_doip--iso-13400-2)).
 3. `uds_protocol` stays a codec — no dispatch, no policy, no session state.
 4. `uds_session` never learns its transport, and never reads a clock.
-5. `uds_on_ip` never learns what a service *is*. The service identifiers
-   clause 8 keys connection handling on — `DiagnosticSessionControl` and
-   `ECUReset` requests, and `ECUReset`'s positive response — are the exception the standard itself forces and the exhaustive list of it
-   ([§3.4](#34-uds_on_ip--iso-14229-5)).
+5. `uds_on_ip` never learns what a service *is*. The positive
+   `DiagnosticSessionControl` and `ECUReset` responses, the suppress bit and the
+   response-pending are the exception the standard itself forces and the
+   exhaustive list of it ([§3.4](#34-uds_on_ip--iso-14229-5)).
 6. `uds_services` declares the transport seam and implements no transport, and
    nothing on that seam is shaped by one protocol
    ([§3.5](#35-uds_services--iso-14229-1-cl-87)).

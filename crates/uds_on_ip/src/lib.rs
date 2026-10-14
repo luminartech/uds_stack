@@ -88,8 +88,10 @@
 //! the session state machine are `uds_session`'s, and are used from there
 //! rather than redeclared here.
 //!
-//! The one exception is narrow and forced by the standard: clause 8 keys TCP
-//! connection handling on three identifiers of two services. See
+//! The exception is narrow and forced by the standard. Clause 8 keys TCP
+//! connection handling on the positive `DiagnosticSessionControl` and `ECUReset`
+//! responses, and owing an answer depends on a request's suppress bit and on a
+//! response-pending. Those four facts are all this crate reads of a message; see
 //! `profile::service_ids`.
 
 #![cfg_attr(not(feature = "std"), no_std)]
