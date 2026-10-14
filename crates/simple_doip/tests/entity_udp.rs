@@ -319,7 +319,7 @@ fn the_announcement_carries_the_identity() {
             vin: VIN,
             logical_address: ENTITY,
             entity_id: EID,
-            group_id: Some([1, 2, 3, 4, 5, 6]),
+            group_id: GroupId::new([1, 2, 3, 4, 5, 6]).ok(),
             further_action: FurtherActionRequired::NoFurtherActionRequired,
             vin_gid_sync_status: Some(VinGidSyncStatus::Incomplete),
         }

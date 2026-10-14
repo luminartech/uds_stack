@@ -34,7 +34,7 @@
 use automotive_wire_codec::SliceSink;
 use proptest::prelude::*;
 use simple_doip::{
-    LogicalAddress,
+    GroupId, LogicalAddress,
     messages::{
         ActivationTypeCode, AliveCheckResponse, Decode, DiagnosticAckCode,
         DiagnosticMessage, DiagnosticMessageAck, DiagnosticMessageNack, DiagnosticNackCode,
@@ -266,7 +266,7 @@ proptest! {
         vin in any::<[u8; 17]>(),
         logical_address in any::<u16>(),
         entity_id in any::<[u8; 6]>(),
-        group_id in proptest::option::of(any::<[u8; 6]>()),
+        group_id in any::<[u8; 6]>().prop_map(|bytes| GroupId::new(bytes).ok()),
         further_action in any::<u8>().prop_map(FurtherActionRequired::from),
         vin_gid_sync_status in proptest::option::of(any::<u8>().prop_map(VinGidSyncStatus::from)),
     ) {

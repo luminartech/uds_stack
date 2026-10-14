@@ -388,8 +388,8 @@ impl Encode for Payload<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::LogicalAddress;
     use crate::messages::{FurtherActionRequired, VinGidSyncStatus};
+    use crate::{GroupId, LogicalAddress};
     use automotive_wire_codec::SliceSink;
 
     /// A peer sending a payload type we cannot decode (e.g. a reserved type) must return
@@ -530,7 +530,7 @@ mod tests {
             vin: [0x41; 17],
             logical_address: LogicalAddress(0x0E00),
             entity_id: [0x01, 0x02, 0x03, 0x04, 0x05, 0x06],
-            group_id: Some([0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F]),
+            group_id: GroupId::new([0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F]).ok(),
             further_action: FurtherActionRequired::NoFurtherActionRequired,
             vin_gid_sync_status: Some(VinGidSyncStatus::Synchronized),
         };

@@ -27,7 +27,6 @@ use std::path::PathBuf;
 use std::{env, fs};
 
 use automotive_wire_codec::SliceSink;
-use simple_doip::LogicalAddress;
 use simple_doip::messages::{
     ActivationTypeCode, AliveCheckResponse, Decode, DiagnosticAckCode, DiagnosticMessage,
     DiagnosticMessageAck, DiagnosticMessageNack, DiagnosticNackCode,
@@ -36,6 +35,7 @@ use simple_doip::messages::{
     ProtocolVersion, RoutingActivationRequest, RoutingActivationResponse,
     RoutingActivationResponseCode, VehicleIdentificationResponse, VinGidSyncStatus,
 };
+use simple_doip::{GroupId, LogicalAddress};
 
 fn golden_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/golden")
@@ -358,7 +358,7 @@ fn golden_vehicle_identification_response() {
             vin: [0x41; 17],
             logical_address: LogicalAddress(0x0E00),
             entity_id: [0x01, 0x02, 0x03, 0x04, 0x05, 0x06],
-            group_id: Some([0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F]),
+            group_id: GroupId::new([0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F]).ok(),
             further_action: FurtherActionRequired::NoFurtherActionRequired,
             vin_gid_sync_status: Some(VinGidSyncStatus::Synchronized),
         },
@@ -380,7 +380,7 @@ fn golden_vehicle_identification_response() {
             vin: [0x30; 17],
             logical_address: LogicalAddress(0xE400),
             entity_id: [0, 0, 0, 0, 0, 1],
-            group_id: Some([1, 1, 1, 1, 1, 1]),
+            group_id: GroupId::new([1, 1, 1, 1, 1, 1]).ok(),
             further_action:
                 FurtherActionRequired::RoutingActivationRequiredToInitiateCentralSecurity,
             vin_gid_sync_status: Some(VinGidSyncStatus::Incomplete),

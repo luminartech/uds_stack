@@ -136,6 +136,10 @@ example for each.
   `MessageCodec::DEFAULT_MAX_PAYLOAD_LENGTH` (8 MiB) and is set with
   `MessageCodec::with_max_payload_length`. Migrate: match `Frame::Message` where the
   decoder's item was an `OwnedMessage`.
+- **Breaking:** `VehicleIdentificationResponse::group_id` is `Option<GroupId>`. As
+  `Option<[u8; 6]>` it could hold all `0x00` or all `0xFF`, Table 1's "not set"
+  value, which encoded and decoded back as `None`. Migrate: build it with
+  `GroupId::new(bytes).ok()`, and read the bytes with `GroupId::to_bytes`.
 - **Breaking:** `automotive-wire-codec` is 0.4, and `embedded-io` is no longer a
   dependency. `Encode::encode` writes into `&mut impl wire::Sink` instead of an
   `embedded_io::Write`; to encode into a `&mut [u8]`, wrap it in

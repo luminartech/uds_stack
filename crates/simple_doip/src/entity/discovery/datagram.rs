@@ -5,12 +5,12 @@
 use core::net::{IpAddr, SocketAddr};
 
 use super::{Facts, VehicleIdentity};
+use crate::Vin;
 use crate::messages::{
     EntityStatusNodeType, EntityStatusResponse, Header, Message, NackCode, Payload,
     PayloadType, ProtocolVersion, VehicleIdentificationResponse,
 };
 use crate::wire::{Decode, Encode, SliceSink};
-use crate::{GroupId, Vin};
 
 /// The longest frame the entity sends on UDP: an announcement with its sync status.
 pub(super) const FRAME_CAP: usize = Header::SIZE + 33;
@@ -146,7 +146,7 @@ pub(super) fn frame<'b, I: VehicleIdentity>(
         vin: identity.vin().map_or([0x00; 17], Vin::to_bytes),
         logical_address: facts.address,
         entity_id: identity.eid().to_bytes(),
-        group_id: identity.gid().map(GroupId::to_bytes),
+        group_id: identity.gid(),
         further_action: identity.further_action(),
         vin_gid_sync_status: identity.sync_status(),
     };
