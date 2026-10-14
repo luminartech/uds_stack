@@ -15,6 +15,7 @@ pub enum DiagnosticPowerModeCode {
     /// This entity does not report power mode information.
     NotSupported = 0x02,
     /// A power mode value outside the range this crate models.
+    #[non_exhaustive]
     Reserved(u8),
 }
 

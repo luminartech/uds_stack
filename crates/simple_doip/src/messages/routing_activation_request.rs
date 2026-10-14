@@ -21,10 +21,12 @@ pub enum ActivationTypeCode {
     /// (e.g. ISO 27145, the ISO 20730 series, etc.)
     RegulationRequired,
     /// ISO/SAE reserved
+    #[non_exhaustive]
     Reserved(u8),
     /// Vehicle manufacturer specific authentication,
     CentralSecurity,
     /// Available for additional VM-specific use
+    #[non_exhaustive]
     VehicleManufacturerSpecific(u8),
 }
 

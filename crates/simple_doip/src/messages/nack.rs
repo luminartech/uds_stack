@@ -37,6 +37,7 @@ pub enum NackCode {
     /// `DoIP` entity action: Close socket
     InvalidPayloadLength = 0x04,
     /// A NACK code value outside the range this crate models.
+    #[non_exhaustive]
     Reserved(u8),
 }
 

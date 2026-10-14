@@ -15,6 +15,7 @@ pub enum DiagnosticAckCode {
     /// transmission buffer of the destination network.
     RoutingConfirmationAck,
     /// A value Table 24 reserves.
+    #[non_exhaustive]
     Reserved(u8),
 }
 
@@ -63,6 +64,7 @@ pub enum DiagnosticNackCode {
     /// `0x08`: forwarding the message onto the target's transport protocol failed.
     TransportProtocolError,
     /// A value Table 26 reserves.
+    #[non_exhaustive]
     Reserved(u8),
 }
 

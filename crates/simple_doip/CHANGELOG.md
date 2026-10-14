@@ -140,6 +140,14 @@ example for each.
   `MessageCodec::DEFAULT_MAX_PAYLOAD_LENGTH` (8 MiB) and is set with
   `MessageCodec::with_max_payload_length`. Migrate: match `Frame::Message` where the
   decoder's item was an `OwnedMessage`.
+- **Breaking:** a code enum's variant that carries the wire value is built only by
+  converting the value, so it never holds one a named variant has and `==` agrees with
+  the wire: `ProtocolVersion::ReservedFuture`, `PayloadType::Reserved` and
+  `ReservedVehicleManufacturer`, and the `Reserved` and `VehicleManufacturerSpecific`
+  variants of `NackCode`, `DiagnosticAckCode`, `DiagnosticNackCode`,
+  `ActivationTypeCode`, `RoutingActivationResponseCode`, `EntityStatusNodeType`,
+  `DiagnosticPowerModeCode`, `FurtherActionRequired` and `VinGidSyncStatus`. Migrate:
+  build one with `From`, match it as `Reserved { .. }`, and read the value with `From`.
 - **Breaking:** `VehicleIdentificationResponse::group_id` is `Option<GroupId>`. As
   `Option<[u8; 6]>` it could hold all `0x00` or all `0xFF`, Table 1's "not set"
   value, which encoded and decoded back as `None`. Migrate: build it with

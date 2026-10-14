@@ -16,11 +16,13 @@ pub enum FurtherActionRequired {
     /// activation.
     NoFurtherActionRequired,
     /// A further-action value outside the range this crate models.
+    #[non_exhaustive]
     Reserved(u8),
     /// The tester must send a routing activation request with a `CentralSecurity`
     /// activation type before diagnostics can proceed.
     RoutingActivationRequiredToInitiateCentralSecurity,
     /// Vehicle-manufacturer-specific further-action value.
+    #[non_exhaustive]
     VehicleManufacturerSpecific(u8),
 }
 
@@ -58,6 +60,7 @@ pub enum VinGidSyncStatus {
     /// VIN and/or GID are synchronized
     Synchronized,
     /// A sync-status value outside the range this crate models.
+    #[non_exhaustive]
     Reserved(u8),
     /// VIN and GID are NOT synchronized
     Incomplete,

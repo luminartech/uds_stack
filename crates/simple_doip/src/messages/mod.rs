@@ -1,6 +1,23 @@
 //! `DoIP` message types: the generic header, the [`Payload`] enum covering every
 //! `DoIP` payload type this crate supports, and the concrete request/response
 //! structs for each one, per ISO 13400-2.
+//!
+//! A code enum's variant that carries the wire value, such as [`NackCode::Reserved`], is
+//! built only by converting the value, so it never holds one a named variant has and `==`
+//! agrees with the wire. Match it as `Reserved { .. }` and read the value back with the
+//! enum's `From`:
+//!
+//! ```
+//! use simple_doip::messages::NackCode;
+//!
+//! assert_eq!(NackCode::from(0x00), NackCode::IncorrectPatternFormat);
+//! assert!(matches!(NackCode::from(0x7F), NackCode::Reserved { .. }));
+//! assert_eq!(u8::from(NackCode::from(0x7F)), 0x7F);
+//! ```
+//!
+//! ```compile_fail,E0639
+//! let aliased = simple_doip::messages::NackCode::Reserved(0x00);
+//! ```
 
 mod alive_check_response;
 pub use alive_check_response::AliveCheckResponse;

@@ -24,6 +24,7 @@ pub enum ProtocolVersion {
     /// ISO 13400-2:2019
     V2019 = 0x03,
     /// Client Future Spec Reserved
+    #[non_exhaustive]
     ReservedFuture(u8),
     /// Client Version Value for Vehicle Identification Request
     VehicleIdentificationRequest = 0xFF,
@@ -117,8 +118,10 @@ pub enum PayloadType {
     /// Client Diagnostic Message Negative Acknowledge
     DiagnosticMessageNegativeAcknowledge = 0x8003,
     /// Client Spec Reserved
+    #[non_exhaustive]
     Reserved(u16),
     /// Client Spec Reserved for Vehicle Manufacturer
+    #[non_exhaustive]
     ReservedVehicleManufacturer(u16),
 }
 
