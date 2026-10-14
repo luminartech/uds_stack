@@ -630,6 +630,10 @@ macro_rules! __uds_assert {
              MAX_BLOCK_LENGTH, which ISO 14229-1:2020 15.2.3.2 obliges the server to accept",
         );
         const _: () = ::core::assert!(
+            <$ty as $crate::DataTransfer>::MAX_BLOCK_LENGTH >= 1,
+            "MAX_BLOCK_LENGTH is zero, so no TransferData block could carry data",
+        );
+        const _: () = ::core::assert!(
             <$ty as $crate::DataTransfer>::MAX_BLOCK_LENGTH <= 0xFFFF_FFFD,
             "maxNumberOfBlockLength (MAX_BLOCK_LENGTH + 2) must fit in four bytes",
         );
@@ -664,10 +668,10 @@ macro_rules! __uds_assert {
 /// [`ResponseSink::MIN_BOUND`](crate::ResponseSink::MIN_BOUND), because a negative
 /// response would then not fit.
 ///
-/// Where `DataTransfer` is listed, it also fails to compile where the transport's
-/// [`MAX_PDU`](crate::UdsTransport::MAX_PDU) is shorter than `MAX_BLOCK_LENGTH + 2`, the
-/// `TransferData` request length the server advertises and must accept (ISO 14229-1:2020
-/// 15.2.3.2).
+/// Where `DataTransfer` is listed, it also fails to compile where `MAX_BLOCK_LENGTH` is
+/// zero, or the transport's [`MAX_PDU`](crate::UdsTransport::MAX_PDU) is shorter than
+/// `MAX_BLOCK_LENGTH + 2`, the `TransferData` request length the server advertises and
+/// must accept (ISO 14229-1:2020 15.2.3.2).
 ///
 /// Where `ReadDtcInformation` is listed, it also fails to compile where
 /// [`REPORTS`](crate::ReadDtcInformation::REPORTS) names a layout whose

@@ -76,8 +76,8 @@ pub trait DataTransfer {
     /// The `RequestDownload` positive response advertises `MAX_BLOCK_LENGTH + 2` as
     /// `maxNumberOfBlockLength`, the whole `TransferData` request message a server must
     /// accept (ISO 14229-1:2020 15.2.3.2). [`crate::uds_server`] holds the in-flight
-    /// buffer to that length and fails to compile where the transport cannot carry it; a
-    /// client subtracts two to size its blocks.
+    /// buffer to that length and fails to compile where the transport cannot carry it, or
+    /// where this is zero; a client subtracts two to size its blocks.
     const MAX_BLOCK_LENGTH: usize;
 
     /// The sessions `RequestDownload`, `TransferData` and `RequestTransferExit` are served
