@@ -1176,7 +1176,7 @@ pub async fn communication_control<A: CommunicationControl>(
     let control_type = request.control_type();
     if matches!(
         request.communication_type(),
-        CommunicationType::IsoSaeReserved
+        CommunicationType::IsoSaeReserved { .. }
     ) {
         return Err(NegativeResponseCode::RequestOutOfRange);
     }

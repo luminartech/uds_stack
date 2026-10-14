@@ -354,7 +354,7 @@ mod serde_cannot_bypass_validation {
         // caller name the reserved variant directly and skip it.
         assert!(serde_json::from_str::<SubnetNumber>("16").is_err());
         assert!(serde_json::from_str::<DtcSettingType>("0").is_err());
-        assert!(serde_json::from_str::<CommunicationType>("7").is_err());
+        assert!(serde_json::from_str::<CommunicationType>("16").is_err());
 
         assert_eq!(
             serde_json::from_str::<SubnetNumber>("15").unwrap(),
@@ -393,19 +393,19 @@ mod serde_cannot_bypass_validation {
         // that encoded to two bytes, which this crate's own decoder then rejected.
         assert!(
             serde_json::from_str::<CommunicationControlRequest>(
-                r#"{"suppress_positive_response":false,"control_type":5,"communication_type":"Normal","subnet":0,"node_id":null}"#
+                r#"{"suppress_positive_response":false,"control_type":5,"communication_type":1,"subnet":0,"node_id":null}"#
             )
             .is_err()
         );
         assert!(
             serde_json::from_str::<CommunicationControlRequest>(
-                r#"{"suppress_positive_response":false,"control_type":3,"communication_type":"Normal","subnet":0,"node_id":10}"#
+                r#"{"suppress_positive_response":false,"control_type":3,"communication_type":1,"subnet":0,"node_id":10}"#
             )
             .is_err()
         );
 
         let req: CommunicationControlRequest = serde_json::from_str(
-            r#"{"suppress_positive_response":false,"control_type":5,"communication_type":"Normal","subnet":15,"node_id":10}"#
+            r#"{"suppress_positive_response":false,"control_type":5,"communication_type":1,"subnet":15,"node_id":10}"#
         )
         .unwrap();
         assert_eq!(req.node_id(), Some(10));
@@ -491,6 +491,10 @@ mod serde_cannot_bypass_validation {
             "15"
         );
         assert_eq!(serde_json::to_string(&DtcSettingType::Off).unwrap(), "2");
+        assert_eq!(
+            serde_json::to_string(&CommunicationType::try_from(0x6).unwrap()).unwrap(),
+            "6"
+        );
         assert_eq!(
             serde_json::to_string(&SecurityAccessLevel::new(0x11).unwrap()).unwrap(),
             "17"

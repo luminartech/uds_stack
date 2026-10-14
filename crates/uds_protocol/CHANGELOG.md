@@ -61,12 +61,19 @@ now <https://github.com/luminartech/uds_stack>.
   which is the suppressPosRspMsgIndicationBit, and that error still maps to 0x12. A
   positive response that echoes a reserved type is still rejected. Because the enum
   now has a data-carrying variant, its variants can no longer be cast with `as`.
+- **Breaking:** `CommunicationType` is the whole low nibble of the
+  `communicationType` byte. `CommunicationType::IsoSaeReserved(u8)` holds a nibble
+  that Annex B Table B.1 reserves (bits 1-0 clear, or bits 3-2 set), so a decoded
+  request re-encodes the byte it arrived as; the unit variant re-encoded `28 0A 56`
+  as `28 0A 50`. `CommunicationType::try_from` takes the nibble, `0x0`–`0xF`, and
+  fails only above it, and `CommunicationType::value` returns it. Match the reserved
+  variant as `CommunicationType::IsoSaeReserved { .. }`. With `serde`, the type
+  serializes as the nibble (`1`) rather than the variant name (`"Normal"`).
 - `CommunicationControlRequest` now decodes a `communicationType` whose reserved
   bits 3-2 are set as `CommunicationType::IsoSaeReserved` and no longer rejects it.
   Clause 8.7.5 checks the message length before any data parameter, so a request
   with a stray trailing byte must reach the length check (0x13) before a server
-  answers the reserved value with 0x31. `CommunicationType::try_from` still rejects
-  such a byte.
+  answers the reserved value with 0x31.
 - `ReadDataByIdentifierResponse` and `Response` reject a `ReadDataByIdentifier`
   positive response shorter than one identifier and one record byte with
   `Error::InsufficientData`; it used to decode. `RequestDownloadResponse` and

@@ -60,6 +60,13 @@ byte_schema!(
                       suppressPosRspMsgIndicationBit and is carried separately, so a value with \
                       it set is rejected."
     },
+    CommunicationType {
+        max: 0x0Fu8,
+        description: "The low nibble of a communicationType byte, 0x00 to 0x0F (ISO \
+                      14229-1:2020 Annex B Table B.1). 0x01 is normal messages, 0x02 network \
+                      management messages and 0x03 both; the other values are reserved. The \
+                      high nibble is the subnetNumber, carried separately."
+    },
     DataFormatIdentifier {
         max: 0xFFu8,
         description: "A dataFormatIdentifier byte: compression method in the high nibble, \

@@ -309,8 +309,8 @@ pub trait CommunicationControl {
     ///
     /// * `control_type` - what to do; see [`CommunicationControlType`].
     /// * `communication_type` - what it applies to; see [`CommunicationType`]. Never
-    ///   [`CommunicationType::IsoSaeReserved`]: Annex B Table B.1 reserves that value, and
-    ///   the pipeline answers it `requestOutOfRange` (0x31) without asking.
+    ///   [`CommunicationType::IsoSaeReserved`]: Annex B Table B.1 reserves those values,
+    ///   and the pipeline answers them `requestOutOfRange` (0x31) without asking.
     /// * `subnet` - which network it applies to; see [`SubnetNumber`], which distinguishes
     ///   [`SubnetNumber::ReceivedOn`] from [`SubnetNumber::AllConnectedNetworks`].
     /// * `node_id` - the `nodeIdentificationNumber`, present exactly where `control_type`
