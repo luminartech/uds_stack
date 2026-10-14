@@ -40,13 +40,10 @@ macro_rules! causes {
         /// and part of ``UDSS_LLR_0134`` — have no variant here, because an input that
         /// triggers them cannot be written.
         ///
-        /// Exhaustive. The set is one variant per rejecting requirement limb, so it is
-        /// closed by the requirement set; no requirement here states an open enumeration,
-        /// and only ``UDSS_LLR_0010`` and ``UDSS_LLR_0012`` do so anywhere in the set. A
-        /// cause can appear only by a requirement changing, and a caller whose match then
-        /// fails to compile is being told exactly that — which a wildcard arm would
-        /// swallow.
+        /// `#[non_exhaustive]`: the causes follow the requirement set, which may gain a
+        /// rejecting limb.
         #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+        #[non_exhaustive]
         pub enum Cause {
             $( $(#[$attr])* $variant, )+
         }
@@ -70,8 +67,9 @@ macro_rules! causes {
         /// [`Causes`] yields the two together. One variant per requirement that states
         /// content; ``UDSS_LLR_0172`` is the only one that does.
         ///
-        /// Exhaustive, as [`Cause`] is and for the same reason.
+        /// `#[non_exhaustive]`, as [`Cause`] is.
         #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+        #[non_exhaustive]
         pub enum Content {
             $( $(
                 #[doc = concat!("What ", stringify!($variant), " states.")]

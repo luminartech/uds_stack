@@ -789,12 +789,7 @@ macro_rules! __uds_assert {
 /// #     fn now(&self) -> Timestamp { Timestamp(0) }
 /// # }
 /// #
-/// # const PARAMS: ServerParams = ServerParams {
-/// #     s3_server: 5_000,
-/// #     p2_server_max: 50,
-/// #     p2_star_server_max: 5_000,
-/// #     response_pending_lead: 0,
-/// # };
+/// # const PARAMS: ServerParams = ServerParams::new(5_000, 50, 5_000, 0);
 /// uds_server! {
 ///     Ecu: ReadDataByIdentifier, DataTransfer;
 ///     transport = DoIpTransport,
@@ -953,12 +948,7 @@ macro_rules! __uds_assert {
 /// #     fn now(&self) -> Timestamp { Timestamp(0) }
 /// # }
 /// #
-/// # const PARAMS: ServerParams = ServerParams {
-/// #     s3_server: 5_000,
-/// #     p2_server_max: 50,
-/// #     p2_star_server_max: 5_000,
-/// #     response_pending_lead: 0,
-/// # };
+/// # const PARAMS: ServerParams = ServerParams::new(5_000, 50, 5_000, 0);
 /// uds_server! {
 ///     Ecu: ReadDataByIdentifier, DataTransfer;
 ///     transport = DoIpTransport,

@@ -319,12 +319,7 @@ keeps the session, its timing and the response pending. As in
 #     fn on_tester_present(&mut self) {}
 # }
 #
-# const PARAMS: ServerParams = ServerParams {
-#     s3_server: 5_000,
-#     p2_server_max: 50,
-#     p2_star_server_max: 5_000,
-#     response_pending_lead: 0,
-# };
+# const PARAMS: ServerParams = ServerParams::new(5_000, 50, 5_000, 0);
 #
 uds_server! {
     Ecu: DiagnosticSessionControl, EcuReset, TesterPresent;

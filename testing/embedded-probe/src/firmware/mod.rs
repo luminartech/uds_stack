@@ -59,12 +59,7 @@ uds_server! {
     server = EcuServer,
 }
 
-const PARAMS: ServerParams = ServerParams {
-    s3_server: 5_000,
-    p2_server_max: 50,
-    p2_star_server_max: 5_000,
-    response_pending_lead: 0,
-};
+const PARAMS: ServerParams = ServerParams::new(5_000, 50, 5_000, 0);
 
 static ACCEPTOR: stub::Acceptor = stub::Acceptor;
 static SERVER: StaticCell<EcuServer> = StaticCell::new();

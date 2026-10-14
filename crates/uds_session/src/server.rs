@@ -190,12 +190,7 @@ impl<const A: usize> Server<A> {
     /// ```compile_fail,E0080
     /// use uds_session::{Server, ServerParams};
     ///
-    /// let params = ServerParams {
-    ///     s3_server: 5_000,
-    ///     p2_server_max: 50,
-    ///     p2_star_server_max: 5_000,
-    ///     response_pending_lead: 0,
-    /// };
+    /// let params = ServerParams::new(5_000, 50, 5_000, 0);
     /// let _mute = Server::<0>::new([], params);
     /// ```
     #[must_use]

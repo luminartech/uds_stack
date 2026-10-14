@@ -41,8 +41,11 @@ pub enum ChannelReload {
 /// advertised values equal to these is the obligation of whatever composes that response,
 /// and [`Server::set_parameter`] is how a caller changes them afterwards.
 ///
+/// Built by [`Self::new`], which checks [`Self::is_well_formed`]; read through the fields.
+///
 /// [`Server::set_parameter`]: crate::Server::set_parameter
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub struct ServerParams {
     /// `tS3_Server` — how long a non-default session survives without a request.
     pub s3_server: u32,
@@ -72,45 +75,99 @@ pub struct ServerParams {
 }
 
 impl ServerParams {
-    /// Whether the response-pending lead fits both windows (``UDSS_LLR_0186``).
+    /// The parameters a server is created with, all in milliseconds.
     ///
-    /// It must be less than `p2_server_max`, so that the overrun of the default window is
-    /// not indicated on the request's own reception, and no more than `p2_star_server_max`
-    /// less ``UDSS_LLR_0119``'s spacing — ⌊0,7 × `p2_star_server_max`⌋ — so that the
-    /// enhanced overrun is indicated when a further response-pending message is
-    /// admissible. Construction does not check this: [`crate::Server::new`] is a `const
-    /// fn` used in `static`s and stays infallible, so an assembly asserts it where its
-    /// parameters are fixed.
+    /// # Arguments
+    ///
+    /// * `s3_server` - see [`Self::s3_server`].
+    /// * `p2_server_max` - see [`Self::p2_server_max`].
+    /// * `p2_star_server_max` - see [`Self::p2_star_server_max`].
+    /// * `response_pending_lead` - see [`Self::response_pending_lead`].
+    ///
+    /// # Panics
+    ///
+    /// Where the set is not [`Self::is_well_formed`]; in a `const`, that is a compile
+    /// error.
+    ///
+    /// # Examples
     ///
     /// ```
     /// use uds_session::ServerParams;
     ///
-    /// const PARAMS: ServerParams = ServerParams {
-    ///     s3_server: 5_000,
-    ///     p2_server_max: 50,
-    ///     p2_star_server_max: 5_000,
-    ///     response_pending_lead: 10,
-    /// };
-    /// const { assert!(PARAMS.is_well_formed()) };
+    /// const PARAMS: ServerParams = ServerParams::new(5_000, 50, 5_000, 10);
+    /// assert_eq!(PARAMS.p2_server_max, 50);
+    /// ```
+    ///
+    /// A lead as long as the default window would indicate its overrun on the request's
+    /// own reception, so this does not compile:
+    ///
+    /// ```compile_fail,E0080
+    /// use uds_session::ServerParams;
+    ///
+    /// const PARAMS: ServerParams = ServerParams::new(5_000, 50, 5_000, 50);
     /// ```
     #[must_use]
+    pub const fn new(
+        s3_server: u32,
+        p2_server_max: u32,
+        p2_star_server_max: u32,
+        response_pending_lead: u32,
+    ) -> Self {
+        let params = Self {
+            s3_server,
+            p2_server_max,
+            p2_star_server_max,
+            response_pending_lead,
+        };
+        assert!(
+            params.is_well_formed(),
+            "the response-pending lead does not fit the response windows \
+             (ServerParams::is_well_formed)"
+        );
+        params
+    }
+
+    /// Whether the response-pending lead fits both windows (``UDSS_LLR_0186``): it is
+    /// [`Self::lead_fits`] with this set's own pair.
+    #[must_use]
     pub const fn is_well_formed(&self) -> bool {
+        self.lead_fits(self.p2_server_max, self.p2_star_server_max)
+    }
+
+    /// Whether this set's response-pending lead fits the response windows
+    /// `p2_server_max` and `p2_star_server_max` (``UDSS_LLR_0186``).
+    ///
+    /// It must be less than `p2_server_max`, so that the overrun of the default window is
+    /// not indicated on the request's own reception, and no more than
+    /// `p2_star_server_max` less ``UDSS_LLR_0119``'s spacing — ⌊0,7 ×
+    /// `p2_star_server_max`⌋ — so that the enhanced overrun is indicated when a further
+    /// response-pending message is admissible.
+    ///
+    /// # Arguments
+    ///
+    /// * `p2_server_max` - a default response window, in milliseconds.
+    /// * `p2_star_server_max` - an enhanced response window, in milliseconds.
+    #[must_use]
+    pub const fn lead_fits(&self, p2_server_max: u32, p2_star_server_max: u32) -> bool {
         let lead = self.response_pending_lead;
-        let enhanced = self
-            .p2_star_server_max
-            .saturating_sub(self.response_pending_spacing());
-        lead < self.p2_server_max && lead <= enhanced
+        let enhanced = p2_star_server_max.saturating_sub(spacing(p2_star_server_max));
+        lead < p2_server_max && lead <= enhanced
     }
 
     /// ``UDSS_LLR_0119`` — ⌈3 × `tP2*_Server_Max` / 10⌉ in integer arithmetic, from the
     /// parameter as it stands.
     pub(crate) const fn response_pending_spacing(&self) -> u32 {
-        let p = self.p2_star_server_max;
-        let q = p / 10;
-        let r = p % 10;
-        q.saturating_mul(3)
-            .saturating_add(r.saturating_mul(3).saturating_add(9) / 10)
+        spacing(self.p2_star_server_max)
     }
+}
+
+/// ⌈3 × `p2_star_server_max` / 10⌉ in integer arithmetic.
+const fn spacing(p2_star_server_max: u32) -> u32 {
+    let p = p2_star_server_max;
+    let q = p / 10;
+    let r = p % 10;
+    q.saturating_mul(3)
+        .saturating_add(r.saturating_mul(3).saturating_add(9) / 10)
 }
 
 /// One server parameter, for setting it again.
@@ -119,11 +176,10 @@ impl ServerParams {
 /// permits it at any time, and ``UDSS_LLR_0076`` keeps a running timer on the value it
 /// was loaded with, so a change never moves a window already open.
 ///
-/// Exhaustive. ``UDSS_LLR_0041`` makes the protocol parameters exactly those a
-/// requirement of this set conditions on, so the set is closed by the requirement set
-/// rather than open-ended. A parameter can only appear by a requirement changing, and a
-/// caller whose match then fails to compile is being told exactly that.
+/// `#[non_exhaustive]`: ``UDSS_LLR_0041`` makes the protocol parameters those a
+/// requirement of this set conditions on, and the set may gain one.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum ServerParameter {
     /// `tS3_Server`.
     S3Server(u32),
@@ -196,8 +252,9 @@ pub struct ChannelParams {
 /// physical keep-alive, so [`crate::Client::set_physical_s3_client`] carries it and exists
 /// only in that mode.
 ///
-/// Exhaustive, for the reason [`ServerParameter`] gives: ``UDSS_LLR_0041`` closes the set.
+/// `#[non_exhaustive]`, for the reason [`ServerParameter`] gives.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum ChannelParameter {
     /// Both response reloads at once.
     ///

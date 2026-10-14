@@ -595,7 +595,7 @@ impl<
                 repeat: e.repeats > 0,
                 session,
             },
-            keep_alive @ ClientTx::KeepAlive { .. } => keep_alive,
+            other => other,
         };
         loop {
             let now = self.transport.now();

@@ -132,12 +132,7 @@ uds_server! {
     server = Srv,
 }
 
-const PARAMS: ServerParams = ServerParams {
-    s3_server: 5_000,
-    p2_server_max: 50,
-    p2_star_server_max: 5_000,
-    response_pending_lead: 0,
-};
+const PARAMS: ServerParams = ServerParams::new(5_000, 50, 5_000, 0);
 
 /// A spurious confirmation is rejected by the session layer and the driver carries
 /// on: `step` returns `Ok`, not an error and not a panic.

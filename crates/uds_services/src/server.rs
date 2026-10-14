@@ -404,14 +404,9 @@ async fn retime<A: ServiceSet, T: UdsTransport, const PEERS: usize>(
         return Ok(stopped);
     };
     debug_assert!(
-        ServerParams {
-            p2_server_max: timing.p2_server_max(),
-            p2_star_server_max: timing.p2_star_server_max(),
-            ..params
-        }
-        .is_well_formed(),
+        params.lead_fits(timing.p2_server_max(), timing.p2_star_server_max()),
         "DiagnosticSessionControl::timing returned a pair the response-pending lead does \
-         not fit (ServerParams::is_well_formed)",
+         not fit (ServerParams::lead_fits)",
     );
     for parameter in [
         ServerParameter::P2ServerMax(timing.p2_server_max()),

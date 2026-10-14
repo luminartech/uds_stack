@@ -24,7 +24,13 @@ is released in lockstep with the rest of the `uds_stack` workspace (`uds_protoco
   ends a non-default session, and `ResponseOverrun` when `tP2_Server` is about to
   expire with no response sent. `ServerParams::response_pending_lead` sets how early
   that overrun is reported, so a response-pending message can still go out inside
-  the window. `is_well_formed` checks the lead against both windows.
+  the window. `ServerParams::new` builds the set and panics, or in a `const` fails to
+  compile, where the lead does not fit both windows (`is_well_formed`); `lead_fits`
+  checks it against another pair.
+- The types that follow this crate's requirement set rather than a table of ISO
+  14229-2 are `#[non_exhaustive]`, since the set may grow: `ServerParams`,
+  `ServerParameter`, `ChannelParameter`, `ServerTx`, `ClientTx`, `ServerRx`,
+  `ClientRx`, `ExpectedResponses`, `Cause` and `Content`.
 - `Client<K, PHYS, FUNC, R>`, the session layer in the client role, with separate
   arrays of physical and functional channel slots (`PhysicalSlot`,
   `FunctionalSlot<R>`, where `R` is the responders tracked per functional channel).

@@ -152,12 +152,7 @@ uds_client! {
 const SERVER: Address = Address(ENTITY.0);
 const TESTER: Address = Address(doip_loopback::TESTER.0);
 
-const PARAMS: ServerParams = ServerParams {
-    s3_server: 5_000,
-    p2_server_max: 50,
-    p2_star_server_max: 5_000,
-    response_pending_lead: 0,
-};
+const PARAMS: ServerParams = ServerParams::new(5_000, 50, 5_000, 0);
 
 /// The client's response window, well short of [`SLOW`].
 const RELOADS: Reloads = Reloads {

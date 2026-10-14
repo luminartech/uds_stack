@@ -6,18 +6,15 @@ use uds_session::{
     SessionSelection, Solicitation, TaType, Timestamp,
 };
 
-const PARAMS: ServerParams = ServerParams {
-    s3_server: 5_000,
-    p2_server_max: 50,
-    p2_star_server_max: 5_000,
-    response_pending_lead: 0,
-};
+const PARAMS: ServerParams = ServerParams::new(5_000, 50, 5_000, 0);
 
 /// [`PARAMS`] with a response-pending lead of 10 ms (``UDSS_LLR_0186``).
-const PARAMS_LEAD: ServerParams = ServerParams {
-    response_pending_lead: 10,
-    ..PARAMS
-};
+const PARAMS_LEAD: ServerParams = ServerParams::new(
+    PARAMS.s3_server,
+    PARAMS.p2_server_max,
+    PARAMS.p2_star_server_max,
+    10,
+);
 
 fn server() -> Server<2> {
     Server::new([Association::EMPTY, Association::EMPTY], PARAMS)
@@ -99,10 +96,12 @@ mod expiry {
     fn an_s3_of_u32_max_is_a_deadline_ahead_not_a_spin() {
         let mut s = Server::<2>::new(
             [Association::EMPTY, Association::EMPTY],
-            ServerParams {
-                s3_server: u32::MAX,
-                ..PARAMS
-            },
+            ServerParams::new(
+                u32::MAX,
+                PARAMS.p2_server_max,
+                PARAMS.p2_star_server_max,
+                PARAMS.response_pending_lead,
+            ),
         );
         let now = Timestamp(1_000);
         enter_non_default(&mut s, now);
@@ -698,6 +697,7 @@ mod overlap {
             ServerTx::ResponsePending => &PENDING,
             ServerTx::BusyRepeatRequest => &[0x7F, 0x22, 0x21],
             ServerTx::FinalResponse { .. } => &[0x62, 0xF1, 0x90, 0x01],
+            _ => &[],
         };
         outputs(s.s_data_req(now, ai(ECU, TESTER), data, class)).1
     }
@@ -1094,14 +1094,14 @@ mod lead {
 
     /// ``UDSS_LLR_0186`` — a lead not less than `tP2_Server_Max` saturates: the overrun
     /// is indicated on the first timestamp supplied after the request, never before it.
+    /// `ServerParams::new` refuses such a lead, and setting it again is how one arrives.
     #[test]
     fn a_lead_not_less_than_the_window_indicates_on_the_first_tick() {
-        let params = ServerParams {
-            response_pending_lead: 50,
-            ..PARAMS
-        };
-        assert!(!params.is_well_formed());
-        let mut s = server_with(params);
+        let mut s = server_with(PARAMS);
+        let (_, ok) = outputs(
+            s.set_parameter(Timestamp(0), ServerParameter::ResponsePendingLead(50)),
+        );
+        assert!(ok.is_ok());
         request(&mut s, Timestamp(100));
         assert_eq!(s.next_deadline(), Some(Timestamp(100)));
         let (out, _) = outputs(s.tick(Timestamp(100)));
