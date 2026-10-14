@@ -38,8 +38,8 @@ const fn sid(service: UdsServiceType) -> u8 {
 /// Encode a `ReadDataByIdentifier` request for `identifiers` into `request`.
 ///
 /// `None` where `identifiers` is empty, names more than `max_dids` (the
-/// `max_dids_per_request` given to [`crate::uds_client`]), or names more than `request`
-/// holds.
+/// [`ClientLimits::max_dids_per_request`](crate::ClientLimits::max_dids_per_request)), or
+/// names more than `request` holds.
 pub(super) fn read_data_by_identifier<D: DataIdentifier>(
     request: &mut [u8],
     identifiers: &[D],

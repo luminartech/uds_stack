@@ -93,8 +93,8 @@ pub mod assembly;
 
 pub mod client;
 pub use client::{
-    Answer, Client, ClientError, ClientKeepAlive, ClientSet, ClientTiming, KeepAlive,
-    MalformedResponse, Records, Repeats, Replaced, Response, Responses,
+    Answer, Client, ClientError, ClientKeepAlive, ClientLimits, ClientSet, ClientTiming,
+    KeepAlive, MalformedResponse, Records, Repeats, Replaced, Response, Responses,
 };
 
 pub mod server;

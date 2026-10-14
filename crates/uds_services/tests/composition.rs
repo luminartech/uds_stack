@@ -513,15 +513,17 @@ fn the_handler_seam_is_typed_not_byte_shaped() {
 
 uds_client! {
     Did;
+    vocabulary = TesterVocabulary,
     transport = FakeTransport,
-    max_dids_per_request = 4,
     routines = Rid,
-    max_dtcs = 4,
-    max_dtc_record_len = 16,
-    max_seed_len = 2,
-    max_key_len = 2,
-    max_option_len = 4,
-    max_block_len = 16,
+    limits = uds_services::ClientLimits::new()
+        .max_dids_per_request(4)
+        .max_dtcs(4)
+        .max_dtc_record_len(16)
+        .max_seed_len(2)
+        .max_key_len(2)
+        .max_option_len(4)
+        .max_block_len(16),
     physical = 2,
     functional = 1,
     responders = 4,
@@ -548,7 +550,7 @@ static TESTER: Tester = Tester::new(
 /// compile error one identifier catalogue serving both roles exists to produce.
 #[test]
 fn the_client_buffers_are_derived_from_the_same_declaration() {
-    let mut store = <<Did as ClientSet>::Store as ClientStorage>::EMPTY;
+    let mut store = <<TesterVocabulary as ClientSet>::Store as ClientStorage>::EMPTY;
     let b = store.split();
     assert_eq!(b.request.len(), 3 + 17);
     assert_eq!(b.response.len(), 1 + 4 * (2 + 17));

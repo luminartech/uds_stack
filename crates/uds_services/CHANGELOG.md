@@ -45,10 +45,9 @@ lockstep with the rest of the `uds_stack` workspace (`uds_protocol`, `uds_sessio
   into a `ResponseSink`.
 - `uds_client!`, which builds a client from the same identifier enumeration the
   server's handlers use. Changing that enumeration on only one side fails to
-  compile. `uds_client!` implements `ClientSet` for the identifier type in the
-  crate that invokes it, so an enumeration shared with the server side and defined
-  in another crate is newtyped on the client side. It emits a `Client` alias with
-  the channel counts and keep-alive mode set.
+  compile. It declares a marker type, named by its `vocabulary` key, that `ClientSet`
+  is implemented on, so the enumeration may come from any crate and take any number of
+  clients. It emits a `Client` alias with the channel counts and keep-alive mode set.
 - `Client`, the async client driver over `uds_session`'s client role:
   `read_data_by_identifier` (physical, returning the declared identifier/record
   pairs as `Records`; a reply carrying a record not asked for is malformed),
@@ -119,14 +118,14 @@ lockstep with the rest of the `uds_stack` workspace (`uds_protocol`, `uds_sessio
   `DtcReportKind::record_len` returns `None` for them and `Some` for the rest. A client
   reads them. A server cannot answer them, and `uds_server!` fails to compile where
   `ReadDtcInformation::REPORTS` lists either.
-- **Breaking:** `uds_client!` takes `routines`, `max_dtcs`, `max_dtc_record_len`,
-  `max_seed_len`, `max_key_len`, `max_option_len` and `max_block_len`, and folds the
-  client's buffers from them as `uds_server!` folds a server's from its service traits.
-  `ClientSet` gains `type Routine`, `const MAX_DIDS_PER_REQUEST`, `const MAX_KEY_LEN`,
-  `const MAX_OPTION_LEN` and `const MAX_BLOCK_LEN`, the most data bytes one
-  `TransferData` block carries. Each call refuses an input past its maximum as
-  `ClientError::Request` before sending. A transport whose `MAX_PDU` cannot carry a
-  request of the declared maxima fails to compile, naming the input.
+- **Breaking:** `uds_client!` takes `routines` and `limits`, a `ClientLimits` built in a
+  `const` from `ClientLimits::new()` and setters for the most identifiers per read, DTC
+  records, DTC record bytes, seed, key, option record and `TransferData` block, each
+  defaulting to the least. It folds the client's buffers from them as `uds_server!` folds
+  a server's from its service traits; a limit added later is a new setter. `ClientSet`
+  gains `type Did`, `type Routine` and `const LIMITS`. Each call refuses an input past its
+  limit as `ClientError::Request` before sending. A transport whose `MAX_PDU` cannot carry
+  a request of the declared limits fails to compile, naming the limit.
 - **Breaking:** `DataTransfer` requires `SESSIONS`, `format_supported` and `access`.
   Migrate: declare the sessions the three services are served in, accept the formats you
   support, and return the `Access` of each memory interval (`None` for an invalid one).

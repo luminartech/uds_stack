@@ -16,12 +16,12 @@ use sensor_services::{DTCS, Did, Ecu, Rid};
 use uds_on_ip::DoIpTransport;
 use uds_on_ip::profile::bench_reloads;
 use uds_services::{
-    Address, CLEAR_ALL_DTCS, ClientTiming, CommunicationControlType, CommunicationType,
-    DataFormatIdentifier, DataIdentifier, DiagnosticSessionType as S, DtcRecord,
+    Address, CLEAR_ALL_DTCS, ClientLimits, ClientTiming, CommunicationControlType,
+    CommunicationType, DataFormatIdentifier, DiagnosticSessionType as S, DtcRecord,
     DtcSettingType, DtcStatusMask, KeepAlive, NegativeResponseCode as Nrc,
-    PhysicalKeepAlive, ReadDtcInfoResponse, ReadDtcInfoSubFunction, RecordError, Reloads,
-    Replaced, ResetType, Response, RoutineControlSubFunction, SecurityLevel, ServerParams,
-    Stopped, SubnetNumber, Timestamp, uds_client, uds_server,
+    PhysicalKeepAlive, ReadDtcInfoResponse, ReadDtcInfoSubFunction, Reloads, Replaced,
+    ResetType, Response, RoutineControlSubFunction, SecurityLevel, ServerParams, Stopped,
+    SubnetNumber, Timestamp, uds_client, uds_server,
 };
 
 uds_server! {
@@ -34,35 +34,19 @@ uds_server! {
     server = SensorServer,
 }
 
-/// The sensor's identifiers as the client names them: `uds_client!` implements its
-/// `ClientSet` for the identifier type, which must therefore be local to this crate.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct SdkDid(Did);
-
-impl DataIdentifier for SdkDid {
-    const MAX_RECORD_LEN: usize = Did::MAX_RECORD_LEN;
-    fn as_u16(self) -> u16 {
-        self.0.as_u16()
-    }
-    fn from_u16(value: u16) -> Option<Self> {
-        Did::from_u16(value).map(Self)
-    }
-    fn split_record(self, buf: &[u8]) -> Result<(&[u8], &[u8]), RecordError> {
-        self.0.split_record(buf)
-    }
-}
-
 uds_client! {
-    SdkDid;
+    Did;
+    vocabulary = SdkVocabulary,
     transport = SensorClientTransport,
-    max_dids_per_request = 4,
     routines = Rid,
-    max_dtcs = 8,
-    max_dtc_record_len = 32,
-    max_seed_len = 2,
-    max_key_len = 2,
-    max_option_len = 4,
-    max_block_len = 64,
+    limits = ClientLimits::new()
+        .max_dids_per_request(4)
+        .max_dtcs(8)
+        .max_dtc_record_len(32)
+        .max_seed_len(2)
+        .max_key_len(2)
+        .max_option_len(4)
+        .max_block_len(64),
     physical = 1,
     functional = 1,
     responders = 1,
@@ -151,21 +135,17 @@ where
 #[test]
 fn a_write_in_the_right_session_is_positive_and_a_forbidden_one_negative() {
     with_sensor(|mut c| async move {
-        let written = c
-            .write_data_by_identifier(SERVER, SdkDid(Did::Mode), &[0x01])
-            .await;
+        let written = c.write_data_by_identifier(SERVER, Did::Mode, &[0x01]).await;
         assert_eq!(written.expect("answered"), Response::Positive(()));
-        let read = c
-            .read_data_by_identifier(SERVER, &[SdkDid(Did::Mode)])
-            .await;
+        let read = c.read_data_by_identifier(SERVER, &[Did::Mode]).await;
         match read {
             Ok(Response::Positive(mut records)) => {
-                assert_eq!(records.next(), Some((SdkDid(Did::Mode), &[0x01][..])));
+                assert_eq!(records.next(), Some((Did::Mode, &[0x01][..])));
             }
             other => panic!("{other:?}"),
         }
         let forbidden = c
-            .write_data_by_identifier(SERVER, SdkDid(Did::VehicleSpeed), &[0x00])
+            .write_data_by_identifier(SERVER, Did::VehicleSpeed, &[0x00])
             .await;
         assert_eq!(
             forbidden.expect("answered"),
@@ -252,9 +232,7 @@ fn a_reset_is_answered_and_its_close_survived() {
         assert_eq!(reset.expect("answered"), Response::Positive(Some(0x0A)));
         let again = c.ecu_reset(SERVER, ResetType::HardReset).await;
         assert_eq!(again.expect("answered"), Response::Positive(None));
-        let read = c
-            .read_data_by_identifier(SERVER, &[SdkDid(Did::Mode)])
-            .await;
+        let read = c.read_data_by_identifier(SERVER, &[Did::Mode]).await;
         assert!(matches!(read, Ok(Response::Positive(_))), "{read:?}");
         c.close().await.expect("closed");
     });
@@ -412,9 +390,7 @@ fn a_positive_reset_is_reported_as_a_replacement_at_once() {
         assert_eq!(left.expect("asked"), Replaced::SessionLost);
         let again = c.connection_replaced(SERVER).await;
         assert_eq!(again.expect("asked"), Replaced::No);
-        let read = c
-            .read_data_by_identifier(SERVER, &[SdkDid(Did::Mode)])
-            .await;
+        let read = c.read_data_by_identifier(SERVER, &[Did::Mode]).await;
         assert!(matches!(read, Ok(Response::Positive(_))), "{read:?}");
         let after = c.connection_replaced(SERVER).await;
         assert_eq!(after.expect("asked"), Replaced::No);
@@ -522,9 +498,7 @@ fn a_hard_reset_ends_run_after_the_close() {
         serve_until(&mut server, async {
             let left = c.connection_replaced(SERVER).await;
             assert_eq!(left.expect("asked"), Replaced::SessionLost);
-            let read = c
-                .read_data_by_identifier(SERVER, &[SdkDid(Did::Mode)])
-                .await;
+            let read = c.read_data_by_identifier(SERVER, &[Did::Mode]).await;
             assert!(matches!(read, Ok(Response::Positive(_))), "{read:?}");
             c.close().await.expect("closed");
         })

@@ -132,15 +132,16 @@ uds_server! {
 
 uds_client! {
     Did;
+    vocabulary = DiagnoserVocabulary,
     transport = SensorClientTransport,
-    max_dids_per_request = 1,
     routines = Rid,
-    max_dtcs = 4,
-    max_dtc_record_len = 16,
-    max_seed_len = 2,
-    max_key_len = 2,
-    max_option_len = 4,
-    max_block_len = 64,
+    limits = uds_services::ClientLimits::new()
+        .max_dtcs(4)
+        .max_dtc_record_len(16)
+        .max_seed_len(2)
+        .max_key_len(2)
+        .max_option_len(4)
+        .max_block_len(64),
     physical = 1,
     functional = 1,
     responders = 1,

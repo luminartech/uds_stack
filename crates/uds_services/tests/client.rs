@@ -59,36 +59,31 @@ const fn from(ecu: Address) -> Ai {
 
 const FAILED: SResult = SResult::Transport(TransportError(1));
 
-/// One identifier vocabulary per client below: `uds_client!` implements its
-/// `ClientSet` on the enumeration, so each mode needs its own.
-macro_rules! vocabulary {
-    ($name:ident) => {
-        #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-        enum $name {
-            Speed,
-            Odometer,
-        }
+/// The identifiers every client below names.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Did {
+    Speed,
+    Odometer,
+}
 
-        impl DataIdentifier for $name {
-            const MAX_RECORD_LEN: usize = 1;
-            fn as_u16(self) -> u16 {
-                match self {
-                    Self::Speed => 0xF40D,
-                    Self::Odometer => 0xF1A0,
-                }
-            }
-            fn from_u16(v: u16) -> Option<Self> {
-                match v {
-                    0xF40D => Some(Self::Speed),
-                    0xF1A0 => Some(Self::Odometer),
-                    _ => None,
-                }
-            }
-            fn split_record(self, buf: &[u8]) -> Result<(&[u8], &[u8]), RecordError> {
-                buf.split_at_checked(1).ok_or(RecordError::Short)
-            }
+impl DataIdentifier for Did {
+    const MAX_RECORD_LEN: usize = 1;
+    fn as_u16(self) -> u16 {
+        match self {
+            Self::Speed => 0xF40D,
+            Self::Odometer => 0xF1A0,
         }
-    };
+    }
+    fn from_u16(v: u16) -> Option<Self> {
+        match v {
+            0xF40D => Some(Self::Speed),
+            0xF1A0 => Some(Self::Odometer),
+            _ => None,
+        }
+    }
+    fn split_record(self, buf: &[u8]) -> Result<(&[u8], &[u8]), RecordError> {
+        buf.split_at_checked(1).ok_or(RecordError::Short)
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -106,23 +101,19 @@ impl RoutineIdentifier for Rid {
     }
 }
 
-vocabulary!(Did);
-vocabulary!(FunctionalDid);
-vocabulary!(WideDid);
-vocabulary!(WideFunctionalDid);
-vocabulary!(NarrowBlockDid);
-
 uds_client! {
     Did;
+    vocabulary = TesterVocabulary,
     transport = Script,
-    max_dids_per_request = 2,
     routines = Rid,
-    max_dtcs = 4,
-    max_dtc_record_len = 16,
-    max_seed_len = 2,
-    max_key_len = 2,
-    max_option_len = 4,
-    max_block_len = 16,
+    limits = uds_services::ClientLimits::new()
+        .max_dids_per_request(2)
+        .max_dtcs(4)
+        .max_dtc_record_len(16)
+        .max_seed_len(2)
+        .max_key_len(2)
+        .max_option_len(4)
+        .max_block_len(16),
     physical = 2,
     functional = 1,
     responders = 1,
@@ -131,16 +122,18 @@ uds_client! {
 }
 
 uds_client! {
-    FunctionalDid;
+    Did;
+    vocabulary = FunctionalTesterVocabulary,
     transport = Script,
-    max_dids_per_request = 2,
     routines = Rid,
-    max_dtcs = 4,
-    max_dtc_record_len = 16,
-    max_seed_len = 2,
-    max_key_len = 2,
-    max_option_len = 4,
-    max_block_len = 16,
+    limits = uds_services::ClientLimits::new()
+        .max_dids_per_request(2)
+        .max_dtcs(4)
+        .max_dtc_record_len(16)
+        .max_seed_len(2)
+        .max_key_len(2)
+        .max_option_len(4)
+        .max_block_len(16),
     physical = 1,
     functional = 1,
     responders = 2,
@@ -149,16 +142,18 @@ uds_client! {
 }
 
 uds_client! {
-    WideDid;
+    Did;
+    vocabulary = WideTesterVocabulary,
     transport = Script,
-    max_dids_per_request = 2,
     routines = Rid,
-    max_dtcs = 4,
-    max_dtc_record_len = 16,
-    max_seed_len = 2,
-    max_key_len = 2,
-    max_option_len = 4,
-    max_block_len = 16,
+    limits = uds_services::ClientLimits::new()
+        .max_dids_per_request(2)
+        .max_dtcs(4)
+        .max_dtc_record_len(16)
+        .max_seed_len(2)
+        .max_key_len(2)
+        .max_option_len(4)
+        .max_block_len(16),
     physical = 3,
     functional = 1,
     responders = 1,
@@ -167,16 +162,18 @@ uds_client! {
 }
 
 uds_client! {
-    WideFunctionalDid;
+    Did;
+    vocabulary = WideFunctionalTesterVocabulary,
     transport = Script,
-    max_dids_per_request = 2,
     routines = Rid,
-    max_dtcs = 4,
-    max_dtc_record_len = 16,
-    max_seed_len = 2,
-    max_key_len = 2,
-    max_option_len = 4,
-    max_block_len = 16,
+    limits = uds_services::ClientLimits::new()
+        .max_dids_per_request(2)
+        .max_dtcs(4)
+        .max_dtc_record_len(16)
+        .max_seed_len(2)
+        .max_key_len(2)
+        .max_option_len(4)
+        .max_block_len(16),
     physical = 2,
     functional = 1,
     responders = 2,
@@ -185,16 +182,18 @@ uds_client! {
 }
 
 uds_client! {
-    NarrowBlockDid;
+    Did;
+    vocabulary = NarrowBlockTesterVocabulary,
     transport = Script,
-    max_dids_per_request = 2,
     routines = Rid,
-    max_dtcs = 4,
-    max_dtc_record_len = 16,
-    max_seed_len = 2,
-    max_key_len = 2,
-    max_option_len = 4,
-    max_block_len = 2,
+    limits = uds_services::ClientLimits::new()
+        .max_dids_per_request(2)
+        .max_dtcs(4)
+        .max_dtc_record_len(16)
+        .max_seed_len(2)
+        .max_key_len(2)
+        .max_option_len(4)
+        .max_block_len(2),
     physical = 1,
     functional = 1,
     responders = 1,
@@ -1024,7 +1023,7 @@ fn a_functional_keep_alive_due_mid_exchange_goes_on_time() {
     let _ = block_on(
         t.diagnostic_session_control(ECU, DiagnosticSessionType::ExtendedDiagnosticSession),
     );
-    let read = block_on(t.read_data_by_identifier(ECU, &[FunctionalDid::Speed]));
+    let read = block_on(t.read_data_by_identifier(ECU, &[Did::Speed]));
     assert!(matches!(read, Ok(Response::Positive(_))), "{read:?}");
     let s = t.transport();
     assert_eq!(s.addressed(1), (Some(to(ECU)), READ));
@@ -1266,7 +1265,7 @@ fn a_held_keep_alive_the_transport_refuses_does_not_lose_the_answer() {
     let _ = block_on(
         t.diagnostic_session_control(ECU, DiagnosticSessionType::ExtendedDiagnosticSession),
     );
-    let read = block_on(t.read_data_by_identifier(ECU, &[FunctionalDid::Speed]));
+    let read = block_on(t.read_data_by_identifier(ECU, &[Did::Speed]));
     assert!(matches!(read, Ok(Response::Positive(_))), "{read:?}");
 }
 
@@ -1457,7 +1456,7 @@ fn a_timeout_found_while_sending_keep_alives_is_still_repeated() {
         ));
         assert!(matches!(entered, Ok(Response::Positive(_))), "{entered:?}");
     }
-    let read = block_on(t.read_data_by_identifier(THIRD_ECU, &[WideDid::Speed]));
+    let read = block_on(t.read_data_by_identifier(THIRD_ECU, &[Did::Speed]));
     assert!(matches!(read, Ok(Response::Positive(_))), "{read:?}");
     let s = t.transport();
     assert_eq!(s.addressed(3), (Some(to(ECU)), KEEP_ALIVE));
@@ -1600,7 +1599,7 @@ fn a_timeout_found_while_a_keep_alive_is_refused_is_not_lost() {
     let _ = block_on(t.diagnostic_session_control(ECU, extended));
     let _ = block_on(t.diagnostic_session_control(THIRD_ECU, extended));
     assert_eq!(block_on(t.idle_until(Timestamp(2_000))), Ok(()));
-    let read = block_on(t.read_data_by_identifier(OTHER_ECU, &[WideDid::Speed]));
+    let read = block_on(t.read_data_by_identifier(OTHER_ECU, &[Did::Speed]));
     assert_eq!(read.map(|_| ()), Err(ClientError::Timeout));
 }
 
@@ -1649,7 +1648,7 @@ fn a_functional_keep_alive_waits_for_a_functional_window() {
     let _ = block_on(
         t.diagnostic_session_control(ECU, DiagnosticSessionType::ExtendedDiagnosticSession),
     );
-    let mut answers = t.read_data_by_identifier_functional(GROUP, &[FunctionalDid::Speed]);
+    let mut answers = t.read_data_by_identifier_functional(GROUP, &[Did::Speed]);
     assert!(matches!(block_on(answers.next()), Some(Ok(_))));
     assert!(block_on(answers.next()).is_none());
     drop(answers);
@@ -2492,7 +2491,7 @@ fn a_download_too_wide_for_its_format_sends_nothing() {
 /// The declared block maximum is the client's, readable to clamp a transfer against.
 #[test]
 fn the_declared_block_maximum_is_exposed() {
-    assert_eq!(<Did as ClientSet>::MAX_BLOCK_LEN, 16);
+    assert_eq!(<TesterVocabulary as ClientSet>::LIMITS.max_block_len, 16);
 }
 
 /// A block goes with its counter and the response echoes it; a reply echoing another

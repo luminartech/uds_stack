@@ -63,35 +63,160 @@ use uds_session::{
 /// One application's identifier vocabulary, with the storage derived from it.
 ///
 /// ``UDSSVC_ARCH_0013`` for the client half — implemented by [`crate::uds_client`],
-/// never by hand. It is implemented on the *identifier enumeration* rather than on an
-/// application type, because unlike a server a client has no handler state: the
-/// identifiers are the only thing the application declares, and they are what the buffer
-/// lengths are folded from.
+/// never by hand, on the marker type it declares in the invoking crate. The identifier
+/// enumerations, [`Self::Did`] and [`Self::Routine`], may live in any crate: a client has
+/// no handler state, so they and its [`ClientLimits`] are all the application declares,
+/// and they are what the buffer lengths are folded from.
 ///
 /// Sealed through [`crate::sealed`], for the reason
 /// [`ServiceSet`](crate::ServiceSet) is: the derivation argument holds only while the
 /// macro is what chooses [`Self::Store`]'s lengths.
-pub trait ClientSet: DataIdentifier + crate::sealed::Sealed {
-    /// The storage whose lengths were folded from this vocabulary's declared maxima.
-    type Store: ClientStorage;
-    /// The most identifiers one `ReadDataByIdentifier` request names, declared through
-    /// [`crate::uds_client`]'s `max_dids_per_request`.
-    const MAX_DIDS_PER_REQUEST: usize;
-    /// The longest `SecurityAccess` key [`Client::security_access_key`] sends, declared
-    /// through [`crate::uds_client`]'s `max_key_len`.
-    const MAX_KEY_LEN: usize;
-    /// The longest option or parameter record [`Client::routine_control`],
-    /// [`Client::control_dtc_setting`] and [`Client::request_transfer_exit`] send,
-    /// declared through [`crate::uds_client`]'s `max_option_len`.
-    const MAX_OPTION_LEN: usize;
-    /// The most data bytes one `TransferData` block carries, declared through
-    /// [`crate::uds_client`]'s `max_block_len`: at least the server's
-    /// `maxNumberOfBlockLength` minus two, or a full block cannot be sent; see
-    /// [`Client::request_download`].
-    const MAX_BLOCK_LEN: usize;
+pub trait ClientSet: crate::sealed::Sealed {
+    /// The data identifiers the client's requests name, declared as
+    /// [`crate::uds_client`]'s leading type.
+    type Did: DataIdentifier;
     /// The routine vocabulary the client's `RoutineControl` requests name, declared
     /// through [`crate::uds_client`]'s `routines`; see [`Client::routine_control`].
     type Routine: RoutineIdentifier;
+    /// The storage whose lengths were folded from this vocabulary and [`Self::LIMITS`].
+    type Store: ClientStorage;
+    /// The limits declared through [`crate::uds_client`]'s `limits`.
+    const LIMITS: ClientLimits;
+}
+
+/// The most a client's requests carry and its responses hold, beyond what its
+/// identifier vocabularies declare.
+///
+/// [`crate::uds_client`] folds the client's buffers from these. Built in a `const` from
+/// [`Self::new`] and its setters, and read back through the field each setter sets. A
+/// limit not set keeps its default, which carries nothing beyond the smallest request:
+/// one identifier per read, and no seed, key, option record, DTC record or transfer
+/// block.
+///
+/// A limit a request carries bounds it: a call given more is [`ClientError::Request`],
+/// and nothing is sent. A response longer than the response buffer is
+/// [`MalformedResponse::Overlong`]; every response buffer holds at least the widest
+/// fixed-size response, so a limit of zero does not refuse a short payload outright.
+///
+/// # Examples
+///
+/// ```
+/// use uds_services::ClientLimits;
+///
+/// const LIMITS: ClientLimits = ClientLimits::new()
+///     .max_dids_per_request(4)
+///     .max_seed_len(8)
+///     .max_key_len(8);
+/// assert_ne!(LIMITS, ClientLimits::new());
+/// ```
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct ClientLimits {
+    /// Set by [`Self::max_dids_per_request`].
+    pub max_dids_per_request: usize,
+    /// Set by [`Self::max_dtcs`].
+    pub max_dtcs: usize,
+    /// Set by [`Self::max_dtc_record_len`].
+    pub max_dtc_record_len: usize,
+    /// Set by [`Self::max_seed_len`].
+    pub max_seed_len: usize,
+    /// Set by [`Self::max_key_len`].
+    pub max_key_len: usize,
+    /// Set by [`Self::max_option_len`].
+    pub max_option_len: usize,
+    /// Set by [`Self::max_block_len`].
+    pub max_block_len: usize,
+}
+
+impl ClientLimits {
+    /// Every limit at its default: one identifier per read, and nothing else carried.
+    #[must_use]
+    pub const fn new() -> Self {
+        Self {
+            max_dids_per_request: 1,
+            max_dtcs: 0,
+            max_dtc_record_len: 0,
+            max_seed_len: 0,
+            max_key_len: 0,
+            max_option_len: 0,
+            max_block_len: 0,
+        }
+    }
+
+    /// The most identifiers one `ReadDataByIdentifier` request names.
+    #[must_use]
+    pub const fn max_dids_per_request(self, n: usize) -> Self {
+        Self {
+            max_dids_per_request: n,
+            ..self
+        }
+    }
+
+    /// The most DTC records one `ReadDTCInformation` list response carries.
+    #[must_use]
+    pub const fn max_dtcs(self, n: usize) -> Self {
+        Self {
+            max_dtcs: n,
+            ..self
+        }
+    }
+
+    /// The most record bytes one `ReadDTCInformation` snapshot or extended data response
+    /// carries after its six-byte header.
+    #[must_use]
+    pub const fn max_dtc_record_len(self, n: usize) -> Self {
+        Self {
+            max_dtc_record_len: n,
+            ..self
+        }
+    }
+
+    /// The longest `SecurityAccess` seed a response holds.
+    #[must_use]
+    pub const fn max_seed_len(self, n: usize) -> Self {
+        Self {
+            max_seed_len: n,
+            ..self
+        }
+    }
+
+    /// The longest `SecurityAccess` key [`Client::security_access_key`] sends.
+    #[must_use]
+    pub const fn max_key_len(self, n: usize) -> Self {
+        Self {
+            max_key_len: n,
+            ..self
+        }
+    }
+
+    /// The longest option or parameter record [`Client::routine_control`],
+    /// [`Client::control_dtc_setting`] and [`Client::request_transfer_exit`] send, and
+    /// the longest transfer-exit parameter record a response holds.
+    #[must_use]
+    pub const fn max_option_len(self, n: usize) -> Self {
+        Self {
+            max_option_len: n,
+            ..self
+        }
+    }
+
+    /// The most data bytes one `TransferData` block carries, its service identifier and
+    /// block sequence counter not counted: at least the server's
+    /// `maxNumberOfBlockLength` minus two, or a full block cannot be sent; see
+    /// [`Client::request_download`].
+    #[must_use]
+    pub const fn max_block_len(self, n: usize) -> Self {
+        Self {
+            max_block_len: n,
+            ..self
+        }
+    }
+}
+
+impl Default for ClientLimits {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 /// Why a call produced no response.
@@ -116,7 +241,7 @@ pub enum ClientError<E> {
     /// Every channel slot was in use, and none was idle enough to withdraw.
     NoChannel,
     /// The request could not be formed or does not fit the request buffer: it names no
-    /// identifier or more than the client's `max_dids_per_request`, a record is empty
+    /// identifier or more than [`ClientLimits::max_dids_per_request`], a record is empty
     /// where the service requires one, a node identifier disagrees with the control
     /// type, or an address is wider than its format admits. Nothing was sent.
     Request,
@@ -576,7 +701,9 @@ impl<
     ///
     /// As [`Client::read_data_by_identifier`]'s. Dropping this `Responses` part-way is
     /// safe too: the next call on the client drains what is left of the window first.
-    pub async fn next(&mut self) -> Option<Result<Answer<'_, C>, ClientError<T::Error>>> {
+    pub async fn next(
+        &mut self,
+    ) -> Option<Result<Answer<'_, C::Did>, ClientError<T::Error>>> {
         if let Some(error) = self.refused.take() {
             return Some(Err(error));
         }
@@ -804,7 +931,7 @@ impl<
     ///
     /// * `target` - the server's `S_AI[TA]`.
     /// * `identifiers` - what to read, at least one and at most the client's
-    ///   `max_dids_per_request` (see [`crate::uds_client`]).
+    ///   [`ClientLimits::max_dids_per_request`].
     ///
     /// # Errors
     ///
@@ -827,8 +954,8 @@ impl<
     pub async fn read_data_by_identifier(
         &mut self,
         target: Address,
-        identifiers: &[C],
-    ) -> Result<Response<Records<'_, C>>, ClientError<T::Error>> {
+        identifiers: &[C::Did],
+    ) -> Result<Response<Records<'_, C::Did>>, ClientError<T::Error>> {
         let answered = self
             .exchange_with(
                 target,
@@ -836,7 +963,7 @@ impl<
                     encode::read_data_by_identifier(
                         request,
                         identifiers,
-                        C::MAX_DIDS_PER_REQUEST,
+                        C::LIMITS.max_dids_per_request,
                     )
                 },
                 None,
@@ -932,14 +1059,14 @@ impl<
     pub async fn write_data_by_identifier(
         &mut self,
         target: Address,
-        did: C,
+        did: C::Did,
         record: &[u8],
     ) -> Result<Response<()>, ClientError<T::Error>> {
         let answered = self
             .exchange_with(
                 target,
                 |request| {
-                    within(record.len(), C::MAX_RECORD_LEN)?;
+                    within(record.len(), <C::Did as DataIdentifier>::MAX_RECORD_LEN)?;
                     encode::write_data_by_identifier(request, did, record)
                 },
                 None,
@@ -1048,8 +1175,9 @@ impl<
     ///
     /// # Errors
     ///
-    /// [`ClientError::Request`] where `key` is longer than [`ClientSet::MAX_KEY_LEN`], and
-    /// nothing is sent; otherwise as [`Self::read_data_by_identifier`]'s.
+    /// [`ClientError::Request`] where `key` is longer than
+    /// [`ClientLimits::max_key_len`], and nothing is sent; otherwise as
+    /// [`Self::read_data_by_identifier`]'s.
     ///
     /// A repeated key (under [`ClientTiming::repeats`]), whatever answer was lost, reaches
     /// a server with no seed outstanding, since a key of valid length discards the seed
@@ -1070,7 +1198,7 @@ impl<
             .exchange_with(
                 target,
                 |request| {
-                    within(key.len(), C::MAX_KEY_LEN)?;
+                    within(key.len(), C::LIMITS.max_key_len)?;
                     encode::security_access_key(request, level, key)
                 },
                 None,
@@ -1102,7 +1230,7 @@ impl<
     /// # Errors
     ///
     /// [`ClientError::Request`] where the record is longer than
-    /// [`ClientSet::MAX_OPTION_LEN`], and nothing is sent; otherwise as
+    /// [`ClientLimits::max_option_len`], and nothing is sent; otherwise as
     /// [`Self::read_data_by_identifier`]'s. A positive response echoing another
     /// routine's identifier is [`MalformedResponse::Echo`].
     ///
@@ -1120,7 +1248,7 @@ impl<
             .exchange_with(
                 target,
                 |request| {
-                    within(option_record.len(), C::MAX_OPTION_LEN)?;
+                    within(option_record.len(), C::LIMITS.max_option_len)?;
                     encode::routine_control(request, control, routine, option_record)
                 },
                 None,
@@ -1290,7 +1418,7 @@ impl<
     /// # Errors
     ///
     /// [`ClientError::Request`] where the record is longer than
-    /// [`ClientSet::MAX_OPTION_LEN`], and nothing is sent; otherwise as
+    /// [`ClientLimits::max_option_len`], and nothing is sent; otherwise as
     /// [`Self::read_data_by_identifier`]'s.
     ///
     /// # Cancel safety
@@ -1306,7 +1434,7 @@ impl<
             .exchange_with(
                 target,
                 |request| {
-                    within(option_record.len(), C::MAX_OPTION_LEN)?;
+                    within(option_record.len(), C::LIMITS.max_option_len)?;
                     encode::control_dtc_setting(request, setting, option_record)
                 },
                 None,
@@ -1334,7 +1462,7 @@ impl<
     /// required to accept transferData requests that are equal in length to its reported
     /// maxNumberOfBlockLength. It is server specific what transferData request lengths
     /// less than maxNumberOfBlockLength are accepted (if any)." A block longer than the
-    /// client's [`ClientSet::MAX_BLOCK_LEN`] cannot be sent.
+    /// client's [`ClientLimits::max_block_len`] cannot be sent.
     ///
     /// The client keeps no transfer state: the caller owns the block sequence counter
     /// and its roll from `0xFF` to `0x00`.
@@ -1450,8 +1578,9 @@ impl<
     ///
     /// # Errors
     ///
-    /// [`ClientError::Request`] where `data` is longer than [`ClientSet::MAX_BLOCK_LEN`],
-    /// and nothing is sent; otherwise as [`Self::read_data_by_identifier`]'s.
+    /// [`ClientError::Request`] where `data` is longer than
+    /// [`ClientLimits::max_block_len`], and nothing is sent; otherwise as
+    /// [`Self::read_data_by_identifier`]'s.
     ///
     /// # Cancel safety
     ///
@@ -1466,7 +1595,7 @@ impl<
             .exchange_with(
                 target,
                 |request| {
-                    within(data.len(), C::MAX_BLOCK_LEN)?;
+                    within(data.len(), C::LIMITS.max_block_len)?;
                     encode::transfer_data(request, counter, data)
                 },
                 None,
@@ -1493,7 +1622,7 @@ impl<
     /// # Errors
     ///
     /// [`ClientError::Request`] where the record is longer than
-    /// [`ClientSet::MAX_OPTION_LEN`], and nothing is sent; otherwise as
+    /// [`ClientLimits::max_option_len`], and nothing is sent; otherwise as
     /// [`Self::read_data_by_identifier`]'s.
     ///
     /// # Cancel safety
@@ -1508,7 +1637,7 @@ impl<
             .exchange_with(
                 target,
                 |request| {
-                    within(parameter_record.len(), C::MAX_OPTION_LEN)?;
+                    within(parameter_record.len(), C::LIMITS.max_option_len)?;
                     encode::request_transfer_exit(request, parameter_record)
                 },
                 None,
@@ -1667,7 +1796,7 @@ impl<
     pub fn read_data_by_identifier_functional(
         &mut self,
         target: Address,
-        identifiers: &[C],
+        identifiers: &[C::Did],
     ) -> Responses<'_, C, T, K, PHYS, FUNC, R> {
         self.retire();
         let ai = self
@@ -1677,7 +1806,7 @@ impl<
         let refused = match encode::read_data_by_identifier(
             request,
             identifiers,
-            C::MAX_DIDS_PER_REQUEST,
+            C::LIMITS.max_dids_per_request,
         ) {
             Some(len) => {
                 let sid = request.first().copied().unwrap_or_default();
