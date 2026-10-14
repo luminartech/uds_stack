@@ -961,7 +961,6 @@ impl<
             message,
             answered.arrived,
         ))
-        .echoing(|reset| reset.reset_type == kind)
         .map(|reset| reset.power_down_time))
     }
 
@@ -1003,7 +1002,6 @@ impl<
                 message,
                 answered.arrived,
             ))
-            .echoing(|seed| u8::from(seed.access_type) == level.request_seed())
             .map(|seed| seed.security_seed),
         )
     }
@@ -1049,7 +1047,6 @@ impl<
                 message,
                 answered.arrived,
             ))
-            .echoing(|unlocked| u8::from(unlocked.access_type) == level.send_key())
             .map(|_| ()),
         )
     }
@@ -1071,8 +1068,7 @@ impl<
     ///
     /// [`ClientError::Request`] where the record does not fit the request buffer;
     /// otherwise as [`Self::read_data_by_identifier`]'s. A positive response echoing
-    /// another control type or another routine's identifier is
-    /// [`MalformedResponse::Echo`].
+    /// another routine's identifier is [`MalformedResponse::Echo`].
     ///
     /// # Cancel safety
     ///
@@ -1097,7 +1093,7 @@ impl<
                 message,
                 answered.arrived,
             ))
-            .echoing(|r| r.sub_function == control && r.routine_id == routine.as_u16())
+            .echoing(|r| r.routine_id == routine.as_u16())
             .map(|r| r.status_record),
         )
     }
@@ -1126,7 +1122,6 @@ impl<
         target: Address,
         report: ReadDtcInfoSubFunction,
     ) -> Result<Response<ReadDtcInfoResponse<'_>>, ClientError<T::Error>> {
-        let sub_function = u8::from(report.report_type());
         let asked = match report {
             ReadDtcInfoSubFunction::ReportDtcSnapshotRecordByDtcNumber(dtc, _)
             | ReadDtcInfoSubFunction::ReportDtcExtDataRecordByDtcNumber(dtc, _) => {
@@ -1147,10 +1142,7 @@ impl<
                 message,
                 answered.arrived,
             ))
-            .echoing(|r| {
-                message.get(1).copied() == Some(sub_function)
-                    && asked.is_none_or(|asked| records_dtc(r) == Some(asked))
-            }),
+            .echoing(|r| asked.is_none_or(|asked| records_dtc(r) == Some(asked))),
         )
     }
 
@@ -1244,7 +1236,6 @@ impl<
                 message,
                 answered.arrived,
             ))
-            .echoing(|r| r.control_type == control)
             .map(|_| ()),
         )
     }
@@ -1284,7 +1275,6 @@ impl<
                 message,
                 answered.arrived,
             ))
-            .echoing(|r| r.setting == setting)
             .map(|_| ()),
         )
     }
@@ -1442,7 +1432,6 @@ impl<
                 message,
                 answered.arrived,
             ))
-            .echoing(|r| r.block_sequence_counter == counter)
             .map(|r| r.data),
         )
     }
