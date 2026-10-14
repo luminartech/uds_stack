@@ -43,7 +43,9 @@ is released in lockstep with the rest of the `uds_stack` workspace (`uds_protoco
 - Inputs as the ISO 14229-2 service primitives: `s_data_req`, `t_data_som_ind`,
   `t_data_ind`, `t_data_conf` and `tick`, each taking a caller-supplied `Timestamp`,
   plus `Server::completion_report` for a request that was handled with no response.
-  `next_deadline` tells the caller when to call `tick` next.
+  `next_deadline` tells the caller when to call `tick` next. A timer loaded with
+  2^31 − 1 ms (about 24.8 days) or more runs for 2^31 − 1 ms, the longest interval
+  the wrapping `Timestamp` can tell from a deadline already past.
 - `Reaction`, which each input returns, is drained for its outputs. `Reaction::finish`
   gives a `Finished` with the input's outcome and any outputs not yet drained, so
   none are lost. A refused input reports a `Rejection` that lists every `Cause` and

@@ -92,6 +92,34 @@ mod expiry {
         assert_eq!(server().next_deadline(), None);
     }
 
+    /// ``UDSS_LLR_0076`` — an `S3_Server` of `u32::MAX` loads as half the range, so the
+    /// deadline is still ahead after entering the session. Loaded whole, it read as
+    /// already reached while `tick` expired nothing, and a driver woken at it spun.
+    #[test]
+    fn an_s3_of_u32_max_is_a_deadline_ahead_not_a_spin() {
+        let mut s = Server::<2>::new(
+            [Association::EMPTY, Association::EMPTY],
+            ServerParams {
+                s3_server: u32::MAX,
+                ..PARAMS
+            },
+        );
+        let now = Timestamp(1_000);
+        enter_non_default(&mut s, now);
+        let deadline = now.after(u32::MAX / 2);
+        assert_eq!(s.next_deadline(), Some(deadline));
+        assert!(!now.has_reached(deadline));
+        assert_eq!(now.until(deadline), u32::MAX / 2);
+        let (out, ok) = outputs(s.tick(deadline));
+        assert!(ok.is_ok());
+        assert_eq!(
+            out[0],
+            Some(ServerOutput::SessionTimeout {
+                client: peer(TESTER)
+            })
+        );
+    }
+
     /// ``UDSS_LLR_0100`` — at `tS3_Server` the session ends, the timer is disabled, the
     /// controlling client is discarded, and the indication names that client.
     #[test]
