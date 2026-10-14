@@ -167,21 +167,25 @@ impl From<AddressAndLengthFormatIdentifier> for u8 {
 /// long. Derived from the slice length when encoding, so it is not part of either
 /// response's public surface.
 ///
-/// The low nibble is not retained. ISO 14229-1:2020 Tables 443 and 448 both state that bits
-/// 3 to 0 are "reserved by document, to be set to '0'", and that "the lower nibble
-/// **shall** be set to '0'" — the byte range they give is `0x00` to `0xF0`. A non-zero low
-/// nibble is therefore not a value to echo back but a malformed byte, so encoding always
-/// emits zero.
+/// ISO 14229-1:2020 Tables 443 and 448 reserve bits 3 to 0, "to be set to '0'": they are
+/// ignored on decode and encoded as zero. Tables 442 and 447 make the first
+/// `maxNumberOfBlockLength` byte mandatory, so a zero high nibble does not convert.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct LengthFormatIdentifier {
     pub max_number_of_block_length: u8,
 }
 
-impl From<u8> for LengthFormatIdentifier {
-    fn from(value: u8) -> Self {
-        Self {
-            max_number_of_block_length: (value & BLOCK_LENGTH_NIBBLE_MASK) >> 4,
+impl TryFrom<u8> for LengthFormatIdentifier {
+    type Error = Error;
+
+    fn try_from(value: u8) -> Result<Self, Error> {
+        let max_number_of_block_length = (value & BLOCK_LENGTH_NIBBLE_MASK) >> 4;
+        if max_number_of_block_length == 0 {
+            return Err(Error::IncorrectMessageLengthOrInvalidFormat);
         }
+        Ok(Self {
+            max_number_of_block_length,
+        })
     }
 }
 impl From<LengthFormatIdentifier> for u8 {
@@ -364,10 +368,16 @@ mod tests {
 
     #[test]
     fn length_format_identifier() {
-        let length_format_identifier = LengthFormatIdentifier::from(0xF0);
+        let length_format_identifier = LengthFormatIdentifier::try_from(0xF0).unwrap();
         assert_eq!(length_format_identifier.max_number_of_block_length, 15);
 
         assert_eq!(u8::from(length_format_identifier), 0xF0);
+        for malformed in [0x00, 0x09] {
+            assert!(matches!(
+                LengthFormatIdentifier::try_from(malformed),
+                Err(Error::IncorrectMessageLengthOrInvalidFormat)
+            ));
+        }
     }
 
     #[test]
@@ -415,13 +425,9 @@ mod tests {
 
             #[test]
             fn prop_length_format_identifier_normalizes_the_reserved_nibble(byte in any::<u8>()) {
-                // Tables 443 and 448 require the low nibble to be '0', so re-encoding any
-                // byte must clear it while preserving the block-length nibble. Generating
-                // the full `u8` range rather than `high_nibble << 4` is what makes this a
-                // real property: the narrower generator held trivially whichever way the
-                // impl behaved.
-                let lfi = LengthFormatIdentifier::from(byte);
-                let back: u8 = lfi.into();
+                // Over the full `u8` range: a byte converts exactly when its high nibble is
+                // not zero, and re-encodes with the reserved low nibble cleared.
+                let back = LengthFormatIdentifier::try_from(byte).map_or(0, u8::from);
                 prop_assert_eq!(byte & 0xF0, back);
             }
 

@@ -111,9 +111,9 @@ impl<'a> Decode<'a> for Response<'a> {
             UdsServiceType::NegativeResponse => {
                 Self::NegativeResponse(<NegativeResponse as Decode>::decode_exact(payload)?)
             }
-            UdsServiceType::ReadDataByIdentifier => {
-                Self::ReadDataByIdentifier(ReadDataByIdentifierResponse::new(payload))
-            }
+            UdsServiceType::ReadDataByIdentifier => Self::ReadDataByIdentifier(
+                <ReadDataByIdentifierResponse as Decode>::decode_exact(payload)?,
+            ),
             UdsServiceType::ReadDtcInfo => {
                 Self::ReadDtcInfo(<ReadDtcInfoResponse as Decode>::decode_exact(payload)?)
             }

@@ -67,6 +67,13 @@ now <https://github.com/luminartech/uds_stack>.
   with a stray trailing byte must reach the length check (0x13) before a server
   answers the reserved value with 0x31. `CommunicationType::try_from` still rejects
   such a byte.
+- `ReadDataByIdentifierResponse` and `Response` reject a `ReadDataByIdentifier`
+  positive response shorter than one identifier and one record byte with
+  `Error::InsufficientData`; it used to decode. `RequestDownloadResponse` and
+  `RequestUploadResponse` reject a `lengthFormatIdentifier` whose high nibble is zero
+  with `Error::IncorrectMessageLengthOrInvalidFormat`, as their `new` rejects an empty
+  `maxNumberOfBlockLength`: ISO 14229-1:2020 Tables 188, 442 and 447 make those bytes
+  mandatory.
 - **Breaking:** the minimum supported Rust version is now 1.91, up from 1.85. It is
   the workspace MSRV, which all five crates share.
 

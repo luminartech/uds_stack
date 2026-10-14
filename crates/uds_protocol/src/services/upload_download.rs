@@ -365,12 +365,11 @@ macro_rules! upload_download_service {
             ///
             /// # Errors
             /// Returns [`Error::IncorrectMessageLengthOrInvalidFormat`] if the slice is
-            /// longer than 15 bytes, which is the widest a single nibble can declare. The
-            /// check used to live in `encode`, so a too-long slice was accepted here and
-            /// failed later — the same construct-then-fail-to-encode asymmetry the transfer
-            /// requests had.
+            /// empty, or longer than 15 bytes, the widest a single nibble can declare.
             pub const fn new(max_number_of_block_length: &'d [u8]) -> Result<Self, Error> {
-                if max_number_of_block_length.len() > MAX_BLOCK_LENGTH_BYTES {
+                if max_number_of_block_length.is_empty()
+                    || max_number_of_block_length.len() > MAX_BLOCK_LENGTH_BYTES
+                {
                     return Err(Error::IncorrectMessageLengthOrInvalidFormat);
                 }
                 Ok(Self {
@@ -416,7 +415,7 @@ macro_rules! upload_download_service {
                         available: buf.len(),
                     }));
                 }
-                let length_format_identifier = LengthFormatIdentifier::from(buf[0]);
+                let length_format_identifier = LengthFormatIdentifier::try_from(buf[0])?;
                 let len = length_format_identifier.max_number_of_block_length as usize;
                 let total = 1 + len;
                 if buf.len() < total {
@@ -676,6 +675,21 @@ macro_rules! upload_download_service {
                 let fresh = $resp::new(&[0x08, 0x00]).unwrap();
                 let written = Encode::encode(&fresh, &mut automotive_wire_codec::SliceSink::new(&mut buf)).unwrap();
                 assert_eq!(&buf[..written], &[0x20, 0x08, 0x00]);
+            }
+
+            /// Tables 442 and 447 make the first maxNumberOfBlockLength byte mandatory, so
+            /// a zero length nibble is malformed, and so is building a response without it.
+            #[test]
+            fn a_missing_block_length_is_rejected() {
+                assert!(matches!(
+                    <$resp as Decode>::decode_exact(&[0x00]),
+                    Err(Error::IncorrectMessageLengthOrInvalidFormat)
+                ));
+                assert!(matches!(
+                    <$resp as Decode>::decode_exact(&[0x09]),
+                    Err(Error::IncorrectMessageLengthOrInvalidFormat)
+                ));
+                assert!($resp::new(&[]).is_err());
             }
 
             #[test]
