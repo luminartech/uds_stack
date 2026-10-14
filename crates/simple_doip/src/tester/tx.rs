@@ -67,26 +67,31 @@ impl<const N: usize> Outgoing<N> {
     }
 }
 
-/// The longest control message: a routing activation request without its OEM field.
-const CONTROL: usize = Header::SIZE + RoutingActivationRequest::PAYLOAD_SIZE;
+/// The longest control message: a routing activation request with its OEM field.
+const CONTROL: usize = Header::SIZE + RoutingActivationRequest::PAYLOAD_SIZE_WITH_OEM;
 
 /// A message the tester owes the entity outside any request.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Owed {
-    /// ISO 13400-2:2019 Table 47: a default activation for the tester, with no OEM field.
+    /// ISO 13400-2:2019 Table 47: an activation for the tester.
     RoutingActivationRequest(LogicalAddress),
     /// ISO 13400-2:2019 Table 28: the alive check response naming the tester.
     AliveCheckResponse(LogicalAddress),
 }
 
 impl Owed {
-    fn message(self, version: ProtocolVersion) -> Message<'static> {
+    fn message(
+        self,
+        version: ProtocolVersion,
+        activation_type: ActivationTypeCode,
+        vm_specific: Option<[u8; 4]>,
+    ) -> Message<'static> {
         match self {
             Self::RoutingActivationRequest(sa) => Message::routing_activation_request(
                 version,
                 sa,
-                ActivationTypeCode::Default,
-                None,
+                activation_type,
+                vm_specific,
             ),
             Self::AliveCheckResponse(sa) => Message::alive_check_response(version, sa),
         }
@@ -105,9 +110,12 @@ pub(super) struct Control {
     next: Option<Owed>,
     answered_at: Option<Instant>,
     version: ProtocolVersion,
+    activation_type: ActivationTypeCode,
+    vm_specific: Option<[u8; 4]>,
 }
 
 impl Control {
+    /// Sends `version`, and activates routing with the default type and no OEM field.
     pub(super) const fn new(version: ProtocolVersion) -> Self {
         Self {
             buf: [0; CONTROL],
@@ -117,6 +125,22 @@ impl Control {
             next: None,
             answered_at: None,
             version,
+            activation_type: ActivationTypeCode::Default,
+            vm_specific: None,
+        }
+    }
+
+    /// The same, activating routing with `activation_type` and, where given, the
+    /// VM-specific OEM field (ISO 13400-2:2019 Table 47).
+    pub(super) const fn activating(
+        self,
+        activation_type: ActivationTypeCode,
+        vm_specific: Option<[u8; 4]>,
+    ) -> Self {
+        Self {
+            activation_type,
+            vm_specific,
+            ..self
         }
     }
 
@@ -125,7 +149,7 @@ impl Control {
         self.version
     }
 
-    /// Owes a default routing activation request for `sa`.
+    /// Owes a routing activation request for `sa`.
     pub(super) fn routing_activation_request(&mut self, sa: LogicalAddress) {
         self.owe(Owed::RoutingActivationRequest(sa));
     }
@@ -146,7 +170,7 @@ impl Control {
 
     fn start(&mut self, owed: Owed) {
         self.len = owed
-            .message(self.version)
+            .message(self.version, self.activation_type, self.vm_specific)
             .encode(&mut SliceSink::new(&mut self.buf))
             .unwrap_or(0);
         self.written = 0;
@@ -178,9 +202,10 @@ impl Control {
         self.answered_at
     }
 
-    /// Forgets everything owed and written, for a new connection, keeping the version.
+    /// Forgets everything owed and written, for a new connection, keeping the version and
+    /// the activation.
     pub(super) fn clear(&mut self) {
-        *self = Self::new(self.version);
+        *self = Self::new(self.version).activating(self.activation_type, self.vm_specific);
     }
 }
 

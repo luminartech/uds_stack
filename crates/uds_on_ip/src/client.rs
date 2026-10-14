@@ -22,6 +22,25 @@ use crate::profile::server_may_close_after;
 /// waiting ahead of a call's request takes of a [`DoIpClientTransport`]'s `QUEUE`.
 pub const KEEP_ALIVE_LEN: usize = 2;
 
+/// What a physical request that expects an answer does when its server's last such
+/// request was confirmed and never answered: whether that answer, arriving late, may be
+/// taken for this one's.
+///
+/// Neither ISO 14229-5 nor ISO 13400-2 says;
+/// [`DoIpClientTransport::with_late_reply_guard`] chooses.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum LateReplyGuard {
+    /// The request goes on a new connection, so a late answer cannot arrive on it. The
+    /// client sees the old connection's [`TransportEvent::Closed`] and pays a routing
+    /// activation and the connection's reconnect back-off.
+    #[default]
+    Reconnect,
+    /// The request goes on the same connection, for a server known never to answer late,
+    /// or a tester that wants to watch a late answer arrive. A late answer is taken for
+    /// this request's.
+    Off,
+}
+
 /// ISO 14229-5:2022 over a `DoIP` tester connection: the client side of `UDSonIP`, for a
 /// `uds_services::Client`.
 ///
@@ -53,7 +72,8 @@ pub const KEEP_ALIVE_LEN: usize = 2;
 /// - **A late reply.** A physical request that expects a response, to a server whose
 ///   last such request was confirmed and never answered, goes on a new connection, so
 ///   that answer, arriving after the client gave up on it, cannot be taken for this
-///   one's. A response-pending message is not an answer. A request whose positive
+///   one's, unless [`Self::with_late_reply_guard`] turned that off. A response-pending
+///   message is not an answer. A request whose positive
 ///   response is suppressed expects none, so it neither leaves a reply to arrive late
 ///   nor gives up a connection a reply is awaited on.
 /// - **Periodic responses.** A message of ISO 14229-5:2022 REQ 7.16's payload type
@@ -102,6 +122,7 @@ pub struct DoIpClientTransport<
     connection: C,
     reloads: Reloads,
     max_data_size: Option<u32>,
+    late_reply_guard: LateReplyGuard,
     link: Link,
     /// The request the connection carries, awaiting its confirm, as it was made.
     sent: Option<Ai>,
@@ -189,8 +210,8 @@ impl<C: TesterConnection, const QUEUE: usize, const PEERS: usize, const WAITING:
     /// # Arguments
     ///
     /// * `connection` - a connected [`TesterConnection`], routing activated. It sends
-    ///   every request, and opens every later connection, in the protocol version it was
-    ///   given (`simple_doip`'s `Tester::connect_with_version`).
+    ///   every request, and opens every later connection, as it was given
+    ///   (`simple_doip`'s `ConnectOptions`).
     /// * `reloads` - the `tP6_Client` pair; see
     ///   [`profile::bench_reloads`](crate::profile::bench_reloads).
     ///
@@ -253,6 +274,7 @@ impl<C: TesterConnection, const QUEUE: usize, const PEERS: usize, const WAITING:
             connection,
             reloads,
             max_data_size: None,
+            late_reply_guard: LateReplyGuard::Reconnect,
             link: Link::Up,
             sent: None,
             waiting: Waiting::EMPTY,
@@ -277,6 +299,18 @@ impl<C, const QUEUE: usize, const PEERS: usize, const WAITING: usize>
     #[must_use]
     pub const fn with_max_data_size(mut self, max_data_size: Option<u32>) -> Self {
         self.max_data_size = max_data_size;
+        self
+    }
+
+    /// The same transport, guarding against a late reply as `guard` says, in place of
+    /// [`LateReplyGuard::Reconnect`].
+    ///
+    /// # Arguments
+    ///
+    /// * `guard` - see [`LateReplyGuard`].
+    #[must_use]
+    pub const fn with_late_reply_guard(mut self, guard: LateReplyGuard) -> Self {
+        self.late_reply_guard = guard;
         self
     }
 
@@ -329,7 +363,8 @@ impl<C, const QUEUE: usize, const PEERS: usize, const WAITING: usize>
     /// server's last request was confirmed and never answered, and that answer, arriving
     /// late, would be taken for this one's.
     fn late_reply_possible(&self, ai: Ai, expects: bool) -> bool {
-        expects
+        self.late_reply_guard == LateReplyGuard::Reconnect
+            && expects
             && ai.ta_type == TaType::Physical
             && self
                 .peers

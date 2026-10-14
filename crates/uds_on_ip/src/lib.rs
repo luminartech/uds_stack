@@ -103,7 +103,7 @@ pub mod mapping;
 pub mod profile;
 pub mod transport;
 
-pub use client::{DoIpClientTransport, KEEP_ALIVE_LEN};
+pub use client::{DoIpClientTransport, KEEP_ALIVE_LEN, LateReplyGuard};
 pub use error::{ClientTransportError, Error};
 pub use transport::DoIpTransport;
 

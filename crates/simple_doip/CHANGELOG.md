@@ -83,17 +83,21 @@ example for each.
     which `now` returns and `next_event` takes as its deadline.
   - `TesterAddress`, a logical address in the tester range, and
     `EntityConfig<TESTERS>`, the testers an entity accepts. `EntityConfig` has no
-    `Default`: every integrator names its testers.
+    `Default`: every integrator names its testers. `with_close_limit` sets how long an
+    entity's orderly close may take before it aborts, in place of
+    `service::ORDERLY_CLOSE_LIMIT`.
 - `tester::Tester` (`connection`): connects to an entity, activates routing, answers
   alive checks, and is then a `TesterConnection`. One request is outstanding at a
   time; a request with no acknowledgement within `A_DoIP_Diagnostic_Message` is
   confirmed `TimeoutA` and its connection given up, so a late response cannot reach
-  a later request. A connection's end is reported once as `Closed`. `reconnect`
+  a later request; `with_ack_timeout` replaces Table 12's 2 s (`ACK_TIMEOUT`). A connection's end is reported once as `Closed`. `reconnect`
   waits `RECONNECT_BACKOFF` (3 s, or `with_reconnect_backoff`) after a loss before
   connecting. Every message it sends carries ISO 13400-2:2019's protocol version
-  (`0x03`), or the `TesterVersion` given to `connect_with_version` (`0x01`, `0x02`)
-  for an entity that implements an earlier edition. Also `ConnectError`, `MIN_N`
-  and `DIAGNOSTIC_MESSAGE_OVERHEAD`.
+  (`0x03`). `connect_with` takes `ConnectOptions`: another `TesterVersion` (`0x01`,
+  `0x02`) for an entity that implements an earlier edition, and the routing
+  activation type and OEM-specific field, so a tester can ask for central security
+  (`0xE0`, REQ 8.DoIP-144). Also `ConnectError`, `MIN_N` and
+  `DIAGNOSTIC_MESSAGE_OVERHEAD`.
 - `tester::discovery` (`connection`): `identify` broadcasts or directs a vehicle
   identification request (all, by EID, or by VIN) and collects every entity that
   answers within `A_DoIP_Ctrl`; `entity_status` and `power_mode` ask one entity.
@@ -102,7 +106,7 @@ example for each.
   socket arbitration and alive checks, the generic header and diagnostic message
   handlers, and the Table 12 timers inside `next_event`, with `MCTS` connections
   plus the reserve socket. Its memory is fixed by its const parameters. Also
-  `EntityAddress`, `AddressError`, `Error` and `ORDERLY_CLOSE_LIMIT`.
+  `EntityAddress`, `AddressError` and `Error`.
 - `entity::Entity::with_discovery`: the entity's `UDP_DISCOVERY` socket as well. It
   announces itself, answers vehicle identification (plain, by EID and by VIN),
   entity status and power mode, and NACKs bad headers, all polled by `next_event`.

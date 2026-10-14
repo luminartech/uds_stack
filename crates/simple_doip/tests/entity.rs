@@ -711,6 +711,28 @@ fn an_orderly_close_that_cannot_write_is_aborted() {
     assert!(peer.is_aborted());
 }
 
+/// A configured close limit replaces the 2 s: the same stalled close is aborted at it.
+#[test]
+fn a_configured_close_limit_bounds_the_orderly_close() {
+    let _clock = clock();
+    let stack = MockStack::new(4096);
+    let config = two_testers().with_close_limit(core::time::Duration::from_millis(500));
+    let mut entity = OneSocket::new(&stack, address(), config);
+    let peer = stack.dial();
+    assert_eq!(events(&mut entity), []);
+    peer.stall_writes();
+    peer.send(&[0x03, 0xFD, 0x00, 0x05, 0x00, 0x00, 0x00, 0x07]);
+    assert_eq!(events(&mut entity), []);
+
+    advance(ms(499));
+    assert_eq!(events(&mut entity), []);
+    assert!(!peer.is_shut());
+
+    advance(ms(1));
+    assert_eq!(events(&mut entity), []);
+    assert!(peer.is_aborted());
+}
+
 /// An orderly close whose write fails becomes an abort with `T_TCP_Alive_Check` of its
 /// own, rather than what was left of the close's, before the socket is dropped.
 #[test]

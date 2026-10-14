@@ -4,7 +4,7 @@
 use embassy_time::Instant;
 
 use super::outbox::Outbox;
-use super::{ABORT_LIMIT, ORDERLY_CLOSE_LIMIT, expiry};
+use super::{ABORT_LIMIT, expiry};
 use crate::LogicalAddress;
 use crate::messages::{ActivationTypeCode, ProtocolVersion};
 use crate::stream::rx::RxBuffer;
@@ -42,15 +42,17 @@ pub(super) struct Open<S> {
 
 impl<S> Open<S> {
     /// Starts closing the socket at `now`, by `abort` or after writing what is queued,
-    /// within its limit. A close already started keeps going and keeps its deadline,
-    /// unless `abort` makes an orderly close an abort, which gets the abort's limit; it
-    /// is owned by the caller if `by_caller`.
-    pub(super) fn finalize(&mut self, abort: bool, by_caller: bool, now: Instant) {
-        let limit = if abort {
-            ABORT_LIMIT
-        } else {
-            ORDERLY_CLOSE_LIMIT
-        };
+    /// within its limit: `close_limit` for an orderly close. A close already started
+    /// keeps going and keeps its deadline, unless `abort` makes an orderly close an
+    /// abort, which gets the abort's limit; it is owned by the caller if `by_caller`.
+    pub(super) fn finalize(
+        &mut self,
+        abort: bool,
+        by_caller: bool,
+        now: Instant,
+        close_limit: core::time::Duration,
+    ) {
+        let limit = if abort { ABORT_LIMIT } else { close_limit };
         if let Phase::Finalizing {
             abort: was_abort,
             by_caller: was_by_caller,
@@ -198,9 +200,15 @@ impl<S, const CAP: usize> Slot<S, CAP> {
     }
 
     /// [`Open::finalize`], for the socket the slot holds.
-    pub(super) fn finalize(&mut self, abort: bool, by_caller: bool, now: Instant) {
+    pub(super) fn finalize(
+        &mut self,
+        abort: bool,
+        by_caller: bool,
+        now: Instant,
+        close_limit: core::time::Duration,
+    ) {
         if let Some(open) = self.open.as_mut() {
-            open.finalize(abort, by_caller, now);
+            open.finalize(abort, by_caller, now, close_limit);
         }
     }
 

@@ -1,7 +1,7 @@
 {
-  "text": 56484,
+  "text": 57512,
   "data": 0,
-  "bss": 9700,
-  "main_frame": 9176,
-  "client_transport": 12640
+  "bss": 9716,
+  "main_frame": 9216,
+  "client_transport": 12656
 }

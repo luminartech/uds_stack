@@ -783,7 +783,13 @@ impl core::fmt::Display for TesterAddress {
     }
 }
 
-/// What a `DoIP` entity is told about its testers.
+/// How long an orderly close may take before the entity aborts it, discarding whatever
+/// the tester has not yet acknowledged, unless [`EntityConfig::with_close_limit`] says
+/// otherwise. ISO 13400-2 does not bound the close; this is long enough for what was
+/// written before it to be retransmitted.
+pub const ORDERLY_CLOSE_LIMIT: core::time::Duration = core::time::Duration::from_secs(2);
+
+/// What a `DoIP` entity is told about its testers, and how long it gives a close.
 ///
 /// `TESTERS` is how many tester source addresses may activate routing; a routing
 /// activation from any other is refused as an unknown source address.
@@ -808,6 +814,7 @@ impl core::fmt::Display for TesterAddress {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct EntityConfig<const TESTERS: usize = 1> {
     accepted_testers: [TesterAddress; TESTERS],
+    close_limit: core::time::Duration,
 }
 
 impl<const TESTERS: usize> EntityConfig<TESTERS> {
@@ -819,7 +826,31 @@ impl<const TESTERS: usize> EntityConfig<TESTERS> {
     #[must_use]
     pub const fn new(accepted_testers: [TesterAddress; TESTERS]) -> Self {
         const { assert!(TESTERS > 0, "an entity must accept at least one tester") };
-        Self { accepted_testers }
+        Self {
+            accepted_testers,
+            close_limit: ORDERLY_CLOSE_LIMIT,
+        }
+    }
+
+    /// Sets how long an orderly close may take before the entity aborts it, in place of
+    /// [`ORDERLY_CLOSE_LIMIT`].
+    ///
+    /// # Arguments
+    ///
+    /// * `close_limit` - long enough for what was written before the close to be
+    ///   retransmitted on this network.
+    #[must_use]
+    pub const fn with_close_limit(self, close_limit: core::time::Duration) -> Self {
+        Self {
+            close_limit,
+            ..self
+        }
+    }
+
+    /// How long an orderly close may take before the entity aborts it.
+    #[must_use]
+    pub const fn close_limit(&self) -> core::time::Duration {
+        self.close_limit
     }
 
     /// Whether a tester with source address `sa` may activate routing.

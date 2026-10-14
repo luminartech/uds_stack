@@ -20,7 +20,9 @@ use simple_doip::service::{
     Refusal, TesterAddress, TesterConnection, Timestamp,
 };
 use simple_doip::{LogicalAddress, TaType};
-use uds_on_ip::{ClientTransportError, DoIpClientTransport, KEEP_ALIVE_LEN};
+use uds_on_ip::{
+    ClientTransportError, DoIpClientTransport, KEEP_ALIVE_LEN, LateReplyGuard,
+};
 use uds_services::{AfterSend, ClientTransport, TransportEvent, UdsTransport};
 use uds_session::{Address, Ai, Mtype, Reloads, SResult, TransportError};
 
@@ -932,6 +934,19 @@ fn a_request_after_an_unanswered_one_goes_on_a_new_connection() {
             Call::Request(ENTITY, TaType::Physical, READ.to_vec())
         ]
     );
+}
+
+/// With the guard off, the same request goes on the same connection, and nothing closes.
+#[test]
+fn with_the_guard_off_a_request_after_an_unanswered_one_keeps_the_connection() {
+    let mut t = transport([Entity::Acks(DoIpResult::Ok), Entity::Acks(DoIpResult::Ok)])
+        .with_late_reply_guard(LateReplyGuard::Off);
+    send(&mut t, TO_ENTITY, READ);
+    assert_eq!(next(&mut t), Seen::Conf(TO_ENTITY, SResult::Ok));
+
+    send(&mut t, TO_ENTITY, READ);
+    assert_eq!(next(&mut t), Seen::Conf(TO_ENTITY, SResult::Ok));
+    assert_eq!(reconnects(&t), 0);
 }
 
 /// An answered request leaves nothing to arrive late.

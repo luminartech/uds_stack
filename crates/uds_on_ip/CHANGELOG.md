@@ -36,7 +36,7 @@ transport for both roles. It is released in lockstep with the rest of the
   re-activates routing after a server closes the connection (REQ 7.8, REQ 7.10).
   It reports each close as expected or unexpected, and sends a request on a new
   connection when a late reply to an earlier one could otherwise be mistaken for
-  its answer. Received periodic responses are reported as
+  its answer, unless `with_late_reply_guard(LateReplyGuard::Off)`. Received periodic responses are reported as
   `TransportEvent::Periodic`. `with_max_data_size` passes in the entity's
   advertised *Max. data size*, so `outbound_max` reports the true limit.
 - `profile::bench_reloads()`, the conventional `tP6` reload pair (2000 ms and
