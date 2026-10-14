@@ -725,11 +725,14 @@ currently unreachable — part of the public taxonomy but never produced by this
 ### 4.1 `is_framing_fatal` is consumed by the codec
 
 `MessageCodec::decode` (`src/message_codec.rs`) is the one place the classifier
-drives real behavior: a frame that fails to decode is dropped and the codec
-loops to the next one when the error is recoverable, but propagated (buffer
-left untouched) when `is_framing_fatal()`. So one unsupported payload type does
-not tear down a connection; `unsupported_payload_type_is_skipped_not_fatal`
-locks that.
+drives real behavior: a frame that fails to decode is handed to the caller as
+`Frame::Undecoded`, with its header, payload bytes and error, when the error is
+recoverable, and propagated (buffer left untouched) when `is_framing_fatal()`.
+So one unsupported payload type does not tear down a connection, and the caller
+decides what to do with it; `an_unmodelled_payload_type_is_handed_over_undecoded`
+locks that. A header declaring a payload past `MessageCodec::max_payload_length`
+is `Frame::TooLarge`, and its payload is discarded as it arrives rather than
+buffered.
 
 ### 4.2 `Incomplete` is classified fatal, including inside a complete frame
 
@@ -820,7 +823,7 @@ the seam described in section 3 usable.
 
 | Path | Role |
 |---|---|
-| `src/message_codec.rs` | `MessageCodec`: `Decoder<Item = OwnedMessage>` and `Encoder<&OwnedMessage>` |
+| `src/message_codec.rs` | `MessageCodec`: `Decoder<Item = Frame>` and `Encoder<&OwnedMessage>` |
 
 ### Tests and examples
 

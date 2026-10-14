@@ -127,6 +127,15 @@ example for each.
 
 ### Changed
 
+- **Breaking:** `MessageCodec`'s `Decoder::Item` is `message_codec::Frame`. A frame
+  whose payload does not decode, such as a vehicle-manufacturer-specific payload type,
+  is `Frame::Undecoded` with its header, payload and error; it used to be dropped. A
+  header declaring a payload longer than `MessageCodec::max_payload_length` is
+  `Frame::TooLarge` and its payload is discarded as it arrives; it used to be
+  buffered whatever its length. The limit defaults to
+  `MessageCodec::DEFAULT_MAX_PAYLOAD_LENGTH` (8 MiB) and is set with
+  `MessageCodec::with_max_payload_length`. Migrate: match `Frame::Message` where the
+  decoder's item was an `OwnedMessage`.
 - **Breaking:** `automotive-wire-codec` is 0.4, and `embedded-io` is no longer a
   dependency. `Encode::encode` writes into `&mut impl wire::Sink` instead of an
   `embedded_io::Write`; to encode into a `&mut [u8]`, wrap it in

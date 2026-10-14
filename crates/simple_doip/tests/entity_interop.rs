@@ -13,7 +13,7 @@ use bytes::BytesMut;
 use edge_nal::TcpBind;
 use edge_nal_std::Stack;
 use simple_doip::entity::{Entity, EntityAddress};
-use simple_doip::message_codec::MessageCodec;
+use simple_doip::message_codec::{Frame, MessageCodec};
 use simple_doip::messages::{
     ActivationTypeCode, DiagnosticAckCode, OwnedMessage, OwnedPayload, ProtocolVersion,
     RoutingActivationResponseCode,
@@ -72,7 +72,10 @@ async fn exchange(local: SocketAddr, messages: &[OwnedMessage]) -> Vec<OwnedPayl
     let mut received = Vec::new();
     let mut inbound = BytesMut::new();
     loop {
-        while let Some(message) = codec.decode(&mut inbound).unwrap() {
+        while let Some(frame) = codec.decode(&mut inbound).unwrap() {
+            let Frame::Message(message) = frame else {
+                panic!("the entity sent a frame that does not decode: {frame:?}");
+            };
             let answered = matches!(message.payload, OwnedPayload::DiagnosticMessage(_));
             received.push(message.payload);
             if answered {
