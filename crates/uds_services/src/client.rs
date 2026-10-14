@@ -821,11 +821,9 @@ impl<
     ///
     /// # Cancel safety
     ///
-    /// Cancel-safe at every await but the transport's own
-    /// [`UdsTransport::t_data_req`]: the exchange is recorded in the client, and the next
-    /// call resets its channel. A future dropped inside `t_data_req` may leave a
-    /// transmission whose confirmation never comes, which nothing but the transport can
-    /// clear.
+    /// Cancel-safe: the exchange is recorded in the client, and the next call resets its
+    /// channel. A request the transport accepted is confirmed after that, which matches
+    /// nothing, as [`UdsTransport`]'s obligations make it.
     pub async fn read_data_by_identifier(
         &mut self,
         target: Address,

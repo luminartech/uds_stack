@@ -154,7 +154,7 @@ pub enum AfterSend {
 /// inbound event *or* a timer expiry already measures time, so asking it for the clock
 /// adds no capability and avoids two implementors holding two timebases.
 ///
-/// Three obligations the signatures cannot state, which the drivers rely on:
+/// Four obligations the signatures cannot state, which the drivers rely on:
 ///
 /// - **[`Self::next_event`] is cancel-safe.** The driver races it against the handler
 ///   and drops the losing future, often unpolled. A message partly read when the future
@@ -165,6 +165,11 @@ pub enum AfterSend {
 ///   `T_Data.conf` for every `T_Data.req` is an assumption of use: an association whose
 ///   confirmation never arrives has no server exit (``UDSS_LLR_0060``), and the driver
 ///   waits on it.
+/// - **A [`Self::t_data_req`] future dropped before it completes has accepted its
+///   request or done nothing.** An accepted request is owed its
+///   [`TransportEvent::DataConf`] as any other is; one not accepted is never sent. A
+///   transmission begun and then abandoned without either would leave a confirmation
+///   nothing can supply.
 /// - **That [`TransportEvent::DataConf`] comes before any message answering the
 ///   request.** The session layer opens a request's response window at its confirmation,
 ///   so a client takes nothing earlier as its answer. A transmission is complete before
@@ -189,7 +194,9 @@ pub trait UdsTransport {
     /// `T_Data.req` — hand a `T_PDU` to the transport.
     ///
     /// An `Ok` is an acceptance, and obliges exactly one [`TransportEvent::DataConf`]
-    /// for `ai` later — failed, where the connection closed first. See the trait's doc.
+    /// for `ai` later — failed, where the connection closed first. Dropped before it
+    /// completes, the future has accepted the request or done nothing. See the trait's
+    /// doc.
     ///
     /// # Arguments
     ///

@@ -430,12 +430,13 @@ impl<E: DiagnosticEntity, const CONNECTIONS: usize> UdsTransport
     /// [`DoIpTransport`]. The [`TransportEvent::DataConf`] that follows carries `ai`
     /// as given, whatever addressing the entity reports it with.
     ///
-    /// A request the entity refuses, which [`DiagnosticEntity::request`] does not
-    /// confirm, is accepted here all the same and confirmed failed by the next
-    /// [`UdsTransport::next_event`]: ISO 13400-2:2019 8.3.1 confirms every request, and
-    /// a refusal is not the end of the connection. [`Refusal::NoRoom`] and
-    /// [`Refusal::PduTooLarge`] are `DoIP_OUT_OF_MEMORY`, [`Refusal::EmptyPdu`]
-    /// `DoIP_ERROR`. It arms no close.
+    /// Accepted or refused when called, waiting on nothing, so the future cannot be
+    /// dropped part-way. A request the entity refuses, which
+    /// [`DiagnosticEntity::request`] does not confirm, is accepted here all the same
+    /// and confirmed failed by the next [`UdsTransport::next_event`]: ISO 13400-2:2019
+    /// 8.3.1 confirms every request, and a refusal is not the end of the connection.
+    /// [`Refusal::NoRoom`] and [`Refusal::PduTooLarge`] are `DoIP_OUT_OF_MEMORY`,
+    /// [`Refusal::EmptyPdu`] `DoIP_ERROR`. It arms no close.
     ///
     /// # Errors
     ///

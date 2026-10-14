@@ -58,8 +58,10 @@ lockstep with the rest of the `uds_stack` workspace (`uds_protocol`, `uds_sessio
   sent, closed, no channel, or a bad request. Keep-alive is configured with
   `KeepAlive` and timing policy with `ClientTiming`.
 - `UdsTransport`, the async interface a transport binding implements for both
-  roles: `t_data_req`, a cancel-safe `next_event` that returns `TransportEvent`,
-  `outbound_max`, `channel_timing`, `now`, and a `MAX_PDU` constant.
+  roles: `t_data_req`, which dropped part-way has accepted its request or done
+  nothing, a cancel-safe `next_event` that returns `TransportEvent`, `outbound_max`,
+  `channel_timing`, `now`, and a `MAX_PDU` constant. Every client call is
+  cancel-safe.
   `ClientTransport` extends it with `close` for the client role. The crate never
   depends on a binding; `uds_on_ip` provides the `DoIP` one.
 - `DataIdentifier` and `RoutineIdentifier`, the traits an application's identifier
