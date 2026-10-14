@@ -128,6 +128,7 @@ uds_server! {
     Ecu: ReadDataByIdentifier, DiagnosticSessionControl;
     transport = Spurious,
     peers = 1,
+    services = Services,
     server = Srv,
 }
 
@@ -204,6 +205,7 @@ uds_server! {
     Slow: ReadDataByIdentifier;
     transport = Script,
     peers = 1,
+    services = SlowServices,
     server = SlowSrv,
 }
 
@@ -228,6 +230,7 @@ uds_server! {
     Patient: ReadDataByIdentifier;
     transport = Script,
     peers = 1,
+    services = PatientServices,
     server = PatientSrv,
 }
 
@@ -655,6 +658,7 @@ uds_server! {
     Timed: ReadDataByIdentifier, DiagnosticSessionControl;
     transport = Script,
     peers = 1,
+    services = TimedServices,
     server = TimedSrv,
 }
 

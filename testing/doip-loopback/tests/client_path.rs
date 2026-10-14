@@ -126,6 +126,7 @@ uds_server! {
     Ecu: DiagnosticSessionControl, ReadDataByIdentifier;
     transport = DoIpTransport<SensorEntity<4096>, 2>,
     peers = 1,
+    services = EcuServices,
     server = EcuServer,
 }
 

@@ -694,10 +694,11 @@ uds_server! {
          ClearDiagnosticInformation, ReadDtcInformation, RoutineControl, DataTransfer;
     transport = NoTransport,
     peers = 1,
+    services = EcuServices,
     server = EcuServer,
 }
 
-type State = <Ecu as ServiceSet>::State;
+type State = <EcuServices as ServiceSet>::State;
 
 const PHYSICAL: Ai = Ai {
     mtype: Mtype::Diag,
@@ -711,8 +712,13 @@ const PHYSICAL: Ai = Ai {
 fn exchange(ecu: &mut Ecu, state: &mut State, request: &[u8]) -> Option<Vec<u8>> {
     let mut buf = [0_u8; 64];
     let mut out = ResponseSink::new(&mut buf, None);
-    let unsettled =
-        block_on(ecu.dispatch(state, PHYSICAL, Received::Whole(request), &mut out));
+    let unsettled = block_on(EcuServices::dispatch(
+        ecu,
+        state,
+        PHYSICAL,
+        Received::Whole(request),
+        &mut out,
+    ));
     match settle(PHYSICAL, unsettled, false, &mut out) {
         Responded::Yes { .. } => Some(out.written_bytes().to_vec()),
         Responded::Suppressed { .. } => None,
@@ -724,8 +730,13 @@ fn exchange(ecu: &mut Ecu, state: &mut State, request: &[u8]) -> Option<Vec<u8>>
 fn exchange_truncated(ecu: &mut Ecu, state: &mut State, front: &[u8]) -> Vec<u8> {
     let mut buf = [0_u8; 64];
     let mut out = ResponseSink::new(&mut buf, None);
-    let unsettled =
-        block_on(ecu.dispatch(state, PHYSICAL, Received::Truncated(front), &mut out));
+    let unsettled = block_on(EcuServices::dispatch(
+        ecu,
+        state,
+        PHYSICAL,
+        Received::Truncated(front),
+        &mut out,
+    ));
     let _ = settle(PHYSICAL, unsettled, false, &mut out);
     out.written_bytes().to_vec()
 }
@@ -740,15 +751,20 @@ fn exchange_bounded(
 ) -> Vec<u8> {
     let mut buf = [0_u8; 64];
     let mut out = ResponseSink::new(&mut buf, Some(bound));
-    let unsettled =
-        block_on(ecu.dispatch(state, PHYSICAL, Received::Whole(request), &mut out));
+    let unsettled = block_on(EcuServices::dispatch(
+        ecu,
+        state,
+        PHYSICAL,
+        Received::Whole(request),
+        &mut out,
+    ));
     let _ = settle(PHYSICAL, unsettled, false, &mut out);
     out.written_bytes().to_vec()
 }
 
 fn in_session(ecu: &mut Ecu, session: S) -> State {
     let mut state = State::INITIAL;
-    ecu.session_confirmed(&mut state, session);
+    EcuServices::session_confirmed(ecu, &mut state, session);
     state
 }
 
@@ -1188,9 +1204,9 @@ fn security_access_a_lockout_outlives_a_power_cycle() {
 
     ecu.delay = Delay::Idle;
     let mut state = State::INITIAL;
-    ecu.start_up(&mut state);
+    EcuServices::start_up(&mut ecu, &mut state);
     assert_eq!((ecu.attempts, ecu.delay), (3, Delay::Running));
-    ecu.session_confirmed(&mut state, S::ExtendedDiagnosticSession);
+    EcuServices::session_confirmed(&mut ecu, &mut state, S::ExtendedDiagnosticSession);
     assert_eq!(
         exchange(&mut ecu, &mut state, &[0x27, 0x01]).as_deref(),
         Some(&[0x7F, 0x27, 0x37][..])
@@ -1306,7 +1322,7 @@ fn security_access_a_session_change_locks() {
     let _ = exchange(&mut ecu, &mut state, &[0x27, 0x01]);
     let _ = exchange(&mut ecu, &mut state, &RIGHT_KEY);
     let _ = exchange(&mut ecu, &mut state, &[0x27, 0x03]);
-    ecu.session_confirmed(&mut state, S::ExtendedDiagnosticSession);
+    EcuServices::session_confirmed(&mut ecu, &mut state, S::ExtendedDiagnosticSession);
     assert_eq!(ecu.relocked, Some(true));
     assert_eq!(
         exchange(&mut ecu, &mut state, &[0x27, 0x04, 0xED, 0xCC]).as_deref(),
@@ -1325,9 +1341,9 @@ fn security_access_a_session_timeout_locks() {
     let mut state = extended(&mut ecu);
     let _ = exchange(&mut ecu, &mut state, &[0x27, 0x01]);
     let _ = exchange(&mut ecu, &mut state, &RIGHT_KEY);
-    ecu.session_timed_out(&mut state);
+    EcuServices::session_timed_out(&mut ecu, &mut state);
     assert_eq!(ecu.relocked, Some(true));
-    ecu.session_confirmed(&mut state, S::ExtendedDiagnosticSession);
+    EcuServices::session_confirmed(&mut ecu, &mut state, S::ExtendedDiagnosticSession);
     assert_eq!(ecu.relocked, Some(false));
     assert_eq!(
         exchange(&mut ecu, &mut state, &[0x27, 0x01]).as_deref(),
@@ -2235,9 +2251,9 @@ fn on_transition_is_told_the_session_entered() {
     let mut ecu = Ecu::default();
     let mut state = extended(&mut ecu);
     assert_eq!(ecu.entered, Some(S::ExtendedDiagnosticSession));
-    ecu.session_confirmed(&mut state, S::ProgrammingSession);
+    EcuServices::session_confirmed(&mut ecu, &mut state, S::ProgrammingSession);
     assert_eq!(ecu.entered, Some(S::ProgrammingSession));
-    ecu.session_timed_out(&mut state);
+    EcuServices::session_timed_out(&mut ecu, &mut state);
     assert_eq!(ecu.entered, Some(S::DefaultSession));
 }
 
@@ -2798,21 +2814,21 @@ fn truncated_transfer_requests_follow_figures_33_and_34() {
 fn figure_7_decides_what_a_session_or_level_change_leaves_of_a_transfer() {
     let mut ecu = Ecu::default();
     let mut gated = downloading(&mut ecu, &DOWNLOAD_GATED);
-    ecu.session_confirmed(&mut gated, S::ExtendedDiagnosticSession);
+    EcuServices::session_confirmed(&mut ecu, &mut gated, S::ExtendedDiagnosticSession);
     assert_eq!(
         exchange(&mut ecu, &mut gated, &BLOCKS[0]).as_deref(),
         Some(&[0x7F, 0x36, 0x24][..]),
         "key 3(ii)"
     );
     let mut ungated = downloading(&mut ecu, &DOWNLOAD_2000);
-    ecu.session_confirmed(&mut ungated, S::ProgrammingSession);
+    EcuServices::session_confirmed(&mut ecu, &mut ungated, S::ProgrammingSession);
     assert_eq!(
         exchange(&mut ecu, &mut ungated, &BLOCKS[0]).as_deref(),
         Some(&[0x76, 0x01][..]),
         "key 3(iii)"
     );
-    ecu.session_confirmed(&mut ungated, S::DefaultSession);
-    ecu.session_confirmed(&mut ungated, S::ExtendedDiagnosticSession);
+    EcuServices::session_confirmed(&mut ecu, &mut ungated, S::DefaultSession);
+    EcuServices::session_confirmed(&mut ecu, &mut ungated, S::ExtendedDiagnosticSession);
     assert_eq!(
         exchange(&mut ecu, &mut ungated, &BLOCKS[1]).as_deref(),
         Some(&[0x7F, 0x36, 0x24][..]),
@@ -2850,7 +2866,7 @@ fn a_transfer_stays_only_in_the_sessions_both_the_region_and_the_service_allow()
         .as_deref(),
         Some(&DOWNLOAD_ACCEPTED[..])
     );
-    ecu.session_confirmed(&mut state, S::ExtendedDiagnosticSession);
+    EcuServices::session_confirmed(&mut ecu, &mut state, S::ExtendedDiagnosticSession);
     assert_eq!(
         exchange(&mut ecu, &mut state, &BLOCKS[0]).as_deref(),
         Some(&[0x7F, 0x36, 0x24][..]),
@@ -2866,8 +2882,8 @@ fn a_transfer_stays_only_in_the_sessions_both_the_region_and_the_service_allow()
         .as_deref(),
         Some(&DOWNLOAD_ACCEPTED[..])
     );
-    ecu.session_confirmed(&mut state, S::SafetySystemDiagnosticSession);
-    ecu.session_confirmed(&mut state, S::ProgrammingSession);
+    EcuServices::session_confirmed(&mut ecu, &mut state, S::SafetySystemDiagnosticSession);
+    EcuServices::session_confirmed(&mut ecu, &mut state, S::ProgrammingSession);
     assert_eq!(
         exchange(&mut ecu, &mut state, &BLOCKS[0]).as_deref(),
         Some(&[0x7F, 0x36, 0x24][..]),

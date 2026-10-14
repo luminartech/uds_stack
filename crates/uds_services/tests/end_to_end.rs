@@ -226,6 +226,7 @@ uds_server! {
     Ecu: ReadDataByIdentifier, DiagnosticSessionControl, TesterPresent, SecurityAccess;
     transport = Script,
     peers = 1,
+    services = EcuServices,
     server = EcuServer,
 }
 

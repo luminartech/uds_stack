@@ -329,6 +329,7 @@ uds_server! {
          DiagnosticSessionControl;
     transport = FakeTransport,
     peers = 1,
+    services = EcuServices,
     server = EcuServer,
 }
 
@@ -364,7 +365,7 @@ static SERVER: ConstStaticCell<EcuServer> = ConstStaticCell::new(EcuServer::new(
 /// as the design being wrong about a bound.
 #[test]
 fn the_buffers_are_derived_from_the_declared_maxima() {
-    let mut store = <<Ecu as ServiceSet>::Store as Storage>::EMPTY;
+    let mut store = <<EcuServices as ServiceSet>::Store as Storage>::EMPTY;
     let b = store.split();
     assert_eq!(b.in_flight.len(), 2 + 1_024);
     assert_eq!(b.concurrent.len(), 8);
@@ -372,7 +373,7 @@ fn the_buffers_are_derived_from_the_declared_maxima() {
     // And nothing else: the session owns the associations, so the store holds only
     // the three buffers.
     assert_eq!(
-        core::mem::size_of::<<Ecu as ServiceSet>::Store>(),
+        core::mem::size_of::<<EcuServices as ServiceSet>::Store>(),
         (2 + 1_024) + 8 + (1 + 4 * (2 + 17))
     );
 }
@@ -380,48 +381,40 @@ fn the_buffers_are_derived_from_the_declared_maxima() {
 /// ``UDSSVC_ARCH_0006`` — `serviceNotSupported` is decided from the assembly list.
 #[test]
 fn the_assembled_list_answers_service_supported() {
-    let ecu = Ecu::new();
-    assert!(ServiceSet::supports(
-        &ecu,
-        UdsServiceType::ReadDataByIdentifier
-    ));
-    assert!(ServiceSet::supports(&ecu, UdsServiceType::SecurityAccess));
-    assert!(ServiceSet::supports(&ecu, UdsServiceType::TransferData));
-    assert!(ServiceSet::supports(&ecu, UdsServiceType::ReadDtcInfo));
-    assert!(ServiceSet::supports(
-        &ecu,
-        UdsServiceType::ClearDiagnosticInfo
-    ));
-    assert!(ServiceSet::supports(
-        &ecu,
-        UdsServiceType::CommunicationControl
-    ));
-    assert!(ServiceSet::supports(&ecu, UdsServiceType::TesterPresent));
-    assert!(!ServiceSet::supports(
-        &ecu,
+    assert!(EcuServices::supports(UdsServiceType::ReadDataByIdentifier));
+    assert!(EcuServices::supports(UdsServiceType::SecurityAccess));
+    assert!(EcuServices::supports(UdsServiceType::TransferData));
+    assert!(EcuServices::supports(UdsServiceType::ReadDtcInfo));
+    assert!(EcuServices::supports(UdsServiceType::ClearDiagnosticInfo));
+    assert!(EcuServices::supports(UdsServiceType::CommunicationControl));
+    assert!(EcuServices::supports(UdsServiceType::TesterPresent));
+    assert!(!EcuServices::supports(
         UdsServiceType::WriteDataByIdentifier
     ));
-    assert!(!ServiceSet::supports(
-        &ecu,
-        UdsServiceType::ControlDtcSetting
-    ));
+    assert!(!EcuServices::supports(UdsServiceType::ControlDtcSetting));
     // A byte naming no service at all resolves to one variant, which no list contains.
-    assert!(!ServiceSet::supports(
-        &ecu,
-        UdsServiceType::from_request_sid(0x01)
-    ));
+    assert!(!EcuServices::supports(UdsServiceType::from_request_sid(
+        0x01
+    )));
 }
 
 /// ``UDSSVC_ARCH_0033`` — Annex A permission is per service and declared.
 #[test]
 fn response_pending_permission_follows_the_declaration() {
-    let ecu = Ecu::new();
-    assert!(ecu.may_respond_pending(UdsServiceType::RequestDownload));
-    assert!(!ecu.may_respond_pending(UdsServiceType::ReadDataByIdentifier));
-    assert!(!ecu.may_respond_pending(UdsServiceType::WriteDataByIdentifier));
+    assert!(EcuServices::may_respond_pending(
+        UdsServiceType::RequestDownload
+    ));
+    assert!(!EcuServices::may_respond_pending(
+        UdsServiceType::ReadDataByIdentifier
+    ));
+    assert!(!EcuServices::may_respond_pending(
+        UdsServiceType::WriteDataByIdentifier
+    ));
     // 0x3E is false because the trait carries no constant to declare otherwise, not
     // because this server declared it so. Nothing an application writes can flip it.
-    assert!(!ecu.may_respond_pending(UdsServiceType::TesterPresent));
+    assert!(!EcuServices::may_respond_pending(
+        UdsServiceType::TesterPresent
+    ));
 }
 
 /// The one message clause 8.7.6 admits mid-service is a **functionally addressed**
@@ -445,7 +438,7 @@ fn the_tester_present_exception_is_admitted_only_when_functionally_addressed() {
         }
     }
 
-    let admitted = <Ecu as ServiceSet>::is_concurrent_exception;
+    let admitted = <EcuServices as ServiceSet>::is_concurrent_exception;
     assert!(admitted(&[0x3E, 0x80], ai(TaType::Functional)));
     assert!(!admitted(&[0x3E, 0x80], ai(TaType::Physical)));
     // Without the suppress bit it is an ordinary request either way.
@@ -560,7 +553,7 @@ fn the_client_buffers_are_derived_from_the_same_declaration() {
     assert_eq!(b.request.len(), 3 + 17);
     assert_eq!(b.response.len(), 1 + 4 * (2 + 17));
 
-    let mut server_store = <<Ecu as ServiceSet>::Store as Storage>::EMPTY;
+    let mut server_store = <<EcuServices as ServiceSet>::Store as Storage>::EMPTY;
     assert_eq!(b.response.len(), server_store.split().response.len());
 }
 
@@ -638,7 +631,8 @@ async fn read_the_vin_from_every_server(
 #[test]
 fn the_assembled_dispatch_answers_a_read() {
     let mut ecu = Ecu::new();
-    let mut state = <<Ecu as ServiceSet>::State as uds_services::ProtocolState>::INITIAL;
+    let mut state =
+        <<EcuServices as ServiceSet>::State as uds_services::ProtocolState>::INITIAL;
     let mut buf = [0_u8; 32];
     let mut out = ResponseSink::new(&mut buf, None);
     let ai = Ai {
@@ -647,7 +641,8 @@ fn the_assembled_dispatch_answers_a_read() {
         ta: Address(0x10),
         ta_type: TaType::Physical,
     };
-    let unsettled = block_on(ecu.dispatch(
+    let unsettled = block_on(EcuServices::dispatch(
+        &mut ecu,
         &mut state,
         ai,
         Received::Whole(&[0x22, 0xF4, 0x0D]),
@@ -669,7 +664,8 @@ fn the_assembled_dispatch_answers_a_read() {
 #[test]
 fn unsupported_services_settle_0x11_or_silence() {
     let mut ecu = Ecu::new();
-    let mut state = <<Ecu as ServiceSet>::State as uds_services::ProtocolState>::INITIAL;
+    let mut state =
+        <<EcuServices as ServiceSet>::State as uds_services::ProtocolState>::INITIAL;
     let mut buf = [0_u8; 32];
     let mut out = ResponseSink::new(&mut buf, None);
     let phys = Ai {
@@ -678,8 +674,13 @@ fn unsupported_services_settle_0x11_or_silence() {
         ta: Address(0x10),
         ta_type: TaType::Physical,
     };
-    let unsettled =
-        block_on(ecu.dispatch(&mut state, phys, Received::Whole(&[0x11, 0x01]), &mut out));
+    let unsettled = block_on(EcuServices::dispatch(
+        &mut ecu,
+        &mut state,
+        phys,
+        Received::Whole(&[0x11, 0x01]),
+        &mut out,
+    ));
     let r = settle(phys, unsettled, false, &mut out);
     assert_eq!(
         r,
@@ -690,14 +691,21 @@ fn unsupported_services_settle_0x11_or_silence() {
     assert_eq!(out.written_bytes(), &[0x7F, 0x11, 0x11]);
     // Listed, so `begin` passes it; its stage finds no download open. Table 23
     // refuses the transfer services in the default session, so it is asked from another.
-    let mut extended = <<Ecu as ServiceSet>::State as uds_services::ProtocolState>::INITIAL;
-    ecu.session_confirmed(
+    let mut extended =
+        <<EcuServices as ServiceSet>::State as uds_services::ProtocolState>::INITIAL;
+    EcuServices::session_confirmed(
+        &mut ecu,
         &mut extended,
         DiagnosticSessionType::ExtendedDiagnosticSession,
     );
     let request = [0x36, 0x01, 0xAA];
-    let unsettled =
-        block_on(ecu.dispatch(&mut extended, phys, Received::Whole(&request), &mut out));
+    let unsettled = block_on(EcuServices::dispatch(
+        &mut ecu,
+        &mut extended,
+        phys,
+        Received::Whole(&request),
+        &mut out,
+    ));
     let r = settle(phys, unsettled, false, &mut out);
     assert_eq!(
         r,
@@ -710,8 +718,13 @@ fn unsupported_services_settle_0x11_or_silence() {
         ta_type: TaType::Functional,
         ..phys
     };
-    let unsettled =
-        block_on(ecu.dispatch(&mut state, func, Received::Whole(&[0x11, 0x01]), &mut out));
+    let unsettled = block_on(EcuServices::dispatch(
+        &mut ecu,
+        &mut state,
+        func,
+        Received::Whole(&[0x11, 0x01]),
+        &mut out,
+    ));
     let r = settle(func, unsettled, false, &mut out);
     assert_eq!(
         r,
@@ -728,7 +741,8 @@ fn unsupported_services_settle_0x11_or_silence() {
 #[test]
 fn an_over_long_request_for_a_service_not_in_this_session_is_refused_0x7f() {
     let mut ecu = Ecu::new();
-    let mut state = <<Ecu as ServiceSet>::State as uds_services::ProtocolState>::INITIAL;
+    let mut state =
+        <<EcuServices as ServiceSet>::State as uds_services::ProtocolState>::INITIAL;
     let mut buf = [0_u8; 32];
     let mut out = ResponseSink::new(&mut buf, None);
     let phys = Ai {
@@ -738,7 +752,9 @@ fn an_over_long_request_for_a_service_not_in_this_session_is_refused_0x7f() {
         ta_type: TaType::Physical,
     };
     let truncated = Received::Truncated(&[0x27, 0x02, 0, 0, 0, 0]);
-    let unsettled = block_on(ecu.dispatch(&mut state, phys, truncated, &mut out));
+    let unsettled = block_on(EcuServices::dispatch(
+        &mut ecu, &mut state, phys, truncated, &mut out,
+    ));
     let r = settle(phys, unsettled, false, &mut out);
     assert_eq!(
         r,

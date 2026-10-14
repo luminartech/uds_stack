@@ -32,8 +32,10 @@ use uds_session::{
 ///
 /// Named `Server` although `uds_session::Server` exists, because a consuming application
 /// never imports `uds_session` — only a binding author does, and a binding author can
-/// alias. The trait an application implements is [`ServiceSet`], so `Server` means one
-/// thing here.
+/// alias.
+///
+/// `A` is the [`ServiceSet`] marker [`crate::uds_server`] generates; the application it
+/// holds is `A::App`.
 ///
 /// `PEERS` is a parameter rather than a derived constant because the session layer's type
 /// is `uds_session::Server<PEERS>`, and an associated const of a generic cannot be a const
@@ -41,7 +43,7 @@ use uds_session::{
 /// `peers = N` supplies it and the macro emits the alias, so the count appears once.
 #[derive(Debug)]
 pub struct Server<A: ServiceSet, T: UdsTransport, const PEERS: usize> {
-    services: A,
+    services: A::App,
     store: A::Store,
     state: A::State,
     session: SessionServer<PEERS>,
@@ -87,8 +89,8 @@ impl<A: ServiceSet, T: UdsTransport, const PEERS: usize> Server<A, T, PEERS> {
     ///
     /// # Arguments
     ///
-    /// * `services` - the application's assembled [`ServiceSet`], whose handlers answer
-    ///   requests
+    /// * `services` - the application, whose handlers answer requests: the
+    ///   [`ServiceSet::App`] of `A`
     /// * `transport` - the [`UdsTransport`] the server receives requests from and sends
     ///   responses through
     /// * `own` - the [`Address`] every response is sent from: its `S_SA`, which
@@ -103,7 +105,7 @@ impl<A: ServiceSet, T: UdsTransport, const PEERS: usize> Server<A, T, PEERS> {
     ///   [`DiagnosticSessionControl::timing`](crate::DiagnosticSessionControl::timing)
     ///   replaces them
     pub const fn new(
-        services: A,
+        services: A::App,
         transport: T,
         own: Address,
         params: ServerParams,
@@ -123,7 +125,7 @@ impl<A: ServiceSet, T: UdsTransport, const PEERS: usize> Server<A, T, PEERS> {
     }
 
     /// The application's services, for whatever it needs them for between events.
-    pub fn services(&mut self) -> &mut A {
+    pub fn services(&mut self) -> &mut A::App {
         &mut self.services
     }
 
@@ -138,7 +140,7 @@ impl<A: ServiceSet, T: UdsTransport, const PEERS: usize> Server<A, T, PEERS> {
     /// [`Stopped`].
     fn start_up(&mut self) {
         if !core::mem::replace(&mut self.started, true) {
-            self.services.start_up(&mut self.state);
+            A::start_up(&mut self.services, &mut self.state);
         }
     }
 
@@ -203,13 +205,13 @@ impl<A: ServiceSet, T: UdsTransport, const PEERS: usize> Server<A, T, PEERS> {
                 let reaction = self.session.t_data_conf(now, ai, result);
                 let d =
                     drain(reaction, &mut self.transport, &mut self.pending, None).await?;
-                return Ok(apply(&mut self.services, &mut self.state, d.deferred));
+                return Ok(apply::<A>(&mut self.services, &mut self.state, d.deferred));
             }
             TransportEvent::Deadline => {
                 let reaction = self.session.tick(now);
                 let d =
                     drain(reaction, &mut self.transport, &mut self.pending, None).await?;
-                return Ok(apply(&mut self.services, &mut self.state, d.deferred));
+                return Ok(apply::<A>(&mut self.services, &mut self.state, d.deferred));
             }
             // Periodic has no consumer; a Closed outside a handler ends nothing here.
             TransportEvent::Periodic { .. } | TransportEvent::Closed { .. } => {
@@ -218,7 +220,7 @@ impl<A: ServiceSet, T: UdsTransport, const PEERS: usize> Server<A, T, PEERS> {
         };
 
         let outbound_max = self.transport.outbound_max();
-        let mut stopped = retime(
+        let mut stopped = retime::<A, _, PEERS>(
             &mut self.services,
             &mut self.state,
             &mut self.session,
@@ -238,7 +240,7 @@ impl<A: ServiceSet, T: UdsTransport, const PEERS: usize> Server<A, T, PEERS> {
         // Dispatched only once indicated: the indication is what starts `tP2_Server`
         // (UDSS_LLR_0113), without which the 0x78 window does not exist.
         let d = drain(reaction, &mut self.transport, &mut self.pending, None).await?;
-        stopped = stopped.or(apply(&mut self.services, &mut self.state, d.deferred));
+        stopped = stopped.or(apply::<A>(&mut self.services, &mut self.state, d.deferred));
         let Some((ai, _)) = d.indication else {
             return Ok(stopped);
         };
@@ -253,13 +255,14 @@ impl<A: ServiceSet, T: UdsTransport, const PEERS: usize> Server<A, T, PEERS> {
         // (ISO 14229-1:2020 Table 21, SIDRQ). An empty request is the pipeline's to
         // settle, and settles without pending, so the 0 is never transmitted.
         let sid = received.bytes().first().copied().unwrap_or(0);
-        let serving = Serving::new(&self.services, self.own, ai, sid);
+        let serving = Serving::new::<A>(self.own, ai, sid);
 
         let mut sink = ResponseSink::new(response, outbound_max);
         // Scoped, because `pin!` binds to the enclosing block: `handler` drops before
         // `sink` is settled and read.
         let served = {
-            let handler = core::pin::pin!(self.services.dispatch(
+            let handler = core::pin::pin!(A::dispatch(
+                &mut self.services,
                 &mut self.state,
                 ai,
                 received,
@@ -276,14 +279,18 @@ impl<A: ServiceSet, T: UdsTransport, const PEERS: usize> Server<A, T, PEERS> {
             .await?
         };
         // Recorded mid-handler, applied now that `&mut services`/`&mut state` are free.
-        stopped = stopped.or(apply(&mut self.services, &mut self.state, served.deferred));
+        stopped = stopped.or(apply::<A>(
+            &mut self.services,
+            &mut self.state,
+            served.deferred,
+        ));
         // `stopped` is `None` here for as long as `pending` is no restart while a handler
         // runs, which the check before dispatch ensures and only `answer` changes. A
         // restart confirmed under the handler would end its request with no response.
         if stopped.is_some() {
             return Ok(stopped.or(self.unanswered(serving.ai).await?));
         }
-        let serving = serving.leaving_if(&self.services, &served);
+        let serving = serving.leaving_if::<A>(&self.services, &served);
         let deferred = conclude::<A, _, PEERS>(
             &mut self.session,
             &mut self.transport,
@@ -294,7 +301,7 @@ impl<A: ServiceSet, T: UdsTransport, const PEERS: usize> Server<A, T, PEERS> {
             &mut sink,
         )
         .await?;
-        Ok(stopped.or(apply(&mut self.services, &mut self.state, deferred)))
+        Ok(stopped.or(apply::<A>(&mut self.services, &mut self.state, deferred)))
     }
 
     /// ``UDSS_LLR_0074`` — end the request `ai` with no response, and apply what its
@@ -308,7 +315,7 @@ impl<A: ServiceSet, T: UdsTransport, const PEERS: usize> Server<A, T, PEERS> {
             Effect::None,
         )
         .await?;
-        Ok(apply(&mut self.services, &mut self.state, d))
+        Ok(apply::<A>(&mut self.services, &mut self.state, d))
     }
 
     /// Run until a restarting reset is confirmed, or the transport fails.
@@ -345,7 +352,7 @@ impl<A: ServiceSet, T: UdsTransport, const PEERS: usize> Server<A, T, PEERS> {
     /// A server in a `ConstStaticCell`/`StaticCell` cannot be moved out of; it is stepped
     /// again instead. After an `Err` from [`Self::step`], this is the only supported use.
     #[must_use]
-    pub fn into_parts(self) -> (A, T) {
+    pub fn into_parts(self) -> (A::App, T) {
         (self.services, self.transport)
     }
 }
@@ -383,7 +390,7 @@ pub enum Stopped {
 /// A debug build panics where the pair leaves `params`' response-pending lead ill formed:
 /// the enhanced overrun would then come due before ``UDSS_LLR_0119`` admits its 0x78.
 async fn retime<A: ServiceSet, T: UdsTransport, const PEERS: usize>(
-    services: &mut A,
+    services: &mut A::App,
     state: &mut A::State,
     session: &mut SessionServer<PEERS>,
     transport: &mut T,
@@ -392,8 +399,8 @@ async fn retime<A: ServiceSet, T: UdsTransport, const PEERS: usize>(
     now: Timestamp,
 ) -> Result<Option<Stopped>, T::Error> {
     let tick = drain(session.tick(now), transport, pending, None).await?;
-    let mut stopped = apply(services, state, tick.deferred);
-    let Some(timing) = services.session_timing(state) else {
+    let mut stopped = apply::<A>(services, state, tick.deferred);
+    let Some(timing) = A::session_timing(services, state) else {
         return Ok(stopped);
     };
     debug_assert!(
@@ -417,7 +424,7 @@ async fn retime<A: ServiceSet, T: UdsTransport, const PEERS: usize>(
             None,
         )
         .await?;
-        stopped = stopped.or(apply(services, state, d.deferred));
+        stopped = stopped.or(apply::<A>(services, state, d.deferred));
     }
     Ok(stopped)
 }
@@ -604,20 +611,20 @@ async fn drain<'d, T: UdsTransport, const PEERS: usize>(
 /// and running it after a timeout that overtook it ends in the same state: a restart
 /// ends in the default session either way, and a continuing reset changes no session.
 fn apply<A: ServiceSet>(
-    services: &mut A,
+    services: &mut A::App,
     state: &mut A::State,
     d: Deferred,
 ) -> Option<Stopped> {
     if d.timed_out {
-        services.session_timed_out(state);
+        A::session_timed_out(services, state);
     }
     match d.confirmed {
         Some(Effect::Session(selected)) => {
-            services.session_confirmed(state, selected);
+            A::session_confirmed(services, state, selected);
             None
         }
         Some(Effect::Reset { kind, after }) => {
-            services.reset_confirmed(state, kind, after);
+            A::reset_confirmed(services, state, kind, after);
             matches!(after, AfterReset::Restart).then_some(Stopped::Reset(kind))
         }
         Some(Effect::None) | None => None,
@@ -663,25 +670,26 @@ impl Serving {
     /// The request `ai` sent, its service identifier `sid`, before it is dispatched.
     ///
     /// ``UDSSVC_ARCH_0032`` — whether 0x78 is admissible is the service's to say, never
-    /// the driver's. Resolved before dispatch, which holds `&mut services` until it
-    /// completes.
-    fn new<A: ServiceSet>(services: &A, own: Address, ai: Ai, sid: u8) -> Self {
+    /// the driver's.
+    fn new<A: ServiceSet>(own: Address, ai: Ai, sid: u8) -> Self {
         Self {
             ai,
             own,
             reply_to: reply_address(own, ai),
             sid,
-            may_pend: services.may_respond_pending(UdsServiceType::from_request_sid(sid)),
+            may_pend: A::may_respond_pending(UdsServiceType::from_request_sid(sid)),
             leaving: None,
         }
     }
 
     /// The same, with [`Self::leaving`] set where `served` selects a session that
     /// `services` leave the running software to enter.
-    fn leaving_if<A: ServiceSet>(self, services: &A, served: &Served) -> Self {
+    fn leaving_if<A: ServiceSet>(self, services: &A::App, served: &Served) -> Self {
         Self {
             leaving: match served.effect() {
-                Effect::Session(selected) if services.leaves_running_software(selected) => {
+                Effect::Session(selected)
+                    if A::leaves_running_software(services, selected) =>
+                {
                     Some(self.reply_to)
                 }
                 _ => None,

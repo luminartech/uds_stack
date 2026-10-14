@@ -248,13 +248,18 @@ impl<'a> Received<'a> {
 
 /// One application's assembled service implementations.
 ///
-/// ``UDSSVC_ARCH_0013`` — implemented by [`crate::uds_server`], never by hand.
+/// ``UDSSVC_ARCH_0013`` — implemented by [`crate::uds_server`], never by hand, on the
+/// marker type it generates in the invoking crate. The application, [`Self::App`], may
+/// live in any crate.
 ///
 /// Sealed through [`crate::sealed`]. The whole derivation argument — that
 /// [`Self::Store`]'s lengths are folded from this application's declared maxima — holds
 /// only while the macro is what chooses them; a hand-written impl can pick any lengths it
 /// likes and still advertise the declared maxima on the wire.
 pub trait ServiceSet: crate::sealed::Sealed {
+    /// The application whose service traits this assembly calls.
+    type App;
+
     /// The storage whose sizes were derived from this application's declared maxima.
     type Store: Storage;
 
@@ -271,6 +276,7 @@ pub trait ServiceSet: crate::sealed::Sealed {
     ///
     /// # Arguments
     ///
+    /// * `app` - the [`Self::App`] whose handlers answer, held by [`crate::Server`]
     /// * `state` - the [`ProtocolState`] of this assembly, held by [`crate::Server`]
     /// * `ai` - the [`Ai`] the driver drained with the request
     /// * `request` - the request, [`Received::Whole`] or [`Received::Truncated`]; only a
@@ -278,7 +284,7 @@ pub trait ServiceSet: crate::sealed::Sealed {
     /// * `out` - the [`ResponseSink`] the response is written into, and that the driver
     ///   settles once this future completes
     fn dispatch(
-        &mut self,
+        app: &mut Self::App,
         state: &mut Self::State,
         ai: Ai,
         request: Received<'_>,
@@ -296,8 +302,9 @@ pub trait ServiceSet: crate::sealed::Sealed {
     ///
     /// # Arguments
     ///
+    /// * `app` - the [`Self::App`], held by [`crate::Server`]
     /// * `state` - the [`ProtocolState`] of this assembly, held by [`crate::Server`]
-    fn start_up(&mut self, state: &mut Self::State);
+    fn start_up(app: &mut Self::App, state: &mut Self::State);
 
     /// `tS3_Server` expired: return to the default session and tell the application.
     ///
@@ -307,10 +314,11 @@ pub trait ServiceSet: crate::sealed::Sealed {
     ///
     /// # Arguments
     ///
+    /// * `app` - the [`Self::App`] told of the transition, held by [`crate::Server`]
     /// * `state` - the [`ProtocolState`] of this assembly, held by [`crate::Server`],
     ///   whose session returns to
     ///   [`DefaultSession`](DiagnosticSessionType::DefaultSession)
-    fn session_timed_out(&mut self, state: &mut Self::State);
+    fn session_timed_out(app: &mut Self::App, state: &mut Self::State);
 
     /// A response selecting `selected` was confirmed sent: enter it and tell the
     /// application. ``UDSS_LLR_0085``/``0086`` is the moment; ``UDSSVC_ARCH_0038`` the
@@ -318,11 +326,12 @@ pub trait ServiceSet: crate::sealed::Sealed {
     ///
     /// # Arguments
     ///
+    /// * `app` - the [`Self::App`] told of the transition, held by [`crate::Server`]
     /// * `state` - the [`ProtocolState`] of this assembly, held by [`crate::Server`],
     ///   whose session becomes `selected`
     /// * `selected` - the [`DiagnosticSessionType`] the confirmed response selected
     fn session_confirmed(
-        &mut self,
+        app: &mut Self::App,
         state: &mut Self::State,
         selected: DiagnosticSessionType,
     );
@@ -335,11 +344,12 @@ pub trait ServiceSet: crate::sealed::Sealed {
     ///
     /// # Arguments
     ///
+    /// * `app` - the [`Self::App`] told of the reset, held by [`crate::Server`]
     /// * `state` - the [`ProtocolState`] of this assembly, held by [`crate::Server`]
     /// * `kind` - the reset accepted; see [`ResetType`]
     /// * `after` - what [`crate::EcuReset::reset`] said follows it
     fn reset_confirmed(
-        &mut self,
+        app: &mut Self::App,
         state: &mut Self::State,
         kind: ResetType,
         after: AfterReset,
@@ -354,8 +364,9 @@ pub trait ServiceSet: crate::sealed::Sealed {
     ///
     /// # Arguments
     ///
+    /// * `app` - the [`Self::App`] that states each session's timing
     /// * `state` - the [`ProtocolState`] of this assembly, which holds the session in force
-    fn session_timing(&self, state: &Self::State) -> Option<SessionTiming>;
+    fn session_timing(app: &Self::App, state: &Self::State) -> Option<SessionTiming>;
 
     /// Whether entering `session` leaves the software this server is running, which
     /// [`crate::Server`] tells the transport with the response that selects it.
@@ -365,9 +376,10 @@ pub trait ServiceSet: crate::sealed::Sealed {
     ///
     /// # Arguments
     ///
+    /// * `app` - the [`Self::App`] that knows which sessions leave its software
     /// * `session` - the session a positive response selects; see
     ///   [`DiagnosticSessionType`].
-    fn leaves_running_software(&self, session: DiagnosticSessionType) -> bool;
+    fn leaves_running_software(app: &Self::App, session: DiagnosticSessionType) -> bool;
 
     /// Whether this server implements `service` at all.
     ///
@@ -375,12 +387,12 @@ pub trait ServiceSet: crate::sealed::Sealed {
     /// assembly list can answer. A byte that names no service arrives as
     /// [`UdsServiceType::UnsupportedDiagnosticService`], which no assembly list contains,
     /// so it answers `false` without a special case.
-    fn supports(&self, service: UdsServiceType) -> bool;
+    fn supports(service: UdsServiceType) -> bool;
 
     /// Whether `service`'s handler may answer `requestCorrectlyReceivedResponsePending`.
     ///
     /// ``UDSSVC_ARCH_0033``.
-    fn may_respond_pending(&self, service: UdsServiceType) -> bool;
+    fn may_respond_pending(service: UdsServiceType) -> bool;
 
     /// Whether `request`, addressed this way, may proceed while a service is already in
     /// progress.

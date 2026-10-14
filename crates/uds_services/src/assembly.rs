@@ -344,7 +344,7 @@ macro_rules! __uds_may_pend {
 #[macro_export]
 macro_rules! __uds_session_hook {
     ($self:ident, $entered:expr, DiagnosticSessionControl) => {
-        <Self as $crate::DiagnosticSessionControl>::on_transition(
+        <<Self as $crate::ServiceSet>::App as $crate::DiagnosticSessionControl>::on_transition(
             $self,
             $entered.transition,
             $entered.session,
@@ -360,7 +360,7 @@ macro_rules! __uds_session_hook {
 #[macro_export]
 macro_rules! __uds_reset_hook {
     ($self:ident, $kind:ident, EcuReset) => {
-        <Self as $crate::EcuReset>::confirmed($self, $kind);
+        <<Self as $crate::ServiceSet>::App as $crate::EcuReset>::confirmed($self, $kind);
     };
     ($self:ident, $kind:ident, $svc:ident) => {};
 }
@@ -384,7 +384,7 @@ macro_rules! __uds_session_timing {
 #[macro_export]
 macro_rules! __uds_leaves {
     ($self:ident, $session:ident, DiagnosticSessionControl) => {
-        return <Self as $crate::DiagnosticSessionControl>::leaves_running_software(
+        return <<Self as $crate::ServiceSet>::App as $crate::DiagnosticSessionControl>::leaves_running_software(
             $self, $session,
         );
     };
@@ -432,28 +432,34 @@ macro_rules! __uds_sub_function_access {
     ($self:ident, $service:ident, $value:ident, $active:ident, EcuReset) => {
         if ::core::matches!($service, $crate::UdsServiceType::EcuReset) {
             return $crate::pipeline::sub_function_access($value, |kind| {
-                <Self as $crate::EcuReset>::access($self, kind)
+                <<Self as $crate::ServiceSet>::App as $crate::EcuReset>::access($self, kind)
             });
         }
     };
     ($self:ident, $service:ident, $value:ident, $active:ident, CommunicationControl) => {
         if ::core::matches!($service, $crate::UdsServiceType::CommunicationControl) {
             return $crate::pipeline::sub_function_access($value, |kind| {
-                <Self as $crate::CommunicationControl>::access($self, kind)
+                <<Self as $crate::ServiceSet>::App as $crate::CommunicationControl>::access(
+                    $self, kind,
+                )
             });
         }
     };
     ($self:ident, $service:ident, $value:ident, $active:ident, ControlDtcSetting) => {
         if ::core::matches!($service, $crate::UdsServiceType::ControlDtcSetting) {
             return $crate::pipeline::sub_function_access($value, |setting| {
-                <Self as $crate::ControlDtcSetting>::access($self, setting)
+                <<Self as $crate::ServiceSet>::App as $crate::ControlDtcSetting>::access(
+                    $self, setting,
+                )
             });
         }
     };
     ($self:ident, $service:ident, $value:ident, $active:ident, ReadDtcInformation) => {
         if ::core::matches!($service, $crate::UdsServiceType::ReadDtcInfo) {
             return $crate::pipeline::sub_function_access($value, |report| {
-                <Self as $crate::ReadDtcInformation>::access($self, report)
+                <<Self as $crate::ServiceSet>::App as $crate::ReadDtcInformation>::access(
+                    $self, report,
+                )
             });
         }
     };
@@ -650,12 +656,14 @@ macro_rules! __uds_assert {
 /// already depends on both crates, so ``UDSSVC_ARCH_0002`` and ``0003`` are untouched.
 ///
 /// `peers = N` sizes the association array of the `uds_session::Server<N>` the driver
-/// owns, and `server = Name` is the alias it is reached through — the macro emits
-/// `type Name = Server<Ecu, Transport, N>`, so the count is written once, where it acts.
+/// owns. `services = Assembly` names the marker type the macro declares and implements
+/// this crate's sealed [`ServiceSet`](crate::ServiceSet) on, with the application as its
+/// [`App`](crate::ServiceSet::App). `server = Name` is the alias the server is reached
+/// through: the macro emits `type Name = Server<Assembly, Transport, N>`, so the count is
+/// written once, where it acts. Both are private to the invoking module.
 ///
-/// The application type must be defined in the crate that invokes the macro, because the
-/// macro implements this crate's sealed [`ServiceSet`](crate::ServiceSet) for it; a type
-/// from another crate needs a local newtype.
+/// The application type may come from any crate: the marker is what is local, so one
+/// application shared by firmware, a simulator and tests is assembled in each.
 ///
 /// **Milestone 1 accepts `peers = 1` only**, and any other count fails to compile. The
 /// driver keeps one slot for a `DiagnosticSessionControl` or `ECUReset` response awaiting
@@ -779,6 +787,7 @@ macro_rules! __uds_assert {
 ///     Ecu: ReadDataByIdentifier, DataTransfer;
 ///     transport = DoIpTransport,
 ///     peers = 1,
+///     services = EcuServices,
 ///     server = EcuServer,
 /// }
 ///
@@ -797,7 +806,7 @@ macro_rules! __uds_assert {
 /// let mut cx = core::task::Context::from_waker(core::task::Waker::noop());
 /// assert!(step.as_mut().poll(&mut cx).is_ready());
 ///
-/// let mut store = <<Ecu as ServiceSet>::Store as Storage>::EMPTY;
+/// let mut store = <<EcuServices as ServiceSet>::Store as Storage>::EMPTY;
 /// let buffers = store.split();
 /// assert_eq!(buffers.in_flight.len(), 1_026);
 /// assert_eq!(buffers.response.len(), 77);
@@ -942,6 +951,7 @@ macro_rules! __uds_assert {
 ///     Ecu: ReadDataByIdentifier, DataTransfer;
 ///     transport = DoIpTransport,
 ///     peers = 1,
+///     services = EcuServices,
 ///     server = EcuServer,
 /// }
 ///
@@ -960,7 +970,7 @@ macro_rules! __uds_assert {
 /// let mut cx = core::task::Context::from_waker(core::task::Waker::noop());
 /// assert!(step.as_mut().poll(&mut cx).is_ready());
 ///
-/// let mut store = <<Ecu as ServiceSet>::Store as Storage>::EMPTY;
+/// let mut store = <<EcuServices as ServiceSet>::Store as Storage>::EMPTY;
 /// let buffers = store.split();
 /// assert_eq!(buffers.in_flight.len(), 1_026);
 /// assert_eq!(buffers.response.len(), 77);
@@ -971,11 +981,17 @@ macro_rules! uds_server {
         $ty:ty : $($svc:ident),+ $(,)? ;
         transport = $transport:ty,
         peers = $peers:expr,
+        services = $services:ident,
         server = $server:ident $(,)?
     ) => {
+        /// The assembled services of this application, on which `uds_server!`
+        /// implements `ServiceSet`. Never a value: it names the assembly in types.
+        #[derive(Debug)]
+        enum $services {}
+
         /// The assembled server: this application's services, storage, session layer and
         /// transport. Emitted by `uds_server!`.
-        type $server = $crate::Server<$ty, $transport, { $peers }>;
+        type $server = $crate::Server<$services, $transport, { $peers }>;
 
         const _: () = {
             const IN_FLIGHT: usize = $crate::assembly::min2(
@@ -1015,15 +1031,17 @@ macro_rules! uds_server {
                 "milestone 1 supports `peers = 1` only",
             );
 
-            impl $crate::sealed::Sealed for $ty {}
+            impl $crate::sealed::Sealed for $services {}
 
-            impl $crate::ServiceSet for $ty {
+            impl $crate::ServiceSet for $services {
+                type App = $ty;
+
                 type Store = $crate::Store<IN_FLIGHT, CONCURRENT, RESPONSE>;
 
                 type State = $crate::State;
 
                 async fn dispatch(
-                    &mut self,
+                    app: &mut $ty,
                     state: &mut Self::State,
                     // The driver settles, and it is `settle` that reads the addressing.
                     _ai: $crate::Ai,
@@ -1040,7 +1058,7 @@ macro_rules! uds_server {
                                       value: u8,
                                       active: $crate::DiagnosticSessionType| {
                             $( $crate::__uds_sub_function_access!(
-                                self, service, value, active, $svc
+                                app, service, value, active, $svc
                             ); )+
                             ::core::option::Option::Some($crate::Access::new(
                                 $crate::Sessions::ALL,
@@ -1052,14 +1070,14 @@ macro_rules! uds_server {
                                      bytes: &[u8]|
                          -> ::core::option::Option<$crate::NegativeResponseCode> {
                             $( $crate::__uds_ahead_of_decode!(
-                                self, service, active, bytes, $svc
+                                app, service, active, bytes, $svc
                             ); )+
                             ::core::option::Option::None
                         };
                         let (sid, decoded) = match $crate::pipeline::begin_with(
                             state,
                             received.bytes(),
-                            |s| <Self as $crate::ServiceSet>::supports(self, s),
+                            <Self as $crate::ServiceSet>::supports,
                             access,
                             ahead,
                         ) {
@@ -1077,7 +1095,7 @@ macro_rules! uds_server {
                                     $crate::NegativeResponseCode,
                                 > {
                                     $( $crate::__uds_before_length!(
-                                        self, state, request, $svc
+                                        app, state, request, $svc
                                     ); )+
                                     ::core::result::Result::Ok(())
                                 };
@@ -1095,7 +1113,7 @@ macro_rules! uds_server {
                                 .unwrap_or(false),
                         };
                         let outcome = async {
-                            $( $crate::__uds_stage!(self, state, out, decoded, $svc); )+
+                            $( $crate::__uds_stage!(app, state, out, decoded, $svc); )+
                             ::core::result::Result::Err(
                                 $crate::NegativeResponseCode::ServiceNotSupported,
                             )
@@ -1114,71 +1132,82 @@ macro_rules! uds_server {
                               and returns before the fall-through"
                 )]
                 fn leaves_running_software(
-                    &self,
+                    app: &$ty,
                     session: $crate::DiagnosticSessionType,
                 ) -> bool {
-                    $( $crate::__uds_leaves!(self, session, $svc); )+
+                    $( $crate::__uds_leaves!(app, session, $svc); )+
                     false
                 }
 
-                fn start_up(&mut self, _state: &mut Self::State) {
-                    $( $crate::__uds_start_up!(self, $svc); )+
+                #[allow(unused_variables, reason = "only an assembly with SecurityAccess reads it")]
+                fn start_up(app: &mut $ty, _state: &mut Self::State) {
+                    $( $crate::__uds_start_up!(app, $svc); )+
                 }
 
-                fn session_timed_out(&mut self, state: &mut Self::State) {
+                #[allow(
+                    unused_variables,
+                    reason = "only an assembly with DiagnosticSessionControl reads it"
+                )]
+                fn session_timed_out(app: &mut $ty, state: &mut Self::State) {
                     let entered = $crate::pipeline::transition(
                         state,
                         $crate::DiagnosticSessionType::DefaultSession,
                     );
-                    $( $crate::__uds_session_hook!(self, entered, $svc); )+
+                    $( $crate::__uds_session_hook!(app, entered, $svc); )+
                 }
 
+                #[allow(
+                    unused_variables,
+                    reason = "only an assembly with DiagnosticSessionControl reads it"
+                )]
                 fn session_confirmed(
-                    &mut self,
+                    app: &mut $ty,
                     state: &mut Self::State,
                     selected: $crate::DiagnosticSessionType,
                 ) {
                     let entered = $crate::pipeline::transition(state, selected);
-                    $( $crate::__uds_session_hook!(self, entered, $svc); )+
+                    $( $crate::__uds_session_hook!(app, entered, $svc); )+
                 }
 
                 #[allow(unused_variables, reason = "only an assembly with EcuReset reads it")]
                 fn reset_confirmed(
-                    &mut self,
+                    app: &mut $ty,
                     state: &mut Self::State,
                     kind: $crate::ResetType,
                     after: $crate::AfterReset,
                 ) {
-                    $( $crate::__uds_reset_hook!(self, kind, $svc); )+
+                    $( $crate::__uds_reset_hook!(app, kind, $svc); )+
                     if ::core::matches!(after, $crate::AfterReset::Restart) {
                         if let ::core::option::Option::Some(entered) =
                             $crate::pipeline::restart(state)
                         {
-                            $( $crate::__uds_session_hook!(self, entered, $svc); )+
+                            $( $crate::__uds_session_hook!(app, entered, $svc); )+
                         }
                     }
                 }
 
                 #[allow(
                     unreachable_code,
-                    reason = "the arm emitted for DiagnosticSessionControl returns"
+                    unused_variables,
+                    reason = "the arm emitted for DiagnosticSessionControl reads both and \
+                              returns"
                 )]
                 fn session_timing(
-                    &self,
+                    app: &$ty,
                     state: &Self::State,
                 ) -> ::core::option::Option<$crate::SessionTiming> {
-                    $( $crate::__uds_session_timing!(self, state, $svc); )+
+                    $( $crate::__uds_session_timing!(app, state, $svc); )+
                     ::core::option::Option::None
                 }
 
-                fn supports(&self, service: $crate::UdsServiceType) -> bool {
+                fn supports(service: $crate::UdsServiceType) -> bool {
                     $( if $crate::__uds_sids!($svc).contains(&service) {
                         return true;
                     } )+
                     false
                 }
 
-                fn may_respond_pending(&self, service: $crate::UdsServiceType) -> bool {
+                fn may_respond_pending(service: $crate::UdsServiceType) -> bool {
                     $( if $crate::__uds_sids!($svc).contains(&service) {
                         return $crate::__uds_may_pend!($ty, $svc);
                     } )+

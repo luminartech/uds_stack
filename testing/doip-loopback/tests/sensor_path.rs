@@ -91,6 +91,7 @@ uds_server! {
     Ecu: DiagnosticSessionControl, EcuReset, TesterPresent;
     transport = Transport,
     peers = 1,
+    services = EcuServices,
     server = EcuServer,
 }
 
@@ -391,6 +392,7 @@ uds_server! {
     Reader: ReadDataByIdentifier;
     transport = DoIpTransport<SmallEntity, 2>,
     peers = 1,
+    services = ReaderServices,
     server = ReaderServer,
 }
 
@@ -432,7 +434,7 @@ fn reader(loopback: &Loopback) -> ReaderServer {
 
 /// The longest request [`ReaderServer`] accepts: its in-flight buffer.
 fn reader_limit() -> usize {
-    let mut store = <<Reader as ServiceSet>::Store as Storage>::EMPTY;
+    let mut store = <<ReaderServices as ServiceSet>::Store as Storage>::EMPTY;
     store.split().in_flight.len()
 }
 

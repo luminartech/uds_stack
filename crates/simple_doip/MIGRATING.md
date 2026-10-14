@@ -329,6 +329,7 @@ uds_server! {
     Ecu: DiagnosticSessionControl, EcuReset, TesterPresent;
     transport = DoIpTransport<Entity<'static, TcpAcceptor, 1, 4096>, 2>,
     peers = 1,
+    services = EcuServices,
     server = EcuServer,
 }
 

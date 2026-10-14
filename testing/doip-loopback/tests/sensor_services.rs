@@ -12,7 +12,7 @@ use doip_loopback::{
     ticking,
 };
 use embassy_time::{Duration, Instant};
-use sensor_services::{DTCS, Did, Rid};
+use sensor_services::{DTCS, Did, Ecu, Rid};
 use uds_on_ip::DoIpTransport;
 use uds_on_ip::profile::bench_reloads;
 use uds_services::{
@@ -24,14 +24,13 @@ use uds_services::{
     Stopped, SubnetNumber, Timestamp, uds_client, uds_server,
 };
 
-sensor_services::ecu!();
-
 uds_server! {
     Ecu: DiagnosticSessionControl, EcuReset, TesterPresent, SecurityAccess,
          ReadDataByIdentifier, WriteDataByIdentifier, RoutineControl, ReadDtcInformation,
          ClearDiagnosticInformation, CommunicationControl, ControlDtcSetting, DataTransfer;
     transport = DoIpTransport<SensorEntity<4096>, 2>,
     peers = 1,
+    services = SensorServices,
     server = SensorServer,
 }
 

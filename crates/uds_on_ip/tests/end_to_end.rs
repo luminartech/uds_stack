@@ -150,6 +150,7 @@ uds_server! {
     Ecu: ReadDataByIdentifier, DiagnosticSessionControl, EcuReset, TesterPresent;
     transport = Transport,
     peers = 1,
+    services = EcuServices,
     server = EcuServer,
 }
 

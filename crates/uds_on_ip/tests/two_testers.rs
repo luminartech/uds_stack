@@ -81,6 +81,7 @@ uds_server! {
     Ecu: ReadDataByIdentifier, TesterPresent;
     transport = DoIpTransport<MockEntity<2>, 2>,
     peers = 1,
+    services = EcuServices,
     server = EcuServer,
 }
 

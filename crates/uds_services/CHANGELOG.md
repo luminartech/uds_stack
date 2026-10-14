@@ -19,9 +19,11 @@ lockstep with the rest of the `uds_stack` workspace (`uds_protocol`, `uds_sessio
 ### Added
 
 - `uds_server!`, which builds a server from an application type and the service
-  traits it implements. It emits a `Server<App, Transport, PEERS>` alias and sizes
-  every buffer at compile time from the application's declared maxima and the
-  transport's `MAX_PDU`. It fails to compile when a negative response would not fit.
+  traits it implements. It declares a marker type, named by its `services` key, that
+  the assembly is implemented on, so the application type may come from any crate. It
+  emits a `Server<Assembly, Transport, PEERS>` alias and sizes every buffer at compile
+  time from the application's declared maxima and the transport's `MAX_PDU`. It fails
+  to compile when a negative response would not fit.
 - `Server`, the async server driver. It owns a `uds_session::Server` and the
   transport, applies the clause 8.7 validation sequence, and is driven by `step()`
   or `run()`. Requests for services the application does not implement, or for

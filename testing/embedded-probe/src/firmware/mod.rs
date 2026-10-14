@@ -47,7 +47,7 @@ type SensorClientTransport = DoIpClientTransport<SensorTester, MAX_MESSAGE>;
 /// linker keeps it.
 static CLIENT_TRANSPORT_SIZE: usize = size_of::<SensorClientTransport>();
 
-sensor_services::ecu!();
+use sensor_services::Ecu;
 
 uds_server! {
     Ecu: DiagnosticSessionControl, EcuReset, TesterPresent, SecurityAccess,
@@ -55,6 +55,7 @@ uds_server! {
          ClearDiagnosticInformation, CommunicationControl, ControlDtcSetting, DataTransfer;
     transport = Transport,
     peers = 1,
+    services = EcuServices,
     server = EcuServer,
 }
 

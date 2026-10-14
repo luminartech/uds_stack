@@ -124,6 +124,7 @@ uds_server! {
     Ecu: DiagnosticSessionControl, TesterPresent, EcuReset;
     transport = Script,
     peers = 1,
+    services = EcuServices,
     server = EcuServer,
 }
 
