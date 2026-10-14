@@ -20,7 +20,7 @@ use uds_protocol::NegativeResponseCode as Nrc;
 use uds_services::{
     Address, ClientError, ClientTiming, DataIdentifier, DiagnosticSessionControl,
     DiagnosticSessionType as S, KeepAlive, PhysicalKeepAlive, ReadDataByIdentifier,
-    RecordError, Reloads, Response, ResponseSink, RoutineIdentifier, ServerParams,
+    RecordError, Reloads, Repeats, Response, ResponseSink, RoutineIdentifier, ServerParams,
     SessionTiming, SessionTransition, Sink, UdsTransport, uds_client, uds_server,
 };
 
@@ -192,7 +192,7 @@ async fn client(loopback: &Loopback, backoff: Duration) -> Diagnoser {
 async fn client_repeating(
     loopback: &Loopback,
     backoff: Duration,
-    repeats: u8,
+    repeats: Repeats,
 ) -> Diagnoser {
     let mut c = client(loopback, backoff).await;
     c.timing_mut().repeats = repeats;
@@ -348,8 +348,8 @@ fn a_reconnect_drops_backs_off_then_connects() {
     });
 }
 
-/// `ClientTiming::repeats` at zero over `DoIP`: the slow read reports the first expired
-/// window, and the late-reply guard still holds, so the next read goes on a new
+/// `ClientTiming::repeats` at `Repeats::Never` over `DoIP`: the slow read reports the first
+/// expired window, and the late-reply guard still holds, so the next read goes on a new
 /// connection after one back-off and the slow read's late answer reaches neither read.
 #[test]
 fn a_ceiling_of_zero_times_out_after_one_window_and_one_backoff() {
@@ -357,7 +357,7 @@ fn a_ceiling_of_zero_times_out_after_one_window_and_one_backoff() {
     on_loopback(|loopback| async move {
         let mut server = server(&loopback);
         serve_until(&mut server, async {
-            let mut c = client_repeating(&loopback, BACKOFF, 0).await;
+            let mut c = client_repeating(&loopback, BACKOFF, Repeats::Never).await;
             let before = c.transport().now();
             let slow = ticking(c.read_data_by_identifier(SERVER, &[Did::Slow]), STEP).await;
             assert!(matches!(slow, Err(ClientError::Timeout)), "{slow:?}");

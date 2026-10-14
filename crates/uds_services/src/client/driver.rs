@@ -643,9 +643,9 @@ impl<
     ///
     /// Sends the request first if it is unsent. A failed transmission is repeated up to
     /// ISO 14229-2:2021 Table 9's two times, and, physically, an expired response window
-    /// up to the lesser of that and `ClientTiming::repeats`; after the last, the channel
-    /// is reset and the failure returned. A physical exchange ends at its answer, a
-    /// functional one at its window closing.
+    /// while the request's repeats are under `ClientTiming::repeats`; after the last, the
+    /// channel is reset and the failure returned. A physical exchange ends at its answer,
+    /// a functional one at its window closing.
     pub(super) async fn advance(
         &mut self,
     ) -> Option<Result<Answered, ClientError<T::Error>>> {
@@ -706,11 +706,11 @@ impl<
             } else {
                 continue;
             };
-            // Table 9 caps the error handling at two times; the response-timeout repeat
-            // is also under the integration's ceiling (`ClientTiming::repeats`), the
-            // transmission-failure repeat is not.
+            // Table 9 caps the error handling at two times, whatever the error; the
+            // response-timeout repeat is also under the integration's ceiling
+            // (`ClientTiming::repeats`), the transmission-failure repeat is not.
             let allowed = match failure {
-                ClientError::Timeout => REPEATS.min(self.timing.repeats),
+                ClientError::Timeout => self.timing.repeats.count(),
                 _ => REPEATS,
             };
             if e.repeats >= allowed {

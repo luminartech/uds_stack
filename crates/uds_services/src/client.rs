@@ -306,19 +306,19 @@ pub struct ClientTiming {
     /// `ΔtP6_Response` and leaves a longer wait to the client. Vehicle-specific; the
     /// standard gives no default.
     pub network_delay: u32,
-    /// The most times a physically addressed request whose response window expired is
-    /// repeated before [`ClientError::Timeout`]. ISO 14229-2:2021 9.7 Table 9 has the
-    /// client repeat it, at most twice, and leaves performing the repeat to the
-    /// application (``UDSS_LLR_0177`` caps it). [`Self::new`] sets Table 9's two; a value
-    /// above two acts as two; zero reports the first expired window. A failed
-    /// transmission is repeated to two regardless, Table 9's transmission cell being the
-    /// link's, not the request's, and one count covers both cells, so a failed
-    /// transmission's repeat counts against the ceiling; functionally addressed requests
-    /// are not under it. A ceiling of zero also forgoes the one repeat the standard
-    /// designs a server to absorb, a [`Client::transfer_data`] block with the same
-    /// counter (ISO 14229-1:2020 15.4); set it, call, and restore it where that repeat is
-    /// wanted.
-    pub repeats: u8,
+    /// The ceiling on a physically addressed request's repeats under which an expired
+    /// response window is repeated rather than reported as [`ClientError::Timeout`].
+    /// ISO 14229-2:2021 9.7 Table 9 has the client repeat it and leaves performing the
+    /// repeat to the application (``UDSS_LLR_0177`` caps it). Table 9 performs its error
+    /// handling "for a maximum of two times" whatever the error, so the ceiling counts
+    /// every repeat of the request: a failed transmission's repeat leaves one fewer for
+    /// an expired window. A failed transmission is itself repeated up to Table 9's two
+    /// whatever this is, that cell being the link's, not the request's; functionally
+    /// addressed requests are not under it. [`Self::new`] sets [`Repeats::Twice`].
+    /// [`Repeats::Never`] also forgoes the one repeat the standard designs a server to
+    /// absorb, a [`Client::transfer_data`] block with the same counter (ISO 14229-1:2020
+    /// 15.4); set it, call, and restore it where that repeat is wanted.
+    pub repeats: Repeats,
 }
 
 impl ClientTiming {
@@ -330,8 +330,7 @@ impl ClientTiming {
     /// * `functional_spacing` - see [`Self::functional_spacing`].
     /// * `network_delay` - see [`Self::network_delay`].
     ///
-    /// [`Self::repeats`] is ISO 14229-2:2021 Table 9's two; [`Self::with_repeats`]
-    /// overrides it.
+    /// [`Self::repeats`] is [`Repeats::Twice`]; [`Self::with_repeats`] overrides it.
     #[must_use]
     pub const fn new(
         physical_spacing: u32,
@@ -342,15 +341,39 @@ impl ClientTiming {
             physical_spacing,
             functional_spacing,
             network_delay,
-            repeats: 2,
+            repeats: Repeats::Twice,
         }
     }
 
     /// This policy with [`Self::repeats`] set to `repeats`.
     #[must_use]
-    pub const fn with_repeats(mut self, repeats: u8) -> Self {
+    pub const fn with_repeats(mut self, repeats: Repeats) -> Self {
         self.repeats = repeats;
         self
+    }
+}
+
+/// A ceiling on a request's repeats, within ISO 14229-2:2021 9.7 Table 9's two; see
+/// [`ClientTiming::repeats`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum Repeats {
+    /// No expired window is repeated: the first is reported.
+    Never,
+    /// An expired window is repeated only where the request has not been repeated yet.
+    Once,
+    /// An expired window is repeated while the request has been repeated fewer than two
+    /// times: Table 9's ceiling.
+    Twice,
+}
+
+impl Repeats {
+    /// The ceiling as a count of repeats.
+    pub(crate) const fn count(self) -> u8 {
+        match self {
+            Self::Never => 0,
+            Self::Once => 1,
+            Self::Twice => 2,
+        }
     }
 }
 
@@ -1033,8 +1056,8 @@ impl<
     /// A repeated key (under [`ClientTiming::repeats`]), whatever answer was lost, reaches
     /// a server with no seed outstanding, since a key of valid length discards the seed
     /// (ISO 14229-1:2020 10.4, Annex I Table I.2), and earns
-    /// [`NegativeResponseCode::RequestSequenceError`] in place of the first answer; a
-    /// ceiling of zero reports the first window instead.
+    /// [`NegativeResponseCode::RequestSequenceError`] in place of the first answer;
+    /// [`Repeats::Never`] reports the first window instead.
     ///
     /// # Cancel safety
     ///
@@ -1417,8 +1440,8 @@ impl<
     ///
     /// This is the one request the standard designs a repeat for: a server that already
     /// wrote the block answers its repeat, same `counter`, without writing again (15.4).
-    /// A caller holding [`ClientTiming::repeats`] at zero sets it for the blocks, through
-    /// [`Self::timing_mut`], and restores it after.
+    /// A caller holding [`ClientTiming::repeats`] at [`Repeats::Never`] raises it for the
+    /// blocks, through [`Self::timing_mut`], and restores it after.
     ///
     /// # Arguments
     ///

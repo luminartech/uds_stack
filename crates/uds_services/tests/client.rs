@@ -16,9 +16,9 @@ use uds_services::{
     DataFormatIdentifier, DataIdentifier, DiagnosticSessionType, DtcExtDataRecordNumber,
     DtcRecord, DtcSettingType, DtcSnapshotRecordNumber, DtcStatusMask, FunctionalKeepAlive,
     KeepAlive, MalformedResponse, Mtype, NegativeResponseCode, PhysicalKeepAlive,
-    ReadDtcInfoResponse, ReadDtcInfoSubFunction, RecordError, Reloads, Replaced, ResetType,
-    Response, RoutineControlSubFunction, RoutineIdentifier, SResult, SecurityLevel,
-    SessionTiming, SubnetNumber, TaType, Timestamp, uds_client,
+    ReadDtcInfoResponse, ReadDtcInfoSubFunction, RecordError, Reloads, Repeats, Replaced,
+    ResetType, Response, RoutineControlSubFunction, RoutineIdentifier, SResult,
+    SecurityLevel, SessionTiming, SubnetNumber, TaType, Timestamp, uds_client,
 };
 use uds_session::TransportError;
 
@@ -356,7 +356,7 @@ fn a_failed_transmission_is_repeated_after_the_spacing_then_not_sent() {
 
 /// A tester whose ceiling on ISO 14229-2:2021 Table 9's response-timeout repeat is
 /// `repeats`.
-fn tester_repeating(steps: &[Step], repeats: u8) -> Tester {
+fn tester_repeating(steps: &[Step], repeats: Repeats) -> Tester {
     Tester::new(
         Script::new(steps),
         TESTER,
@@ -365,8 +365,9 @@ fn tester_repeating(steps: &[Step], repeats: u8) -> Tester {
     )
 }
 
-/// `ClientTiming::repeats` at zero — an unanswered request is sent once and reports the
-/// first expired window; the channel is reset, so the next request is sent and answered.
+/// `ClientTiming::repeats` at `Repeats::Never` — an unanswered request is sent once and
+/// reports the first expired window; the channel is reset, so the next request is sent
+/// and answered.
 #[test]
 fn a_ceiling_of_zero_reports_the_first_expired_window() {
     let mut t = tester_repeating(
@@ -376,7 +377,7 @@ fn a_ceiling_of_zero_reports_the_first_expired_window() {
             Step::Conf(to(ECU), SResult::Ok),
             Step::Ind(from(ECU), SPEED),
         ],
-        0,
+        Repeats::Never,
     );
     assert_eq!(
         block_on(t.read_data_by_identifier(ECU, &[Did::Speed])).err(),
@@ -391,7 +392,7 @@ fn a_ceiling_of_zero_reports_the_first_expired_window() {
     assert_eq!(t.transport().sent_count, 2);
 }
 
-/// A ceiling of one repeats once; a ceiling above two acts as Table 9's two.
+/// A ceiling of one repeats once; a ceiling of two repeats twice, Table 9's most.
 #[test]
 fn a_ceiling_caps_the_repeats_under_table_9s_two() {
     let mut t = tester_repeating(
@@ -401,7 +402,7 @@ fn a_ceiling_caps_the_repeats_under_table_9s_two() {
             Step::Conf(to(ECU), SResult::Ok),
             Step::At(200),
         ],
-        1,
+        Repeats::Once,
     );
     assert_eq!(
         block_on(t.read_data_by_identifier(ECU, &[Did::Speed])).err(),
@@ -418,7 +419,7 @@ fn a_ceiling_caps_the_repeats_under_table_9s_two() {
             Step::Conf(to(ECU), SResult::Ok),
             Step::At(300),
         ],
-        7,
+        Repeats::Twice,
     );
     assert_eq!(
         block_on(t.read_data_by_identifier(ECU, &[Did::Speed])).err(),
@@ -439,7 +440,7 @@ fn a_ceiling_of_zero_still_repeats_a_failed_transmission() {
             Step::At(20),
             Step::Conf(to(ECU), FAILED),
         ],
-        0,
+        Repeats::Never,
     );
     assert_eq!(
         block_on(t.read_data_by_identifier(ECU, &[Did::Speed])).err(),
@@ -449,8 +450,9 @@ fn a_ceiling_of_zero_still_repeats_a_failed_transmission() {
 }
 
 /// One count covers both of Table 9's cells: a failed transmission's repeat counts against
-/// the ceiling, so at zero a failed transmission then an expired window is two
-/// transmissions and `Timeout`, and at one the expired window is not repeated at all.
+/// the ceiling, so at `Repeats::Never` a failed transmission then an expired window is two
+/// transmissions and `Timeout`, and at `Repeats::Once` the expired window is not repeated
+/// at all.
 #[test]
 fn a_failed_transmissions_repeat_counts_against_the_ceiling() {
     let mut t = tester_repeating(
@@ -460,7 +462,7 @@ fn a_failed_transmissions_repeat_counts_against_the_ceiling() {
             Step::Conf(to(ECU), SResult::Ok),
             Step::At(110),
         ],
-        0,
+        Repeats::Never,
     );
     assert_eq!(
         block_on(t.read_data_by_identifier(ECU, &[Did::Speed])).err(),
@@ -475,7 +477,7 @@ fn a_failed_transmissions_repeat_counts_against_the_ceiling() {
             Step::Conf(to(ECU), SResult::Ok),
             Step::At(110),
         ],
-        1,
+        Repeats::Once,
     );
     assert_eq!(
         block_on(t.read_data_by_identifier(ECU, &[Did::Speed])).err(),
@@ -494,7 +496,7 @@ fn a_ceiling_of_zero_leaves_a_functional_read_alone() {
             Step::Ind(from(ECU), SPEED),
             Step::At(1_000),
         ],
-        0,
+        Repeats::Never,
     );
     let mut answers = t.read_data_by_identifier_functional(GROUP, &[Did::Speed]);
     assert!(matches!(
@@ -509,7 +511,10 @@ fn a_ceiling_of_zero_leaves_a_functional_read_alone() {
 /// A close mid-exchange is still `Closed`, not `Timeout`, under a ceiling of zero.
 #[test]
 fn a_ceiling_of_zero_still_reports_a_close_mid_exchange() {
-    let mut t = tester_repeating(&[Step::Conf(to(ECU), SResult::Ok), Step::Close(ECU)], 0);
+    let mut t = tester_repeating(
+        &[Step::Conf(to(ECU), SResult::Ok), Step::Close(ECU)],
+        Repeats::Never,
+    );
     assert_eq!(
         block_on(t.read_data_by_identifier(ECU, &[Did::Speed])).err(),
         Some(ClientError::Closed)
@@ -536,19 +541,19 @@ fn the_ceiling_changed_between_calls_applies_to_the_next() {
         Step::Conf(to(ECU), SResult::Ok),
         Step::At(700),
     ]);
-    assert_eq!(t.timing().repeats, 2);
+    assert_eq!(t.timing().repeats, Repeats::Twice);
     assert_eq!(
         block_on(t.read_data_by_identifier(ECU, &[Did::Speed])).err(),
         Some(ClientError::Timeout)
     );
     assert_eq!(t.transport().sent_count, 3);
-    t.timing_mut().repeats = 0;
+    t.timing_mut().repeats = Repeats::Never;
     assert_eq!(
         block_on(t.read_data_by_identifier(ECU, &[Did::Speed])).err(),
         Some(ClientError::Timeout)
     );
     assert_eq!(t.transport().sent_count, 4);
-    t.timing_mut().repeats = 2;
+    t.timing_mut().repeats = Repeats::Twice;
     assert_eq!(
         block_on(t.read_data_by_identifier(ECU, &[Did::Speed])).err(),
         Some(ClientError::Timeout)
