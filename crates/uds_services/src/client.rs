@@ -146,20 +146,15 @@ impl<E: core::fmt::Debug> core::error::Error for ClientError<E> {}
 pub enum Replaced {
     /// The connection the last ask saw is still the one in use.
     No,
-    /// The server closed it as its protocol prescribes: after a positive `ECUReset`, or
-    /// after a positive `DiagnosticSessionControl` the transport marked as leaving
-    /// (ISO 14229-5:2022 REQ 7.9 and REQ 7.11). The server's session and security are
-    /// gone.
-    Prescribed,
-    /// Any other close: the server dropped it, or this client's transport reconnected for
-    /// the first request after an unanswered one, whether to repeat it (ISO 14229-2:2021
-    /// Table 9, under [`ClientTiming::repeats`]) or because a late answer could be taken
-    /// for the next request's, or after a cancelled call. The server's session and
-    /// security may be intact. A session change's close is this where the transport
-    /// acknowledged a request between the response and the close, a keep-alive included;
-    /// a caller that knows its session change leaves the server's software treats the
-    /// next replacement of either kind as the session lost.
-    Other,
+    /// The server's session and security are gone: it closed the connection as its
+    /// protocol prescribes after a reset or a session change (ISO 14229-5:2022 REQ 7.9
+    /// and REQ 7.11). A caller enters its session again and unlocks again.
+    SessionLost,
+    /// The connection was replaced, and the server's session and security may be intact
+    /// or gone. A caller that needs to know asks the server, reading its active session
+    /// (ISO 14229-1:2020 C.1, `0xF186`), before entering a session again, which would
+    /// relock security and end a transfer in progress.
+    SessionUnknown,
 }
 
 /// A keep-alive mode a [`Client`] can be built in: [`FunctionalKeepAlive`] or
@@ -963,7 +958,7 @@ impl<
     /// A positive response to `enableRapidPowerShutDown` carries the server's
     /// power-down time; any other carries `None`. The server closes its connection after
     /// a positive response (ISO 14229-5:2022 REQ 7.11), which
-    /// [`Self::connection_replaced`] reports [`Replaced::Prescribed`] from now. The next
+    /// [`Self::connection_replaced`] reports [`Replaced::SessionLost`] from now. The next
     /// call opens a new connection, which fails with [`ClientError::Transport`] while the
     /// server restarts; retry it after a back-off.
     ///
@@ -1565,32 +1560,29 @@ impl<
     /// Why the connection to `target` is not the one this last asked about, or the one
     /// the channel to it was opened over.
     ///
-    /// A positive [`Self::ecu_reset`] response is reported [`Replaced::Prescribed`] from
+    /// A positive [`Self::ecu_reset`] response is reported [`Replaced::SessionLost`] from
     /// that exchange itself, before the transport reports the close, since the server
     /// always closes after one (ISO 14229-5:2022 REQ 7.11); the next close the transport
-    /// reports to `target` is that same one, not another. Any other close is reported
-    /// once the transport has been polled past it, by [`Self::idle_until`] or by any
-    /// call: [`Replaced::Prescribed`] where the transport marks it expected, as the
-    /// `DoIP` transport marks the close that follows a positive `DiagnosticSessionControl`
-    /// (REQ 7.9), and [`Replaced::Other`] otherwise. That transport stops marking it once
-    /// any request is acknowledged between the response and the close, a keep-alive
-    /// falling due included, so that close can be [`Replaced::Other`]; a caller that knows
-    /// its session change leaves the server's software treats the next replacement of
-    /// either kind as the session lost. A session change's close is therefore certain only
-    /// after such a poll; on a transport whose first poll after a close may be `Pending`,
-    /// as the std `DoIP` stack's is, one poll may not reach it.
+    /// reports to `target` is that same one, unless the server answers first. Any other
+    /// close is reported once the transport has been polled past it, by
+    /// [`Self::idle_until`] or by any call: [`Replaced::SessionLost`] where the transport
+    /// marks it expected, and [`Replaced::SessionUnknown`] otherwise. The `DoIP`
+    /// transport marks the close that follows a positive `DiagnosticSessionControl`
+    /// (REQ 7.9), a close a server makes only where the change leaves its running
+    /// software, until it acknowledges any request between the response and the close,
+    /// a keep-alive falling due included; that close is then
+    /// [`Replaced::SessionUnknown`]. On a transport whose first poll after a close may be
+    /// `Pending`, as the std `DoIP` stack's is, one poll may not reach it.
     ///
-    /// [`Replaced::Other`] is the normal result of a request that went unanswered over
-    /// `DoIP`: its transport puts the first request after it, the repeat ISO 14229-2:2021
-    /// Table 9 asks for where [`ClientTiming::repeats`] allows one or the next call where
-    /// it does not, on a new connection, so a late answer cannot be taken for that
-    /// request's. It is also the result of a call cancelled after its request went. The
-    /// server's session and security may survive such a close, so it is no reason on its
-    /// own to enter the session again, which would relock security and end a transfer in
-    /// progress.
+    /// [`Replaced::SessionUnknown`] is the normal result of a request that went unanswered
+    /// over `DoIP`: its transport puts the first request after it, the repeat
+    /// ISO 14229-2:2021 Table 9 asks for where [`ClientTiming::repeats`] allows one or the
+    /// next call where it does not, on a new connection, so a late answer cannot be taken
+    /// for that request's. It is also the result of a call cancelled after its request
+    /// went.
     ///
-    /// Where both kinds of close happened since the last asking, the answer is
-    /// [`Replaced::Prescribed`], once.
+    /// Where closes of both kinds happened since the last asking, the answer is
+    /// [`Replaced::SessionLost`], once.
     ///
     /// This first settles what an earlier call left, waiting out a functional window a
     /// dropped call left open, then takes every event the transport holds at the asking,

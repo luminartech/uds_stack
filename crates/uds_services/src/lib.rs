@@ -61,13 +61,14 @@
 //! # Exhaustive matching
 //!
 //! Only what may grow is `#[non_exhaustive]`, and that is a decision rather than an
-//! omission. Four types are:
+//! omission. Five types are:
 //!
 //! - [`DtcReportKind`] names only the clause 12.3 layouts this crate sizes, so it grows
 //!   as more are sized.
 //! - [`ClientError`] may gain a class of failure for which a call produced no response.
 //! - [`MalformedResponse`] may gain a way in which a server's reply disagrees with this
 //!   application about the bytes.
+//! - [`Replaced`] may gain a replacement a transport learns to tell apart from these.
 //! - [`ClientTiming`] may gain a parameter of the timing ISO 14229-2 leaves to the
 //!   client.
 //!

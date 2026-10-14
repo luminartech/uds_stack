@@ -2573,13 +2573,16 @@ fn a_replaced_connection_is_reported_once() {
     // The `Leave` is observed by this ask's own look at the transport.
     assert_eq!(
         block_on(t.connection_replaced(ECU)),
-        Ok(Replaced::Prescribed)
+        Ok(Replaced::SessionLost)
     );
     assert_eq!(block_on(t.connection_replaced(ECU)), Ok(Replaced::No));
     // This ask observes the other server's close.
     assert_eq!(block_on(t.connection_replaced(ECU)), Ok(Replaced::No));
     // An unprescribed close is a replacement of the other kind.
-    assert_eq!(block_on(t.connection_replaced(ECU)), Ok(Replaced::Other));
+    assert_eq!(
+        block_on(t.connection_replaced(ECU)),
+        Ok(Replaced::SessionUnknown)
+    );
     assert_eq!(block_on(t.connection_replaced(ECU)), Ok(Replaced::No));
 }
 
@@ -2601,11 +2604,11 @@ fn both_kinds_of_close_are_reported_as_the_prescribed_one() {
     speed(block_on(t.read_data_by_identifier(ECU, &[Did::Speed])));
     assert_eq!(
         block_on(t.connection_replaced(ECU)),
-        Ok(Replaced::Prescribed)
+        Ok(Replaced::SessionLost)
     );
     assert_eq!(
         block_on(t.connection_replaced(ECU)),
-        Ok(Replaced::Prescribed)
+        Ok(Replaced::SessionLost)
     );
     assert_eq!(block_on(t.connection_replaced(ECU)), Ok(Replaced::No));
 }
@@ -2629,7 +2632,10 @@ fn a_reconnect_to_repeat_a_request_is_not_a_prescribed_close() {
         Ok(Response::Positive(&[][..]))
     );
     assert_eq!(t.transport().sent_count, 2);
-    assert_eq!(block_on(t.connection_replaced(ECU)), Ok(Replaced::Other));
+    assert_eq!(
+        block_on(t.connection_replaced(ECU)),
+        Ok(Replaced::SessionUnknown)
+    );
     assert_eq!(block_on(t.connection_replaced(ECU)), Ok(Replaced::No));
 }
 
@@ -2646,7 +2652,10 @@ fn one_ask_drains_every_close_the_transport_holds() {
         Step::At(2),
     ]);
     speed(block_on(t.read_data_by_identifier(ECU, &[Did::Speed])));
-    assert_eq!(block_on(t.connection_replaced(ECU)), Ok(Replaced::Other));
+    assert_eq!(
+        block_on(t.connection_replaced(ECU)),
+        Ok(Replaced::SessionUnknown)
+    );
     assert_eq!(block_on(t.connection_replaced(ECU)), Ok(Replaced::No));
     assert!(t.transport().finished());
 }
@@ -2669,7 +2678,7 @@ fn a_positive_reset_is_a_replacement_before_its_close_arrives() {
     );
     assert_eq!(
         block_on(t.connection_replaced(ECU)),
-        Ok(Replaced::Prescribed)
+        Ok(Replaced::SessionLost)
     );
     assert_eq!(block_on(t.connection_replaced(ECU)), Ok(Replaced::No));
     assert!(t.transport().finished());
@@ -2714,7 +2723,7 @@ fn a_reset_close_marked_unprescribed_is_not_reported_again() {
     );
     assert_eq!(
         block_on(t.connection_replaced(ECU)),
-        Ok(Replaced::Prescribed)
+        Ok(Replaced::SessionLost)
     );
     assert_eq!(block_on(t.connection_replaced(ECU)), Ok(Replaced::No));
     assert!(t.transport().finished());
@@ -2739,10 +2748,13 @@ fn a_reset_answered_past_is_no_longer_foreseen() {
     );
     assert_eq!(
         block_on(t.connection_replaced(ECU)),
-        Ok(Replaced::Prescribed)
+        Ok(Replaced::SessionLost)
     );
     speed(block_on(t.read_data_by_identifier(ECU, &[Did::Speed])));
-    assert_eq!(block_on(t.connection_replaced(ECU)), Ok(Replaced::Other));
+    assert_eq!(
+        block_on(t.connection_replaced(ECU)),
+        Ok(Replaced::SessionUnknown)
+    );
     assert!(t.transport().finished());
 }
 

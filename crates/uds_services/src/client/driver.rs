@@ -144,8 +144,8 @@ impl Replaced {
     /// The stronger of two reports: a prescribed close over any other.
     const fn or(self, other: Self) -> Self {
         match (self, other) {
-            (Self::Prescribed, _) | (_, Self::Prescribed) => Self::Prescribed,
-            (Self::Other, _) | (_, Self::Other) => Self::Other,
+            (Self::SessionLost, _) | (_, Self::SessionLost) => Self::SessionLost,
+            (Self::SessionUnknown, _) | (_, Self::SessionUnknown) => Self::SessionUnknown,
             (Self::No, Self::No) => Self::No,
         }
     }
@@ -207,7 +207,7 @@ impl<const PHYS: usize, const FUNC: usize> Book<PHYS, FUNC> {
     pub(super) fn foresee_close(&mut self, ta: Address) {
         if let Some(o) = self.physical_to(ta) {
             o.untold = Untold {
-                replaced: o.untold.replaced.or(Replaced::Prescribed),
+                replaced: o.untold.replaced.or(Replaced::SessionLost),
                 foreseen: true,
             };
         }
@@ -225,9 +225,9 @@ impl<const PHYS: usize, const FUNC: usize> Book<PHYS, FUNC> {
     /// `ECUReset` response foresaw it.
     fn closed(&mut self, peer: Address, expected: bool) {
         let kind = if expected {
-            Replaced::Prescribed
+            Replaced::SessionLost
         } else {
-            Replaced::Other
+            Replaced::SessionUnknown
         };
         for o in self
             .physical

@@ -393,7 +393,7 @@ fn the_prescribed_close_is_reported_as_a_replacement_once() {
             .await
             .expect("idled");
         let left = c.connection_replaced(SERVER).await;
-        assert_eq!(left.expect("asked"), Replaced::Prescribed);
+        assert_eq!(left.expect("asked"), Replaced::SessionLost);
         let again = c.connection_replaced(SERVER).await;
         assert_eq!(again.expect("asked"), Replaced::No);
         c.close().await.expect("closed");
@@ -410,7 +410,7 @@ fn a_positive_reset_is_reported_as_a_replacement_at_once() {
         let reset = c.ecu_reset(SERVER, ResetType::HardReset).await;
         assert_eq!(reset.expect("answered"), Response::Positive(None));
         let left = c.connection_replaced(SERVER).await;
-        assert_eq!(left.expect("asked"), Replaced::Prescribed);
+        assert_eq!(left.expect("asked"), Replaced::SessionLost);
         let again = c.connection_replaced(SERVER).await;
         assert_eq!(again.expect("asked"), Replaced::No);
         let read = c
