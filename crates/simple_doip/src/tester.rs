@@ -45,8 +45,36 @@ const ACK_TIMEOUT: Duration =
 /// seconds is what a sensor that does so was measured to need.
 pub const RECONNECT_BACKOFF: Duration = Duration::from_secs(3);
 
-/// The protocol version the tester sends.
-const VERSION: ProtocolVersion = ProtocolVersion::V2019;
+/// The protocol version a tester puts in every message it sends: one ISO 13400-2:2019
+/// Table 16 defines for `DoIP` messages. Table 16's `0xFF` is for vehicle identification
+/// requests only, and an entity answers a version it does not implement with a generic
+/// header negative acknowledgement `0x00` (REQ 7.DoIP-041).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum TesterVersion {
+    /// ISO/DIS 13400-2:2010, `0x01`.
+    V2010,
+    /// ISO 13400-2:2012, `0x02`.
+    V2012,
+    /// ISO 13400-2:2019, `0x03`.
+    #[default]
+    V2019,
+}
+
+impl TesterVersion {
+    const fn protocol_version(self) -> ProtocolVersion {
+        match self {
+            Self::V2010 => ProtocolVersion::V2010,
+            Self::V2012 => ProtocolVersion::V2012,
+            Self::V2019 => ProtocolVersion::V2019,
+        }
+    }
+}
+
+impl From<TesterVersion> for ProtocolVersion {
+    fn from(version: TesterVersion) -> Self {
+        version.protocol_version()
+    }
+}
 
 /// What a diagnostic message adds to its PDU: the generic header, and the source and
 /// target addresses (ISO 13400-2:2019 Table 21).
@@ -229,7 +257,8 @@ impl<C: TcpConnect, const N: usize> fmt::Debug for Tester<'_, C, N> {
 
 impl<'s, C: TcpConnect, const N: usize> Tester<'s, C, N> {
     /// Connects to the entity at `remote` and activates routing for source address `sa`
-    /// (ISO 13400-2:2019 12.5.2).
+    /// (ISO 13400-2:2019 12.5.2), sending ISO 13400-2:2019's protocol version: it is
+    /// [`Self::connect_with_version`] with [`TesterVersion::default`].
     ///
     /// Activation is the default type. An entity answering
     /// [`RoutingActivationResponseCode::RoutingSuccessfullyActivatedConfirmationRequired`]
@@ -266,6 +295,36 @@ impl<'s, C: TcpConnect, const N: usize> Tester<'s, C, N> {
         remote: SocketAddr,
         sa: TesterAddress,
     ) -> Result<Self, ConnectError<C::Error>> {
+        Self::connect_with_version(stack, remote, sa, TesterVersion::default()).await
+    }
+
+    /// Connects to the entity at `remote` and activates routing for source address `sa`
+    /// (ISO 13400-2:2019 12.5.2), sending `version` in every message on this connection
+    /// and on every one [`TesterConnection::reconnect`] opens.
+    ///
+    /// Everything else is [`Self::connect`]'s, its errors included. An entity that does
+    /// not implement `version` answers the activation request with
+    /// [`ConnectError::HeaderNack`] carrying [`NackCode::IncorrectPatternFormat`]
+    /// (ISO 13400-2:2019 REQ 7.DoIP-041); answers in any version Table 16 defines are
+    /// accepted whatever `version` is.
+    ///
+    /// # Arguments
+    ///
+    /// * `stack` - the stack that opens this connection and any later one.
+    /// * `remote` - the entity, usually on [`TCP_PORT`](crate::TCP_PORT).
+    /// * `sa` - this tester's source address.
+    /// * `version` - the protocol version the entity implements: ISO 13400-2:2019
+    ///   Table 16 allows `0x01`, `0x02` and `0x03`.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::connect`].
+    pub async fn connect_with_version(
+        stack: &'s C,
+        remote: SocketAddr,
+        sa: TesterAddress,
+        version: TesterVersion,
+    ) -> Result<Self, ConnectError<C::Error>> {
         const {
             assert!(N >= MIN_N, "a Tester's N must be at least MIN_N");
         };
@@ -275,7 +334,7 @@ impl<'s, C: TcpConnect, const N: usize> Tester<'s, C, N> {
             sa,
             socket: None,
             rx: RxBuffer::new(),
-            control: Control::new(),
+            control: Control::new(version.protocol_version()),
             outgoing: Outgoing::new(),
             exchange: Exchange::default(),
             owed: None,
@@ -558,7 +617,8 @@ impl<C: TcpConnect, const N: usize> DiagnosticConnection for Tester<'_, C, N> {
         if pdu.is_empty() {
             return Err(Refusal::EmptyPdu.into());
         }
-        let message = Message::diagnostic_message(VERSION, self.sa.address(), ta, pdu);
+        let message =
+            Message::diagnostic_message(self.control.version(), self.sa.address(), ta, pdu);
         self.outgoing
             .load(&message)
             .map_err(|TooLarge| Refusal::PduTooLarge {

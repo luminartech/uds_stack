@@ -13,8 +13,9 @@ use doip_loopback::{
     ticking,
 };
 use embassy_time::Duration;
-use uds_on_ip::DoIpTransport;
+use simple_doip::tester::TesterVersion;
 use uds_on_ip::profile::bench_reloads;
+use uds_on_ip::{DoIpClientTransport, DoIpTransport};
 use uds_protocol::NegativeResponseCode as Nrc;
 use uds_services::{
     Address, ClientError, ClientTiming, DataIdentifier, DiagnosticSessionControl,
@@ -223,6 +224,36 @@ fn a_client_reads_a_did_over_loopback() {
         let mut server = server(&loopback);
         serve_until(&mut server, async {
             let mut c = client(&loopback, Duration::from_ticks(0)).await;
+            assert_eq!(
+                record(
+                    c.read_data_by_identifier(SERVER, &[Did::Vin]).await,
+                    Did::Vin
+                ),
+                VIN
+            );
+            c.close().await.expect("closed");
+        })
+        .await;
+    });
+}
+
+/// A client whose tester sends ISO 13400-2:2012's protocol version reads from the
+/// sensor's server, which implements both it and ISO 13400-2:2019's (Table 16).
+#[test]
+fn a_client_sending_2012_reads_a_did_over_loopback() {
+    on_loopback(|loopback| async move {
+        let mut server = server(&loopback);
+        serve_until(&mut server, async {
+            let tester = loopback
+                .tester_sending(TesterVersion::V2012, Duration::from_ticks(0))
+                .await
+                .expect("activated");
+            let mut c = Diagnoser::new(
+                DoIpClientTransport::new(tester, RELOADS),
+                TESTER,
+                KeepAlive::physical(2_000),
+                ClientTiming::new(0, 0, 0),
+            );
             assert_eq!(
                 record(
                     c.read_data_by_identifier(SERVER, &[Did::Vin]).await,

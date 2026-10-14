@@ -85,7 +85,10 @@ example for each.
   confirmed `TimeoutA` and its connection given up, so a late response cannot reach
   a later request. A connection's end is reported once as `Closed`. `reconnect`
   waits `RECONNECT_BACKOFF` (3 s, or `with_reconnect_backoff`) after a loss before
-  connecting. Also `ConnectError`, `MIN_N` and `DIAGNOSTIC_MESSAGE_OVERHEAD`.
+  connecting. Every message it sends carries ISO 13400-2:2019's protocol version
+  (`0x03`), or the `TesterVersion` given to `connect_with_version` (`0x01`, `0x02`)
+  for an entity that implements an earlier edition. Also `ConnectError`, `MIN_N`
+  and `DIAGNOSTIC_MESSAGE_OVERHEAD`.
 - `tester::discovery` (`connection`): `identify` broadcasts or directs a vehicle
   identification request (all, by EID, or by VIN) and collects every entity that
   answers within `A_DoIP_Ctrl`; `entity_status` and `power_mode` ask one entity.

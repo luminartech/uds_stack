@@ -1,10 +1,10 @@
 use embassy_time::Instant;
 
 use crate::LogicalAddress;
-use crate::messages::{ActivationTypeCode, Header, Message, RoutingActivationRequest};
+use crate::messages::{
+    ActivationTypeCode, Header, Message, ProtocolVersion, RoutingActivationRequest,
+};
 use crate::wire::{Encode, SliceSink};
-
-use super::VERSION;
 
 /// The diagnostic message being written, and how much of it has been.
 #[derive(Debug)]
@@ -80,22 +80,22 @@ enum Owed {
 }
 
 impl Owed {
-    fn message(self) -> Message<'static> {
+    fn message(self, version: ProtocolVersion) -> Message<'static> {
         match self {
             Self::RoutingActivationRequest(sa) => Message::routing_activation_request(
-                VERSION,
+                version,
                 sa,
                 ActivationTypeCode::Default,
                 None,
             ),
-            Self::AliveCheckResponse(sa) => Message::alive_check_response(VERSION, sa),
+            Self::AliveCheckResponse(sa) => Message::alive_check_response(version, sa),
         }
     }
 }
 
 /// The routing activation request or alive check response being written, ahead of
-/// [`Outgoing`], with the one owed next, and when the last alive check response was
-/// written.
+/// [`Outgoing`], with the one owed next, when the last alive check response was
+/// written, and the protocol version every message on the connection carries.
 #[derive(Debug)]
 pub(super) struct Control {
     buf: [u8; CONTROL],
@@ -104,10 +104,11 @@ pub(super) struct Control {
     writing: Option<Owed>,
     next: Option<Owed>,
     answered_at: Option<Instant>,
+    version: ProtocolVersion,
 }
 
 impl Control {
-    pub(super) const fn new() -> Self {
+    pub(super) const fn new(version: ProtocolVersion) -> Self {
         Self {
             buf: [0; CONTROL],
             len: 0,
@@ -115,7 +116,13 @@ impl Control {
             writing: None,
             next: None,
             answered_at: None,
+            version,
         }
+    }
+
+    /// The protocol version every message on the connection carries.
+    pub(super) const fn version(&self) -> ProtocolVersion {
+        self.version
     }
 
     /// Owes a default routing activation request for `sa`.
@@ -139,7 +146,7 @@ impl Control {
 
     fn start(&mut self, owed: Owed) {
         self.len = owed
-            .message()
+            .message(self.version)
             .encode(&mut SliceSink::new(&mut self.buf))
             .unwrap_or(0);
         self.written = 0;
@@ -171,16 +178,15 @@ impl Control {
         self.answered_at
     }
 
-    /// Forgets everything owed and written, for a new connection.
+    /// Forgets everything owed and written, for a new connection, keeping the version.
     pub(super) fn clear(&mut self) {
-        *self = Self::new();
+        *self = Self::new(self.version);
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::messages::ProtocolVersion;
 
     const TESTER: LogicalAddress = LogicalAddress(0x0E00);
 
@@ -190,30 +196,50 @@ mod tests {
     }
 
     #[test]
-    fn the_control_messages_are_the_ones_the_message_types_encode() {
-        let mut control = Control::new();
+    fn the_control_messages_are_the_ones_the_message_types_encode_in_its_version() {
+        for version in [
+            ProtocolVersion::V2010,
+            ProtocolVersion::V2012,
+            ProtocolVersion::V2019,
+        ] {
+            let mut control = Control::new(version);
 
-        control.routing_activation_request(TESTER);
-        let mut buf = [0; 32];
-        assert_eq!(
-            control.pending(),
-            encoded(
-                &Message::routing_activation_request(
-                    ProtocolVersion::V2019,
-                    TESTER,
-                    ActivationTypeCode::Default,
-                    None,
-                ),
-                &mut buf
-            )
-        );
-        control.advance(control.pending().len());
+            control.routing_activation_request(TESTER);
+            let mut buf = [0; 32];
+            assert_eq!(
+                control.pending(),
+                encoded(
+                    &Message::routing_activation_request(
+                        version,
+                        TESTER,
+                        ActivationTypeCode::Default,
+                        None,
+                    ),
+                    &mut buf
+                )
+            );
+            control.advance(control.pending().len());
 
+            control.alive_check_response(TESTER);
+            assert_eq!(
+                control.pending(),
+                encoded(&Message::alive_check_response(version, TESTER), &mut buf)
+            );
+        }
+    }
+
+    #[test]
+    fn a_cleared_control_keeps_its_version() {
+        let mut control = Control::new(ProtocolVersion::V2012);
+        control.clear();
         control.alive_check_response(TESTER);
+        let mut buf = [0; 16];
+
+        assert_eq!(control.version(), ProtocolVersion::V2012);
         assert_eq!(
             control.pending(),
             encoded(
-                &Message::alive_check_response(ProtocolVersion::V2019, TESTER),
+                &Message::alive_check_response(ProtocolVersion::V2012, TESTER),
                 &mut buf
             )
         );
@@ -221,7 +247,7 @@ mod tests {
 
     #[test]
     fn a_message_is_pending_until_written() {
-        let mut control = Control::new();
+        let mut control = Control::new(ProtocolVersion::V2019);
         control.alive_check_response(TESTER);
         let mut whole = [0; 10];
         whole.copy_from_slice(control.pending());
@@ -252,7 +278,7 @@ mod tests {
 
     #[test]
     fn a_message_owed_while_another_is_being_written_follows_it_whole() {
-        let mut control = Control::new();
+        let mut control = Control::new(ProtocolVersion::V2019);
         control.routing_activation_request(TESTER);
         let mut out = [0; 64];
         let first = control.pending().len().min(3);
@@ -290,7 +316,7 @@ mod tests {
 
     #[test]
     fn an_alive_check_response_is_answered_once_its_last_byte_is_written() {
-        let mut control = Control::new();
+        let mut control = Control::new(ProtocolVersion::V2019);
         control.routing_activation_request(TESTER);
         control.advance(1);
         control.alive_check_response(TESTER);

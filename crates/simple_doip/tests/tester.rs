@@ -20,7 +20,7 @@ use simple_doip::service::{
     ConnectionEvent, ConnectionRefusal, DiagnosticConnection, DoIpResult,
     NotATesterAddress, Reconnection, Refusal, TesterAddress, TesterConnection, Timestamp,
 };
-use simple_doip::tester::{ConnectError, MIN_N, RECONNECT_BACKOFF, Tester};
+use simple_doip::tester::{ConnectError, MIN_N, RECONNECT_BACKOFF, Tester, TesterVersion};
 use simple_doip::{LogicalAddress, TaType};
 use support::mock_stack::*;
 
@@ -205,6 +205,74 @@ fn a_header_nack_during_activation_is_an_error() {
         ConnectError::HeaderNack(NackCode::MessageTooLarge)
     );
     assert!(stack.latest().is_aborted());
+}
+
+/// ISO 13400-2:2019 Table 16 and REQ 7.DoIP-041: an entity implementing ISO 13400-2:2012
+/// refuses the default tester's `0x03` header with NACK `0x00`, and activates a tester
+/// that sends `0x02`. That tester's requests, alive check responses and reconnections
+/// carry `0x02` too.
+#[test]
+fn a_tester_sending_2012_reaches_an_entity_that_refuses_2019() {
+    let _clock = clock();
+    let refusing = MockStack::new(usize::MAX);
+    refusing.script_next(&versioned(header_nack(0x00), 0x02));
+
+    assert_eq!(
+        connect(&refusing).unwrap_err(),
+        ConnectError::HeaderNack(NackCode::IncorrectPatternFormat)
+    );
+    assert_eq!(refusing.latest().take_written(), activation_request());
+
+    let stack = MockStack::new(usize::MAX);
+    stack.script_next(&versioned(activation_response(0x10), 0x02));
+    let mut tester: ActiveTester<'_> = run(Tester::connect_with_version(
+        &stack,
+        REMOTE,
+        sa(),
+        TesterVersion::V2012,
+    ))
+    .unwrap();
+    assert_eq!(
+        stack.latest().take_written(),
+        versioned(activation_request(), 0x02)
+    );
+
+    stack.latest().eof();
+    let mut buf = [0; 16];
+    assert_eq!(next(&mut tester, &mut buf), Ok(ConnectionEvent::Closed));
+    stack.script_next(&versioned(activation_response(0x10), 0x02));
+    reconnect(&mut tester).unwrap();
+    assert_eq!(
+        stack.latest().take_written(),
+        versioned(activation_request(), 0x02)
+    );
+
+    request(&mut tester).unwrap();
+    stack.latest().send(&versioned(alive_check_request(), 0x02));
+    let mut waiting = pin!(tester.next_event(&mut buf, None));
+    assert!(until_stalled(waiting.as_mut()).is_none());
+    let mut expected = versioned(diagnostic(TESTER, ENTITY, &PDU), 0x02);
+    expected.extend(versioned(alive_check_response(), 0x02));
+    assert_eq!(stack.latest().take_written(), expected);
+}
+
+/// ISO 13400-2:2019 Table 16: a tester sends this document's version unless told
+/// otherwise.
+#[test]
+fn a_tester_sends_2019_by_default() {
+    assert_eq!(TesterVersion::default(), TesterVersion::V2019);
+    assert_eq!(
+        simple_doip::messages::ProtocolVersion::from(TesterVersion::V2010),
+        simple_doip::messages::ProtocolVersion::V2010
+    );
+    assert_eq!(
+        simple_doip::messages::ProtocolVersion::from(TesterVersion::V2012),
+        simple_doip::messages::ProtocolVersion::V2012
+    );
+    assert_eq!(
+        simple_doip::messages::ProtocolVersion::from(TesterVersion::V2019),
+        simple_doip::messages::ProtocolVersion::V2019
+    );
 }
 
 #[test]
