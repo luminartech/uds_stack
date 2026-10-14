@@ -25,7 +25,6 @@ use automotive_wire_codec::{write_u8, write_u16_be};
 #[cfg_attr(feature = "serde", serde(try_from = "u8", into = "u8"))]
 #[cfg_attr(feature = "clap", derive(clap::ValueEnum))]
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-#[non_exhaustive]
 pub enum DiagnosticSessionType {
     /// This value is reserved by the ISO 14229-1 Specification
     ///

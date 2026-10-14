@@ -595,7 +595,7 @@ impl Routine {
             RoutineControlSubFunction::StartRoutine => Some(Self::Start),
             RoutineControlSubFunction::StopRoutine => Some(Self::Stop),
             RoutineControlSubFunction::RequestRoutineResults => Some(Self::Results),
-            _ => None,
+            RoutineControlSubFunction::IsoSaeReserved { .. } => None,
         }
     }
 }

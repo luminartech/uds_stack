@@ -14,7 +14,6 @@ use automotive_wire_codec::{write_bytes, write_u8, write_u16_be};
 #[cfg_attr(feature = "serde", serde(try_from = "u8", into = "u8"))]
 #[cfg_attr(feature = "clap", derive(clap::ValueEnum))]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-#[non_exhaustive]
 pub enum CommunicationControlType {
     /// This value indicates that the reception and transmission of messages
     /// shall be enabled for the specified [`CommunicationType`]
@@ -195,7 +194,6 @@ mod communication_control_type_tests {
 #[cfg_attr(feature = "serde", derive(serde::Deserialize, serde::Serialize))]
 #[cfg_attr(feature = "serde", serde(try_from = "u8", into = "u8"))]
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-#[non_exhaustive]
 pub enum SubnetNumber {
     /// `0x0` — apply to the receiving node, including communication to all connected
     /// networks.
@@ -255,7 +253,6 @@ impl TryFrom<u8> for SubnetNumber {
 #[cfg_attr(feature = "serde", serde(try_from = "u8", into = "u8"))]
 #[cfg_attr(feature = "clap", derive(clap::ValueEnum))]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-#[non_exhaustive]
 pub enum CommunicationType {
     /// A nibble Table B.1 reserves: bits 1-0 clear, or bits 3-2 set.
     ///

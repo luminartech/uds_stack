@@ -14,7 +14,6 @@ use automotive_wire_codec::write_u8;
 #[cfg_attr(feature = "serde", serde(try_from = "u8", into = "u8"))]
 #[cfg_attr(feature = "clap", derive(clap::ValueEnum))]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-#[non_exhaustive]
 pub enum ResetType {
     /// This value is reserved.
     ///

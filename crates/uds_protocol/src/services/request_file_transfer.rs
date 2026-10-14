@@ -23,7 +23,6 @@ fn size_param_width(a: u128, b: u128) -> usize {
 #[cfg_attr(feature = "serde", serde(from = "u8", into = "u8"))]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[repr(u8)]
-#[non_exhaustive]
 pub enum FileOperationMode {
     /// ISO/SAE reserved (`0x00`, `0x07–0xFF`).
     IsoSaeReserved(u8),

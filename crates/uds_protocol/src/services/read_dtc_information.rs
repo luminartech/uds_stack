@@ -665,8 +665,10 @@ impl ReadDtcInfoSubFunction {
 /// length is checked, so it needs the report type apart from the parameters
 /// [`ReadDtcInfoSubFunction`] decodes with it. [`ReadDtcInfoSubFunction::report_type`]
 /// projects one onto the other.
+///
+/// Table 317 gives no row for `0x0F` to `0x13`, which earlier editions assigned; they
+/// classify as `IsoSaeReserved`, as the table's other unassigned values do.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-#[non_exhaustive]
 pub enum ReadDtcInfoReportType {
     /// 0x01
     ReportNumberOfDtcByStatusMask,

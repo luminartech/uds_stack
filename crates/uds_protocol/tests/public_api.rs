@@ -424,7 +424,7 @@ mod serde_cannot_bypass_validation {
         // Each of these has a `try_from` that range-checks the byte; the derived impl let a
         // caller name the reserved variant directly and skip it.
         assert!(serde_json::from_str::<SubnetNumber>("16").is_err());
-        assert!(serde_json::from_str::<DtcSettingType>("0").is_err());
+        assert!(serde_json::from_str::<DtcSettingType>("128").is_err());
         assert!(serde_json::from_str::<CommunicationType>("16").is_err());
 
         assert_eq!(

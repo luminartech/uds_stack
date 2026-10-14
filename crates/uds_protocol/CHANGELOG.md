@@ -92,6 +92,24 @@ now <https://github.com/luminartech/uds_stack>.
   `IsoSaeReserved`), and `ReservedForSpecificConditionsNotMet` is split into Table A.1's
   `ReservedForSpecificConditionsNotCorrect` (`0x95`–`0xEF`) and
   `VehicleManufacturerSpecificConditionsNotCorrect` (`0xF0`–`0xFE`).
+- **Breaking:** an enum that mirrors a table of ISO 14229-1:2020 is exhaustive, since
+  the table assigns every value: `UdsIdentifier` (Table C.1), `UdsRoutineIdentifier`
+  (Table F.1), `DtcFormatIdentifier` (D.14), `FunctionalGroupIdentifier` (D.15),
+  `DtcExtDataRecordNumber` (D.16), `DtcSnapshotRecordNumber` (Table 318),
+  `CommunicationControlType` (Table 54), `SubnetNumber` and `CommunicationType` (B.1),
+  `DtcSettingType` (Table 128), `RoutineControlSubFunction` (Table 426), `ResetType`
+  (Table 34), `DiagnosticSessionType` (Table 25), `SecurityAccessType` (Table 42),
+  `FileOperationMode` (G.1) and `ReadDtcInfoReportType` (Table 317). Enums that cover
+  only part of a table, and error enums, stay `#[non_exhaustive]`. Migrate: a wildcard
+  arm over one of these now warns as unreachable where every variant is matched.
+- **Breaking:** `DtcSettingType` gains `IsoSaeReserved`: Table 128's reserved values
+  `0x00`, `0x03`–`0x3F` and `0x7F` decode rather than fail with
+  `Error::InvalidDtcSetting`, which is now only for a byte with bit 7 set. A server
+  answers a setting it does not support `subFunctionNotSupported` from its own lookup.
+- **Breaking:** variants renamed to Table C.1's and D.16's names:
+  `UdsIdentifier::EcuManufacturingDate` (`0xF18B`, was `EcuManufacturingData`),
+  `UdsIdentifier::RepairShopCodeOrTesterSerialNumber` (`0xF198`), and
+  `DtcExtDataRecordNumber::VehicleManufacturerSpecific` (was `VehicleManufacturer`).
 - **Breaking:** a variant that carries a wire integer is built only by converting the
   integer, so it never holds one a named variant has and `==` agrees with the wire.
   That covers `NegativeResponseCode`'s three, and those of `UdsIdentifier`,

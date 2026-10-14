@@ -8,7 +8,6 @@
 #[cfg_attr(feature = "serde", serde(from = "u16", into = "u16"))]
 #[cfg_attr(feature = "clap", derive(clap::ValueEnum))]
 #[derive(Clone, Copy, Eq, PartialEq)]
-#[non_exhaustive]
 pub enum UdsIdentifier {
     /// DID reserved by ISO/SAE (ranges `0x0000–0x00FF`, `0xFF02–0xFFFF`).
     #[cfg_attr(feature = "clap", clap(skip))]
@@ -106,7 +105,7 @@ pub enum UdsIdentifier {
     /// This value shall be used to reference the ECU (server) manufacturing date. Record
     /// data content and format shall be unsigned numeric, ASCII or BCD, and shall be
     /// ordered as Year, Month, Day.
-    EcuManufacturingData,
+    EcuManufacturingDate,
     /// Get the serial number of the ECU, format shall be server specific.
     EcuSerialNumber,
     /// Request the supported functional units of the ECU.
@@ -136,7 +135,7 @@ pub enum UdsIdentifier {
     /// System name or engine type (`0xF197`).
     SystemNameOrEngineType,
     /// Repair shop or tester serial number (`0xF198`).
-    RepairShopOrTesterSerialNumber,
+    RepairShopCodeOrTesterSerialNumber,
     /// When the server was last programmed, the record data content and format shall be
     /// unsigned numeric, ASCII or BCD, and shall be ordered as Year, Month, Day.
     ProgrammingDate,
@@ -186,7 +185,7 @@ impl From<u16> for UdsIdentifier {
             0xF188 => Self::VehicleManufacturerEcuSoftwareNumber,
             0xF189 => Self::VehicleManufacturerEcuSoftwareVersionNumber,
             0xF18A => Self::SystemSupplierIdentifier,
-            0xF18B => Self::EcuManufacturingData,
+            0xF18B => Self::EcuManufacturingDate,
             0xF18C => Self::EcuSerialNumber,
             0xF18D => Self::SupportedFunctionalUnits,
             0xF18E => Self::VehicleManufacturerKitAssemblyPartNumber,
@@ -199,7 +198,7 @@ impl From<u16> for UdsIdentifier {
             0xF195 => Self::SystemSupplierEcuSoftwareVersionNumber,
             0xF196 => Self::ExhaustRegulationOrTypeApprovalNumber,
             0xF197 => Self::SystemNameOrEngineType,
-            0xF198 => Self::RepairShopOrTesterSerialNumber,
+            0xF198 => Self::RepairShopCodeOrTesterSerialNumber,
             0xF199 => Self::ProgrammingDate,
             0xF19A => Self::CalibrationRepairShopCodeOrCalibrationEquipmentSerialNumber,
             0xF19B => Self::CalibrationDate,
@@ -265,7 +264,7 @@ impl From<UdsIdentifier> for u16 {
             UdsIdentifier::VehicleManufacturerEcuSoftwareNumber => 0xF188,
             UdsIdentifier::VehicleManufacturerEcuSoftwareVersionNumber => 0xF189,
             UdsIdentifier::SystemSupplierIdentifier => 0xF18A,
-            UdsIdentifier::EcuManufacturingData => 0xF18B,
+            UdsIdentifier::EcuManufacturingDate => 0xF18B,
             UdsIdentifier::EcuSerialNumber => 0xF18C,
             UdsIdentifier::SupportedFunctionalUnits => 0xF18D,
             UdsIdentifier::VehicleManufacturerKitAssemblyPartNumber => 0xF18E,
@@ -278,7 +277,7 @@ impl From<UdsIdentifier> for u16 {
             UdsIdentifier::SystemSupplierEcuSoftwareVersionNumber => 0xF195,
             UdsIdentifier::ExhaustRegulationOrTypeApprovalNumber => 0xF196,
             UdsIdentifier::SystemNameOrEngineType => 0xF197,
-            UdsIdentifier::RepairShopOrTesterSerialNumber => 0xF198,
+            UdsIdentifier::RepairShopCodeOrTesterSerialNumber => 0xF198,
             UdsIdentifier::ProgrammingDate => 0xF199,
             UdsIdentifier::CalibrationRepairShopCodeOrCalibrationEquipmentSerialNumber => {
                 0xF19A
@@ -315,7 +314,6 @@ impl core::fmt::Debug for UdsIdentifier {
 #[cfg_attr(feature = "serde", derive(serde::Deserialize, serde::Serialize))]
 #[cfg_attr(feature = "serde", serde(from = "u16", into = "u16"))]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-#[non_exhaustive]
 pub enum UdsRoutineIdentifier {
     /// ISO/SAE reserved routine identifier (`0x0000–0x00FF`, `0xE300–0xEFFF`,
     /// `0xFF02–0xFFFF`).

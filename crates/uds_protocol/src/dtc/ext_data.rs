@@ -6,7 +6,6 @@ use automotive_wire_codec::write_u8;
 #[cfg_attr(feature = "serde", derive(serde::Deserialize, serde::Serialize))]
 #[cfg_attr(feature = "serde", serde(from = "u8", into = "u8"))]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-#[non_exhaustive]
 pub enum DtcExtDataRecordNumber {
     /// ISO/SAE reserved record numbers (`0x00`, `0xF0-0xFD`).
     #[non_exhaustive]
@@ -16,7 +15,7 @@ pub enum DtcExtDataRecordNumber {
     ///
     /// 0x01-0x8F
     #[non_exhaustive]
-    VehicleManufacturer(u8),
+    VehicleManufacturerSpecific(u8),
 
     /// Requests the server to report regulated emissions OBD stored
     /// `DTCExtendedDataRecords`. The values are specified in SAE J1979-DA.
@@ -47,7 +46,7 @@ impl DtcExtDataRecordNumber {
     pub const fn new(value: u8) -> Self {
         match value {
             0x00 | 0xF0..=0xFD => Self::IsoSaeReserved(value),
-            0x01..=0x8F => Self::VehicleManufacturer(value),
+            0x01..=0x8F => Self::VehicleManufacturerSpecific(value),
             0x90..=0x9F => Self::RegulatedEmissionsObdDtcExtDataRecords(value),
             0xA0..=0xEF => Self::RegulatedDtcExtDataRecords(value),
             0xFE => Self::AllRegulatedEmissionsObdDtcExtDataRecords,
@@ -61,7 +60,7 @@ impl DtcExtDataRecordNumber {
     pub const fn value(&self) -> u8 {
         match self {
             Self::IsoSaeReserved(value) => *value,
-            Self::VehicleManufacturer(value) => *value,
+            Self::VehicleManufacturerSpecific(value) => *value,
             Self::RegulatedEmissionsObdDtcExtDataRecords(value) => *value,
             Self::RegulatedDtcExtDataRecords(value) => *value,
             Self::AllRegulatedEmissionsObdDtcExtDataRecords => 0xFE,

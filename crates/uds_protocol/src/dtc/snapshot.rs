@@ -9,7 +9,6 @@ use automotive_wire_codec::write_u8;
 #[cfg_attr(feature = "serde", derive(serde::Deserialize, serde::Serialize))]
 #[cfg_attr(feature = "serde", serde(from = "u8", into = "u8"))]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-#[non_exhaustive]
 pub enum DtcSnapshotRecordNumber {
     /// Reserved for Legislative purposes
     #[non_exhaustive]

@@ -95,12 +95,12 @@ byte_schema!(
                       being rejected."
     },
     DtcSettingType {
-        max: 0x7Eu8,
-        description: "A DTCSettingType byte (ISO 14229-1:2020 Table 128). Only 0x01 (on), 0x02 \
-                      (off), 0x40 to 0x5F (vehicle-manufacturer specific) and 0x60 to 0x7E \
-                      (system-supplier specific) are accepted; 0x00, 0x03 to 0x3F and 0x7F are \
-                      reserved and rejected. The set is not contiguous, so the minimum and \
-                      maximum here are looser than the real constraint."
+        max: 0x7Fu8,
+        description: "A DTCSettingType byte, 0x00 to 0x7F (ISO 14229-1:2020 Table 128): 0x01 \
+                      on, 0x02 off, 0x40 to 0x5F vehicle-manufacturer specific, 0x60 to 0x7E \
+                      system-supplier specific, and the rest ISOSAEReserved. Bit 7 is the \
+                      suppressPosRspMsgIndicationBit and is carried separately, so a value \
+                      with it set is rejected."
     },
     DtcSnapshotRecordNumber {
         max: 0xFFu8,
