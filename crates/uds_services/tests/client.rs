@@ -2681,3 +2681,29 @@ fn a_reset_close_marked_unprescribed_is_not_reported_again() {
     assert_eq!(block_on(t.connection_replaced(ECU)), Ok(Replaced::No));
     assert!(t.transport().finished());
 }
+
+/// A reset whose close never comes foresees nothing past the server's next answer: that
+/// answer came over the connection the reset left open, so a later close is another.
+#[test]
+fn a_reset_answered_past_is_no_longer_foreseen() {
+    let mut t = tester(&[
+        Step::Conf(to(ECU), SResult::Ok),
+        Step::Ind(from(ECU), RESETTING),
+        Step::At(1),
+        Step::Conf(to(ECU), SResult::Ok),
+        Step::Ind(from(ECU), SPEED),
+        Step::Close(ECU),
+        Step::At(2),
+    ]);
+    assert_eq!(
+        block_on(t.ecu_reset(ECU, ResetType::HardReset)),
+        Ok(Response::Positive(None))
+    );
+    assert_eq!(
+        block_on(t.connection_replaced(ECU)),
+        Ok(Replaced::Prescribed)
+    );
+    speed(block_on(t.read_data_by_identifier(ECU, &[Did::Speed])));
+    assert_eq!(block_on(t.connection_replaced(ECU)), Ok(Replaced::Other));
+    assert!(t.transport().finished());
+}

@@ -128,7 +128,8 @@ struct Untold {
     /// A positive `ECUReset` response prescribed a close the transport has yet to report
     /// (ISO 14229-5:2022 REQ 7.11). The response itself recorded the replacement, so the
     /// next close the transport reports to this server is that same one, however the
-    /// transport marks it.
+    /// transport marks it, unless the server answers first: an answer comes over the
+    /// connection the reset did not close, so a later close is another.
     foreseen: bool,
 }
 
@@ -209,6 +210,13 @@ impl<const PHYS: usize, const FUNC: usize> Book<PHYS, FUNC> {
                 replaced: o.untold.replaced.or(Replaced::Prescribed),
                 foreseen: true,
             };
+        }
+    }
+
+    /// Record that `ta` answered: a close foreseen and not yet reported will not come.
+    pub(super) fn answered(&mut self, ta: Address) {
+        if let Some(o) = self.physical_to(ta) {
+            o.untold.foreseen = false;
         }
     }
 

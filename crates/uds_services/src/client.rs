@@ -1695,6 +1695,7 @@ impl<
         };
         self.exchange = Some(Exchange::new(ai, len, sid, echo, class));
         let answered = self.advance().await.unwrap_or(Err(ClientError::Timeout))?;
+        self.book.answered(target);
         // The answer stands: a keep-alive the transport fails to take now stays owed,
         // and the failure meets the next call.
         let _ = self.send_owed().await;
