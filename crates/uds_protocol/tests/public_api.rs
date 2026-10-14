@@ -182,6 +182,42 @@ fn serde_cannot_build_a_reserved_variant_that_aliases_a_named_one() {
     }
 }
 
+/// A sub-function byte goes through serde as the byte, so the reserved variants' range
+/// checks hold: `{"IsoSaeReserved":129}` built a `ResetType` that encoded `11 81`, which
+/// reads back as suppressed while the request said it was not.
+#[cfg(feature = "serde")]
+#[test]
+fn serde_cannot_build_a_sub_function_that_sets_the_suppress_bit() {
+    use uds_protocol::{
+        DiagnosticSessionType, ReadDtcInfoSubFunction, ResetType, RoutineControlSubFunction,
+    };
+
+    assert!(serde_json::from_str::<ResetType>(r#"{"IsoSaeReserved":129}"#).is_err());
+    assert!(serde_json::from_str::<ResetType>("129").is_err());
+    assert!(
+        serde_json::from_str::<DiagnosticSessionType>(r#"{"IsoSaeReserved":129}"#).is_err()
+    );
+    assert!(serde_json::from_str::<DiagnosticSessionType>("129").is_err());
+    assert!(
+        serde_json::from_str::<ReadDtcInfoSubFunction>(r#"{"IsoSaeReserved":130}"#)
+            .is_err()
+    );
+    assert!(
+        serde_json::from_str::<RoutineControlSubFunction>(r#"{"IsoSaeReserved":129}"#)
+            .is_err()
+    );
+
+    for byte in 0x00..=0x7Fu8 {
+        let reset: ResetType = serde_json::from_str(&byte.to_string()).unwrap();
+        assert_eq!(reset, ResetType::try_from(byte).unwrap());
+        assert_eq!(serde_json::to_string(&reset).unwrap(), byte.to_string());
+        let session: DiagnosticSessionType =
+            serde_json::from_str(&byte.to_string()).unwrap();
+        assert_eq!(session, DiagnosticSessionType::try_from(byte).unwrap());
+        assert_eq!(serde_json::to_string(&session).unwrap(), byte.to_string());
+    }
+}
+
 #[test]
 fn a_reserved_variant_is_nameable_and_destructurable_downstream() {
     // The seal made both `IsoSaeReserved(b)` and `IsoSaeReserved(..)` E0603 out here, so a

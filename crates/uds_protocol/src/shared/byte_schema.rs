@@ -73,6 +73,12 @@ byte_schema!(
                       encryption method in the low nibble. 0x00 means neither. Every byte is a \
                       valid encoding; non-zero values are vehicle-manufacturer specific."
     },
+    DiagnosticSessionType {
+        max: 0x7Fu8,
+        description: "A diagnosticSessionType byte, 0x00 to 0x7F (ISO 14229-1:2020 Table 24). \
+                      Bit 7 is the suppressPosRspMsgIndicationBit and is carried separately, so \
+                      a value with it set is rejected."
+    },
     DtcFormatIdentifier {
         max: 0xFFu8,
         description: "A DTCFormatIdentifier byte (ISO 14229-1:2020 Table 331). 0x00 to 0x04 are \
@@ -98,6 +104,12 @@ byte_schema!(
         description: "A functionalGroupIdentifier byte (ISO 14229-1:2020 Annex D). Every byte \
                       classifies: undefined values become ISOSAEReserved rather than being \
                       rejected."
+    },
+    ResetType {
+        max: 0x7Fu8,
+        description: "A resetType byte, 0x00 to 0x7F (ISO 14229-1:2020 Table 34). Bit 7 is the \
+                      suppressPosRspMsgIndicationBit and is carried separately, so a value with \
+                      it set is rejected."
     },
     SecurityAccessType {
         max: 0x7Fu8,

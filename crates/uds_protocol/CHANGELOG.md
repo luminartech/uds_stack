@@ -69,6 +69,14 @@ now <https://github.com/luminartech/uds_stack>.
   fails only above it, and `CommunicationType::value` returns it. Match the reserved
   variant as `CommunicationType::IsoSaeReserved { .. }`. With `serde`, the type
   serializes as the nibble (`1`) rather than the variant name (`"Normal"`).
+- **Breaking:** with `serde`, `ResetType` and `DiagnosticSessionType` serialize as
+  their sub-function byte (`1`) rather than the variant name (`"HardReset"`), and
+  deserialize through `TryFrom<u8>`, as `SecurityAccessType` and
+  `CommunicationControlType` do. A derived `Deserialize` accepted
+  `{"IsoSaeReserved":129}`, so an `EcuResetRequest` that did not ask for suppression
+  encoded `11 81`, which reads back as suppressed. `ReadDtcInfoSubFunction` does not
+  deserialize its `IsoSaeReserved` variant at all, as `RoutineControlSubFunction`
+  does not; build it with `ReadDtcInfoSubFunction::try_reserved`.
 - `CommunicationControlRequest` now decodes a `communicationType` whose reserved
   bits 3-2 are set as `CommunicationType::IsoSaeReserved` and no longer rejects it.
   Clause 8.7.5 checks the message length before any data parameter, so a request

@@ -175,8 +175,8 @@ macro_rules! assert_schema_bound_matches_serde {
 fn every_byte_schema_advertises_the_range_serde_enforces() {
     use uds_protocol::{
         CommunicationControlType, CommunicationType, DataFormatIdentifier,
-        DtcFormatIdentifier, DtcSettingType, FileOperationMode, FunctionalGroupIdentifier,
-        SecurityAccessType, SubnetNumber,
+        DiagnosticSessionType, DtcFormatIdentifier, DtcSettingType, FileOperationMode,
+        FunctionalGroupIdentifier, ResetType, SecurityAccessType, SubnetNumber,
     };
 
     assert_schema_bound_matches_serde!(
@@ -185,7 +185,9 @@ fn every_byte_schema_advertises_the_range_serde_enforces() {
     );
     assert_schema_bound_matches_serde!(CommunicationType, "CommunicationType");
     assert_schema_bound_matches_serde!(DataFormatIdentifier, "DataFormatIdentifier");
+    assert_schema_bound_matches_serde!(DiagnosticSessionType, "DiagnosticSessionType");
     assert_schema_bound_matches_serde!(DtcFormatIdentifier, "DtcFormatIdentifier");
+    assert_schema_bound_matches_serde!(ResetType, "ResetType");
     assert_schema_bound_matches_serde!(DtcSettingType, "DtcSettingType");
     assert_schema_bound_matches_serde!(FileOperationMode, "FileOperationMode");
     assert_schema_bound_matches_serde!(
