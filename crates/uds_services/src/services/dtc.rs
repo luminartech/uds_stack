@@ -30,10 +30,11 @@ pub enum DtcReportKind {
     /// WWH-OBD severity records — `0x42`.
     WwhObdSeverity,
     /// One DTC's snapshot records, raw — `0x04`. Bounded in bytes, not records: a
-    /// record's width is the application's identifiers' to know.
+    /// record's width is the application's identifiers' to know. A client reads it; a
+    /// server cannot list it in [`ReadDtcInformation::REPORTS`].
     SnapshotRecords,
-    /// One DTC's extended data records, raw — `0x06`. Bounded in bytes, as
-    /// [`Self::SnapshotRecords`] is.
+    /// One DTC's extended data records, raw — `0x06`. Bounded in bytes, and read only by
+    /// a client, as [`Self::SnapshotRecords`] is.
     ExtDataRecords,
 }
 
@@ -52,15 +53,17 @@ impl DtcReportKind {
         }
     }
 
-    /// Bytes per record, or zero for a layout that carries none.
+    /// Bytes per DTC record, zero for a layout that carries none, or `None` for a layout
+    /// bounded in bytes rather than in records ([`Self::SnapshotRecords`] and
+    /// [`Self::ExtDataRecords`]).
     #[must_use]
-    pub const fn record_len(self) -> usize {
+    pub const fn record_len(self) -> Option<usize> {
         match self {
-            Self::Count => 0,
-            Self::SnapshotRecords | Self::ExtDataRecords => 1,
-            Self::DtcList | Self::FaultDetectionCounters => 4,
-            Self::WwhObdSeverity => 5,
-            Self::SeverityList => 6,
+            Self::Count => Some(0),
+            Self::SnapshotRecords | Self::ExtDataRecords => None,
+            Self::DtcList | Self::FaultDetectionCounters => Some(4),
+            Self::WwhObdSeverity => Some(5),
+            Self::SeverityList => Some(6),
         }
     }
 }
@@ -92,6 +95,10 @@ pub trait ReadDtcInformation {
     /// buffer right: a server answering [`DtcReportKind::SeverityList`] needs six-byte
     /// records where [`DtcReportKind::DtcList`] needs four, and neither width is the
     /// application's to know.
+    ///
+    /// The assembly fails to compile where this lists a layout whose
+    /// [`DtcReportKind::record_len`] is `None`: [`MAX_DTCS`](Self::MAX_DTCS) does not
+    /// bound it.
     const REPORTS: &'static [DtcReportKind];
 
     /// Where `report` is available and which levels unlock it, or `None` where this

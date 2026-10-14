@@ -44,7 +44,11 @@ pub const fn min2(a: usize, b: usize) -> usize {
     if a < b { a } else { b }
 }
 
-/// The response bound for `ReadDTCInformation`: the widest layout this server answers.
+/// The response bound for `ReadDTCInformation`: the widest of `reports`.
+///
+/// `max_dtcs` bounds the layouts counted in records and `max_record_bytes` those counted
+/// in bytes, as [`DtcReportKind::record_len`](crate::DtcReportKind::record_len) tells
+/// them apart.
 ///
 /// `#[doc(hidden)]`: macro plumbing, as [`max_of`] is. Saturating throughout because this
 /// crate denies `arithmetic_side_effects`, and a declared maximum large enough to
@@ -55,18 +59,38 @@ pub const fn min2(a: usize, b: usize) -> usize {
 pub const fn dtc_response_bound(
     mut reports: &[crate::DtcReportKind],
     max_dtcs: usize,
+    max_record_bytes: usize,
 ) -> usize {
     let mut best = 0;
     while let Some((&kind, rest)) = reports.split_first() {
-        let size = kind
-            .header_len()
-            .saturating_add(max_dtcs.saturating_mul(kind.record_len()));
+        let records = match kind.record_len() {
+            Some(width) => max_dtcs.saturating_mul(width),
+            None => max_record_bytes,
+        };
+        let size = kind.header_len().saturating_add(records);
         if size > best {
             best = size;
         }
         reports = rest;
     }
     best
+}
+
+/// Whether any of `reports` is bounded in bytes rather than in records.
+///
+/// `#[doc(hidden)]`: macro plumbing, as [`max_of`] is. `uds_server!` refuses such a
+/// server, whose [`ReadDtcInformation::MAX_DTCS`](crate::ReadDtcInformation::MAX_DTCS)
+/// cannot bound the response.
+#[doc(hidden)]
+#[must_use]
+pub const fn bounded_in_bytes(mut reports: &[crate::DtcReportKind]) -> bool {
+    while let Some((&kind, rest)) = reports.split_first() {
+        if kind.record_len().is_none() {
+            return true;
+        }
+        reports = rest;
+    }
+    false
 }
 
 /// The request bound of a client: the widest request among its services.
@@ -147,10 +171,12 @@ pub const fn client_response_bound(maxima: ClientResponseMaxima) -> usize {
                 K::FaultDetectionCounters,
                 K::SeverityList,
                 K::WwhObdSeverity,
+                K::SnapshotRecords,
+                K::ExtDataRecords,
             ],
             max_dtcs,
+            max_dtc_record_len,
         ),
-        dtc_response_bound(&[K::SnapshotRecords, K::ExtDataRecords], max_dtc_record_len),
         2_usize.saturating_add(max_seed_len),
         5_usize.saturating_add(max_status_len),
         2_usize.saturating_add(max_block_len),
@@ -271,6 +297,7 @@ macro_rules! __uds_response_bound {
         $crate::assembly::dtc_response_bound(
             <$ty as $crate::ReadDtcInformation>::REPORTS,
             <$ty as $crate::ReadDtcInformation>::MAX_DTCS,
+            0,
         )
     };
     ($ty:ty, DataTransfer) => {
@@ -584,10 +611,20 @@ macro_rules! __uds_stage {
 
 /// The compile-time checks one listed service adds to the assembly: `DataTransfer`'s
 /// advertised block must reach the transport whole (15.2.3.2), and its
-/// `maxNumberOfBlockLength` must fit the four bytes a download-only response holds.
+/// `maxNumberOfBlockLength` must fit the four bytes a download-only response holds;
+/// `ReadDtcInformation` must list only layouts its `MAX_DTCS` bounds.
 #[doc(hidden)]
 #[macro_export]
 macro_rules! __uds_assert {
+    ($ty:ty, $transport:ty, ReadDtcInformation) => {
+        const _: () = ::core::assert!(
+            !$crate::assembly::bounded_in_bytes(
+                <$ty as $crate::ReadDtcInformation>::REPORTS
+            ),
+            "REPORTS lists DtcReportKind::SnapshotRecords or ExtDataRecords, which a \
+             server cannot answer: MAX_DTCS does not bound them",
+        );
+    };
     ($ty:ty, $transport:ty, DataTransfer) => {
         const _: () = ::core::assert!(
             <$transport as $crate::UdsTransport>::MAX_PDU
@@ -634,6 +671,11 @@ macro_rules! __uds_assert {
 /// [`MAX_PDU`](crate::UdsTransport::MAX_PDU) is shorter than `MAX_BLOCK_LENGTH + 2`:
 /// ISO 14229-1:2020 15.2.3.2, "A server is required to accept transferData requests that
 /// are equal in length to its reported maxNumberOfBlockLength".
+///
+/// Where `ReadDtcInformation` is listed, it also fails to compile where
+/// [`REPORTS`](crate::ReadDtcInformation::REPORTS) names a layout whose
+/// [`record_len`](crate::DtcReportKind::record_len) is `None`, which
+/// [`MAX_DTCS`](crate::ReadDtcInformation::MAX_DTCS) does not bound.
 ///
 /// ```compile_fail,E0080
 /// # use uds_services::{
@@ -1472,8 +1514,8 @@ macro_rules! uds_client {
 #[cfg(test)]
 mod tests {
     use super::{
-        ClientResponseMaxima, client_request_bound, client_response_bound,
-        dtc_response_bound, max_of, min2,
+        ClientResponseMaxima, bounded_in_bytes, client_request_bound,
+        client_response_bound, dtc_response_bound, max_of, min2,
     };
     use crate::DtcReportKind;
 
@@ -1582,10 +1624,13 @@ mod tests {
     /// both when the server reports no records at all.
     #[test]
     fn the_widest_declared_layout_sets_the_bound() {
-        const LIST: usize = dtc_response_bound(&[DtcReportKind::DtcList], 10);
-        const SEVERITY: usize = dtc_response_bound(&[DtcReportKind::SeverityList], 10);
-        const BOTH: usize =
-            dtc_response_bound(&[DtcReportKind::DtcList, DtcReportKind::SeverityList], 10);
+        const LIST: usize = dtc_response_bound(&[DtcReportKind::DtcList], 10, 0);
+        const SEVERITY: usize = dtc_response_bound(&[DtcReportKind::SeverityList], 10, 0);
+        const BOTH: usize = dtc_response_bound(
+            &[DtcReportKind::DtcList, DtcReportKind::SeverityList],
+            10,
+            0,
+        );
         assert_eq!((LIST, SEVERITY, BOTH), (3 + 40, 3 + 60, 3 + 60));
     }
 
@@ -1593,24 +1638,55 @@ mod tests {
     /// room, and `WwhObdSeverity`'s five header bytes plus the `0x59` are counted.
     #[test]
     fn a_layout_without_records_still_needs_its_header() {
-        const COUNT: usize = dtc_response_bound(&[DtcReportKind::Count], 10);
-        const WWH: usize = dtc_response_bound(&[DtcReportKind::WwhObdSeverity], 10);
+        const COUNT: usize = dtc_response_bound(&[DtcReportKind::Count], 10, 0);
+        const WWH: usize = dtc_response_bound(&[DtcReportKind::WwhObdSeverity], 10, 0);
         assert_eq!((COUNT, WWH), (6, 6 + 50));
     }
 
     /// The by-DTC-number layouts are bounded in bytes: six of header, then as many
-    /// record bytes as the caller declares.
+    /// record bytes as the caller declares, whatever the DTC count.
     #[test]
     fn a_by_dtc_number_layout_is_bounded_by_its_record_bytes() {
-        const SNAPSHOT: usize = dtc_response_bound(&[DtcReportKind::SnapshotRecords], 20);
-        const EXT: usize = dtc_response_bound(&[DtcReportKind::ExtDataRecords], 20);
-        assert_eq!((SNAPSHOT, EXT), (26, 26));
+        const SNAPSHOT: usize =
+            dtc_response_bound(&[DtcReportKind::SnapshotRecords], 3, 20);
+        const EXT: usize = dtc_response_bound(&[DtcReportKind::ExtDataRecords], 3, 20);
+        assert_eq!((SNAPSHOT, EXT), (6 + 20, 6 + 20));
+    }
+
+    /// Mixed layouts each take their own maximum: the DTC count bounds the list and the
+    /// record bytes bound the snapshot, so neither is read in the other's unit.
+    #[test]
+    fn mixed_layouts_are_bounded_each_in_its_own_unit() {
+        const KINDS: &[DtcReportKind] =
+            &[DtcReportKind::DtcList, DtcReportKind::SnapshotRecords];
+        const LIST_WINS: usize = dtc_response_bound(KINDS, 10, 20);
+        const BYTES_WIN: usize = dtc_response_bound(KINDS, 10, 100);
+        assert_eq!((LIST_WINS, BYTES_WIN), (3 + 10 * 4, 6 + 100));
+    }
+
+    /// Only the layouts counted in bytes are flagged, which is what `uds_server!` refuses.
+    #[test]
+    fn only_byte_bounded_layouts_are_flagged() {
+        const LISTS: bool = bounded_in_bytes(&[
+            DtcReportKind::Count,
+            DtcReportKind::DtcList,
+            DtcReportKind::FaultDetectionCounters,
+            DtcReportKind::SeverityList,
+            DtcReportKind::WwhObdSeverity,
+        ]);
+        const SNAPSHOT: bool =
+            bounded_in_bytes(&[DtcReportKind::DtcList, DtcReportKind::SnapshotRecords]);
+        const EXT: bool = bounded_in_bytes(&[DtcReportKind::ExtDataRecords]);
+        assert_eq!(
+            (LISTS, SNAPSHOT, EXT, bounded_in_bytes(&[])),
+            (false, true, true, false)
+        );
     }
 
     /// A server declaring no report types folds to zero, as an empty service set does.
     #[test]
     fn no_declared_layout_folds_to_zero() {
-        const NONE: usize = dtc_response_bound(&[], 10);
+        const NONE: usize = dtc_response_bound(&[], 10, 10);
         assert_eq!(NONE, 0);
     }
 
