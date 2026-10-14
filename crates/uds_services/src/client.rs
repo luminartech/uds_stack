@@ -541,7 +541,7 @@ impl From<RecordError> for MalformedResponse {
 
 /// What one server said.
 ///
-/// ``UDSSVC_ARCH_0021`` and ``UDSSVC_ARCH_0023`` — three cases, and none is an error.
+/// ``UDSSVC_ARCH_0021`` — three cases, and none is an error.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Response<V> {
     /// A positive response, decoded.
@@ -555,13 +555,6 @@ pub enum Response<V> {
     /// Not an error, for the reason [`Answer::Malformed`] is not: the server answered and
     /// the transport delivered it intact.
     Malformed(MalformedResponse),
-    /// The exchange completed and nothing came back, as a request with the suppress bit
-    /// set expects. Distinct from a timeout, because a timeout is a fault and suppression
-    /// is not.
-    ///
-    /// No call returns this yet: none sets the suppress bit, and a silent functional
-    /// window ends a [`Responses`] instead.
-    NoResponseExpected,
 }
 
 impl<V> Response<V> {
@@ -571,7 +564,6 @@ impl<V> Response<V> {
             Self::Positive(value) => Response::Positive(f(value)),
             Self::Negative(code) => Response::Negative(code),
             Self::Malformed(error) => Response::Malformed(error),
-            Self::NoResponseExpected => Response::NoResponseExpected,
         }
     }
 
@@ -1985,19 +1977,13 @@ mod tests {
     /// ``UDSSVC_ARCH_0021`` — a negative response is a response, and this crate is the
     /// layer that interprets it: `uds_session` indicates the message and `UdsTransport`
     /// carries its bytes, and neither reads a response code.
-    ///
-    /// ``UDSSVC_ARCH_0023`` — and "completed, nothing came back" is a third case, not a
-    /// timeout: the suppress bit, or a functional request no server supports. A timeout
-    /// is a fault; suppression is not.
     #[test]
-    fn a_response_has_three_cases_and_none_of_them_is_an_error() {
+    fn a_negative_response_is_a_response_not_an_error() {
         let p: Response<&[u8]> = Response::Positive(&[0x62]);
         let n: Response<&[u8]> =
             Response::Negative(NegativeResponseCode::ServiceNotSupported);
-        let q: Response<&[u8]> = Response::NoResponseExpected;
         assert!(matches!(p, Response::Positive(_)));
         assert!(matches!(n, Response::Negative(_)));
-        assert!(matches!(q, Response::NoResponseExpected));
     }
 
     /// ``UDSSVC_ARCH_0022`` — each answer carries the source address of the server that

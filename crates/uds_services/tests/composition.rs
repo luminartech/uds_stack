@@ -597,7 +597,6 @@ async fn read_the_vin(tester: &mut Tester) -> Result<&'static str, ClientError<(
                 let _ = error;
                 "unreadable"
             }
-            Response::NoResponseExpected => "suppressed",
         },
     )
 }
