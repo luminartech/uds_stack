@@ -834,6 +834,20 @@ fn idling_sends_a_keep_alive_every_s3_client() {
     assert_eq!(s.sent_count, 3);
 }
 
+/// Asking whether the connection was replaced sends a `TesterPresent` that fell due on
+/// the way, so a caller polling it between waits of its own keeps the session.
+#[test]
+fn asking_after_a_replacement_sends_a_keep_alive_that_fell_due() {
+    let mut t = patient(&[ENTER[0], ENTER[1], Step::At(2_010), Step::At(2_010)]);
+    let _ = block_on(
+        t.diagnostic_session_control(ECU, DiagnosticSessionType::ExtendedDiagnosticSession),
+    );
+    assert_eq!(block_on(t.connection_replaced(ECU)), Ok(Replaced::No));
+    let s = t.transport();
+    assert_eq!(s.addressed(1), (Some(to(ECU)), KEEP_ALIVE));
+    assert_eq!(s.sent(1).map(|x| x.at), Some(2_010));
+}
+
 /// No `TesterPresent` while a request awaits its response, even a
 /// silent one outlasting `tS3_Client` (2 040 ms against 2 000): the request stops the
 /// keep-alive (``UDSS_LLR_0160``) and its answer restarts it (``UDSS_LLR_0161``).
@@ -2706,4 +2720,19 @@ fn a_reset_answered_past_is_no_longer_foreseen() {
     speed(block_on(t.read_data_by_identifier(ECU, &[Did::Speed])));
     assert_eq!(block_on(t.connection_replaced(ECU)), Ok(Replaced::Other));
     assert!(t.transport().finished());
+}
+
+/// An ask takes what the transport held when it was made: a server that keeps sending
+/// does not hold it past the moment the transport's clock moves on.
+#[test]
+fn an_ask_ends_once_the_clock_passes_it() {
+    let mut t = tester(&[
+        Step::Conf(to(ECU), SResult::Ok),
+        Step::Ind(from(ECU), SPEED),
+        Step::IndAt(1, from(ECU), SPEED),
+        Step::IndAt(2, from(ECU), SPEED),
+    ]);
+    speed(block_on(t.read_data_by_identifier(ECU, &[Did::Speed])));
+    assert_eq!(block_on(t.connection_replaced(ECU)), Ok(Replaced::No));
+    assert!(!t.transport().finished());
 }

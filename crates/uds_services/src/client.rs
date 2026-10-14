@@ -1541,8 +1541,9 @@ impl<
     /// [`Replaced::Prescribed`], once.
     ///
     /// This first settles what an earlier call left, waiting out a functional window a
-    /// dropped call left open, then takes every event the transport already holds, until
-    /// it reports the current time as its deadline, and answers. Asking clears the report.
+    /// dropped call left open, then takes every event the transport holds at the asking,
+    /// until it reports the asking's time as its deadline or its clock passes it, sends a
+    /// keep-alive that fell due, and answers. Asking clears the report.
     /// [`Replaced::No`] where no channel to `target` is open, and where the channel was
     /// withdrawn for another server before the asking.
     ///
@@ -1552,7 +1553,8 @@ impl<
     ///
     /// # Errors
     ///
-    /// [`ClientError::Transport`] where the transport failed.
+    /// [`ClientError::Transport`] where the transport failed, a keep-alive's sending
+    /// included; the report is then kept for the next asking.
     ///
     /// # Cancel safety
     ///
@@ -1564,8 +1566,11 @@ impl<
     ) -> Result<Replaced, ClientError<T::Error>> {
         self.retire();
         self.drain_window().await?;
-        let now = self.transport.now();
-        while !self.pump(None, Some(now)).await?.quiet {}
+        let asked = self.transport.now();
+        while !self.pump(None, Some(asked)).await?.quiet
+            && asked.has_reached(self.transport.now())
+        {}
+        self.send_owed().await.result?;
         Ok(self.book.take_replaced(target))
     }
 
