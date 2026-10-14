@@ -85,6 +85,21 @@ now <https://github.com/luminartech/uds_stack>.
   `from_request_seed`, which accepts Table 42's odd values `0x01`–`0x41`, and by
   `request_seed` and `send_key`. A decoded even sub-function `n` is
   `SendKey(level n - 1)`. With `serde`, a level is its `requestSeed` byte.
+- **Breaking:** `NegativeResponseCode` is ISO 14229-1:2020 Table A.1 and no longer
+  `#[non_exhaustive]`: the table is fixed, so a match over it is complete. It gains
+  `0x25`, `0x26`, `0x38`–`0x3A`, `0x50`–`0x5D` and `0x94`, which used to classify as
+  reserved; `ExtendedDataLinkSecurityReserved` is gone (`0x3B`–`0x4F` are
+  `IsoSaeReserved`), and `ReservedForSpecificConditionsNotMet` is split into Table A.1's
+  `ReservedForSpecificConditionsNotCorrect` (`0x95`–`0xEF`) and
+  `VehicleManufacturerSpecificConditionsNotCorrect` (`0xF0`–`0xFE`).
+- **Breaking:** a variant that carries a wire integer is built only by converting the
+  integer, so it never holds one a named variant has and `==` agrees with the wire.
+  That covers `NegativeResponseCode`'s three, and those of `UdsIdentifier`,
+  `UdsRoutineIdentifier`, `DtcSnapshotRecordNumber` and `DtcExtDataRecordNumber`.
+  Migrate: build one with `From` (or `new`), match it as `Variant { .. }` and read the
+  integer with `value()` or `From`. With `serde`, each of these types is its integer
+  rather than a variant name, and `DtcSnapshotRecordNumber` and `DtcExtDataRecordNumber`
+  gain `From<u8>`.
 - **Breaking:** `RequestDownloadRequest` and `RequestUploadRequest` carry
   `memoryAddress` and `memorySize` up to eight bytes each, and `memory_size` is a
   `u64`. `AddressAndLengthFormatIdentifier` accepts each nibble from 1 to 8; it used

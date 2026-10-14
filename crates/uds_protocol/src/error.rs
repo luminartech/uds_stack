@@ -369,8 +369,8 @@ mod nrc_mapping_tests {
                 !matches!(
                     nrc,
                     NegativeResponseCode::IsoSaeReserved(_)
-                        | NegativeResponseCode::ExtendedDataLinkSecurityReserved(_)
-                        | NegativeResponseCode::ReservedForSpecificConditionsNotMet(_)
+                        | NegativeResponseCode::ReservedForSpecificConditionsNotCorrect(_)
+                        | NegativeResponseCode::VehicleManufacturerSpecificConditionsNotCorrect(_)
                 ),
                 "{why}: mapped to a reserved NRC ({nrc:?})"
             );

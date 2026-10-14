@@ -218,6 +218,38 @@ fn serde_cannot_build_a_sub_function_that_sets_the_suppress_bit() {
     }
 }
 
+/// A value that carries a wire integer is built only from that integer, so it never holds
+/// one a named variant has, and `==` agrees with the wire. Through `serde` too: a
+/// `{"IsoSaeReserved":49}` would have been a `NegativeResponseCode` unequal to
+/// `RequestOutOfRange` that encoded as `0x31`.
+#[cfg(feature = "serde")]
+#[test]
+fn serde_builds_a_wire_valued_type_only_from_its_integer() {
+    use uds_protocol::{
+        DtcExtDataRecordNumber, DtcSnapshotRecordNumber, NegativeResponseCode,
+        UdsIdentifier, UdsRoutineIdentifier,
+    };
+
+    assert!(
+        serde_json::from_str::<NegativeResponseCode>(r#"{"IsoSaeReserved":49}"#).is_err()
+    );
+    for byte in 0..=u8::MAX {
+        let json = byte.to_string();
+        let nrc: NegativeResponseCode = serde_json::from_str(&json).unwrap();
+        assert_eq!(nrc, NegativeResponseCode::from(byte));
+        assert_eq!(serde_json::to_string(&nrc).unwrap(), json);
+        let ext: DtcExtDataRecordNumber = serde_json::from_str(&json).unwrap();
+        assert_eq!(ext, DtcExtDataRecordNumber::new(byte));
+        let snapshot: DtcSnapshotRecordNumber = serde_json::from_str(&json).unwrap();
+        assert_eq!(snapshot, DtcSnapshotRecordNumber::new(byte));
+    }
+    assert!(serde_json::from_str::<UdsIdentifier>(r#"{"IsoSaeReserved":61840}"#).is_err());
+    let vin: UdsIdentifier = serde_json::from_str("61840").unwrap();
+    assert_eq!(vin, UdsIdentifier::from(0xF190));
+    let erase: UdsRoutineIdentifier = serde_json::from_str("65280").unwrap();
+    assert_eq!(erase, UdsRoutineIdentifier::EraseMemory);
+}
+
 #[test]
 fn a_reserved_variant_is_nameable_and_destructurable_downstream() {
     // The seal made both `IsoSaeReserved(b)` and `IsoSaeReserved(..)` E0603 out here, so a

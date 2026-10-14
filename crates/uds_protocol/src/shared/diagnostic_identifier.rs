@@ -5,53 +5,67 @@
 /// The identifiers listed here are defined and should be implemented by the vehicle
 /// manufacturer/system supplier.
 #[cfg_attr(feature = "serde", derive(serde::Deserialize, serde::Serialize))]
-#[cfg_attr(feature = "utoipa", derive(utoipa::ToSchema))]
+#[cfg_attr(feature = "serde", serde(from = "u16", into = "u16"))]
 #[cfg_attr(feature = "clap", derive(clap::ValueEnum))]
 #[derive(Clone, Copy, Eq, PartialEq)]
 #[non_exhaustive]
 pub enum UdsIdentifier {
     /// DID reserved by ISO/SAE (ranges `0x0000–0x00FF`, `0xFF02–0xFFFF`).
     #[cfg_attr(feature = "clap", clap(skip))]
+    #[non_exhaustive]
     IsoSaeReserved(u16),
     /// Vehicle-manufacturer–specific DID (multiple ranges, see ISO 14229-1 Table C.1).
     #[cfg_attr(feature = "clap", clap(skip))]
+    #[non_exhaustive]
     VehicleManufacturerSpecific(u16),
     /// System-supplier–specific DID (`0xFD00–0xFEFF`).
     #[cfg_attr(feature = "clap", clap(skip))]
+    #[non_exhaustive]
     SystemSupplierSpecific(u16),
     /// Reserved for legislative use (multiple ranges per ISO 14229-1 Table C.1).
     #[cfg_attr(feature = "clap", clap(skip))]
+    #[non_exhaustive]
     ReservedForLegislativeUse(u16),
     /// Network configuration data for tractor-trailer application (`0xF000–0xF00F`).
     #[cfg_attr(feature = "clap", clap(skip))]
+    #[non_exhaustive]
     NetworkConfigDataForTractorTrailer(u16),
     /// Identification option vehicle-manufacturer–specific (`0xF100–0xF17F`,
     /// `0xF1A0–0xF1EF`).
     #[cfg_attr(feature = "clap", clap(skip))]
+    #[non_exhaustive]
     IdentificationOptionVehicleManufacturerSpecific(u16),
     /// Identification option system-supplier–specific (`0xF1F0–0xF1FF`).
     #[cfg_attr(feature = "clap", clap(skip))]
+    #[non_exhaustive]
     IdentificationOptionSystemSupplierSpecific(u16),
     /// Periodic data identifier (`0xF200–0xF2FF`).
     #[cfg_attr(feature = "clap", clap(skip))]
+    #[non_exhaustive]
     PeriodicDataIdentifier(u16),
     /// Dynamically defined data identifier (`0xF300–0xF3FF`).
     #[cfg_attr(feature = "clap", clap(skip))]
+    #[non_exhaustive]
     DynamicallyDefineDataIdentifier(u16),
     /// OBD data identifier (`0xF400–0xF5FF`, `0xF700–0xF7FF`).
     #[cfg_attr(feature = "clap", clap(skip))]
+    #[non_exhaustive]
     ObdDataIdentifier(u16),
     /// OBD monitor data identifier (`0xF600–0xF6FF`).
     #[cfg_attr(feature = "clap", clap(skip))]
+    #[non_exhaustive]
     ObdMonitorDataIdentifier(u16),
     /// OBD info-type data identifier (`0xF800–0xF8FF`).
     #[cfg_attr(feature = "clap", clap(skip))]
+    #[non_exhaustive]
     ObdInfoTypeDataIdentifier(u16),
     /// Tachograph data identifier (`0xF900–0xF9FF`).
     #[cfg_attr(feature = "clap", clap(skip))]
+    #[non_exhaustive]
     TachographDataIdentifier(u16),
     /// Airbag deployment data identifier (`0xFA00–0xFA0F`).
     #[cfg_attr(feature = "clap", clap(skip))]
+    #[non_exhaustive]
     AirbagDeploymentDataIdentifier(u16),
     /// Number of EDR devices (`0xFA10`).
     NumberOfEdrDevices,
@@ -61,9 +75,11 @@ pub enum UdsIdentifier {
     EdrDeviceAddressInformation,
     /// EDR entries (`0xFA13–0xFA18`).
     #[cfg_attr(feature = "clap", clap(skip))]
+    #[non_exhaustive]
     EdrEntries(u16),
     /// Safety system data identifier (`0xFA19–0xFAFF`).
     #[cfg_attr(feature = "clap", clap(skip))]
+    #[non_exhaustive]
     SafetySystemDataIdentifier(u16),
     /// Boot software identification (`0xF180`).
     BootSoftwareIdentification,
@@ -297,24 +313,28 @@ impl core::fmt::Debug for UdsIdentifier {
 /// Some services will be defined by the Vehicle manufacturer or a system supplier,
 /// and they must be implemented by the tester system.
 #[cfg_attr(feature = "serde", derive(serde::Deserialize, serde::Serialize))]
-#[cfg_attr(feature = "utoipa", derive(utoipa::ToSchema))]
+#[cfg_attr(feature = "serde", serde(from = "u16", into = "u16"))]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[non_exhaustive]
 pub enum UdsRoutineIdentifier {
     /// ISO/SAE reserved routine identifier (`0x0000–0x00FF`, `0xE300–0xEFFF`,
     /// `0xFF02–0xFFFF`).
+    #[non_exhaustive]
     IsoSaeReserved(u16),
     /// Represent Tachograph test result values
     ///
     /// 0x0100-0x01FF
+    #[non_exhaustive]
     TachographTestIds(u16),
 
     /// Vehicle Manufacturer Specific Routine Identifiers
     ///
     /// 0x0200-0xDFFF
+    #[non_exhaustive]
     VehicleManufacturerSpecific(u16),
 
     /// 0xE000-0xE1FF
+    #[non_exhaustive]
     ObdTestIds(u16),
 
     /// Execute Service Programming Loop (SPL)
@@ -328,11 +348,13 @@ pub enum UdsRoutineIdentifier {
     DeployLoopRoutineId,
 
     /// 0xE202-0xE2FF
+    #[non_exhaustive]
     SafetySystemRoutineId(u16),
 
     /// System Supplier Specific Routine Identifiers
     ///
     /// 0xF000-0xFEFF
+    #[non_exhaustive]
     SystemSupplierSpecific(u16),
 
     /// Erase Memory

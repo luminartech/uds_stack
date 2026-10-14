@@ -1,8 +1,10 @@
-//! `OpenAPI` schemas for the types that serialize as a single protocol byte.
+//! `OpenAPI` schemas for the types that serialize as a single protocol byte or 16-bit
+//! identifier.
 //!
-//! Several public types are one wire byte with a range invariant. Their `serde` impls go
-//! through `u8` (via `serde(try_from = "u8", into = "u8")` or `serde(from = "u8", into =
-//! "u8")`) so that deserializing cannot build a value their constructor would reject. A
+//! Several public types are one wire integer with a range invariant. Their `serde` impls
+//! go through it (via `serde(try_from = "u8", into = "u8")`, `serde(from = "u16", into =
+//! "u16")` and the like) so that deserializing cannot build a value their constructor
+//! would reject. A
 //! derived `ToSchema` would still describe the Rust shape — an object with nibble
 //! properties, or a `oneOf` over variant names — and so disagree with what `serde` actually
 //! reads and writes. These impls keep the two in step.
@@ -13,7 +15,7 @@
 //! rejection. The whole reason these types exist is that their bytes have ranges; the
 //! schema is the one place that has to say so.
 
-/// Implement `PartialSchema`/`ToSchema` for a type whose serialized form is a single `u8`.
+/// Implement `PartialSchema`/`ToSchema` for a type whose serialized form is one integer.
 ///
 /// `max` is the largest byte the type's own `serde` entry point accepts, so the schema and
 /// the deserializer cannot drift; `description` is the published schema description and
@@ -79,6 +81,13 @@ byte_schema!(
                       Bit 7 is the suppressPosRspMsgIndicationBit and is carried separately, so \
                       a value with it set is rejected."
     },
+    DtcExtDataRecordNumber {
+        max: 0xFFu8,
+        description: "A DTCExtDataRecordNumber byte (ISO 14229-1:2020 Table D.16). Every byte \
+                      classifies: 0x01 to 0x8F vehicle-manufacturer specific, 0x90 to 0x9F \
+                      regulated emissions OBD, 0xA0 to 0xEF regulated, 0xFE all regulated \
+                      emissions OBD, 0xFF all, and the rest ISOSAEReserved."
+    },
     DtcFormatIdentifier {
         max: 0xFFu8,
         description: "A DTCFormatIdentifier byte (ISO 14229-1:2020 Table 331). 0x00 to 0x04 are \
@@ -93,6 +102,12 @@ byte_schema!(
                       reserved and rejected. The set is not contiguous, so the minimum and \
                       maximum here are looser than the real constraint."
     },
+    DtcSnapshotRecordNumber {
+        max: 0xFFu8,
+        description: "A DTCSnapshotRecordNumber byte (ISO 14229-1:2020 Table 318). Every \
+                      byte classifies: 0x00 and 0xF0 are reserved, 0xFF requests all \
+                      records, and the rest name one record."
+    },
     FileOperationMode {
         max: 0xFFu8,
         description: "A RequestFileTransfer modeOfOperation byte (ISO 14229-1:2020 Table 485). \
@@ -104,6 +119,13 @@ byte_schema!(
         description: "A functionalGroupIdentifier byte (ISO 14229-1:2020 Annex D). Every byte \
                       classifies: undefined values become ISOSAEReserved rather than being \
                       rejected."
+    },
+    NegativeResponseCode {
+        max: 0xFFu8,
+        description: "A negative response code byte (ISO 14229-1:2020 Table A.1). Every byte \
+                      classifies: one the table does not name is ISOSAEReserved, \
+                      reservedForSpecificConditionsNotCorrect (0x95 to 0xEF) or \
+                      vehicleManufacturerSpecificConditionsNotCorrect (0xF0 to 0xFE)."
     },
     ResetType {
         max: 0x7Fu8,
@@ -132,5 +154,15 @@ byte_schema!(
                       the network the request arrived on, and 0x01 to 0x0E a specific subnet. It \
                       occupies the high nibble of the communicationType byte, so anything wider \
                       than a nibble is rejected."
+    },
+    UdsIdentifier {
+        max: 0xFFFFu16,
+        description: "A dataIdentifier (ISO 14229-1:2020 Annex C Table C.1). Every value \
+                      classifies into a named identifier or the range it falls in."
+    },
+    UdsRoutineIdentifier {
+        max: 0xFFFFu16,
+        description: "A routineIdentifier (ISO 14229-1:2020 Annex F Table F.1). Every value \
+                      classifies into a named routine or the range it falls in."
     },
 );

@@ -7,13 +7,15 @@ use automotive_wire_codec::write_u8;
 
 /// Identifies which DTC snapshot record is being requested or reported.
 #[cfg_attr(feature = "serde", derive(serde::Deserialize, serde::Serialize))]
-#[cfg_attr(feature = "utoipa", derive(utoipa::ToSchema))]
+#[cfg_attr(feature = "serde", serde(from = "u8", into = "u8"))]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[non_exhaustive]
 pub enum DtcSnapshotRecordNumber {
     /// Reserved for Legislative purposes
+    #[non_exhaustive]
     Reserved(u8),
     /// Indicates the number of the specific `DTCSnapshot` data record requested
+    #[non_exhaustive]
     Number(u8),
     /// Requests that the server report all `DTCSnapshot` data records at once
     All,
@@ -40,6 +42,18 @@ impl DtcSnapshotRecordNumber {
             DtcSnapshotRecordNumber::Number(value) => *value,
             DtcSnapshotRecordNumber::All => 0xFF,
         }
+    }
+}
+
+impl From<u8> for DtcSnapshotRecordNumber {
+    fn from(value: u8) -> Self {
+        Self::new(value)
+    }
+}
+
+impl From<DtcSnapshotRecordNumber> for u8 {
+    fn from(value: DtcSnapshotRecordNumber) -> Self {
+        value.value()
     }
 }
 
