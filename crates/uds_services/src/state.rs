@@ -63,9 +63,9 @@ pub(crate) struct Transfer {
     pub(crate) gated_by: Option<SecurityLevel>,
     /// `memorySize`, where a `dataFormatIdentifier` of `0x00` makes it a count of the
     /// bytes transferred (Table 441).
-    pub(crate) size: Option<u32>,
+    pub(crate) size: Option<u64>,
     /// Data bytes accepted, counted where `size` is known.
-    pub(crate) received: u32,
+    pub(crate) received: u64,
     /// The `blockSequenceCounter` expected next (Table 451).
     pub(crate) next: u8,
     /// Whether a block has been accepted, so that a repeat is possible.
@@ -77,7 +77,7 @@ impl Transfer {
     pub(crate) const fn new(
         sessions: Sessions,
         gated_by: Option<SecurityLevel>,
-        size: Option<u32>,
+        size: Option<u64>,
     ) -> Self {
         Self {
             sessions,
@@ -107,16 +107,15 @@ impl Transfer {
     /// Whether `len` more bytes would pass a known `memorySize` (Figure 33's 0x71 node).
     pub(crate) fn would_exceed(&self, len: usize) -> bool {
         let len = u64::try_from(len).unwrap_or(u64::MAX);
-        self.size.is_some_and(|size| {
-            u64::from(self.received).saturating_add(len) > u64::from(size)
-        })
+        self.size
+            .is_some_and(|size| self.received.saturating_add(len) > size)
     }
 
     /// Accept a block of `len` data bytes: count them where `size` is known and advance
     /// the counter, `0xFF` rolling to `0x00`.
     pub(crate) fn accept(&mut self, len: usize) {
         if self.size.is_some() {
-            let len = u32::try_from(len).unwrap_or(u32::MAX);
+            let len = u64::try_from(len).unwrap_or(u64::MAX);
             self.received = self.received.saturating_add(len);
         }
         self.next = self.next.wrapping_add(1);

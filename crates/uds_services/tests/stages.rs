@@ -156,7 +156,7 @@ struct Ecu {
     /// The `DTCSettingType` `ControlDtcSetting` last applied.
     dtc_setting: Option<DtcSettingType>,
     /// The transfer `DataTransfer::begin` last began.
-    begun: Option<(u64, u32)>,
+    begun: Option<(u64, u64)>,
     /// Each block `DataTransfer::block` accepted.
     blocks: Vec<Vec<u8>>,
     /// What `DataTransfer::block` writes after `76 <counter>`.
@@ -2444,7 +2444,8 @@ fn request_download_shorter_than_five_bytes_is_0x13() {
 
 /// Figure 31 — an unsupported `dataFormatIdentifier` or an invalid
 /// `addressAndLengthFormatIdentifier` is 0x31 before the full length is checked, so a
-/// wrong length does not turn it into 0x13.
+/// wrong length does not turn it into 0x13. A zero width is invalid (Annex H Table H.1),
+/// and so is one wider than the eight bytes `TransferRequest` carries.
 #[test]
 fn request_download_an_invalid_format_is_0x31_before_the_full_length() {
     let mut ecu = Ecu::default();
@@ -2452,6 +2453,8 @@ fn request_download_an_invalid_format_is_0x31_before_the_full_length() {
     for request in [
         &[0x34, 0x77, 0x22, 0x20, 0x00][..],
         &[0x34, 0x00, 0x60, 0x20, 0x00][..],
+        &[0x34, 0x00, 0x19, 0x20, 0x00][..],
+        &[0x34, 0x00, 0x91, 0x20, 0x00][..],
         &[0x34, 0x77, 0x22, 0x20, 0x00, 0x00, 0x18, 0xFF][..],
     ] {
         assert_eq!(

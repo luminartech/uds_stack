@@ -113,6 +113,11 @@ lockstep with the rest of the `uds_stack` workspace (`uds_protocol`, `uds_sessio
 
 ### Changed
 
+- **Breaking:** `TransferRequest`'s `size` and `Client::request_download`'s `size` are
+  `u64`, and a request may declare up to eight bytes each of address and size. A wider
+  declaration is answered `requestOutOfRange` (0x31) before any handler is asked. A
+  client's or a `DataTransfer` server's request buffer holds the 19-byte widest
+  `RequestDownload`, up from 12, and a client's transport must carry it.
 - **Breaking:** `DtcReportKind` is `#[non_exhaustive]` and gains `SnapshotRecords` and
   `ExtDataRecords`, sub-functions `0x04` and `0x06`, bounded in record bytes, so
   `DtcReportKind::record_len` returns `None` for them and `Some` for the rest. A client

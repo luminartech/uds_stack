@@ -85,6 +85,15 @@ now <https://github.com/luminartech/uds_stack>.
   `from_request_seed`, which accepts Table 42's odd values `0x01`–`0x41`, and by
   `request_seed` and `send_key`. A decoded even sub-function `n` is
   `SendKey(level n - 1)`. With `serde`, a level is its `requestSeed` byte.
+- **Breaking:** `RequestDownloadRequest` and `RequestUploadRequest` carry
+  `memoryAddress` and `memorySize` up to eight bytes each, and `memory_size` is a
+  `u64`. `AddressAndLengthFormatIdentifier` accepts each nibble from 1 to 8; it used
+  to stop at 4 and 5, reading Annex H Table H.1, which is informative and marks only
+  a zero nibble "not applicable". A wider nibble is still
+  `Error::InvalidAddressAndLengthFormatIdentifier`, NRC 0x31. `new` derives the
+  narrowest widths and now returns the request rather than a `Result`, since any
+  `u64` fits; `Error::InvalidMemorySize` carries a `u64`. Migrate: drop the `?` or
+  `unwrap` after `new`, and widen whatever holds a size.
 - `SecurityAccessResponse` follows Table 44: a `requestSeed` echo without a seed is
   `Error::InsufficientData`, and a `sendKey` echo followed by bytes is
   `Error::IncorrectMessageLengthOrInvalidFormat`. Both used to decode, the second

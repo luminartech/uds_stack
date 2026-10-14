@@ -46,13 +46,13 @@ macro_rules! byte_schema {
 
 byte_schema!(
     AddressAndLengthFormatIdentifier {
-        max: 0x45u8,
+        max: 0x88u8,
         description: "An addressAndLengthFormatIdentifier byte: memorySize width in the high \
-                      nibble (1 to 4 bytes), memoryAddress width in the low nibble (1 to 5). So \
-                      0x44 declares four bytes each. ISO 14229-1:2020 Annex H Table H.1 runs \
-                      from 0x11 to 0x45 and marks a zero nibble, or a size above 4, \
-                      not applicable. The accepted set is not contiguous: 0x15, 0x25, 0x35 and \
-                      0x40 to 0x43 fall inside these bounds but are rejected."
+                      nibble, memoryAddress width in the low nibble, each 1 to 8 bytes. So \
+                      0x44 declares four bytes each. ISO 14229-1:2020 Annex H Table H.1 marks \
+                      a zero nibble not applicable, and a width above 8 does not fit a 64-bit \
+                      value. The accepted set is not contiguous: a byte with either nibble 0 \
+                      or above 8, such as 0x40 or 0x19, is rejected."
     },
     CommunicationControlType {
         max: 0x7Fu8,

@@ -14,9 +14,9 @@ use uds_protocol::{DataFormatIdentifier, FileOperationMode, NegativeResponseCode
 /// Address and size arrive decoded. Their wire widths are declared by the
 /// `addressAndLengthFormatIdentifier`, which `uds_protocol` reads to size the fields —
 /// so the widths are a decoding concern that is already settled by the time a handler is
-/// called, and the identifier itself never reaches one. The two are [`u64`] and [`u32`]
-/// after ISO 14229-1:2020 Table H.1, which caps `memoryAddress` at five bytes and
-/// `memorySize` at four; being different types, they also cannot be transposed.
+/// called, and the identifier itself never reaches one. Each is up to eight bytes wide,
+/// so each is a [`u64`]; a request declaring a wider one is answered `requestOutOfRange`
+/// (0x31) before any handler is asked.
 ///
 /// Not [`Hash`]: [`FileOperationMode`] is not, and a transfer request is a thing to match
 /// on rather than a key to look one up by.
@@ -30,7 +30,7 @@ pub enum TransferRequest<'a> {
         /// `memoryAddress`, decoded.
         address: u64,
         /// `memorySize`, decoded.
-        size: u32,
+        size: u64,
     },
     /// `RequestUpload` (0x35) — the server sends data to the client.
     Upload {
@@ -39,7 +39,7 @@ pub enum TransferRequest<'a> {
         /// `memoryAddress`, decoded.
         address: u64,
         /// `memorySize`, decoded.
-        size: u32,
+        size: u64,
     },
     /// `RequestFileTransfer` (0x38).
     File {

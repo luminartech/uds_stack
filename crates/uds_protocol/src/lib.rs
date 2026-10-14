@@ -303,7 +303,7 @@ mod no_std_api_tests {
         // argument to `RequestDownloadRequest::new` and appears in `RequestFileTransfer`
         // request/response variants, so without a public path those are unconstructible.
         let dfi = DataFormatIdentifier::new(0x00, 0x00).unwrap();
-        let req = RequestDownloadRequest::new(dfi, 0x1234, 0x10).unwrap();
+        let req = RequestDownloadRequest::new(dfi, 0x1234, 0x10);
         let mut buf = [0u8; 16];
         let written = req.encode_to_slice(&mut buf).unwrap();
         assert_eq!(written, req.encoded_size().unwrap());
@@ -411,15 +411,9 @@ mod no_std_api_tests {
     #[test]
     fn transfer_setup_requests_are_const_constructible() {
         const DOWNLOAD: RequestDownloadRequest =
-            match RequestDownloadRequest::new(DataFormatIdentifier::NONE, 0x1234, 0x10) {
-                Ok(req) => req,
-                Err(_) => panic!("address fits in 5 bytes"),
-            };
+            RequestDownloadRequest::new(DataFormatIdentifier::NONE, 0x1234, 0x10);
         const UPLOAD: RequestUploadRequest =
-            match RequestUploadRequest::new(DataFormatIdentifier::NONE, 0x1234, 0x10) {
-                Ok(req) => req,
-                Err(_) => panic!("address fits in 5 bytes"),
-            };
+            RequestUploadRequest::new(DataFormatIdentifier::NONE, 0x1234, 0x10);
 
         assert_eq!(DOWNLOAD.memory_address(), 0x1234);
         assert_eq!(UPLOAD.memory_size(), 0x10);

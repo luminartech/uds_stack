@@ -464,10 +464,9 @@ mod serde_cannot_bypass_validation {
             )
             .is_err()
         );
-        // A width outside Table H.1 is rejected too. The widths arrive as one
-        // addressAndLengthFormatIdentifier byte, so a width outside Table H.1 is rejected
-        // by that type before the request is built: 0x90 declares a 9-byte memorySize and a
-        // 0-byte memoryAddress, both "not applicable".
+        // A width the format identifier refuses is rejected too, by that type before the
+        // request is built: 0x90 declares a 9-byte memorySize, wider than a u64, and a
+        // 0-byte memoryAddress, which Annex H Table H.1 marks "not applicable".
         assert!(
             serde_json::from_str::<RequestDownloadRequest>(
                 r#"{"data_format_identifier":0,"address_and_length_format_identifier":144,"memory_address":16,"memory_size":16}"#
@@ -508,7 +507,7 @@ mod serde_cannot_bypass_validation {
         // The type is now public and serializes as the single ISO-named byte it is on the
         // wire, so the shape matches Table 441 instead of paraphrasing it.
         let download =
-            RequestDownloadRequest::new(DataFormatIdentifier::NONE, 0x1234, 0x10).unwrap();
+            RequestDownloadRequest::new(DataFormatIdentifier::NONE, 0x1234, 0x10);
         let json = serde_json::to_string(&download).unwrap();
         assert_eq!(
             json,

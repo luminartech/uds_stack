@@ -1472,13 +1472,12 @@ impl<
     /// * `target` - the server's address.
     /// * `data_format` - compression and encryption, [`DataFormatIdentifier::NONE`] for
     ///   neither.
-    /// * `address` - `memoryAddress`, up to five bytes wide.
+    /// * `address` - `memoryAddress`.
     /// * `size` - `memorySize`.
     ///
     /// # Errors
     ///
-    /// [`ClientError::Request`] where `address` is wider than five bytes; otherwise as
-    /// [`Self::read_data_by_identifier`]'s. A block length that is empty or wider than
+    /// As [`Self::read_data_by_identifier`]'s. A block length that is empty or wider than
     /// eight bytes is [`MalformedResponse::Decode`].
     ///
     /// # Cancel safety
@@ -1489,9 +1488,9 @@ impl<
         target: Address,
         data_format: DataFormatIdentifier,
         address: u64,
-        size: u32,
+        size: u64,
     ) -> Result<Response<u64>, ClientError<T::Error>> {
-        let download = RequestDownloadRequest::new(data_format, address, size).ok();
+        let download = Some(RequestDownloadRequest::new(data_format, address, size));
         self.download(target, download).await
     }
 
@@ -1523,7 +1522,7 @@ impl<
         data_format: DataFormatIdentifier,
         format: AddressAndLengthFormatIdentifier,
         address: u64,
-        size: u32,
+        size: u64,
     ) -> Result<Response<u64>, ClientError<T::Error>> {
         let download =
             RequestDownloadRequest::new_with_alfid(data_format, format, address, size).ok();

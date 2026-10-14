@@ -96,8 +96,8 @@ pub const fn bounded_in_bytes(mut reports: &[crate::DtcReportKind]) -> bool {
 /// The request bound of a client: the widest request among its services.
 ///
 /// `#[doc(hidden)]`: macro plumbing, as [`max_of`] is. The fixed-size requests' widest
-/// is `RequestDownload` at 12: the identifier, two format bytes, a five-byte address
-/// and a four-byte size, the widest the format identifier admits.
+/// is `RequestDownload` at 19: the identifier, two format bytes, and an eight-byte
+/// address and size, the widest the format identifier admits.
 #[doc(hidden)]
 #[must_use]
 pub const fn client_request_bound(
@@ -111,7 +111,7 @@ pub const fn client_request_bound(
         4_usize.saturating_add(limits.max_option_len),
         2_usize.saturating_add(limits.max_block_len),
         1_usize.saturating_add(limits.max_option_len),
-        12,
+        19,
     ])
 }
 
@@ -192,7 +192,7 @@ pub const fn assert_client_fits(
         "the transport's MAX_PDU cannot carry a TransferData block of max_block_len"
     );
     assert!(
-        12 <= max_pdu,
+        19 <= max_pdu,
         "the transport's MAX_PDU cannot carry the widest RequestDownload request"
     );
 }
@@ -257,12 +257,12 @@ macro_rules! __uds_sids {
 #[macro_export]
 #[rustfmt::skip]
 macro_rules! __uds_request_bound {
-    // `RequestDownload` is at most 12 bytes: SID, DFI, ALFID, a 5-byte address and a
-    // 4-byte size (Table H.1).
+    // `RequestDownload` is at most 19 bytes: SID, DFI, ALFID, an 8-byte address and an
+    // 8-byte size, the widest `uds_protocol` decodes.
     ($ty:ty, DataTransfer) => {
         $crate::assembly::max_of(&[
             2 + <$ty as $crate::DataTransfer>::MAX_BLOCK_LENGTH,
-            12,
+            19,
         ])
     };
     ($ty:ty, ReadDataByIdentifier) => {
@@ -1528,7 +1528,7 @@ mod tests {
         const RESPONSE: usize = client_response_bound(LIMITS, 17, 1);
         assert_eq!(REQUEST, 2 + 64);
         assert_eq!(RESPONSE, 2 + 64);
-        assert_eq!(client_request_bound(LEAST, 1), 12);
+        assert_eq!(client_request_bound(LEAST, 1), 19);
         assert_eq!(client_response_bound(LEAST, 1, 1), 17);
     }
 
@@ -1536,7 +1536,7 @@ mod tests {
     /// nothing beyond them.
     #[test]
     fn the_default_limits_fold_to_the_fixed_floors() {
-        assert_eq!(client_request_bound(ClientLimits::new(), 1), 12);
+        assert_eq!(client_request_bound(ClientLimits::new(), 1), 19);
         assert_eq!(client_response_bound(ClientLimits::new(), 1, 1), 17);
     }
 

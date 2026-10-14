@@ -2424,15 +2424,22 @@ fn a_download_is_requested_and_the_block_length_read() {
     );
 }
 
-/// An address wider than five bytes cannot be carried and sends nothing.
+/// The widest address and size, eight bytes each, fit the request buffer and go out
+/// under `addressAndLengthFormatIdentifier` `0x88`.
 #[test]
-fn a_download_of_an_unaddressable_memory_sends_nothing() {
-    let mut t = tester(&[]);
+fn a_download_of_the_widest_address_and_size_is_sent() {
+    let mut t = tester(&[
+        Step::Conf(to(ECU), SResult::Ok),
+        Step::Ind(from(ECU), &[0x74, 0x20, 0x04, 0x00]),
+    ]);
     assert_eq!(
-        block_on(t.request_download(ECU, DataFormatIdentifier::NONE, 0x0100_0000_0000, 1)),
-        Err(ClientError::Request)
+        block_on(t.request_download(ECU, DataFormatIdentifier::NONE, u64::MAX, u64::MAX)),
+        Ok(Response::Positive(0x0400))
     );
-    assert!(t.transport().finished());
+    let (to_ecu, sent) = t.transport().addressed(0);
+    assert_eq!(to_ecu, Some(to(ECU)));
+    assert_eq!(sent.get(..3), Some(&[0x34, 0x00, 0x88][..]));
+    assert_eq!(sent.get(3..), Some(&[0xFF; 16][..]));
 }
 
 /// ISO 14229-1:2020 15.2.2 — a caller-chosen `addressAndLengthFormatIdentifier` fixes
