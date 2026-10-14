@@ -111,6 +111,13 @@ byte_schema!(
                       suppressPosRspMsgIndicationBit and is carried separately, so a value with \
                       it set is rejected."
     },
+    SecurityAccessLevel {
+        max: 0x41u8,
+        description: "A security level, named by its requestSeed sub-function byte (ISO \
+                      14229-1:2020 Table 42): an odd value from 0x01 to 0x41. Its sendKey is \
+                      that value plus one. The accepted set is not contiguous: even values are \
+                      rejected."
+    },
     SecurityAccessType {
         max: 0x7Fu8,
         description: "A SecurityAccess sub-function byte, 0x00 to 0x7F. Odd values request a \

@@ -2093,6 +2093,21 @@ fn a_key_is_sent_on_the_next_sub_function() {
     );
 }
 
+/// ISO 14229-1:2020 Table 44: a `sendKey` response carries no seed, so bytes after the
+/// echo make it malformed rather than unlocking.
+#[test]
+fn a_key_response_carrying_a_seed_is_malformed() {
+    let mut t = tester(&[
+        Step::Conf(to(ECU), SResult::Ok),
+        Step::Ind(from(ECU), &[0x67, 0x02, 0x00]),
+    ]);
+    let unlocked = block_on(t.security_access_key(ECU, LEVEL_1, &[0xC9, 0xA9]));
+    assert!(
+        matches!(unlocked, Ok(Response::Malformed(MalformedResponse::Decode))),
+        "{unlocked:?}"
+    );
+}
+
 /// A routine's positive response echoes its sub-function and identifier; what
 /// follows is handed back whole, `routineInfo` first where the server sends one.
 #[test]

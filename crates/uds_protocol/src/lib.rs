@@ -316,10 +316,12 @@ mod no_std_api_tests {
             TransferDataRequest::new(1, &[0x01, 0x02, 0x03]);
         const _SEC: SecurityAccessRequest<'static> = SecurityAccessRequest::new(
             false,
-            SecurityAccessType::RequestSeed(match SecurityAccessLevel::new(0x01) {
-                Ok(level) => level,
-                Err(_) => panic!("0x01 is a valid security access level"),
-            }),
+            SecurityAccessType::RequestSeed(
+                match SecurityAccessLevel::from_request_seed(0x01) {
+                    Ok(level) => level,
+                    Err(_) => panic!("0x01 is a valid security access level"),
+                },
+            ),
             &[0xAA, 0xBB],
         );
     }

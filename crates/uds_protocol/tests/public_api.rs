@@ -360,13 +360,16 @@ mod serde_cannot_bypass_validation {
     };
 
     #[test]
-    fn security_access_level_rejects_a_value_that_collides_with_sprmib() {
-        // A level must fit in 0x00..=0x7F, because bit 7 of the sub-function byte is
-        // SPRMIB. Deserializing 0xFF produced a level that encoded to a byte which decoded
-        // back as a *different* level with suppression set — silent semantic corruption.
-        assert!(serde_json::from_str::<SecurityAccessLevel>("255").is_err());
-        let level: SecurityAccessLevel = serde_json::from_str("127").unwrap();
-        assert_eq!(level.value(), 0x7F);
+    fn security_access_level_is_only_a_request_seed() {
+        // A level is the `requestSeed` byte of its pair, so serde admits exactly what
+        // `from_request_seed` does: an even byte would be a key, and one with bit 7 set
+        // would collide with SPRMIB.
+        for rejected in ["2", "67", "127", "255"] {
+            assert!(serde_json::from_str::<SecurityAccessLevel>(rejected).is_err());
+        }
+        let level: SecurityAccessLevel = serde_json::from_str("65").unwrap();
+        assert_eq!(level.request_seed(), 0x41);
+        assert_eq!(level.send_key(), 0x42);
     }
 
     #[test]
@@ -532,7 +535,8 @@ mod serde_cannot_bypass_validation {
             "6"
         );
         assert_eq!(
-            serde_json::to_string(&SecurityAccessLevel::new(0x11).unwrap()).unwrap(),
+            serde_json::to_string(&SecurityAccessLevel::from_request_seed(0x11).unwrap())
+                .unwrap(),
             "17"
         );
     }

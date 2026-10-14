@@ -77,6 +77,18 @@ now <https://github.com/luminartech/uds_stack>.
   encoded `11 81`, which reads back as suppressed. `ReadDtcInfoSubFunction` does not
   deserialize its `IsoSaeReserved` variant at all, as `RoutineControlSubFunction`
   does not; build it with `ReadDtcInfoSubFunction::try_reserved`.
+- **Breaking:** `SecurityAccessLevel` is a level's `requestSeed`/`sendKey` pair,
+  named by its `requestSeed` byte, rather than a raw sub-function byte.
+  `SecurityAccessType::SendKey(level)` encodes `level.send_key()`; it used to encode
+  whatever byte the level held, so a send-key built from level `0x01` went out as
+  `27 01`, a seed request. `SecurityAccessLevel::new` and `value` are replaced by
+  `from_request_seed`, which accepts Table 42's odd values `0x01`–`0x41`, and by
+  `request_seed` and `send_key`. A decoded even sub-function `n` is
+  `SendKey(level n - 1)`. With `serde`, a level is its `requestSeed` byte.
+- `SecurityAccessResponse` follows Table 44: a `requestSeed` echo without a seed is
+  `Error::InsufficientData`, and a `sendKey` echo followed by bytes is
+  `Error::IncorrectMessageLengthOrInvalidFormat`. Both used to decode, the second
+  with the trailing bytes as `security_seed`.
 - `CommunicationControlRequest` now decodes a `communicationType` whose reserved
   bits 3-2 are set as `CommunicationType::IsoSaeReserved` and no longer rejects it.
   Clause 8.7.5 checks the message length before any data parameter, so a request

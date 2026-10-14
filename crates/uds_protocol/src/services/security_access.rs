@@ -3,54 +3,63 @@ use crate::shared::SuppressablePositiveResponse;
 use crate::{Decode, Encode, Error, Incomplete, NegativeResponseCode};
 use automotive_wire_codec::{write_bytes, write_u8};
 
-/// A `SecurityAccess` level byte, guaranteed to fit the 7-bit sub-function field
-/// (`0x00..=0x7F`).
+/// One vehicle-manufacturer security level: the `requestSeed`/`sendKey` pair of ISO
+/// 14229-1:2020 Table 42, named by its `requestSeed` sub-function.
 ///
-/// A request fuses the suppress-positive-response flag into bit 7 of this byte at the wire
-/// boundary, so a level with bit 7 already set would be ambiguous. Constraining
-/// construction here makes that collision unrepresentable rather than something to catch at
-/// encode time. Serializes as the wire byte and validates on the way back in, so `serde`
-/// cannot construct a level `new` would have rejected.
+/// Holding the pair rather than a raw sub-function byte is what keeps
+/// [`SecurityAccessType::RequestSeed`] and [`SecurityAccessType::SendKey`] apart: each
+/// encodes its own half, so a key cannot be sent as a seed request. Serializes as the
+/// `requestSeed` byte.
 #[cfg_attr(feature = "serde", derive(serde::Deserialize, serde::Serialize))]
-#[cfg_attr(feature = "utoipa", derive(utoipa::ToSchema))]
 #[cfg_attr(feature = "serde", serde(try_from = "u8", into = "u8"))]
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct SecurityAccessLevel(u8);
 
 impl SecurityAccessLevel {
-    /// Create a level, rejecting any value that would set the SPRMIB bit (`>= 0x80`).
+    /// The level whose `requestSeed` sub-function is `request_seed`.
     ///
     /// # Errors
-    /// Returns [`Error::InvalidSecurityAccessType`] if `value >= 0x80`.
-    pub const fn new(value: u8) -> Result<Self, Error> {
-        if value > 0x7F {
-            Err(Error::InvalidSecurityAccessType(value))
+    /// Returns [`Error::InvalidSecurityAccessType`] unless `request_seed` is one of Table
+    /// 42's vehicle-manufacturer `requestSeed` values: odd, `0x01` to `0x41`.
+    pub const fn from_request_seed(request_seed: u8) -> Result<Self, Error> {
+        if request_seed % 2 == 1 && request_seed <= LAST_REQUEST_SEED {
+            Ok(Self(request_seed))
         } else {
-            Ok(Self(value))
+            Err(Error::InvalidSecurityAccessType(request_seed))
         }
     }
 
-    /// The raw level byte (always `0x00..=0x7F`).
+    /// The `requestSeed` sub-function value.
     #[must_use]
-    pub const fn value(&self) -> u8 {
+    pub const fn request_seed(self) -> u8 {
         self.0
     }
+
+    /// The `sendKey` sub-function value, [`Self::request_seed`] plus one.
+    #[must_use]
+    pub const fn send_key(self) -> u8 {
+        // At most `LAST_REQUEST_SEED + 1`, so the sum cannot overflow.
+        self.0.saturating_add(1)
+    }
 }
+
+/// The highest vehicle-manufacturer `requestSeed` value in Table 42.
+const LAST_REQUEST_SEED: u8 = 0x41;
 
 impl TryFrom<u8> for SecurityAccessLevel {
     type Error = Error;
 
     /// # Errors
-    /// Returns [`Error::InvalidSecurityAccessType`] if `value >= 0x80`; see
-    /// [`SecurityAccessLevel::new`].
+    /// Returns [`Error::InvalidSecurityAccessType`] where `value` is not a `requestSeed`;
+    /// see [`SecurityAccessLevel::from_request_seed`].
     fn try_from(value: u8) -> Result<Self, Error> {
-        Self::new(value)
+        Self::from_request_seed(value)
     }
 }
 
 impl From<SecurityAccessLevel> for u8 {
     fn from(level: SecurityAccessLevel) -> Self {
-        level.0
+        level.request_seed()
     }
 }
 
@@ -74,9 +83,11 @@ pub enum SecurityAccessType {
     /// and can never collide with the SPRMIB bit.
     #[non_exhaustive]
     IsoSaeReserved(u8),
-    /// `RequestSeed` with the level of security defined by the vehicle manufacturer
+    /// `requestSeed` for a vehicle-manufacturer security level; encodes
+    /// [`SecurityAccessLevel::request_seed`].
     RequestSeed(SecurityAccessLevel),
-    /// `SendKey` with the level of security defined by the vehicle manufacturer
+    /// `sendKey` for a vehicle-manufacturer security level; encodes
+    /// [`SecurityAccessLevel::send_key`].
     SendKey(SecurityAccessLevel),
     /// `RequestSeed` with different levels of security defined for end of life
     /// activation of on-board pyrotechnic devices
@@ -96,8 +107,8 @@ impl From<SecurityAccessType> for u8 {
     fn from(value: SecurityAccessType) -> Self {
         match value {
             SecurityAccessType::IsoSaeReserved(val) => val,
-            SecurityAccessType::RequestSeed(level) => level.value(),
-            SecurityAccessType::SendKey(level) => level.value(),
+            SecurityAccessType::RequestSeed(level) => level.request_seed(),
+            SecurityAccessType::SendKey(level) => level.send_key(),
             SecurityAccessType::Iso26021_2Values => 0x5F,
             SecurityAccessType::Iso26021_2SendKeyValues => 0x60,
             SecurityAccessType::SystemSupplierSpecific(val) => val,
@@ -113,11 +124,12 @@ impl TryFrom<u8> for SecurityAccessType {
             // Security requests alternate, with odd numbers being seed requests,
             // and even numbers being send key requests
             0x01..=0x42 => {
-                // `value` is 0x01..=0x42 here, so it always fits `SecurityAccessLevel`.
+                // An odd `value` is the level's own `requestSeed`; an even one is the
+                // `sendKey` of the level one below it, which is odd and at least 0x01.
                 if value % 2 == 1 {
                     Ok(Self::RequestSeed(SecurityAccessLevel(value)))
                 } else {
-                    Ok(Self::SendKey(SecurityAccessLevel(value)))
+                    Ok(Self::SendKey(SecurityAccessLevel(value - 1)))
                 }
             }
             0x5F => Ok(Self::Iso26021_2Values),
@@ -158,7 +170,7 @@ mod security_access_type_tests {
         for value in &SEND_KEY_VALUES {
             assert_eq!(
                 SecurityAccessType::try_from(*value).unwrap(),
-                SecurityAccessType::SendKey(SecurityAccessLevel(*value))
+                SecurityAccessType::SendKey(SecurityAccessLevel(*value - 1))
             );
         }
         for i in 0x43..=0x5E {
@@ -194,26 +206,40 @@ mod security_access_type_tests {
     }
 
     #[test]
-    fn level_value_is_const_accessor() {
-        const V: u8 = match SecurityAccessLevel::new(0x03) {
-            Ok(l) => l.value(),
+    fn a_level_is_named_by_its_request_seed() {
+        const SEED: u8 = match SecurityAccessLevel::from_request_seed(0x03) {
+            Ok(level) => level.request_seed(),
             Err(_) => 0xFF,
         };
-        assert_eq!(V, 0x03);
+        assert_eq!(SEED, 0x03);
+        for value in 0x00..=0xFFu8 {
+            match SecurityAccessLevel::from_request_seed(value) {
+                Ok(level) => {
+                    assert!(value % 2 == 1 && value <= 0x41, "{value:#04X}");
+                    assert_eq!(level.request_seed(), value);
+                    assert_eq!(level.send_key(), value + 1);
+                }
+                Err(error) => {
+                    assert!(value % 2 == 0 || value > 0x41, "{value:#04X}");
+                    assert!(
+                        matches!(error, Error::InvalidSecurityAccessType(v) if v == value)
+                    );
+                }
+            }
+        }
     }
 
+    /// A send-key built from a level encodes that level's even byte, so it cannot be
+    /// mistaken for the seed request; the review's probe sent `27 01` for "send key 1".
     #[test]
-    fn security_access_level_rejects_sprmib_colliding_values() {
-        // 0x00..=0x7F are constructible; 0x80..=0xFF (SPRMIB bit set) are rejected.
-        for value in 0x00..=0x7F {
-            assert_eq!(SecurityAccessLevel::new(value).unwrap().value(), value);
-        }
-        for value in 0x80..=0xFF {
-            assert!(matches!(
-                SecurityAccessLevel::new(value),
-                Err(Error::InvalidSecurityAccessType(v)) if v == value
-            ));
-        }
+    fn seed_and_key_for_one_level_encode_the_pair() {
+        let level = SecurityAccessLevel::from_request_seed(0x01).unwrap();
+        assert_eq!(u8::from(SecurityAccessType::RequestSeed(level)), 0x01);
+        assert_eq!(u8::from(SecurityAccessType::SendKey(level)), 0x02);
+        assert_eq!(
+            SecurityAccessType::try_from(0x02).unwrap(),
+            SecurityAccessType::SendKey(level)
+        );
     }
 
     #[test]
@@ -377,6 +403,12 @@ impl Encode for SecurityAccessResponse<'_> {
 impl<'a> Decode<'a> for SecurityAccessResponse<'a> {
     type Error = crate::Error;
 
+    /// # Errors
+    ///
+    /// ISO 14229-1:2020 Table 44 makes `securitySeed` mandatory after a `requestSeed` echo
+    /// and absent after a `sendKey` one: [`Error::InsufficientData`] for a seed request
+    /// answered without a seed, and [`Error::IncorrectMessageLengthOrInvalidFormat`] for a
+    /// key answered with one. A system-supplier or reserved echo is not judged.
     fn decode(buf: &'a [u8]) -> Result<(Self, &'a [u8]), Error> {
         if buf.is_empty() {
             return Err(Error::InsufficientData(Incomplete {
@@ -385,10 +417,28 @@ impl<'a> Decode<'a> for SecurityAccessResponse<'a> {
             }));
         }
         let access_type = SecurityAccessType::try_from(buf[0])?;
+        let security_seed = &buf[1..];
+        match access_type {
+            SecurityAccessType::RequestSeed(_) | SecurityAccessType::Iso26021_2Values
+                if security_seed.is_empty() =>
+            {
+                return Err(Error::InsufficientData(Incomplete {
+                    needed: 2,
+                    available: buf.len(),
+                }));
+            }
+            SecurityAccessType::SendKey(_)
+            | SecurityAccessType::Iso26021_2SendKeyValues
+                if !security_seed.is_empty() =>
+            {
+                return Err(Error::IncorrectMessageLengthOrInvalidFormat);
+            }
+            _ => {}
+        }
         Ok((
             Self {
                 access_type,
-                security_seed: &buf[1..],
+                security_seed,
             },
             &[],
         ))
@@ -417,7 +467,7 @@ mod request {
     #[test]
     fn request_seed() {
         let bytes: [u8; 6] = [
-            0x01, // aka SecurityAccessType::RequestSeed(0x01)
+            0x01, // requestSeed for the level whose seed request is 0x01
             0x00, 0x01, 0x02, 0x03, 0x04, // fake data
         ];
         let (req, _) = <SecurityAccessRequest as Decode>::decode(&bytes).unwrap();
@@ -446,18 +496,15 @@ mod response {
     use crate::{Decode, Encode, test_util::assert_encode_size_agrees};
 
     #[test]
-    fn response_send() {
-        let bytes: [u8; 6] = [
-            0x02, // aka SecurityAccessType::SendKey(0x02)
-            0x00, 0x01, 0x02, 0x03, 0x04, // fake data
-        ];
+    fn response_seed() {
+        let bytes: [u8; 5] = [0x01, 0x00, 0x01, 0x02, 0x03];
         let (resp, _) = <SecurityAccessResponse as Decode>::decode(&bytes).unwrap();
 
         assert_eq!(
             resp.access_type,
-            SecurityAccessType::SendKey(SecurityAccessLevel(0x02))
+            SecurityAccessType::RequestSeed(SecurityAccessLevel(0x01))
         );
-        assert_eq!(resp.security_seed, &[0x00, 0x01, 0x02, 0x03, 0x04]);
+        assert_eq!(resp.security_seed, &[0x00, 0x01, 0x02, 0x03]);
 
         let mut buf = [0u8; 16];
         let written =
@@ -466,5 +513,39 @@ mod response {
         assert_eq!(&buf[..written], &bytes);
         assert_eq!(written, resp.encoded_size().unwrap());
         assert_encode_size_agrees(&resp);
+    }
+
+    /// ISO 14229-1:2020 Table 44 makes `securitySeed` mandatory where the request asked
+    /// for one and absent where it sent a key, so `67 02 ..` does not decode its trailing
+    /// bytes as a seed, and `67 01` with no seed is short.
+    #[test]
+    fn the_seed_is_present_exactly_for_a_seed_request() {
+        let (resp, _) = <SecurityAccessResponse as Decode>::decode(&[0x02]).unwrap();
+        assert_eq!(
+            resp.access_type,
+            SecurityAccessType::SendKey(SecurityAccessLevel(0x01))
+        );
+        assert_eq!(resp.security_seed, [0u8; 0]);
+        let (resp, _) = <SecurityAccessResponse as Decode>::decode(&[0x60]).unwrap();
+        assert_eq!(
+            resp.access_type,
+            SecurityAccessType::Iso26021_2SendKeyValues
+        );
+
+        for key_with_seed in [&[0x02, 0xAA][..], &[0x60, 0xAA]] {
+            assert!(matches!(
+                <SecurityAccessResponse as Decode>::decode(key_with_seed),
+                Err(Error::IncorrectMessageLengthOrInvalidFormat)
+            ));
+        }
+        for seed_without_seed in [&[0x01][..], &[0x5F]] {
+            assert!(matches!(
+                <SecurityAccessResponse as Decode>::decode(seed_without_seed),
+                Err(Error::InsufficientData(_))
+            ));
+        }
+        // A system-supplier sub-function's layout is the supplier's, so it is not judged.
+        assert!(<SecurityAccessResponse as Decode>::decode(&[0x61]).is_ok());
+        assert!(<SecurityAccessResponse as Decode>::decode(&[0x61, 0xAA]).is_ok());
     }
 }
