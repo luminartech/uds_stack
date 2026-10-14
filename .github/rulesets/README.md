@@ -20,7 +20,7 @@ squashed commit.
 
 - **Squash only.** The squash commit takes the PR title, which PR Title Lint checks, so
   every commit on `main` is conventional. That is what release-plz reads for the
-  version bump and the changelogs.
+  version bump.
 - **One approval, from someone other than the last pusher.** Stale approvals are dismissed
   on push. This applies to the release PR as well: its merge is what publishes.
 - **Merge queue.** `ci.yml` runs the long fuzz and Miri on `merge_group`, so those run on

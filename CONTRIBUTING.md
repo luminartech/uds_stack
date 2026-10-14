@@ -73,13 +73,14 @@ $ pre-commit install
 ## House rules
 
 **Commits are [Conventional Commits](https://www.conventionalcommits.org/).**
-A hook enforces the format, and `release-plz` derives changelogs and version
-bumps from it, so `fix:` and `feat:` are load-bearing rather than decorative.
+A hook enforces the format, and `release-plz` derives the version bump from it,
+so `fix:` and `feat:` are load-bearing rather than decorative.
 
 **The crates release in lockstep.** There is one version, `[workspace.package]`
 in the root `Cargo.toml`, which every crate inherits; every release publishes all
 five at it and is tagged once, `v<version>`. A crate's own `CHANGELOG.md` says what
-changed in that crate. The `<crate>/v<version>` tags in the history are from before
+changed in that crate; it is written by hand, under `## [Unreleased]`, in the change
+that makes the change. The `<crate>/v<version>` tags in the history are from before
 the consolidation.
 
 **A crate's scope is decided by which standard specifies the behaviour**, not
