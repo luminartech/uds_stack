@@ -1338,7 +1338,7 @@ macro_rules! uds_server {
 ///     DoIpTransport,
 ///     Address(0x0E00),
 ///     KeepAlive::physical(2_000),
-///     ClientTiming::new(10, 10, 50),
+///     ClientTiming::new(50),
 /// );
 /// # let _ = &TESTER;
 /// ```

@@ -87,7 +87,9 @@ async fn sdk(loopback: &Loopback) -> Sdk {
         transport,
         TESTER,
         KeepAlive::physical(KEEP_ALIVE_MS),
-        ClientTiming::new(0, 0, 0),
+        ClientTiming::new(0)
+            .physical_spacing(0)
+            .functional_spacing(0),
     )
 }
 

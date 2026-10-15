@@ -172,7 +172,7 @@ let mut client = Diagnoser::new(
     DoIpClientTransport::new(tester, reloads),
     Address(0x0E00),
     KeepAlive::physical(2_000),
-    ClientTiming::new(0, 0, 0),
+    ClientTiming::new(0),
 );
 if let Response::Positive(mut records) = client
     .read_data_by_identifier(Address(0x0001), &[Did::Vin])

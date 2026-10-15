@@ -181,7 +181,9 @@ async fn client(loopback: &Loopback, backoff: Duration) -> Diagnoser {
         transport,
         TESTER,
         KeepAlive::physical(2_000),
-        ClientTiming::new(0, 0, 0),
+        ClientTiming::new(0)
+            .physical_spacing(0)
+            .functional_spacing(0),
     )
 }
 
@@ -249,7 +251,9 @@ fn a_client_sending_2012_reads_a_did_over_loopback() {
                 DoIpClientTransport::new(tester, RELOADS),
                 TESTER,
                 KeepAlive::physical(2_000),
-                ClientTiming::new(0, 0, 0),
+                ClientTiming::new(0)
+                    .physical_spacing(0)
+                    .functional_spacing(0),
             );
             assert_eq!(
                 record(

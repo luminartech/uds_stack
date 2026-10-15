@@ -28,7 +28,9 @@ const ECU: Address = Address(0x0010);
 const OTHER_ECU: Address = Address(0x0011);
 const GROUP: Address = Address(0xE400);
 const S3_CLIENT: u32 = 2_000;
-const TIMING: ClientTiming = ClientTiming::new(10, 10, 0);
+const TIMING: ClientTiming = ClientTiming::new(0)
+    .physical_spacing(10)
+    .functional_spacing(10);
 
 /// The request to `ecu`, physically addressed.
 const fn to(ecu: Address) -> Ai {
@@ -361,7 +363,7 @@ fn tester_repeating(steps: &[Step], repeats: Repeats) -> Tester {
         Script::new(steps),
         TESTER,
         KeepAlive::physical(S3_CLIENT),
-        TIMING.with_repeats(repeats),
+        TIMING.repeats(repeats),
     )
 }
 
@@ -1413,7 +1415,9 @@ fn the_wait_after_a_response_pending_includes_the_network_delay() {
             }),
             TESTER,
             KeepAlive::physical(S3_CLIENT),
-            ClientTiming::new(10, 10, network_delay),
+            ClientTiming::new(network_delay)
+                .physical_spacing(10)
+                .functional_spacing(10),
         );
         let _ = block_on(t.diagnostic_session_control(
             ECU,

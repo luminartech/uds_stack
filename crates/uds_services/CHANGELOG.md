@@ -102,7 +102,7 @@ lockstep with the rest of the `uds_stack` workspace (`uds_protocol`, `uds_sessio
   return.
 - `ClientTiming::repeats`, a `Repeats` ceiling on a physically addressed request's
   repeats under which an expired response window is repeated: ISO 14229-2:2021 Table
-  9's two (`Repeats::Twice`) by default, set by `ClientTiming::with_repeats`, read and
+  9's two (`Repeats::Twice`) by default, set by `ClientTiming::repeats`, read and
   changed through `Client::timing` and `Client::timing_mut`. It counts every repeat of
   the request, as Table 9 does. A failed transmission is repeated to two regardless,
   and functionally addressed requests are not under it.
@@ -140,6 +140,11 @@ lockstep with the rest of the `uds_stack` workspace (`uds_protocol`, `uds_sessio
   gains `type Did`, `type Routine` and `const LIMITS`. Each call refuses an input past its
   limit as `ClientError::Request(RequestError::ExceedsLimit { .. })` before sending. A transport whose `MAX_PDU` cannot carry
   a request of the declared limits fails to compile, naming the limit.
+- **Breaking:** `ClientTiming::new` takes only the network delay, and the two spacings
+  default to ISO 14229-2:2021 Table 4's minimum for the recommended `P2Server_max`;
+  `physical_spacing`, `functional_spacing` and `repeats` (formerly `with_repeats`) set
+  each. Migrate: `ClientTiming::new(delay).physical_spacing(p).functional_spacing(f)`
+  for `ClientTiming::new(p, f, delay)`.
 - **Breaking:** `ClientError::Request` carries a `RequestError` naming the refusal, and
   `Client::communication_control` takes a `CommunicationControlRequest`, whose
   constructors already refuse a node identifier that disagrees with the control type.

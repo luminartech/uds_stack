@@ -454,7 +454,7 @@ impl KeepAlive<FunctionalKeepAlive> {
 /// client rather than the transport, in milliseconds, and the ceiling on 9.7 Table 9's
 /// response-timeout repeat.
 ///
-/// Built with [`Self::new`]; it may gain fields.
+/// Built with [`Self::new`] and the same-named setters; it may gain fields.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub struct ClientTiming {
@@ -489,34 +489,53 @@ pub struct ClientTiming {
 }
 
 impl ClientTiming {
-    /// A timing policy.
+    /// ISO 14229-2:2021 Table 4's recommended `tP2_Server_Max`, in milliseconds, which
+    /// [`Self::new`] adds to the network delay for each spacing's default.
+    pub const RECOMMENDED_P2_SERVER_MAX: u32 = 50;
+
+    /// A timing policy for a network whose `ΔtP6` is `network_delay`.
+    ///
+    /// Each spacing is Table 4's minimum for a server answering in the recommended
+    /// window, [`Self::RECOMMENDED_P2_SERVER_MAX`] plus `network_delay`;
+    /// [`Self::physical_spacing`] and [`Self::functional_spacing`] set another. And
+    /// [`Self::repeats`] is [`Repeats::Twice`].
     ///
     /// # Arguments
     ///
-    /// * `physical_spacing` - see [`Self::physical_spacing`].
-    /// * `functional_spacing` - see [`Self::functional_spacing`].
     /// * `network_delay` - see [`Self::network_delay`].
-    ///
-    /// [`Self::repeats`] is [`Repeats::Twice`]; [`Self::with_repeats`] overrides it.
     #[must_use]
-    pub const fn new(
-        physical_spacing: u32,
-        functional_spacing: u32,
-        network_delay: u32,
-    ) -> Self {
+    pub const fn new(network_delay: u32) -> Self {
+        let spacing = Self::RECOMMENDED_P2_SERVER_MAX.saturating_add(network_delay);
         Self {
-            physical_spacing,
-            functional_spacing,
+            physical_spacing: spacing,
+            functional_spacing: spacing,
             network_delay,
             repeats: Repeats::Twice,
         }
     }
 
+    /// This policy with [`Self::physical_spacing`] set to `ms`.
+    #[must_use]
+    pub const fn physical_spacing(self, ms: u32) -> Self {
+        Self {
+            physical_spacing: ms,
+            ..self
+        }
+    }
+
+    /// This policy with [`Self::functional_spacing`] set to `ms`.
+    #[must_use]
+    pub const fn functional_spacing(self, ms: u32) -> Self {
+        Self {
+            functional_spacing: ms,
+            ..self
+        }
+    }
+
     /// This policy with [`Self::repeats`] set to `repeats`.
     #[must_use]
-    pub const fn with_repeats(mut self, repeats: Repeats) -> Self {
-        self.repeats = repeats;
-        self
+    pub const fn repeats(self, repeats: Repeats) -> Self {
+        Self { repeats, ..self }
     }
 }
 
