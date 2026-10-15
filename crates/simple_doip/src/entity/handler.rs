@@ -85,7 +85,7 @@ pub(super) fn handle<S, const CAP: usize>(
     let Ok(Next::Frame(frame, consumed)) = rx.next() else {
         return Handled::Waiting;
     };
-    let payload_type = frame.header.payload_type;
+    let payload_type = frame.header.payload_type();
     let handled = match (payload_type, Payload::decode(frame.payload, payload_type)) {
         (_, Ok(Payload::RoutingActivationRequest(request))) => {
             if registered.is_none() && !open.activation_received {
@@ -180,7 +180,7 @@ fn check_header<S, const CAP: usize>(
         }
     };
     if !matches!(
-        header.protocol_version,
+        header.protocol_version(),
         ProtocolVersion::V2012 | ProtocolVersion::V2019
     ) {
         return Err(refuse(
@@ -191,12 +191,12 @@ fn check_header<S, const CAP: usize>(
             limits.close,
         ));
     }
-    open.version = header.protocol_version;
-    let Some(length_ok) = length_rule(header.payload_type) else {
+    open.version = header.protocol_version();
+    let Some(length_ok) = length_rule(header.payload_type()) else {
         return Err(discard(open, tx, rx, &header, NackCode::UnknownPayloadType));
     };
     let fits = |limit: usize| {
-        usize::try_from(header.payload_length)
+        usize::try_from(header.payload_length())
             .is_ok_and(|length| length <= limit.saturating_sub(Header::SIZE))
     };
     if !fits(limits.message) {
@@ -205,7 +205,7 @@ fn check_header<S, const CAP: usize>(
     if !fits(memory) {
         return Err(discard(open, tx, rx, &header, NackCode::OutOfMemory));
     }
-    if !length_ok(header.payload_length) {
+    if !length_ok(header.payload_length()) {
         return Err(refuse(
             open,
             tx,
@@ -267,7 +267,7 @@ fn discard<S, const CAP: usize>(
 
 fn header_nack(version: ProtocolVersion, code: NackCode) -> Message<'static> {
     Message {
-        header: Header::new(version, PayloadType::NegativeAcknowledge, 1),
+        protocol_version: version,
         payload: Payload::DoIPNack(code),
     }
 }

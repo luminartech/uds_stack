@@ -28,7 +28,7 @@ use embassy_time::{Duration, Timer};
 
 use crate::messages::{
     DiagnosticPowerModeCode, EntityStatusResponse, Header, Message, NackCode, Payload,
-    PayloadType, ProtocolVersion, VehicleIdentificationResponse,
+    ProtocolVersion, VehicleIdentificationResponse,
 };
 use crate::wire::{Decode, Encode, SliceSink};
 use crate::{A_DOIP_CTRL, EntityId, TCP_PORT, UDP_DISCOVERY_PORT, Vin};
@@ -134,11 +134,6 @@ pub async fn identify<U: UdpSplit>(
         Request::Eid(eid) => Payload::VehicleIdentificationRequestWithEid(eid.to_bytes()),
         Request::Vin(vin) => Payload::VehicleIdentificationRequestWithVin(vin.to_bytes()),
     };
-    let payload_type = match request {
-        Request::All => PayloadType::VehicleIdentificationRequest,
-        Request::Eid(_) => PayloadType::VehicleIdentificationRequestWithEID,
-        Request::Vin(_) => PayloadType::VehicleIdentificationRequestWithVIN,
-    };
     found.fill(None);
     let collect = |from: SocketAddr, message: Message<'_>| {
         if let Payload::VehicleAnnouncement(identification) = message.payload {
@@ -155,12 +150,11 @@ pub async fn identify<U: UdpSplit>(
         }
         None::<()>
     };
-    let header = Header::new(
-        ProtocolVersion::VehicleIdentificationRequest,
-        payload_type,
-        0,
-    );
-    exchange(socket, to, header, payload, collect).await?;
+    let message = Message {
+        protocol_version: ProtocolVersion::VehicleIdentificationRequest,
+        payload,
+    };
+    exchange(socket, to, message, collect).await?;
     Ok(found.iter().flatten().count())
 }
 
@@ -186,7 +180,6 @@ pub async fn entity_status<U: UdpSplit>(
     ask(
         socket,
         entity,
-        PayloadType::DoIPEntityStatusRequest,
         Payload::EntityStatusRequest,
         |payload| match payload {
             Payload::EntityStatusResponse(status) => Some(status),
@@ -215,7 +208,6 @@ pub async fn power_mode<U: UdpSplit>(
     ask(
         socket,
         entity,
-        PayloadType::DiagnosticPowerModeInfoRequest,
         Payload::PowerModeInfoRequest,
         |payload| match payload {
             Payload::PowerModeInfoResponse(mode) => Some(mode),
@@ -230,7 +222,6 @@ pub async fn power_mode<U: UdpSplit>(
 async fn ask<U: UdpSplit, T>(
     socket: &mut U,
     entity: SocketAddr,
-    payload_type: PayloadType,
     payload: Payload<'static>,
     answer: impl Fn(Payload<'_>) -> Option<T>,
 ) -> Result<T, DiscoveryError<U::Error>> {
@@ -243,24 +234,25 @@ async fn ask<U: UdpSplit, T>(
             payload => answer(payload).map(Ok),
         }
     };
-    let header = Header::new(ProtocolVersion::V2019, payload_type, 0);
-    exchange(socket, entity, header, payload, take)
+    let message = Message {
+        protocol_version: ProtocolVersion::V2019,
+        payload,
+    };
+    exchange(socket, entity, message, take)
         .await
         .map_err(DiscoveryError::Io)?
         .unwrap_or(Err(DiscoveryError::NoAnswer))
 }
 
-/// Sends `payload` under `header` to `to`, then hands `take` each frame received within
+/// Sends `message` to `to`, then hands `take` each frame received within
 /// [`A_DOIP_CTRL`] until it returns something.
 async fn exchange<U: UdpSplit, T>(
     socket: &mut U,
     to: SocketAddr,
-    header: Header,
-    payload: Payload<'_>,
+    message: Message<'_>,
     mut take: impl FnMut(SocketAddr, Message<'_>) -> Option<T>,
 ) -> Result<Option<T>, U::Error> {
     let (mut receiver, mut sender) = socket.split();
-    let message = Message { header, payload };
     let mut frame = [0u8; Header::SIZE + 17];
     let written = message
         .encode(&mut SliceSink::new(&mut frame))

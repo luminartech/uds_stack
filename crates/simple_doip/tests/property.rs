@@ -294,7 +294,7 @@ proptest! {
 
         let (parsed, rest) = Message::decode(bytes).expect("message decode failed");
         prop_assert!(rest.is_empty());
-        prop_assert_eq!(parsed.header.payload_type, PayloadType::NegativeAcknowledge);
+        prop_assert_eq!(parsed.payload.payload_type(), PayloadType::NegativeAcknowledge);
         prop_assert_eq!(parsed.payload, payload);
     }
 

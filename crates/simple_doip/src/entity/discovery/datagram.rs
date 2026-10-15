@@ -75,7 +75,7 @@ pub(super) fn handle<I: VehicleIdentity>(
         return Some(Owed::nack(NackCode::IncorrectPatternFormat));
     };
     if matches!(
-        header.payload_type,
+        header.payload_type(),
         PayloadType::NegativeAcknowledge
             | PayloadType::VehicleAnnouncement
             | PayloadType::DoIPEntityStatusResponse
@@ -84,12 +84,12 @@ pub(super) fn handle<I: VehicleIdentity>(
         return None;
     }
     let identification = matches!(
-        header.payload_type,
+        header.payload_type(),
         PayloadType::VehicleIdentificationRequest
             | PayloadType::VehicleIdentificationRequestWithEID
             | PayloadType::VehicleIdentificationRequestWithVIN
     );
-    let version = match header.protocol_version {
+    let version = match header.protocol_version() {
         version @ (ProtocolVersion::V2012 | ProtocolVersion::V2019) => version,
         ProtocolVersion::VehicleIdentificationRequest if identification => {
             ProtocolVersion::V2019
@@ -97,7 +97,7 @@ pub(super) fn handle<I: VehicleIdentity>(
         _ => return Some(Owed::nack(NackCode::IncorrectPatternFormat)),
     };
     let refused = |code| Some(Owed::now(Answer::Nack(code), version));
-    let expected = match header.payload_type {
+    let expected = match header.payload_type() {
         PayloadType::VehicleIdentificationRequest
         | PayloadType::DoIPEntityStatusRequest
         | PayloadType::DiagnosticPowerModeInfoRequest => 0,
@@ -105,10 +105,10 @@ pub(super) fn handle<I: VehicleIdentity>(
         PayloadType::VehicleIdentificationRequestWithVIN => 17,
         _ => return refused(NackCode::UnknownPayloadType),
     };
-    if header.payload_length > max_data_size {
+    if header.payload_length() > max_data_size {
         return refused(NackCode::MessageTooLarge);
     }
-    let whole = usize::try_from(header.payload_length).is_ok_and(|declared| {
+    let whole = usize::try_from(header.payload_length()).is_ok_and(|declared| {
         declared == expected && Some(length) == expected.checked_add(Header::SIZE)
     });
     if !whole {
@@ -119,7 +119,7 @@ pub(super) fn handle<I: VehicleIdentity>(
         version,
         when: When::AfterAnnounceWait,
     };
-    match Payload::decode(payload.get(..expected)?, header.payload_type).ok()? {
+    match Payload::decode(payload.get(..expected)?, header.payload_type()).ok()? {
         Payload::VehicleIdentificationRequest => Some(identified),
         Payload::VehicleIdentificationRequestWithEid(eid) => {
             identity.matches_eid(&eid).then_some(identified)
@@ -150,28 +150,21 @@ pub(super) fn frame<'b, I: VehicleIdentity>(
         further_action: identity.further_action(),
         vin_gid_sync_status: identity.sync_status(),
     };
-    let (payload_type, payload) = match answer {
-        Answer::Announcement | Answer::Identification => (
-            PayloadType::VehicleAnnouncement,
-            Payload::VehicleAnnouncement(identification()),
-        ),
-        Answer::EntityStatus => (
-            PayloadType::DoIPEntityStatusResponse,
-            Payload::EntityStatusResponse(EntityStatusResponse {
-                node_type: EntityStatusNodeType::DoIPNode,
-                max_concurrent_tcp_sockets: facts.mcts,
-                open_tcp_sockets: facts.open,
-                max_data_size: Some(facts.max_data_size),
-            }),
-        ),
-        Answer::PowerMode => (
-            PayloadType::DiagnosticPowerModeInfoResponse,
-            Payload::PowerModeInfoResponse(identity.power_mode()),
-        ),
-        Answer::Nack(code) => (PayloadType::NegativeAcknowledge, Payload::DoIPNack(code)),
+    let payload = match answer {
+        Answer::Announcement | Answer::Identification => {
+            Payload::VehicleAnnouncement(identification())
+        }
+        Answer::EntityStatus => Payload::EntityStatusResponse(EntityStatusResponse {
+            node_type: EntityStatusNodeType::DoIPNode,
+            max_concurrent_tcp_sockets: facts.mcts,
+            open_tcp_sockets: facts.open,
+            max_data_size: Some(facts.max_data_size),
+        }),
+        Answer::PowerMode => Payload::PowerModeInfoResponse(identity.power_mode()),
+        Answer::Nack(code) => Payload::DoIPNack(code),
     };
     let message = Message {
-        header: Header::new(version, payload_type, 0),
+        protocol_version: version,
         payload,
     };
     let written = message.encode(&mut SliceSink::new(buf)).unwrap_or(0);

@@ -9,7 +9,7 @@ pub struct RawFrame<'a> {
     /// The decoded 8-byte `DoIP` generic header (protocol version, its inverse,
     /// payload type, and payload length) that prefixed this frame on the wire.
     pub header: Header,
-    /// The frame's payload bytes, exactly `header.payload_length` long, not yet
+    /// The frame's payload bytes, exactly `header.payload_length()` long, not yet
     /// decoded into a concrete [`Payload`](crate::messages::Payload) variant.
     pub payload: &'a [u8],
 }
@@ -40,7 +40,7 @@ pub struct RawFrame<'a> {
 /// let (frame, consumed) = try_frame(&buf)?.expect("buffer holds a complete frame");
 /// assert_eq!(consumed, 9);
 ///
-/// let payload = Payload::decode(frame.payload, frame.header.payload_type)?;
+/// let payload = Payload::decode(frame.payload, frame.header.payload_type())?;
 /// assert!(matches!(payload, Payload::DoIPNack(_)));
 /// # Ok::<(), simple_doip::messages::MessageError>(())
 /// ```
@@ -49,7 +49,7 @@ pub fn try_frame(buf: &[u8]) -> Result<Option<(RawFrame<'_>, usize)>, MessageErr
         return Ok(None);
     }
     let (header, _) = Header::decode(&buf[..Header::SIZE])?;
-    let payload_len = header.payload_length as usize;
+    let payload_len = header.payload_length() as usize;
     // Preserve the 32-bit overflow guard: compare available bytes, never compute
     // Header::SIZE + payload_len before proving it fits.
     if buf.len() - Header::SIZE < payload_len {
@@ -83,7 +83,7 @@ mod tests {
         let (frame, consumed) = try_frame(&buf).unwrap().unwrap();
         assert_eq!(consumed, 9);
         assert_eq!(
-            frame.header.payload_type,
+            frame.header.payload_type(),
             crate::messages::PayloadType::NegativeAcknowledge
         );
         assert_eq!(frame.payload, &buf[8..9]);
@@ -120,7 +120,7 @@ mod tests {
         let buf: [u8; 9] = [0x02, 0xFD, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x03];
         let (frame, consumed) = try_frame(&buf).unwrap().unwrap();
         assert_eq!(consumed, 9);
-        let payload = Payload::decode(frame.payload, frame.header.payload_type)
+        let payload = Payload::decode(frame.payload, frame.header.payload_type())
             .expect("a well-formed NACK payload should decode");
         assert!(matches!(payload, Payload::DoIPNack(_)));
 
@@ -132,7 +132,7 @@ mod tests {
         let (frame, consumed) = try_frame(&buf).unwrap().unwrap();
         assert_eq!(consumed, 9);
         assert_eq!(frame.payload, &buf[8..9]);
-        let err = Payload::decode(frame.payload, frame.header.payload_type).unwrap_err();
+        let err = Payload::decode(frame.payload, frame.header.payload_type()).unwrap_err();
         assert!(matches!(
             err,
             MessageError::UnsupportedPayloadType(PayloadType::Reserved(0x9999))

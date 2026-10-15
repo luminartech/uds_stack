@@ -177,6 +177,16 @@ example for each.
   `WithVin` rather than `VehicleIdentificationRequest`, and one shorter than its EID
   or VIN is `MessageError::Incomplete`. `0x4003` decodes to `PowerModeInfoRequest`
   where it was `MessageError::UnsupportedPayloadType`.
+- **Breaking:** `Message` and `OwnedMessage` hold a `protocol_version` and a
+  `payload`, and no `header`. The header is derived when a message is encoded, its
+  payload type from the new `Payload::payload_type`, so it can no longer name a type
+  other than its payload's; `Message::header` and `OwnedMessage::header` return it.
+  `Header`'s fields are private, read through `protocol_version()`,
+  `payload_type()` and `payload_length()`, and it no longer stores the inverse
+  protocol version, which decode checks and encode derives. The message
+  constructors no longer panic. Migrate: build a `Message` from `protocol_version`
+  and `payload`, read `message.payload.payload_type()` or `message.header()` where
+  you read `message.header`, and call the getter where you read a `Header` field.
 - **Breaking:** the minimum supported Rust version is 1.91, up from 1.88.
 - `simple_doip` is released in lockstep with `uds_protocol`, `uds_session`,
   `uds_services` and `uds_on_ip`: all five share one version, and 0.7.0 is the

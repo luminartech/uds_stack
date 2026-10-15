@@ -80,7 +80,7 @@ fn main() -> Result<(), MessageError> {
     let (frame, consumed) = try_frame(&buf)?.expect("buffer holds a complete frame");
     assert_eq!(consumed, 9);
 
-    let payload = Payload::decode(frame.payload, frame.header.payload_type)?;
+    let payload = Payload::decode(frame.payload, frame.header.payload_type())?;
     assert!(matches!(payload, Payload::DoIPNack(_)));
     Ok(())
 }

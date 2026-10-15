@@ -32,19 +32,9 @@ fuzz_target!(|data: &[u8]| {
         Message::decode(&encoded).expect("re-decoding an encoded message must not fail");
     assert!(rest.is_empty(), "re-encoding left trailing bytes");
 
-    // The payload, not the whole message: `encode` derives the header's
-    // declared length from the payload, so a frame that arrived claiming a
-    // length its payload did not occupy comes back with the real one. That
-    // normalization is the fix for #15 -- asserting full `Message` equality
-    // here would assert the bug back into existence.
-    assert_eq!(
-        message.payload, reparsed.payload,
-        "round trip changed the payload"
-    );
-    assert_eq!(
-        message.header.payload_type, reparsed.header.payload_type,
-        "round trip changed the payload type"
-    );
+    // A message is its protocol version and its payload: `encode` derives the
+    // header from them, so nothing else can differ.
+    assert_eq!(message, reparsed, "round trip changed the message");
 
     // Encoding is idempotent: having normalized once, a second pass must
     // produce the very same bytes. This is the property that would catch a

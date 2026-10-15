@@ -235,6 +235,46 @@ impl OwnedPayload {
 }
 
 impl<'a> Payload<'a> {
+    /// The payload type a header carries for this payload (Table 17).
+    ///
+    /// [`Payload::VehicleAnnouncement`] and [`Payload::VehicleIdentificationResponse`]
+    /// share [`PayloadType::VehicleAnnouncement`], which decodes as the former.
+    #[must_use]
+    pub const fn payload_type(&self) -> PayloadType {
+        match self {
+            Payload::DoIPNack(_) => PayloadType::NegativeAcknowledge,
+            Payload::AliveCheckRequest => PayloadType::AliveCheckRequest,
+            Payload::AliveCheckResponse(_) => PayloadType::AliveCheckResponse,
+            Payload::DiagnosticMessage(_) => PayloadType::DiagnosticMessage,
+            Payload::DiagnosticMessageAck(_) => {
+                PayloadType::DiagnosticMessagePositiveAcknowledge
+            }
+            Payload::DiagnosticMessageNack(_) => {
+                PayloadType::DiagnosticMessageNegativeAcknowledge
+            }
+            Payload::EntityStatusRequest => PayloadType::DoIPEntityStatusRequest,
+            Payload::EntityStatusResponse(_) => PayloadType::DoIPEntityStatusResponse,
+            Payload::PowerModeInfoRequest => PayloadType::DiagnosticPowerModeInfoRequest,
+            Payload::PowerModeInfoResponse(_) => {
+                PayloadType::DiagnosticPowerModeInfoResponse
+            }
+            Payload::RoutingActivationRequest(_) => PayloadType::RoutingActivationRequest,
+            Payload::RoutingActivationResponse(_) => PayloadType::RoutingActivationResponse,
+            Payload::VehicleAnnouncement(_) | Payload::VehicleIdentificationResponse(_) => {
+                PayloadType::VehicleAnnouncement
+            }
+            Payload::VehicleIdentificationRequest => {
+                PayloadType::VehicleIdentificationRequest
+            }
+            Payload::VehicleIdentificationRequestWithEid(_) => {
+                PayloadType::VehicleIdentificationRequestWithEID
+            }
+            Payload::VehicleIdentificationRequestWithVin(_) => {
+                PayloadType::VehicleIdentificationRequestWithVIN
+            }
+        }
+    }
+
     /// Decode a payload of the given type from exactly the payload bytes of one message.
     ///
     /// # Errors

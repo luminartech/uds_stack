@@ -111,18 +111,18 @@ impl Decoder for MessageCodec {
             return Ok(None);
         };
         let (header, _) = Header::decode(header_bytes)?;
-        if header.payload_length > self.max_payload_length {
+        if header.payload_length() > self.max_payload_length {
             src.advance(Header::SIZE);
-            self.discarding = header.payload_length;
+            self.discarding = header.payload_length();
             return Ok(Some(Frame::TooLarge { header }));
         }
         let Some((frame, consumed)) = crate::try_frame(src.as_ref())? else {
             return Ok(None);
         };
         let decoded =
-            Payload::decode(frame.payload, frame.header.payload_type).map(|payload| {
+            Payload::decode(frame.payload, frame.header.payload_type()).map(|payload| {
                 Message {
-                    header: frame.header.clone(),
+                    protocol_version: frame.header.protocol_version(),
                     payload,
                 }
                 .to_owned_message()
@@ -238,7 +238,7 @@ mod tests {
         else {
             panic!("an unmodelled payload type must be handed over");
         };
-        assert_eq!(header.payload_type, PayloadType::from(0x9999));
+        assert_eq!(header.payload_type(), PayloadType::from(0x9999));
         assert_eq!(&payload[..], &[0x07]);
         assert!(matches!(error, MessageError::UnsupportedPayloadType(_)));
         assert!(is_nack(codec.decode(&mut src).unwrap().as_ref()));
@@ -281,7 +281,7 @@ mod tests {
         let Some(Frame::TooLarge { header }) = codec.decode(&mut src).unwrap() else {
             panic!("a payload past the limit must be reported");
         };
-        assert_eq!(header.payload_length, 4);
+        assert_eq!(header.payload_length(), 4);
         assert!(codec.decode(&mut src).unwrap().is_none());
         assert!(src.is_empty(), "the payload's first bytes are discarded");
 

@@ -44,16 +44,13 @@ fn a_fixed_size_payload_with_an_overlong_declared_length_still_round_trips() {
         0x02, 0xFD, 0x00, 0x00, 0x00, 0x00, 0x00, 0x05, 0x03, 0x00, 0x00, 0x00, 0x00,
     ];
     let (message, _rest) = Message::decode(&framed).expect("the frame is accepted as-is");
-    assert_eq!(
-        message.header.payload_length, 5,
-        "decode still reports what the wire declared"
-    );
 
     let encoded = encode(&message);
     let (reparsed, rest) = Message::decode(&encoded).expect("re-decode must succeed");
     assert_eq!(rest, []);
     assert_eq!(
-        reparsed.header.payload_length, 1,
+        reparsed.header().unwrap().payload_length(),
+        1,
         "the encoded frame declares the length its payload actually occupies"
     );
     assert_eq!(message.payload, reparsed.payload);
@@ -66,15 +63,14 @@ fn a_unit_payload_with_a_nonzero_declared_length_still_round_trips() {
     let framed: [u8; 9] = [0x00, 0xFF, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x00];
     let (message, _rest) = Message::decode(&framed).expect("the frame is accepted as-is");
     assert_eq!(message.payload, Payload::VehicleIdentificationRequest);
-    assert_eq!(message.header.payload_length, 1);
 
     let encoded = encode(&message);
     assert_eq!(encoded.len(), 8, "a unit payload encodes to a bare header");
     let (reparsed, rest) = Message::decode(&encoded).expect("re-decode must succeed");
     assert_eq!(rest, []);
-    assert_eq!(reparsed.header.payload_length, 0);
+    assert_eq!(reparsed.header().unwrap().payload_length(), 0);
     assert_eq!(
-        reparsed.header.payload_type,
+        reparsed.header().unwrap().payload_type(),
         PayloadType::VehicleIdentificationRequest
     );
 }

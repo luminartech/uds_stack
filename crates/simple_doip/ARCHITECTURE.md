@@ -84,6 +84,11 @@ so there is exactly **one** wire implementation; there is no second serializer
 that could drift. The borrowed↔owned round trip for every `Payload` variant is
 locked by `payload_conversion_roundtrip_all_variants` in `src/messages/mod.rs`.
 
+A `Message` holds only a protocol version and a payload. Its generic header is
+derived when it is encoded (`Message::header`): the payload type from
+`Payload::payload_type`, the length from the payload's encoded size. `Header` is
+what `try_frame` reads off the wire, a read-only view with private fields.
+
 ### 2.2 A tester connection's life
 
 `TesterConnection` (in `src/service.rs`) states what every tester connection
@@ -652,7 +657,7 @@ interpretation are two separate steps**.
 let (frame, consumed) = try_frame(buf)?.expect("complete frame present");
 
 // step 2 — interpretation, invoked by the caller, on the caller's terms.
-let payload = Payload::decode(frame.payload, frame.header.payload_type)?;
+let payload = Payload::decode(frame.payload, frame.header.payload_type())?;
 ```
 
 `try_frame` (in `src/framer.rs`) validates the 8-byte header's protocol version
@@ -828,7 +833,7 @@ the seam described in section 3 usable.
 
 - `tests/golden_vectors.rs` + `tests/golden/` — frozen hex fixtures of the
   exact encoded bytes of every wire type. **Do not regenerate them.** They
-  cover bodies, plus whole frames where a constructor chooses the header
+  cover bodies, plus whole frames where the payload chooses the header's type
   (the diagnostic message acknowledgements' `0x8002`/`0x8003`).
 - `tests/nested_encode.rs` — permanent regression test for the encode hot path.
 - `examples/bare_metal_codec.rs` — encode/frame/decode into a `[u8; N]`, no
@@ -866,10 +871,9 @@ None of this is scheduled; each is a decision for the crate's next owner.
 
 ### 7.1 `is_response` belongs on `PayloadType`, not `Message`
 
-`Message::is_response` (`src/messages/mod.rs`) reads only
-`self.header.payload_type` and never touches `self.payload` — it is a pure
-`PayloadType → PayloadType` relation wearing a `Message` method signature.
-Moving it to `PayloadType` would make the relation testable without
+`Message::is_response` (`src/messages/mod.rs`) reads only its payload's
+`payload_type()` — it is a pure `PayloadType → PayloadType` relation wearing a
+`Message` method signature. Moving it to `PayloadType` would make the relation testable without
 constructing a `Message`, and delete `OwnedMessage::is_response` (today a pure
 pass-through). Nothing in this crate calls either.
 

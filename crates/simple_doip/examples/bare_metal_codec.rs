@@ -50,10 +50,10 @@ fn main() {
         .expect("a complete message should be available");
     assert_eq!(routing_consumed, routing_written);
     let routing_payload =
-        Payload::decode(routing_frame.payload, routing_frame.header.payload_type)
+        Payload::decode(routing_frame.payload, routing_frame.header.payload_type())
             .expect("decoding a routing activation request payload should not fail");
     let decoded_routing = Message {
-        header: routing_frame.header,
+        protocol_version: routing_frame.header.protocol_version(),
         payload: routing_payload,
     };
     println!("Decoded routing activation request: {decoded_routing:?}");
@@ -85,11 +85,11 @@ fn main() {
     assert_eq!(diagnostic_consumed, diagnostic_written);
     let diagnostic_payload = Payload::decode(
         diagnostic_frame.payload,
-        diagnostic_frame.header.payload_type,
+        diagnostic_frame.header.payload_type(),
     )
     .expect("decoding a diagnostic message payload should not fail");
     let decoded_diagnostic = Message {
-        header: diagnostic_frame.header,
+        protocol_version: diagnostic_frame.header.protocol_version(),
         payload: diagnostic_payload,
     };
     println!("Decoded diagnostic message: {decoded_diagnostic:?}");

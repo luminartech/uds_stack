@@ -542,7 +542,7 @@ async fn activate<S: Read + Write + Readable, const N: usize>(
                 }
                 Ok(Next::Oversized { header, .. }) => {
                     if !spoken(&header)
-                        || header.payload_type == PayloadType::RoutingActivationResponse
+                        || header.payload_type() == PayloadType::RoutingActivationResponse
                     {
                         return Err(ConnectError::InvalidMessage);
                     }
@@ -1165,7 +1165,7 @@ impl Delivered {
 /// `DoIP` messages: ISO/DIS 13400-2:2010's, ISO 13400-2:2012's or its own.
 fn spoken(header: &Header) -> bool {
     matches!(
-        header.protocol_version,
+        header.protocol_version(),
         ProtocolVersion::V2010 | ProtocolVersion::V2012 | ProtocolVersion::V2019
     )
 }
@@ -1173,8 +1173,8 @@ fn spoken(header: &Header) -> bool {
 /// Whether `header`'s payload length is one ISO 13400-2:2019 allows its payload type
 /// (Tables 18, 21, 23, 25, 27 and 48).
 fn sized_for_its_type(header: &Header) -> bool {
-    let length = usize::try_from(header.payload_length).unwrap_or(usize::MAX);
-    match header.payload_type {
+    let length = usize::try_from(header.payload_length()).unwrap_or(usize::MAX);
+    match header.payload_type() {
         PayloadType::NegativeAcknowledge => length == 1,
         PayloadType::RoutingActivationResponse => {
             length == RoutingActivationResponse::PAYLOAD_SIZE
@@ -1211,8 +1211,8 @@ fn react(
         None => Reaction::Ignore,
     };
     match (
-        header.payload_type,
-        Payload::decode(payload, header.payload_type),
+        header.payload_type(),
+        Payload::decode(payload, header.payload_type()),
     ) {
         (PayloadType::DiagnosticMessage, _) => {
             let Ok((message, _)) = DiagnosticMessage::decode(payload) else {
@@ -1226,7 +1226,7 @@ fn react(
                 sa: message.source_address,
                 ta,
                 copied: copy(message.user_data, buf),
-                length: usize::try_from(header.payload_length)
+                length: usize::try_from(header.payload_length())
                     .unwrap_or(usize::MAX)
                     .saturating_sub(DiagnosticMessage::ADDRESSES_SIZE),
             })
@@ -1285,7 +1285,7 @@ fn react(
         ) => Reaction::Deliver(Delivered::Unmodelled {
             payload_type,
             copied: copy(payload, buf),
-            length: usize::try_from(header.payload_length).unwrap_or(usize::MAX),
+            length: usize::try_from(header.payload_length()).unwrap_or(usize::MAX),
         }),
         _ => Reaction::Ignore,
     }
@@ -1309,8 +1309,8 @@ fn on_activation_frame<E>(
     }
     let sized = sized_for_its_type(header);
     match (
-        header.payload_type,
-        Payload::decode(payload, header.payload_type),
+        header.payload_type(),
+        Payload::decode(payload, header.payload_type()),
     ) {
         (
             PayloadType::RoutingActivationResponse,
