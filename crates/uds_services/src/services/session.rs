@@ -109,8 +109,8 @@ pub trait DiagnosticSessionControl {
     /// timed by this and not by the [`ServerParams`](crate::ServerParams) passed to
     /// [`Server::new`](crate::Server::new). The returned pair must keep those params'
     /// `response_pending_lead` well formed
-    /// ([`ServerParams::is_well_formed`](crate::ServerParams::is_well_formed)); a debug
-    /// build panics on the first request timed by a pair that does not.
+    /// ([`ServerParams::lead_fits`](crate::ServerParams::lead_fits)); the server panics
+    /// on the first request timed by a pair that does not.
     ///
     /// # Arguments
     ///

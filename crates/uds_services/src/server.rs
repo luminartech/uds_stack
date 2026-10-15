@@ -170,6 +170,12 @@ impl<A: ServiceSet, T: UdsTransport, const PEERS: usize> Server<A, T, PEERS> {
     ///
     /// [`UdsTransport::Error`] where the transport failed. A negative response is not an
     /// error: it is a response, written into the sink.
+    ///
+    /// # Panics
+    ///
+    /// Where [`DiagnosticSessionControl::timing`](crate::DiagnosticSessionControl::timing)
+    /// returns a pair the [`ServerParams`] response-pending lead does not fit
+    /// ([`ServerParams::lead_fits`]), on the first request that pair would time.
     pub async fn step(&mut self) -> Result<Stepped, T::Error> {
         let Some(stopped) = self.handle().await? else {
             return Ok(Stepped::Continue);
@@ -337,6 +343,10 @@ impl<A: ServiceSet, T: UdsTransport, const PEERS: usize> Server<A, T, PEERS> {
     /// # Errors
     ///
     /// Whatever [`Self::step`] returned.
+    ///
+    /// # Panics
+    ///
+    /// Where [`Self::step`] does.
     pub async fn run(&mut self) -> Result<Stopped, T::Error> {
         loop {
             if let Stepped::Stopped(stopped) = self.step().await? {
@@ -387,8 +397,11 @@ pub enum Stopped {
 /// The parameters are then set at the same `now`, which can expire nothing further, and
 /// ``UDSS_LLR_0076`` leaves any window already open on the value it was loaded with.
 ///
-/// A debug build panics where the pair leaves `params`' response-pending lead ill formed:
-/// the enhanced overrun would then come due before ``UDSS_LLR_0119`` admits its 0x78.
+/// # Panics
+///
+/// Where the pair leaves `params`' response-pending lead ill formed: the enhanced overrun
+/// would then come due before ``UDSS_LLR_0119`` admits its 0x78, so the server could not
+/// keep the window it advertised.
 async fn retime<A: ServiceSet, T: UdsTransport, const PEERS: usize>(
     services: &mut A::App,
     state: &mut A::State,
@@ -403,7 +416,7 @@ async fn retime<A: ServiceSet, T: UdsTransport, const PEERS: usize>(
     let Some(timing) = A::session_timing(services, state) else {
         return Ok(stopped);
     };
-    debug_assert!(
+    assert!(
         params.lead_fits(timing.p2_server_max(), timing.p2_star_server_max()),
         "DiagnosticSessionControl::timing returned a pair the response-pending lead does \
          not fit (ServerParams::lead_fits)",

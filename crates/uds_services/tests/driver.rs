@@ -697,6 +697,22 @@ fn the_confirmed_sessions_advertised_timing_is_enforced() {
     assert_eq!(t.addressed(3).1, POSITIVE);
 }
 
+/// A session whose advertised pair the response-pending lead does not fit panics the
+/// server on the first request it would time: the default session's 50 ms `P2` cannot
+/// hold a 2000 ms lead.
+#[test]
+#[should_panic(expected = "the response-pending lead does not fit")]
+fn a_session_pair_the_lead_does_not_fit_panics() {
+    let params = ServerParams::new(5_000, 5_000, 10_000, 2_000);
+    let mut server = TimedSrv::new(
+        Timed { pends: 0 },
+        Script::new(&[Step::Ind(request_from(TESTER), READ)]),
+        ECU,
+        params,
+    );
+    let _ = block_on(server.step());
+}
+
 /// A request longer than the in-flight buffer, with no service in progress, is checked as
 /// clause 8.7 checks any request, in ISO 14229-1:2020 Figure 5's and Figure 6's order:
 /// `serviceNotSupported` (0x11) for a service this server lacks, `subFunctionNotSupported`
