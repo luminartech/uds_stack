@@ -148,10 +148,10 @@ pub enum ConnectionRefusal {
 /// instant on it: milliseconds, truncated to 32 bits, so it wraps every 49.7 days.
 ///
 /// It has no order, because the raw order is wrong either side of the wrap. Two readings
-/// compare only by how far apart they are, which [`Self::has_reached`] and
-/// [`Self::until`] read correctly so long as they lie within half the range, about 24.8
-/// days, of each other: the rule its namesake `uds_session::Timestamp` keeps one layer
-/// up.
+/// compare only by how far apart they are, which [`Self::has_reached`], [`Self::until`]
+/// and [`Self::earlier`] read correctly so long as they lie within half the range, about
+/// 24.8 days, of each other: the rule, and the methods, of its namesake
+/// `uds_session::Timestamp` one layer up.
 ///
 /// # Examples
 ///
@@ -164,6 +164,8 @@ pub enum ConnectionRefusal {
 /// assert!(!now.has_reached(deadline));
 /// assert_eq!(now.until(deadline), 16);
 /// assert!(deadline.has_reached(now));
+/// assert_eq!(deadline.interval_since(now), 16);
+/// assert_eq!(now.earlier(deadline), now);
 /// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Timestamp(pub u32);
@@ -177,6 +179,32 @@ impl Timestamp {
     #[must_use]
     pub const fn after(self, millis: u32) -> Self {
         Self(self.0.wrapping_add(millis))
+    }
+
+    /// The earlier of `self` and `other`: `self` where the wrapping difference
+    /// `self - other` lands in the upper half of the range.
+    ///
+    /// # Arguments
+    ///
+    /// * `other` - the instant to compare `self` against.
+    #[must_use]
+    pub const fn earlier(self, other: Self) -> Self {
+        if self.0.wrapping_sub(other.0) > u32::MAX / 2 {
+            self
+        } else {
+            other
+        }
+    }
+
+    /// The milliseconds since `earlier`, modulo 2^32, so a reading past the wrap still
+    /// yields the right interval.
+    ///
+    /// # Arguments
+    ///
+    /// * `earlier` - the instant the interval starts at.
+    #[must_use]
+    pub const fn interval_since(self, earlier: Self) -> u32 {
+        self.0.wrapping_sub(earlier.0)
     }
 
     /// Whether `self`, read as the current time, has reached `deadline`: whether the

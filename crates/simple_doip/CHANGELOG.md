@@ -90,7 +90,9 @@ example for each.
     a connection a `ConnectionRefusal` (`Closed`, or `Refused(Refusal)`), and no
     confirm follows it.
   - `Timestamp`, a wrapping 32-bit millisecond reading of the implementor's clock,
-    which `now` returns and `next_event` takes as its deadline.
+    which `now` returns and `next_event` takes as its deadline. It has the methods of
+    `uds_session::Timestamp`: `after`, `earlier`, `interval_since`, `has_reached`
+    and `until`.
   - `TesterAddress`, a logical address in the tester range, and
     `EntityConfig<TESTERS>`, the testers an entity accepts. `EntityConfig` has no
     `Default`: every integrator names its testers. `with_close_limit` sets how long an
