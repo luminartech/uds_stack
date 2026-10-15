@@ -218,6 +218,9 @@ example for each.
 
 ### Fixed
 
+- `Tester::close` returns `Ok` where the stack reports `NotConnected` because the
+  entity closed first, as its contract promises for a tester with no connection. A std
+  stack's shutdown failed that way after an unobserved close, such as after a reset.
 - A negative diagnostic acknowledgement was emitted under the positive
   payload type `0x8002` whatever its code, and a received `0x8003` was decoded
   without its body. The separate types above make a header and its code agree.

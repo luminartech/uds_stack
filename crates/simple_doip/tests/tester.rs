@@ -321,7 +321,10 @@ fn a_refused_connection_is_an_io_error() {
     let stack = MockStack::new(usize::MAX);
     stack.refuse_next_connect();
 
-    assert_eq!(connect(&stack).unwrap_err(), ConnectError::Io(MockError));
+    assert_eq!(
+        connect(&stack).unwrap_err(),
+        ConnectError::Io(MockError::Failed)
+    );
 }
 
 /// ISO 13400-2:2019 Table 13: a tester's source address is in the client range, so
@@ -684,7 +687,7 @@ fn the_cause_of_a_loss_is_readable_through_the_trait() {
         next(&mut tester, &mut buf).unwrap(),
         ConnectionEvent::Closed
     );
-    assert_eq!(cause_of_loss(&tester), Some(&MockError));
+    assert_eq!(cause_of_loss(&tester), Some(&MockError::Failed));
 }
 
 /// A failed read ends the connection, reported as `Closed` rather than as an `Err`; the
@@ -702,7 +705,7 @@ fn a_failed_read_is_closed_and_keeps_its_error() {
         ConnectionEvent::Closed
     );
     assert_quiet_until_the_deadline(&mut tester);
-    assert_eq!(tester.io_error(), Some(&MockError));
+    assert_eq!(tester.io_error(), Some(&MockError::Failed));
     assert!(stack.latest().is_shut());
     assert!(
         !stack.latest().is_aborted(),
@@ -1208,7 +1211,7 @@ fn a_failed_write_confirms_no_socket() {
         ConnectionEvent::Closed
     );
     assert_quiet_until_the_deadline(&mut tester);
-    assert_eq!(tester.io_error(), Some(&MockError));
+    assert_eq!(tester.io_error(), Some(&MockError::Failed));
 }
 
 /// A request that left and was never acknowledged has an unknown outcome, so an I/O
@@ -1501,7 +1504,7 @@ fn a_failed_reconnect_leaves_the_tester_closed() {
 
     assert_eq!(
         reconnect(&mut tester).unwrap_err(),
-        ConnectError::Io(MockError)
+        ConnectError::Io(MockError::Failed)
     );
     assert_eq!(
         next(&mut tester, &mut buf).unwrap(),
@@ -2690,6 +2693,19 @@ fn close_shuts_the_connection_gracefully_and_leaves_it_closed() {
     );
     assert_quiet_until_the_deadline(&mut tester);
     assert_eq!(request(&mut tester).unwrap_err(), ConnectionRefusal::Closed);
+}
+
+/// A close the stack reports `NotConnected`, because the entity closed first, is the
+/// close the contract promises for a tester with no connection: `Ok`.
+#[test]
+fn close_after_the_entity_closed_first_is_ok() {
+    let _clock = clock();
+    let stack = MockStack::new(usize::MAX);
+    let mut tester = active(&stack);
+    stack.latest().close_not_connected();
+
+    assert_eq!(run(tester.close()), Ok(()));
+    assert!(stack.latest().is_closed());
 }
 
 /// A request unconfirmed at the close still gets its one confirm, from the next

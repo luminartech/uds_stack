@@ -213,7 +213,7 @@ fn a_failed_accept_is_returned() {
     let mut buf = [0u8; 64];
     assert!(matches!(
         until_stalled(pin!(entity.next_event(&mut buf, None))),
-        Some(Err(Error::Accept(MockError)))
+        Some(Err(Error::Accept(MockError::Failed)))
     ));
 }
 

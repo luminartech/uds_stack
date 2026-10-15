@@ -42,9 +42,14 @@ use simple_doip::messages::{
 };
 use simple_doip::wire::{Encode, SliceSink};
 
-/// The mock's only error.
+/// The mock's errors.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct MockError;
+pub enum MockError {
+    /// Any failure a test scripts.
+    Failed,
+    /// A shutdown of a socket the peer has already closed, as a std stack reports it.
+    NotConnected,
+}
 
 impl std::fmt::Display for MockError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -56,7 +61,10 @@ impl std::error::Error for MockError {}
 
 impl embedded_io_async::Error for MockError {
     fn kind(&self) -> ErrorKind {
-        ErrorKind::Other
+        match self {
+            Self::Failed => ErrorKind::Other,
+            Self::NotConnected => ErrorKind::NotConnected,
+        }
     }
 }
 
@@ -72,6 +80,7 @@ struct Connection {
     write_budget: Option<usize>,
     write_zero: bool,
     close_stall: bool,
+    close_not_connected: bool,
     abort_stall: bool,
     outbound: Vec<u8>,
     /// How many bytes each write that wrote any carried.
@@ -253,6 +262,12 @@ impl MockPeer {
         self.with(|c| c.close_stall = true);
     }
 
+    /// The tester's graceful close fails `NotConnected` from now on, as a std stack's
+    /// shutdown does once the peer has closed first.
+    pub fn close_not_connected(&self) {
+        self.with(|c| c.close_not_connected = true);
+    }
+
     /// The tester's aborts pend from now on, as when the stack cannot send the reset.
     pub fn stall_aborts(&self) {
         self.with(|c| c.abort_stall = true);
@@ -338,7 +353,7 @@ impl MockPeer {
         poll_fn(|cx| {
             self.with(|c| {
                 if c.read_error {
-                    return Poll::Ready(Err(MockError));
+                    return Poll::Ready(Err(MockError::Failed));
                 }
                 if !c.inbound.is_empty() {
                     let n = buf.len().min(piece).min(c.inbound.len());
@@ -364,7 +379,7 @@ impl MockPeer {
         poll_fn(|cx| {
             self.with(|c| {
                 if c.write_error {
-                    return Poll::Ready(Err(MockError));
+                    return Poll::Ready(Err(MockError::Failed));
                 }
                 if c.write_stall || c.write_budget == Some(0) {
                     c.writer = Some(cx.waker().clone());
@@ -428,6 +443,9 @@ impl TcpShutdown for MockSocket {
             self.peer.with(|c| {
                 if c.close_stall {
                     Poll::Pending
+                } else if c.close_not_connected {
+                    c.closed = true;
+                    Poll::Ready(Err(MockError::NotConnected))
                 } else {
                     c.closed = true;
                     Poll::Ready(Ok(()))
@@ -510,7 +528,7 @@ impl TcpConnect for MockStack {
             .pop_front()
             .unwrap_or(Some(Vec::new()));
         let Some(inbound) = script else {
-            return Err(MockError);
+            return Err(MockError::Failed);
         };
         let mut connection = Connection::default();
         connection.inbound.extend(inbound);
@@ -531,7 +549,7 @@ impl TcpAccept for MockStack {
         poll_fn(|cx| {
             let mut shared = self.0.borrow_mut();
             if std::mem::take(&mut shared.accept_fails) {
-                return Poll::Ready(Err(MockError));
+                return Poll::Ready(Err(MockError::Failed));
             }
             let Some(index) = shared.incoming.pop_front() else {
                 shared.acceptor = Some(cx.waker().clone());
@@ -643,11 +661,11 @@ impl MockUdp {
         poll_fn(|cx| {
             self.with(|u| {
                 if u.receive_error {
-                    return Poll::Ready(Err(MockError));
+                    return Poll::Ready(Err(MockError::Failed));
                 }
                 if u.receive_error_once && !u.inbound.is_empty() {
                     u.receive_error_once = false;
-                    return Poll::Ready(Err(MockError));
+                    return Poll::Ready(Err(MockError::Failed));
                 }
                 let Some((datagram, from)) = u.inbound.pop_front() else {
                     u.receiver = Some(cx.waker().clone());
@@ -665,7 +683,7 @@ impl MockUdp {
         poll_fn(|cx| {
             self.with(|u| {
                 if u.receive_error {
-                    Poll::Ready(Err(MockError))
+                    Poll::Ready(Err(MockError::Failed))
                 } else if !u.inbound.is_empty() {
                     Poll::Ready(Ok(()))
                 } else {
@@ -682,7 +700,7 @@ impl MockUdp {
         poll_fn(|cx| {
             self.with(|u| {
                 if u.send_error {
-                    return Poll::Ready(Err(MockError));
+                    return Poll::Ready(Err(MockError::Failed));
                 }
                 if u.send_stall {
                     u.sender = Some(cx.waker().clone());

@@ -276,7 +276,7 @@ fn a_failing_socket_is_an_io_error() {
     udp.fail_sends();
     assert_eq!(
         until_stalled(pin!(discovery::power_mode(&mut socket, entity_at(10)))),
-        Some(Err(DiscoveryError::Io(MockError)))
+        Some(Err(DiscoveryError::Io(MockError::Failed)))
     );
 
     udp.heal();
@@ -290,7 +290,10 @@ fn a_failing_socket_is_an_io_error() {
     assert!(until_stalled(identifying.as_mut()).is_none());
     udp.fail_receives();
     udp.deliver(entity_at(10), &identification(0xE400, EID));
-    assert_eq!(until_stalled(identifying.as_mut()), Some(Err(MockError)));
+    assert_eq!(
+        until_stalled(identifying.as_mut()),
+        Some(Err(MockError::Failed))
+    );
 }
 
 /// A receive that fails loses that datagram alone, as when a host reports an earlier

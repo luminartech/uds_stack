@@ -938,11 +938,22 @@ impl<C: TcpConnect, const N: usize> TesterConnection for Tester<'_, C, N> {
     ///
     /// # Errors
     ///
-    /// The socket's error where closing fails; the tester is closed all the same.
+    /// The socket's error where closing fails, other than `NotConnected`, which a stack
+    /// reports once the entity has closed first and is the close with no connection; the
+    /// tester is closed all the same.
     async fn close(&mut self) -> Result<(), Self::CloseError> {
-        match self.give_up() {
-            Some(mut socket) => socket.close(Close::Both).await,
-            None => Ok(()),
+        let Some(mut socket) = self.give_up() else {
+            return Ok(());
+        };
+        match socket.close(Close::Both).await {
+            // The entity closed first: there was no connection left to close.
+            Err(error)
+                if embedded_io_async::Error::kind(&error)
+                    == embedded_io_async::ErrorKind::NotConnected =>
+            {
+                Ok(())
+            }
+            closed => closed,
         }
     }
 }
