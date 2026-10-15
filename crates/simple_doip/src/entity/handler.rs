@@ -192,9 +192,9 @@ fn check_header<S, const CAP: usize>(
         ));
     }
     open.version = header.protocol_version();
-    let Some(length_ok) = length_rule(header.payload_type()) else {
+    if !taken_on_tcp(header.payload_type()) {
         return Err(discard(open, tx, rx, &header, NackCode::UnknownPayloadType));
-    };
+    }
     let fits = |limit: usize| {
         usize::try_from(header.payload_length())
             .is_ok_and(|length| length <= limit.saturating_sub(Header::SIZE))
@@ -205,7 +205,10 @@ fn check_header<S, const CAP: usize>(
     if !fits(memory) {
         return Err(discard(open, tx, rx, &header, NackCode::OutOfMemory));
     }
-    if !length_ok(header.payload_length()) {
+    if !header
+        .payload_type()
+        .allows_payload_length(header.payload_length())
+    {
         return Err(refuse(
             open,
             tx,
@@ -217,20 +220,18 @@ fn check_header<S, const CAP: usize>(
     Ok(())
 }
 
-/// The payload lengths ISO 13400-2:2019 allows each payload type a tester sends on a
-/// `TCP_DATA` socket, or `None` for a type the entity does not take there (Figure 16).
-/// A diagnostic message's user data is mandatory (Table 21), which this crate reads as
-/// at least one byte.
-fn length_rule(payload_type: PayloadType) -> Option<fn(u32) -> bool> {
-    match payload_type {
-        PayloadType::RoutingActivationRequest => Some(|length| matches!(length, 7 | 11)),
-        PayloadType::AliveCheckResponse => Some(|length| length == 2),
-        PayloadType::DiagnosticMessage
-        | PayloadType::DiagnosticMessagePositiveAcknowledge
-        | PayloadType::DiagnosticMessageNegativeAcknowledge => Some(|length| length >= 5),
-        PayloadType::NegativeAcknowledge => Some(|length| length == 1),
-        _ => None,
-    }
+/// Whether the entity takes `payload_type` from a tester on a `TCP_DATA` socket (Table 17,
+/// Figure 16).
+fn taken_on_tcp(payload_type: PayloadType) -> bool {
+    matches!(
+        payload_type,
+        PayloadType::RoutingActivationRequest
+            | PayloadType::AliveCheckResponse
+            | PayloadType::DiagnosticMessage
+            | PayloadType::DiagnosticMessagePositiveAcknowledge
+            | PayloadType::DiagnosticMessageNegativeAcknowledge
+            | PayloadType::NegativeAcknowledge
+    )
 }
 
 /// Generic header NACK `code`, then the socket is closed within `close_limit`.

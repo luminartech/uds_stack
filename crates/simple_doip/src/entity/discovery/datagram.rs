@@ -97,20 +97,23 @@ pub(super) fn handle<I: VehicleIdentity>(
         _ => return Some(Owed::nack(NackCode::IncorrectPatternFormat)),
     };
     let refused = |code| Some(Owed::now(Answer::Nack(code), version));
-    let expected = match header.payload_type() {
-        PayloadType::VehicleIdentificationRequest
-        | PayloadType::DoIPEntityStatusRequest
-        | PayloadType::DiagnosticPowerModeInfoRequest => 0,
-        PayloadType::VehicleIdentificationRequestWithEID => 6,
-        PayloadType::VehicleIdentificationRequestWithVIN => 17,
-        _ => return refused(NackCode::UnknownPayloadType),
-    };
+    let taken = identification
+        || matches!(
+            header.payload_type(),
+            PayloadType::DoIPEntityStatusRequest
+                | PayloadType::DiagnosticPowerModeInfoRequest
+        );
+    if !taken {
+        return refused(NackCode::UnknownPayloadType);
+    }
     if header.payload_length() > max_data_size {
         return refused(NackCode::MessageTooLarge);
     }
-    let whole = usize::try_from(header.payload_length()).is_ok_and(|declared| {
-        declared == expected && Some(length) == expected.checked_add(Header::SIZE)
-    });
+    let declared = usize::try_from(header.payload_length()).ok();
+    let whole = header
+        .payload_type()
+        .allows_payload_length(header.payload_length())
+        && declared.and_then(|declared| declared.checked_add(Header::SIZE)) == Some(length);
     if !whole {
         return refused(NackCode::InvalidPayloadLength);
     }
@@ -119,7 +122,7 @@ pub(super) fn handle<I: VehicleIdentity>(
         version,
         when: When::AfterAnnounceWait,
     };
-    match Payload::decode(payload.get(..expected)?, header.payload_type()).ok()? {
+    match Payload::decode(payload.get(..declared?)?, header.payload_type()).ok()? {
         Payload::VehicleIdentificationRequest => Some(identified),
         Payload::VehicleIdentificationRequestWithEid(eid) => {
             identity.matches_eid(&eid).then_some(identified)

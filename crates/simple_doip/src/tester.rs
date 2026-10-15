@@ -1170,24 +1170,11 @@ fn spoken(header: &Header) -> bool {
     )
 }
 
-/// Whether `header`'s payload length is one ISO 13400-2:2019 allows its payload type
-/// (Tables 18, 21, 23, 25, 27 and 48).
+/// Whether `header`'s payload length is one its payload type allows.
 fn sized_for_its_type(header: &Header) -> bool {
-    let length = usize::try_from(header.payload_length()).unwrap_or(usize::MAX);
-    match header.payload_type() {
-        PayloadType::NegativeAcknowledge => length == 1,
-        PayloadType::RoutingActivationResponse => {
-            length == RoutingActivationResponse::PAYLOAD_SIZE
-                || length == RoutingActivationResponse::PAYLOAD_SIZE_WITH_OEM
-        }
-        PayloadType::AliveCheckRequest => length == 0,
-        PayloadType::DiagnosticMessage
-        | PayloadType::DiagnosticMessagePositiveAcknowledge
-        | PayloadType::DiagnosticMessageNegativeAcknowledge => {
-            length > DiagnosticMessage::ADDRESSES_SIZE
-        }
-        _ => true,
-    }
+    header
+        .payload_type()
+        .allows_payload_length(header.payload_length())
 }
 
 /// Acts on one message from the entity, whose `payload` may be only the start of what

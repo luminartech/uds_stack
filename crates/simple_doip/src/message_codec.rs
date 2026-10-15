@@ -257,9 +257,10 @@ mod tests {
     }
 
     /// A `RoutingActivationRequest` (payload type `0x0005`) whose header declares a 1-byte
-    /// body, and one body byte is present, so framing is satisfied. The body is still
-    /// truncated for its type, and `Payload::decode`'s framing-fatal
-    /// `MessageError::Incomplete` propagates rather than being handed over.
+    /// body, and one body byte is present, so framing is satisfied, but Table 46 allows
+    /// the request 7 or 11 bytes. It is `Payload::decode` that returns the framing-fatal
+    /// `MessageError::InvalidPayloadLength`, which `decode` must propagate rather than
+    /// hand over as a `Frame::Undecoded`.
     const TRUNCATED_BODY_FRAME: [u8; 9] =
         [0x02, 0xFD, 0x00, 0x05, 0x00, 0x00, 0x00, 0x01, 0x03];
 
@@ -269,7 +270,15 @@ mod tests {
         let mut src = BytesMut::from(&TRUNCATED_BODY_FRAME[..]);
         let err = codec.decode(&mut src).unwrap_err();
         assert!(err.is_framing_fatal(), "got a non-fatal error: {err:?}");
-        assert!(matches!(err, MessageError::Incomplete { .. }));
+        assert!(matches!(
+            err,
+            MessageError::InvalidPayloadLength { length: 1, .. }
+        ));
+        assert_eq!(
+            src.len(),
+            TRUNCATED_BODY_FRAME.len(),
+            "the buffer is left untouched"
+        );
     }
 
     /// A payload past the limit is reported from its header alone, its bytes are

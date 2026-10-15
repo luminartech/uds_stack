@@ -174,9 +174,9 @@ example for each.
   field.
 - **Breaking:** `Payload::decode` keeps what a directed identification request
   names. `0x0002` and `0x0003` decode to `VehicleIdentificationRequestWithEid` and
-  `WithVin` rather than `VehicleIdentificationRequest`, and one shorter than its EID
-  or VIN is `MessageError::Incomplete`. `0x4003` decodes to `PowerModeInfoRequest`
-  where it was `MessageError::UnsupportedPayloadType`.
+  `WithVin` rather than `VehicleIdentificationRequest`, and one not as long as its
+  EID or VIN is `MessageError::InvalidPayloadLength`. `0x4003` decodes to
+  `PowerModeInfoRequest` where it was `MessageError::UnsupportedPayloadType`.
 - **Breaking:** `Message` and `OwnedMessage` hold a `protocol_version` and a
   `payload`, and no `header`. The header is derived when a message is encoded, its
   payload type from the new `Payload::payload_type`, so it can no longer name a type
@@ -187,6 +187,19 @@ example for each.
   constructors no longer panic. Migrate: build a `Message` from `protocol_version`
   and `payload`, read `message.payload.payload_type()` or `message.header()` where
   you read `message.header`, and call the getter where you read a `Header` field.
+- **Breaking:** `Payload::decode`, and with it `Message::decode`, requires a payload
+  to be exactly as long as its type allows (REQ 7.DoIP-045), and refuses one too
+  short, too long, or with bytes left over with the new
+  `MessageError::InvalidPayloadLength { payload_type, length }`, which
+  `is_framing_fatal` classifies fatal as Table 19 has the socket closed. A body too
+  short was `MessageError::Incomplete`, and trailing bytes were ignored. The rule is
+  public as `PayloadType::allows_payload_length`, which the entity and the tester
+  check headers against. A diagnostic message must carry at least one byte of user
+  data. Migrate: match `InvalidPayloadLength` where you matched `Incomplete` from
+  `Payload::decode`, and send whole payloads.
+- **Breaking:** `MessageError::PayloadLengthTooShort` and
+  `MessageError::UnexpectedPayloadType` are removed: nothing produced them. Migrate:
+  delete the match arms.
 - **Breaking:** the minimum supported Rust version is 1.91, up from 1.88.
 - `simple_doip` is released in lockstep with `uds_protocol`, `uds_session`,
   `uds_services` and `uds_on_ip`: all five share one version, and 0.7.0 is the

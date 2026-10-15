@@ -175,6 +175,41 @@ impl From<PayloadType> for u16 {
     }
 }
 
+impl PayloadType {
+    /// Whether a payload of `length` bytes has a length this payload type allows, the
+    /// check REQ 7.DoIP-045 has an entity answer with generic header NACK `0x04`.
+    ///
+    /// The lengths are those of each payload's structure: Tables 2 to 5 and 8 to 11
+    /// for the vehicle identification, power mode and entity status messages, Table 18
+    /// for the generic NACK, Tables 21, 23 and 25 for the diagnostic message and its
+    /// acknowledgements, Tables 27 and 28 for the alive check, and Tables 46 and 48 for
+    /// routing activation. A diagnostic message's user data is mandatory (Table 21),
+    /// which this crate reads as at least one byte. Always `true` for a reserved type,
+    /// whose payload this crate does not model.
+    #[must_use]
+    pub const fn allows_payload_length(self, length: u32) -> bool {
+        match self {
+            PayloadType::VehicleIdentificationRequest
+            | PayloadType::AliveCheckRequest
+            | PayloadType::DoIPEntityStatusRequest
+            | PayloadType::DiagnosticPowerModeInfoRequest => length == 0,
+            PayloadType::NegativeAcknowledge
+            | PayloadType::DiagnosticPowerModeInfoResponse => length == 1,
+            PayloadType::AliveCheckResponse => length == 2,
+            PayloadType::VehicleIdentificationRequestWithEID => length == 6,
+            PayloadType::VehicleIdentificationRequestWithVIN => length == 17,
+            PayloadType::VehicleAnnouncement => matches!(length, 32 | 33),
+            PayloadType::RoutingActivationRequest => matches!(length, 7 | 11),
+            PayloadType::RoutingActivationResponse => matches!(length, 9 | 13),
+            PayloadType::DoIPEntityStatusResponse => matches!(length, 3 | 7),
+            PayloadType::DiagnosticMessage
+            | PayloadType::DiagnosticMessagePositiveAcknowledge
+            | PayloadType::DiagnosticMessageNegativeAcknowledge => length >= 5,
+            PayloadType::Reserved(_) | PayloadType::ReservedVehicleManufacturer(_) => true,
+        }
+    }
+}
+
 impl Debug for PayloadType {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         let val: u16 = (*self).into();

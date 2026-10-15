@@ -298,11 +298,12 @@ proptest! {
         prop_assert_eq!(parsed.payload, payload);
     }
 
+    /// A diagnostic message carries at least one byte of user data (Table 21).
     #[test]
     fn prop_full_diagnostic_frame_roundtrip(
         source in any::<u16>(),
         target in any::<u16>(),
-        user_data in prop::collection::vec(any::<u8>(), 0..64),
+        user_data in prop::collection::vec(any::<u8>(), 1..64),
     ) {
         let payload = Payload::DiagnosticMessage(DiagnosticMessage {
             source_address: LogicalAddress(source),

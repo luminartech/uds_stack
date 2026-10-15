@@ -708,23 +708,23 @@ module header of `src/messages/message_error.rs`:
 |---|---|---|
 | `VersionInverseIncorrect` | framing-fatal | wire decode |
 | `Incomplete` | framing-fatal | wire decode |
-| `TrailingBytes` | recoverable | wire decode |
-| `PayloadLengthTooShort`, `UnexpectedPayloadType`, `UnsupportedPayloadType` | recoverable (body) | wire decode |
-| `Io(embedded_io::ErrorKind)` | recoverable | encode / `embedded-io` |
+| `InvalidPayloadLength` | framing-fatal (Table 19 closes the socket) | wire decode |
+| `TrailingBytes` | recoverable | wire decode (`decode_exact`) |
+| `UnsupportedPayloadType` | recoverable (body) | wire decode |
+| `PayloadTooLarge` | recoverable | encode |
+| `Io(WriteError)` | recoverable | encode / `automotive-wire-codec` |
 | `Std(std::io::Error)` (feature `std`) | not a frame property at all | tokio/codec boundary |
 
 `MessageError::is_framing_fatal()` collapses the first axis into one question:
-*has stream sync been lost?* If yes, the header cannot be trusted and the only
-safe move is to close the connection. If no, the frame boundary is known and
-the caller can NACK, ignore, or skip.
+*is closing the connection the only safe move?* It is when stream sync has been
+lost and the header cannot be trusted, and when a payload has a length its type
+does not allow, for which Table 19 has an entity close the socket. Otherwise
+the frame boundary is known and the caller can NACK, ignore, or skip.
 
 Both `Io` and `Std` exist because they carry different information: the
-`no_std` core can only produce a flattened `embedded_io::ErrorKind`, while the
-tokio layer has a real `std::io::Error` with an OS code and message, which
-`MessageCodec` must accept as its `Decoder`/`Encoder` error.
-
-`PayloadLengthTooShort` and `UnexpectedPayloadType` are documented in-tree as
-currently unreachable — part of the public taxonomy but never produced by this crate.
+`no_std` core can only produce a flattened `WriteError`, while the tokio layer
+has a real `std::io::Error` with an OS code and message, which `MessageCodec`
+must accept as its `Decoder`/`Encoder` error.
 
 ### 4.1 `is_framing_fatal` is consumed by the codec
 
@@ -738,18 +738,20 @@ locks that. A header declaring a payload past `MessageCodec::max_payload_length`
 is `Frame::TooLarge`, and its payload is discarded as it arrives rather than
 buffered.
 
-### 4.2 `Incomplete` is classified fatal, including inside a complete frame
+### 4.2 One payload length rule
 
-`try_frame` never returns `Incomplete` itself — a buffer too short for a
-complete frame yields `Ok(None)`. So when `Payload::decode` returns
-`Incomplete` inside `MessageCodec::decode`, the frame boundary is already known
-and stream sync is not actually at risk; only the body was shorter than its
-payload type requires. `is_framing_fatal` does not distinguish this from a
-genuinely incomplete frame, so the codec tears the connection down either way.
-This is deliberate, not a bug: it is documented on the variant and pinned by
-`truncated_body_is_fatal_via_classifier` in `src/message_codec.rs`. Splitting
-`Incomplete` or making the classifier context-sensitive would change tested
-wire-facing behavior and is left to a deliberate future decision.
+`PayloadType::allows_payload_length` is REQ 7.DoIP-045's rule: the lengths each
+payload type's structure table allows. `Payload::decode` holds every payload to
+it, so a body too short, too long, or between the two lengths of a type with an
+optional field is `InvalidPayloadLength` rather than a partial decode. The
+entity's TCP header handler (`src/entity/handler.rs`), its UDP one
+(`src/entity/discovery/datagram.rs`) and the tester (`src/tester.rs`) check a
+header against the same rule before the payload is read, and the entity answers
+a failure with NACK `0x04`. `try_frame` never returns `Incomplete` itself — a
+buffer too short for a complete frame yields `Ok(None)` — and `Payload::decode`
+does not either, so inside a delimited frame a wrong length is always
+`InvalidPayloadLength`. `truncated_body_is_fatal_via_classifier` in
+`src/message_codec.rs` pins that the codec propagates it.
 
 ---
 
@@ -883,13 +885,6 @@ The README's **Scope and limitations** section names these for an integrator
 choosing the crate; the mechanics are here:
 
 - No TLS: `TCP_TLS_PORT` is named, and nothing serves it.
-- `Message::decode` accepts a header whose `payload_length` disagrees with what
-  the payload actually occupies — it hands the payload exactly that many bytes
-  and does not require them all to be consumed. `Message::encode` always
-  derives the length field, so an emitted frame is self-consistent, but lenient
-  decode remains. ISO 13400-2 has an entity answer an invalid payload length
-  with NACK `0x04`, and `MessageError::PayloadLengthTooShort` exists, unused,
-  for exactly this.
 - `RoutingActivationRequest::encode` omits the optional vehicle-manufacturer
   field when it is `None`, writing 7 bytes instead of 11 — every golden vector
   agrees, but none exercises a peer that requires the long form

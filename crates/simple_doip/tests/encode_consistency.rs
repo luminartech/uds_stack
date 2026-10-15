@@ -1,15 +1,11 @@
-//! `Message::encode` must never emit a frame `Message::decode` rejects.
+//! `Message::encode` must never emit a frame `Message::decode` rejects, and
+//! `Message::decode` must reject a frame whose declared length its payload does not
+//! occupy exactly.
 //!
-//! Regression tests for the asymmetry the `fuzz_roundtrip` target found:
-//! `decode` takes exactly `header.payload_length` bytes and lets
-//! `Payload::decode` consume fewer without complaint, so a decoded `Message`
-//! could carry a declared length its payload did not occupy. `encode` wrote
-//! that stale field verbatim, producing a frame that failed to decode with
-//! `Incomplete`.
-//!
-//! Both inputs below are frames a peer can actually send. Neither is
-//! well-formed, but both are accepted, and being accepted is what put them on
-//! the re-encode path.
+//! Regression tests for the asymmetry the `fuzz_roundtrip` target found: a decoded
+//! `Message` once carried a declared length its payload did not occupy. `decode` now
+//! refuses such a frame with `InvalidPayloadLength` (REQ 7.DoIP-045), and `encode`
+//! derives the length from the payload.
 
 // Test code. `unwrap`, `expect` and `panic` are the failure mechanism here, and a
 // test that indexes a known-length golden vector reads better than one that does
@@ -25,7 +21,7 @@
 )]
 
 use automotive_wire_codec::SliceSink;
-use simple_doip::messages::{Decode, Encode, Message, Payload, PayloadType};
+use simple_doip::messages::{Decode, Encode, Message, MessageError, PayloadType};
 
 /// Encode `message` into a fresh buffer sized by `encoded_size`.
 fn encode(message: &Message<'_>) -> Vec<u8> {
@@ -39,40 +35,31 @@ fn encode(message: &Message<'_>) -> Vec<u8> {
 
 /// A NACK body is one byte. This frame's header claims five.
 #[test]
-fn a_fixed_size_payload_with_an_overlong_declared_length_still_round_trips() {
+fn a_fixed_size_payload_with_an_overlong_declared_length_is_refused() {
     let framed: [u8; 13] = [
         0x02, 0xFD, 0x00, 0x00, 0x00, 0x00, 0x00, 0x05, 0x03, 0x00, 0x00, 0x00, 0x00,
     ];
-    let (message, _rest) = Message::decode(&framed).expect("the frame is accepted as-is");
-
-    let encoded = encode(&message);
-    let (reparsed, rest) = Message::decode(&encoded).expect("re-decode must succeed");
-    assert_eq!(rest, []);
-    assert_eq!(
-        reparsed.header().unwrap().payload_length(),
-        1,
-        "the encoded frame declares the length its payload actually occupies"
-    );
-    assert_eq!(message.payload, reparsed.payload);
+    assert!(matches!(
+        Message::decode(&framed),
+        Err(MessageError::InvalidPayloadLength {
+            payload_type: PayloadType::NegativeAcknowledge,
+            length: 5,
+        })
+    ));
 }
 
-/// `VehicleIdentificationRequest` is a unit variant -- an empty body. This
-/// frame's header claims one byte, which `Payload::decode` discards.
+/// `VehicleIdentificationRequest` carries no data. This frame's header claims one
+/// byte.
 #[test]
-fn a_unit_payload_with_a_nonzero_declared_length_still_round_trips() {
+fn a_unit_payload_with_a_nonzero_declared_length_is_refused() {
     let framed: [u8; 9] = [0x00, 0xFF, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x00];
-    let (message, _rest) = Message::decode(&framed).expect("the frame is accepted as-is");
-    assert_eq!(message.payload, Payload::VehicleIdentificationRequest);
-
-    let encoded = encode(&message);
-    assert_eq!(encoded.len(), 8, "a unit payload encodes to a bare header");
-    let (reparsed, rest) = Message::decode(&encoded).expect("re-decode must succeed");
-    assert_eq!(rest, []);
-    assert_eq!(reparsed.header().unwrap().payload_length(), 0);
-    assert_eq!(
-        reparsed.header().unwrap().payload_type(),
-        PayloadType::VehicleIdentificationRequest
-    );
+    assert!(matches!(
+        Message::decode(&framed),
+        Err(MessageError::InvalidPayloadLength {
+            payload_type: PayloadType::VehicleIdentificationRequest,
+            length: 1,
+        })
+    ));
 }
 
 /// A well-formed frame is untouched: the derived length equals the declared
