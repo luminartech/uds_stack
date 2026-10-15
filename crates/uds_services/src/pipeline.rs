@@ -737,8 +737,9 @@ pub fn diagnostic_session_control<A: DiagnosticSessionControl>(
 /// ISO 14229-1:2020 clause 10.3 — `EcuReset`'s own stage. Whether the reset is supported
 /// (0x12) and in the active session (0x7E) was settled by [`begin`], and the exact length
 /// (0x13) by its decode, so only the handler's verdict remains: the positive response is
-/// `51`, the echoed `resetType` (Table 35), then whatever `powerDownTime` the handler
-/// wrote. The reset itself is the application's, after that response.
+/// `51`, the echoed `resetType` (Table 35), then, for `enableRapidPowerShutDown` alone,
+/// the handler's `powerDownTime`. The reset itself is the application's, after that
+/// response.
 #[doc(hidden)]
 pub async fn ecu_reset<A: EcuReset>(
     services: &mut A,
@@ -746,8 +747,11 @@ pub async fn ecu_reset<A: EcuReset>(
     out: &mut ResponseSink<'_>,
 ) -> Result<Effect, NegativeResponseCode> {
     let kind = request.reset_type;
+    let after = services.reset(kind).await?;
     let _ = out.write_all(&[0x51, u8::from(kind)]);
-    let after = services.reset(kind, out).await?;
+    if kind == uds_protocol::ResetType::EnableRapidPowerShutDown {
+        let _ = out.write_all(&[services.power_down_time()]);
+    }
     Ok(Effect::Reset { kind, after })
 }
 

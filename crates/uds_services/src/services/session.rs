@@ -2,7 +2,7 @@
 //!
 //! ``UDSSVC_ARCH_0012`` — one trait per service.
 
-use crate::{Access, ResponseSink, SessionTransition};
+use crate::{Access, SessionTransition};
 use uds_protocol::{
     CommunicationControlType, CommunicationType, DiagnosticSessionType, DtcSettingType,
     NegativeResponseCode, P2StarServerMax, ResetType, SubnetNumber,
@@ -207,7 +207,7 @@ pub trait EcuReset {
     ///   variants carry the raw byte for a server that defines its own.
     fn access(&self, kind: ResetType) -> Option<Access>;
 
-    /// Accept or refuse `kind`, writing any `powerDownTime` into `out`.
+    /// Accept or refuse `kind`.
     ///
     /// **Must not perform the reset before returning.** ISO 14229-1:2020 clause 10.3.1
     /// strongly recommends that the positive response is sent before the reset is
@@ -217,24 +217,25 @@ pub trait EcuReset {
     /// # Arguments
     ///
     /// * `kind` - the reset requested, one [`Self::access`] admitted; see [`ResetType`].
-    /// * `out` - where the `powerDownTime` byte goes, for
-    ///   [`ResetType::EnableRapidPowerShutDown`], the one reset whose response carries
-    ///   it (clause 10.3.3, Table 35); nothing is written for any other.
     ///
     /// # Errors
     ///
     /// The [`NegativeResponseCode`] for a reset whose criteria are not met, such as
     /// `conditionsNotCorrect` (0x22), clause 10.3.4. A locked level is
     /// [`Self::access`]'s, not this method's.
-    ///
-    /// A refused write to `out` needs no handling: the sink records the refusal and the
-    /// pipeline answers `responseTooLong` (0x14) in place of the response, so the write's
-    /// `Result` may be discarded. See [`ResponseSink`].
     fn reset(
         &mut self,
         kind: ResetType,
-        out: &mut ResponseSink<'_>,
     ) -> impl core::future::Future<Output = Result<AfterReset, NegativeResponseCode>>;
+
+    /// The `powerDownTime` an accepted [`ResetType::EnableRapidPowerShutDown`]'s
+    /// response carries, the one reset whose response does (ISO 14229-1:2020 Table 35):
+    /// seconds from `0x00` to `0xFE`, or `0xFF` for a failure or a time not available,
+    /// which is what this returns unless overridden. Asked after [`Self::reset`] accepts
+    /// that reset, and for no other.
+    fn power_down_time(&self) -> u8 {
+        0xFF
+    }
 
     /// The positive response to `kind` was confirmed sent, or its suppression completed
     /// (``UDSS_LLR_0085``/``0086``). Where a reset starts something after its response,
@@ -398,7 +399,7 @@ pub trait ControlDtcSetting {
 )]
 mod tests {
     use super::{AfterReset, DiagnosticSessionControl, EcuReset, SessionTiming};
-    use crate::{ResponseSink, SessionTransition};
+    use crate::SessionTransition;
     use uds_protocol::{DiagnosticSessionType, NegativeResponseCode, ResetType};
 
     struct Ecu;
@@ -447,7 +448,6 @@ mod tests {
         async fn reset(
             &mut self,
             _k: ResetType,
-            _o: &mut ResponseSink<'_>,
         ) -> Result<AfterReset, NegativeResponseCode> {
             Ok(AfterReset::Restart)
         }

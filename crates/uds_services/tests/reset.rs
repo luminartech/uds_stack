@@ -14,8 +14,8 @@ use core::future::{Future, ready};
 use uds_protocol::NegativeResponseCode as Nrc;
 use uds_services::{
     Access, Address, AfterReset, Ai, DiagnosticSessionControl, DiagnosticSessionType as S,
-    EcuReset, Mtype, ResetType, ResponseSink, SResult, ServerParams, SessionTiming,
-    SessionTransition, Sessions, Sink, Stepped, Stopped, TaType, TesterPresent, uds_server,
+    EcuReset, Mtype, ResetType, SResult, ServerParams, SessionTiming, SessionTransition,
+    Sessions, Stepped, Stopped, TaType, TesterPresent, uds_server,
 };
 use uds_session::TransportError;
 
@@ -102,18 +102,16 @@ impl EcuReset for Ecu {
         )
         .then(|| Access::new(Sessions::ALL))
     }
-    fn reset(
-        &mut self,
-        kind: ResetType,
-        out: &mut ResponseSink<'_>,
-    ) -> impl Future<Output = Result<AfterReset, Nrc>> {
+    fn reset(&mut self, kind: ResetType) -> impl Future<Output = Result<AfterReset, Nrc>> {
         self.accepted.push(kind);
         ready(Ok(if matches!(kind, ResetType::EnableRapidPowerShutDown) {
-            let _ = out.write_all(&[0x0A]);
             AfterReset::Continue
         } else {
             AfterReset::Restart
         }))
+    }
+    fn power_down_time(&self) -> u8 {
+        0x0A
     }
     fn confirmed(&mut self, kind: ResetType) {
         self.confirmed.push(kind);

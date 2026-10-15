@@ -152,6 +152,11 @@ lockstep with the rest of the `uds_stack` workspace (`uds_protocol`, `uds_sessio
   `EcuReset::confirmed` is required. Migrate: return `AfterReset::Restart` for a reset that
   restarts the server, `AfterReset::Continue` otherwise; start any post-response action in
   `confirmed`.
+- **Breaking:** `EcuReset::reset` takes no sink. The server writes an
+  `enableRapidPowerShutDown` response's `powerDownTime` from the new
+  `EcuReset::power_down_time`, which defaults to `0xFF` (not available), and writes none
+  for any other reset. Migrate: drop the `out` parameter, and move a written
+  `powerDownTime` into `power_down_time`.
 - **Breaking:** `Server::step` returns `Result<Stepped, _>`, which is `#[must_use]`, and
   `Server::run` returns `Result<Stopped, _>` once a restarting reset is confirmed.
   Migrate: loop on `run`, or match `Stepped::Stopped` in a `step` loop, act on it

@@ -308,7 +308,6 @@ keeps the session, its timing and the response pending. As in
 #     fn reset(
 #         &mut self,
 #         _kind: ResetType,
-#         _out: &mut ResponseSink<'_>,
 #     ) -> impl Future<Output = Result<AfterReset, Nrc>> {
 #         core::future::ready(Ok(AfterReset::Restart))
 #     }

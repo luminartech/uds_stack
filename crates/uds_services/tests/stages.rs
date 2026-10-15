@@ -231,16 +231,9 @@ impl EcuReset for Ecu {
             _ => None,
         }
     }
-    async fn reset(
-        &mut self,
-        kind: ResetType,
-        out: &mut ResponseSink<'_>,
-    ) -> Result<AfterReset, Nrc> {
+    async fn reset(&mut self, kind: ResetType) -> Result<AfterReset, Nrc> {
         if core::mem::take(&mut self.refuse) {
             return Err(Nrc::ConditionsNotCorrect);
-        }
-        if matches!(kind, ResetType::EnableRapidPowerShutDown) {
-            let _ = out.write_all(&[0x0A]);
         }
         self.accepted = Some(kind);
         Ok(if matches!(kind, ResetType::EnableRapidPowerShutDown) {
@@ -249,6 +242,10 @@ impl EcuReset for Ecu {
             AfterReset::Restart
         })
     }
+    fn power_down_time(&self) -> u8 {
+        0x0A
+    }
+
     fn confirmed(&mut self, _kind: ResetType) {}
 }
 

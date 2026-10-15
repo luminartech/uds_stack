@@ -128,17 +128,15 @@ impl EcuReset for Ecu {
             _ => None,
         }
     }
-    fn reset(
-        &mut self,
-        kind: ResetType,
-        out: &mut ResponseSink<'_>,
-    ) -> impl Future<Output = Result<AfterReset, Nrc>> {
+    fn reset(&mut self, kind: ResetType) -> impl Future<Output = Result<AfterReset, Nrc>> {
         ready(Ok(if matches!(kind, ResetType::EnableRapidPowerShutDown) {
-            let _ = out.write_all(&[0x0A]);
             AfterReset::Continue
         } else {
             AfterReset::Restart
         }))
+    }
+    fn power_down_time(&self) -> u8 {
+        0x0A
     }
     fn confirmed(&mut self, _kind: ResetType) {}
 }
