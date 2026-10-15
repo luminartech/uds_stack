@@ -601,7 +601,6 @@ impl ControlDtcSetting for Ecu {
 impl DataTransfer for Ecu {
     const MAY_RESPOND_PENDING: bool = true;
     const MAX_BLOCK_LENGTH: usize = 8;
-    const SUPPORTS_UPLOAD: bool = false;
     const SESSIONS: Sessions = Sessions::NONE
         .with(S::ProgrammingSession)
         .with(S::ExtendedDiagnosticSession);
@@ -2365,9 +2364,9 @@ fn downloading(ecu: &mut Ecu, request: &[u8]) -> State {
     state
 }
 
-/// 15.2.3.2 — the positive response advertises `MAX_BLOCK_LENGTH + 2`, "the complete
-/// message length, including the service identifier and the data-parameters", in the
-/// fewest bytes, its `lengthFormatIdentifier` high nibble that byte count.
+/// 15.2.3.2 — the positive response advertises `MAX_BLOCK_LENGTH + 2`, the whole
+/// `TransferData` request message, in the fewest bytes, its `lengthFormatIdentifier` high
+/// nibble that byte count.
 #[test]
 fn request_download_advertises_the_whole_message_length() {
     let mut ecu = Ecu::default();
@@ -2513,8 +2512,7 @@ const BLOCKS: [[u8; 10]; 3] = [
 ];
 
 /// Table 451, 15.4.4 the 0x73 row — three blocks reach `block` once each; the last,
-/// repeated, is answered `76 03` without a second call ("without writing the data once
-/// again into its memory"); the exit closes the transfer.
+/// repeated, is answered `76 03` without a second call; the exit closes the transfer.
 #[test]
 fn a_download_of_three_blocks_and_a_repeat() {
     let mut ecu = Ecu::default();
@@ -2560,8 +2558,7 @@ fn a_block_or_an_exit_with_no_transfer_open_is_0x24() {
     );
 }
 
-/// Figure 33 key 1 — "at least 3 if a `RequestDownload` is in progress": an empty block is
-/// 0x13 and advances nothing.
+/// Figure 33 key 1 — an empty block is 0x13 and advances nothing.
 #[test]
 fn an_empty_download_block_is_0x13() {
     let mut ecu = Ecu::default();
@@ -2624,15 +2621,54 @@ fn memory_size_is_held_for_an_uncompressed_download() {
     assert_eq!(ecu.exits.len(), 0, "the crate answered the early exit");
 }
 
-/// Figure 33's 0x71 node — a block that would pass `memorySize` is 0x71.
+/// Figure 33's 0x71 node — a block that would pass `memorySize` is 0x71, which ends the
+/// transfer: a further block or an exit is 0x24, and a new download is accepted.
 #[test]
-fn a_block_past_memory_size_is_0x71() {
+fn a_block_past_memory_size_is_0x71_and_ends_the_transfer() {
     let mut ecu = Ecu::default();
     // 4 bytes at 0x2000.
-    let mut state = downloading(&mut ecu, &[0x34, 0x00, 0x22, 0x20, 0x00, 0x00, 0x04]);
+    let short = [0x34, 0x00, 0x22, 0x20, 0x00, 0x00, 0x04];
+    let mut state = downloading(&mut ecu, &short);
     assert_eq!(
         exchange(&mut ecu, &mut state, &BLOCKS[0]).as_deref(),
         Some(&[0x7F, 0x36, 0x71][..])
+    );
+    assert_eq!(
+        exchange(&mut ecu, &mut state, &[0x36, 0x01, 0xAA]).as_deref(),
+        Some(&[0x7F, 0x36, 0x24][..])
+    );
+    assert_eq!(
+        exchange(&mut ecu, &mut state, &[0x37]).as_deref(),
+        Some(&[0x7F, 0x37, 0x24][..])
+    );
+    assert_eq!(
+        exchange(&mut ecu, &mut state, &short).as_deref(),
+        Some(&DOWNLOAD_ACCEPTED[..])
+    );
+}
+
+/// A 0x71 from `block` ends the transfer as the stage's own does.
+#[test]
+fn a_handler_0x71_ends_the_transfer() {
+    let mut ecu = Ecu::default();
+    let mut state = downloading(&mut ecu, &DOWNLOAD_GATED);
+    let _ = exchange(&mut ecu, &mut state, &BLOCKS[0]);
+    ecu.block_refusal = Some(Nrc::TransferDataSuspended);
+    assert_eq!(
+        exchange(&mut ecu, &mut state, &BLOCKS[1]).as_deref(),
+        Some(&[0x7F, 0x36, 0x71][..])
+    );
+    assert_eq!(
+        exchange(&mut ecu, &mut state, &BLOCKS[1]).as_deref(),
+        Some(&[0x7F, 0x36, 0x24][..])
+    );
+    assert_eq!(
+        exchange(&mut ecu, &mut state, &[0x37]).as_deref(),
+        Some(&[0x7F, 0x37, 0x24][..])
+    );
+    assert_eq!(
+        exchange(&mut ecu, &mut state, &DOWNLOAD_GATED).as_deref(),
+        Some(&DOWNLOAD_ACCEPTED[..])
     );
 }
 

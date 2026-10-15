@@ -552,7 +552,6 @@ macro_rules! ecu {
             impl DataTransfer for Ecu {
                 const MAY_RESPOND_PENDING: bool = true;
                 const MAX_BLOCK_LENGTH: usize = 0x20;
-                const SUPPORTS_UPLOAD: bool = false;
                 const SESSIONS: Sessions = Sessions::NONE.with(S::ProgrammingSession);
                 fn format_supported(&self, format: DataFormatIdentifier) -> bool {
                     format == DataFormatIdentifier::NONE

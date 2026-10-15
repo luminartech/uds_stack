@@ -15,7 +15,7 @@ use uds_protocol::NegativeResponseCode as Nrc;
 use uds_services::{
     Access, Address, AfterReset, Ai, DiagnosticSessionControl, DiagnosticSessionType as S,
     EcuReset, Mtype, ResetType, ResponseSink, SResult, ServerParams, SessionTiming,
-    SessionTransition, Sessions, Sink, Stopped, TaType, TesterPresent, uds_server,
+    SessionTransition, Sessions, Sink, Stepped, Stopped, TaType, TesterPresent, uds_server,
 };
 use uds_session::TransportError;
 
@@ -148,7 +148,10 @@ fn steps(after: &[Step]) -> Vec<Step> {
 }
 
 fn step(s: &mut EcuServer) -> Option<Stopped> {
-    block_on(s.step()).unwrap()
+    match block_on(s.step()).unwrap() {
+        Stepped::Continue => None,
+        Stepped::Stopped(stopped) => Some(stopped),
+    }
 }
 
 /// 10.3, Annex I transition 1 — a restarting reset changes nothing until its response is
@@ -182,6 +185,21 @@ fn a_restarting_reset_runs_on_its_confirmation_and_stops() {
     assert_eq!(step(&mut s), None);
     assert_eq!(s.transport().sent_bytes(2), &[0x51, 0x01]);
     assert_eq!(s.transport().sent_bytes(3), &[0x7F, 0x10, 0x7E]);
+}
+
+/// A restart from the default session changes no session, so no session hook is called.
+#[test]
+fn a_restart_from_the_default_session_calls_no_session_hook() {
+    let mut s = EcuServer::new(
+        Ecu::default(),
+        script(&[ind(&[0x11, 0x01]), conf(SResult::Ok)]),
+        ECU,
+        PARAMS,
+    );
+    assert_eq!(step(&mut s), None, "the reset's request");
+    assert_eq!(step(&mut s), Some(Stopped::Reset(ResetType::HardReset)));
+    assert_eq!(s.services().confirmed, [ResetType::HardReset]);
+    assert_eq!(s.services().transitions, []);
 }
 
 /// ``UDSS_LLR_0086`` — a suppressed `11 81` runs on its completion report, physically and
@@ -256,9 +274,7 @@ fn a_failed_reset_confirmation_runs_nothing() {
     assert_eq!(s.transport().sent_bytes(3).first(), Some(&0x50));
 }
 
-/// 10.3.1: "It is recommended that during this time the ECU does not accept any request
-/// messages and send any response messages" — a request between the reset's response and
-/// its confirmation is not served.
+/// 10.3.1 — a request between the reset's response and its confirmation is not served.
 #[test]
 fn a_request_before_the_reset_is_confirmed_gets_no_response() {
     let mut s = EcuServer::new(

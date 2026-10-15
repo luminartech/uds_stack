@@ -29,8 +29,9 @@ use uds_protocol::{
     ClearDiagnosticInfoRequest, CommunicationControlRequest, CommunicationType,
     ControlDtcSettingRequest, DiagnosticSessionControlRequest, EcuResetRequest,
     ReadDataByIdentifierRequest, ReadDtcInfoRequest, RequestDownloadRequest,
-    RequestTransferExitRequest, RoutineControlRequest, RoutineControlSubFunction,
-    SecurityAccessRequest, TransferDataRequest, WriteDataByIdentifierRequest,
+    RequestDownloadResponse, RequestTransferExitRequest, RoutineControlRequest,
+    RoutineControlSubFunction, SecurityAccessRequest, TransferDataRequest,
+    WriteDataByIdentifierRequest,
 };
 use uds_session::{Ai, TaType};
 
@@ -70,11 +71,15 @@ pub fn transition(state: &mut State, to: DiagnosticSessionType) -> Entered {
     }
 }
 
-/// ISO 14229-1:2020 10.3, Annex I transition 1: the protocol state a restarting reset
-/// leaves, the power-up one. With [`transition`], the only writes of the session field.
+/// ISO 14229-1:2020 10.3, Annex I transition 1: leave the protocol state a restarting
+/// reset leaves, the power-up one, and say what entering its default session did, where
+/// the server was in another. With [`transition`], the only writes of the session field.
 #[doc(hidden)]
-pub fn restart(state: &mut State) {
+pub fn restart(state: &mut State) -> Option<Entered> {
+    let entered = (state.session() != DiagnosticSessionType::DefaultSession)
+        .then(|| transition(state, DiagnosticSessionType::DefaultSession));
     *state = <State as crate::state::ProtocolState>::INITIAL;
+    entered
 }
 
 /// The `P2` pair of the session `state` is in, as `services` states it. Read through here
@@ -248,8 +253,8 @@ where
 }
 
 /// ISO 14229-1:2020 Figure 5's 0x7F for `DataTransfer::SESSIONS`, then Figure 31's two
-/// nodes ahead of the full length for `RequestDownload`: shorter than 5 bytes (key 1,
-/// "SI + DFI_ + ALFID + minimum MA_ + minimum MS_") is 0x13, and an unsupported
+/// nodes ahead of the full length for `RequestDownload`: shorter than 5 bytes (key 1) is
+/// 0x13, and an unsupported
 /// `dataFormatIdentifier` or an invalid `addressAndLengthFormatIdentifier` is 0x31.
 #[doc(hidden)]
 pub fn transfer_ahead_of_decode<A: DataTransfer>(
@@ -752,9 +757,9 @@ pub async fn ecu_reset<A: EcuReset>(
 /// `securityAccessDenied` (0x33); a download already in progress is
 /// `conditionsNotCorrect` (0x22, Table 444); then `begin`.
 ///
-/// The positive response is `74 <lengthFormatIdentifier> <maxNumberOfBlockLength>`, the
-/// value `MAX_BLOCK_LENGTH + 2` (15.2.3.2) in the fewest bytes, the identifier's high
-/// nibble that count. The transfer opens only where the response settles positive.
+/// The positive response's `maxNumberOfBlockLength` is `MAX_BLOCK_LENGTH + 2` (15.2.3.2)
+/// in the fewest bytes, which [`RequestDownloadResponse`] encodes. The transfer opens only
+/// where the response settles positive.
 #[doc(hidden)]
 pub async fn request_download<A: DataTransfer>(
     services: &mut A,
@@ -786,9 +791,11 @@ pub async fn request_download<A: DataTransfer>(
     let length = advertised
         .get(leading.min(advertised.len().saturating_sub(1))..)
         .unwrap_or(&advertised);
-    let identifier = u8::try_from(length.len() << 4).unwrap_or(0xF0);
-    let _ = out.write_all(&[0x74, identifier]);
-    let _ = out.write_all(length);
+    let _ = out.write_all(&[0x74]);
+    // A `usize`'s bytes always fit the nibble `new` bounds them to.
+    if let Ok(response) = RequestDownloadResponse::new(length) {
+        let _ = response.encode(out);
+    }
     if !out.refused() {
         let gated_by = access.levels().and(state.unlocked());
         let size =
@@ -807,7 +814,8 @@ pub async fn request_download<A: DataTransfer>(
 /// passing a known `memorySize` is `transferDataSuspended` (0x71); a counter other than
 /// the expected one is `wrongBlockSequenceCounter` (0x73); more than `MAX_BLOCK_LENGTH`
 /// data bytes is 0x31; then `block`. The counter advances, and the bytes count, only where
-/// the response settles positive.
+/// the response settles positive. A 0x71, this stage's or `block`'s, ends the transfer,
+/// so the client starts over with a `RequestDownload`.
 #[doc(hidden)]
 pub async fn transfer_data<A: DataTransfer>(
     services: &mut A,
@@ -836,6 +844,7 @@ pub async fn transfer_data<A: DataTransfer>(
         return Ok(Effect::None);
     }
     if transfer.would_exceed(data.len()) {
+        state.close_transfer();
         return Err(NegativeResponseCode::TransferDataSuspended);
     }
     if counter != transfer.next {
@@ -845,7 +854,11 @@ pub async fn transfer_data<A: DataTransfer>(
         return Err(NegativeResponseCode::RequestOutOfRange);
     }
     let _ = out.write_all(&[0x76, counter]);
-    services.block(data, out).await?;
+    let blocked = services.block(data, out).await;
+    if blocked == Err(NegativeResponseCode::TransferDataSuspended) {
+        state.close_transfer();
+    }
+    blocked?;
     if !out.refused() {
         state.accept_block(data.len());
     }
@@ -853,8 +866,8 @@ pub async fn transfer_data<A: DataTransfer>(
 }
 
 /// ISO 14229-1:2020 clause 15.5 — `RequestTransferExit`'s own stage, in Figure 34's order:
-/// no download in progress, or less than a known `memorySize` received ("the programming
-/// process is not completed", Table 459), is `requestSequenceError` (0x24); then `exit`.
+/// no download in progress, or less than a known `memorySize` received (Table 459), is
+/// `requestSequenceError` (0x24); then `exit`.
 /// After a 0x24, whoever answered it, the transfer stays open so the client can send what
 /// is missing; after any other answer it closes, except a positive one that settles 0x14.
 #[doc(hidden)]

@@ -374,21 +374,45 @@ Protocol state
 
    .. uml::
       :align: center
-      :caption: The transfer state machine. Every transition labelled with a code is
-                settled by this crate; the handler is not called.
+      :caption: The download's state machine. Every transition labelled with a code is
+                settled by this crate unless it names the handler.
 
       @startuml
       hide empty description
       [*] --> Idle
-      Idle --> Active : RequestDownload / RequestUpload /\nRequestFileTransfer accepted\nblockSequenceCounter := 0x01
       Idle --> Idle : TransferData → 0x24\nRequestTransferExit → 0x24
-      Active --> Active : TransferData, expected counter\n→ handler
-      Active --> Active : TransferData, previous counter\n→ repeat (15.4.1)
+      Idle --> Active : RequestDownload accepted → 74\nblockSequenceCounter := 0x01
+      Active --> Active : TransferData, expected counter\n→ handler → 76
+      Active --> Active : TransferData, previous counter\n→ 76, handler not called (15.4.4)
       Active --> Active : TransferData, any other counter → 0x73
       Active --> Active : TransferData after memorySize reached → 0x24
-      Active --> Active : RequestDownload / RequestUpload /\nRequestFileTransfer → 0x22
-      Active --> Idle : RequestTransferExit accepted
+      Active --> Active : RequestDownload → 0x22 (Table 444)
+      Active --> Active : RequestTransferExit → 0x24\n(memorySize not reached, or the handler's)
+      Active --> Idle : TransferData → 0x71\n(this crate's or the handler's)
+      Active --> Idle : RequestTransferExit, any other answer
+      Active --> Idle : default session; a session outside\nthe transfer's; a gated transfer's\nlevel relocked (Figure 7 keys 1, 3, 4)
       @enduml
+
+   **A response lost after it settled is not undone.** The client's repeat is answered from
+   the state the lost response left:
+
+   .. list-table::
+      :header-rows: 1
+
+      * - Lost
+        - The client repeats
+        - Answered
+      * - ``74``
+        - ``RequestDownload``
+        - 0x22, the download being ``Active``. The client sends its blocks from ``0x01``,
+          or ends the download by a session change.
+      * - ``76``
+        - the block
+        - ``76 <counter>``, without the handler, so without any
+          ``transferResponseParameterRecord`` the first answer carried.
+      * - ``77``
+        - ``RequestTransferExit``
+        - 0x24, the transfer being ``Idle`` although it succeeded (Table 459, Figure 34).
 
    **The counter is arithmetic, and the wrap is the part to get right.** Clause 15.4.1
    initialises it to one on ``RequestDownload`` (0x34), ``RequestUpload`` (0x35) or
@@ -429,9 +453,6 @@ Protocol state
    so ``begin`` returns nothing. The ``RequestDownload`` response advertises
    ``MAX_BLOCK_LENGTH + 2``, because 15.2.3.2's number counts the service identifier and
    the block sequence counter, which the const excludes.
-   ``SUPPORTS_UPLOAD`` sits beside it for the same kind of reason: a download-only server
-   never puts a block in a *response*, so it must not pay for a response buffer sized to
-   hold one.
 
    **Direction is carried by ``TransferRequest`` rather than by a separate field**, which is
    what makes the paragraph above structural instead of advisory. The repeated-block rule

@@ -105,7 +105,7 @@ lockstep with the rest of the `uds_stack` workspace (`uds_protocol`, `uds_sessio
 - `DataTransfer` serves a download: `RequestDownload`, `TransferData` and
   `RequestTransferExit`, with the transfer held in the protocol state.
 - `DataTransfer::SESSIONS`, `DataTransfer::format_supported` and `DataTransfer::access`.
-- `AfterReset`, `EcuReset::confirmed`, `Stopped`, and `Server::into_parts`.
+- `AfterReset`, `EcuReset::confirmed`, `Stepped`, `Stopped`, and `Server::into_parts`.
 
 ### Changed
 
@@ -129,9 +129,12 @@ lockstep with the rest of the `uds_stack` workspace (`uds_protocol`, `uds_sessio
   `EcuReset::confirmed` is required. Migrate: return `AfterReset::Restart` for a reset that
   restarts the server, `AfterReset::Continue` otherwise; start any post-response action in
   `confirmed`.
-- **Breaking:** `Server::step` returns `Result<Option<Stopped>, _>` and `Server::run`
-  returns `Result<Stopped, _>` once a restarting reset is confirmed. Migrate: loop on
-  `run`, or act on `Stopped` (rebind, delay) and call `run` again.
+- **Breaking:** `Server::step` returns `Result<Stepped, _>`, which is `#[must_use]`, and
+  `Server::run` returns `Result<Stopped, _>` once a restarting reset is confirmed.
+  Migrate: loop on `run`, or match `Stepped::Stopped` in a `step` loop, act on it
+  (rebind, delay) and step again.
+- **Breaking:** `DataTransfer::SUPPORTS_UPLOAD` is removed, since no upload is served.
+  Migrate: delete it from the implementation.
 - **Breaking:** `Responded` carries an `Effect` in place of a session and is hidden from the
   documentation; applications never built or read it.
 - **Breaking:** `uds_server!` fails to compile where the transport cannot carry a

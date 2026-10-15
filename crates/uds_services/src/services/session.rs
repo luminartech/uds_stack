@@ -238,8 +238,8 @@ pub trait EcuReset {
 
     /// The positive response to `kind` was confirmed sent, or its suppression completed
     /// (``UDSS_LLR_0085``/``0086``). Where a reset starts something after its response,
-    /// it starts here: ISO 14229-1:2020 Table 34, "the server shall send the positive
-    /// response message prior to the start of the 'rapid power shut down' function".
+    /// such as the rapid power shutdown ISO 14229-1:2020 Table 34 starts only after the
+    /// positive response, it starts here.
     ///
     /// Called for every accepted reset, before the protocol state returns to the power-up
     /// state for an [`AfterReset::Restart`]. Not called where the confirmation failed.

@@ -174,7 +174,6 @@ impl CommunicationControl for Ecu {
 impl DataTransfer for Ecu {
     const MAY_RESPOND_PENDING: bool = true;
     const MAX_BLOCK_LENGTH: usize = 1_024;
-    const SUPPORTS_UPLOAD: bool = false;
     const SESSIONS: Sessions = Sessions::ALL;
     fn format_supported(&self, _format: DataFormatIdentifier) -> bool {
         true
@@ -470,7 +469,7 @@ fn the_server_in_a_static_can_be_stepped() {
     let mut cx = core::task::Context::from_waker(core::task::Waker::noop());
     assert_eq!(
         step.as_mut().poll(&mut cx),
-        core::task::Poll::Ready(Ok(None))
+        core::task::Poll::Ready(Ok(uds_services::Stepped::Continue))
     );
 }
 

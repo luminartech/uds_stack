@@ -200,9 +200,8 @@ impl State {
     }
 
     /// Annex I transition 6: every level locked, no seed awaiting a key, and a transfer
-    /// that depended on an unlocked level ended (Figure 7 key 3(ii): "The locking of
-    /// security access shall reset any active diagnostic functionality that was dependent
-    /// on security access to be unlocked"). Whether a level had been unlocked.
+    /// that depended on an unlocked level ended (Figure 7 key 3(ii)). Whether a level had
+    /// been unlocked.
     pub(crate) fn lock(&mut self) -> bool {
         self.seed_sent = None;
         if self.transfer.is_some_and(|t| t.gated_by.is_some()) {

@@ -300,12 +300,9 @@ macro_rules! __uds_response_bound {
             0,
         )
     };
+    // `76 <counter>` or `77`, and a short `transferResponseParameterRecord`.
     ($ty:ty, DataTransfer) => {
-        if <$ty as $crate::DataTransfer>::SUPPORTS_UPLOAD {
-            2 + <$ty as $crate::DataTransfer>::MAX_BLOCK_LENGTH
-        } else {
-            6_usize
-        }
+        6_usize
     };
     // The service identifier, the echoed type, the identifier and `routineInfo`.
     ($ty:ty, RoutineControl) => {
@@ -668,9 +665,9 @@ macro_rules! __uds_assert {
 /// response would then not fit.
 ///
 /// Where `DataTransfer` is listed, it also fails to compile where the transport's
-/// [`MAX_PDU`](crate::UdsTransport::MAX_PDU) is shorter than `MAX_BLOCK_LENGTH + 2`:
-/// ISO 14229-1:2020 15.2.3.2, "A server is required to accept transferData requests that
-/// are equal in length to its reported maxNumberOfBlockLength".
+/// [`MAX_PDU`](crate::UdsTransport::MAX_PDU) is shorter than `MAX_BLOCK_LENGTH + 2`, the
+/// `TransferData` request length the server advertises and must accept (ISO 14229-1:2020
+/// 15.2.3.2).
 ///
 /// Where `ReadDtcInformation` is listed, it also fails to compile where
 /// [`REPORTS`](crate::ReadDtcInformation::REPORTS) names a layout whose
@@ -729,7 +726,6 @@ macro_rules! __uds_assert {
 /// # impl DataTransfer for Ecu {
 /// #     const MAY_RESPOND_PENDING: bool = true;
 /// #     const MAX_BLOCK_LENGTH: usize = 1 << 20;
-/// #     const SUPPORTS_UPLOAD: bool = false;
 /// #     const SESSIONS: Sessions = Sessions::ALL;
 /// #     fn format_supported(&self, _format: DataFormatIdentifier) -> bool { true }
 /// #     fn access(&self, _r: &TransferRequest<'_>) -> Option<Access> {
@@ -894,7 +890,6 @@ macro_rules! __uds_assert {
 /// # impl DataTransfer for Ecu {
 /// #     const MAY_RESPOND_PENDING: bool = true;
 /// #     const MAX_BLOCK_LENGTH: usize = 1_024;
-/// #     const SUPPORTS_UPLOAD: bool = false;
 /// #     const SESSIONS: Sessions = Sessions::ALL;
 /// #     fn format_supported(&self, _format: DataFormatIdentifier) -> bool { true }
 /// #     fn access(&self, _r: &TransferRequest<'_>) -> Option<Access> {
@@ -1152,12 +1147,11 @@ macro_rules! uds_server {
                 ) {
                     $( $crate::__uds_reset_hook!(self, kind, $svc); )+
                     if ::core::matches!(after, $crate::AfterReset::Restart) {
-                        let entered = $crate::pipeline::transition(
-                            state,
-                            $crate::DiagnosticSessionType::DefaultSession,
-                        );
-                        $( $crate::__uds_session_hook!(self, entered, $svc); )+
-                        $crate::pipeline::restart(state);
+                        if let ::core::option::Option::Some(entered) =
+                            $crate::pipeline::restart(state)
+                        {
+                            $( $crate::__uds_session_hook!(self, entered, $svc); )+
+                        }
                     }
                 }
 

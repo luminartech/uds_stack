@@ -98,7 +98,7 @@ pub use client::{
 };
 
 pub mod server;
-pub use server::{Server, ServerParams, Stopped};
+pub use server::{Server, ServerParams, Stepped, Stopped};
 
 pub mod storage;
 pub use storage::{Buffers, ClientBuffers, ClientStorage, ClientStore, Storage, Store};

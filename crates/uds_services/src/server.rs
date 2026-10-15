@@ -142,8 +142,8 @@ impl<A: ServiceSet, T: UdsTransport, const PEERS: usize> Server<A, T, PEERS> {
         }
     }
 
-    /// Handle one transport event. Returns `Some` where a restarting reset was confirmed
-    /// during this step; see [`Stopped`].
+    /// Handle one transport event. Returns [`Stepped::Stopped`] where a restarting reset
+    /// was confirmed during this step, which the caller acts on before stepping again.
     ///
     /// **An `Err` is terminal for this server instance** (``UDSSVC_ARCH_0040``, a
     /// milestone-1 limit). A transport error unwinds through the drains with `?`, so a
@@ -168,13 +168,13 @@ impl<A: ServiceSet, T: UdsTransport, const PEERS: usize> Server<A, T, PEERS> {
     ///
     /// [`UdsTransport::Error`] where the transport failed. A negative response is not an
     /// error: it is a response, written into the sink.
-    pub async fn step(&mut self) -> Result<Option<Stopped>, T::Error> {
-        let stopped = self.handle().await?;
-        if stopped.is_some() {
-            // Annex I transition 1 owes start-up again after a restart.
-            self.started = false;
-        }
-        Ok(stopped)
+    pub async fn step(&mut self) -> Result<Stepped, T::Error> {
+        let Some(stopped) = self.handle().await? else {
+            return Ok(Stepped::Continue);
+        };
+        // Annex I transition 1 owes start-up again after a restart.
+        self.started = false;
+        Ok(Stepped::Stopped(stopped))
     }
 
     /// The body of [`Self::step`].
@@ -332,7 +332,7 @@ impl<A: ServiceSet, T: UdsTransport, const PEERS: usize> Server<A, T, PEERS> {
     /// Whatever [`Self::step`] returned.
     pub async fn run(&mut self) -> Result<Stopped, T::Error> {
         loop {
-            if let Some(stopped) = self.step().await? {
+            if let Stepped::Stopped(stopped) = self.step().await? {
                 return Ok(stopped);
             }
         }
@@ -348,6 +348,16 @@ impl<A: ServiceSet, T: UdsTransport, const PEERS: usize> Server<A, T, PEERS> {
     pub fn into_parts(self) -> (A, T) {
         (self.services, self.transport)
     }
+}
+
+/// What one [`Server::step`] ended with.
+#[must_use = "a `Stepped::Stopped` asks the caller to act on a restart before stepping again"]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Stepped {
+    /// The event was handled, and the server serves on.
+    Continue,
+    /// The server handed control back; see [`Stopped`].
+    Stopped(Stopped),
 }
 
 /// Why [`Server::step`] or [`Server::run`] handed control back (``UDSSVC_ARCH_0045``).
@@ -615,7 +625,7 @@ fn apply<A: ServiceSet>(
 }
 
 /// Whether a `Restart` response is awaiting its confirmation, during which 10.3.1
-/// recommends the server "does not accept any request messages".
+/// recommends the server accept no request.
 const fn restarting(pending: Option<Pending>) -> bool {
     matches!(
         pending,
