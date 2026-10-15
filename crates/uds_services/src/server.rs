@@ -242,11 +242,11 @@ impl<A: ServiceSet, T: UdsTransport, const PEERS: usize> Server<A, T, PEERS> {
         let Some((ai, _)) = d.indication else {
             return Ok(stopped);
         };
-        // Defensive: `retime` and the indication drain yield no `Confirm`, so `stopped` is
-        // `None` here, and no handler is dispatched while a restart awaits confirmation.
+        // 10.3.1: no request is served between a restart's response and its confirmation,
+        // nor after the restart within this step. `stopped` is `None` here for as long as
+        // uds_session yields no `Confirm` from a tick, a parameter change or an
+        // indication; the check keeps 10.3.1 if one ever confirms a restart.
         if stopped.is_some() || restarting(self.pending) {
-            // 10.3.1: no request is served between a restart's response and its
-            // confirmation, nor after the restart within this step.
             return Ok(stopped.or(self.unanswered(ai).await?));
         }
         // The byte is kept as received because a negative response echoes it
@@ -277,10 +277,10 @@ impl<A: ServiceSet, T: UdsTransport, const PEERS: usize> Server<A, T, PEERS> {
         };
         // Recorded mid-handler, applied now that `&mut services`/`&mut state` are free.
         stopped = stopped.or(apply(&mut self.services, &mut self.state, served.deferred));
+        // `stopped` is `None` here for as long as `pending` is no restart while a handler
+        // runs, which the check before dispatch ensures and only `answer` changes. A
+        // restart confirmed under the handler would end its request with no response.
         if stopped.is_some() {
-            // Defensive: no handler is dispatched while a restart awaits confirmation, so
-            // nothing reaches this today.
-            // The restart overtook the handler: its request ends with no response.
             return Ok(stopped.or(self.unanswered(serving.ai).await?));
         }
         let serving = serving.leaving_if(&self.services, &served);
