@@ -15,7 +15,7 @@ pub use control_dtc_settings::{
 mod diagnostic_session_control;
 pub use diagnostic_session_control::{
     DiagnosticSessionControlRequest, DiagnosticSessionControlResponse,
-    DiagnosticSessionType,
+    DiagnosticSessionType, P2StarServerMax,
 };
 
 mod ecu_reset;

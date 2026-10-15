@@ -37,6 +37,11 @@ now <https://github.com/luminartech/uds_stack>.
 
 ### Changed
 
+- **Breaking:** `DiagnosticSessionControlResponse::p2_server_max` is
+  `p2_server_max_ms`, and `p2_star_server_max` is a `P2StarServerMax`, which holds Table
+  29's count of 10 ms units and reads it back as `tens_of_millis` or `as_millis`. The
+  two timeouts can no longer be passed to `new` in each other's place. Migrate: wrap the
+  count in `P2StarServerMax::from_tens_of_millis`.
 - **Breaking:** the crate now uses `automotive-wire-codec` 0.4. The re-exported
   `Encode`, `Decode` and `DecodeIter` are that version's traits, and
   `Encode::encode` now writes into `&mut impl automotive_wire_codec::Sink` instead

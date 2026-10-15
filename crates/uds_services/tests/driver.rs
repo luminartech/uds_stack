@@ -67,7 +67,7 @@ impl uds_services::DiagnosticSessionControl for Ecu {
     fn timing(&self, _s: S) -> SessionTiming {
         SessionTiming {
             p2_server_max_ms: 50,
-            p2_star_server_max_10ms: 500,
+            p2_star_server_max: uds_services::P2StarServerMax::from_tens_of_millis(500),
         }
     }
     fn on_transition(&mut self, _t: SessionTransition, _entered: S, _r: bool) {}
@@ -638,11 +638,11 @@ impl uds_services::DiagnosticSessionControl for Timed {
         match s {
             S::ExtendedDiagnosticSession => SessionTiming {
                 p2_server_max_ms: 100,
-                p2_star_server_max_10ms: 200,
+                p2_star_server_max: uds_services::P2StarServerMax::from_tens_of_millis(200),
             },
             _ => SessionTiming {
                 p2_server_max_ms: 50,
-                p2_star_server_max_10ms: 500,
+                p2_star_server_max: uds_services::P2StarServerMax::from_tens_of_millis(500),
             },
         }
     }

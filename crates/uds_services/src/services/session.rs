@@ -5,7 +5,7 @@
 use crate::{Access, ResponseSink, SessionTransition};
 use uds_protocol::{
     CommunicationControlType, CommunicationType, DiagnosticSessionType, DtcSettingType,
-    NegativeResponseCode, ResetType, SubnetNumber,
+    NegativeResponseCode, P2StarServerMax, ResetType, SubnetNumber,
 };
 
 /// ``UDSS_LLR_0073`` — the session layer learns only default/non-default.
@@ -30,8 +30,8 @@ pub(crate) fn selection_of(
 pub struct SessionTiming {
     /// `P2Server_max`, in 1 ms units.
     pub p2_server_max_ms: u16,
-    /// `P2*Server_max`, in 10 ms units.
-    pub p2_star_server_max_10ms: u16,
+    /// `P2*Server_max`; see [`P2StarServerMax`].
+    pub p2_star_server_max: P2StarServerMax,
 }
 
 impl SessionTiming {
@@ -42,7 +42,7 @@ impl SessionTiming {
 
     /// `P2*Server_max` in milliseconds, the session layer's unit.
     pub(crate) fn p2_star_server_max(self) -> u32 {
-        u32::from(self.p2_star_server_max_10ms) * 10
+        self.p2_star_server_max.as_millis()
     }
 }
 
@@ -427,7 +427,7 @@ mod tests {
         fn timing(&self, _s: DiagnosticSessionType) -> SessionTiming {
             SessionTiming {
                 p2_server_max_ms: 50,
-                p2_star_server_max_10ms: 500,
+                p2_star_server_max: crate::P2StarServerMax::from_tens_of_millis(500),
             }
         }
         fn on_transition(
@@ -485,7 +485,7 @@ mod tests {
         assert_eq!((t.p2_server_max(), t.p2_star_server_max()), (50, 5_000));
         let widest = SessionTiming {
             p2_server_max_ms: u16::MAX,
-            p2_star_server_max_10ms: u16::MAX,
+            p2_star_server_max: crate::P2StarServerMax::from_tens_of_millis(u16::MAX),
         };
         assert_eq!(widest.p2_star_server_max(), 655_350);
     }

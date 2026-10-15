@@ -728,7 +728,7 @@ pub fn diagnostic_session_control<A: DiagnosticSessionControl>(
     let _ = uds_protocol::DiagnosticSessionControlResponse::new(
         session,
         timing.p2_server_max_ms,
-        timing.p2_star_server_max_10ms,
+        timing.p2_star_server_max,
     )
     .encode(out);
     Ok(Some(session))
@@ -1315,7 +1315,7 @@ mod tests {
         fn timing(&self, _s: S) -> crate::SessionTiming {
             crate::SessionTiming {
                 p2_server_max_ms: 50,
-                p2_star_server_max_10ms: 500,
+                p2_star_server_max: crate::P2StarServerMax::from_tens_of_millis(500),
             }
         }
         fn on_transition(&mut self, _t: crate::SessionTransition, _e: S, _r: bool) {}
@@ -1403,7 +1403,7 @@ mod tests {
         fn timing(&self, _s: S) -> crate::SessionTiming {
             crate::SessionTiming {
                 p2_server_max_ms: u16::MAX,
-                p2_star_server_max_10ms: u16::MAX,
+                p2_star_server_max: crate::P2StarServerMax::from_tens_of_millis(u16::MAX),
             }
         }
         fn on_transition(&mut self, _t: crate::SessionTransition, _e: S, _r: bool) {}

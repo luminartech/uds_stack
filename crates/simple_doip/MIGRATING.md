@@ -294,7 +294,7 @@ keeps the session, its timing and the response pending. As in
 #     fn timing(&self, _s: S) -> SessionTiming {
 #         SessionTiming {
 #             p2_server_max_ms: 50,
-#             p2_star_server_max_10ms: 500,
+#             p2_star_server_max: uds_services::P2StarServerMax::from_tens_of_millis(500),
 #         }
 #     }
 #     fn on_transition(&mut self, _t: SessionTransition, _entered: S, _relocked: bool) {}

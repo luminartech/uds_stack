@@ -824,7 +824,7 @@ fn entering_a_session_returns_its_timing() {
         .ok(),
         Some(Response::Positive(SessionTiming {
             p2_server_max_ms: 50,
-            p2_star_server_max_10ms: 500,
+            p2_star_server_max: uds_services::P2StarServerMax::from_tens_of_millis(500),
         }))
     );
     assert_eq!(t.transport().sent_bytes(0), ENTER_EXTENDED);
@@ -1703,7 +1703,7 @@ fn a_session_change_reply_for_another_session_is_not_the_answer() {
         entered,
         Ok(Response::Positive(SessionTiming {
             p2_server_max_ms: 50,
-            p2_star_server_max_10ms: 500,
+            p2_star_server_max: uds_services::P2StarServerMax::from_tens_of_millis(500),
         }))
     );
     assert!(t.transport().finished());

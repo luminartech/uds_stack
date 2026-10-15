@@ -379,7 +379,9 @@ pub(super) fn session_timing(answer: Final<'_>) -> Response<SessionTiming> {
         Final::Positive([_session, p2_hi, p2_lo, star_hi, star_lo, ..]) => {
             Response::Positive(SessionTiming {
                 p2_server_max_ms: u16::from_be_bytes([*p2_hi, *p2_lo]),
-                p2_star_server_max_10ms: u16::from_be_bytes([*star_hi, *star_lo]),
+                p2_star_server_max: crate::P2StarServerMax::from_tens_of_millis(
+                    u16::from_be_bytes([*star_hi, *star_lo]),
+                ),
             })
         }
         Final::Positive(_) => Response::Malformed(MalformedResponse::Short),
@@ -578,7 +580,7 @@ mod tests {
             session_timing(final_response(&response, Arrived::Whole)),
             Response::Positive(SessionTiming {
                 p2_server_max_ms: 50,
-                p2_star_server_max_10ms: 500,
+                p2_star_server_max: crate::P2StarServerMax::from_tens_of_millis(500),
             })
         );
         assert!(matches!(

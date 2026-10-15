@@ -185,9 +185,9 @@ pub use uds_protocol::{
     AddressAndLengthFormatIdentifier, CLEAR_ALL_DTCS, CommunicationControlType,
     CommunicationType, DataFormatIdentifier, DiagnosticSessionType, DtcExtDataRecordNumber,
     DtcRecord, DtcSettingType, DtcSnapshotRecordNumber, DtcStatusMask, FileOperationMode,
-    FunctionalGroupIdentifier, NegativeResponseCode, ReadDtcInfoReportType,
-    ReadDtcInfoResponse, ReadDtcInfoSubFunction, ResetType, RoutineControlSubFunction,
-    SubnetNumber, UdsServiceType,
+    FunctionalGroupIdentifier, NegativeResponseCode, P2StarServerMax,
+    ReadDtcInfoReportType, ReadDtcInfoResponse, ReadDtcInfoSubFunction, ResetType,
+    RoutineControlSubFunction, SubnetNumber, UdsServiceType,
 };
 
 /// Re-exported only so `uds_server!`'s expansion can name it; not part of the API.
