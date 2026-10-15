@@ -113,7 +113,8 @@ now <https://github.com/luminartech/uds_stack>.
 - **Breaking:** a variant that carries a wire integer is built only by converting the
   integer, so it never holds one a named variant has and `==` agrees with the wire.
   That covers `NegativeResponseCode`'s three, and those of `UdsIdentifier`,
-  `UdsRoutineIdentifier`, `DtcSnapshotRecordNumber` and `DtcExtDataRecordNumber`.
+  `UdsRoutineIdentifier`, `DtcSnapshotRecordNumber`, `DtcExtDataRecordNumber`,
+  `DtcFormatIdentifier`, `FunctionalGroupIdentifier` and `FileOperationMode`.
   Migrate: build one with `From` (or `new`), match it as `Variant { .. }` and read the
   integer with `value()` or `From`. With `serde`, each of these types is its integer
   rather than a variant name, and `DtcSnapshotRecordNumber` and `DtcExtDataRecordNumber`

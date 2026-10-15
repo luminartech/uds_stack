@@ -156,13 +156,10 @@ fn the_two_length_bounded_payloads_reject_an_unencodable_value() {
 #[cfg(feature = "serde")]
 #[test]
 fn serde_cannot_build_a_reserved_variant_that_aliases_a_named_one() {
-    // This is what the variant seals were supposed to prevent and did not: with a plain
-    // derived `Deserialize`, `{"IsoSaeReserved":1}` produced a value whose `value()` is
-    // 0x01 -- the same byte `Iso14229_1DtcFormat` encodes -- yet compared unequal to it.
-    // `#[non_exhaustive]` on the variant blocked the Rust struct literal and did nothing
-    // about serde, so it bought pattern-matching friction and no guarantee. Routing serde
-    // through `u8` is what actually closes it, for every byte, and it lets the variant be
-    // named and destructured again.
+    // With a plain derived `Deserialize`, `{"IsoSaeReserved":1}` produced a value whose
+    // `value()` is 0x01 -- the same byte `Iso14229_1DtcFormat` encodes -- yet compared
+    // unequal to it. The variant seal does nothing about serde; routing serde through `u8`
+    // closes it, for every byte.
     let round: DtcFormatIdentifier = serde_json::from_str("1").expect("a bare byte");
     assert_eq!(round, DtcFormatIdentifier::Iso14229_1DtcFormat);
     assert_eq!(serde_json::to_string(&round).unwrap(), "1");
@@ -251,17 +248,15 @@ fn serde_builds_a_wire_valued_type_only_from_its_integer() {
 }
 
 #[test]
-fn a_reserved_variant_is_nameable_and_destructurable_downstream() {
-    // The seal made both `IsoSaeReserved(b)` and `IsoSaeReserved(..)` E0603 out here, so a
-    // downstream could not even read the byte by matching -- only `value()` worked. For an
-    // audience new to Rust that is a compile error whose text says nothing about the way
-    // out.
+fn a_reserved_variant_is_matched_by_shape_and_read_by_value() {
+    // Sealed, so downstream matches the variant with `{ .. }`, reads the byte through
+    // `u8::from`, and obtains one only through the classifier.
     let reserved = DtcFormatIdentifier::from(0xAA);
-    match reserved {
-        DtcFormatIdentifier::IsoSaeReserved(byte) => assert_eq!(byte, 0xAA),
-        other => panic!("0xAA should classify as reserved, got {other:?}"),
-    }
-    assert_eq!(DtcFormatIdentifier::IsoSaeReserved(0xAA), reserved);
+    assert!(matches!(
+        reserved,
+        DtcFormatIdentifier::IsoSaeReserved { .. }
+    ));
+    assert_eq!(u8::from(reserved), 0xAA);
 }
 
 #[test]
