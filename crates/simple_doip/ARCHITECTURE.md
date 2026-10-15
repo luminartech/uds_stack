@@ -49,7 +49,7 @@ decision below follows from that.
 
 Capability is added in Cargo-feature tiers, each building on the previous.
 `default = []`, so the bare crate is the `no_std` core, running up through
-owned/alloc mirrors, `std` I/O and errors, and the tokio-util codec.
+owned/alloc mirrors, `std::io::Error` interop, and the tokio-util codec.
 `connection` stands apart: it builds on the core alone, and is `no_std` with no
 allocator:
 
@@ -58,7 +58,7 @@ allocator:
 | L0 (external) | — | byte-level `Decode`/`Encode` traits, `Incomplete`, `TrailingBytes`, `take` | `automotive-wire-codec` crate |
 | Borrowed core | *(none)* | `Message<'a>`, `Payload<'a>`, `Header`, `try_frame` | `src/messages/`, `src/framer.rs` |
 | Owned mirror | `alloc` | `OwnedMessage`, `OwnedPayload`, `OwnedDiagnosticMessage`, `OwnedDiagnosticMessageAck`, `OwnedDiagnosticMessageNack` | `src/messages/mod.rs`, `src/messages/payload.rs` |
-| std | `std` | `std::io::Error` interop (`MessageError::Std`), `std`-backed error traits | `src/messages/message_error.rs` |
+| std | `std` | `std::io::Error` interop (`MessageError::Std`) | `src/messages/message_error.rs` |
 | Codec | `codec` | `MessageCodec`, a `tokio_util::codec` `Encoder`/`Decoder` | `src/message_codec.rs` |
 | Connection service | `connection` | `tester::Tester`, a `TesterConnection` (a `DiagnosticConnection` that can reconnect and close), and `entity::Entity`, a `DiagnosticEntity`, over `edge-nal` and `embassy-time` | `src/tester.rs`, `src/tester/`, `src/entity/`, `src/stream.rs`, `src/stream/` |
 

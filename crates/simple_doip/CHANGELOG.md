@@ -47,6 +47,14 @@ example for each.
   deployment's tester address, from `0x0E00`–`0x0FFF`.
 - **Breaking:** `DiagnosticAckCode::is_positive_ack` and `is_negative_ack`. Whether
   an acknowledgement is negative is now its type; see Changed.
+- **Breaking:** `LogicalAddress::is_valid_client_address` and
+  `LogicalAddress::OBD_ADDRESS_RANGE`. The predicate logged through `tracing` under
+  `std` for an address in `0x0F00`–`0x0F7F`. Migrate: call
+  `service::TesterAddress::new(address).is_ok()`, or keep the `TesterAddress`.
+- **Breaking:** what the `std` feature enabled besides `MessageError::Std`: the
+  `tracing` dependency, which only `codec` now enables, and `thiserror`'s `std`
+  feature. Migrate: enable `tracing`'s or `thiserror`'s `std` feature yourself if
+  you relied on it through this crate.
 - The `async-trait`, `futures` and `embedded-io` dependencies. The first two served
   only the client and server; for `embedded-io`, see Changed.
 - The `simple_client` and `echo_server` examples, with the types they showed.

@@ -26,10 +26,10 @@ all-features = true
 automotive-wire-codec = { workspace = true }
 strum = { workspace = true }
 thiserror = { workspace = true }
-tracing = { workspace = true, optional = true }
-# std-only, all optional
+# the `codec` feature, std
 bytes = { workspace = true, optional = true }
 tokio-util = { workspace = true, optional = true }
+tracing = { workspace = true, optional = true }
 # the `connection` feature, no_std
 edge-nal = { workspace = true, optional = true }
 embedded-io-async = { workspace = true, optional = true }
@@ -48,8 +48,8 @@ critical-section = { workspace = true, features = ["std"] }
 [features]
 default = []
 alloc = []
-std = ["alloc", "thiserror/std", "dep:tracing", "tracing/std"]
-codec = ["std", "dep:tokio-util", "dep:bytes"]
+std = ["alloc"]
+codec = ["std", "dep:tokio-util", "dep:bytes", "dep:tracing"]
 connection = [
     "dep:edge-nal",
     "dep:embedded-io-async",

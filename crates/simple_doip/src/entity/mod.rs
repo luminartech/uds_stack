@@ -38,7 +38,7 @@ use crate::messages::{
 };
 use crate::service::{
     ConnectionId, DiagnosticEntity, DoIpResult, EntityConfig, EntityEvent, Refusal,
-    Timestamp,
+    TesterAddress, Timestamp,
 };
 use crate::stream::tx::Full;
 use crate::stream::{after, caller_deadline, timestamp};
@@ -123,7 +123,7 @@ impl EntityAddress {
         functional: LogicalAddress,
     ) -> Result<Self, AddressError> {
         if physical.default_ta_type() != TaType::Physical
-            || physical.is_valid_client_address()
+            || TesterAddress::new(physical).is_ok()
         {
             return Err(AddressError::NotPhysical(physical));
         }

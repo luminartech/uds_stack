@@ -43,6 +43,7 @@ use simple_doip::{
         PayloadType, ProtocolVersion, RoutingActivationRequest, RoutingActivationResponse,
         RoutingActivationResponseCode, VehicleIdentificationResponse, VinGidSyncStatus,
     },
+    service::TesterAddress,
 };
 
 /// Encode into a fixed buffer the way a bare-metal caller would -- a
@@ -107,7 +108,7 @@ proptest! {
     /// ISO 13400-2 reserves the tester address range `0x0E00..=0x0FFF`.
     #[test]
     fn prop_logical_address_client_range(addr in 0x0E00u16..=0x0FFF) {
-        prop_assert!(LogicalAddress(addr).is_valid_client_address());
+        prop_assert!(TesterAddress::new(LogicalAddress(addr)).is_ok());
     }
 
     /// Everything outside that range is not a tester address.
@@ -115,7 +116,7 @@ proptest! {
     fn prop_logical_address_outside_client_range(
         addr in prop_oneof![0x0000u16..0x0E00, 0x1000u16..=0xFFFF],
     ) {
-        prop_assert!(!LogicalAddress(addr).is_valid_client_address());
+        prop_assert!(TesterAddress::new(LogicalAddress(addr)).is_err());
     }
 
     #[test]
