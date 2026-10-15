@@ -42,15 +42,12 @@ transport for both roles. It is released in lockstep with the rest of the
 - `profile::bench_reloads()`, the conventional `tP6` reload pair (2000 ms and
   5000 ms) for a bench setup. It is a function and not a `Default`, because these
   values are not a vehicle configuration.
-- `mapping`, the address conversions between `uds_session` and `simple_doip`
-  (`to_logical`, `from_logical`, `target_of`), and `MappingError` for the remote
-  message types, which `DoIP` cannot carry.
-- `Error` for the server transport and `ClientTransportError` for the client
-  transport. A conformant connection close is reported as an event, not as an
+- `MappingError` for the remote message types, which `DoIP` cannot carry.
+- `DoIpTransportError` for the server transport and `DoIpClientTransportError` for the
+  client transport. A conformant connection close is reported as an event, not as an
   error.
-- `no_std` and allocation-free by default (`default = []`), with no async runtime
-  named. `alloc` and `std` features forward to `simple_doip` and `uds_protocol`, and
-  `std` adds `std::error::Error`. `unsafe` is forbidden. MSRV 1.91.
+- `no_std` and allocation-free, with no features and no async runtime named. The
+  errors implement `core::error::Error`. `unsafe` is forbidden. MSRV 1.91.
 
 ### Known limitations
 

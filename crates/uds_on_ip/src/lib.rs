@@ -94,7 +94,7 @@
 //! response-pending. Those four facts are all this crate reads of a message; see
 //! `profile::service_ids`.
 
-#![cfg_attr(not(feature = "std"), no_std)]
+#![no_std]
 #![forbid(unsafe_code)]
 
 pub mod client;
@@ -104,7 +104,7 @@ pub mod profile;
 pub mod transport;
 
 pub use client::{DoIpClientTransport, KEEP_ALIVE_LEN, LateReplyGuard};
-pub use error::{ClientTransportError, Error};
+pub use error::{DoIpClientTransportError, DoIpTransportError};
 pub use transport::DoIpTransport;
 
 // `TransportEvent` is deliberately not re-exported. It is

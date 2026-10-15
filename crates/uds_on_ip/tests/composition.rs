@@ -56,7 +56,7 @@ impl DiagnosticEntity for OpaqueEntity {
 }
 
 type Transport = DoIpTransport<OpaqueEntity, 1>;
-type Error = uds_on_ip::Error<()>;
+type Error = uds_on_ip::DoIpTransportError<()>;
 
 /// The driver bounds its transport on nothing but the trait.
 ///
@@ -74,7 +74,7 @@ fn the_driver_bound_is_satisfied() {
 /// An entity that is not `Debug` and not `Send` still gives a usable transport.
 ///
 /// The trait's only associated bound is `Error: Debug`, which is this crate's
-/// [`uds_on_ip::Error`] over the entity's error. A bound that leaked from the
+/// [`uds_on_ip::DoIpTransportError`] over the entity's error. A bound that leaked from the
 /// entity itself to the `impl` would show up here.
 fn an_opaque_entity_still_satisfies_the_trait() {
     const fn accepts<T: UdsTransport + core::fmt::Debug>() {}

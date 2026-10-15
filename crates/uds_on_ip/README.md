@@ -91,12 +91,9 @@ this compares to the rest of the stack.
 
 ## Feature flags
 
-| Feature | Implies | What it gives you |
-|---------|---------|--------------------|
-| `std` *(off by default)* | `alloc` | `std::error::Error` for `Error`, and `std` on `simple_doip`/`uds_protocol`. |
-| `alloc` | — | The `alloc`-only layers of `simple_doip` and `uds_protocol`. Nothing in this crate's own code needs it. |
-
-`default = []`, so the crate is `no_std` out of the box.
+None. The crate is `no_std` in every configuration, and its errors implement
+`core::error::Error`. Enable `simple_doip`'s and `uds_protocol`'s features on those
+crates directly.
 
 ## `no_std` support
 

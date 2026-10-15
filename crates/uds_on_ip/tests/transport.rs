@@ -16,7 +16,7 @@ use simple_doip::LogicalAddress;
 use simple_doip::service::{ConnectionId, DoIpResult, Refusal};
 use support::{Fault, MockEntity, TESTER, Tester, Wire, block_on, poll_once_and_drop};
 use uds_on_ip::profile::bench_reloads;
-use uds_on_ip::{DoIpTransport, Error};
+use uds_on_ip::{DoIpTransport, DoIpTransportError};
 use uds_services::{
     Address, AfterSend, Ai, Mtype, SResult, TaType, TransportEvent, UdsTransport,
 };
@@ -506,7 +506,7 @@ fn a_refusal_beyond_those_held_is_an_error() {
     let error = block_on(t.t_data_req(response_ai(), &[0x7E, 0x00], AfterSend::Continue))
         .unwrap_err();
     assert!(
-        matches!(error, Error::Refused(Refusal::NoRoom)),
+        matches!(error, DoIpTransportError::Refused(Refusal::NoRoom)),
         "{error:?}"
     );
 }
@@ -544,7 +544,7 @@ fn assert_nothing_follows(t: &mut Transport<1>) {
     let mut buffer = [0u8; 16];
     assert!(matches!(
         block_on(t.next_event(&mut buffer, None)),
-        Err(Error::Entity(Fault::Exhausted))
+        Err(DoIpTransportError::Entity(Fault::Exhausted))
     ));
 }
 
@@ -711,7 +711,7 @@ fn a_pdu_outside_the_lent_buffer_is_an_error() {
     let mut buffer = [0u8; 16];
     assert!(matches!(
         block_on(t.next_event(&mut buffer, None)),
-        Err(Error::PduOutsideBuffer)
+        Err(DoIpTransportError::PduOutsideBuffer)
     ));
 }
 
@@ -724,7 +724,7 @@ fn a_close_with_no_known_tester_is_not_reported() {
     let mut buffer = [0u8; 16];
     assert!(matches!(
         block_on(t.next_event(&mut buffer, None)),
-        Err(Error::Entity(Fault::Exhausted))
+        Err(DoIpTransportError::Entity(Fault::Exhausted))
     ));
 }
 
@@ -777,12 +777,12 @@ fn a_remote_message_type_is_refused_before_the_entity() {
         ..response_ai()
     };
     let error = block_on(t.t_data_req(remote, &[0x62], AfterSend::Continue)).unwrap_err();
-    assert!(matches!(error, Error::Mapping(_)), "{error:?}");
+    assert!(matches!(error, DoIpTransportError::Mapping(_)), "{error:?}");
     let mut buffer = [0u8; 16];
     assert!(
         matches!(
             block_on(t.next_event(&mut buffer, None)),
-            Err(Error::Entity(Fault::Exhausted))
+            Err(DoIpTransportError::Entity(Fault::Exhausted))
         ),
         "no confirmation follows a refused request"
     );

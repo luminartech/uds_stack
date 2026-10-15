@@ -21,7 +21,7 @@ use simple_doip::service::{
 };
 use simple_doip::{LogicalAddress, TaType};
 use uds_on_ip::{
-    ClientTransportError, DoIpClientTransport, KEEP_ALIVE_LEN, LateReplyGuard,
+    DoIpClientTransport, DoIpClientTransportError, KEEP_ALIVE_LEN, LateReplyGuard,
 };
 use uds_services::{AfterSend, ClientTransport, TransportEvent, UdsTransport};
 use uds_session::{Address, Ai, Mtype, Reloads, SResult, TransportError};
@@ -826,7 +826,7 @@ fn a_failed_reconnect_fails_the_waiting_request_and_the_next_tries_again() {
     let mut buf = [0; 32];
     assert!(matches!(
         run(t.next_event(&mut buf, None)),
-        Err(uds_on_ip::ClientTransportError::Reconnect("refused"))
+        Err(uds_on_ip::DoIpClientTransportError::Reconnect("refused"))
     ));
     assert_eq!(
         next(&mut t),
@@ -858,7 +858,7 @@ fn a_failed_reconnect_frees_the_waiting_requests_server() {
     let mut buf = [0; 32];
     assert!(matches!(
         run(t.next_event(&mut buf, None)),
-        Err(uds_on_ip::ClientTransportError::Reconnect("refused"))
+        Err(uds_on_ip::DoIpClientTransportError::Reconnect("refused"))
     ));
     assert_eq!(
         next(&mut t),
@@ -1167,17 +1167,20 @@ fn a_new_server_while_every_tracked_one_is_busy_is_refused() {
 // --- the error type ----------------------------------------------------------------------
 
 /// The transport's error is named by its connection alone: a caller writes
-/// `ClientTransportError<Scripted>`, never the three types the connection already
+/// `DoIpClientTransportError<Scripted>`, never the three types the connection already
 /// determines.
 #[test]
 fn the_error_is_named_by_its_connection() {
     fn transport_error(
         error: <Transport as UdsTransport>::Error,
-    ) -> ClientTransportError<Scripted> {
+    ) -> DoIpClientTransportError<Scripted> {
         error
     }
-    let error = transport_error(ClientTransportError::Reconnect("refused"));
-    assert!(matches!(error, ClientTransportError::Reconnect("refused")));
+    let error = transport_error(DoIpClientTransportError::Reconnect("refused"));
+    assert!(matches!(
+        error,
+        DoIpClientTransportError::Reconnect("refused")
+    ));
     assert_eq!(
         error.to_string(),
         "the DoIP connection could not be reopened: \"refused\""

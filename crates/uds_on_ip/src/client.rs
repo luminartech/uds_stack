@@ -11,7 +11,7 @@ use simple_doip::service::{
 use uds_services::{AfterSend, ClientTransport, TransportEvent, UdsTransport};
 use uds_session::{Address, Ai, Reloads, SResult, TaType, Timestamp};
 
-use crate::error::ClientTransportError;
+use crate::error::DoIpClientTransportError;
 use crate::mapping::{
     ADDRESSES, PERIODIC_RESPONSE_PAYLOAD_TYPE, ai, awaits_response, from_logical, refused,
     response_pending, s_result, target_of, to_doip_ta_type, to_logical,
@@ -418,17 +418,21 @@ impl<C: TesterConnection, const QUEUE: usize, const PEERS: usize, const WAITING:
     DoIpClientTransport<C, QUEUE, PEERS, WAITING>
 {
     /// Owes `ai`'s failed confirm for `refusal`; `Err` where nothing more can be owed.
-    fn refuse(&mut self, ai: Ai, refusal: Refusal) -> Result<(), ClientTransportError<C>> {
+    fn refuse(
+        &mut self,
+        ai: Ai,
+        refusal: Refusal,
+    ) -> Result<(), DoIpClientTransportError<C>> {
         if self.owed.refuse(ai, s_result(refused(refusal))) {
             Ok(())
         } else {
-            Err(ClientTransportError::Refused(refusal))
+            Err(DoIpClientTransportError::Refused(refusal))
         }
     }
 
     /// Hands `data` to the connection, or holds it until the connection can take it,
     /// reconnected by the next [`UdsTransport::next_event`] where it has ended.
-    fn send(&mut self, ai: Ai, data: &[u8]) -> Result<(), ClientTransportError<C>> {
+    fn send(&mut self, ai: Ai, data: &[u8]) -> Result<(), DoIpClientTransportError<C>> {
         let ta = target_of(ai)?;
         let expects = awaits_response(data);
         if self.late_reply_possible(ai, expects) {
@@ -467,7 +471,7 @@ impl<C: TesterConnection, const QUEUE: usize, const PEERS: usize, const WAITING:
         ai: Ai,
         data: &[u8],
         expects: bool,
-    ) -> Result<(), ClientTransportError<C>> {
+    ) -> Result<(), DoIpClientTransportError<C>> {
         if self.waiting.push(ai, data) {
             self.requested(ai, expects);
             Ok(())
@@ -483,7 +487,7 @@ impl<C: TesterConnection, const QUEUE: usize, const PEERS: usize, const WAITING:
     async fn reconnect(
         &mut self,
         deadline: Option<Timestamp>,
-    ) -> Result<Reconnection, ClientTransportError<C>> {
+    ) -> Result<Reconnection, DoIpClientTransportError<C>> {
         if self.link == Link::Up || self.waiting.is_empty() {
             return Ok(Reconnection::Connected);
         }
@@ -496,7 +500,7 @@ impl<C: TesterConnection, const QUEUE: usize, const PEERS: usize, const WAITING:
             Ok(other) => Ok(other),
             Err(error) => {
                 self.fail_waiting();
-                Err(ClientTransportError::Reconnect(error))
+                Err(DoIpClientTransportError::Reconnect(error))
             }
         }
     }
@@ -543,14 +547,14 @@ impl<C: TesterConnection, const QUEUE: usize, const PEERS: usize, const WAITING:
         &mut self,
         event: ConnectionEvent<'_>,
         start: usize,
-    ) -> Result<Option<Received>, ClientTransportError<C>> {
+    ) -> Result<Option<Received>, DoIpClientTransportError<C>> {
         let own = self.connection.address().address();
-        let span = |pdu: &[u8]| -> Result<Range<usize>, ClientTransportError<C>> {
+        let span = |pdu: &[u8]| -> Result<Range<usize>, DoIpClientTransportError<C>> {
             let at = pdu
                 .as_ptr()
                 .addr()
                 .checked_sub(start)
-                .ok_or(ClientTransportError::PduOutsideBuffer)?;
+                .ok_or(DoIpClientTransportError::PduOutsideBuffer)?;
             Ok(at..at.saturating_add(pdu.len()))
         };
         Ok(match event {
@@ -615,7 +619,7 @@ enum Received {
 impl<C: TesterConnection, const QUEUE: usize, const PEERS: usize, const WAITING: usize>
     UdsTransport for DoIpClientTransport<C, QUEUE, PEERS, WAITING>
 {
-    type Error = ClientTransportError<C>;
+    type Error = DoIpClientTransportError<C>;
 
     /// The connection's
     /// [`MAX_PDU`](simple_doip::service::DiagnosticConnection::MAX_PDU),
@@ -634,9 +638,9 @@ impl<C: TesterConnection, const QUEUE: usize, const PEERS: usize, const WAITING:
     ///
     /// # Errors
     ///
-    /// [`ClientTransportError::Mapping`] if the addressing cannot be carried, and
-    /// [`ClientTransportError::Refused`] if the connection refuses the request while the
-    /// transport already owes as many confirmations as it can hold.
+    /// [`DoIpClientTransportError::Mapping`] if the addressing cannot be carried, and
+    /// [`DoIpClientTransportError::Refused`] if the connection refuses the request while
+    /// the transport already owes as many confirmations as it can hold.
     fn t_data_req(
         &mut self,
         ai: Ai,
@@ -656,10 +660,10 @@ impl<C: TesterConnection, const QUEUE: usize, const PEERS: usize, const WAITING:
     ///
     /// # Errors
     ///
-    /// [`ClientTransportError::Connection`] where the connection fails other than by
-    /// closing, [`ClientTransportError::Reconnect`] where no new connection could be
+    /// [`DoIpClientTransportError::Connection`] where the connection fails other than by
+    /// closing, [`DoIpClientTransportError::Reconnect`] where no new connection could be
     /// opened for a waiting request, which is then confirmed failed, and
-    /// [`ClientTransportError::PduOutsideBuffer`] where the connection reports a PDU
+    /// [`DoIpClientTransportError::PduOutsideBuffer`] where the connection reports a PDU
     /// outside `buffer`.
     async fn next_event<'b>(
         &mut self,
@@ -682,7 +686,7 @@ impl<C: TesterConnection, const QUEUE: usize, const PEERS: usize, const WAITING:
                 .connection
                 .next_event(&mut *buffer, deadline.map(|at| service::Timestamp(at.0)))
                 .await
-                .map_err(ClientTransportError::Connection)?;
+                .map_err(DoIpClientTransportError::Connection)?;
             match self.receive(event, start)? {
                 Some(Received::Event(event)) => return Ok(event.into()),
                 Some(found) => break found,
@@ -690,8 +694,11 @@ impl<C: TesterConnection, const QUEUE: usize, const PEERS: usize, const WAITING:
             }
         };
         let buffer: &'b [u8] = buffer;
-        let data =
-            |at: Range<usize>| buffer.get(at).ok_or(ClientTransportError::PduOutsideBuffer);
+        let data = |at: Range<usize>| {
+            buffer
+                .get(at)
+                .ok_or(DoIpClientTransportError::PduOutsideBuffer)
+        };
         Ok(match found {
             Received::Ind(ai, at, None) => TransportEvent::DataInd {
                 ai,
@@ -743,7 +750,7 @@ impl<C: TesterConnection, const QUEUE: usize, const PEERS: usize, const WAITING:
     ///
     /// # Errors
     ///
-    /// [`ClientTransportError::Close`] where closing fails; the connection is closed
+    /// [`DoIpClientTransportError::Close`] where closing fails; the connection is closed
     /// either way.
     async fn close(&mut self) -> Result<(), Self::Error> {
         self.peers = [None; PEERS];
@@ -752,7 +759,7 @@ impl<C: TesterConnection, const QUEUE: usize, const PEERS: usize, const WAITING:
         self.connection
             .close()
             .await
-            .map_err(ClientTransportError::Close)
+            .map_err(DoIpClientTransportError::Close)
     }
 }
 
