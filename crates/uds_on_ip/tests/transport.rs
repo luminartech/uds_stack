@@ -265,6 +265,35 @@ fn a_positive_reset_response_closes_the_connection_after_its_confirmation() {
     );
 }
 
+/// A suppressed `ECUReset` sends nothing to close after, so the caller closes the
+/// tester's connection with `close_testers` once the server has stopped.
+#[test]
+fn close_testers_closes_after_a_suppressed_reset() {
+    let mut t = indicated(&[0x11, 0x81]);
+    assert_eq!(block_on(t.close_testers()), 1);
+    assert_eq!(t.entity().wire, [Wire::Close(CONNECTION)]);
+}
+
+/// A tester with a message unconfirmed keeps its connection, so the confirmation owed
+/// to the driver still arrives.
+#[test]
+fn close_testers_leaves_a_tester_owed_a_confirmation() {
+    let mut t = indicated(&[0x22, 0xF1, 0x90]);
+    respond(&mut t, &[0x7F, 0x22, 0x31]);
+    assert_eq!(block_on(t.close_testers()), 0);
+    assert_eq!(
+        next(&mut t),
+        TransportEvent::DataConf {
+            ai: response_ai(),
+            result: SResult::Ok,
+        }
+    );
+    assert_eq!(
+        t.entity().wire,
+        [Wire::Data(CONNECTION, vec![0x7F, 0x22, 0x31])]
+    );
+}
+
 /// A busy refusal sent to the tester before the positive `ECUReset` response is
 /// confirmed does not reorder REQ 7.11: the response's confirmation still reaches
 /// the driver after the close, and the refusal, written before the close, is

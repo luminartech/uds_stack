@@ -43,6 +43,9 @@ transport for both roles. It is released in lockstep with the rest of the
   5000 ms) for a bench setup. It is a function and not a `Default`, because these
   values are not a vehicle configuration.
 - `MappingError` for the remote message types, which `DoIP` cannot carry.
+- `DoIpTransport::close_testers`, which closes every tester connection with nothing
+  awaiting confirmation, for the caller to close after a suppressed `ECUReset`, which
+  sends nothing for the transport to close after.
 - `DoIpTransportError` for the server transport and `DoIpClientTransportError` for the
   client transport. A conformant connection close is reported as an event, not as an
   error.

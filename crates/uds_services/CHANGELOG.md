@@ -109,7 +109,8 @@ lockstep with the rest of the `uds_stack` workspace (`uds_protocol`, `uds_sessio
 - `DataTransfer` serves a download: `RequestDownload`, `TransferData` and
   `RequestTransferExit`, with the transfer held in the protocol state.
 - `DataTransfer::SESSIONS`, `DataTransfer::format_supported` and `DataTransfer::access`.
-- `AfterReset`, `EcuReset::confirmed`, `Stepped`, `Stopped`, and `Server::into_parts`.
+- `AfterReset`, `EcuReset::confirmed`, `Stepped`, `Stopped`, `Server::into_parts`, and
+  `Server::transport_mut`.
 
 ### Changed
 

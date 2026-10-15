@@ -63,8 +63,8 @@ use uds_session::{Ai, Reloads, SResult, Timestamp};
 /// confirmation: `uds_services::Server` executes a session change there. It
 /// executes an accepted reset on that confirmation (`EcuReset::confirmed`, and
 /// `Stopped` for a restart), so the reset follows the close; a suppressed reset
-/// sends nothing and closes nothing. A message whose confirmation fails closes
-/// nothing.
+/// sends nothing and closes nothing; [`DoIpTransport::close_testers`] closes after one. A
+/// message whose confirmation fails closes nothing.
 ///
 /// The close follows the armed message's own confirmation, told apart from the
 /// tester's others by the order the entity confirms them in. A message sent to the
@@ -334,6 +334,33 @@ impl<E, const CONNECTIONS: usize> DoIpTransport<E, CONNECTIONS> {
 }
 
 impl<E: DiagnosticEntity, const CONNECTIONS: usize> DoIpTransport<E, CONNECTIONS> {
+    /// Close, in order, the connection of every tester with nothing awaiting
+    /// confirmation, as the transport closes one after a positive `ECUReset` response
+    /// (REQ 7.11). For a suppressed reset, which sends nothing to close after: call it
+    /// between steps, once `uds_services::Server::step` has returned the restart.
+    ///
+    /// A tester with a message still unconfirmed keeps its connection, since its
+    /// confirmation is owed to the driver. Returns how many connections it closed.
+    pub async fn close_testers(&mut self) -> usize {
+        let mut closed: usize = 0;
+        for index in 0..CONNECTIONS {
+            let idle = self
+                .testers
+                .get(index)
+                .copied()
+                .flatten()
+                .filter(|tester| tester.unconfirmed == 0);
+            let Some(tester) = idle else {
+                continue;
+            };
+            self.forget(tester.connection);
+            let _ended_either_way: Result<(), E::Error> =
+                self.entity.close(tester.connection).await;
+            closed = closed.saturating_add(1);
+        }
+        closed
+    }
+
     async fn close(&mut self, closing: Closing) -> TransportEvent<'static> {
         self.closing = Some(closing);
         self.forget(closing.connection);
