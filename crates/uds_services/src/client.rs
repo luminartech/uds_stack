@@ -781,6 +781,119 @@ impl<
     }
 }
 
+/// One server's answer to a functionally addressed request whose positive response
+/// carries nothing to read, such as [`Client::control_dtc_setting_functional`]'s.
+///
+/// ``UDSSVC_ARCH_0022`` — each responding server sets its own source address, so every
+/// variant carries one. A server that stays silent produces no reply at all.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum Reply {
+    /// A positive response.
+    Positive {
+        /// The responding server's `S_AI[SA]`.
+        from: Address,
+    },
+    /// A negative response. Not an error: a server answering `serviceNotSupported` has
+    /// answered.
+    Negative {
+        /// The responding server's `S_AI[SA]`.
+        from: Address,
+        /// What it declined with.
+        code: NegativeResponseCode,
+    },
+    /// A positive response whose bytes do not parse.
+    Malformed {
+        /// The responding server's `S_AI[SA]`.
+        from: Address,
+        /// Why it could not be read.
+        error: MalformedResponse,
+    },
+}
+
+impl Reply {
+    /// The responding server's `S_AI[SA]`, whichever reply this is.
+    #[must_use]
+    pub const fn from(&self) -> Address {
+        match self {
+            Self::Positive { from }
+            | Self::Negative { from, .. }
+            | Self::Malformed { from, .. } => *from,
+        }
+    }
+}
+
+/// The replies to one functionally addressed request whose positive response carries
+/// nothing to read; [`Responses`]' counterpart for such a service.
+///
+/// The request goes out on the first [`Self::next`]. The request in progress is recorded
+/// in the [`Client`], not here, so dropping this part-way is safe: the client's next call
+/// drains what is left of the window before anything else.
+#[derive(Debug)]
+#[must_use = "an undrained sequence discards the replies the request produced"]
+pub struct Replies<
+    'c,
+    C: ClientSet,
+    T: ClientTransport,
+    K: ClientKeepAlive,
+    const PHYS: usize,
+    const FUNC: usize,
+    const R: usize = 0,
+> {
+    client: &'c mut Client<C, T, K, PHYS, FUNC, R>,
+    /// Why the request could not be made, reported by the first [`Self::next`].
+    refused: Option<ClientError<T::Error>>,
+}
+
+impl<
+    C: ClientSet,
+    T: ClientTransport,
+    K: ClientKeepAlive,
+    const PHYS: usize,
+    const FUNC: usize,
+    const R: usize,
+> Replies<'_, C, T, K, PHYS, FUNC, R>
+{
+    /// The next reply, or `None` when the response window has closed.
+    ///
+    /// The first call sends the request. The window closes one response timeout after
+    /// the last reply, or after the request's confirmation where none came; a
+    /// response-pending message holds it open and is not a reply. A positive response
+    /// echoing another sub-function than the request's is an earlier request's late
+    /// reply, and is not a reply to this one.
+    ///
+    /// # Errors
+    ///
+    /// As [`Responses::next`]'s.
+    ///
+    /// # Cancel safety
+    ///
+    /// As [`Responses::next`]'s.
+    pub async fn next(&mut self) -> Option<Result<Reply, ClientError<T::Error>>> {
+        if let Some(error) = self.refused.take() {
+            return Some(Err(error));
+        }
+        if let Err(error) = self.client.drain_window().await {
+            self.client.exchange = None;
+            return Some(Err(error));
+        }
+        let answered = match self.client.advance().await? {
+            Ok(answered) => answered,
+            Err(error) => return Some(Err(error)),
+        };
+        let from = answered.from;
+        let message = answered_bytes(&mut self.client.store, &answered);
+        let reply = match encode::decoded::<ControlDtcSettingResponse>(
+            encode::final_response(message, answered.arrived),
+        ) {
+            Response::Positive(_) => Reply::Positive { from },
+            Response::Negative(code) => Reply::Negative { from, code },
+            Response::Malformed(error) => Reply::Malformed { from, error },
+        };
+        Some(Ok(reply))
+    }
+}
+
 /// The identifier/record pairs in one `ReadDataByIdentifier` response.
 ///
 /// ``UDSSVC_ARCH_0026`` — the application declared each identifier's record structure, so
@@ -1440,7 +1553,7 @@ impl<
         let answered = self
             .exchange_with(
                 target,
-                |request| encode::communication_control(request, control),
+                |request| encode::communication_control(request, control, false),
                 None,
             )
             .await?;
@@ -1845,32 +1958,131 @@ impl<
         target: Address,
         identifiers: &[C::Did],
     ) -> Responses<'_, C, T, K, PHYS, FUNC, R> {
-        self.retire();
-        let ai = self
-            .addressing(target)
-            .with_ta_type(uds_session::TaType::Functional);
-        let ClientBuffers { request, .. } = self.store.split();
-        let refused = match encode::read_data_by_identifier(
-            request,
-            identifiers,
-            C::LIMITS.max_dids_per_request,
-        ) {
-            Ok(len) => {
-                let sid = request.first().copied().unwrap_or_default();
-                let class = ClientTx::Request {
-                    expected: ExpectedResponses::Unknown,
-                    repeat: false,
-                    session: None,
-                };
-                self.exchange = Some(Exchange::new(ai, len, sid, None, class));
-                None
-            }
-            Err(error) => Some(ClientError::Request(error)),
-        };
+        let max = C::LIMITS.max_dids_per_request;
+        let refused = self.functional(
+            target,
+            |request| encode::read_data_by_identifier(request, identifiers, max),
+            ExpectedResponses::Unknown,
+        );
         Responses {
             client: self,
             refused,
             asked: identifiers.len(),
+        }
+    }
+
+    /// Disable or enable communication on every server on a functional address, with
+    /// the suppress bit set so that none answers (ISO 14229-1:2020 9.2.2), and awaiting
+    /// nothing beyond the transmission's confirmation.
+    ///
+    /// ``UDSSVC_ARCH_0009`` — a server that does not support the request is silent, as is
+    /// one that performed it, so success cannot be told from silent non-support. The
+    /// request is never repeated for want of a response, since none is awaited; a failed
+    /// transmission is repeated as any request's is.
+    ///
+    /// # Arguments
+    ///
+    /// * `group` - the functional address, `S_AI[TA]`.
+    /// * `control` - as for [`Self::communication_control`]; its suppress bit is set
+    ///   whatever it carries.
+    ///
+    /// # Errors
+    ///
+    /// [`ClientError::NotSent`] where the transmission failed after its repeats,
+    /// [`ClientError::NoChannel`] where no channel could be opened to `group`, and
+    /// [`ClientError::Transport`] where the transport failed.
+    ///
+    /// # Cancel safety
+    ///
+    /// As [`Self::read_data_by_identifier`]'s.
+    pub async fn communication_control_functional(
+        &mut self,
+        group: Address,
+        control: CommunicationControlRequest,
+    ) -> Result<(), ClientError<T::Error>> {
+        if let Some(refused) = self.functional(
+            group,
+            |request| encode::communication_control(request, control, true),
+            ExpectedResponses::None,
+        ) {
+            return Err(refused);
+        }
+        if let Err(error) = self.drain_window().await {
+            self.exchange = None;
+            return Err(error);
+        }
+        match self.advance().await {
+            // No server answers a suppressed request; what arrives is someone else's.
+            None | Some(Ok(_)) => Ok(()),
+            Some(Err(error)) => Err(error),
+        }
+    }
+
+    /// Set DTC recording on every server on a functional address, with the suppress bit
+    /// clear so that each that supports it answers.
+    ///
+    /// ``UDSSVC_ARCH_0022`` — zero or more servers answer, so the replies come back as a
+    /// [`Replies`] sequence; nothing is sent until its first [`Replies::next`], which is
+    /// also where a refusal surfaces.
+    ///
+    /// # Arguments
+    ///
+    /// * `group` - the functional address, `S_AI[TA]`.
+    /// * `setting` - as for [`Self::control_dtc_setting`].
+    /// * `option_record` - as for [`Self::control_dtc_setting`], at most
+    ///   [`ClientLimits::max_option_len`] bytes.
+    pub fn control_dtc_setting_functional(
+        &mut self,
+        group: Address,
+        setting: DtcSettingType,
+        option_record: &[u8],
+    ) -> Replies<'_, C, T, K, PHYS, FUNC, R> {
+        let max = C::LIMITS.max_option_len;
+        let refused = self.functional(
+            group,
+            |request| {
+                within(option_record.len(), max)?;
+                encode::control_dtc_setting(request, setting, option_record)
+            },
+            ExpectedResponses::Unknown,
+        );
+        Replies {
+            client: self,
+            refused,
+        }
+    }
+
+    /// Record a functional request to `group`, encoded by `encode` and expecting
+    /// `expected`, as the exchange the next `advance` sends; or why it could not
+    /// be made. A positive response answers it only where it echoes the request's
+    /// sub-function, as [`Self::exchange_with`]'s does.
+    fn functional(
+        &mut self,
+        group: Address,
+        encode: impl FnOnce(&mut [u8]) -> Result<usize, RequestError>,
+        expected: ExpectedResponses,
+    ) -> Option<ClientError<T::Error>> {
+        self.retire();
+        let ai = self
+            .addressing(group)
+            .with_ta_type(uds_session::TaType::Functional);
+        let ClientBuffers { request, .. } = self.store.split();
+        match encode(request) {
+            Ok(len) => {
+                let sid = request.first().copied().unwrap_or_default();
+                let service = UdsServiceType::from_request_sid(sid);
+                let echo = (service.has_sub_function() == Some(true))
+                    .then(|| request.get(1).map(|byte| byte & 0x7F))
+                    .flatten();
+                let class = ClientTx::Request {
+                    expected,
+                    repeat: false,
+                    session: None,
+                };
+                self.exchange = Some(Exchange::new(ai, len, sid, echo, class));
+                None
+            }
+            Err(error) => Some(ClientError::Request(error)),
         }
     }
 

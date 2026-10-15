@@ -17,7 +17,7 @@ use uds_services::{
     DtcExtDataRecordNumber, DtcRecord, DtcSettingType, DtcSnapshotRecordNumber,
     DtcStatusMask, FunctionalKeepAlive, KeepAlive, MalformedResponse, Mtype,
     NegativeResponseCode, PhysicalKeepAlive, ReadDtcInfoResponse, ReadDtcInfoSubFunction,
-    RecordError, Reloads, Repeats, Replaced, RequestError, ResetType, Response,
+    RecordError, Reloads, Repeats, Replaced, Reply, RequestError, ResetType, Response,
     RoutineControlSubFunction, RoutineIdentifier, SResult, SecurityLevel, SessionTiming,
     SubnetNumber, TaType, Timestamp, uds_client,
 };
@@ -486,6 +486,84 @@ fn a_failed_transmissions_repeat_counts_against_the_ceiling() {
         Some(ClientError::Timeout)
     );
     assert_eq!(t.transport().sent_count, 2);
+}
+
+/// A functional `CommunicationControl` goes to the group with the suppress bit set in
+/// its second byte, completes on its confirmation, and opens no response window: a
+/// physical read that follows is sent at once, with nothing drained first.
+#[test]
+fn a_functional_communication_control_is_suppressed_and_completes_on_confirmation()
+-> Result<(), uds_protocol::Error> {
+    let mut t = tester(&[
+        Step::Conf(FUNCTIONAL, SResult::Ok),
+        Step::Conf(to(ECU), SResult::Ok),
+        Step::Ind(from(ECU), SPEED),
+    ]);
+    let control = CommunicationControlRequest::new(
+        false,
+        CommunicationControlType::DisableRxAndTx,
+        CommunicationType::Normal,
+    )?;
+    assert_eq!(
+        block_on(t.communication_control_functional(GROUP, control)),
+        Ok(())
+    );
+    assert_eq!(
+        t.transport().addressed(0),
+        (Some(FUNCTIONAL), &[0x28, 0x83, 0x01][..])
+    );
+    assert!(matches!(
+        block_on(t.read_data_by_identifier(ECU, &[Did::Speed])),
+        Ok(Response::Positive(_))
+    ));
+    assert_eq!(t.transport().sent_count, 2);
+    assert!(t.transport().finished());
+    Ok(())
+}
+
+/// A functional `ControlDTCSetting` goes to the group with the suppress bit clear and
+/// lends each server's reply in turn: a positive, a negative, and a positive echoing
+/// another setting skipped as an earlier request's. The window closes one response
+/// timeout after the last reply.
+#[test]
+fn a_functional_dtc_setting_lends_each_servers_reply() {
+    let mut t = tester(&[
+        Step::Conf(FUNCTIONAL, SResult::Ok),
+        Step::Ind(from(ECU), &[0xC5, 0x02]),
+        Step::Ind(from(OTHER_ECU), &[0xC5, 0x01]),
+        Step::Ind(from(OTHER_ECU), &[0x7F, 0x85, 0x22]),
+        Step::At(1_000),
+    ]);
+    let mut replies = t.control_dtc_setting_functional(GROUP, DtcSettingType::Off, &[]);
+    assert_eq!(
+        block_on(replies.next()),
+        Some(Ok(Reply::Positive { from: ECU }))
+    );
+    assert_eq!(
+        block_on(replies.next()),
+        Some(Ok(Reply::Negative {
+            from: OTHER_ECU,
+            code: NegativeResponseCode::ConditionsNotCorrect,
+        }))
+    );
+    assert_eq!(block_on(replies.next()), None);
+    drop(replies);
+    assert_eq!(
+        t.transport().addressed(0),
+        (Some(FUNCTIONAL), &[0x85, 0x02][..])
+    );
+    assert!(t.transport().finished());
+}
+
+/// A functional `ControlDTCSetting` no server answers ends its sequence when the window
+/// closes.
+#[test]
+fn a_functional_dtc_setting_no_server_answers_ends_empty() {
+    let mut t = tester(&[Step::Conf(FUNCTIONAL, SResult::Ok), Step::At(1_000)]);
+    let mut replies = t.control_dtc_setting_functional(GROUP, DtcSettingType::On, &[]);
+    assert_eq!(block_on(replies.next()), None);
+    drop(replies);
+    assert!(t.transport().finished());
 }
 
 /// A functionally addressed read is not under the ceiling: its window closes and its

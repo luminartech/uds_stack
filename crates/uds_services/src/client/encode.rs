@@ -69,20 +69,24 @@ pub(super) fn read_data_by_identifier<D: DataIdentifier>(
         .ok_or(RequestError::DoesNotFit)
 }
 
-/// Encode `control` into `buffer`, its suppress bit clear: the client awaits the
-/// response.
+/// Encode `control` into `buffer` with the suppress bit `suppress`, whatever `control`
+/// carries: clear where the call awaits a response, set where it awaits none.
 pub(super) fn communication_control(
     buffer: &mut [u8],
     control: CommunicationControlRequest,
+    suppress: bool,
 ) -> Result<usize, RequestError> {
     let kind = control.control_type();
     let communication = control.communication_type();
     // Rebuilt from a request its constructors already admitted, so neither can refuse.
     let rebuilt = match control.node_id() {
-        Some(node) => {
-            CommunicationControlRequest::new_with_node_id(false, kind, communication, node)
-        }
-        None => CommunicationControlRequest::new(false, kind, communication),
+        Some(node) => CommunicationControlRequest::new_with_node_id(
+            suppress,
+            kind,
+            communication,
+            node,
+        ),
+        None => CommunicationControlRequest::new(suppress, kind, communication),
     };
     let rebuilt = rebuilt.map_err(|_| RequestError::DoesNotFit)?;
     request(

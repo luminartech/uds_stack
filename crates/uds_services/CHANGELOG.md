@@ -109,6 +109,10 @@ lockstep with the rest of the `uds_stack` workspace (`uds_protocol`, `uds_sessio
 - `DataTransfer` serves a download: `RequestDownload`, `TransferData` and
   `RequestTransferExit`, with the transfer held in the protocol state.
 - `DataTransfer::SESSIONS`, `DataTransfer::format_supported` and `DataTransfer::access`.
+- `Client::communication_control_functional`, a functionally addressed
+  `CommunicationControl` with the suppress bit set, complete on its confirmation, and
+  `Client::control_dtc_setting_functional`, a functionally addressed `ControlDTCSetting`
+  whose answers come back as `Replies` of `Reply`.
 - `AfterReset`, `EcuReset::confirmed`, `Stepped`, `Stopped`, `Server::into_parts`, and
   `Server::transport_mut`.
 

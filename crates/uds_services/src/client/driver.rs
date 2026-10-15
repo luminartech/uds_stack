@@ -89,6 +89,17 @@ impl Exchange {
     const fn functional(self) -> bool {
         matches!(self.ai.ta_type, TaType::Functional)
     }
+
+    /// Whether it expects no response, so its confirmation completes it.
+    const fn expects_none(self) -> bool {
+        matches!(
+            self.class,
+            ClientTx::Request {
+                expected: ExpectedResponses::None,
+                ..
+            }
+        )
+    }
 }
 
 /// A response that answered the exchange, as the place it occupies in the response
@@ -685,6 +696,12 @@ impl<
             seen.timed_out |= self.send_owed().await.expired;
             if seen.confirmed == Some(true) {
                 e.phase = Phase::Open;
+                // A request expecting no response is complete on its confirmation
+                // (UDSS_LLR_0074): no window opens to wait out.
+                if e.expects_none() {
+                    self.exchange = None;
+                    return None;
+                }
             }
             self.exchange = Some(e);
             if let Some(answered) = seen.answer {
