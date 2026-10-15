@@ -16,12 +16,13 @@ use sensor_services::{DTCS, Did, Ecu, Rid};
 use uds_on_ip::DoIpTransport;
 use uds_on_ip::profile::bench_reloads;
 use uds_services::{
-    Address, CLEAR_ALL_DTCS, ClientLimits, ClientTiming, CommunicationControlType,
-    CommunicationType, DataFormatIdentifier, DiagnosticSessionType as S, DtcRecord,
-    DtcSettingType, DtcStatusMask, KeepAlive, NegativeResponseCode as Nrc,
-    PhysicalKeepAlive, ReadDtcInfoResponse, ReadDtcInfoSubFunction, Reloads, Replaced,
-    ResetType, Response, RoutineControlSubFunction, SecurityLevel, ServerParams, Stopped,
-    SubnetNumber, Timestamp, uds_client, uds_server,
+    Address, CLEAR_ALL_DTCS, ClientLimits, ClientTiming, CommunicationControlRequest,
+    CommunicationControlType, CommunicationType, DataFormatIdentifier,
+    DiagnosticSessionType as S, DtcRecord, DtcSettingType, DtcStatusMask, KeepAlive,
+    NegativeResponseCode as Nrc, PhysicalKeepAlive, ReadDtcInfoResponse,
+    ReadDtcInfoSubFunction, Reloads, Replaced, ResetType, Response,
+    RoutineControlSubFunction, SecurityLevel, ServerParams, Stopped, SubnetNumber,
+    Timestamp, uds_client, uds_server,
 };
 
 uds_server! {
@@ -315,25 +316,23 @@ fn supported_dtcs_need_the_extended_session() {
 fn communication_and_dtc_setting_are_controlled() {
     with_sensor(|mut c| async move {
         extended(&mut c).await;
-        let enabled = c
-            .communication_control(
-                SERVER,
-                CommunicationControlType::EnableRxAndTx,
-                CommunicationType::Normal,
-                SubnetNumber::AllConnectedNetworks,
-                None,
-            )
-            .await;
+        let plain = CommunicationControlRequest::new(
+            false,
+            CommunicationControlType::EnableRxAndTx,
+            CommunicationType::Normal,
+        )
+        .expect("a plain control type takes no node")
+        .with_subnet(SubnetNumber::AllConnectedNetworks);
+        let enabled = c.communication_control(SERVER, plain).await;
         assert_eq!(enabled.expect("answered"), Response::Positive(()));
-        let refused = c
-            .communication_control(
-                SERVER,
-                CommunicationControlType::EnableRxAndDisableTxWithEnhancedAddressInfo,
-                CommunicationType::Normal,
-                SubnetNumber::AllConnectedNetworks,
-                Some(0xFFFF),
-            )
-            .await;
+        let enhanced = CommunicationControlRequest::new_with_node_id(
+            false,
+            CommunicationControlType::EnableRxAndDisableTxWithEnhancedAddressInfo,
+            CommunicationType::Normal,
+            0xFFFF,
+        )
+        .expect("an enhanced-address type takes a node");
+        let refused = c.communication_control(SERVER, enhanced).await;
         assert_eq!(
             refused.expect("answered"),
             Response::Negative(Nrc::RequestOutOfRange)

@@ -12,13 +12,14 @@ use core::future::Future;
 use core::task::Poll;
 use uds_services::{
     Address, AddressAndLengthFormatIdentifier, Ai, Answer, CLEAR_ALL_DTCS, ClientError,
-    ClientSet, ClientTiming, CommunicationControlType, CommunicationType,
-    DataFormatIdentifier, DataIdentifier, DiagnosticSessionType, DtcExtDataRecordNumber,
-    DtcRecord, DtcSettingType, DtcSnapshotRecordNumber, DtcStatusMask, FunctionalKeepAlive,
-    KeepAlive, MalformedResponse, Mtype, NegativeResponseCode, PhysicalKeepAlive,
-    ReadDtcInfoResponse, ReadDtcInfoSubFunction, RecordError, Reloads, Repeats, Replaced,
-    ResetType, Response, RoutineControlSubFunction, RoutineIdentifier, SResult,
-    SecurityLevel, SessionTiming, SubnetNumber, TaType, Timestamp, uds_client,
+    ClientSet, ClientTiming, CommunicationControlRequest, CommunicationControlType,
+    CommunicationType, DataFormatIdentifier, DataIdentifier, DiagnosticSessionType,
+    DtcExtDataRecordNumber, DtcRecord, DtcSettingType, DtcSnapshotRecordNumber,
+    DtcStatusMask, FunctionalKeepAlive, KeepAlive, MalformedResponse, Mtype,
+    NegativeResponseCode, PhysicalKeepAlive, ReadDtcInfoResponse, ReadDtcInfoSubFunction,
+    RecordError, Reloads, Repeats, Replaced, RequestError, ResetType, Response,
+    RoutineControlSubFunction, RoutineIdentifier, SResult, SecurityLevel, SessionTiming,
+    SubnetNumber, TaType, Timestamp, uds_client,
 };
 use uds_session::TransportError;
 
@@ -605,12 +606,14 @@ fn a_read_of_nothing_or_too_much_sends_nothing() {
     let mut t = tester(&[]);
     assert_eq!(
         block_on(t.read_data_by_identifier(ECU, &[])).err(),
-        Some(ClientError::Request)
+        Some(ClientError::Request(RequestError::NoIdentifiers))
     );
     let three = [Did::Speed, Did::Odometer, Did::Speed];
     assert_eq!(
         block_on(t.read_data_by_identifier(ECU, &three)).err(),
-        Some(ClientError::Request)
+        Some(ClientError::Request(RequestError::TooManyIdentifiers {
+            max: 2
+        }))
     );
     assert_eq!(t.transport().sent_count, 0);
 }
@@ -762,7 +765,7 @@ fn a_functional_read_of_nothing_is_refused_at_the_first_next() {
     let mut answers = t.read_data_by_identifier_functional(GROUP, &[]);
     assert_eq!(
         block_on(answers.next()).map(Result::err),
-        Some(Some(ClientError::Request))
+        Some(Some(ClientError::Request(RequestError::NoIdentifiers)))
     );
     assert!(block_on(answers.next()).is_none());
 }
@@ -1981,7 +1984,7 @@ fn a_write_of_nothing_sends_nothing() {
     let mut t = tester(&[]);
     assert_eq!(
         block_on(t.write_data_by_identifier(ECU, Did::Speed, &[])),
-        Err(ClientError::Request)
+        Err(ClientError::Request(RequestError::EmptyRecord))
     );
     assert!(t.transport().finished());
 }
@@ -2320,31 +2323,31 @@ fn a_clear_is_confirmed_bare() {
 /// `CommunicationControl` (10.5) is its type, the communication type and subnet byte,
 /// and for an enhanced-address type the node identifier; its response echoes the type.
 #[test]
-fn communication_is_controlled_with_or_without_a_node() {
+fn communication_is_controlled_with_or_without_a_node() -> Result<(), uds_protocol::Error> {
     let mut t = tester(&[
         Step::Conf(to(ECU), SResult::Ok),
         Step::Ind(from(ECU), &[0x68, 0x00]),
         Step::Conf(to(ECU), SResult::Ok),
         Step::Ind(from(ECU), &[0x68, 0x04]),
     ]);
+    let plain = CommunicationControlRequest::new(
+        false,
+        CommunicationControlType::EnableRxAndTx,
+        CommunicationType::Normal,
+    )?
+    .with_subnet(SubnetNumber::AllConnectedNetworks);
     assert_eq!(
-        block_on(t.communication_control(
-            ECU,
-            CommunicationControlType::EnableRxAndTx,
-            CommunicationType::Normal,
-            SubnetNumber::AllConnectedNetworks,
-            None,
-        )),
+        block_on(t.communication_control(ECU, plain)),
         Ok(Response::Positive(()))
     );
+    let enhanced = CommunicationControlRequest::new_with_node_id(
+        false,
+        CommunicationControlType::EnableRxAndDisableTxWithEnhancedAddressInfo,
+        CommunicationType::Normal,
+        0x1234,
+    )?;
     assert_eq!(
-        block_on(t.communication_control(
-            ECU,
-            CommunicationControlType::EnableRxAndDisableTxWithEnhancedAddressInfo,
-            CommunicationType::Normal,
-            SubnetNumber::AllConnectedNetworks,
-            Some(0x1234),
-        )),
+        block_on(t.communication_control(ECU, enhanced)),
         Ok(Response::Positive(()))
     );
     assert_eq!(
@@ -2355,34 +2358,7 @@ fn communication_is_controlled_with_or_without_a_node() {
         t.transport().addressed(1),
         (Some(to(ECU)), &[0x28, 0x04, 0x01, 0x12, 0x34][..])
     );
-}
-
-/// A node identifier for a plain type, or none for an enhanced one, cannot be encoded
-/// and sends nothing.
-#[test]
-fn a_node_that_disagrees_with_the_type_sends_nothing() {
-    let mut t = tester(&[]);
-    assert_eq!(
-        block_on(t.communication_control(
-            ECU,
-            CommunicationControlType::EnableRxAndTx,
-            CommunicationType::Normal,
-            SubnetNumber::AllConnectedNetworks,
-            Some(1),
-        )),
-        Err(ClientError::Request)
-    );
-    assert_eq!(
-        block_on(t.communication_control(
-            ECU,
-            CommunicationControlType::EnableRxAndTxWithEnhancedAddressInfo,
-            CommunicationType::Normal,
-            SubnetNumber::AllConnectedNetworks,
-            None,
-        )),
-        Err(ClientError::Request)
-    );
-    assert!(t.transport().finished());
+    Ok(())
 }
 
 /// `ControlDTCSetting` (10.8) is the setting then the option record, echoed by the
@@ -2490,7 +2466,7 @@ fn a_download_too_wide_for_its_format_sends_nothing() {
             0x0001_0000,
             1
         )),
-        Err(ClientError::Request)
+        Err(ClientError::Request(RequestError::ExceedsFormat))
     );
     assert!(t.transport().finished());
 }
@@ -2523,10 +2499,10 @@ fn a_block_is_transferred_and_the_counter_echoed() {
         Ok(Response::Positive(&[][..]))
     );
     let too_long = [0xAA; 17];
-    assert_eq!(
+    assert!(matches!(
         block_on(t.transfer_data(ECU, 0x03, &too_long)),
-        Err(ClientError::Request)
-    );
+        Err(ClientError::Request(RequestError::ExceedsLimit { .. }))
+    ));
     let sent = t.transport().sent_bytes(0);
     assert_eq!(sent.get(..2), Some(&[0x36, 0x01][..]));
     assert_eq!(sent.len(), 18);
@@ -2799,32 +2775,32 @@ fn an_ask_ends_once_the_clock_passes_it() {
 #[test]
 fn a_request_past_its_declared_maximum_is_refused() {
     let mut t = tester(&[]);
-    assert_eq!(
+    assert!(matches!(
         block_on(t.write_data_by_identifier(ECU, Did::Speed, &[0x01, 0x02])),
-        Err(ClientError::Request)
-    );
-    assert_eq!(
+        Err(ClientError::Request(RequestError::ExceedsLimit { .. }))
+    ));
+    assert!(matches!(
         block_on(t.security_access_key(ECU, LEVEL_1, &[0x01, 0x02, 0x03])),
-        Err(ClientError::Request)
-    );
+        Err(ClientError::Request(RequestError::ExceedsLimit { .. }))
+    ));
     let option = [0x01; 5];
-    assert_eq!(
+    assert!(matches!(
         block_on(t.routine_control(
             ECU,
             RoutineControlSubFunction::StartRoutine,
             Rid::SelfTest,
             &option,
         )),
-        Err(ClientError::Request)
-    );
-    assert_eq!(
+        Err(ClientError::Request(RequestError::ExceedsLimit { .. }))
+    ));
+    assert!(matches!(
         block_on(t.control_dtc_setting(ECU, DtcSettingType::Off, &option)),
-        Err(ClientError::Request)
-    );
-    assert_eq!(
+        Err(ClientError::Request(RequestError::ExceedsLimit { .. }))
+    ));
+    assert!(matches!(
         block_on(t.request_transfer_exit(ECU, &option)),
-        Err(ClientError::Request)
-    );
+        Err(ClientError::Request(RequestError::ExceedsLimit { .. }))
+    ));
     assert_eq!(t.transport().sent_count, 0);
 
     let mut narrow = NarrowBlockTester::new(
@@ -2835,7 +2811,10 @@ fn a_request_past_its_declared_maximum_is_refused() {
     );
     assert_eq!(
         block_on(narrow.transfer_data(ECU, 0x01, &[0xAA; 3])),
-        Err(ClientError::Request)
+        Err(ClientError::Request(RequestError::ExceedsLimit {
+            len: 3,
+            max: 2
+        }))
     );
     assert_eq!(narrow.transport().sent_count, 0);
 }

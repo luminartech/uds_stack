@@ -78,7 +78,8 @@ pub mod assembly;
 pub mod client;
 pub use client::{
     Answer, Client, ClientError, ClientKeepAlive, ClientLimits, ClientSet, ClientTiming,
-    KeepAlive, MalformedResponse, Records, Repeats, Replaced, Response, Responses,
+    KeepAlive, MalformedResponse, Records, Repeats, Replaced, RequestError, Response,
+    Responses,
 };
 
 pub mod server;
@@ -187,12 +188,13 @@ pub use services::{Received, Unsettled};
 /// them can carry `suppressPosRspMsgIndication`: that bit is the pipeline's and never
 /// reaches a handler.
 pub use uds_protocol::{
-    AddressAndLengthFormatIdentifier, CLEAR_ALL_DTCS, CommunicationControlType,
-    CommunicationType, DataFormatIdentifier, DiagnosticSessionType, DtcExtDataRecordNumber,
-    DtcRecord, DtcSettingType, DtcSnapshotRecordNumber, DtcStatusMask, FileOperationMode,
-    FunctionalGroupIdentifier, NegativeResponseCode, P2StarServerMax,
-    ReadDtcInfoReportType, ReadDtcInfoResponse, ReadDtcInfoSubFunction, ResetType,
-    RoutineControlSubFunction, SubnetNumber, UdsServiceType,
+    AddressAndLengthFormatIdentifier, CLEAR_ALL_DTCS, CommunicationControlRequest,
+    CommunicationControlType, CommunicationType, DataFormatIdentifier,
+    DiagnosticSessionType, DtcExtDataRecordNumber, DtcRecord, DtcSettingType,
+    DtcSnapshotRecordNumber, DtcStatusMask, FileOperationMode, FunctionalGroupIdentifier,
+    NegativeResponseCode, P2StarServerMax, ReadDtcInfoReportType, ReadDtcInfoResponse,
+    ReadDtcInfoSubFunction, ResetType, RoutineControlSubFunction, SubnetNumber,
+    UdsServiceType,
 };
 
 /// Re-exported only so `uds_server!`'s expansion can name it; not part of the API.

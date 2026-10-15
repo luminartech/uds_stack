@@ -138,8 +138,13 @@ lockstep with the rest of the `uds_stack` workspace (`uds_protocol`, `uds_sessio
   defaulting to the least. It folds the client's buffers from them as `uds_server!` folds
   a server's from its service traits; a limit added later is a new setter. `ClientSet`
   gains `type Did`, `type Routine` and `const LIMITS`. Each call refuses an input past its
-  limit as `ClientError::Request` before sending. A transport whose `MAX_PDU` cannot carry
+  limit as `ClientError::Request(RequestError::ExceedsLimit { .. })` before sending. A transport whose `MAX_PDU` cannot carry
   a request of the declared limits fails to compile, naming the limit.
+- **Breaking:** `ClientError::Request` carries a `RequestError` naming the refusal, and
+  `Client::communication_control` takes a `CommunicationControlRequest`, whose
+  constructors already refuse a node identifier that disagrees with the control type.
+  Migrate: match `ClientError::Request(_)`, and build the request with
+  `CommunicationControlRequest::new` or `new_with_node_id`.
 - **Breaking:** `DataTransfer` requires `SESSIONS`, `format_supported` and `access`.
   Migrate: declare the sessions the three services are served in, accept the formats you
   support, and return the `Access` of each memory interval (`None` for an invalid one).

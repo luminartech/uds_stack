@@ -47,12 +47,12 @@ use driver::{Answered, Book, Exchange};
 use crate::UdsTransport;
 use uds_protocol::{
     AddressAndLengthFormatIdentifier, ClearDiagnosticInfoResponse,
-    CommunicationControlResponse, CommunicationControlType, CommunicationType,
-    ControlDtcSettingResponse, DataFormatIdentifier, DtcRecord, DtcSettingType,
-    EcuResetResponse, NegativeResponseCode, ReadDtcInfoResponse, ReadDtcInfoSubFunction,
+    CommunicationControlRequest, CommunicationControlResponse, ControlDtcSettingResponse,
+    DataFormatIdentifier, DtcRecord, DtcSettingType, EcuResetResponse,
+    NegativeResponseCode, ReadDtcInfoResponse, ReadDtcInfoSubFunction,
     RequestDownloadRequest, RequestDownloadResponse, RequestTransferExitResponse,
     ResetType, RoutineControlResponse, RoutineControlSubFunction, SecurityAccessResponse,
-    SubnetNumber, TransferDataResponse, WriteDataByIdentifierResponse,
+    TransferDataResponse, WriteDataByIdentifierResponse,
 };
 use uds_session::{
     Address, ChannelAddressing, ChannelParameter, ChannelParams, ClientTx,
@@ -241,12 +241,60 @@ pub enum ClientError<E> {
     Closed,
     /// Every channel slot was in use, and none was idle enough to withdraw.
     NoChannel,
-    /// The request could not be formed or does not fit the request buffer: it names no
-    /// identifier or more than [`ClientLimits::max_dids_per_request`], a record is empty
-    /// where the service requires one, a node identifier disagrees with the control
-    /// type, or an address is wider than its format admits. Nothing was sent.
-    Request,
+    /// The request could not be formed; see [`RequestError`]. Nothing was sent.
+    Request(RequestError),
 }
+
+/// Why a request could not be formed. Nothing was sent.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum RequestError {
+    /// A `ReadDataByIdentifier` named no identifier.
+    NoIdentifiers,
+    /// A `ReadDataByIdentifier` named more identifiers than
+    /// [`ClientLimits::max_dids_per_request`].
+    TooManyIdentifiers {
+        /// The limit it exceeded.
+        max: usize,
+    },
+    /// A `WriteDataByIdentifier` record was empty.
+    EmptyRecord,
+    /// An input was longer than its declared maximum: a record than
+    /// [`DataIdentifier::MAX_RECORD_LEN`], or a key, option record or block than its
+    /// [`ClientLimits`] maximum.
+    ExceedsLimit {
+        /// The input's length.
+        len: usize,
+        /// The maximum it exceeded.
+        max: usize,
+    },
+    /// A `memoryAddress` or `memorySize` was wider than the
+    /// [`AddressAndLengthFormatIdentifier`] given for it.
+    ExceedsFormat,
+    /// The request did not fit the request buffer.
+    DoesNotFit,
+}
+
+impl core::fmt::Display for RequestError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::NoIdentifiers => f.write_str("no identifier was named"),
+            Self::TooManyIdentifiers { max } => {
+                write!(f, "more identifiers than the {max} a request may carry")
+            }
+            Self::EmptyRecord => f.write_str("the record is empty"),
+            Self::ExceedsLimit { len, max } => {
+                write!(f, "an input of {len} bytes exceeds its maximum of {max}")
+            }
+            Self::ExceedsFormat => {
+                f.write_str("the address or size is wider than its format declares")
+            }
+            Self::DoesNotFit => f.write_str("the request does not fit the request buffer"),
+        }
+    }
+}
+
+impl core::error::Error for RequestError {}
 
 impl<E: core::fmt::Debug> core::fmt::Display for ClientError<E> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
@@ -256,9 +304,7 @@ impl<E: core::fmt::Debug> core::fmt::Display for ClientError<E> {
             Self::NotSent => f.write_str("the request could not be sent"),
             Self::Closed => f.write_str("the connection closed before the response"),
             Self::NoChannel => f.write_str("no channel slot is free"),
-            Self::Request => {
-                f.write_str("the request could not be formed, or does not fit")
-            }
+            Self::Request(error) => write!(f, "the request could not be formed: {error}"),
         }
     }
 }
@@ -1355,16 +1401,14 @@ impl<
     /// # Arguments
     ///
     /// * `target` - the server's address.
-    /// * `control` - what to enable or disable.
-    /// * `communication` - which messages it applies to.
-    /// * `subnet` - which subnet, or all.
-    /// * `node_id` - the node, for the two enhanced-address control types only.
+    /// * `control` - the request, built by [`CommunicationControlRequest::new`] or, for
+    ///   an enhanced-address control type,
+    ///   [`CommunicationControlRequest::new_with_node_id`]. Its suppress bit is ignored: a
+    ///   call awaits the response.
     ///
     /// # Errors
     ///
-    /// [`ClientError::Request`] where `node_id` is given for a plain control type or
-    /// missing for an enhanced-address one; otherwise as
-    /// [`Self::read_data_by_identifier`]'s.
+    /// As [`Self::read_data_by_identifier`]'s.
     ///
     /// # Cancel safety
     ///
@@ -1372,23 +1416,12 @@ impl<
     pub async fn communication_control(
         &mut self,
         target: Address,
-        control: CommunicationControlType,
-        communication: CommunicationType,
-        subnet: SubnetNumber,
-        node_id: Option<u16>,
+        control: CommunicationControlRequest,
     ) -> Result<Response<()>, ClientError<T::Error>> {
         let answered = self
             .exchange_with(
                 target,
-                |request| {
-                    encode::communication_control(
-                        request,
-                        control,
-                        communication,
-                        subnet,
-                        node_id,
-                    )
-                },
+                |request| encode::communication_control(request, control),
                 None,
             )
             .await?;
@@ -1485,7 +1518,7 @@ impl<
         address: u64,
         size: u64,
     ) -> Result<Response<u64>, ClientError<T::Error>> {
-        let download = Some(RequestDownloadRequest::new(data_format, address, size));
+        let download = Ok(RequestDownloadRequest::new(data_format, address, size));
         self.download(target, download).await
     }
 
@@ -1520,16 +1553,17 @@ impl<
         size: u64,
     ) -> Result<Response<u64>, ClientError<T::Error>> {
         let download =
-            RequestDownloadRequest::new_with_alfid(data_format, format, address, size).ok();
+            RequestDownloadRequest::new_with_alfid(data_format, format, address, size)
+                .map_err(|_| RequestError::ExceedsFormat);
         self.download(target, download).await
     }
 
-    /// Exchange `download` with `target` and read the block length back; `None` where
+    /// Exchange `download` with `target` and read the block length back; an `Err` where
     /// the request could not be formed, refused as [`ClientError::Request`].
     async fn download(
         &mut self,
         target: Address,
-        download: Option<RequestDownloadRequest>,
+        download: Result<RequestDownloadRequest, RequestError>,
     ) -> Result<Response<u64>, ClientError<T::Error>> {
         let answered = self
             .exchange_with(
@@ -1802,7 +1836,7 @@ impl<
             identifiers,
             C::LIMITS.max_dids_per_request,
         ) {
-            Some(len) => {
+            Ok(len) => {
                 let sid = request.first().copied().unwrap_or_default();
                 let class = ClientTx::Request {
                     expected: ExpectedResponses::Unknown,
@@ -1812,7 +1846,7 @@ impl<
                 self.exchange = Some(Exchange::new(ai, len, sid, None, class));
                 None
             }
-            None => Some(ClientError::Request),
+            Err(error) => Some(ClientError::Request(error)),
         };
         Responses {
             client: self,
@@ -1833,13 +1867,13 @@ impl<
     async fn exchange_with(
         &mut self,
         target: Address,
-        encode: impl FnOnce(&mut [u8]) -> Option<usize>,
+        encode: impl FnOnce(&mut [u8]) -> Result<usize, RequestError>,
         session: Option<uds_session::SessionSelection>,
     ) -> Result<Answered, ClientError<T::Error>> {
         self.retire();
         self.drain_window().await?;
         let ClientBuffers { request, .. } = self.store.split();
-        let len = encode(request).ok_or(ClientError::Request)?;
+        let len = encode(request).map_err(ClientError::Request)?;
         let sid = request.first().copied().unwrap_or_default();
         let service = UdsServiceType::from_request_sid(sid);
         let echoed = session.is_some()
@@ -1911,9 +1945,13 @@ const fn records_dtc(response: &ReadDtcInfoResponse<'_>) -> Option<DtcRecord> {
     }
 }
 
-/// `Some` where a request input of `len` bytes is within its declared maximum `max`.
-const fn within(len: usize, max: usize) -> Option<()> {
-    if len <= max { Some(()) } else { None }
+/// Whether a request input of `len` bytes is within its declared maximum `max`.
+const fn within(len: usize, max: usize) -> Result<(), RequestError> {
+    if len <= max {
+        Ok(())
+    } else {
+        Err(RequestError::ExceedsLimit { len, max })
+    }
 }
 
 /// The bytes `answered` occupies in the response buffer.
