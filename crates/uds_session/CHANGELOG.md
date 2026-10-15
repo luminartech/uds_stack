@@ -52,6 +52,10 @@ is released in lockstep with the rest of the `uds_stack` workspace (`uds_protoco
   `next_deadline` tells the caller when to call `tick` next. A timer loaded with
   2^31 − 1 ms (about 24.8 days) or more runs for 2^31 − 1 ms, the longest interval
   the wrapping `Timestamp` can tell from a deadline already past.
+- `Client::s_data_req` names the channel by the handle `open_physical_channel` or
+  `open_functional_channel` returned, and sends with that channel's addressing, so a
+  request cannot name an addressing no channel has. A request on a withdrawn channel is
+  rejected `NoSuchChannel`.
 - `Reaction`, which each input returns, is drained for its outputs. `Reaction::finish`
   gives a `Finished` with the input's outcome and any outputs not yet drained, so
   none are lost. A refused input reports a `Rejection` that lists every `Cause` and

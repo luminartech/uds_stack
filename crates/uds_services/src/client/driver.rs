@@ -601,7 +601,11 @@ impl<
             let now = self.transport.now();
             let ClientBuffers { request, .. } = self.store.split();
             let data = request.get(..e.len).unwrap_or(&[]);
-            let reaction = self.session.s_data_req(now, e.ai, data, class);
+            // A channel withdrawn under the exchange is a request that cannot be sent.
+            let Some(channel) = self.book.channel(e.ai) else {
+                return Err(ClientError::NotSent);
+            };
+            let reaction = self.session.s_data_req(now, channel, data, class);
             // Sent while the transport takes it, so a call dropped meanwhile is reset.
             self.exchange = Some(Exchange {
                 phase: Phase::Sent,
@@ -833,7 +837,10 @@ impl<
             expected: ExpectedResponses::None,
         };
         let running = self.exchange.map(|e| e.ai);
-        let reaction = self.session.s_data_req(now, ai, &KEEP_ALIVE, class);
+        let Some(channel) = self.book.channel(ai) else {
+            return Ok(false);
+        };
+        let reaction = self.session.s_data_req(now, channel, &KEEP_ALIVE, class);
         let drained = drain(reaction, &mut self.transport, &mut self.book, running).await;
         self.confirm_refused();
         *expired |= drained.seen.timed_out;

@@ -135,13 +135,22 @@ fn rejected<T>(outcome: Result<T, Rejection>, cause: Cause) -> bool {
     clippy::panic,
     reason = "a test harness: a test cannot go on without the handle"
 )]
+fn open_phys_with<const P: usize, const F: usize, const R: usize>(
+    c: &mut Client<FunctionalKeepAlive, P, F, R>,
+    now: Timestamp,
+    ta: u16,
+    params: ChannelParams,
+) -> PhysicalChannelId {
+    let (_, id) = outputs(c.open_physical_channel(now, to(ta), params));
+    id.unwrap_or_else(|r| panic!("open failed: {r}"))
+}
+
 fn open_phys<const P: usize, const F: usize, const R: usize>(
     c: &mut Client<FunctionalKeepAlive, P, F, R>,
     now: Timestamp,
     ta: u16,
 ) -> PhysicalChannelId {
-    let (_, id) = outputs(c.open_physical_channel(now, to(ta), PHYS_PARAMS));
-    id.unwrap_or_else(|r| panic!("open failed: {r}"))
+    open_phys_with(c, now, ta, PHYS_PARAMS)
 }
 
 #[allow(
@@ -164,17 +173,27 @@ fn open_func<K: KeepAliveMode, const P: usize, const F: usize, const R: usize>(
     open_func_with(c, now, FUNC_PARAMS)
 }
 
-/// Send and confirm one request at `now`; any response window opens from `now`.
+/// The addressing of the transmission among `out`, if there is one.
+fn transmitted(out: &[Option<ClientOutput<'_>>; 6]) -> Option<Ai> {
+    out.iter().flatten().find_map(|o| match o {
+        ClientOutput::Transmit { ai, .. } => Some(*ai),
+        _ => None,
+    })
+}
+
+/// Send one request on `channel` at `now` and confirm it under the addressing it was
+/// sent with; any response window opens from `now`.
 fn exchange<K: KeepAliveMode, const P: usize, const F: usize, const R: usize>(
     c: &mut Client<K, P, F, R>,
     now: Timestamp,
-    ai: Ai,
+    channel: impl Into<ChannelId>,
     class: ClientTx,
 ) {
-    let (_, sent) = outputs(c.s_data_req(now, ai, &DATA, class));
+    let (out, sent) = outputs(c.s_data_req(now, channel, &DATA, class));
     assert_eq!(sent, Ok(()));
-    let (_, confirmed) = outputs(c.t_data_conf(now, ai, SResult::Ok));
-    assert_eq!(confirmed, Ok(()));
+    let confirmed =
+        transmitted(&out).map(|ai| outputs(c.t_data_conf(now, ai, SResult::Ok)).1);
+    assert_eq!(confirmed, Some(Ok(())));
 }
 
 /// A completed message from `sa` on `channel`, accepted; its outputs.
@@ -363,7 +382,7 @@ mod request {
     fn a_request_is_transmitted_on_its_channel() {
         let mut c = tester();
         let id = open_phys(&mut c, Timestamp(0), ECU);
-        let (out, sent) = outputs(c.s_data_req(Timestamp(0), phys(ECU), &DATA, UNKNOWN));
+        let (out, sent) = outputs(c.s_data_req(Timestamp(0), id, &DATA, UNKNOWN));
         assert_eq!(
             out,
             only(ClientOutput::Transmit {
@@ -375,13 +394,14 @@ mod request {
         assert_eq!(sent, Ok(()));
     }
 
-    /// ``UDSS_LLR_0123``, ``UDSS_LLR_0015`` — a request naming no channel is refused and
-    /// nothing is sent.
+    /// ``UDSS_LLR_0123``, ``UDSS_LLR_0015`` — a request on a channel the caller has
+    /// withdrawn is refused and nothing is sent.
     #[test]
-    fn a_request_naming_no_channel_is_rejected() {
+    fn a_request_on_a_withdrawn_channel_is_rejected() {
         let mut c = tester();
-        open_phys(&mut c, Timestamp(0), ECU);
-        let (out, sent) = outputs(c.s_data_req(Timestamp(0), phys(ECU_2), &DATA, UNKNOWN));
+        let ecu = open_phys(&mut c, Timestamp(0), ECU);
+        assert_eq!(outputs(c.withdraw_channel(Timestamp(0), ecu)).1, Ok(()));
+        let (out, sent) = outputs(c.s_data_req(Timestamp(0), ecu, &DATA, UNKNOWN));
         assert_eq!(out, NOTHING);
         assert!(rejected(sent, Cause::NoSuchChannel));
     }
@@ -391,12 +411,12 @@ mod request {
     #[test]
     fn a_request_duplicating_an_outstanding_association_is_rejected() {
         let mut c = tester();
-        open_phys(&mut c, Timestamp(0), ECU);
+        let ecu = open_phys(&mut c, Timestamp(0), ECU);
         assert_eq!(
-            outputs(c.s_data_req(Timestamp(0), phys(ECU), &DATA, UNKNOWN)).1,
+            outputs(c.s_data_req(Timestamp(0), ecu, &DATA, UNKNOWN)).1,
             Ok(())
         );
-        let (out, again) = outputs(c.s_data_req(Timestamp(1), phys(ECU), &DATA, UNKNOWN));
+        let (out, again) = outputs(c.s_data_req(Timestamp(1), ecu, &DATA, UNKNOWN));
         assert_eq!(out, NOTHING);
         assert!(rejected(again, Cause::AssociationOutstanding));
     }
@@ -406,9 +426,9 @@ mod request {
     #[test]
     fn a_confirmation_is_forwarded_and_frees_the_association() {
         let mut c = tester();
-        open_phys(&mut c, Timestamp(0), ECU);
+        let ecu = open_phys(&mut c, Timestamp(0), ECU);
         assert_eq!(
-            outputs(c.s_data_req(Timestamp(0), phys(ECU), &DATA, NO_RESPONSE)).1,
+            outputs(c.s_data_req(Timestamp(0), ecu, &DATA, NO_RESPONSE)).1,
             Ok(())
         );
         let (out, confirmed) = outputs(c.t_data_conf(Timestamp(1), phys(ECU), SResult::Ok));
@@ -420,7 +440,7 @@ mod request {
             })
         );
         assert_eq!(confirmed, Ok(()));
-        let (_, again) = outputs(c.s_data_req(Timestamp(1_000), phys(ECU), &DATA, UNKNOWN));
+        let (_, again) = outputs(c.s_data_req(Timestamp(1_000), ecu, &DATA, UNKNOWN));
         assert_eq!(again, Ok(()));
     }
 
@@ -428,9 +448,9 @@ mod request {
     #[test]
     fn a_confirmation_matches_on_the_message_type() {
         let mut c = tester();
-        open_phys(&mut c, Timestamp(0), ECU);
+        let ecu = open_phys(&mut c, Timestamp(0), ECU);
         assert_eq!(
-            outputs(c.s_data_req(Timestamp(0), phys(ECU), &DATA, UNKNOWN)).1,
+            outputs(c.s_data_req(Timestamp(0), ecu, &DATA, UNKNOWN)).1,
             Ok(())
         );
         let secure = Ai {
@@ -458,7 +478,7 @@ mod request {
         let mut c = tester();
         let id = open_phys(&mut c, Timestamp(0), ECU);
         assert_eq!(
-            outputs(c.s_data_req(Timestamp(0), phys(ECU), &DATA, UNKNOWN)).1,
+            outputs(c.s_data_req(Timestamp(0), id, &DATA, UNKNOWN)).1,
             Ok(())
         );
         let (out, withdrawn) = outputs(c.withdraw_channel(Timestamp(1), id));
@@ -473,8 +493,8 @@ mod request {
     #[test]
     fn the_window_opens_on_a_confirmed_request_expecting_a_response() {
         let mut c = tester();
-        open_phys(&mut c, Timestamp(0), ECU);
-        exchange(&mut c, Timestamp(0), phys(ECU), UNKNOWN);
+        let ecu = open_phys(&mut c, Timestamp(0), ECU);
+        exchange(&mut c, Timestamp(0), ecu, UNKNOWN);
         assert_eq!(c.next_deadline(), Some(Timestamp(51)));
     }
 
@@ -482,8 +502,8 @@ mod request {
     #[test]
     fn a_request_expecting_none_opens_no_window() {
         let mut c = tester();
-        open_phys(&mut c, Timestamp(0), ECU);
-        let (_, sent) = outputs(c.s_data_req(Timestamp(0), phys(ECU), &DATA, NO_RESPONSE));
+        let ecu = open_phys(&mut c, Timestamp(0), ECU);
+        let (_, sent) = outputs(c.s_data_req(Timestamp(0), ecu, &DATA, NO_RESPONSE));
         assert_eq!(sent, Ok(()));
         let (_, confirmed) = outputs(c.t_data_conf(Timestamp(0), phys(ECU), SResult::Ok));
         assert_eq!(confirmed, Ok(()));
@@ -495,8 +515,8 @@ mod request {
     #[test]
     fn a_failed_transmission_opens_no_window() {
         let mut c = tester();
-        open_phys(&mut c, Timestamp(0), ECU);
-        let (_, sent) = outputs(c.s_data_req(Timestamp(0), phys(ECU), &DATA, UNKNOWN));
+        let ecu = open_phys(&mut c, Timestamp(0), ECU);
+        let (_, sent) = outputs(c.s_data_req(Timestamp(0), ecu, &DATA, UNKNOWN));
         assert_eq!(sent, Ok(()));
         let failed = FAILED;
         let (out, confirmed) = outputs(c.t_data_conf(Timestamp(0), phys(ECU), failed));
@@ -518,9 +538,9 @@ mod request {
     fn outputs_do_not_depend_on_the_message_data() {
         let run = |data: &[u8]| {
             let mut c = tester();
-            open_phys(&mut c, Timestamp(0), ECU);
+            let ecu = open_phys(&mut c, Timestamp(0), ECU);
             let class = select(SessionSelection::NonDefault);
-            let (sent, _) = outputs(c.s_data_req(Timestamp(0), phys(ECU), data, class));
+            let (sent, _) = outputs(c.s_data_req(Timestamp(0), ecu, data, class));
             let transmitted = match sent {
                 [
                     Some(ClientOutput::Transmit { channel, ai, .. }),
@@ -549,8 +569,8 @@ mod expiry {
     #[test]
     fn the_window_expires_only_once_exceeded() {
         let mut c = tester();
-        open_phys(&mut c, Timestamp(0), ECU);
-        exchange(&mut c, Timestamp(0), phys(ECU), UNKNOWN);
+        let ecu = open_phys(&mut c, Timestamp(0), ECU);
+        exchange(&mut c, Timestamp(0), ecu, UNKNOWN);
         assert_eq!(outputs(c.tick(Timestamp(50))).0, NOTHING);
         assert_eq!(
             outputs(c.tick(Timestamp(51))).0,
@@ -563,8 +583,8 @@ mod expiry {
     #[test]
     fn the_response_deadline_is_one_past_the_window() {
         let mut c = tester();
-        open_phys(&mut c, Timestamp(0), ECU);
-        exchange(&mut c, Timestamp(0), phys(ECU), UNKNOWN);
+        let ecu = open_phys(&mut c, Timestamp(0), ECU);
+        exchange(&mut c, Timestamp(0), ecu, UNKNOWN);
         assert_eq!(c.next_deadline(), Some(Timestamp(51)));
         assert_eq!(
             outputs(c.tick(Timestamp(51))).0,
@@ -578,8 +598,8 @@ mod expiry {
     #[test]
     fn a_timeout_is_indicated_once() {
         let mut c = tester();
-        open_phys(&mut c, Timestamp(0), ECU);
-        exchange(&mut c, Timestamp(0), phys(ECU), UNKNOWN);
+        let ecu = open_phys(&mut c, Timestamp(0), ECU);
+        exchange(&mut c, Timestamp(0), ecu, UNKNOWN);
         assert_ne!(outputs(c.tick(Timestamp(51))).0, NOTHING);
         assert_eq!(outputs(c.tick(Timestamp(52))).0, NOTHING);
     }
@@ -590,8 +610,8 @@ mod expiry {
     fn the_response_window_runs_across_the_wrap() {
         let mut c = tester();
         let start = Timestamp(u32::MAX - 9);
-        open_phys(&mut c, start, ECU);
-        exchange(&mut c, start, phys(ECU), UNKNOWN);
+        let ecu = open_phys(&mut c, start, ECU);
+        exchange(&mut c, start, ecu, UNKNOWN);
         assert_eq!(c.next_deadline(), Some(Timestamp(41)));
         assert_eq!(outputs(c.tick(Timestamp(40))).0, NOTHING);
         assert_eq!(
@@ -605,9 +625,14 @@ mod expiry {
     #[test]
     fn an_expiry_precedes_the_input_that_carried_its_timestamp() {
         let mut c = tester();
-        open_phys(&mut c, Timestamp(0), ECU);
-        exchange(&mut c, Timestamp(0), phys(ECU), UNKNOWN);
-        let (out, sent) = outputs(c.s_data_req(Timestamp(51), phys(ECU_2), &DATA, UNKNOWN));
+        let ecu = open_phys(&mut c, Timestamp(0), ECU);
+        let withdrawn = open_phys(&mut c, Timestamp(0), ECU_2);
+        assert_eq!(
+            outputs(c.withdraw_channel(Timestamp(0), withdrawn)).1,
+            Ok(())
+        );
+        exchange(&mut c, Timestamp(0), ecu, UNKNOWN);
+        let (out, sent) = outputs(c.s_data_req(Timestamp(51), withdrawn, &DATA, UNKNOWN));
         assert_eq!(out, only(timeout(phys(ECU), ChannelReload::Default)));
         assert!(rejected(sent, Cause::NoSuchChannel));
     }
@@ -618,7 +643,7 @@ mod expiry {
     fn an_expiry_at_a_withdrawal_is_still_indicated() {
         let mut c = tester();
         let id = open_phys(&mut c, Timestamp(0), ECU);
-        exchange(&mut c, Timestamp(0), phys(ECU), UNKNOWN);
+        exchange(&mut c, Timestamp(0), id, UNKNOWN);
         let (out, withdrawn) = outputs(c.withdraw_channel(Timestamp(51), id));
         assert_eq!(out, only(timeout(phys(ECU), ChannelReload::Default)));
         assert_eq!(withdrawn, Ok(()));
@@ -628,10 +653,10 @@ mod expiry {
     #[test]
     fn two_channels_keep_their_own_windows() {
         let mut c = tester();
-        open_phys(&mut c, Timestamp(0), ECU);
-        open_phys(&mut c, Timestamp(0), ECU_2);
-        exchange(&mut c, Timestamp(0), phys(ECU), UNKNOWN);
-        exchange(&mut c, Timestamp(20), phys(ECU_2), UNKNOWN);
+        let ecu = open_phys(&mut c, Timestamp(0), ECU);
+        let ecu_2 = open_phys(&mut c, Timestamp(0), ECU_2);
+        exchange(&mut c, Timestamp(0), ecu, UNKNOWN);
+        exchange(&mut c, Timestamp(20), ecu_2, UNKNOWN);
         assert_eq!(
             outputs(c.tick(Timestamp(51))).0,
             only(timeout(phys(ECU), ChannelReload::Default))
@@ -643,12 +668,12 @@ mod expiry {
     #[test]
     fn simultaneous_expiries_drain_in_slot_order() {
         let mut c = tester();
-        open_phys(&mut c, Timestamp(0), ECU);
-        open_phys(&mut c, Timestamp(0), ECU_2);
-        open_func(&mut c, Timestamp(0));
-        exchange(&mut c, Timestamp(0), phys(ECU), UNKNOWN);
-        exchange(&mut c, Timestamp(0), phys(ECU_2), UNKNOWN);
-        exchange(&mut c, Timestamp(0), func(), UNKNOWN);
+        let ecu = open_phys(&mut c, Timestamp(0), ECU);
+        let ecu_2 = open_phys(&mut c, Timestamp(0), ECU_2);
+        let group = open_func(&mut c, Timestamp(0));
+        exchange(&mut c, Timestamp(0), ecu, UNKNOWN);
+        exchange(&mut c, Timestamp(0), ecu_2, UNKNOWN);
+        exchange(&mut c, Timestamp(0), group, UNKNOWN);
         assert_eq!(
             outputs(c.tick(Timestamp(51))).0,
             [
@@ -668,7 +693,7 @@ mod expiry {
     fn a_parameter_change_does_not_move_an_open_window() {
         let mut c = tester();
         let id = open_phys(&mut c, Timestamp(0), ECU);
-        exchange(&mut c, Timestamp(0), phys(ECU), UNKNOWN);
+        exchange(&mut c, Timestamp(0), id, UNKNOWN);
         let (_, set) = outputs(c.set_physical_parameter(
             Timestamp(10),
             id,
@@ -689,9 +714,8 @@ mod expiry {
             },
             spacing: 0,
         };
-        let (_, id) = outputs(c.open_physical_channel(Timestamp(0), to(ECU), zero));
-        assert!(id.is_ok());
-        exchange(&mut c, Timestamp(5), phys(ECU), UNKNOWN);
+        let ecu = open_phys_with(&mut c, Timestamp(0), ECU, zero);
+        exchange(&mut c, Timestamp(5), ecu, UNKNOWN);
         assert_eq!(outputs(c.tick(Timestamp(5))).0, NOTHING);
         assert_eq!(
             outputs(c.tick(Timestamp(6))).0,
@@ -704,8 +728,8 @@ mod expiry {
     #[test]
     fn an_expiry_not_retrieved_is_indicated_at_the_next_input() {
         let mut c = tester();
-        open_phys(&mut c, Timestamp(0), ECU);
-        exchange(&mut c, Timestamp(0), phys(ECU), UNKNOWN);
+        let ecu = open_phys(&mut c, Timestamp(0), ECU);
+        exchange(&mut c, Timestamp(0), ecu, UNKNOWN);
         let _ = c.tick(Timestamp(51)).finish();
         assert_eq!(
             outputs(c.tick(Timestamp(52))).0,
@@ -718,12 +742,11 @@ mod expiry {
     #[test]
     fn finishing_hands_back_what_was_not_drained() {
         let mut c = tester();
-        open_phys(&mut c, Timestamp(0), ECU);
+        let ecu = open_phys(&mut c, Timestamp(0), ECU);
         let other = open_phys(&mut c, Timestamp(0), ECU_2);
-        exchange(&mut c, Timestamp(0), phys(ECU), UNKNOWN);
-        let Finished { outcome, mut rest } = c
-            .s_data_req(Timestamp(51), phys(ECU_2), &DATA, UNKNOWN)
-            .finish();
+        exchange(&mut c, Timestamp(0), ecu, UNKNOWN);
+        let Finished { outcome, mut rest } =
+            c.s_data_req(Timestamp(51), other, &DATA, UNKNOWN).finish();
         assert_eq!(
             rest.next(),
             Some(timeout(phys(ECU), ChannelReload::Default))
@@ -747,7 +770,7 @@ mod physical_window {
     fn exchanged(now: Timestamp) -> (Tester, PhysicalChannelId) {
         let mut c = tester();
         let id = open_phys(&mut c, now, ECU);
-        exchange(&mut c, now, phys(ECU), UNKNOWN);
+        exchange(&mut c, now, id, UNKNOWN);
         (c, id)
     }
 
@@ -844,7 +867,7 @@ mod physical_window {
     fn a_completion_after_the_window_closed_is_still_paired() {
         let (mut c, id) = exchanged(Timestamp(0));
         som(&mut c, Timestamp(10), id, ECU, SOLICITED);
-        exchange(&mut c, Timestamp(20), phys(ECU), UNKNOWN);
+        exchange(&mut c, Timestamp(20), id, UNKNOWN);
         ind(&mut c, Timestamp(30), id, ECU, SResult::Ok, Some(SOLICITED));
         assert_eq!(c.next_deadline(), Some(Timestamp(71)));
     }
@@ -934,7 +957,7 @@ mod physical_window {
         let (mut c, id) = exchanged(Timestamp(0));
         som(&mut c, Timestamp(10), id, ECU, UNSOLICITED);
         assert_ne!(outputs(c.tick(Timestamp(51))).0, NOTHING);
-        exchange(&mut c, Timestamp(100), phys(ECU), UNKNOWN);
+        exchange(&mut c, Timestamp(100), id, UNKNOWN);
         ind(
             &mut c,
             Timestamp(110),
@@ -953,7 +976,7 @@ mod physical_window {
         let (mut c, id) = exchanged(Timestamp(0));
         som(&mut c, Timestamp(10), id, ECU, UNSOLICITED);
         ind(&mut c, Timestamp(20), id, ECU, FAILED, None);
-        exchange(&mut c, Timestamp(100), phys(ECU), UNKNOWN);
+        exchange(&mut c, Timestamp(100), id, UNKNOWN);
         ind(
             &mut c,
             Timestamp(110),
@@ -986,7 +1009,7 @@ mod functional_window {
     fn exchanged(now: Timestamp, class: ClientTx) -> (Tester, FunctionalChannelId) {
         let mut c = tester();
         let id = open_func(&mut c, now);
-        exchange(&mut c, now, func(), class);
+        exchange(&mut c, now, id, class);
         (c, id)
     }
 
@@ -1188,7 +1211,7 @@ mod functional_window {
             SResult::Ok,
             Some(SOLICITED),
         );
-        exchange(&mut c, Timestamp(5_100), func(), UNKNOWN);
+        exchange(&mut c, Timestamp(5_100), id, UNKNOWN);
         som(&mut c, Timestamp(5_110), id, ECU_3, SOLICITED);
         assert_eq!(c.next_deadline(), Some(Timestamp(5_161)));
     }
@@ -1227,7 +1250,7 @@ mod functional_window {
         let (mut c, id) = exchanged(Timestamp(0), UNKNOWN);
         ind(&mut c, Timestamp(10), id, ECU, SResult::Ok, Some(PENDING));
         ind(&mut c, Timestamp(20), id, ECU_2, FAILED, None);
-        exchange(&mut c, Timestamp(100), func(), UNKNOWN);
+        exchange(&mut c, Timestamp(100), id, UNKNOWN);
         som(&mut c, Timestamp(110), id, ECU_3, SOLICITED);
         assert_eq!(c.next_deadline(), Some(Timestamp(161)));
     }
@@ -1261,7 +1284,7 @@ mod functional_window {
         let (mut c, id) = exchanged(Timestamp(0), UNKNOWN);
         assert_ne!(outputs(c.tick(Timestamp(51))).0, NOTHING);
         ind(&mut c, Timestamp(60), id, ECU, SResult::Ok, Some(PENDING));
-        exchange(&mut c, Timestamp(100), func(), UNKNOWN);
+        exchange(&mut c, Timestamp(100), id, UNKNOWN);
         som(&mut c, Timestamp(110), id, ECU_2, SOLICITED);
         assert_eq!(c.next_deadline(), Some(Timestamp(161)));
     }
@@ -1283,7 +1306,7 @@ mod functional_window {
         let (mut c, id) = exchanged(Timestamp(0), UNKNOWN);
         som(&mut c, Timestamp(10), id, ECU, SOLICITED);
         ind(&mut c, Timestamp(20), id, ECU, FAILED, None);
-        let (_, sent) = outputs(c.s_data_req(Timestamp(100), func(), &DATA, UNKNOWN));
+        let (_, sent) = outputs(c.s_data_req(Timestamp(100), id, &DATA, UNKNOWN));
         assert_eq!(sent, Ok(()));
     }
 
@@ -1314,8 +1337,13 @@ mod spacing {
             })
     }
 
-    fn send(c: &mut Tester, now: u32, ai: Ai, class: ClientTx) -> Result<(), Rejection> {
-        outputs(c.s_data_req(Timestamp(now), ai, &DATA, class)).1
+    fn send(
+        c: &mut Tester,
+        now: u32,
+        channel: impl Into<ChannelId>,
+        class: ClientTx,
+    ) -> Result<(), Rejection> {
+        outputs(c.s_data_req(Timestamp(now), channel, &DATA, class)).1
     }
 
     /// ``UDSS_LLR_0169``, ``UDSS_LLR_0166``, ``UDSS_LLR_0171`` — a confirmed physical
@@ -1324,13 +1352,13 @@ mod spacing {
     #[test]
     fn a_confirmed_physical_request_needing_no_response_starts_spacing() {
         let mut c = tester();
-        open_phys(&mut c, Timestamp(0), ECU);
-        exchange(&mut c, Timestamp(0), phys(ECU), NO_RESPONSE);
+        let ecu = open_phys(&mut c, Timestamp(0), ECU);
+        exchange(&mut c, Timestamp(0), ecu, NO_RESPONSE);
         assert_eq!(c.next_deadline(), Some(Timestamp(60)));
-        let early = send(&mut c, 59, phys(ECU), UNKNOWN);
+        let early = send(&mut c, 59, ecu, UNKNOWN);
         assert!(rejected(early, Cause::SpacingTimerRunning));
         assert_eq!(remaining(early), Some(1));
-        assert_eq!(send(&mut c, 60, phys(ECU), UNKNOWN), Ok(()));
+        assert_eq!(send(&mut c, 60, ecu, UNKNOWN), Ok(()));
     }
 
     /// ``UDSS_LLR_0169`` — a physical request expecting a response starts none.
@@ -1338,10 +1366,10 @@ mod spacing {
     fn a_physical_request_needing_a_response_starts_no_spacing() {
         let mut c = tester();
         let id = open_phys(&mut c, Timestamp(0), ECU);
-        exchange(&mut c, Timestamp(0), phys(ECU), UNKNOWN);
+        exchange(&mut c, Timestamp(0), id, UNKNOWN);
         ind(&mut c, Timestamp(10), id, ECU, SResult::Ok, Some(SOLICITED));
         assert_eq!(c.next_deadline(), None);
-        assert_eq!(send(&mut c, 11, phys(ECU), UNKNOWN), Ok(()));
+        assert_eq!(send(&mut c, 11, id, UNKNOWN), Ok(()));
     }
 
     /// ``UDSS_LLR_0169`` — a failed physical transmission starts it, whatever the
@@ -1349,8 +1377,8 @@ mod spacing {
     #[test]
     fn a_failed_physical_transmission_starts_spacing() {
         let mut c = tester();
-        open_phys(&mut c, Timestamp(0), ECU);
-        assert_eq!(send(&mut c, 0, phys(ECU), UNKNOWN), Ok(()));
+        let ecu = open_phys(&mut c, Timestamp(0), ECU);
+        assert_eq!(send(&mut c, 0, ecu, UNKNOWN), Ok(()));
         let (_, confirmed) = outputs(c.t_data_conf(Timestamp(0), phys(ECU), FAILED));
         assert_eq!(confirmed, Ok(()));
         assert_eq!(c.next_deadline(), Some(Timestamp(60)));
@@ -1361,20 +1389,20 @@ mod spacing {
     #[test]
     fn any_functional_confirmation_starts_spacing() {
         let mut c = tester();
-        spaced_func(&mut c);
-        exchange(&mut c, Timestamp(0), func(), UNKNOWN);
+        let group = spaced_func(&mut c);
+        exchange(&mut c, Timestamp(0), group, UNKNOWN);
         assert_eq!(c.next_deadline(), Some(Timestamp(51)));
         assert_ne!(outputs(c.tick(Timestamp(51))).0, NOTHING);
         assert_eq!(c.next_deadline(), Some(Timestamp(70)));
-        assert_eq!(remaining(send(&mut c, 52, func(), UNKNOWN)), Some(18));
+        assert_eq!(remaining(send(&mut c, 52, group, UNKNOWN)), Some(18));
     }
 
     /// ``UDSS_LLR_0170`` — a failed functional transmission starts it too.
     #[test]
     fn a_failed_functional_transmission_starts_spacing() {
         let mut c = tester();
-        spaced_func(&mut c);
-        assert_eq!(send(&mut c, 0, func(), UNKNOWN), Ok(()));
+        let group = spaced_func(&mut c);
+        assert_eq!(send(&mut c, 0, group, UNKNOWN), Ok(()));
         let (_, confirmed) = outputs(c.t_data_conf(Timestamp(0), func(), FAILED));
         assert_eq!(confirmed, Ok(()));
         assert_eq!(c.next_deadline(), Some(Timestamp(70)));
@@ -1385,9 +1413,9 @@ mod spacing {
     #[test]
     fn the_rejection_states_the_time_remaining() {
         let mut c = tester();
-        spaced_func(&mut c);
-        exchange(&mut c, Timestamp(0), func(), NO_RESPONSE);
-        let (out, refused) = outputs(c.s_data_req(Timestamp(25), func(), &DATA, UNKNOWN));
+        let group = spaced_func(&mut c);
+        exchange(&mut c, Timestamp(0), group, NO_RESPONSE);
+        let (out, refused) = outputs(c.s_data_req(Timestamp(25), group, &DATA, UNKNOWN));
         assert_eq!(out, NOTHING);
         assert_eq!(remaining(refused), Some(45));
     }
@@ -1396,23 +1424,23 @@ mod spacing {
     #[test]
     fn the_spacing_timer_is_per_channel() {
         let mut c = tester();
-        open_phys(&mut c, Timestamp(0), ECU);
-        open_phys(&mut c, Timestamp(0), ECU_2);
-        exchange(&mut c, Timestamp(0), phys(ECU), NO_RESPONSE);
-        assert_eq!(send(&mut c, 10, phys(ECU_2), UNKNOWN), Ok(()));
+        let ecu = open_phys(&mut c, Timestamp(0), ECU);
+        let ecu_2 = open_phys(&mut c, Timestamp(0), ECU_2);
+        exchange(&mut c, Timestamp(0), ecu, NO_RESPONSE);
+        assert_eq!(send(&mut c, 10, ecu_2, UNKNOWN), Ok(()));
     }
 
     /// ``UDSS_LLR_0171`` — a keep-alive is a request like any other.
     #[test]
     fn a_keep_alive_is_spaced_like_any_request() {
         let mut c = tester();
-        spaced_func(&mut c);
-        exchange(&mut c, Timestamp(0), func(), NO_RESPONSE);
+        let group = spaced_func(&mut c);
+        exchange(&mut c, Timestamp(0), group, NO_RESPONSE);
         let keep_alive = ClientTx::KeepAlive {
             expected: ExpectedResponses::None,
         };
         assert!(rejected(
-            send(&mut c, 10, func(), keep_alive),
+            send(&mut c, 10, group, keep_alive),
             Cause::SpacingTimerRunning
         ));
     }
@@ -1421,9 +1449,9 @@ mod spacing {
     #[test]
     fn each_confirmation_starts_the_spacing_timer_afresh() {
         let mut c = tester();
-        open_phys(&mut c, Timestamp(0), ECU);
-        exchange(&mut c, Timestamp(0), phys(ECU), NO_RESPONSE);
-        exchange(&mut c, Timestamp(60), phys(ECU), NO_RESPONSE);
+        let ecu = open_phys(&mut c, Timestamp(0), ECU);
+        exchange(&mut c, Timestamp(0), ecu, NO_RESPONSE);
+        exchange(&mut c, Timestamp(60), ecu, NO_RESPONSE);
         assert_eq!(c.next_deadline(), Some(Timestamp(120)));
     }
 
@@ -1432,8 +1460,8 @@ mod spacing {
     #[test]
     fn spacing_expiry_does_nothing_else() {
         let mut c = tester();
-        open_phys(&mut c, Timestamp(0), ECU);
-        exchange(&mut c, Timestamp(0), phys(ECU), NO_RESPONSE);
+        let ecu = open_phys(&mut c, Timestamp(0), ECU);
+        exchange(&mut c, Timestamp(0), ecu, NO_RESPONSE);
         assert_eq!(outputs(c.tick(Timestamp(60))).0, NOTHING);
         assert_eq!(c.next_deadline(), None);
     }
@@ -1443,11 +1471,11 @@ mod spacing {
     fn the_spacing_wait_runs_across_the_wrap() {
         let mut c = tester();
         let start = Timestamp(u32::MAX - 9);
-        open_phys(&mut c, start, ECU);
-        exchange(&mut c, start, phys(ECU), NO_RESPONSE);
+        let ecu = open_phys(&mut c, start, ECU);
+        exchange(&mut c, start, ecu, NO_RESPONSE);
         assert_eq!(c.next_deadline(), Some(Timestamp(50)));
-        assert_eq!(remaining(send(&mut c, 49, phys(ECU), UNKNOWN)), Some(1));
-        assert_eq!(send(&mut c, 50, phys(ECU), UNKNOWN), Ok(()));
+        assert_eq!(remaining(send(&mut c, 49, ecu, UNKNOWN)), Some(1));
+        assert_eq!(send(&mut c, 50, ecu, UNKNOWN), Ok(()));
     }
 
     /// ``UDSS_LLR_0080``, ``UDSS_LLR_0019`` — of a deadline before the wrap and one after
@@ -1455,10 +1483,10 @@ mod spacing {
     #[test]
     fn the_earlier_of_two_deadlines_is_reported_across_the_wrap() {
         let mut c = tester();
-        open_phys(&mut c, Timestamp(0), ECU);
-        open_phys(&mut c, Timestamp(0), ECU_2);
-        exchange(&mut c, Timestamp(u32::MAX - 51), phys(ECU_2), UNKNOWN);
-        exchange(&mut c, Timestamp(u32::MAX - 10), phys(ECU), NO_RESPONSE);
+        let ecu = open_phys(&mut c, Timestamp(0), ECU);
+        let ecu_2 = open_phys(&mut c, Timestamp(0), ECU_2);
+        exchange(&mut c, Timestamp(u32::MAX - 51), ecu_2, UNKNOWN);
+        exchange(&mut c, Timestamp(u32::MAX - 10), ecu, NO_RESPONSE);
         assert_eq!(c.next_deadline(), Some(Timestamp(u32::MAX)));
     }
 }
@@ -1471,15 +1499,29 @@ mod error_handling {
         repeat: true,
         session: None,
     };
-    fn send(c: &mut Tester, now: u32, ai: Ai, class: ClientTx) -> Result<(), Rejection> {
-        outputs(c.s_data_req(Timestamp(now), ai, &DATA, class)).1
+    fn send(
+        c: &mut Tester,
+        now: u32,
+        channel: impl Into<ChannelId>,
+        class: ClientTx,
+    ) -> Result<(), Rejection> {
+        outputs(c.s_data_req(Timestamp(now), channel, &DATA, class)).1
     }
 
-    /// One transmission that failed: its confirmation starts the spacing timer and no
-    /// window, as a request the client goes on to repeat.
-    fn attempt(c: &mut Tester, now: u32, ai: Ai, class: ClientTx) -> Result<(), Rejection> {
-        send(c, now, ai, class)?;
-        outputs(c.t_data_conf(Timestamp(now), ai, FAILED)).1
+    /// One transmission on `channel` that failed: its confirmation starts the spacing
+    /// timer and no window, as a request the client goes on to repeat.
+    fn attempt(
+        c: &mut Tester,
+        now: u32,
+        channel: impl Into<ChannelId>,
+        class: ClientTx,
+    ) -> Result<(), Rejection> {
+        let (out, sent) = outputs(c.s_data_req(Timestamp(now), channel, &DATA, class));
+        sent?;
+        let confirmed = transmitted(&out)
+            .map(|ai| outputs(c.t_data_conf(Timestamp(now), ai, FAILED)).1);
+        assert!(confirmed.is_some(), "an accepted request is transmitted");
+        confirmed.unwrap_or(Ok(()))
     }
 
     fn reset(
@@ -1497,11 +1539,11 @@ mod error_handling {
     #[test]
     fn a_third_repeat_is_rejected() {
         let mut c = tester();
-        open_phys(&mut c, Timestamp(0), ECU);
-        assert_eq!(attempt(&mut c, 0, phys(ECU), UNKNOWN), Ok(()));
-        assert_eq!(attempt(&mut c, 60, phys(ECU), REPEAT), Ok(()));
-        assert_eq!(attempt(&mut c, 120, phys(ECU), REPEAT), Ok(()));
-        let third = send(&mut c, 180, phys(ECU), REPEAT);
+        let ecu = open_phys(&mut c, Timestamp(0), ECU);
+        assert_eq!(attempt(&mut c, 0, ecu, UNKNOWN), Ok(()));
+        assert_eq!(attempt(&mut c, 60, ecu, REPEAT), Ok(()));
+        assert_eq!(attempt(&mut c, 120, ecu, REPEAT), Ok(()));
+        let third = send(&mut c, 180, ecu, REPEAT);
         assert!(rejected(third, Cause::RepeatCountSpent));
     }
 
@@ -1509,7 +1551,7 @@ mod error_handling {
     #[test]
     fn an_unmarked_request_resets_the_count() {
         let mut c = tester();
-        open_phys(&mut c, Timestamp(0), ECU);
+        let ecu = open_phys(&mut c, Timestamp(0), ECU);
         for (now, class) in [
             (0, UNKNOWN),
             (60, REPEAT),
@@ -1518,7 +1560,7 @@ mod error_handling {
             (240, REPEAT),
             (300, REPEAT),
         ] {
-            assert_eq!(attempt(&mut c, now, phys(ECU), class), Ok(()));
+            assert_eq!(attempt(&mut c, now, ecu, class), Ok(()));
         }
     }
 
@@ -1526,11 +1568,11 @@ mod error_handling {
     #[test]
     fn a_keep_alive_leaves_the_count_alone() {
         let mut c = tester();
-        open_phys(&mut c, Timestamp(0), ECU);
+        let ecu = open_phys(&mut c, Timestamp(0), ECU);
         for (now, class) in [(0, UNKNOWN), (60, REPEAT), (120, REPEAT), (180, KEEP_ALIVE)] {
-            assert_eq!(attempt(&mut c, now, phys(ECU), class), Ok(()));
+            assert_eq!(attempt(&mut c, now, ecu, class), Ok(()));
         }
-        let repeat = send(&mut c, 240, phys(ECU), REPEAT);
+        let repeat = send(&mut c, 240, ecu, REPEAT);
         assert!(rejected(repeat, Cause::RepeatCountSpent));
     }
 
@@ -1538,12 +1580,12 @@ mod error_handling {
     #[test]
     fn a_rejected_repeat_is_not_counted() {
         let mut c = tester();
-        open_phys(&mut c, Timestamp(0), ECU);
-        assert_eq!(attempt(&mut c, 0, phys(ECU), UNKNOWN), Ok(()));
-        let early = send(&mut c, 30, phys(ECU), REPEAT);
+        let ecu = open_phys(&mut c, Timestamp(0), ECU);
+        assert_eq!(attempt(&mut c, 0, ecu, UNKNOWN), Ok(()));
+        let early = send(&mut c, 30, ecu, REPEAT);
         assert!(rejected(early, Cause::SpacingTimerRunning));
-        assert_eq!(attempt(&mut c, 60, phys(ECU), REPEAT), Ok(()));
-        assert_eq!(attempt(&mut c, 120, phys(ECU), REPEAT), Ok(()));
+        assert_eq!(attempt(&mut c, 60, ecu, REPEAT), Ok(()));
+        assert_eq!(attempt(&mut c, 120, ecu, REPEAT), Ok(()));
     }
 
     /// ``UDSS_LLR_0178``, ``UDSS_LLR_0141`` — after the window, a functional request
@@ -1552,13 +1594,13 @@ mod error_handling {
     fn a_functional_request_waits_for_responses_still_arriving() {
         let mut c = tester();
         let id = open_func(&mut c, Timestamp(0));
-        exchange(&mut c, Timestamp(0), func(), UNKNOWN);
+        exchange(&mut c, Timestamp(0), id, UNKNOWN);
         som(&mut c, Timestamp(10), id, ECU, SOLICITED);
         assert_eq!(
             outputs(c.tick(Timestamp(61))).0,
             only(timeout(func(), ChannelReload::Default))
         );
-        let waiting = send(&mut c, 200, func(), UNKNOWN);
+        let waiting = send(&mut c, 200, id, UNKNOWN);
         assert!(rejected(waiting, Cause::ResponseStillArriving));
         ind(
             &mut c,
@@ -1568,7 +1610,7 @@ mod error_handling {
             SResult::Ok,
             Some(SOLICITED),
         );
-        assert_eq!(send(&mut c, 220, func(), UNKNOWN), Ok(()));
+        assert_eq!(send(&mut c, 220, id, UNKNOWN), Ok(()));
     }
 
     /// ``UDSS_LLR_0140``, ``UDSS_LLR_0178`` — a start-of-message arriving with no request
@@ -1577,10 +1619,10 @@ mod error_handling {
     fn a_start_of_message_after_the_window_creates_an_entry() {
         let mut c = tester();
         let id = open_func(&mut c, Timestamp(0));
-        exchange(&mut c, Timestamp(0), func(), UNKNOWN);
+        exchange(&mut c, Timestamp(0), id, UNKNOWN);
         assert_ne!(outputs(c.tick(Timestamp(51))).0, NOTHING);
         som(&mut c, Timestamp(60), id, ECU, SOLICITED);
-        let waiting = send(&mut c, 200, func(), UNKNOWN);
+        let waiting = send(&mut c, 200, id, UNKNOWN);
         assert!(rejected(waiting, Cause::ResponseStillArriving));
     }
 
@@ -1590,12 +1632,12 @@ mod error_handling {
     fn a_rejected_repeat_states_every_cause_and_changes_nothing() {
         let mut c = tester();
         let id = open_func_with(&mut c, Timestamp(0), SPACED_FUNC);
-        assert_eq!(attempt(&mut c, 0, func(), UNKNOWN), Ok(()));
-        assert_eq!(attempt(&mut c, 70, func(), REPEAT), Ok(()));
-        assert_eq!(attempt(&mut c, 140, func(), REPEAT), Ok(()));
+        assert_eq!(attempt(&mut c, 0, id, UNKNOWN), Ok(()));
+        assert_eq!(attempt(&mut c, 70, id, REPEAT), Ok(()));
+        assert_eq!(attempt(&mut c, 140, id, REPEAT), Ok(()));
         som(&mut c, Timestamp(150), id, ECU, SOLICITED);
         let before = c.next_deadline();
-        let (out, refused) = outputs(c.s_data_req(Timestamp(160), func(), &DATA, REPEAT));
+        let (out, refused) = outputs(c.s_data_req(Timestamp(160), id, &DATA, REPEAT));
         assert_eq!(out, NOTHING);
         assert!(rejected(refused, Cause::RepeatCountSpent));
         assert!(rejected(refused, Cause::ResponseStillArriving));
@@ -1615,10 +1657,10 @@ mod error_handling {
             SResult::Ok,
             Some(SOLICITED),
         );
-        let still_two = send(&mut c, 210, func(), REPEAT);
+        let still_two = send(&mut c, 210, id, REPEAT);
         assert_eq!(still_two.map_err(|r| r.causes().count()), Err(1));
         assert!(rejected(still_two, Cause::RepeatCountSpent));
-        assert_eq!(send(&mut c, 210, func(), UNKNOWN), Ok(()));
+        assert_eq!(send(&mut c, 210, id, UNKNOWN), Ok(()));
     }
 
     /// ``UDSS_LLR_0010``, ``UDSS_LLR_0081`` — a reset at an expiry's timestamp still
@@ -1627,7 +1669,7 @@ mod error_handling {
     fn an_expiry_at_a_reset_is_still_indicated() {
         let mut c = tester();
         let id = open_phys(&mut c, Timestamp(0), ECU);
-        exchange(&mut c, Timestamp(0), phys(ECU), UNKNOWN);
+        exchange(&mut c, Timestamp(0), id, UNKNOWN);
         let (out, outcome) = outputs(c.reset_channel(Timestamp(51), id));
         assert_eq!(out, only(timeout(phys(ECU), ChannelReload::Default)));
         assert_eq!(outcome, Ok(()));
@@ -1671,7 +1713,7 @@ mod error_handling {
     fn a_reset_ends_the_request_silently() {
         let mut c = tester();
         let id = open_phys(&mut c, Timestamp(0), ECU);
-        exchange(&mut c, Timestamp(0), phys(ECU), UNKNOWN);
+        exchange(&mut c, Timestamp(0), id, UNKNOWN);
         assert_eq!(reset(&mut c, 10, id), Ok(()));
         assert_eq!(c.next_deadline(), None);
         assert_eq!(outputs(c.tick(Timestamp(100))).0, NOTHING);
@@ -1682,9 +1724,9 @@ mod error_handling {
     fn a_reset_leaves_the_spacing_timer_running() {
         let mut c = tester();
         let id = open_phys(&mut c, Timestamp(0), ECU);
-        exchange(&mut c, Timestamp(0), phys(ECU), NO_RESPONSE);
+        exchange(&mut c, Timestamp(0), id, NO_RESPONSE);
         assert_eq!(reset(&mut c, 10, id), Ok(()));
-        let early = send(&mut c, 20, phys(ECU), UNKNOWN);
+        let early = send(&mut c, 20, id, UNKNOWN);
         assert!(rejected(early, Cause::SpacingTimerRunning));
     }
 
@@ -1693,12 +1735,12 @@ mod error_handling {
     fn a_reset_zeroes_the_repeat_count() {
         let mut c = tester();
         let id = open_phys(&mut c, Timestamp(0), ECU);
-        assert_eq!(attempt(&mut c, 0, phys(ECU), UNKNOWN), Ok(()));
-        assert_eq!(attempt(&mut c, 60, phys(ECU), REPEAT), Ok(()));
-        assert_eq!(attempt(&mut c, 120, phys(ECU), REPEAT), Ok(()));
+        assert_eq!(attempt(&mut c, 0, id, UNKNOWN), Ok(()));
+        assert_eq!(attempt(&mut c, 60, id, REPEAT), Ok(()));
+        assert_eq!(attempt(&mut c, 120, id, REPEAT), Ok(()));
         assert_eq!(reset(&mut c, 150, id), Ok(()));
-        assert_eq!(attempt(&mut c, 180, phys(ECU), REPEAT), Ok(()));
-        assert_eq!(attempt(&mut c, 240, phys(ECU), REPEAT), Ok(()));
+        assert_eq!(attempt(&mut c, 180, id, REPEAT), Ok(()));
+        assert_eq!(attempt(&mut c, 240, id, REPEAT), Ok(()));
     }
 
     /// ``UDSS_LLR_0180``, ``UDSS_LLR_0130`` — a reset closes a physical channel's open
@@ -1707,10 +1749,10 @@ mod error_handling {
     fn a_reset_closes_the_open_start_of_message() {
         let mut c = tester();
         let id = open_phys(&mut c, Timestamp(0), ECU);
-        exchange(&mut c, Timestamp(0), phys(ECU), UNKNOWN);
+        exchange(&mut c, Timestamp(0), id, UNKNOWN);
         som(&mut c, Timestamp(10), id, ECU, SOLICITED);
         assert_eq!(reset(&mut c, 20, id), Ok(()));
-        exchange(&mut c, Timestamp(30), phys(ECU), UNKNOWN);
+        exchange(&mut c, Timestamp(30), id, UNKNOWN);
         ind(&mut c, Timestamp(40), id, ECU, SResult::Ok, Some(SOLICITED));
         assert_eq!(c.next_deadline(), None);
     }
@@ -1720,10 +1762,10 @@ mod error_handling {
     fn a_reset_releases_every_responder_entry() {
         let mut c = tester();
         let id = open_func(&mut c, Timestamp(0));
-        exchange(&mut c, Timestamp(0), func(), UNKNOWN);
+        exchange(&mut c, Timestamp(0), id, UNKNOWN);
         som(&mut c, Timestamp(10), id, ECU, SOLICITED);
         assert_eq!(reset(&mut c, 20, id), Ok(()));
-        assert_eq!(send(&mut c, 30, func(), UNKNOWN), Ok(()));
+        assert_eq!(send(&mut c, 30, id, UNKNOWN), Ok(()));
     }
 
     /// ``UDSS_LLR_0181`` — an association the reset abandoned stays outstanding.
@@ -1731,9 +1773,9 @@ mod error_handling {
     fn an_abandoned_association_stays_outstanding() {
         let mut c = tester();
         let id = open_phys(&mut c, Timestamp(0), ECU);
-        assert_eq!(send(&mut c, 0, phys(ECU), UNKNOWN), Ok(()));
+        assert_eq!(send(&mut c, 0, id, UNKNOWN), Ok(()));
         assert_eq!(reset(&mut c, 10, id), Ok(()));
-        let again = send(&mut c, 20, phys(ECU), UNKNOWN);
+        let again = send(&mut c, 20, id, UNKNOWN);
         assert!(rejected(again, Cause::AssociationOutstanding));
     }
 
@@ -1742,7 +1784,7 @@ mod error_handling {
     fn an_abandoned_confirmation_is_forwarded_and_opens_no_window() {
         let mut c = tester();
         let id = open_phys(&mut c, Timestamp(0), ECU);
-        assert_eq!(send(&mut c, 0, phys(ECU), UNKNOWN), Ok(()));
+        assert_eq!(send(&mut c, 0, id, UNKNOWN), Ok(()));
         assert_eq!(reset(&mut c, 10, id), Ok(()));
         let (out, confirmed) =
             outputs(c.t_data_conf(Timestamp(20), phys(ECU), SResult::Ok));
@@ -1763,7 +1805,7 @@ mod error_handling {
     fn an_abandoned_confirmation_still_starts_spacing() {
         let mut c = tester();
         let id = open_phys(&mut c, Timestamp(0), ECU);
-        assert_eq!(send(&mut c, 0, phys(ECU), NO_RESPONSE), Ok(()));
+        assert_eq!(send(&mut c, 0, id, NO_RESPONSE), Ok(()));
         assert_eq!(reset(&mut c, 10, id), Ok(()));
         let (_, confirmed) = outputs(c.t_data_conf(Timestamp(20), phys(ECU), SResult::Ok));
         assert_eq!(confirmed, Ok(()));
@@ -1786,7 +1828,7 @@ mod error_handling {
         let mut c = tester();
         let id = open_phys(&mut c, Timestamp(0), ECU);
         let class = select(SessionSelection::NonDefault);
-        assert_eq!(send(&mut c, 0, phys(ECU), class), Ok(()));
+        assert_eq!(send(&mut c, 0, id, class), Ok(()));
         assert_eq!(reset(&mut c, 5, id), Ok(()));
         let (_, confirmed) = outputs(c.t_data_conf(Timestamp(10), phys(ECU), SResult::Ok));
         assert_eq!(confirmed, Ok(()));
@@ -1799,12 +1841,11 @@ mod error_handling {
     #[test]
     fn one_report_states_an_outstanding_association_and_a_spent_count() {
         let mut c = tester();
-        open_phys(&mut c, Timestamp(0), ECU);
-        let ai = phys(ECU);
-        assert_eq!(attempt(&mut c, 0, ai, UNKNOWN), Ok(()));
-        assert_eq!(attempt(&mut c, 60, ai, REPEAT), Ok(()));
-        assert_eq!(send(&mut c, 120, ai, REPEAT), Ok(()));
-        let report = send(&mut c, 130, ai, REPEAT);
+        let ecu = open_phys(&mut c, Timestamp(0), ECU);
+        assert_eq!(attempt(&mut c, 0, ecu, UNKNOWN), Ok(()));
+        assert_eq!(attempt(&mut c, 60, ecu, REPEAT), Ok(()));
+        assert_eq!(send(&mut c, 120, ecu, REPEAT), Ok(()));
+        let report = send(&mut c, 130, ecu, REPEAT);
         assert!(
             report.is_err_and(|r| r.contains(Cause::AssociationOutstanding)
                 && r.contains(Cause::RepeatCountSpent))
@@ -1816,12 +1857,11 @@ mod error_handling {
     #[test]
     fn a_fresh_channel_allows_two_repeats() {
         let mut c = tester();
-        open_phys(&mut c, Timestamp(0), ECU);
-        let ai = phys(ECU);
-        assert_eq!(attempt(&mut c, 0, ai, REPEAT), Ok(()));
-        assert_eq!(attempt(&mut c, 60, ai, REPEAT), Ok(()));
+        let ecu = open_phys(&mut c, Timestamp(0), ECU);
+        assert_eq!(attempt(&mut c, 0, ecu, REPEAT), Ok(()));
+        assert_eq!(attempt(&mut c, 60, ecu, REPEAT), Ok(()));
         assert!(rejected(
-            send(&mut c, 120, ai, REPEAT),
+            send(&mut c, 120, ecu, REPEAT),
             Cause::RepeatCountSpent
         ));
     }
@@ -1832,7 +1872,7 @@ mod error_handling {
     fn a_functional_reset_ends_the_request() {
         let mut c = tester();
         let id = open_func(&mut c, Timestamp(0));
-        exchange(&mut c, Timestamp(0), func(), UNKNOWN);
+        exchange(&mut c, Timestamp(0), id, UNKNOWN);
         assert_eq!(reset(&mut c, 10, id), Ok(()));
         assert_eq!(c.next_deadline(), None);
         assert_eq!(outputs(c.tick(Timestamp(51))).0, NOTHING);
@@ -1862,7 +1902,7 @@ mod functional_keep_alive {
         let mut c = tester();
         let p = open_phys(&mut c, now, ECU);
         let f = open_func(&mut c, now);
-        exchange(&mut c, now, phys(ECU), select(SessionSelection::NonDefault));
+        exchange(&mut c, now, p, select(SessionSelection::NonDefault));
         (c, p, f)
     }
 
@@ -1884,11 +1924,11 @@ mod functional_keep_alive {
     #[test]
     fn a_functional_session_change_engages_it_too() {
         let mut c = tester();
-        open_func(&mut c, Timestamp(0));
+        let group = open_func(&mut c, Timestamp(0));
         exchange(
             &mut c,
             Timestamp(0),
-            func(),
+            group,
             select(SessionSelection::NonDefault),
         );
         assert_eq!(tick(&mut c, 10), NOTHING);
@@ -1899,11 +1939,11 @@ mod functional_keep_alive {
     /// ``UDSS_LLR_0155`` — a running keep-alive is not restarted by a further change.
     #[test]
     fn a_running_keep_alive_is_not_restarted_by_another_session_change() {
-        let (mut c, _, _) = engaged(Timestamp(0));
+        let (mut c, p, _) = engaged(Timestamp(0));
         exchange(
             &mut c,
             Timestamp(1_000),
-            phys(ECU),
+            p,
             select(SessionSelection::NonDefault),
         );
         assert_eq!(tick(&mut c, 2_000), only(DUE));
@@ -1913,9 +1953,9 @@ mod functional_keep_alive {
     #[test]
     fn a_failed_session_change_engages_nothing() {
         let mut c = tester();
-        open_phys(&mut c, Timestamp(0), ECU);
+        let ecu = open_phys(&mut c, Timestamp(0), ECU);
         let class = select(SessionSelection::NonDefault);
-        let (_, sent) = outputs(c.s_data_req(Timestamp(0), phys(ECU), &DATA, class));
+        let (_, sent) = outputs(c.s_data_req(Timestamp(0), ecu, &DATA, class));
         assert_eq!(sent, Ok(()));
         let (_, confirmed) = outputs(c.t_data_conf(Timestamp(0), phys(ECU), FAILED));
         assert_eq!(confirmed, Ok(()));
@@ -1934,9 +1974,9 @@ mod functional_keep_alive {
     /// ``UDSS_LLR_0157`` — the confirmed functional keep-alive starts the timer again.
     #[test]
     fn the_confirmed_keep_alive_restarts_the_timer() {
-        let (mut c, _, _) = engaged(Timestamp(0));
+        let (mut c, _, f) = engaged(Timestamp(0));
         assert_eq!(tick(&mut c, 2_000), only(DUE));
-        exchange(&mut c, Timestamp(2_100), func(), KEEP_ALIVE);
+        exchange(&mut c, Timestamp(2_100), f, KEEP_ALIVE);
         assert_eq!(tick(&mut c, 4_099), NOTHING);
         assert_eq!(tick(&mut c, 4_100), only(DUE));
     }
@@ -1946,9 +1986,9 @@ mod functional_keep_alive {
     /// under ``UDSS_LLR_0161``.
     #[test]
     fn a_failed_keep_alive_restarts_the_timer_too() {
-        let (mut c, _, _) = engaged(Timestamp(0));
+        let (mut c, _, f) = engaged(Timestamp(0));
         assert_eq!(tick(&mut c, 2_000), only(DUE));
-        let (_, sent) = outputs(c.s_data_req(Timestamp(2_000), func(), &DATA, KEEP_ALIVE));
+        let (_, sent) = outputs(c.s_data_req(Timestamp(2_000), f, &DATA, KEEP_ALIVE));
         assert_eq!(sent, Ok(()));
         let (_, confirmed) = outputs(c.t_data_conf(Timestamp(2_010), func(), FAILED));
         assert_eq!(confirmed, Ok(()));
@@ -1959,8 +1999,8 @@ mod functional_keep_alive {
     /// ``UDSS_LLR_0157`` — so does one sent before the timer expired.
     #[test]
     fn an_early_keep_alive_restarts_it_too() {
-        let (mut c, _, _) = engaged(Timestamp(0));
-        exchange(&mut c, Timestamp(1_000), func(), KEEP_ALIVE);
+        let (mut c, _, f) = engaged(Timestamp(0));
+        exchange(&mut c, Timestamp(1_000), f, KEEP_ALIVE);
         assert_eq!(tick(&mut c, 2_000), NOTHING);
         assert_eq!(tick(&mut c, 3_000), only(DUE));
     }
@@ -1970,8 +2010,8 @@ mod functional_keep_alive {
     #[test]
     fn a_physical_keep_alive_restarts_nothing() {
         let (mut c, _, _) = engaged(Timestamp(0));
-        open_phys(&mut c, Timestamp(0), ECU_2);
-        exchange(&mut c, Timestamp(1_000), phys(ECU_2), KEEP_ALIVE);
+        let ecu_2 = open_phys(&mut c, Timestamp(0), ECU_2);
+        exchange(&mut c, Timestamp(1_000), ecu_2, KEEP_ALIVE);
         assert_eq!(tick(&mut c, 2_000), only(DUE));
     }
 
@@ -1979,34 +2019,24 @@ mod functional_keep_alive {
     #[test]
     fn a_keep_alive_in_the_default_session_starts_nothing() {
         let mut c = tester();
-        open_func(&mut c, Timestamp(0));
-        exchange(&mut c, Timestamp(0), func(), KEEP_ALIVE);
+        let group = open_func(&mut c, Timestamp(0));
+        exchange(&mut c, Timestamp(0), group, KEEP_ALIVE);
         assert_eq!(tick(&mut c, 10_000), NOTHING);
     }
 
     /// ``UDSS_LLR_0158`` — a functional return to the default session disengages it.
     #[test]
     fn a_functional_return_to_default_disengages() {
-        let (mut c, _, _) = engaged(Timestamp(0));
-        exchange(
-            &mut c,
-            Timestamp(100),
-            func(),
-            select(SessionSelection::Default),
-        );
+        let (mut c, _, f) = engaged(Timestamp(0));
+        exchange(&mut c, Timestamp(100), f, select(SessionSelection::Default));
         assert_eq!(tick(&mut c, 10_000), NOTHING);
     }
 
     /// ``UDSS_LLR_0158`` — a physical one does not: the others stay in session.
     #[test]
     fn a_physical_return_to_default_does_not() {
-        let (mut c, _, _) = engaged(Timestamp(0));
-        exchange(
-            &mut c,
-            Timestamp(100),
-            phys(ECU),
-            select(SessionSelection::Default),
-        );
+        let (mut c, p, _) = engaged(Timestamp(0));
+        exchange(&mut c, Timestamp(100), p, select(SessionSelection::Default));
         assert_eq!(tick(&mut c, 2_000), only(DUE));
     }
 
@@ -2017,7 +2047,7 @@ mod functional_keep_alive {
     fn an_abandoned_keep_alive_still_restarts_on_its_confirmation() {
         let (mut c, _, f) = engaged(Timestamp(0));
         assert_eq!(tick(&mut c, 2_000), only(DUE));
-        let (_, sent) = outputs(c.s_data_req(Timestamp(2_000), func(), &DATA, KEEP_ALIVE));
+        let (_, sent) = outputs(c.s_data_req(Timestamp(2_000), f, &DATA, KEEP_ALIVE));
         assert_eq!(sent, Ok(()));
         let (out, reset) = outputs(c.reset_channel(Timestamp(2_001), f));
         assert_eq!((out, reset), (NOTHING, Ok(())));
@@ -2063,13 +2093,13 @@ mod functional_keep_alive {
     /// from the timer's next start.
     #[test]
     fn a_new_reload_applies_from_the_next_start() {
-        let (mut c, _, _) = engaged(Timestamp(0));
+        let (mut c, _, f) = engaged(Timestamp(0));
         assert_eq!(
             outputs(c.set_keep_alive_reload(Timestamp(10), 500)),
             (NOTHING, Ok(()))
         );
         assert_eq!(tick(&mut c, 2_000), only(DUE));
-        exchange(&mut c, Timestamp(2_100), func(), KEEP_ALIVE);
+        exchange(&mut c, Timestamp(2_100), f, KEEP_ALIVE);
         assert_eq!(tick(&mut c, 2_599), NOTHING);
         assert_eq!(tick(&mut c, 2_600), only(DUE));
     }
@@ -2117,7 +2147,7 @@ mod physical_keep_alive {
         exchange(
             &mut c,
             Timestamp(0),
-            phys(ECU),
+            id,
             select(SessionSelection::NonDefault),
         );
         (c, id)
@@ -2138,8 +2168,8 @@ mod physical_keep_alive {
         outputs(c.tick(Timestamp(now))).0
     }
 
-    fn send(c: &mut PhysTester, now: u32, class: ClientTx) {
-        let (_, sent) = outputs(c.s_data_req(Timestamp(now), phys(ECU), &DATA, class));
+    fn send(c: &mut PhysTester, now: u32, id: PhysicalChannelId, class: ClientTx) {
+        let (_, sent) = outputs(c.s_data_req(Timestamp(now), id, &DATA, class));
         assert_eq!(sent, Ok(()));
     }
 
@@ -2167,7 +2197,7 @@ mod physical_keep_alive {
             repeat: false,
             session: Some(SessionSelection::NonDefault),
         };
-        exchange(&mut c, Timestamp(0), phys(ECU), class);
+        exchange(&mut c, Timestamp(0), id, class);
         assert_eq!(c.next_deadline(), Some(Timestamp(51)));
         let accepted = Some(selected(Some(SessionSelection::NonDefault)));
         ind(&mut c, Timestamp(10), id, ECU, SResult::Ok, accepted);
@@ -2184,7 +2214,7 @@ mod physical_keep_alive {
             repeat: false,
             session: Some(SessionSelection::NonDefault),
         };
-        exchange(&mut c, Timestamp(0), phys(ECU), class);
+        exchange(&mut c, Timestamp(0), id, class);
         ind(
             &mut c,
             Timestamp(10),
@@ -2199,8 +2229,8 @@ mod physical_keep_alive {
     /// ``UDSS_LLR_0160`` — any request on the channel stops its keep-alive.
     #[test]
     fn a_request_stops_the_keep_alive() {
-        let (mut c, _) = engaged();
-        send(&mut c, 100, UNKNOWN);
+        let (mut c, id) = engaged();
+        send(&mut c, 100, id, UNKNOWN);
         assert_eq!(c.next_deadline(), None);
     }
 
@@ -2208,7 +2238,7 @@ mod physical_keep_alive {
     #[test]
     fn a_confirmed_request_needing_no_response_restarts_it() {
         let (mut c, id) = engaged();
-        send(&mut c, 100, NO_RESPONSE);
+        send(&mut c, 100, id, NO_RESPONSE);
         confirm(&mut c, 110, SResult::Ok);
         assert_eq!(tick(&mut c, 2_109), NOTHING);
         assert_eq!(tick(&mut c, 2_110), only(due(id)));
@@ -2218,7 +2248,7 @@ mod physical_keep_alive {
     #[test]
     fn a_failed_transmission_restarts_it() {
         let (mut c, id) = engaged();
-        send(&mut c, 100, UNKNOWN);
+        send(&mut c, 100, id, UNKNOWN);
         confirm(&mut c, 110, FAILED);
         assert_eq!(tick(&mut c, 2_110), only(due(id)));
     }
@@ -2227,7 +2257,7 @@ mod physical_keep_alive {
     #[test]
     fn a_solicited_final_response_restarts_it() {
         let (mut c, id) = engaged();
-        exchange(&mut c, Timestamp(100), phys(ECU), UNKNOWN);
+        exchange(&mut c, Timestamp(100), id, UNKNOWN);
         ind(
             &mut c,
             Timestamp(120),
@@ -2244,7 +2274,7 @@ mod physical_keep_alive {
     #[test]
     fn a_response_pending_message_does_not() {
         let (mut c, id) = engaged();
-        exchange(&mut c, Timestamp(100), phys(ECU), UNKNOWN);
+        exchange(&mut c, Timestamp(100), id, UNKNOWN);
         ind(&mut c, Timestamp(110), id, ECU, SResult::Ok, Some(PENDING));
         assert_eq!(c.next_deadline(), Some(Timestamp(5_111)));
     }
@@ -2253,7 +2283,7 @@ mod physical_keep_alive {
     #[test]
     fn a_failed_reception_restarts_it() {
         let (mut c, id) = engaged();
-        exchange(&mut c, Timestamp(100), phys(ECU), UNKNOWN);
+        exchange(&mut c, Timestamp(100), id, UNKNOWN);
         ind(&mut c, Timestamp(110), id, ECU, FAILED, None);
         assert_eq!(c.next_deadline(), Some(Timestamp(2_110)));
     }
@@ -2267,6 +2297,7 @@ mod physical_keep_alive {
         send(
             &mut c,
             2_000,
+            id,
             ClientTx::KeepAlive {
                 expected: ExpectedResponses::Exactly(NonZeroU16::MIN),
             },
@@ -2295,7 +2326,7 @@ mod physical_keep_alive {
     fn a_reset_after_the_confirmation_restarts_keep_alive() {
         let (mut c, id) = engaged();
         assert_eq!(tick(&mut c, 2_000), only(due(id)));
-        send(&mut c, 2_000, AWAITED_KEEP_ALIVE);
+        send(&mut c, 2_000, id, AWAITED_KEEP_ALIVE);
         confirm(&mut c, 2_001, SResult::Ok);
         reset(&mut c, 2_010, id);
         assert_eq!(c.next_deadline(), Some(Timestamp(4_010)));
@@ -2311,7 +2342,7 @@ mod physical_keep_alive {
     fn a_reset_before_the_confirmation_restarts_keep_alive_at_the_confirmation() {
         let (mut c, id) = engaged();
         assert_eq!(tick(&mut c, 2_000), only(due(id)));
-        send(&mut c, 2_000, AWAITED_KEEP_ALIVE);
+        send(&mut c, 2_000, id, AWAITED_KEEP_ALIVE);
         reset(&mut c, 2_001, id);
         assert_eq!(c.next_deadline(), None);
         confirm(&mut c, 2_002, SResult::Ok);
@@ -2324,7 +2355,7 @@ mod physical_keep_alive {
     #[test]
     fn a_reset_ending_any_request_restarts_keep_alive() {
         let (mut c, id) = engaged();
-        send(&mut c, 500, request(ONE));
+        send(&mut c, 500, id, request(ONE));
         confirm(&mut c, 500, SResult::Ok);
         reset(&mut c, 520, id);
         assert_eq!(c.next_deadline(), Some(Timestamp(2_520)));
@@ -2336,7 +2367,7 @@ mod physical_keep_alive {
     #[test]
     fn a_reset_after_a_request_timed_out_restarts_keep_alive() {
         let (mut c, id) = engaged();
-        send(&mut c, 500, request(ONE));
+        send(&mut c, 500, id, request(ONE));
         confirm(&mut c, 500, SResult::Ok);
         assert_eq!(
             tick(&mut c, 551),
@@ -2361,7 +2392,7 @@ mod physical_keep_alive {
     fn a_reset_out_of_session_starts_nothing() {
         let mut c = phys_tester();
         let id = open(&mut c, ECU, S3_CLIENT);
-        send(&mut c, 0, request(ONE));
+        send(&mut c, 0, id, request(ONE));
         confirm(&mut c, 0, SResult::Ok);
         reset(&mut c, 10, id);
         assert_eq!(c.next_deadline(), None);
@@ -2376,13 +2407,14 @@ mod physical_keep_alive {
         exchange(
             &mut c,
             Timestamp(0),
-            phys(ECU),
+            id,
             select(SessionSelection::NonDefault),
         );
         assert_eq!(tick(&mut c, 1), only(due(id)));
         send(
             &mut c,
             60,
+            id,
             ClientTx::KeepAlive {
                 expected: ExpectedResponses::Exactly(NonZeroU16::MIN),
             },
@@ -2399,8 +2431,8 @@ mod physical_keep_alive {
     /// ``UDSS_LLR_0161`` (fifth bullet) — a lost response to anything else does not.
     #[test]
     fn a_lost_ordinary_response_does_not() {
-        let (mut c, _) = engaged();
-        exchange(&mut c, Timestamp(100), phys(ECU), UNKNOWN);
+        let (mut c, id) = engaged();
+        exchange(&mut c, Timestamp(100), id, UNKNOWN);
         assert_ne!(tick(&mut c, 151), NOTHING);
         assert_eq!(c.next_deadline(), None);
     }
@@ -2409,11 +2441,11 @@ mod physical_keep_alive {
     /// disengages, and wins over the restart the same confirmation would cause.
     #[test]
     fn a_confirmed_return_to_default_disengages() {
-        let (mut c, _) = engaged();
+        let (mut c, id) = engaged();
         exchange(
             &mut c,
             Timestamp(100),
-            phys(ECU),
+            id,
             select(SessionSelection::Default),
         );
         assert_eq!(c.next_deadline(), Some(Timestamp(160)));
@@ -2425,7 +2457,7 @@ mod physical_keep_alive {
     #[test]
     fn a_received_return_to_default_disengages() {
         let (mut c, id) = engaged();
-        exchange(&mut c, Timestamp(100), phys(ECU), UNKNOWN);
+        exchange(&mut c, Timestamp(100), id, UNKNOWN);
         let default = Some(selected(Some(SessionSelection::Default)));
         ind(&mut c, Timestamp(120), id, ECU, SResult::Ok, default);
         assert_eq!(c.next_deadline(), None);
@@ -2440,7 +2472,7 @@ mod physical_keep_alive {
         exchange(
             &mut c,
             Timestamp(0),
-            phys(ECU_2),
+            second,
             select(SessionSelection::NonDefault),
         );
         assert_eq!(
@@ -2469,7 +2501,7 @@ mod physical_keep_alive {
         exchange(
             &mut c,
             Timestamp(0),
-            phys(ECU_2),
+            second,
             select(SessionSelection::NonDefault),
         );
         assert_eq!(tick(&mut c, 2_000), only(due(first)));
@@ -2486,7 +2518,7 @@ mod physical_keep_alive {
             (NOTHING, Ok(()))
         );
         assert_eq!(tick(&mut c, 2_000), only(due(id)));
-        send(&mut c, 2_100, NO_RESPONSE);
+        send(&mut c, 2_100, id, NO_RESPONSE);
         confirm(&mut c, 2_100, SResult::Ok);
         assert_eq!(tick(&mut c, 2_599), NOTHING);
         assert_eq!(tick(&mut c, 2_600), only(due(id)));
@@ -2514,7 +2546,7 @@ mod physical_keep_alive {
         exchange(
             &mut c,
             Timestamp(0),
-            func(),
+            id,
             select(SessionSelection::NonDefault),
         );
         assert_eq!(
@@ -2530,7 +2562,7 @@ mod physical_keep_alive {
     #[test]
     fn an_unsolicited_final_response_does_not() {
         let (mut c, id) = engaged();
-        exchange(&mut c, Timestamp(100), phys(ECU), UNKNOWN);
+        exchange(&mut c, Timestamp(100), id, UNKNOWN);
         ind(
             &mut c,
             Timestamp(110),

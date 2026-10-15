@@ -126,7 +126,7 @@ fn every_client_entry_point(
     drop(client.release_keep_alive(now, ch_phys));
     drop(client.s_data_req(
         now,
-        ai,
+        ch_phys,
         payload,
         ClientTx::Request {
             expected: ExpectedResponses::Unknown,

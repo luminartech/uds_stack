@@ -1014,10 +1014,10 @@ impl<K: KeepAliveMode, const PHYS: usize, const FUNC: usize, const R: usize, Tag
     fn validate_req(
         &self,
         now: Timestamp,
-        ai: Ai,
+        id: ChannelId<Tag>,
         class: ClientTx,
     ) -> Result<(), Rejection> {
-        let Some(channel) = self.channels().find(|c| c.ai == ai) else {
+        let Some(channel) = self.channels().find(|c| c.handle() == id) else {
             return Err(NO_SUCH_CHANNEL); // UDSS_LLR_0123
         };
         let mut causes: Option<Rejection> = None;
@@ -1033,7 +1033,7 @@ impl<K: KeepAliveMode, const PHYS: usize, const FUNC: usize, const R: usize, Tag
         let arriving = self
             .functional
             .iter()
-            .filter(|s| s.channel.as_ref().is_some_and(|c| c.ai == ai))
+            .filter(|s| s.channel.as_ref().is_some_and(|c| c.handle() == id))
             .any(FunctionalSlot::still_arriving);
         if arriving {
             add(Cause::ResponseStillArriving); // UDSS_LLR_0178
@@ -1229,23 +1229,25 @@ impl<K: KeepAliveMode, const PHYS: usize, const FUNC: usize, const R: usize, Tag
 
     /// Request transmission of a request.
     ///
-    /// ``UDSS_LLR_0033``. ``UDSS_LLR_0123`` rejects an addressing naming no existing
-    /// channel, ``UDSS_LLR_0061`` a request duplicating an outstanding association,
+    /// ``UDSS_LLR_0033``. The request names its channel, whose addressing it is sent
+    /// with; ``UDSS_LLR_0123`` rejects a channel the caller has withdrawn,
+    /// ``UDSS_LLR_0061`` a request duplicating an outstanding association,
     /// ``UDSS_LLR_0171`` one on a channel whose spacing timer is running — with
     /// ``UDSS_LLR_0172``'s remaining time in the report — and ``UDSS_LLR_0177`` and
     /// ``UDSS_LLR_0178`` a third repeat or one sent while responses are still arriving.
     pub fn s_data_req<'d>(
         &mut self,
         now: Timestamp,
-        ai: Ai,
+        channel: impl Into<ChannelId<Tag>>,
         data: &'d [u8],
         class: ClientTx,
     ) -> ClientReaction<'_, 'd, K, PHYS, FUNC, R, (), Tag> {
+        let channel = channel.into();
         self.expire(now);
-        if let Err(rejection) = self.validate_req(now, ai, class) {
+        if let Err(rejection) = self.validate_req(now, channel, class) {
             return Reaction::new(self, [None, None], Err(rejection)); // UDSS_LLR_0015
         }
-        let transmit = self.channels_mut().find(|c| c.ai == ai).map(|c| {
+        let transmit = self.channel_mut(channel).map(|c| {
             // UDSS_LLR_0059
             c.sent = Some(Sent {
                 class,
@@ -1254,7 +1256,7 @@ impl<K: KeepAliveMode, const PHYS: usize, const FUNC: usize, const R: usize, Tag
             c.count(class); // UDSS_LLR_0176
             ClientOutput::Transmit {
                 channel: c.handle(),
-                ai,
+                ai: c.ai,
                 data,
             }
         });
