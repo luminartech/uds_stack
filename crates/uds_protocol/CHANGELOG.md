@@ -37,6 +37,14 @@ now <https://github.com/luminartech/uds_stack>.
 
 ### Changed
 
+- **Breaking:** `ReadDtcInfoResponse`'s `NumberOfDtcs`, `DtcList` and `DtcSeverityList`
+  carry a `DtcCountReport`, `DtcListReport` or `DtcSeverityReport` in place of a
+  `sub_function_id` byte, so the echo cannot name another layout. Encoding refuses
+  records that are not a whole number of the variant's record length. A valid report type
+  no variant parses decodes as `Unmodeled`, its parameters raw, where it used to fail
+  with `InvalidDtcSubfunctionType`. `ReadDtcInfoReportType` goes through serde as its
+  byte. Migrate: name the report (`DtcListReport::Supported` for `0x0A`) and add an arm
+  for `Unmodeled`.
 - **Breaking:** `DiagnosticSessionControlResponse::p2_server_max` is
   `p2_server_max_ms`, and `p2_star_server_max` is a `P2StarServerMax`, which holds Table
   29's count of 10 ms units and reads it back as `tens_of_millis` or `as_millis`. The

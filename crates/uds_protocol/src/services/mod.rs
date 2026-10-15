@@ -31,9 +31,9 @@ pub use read_data_by_identifier::{
 
 mod read_dtc_information;
 pub use read_dtc_information::{
-    DtcAndStatusIter, DtcFaultDetectionCounterRecord, DtcFaultDetectionIter,
-    ReadDtcInfoReportType, ReadDtcInfoRequest, ReadDtcInfoResponse, ReadDtcInfoSubFunction,
-    WwhObdDtcSeverityIter,
+    DtcAndStatusIter, DtcCountReport, DtcFaultDetectionCounterRecord,
+    DtcFaultDetectionIter, DtcListReport, DtcSeverityReport, ReadDtcInfoReportType,
+    ReadDtcInfoRequest, ReadDtcInfoResponse, ReadDtcInfoSubFunction, WwhObdDtcSeverityIter,
 };
 
 mod upload_download;
