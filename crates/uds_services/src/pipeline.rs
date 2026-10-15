@@ -761,7 +761,7 @@ pub async fn ecu_reset<A: EcuReset>(
 /// `securityAccessDenied` (0x33); a download already in progress is
 /// `conditionsNotCorrect` (0x22, Table 444); then `begin`.
 ///
-/// The positive response's `maxNumberOfBlockLength` is `MAX_BLOCK_LENGTH + 2` (15.2.3.2)
+/// The positive response's `maxNumberOfBlockLength` is `MAX_BLOCK_LEN + 2` (15.2.3.2)
 /// in the fewest bytes, which [`RequestDownloadResponse`] encodes. The transfer opens only
 /// where the response settles positive.
 #[doc(hidden)]
@@ -790,7 +790,7 @@ pub async fn request_download<A: DataTransfer>(
         return Err(NegativeResponseCode::ConditionsNotCorrect);
     }
     services.begin(transfer).await?;
-    let advertised = A::MAX_BLOCK_LENGTH.saturating_add(2).to_be_bytes();
+    let advertised = A::MAX_BLOCK_LEN.saturating_add(2).to_be_bytes();
     let leading = advertised.iter().take_while(|&&byte| byte == 0).count();
     let length = advertised
         .get(leading.min(advertised.len().saturating_sub(1))..)
@@ -814,9 +814,9 @@ pub async fn request_download<A: DataTransfer>(
 /// Figure 33's order: no download in progress, or all of a known `memorySize` received
 /// and the block not a repeat, is `requestSequenceError` (0x24, Table 454); an empty block
 /// is 0x13 (key 1); a repeat of the last accepted block (15.4.4, the 0x73 row) longer than
-/// `MAX_BLOCK_LENGTH` is 0x31, otherwise answered `76 <counter>` without `block`; a block
+/// `MAX_BLOCK_LEN` is 0x31, otherwise answered `76 <counter>` without `block`; a block
 /// passing a known `memorySize` is `transferDataSuspended` (0x71); a counter other than
-/// the expected one is `wrongBlockSequenceCounter` (0x73); more than `MAX_BLOCK_LENGTH`
+/// the expected one is `wrongBlockSequenceCounter` (0x73); more than `MAX_BLOCK_LEN`
 /// data bytes is 0x31; then `block`. The counter advances, and the bytes count, only where
 /// the response settles positive. A 0x71, this stage's or `block`'s, ends the transfer,
 /// so the client starts over with a `RequestDownload`.
@@ -839,7 +839,7 @@ pub async fn transfer_data<A: DataTransfer>(
     if !repeat && transfer.all_received() {
         return Err(NegativeResponseCode::RequestSequenceError);
     }
-    let over_long = data.len() > A::MAX_BLOCK_LENGTH;
+    let over_long = data.len() > A::MAX_BLOCK_LEN;
     if repeat {
         if over_long {
             return Err(NegativeResponseCode::RequestOutOfRange);

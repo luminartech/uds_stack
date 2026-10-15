@@ -173,7 +173,7 @@ impl CommunicationControl for Ecu {
 
 impl DataTransfer for Ecu {
     const MAY_RESPOND_PENDING: bool = true;
-    const MAX_BLOCK_LENGTH: usize = 1_024;
+    const MAX_BLOCK_LEN: usize = 1_024;
     const SESSIONS: Sessions = Sessions::ALL;
     fn format_supported(&self, _format: DataFormatIdentifier) -> bool {
         true

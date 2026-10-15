@@ -597,7 +597,7 @@ impl ControlDtcSetting for Ecu {
 /// not a valid interval.
 impl DataTransfer for Ecu {
     const MAY_RESPOND_PENDING: bool = true;
-    const MAX_BLOCK_LENGTH: usize = 8;
+    const MAX_BLOCK_LEN: usize = 8;
     const SESSIONS: Sessions = Sessions::NONE
         .with(S::ProgrammingSession)
         .with(S::ExtendedDiagnosticSession);
@@ -2363,7 +2363,7 @@ fn security_access_a_truncated_key_out_of_sequence_is_0x24() {
 const DOWNLOAD_GATED: [u8; 7] = [0x34, 0x00, 0x22, 0x10, 0x00, 0x00, 0x18];
 /// The same at the ungated 0x2000.
 const DOWNLOAD_2000: [u8; 7] = [0x34, 0x00, 0x22, 0x20, 0x00, 0x00, 0x18];
-/// The positive response: a 1-byte `maxNumberOfBlockLength` of `MAX_BLOCK_LENGTH + 2`.
+/// The positive response: a 1-byte `maxNumberOfBlockLength` of `MAX_BLOCK_LEN + 2`.
 const DOWNLOAD_ACCEPTED: [u8; 3] = [0x74, 0x10, 0x0A];
 
 /// Level 0x03 unlocked in the extended session, where `unlocked_level_3` leaves the
@@ -2377,7 +2377,7 @@ fn downloading(ecu: &mut Ecu, request: &[u8]) -> State {
     state
 }
 
-/// 15.2.3.2 — the positive response advertises `MAX_BLOCK_LENGTH + 2`, the whole
+/// 15.2.3.2 — the positive response advertises `MAX_BLOCK_LEN + 2`, the whole
 /// `TransferData` request message, in the fewest bytes, its `lengthFormatIdentifier` high
 /// nibble that byte count.
 #[test]
@@ -2589,7 +2589,7 @@ fn an_empty_download_block_is_0x13() {
     );
 }
 
-/// Table 454 — a wrong counter is 0x73; a block longer than `MAX_BLOCK_LENGTH` is 0x31
+/// Table 454 — a wrong counter is 0x73; a block longer than `MAX_BLOCK_LEN` is 0x31
 /// (Figure 33's 0x31 node, after the counter).
 #[test]
 fn a_wrong_counter_is_0x73_and_an_over_long_block_0x31() {

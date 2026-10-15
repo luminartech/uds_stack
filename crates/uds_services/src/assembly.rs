@@ -7,7 +7,7 @@
 //! The macro does something the rest of the crate cannot. An associated const of a
 //! *generic* parameter is not usable as an array length — `[u8; S::MAX_REQUEST]` is
 //! rejected without the unstable `generic_const_exprs` — but at this macro's expansion
-//! site the types are concrete, so `<Ecu as DataTransfer>::MAX_BLOCK_LENGTH` is an
+//! site the types are concrete, so `<Ecu as DataTransfer>::MAX_BLOCK_LEN` is an
 //! ordinary const and folding a list of them into an array length is stable Rust. That is
 //! why assembly is a macro and not a blanket impl, and it is how [`crate::Storage`]'s
 //! sizes are derived without the application picking a number.
@@ -261,7 +261,7 @@ macro_rules! __uds_request_bound {
     // 8-byte size, the widest `uds_protocol` decodes.
     ($ty:ty, DataTransfer) => {
         $crate::assembly::max_of(&[
-            2 + <$ty as $crate::DataTransfer>::MAX_BLOCK_LENGTH,
+            2 + <$ty as $crate::DataTransfer>::MAX_BLOCK_LEN,
             19,
         ])
     };
@@ -643,17 +643,17 @@ macro_rules! __uds_assert {
     ($ty:ty, $transport:ty, DataTransfer) => {
         const _: () = ::core::assert!(
             <$transport as $crate::UdsTransport>::MAX_PDU
-                >= 2 + <$ty as $crate::DataTransfer>::MAX_BLOCK_LENGTH,
+                >= 2 + <$ty as $crate::DataTransfer>::MAX_BLOCK_LEN,
             "the transport's MAX_PDU cannot carry a TransferData block of \
-             MAX_BLOCK_LENGTH, which ISO 14229-1:2020 15.2.3.2 obliges the server to accept",
+             MAX_BLOCK_LEN, which ISO 14229-1:2020 15.2.3.2 obliges the server to accept",
         );
         const _: () = ::core::assert!(
-            <$ty as $crate::DataTransfer>::MAX_BLOCK_LENGTH >= 1,
-            "MAX_BLOCK_LENGTH is zero, so no TransferData block could carry data",
+            <$ty as $crate::DataTransfer>::MAX_BLOCK_LEN >= 1,
+            "MAX_BLOCK_LEN is zero, so no TransferData block could carry data",
         );
         const _: () = ::core::assert!(
-            <$ty as $crate::DataTransfer>::MAX_BLOCK_LENGTH <= 0xFFFF_FFFD,
-            "maxNumberOfBlockLength (MAX_BLOCK_LENGTH + 2) must fit in four bytes",
+            <$ty as $crate::DataTransfer>::MAX_BLOCK_LEN <= 0xFFFF_FFFD,
+            "maxNumberOfBlockLength (MAX_BLOCK_LEN + 2) must fit in four bytes",
         );
     };
     ($ty:ty, $transport:ty, $svc:ident) => {};
@@ -688,9 +688,9 @@ macro_rules! __uds_assert {
 /// [`ResponseSink::MIN_BOUND`](crate::ResponseSink::MIN_BOUND), because a negative
 /// response would then not fit.
 ///
-/// Where `DataTransfer` is listed, it also fails to compile where `MAX_BLOCK_LENGTH` is
+/// Where `DataTransfer` is listed, it also fails to compile where `MAX_BLOCK_LEN` is
 /// zero, or the transport's [`MAX_PDU`](crate::UdsTransport::MAX_PDU) is shorter than
-/// `MAX_BLOCK_LENGTH + 2`, the `TransferData` request length the server advertises and
+/// `MAX_BLOCK_LEN + 2`, the `TransferData` request length the server advertises and
 /// must accept (ISO 14229-1:2020 15.2.3.2).
 ///
 /// Where `ReadDtcInformation` is listed, it also fails to compile where
@@ -749,7 +749,7 @@ macro_rules! __uds_assert {
 /// #
 /// # impl DataTransfer for Ecu {
 /// #     const MAY_RESPOND_PENDING: bool = true;
-/// #     const MAX_BLOCK_LENGTH: usize = 1 << 20;
+/// #     const MAX_BLOCK_LEN: usize = 1 << 20;
 /// #     const SESSIONS: Sessions = Sessions::ALL;
 /// #     fn format_supported(&self, _format: DataFormatIdentifier) -> bool { true }
 /// #     fn access(&self, _r: &TransferRequest<'_>) -> Option<Access> {
@@ -850,11 +850,11 @@ macro_rules! __uds_assert {
 /// # Examples
 ///
 /// Two services, a transport, and the buffer lengths the macro folds from what they
-/// declared. Nothing here picks a size: `1_026` is [`MAX_BLOCK_LENGTH`] plus its service
+/// declared. Nothing here picks a size: `1_026` is [`MAX_BLOCK_LEN`] plus its service
 /// identifier and block sequence counter, and `77` is [`MAX_DIDS_PER_REQUEST`] records of
 /// [`MAX_RECORD_LEN`] plus their identifiers.
 ///
-/// [`MAX_BLOCK_LENGTH`]: crate::DataTransfer::MAX_BLOCK_LENGTH
+/// [`MAX_BLOCK_LEN`]: crate::DataTransfer::MAX_BLOCK_LEN
 /// [`MAX_DIDS_PER_REQUEST`]: crate::ReadDataByIdentifier::MAX_DIDS_PER_REQUEST
 /// [`MAX_RECORD_LEN`]: crate::DataIdentifier::MAX_RECORD_LEN
 ///
@@ -909,7 +909,7 @@ macro_rules! __uds_assert {
 /// #
 /// # impl DataTransfer for Ecu {
 /// #     const MAY_RESPOND_PENDING: bool = true;
-/// #     const MAX_BLOCK_LENGTH: usize = 1_024;
+/// #     const MAX_BLOCK_LEN: usize = 1_024;
 /// #     const SESSIONS: Sessions = Sessions::ALL;
 /// #     fn format_supported(&self, _format: DataFormatIdentifier) -> bool { true }
 /// #     fn access(&self, _r: &TransferRequest<'_>) -> Option<Access> {

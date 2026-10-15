@@ -63,12 +63,12 @@ pub trait DataTransfer {
     /// The most data bytes one `TransferData` block carries, excluding the service
     /// identifier and the `blockSequenceCounter`.
     ///
-    /// The `RequestDownload` positive response advertises `MAX_BLOCK_LENGTH + 2` as
+    /// The `RequestDownload` positive response advertises `MAX_BLOCK_LEN + 2` as
     /// `maxNumberOfBlockLength`, the whole `TransferData` request message a server must
     /// accept (ISO 14229-1:2020 15.2.3.2). [`crate::uds_server`] holds the in-flight
     /// buffer to that length and fails to compile where the transport cannot carry it, or
     /// where this is zero; a client subtracts two to size its blocks.
-    const MAX_BLOCK_LENGTH: usize;
+    const MAX_BLOCK_LEN: usize;
 
     /// The sessions `RequestDownload`, `TransferData` and `RequestTransferExit` are served
     /// in. In any other session each is `serviceNotSupportedInActiveSession` (0x7F)
@@ -109,7 +109,7 @@ pub trait DataTransfer {
     /// Begin a transfer.
     ///
     /// The positive response's `maxNumberOfBlockLength` is composed by this crate from
-    /// [`Self::MAX_BLOCK_LENGTH`], so this returns nothing.
+    /// [`Self::MAX_BLOCK_LEN`], so this returns nothing.
     ///
     /// # Errors
     ///
@@ -174,7 +174,7 @@ mod tests {
     struct Ecu;
     impl DataTransfer for Ecu {
         const MAY_RESPOND_PENDING: bool = true;
-        const MAX_BLOCK_LENGTH: usize = 1_024;
+        const MAX_BLOCK_LEN: usize = 1_024;
         const SESSIONS: Sessions = Sessions::ALL;
         fn format_supported(&self, _f: DataFormatIdentifier) -> bool {
             true
@@ -205,11 +205,11 @@ mod tests {
     }
 
     /// Decision 4 of the design: the advertised `maxNumberOfBlockLength` is
-    /// `MAX_BLOCK_LENGTH + 2` (15.2.3.2), the length of the in-flight buffer that must hold
+    /// `MAX_BLOCK_LEN + 2` (15.2.3.2), the length of the in-flight buffer that must hold
     /// the block.
     #[test]
     fn the_block_length_gives_both_the_buffer_and_the_advertisement() {
-        const BLOCK: usize = <Ecu as DataTransfer>::MAX_BLOCK_LENGTH;
+        const BLOCK: usize = <Ecu as DataTransfer>::MAX_BLOCK_LEN;
         const ADVERTISED: usize = 2 + BLOCK; // SID + block sequence counter
         assert_eq!((BLOCK, ADVERTISED), (1_024, 1_026));
     }

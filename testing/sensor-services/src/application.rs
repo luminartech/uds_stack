@@ -421,7 +421,7 @@ impl ControlDtcSetting for Ecu {
 /// in the programming session with level 0x03 unlocked.
 impl DataTransfer for Ecu {
     const MAY_RESPOND_PENDING: bool = true;
-    const MAX_BLOCK_LENGTH: usize = 0x20;
+    const MAX_BLOCK_LEN: usize = 0x20;
     const SESSIONS: Sessions = Sessions::NONE.with(S::ProgrammingSession);
     fn format_supported(&self, format: DataFormatIdentifier) -> bool {
         format == DataFormatIdentifier::NONE
