@@ -260,12 +260,15 @@ impl<'a> Received<'a> {
 /// likes and still advertise the declared maxima on the wire.
 pub trait ServiceSet: crate::sealed::Sealed {
     /// The application whose service traits this assembly calls.
+    #[doc(hidden)]
     type App;
 
     /// The storage whose sizes were derived from this application's declared maxima.
+    #[doc(hidden)]
     type Store: Storage;
 
     /// The protocol state this assembly keeps. ``UDSSVC_ARCH_0035``.
+    #[doc(hidden)]
     type State: ProtocolState;
 
     /// Run the clause 8.7 pipeline for `request` up to its last stages, writing any
@@ -285,6 +288,7 @@ pub trait ServiceSet: crate::sealed::Sealed {
     ///   whole one reaches a handler
     /// * `out` - the [`ResponseSink`] the response is written into, and that the driver
     ///   settles once this future completes
+    #[doc(hidden)]
     fn dispatch(
         app: &mut Self::App,
         state: &mut Self::State,
@@ -306,6 +310,7 @@ pub trait ServiceSet: crate::sealed::Sealed {
     ///
     /// * `app` - the [`Self::App`], held by [`crate::Server`]
     /// * `state` - the [`ProtocolState`] of this assembly, held by [`crate::Server`]
+    #[doc(hidden)]
     fn start_up(app: &mut Self::App, state: &mut Self::State);
 
     /// `tS3_Server` expired: return to the default session and tell the application.
@@ -320,6 +325,7 @@ pub trait ServiceSet: crate::sealed::Sealed {
     /// * `state` - the [`ProtocolState`] of this assembly, held by [`crate::Server`],
     ///   whose session returns to
     ///   [`DefaultSession`](DiagnosticSessionType::DefaultSession)
+    #[doc(hidden)]
     fn session_timed_out(app: &mut Self::App, state: &mut Self::State);
 
     /// A response selecting `selected` was confirmed sent: enter it and tell the
@@ -332,6 +338,7 @@ pub trait ServiceSet: crate::sealed::Sealed {
     /// * `state` - the [`ProtocolState`] of this assembly, held by [`crate::Server`],
     ///   whose session becomes `selected`
     /// * `selected` - the [`DiagnosticSessionType`] the confirmed response selected
+    #[doc(hidden)]
     fn session_confirmed(
         app: &mut Self::App,
         state: &mut Self::State,
@@ -350,6 +357,7 @@ pub trait ServiceSet: crate::sealed::Sealed {
     /// * `state` - the [`ProtocolState`] of this assembly, held by [`crate::Server`]
     /// * `kind` - the reset accepted; see [`ResetType`]
     /// * `after` - what [`crate::EcuReset::reset`] said follows it
+    #[doc(hidden)]
     fn reset_confirmed(
         app: &mut Self::App,
         state: &mut Self::State,
@@ -368,6 +376,7 @@ pub trait ServiceSet: crate::sealed::Sealed {
     ///
     /// * `app` - the [`Self::App`] that states each session's timing
     /// * `state` - the [`ProtocolState`] of this assembly, which holds the session in force
+    #[doc(hidden)]
     fn session_timing(app: &Self::App, state: &Self::State) -> Option<SessionTiming>;
 
     /// Whether entering `session` leaves the software this server is running, which
@@ -381,6 +390,7 @@ pub trait ServiceSet: crate::sealed::Sealed {
     /// * `app` - the [`Self::App`] that knows which sessions leave its software
     /// * `session` - the session a positive response selects; see
     ///   [`DiagnosticSessionType`].
+    #[doc(hidden)]
     fn leaves_running_software(app: &Self::App, session: DiagnosticSessionType) -> bool;
 
     /// Whether this server implements `service` at all.
@@ -389,11 +399,13 @@ pub trait ServiceSet: crate::sealed::Sealed {
     /// assembly list can answer. A byte that names no service arrives as
     /// [`UdsServiceType::UnsupportedDiagnosticService`], which no assembly list contains,
     /// so it answers `false` without a special case.
+    #[doc(hidden)]
     fn supports(service: UdsServiceType) -> bool;
 
     /// Whether `service`'s handler may answer `requestCorrectlyReceivedResponsePending`.
     ///
     /// ``UDSSVC_ARCH_0033``.
+    #[doc(hidden)]
     fn may_respond_pending(service: UdsServiceType) -> bool;
 
     /// Whether `request`, addressed this way, may proceed while a service is already in
@@ -415,6 +427,7 @@ pub trait ServiceSet: crate::sealed::Sealed {
     /// services: the answer depends on the assembly, never on a handler's state.
     /// [`crate::Server`] answers anything else arriving mid-service `busyRepeatRequest`
     /// (0x21).
+    #[doc(hidden)]
     fn is_concurrent_exception(request: &[u8], ai: Ai) -> bool;
 }
 

@@ -84,13 +84,17 @@ pub use client::{
 pub mod server;
 pub use server::{Server, ServerParams, Stepped, Stopped};
 
+#[doc(hidden)]
 pub mod storage;
+#[doc(hidden)]
 pub use storage::{Buffers, ClientBuffers, ClientStorage, ClientStore, Storage, Store};
 
 pub mod sink;
 pub use sink::ResponseSink;
 
+#[doc(hidden)]
 pub mod state;
+#[doc(hidden)]
 pub use state::{ProtocolState, State};
 
 /// The write vocabulary a handler needs to use a [`ResponseSink`].
@@ -164,11 +168,12 @@ pub mod services;
 pub use services::{
     AfterReset, ClearDiagnosticInformation, CommunicationControl, ControlDtcSetting,
     DataTransfer, Delay, DiagnosticSessionControl, DtcReportKind, EcuReset, Effect,
-    KeyVerdict, ReadDataByIdentifier, ReadDtcInformation, Received, Responded,
-    RoutineControl, SecurityAccess, SecurityLevel, SecurityPolicy, ServiceSet,
-    SessionTiming, SessionTransition, TesterPresent, TransferRequest, Unsettled,
-    WriteDataByIdentifier,
+    KeyVerdict, ReadDataByIdentifier, ReadDtcInformation, Responded, RoutineControl,
+    SecurityAccess, SecurityLevel, SecurityPolicy, ServiceSet, SessionTiming,
+    SessionTransition, TesterPresent, TransferRequest, WriteDataByIdentifier,
 };
+#[doc(hidden)]
+pub use services::{Received, Unsettled};
 
 /// The protocol vocabulary this crate's handler signatures are written in.
 ///

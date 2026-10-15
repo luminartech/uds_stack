@@ -79,6 +79,7 @@ pub trait ClientSet: crate::sealed::Sealed {
     /// through [`crate::uds_client`]'s `routines`; see [`Client::routine_control`].
     type Routine: RoutineIdentifier;
     /// The storage whose lengths were folded from this vocabulary and [`Self::LIMITS`].
+    #[doc(hidden)]
     type Store: ClientStorage;
     /// The limits declared through [`crate::uds_client`]'s `limits`.
     const LIMITS: ClientLimits;
