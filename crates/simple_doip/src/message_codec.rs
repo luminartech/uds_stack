@@ -134,7 +134,7 @@ impl Decoder for MessageCodec {
             }
             Err(error) if error.is_framing_fatal() => Err(error),
             Err(error) => {
-                let header = frame.header.clone();
+                let header = frame.header;
                 let mut whole = src.split_to(consumed);
                 let payload = whole.split_off(Header::SIZE).freeze();
                 Ok(Some(Frame::Undecoded {
