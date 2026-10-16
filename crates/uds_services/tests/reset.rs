@@ -181,6 +181,29 @@ fn a_restarting_reset_runs_on_its_confirmation_and_stops() {
     assert_eq!(s.transport().sent_bytes(3), &[0x7F, 0x10, 0x7E]);
 }
 
+/// ISO 14229-5:2022 REQ 7.11 — a restarting reset tells the transport it is restarting
+/// as `step` reports it, whether its response was sent or suppressed, so a transport can
+/// close what the restart ends. A reset that does not restart tells it nothing.
+#[test]
+fn a_restart_tells_the_transport_and_a_continuing_reset_does_not() {
+    for (request, restarts) in [
+        (&[0x11, 0x01][..], 1),
+        (&[0x11, 0x81][..], 1),
+        (&[0x11, 0x04][..], 0),
+    ] {
+        let mut s = EcuServer::new(
+            Ecu::default(),
+            script(&[ind(request), conf(SResult::Ok)]),
+            ECU,
+            PARAMS,
+        );
+        for _ in 0..2 {
+            step(&mut s);
+        }
+        assert_eq!(s.transport().restarts, restarts, "{request:02X?}");
+    }
+}
+
 /// A restart from the default session changes no session, so no session hook is called.
 #[test]
 fn a_restart_from_the_default_session_calls_no_session_hook() {

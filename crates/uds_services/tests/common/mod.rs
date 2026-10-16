@@ -104,6 +104,8 @@ pub struct Script {
     send_cost: u32,
     /// How many times the client closed it.
     pub closes: usize,
+    /// How many times the server told it it is restarting.
+    pub restarts: usize,
     /// Whether closing fails.
     failing_close: bool,
 }
@@ -134,6 +136,7 @@ impl Script {
             stalled: None,
             send_cost: 0,
             closes: 0,
+            restarts: 0,
             failing_close: false,
         }
     }
@@ -350,6 +353,11 @@ impl UdsTransport for Script {
     }
     fn now(&self) -> Timestamp {
         Timestamp(self.now)
+    }
+
+    fn restarting(&mut self) -> impl Future<Output = ()> {
+        self.restarts = self.restarts.wrapping_add(1);
+        core::future::ready(())
     }
 }
 

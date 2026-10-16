@@ -136,13 +136,6 @@ impl<A: ServiceSet, T: UdsTransport, const PEERS: usize> Server<A, T, PEERS> {
         &self.transport
     }
 
-    /// The transport, for what the caller does with it between steps, such as closing
-    /// a tester's connection after a [`Stopped`] whose reset was suppressed and so sent
-    /// nothing to close it after. Anything sent through it bypasses the session layer.
-    pub fn transport_mut(&mut self) -> &mut T {
-        &mut self.transport
-    }
-
     /// Run [`ServiceSet::start_up`] on the first step, and again on the first step after a
     /// [`Stopped`].
     fn start_up(&mut self) {
@@ -189,6 +182,7 @@ impl<A: ServiceSet, T: UdsTransport, const PEERS: usize> Server<A, T, PEERS> {
         };
         // Annex I transition 1 owes start-up again after a restart.
         self.started = false;
+        self.transport.restarting().await;
         Ok(Stepped::Stopped(stopped))
     }
 

@@ -120,8 +120,9 @@ lockstep with the rest of the `uds_stack` workspace (`uds_protocol`, `uds_sessio
 - A reserved `DTCSettingType` (Table 128) is `subFunctionNotSupported` (0x12) before
   `ControlDtcSetting::access` is asked, as a reserved `communicationType` is 0x31 before
   `CommunicationControl` is.
-- `AfterReset`, `EcuReset::confirmed`, `Stepped`, `Stopped`, `Server::into_parts`, and
-  `Server::transport_mut`.
+- `AfterReset`, `EcuReset::confirmed`, `Stepped`, `Stopped` and `Server::into_parts`.
+- `UdsTransport::restarting`, which `Server::step` awaits on every restart, a reset's
+  response sent or suppressed, before it returns `Stopped`. It does nothing by default.
 
 ### Changed
 

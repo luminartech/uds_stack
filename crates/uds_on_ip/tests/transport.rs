@@ -265,22 +265,40 @@ fn a_positive_reset_response_closes_the_connection_after_its_confirmation() {
     );
 }
 
-/// A suppressed `ECUReset` sends nothing to close after, so the caller closes the
-/// tester's connection with `close_testers` once the server has stopped.
+/// REQ 7.11 — a suppressed `ECUReset` sends nothing to close after, so the transport
+/// closes the tester's connection when the server says it is restarting.
 #[test]
-fn close_testers_closes_after_a_suppressed_reset() {
+fn restarting_closes_the_tester_after_a_suppressed_reset() {
     let mut t = indicated(&[0x11, 0x81]);
-    assert_eq!(block_on(t.close_testers()), 1);
+    block_on(UdsTransport::restarting(&mut t));
     assert_eq!(t.entity().wire, [Wire::Close(CONNECTION)]);
+}
+
+/// After a positive reset the connection already closed on the response's
+/// confirmation, so restarting closes nothing more.
+#[test]
+fn restarting_after_a_positive_reset_closes_nothing_more() {
+    let mut t = indicated(&[0x11, 0x01]);
+    respond(&mut t, &[0x51, 0x01]);
+    next(&mut t);
+    block_on(UdsTransport::restarting(&mut t));
+    assert_eq!(
+        t.entity().wire,
+        [
+            Wire::Data(CONNECTION, vec![0x51, 0x01]),
+            Wire::Close(CONNECTION),
+        ]
+    );
 }
 
 /// A tester with a message unconfirmed keeps its connection, so the confirmation owed
 /// to the driver still arrives.
 #[test]
-fn close_testers_leaves_a_tester_owed_a_confirmation() {
+fn restarting_leaves_a_tester_owed_a_confirmation() {
     let mut t = indicated(&[0x22, 0xF1, 0x90]);
     respond(&mut t, &[0x7F, 0x22, 0x31]);
-    assert_eq!(block_on(t.close_testers()), 0);
+    block_on(UdsTransport::restarting(&mut t));
+    assert!(!t.entity().wire.contains(&Wire::Close(CONNECTION)));
     assert_eq!(
         next(&mut t),
         TransportEvent::DataConf {

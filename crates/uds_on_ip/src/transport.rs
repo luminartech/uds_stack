@@ -62,9 +62,10 @@ use uds_session::{Ai, Reloads, SResult, Timestamp};
 /// the response ("after sending") and precedes anything done on the
 /// confirmation: `uds_services::Server` executes a session change there. It
 /// executes an accepted reset on that confirmation (`EcuReset::confirmed`, and
-/// `Stopped` for a restart), so the reset follows the close; a suppressed reset
-/// sends nothing and closes nothing; [`DoIpTransport::close_testers`] closes after one. A
-/// message whose confirmation fails closes nothing.
+/// `Stopped` for a restart), so the reset follows the close. A suppressed reset sends
+/// nothing to close after, so the connection closes when the server says it is
+/// restarting ([`UdsTransport::restarting`]). A message whose confirmation fails closes
+/// nothing.
 ///
 /// The close follows the armed message's own confirmation, told apart from the
 /// tester's others by the order the entity confirms them in. A message sent to the
@@ -335,14 +336,9 @@ impl<E, const CONNECTIONS: usize> DoIpTransport<E, CONNECTIONS> {
 
 impl<E: DiagnosticEntity, const CONNECTIONS: usize> DoIpTransport<E, CONNECTIONS> {
     /// Close, in order, the connection of every tester with nothing awaiting
-    /// confirmation, as the transport closes one after a positive `ECUReset` response
-    /// (REQ 7.11). For a suppressed reset, which sends nothing to close after: call it
-    /// between steps, once `uds_services::Server::step` has returned the restart.
-    ///
-    /// A tester with a message still unconfirmed keeps its connection, since its
-    /// confirmation is owed to the driver. Returns how many connections it closed.
-    pub async fn close_testers(&mut self) -> usize {
-        let mut closed: usize = 0;
+    /// confirmation. A tester with a message still unconfirmed keeps its connection, since
+    /// its confirmation is owed to the driver.
+    async fn close_testers(&mut self) {
         for index in 0..CONNECTIONS {
             let idle = self
                 .testers
@@ -356,9 +352,7 @@ impl<E: DiagnosticEntity, const CONNECTIONS: usize> DoIpTransport<E, CONNECTIONS
             self.forget(tester.connection);
             let _ended_either_way: Result<(), E::Error> =
                 self.entity.close(tester.connection).await;
-            closed = closed.saturating_add(1);
         }
-        closed
     }
 
     async fn close(&mut self, closing: Closing) -> TransportEvent<'static> {
@@ -583,6 +577,14 @@ impl<E: DiagnosticEntity, const CONNECTIONS: usize> UdsTransport
     /// unconverted.
     fn now(&self) -> Timestamp {
         Timestamp(self.entity.now().0)
+    }
+
+    /// Closes every tester's connection with nothing awaiting confirmation: after a
+    /// suppressed `ECUReset`, the close REQ 7.11 owes and no response armed. After a
+    /// positive one the connection closed on the response's confirmation, so there is
+    /// nothing left to close.
+    async fn restarting(&mut self) {
+        self.close_testers().await;
     }
 }
 

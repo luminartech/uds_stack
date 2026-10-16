@@ -185,6 +185,29 @@ fn a_reset_is_answered_then_closed_and_the_tester_reconnects() {
     });
 }
 
+/// A suppressed `ECUReset` sends no response for the close to follow, and the connection
+/// still ends with the restart (ISO 14229-5:2022 REQ 7.11): the tester sees it closed
+/// before anything else, reconnects, and is served as before.
+#[test]
+fn a_suppressed_reset_closes_the_connection_and_the_tester_reconnects() {
+    on_loopback(|loopback| async move {
+        let mut server = server(&loopback);
+        serve_until(&mut server, async {
+            let mut tester = loopback.tester().await.expect("activated");
+            assert_eq!(send(&mut tester, &[0x11, 0x81]).await, DoIpResult::Ok);
+            assert_eq!(next(&mut tester).await, Then::Closed);
+
+            tester.reconnect(None).await.expect("reconnected");
+            assert_eq!(
+                ask(&mut tester, &[0x3E, 0x00]).await,
+                answered(&[0x7E, 0x00])
+            );
+            tester.close().await.expect("closed");
+        })
+        .await;
+    });
+}
+
 /// A positive `DiagnosticSessionControl` response to a session change that leaves the
 /// running software is followed by the entity closing the connection (ISO 14229-5:2022
 /// REQ 7.9); a change that does not leave it closes nothing. The tester reconnects

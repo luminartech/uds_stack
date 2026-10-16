@@ -275,6 +275,16 @@ pub trait UdsTransport {
 
     /// Monotonic milliseconds, 32-bit and wrapping.
     fn now(&self) -> Timestamp;
+
+    /// The server is restarting: [`crate::Server::step`] is about to return
+    /// [`Stopped::Reset`](crate::Stopped::Reset), its reset's response sent or suppressed.
+    ///
+    /// A transport ends here what the restart ends and no response closed, as a `DoIP`
+    /// transport closes its testers' connections after a suppressed `ECUReset`
+    /// (ISO 14229-5:2022 REQ 7.11). Does nothing unless a transport says otherwise.
+    fn restarting(&mut self) -> impl core::future::Future<Output = ()> {
+        core::future::ready(())
+    }
 }
 
 /// A transport a client sends over: a [`UdsTransport`] whose connection the client can
