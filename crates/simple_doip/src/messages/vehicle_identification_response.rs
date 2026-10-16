@@ -1,3 +1,4 @@
+use crate::identifiers::GroupId;
 use crate::logical_address::LogicalAddress;
 
 use automotive_wire_codec::{
@@ -15,11 +16,13 @@ pub enum FurtherActionRequired {
     /// activation.
     NoFurtherActionRequired,
     /// A further-action value outside the range this crate models.
+    #[non_exhaustive]
     Reserved(u8),
     /// The tester must send a routing activation request with a `CentralSecurity`
     /// activation type before diagnostics can proceed.
     RoutingActivationRequiredToInitiateCentralSecurity,
     /// Vehicle-manufacturer-specific further-action value.
+    #[non_exhaustive]
     VehicleManufacturerSpecific(u8),
 }
 
@@ -57,6 +60,7 @@ pub enum VinGidSyncStatus {
     /// VIN and/or GID are synchronized
     Synchronized,
     /// A sync-status value outside the range this crate models.
+    #[non_exhaustive]
     Reserved(u8),
     /// VIN and GID are NOT synchronized
     Incomplete,
@@ -92,9 +96,10 @@ pub struct VehicleIdentificationResponse {
     pub logical_address: LogicalAddress,
     /// Unique entity id, e.g. MAC address of network interface.
     pub entity_id: [u8; 6],
-    //// Unique group identification of entities within a vehicle.
-    /// None when value not set (as indicated by `0x00` or `0xFF`).
-    pub group_id: Option<[u8; 6]>,
+    /// The group ID shared by the entities of one vehicle, or `None` where the entity
+    /// sends Table 1's "not set" value. A [`GroupId`] cannot hold that value, so what is
+    /// set here is what decodes back.
+    pub group_id: Option<GroupId>,
     /// Whether the tester must take further action (e.g. routing activation with
     /// central security) before diagnostics can proceed.
     pub further_action: FurtherActionRequired,
@@ -120,12 +125,7 @@ impl<'a> Decode<'a> for VehicleIdentificationResponse {
 
         let (group_id, rest) = read_array::<6>(rest)?;
 
-        // Sentinel values meaning "group ID not set"
-        let group_id = if group_id == [0x00; 6] || group_id == [0xFF; 6] {
-            None
-        } else {
-            Some(group_id)
-        };
+        let group_id = GroupId::new(group_id).ok();
 
         let (further_action, rest) = read_u8(rest)?;
         let further_action = FurtherActionRequired::from(further_action);
@@ -171,11 +171,7 @@ impl Encode for VehicleIdentificationResponse {
         write_bytes(writer, &self.vin)?;
         write_u16_be(writer, self.logical_address.into())?;
         write_bytes(writer, &self.entity_id)?;
-        if let Some(group_id) = self.group_id {
-            write_bytes(writer, &group_id)?;
-        } else {
-            write_bytes(writer, &[0x00; 6])?;
-        }
+        write_bytes(writer, &self.group_id.map_or([0x00; 6], GroupId::to_bytes))?;
         write_u8(writer, self.further_action.into())?;
         if let Some(status) = self.vin_gid_sync_status {
             write_u8(writer, status.into())?;

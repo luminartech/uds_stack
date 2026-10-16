@@ -101,7 +101,7 @@ impl DiagnosticSessionControl for Ecu {
     fn timing(&self, _s: S) -> SessionTiming {
         SessionTiming {
             p2_server_max_ms: 50,
-            p2_star_server_max_10ms: 500,
+            p2_star_server_max: uds_services::P2StarServerMax::from_tens_of_millis(500),
         }
     }
     fn on_transition(&mut self, _t: SessionTransition, _entered: S, _relocked: bool) {}
@@ -126,20 +126,22 @@ uds_server! {
     Ecu: DiagnosticSessionControl, ReadDataByIdentifier;
     transport = DoIpTransport<SensorEntity<4096>, 2>,
     peers = 1,
+    services = EcuServices,
     server = EcuServer,
 }
 
 uds_client! {
     Did;
+    vocabulary = DiagnoserVocabulary,
     transport = SensorClientTransport,
-    max_dids_per_request = 1,
     routines = Rid,
-    max_dtcs = 4,
-    max_dtc_record_len = 16,
-    max_seed_len = 2,
-    max_key_len = 2,
-    max_option_len = 4,
-    max_block_len = 64,
+    limits = uds_services::ClientLimits::new()
+        .max_dtcs(4)
+        .max_dtc_record_len(16)
+        .max_seed_len(2)
+        .max_key_len(2)
+        .max_option_len(4)
+        .max_block_len(64),
     physical = 1,
     functional = 1,
     responders = 1,
@@ -150,12 +152,7 @@ uds_client! {
 const SERVER: Address = Address(ENTITY.0);
 const TESTER: Address = Address(doip_loopback::TESTER.0);
 
-const PARAMS: ServerParams = ServerParams {
-    s3_server: 5_000,
-    p2_server_max: 50,
-    p2_star_server_max: 5_000,
-    response_pending_lead: 0,
-};
+const PARAMS: ServerParams = ServerParams::new(5_000, 50, 5_000, 0);
 
 /// The client's response window, well short of [`SLOW`].
 const RELOADS: Reloads = Reloads {
@@ -184,7 +181,9 @@ async fn client(loopback: &Loopback, backoff: Duration) -> Diagnoser {
         transport,
         TESTER,
         KeepAlive::physical(2_000),
-        ClientTiming::new(0, 0, 0),
+        ClientTiming::new(0)
+            .physical_spacing(0)
+            .functional_spacing(0),
     )
 }
 
@@ -252,7 +251,9 @@ fn a_client_sending_2012_reads_a_did_over_loopback() {
                 DoIpClientTransport::new(tester, RELOADS),
                 TESTER,
                 KeepAlive::physical(2_000),
-                ClientTiming::new(0, 0, 0),
+                ClientTiming::new(0)
+                    .physical_spacing(0)
+                    .functional_spacing(0),
             );
             assert_eq!(
                 record(

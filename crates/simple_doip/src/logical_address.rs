@@ -2,8 +2,6 @@
 //! address testers, ECUs, and gateways on a `DoIP` network, per ISO 13400-2.
 
 use core::fmt::{Debug, Display, LowerHex, UpperHex};
-#[cfg(feature = "std")]
-use tracing::info;
 
 #[derive(Clone, Copy, Eq)]
 /// Logical addressing is used to identify the ECU
@@ -24,15 +22,6 @@ impl LogicalAddress {
     /// Upper bound of the logical address range reserved for external test equipment
     /// (testers).
     pub const MAX_CLIENT_ADDRESS: LogicalAddress = LogicalAddress(0x0FFF);
-
-    /// Sub-range of client addresses reserved for internal on-board diagnostics (OBD)
-    /// tooling rather than general external testers (0x0F00-0x0F7F).
-    /// A client address in this range is still valid, but
-    /// [`is_valid_client_address`](Self::is_valid_client_address) logs an
-    /// informational (`tracing::info!`) message
-    /// since this crate's use cases are external testers, not OBD tooling.
-    pub const OBD_ADDRESS_RANGE: (LogicalAddress, LogicalAddress) =
-        (LogicalAddress(0x0F00), LogicalAddress(0x0F7F));
 
     /// Whether this is a vehicle-manufacturer-defined functional group address
     /// (ISO 13400-2:2019 Table 13, `E400`–`EFFF`).
@@ -55,28 +44,6 @@ impl LogicalAddress {
         match self.0 {
             0xE000..=0xEFFF => TaType::Functional,
             _ => TaType::Physical,
-        }
-    }
-
-    /// Verify if the logical address is within the valid range for a client address
-    /// of 0x0E00 - 0x0FFF
-    #[must_use]
-    pub fn is_valid_client_address(&self) -> bool {
-        if *self >= Self::MIN_CLIENT_ADDRESS && *self <= Self::MAX_CLIENT_ADDRESS {
-            // Check if the logical address is in the OBD range
-            // For now we just log info to the user since this is a valid address,
-            // but it is not recommended to use this range for client addresses
-            // and is not in the use case of the crate at this time
-            if *self >= Self::OBD_ADDRESS_RANGE.0 && *self <= Self::OBD_ADDRESS_RANGE.1 {
-                #[cfg(feature = "std")]
-                info!(
-                    "Logical addresses in the 0x0F00-0x0F7F range are intended for internal \
-                data collection/on-board diagnostics only. Ensure that this is the intended use case."
-                );
-            }
-            true
-        } else {
-            false
         }
     }
 }
@@ -205,7 +172,6 @@ mod tests {
     #[test]
     fn test_logical_address() {
         let addr = LogicalAddress(0x0E00);
-        assert!(addr.is_valid_client_address());
         assert_eq!(addr.0, 0x0E00);
         assert_eq!(addr, LogicalAddress(0x0E00));
         assert_eq!(addr, 0x0E00);

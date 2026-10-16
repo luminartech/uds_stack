@@ -133,7 +133,7 @@ The traits
    ``[u8; S::MAX_REQUEST]`` for ``S: SomeService`` is rejected without the unstable
    ``generic_const_exprs``, so no blanket impl and no generic function anywhere in this
    crate can fold a service's declared maximum into a buffer. At the macro's expansion site
-   the types are concrete — ``<Ecu as DataTransfer>::MAX_BLOCK_LENGTH`` is an ordinary
+   the types are concrete — ``<Ecu as DataTransfer>::MAX_BLOCK_LEN`` is an ordinary
    const — and folding a list of them into an array length is stable Rust with nothing
    unusual about it. That is why the macro exists where a blanket impl would otherwise
    serve, and it is what lets ``UDSSVC_ARCH_0017``'s buffers be sized without the
@@ -449,9 +449,9 @@ Protocol state
    different times — one at compile time in the array length, one per request from a handler
    — with nothing obliging them to match, and a handler advertising more than the buffer
    holds produces a client that sends a block the server structurally cannot receive. As
-   ``DataTransfer::MAX_BLOCK_LENGTH`` the fact is declared once and folded into the buffer,
+   ``DataTransfer::MAX_BLOCK_LEN`` the fact is declared once and folded into the buffer,
    so ``begin`` returns nothing. The ``RequestDownload`` response advertises
-   ``MAX_BLOCK_LENGTH + 2``, because 15.2.3.2's number counts the service identifier and
+   ``MAX_BLOCK_LEN + 2``, because 15.2.3.2's number counts the service identifier and
    the block sequence counter, which the const excludes.
 
    **Direction is carried by ``TransferRequest`` rather than by a separate field**, which is

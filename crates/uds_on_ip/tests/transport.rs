@@ -16,7 +16,7 @@ use simple_doip::LogicalAddress;
 use simple_doip::service::{ConnectionId, DoIpResult, Refusal};
 use support::{Fault, MockEntity, TESTER, Tester, Wire, block_on, poll_once_and_drop};
 use uds_on_ip::profile::bench_reloads;
-use uds_on_ip::{DoIpTransport, Error};
+use uds_on_ip::{DoIpTransport, DoIpTransportError};
 use uds_services::{
     Address, AfterSend, Ai, Mtype, SResult, TaType, TransportEvent, UdsTransport,
 };
@@ -102,6 +102,7 @@ impl From<TransportEvent<'_>> for Seen {
                 Self::Bare(TransportEvent::Closed { peer, expected })
             }
             TransportEvent::Deadline => Self::Bare(TransportEvent::Deadline),
+            other => panic!("an event this test does not model: {other:?}"),
         }
     }
 }
@@ -261,6 +262,53 @@ fn a_positive_reset_response_closes_the_connection_after_its_confirmation() {
             Wire::Data(CONNECTION, vec![0x51, 0x01]),
             Wire::Close(CONNECTION),
         ]
+    );
+}
+
+/// REQ 7.11 — a suppressed `ECUReset` sends nothing to close after, so the transport
+/// closes the tester's connection when the server says it is restarting.
+#[test]
+fn restarting_closes_the_tester_after_a_suppressed_reset() {
+    let mut t = indicated(&[0x11, 0x81]);
+    block_on(UdsTransport::restarting(&mut t));
+    assert_eq!(t.entity().wire, [Wire::Close(CONNECTION)]);
+}
+
+/// After a positive reset the connection already closed on the response's
+/// confirmation, so restarting closes nothing more.
+#[test]
+fn restarting_after_a_positive_reset_closes_nothing_more() {
+    let mut t = indicated(&[0x11, 0x01]);
+    respond(&mut t, &[0x51, 0x01]);
+    next(&mut t);
+    block_on(UdsTransport::restarting(&mut t));
+    assert_eq!(
+        t.entity().wire,
+        [
+            Wire::Data(CONNECTION, vec![0x51, 0x01]),
+            Wire::Close(CONNECTION),
+        ]
+    );
+}
+
+/// A tester with a message unconfirmed keeps its connection, so the confirmation owed
+/// to the driver still arrives.
+#[test]
+fn restarting_leaves_a_tester_owed_a_confirmation() {
+    let mut t = indicated(&[0x22, 0xF1, 0x90]);
+    respond(&mut t, &[0x7F, 0x22, 0x31]);
+    block_on(UdsTransport::restarting(&mut t));
+    assert!(!t.entity().wire.contains(&Wire::Close(CONNECTION)));
+    assert_eq!(
+        next(&mut t),
+        TransportEvent::DataConf {
+            ai: response_ai(),
+            result: SResult::Ok,
+        }
+    );
+    assert_eq!(
+        t.entity().wire,
+        [Wire::Data(CONNECTION, vec![0x7F, 0x22, 0x31])]
     );
 }
 
@@ -505,7 +553,7 @@ fn a_refusal_beyond_those_held_is_an_error() {
     let error = block_on(t.t_data_req(response_ai(), &[0x7E, 0x00], AfterSend::Continue))
         .unwrap_err();
     assert!(
-        matches!(error, Error::Refused(Refusal::NoRoom)),
+        matches!(error, DoIpTransportError::Refused(Refusal::NoRoom)),
         "{error:?}"
     );
 }
@@ -543,7 +591,7 @@ fn assert_nothing_follows(t: &mut Transport<1>) {
     let mut buffer = [0u8; 16];
     assert!(matches!(
         block_on(t.next_event(&mut buffer, None)),
-        Err(Error::Entity(Fault::Exhausted))
+        Err(DoIpTransportError::Entity(Fault::Exhausted))
     ));
 }
 
@@ -710,7 +758,7 @@ fn a_pdu_outside_the_lent_buffer_is_an_error() {
     let mut buffer = [0u8; 16];
     assert!(matches!(
         block_on(t.next_event(&mut buffer, None)),
-        Err(Error::PduOutsideBuffer)
+        Err(DoIpTransportError::PduOutsideBuffer)
     ));
 }
 
@@ -723,7 +771,7 @@ fn a_close_with_no_known_tester_is_not_reported() {
     let mut buffer = [0u8; 16];
     assert!(matches!(
         block_on(t.next_event(&mut buffer, None)),
-        Err(Error::Entity(Fault::Exhausted))
+        Err(DoIpTransportError::Entity(Fault::Exhausted))
     ));
 }
 
@@ -776,12 +824,12 @@ fn a_remote_message_type_is_refused_before_the_entity() {
         ..response_ai()
     };
     let error = block_on(t.t_data_req(remote, &[0x62], AfterSend::Continue)).unwrap_err();
-    assert!(matches!(error, Error::Mapping(_)), "{error:?}");
+    assert!(matches!(error, DoIpTransportError::Mapping(_)), "{error:?}");
     let mut buffer = [0u8; 16];
     assert!(
         matches!(
             block_on(t.next_event(&mut buffer, None)),
-            Err(Error::Entity(Fault::Exhausted))
+            Err(DoIpTransportError::Entity(Fault::Exhausted))
         ),
         "no confirmation follows a refused request"
     );

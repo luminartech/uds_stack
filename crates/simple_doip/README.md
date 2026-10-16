@@ -80,7 +80,7 @@ fn main() -> Result<(), MessageError> {
     let (frame, consumed) = try_frame(&buf)?.expect("buffer holds a complete frame");
     assert_eq!(consumed, 9);
 
-    let payload = Payload::decode(frame.payload, frame.header.payload_type)?;
+    let payload = Payload::decode(frame.payload, frame.header.payload_type())?;
     assert!(matches!(payload, Payload::DoIPNack(_)));
     Ok(())
 }
@@ -94,8 +94,8 @@ The protocol core is `no_std` and zero-copy by default. Everything that pulls in
 | Feature  | Enables                                                   | Depends on                        |
 |----------|------------------------------------------------------------|------------------------------------|
 | `alloc`  | Allocator-backed helpers                                    | —                                   |
-| `std`    | `std`-backed I/O and error traits                            | `alloc`                            |
-| `codec`  | The tokio-util `Encoder`/`Decoder` for DoIP frames           | `std`, `tokio`, `tokio-util`, `bytes` |
+| `std`    | `MessageError::Std` and its conversion from `std::io::Error` | `alloc`                            |
+| `codec`  | The tokio-util `Encoder`/`Decoder` for DoIP frames           | `std`, `tokio-util`, `bytes`, `tracing` |
 | `connection` | The `no_std` tester and entity, `tester::Tester` and `entity::Entity`, over `edge-nal` | `edge-nal`, `embedded-io-async`, `embassy-time`, `embassy-futures` |
 
 `default = []`, so bare-metal / embedded targets should build with

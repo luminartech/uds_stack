@@ -47,12 +47,12 @@ use driver::{Answered, Book, Exchange};
 use crate::UdsTransport;
 use uds_protocol::{
     AddressAndLengthFormatIdentifier, ClearDiagnosticInfoResponse,
-    CommunicationControlResponse, CommunicationControlType, CommunicationType,
-    ControlDtcSettingResponse, DataFormatIdentifier, DtcRecord, DtcSettingType,
-    EcuResetResponse, NegativeResponseCode, ReadDtcInfoResponse, ReadDtcInfoSubFunction,
+    CommunicationControlRequest, CommunicationControlResponse, ControlDtcSettingResponse,
+    DataFormatIdentifier, DtcRecord, DtcSettingType, EcuResetResponse,
+    NegativeResponseCode, ReadDtcInfoResponse, ReadDtcInfoSubFunction,
     RequestDownloadRequest, RequestDownloadResponse, RequestTransferExitResponse,
     ResetType, RoutineControlResponse, RoutineControlSubFunction, SecurityAccessResponse,
-    SubnetNumber, TransferDataResponse, WriteDataByIdentifierResponse,
+    TransferDataResponse, WriteDataByIdentifierResponse,
 };
 use uds_session::{
     Address, ChannelAddressing, ChannelParameter, ChannelParams, ClientTx,
@@ -60,38 +60,168 @@ use uds_session::{
     PhysicalKeepAlive, Rejection, Reloads, Timestamp,
 };
 
+/// The length of the keep-alive a client sends, a `TesterPresent` with its positive
+/// response suppressed: what a transport sets aside for one behind each request.
+pub const KEEP_ALIVE_LEN: usize = encode::KEEP_ALIVE.len();
+
 /// One application's identifier vocabulary, with the storage derived from it.
 ///
 /// ``UDSSVC_ARCH_0013`` for the client half — implemented by [`crate::uds_client`],
-/// never by hand. It is implemented on the *identifier enumeration* rather than on an
-/// application type, because unlike a server a client has no handler state: the
-/// identifiers are the only thing the application declares, and they are what the buffer
-/// lengths are folded from.
+/// never by hand, on the marker type it declares in the invoking crate. The identifier
+/// enumerations, [`Self::Did`] and [`Self::Routine`], may live in any crate: a client has
+/// no handler state, so they and its [`ClientLimits`] are all the application declares,
+/// and they are what the buffer lengths are folded from.
 ///
 /// Sealed through [`crate::sealed`], for the reason
 /// [`ServiceSet`](crate::ServiceSet) is: the derivation argument holds only while the
 /// macro is what chooses [`Self::Store`]'s lengths.
-pub trait ClientSet: DataIdentifier + crate::sealed::Sealed {
-    /// The storage whose lengths were folded from this vocabulary's declared maxima.
-    type Store: ClientStorage;
-    /// The most identifiers one `ReadDataByIdentifier` request names, declared through
-    /// [`crate::uds_client`]'s `max_dids_per_request`.
-    const MAX_DIDS_PER_REQUEST: usize;
-    /// The longest `SecurityAccess` key [`Client::security_access_key`] sends, declared
-    /// through [`crate::uds_client`]'s `max_key_len`.
-    const MAX_KEY_LEN: usize;
-    /// The longest option or parameter record [`Client::routine_control`],
-    /// [`Client::control_dtc_setting`] and [`Client::request_transfer_exit`] send,
-    /// declared through [`crate::uds_client`]'s `max_option_len`.
-    const MAX_OPTION_LEN: usize;
-    /// The most data bytes one `TransferData` block carries, declared through
-    /// [`crate::uds_client`]'s `max_block_len`: at least the server's
-    /// `maxNumberOfBlockLength` minus two, or a full block cannot be sent; see
-    /// [`Client::request_download`].
-    const MAX_BLOCK_LEN: usize;
+pub trait ClientSet: crate::sealed::Sealed {
+    /// The data identifiers the client's requests name, declared as
+    /// [`crate::uds_client`]'s leading type.
+    type Did: DataIdentifier;
     /// The routine vocabulary the client's `RoutineControl` requests name, declared
     /// through [`crate::uds_client`]'s `routines`; see [`Client::routine_control`].
     type Routine: RoutineIdentifier;
+    /// The storage whose lengths were folded from this vocabulary and [`Self::LIMITS`].
+    #[doc(hidden)]
+    type Store: ClientStorage;
+    /// The limits declared through [`crate::uds_client`]'s `limits`.
+    const LIMITS: ClientLimits;
+}
+
+/// The most a client's requests carry and its responses hold, beyond what its
+/// identifier vocabularies declare.
+///
+/// [`crate::uds_client`] folds the client's buffers from these. Built in a `const` from
+/// [`Self::new`] and its setters, and read back through the field each setter sets. A
+/// limit not set keeps its default, which carries nothing beyond the smallest request:
+/// one identifier per read, and no seed, key, option record, DTC record or transfer
+/// block.
+///
+/// A limit a request carries bounds it: a call given more is [`ClientError::Request`],
+/// and nothing is sent. A response longer than the response buffer is
+/// [`MalformedResponse::Overlong`]; every response buffer holds at least the widest
+/// fixed-size response, so a limit of zero does not refuse a short payload outright.
+///
+/// # Examples
+///
+/// ```
+/// use uds_services::ClientLimits;
+///
+/// const LIMITS: ClientLimits = ClientLimits::new()
+///     .max_dids_per_request(4)
+///     .max_seed_len(8)
+///     .max_key_len(8);
+/// assert_ne!(LIMITS, ClientLimits::new());
+/// ```
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct ClientLimits {
+    /// Set by [`Self::max_dids_per_request`].
+    pub max_dids_per_request: usize,
+    /// Set by [`Self::max_dtcs`].
+    pub max_dtcs: usize,
+    /// Set by [`Self::max_dtc_record_len`].
+    pub max_dtc_record_len: usize,
+    /// Set by [`Self::max_seed_len`].
+    pub max_seed_len: usize,
+    /// Set by [`Self::max_key_len`].
+    pub max_key_len: usize,
+    /// Set by [`Self::max_option_len`].
+    pub max_option_len: usize,
+    /// Set by [`Self::max_block_len`].
+    pub max_block_len: usize,
+}
+
+impl ClientLimits {
+    /// Every limit at its default: one identifier per read, and nothing else carried.
+    #[must_use]
+    pub const fn new() -> Self {
+        Self {
+            max_dids_per_request: 1,
+            max_dtcs: 0,
+            max_dtc_record_len: 0,
+            max_seed_len: 0,
+            max_key_len: 0,
+            max_option_len: 0,
+            max_block_len: 0,
+        }
+    }
+
+    /// The most identifiers one `ReadDataByIdentifier` request names.
+    #[must_use]
+    pub const fn max_dids_per_request(self, n: usize) -> Self {
+        Self {
+            max_dids_per_request: n,
+            ..self
+        }
+    }
+
+    /// The most DTC records one `ReadDTCInformation` list response carries.
+    #[must_use]
+    pub const fn max_dtcs(self, n: usize) -> Self {
+        Self {
+            max_dtcs: n,
+            ..self
+        }
+    }
+
+    /// The most record bytes one `ReadDTCInformation` snapshot or extended data response
+    /// carries after its six-byte header.
+    #[must_use]
+    pub const fn max_dtc_record_len(self, n: usize) -> Self {
+        Self {
+            max_dtc_record_len: n,
+            ..self
+        }
+    }
+
+    /// The longest `SecurityAccess` seed a response holds.
+    #[must_use]
+    pub const fn max_seed_len(self, n: usize) -> Self {
+        Self {
+            max_seed_len: n,
+            ..self
+        }
+    }
+
+    /// The longest `SecurityAccess` key [`Client::security_access_key`] sends.
+    #[must_use]
+    pub const fn max_key_len(self, n: usize) -> Self {
+        Self {
+            max_key_len: n,
+            ..self
+        }
+    }
+
+    /// The longest option or parameter record [`Client::routine_control`],
+    /// [`Client::control_dtc_setting`] and [`Client::request_transfer_exit`] send, and
+    /// the longest transfer-exit parameter record a response holds.
+    #[must_use]
+    pub const fn max_option_len(self, n: usize) -> Self {
+        Self {
+            max_option_len: n,
+            ..self
+        }
+    }
+
+    /// The most data bytes one `TransferData` block carries, its service identifier and
+    /// block sequence counter not counted: at least the server's
+    /// `maxNumberOfBlockLength` minus two, or a full block cannot be sent; see
+    /// [`Client::request_download`].
+    #[must_use]
+    pub const fn max_block_len(self, n: usize) -> Self {
+        Self {
+            max_block_len: n,
+            ..self
+        }
+    }
+}
+
+impl Default for ClientLimits {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 /// Why a call produced no response.
@@ -115,12 +245,60 @@ pub enum ClientError<E> {
     Closed,
     /// Every channel slot was in use, and none was idle enough to withdraw.
     NoChannel,
-    /// The request could not be formed or does not fit the request buffer: it names no
-    /// identifier or more than the client's `max_dids_per_request`, a record is empty
-    /// where the service requires one, a node identifier disagrees with the control
-    /// type, or an address is wider than its format admits. Nothing was sent.
-    Request,
+    /// The request could not be formed; see [`RequestError`]. Nothing was sent.
+    Request(RequestError),
 }
+
+/// Why a request could not be formed. Nothing was sent.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum RequestError {
+    /// A `ReadDataByIdentifier` named no identifier.
+    NoIdentifiers,
+    /// A `ReadDataByIdentifier` named more identifiers than
+    /// [`ClientLimits::max_dids_per_request`].
+    TooManyIdentifiers {
+        /// The limit it exceeded.
+        max: usize,
+    },
+    /// A `WriteDataByIdentifier` record was empty.
+    EmptyRecord,
+    /// An input was longer than its declared maximum: a record than
+    /// [`DataIdentifier::MAX_RECORD_LEN`], or a key, option record or block than its
+    /// [`ClientLimits`] maximum.
+    ExceedsLimit {
+        /// The input's length.
+        len: usize,
+        /// The maximum it exceeded.
+        max: usize,
+    },
+    /// A `memoryAddress` or `memorySize` was wider than the
+    /// [`AddressAndLengthFormatIdentifier`] given for it.
+    ExceedsFormat,
+    /// The request did not fit the request buffer.
+    DoesNotFit,
+}
+
+impl core::fmt::Display for RequestError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::NoIdentifiers => f.write_str("no identifier was named"),
+            Self::TooManyIdentifiers { max } => {
+                write!(f, "more identifiers than the {max} a request may carry")
+            }
+            Self::EmptyRecord => f.write_str("the record is empty"),
+            Self::ExceedsLimit { len, max } => {
+                write!(f, "an input of {len} bytes exceeds its maximum of {max}")
+            }
+            Self::ExceedsFormat => {
+                f.write_str("the address or size is wider than its format declares")
+            }
+            Self::DoesNotFit => f.write_str("the request does not fit the request buffer"),
+        }
+    }
+}
+
+impl core::error::Error for RequestError {}
 
 impl<E: core::fmt::Debug> core::fmt::Display for ClientError<E> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
@@ -130,9 +308,7 @@ impl<E: core::fmt::Debug> core::fmt::Display for ClientError<E> {
             Self::NotSent => f.write_str("the request could not be sent"),
             Self::Closed => f.write_str("the connection closed before the response"),
             Self::NoChannel => f.write_str("no channel slot is free"),
-            Self::Request => {
-                f.write_str("the request could not be formed, or does not fit")
-            }
+            Self::Request(error) => write!(f, "the request could not be formed: {error}"),
         }
     }
 }
@@ -282,7 +458,7 @@ impl KeepAlive<FunctionalKeepAlive> {
 /// client rather than the transport, in milliseconds, and the ceiling on 9.7 Table 9's
 /// response-timeout repeat.
 ///
-/// Built with [`Self::new`]; it may gain fields.
+/// Built with [`Self::new`] and the same-named setters; it may gain fields.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub struct ClientTiming {
@@ -317,34 +493,53 @@ pub struct ClientTiming {
 }
 
 impl ClientTiming {
-    /// A timing policy.
+    /// ISO 14229-2:2021 Table 4's recommended `tP2_Server_Max`, in milliseconds, which
+    /// [`Self::new`] adds to the network delay for each spacing's default.
+    pub const RECOMMENDED_P2_SERVER_MAX: u32 = 50;
+
+    /// A timing policy for a network whose `ΔtP6` is `network_delay`.
+    ///
+    /// Each spacing is Table 4's minimum for a server answering in the recommended
+    /// window, [`Self::RECOMMENDED_P2_SERVER_MAX`] plus `network_delay`;
+    /// [`Self::physical_spacing`] and [`Self::functional_spacing`] set another. And
+    /// [`Self::repeats`] is [`Repeats::Twice`].
     ///
     /// # Arguments
     ///
-    /// * `physical_spacing` - see [`Self::physical_spacing`].
-    /// * `functional_spacing` - see [`Self::functional_spacing`].
     /// * `network_delay` - see [`Self::network_delay`].
-    ///
-    /// [`Self::repeats`] is [`Repeats::Twice`]; [`Self::with_repeats`] overrides it.
     #[must_use]
-    pub const fn new(
-        physical_spacing: u32,
-        functional_spacing: u32,
-        network_delay: u32,
-    ) -> Self {
+    pub const fn new(network_delay: u32) -> Self {
+        let spacing = Self::RECOMMENDED_P2_SERVER_MAX.saturating_add(network_delay);
         Self {
-            physical_spacing,
-            functional_spacing,
+            physical_spacing: spacing,
+            functional_spacing: spacing,
             network_delay,
             repeats: Repeats::Twice,
         }
     }
 
+    /// This policy with [`Self::physical_spacing`] set to `ms`.
+    #[must_use]
+    pub const fn physical_spacing(self, ms: u32) -> Self {
+        Self {
+            physical_spacing: ms,
+            ..self
+        }
+    }
+
+    /// This policy with [`Self::functional_spacing`] set to `ms`.
+    #[must_use]
+    pub const fn functional_spacing(self, ms: u32) -> Self {
+        Self {
+            functional_spacing: ms,
+            ..self
+        }
+    }
+
     /// This policy with [`Self::repeats`] set to `repeats`.
     #[must_use]
-    pub const fn with_repeats(mut self, repeats: Repeats) -> Self {
-        self.repeats = repeats;
-        self
+    pub const fn repeats(self, repeats: Repeats) -> Self {
+        Self { repeats, ..self }
     }
 }
 
@@ -416,8 +611,9 @@ impl From<RecordError> for MalformedResponse {
 
 /// What one server said.
 ///
-/// ``UDSSVC_ARCH_0021`` and ``UDSSVC_ARCH_0023`` — three cases, and none is an error.
+/// ``UDSSVC_ARCH_0021`` — three cases, and none is an error.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum Response<V> {
     /// A positive response, decoded.
     Positive(V),
@@ -430,13 +626,6 @@ pub enum Response<V> {
     /// Not an error, for the reason [`Answer::Malformed`] is not: the server answered and
     /// the transport delivered it intact.
     Malformed(MalformedResponse),
-    /// The exchange completed and nothing came back, as a request with the suppress bit
-    /// set expects. Distinct from a timeout, because a timeout is a fault and suppression
-    /// is not.
-    ///
-    /// No call returns this yet: none sets the suppress bit, and a silent functional
-    /// window ends a [`Responses`] instead.
-    NoResponseExpected,
 }
 
 impl<V> Response<V> {
@@ -446,7 +635,6 @@ impl<V> Response<V> {
             Self::Positive(value) => Response::Positive(f(value)),
             Self::Negative(code) => Response::Negative(code),
             Self::Malformed(error) => Response::Malformed(error),
-            Self::NoResponseExpected => Response::NoResponseExpected,
         }
     }
 
@@ -470,6 +658,7 @@ impl<V> Response<V> {
 /// silent produces no answer at all, which is the response window closing rather than a
 /// value to match on.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum Answer<'d, D: DataIdentifier> {
     /// A positive response, its records already validated against this vocabulary.
     Positive {
@@ -487,7 +676,7 @@ pub enum Answer<'d, D: DataIdentifier> {
         code: NegativeResponseCode,
     },
     /// A positive response whose bytes do not parse against this application's
-    /// identifiers.
+    /// identifiers, or that carries a record the request did not ask for.
     ///
     /// Not a [`UdsTransport::Error`]: the transport delivered the message intact and the
     /// server answered. What failed is the agreement about what the bytes mean, which is
@@ -541,6 +730,8 @@ pub struct Responses<
     client: &'c mut Client<C, T, K, PHYS, FUNC, R>,
     /// Why the request could not be made, reported by the first [`Self::next`].
     refused: Option<ClientError<T::Error>>,
+    /// How many identifiers the request names.
+    asked: usize,
 }
 
 impl<
@@ -574,7 +765,9 @@ impl<
     ///
     /// As [`Client::read_data_by_identifier`]'s. Dropping this `Responses` part-way is
     /// safe too: the next call on the client drains what is left of the window first.
-    pub async fn next(&mut self) -> Option<Result<Answer<'_, C>, ClientError<T::Error>>> {
+    pub async fn next(
+        &mut self,
+    ) -> Option<Result<Answer<'_, C::Did>, ClientError<T::Error>>> {
         if let Some(error) = self.refused.take() {
             return Some(Err(error));
         }
@@ -586,10 +779,132 @@ impl<
             Ok(answered) => answered,
             Err(error) => return Some(Err(error)),
         };
-        let message = answered_bytes(&mut self.client.store, &answered);
+        let (asked, message) = answered_read(&mut self.client.store, &answered, self.asked);
         let answer = encode::final_response(message, answered.arrived);
-        Some(Ok(encode::answer(answered.from, answer)))
+        Some(Ok(encode::answer(answered.from, answer, asked)))
     }
+}
+
+/// One server's answer to a functionally addressed request whose positive response
+/// carries nothing to read, such as [`Client::control_dtc_setting_functional`]'s.
+///
+/// ``UDSSVC_ARCH_0022`` — each responding server sets its own source address, so every
+/// variant carries one. A server that stays silent produces no reply at all.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum Reply {
+    /// A positive response.
+    Positive {
+        /// The responding server's `S_AI[SA]`.
+        from: Address,
+    },
+    /// A negative response. Not an error: a server answering `serviceNotSupported` has
+    /// answered.
+    Negative {
+        /// The responding server's `S_AI[SA]`.
+        from: Address,
+        /// What it declined with.
+        code: NegativeResponseCode,
+    },
+    /// A positive response whose bytes do not parse.
+    Malformed {
+        /// The responding server's `S_AI[SA]`.
+        from: Address,
+        /// Why it could not be read.
+        error: MalformedResponse,
+    },
+}
+
+impl Reply {
+    /// The responding server's `S_AI[SA]`, whichever reply this is.
+    #[must_use]
+    pub const fn from(&self) -> Address {
+        match self {
+            Self::Positive { from }
+            | Self::Negative { from, .. }
+            | Self::Malformed { from, .. } => *from,
+        }
+    }
+}
+
+/// The replies to one functionally addressed request whose positive response carries
+/// nothing to read; [`Responses`]' counterpart for such a service. Each reply is read
+/// against the service the call that made this sequence sent.
+///
+/// The request goes out on the first [`Self::next`]. The request in progress is recorded
+/// in the [`Client`], not here, so dropping this part-way is safe: the client's next call
+/// drains what is left of the window before anything else.
+#[derive(Debug)]
+#[must_use = "an undrained sequence discards the replies the request produced"]
+pub struct Replies<
+    'c,
+    C: ClientSet,
+    T: ClientTransport,
+    K: ClientKeepAlive,
+    const PHYS: usize,
+    const FUNC: usize,
+    const R: usize = 0,
+> {
+    client: &'c mut Client<C, T, K, PHYS, FUNC, R>,
+    /// Why the request could not be made, reported by the first [`Self::next`].
+    refused: Option<ClientError<T::Error>>,
+    /// Reads a positive response as the request's service.
+    decode: fn(encode::Final<'_>) -> Response<()>,
+}
+
+impl<
+    C: ClientSet,
+    T: ClientTransport,
+    K: ClientKeepAlive,
+    const PHYS: usize,
+    const FUNC: usize,
+    const R: usize,
+> Replies<'_, C, T, K, PHYS, FUNC, R>
+{
+    /// The next reply, or `None` when the response window has closed.
+    ///
+    /// The first call sends the request. The window closes one response timeout after
+    /// the last reply, or after the request's confirmation where none came; a
+    /// response-pending message holds it open and is not a reply. A positive response
+    /// echoing another sub-function than the request's is an earlier request's late
+    /// reply, and is not a reply to this one.
+    ///
+    /// # Errors
+    ///
+    /// As [`Responses::next`]'s.
+    ///
+    /// # Cancel safety
+    ///
+    /// As [`Responses::next`]'s.
+    pub async fn next(&mut self) -> Option<Result<Reply, ClientError<T::Error>>> {
+        if let Some(error) = self.refused.take() {
+            return Some(Err(error));
+        }
+        if let Err(error) = self.client.drain_window().await {
+            self.client.exchange = None;
+            return Some(Err(error));
+        }
+        let answered = match self.client.advance().await? {
+            Ok(answered) => answered,
+            Err(error) => return Some(Err(error)),
+        };
+        let from = answered.from;
+        let message = answered_bytes(&mut self.client.store, &answered);
+        let reply = match (self.decode)(encode::final_response(message, answered.arrived)) {
+            Response::Positive(()) => Reply::Positive { from },
+            Response::Negative(code) => Reply::Negative { from, code },
+            Response::Malformed(error) => Reply::Malformed { from, error },
+        };
+        Some(Ok(reply))
+    }
+}
+
+/// [`Replies`]' reading of a positive response as `R`.
+fn reply_as<R>(answer: encode::Final<'_>) -> Response<()>
+where
+    for<'d> R: uds_protocol::Decode<'d, Error = uds_protocol::Error>,
+{
+    encode::decoded::<R>(answer).map(|_| ())
 }
 
 /// The identifier/record pairs in one `ReadDataByIdentifier` response.
@@ -794,12 +1109,15 @@ impl<
     /// window, which [`Self::diagnostic_session_control`] sets from the server's own
     /// `P2*Server_max` and [`ClientTiming::network_delay`]. A response longer than the
     /// client's buffer is [`Response::Malformed`] with [`MalformedResponse::Overlong`].
+    /// A positive response may leave out identifiers the server does not support; one
+    /// carrying an identifier not in `identifiers`, or more often than it appears there,
+    /// is [`Response::Malformed`] with [`MalformedResponse::Echo`].
     ///
     /// # Arguments
     ///
     /// * `target` - the server's `S_AI[TA]`.
     /// * `identifiers` - what to read, at least one and at most the client's
-    ///   `max_dids_per_request` (see [`crate::uds_client`]).
+    ///   [`ClientLimits::max_dids_per_request`].
     ///
     /// # Errors
     ///
@@ -816,16 +1134,14 @@ impl<
     ///
     /// # Cancel safety
     ///
-    /// Cancel-safe at every await but the transport's own
-    /// [`UdsTransport::t_data_req`]: the exchange is recorded in the client, and the next
-    /// call resets its channel. A future dropped inside `t_data_req` may leave a
-    /// transmission whose confirmation never comes, which nothing but the transport can
-    /// clear.
+    /// Cancel-safe: the exchange is recorded in the client, and the next call resets its
+    /// channel. A request the transport accepted is confirmed after that, which matches
+    /// nothing, as [`UdsTransport`]'s obligations make it.
     pub async fn read_data_by_identifier(
         &mut self,
         target: Address,
-        identifiers: &[C],
-    ) -> Result<Response<Records<'_, C>>, ClientError<T::Error>> {
+        identifiers: &[C::Did],
+    ) -> Result<Response<Records<'_, C::Did>>, ClientError<T::Error>> {
         let answered = self
             .exchange_with(
                 target,
@@ -833,17 +1149,17 @@ impl<
                     encode::read_data_by_identifier(
                         request,
                         identifiers,
-                        C::MAX_DIDS_PER_REQUEST,
+                        C::LIMITS.max_dids_per_request,
                     )
                 },
                 None,
             )
             .await?;
-        let message = answered_bytes(&mut self.store, &answered);
-        Ok(encode::records(encode::final_response(
-            message,
-            answered.arrived,
-        )))
+        let (asked, message) = answered_read(&mut self.store, &answered, identifiers.len());
+        Ok(encode::records(
+            encode::final_response(message, answered.arrived),
+            asked,
+        ))
     }
 
     /// Change one server's diagnostic session.
@@ -929,14 +1245,14 @@ impl<
     pub async fn write_data_by_identifier(
         &mut self,
         target: Address,
-        did: C,
+        did: C::Did,
         record: &[u8],
     ) -> Result<Response<()>, ClientError<T::Error>> {
         let answered = self
             .exchange_with(
                 target,
                 |request| {
-                    within(record.len(), C::MAX_RECORD_LEN)?;
+                    within(record.len(), <C::Did as DataIdentifier>::MAX_RECORD_LEN)?;
                     encode::write_data_by_identifier(request, did, record)
                 },
                 None,
@@ -1045,8 +1361,9 @@ impl<
     ///
     /// # Errors
     ///
-    /// [`ClientError::Request`] where `key` is longer than [`ClientSet::MAX_KEY_LEN`], and
-    /// nothing is sent; otherwise as [`Self::read_data_by_identifier`]'s.
+    /// [`ClientError::Request`] where `key` is longer than
+    /// [`ClientLimits::max_key_len`], and nothing is sent; otherwise as
+    /// [`Self::read_data_by_identifier`]'s.
     ///
     /// A repeated key (under [`ClientTiming::repeats`]), whatever answer was lost, reaches
     /// a server with no seed outstanding, since a key of valid length discards the seed
@@ -1067,7 +1384,7 @@ impl<
             .exchange_with(
                 target,
                 |request| {
-                    within(key.len(), C::MAX_KEY_LEN)?;
+                    within(key.len(), C::LIMITS.max_key_len)?;
                     encode::security_access_key(request, level, key)
                 },
                 None,
@@ -1099,7 +1416,7 @@ impl<
     /// # Errors
     ///
     /// [`ClientError::Request`] where the record is longer than
-    /// [`ClientSet::MAX_OPTION_LEN`], and nothing is sent; otherwise as
+    /// [`ClientLimits::max_option_len`], and nothing is sent; otherwise as
     /// [`Self::read_data_by_identifier`]'s. A positive response echoing another
     /// routine's identifier is [`MalformedResponse::Echo`].
     ///
@@ -1117,7 +1434,7 @@ impl<
             .exchange_with(
                 target,
                 |request| {
-                    within(option_record.len(), C::MAX_OPTION_LEN)?;
+                    within(option_record.len(), C::LIMITS.max_option_len)?;
                     encode::routine_control(request, control, routine, option_record)
                 },
                 None,
@@ -1229,16 +1546,14 @@ impl<
     /// # Arguments
     ///
     /// * `target` - the server's address.
-    /// * `control` - what to enable or disable.
-    /// * `communication` - which messages it applies to.
-    /// * `subnet` - which subnet, or all.
-    /// * `node_id` - the node, for the two enhanced-address control types only.
+    /// * `control` - the request, built by [`CommunicationControlRequest::new`] or, for
+    ///   an enhanced-address control type,
+    ///   [`CommunicationControlRequest::new_with_node_id`]. Its suppress bit is ignored: a
+    ///   call awaits the response.
     ///
     /// # Errors
     ///
-    /// [`ClientError::Request`] where `node_id` is given for a plain control type or
-    /// missing for an enhanced-address one; otherwise as
-    /// [`Self::read_data_by_identifier`]'s.
+    /// As [`Self::read_data_by_identifier`]'s.
     ///
     /// # Cancel safety
     ///
@@ -1246,23 +1561,12 @@ impl<
     pub async fn communication_control(
         &mut self,
         target: Address,
-        control: CommunicationControlType,
-        communication: CommunicationType,
-        subnet: SubnetNumber,
-        node_id: Option<u16>,
+        control: CommunicationControlRequest,
     ) -> Result<Response<()>, ClientError<T::Error>> {
         let answered = self
             .exchange_with(
                 target,
-                |request| {
-                    encode::communication_control(
-                        request,
-                        control,
-                        communication,
-                        subnet,
-                        node_id,
-                    )
-                },
+                |request| encode::communication_control(request, control, false),
                 None,
             )
             .await?;
@@ -1287,7 +1591,7 @@ impl<
     /// # Errors
     ///
     /// [`ClientError::Request`] where the record is longer than
-    /// [`ClientSet::MAX_OPTION_LEN`], and nothing is sent; otherwise as
+    /// [`ClientLimits::max_option_len`], and nothing is sent; otherwise as
     /// [`Self::read_data_by_identifier`]'s.
     ///
     /// # Cancel safety
@@ -1303,7 +1607,7 @@ impl<
             .exchange_with(
                 target,
                 |request| {
-                    within(option_record.len(), C::MAX_OPTION_LEN)?;
+                    within(option_record.len(), C::LIMITS.max_option_len)?;
                     encode::control_dtc_setting(request, setting, option_record)
                 },
                 None,
@@ -1331,7 +1635,7 @@ impl<
     /// required to accept transferData requests that are equal in length to its reported
     /// maxNumberOfBlockLength. It is server specific what transferData request lengths
     /// less than maxNumberOfBlockLength are accepted (if any)." A block longer than the
-    /// client's [`ClientSet::MAX_BLOCK_LEN`] cannot be sent.
+    /// client's [`ClientLimits::max_block_len`] cannot be sent.
     ///
     /// The client keeps no transfer state: the caller owns the block sequence counter
     /// and its roll from `0xFF` to `0x00`.
@@ -1341,13 +1645,12 @@ impl<
     /// * `target` - the server's address.
     /// * `data_format` - compression and encryption, [`DataFormatIdentifier::NONE`] for
     ///   neither.
-    /// * `address` - `memoryAddress`, up to five bytes wide.
+    /// * `address` - `memoryAddress`.
     /// * `size` - `memorySize`.
     ///
     /// # Errors
     ///
-    /// [`ClientError::Request`] where `address` is wider than five bytes; otherwise as
-    /// [`Self::read_data_by_identifier`]'s. A block length that is empty or wider than
+    /// As [`Self::read_data_by_identifier`]'s. A block length that is empty or wider than
     /// eight bytes is [`MalformedResponse::Decode`].
     ///
     /// # Cancel safety
@@ -1358,9 +1661,9 @@ impl<
         target: Address,
         data_format: DataFormatIdentifier,
         address: u64,
-        size: u32,
+        size: u64,
     ) -> Result<Response<u64>, ClientError<T::Error>> {
-        let download = RequestDownloadRequest::new(data_format, address, size).ok();
+        let download = Ok(RequestDownloadRequest::new(data_format, address, size));
         self.download(target, download).await
     }
 
@@ -1392,19 +1695,20 @@ impl<
         data_format: DataFormatIdentifier,
         format: AddressAndLengthFormatIdentifier,
         address: u64,
-        size: u32,
+        size: u64,
     ) -> Result<Response<u64>, ClientError<T::Error>> {
         let download =
-            RequestDownloadRequest::new_with_alfid(data_format, format, address, size).ok();
+            RequestDownloadRequest::new_with_alfid(data_format, format, address, size)
+                .map_err(|_| RequestError::ExceedsFormat);
         self.download(target, download).await
     }
 
-    /// Exchange `download` with `target` and read the block length back; `None` where
+    /// Exchange `download` with `target` and read the block length back; an `Err` where
     /// the request could not be formed, refused as [`ClientError::Request`].
     async fn download(
         &mut self,
         target: Address,
-        download: Option<RequestDownloadRequest>,
+        download: Result<RequestDownloadRequest, RequestError>,
     ) -> Result<Response<u64>, ClientError<T::Error>> {
         let answered = self
             .exchange_with(
@@ -1447,8 +1751,9 @@ impl<
     ///
     /// # Errors
     ///
-    /// [`ClientError::Request`] where `data` is longer than [`ClientSet::MAX_BLOCK_LEN`],
-    /// and nothing is sent; otherwise as [`Self::read_data_by_identifier`]'s.
+    /// [`ClientError::Request`] where `data` is longer than
+    /// [`ClientLimits::max_block_len`], and nothing is sent; otherwise as
+    /// [`Self::read_data_by_identifier`]'s.
     ///
     /// # Cancel safety
     ///
@@ -1463,7 +1768,7 @@ impl<
             .exchange_with(
                 target,
                 |request| {
-                    within(data.len(), C::MAX_BLOCK_LEN)?;
+                    within(data.len(), C::LIMITS.max_block_len)?;
                     encode::transfer_data(request, counter, data)
                 },
                 None,
@@ -1490,7 +1795,7 @@ impl<
     /// # Errors
     ///
     /// [`ClientError::Request`] where the record is longer than
-    /// [`ClientSet::MAX_OPTION_LEN`], and nothing is sent; otherwise as
+    /// [`ClientLimits::max_option_len`], and nothing is sent; otherwise as
     /// [`Self::read_data_by_identifier`]'s.
     ///
     /// # Cancel safety
@@ -1505,7 +1810,7 @@ impl<
             .exchange_with(
                 target,
                 |request| {
-                    within(parameter_record.len(), C::MAX_OPTION_LEN)?;
+                    within(parameter_record.len(), C::LIMITS.max_option_len)?;
                     encode::request_transfer_exit(request, parameter_record)
                 },
                 None,
@@ -1664,33 +1969,121 @@ impl<
     pub fn read_data_by_identifier_functional(
         &mut self,
         target: Address,
-        identifiers: &[C],
+        identifiers: &[C::Did],
     ) -> Responses<'_, C, T, K, PHYS, FUNC, R> {
-        self.retire();
-        let ai = self
-            .addressing(target)
-            .with_ta_type(uds_session::TaType::Functional);
-        let ClientBuffers { request, .. } = self.store.split();
-        let refused = match encode::read_data_by_identifier(
-            request,
-            identifiers,
-            C::MAX_DIDS_PER_REQUEST,
-        ) {
-            Some(len) => {
-                let sid = request.first().copied().unwrap_or_default();
-                let class = ClientTx::Request {
-                    expected: ExpectedResponses::Unknown,
-                    repeat: false,
-                    session: None,
-                };
-                self.exchange = Some(Exchange::new(ai, len, sid, None, class));
-                None
-            }
-            None => Some(ClientError::Request),
-        };
+        let max = C::LIMITS.max_dids_per_request;
+        let refused = self.functional(
+            target,
+            |request| encode::read_data_by_identifier(request, identifiers, max),
+            ExpectedResponses::Unknown,
+        );
         Responses {
             client: self,
             refused,
+            asked: identifiers.len(),
+        }
+    }
+
+    /// Disable or enable communication on every server on a functional address, with
+    /// the suppress bit set so that none answers (ISO 14229-1:2020 9.2.2), and awaiting
+    /// nothing beyond the transmission's confirmation.
+    ///
+    /// ``UDSSVC_ARCH_0009`` and ISO 14229-1:2020 Table 5 — a server that performed the
+    /// request is silent, as is one that does not support it, so success cannot be told
+    /// from silent non-support; a server that refuses it for any other reason still
+    /// answers with a negative response, which the [`Replies`] sequence lends, as it
+    /// does a positive from a server that ignored the suppress bit. The request is never
+    /// repeated for want of a response; a failed transmission is repeated as any
+    /// request's is.
+    ///
+    /// # Arguments
+    ///
+    /// * `group` - the functional address, `S_AI[TA]`.
+    /// * `control` - as for [`Self::communication_control`]; its suppress bit is set
+    ///   whatever it carries.
+    pub fn communication_control_functional(
+        &mut self,
+        group: Address,
+        control: CommunicationControlRequest,
+    ) -> Replies<'_, C, T, K, PHYS, FUNC, R> {
+        let refused = self.functional(
+            group,
+            |request| encode::communication_control(request, control, true),
+            ExpectedResponses::Unknown,
+        );
+        Replies {
+            client: self,
+            refused,
+            decode: reply_as::<CommunicationControlResponse>,
+        }
+    }
+
+    /// Set DTC recording on every server on a functional address, with the suppress bit
+    /// clear so that each that supports it answers.
+    ///
+    /// ``UDSSVC_ARCH_0022`` — zero or more servers answer, so the replies come back as a
+    /// [`Replies`] sequence; nothing is sent until its first [`Replies::next`], which is
+    /// also where a refusal surfaces.
+    ///
+    /// # Arguments
+    ///
+    /// * `group` - the functional address, `S_AI[TA]`.
+    /// * `setting` - as for [`Self::control_dtc_setting`].
+    /// * `option_record` - as for [`Self::control_dtc_setting`], at most
+    ///   [`ClientLimits::max_option_len`] bytes.
+    pub fn control_dtc_setting_functional(
+        &mut self,
+        group: Address,
+        setting: DtcSettingType,
+        option_record: &[u8],
+    ) -> Replies<'_, C, T, K, PHYS, FUNC, R> {
+        let max = C::LIMITS.max_option_len;
+        let refused = self.functional(
+            group,
+            |request| {
+                within(option_record.len(), max)?;
+                encode::control_dtc_setting(request, setting, option_record)
+            },
+            ExpectedResponses::Unknown,
+        );
+        Replies {
+            client: self,
+            refused,
+            decode: reply_as::<ControlDtcSettingResponse>,
+        }
+    }
+
+    /// Record a functional request to `group`, encoded by `encode` and expecting
+    /// `expected`, as the exchange the next `advance` sends; or why it could not
+    /// be made. A positive response answers it only where it echoes the request's
+    /// sub-function, as [`Self::exchange_with`]'s does.
+    fn functional(
+        &mut self,
+        group: Address,
+        encode: impl FnOnce(&mut [u8]) -> Result<usize, RequestError>,
+        expected: ExpectedResponses,
+    ) -> Option<ClientError<T::Error>> {
+        self.retire();
+        let ai = self
+            .addressing(group)
+            .with_ta_type(uds_session::TaType::Functional);
+        let ClientBuffers { request, .. } = self.store.split();
+        match encode(request) {
+            Ok(len) => {
+                let sid = request.first().copied().unwrap_or_default();
+                let service = UdsServiceType::from_request_sid(sid);
+                let echo = (service.has_sub_function() == Some(true))
+                    .then(|| request.get(1).map(|byte| byte & 0x7F))
+                    .flatten();
+                let class = ClientTx::Request {
+                    expected,
+                    repeat: false,
+                    session: None,
+                };
+                self.exchange = Some(Exchange::new(ai, len, sid, echo, class));
+                None
+            }
+            Err(error) => Some(ClientError::Request(error)),
         }
     }
 
@@ -1706,13 +2099,13 @@ impl<
     async fn exchange_with(
         &mut self,
         target: Address,
-        encode: impl FnOnce(&mut [u8]) -> Option<usize>,
+        encode: impl FnOnce(&mut [u8]) -> Result<usize, RequestError>,
         session: Option<uds_session::SessionSelection>,
     ) -> Result<Answered, ClientError<T::Error>> {
         self.retire();
         self.drain_window().await?;
         let ClientBuffers { request, .. } = self.store.split();
-        let len = encode(request).ok_or(ClientError::Request)?;
+        let len = encode(request).map_err(ClientError::Request)?;
         let sid = request.first().copied().unwrap_or_default();
         let service = UdsServiceType::from_request_sid(sid);
         let echoed = session.is_some()
@@ -1784,12 +2177,34 @@ const fn records_dtc(response: &ReadDtcInfoResponse<'_>) -> Option<DtcRecord> {
     }
 }
 
-/// `Some` where a request input of `len` bytes is within its declared maximum `max`.
-const fn within(len: usize, max: usize) -> Option<()> {
-    if len <= max { Some(()) } else { None }
+/// Whether a request input of `len` bytes is within its declared maximum `max`.
+const fn within(len: usize, max: usize) -> Result<(), RequestError> {
+    if len <= max {
+        Ok(())
+    } else {
+        Err(RequestError::ExceedsLimit { len, max })
+    }
 }
 
 /// The bytes `answered` occupies in the response buffer.
+/// The response `answered` holds, with the identifiers of the `ReadDataByIdentifier`
+/// request it answers: the first `count` pairs after the request's service identifier,
+/// which nothing overwrites until the next request is encoded.
+fn answered_read<'s, S: ClientStorage>(
+    store: &'s mut S,
+    answered: &Answered,
+    count: usize,
+) -> (&'s [[u8; 2]], &'s [u8]) {
+    let ClientBuffers { request, response } = store.split();
+    let request: &'s [u8] = request;
+    let response: &'s [u8] = response;
+    let (pairs, _) = request.get(1..).unwrap_or_default().as_chunks::<2>();
+    (
+        pairs.get(..count).unwrap_or_default(),
+        response.get(answered.range.clone()).unwrap_or_default(),
+    )
+}
+
 fn answered_bytes<'s, S: ClientStorage>(store: &'s mut S, answered: &Answered) -> &'s [u8] {
     let ClientBuffers { response, .. } = store.split();
     response.get(answered.range.clone()).map_or(&[], |m| m)
@@ -1797,7 +2212,7 @@ fn answered_bytes<'s, S: ClientStorage>(store: &'s mut S, answered: &Answered) -
 
 #[cfg(test)]
 mod tests {
-    use super::{Answer, MalformedResponse, Records, Response};
+    use super::{Answer, MalformedResponse, Records, Response, encode};
     use crate::{DataIdentifier, RecordError};
     use uds_protocol::NegativeResponseCode;
     use uds_session::Address;
@@ -1835,19 +2250,13 @@ mod tests {
     /// ``UDSSVC_ARCH_0021`` — a negative response is a response, and this crate is the
     /// layer that interprets it: `uds_session` indicates the message and `UdsTransport`
     /// carries its bytes, and neither reads a response code.
-    ///
-    /// ``UDSSVC_ARCH_0023`` — and "completed, nothing came back" is a third case, not a
-    /// timeout: the suppress bit, or a functional request no server supports. A timeout
-    /// is a fault; suppression is not.
     #[test]
-    fn a_response_has_three_cases_and_none_of_them_is_an_error() {
+    fn a_negative_response_is_a_response_not_an_error() {
         let p: Response<&[u8]> = Response::Positive(&[0x62]);
         let n: Response<&[u8]> =
             Response::Negative(NegativeResponseCode::ServiceNotSupported);
-        let q: Response<&[u8]> = Response::NoResponseExpected;
         assert!(matches!(p, Response::Positive(_)));
         assert!(matches!(n, Response::Negative(_)));
-        assert!(matches!(q, Response::NoResponseExpected));
     }
 
     /// ``UDSSVC_ARCH_0022`` — each answer carries the source address of the server that
@@ -1935,6 +2344,60 @@ mod tests {
         assert_eq!(
             Records::<TestDid>::validate(&response),
             Err(MalformedResponse::Record(RecordError::Short))
+        );
+    }
+
+    const SPEED: [u8; 2] = [0xF4, 0x0D];
+    const VIN: [u8; 2] = [0xF1, 0x90];
+
+    /// The read's verdict on `response` as the answer to a request for `asked`.
+    fn read(response: &[u8], asked: &[[u8; 2]]) -> Option<MalformedResponse> {
+        match encode::records::<TestDid>(encode::Final::Positive(response), asked) {
+            Response::Malformed(error) => Some(error),
+            _ => None,
+        }
+    }
+
+    /// A response naming an identifier the request did not is some other request's:
+    /// both are in the vocabulary, so only the request can tell them apart.
+    #[test]
+    fn a_record_the_request_did_not_ask_for_is_an_echo_error() {
+        assert_eq!(
+            read(&[0xF4, 0x0D, 0x40], &[VIN]),
+            Some(MalformedResponse::Echo)
+        );
+    }
+
+    /// ISO 14229-1:2020 Table 190: a server supporting some of the identifiers answers
+    /// with those, so a record may be missing.
+    #[test]
+    fn a_record_the_server_left_out_is_not_an_error() {
+        assert_eq!(read(&[0xF4, 0x0D, 0x40], &[VIN, SPEED]), None);
+    }
+
+    /// An identifier asked for twice may be answered twice (11.2.1), but not three
+    /// times.
+    #[test]
+    fn a_record_is_answered_at_most_as_often_as_asked() {
+        let twice = [0xF4, 0x0D, 0x40, 0xF4, 0x0D, 0x41];
+        assert_eq!(read(&twice, &[SPEED, SPEED]), None);
+        assert_eq!(read(&twice, &[SPEED]), Some(MalformedResponse::Echo));
+    }
+
+    /// A functionally addressed read applies the same check to each server's answer.
+    #[test]
+    fn a_functional_answer_naming_another_record_is_malformed() {
+        let answer = encode::answer::<TestDid>(
+            Address(0x0E01),
+            encode::Final::Positive(&[0xF4, 0x0D, 0x40]),
+            &[VIN],
+        );
+        assert_eq!(
+            answer,
+            Answer::Malformed {
+                from: Address(0x0E01),
+                error: MalformedResponse::Echo,
+            }
         );
     }
 }

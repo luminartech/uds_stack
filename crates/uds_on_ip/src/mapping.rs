@@ -36,7 +36,7 @@ pub enum MappingError {
 
 /// ISO 14229-2 `S_TA` to ISO 13400-2 logical address.
 #[must_use]
-pub const fn to_logical(addr: Address) -> simple_doip::LogicalAddress {
+pub(crate) const fn to_logical(addr: Address) -> simple_doip::LogicalAddress {
     simple_doip::LogicalAddress(addr.0)
 }
 
@@ -46,7 +46,7 @@ pub const fn to_logical(addr: Address) -> simple_doip::LogicalAddress {
 /// inbound diagnostic message carries the responder's logical address, which
 /// becomes the `S_AI[SA]` the driver needs to tell functional responses apart.
 #[must_use]
-pub const fn from_logical(addr: simple_doip::LogicalAddress) -> Address {
+pub(crate) const fn from_logical(addr: simple_doip::LogicalAddress) -> Address {
     Address(addr.0)
 }
 
@@ -78,7 +78,7 @@ pub const PERIODIC_RESPONSE_PAYLOAD_TYPE: u16 = 0x8004;
 ///
 /// [`MappingError::AddressExtensionUnsupported`] for the two remote message
 /// types.
-pub fn target_of(ai: Ai) -> Result<simple_doip::LogicalAddress, MappingError> {
+pub(crate) fn target_of(ai: Ai) -> Result<simple_doip::LogicalAddress, MappingError> {
     match ai.mtype {
         Mtype::Diag | Mtype::SecureDiag => Ok(to_logical(ai.ta)),
         Mtype::RDiag { .. } | Mtype::SecureRDiag { .. } => {
@@ -160,7 +160,8 @@ pub(crate) fn response_pending(response: &[u8]) -> bool {
 pub(crate) const fn refused(refusal: Refusal) -> DoIpResult {
     match refusal {
         Refusal::NoRoom | Refusal::PduTooLarge { .. } => DoIpResult::OutOfMemory,
-        Refusal::EmptyPdu => DoIpResult::Error,
+        // An empty PDU, or a refusal this binding does not name.
+        Refusal::EmptyPdu | _ => DoIpResult::Error,
     }
 }
 
@@ -207,6 +208,8 @@ pub(crate) enum Inbound {
         connection: ConnectionId,
     },
     Deadline,
+    /// An event this binding does not act on.
+    Ignored,
 }
 
 /// An entity reported a PDU outside the buffer it was lent.
@@ -258,6 +261,7 @@ pub(crate) fn classify(
         },
         EntityEvent::Closed { connection } => Inbound::Closed { connection },
         EntityEvent::Deadline => Inbound::Deadline,
+        _ => Inbound::Ignored,
     })
 }
 

@@ -223,7 +223,7 @@ fn nack(sent: &[(u64, SocketAddr, Vec<u8>)]) -> NackCode {
 fn identification(frame: &[u8]) -> VehicleIdentificationResponse {
     let message = decode(frame);
     assert_eq!(
-        message.header.payload_type,
+        message.payload.payload_type(),
         PayloadType::VehicleAnnouncement
     );
     match message.payload {
@@ -258,10 +258,7 @@ fn three_announcements_follow_the_announce_wait() {
     assert_eq!(Some(third), second.checked_add(500));
     for (_, to, frame) in &sent {
         assert_eq!(*to, broadcast());
-        assert_eq!(
-            decode(frame).header.protocol_version,
-            ProtocolVersion::V2019
-        );
+        assert_eq!(decode(frame).protocol_version, ProtocolVersion::V2019);
         assert_eq!(identification(frame).logical_address, ENTITY);
     }
 }
@@ -319,7 +316,7 @@ fn the_announcement_carries_the_identity() {
             vin: VIN,
             logical_address: ENTITY,
             entity_id: EID,
-            group_id: Some([1, 2, 3, 4, 5, 6]),
+            group_id: GroupId::new([1, 2, 3, 4, 5, 6]).ok(),
             further_action: FurtherActionRequired::NoFurtherActionRequired,
             vin_gid_sync_status: Some(VinGidSyncStatus::Incomplete),
         }
@@ -345,10 +342,7 @@ fn an_identification_request_is_answered_after_the_announce_wait() {
 
     let frame = answer(&sent);
     assert!(first_sent(&sent).0 <= 500);
-    assert_eq!(
-        decode(frame).header.protocol_version,
-        ProtocolVersion::V2012
-    );
+    assert_eq!(decode(frame).protocol_version, ProtocolVersion::V2012);
     assert_eq!(identification(frame).entity_id, EID);
 }
 
@@ -384,7 +378,7 @@ fn the_default_protocol_version_is_taken_on_identification_requests() {
     ] {
         let sent = ask(&mut entity, &udp, &versioned(request, 0xFF));
         assert_eq!(
-            decode(answer(&sent)).header.protocol_version,
+            decode(answer(&sent)).protocol_version,
             ProtocolVersion::V2019
         );
     }
@@ -622,7 +616,7 @@ fn a_nack_carries_the_requests_protocol_version() {
     ] {
         let sent = ask(&mut entity, &udp, &datagram);
         assert_eq!(
-            decode(answer(&sent)).header.protocol_version,
+            decode(answer(&sent)).protocol_version,
             ProtocolVersion::V2012,
             "{datagram:02x?}"
         );

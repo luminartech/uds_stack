@@ -63,13 +63,11 @@ pub enum Error {
     /// Tables 444 and 449 put a `memorySize` that "is not valid" on NRC 0x31, like
     /// [`Error::InvalidMemoryAddress`].
     #[error("Invalid Memory Size: {0}")]
-    InvalidMemorySize(u32),
-    /// The `addressAndLengthFormatIdentifier` byte declares a width ISO does not permit.
-    ///
-    /// ISO 14229-1:2020 Annex H Table H.1 marks the high nibble (`memorySize`) applicable
-    /// for 1 to 4 bytes and the low nibble (`memoryAddress`) for 1 to 5; a zero nibble or
-    /// anything wider is "not applicable". Tables 444 and 449 both put this on NRC 0x31,
-    /// not 0x13.
+    InvalidMemorySize(u64),
+    /// The `addressAndLengthFormatIdentifier` byte declares a width of zero, which
+    /// ISO 14229-1:2020 Annex H Table H.1 marks "not applicable", or wider than the eight
+    /// bytes a [`crate::AddressAndLengthFormatIdentifier`] holds. Tables 444 and 449 both
+    /// put an invalid one on NRC 0x31, not 0x13.
     #[error("Invalid addressAndLengthFormatIdentifier: {0:#04X}")]
     InvalidAddressAndLengthFormatIdentifier(u8),
     /// A `u32` did not fit the three bytes of a DTC (i.e. exceeded `0x00FF_FFFF`).
@@ -305,7 +303,7 @@ mod nrc_mapping_tests {
             (
                 Error::InvalidMemoryAddress(0x1_0000_0000_0000),
                 0x31,
-                "address beyond 5 bytes",
+                "memoryAddress wider than its declared width",
             ),
             (
                 Error::InvalidEncryptionCompressionMethod(0x99),
@@ -325,7 +323,7 @@ mod nrc_mapping_tests {
             (
                 Error::InvalidAddressAndLengthFormatIdentifier(0x00),
                 0x31,
-                "addressAndLengthFormatIdentifier outside Table H.1",
+                "addressAndLengthFormatIdentifier with a zero width",
             ),
             (
                 Error::InvalidMemorySize(0x1_0000),
@@ -371,8 +369,8 @@ mod nrc_mapping_tests {
                 !matches!(
                     nrc,
                     NegativeResponseCode::IsoSaeReserved(_)
-                        | NegativeResponseCode::ExtendedDataLinkSecurityReserved(_)
-                        | NegativeResponseCode::ReservedForSpecificConditionsNotMet(_)
+                        | NegativeResponseCode::ReservedForSpecificConditionsNotCorrect(_)
+                        | NegativeResponseCode::VehicleManufacturerSpecificConditionsNotCorrect(_)
                 ),
                 "{why}: mapped to a reserved NRC ({nrc:?})"
             );

@@ -60,28 +60,12 @@
 //!
 //! # Exhaustive matching
 //!
-//! Only what may grow is `#[non_exhaustive]`, and that is a decision rather than an
-//! omission. Five types are:
-//!
-//! - [`DtcReportKind`] names only the clause 12.3 layouts this crate sizes, so it grows
-//!   as more are sized.
-//! - [`ClientError`] may gain a class of failure for which a call produced no response.
-//! - [`MalformedResponse`] may gain a way in which a server's reply disagrees with this
-//!   application about the bytes.
-//! - [`Replaced`] may gain a replacement a transport learns to tell apart from these.
-//! - [`ClientTiming`] may gain a parameter of the timing ISO 14229-2 leaves to the
-//!   client.
-//!
-//! Every other enumeration here is closed by ISO 14229 or by the architecture, from
-//! [`SessionTransition`]'s four transitions of clause 10.2 Figure 7 onward. `uds_session`
-//! keeps the attribute on exactly the two outputs its own requirement set leaves open,
-//! and on nothing else, for the same reason.
-//!
-//! So a caller matches every other enumeration exhaustively, and a new variant stops
-//! their build. That is the correct signal: it says a requirement changed and their
-//! handling needs revisiting. `#[non_exhaustive]` would turn it into a wildcard arm that
-//! absorbs the change in silence, which is the same failure as a hand-maintained variant
-//! list.
+//! An enumeration is exhaustive only where ISO 14229 fixes the set it mirrors, such as
+//! [`SessionTransition`]'s four transitions of clause 10.2 Figure 7, [`KeyVerdict`]'s
+//! Annex I key outcomes, or [`Repeats`]'s ISO 14229-2:2021 Table 9 range. Every other
+//! one — an error, an outcome of a call, an event at the transport seam, a set this
+//! crate chose — is `#[non_exhaustive]`, because it can grow without a new edition of
+//! the standard.
 
 #![no_std]
 #![forbid(unsafe_code)]
@@ -93,20 +77,25 @@ pub mod assembly;
 
 pub mod client;
 pub use client::{
-    Answer, Client, ClientError, ClientKeepAlive, ClientSet, ClientTiming, KeepAlive,
-    MalformedResponse, Records, Repeats, Replaced, Response, Responses,
+    Answer, Client, ClientError, ClientKeepAlive, ClientLimits, ClientSet, ClientTiming,
+    KEEP_ALIVE_LEN, KeepAlive, MalformedResponse, Records, Repeats, Replaced, Replies,
+    Reply, RequestError, Response, Responses,
 };
 
 pub mod server;
 pub use server::{Server, ServerParams, Stepped, Stopped};
 
+#[doc(hidden)]
 pub mod storage;
+#[doc(hidden)]
 pub use storage::{Buffers, ClientBuffers, ClientStorage, ClientStore, Storage, Store};
 
 pub mod sink;
 pub use sink::ResponseSink;
 
+#[doc(hidden)]
 pub mod state;
+#[doc(hidden)]
 pub use state::{ProtocolState, State};
 
 /// The write vocabulary a handler needs to use a [`ResponseSink`].
@@ -180,11 +169,12 @@ pub mod services;
 pub use services::{
     AfterReset, ClearDiagnosticInformation, CommunicationControl, ControlDtcSetting,
     DataTransfer, Delay, DiagnosticSessionControl, DtcReportKind, EcuReset, Effect,
-    KeyVerdict, ReadDataByIdentifier, ReadDtcInformation, Received, Responded,
-    RoutineControl, SecurityAccess, SecurityLevel, SecurityPolicy, ServiceSet,
-    SessionTiming, SessionTransition, TesterPresent, TransferRequest, Unsettled,
-    WriteDataByIdentifier,
+    KeyVerdict, ReadDataByIdentifier, ReadDtcInformation, Responded, RoutineControl,
+    SecurityAccess, SecurityLevel, SecurityPolicy, ServiceSet, SessionTiming,
+    SessionTransition, TesterPresent, TransferRequest, WriteDataByIdentifier,
 };
+#[doc(hidden)]
+pub use services::{Received, Unsettled};
 
 /// The protocol vocabulary this crate's handler signatures are written in.
 ///
@@ -198,12 +188,13 @@ pub use services::{
 /// them can carry `suppressPosRspMsgIndication`: that bit is the pipeline's and never
 /// reaches a handler.
 pub use uds_protocol::{
-    AddressAndLengthFormatIdentifier, CLEAR_ALL_DTCS, CommunicationControlType,
-    CommunicationType, DataFormatIdentifier, DiagnosticSessionType, DtcExtDataRecordNumber,
-    DtcRecord, DtcSettingType, DtcSnapshotRecordNumber, DtcStatusMask, FileOperationMode,
-    FunctionalGroupIdentifier, NegativeResponseCode, ReadDtcInfoReportType,
-    ReadDtcInfoResponse, ReadDtcInfoSubFunction, ResetType, RoutineControlSubFunction,
-    SubnetNumber, UdsServiceType,
+    AddressAndLengthFormatIdentifier, CLEAR_ALL_DTCS, CommunicationControlRequest,
+    CommunicationControlType, CommunicationType, DataFormatIdentifier,
+    DiagnosticSessionType, DtcExtDataRecordNumber, DtcRecord, DtcSettingType,
+    DtcSnapshotRecordNumber, DtcStatusMask, FileOperationMode, FunctionalGroupIdentifier,
+    NegativeResponseCode, P2StarServerMax, ReadDtcInfoReportType, ReadDtcInfoResponse,
+    ReadDtcInfoSubFunction, ResetType, RoutineControlSubFunction, SubnetNumber,
+    UdsServiceType,
 };
 
 /// Re-exported only so `uds_server!`'s expansion can name it; not part of the API.

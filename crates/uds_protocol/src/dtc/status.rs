@@ -146,7 +146,6 @@ impl<'a> Decode<'a> for DtcStatusMask {
 #[cfg_attr(feature = "serde", derive(serde::Deserialize, serde::Serialize))]
 #[cfg_attr(feature = "serde", serde(from = "u8", into = "u8"))]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-#[non_exhaustive]
 #[repr(u8)]
 pub enum DtcFormatIdentifier {
     /// Defined in [SAE J2012-DA](<https://www.sae.org/standards/content/j2012da_202403/>)
@@ -167,6 +166,7 @@ pub enum DtcFormatIdentifier {
 
     /// Reserved for future usage
     /// 0x05 - 0xFF
+    #[non_exhaustive]
     IsoSaeReserved(u8),
 }
 
@@ -390,12 +390,12 @@ impl<'a> DecodeIter<'a> for DtcRecord {
 #[cfg_attr(feature = "serde", derive(serde::Deserialize, serde::Serialize))]
 #[cfg_attr(feature = "serde", serde(from = "u8", into = "u8"))]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-#[non_exhaustive]
 pub enum FunctionalGroupIdentifier {
     /// 0x00 to 0x32
     /// 0x34 to 0xCF
     /// 0xE0 to 0xFD
     /// 0xFF
+    #[non_exhaustive]
     IsoSaeReserved(u8),
     /// 0x33
     EmissionsSystemGroup,
@@ -404,6 +404,7 @@ pub enum FunctionalGroupIdentifier {
 
     /// 0xD1 to 0xDF
     /// For future use
+    #[non_exhaustive]
     LegislativeSystemGroup(u8),
 
     /// 0xFE

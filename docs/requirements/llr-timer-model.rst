@@ -36,11 +36,18 @@ A requirement that leaves a running timer alone says so.
    :tags: timer-model; timing
 
    A timer shall be loaded, when set running, with the value of the parameter the
-   requirement that sets it running names, as that parameter stands at that instant.
+   requirement that sets it running names, as that parameter stands at that instant. A
+   value of 2^31 − 1 milliseconds or more shall load as 2^31 − 1 milliseconds.
 
    Rationale: loading the value at the start rather than reading the parameter live is
    what lets a parameter change while a timer runs without moving a window already open,
-   which ``UDSS_LLR_0043`` requires of every parameter change.
+   which ``UDSS_LLR_0043`` requires of every parameter change. ``UDSS_LLR_0041`` admits the
+   whole 32-bit range, but ``UDSS_LLR_0019`` tells a deadline ahead from one past only
+   within half of it; a longer load would put the deadline ``UDSS_LLR_0080`` reports
+   where it reads as already reached, and a caller waking at it would find nothing
+   expired, again and again. One millisecond is kept back for a timer that expires on
+   exceeding its value. 2^31 milliseconds is about 24.8 days, so a parameter that long
+   means "never" in practice, and capping it keeps that meaning.
 
 .. llr:: A timer expires when its loaded value is reached
    :id: UDSS_LLR_0077

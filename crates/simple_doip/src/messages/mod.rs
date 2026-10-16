@@ -1,6 +1,23 @@
 //! `DoIP` message types: the generic header, the [`Payload`] enum covering every
 //! `DoIP` payload type this crate supports, and the concrete request/response
 //! structs for each one, per ISO 13400-2.
+//!
+//! A code enum's variant that carries the wire value, such as [`NackCode::Reserved`], is
+//! built only by converting the value, so it never holds one a named variant has and `==`
+//! agrees with the wire. Match it as `Reserved { .. }` and read the value back with the
+//! enum's `From`:
+//!
+//! ```
+//! use simple_doip::messages::NackCode;
+//!
+//! assert_eq!(NackCode::from(0x00), NackCode::IncorrectPatternFormat);
+//! assert!(matches!(NackCode::from(0x7F), NackCode::Reserved { .. }));
+//! assert_eq!(u8::from(NackCode::from(0x7F)), 0x7F);
+//! ```
+//!
+//! ```compile_fail
+//! let aliased = simple_doip::messages::NackCode::Reserved(0x00);
+//! ```
 
 mod alive_check_response;
 pub use alive_check_response::AliveCheckResponse;
@@ -44,53 +61,29 @@ pub use vehicle_identification_response::{
 
 use crate::LogicalAddress;
 
-/// Payload length for a `DoIP` header, from a payload's encoded size.
+/// A `DoIP` message: the protocol version it is sent in, and its payload.
 ///
-/// # Panics
-/// Panics if the payload cannot be sized, or if its encoded size exceeds `u32::MAX`.
-/// Neither is reachable for a well-formed `DoIP` message: every payload type has a
-/// computable size, and the wire format caps payload length at `u32::MAX` by construction.
-#[expect(
-    clippy::expect_used,
-    reason = "declared in this function's `# Panics` section, and unreachable for a \
-              well-formed message: every payload type has a computable size and the \
-              wire format caps payload length at u32::MAX by construction."
-)]
-fn payload_len(value: &impl Encode<Error = MessageError>) -> u32 {
-    u32::try_from(
-        value
-            .encoded_size()
-            .expect("DoIP message is always sizable"),
-    )
-    .expect("DoIP payload length exceeds u32::MAX")
-}
-
-/// Message contains the payload and header info of a `DoIP` message
-///
-/// The payload contains diagnostic data and other `DoIP` protocol information.
-/// The header is a fixed size struct that contains the protocol version, payload type,
-/// and payload length. Payload data borrows from the RX buffer it was decoded from
-/// (zero-copy); use `Message::to_owned_message` (requires the `alloc` feature)
-/// to detach it.
-#[derive(Clone, Debug, PartialEq)]
+/// The generic header is derived from these when the message is encoded: the payload
+/// type from [`Payload::payload_type`], the payload length from the payload's encoded
+/// size. Payload data borrows from the RX buffer it was decoded from (zero-copy); use
+/// `Message::to_owned_message` (requires the `alloc` feature) to detach it.
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Message<'a> {
-    /// The 8-byte `DoIP` generic header (protocol version, its inverse, payload
-    /// type, and payload length) that describes `payload`.
-    pub header: header::Header,
-    /// The decoded, type-specific `DoIP` payload described by `header`.
+    /// The protocol version of the message's generic header.
+    pub protocol_version: ProtocolVersion,
+    /// The decoded, type-specific `DoIP` payload.
     pub payload: Payload<'a>,
 }
 
 /// Fully owned `DoIP` message for values that must outlive an RX buffer, such as the
 /// items the `codec` feature's `MessageCodec` yields.
 #[cfg(feature = "alloc")]
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct OwnedMessage {
-    /// The 8-byte `DoIP` generic header (protocol version, its inverse, payload
-    /// type, and payload length) that describes `payload`.
-    pub header: header::Header,
-    /// The decoded, type-specific `DoIP` payload described by `header`, owning
-    /// any trailing data instead of borrowing from an RX buffer.
+    /// The protocol version of the message's generic header.
+    pub protocol_version: ProtocolVersion,
+    /// The decoded, type-specific `DoIP` payload, owning any trailing data instead of
+    /// borrowing from an RX buffer.
     pub payload: OwnedPayload,
 }
 
@@ -98,7 +91,7 @@ impl<'a> Message<'a> {
     /// Check whether the given payload type is a valid response to this message
     #[must_use]
     pub fn is_response(&self, payload_type: PayloadType) -> bool {
-        match self.header.payload_type {
+        match self.payload.payload_type() {
             PayloadType::RoutingActivationRequest => {
                 payload_type == PayloadType::RoutingActivationResponse
             }
@@ -126,11 +119,28 @@ impl<'a> Message<'a> {
         }
     }
 
+    /// The generic header this message is encoded with: its protocol version, its
+    /// payload's [type](Payload::payload_type) and its payload's encoded size.
+    ///
+    /// # Errors
+    /// Returns [`MessageError::PayloadTooLarge`] if the payload does not fit the `u32`
+    /// payload length field.
+    pub fn header(&self) -> Result<Header, MessageError> {
+        let size = self.payload.encoded_size()?;
+        let payload_length =
+            u32::try_from(size).map_err(|_| MessageError::PayloadTooLarge { size })?;
+        Ok(Header::new(
+            self.protocol_version,
+            self.payload.payload_type(),
+            payload_length,
+        ))
+    }
+
     /// Construct an alive check request message
     #[must_use]
     pub fn alive_check_request(protocol_version: ProtocolVersion) -> Message<'a> {
         Message {
-            header: Header::new(protocol_version, PayloadType::AliveCheckRequest, 0),
+            protocol_version,
             payload: Payload::AliveCheckRequest,
         }
     }
@@ -141,23 +151,14 @@ impl<'a> Message<'a> {
         protocol_version: ProtocolVersion,
         source_address: LogicalAddress,
     ) -> Message<'a> {
-        let response = AliveCheckResponse { source_address };
         Message {
-            header: Header::new(protocol_version, PayloadType::AliveCheckResponse, 2),
-            payload: Payload::AliveCheckResponse(response),
+            protocol_version,
+            payload: Payload::AliveCheckResponse(AliveCheckResponse { source_address }),
         }
     }
 
-    /// Construct a diagnostic message carrying opaque user data
-    ///
-    /// # Panics
-    /// Panics if `message.encoded_size()` errors, or if the resulting size does
-    /// not fit in a `u32`. Neither is reachable here: `DiagnosticMessage::encoded_size`
-    /// is pure arithmetic over the struct's own fields (no I/O to fail), and its
-    /// result is `4 + user_data.len()` (the two 2-byte addresses plus the user
-    /// data; the 8-byte header is deliberately excluded, since this value becomes
-    /// the header's payload length), far below `u32::MAX` for any `user_data`
-    /// slice that can exist in memory.
+    /// Construct a diagnostic message carrying opaque user data, at least one byte of
+    /// it: an empty `user_data` does not encode (ISO 13400-2:2019 Table 21).
     #[must_use]
     pub fn diagnostic_message(
         protocol_version: ProtocolVersion,
@@ -165,28 +166,18 @@ impl<'a> Message<'a> {
         target_address: LogicalAddress,
         user_data: &'a [u8],
     ) -> Message<'a> {
-        let message = DiagnosticMessage {
-            source_address,
-            target_address,
-            user_data,
-        };
-        let payload_size = payload_len(&message);
         Message {
-            header: Header::new(
-                protocol_version,
-                PayloadType::DiagnosticMessage,
-                payload_size,
-            ),
-            payload: Payload::DiagnosticMessage(message),
+            protocol_version,
+            payload: Payload::DiagnosticMessage(DiagnosticMessage {
+                source_address,
+                target_address,
+                user_data,
+            }),
         }
     }
 
     /// Construct a diagnostic message positive acknowledgement, with the
     /// [`DiagnosticAckCode::RoutingConfirmationAck`] code.
-    ///
-    /// # Panics
-    /// Panics if the payload's encoded size does not fit in a `u32`, which no
-    /// `previous_message_data` slice that can exist in memory reaches.
     #[must_use]
     pub fn diagnostic_message_ack(
         protocol_version: ProtocolVersion,
@@ -194,28 +185,18 @@ impl<'a> Message<'a> {
         target_address: LogicalAddress,
         previous_message_data: &'a [u8],
     ) -> Message<'a> {
-        let ack = DiagnosticMessageAck {
-            source_address,
-            target_address,
-            ack_code: DiagnosticAckCode::RoutingConfirmationAck,
-            previous_message_data,
-        };
-        let payload_size = payload_len(&ack);
         Message {
-            header: Header::new(
-                protocol_version,
-                PayloadType::DiagnosticMessagePositiveAcknowledge,
-                payload_size,
-            ),
-            payload: Payload::DiagnosticMessageAck(ack),
+            protocol_version,
+            payload: Payload::DiagnosticMessageAck(DiagnosticMessageAck {
+                source_address,
+                target_address,
+                ack_code: DiagnosticAckCode::RoutingConfirmationAck,
+                previous_message_data,
+            }),
         }
     }
 
     /// Construct a diagnostic message negative acknowledgement.
-    ///
-    /// # Panics
-    /// Panics if the payload's encoded size does not fit in a `u32`, which no
-    /// `previous_message_data` slice that can exist in memory reaches.
     #[must_use]
     pub fn diagnostic_message_nack(
         protocol_version: ProtocolVersion,
@@ -224,31 +205,18 @@ impl<'a> Message<'a> {
         nack_code: DiagnosticNackCode,
         previous_message_data: &'a [u8],
     ) -> Message<'a> {
-        let nack = DiagnosticMessageNack {
-            source_address,
-            target_address,
-            nack_code,
-            previous_message_data,
-        };
-        let payload_size = payload_len(&nack);
         Message {
-            header: Header::new(
-                protocol_version,
-                PayloadType::DiagnosticMessageNegativeAcknowledge,
-                payload_size,
-            ),
-            payload: Payload::DiagnosticMessageNack(nack),
+            protocol_version,
+            payload: Payload::DiagnosticMessageNack(DiagnosticMessageNack {
+                source_address,
+                target_address,
+                nack_code,
+                previous_message_data,
+            }),
         }
     }
 
     /// Construct a routing activation request message
-    ///
-    /// # Panics
-    /// Panics if `request.encoded_size()` errors, or if the resulting size does
-    /// not fit in a `u32`. Neither is reachable here: `RoutingActivationRequest`
-    /// encodes to either 7 or 11 bytes depending on whether the optional
-    /// manufacturer-reserved tail is present (both well under `u32::MAX`), and
-    /// `encoded_size` is pure arithmetic with no I/O to fail.
     #[must_use]
     pub fn routing_activation_request(
         protocol_version: ProtocolVersion,
@@ -256,32 +224,18 @@ impl<'a> Message<'a> {
         activation_type: ActivationTypeCode,
         reserved_vehicle_manufacturer: Option<[u8; 4]>,
     ) -> Message<'a> {
-        let request = RoutingActivationRequest {
-            source_address,
-            activation_type,
-            reserved: [0, 0, 0, 0],
-            reserved_vehicle_manufacturer,
-        };
-
-        let header = Header::new(
-            protocol_version,
-            PayloadType::RoutingActivationRequest,
-            payload_len(&request),
-        );
         Message {
-            header,
-            payload: Payload::RoutingActivationRequest(request),
+            protocol_version,
+            payload: Payload::RoutingActivationRequest(RoutingActivationRequest {
+                source_address,
+                activation_type,
+                reserved: [0, 0, 0, 0],
+                reserved_vehicle_manufacturer,
+            }),
         }
     }
 
     /// Construct a routing activation response message
-    ///
-    /// # Panics
-    /// Panics if `response.encoded_size()` errors, or if the resulting size does
-    /// not fit in a `u32`. Neither is reachable here: `RoutingActivationResponse`
-    /// encodes to either 9 or 13 bytes depending on whether the optional
-    /// OEM-specific tail is present (both well under `u32::MAX`), and
-    /// `encoded_size` is pure arithmetic with no I/O to fail.
     #[must_use]
     pub fn routing_activation_response(
         protocol_version: ProtocolVersion,
@@ -291,21 +245,15 @@ impl<'a> Message<'a> {
         reserved_oem: [u8; 4],
         oem_specific: Option<[u8; 4]>,
     ) -> Message<'a> {
-        let response = RoutingActivationResponse {
-            logical_address_tester,
-            logical_address_of_doip_entity,
-            routing_activation_response_code,
-            reserved_oem,
-            oem_specific,
-        };
-        let header = Header::new(
-            protocol_version,
-            PayloadType::RoutingActivationResponse,
-            payload_len(&response),
-        );
         Message {
-            header,
-            payload: Payload::RoutingActivationResponse(response),
+            protocol_version,
+            payload: Payload::RoutingActivationResponse(RoutingActivationResponse {
+                logical_address_tester,
+                logical_address_of_doip_entity,
+                routing_activation_response_code,
+                reserved_oem,
+                oem_specific,
+            }),
         }
     }
 }
@@ -319,9 +267,15 @@ impl<'a> Decode<'a> for Message<'a> {
     /// Returns a [`MessageError`] if the header or payload cannot be deserialized
     fn decode(buf: &'a [u8]) -> Result<(Self, &'a [u8]), MessageError> {
         let (header, rest) = Header::decode(buf)?;
-        let (payload_bytes, rest) = take(rest, header.payload_length as usize)?;
-        let payload = Payload::decode(payload_bytes, header.payload_type)?;
-        Ok((Message { header, payload }, rest))
+        let (payload_bytes, rest) = take(rest, header.payload_length() as usize)?;
+        let payload = Payload::decode(payload_bytes, header.payload_type())?;
+        Ok((
+            Message {
+                protocol_version: header.protocol_version(),
+                payload,
+            },
+            rest,
+        ))
     }
 }
 
@@ -332,19 +286,8 @@ impl Encode for Message<'_> {
         Ok(Header::SIZE + self.payload.encoded_size()?)
     }
 
-    /// Serialize this message (header + payload) into `writer`.
-    ///
-    /// The header's `payload_length` is **derived from the payload** rather
-    /// than taken from `self.header`. A decoded message keeps whatever length
-    /// the wire declared, and [`Payload::decode`] is not required to consume
-    /// all of it -- so writing that field verbatim can emit a frame whose
-    /// declared length no decoder, including this one, will accept. Deriving
-    /// it means an encoded frame is always self-consistent.
-    ///
-    /// The visible consequence: for a frame that arrived with a declared
-    /// length the payload did not occupy, `decode(encode(m)).header
-    /// .payload_length` is the payload's real size, not the length `m`
-    /// arrived with.
+    /// Serialize this message, the [header](Message::header) it derives and then its
+    /// payload, into `writer`.
     ///
     /// # Errors
     /// Returns a [`MessageError`] if the header or payload cannot be
@@ -354,15 +297,7 @@ impl Encode for Message<'_> {
         &self,
         writer: &mut impl automotive_wire_codec::Sink,
     ) -> Result<usize, MessageError> {
-        let payload_length = self.payload.encoded_size()?;
-        let header = Header::new(
-            self.header.protocol_version,
-            self.header.payload_type,
-            u32::try_from(payload_length).map_err(|_| MessageError::PayloadTooLarge {
-                size: payload_length,
-            })?,
-        );
-        let written = header.encode(writer)?;
+        let written = self.header()?.encode(writer)?;
         Ok(written + self.payload.encode(writer)?)
     }
 }
@@ -373,7 +308,7 @@ impl Message<'_> {
     #[must_use]
     pub fn to_owned_message(&self) -> OwnedMessage {
         OwnedMessage {
-            header: self.header.clone(),
+            protocol_version: self.protocol_version,
             payload: self.payload.to_owned_payload(),
         }
     }
@@ -385,7 +320,7 @@ impl OwnedMessage {
     #[must_use]
     pub fn as_ref(&self) -> Message<'_> {
         Message {
-            header: self.header.clone(),
+            protocol_version: self.protocol_version,
             payload: self.payload.as_ref(),
         }
     }
@@ -394,6 +329,15 @@ impl OwnedMessage {
     #[must_use]
     pub fn is_response(&self, payload_type: PayloadType) -> bool {
         self.as_ref().is_response(payload_type)
+    }
+
+    /// The generic header this message is encoded with, as [`Message::header`].
+    ///
+    /// # Errors
+    /// Returns [`MessageError::PayloadTooLarge`] if the payload does not fit the `u32`
+    /// payload length field.
+    pub fn header(&self) -> Result<Header, MessageError> {
+        self.as_ref().header()
     }
 
     /// Construct an alive check request message
@@ -449,16 +393,8 @@ impl OwnedMessage {
         .to_owned_message()
     }
 
-    /// Construct a diagnostic message carrying owned user data
-    ///
-    /// # Panics
-    /// Panics if `message.as_ref().encoded_size()` errors, or if the resulting
-    /// size does not fit in a `u32`. Neither is reachable here: `encoded_size` is
-    /// pure arithmetic over the struct's own fields (no I/O to fail), and its
-    /// result is `4 + user_data.len()` (the two 2-byte addresses plus the user
-    /// data; the 8-byte header is deliberately excluded, since this value becomes
-    /// the header's payload length), far below `u32::MAX` for any `user_data`
-    /// vector that can exist in memory.
+    /// Construct a diagnostic message carrying owned user data, at least one byte of
+    /// it: an empty `user_data` does not encode (ISO 13400-2:2019 Table 21).
     #[must_use]
     pub fn diagnostic_message(
         protocol_version: ProtocolVersion,
@@ -466,28 +402,18 @@ impl OwnedMessage {
         target_address: LogicalAddress,
         user_data: alloc::vec::Vec<u8>,
     ) -> OwnedMessage {
-        let message = OwnedDiagnosticMessage {
-            source_address,
-            target_address,
-            user_data,
-        };
-        let payload_size = payload_len(&message.as_ref());
         OwnedMessage {
-            header: Header::new(
-                protocol_version,
-                PayloadType::DiagnosticMessage,
-                payload_size,
-            ),
-            payload: OwnedPayload::DiagnosticMessage(message),
+            protocol_version,
+            payload: OwnedPayload::DiagnosticMessage(OwnedDiagnosticMessage {
+                source_address,
+                target_address,
+                user_data,
+            }),
         }
     }
 
     /// Construct a diagnostic message positive acknowledgement carrying owned data,
     /// with the [`DiagnosticAckCode::RoutingConfirmationAck`] code.
-    ///
-    /// # Panics
-    /// Panics if the payload's encoded size does not fit in a `u32`, which no
-    /// `previous_message_data` vector that can exist in memory reaches.
     #[must_use]
     pub fn diagnostic_message_ack(
         protocol_version: ProtocolVersion,
@@ -495,28 +421,18 @@ impl OwnedMessage {
         target_address: LogicalAddress,
         previous_message_data: alloc::vec::Vec<u8>,
     ) -> OwnedMessage {
-        let ack = OwnedDiagnosticMessageAck {
-            source_address,
-            target_address,
-            ack_code: DiagnosticAckCode::RoutingConfirmationAck,
-            previous_message_data,
-        };
-        let payload_size = payload_len(&ack.as_ref());
         OwnedMessage {
-            header: Header::new(
-                protocol_version,
-                PayloadType::DiagnosticMessagePositiveAcknowledge,
-                payload_size,
-            ),
-            payload: OwnedPayload::DiagnosticMessageAck(ack),
+            protocol_version,
+            payload: OwnedPayload::DiagnosticMessageAck(OwnedDiagnosticMessageAck {
+                source_address,
+                target_address,
+                ack_code: DiagnosticAckCode::RoutingConfirmationAck,
+                previous_message_data,
+            }),
         }
     }
 
     /// Construct a diagnostic message negative acknowledgement carrying owned data.
-    ///
-    /// # Panics
-    /// Panics if the payload's encoded size does not fit in a `u32`, which no
-    /// `previous_message_data` vector that can exist in memory reaches.
     #[must_use]
     pub fn diagnostic_message_nack(
         protocol_version: ProtocolVersion,
@@ -525,50 +441,29 @@ impl OwnedMessage {
         nack_code: DiagnosticNackCode,
         previous_message_data: alloc::vec::Vec<u8>,
     ) -> OwnedMessage {
-        let nack = OwnedDiagnosticMessageNack {
-            source_address,
-            target_address,
-            nack_code,
-            previous_message_data,
-        };
-        let payload_size = payload_len(&nack.as_ref());
         OwnedMessage {
-            header: Header::new(
-                protocol_version,
-                PayloadType::DiagnosticMessageNegativeAcknowledge,
-                payload_size,
-            ),
-            payload: OwnedPayload::DiagnosticMessageNack(nack),
+            protocol_version,
+            payload: OwnedPayload::DiagnosticMessageNack(OwnedDiagnosticMessageNack {
+                source_address,
+                target_address,
+                nack_code,
+                previous_message_data,
+            }),
         }
     }
 
     /// Construct a directed reply to a vehicle identification request.
     ///
-    /// The header is stamped with [`PayloadType::VehicleAnnouncement`] (0x0004)
-    /// because ISO 13400-2 defines exactly one wire payload type for both the
-    /// unsolicited announcement and the directed reply. The payload nonetheless
-    /// uses [`OwnedPayload::VehicleIdentificationResponse`], which encodes
-    /// identically but records at construction time that this is an answer to a
-    /// request rather than a spontaneous announcement. A peer decoding these
-    /// bytes gets [`Payload::VehicleAnnouncement`] either way.
-    ///
-    /// # Panics
-    /// Panics if the payload's `encoded_size` errors, or if the resulting size
-    /// does not fit in a `u32`. Neither is reachable here: the payload is fixed
-    /// size (32 or 33 bytes) and `encoded_size` is pure arithmetic over the struct's
-    /// own fields, with no I/O to fail.
+    /// The payload is [`OwnedPayload::VehicleIdentificationResponse`], sent under
+    /// [`PayloadType::VehicleAnnouncement`] (0x0004) exactly as an announcement is,
+    /// so a peer decoding these bytes gets [`Payload::VehicleAnnouncement`].
     #[must_use]
     pub fn vehicle_identification_response(
         protocol_version: ProtocolVersion,
         response: VehicleIdentificationResponse,
     ) -> OwnedMessage {
-        let payload_size = payload_len(&Payload::VehicleIdentificationResponse(response));
         OwnedMessage {
-            header: Header::new(
-                protocol_version,
-                PayloadType::VehicleAnnouncement,
-                payload_size,
-            ),
+            protocol_version,
             payload: OwnedPayload::VehicleIdentificationResponse(response),
         }
     }
@@ -606,28 +501,23 @@ mod tests {
         let buf: [u8; 9] = [0x02, 0xFD, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x03];
         let deserialized_message: Message<'_> = Message::decode(&buf).unwrap().0;
         assert_eq!(
-            deserialized_message.header.protocol_version,
+            deserialized_message.protocol_version,
             ProtocolVersion::V2012
         );
         assert_eq!(
-            deserialized_message.header.payload_type,
+            deserialized_message.payload.payload_type(),
             PayloadType::NegativeAcknowledge
         );
-        assert_eq!(deserialized_message.header.payload_length, 1);
-        let buf: [u8; 15] = [
-            0x01, 0xFE, 0x00, 0x01, 0x00, 0x00, 0x00, 0x07, 0x00, 0x00, 0x00, 0x00, 0x00,
-            0x00, 0x00,
-        ];
+        let buf: [u8; 8] = [0x01, 0xFE, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00];
         let deserialized_message: Message<'_> = Message::decode(&buf).unwrap().0;
         assert_eq!(
-            deserialized_message.header.protocol_version,
+            deserialized_message.protocol_version,
             ProtocolVersion::V2010
         );
         assert_eq!(
-            deserialized_message.header.payload_type,
-            PayloadType::VehicleIdentificationRequest
+            deserialized_message.payload,
+            Payload::VehicleIdentificationRequest
         );
-        assert_eq!(deserialized_message.header.payload_length, 7);
     }
     #[test]
     fn test_invalid_inverse() {
@@ -640,11 +530,23 @@ mod tests {
         ));
     }
 
+    /// Frames a message's encoded bytes back out and decodes them, as a sans-io caller
+    /// does, checking the frame takes exactly the bytes written.
+    fn reframe(message: &Message<'_>) {
+        let mut buf = [0u8; 64];
+        let written = message.encode(&mut SliceSink::new(&mut buf)).unwrap();
+        let (frame, consumed) = crate::try_frame(&buf[..written]).unwrap().unwrap();
+        assert_eq!(consumed, written);
+        assert_eq!(frame.header, message.header().unwrap());
+        let decoded = Message {
+            protocol_version: frame.header.protocol_version(),
+            payload: Payload::decode(frame.payload, frame.header.payload_type()).unwrap(),
+        };
+        assert_eq!(&decoded, message);
+    }
+
     /// Encode a message into a stack buffer and frame it back out again, without any
-    /// `Vec`/`alloc` involved. Exercises the `no_std` / `no_alloc` API surface, and
-    /// pins `Message::diagnostic_message`'s `payload_len` arithmetic: a wrong header
-    /// `payload_length` makes `try_frame` return `Ok(None)` (not enough bytes) or
-    /// leave trailing bytes unconsumed, either of which this test catches.
+    /// `Vec`/`alloc` involved, through the `no_std` / `no_alloc` API surface.
     #[test]
     fn test_no_std_stack_buffer_roundtrip() {
         let message: Message<'_> = Message::diagnostic_message(
@@ -653,26 +555,13 @@ mod tests {
             LogicalAddress(0x1000),
             &[0x10u8, 0x02][..],
         );
-
-        let mut buf = [0u8; 64];
-        let written = {
-            let mut writer = SliceSink::new(&mut buf);
-            message.encode(&mut writer).unwrap()
-        };
-
-        let (frame, consumed) = crate::try_frame(&buf[..written]).unwrap().unwrap();
-        assert_eq!(consumed, written);
-        let payload = Payload::decode(frame.payload, frame.header.payload_type).unwrap();
-        let decoded = Message {
-            header: frame.header,
-            payload,
-        };
-        assert_eq!(decoded, message);
+        assert_eq!(message.header().unwrap().payload_length(), 6);
+        reframe(&message);
     }
 
     /// `Message::diagnostic_message_ack` and `diagnostic_message_nack`: pin each
-    /// header's `payload_length` and round-trip it through `encode`/`try_frame` the
-    /// same way as the stack-buffer test above, without any `Vec`/`alloc`.
+    /// header's payload type and length, and round-trip them the same way as the
+    /// stack-buffer test above, without any `Vec`/`alloc`.
     #[test]
     fn test_diagnostic_message_ack_and_nack_round_trip() {
         let echoed = [0x10u8, 0x02];
@@ -689,32 +578,22 @@ mod tests {
             DiagnosticNackCode::UnknownTargetAddress,
             &echoed[..],
         );
-        for message in [ack, nack] {
+        // Table 17 gives them 0x8002 and 0x8003.
+        for (message, payload_type) in [
+            (ack, PayloadType::DiagnosticMessagePositiveAcknowledge),
+            (nack, PayloadType::DiagnosticMessageNegativeAcknowledge),
+        ] {
             // 5 fixed bytes (two 2-byte addresses + 1 code byte) + 2 previous-message
             // bytes.
-            assert_eq!(message.header.payload_length, 7);
-
-            let mut buf = [0u8; 64];
-            let written = {
-                let mut writer = SliceSink::new(&mut buf);
-                message.encode(&mut writer).unwrap()
-            };
-
-            let (frame, consumed) = crate::try_frame(&buf[..written]).unwrap().unwrap();
-            assert_eq!(consumed, written);
-            let payload =
-                Payload::decode(frame.payload, frame.header.payload_type).unwrap();
-            let decoded = Message {
-                header: frame.header,
-                payload,
-            };
-            assert_eq!(decoded, message);
+            let header = message.header().unwrap();
+            assert_eq!(header.payload_length(), 7);
+            assert_eq!(header.payload_type(), payload_type);
+            reframe(&message);
         }
     }
 
-    /// A routing activation response carrying `oem_specific` must set the header payload
-    /// length to match the 13 bytes `encode` writes, so the framed bytes round-trip.
-    /// (Regression test: the constructor previously hardcoded a length of 9.)
+    /// A routing activation response carrying `oem_specific` is sent with a payload
+    /// length of the 13 bytes `encode` writes, so the framed bytes round-trip.
     #[test]
     fn test_routing_activation_response_oem_specific_round_trip() {
         let message: Message<'_> = Message::routing_activation_response(
@@ -726,22 +605,61 @@ mod tests {
             Some([0xDE, 0xAD, 0xBE, 0xEF]),
         );
         // 9 fixed bytes + 4 oem-specific bytes.
-        assert_eq!(message.header.payload_length, 13);
+        assert_eq!(message.header().unwrap().payload_length(), 13);
+        reframe(&message);
+    }
 
-        let mut buf = [0u8; 64];
-        let written = {
-            let mut writer = SliceSink::new(&mut buf);
-            message.encode(&mut writer).unwrap()
-        };
+    /// The header a message is sent with names its payload's type, whatever else the
+    /// message holds: there is no second copy of the type to disagree with it.
+    #[test]
+    fn the_header_takes_its_payload_type_from_the_payload() {
+        let message = Message::alive_check_request(ProtocolVersion::V2019);
+        let header = message.header().unwrap();
+        assert_eq!(header.payload_type(), PayloadType::AliveCheckRequest);
+        assert_eq!(header.payload_length(), 0);
+        assert_eq!(header.protocol_version(), ProtocolVersion::V2019);
+        let mut buf = [0u8; 8];
+        message.encode(&mut SliceSink::new(&mut buf)).unwrap();
+        assert_eq!(buf, [0x03, 0xFC, 0x00, 0x07, 0x00, 0x00, 0x00, 0x00]);
+    }
 
-        let (frame, consumed) = crate::try_frame(&buf[..written]).unwrap().unwrap();
-        assert_eq!(consumed, written);
-        let payload = Payload::decode(frame.payload, frame.header.payload_type).unwrap();
-        let decoded = Message {
-            header: frame.header,
-            payload,
+    /// Table 17 gives the announcement and the identification response one payload
+    /// type, 0x0004: both are sent under it, and either decodes as an announcement.
+    #[test]
+    fn an_identification_response_is_sent_as_an_announcement() {
+        let response = VehicleIdentificationResponse {
+            vin: [0x41; 17],
+            logical_address: LogicalAddress(0x1000),
+            entity_id: [0x01, 0x02, 0x03, 0x04, 0x05, 0x06],
+            group_id: None,
+            further_action: FurtherActionRequired::NoFurtherActionRequired,
+            vin_gid_sync_status: Some(VinGidSyncStatus::Synchronized),
         };
-        assert_eq!(decoded, message);
+        let announcement = Message {
+            protocol_version: ProtocolVersion::V2019,
+            payload: Payload::VehicleAnnouncement(response),
+        };
+        let identification = Message {
+            protocol_version: ProtocolVersion::V2019,
+            payload: Payload::VehicleIdentificationResponse(response),
+        };
+        let mut sent = [[0u8; 64]; 2];
+        let mut written = [0; 2];
+        for ((message, buf), written) in [&announcement, &identification]
+            .into_iter()
+            .zip(&mut sent)
+            .zip(&mut written)
+        {
+            assert_eq!(
+                message.header().unwrap().payload_type(),
+                PayloadType::VehicleAnnouncement
+            );
+            *written = message.encode(&mut SliceSink::new(buf)).unwrap();
+        }
+        assert_eq!(sent[0][..written[0]], sent[1][..written[1]]);
+        let (decoded, rest) = Message::decode(&sent[1][..written[1]]).unwrap();
+        assert_eq!(rest, []);
+        assert_eq!(decoded, announcement);
     }
 }
 
@@ -752,6 +670,7 @@ mod tests {
 #[cfg(all(test, feature = "alloc"))]
 mod alloc_conversion_tests {
     use super::*;
+    use crate::GroupId;
     use crate::messages::{
         AliveCheckResponse, DiagnosticAckCode, DiagnosticMessage, DiagnosticMessageAck,
         DiagnosticMessageNack, DiagnosticNackCode, DiagnosticPowerModeCode,
@@ -819,7 +738,7 @@ mod alloc_conversion_tests {
                 vin: [0x41; 17],
                 logical_address: LogicalAddress(0x0E00),
                 entity_id: [0x01, 0x02, 0x03, 0x04, 0x05, 0x06],
-                group_id: Some([0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F]),
+                group_id: GroupId::new([0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F]).ok(),
                 further_action: FurtherActionRequired::NoFurtherActionRequired,
                 vin_gid_sync_status: Some(VinGidSyncStatus::Synchronized),
             }),
@@ -844,9 +763,8 @@ mod alloc_conversion_tests {
         }
     }
 
-    /// Owned constructors must produce a header identical to their borrowed
-    /// counterpart's header for the same arguments, including the `payload_length`
-    /// arithmetic (locks the routing-activation length-arithmetic regression class).
+    /// Owned constructors must produce the header their borrowed counterpart does for
+    /// the same arguments, its payload length included.
     #[test]
     fn owned_message_matches_borrowed_headers() {
         // routing_activation_response WITH oem_specific = Some(_) (13-byte case).
@@ -866,8 +784,8 @@ mod alloc_conversion_tests {
             [0x00, 0x00, 0x00, 0x00],
             Some([0xDE, 0xAD, 0xBE, 0xEF]),
         );
-        assert_eq!(borrowed.header, owned.header);
-        assert_eq!(borrowed.header.payload_length, 13);
+        assert_eq!(borrowed.header().unwrap(), owned.header().unwrap());
+        assert_eq!(borrowed.header().unwrap().payload_length(), 13);
 
         // diagnostic_message with non-empty data.
         let data = [0x22u8, 0xF1, 0x90, 0x00];
@@ -883,8 +801,8 @@ mod alloc_conversion_tests {
             LogicalAddress(0x00FF),
             data.to_vec(),
         );
-        assert_eq!(borrowed.header, owned.header);
-        assert_eq!(borrowed.to_owned_message().as_ref().header, borrowed.header);
+        assert_eq!(borrowed.header().unwrap(), owned.header().unwrap());
+        assert_eq!(borrowed.to_owned_message().as_ref(), borrowed);
 
         // diagnostic_message_ack and _nack: ISO 13400-2:2019 Table 17 gives them 0x8002
         // and 0x8003.
@@ -901,9 +819,9 @@ mod alloc_conversion_tests {
             LogicalAddress(0x0E00),
             echoed.to_vec(),
         );
-        assert_eq!(borrowed.header, owned.header);
+        assert_eq!(borrowed.header().unwrap(), owned.header().unwrap());
         assert_eq!(
-            borrowed.header.payload_type,
+            borrowed.header().unwrap().payload_type(),
             PayloadType::DiagnosticMessagePositiveAcknowledge
         );
         let borrowed = Message::diagnostic_message_nack(
@@ -920,9 +838,9 @@ mod alloc_conversion_tests {
             DiagnosticNackCode::UnknownTargetAddress,
             echoed.to_vec(),
         );
-        assert_eq!(borrowed.header, owned.header);
+        assert_eq!(borrowed.header().unwrap(), owned.header().unwrap());
         assert_eq!(
-            borrowed.header.payload_type,
+            borrowed.header().unwrap().payload_type(),
             PayloadType::DiagnosticMessageNegativeAcknowledge
         );
 
@@ -939,6 +857,6 @@ mod alloc_conversion_tests {
             ActivationTypeCode::Default,
             Some([0xDE, 0xAD, 0xBE, 0xEF]),
         );
-        assert_eq!(borrowed.header, owned.header);
+        assert_eq!(borrowed.header().unwrap(), owned.header().unwrap());
     }
 }

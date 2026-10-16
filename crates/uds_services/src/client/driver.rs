@@ -89,6 +89,17 @@ impl Exchange {
     const fn functional(self) -> bool {
         matches!(self.ai.ta_type, TaType::Functional)
     }
+
+    /// Whether it expects no response, so its confirmation completes it.
+    const fn expects_none(self) -> bool {
+        matches!(
+            self.class,
+            ClientTx::Request {
+                expected: ExpectedResponses::None,
+                ..
+            }
+        )
+    }
 }
 
 /// A response that answered the exchange, as the place it occupies in the response
@@ -411,7 +422,7 @@ async fn drain<
 /// The earlier of two optional deadlines on the wrapping timebase.
 fn earliest(a: Option<Timestamp>, b: Option<Timestamp>) -> Option<Timestamp> {
     match (a, b) {
-        (Some(a), Some(b)) => Some(if b.has_reached(a) { a } else { b }),
+        (Some(a), Some(b)) => Some(a.earlier(b)),
         (a, b) => a.or(b),
     }
 }
@@ -595,13 +606,17 @@ impl<
                 repeat: e.repeats > 0,
                 session,
             },
-            keep_alive @ ClientTx::KeepAlive { .. } => keep_alive,
+            other => other,
         };
         loop {
             let now = self.transport.now();
             let ClientBuffers { request, .. } = self.store.split();
             let data = request.get(..e.len).unwrap_or(&[]);
-            let reaction = self.session.s_data_req(now, e.ai, data, class);
+            // A channel withdrawn under the exchange is a request that cannot be sent.
+            let Some(channel) = self.book.channel(e.ai) else {
+                return Err(ClientError::NotSent);
+            };
+            let reaction = self.session.s_data_req(now, channel, data, class);
             // Sent while the transport takes it, so a call dropped meanwhile is reset.
             self.exchange = Some(Exchange {
                 phase: Phase::Sent,
@@ -681,6 +696,12 @@ impl<
             seen.timed_out |= self.send_owed().await.expired;
             if seen.confirmed == Some(true) {
                 e.phase = Phase::Open;
+                // A request expecting no response is complete on its confirmation
+                // (UDSS_LLR_0074): no window opens to wait out.
+                if e.expects_none() {
+                    self.exchange = None;
+                    return None;
+                }
             }
             self.exchange = Some(e);
             if let Some(answered) = seen.answer {
@@ -833,7 +854,10 @@ impl<
             expected: ExpectedResponses::None,
         };
         let running = self.exchange.map(|e| e.ai);
-        let reaction = self.session.s_data_req(now, ai, &KEEP_ALIVE, class);
+        let Some(channel) = self.book.channel(ai) else {
+            return Ok(false);
+        };
+        let reaction = self.session.s_data_req(now, channel, &KEEP_ALIVE, class);
         let drained = drain(reaction, &mut self.transport, &mut self.book, running).await;
         self.confirm_refused();
         *expired |= drained.seen.timed_out;

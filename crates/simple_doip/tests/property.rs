@@ -34,7 +34,7 @@
 use automotive_wire_codec::SliceSink;
 use proptest::prelude::*;
 use simple_doip::{
-    LogicalAddress,
+    GroupId, LogicalAddress,
     messages::{
         ActivationTypeCode, AliveCheckResponse, Decode, DiagnosticAckCode,
         DiagnosticMessage, DiagnosticMessageAck, DiagnosticMessageNack, DiagnosticNackCode,
@@ -43,6 +43,7 @@ use simple_doip::{
         PayloadType, ProtocolVersion, RoutingActivationRequest, RoutingActivationResponse,
         RoutingActivationResponseCode, VehicleIdentificationResponse, VinGidSyncStatus,
     },
+    service::TesterAddress,
 };
 
 /// Encode into a fixed buffer the way a bare-metal caller would -- a
@@ -107,7 +108,7 @@ proptest! {
     /// ISO 13400-2 reserves the tester address range `0x0E00..=0x0FFF`.
     #[test]
     fn prop_logical_address_client_range(addr in 0x0E00u16..=0x0FFF) {
-        prop_assert!(LogicalAddress(addr).is_valid_client_address());
+        prop_assert!(TesterAddress::new(LogicalAddress(addr)).is_ok());
     }
 
     /// Everything outside that range is not a tester address.
@@ -115,7 +116,7 @@ proptest! {
     fn prop_logical_address_outside_client_range(
         addr in prop_oneof![0x0000u16..0x0E00, 0x1000u16..=0xFFFF],
     ) {
-        prop_assert!(!LogicalAddress(addr).is_valid_client_address());
+        prop_assert!(TesterAddress::new(LogicalAddress(addr)).is_err());
     }
 
     #[test]
@@ -266,7 +267,7 @@ proptest! {
         vin in any::<[u8; 17]>(),
         logical_address in any::<u16>(),
         entity_id in any::<[u8; 6]>(),
-        group_id in proptest::option::of(any::<[u8; 6]>()),
+        group_id in any::<[u8; 6]>().prop_map(|bytes| GroupId::new(bytes).ok()),
         further_action in any::<u8>().prop_map(FurtherActionRequired::from),
         vin_gid_sync_status in proptest::option::of(any::<u8>().prop_map(VinGidSyncStatus::from)),
     ) {
@@ -294,15 +295,16 @@ proptest! {
 
         let (parsed, rest) = Message::decode(bytes).expect("message decode failed");
         prop_assert!(rest.is_empty());
-        prop_assert_eq!(parsed.header.payload_type, PayloadType::NegativeAcknowledge);
+        prop_assert_eq!(parsed.payload.payload_type(), PayloadType::NegativeAcknowledge);
         prop_assert_eq!(parsed.payload, payload);
     }
 
+    /// A diagnostic message carries at least one byte of user data (Table 21).
     #[test]
     fn prop_full_diagnostic_frame_roundtrip(
         source in any::<u16>(),
         target in any::<u16>(),
-        user_data in prop::collection::vec(any::<u8>(), 0..64),
+        user_data in prop::collection::vec(any::<u8>(), 1..64),
     ) {
         let payload = Payload::DiagnosticMessage(DiagnosticMessage {
             source_address: LogicalAddress(source),

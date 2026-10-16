@@ -162,7 +162,7 @@ impl DiagnosticSessionControl for Ecu {
     fn timing(&self, _s: S) -> SessionTiming {
         SessionTiming {
             p2_server_max_ms: 50,
-            p2_star_server_max_10ms: 500,
+            p2_star_server_max: uds_services::P2StarServerMax::from_tens_of_millis(500),
         }
     }
     fn on_transition(&mut self, t: SessionTransition, _entered: S, _relocked: bool) {
@@ -226,15 +226,11 @@ uds_server! {
     Ecu: ReadDataByIdentifier, DiagnosticSessionControl, TesterPresent, SecurityAccess;
     transport = Script,
     peers = 1,
+    services = EcuServices,
     server = EcuServer,
 }
 
-const PARAMS: ServerParams = ServerParams {
-    s3_server: 5_000,
-    p2_server_max: 50,
-    p2_star_server_max: 5_000,
-    response_pending_lead: 0,
-};
+const PARAMS: ServerParams = ServerParams::new(5_000, 50, 5_000, 0);
 
 /// Run until the transport errors, which it does only once the script is exhausted, and
 /// check that it was: a step left unconsumed means the driver stopped early.
@@ -510,10 +506,12 @@ fn a_response_pending_lead_sends_the_0x78_within_the_window() {
             conf(SResult::Ok), // the final response's confirmation
         ]),
         ECU,
-        ServerParams {
-            response_pending_lead: 10,
-            ..PARAMS
-        },
+        ServerParams::new(
+            PARAMS.s3_server(),
+            PARAMS.p2_server_max(),
+            PARAMS.p2_star_server_max(),
+            10,
+        ),
     );
     run(&mut s);
     let t = s.transport();

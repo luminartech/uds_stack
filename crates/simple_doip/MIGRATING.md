@@ -30,21 +30,21 @@ embassy-time = { version = "0.5", features = ["std", "generic-queue-8"] }
 
 ## `client::Client` → `tester::Tester`
 
-| 0.6                                                                | 0.7                                                                                                                                                                                            |
-| ------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `Client::connect(ClientOptions)`                                   | `Tester::connect(&stack, remote, sa)`, which connects and activates routing                                                                                                                    |
-| `ClientOptions::server_address`                                    | `remote`, any `SocketAddr`, usually on `TCP_PORT`                                                                                                                                              |
-| `ClientOptions::client_logical_address`                            | `sa`, a `TesterAddress`, which refuses an address outside the tester range                                                                                                                     |
-| `ClientOptions::server_logical_address`, `server_physical_address` | the `ta` of each request                                                                                                                                                                       |
-| `ClientOptions::protocol_version`                                  | `Tester::connect_with_version`'s `version`. `Tester::connect` sends `0x03`; a caller that named `V2012` in 0.6 names `TesterVersion::V2012`. An answer in any version Table 16 defines is read |
-| `ClientOptions::diagnostic_message_timeout`                        | none: the acknowledgement timer is Table 12's 2 s; bound the wait with `next_event`'s deadline                                                                                                 |
-| `RoutingActivationOptions`                                         | none: activation type `0x00`, no OEM-specific field                                                                                                                                            |
-| `Connector`, `ConnectorSocket`                                     | the `edge-nal` stack passed to `connect`: any `TcpConnect`                                                                                                                                     |
-| `send_diagnostic_message(AddressType, bytes)`                      | `request(ta, TaType, pdu)`, then a `ConnectionEvent::Confirm` from `next_event`                                                                                                                |
-| `receive_diagnostic_response()`                                    | `ConnectionEvent::Indication` from `next_event`                                                                                                                                                |
-| `reconnect()`                                                      | `TesterConnection::reconnect(deadline)`, after `RECONNECT_BACKOFF` since the loss                                                                                                              |
-| `shut_down()`, `unbind_socket()`                                   | `TesterConnection::close()`                                                                                                                                                                    |
-| `Error`                                                            | `ConnectError` from `connect`, `service::ConnectionRefusal` from `request`, a `DoIpResult` in each confirm, and `ConnectionEvent::Closed` with `io_error()` for a lost connection              |
+| 0.6                                                                | 0.7                                                                                                                                                                                                             |
+| ------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `Client::connect(ClientOptions)`                                   | `Tester::connect(&stack, remote, sa)`, which connects and activates routing                                                                                                                                     |
+| `ClientOptions::server_address`                                    | `remote`, any `SocketAddr`, usually on `TCP_PORT`                                                                                                                                                               |
+| `ClientOptions::client_logical_address`                            | `sa`, a `TesterAddress`, which refuses an address outside the tester range                                                                                                                                      |
+| `ClientOptions::server_logical_address`, `server_physical_address` | the `ta` of each request                                                                                                                                                                                        |
+| `ClientOptions::protocol_version`                                  | `ConnectOptions::version`, passed to `Tester::connect_with`. `Tester::connect` sends `0x03`; a caller that named `V2012` in 0.6 names `TesterVersion::V2012`. An answer in any version Table 16 defines is read |
+| `ClientOptions::diagnostic_message_timeout`                        | `Tester::with_ack_timeout`; `ACK_TIMEOUT`, Table 12's 2 s, by default                                                                                                                                           |
+| `RoutingActivationOptions`                                         | `ConnectOptions::activation_type` and `vm_specific`, passed to `Tester::connect_with`; `0x00` and no OEM-specific field by default                                                                              |
+| `Connector`, `ConnectorSocket`                                     | the `edge-nal` stack passed to `connect`: any `TcpConnect`                                                                                                                                                      |
+| `send_diagnostic_message(AddressType, bytes)`                      | `request(ta, TaType, pdu)`, then a `ConnectionEvent::Confirm` from `next_event`                                                                                                                                 |
+| `receive_diagnostic_response()`                                    | `ConnectionEvent::Indication` from `next_event`                                                                                                                                                                 |
+| `reconnect()`                                                      | `TesterConnection::reconnect(deadline)`, after `RECONNECT_BACKOFF` since the loss                                                                                                                               |
+| `shut_down()`, `unbind_socket()`                                   | `TesterConnection::close()`                                                                                                                                                                                     |
+| `Error`                                                            | `ConnectError` from `connect`, `service::ConnectionRefusal` from `request`, a `DoIpResult` in each confirm, and `ConnectionEvent::Closed` with `io_error()` for a lost connection                               |
 
 Unlike `Client`, a `Tester` does nothing between calls: everything it reads or writes
 happens inside `next_event`, which a caller keeps calling. A request's acknowledgement is
@@ -103,8 +103,8 @@ above the tester, so the application calls services rather than sending bytes. A
 # use uds_on_ip::DoIpClientTransport;
 # use uds_on_ip::profile::bench_reloads;
 # use uds_services::{
-#     Address, ClientTiming, DataIdentifier, KeepAlive, PhysicalKeepAlive, RecordError,
-#     Response, RoutineIdentifier, uds_client,
+#     Address, ClientLimits, ClientTiming, DataIdentifier, KeepAlive, PhysicalKeepAlive,
+#     RecordError, Response, RoutineIdentifier, uds_client,
 # };
 #
 # #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -142,15 +142,16 @@ above the tester, so the application calls services rather than sending bytes. A
 #
 uds_client! {
     Did;
+    vocabulary = DiagnoserVocabulary,
     transport = DoIpClientTransport<Tester<'static, Stack, 4096>, 4096>,
-    max_dids_per_request = 1,
     routines = Rid,
-    max_dtcs = 4,
-    max_dtc_record_len = 16,
-    max_seed_len = 2,
-    max_key_len = 2,
-    max_option_len = 4,
-    max_block_len = 16,
+    limits = ClientLimits::new()
+        .max_dtcs(4)
+        .max_dtc_record_len(16)
+        .max_seed_len(2)
+        .max_key_len(2)
+        .max_option_len(4)
+        .max_block_len(16),
     physical = 1,
     functional = 1,
     responders = 1,
@@ -171,7 +172,7 @@ let mut client = Diagnoser::new(
     DoIpClientTransport::new(tester, reloads),
     Address(0x0E00),
     KeepAlive::physical(2_000),
-    ClientTiming::new(0, 0, 0),
+    ClientTiming::new(0),
 );
 if let Response::Positive(mut records) = client
     .read_data_by_identifier(Address(0x0001), &[Did::Vin])
@@ -293,7 +294,7 @@ keeps the session, its timing and the response pending. As in
 #     fn timing(&self, _s: S) -> SessionTiming {
 #         SessionTiming {
 #             p2_server_max_ms: 50,
-#             p2_star_server_max_10ms: 500,
+#             p2_star_server_max: uds_services::P2StarServerMax::from_tens_of_millis(500),
 #         }
 #     }
 #     fn on_transition(&mut self, _t: SessionTransition, _entered: S, _relocked: bool) {}
@@ -307,7 +308,6 @@ keeps the session, its timing and the response pending. As in
 #     fn reset(
 #         &mut self,
 #         _kind: ResetType,
-#         _out: &mut ResponseSink<'_>,
 #     ) -> impl Future<Output = Result<AfterReset, Nrc>> {
 #         core::future::ready(Ok(AfterReset::Restart))
 #     }
@@ -318,17 +318,13 @@ keeps the session, its timing and the response pending. As in
 #     fn on_tester_present(&mut self) {}
 # }
 #
-# const PARAMS: ServerParams = ServerParams {
-#     s3_server: 5_000,
-#     p2_server_max: 50,
-#     p2_star_server_max: 5_000,
-#     response_pending_lead: 0,
-# };
+# const PARAMS: ServerParams = ServerParams::new(5_000, 50, 5_000, 0);
 #
 uds_server! {
     Ecu: DiagnosticSessionControl, EcuReset, TesterPresent;
     transport = DoIpTransport<Entity<'static, TcpAcceptor, 1, 4096>, 2>,
     peers = 1,
+    services = EcuServices,
     server = EcuServer,
 }
 

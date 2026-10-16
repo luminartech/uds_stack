@@ -110,6 +110,7 @@ fn owned(event: EntityEvent<'_>) -> Ev {
         },
         EntityEvent::Closed { connection } => Ev::Closed(connection.index()),
         EntityEvent::Deadline => Ev::Deadline,
+        other => panic!("an event this test does not model: {other:?}"),
     }
 }
 
@@ -212,7 +213,7 @@ fn a_failed_accept_is_returned() {
     let mut buf = [0u8; 64];
     assert!(matches!(
         until_stalled(pin!(entity.next_event(&mut buf, None))),
-        Some(Err(Error::Accept(MockError)))
+        Some(Err(Error::Accept(MockError::Failed)))
     ));
 }
 
@@ -703,6 +704,28 @@ fn an_orderly_close_that_cannot_write_is_aborted() {
     assert!(!peer.is_shut());
 
     advance(ms(1999));
+    assert_eq!(events(&mut entity), []);
+    assert!(!peer.is_shut());
+
+    advance(ms(1));
+    assert_eq!(events(&mut entity), []);
+    assert!(peer.is_aborted());
+}
+
+/// A configured close limit replaces the 2 s: the same stalled close is aborted at it.
+#[test]
+fn a_configured_close_limit_bounds_the_orderly_close() {
+    let _clock = clock();
+    let stack = MockStack::new(4096);
+    let config = two_testers().with_close_limit(core::time::Duration::from_millis(500));
+    let mut entity = OneSocket::new(&stack, address(), config);
+    let peer = stack.dial();
+    assert_eq!(events(&mut entity), []);
+    peer.stall_writes();
+    peer.send(&[0x03, 0xFD, 0x00, 0x05, 0x00, 0x00, 0x00, 0x07]);
+    assert_eq!(events(&mut entity), []);
+
+    advance(ms(499));
     assert_eq!(events(&mut entity), []);
     assert!(!peer.is_shut());
 

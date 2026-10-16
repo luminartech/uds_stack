@@ -145,7 +145,6 @@ embedded: && size
     cargo build -p simple_doip  --target {{ embedded_target }} --no-default-features --features connection
     cargo build -p embassy-net-entity --target {{ embedded_target }}
     cargo build -p uds_protocol --target {{ embedded_target }} --no-default-features --features alloc
-    cargo build -p uds_on_ip    --target {{ embedded_target }} --no-default-features --features alloc
     cargo build -p embedded-probe --target {{ embedded_target_no_cas }}
 
 # The probe's flash, static RAM and main's stack frame against

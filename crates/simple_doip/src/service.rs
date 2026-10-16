@@ -104,10 +104,9 @@ pub enum DoIpResult {
 /// [`DiagnosticConnection::request`] did other than for a closed connection
 /// ([`ConnectionRefusal`]). No confirm follows a refusal.
 ///
-/// Exhaustive: these are the only cases in which the request is refused rather than
-/// accepted and confirmed, and a caller that confirms a refused request failed itself
-/// decides what each means.
+/// A caller that confirms a refused request failed itself decides what each means.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, thiserror::Error)]
+#[non_exhaustive]
 pub enum Refusal {
     /// The PDU is empty. ISO 13400-2:2019 Table 21 makes a diagnostic message's user
     /// data mandatory, which this crate reads as at least one byte.
@@ -131,10 +130,10 @@ pub enum Refusal {
 /// Why [`DiagnosticConnection::request`] refused a request. No confirm follows a
 /// refusal.
 ///
-/// Exhaustive, as [`Refusal`] is: a layer generic over the connection tells a closed
-/// connection, to reconnect, from one carrying another request, to wait, from a
-/// request refused for itself.
+/// A layer generic over the connection tells a closed connection, to reconnect, from
+/// one carrying another request, to wait, from a request refused for itself.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, thiserror::Error)]
+#[non_exhaustive]
 pub enum ConnectionRefusal {
     /// The connection is closed. A [`TesterConnection`] takes requests again once
     /// [`TesterConnection::reconnect`] succeeds.
@@ -149,10 +148,10 @@ pub enum ConnectionRefusal {
 /// instant on it: milliseconds, truncated to 32 bits, so it wraps every 49.7 days.
 ///
 /// It has no order, because the raw order is wrong either side of the wrap. Two readings
-/// compare only by how far apart they are, which [`Self::has_reached`] and
-/// [`Self::until`] read correctly so long as they lie within half the range, about 24.8
-/// days, of each other: the rule its namesake `uds_session::Timestamp` keeps one layer
-/// up.
+/// compare only by how far apart they are, which [`Self::has_reached`], [`Self::until`]
+/// and [`Self::earlier`] read correctly so long as they lie within half the range, about
+/// 24.8 days, of each other: the rule, and the methods, of its namesake
+/// `uds_session::Timestamp` one layer up.
 ///
 /// # Examples
 ///
@@ -165,6 +164,8 @@ pub enum ConnectionRefusal {
 /// assert!(!now.has_reached(deadline));
 /// assert_eq!(now.until(deadline), 16);
 /// assert!(deadline.has_reached(now));
+/// assert_eq!(deadline.interval_since(now), 16);
+/// assert_eq!(now.earlier(deadline), now);
 /// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Timestamp(pub u32);
@@ -178,6 +179,32 @@ impl Timestamp {
     #[must_use]
     pub const fn after(self, millis: u32) -> Self {
         Self(self.0.wrapping_add(millis))
+    }
+
+    /// The earlier of `self` and `other`: `self` where the wrapping difference
+    /// `self - other` lands in the upper half of the range.
+    ///
+    /// # Arguments
+    ///
+    /// * `other` - the instant to compare `self` against.
+    #[must_use]
+    pub const fn earlier(self, other: Self) -> Self {
+        if self.0.wrapping_sub(other.0) > u32::MAX / 2 {
+            self
+        } else {
+            other
+        }
+    }
+
+    /// The milliseconds since `earlier`, modulo 2^32, so a reading past the wrap still
+    /// yields the right interval.
+    ///
+    /// # Arguments
+    ///
+    /// * `earlier` - the instant the interval starts at.
+    #[must_use]
+    pub const fn interval_since(self, earlier: Self) -> u32 {
+        self.0.wrapping_sub(earlier.0)
     }
 
     /// Whether `self`, read as the current time, has reached `deadline`: whether the
@@ -215,9 +242,8 @@ impl Timestamp {
 /// occupies, so the connection is free to be used again while the PDU is still live —
 /// which is what lets a server answer the request it has just received.
 ///
-/// Exhaustive: an event added later is a change every caller must handle, so it stops
-/// their build rather than reaching a wildcard arm.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum ConnectionEvent<'b> {
     /// `DoIP_Data.indication`: a diagnostic message arrived (ISO 13400-2:2019 8.3.3).
     ///
@@ -465,6 +491,7 @@ pub trait TesterConnection: DiagnosticConnection {
 
 /// How a [`TesterConnection::reconnect`] that did not fail ended.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum Reconnection {
     /// A new connection is open, routing activated on it.
     Connected,
@@ -503,8 +530,9 @@ impl ConnectionId {
 ///
 /// [`ConnectionEvent`]'s variants, with the [`ConnectionId`] each arrived on wherever one
 /// did. **The lifetime is the caller's buffer, never the entity**, exactly as for
-/// [`ConnectionEvent`]. Exhaustive, as [`ConnectionEvent`] is.
+/// [`ConnectionEvent`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum EntityEvent<'b> {
     /// `DoIP_Data.indication` on `connection`; see [`ConnectionEvent::Indication`].
     Indication {
@@ -783,7 +811,13 @@ impl core::fmt::Display for TesterAddress {
     }
 }
 
-/// What a `DoIP` entity is told about its testers.
+/// How long an orderly close may take before the entity aborts it, discarding whatever
+/// the tester has not yet acknowledged, unless [`EntityConfig::with_close_limit`] says
+/// otherwise. ISO 13400-2 does not bound the close; this is long enough for what was
+/// written before it to be retransmitted.
+pub const ORDERLY_CLOSE_LIMIT: core::time::Duration = core::time::Duration::from_secs(2);
+
+/// What a `DoIP` entity is told about its testers, and how long it gives a close.
 ///
 /// `TESTERS` is how many tester source addresses may activate routing; a routing
 /// activation from any other is refused as an unknown source address.
@@ -808,6 +842,7 @@ impl core::fmt::Display for TesterAddress {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct EntityConfig<const TESTERS: usize = 1> {
     accepted_testers: [TesterAddress; TESTERS],
+    close_limit: core::time::Duration,
 }
 
 impl<const TESTERS: usize> EntityConfig<TESTERS> {
@@ -819,7 +854,31 @@ impl<const TESTERS: usize> EntityConfig<TESTERS> {
     #[must_use]
     pub const fn new(accepted_testers: [TesterAddress; TESTERS]) -> Self {
         const { assert!(TESTERS > 0, "an entity must accept at least one tester") };
-        Self { accepted_testers }
+        Self {
+            accepted_testers,
+            close_limit: ORDERLY_CLOSE_LIMIT,
+        }
+    }
+
+    /// Sets how long an orderly close may take before the entity aborts it, in place of
+    /// [`ORDERLY_CLOSE_LIMIT`].
+    ///
+    /// # Arguments
+    ///
+    /// * `close_limit` - long enough for what was written before the close to be
+    ///   retransmitted on this network.
+    #[must_use]
+    pub const fn with_close_limit(self, close_limit: core::time::Duration) -> Self {
+        Self {
+            close_limit,
+            ..self
+        }
+    }
+
+    /// How long an orderly close may take before the entity aborts it.
+    #[must_use]
+    pub const fn close_limit(&self) -> core::time::Duration {
+        self.close_limit
     }
 
     /// Whether a tester with source address `sa` may activate routing.

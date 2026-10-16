@@ -1,5 +1,8 @@
 //! `ReadDataByIdentifier` (0x22) service implementation
-use crate::{Decode, Encode, Error, NegativeResponseCode};
+use crate::{Decode, Encode, Error, Incomplete, NegativeResponseCode};
+
+/// One `dataIdentifier` and the first byte of its `dataRecord`.
+const MIN_RESPONSE_LEN: usize = 3;
 use automotive_wire_codec::{write_bytes, write_u16_be};
 
 /// Positive response to `ReadDataByIdentifier`: raw `[DID][data record]…` bytes.
@@ -44,7 +47,17 @@ impl Encode for ReadDataByIdentifierResponse<'_> {
 impl<'a> Decode<'a> for ReadDataByIdentifierResponse<'a> {
     type Error = crate::Error;
 
+    /// # Errors
+    ///
+    /// [`Error::InsufficientData`] where `buf` holds less than one identifier and one
+    /// byte of its record, which ISO 14229-1:2020 Table 188 makes mandatory.
     fn decode(buf: &'a [u8]) -> Result<(Self, &'a [u8]), Error> {
+        if buf.len() < MIN_RESPONSE_LEN {
+            return Err(Error::InsufficientData(Incomplete {
+                needed: MIN_RESPONSE_LEN,
+                available: buf.len(),
+            }));
+        }
         Ok((Self { records: buf }, &[]))
     }
 }
@@ -235,6 +248,24 @@ mod test {
         let n = Encode::encode(&resp, &mut automotive_wire_codec::SliceSink::new(&mut buf))
             .unwrap();
         assert_eq!(&buf[..n], &raw);
+    }
+
+    /// Table 188: a positive response carries at least one whole identifier and one byte
+    /// of its record, so `62`, `62 F1` and `62 F1 90` are short, also through
+    /// [`crate::Response`].
+    #[test]
+    fn rdbi_response_without_a_whole_record_is_short() {
+        use crate::{Decode, Response};
+        for short in [&[][..], &[0xF1], &[0xF1, 0x90]] {
+            assert!(matches!(
+                <ReadDataByIdentifierResponse as Decode>::decode(short),
+                Err(Error::InsufficientData(_))
+            ));
+        }
+        assert!(matches!(
+            <Response as Decode>::decode_exact(&[0x62]),
+            Err(Error::InsufficientData(_))
+        ));
     }
 
     #[test]

@@ -2,10 +2,10 @@
 //!
 //! ``UDSSVC_ARCH_0012`` — one trait per service.
 
-use crate::{Access, ResponseSink, SessionTransition};
+use crate::{Access, SessionTransition};
 use uds_protocol::{
     CommunicationControlType, CommunicationType, DiagnosticSessionType, DtcSettingType,
-    NegativeResponseCode, ResetType, SubnetNumber,
+    NegativeResponseCode, P2StarServerMax, ResetType, SubnetNumber,
 };
 
 /// ``UDSS_LLR_0073`` — the session layer learns only default/non-default.
@@ -30,8 +30,8 @@ pub(crate) fn selection_of(
 pub struct SessionTiming {
     /// `P2Server_max`, in 1 ms units.
     pub p2_server_max_ms: u16,
-    /// `P2*Server_max`, in 10 ms units.
-    pub p2_star_server_max_10ms: u16,
+    /// `P2*Server_max`; see [`P2StarServerMax`].
+    pub p2_star_server_max: P2StarServerMax,
 }
 
 impl SessionTiming {
@@ -42,7 +42,7 @@ impl SessionTiming {
 
     /// `P2*Server_max` in milliseconds, the session layer's unit.
     pub(crate) fn p2_star_server_max(self) -> u32 {
-        u32::from(self.p2_star_server_max_10ms) * 10
+        self.p2_star_server_max.as_millis()
     }
 }
 
@@ -109,8 +109,8 @@ pub trait DiagnosticSessionControl {
     /// timed by this and not by the [`ServerParams`](crate::ServerParams) passed to
     /// [`Server::new`](crate::Server::new). The returned pair must keep those params'
     /// `response_pending_lead` well formed
-    /// ([`ServerParams::is_well_formed`](crate::ServerParams::is_well_formed)); a debug
-    /// build panics on the first request timed by a pair that does not.
+    /// ([`ServerParams::lead_fits`](crate::ServerParams::lead_fits)); the server panics
+    /// on the first request timed by a pair that does not.
     ///
     /// # Arguments
     ///
@@ -207,7 +207,7 @@ pub trait EcuReset {
     ///   variants carry the raw byte for a server that defines its own.
     fn access(&self, kind: ResetType) -> Option<Access>;
 
-    /// Accept or refuse `kind`, writing any `powerDownTime` into `out`.
+    /// Accept or refuse `kind`.
     ///
     /// **Must not perform the reset before returning.** ISO 14229-1:2020 clause 10.3.1
     /// strongly recommends that the positive response is sent before the reset is
@@ -217,24 +217,25 @@ pub trait EcuReset {
     /// # Arguments
     ///
     /// * `kind` - the reset requested, one [`Self::access`] admitted; see [`ResetType`].
-    /// * `out` - where the `powerDownTime` byte goes, for
-    ///   [`ResetType::EnableRapidPowerShutDown`], the one reset whose response carries
-    ///   it (clause 10.3.3, Table 35); nothing is written for any other.
     ///
     /// # Errors
     ///
     /// The [`NegativeResponseCode`] for a reset whose criteria are not met, such as
     /// `conditionsNotCorrect` (0x22), clause 10.3.4. A locked level is
     /// [`Self::access`]'s, not this method's.
-    ///
-    /// A refused write to `out` needs no handling: the sink records the refusal and the
-    /// pipeline answers `responseTooLong` (0x14) in place of the response, so the write's
-    /// `Result` may be discarded. See [`ResponseSink`].
     fn reset(
         &mut self,
         kind: ResetType,
-        out: &mut ResponseSink<'_>,
     ) -> impl core::future::Future<Output = Result<AfterReset, NegativeResponseCode>>;
+
+    /// The `powerDownTime` an accepted [`ResetType::EnableRapidPowerShutDown`]'s
+    /// response carries, the one reset whose response does (ISO 14229-1:2020 Table 35):
+    /// seconds from `0x00` to `0xFE`, or `0xFF` for a failure or a time not available,
+    /// which is what this returns unless overridden. Asked after [`Self::reset`] accepts
+    /// that reset, and for no other.
+    fn power_down_time(&self) -> u8 {
+        0xFF
+    }
 
     /// The positive response to `kind` was confirmed sent, or its suppression completed
     /// (``UDSS_LLR_0085``/``0086``). Where a reset starts something after its response,
@@ -309,8 +310,8 @@ pub trait CommunicationControl {
     ///
     /// * `control_type` - what to do; see [`CommunicationControlType`].
     /// * `communication_type` - what it applies to; see [`CommunicationType`]. Never
-    ///   [`CommunicationType::IsoSaeReserved`]: Annex B Table B.1 reserves that value, and
-    ///   the pipeline answers it `requestOutOfRange` (0x31) without asking.
+    ///   [`CommunicationType::IsoSaeReserved`]: Annex B Table B.1 reserves those values,
+    ///   and the pipeline answers them `requestOutOfRange` (0x31) without asking.
     /// * `subnet` - which network it applies to; see [`SubnetNumber`], which distinguishes
     ///   [`SubnetNumber::ReceivedOn`] from [`SubnetNumber::AllConnectedNetworks`].
     /// * `node_id` - the `nodeIdentificationNumber`, present exactly where `control_type`
@@ -398,7 +399,7 @@ pub trait ControlDtcSetting {
 )]
 mod tests {
     use super::{AfterReset, DiagnosticSessionControl, EcuReset, SessionTiming};
-    use crate::{ResponseSink, SessionTransition};
+    use crate::SessionTransition;
     use uds_protocol::{DiagnosticSessionType, NegativeResponseCode, ResetType};
 
     struct Ecu;
@@ -427,7 +428,7 @@ mod tests {
         fn timing(&self, _s: DiagnosticSessionType) -> SessionTiming {
             SessionTiming {
                 p2_server_max_ms: 50,
-                p2_star_server_max_10ms: 500,
+                p2_star_server_max: crate::P2StarServerMax::from_tens_of_millis(500),
             }
         }
         fn on_transition(
@@ -447,7 +448,6 @@ mod tests {
         async fn reset(
             &mut self,
             _k: ResetType,
-            _o: &mut ResponseSink<'_>,
         ) -> Result<AfterReset, NegativeResponseCode> {
             Ok(AfterReset::Restart)
         }
@@ -485,7 +485,7 @@ mod tests {
         assert_eq!((t.p2_server_max(), t.p2_star_server_max()), (50, 5_000));
         let widest = SessionTiming {
             p2_server_max_ms: u16::MAX,
-            p2_star_server_max_10ms: u16::MAX,
+            p2_star_server_max: crate::P2StarServerMax::from_tens_of_millis(u16::MAX),
         };
         assert_eq!(widest.p2_star_server_max(), 655_350);
     }

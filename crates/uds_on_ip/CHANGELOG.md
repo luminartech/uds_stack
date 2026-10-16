@@ -26,28 +26,32 @@ transport for both roles. It is released in lockstep with the rest of the
   (REQ 7.11) and after a positive `DiagnosticSessionControl` response to a session
   change that leaves the running software (REQ 7.9). `CONNECTIONS` must be at
   least the entity's own connection count, which is checked at compile time.
-- `DoIpClientTransport<C, QUEUE, PEERS>`, the client-side
+- `DoIpClientTransport<C, QUEUE, PEERS, WAITING>`, the client-side
   `uds_services::UdsTransport` and `ClientTransport` over any
-  `simple_doip::service::TesterConnection`. It queues one request behind another,
-  turns a refused request into a failed confirmation, and reconnects and
+  `simple_doip::service::TesterConnection`. It queues up to `WAITING` requests in
+  `QUEUE` bytes behind the one the connection carries; `QUEUE` must be at least
+  the connection's `MAX_PDU` plus `KEEP_ALIVE_LEN`, `uds_services::KEEP_ALIVE_LEN`, for
+  each other request waiting, which is checked at compile time. It turns a refused request into a failed
+  confirmation, and reconnects and
   re-activates routing after a server closes the connection (REQ 7.8, REQ 7.10).
   It reports each close as expected or unexpected, and sends a request on a new
   connection when a late reply to an earlier one could otherwise be mistaken for
-  its answer. Received periodic responses are reported as
+  its answer, unless `with_late_reply_guard(LateReplyGuard::Off)`. Received periodic responses are reported as
   `TransportEvent::Periodic`. `with_max_data_size` passes in the entity's
   advertised *Max. data size*, so `outbound_max` reports the true limit.
 - `profile::bench_reloads()`, the conventional `tP6` reload pair (2000 ms and
   5000 ms) for a bench setup. It is a function and not a `Default`, because these
   values are not a vehicle configuration.
-- `mapping`, the address conversions between `uds_session` and `simple_doip`
-  (`to_logical`, `from_logical`, `target_of`), and `MappingError` for the remote
-  message types, which `DoIP` cannot carry.
-- `Error` for the server transport and `ClientTransportError` for the client
-  transport. A conformant connection close is reported as an event, not as an
+- `MappingError` for the remote message types, which `DoIP` cannot carry.
+- `DoIpTransport` closes every tester connection with nothing awaiting confirmation
+  when the server says it is restarting (`UdsTransport::restarting`), so a suppressed
+  `ECUReset`, which sends nothing to close after, still ends the connection
+  (REQ 7.11).
+- `DoIpTransportError` for the server transport and `DoIpClientTransportError` for the
+  client transport. A conformant connection close is reported as an event, not as an
   error.
-- `no_std` and allocation-free by default (`default = []`), with no async runtime
-  named. `alloc` and `std` features forward to `simple_doip` and `uds_protocol`, and
-  `std` adds `std::error::Error`. `unsafe` is forbidden. MSRV 1.91.
+- `no_std` and allocation-free, with no features and no async runtime named. The
+  errors implement `core::error::Error`. `unsafe` is forbidden. MSRV 1.91.
 
 ### Known limitations
 

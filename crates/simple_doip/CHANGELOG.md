@@ -47,6 +47,14 @@ example for each.
   deployment's tester address, from `0x0E00`–`0x0FFF`.
 - **Breaking:** `DiagnosticAckCode::is_positive_ack` and `is_negative_ack`. Whether
   an acknowledgement is negative is now its type; see Changed.
+- **Breaking:** `LogicalAddress::is_valid_client_address` and
+  `LogicalAddress::OBD_ADDRESS_RANGE`. The predicate logged through `tracing` under
+  `std` for an address in `0x0F00`–`0x0F7F`. Migrate: call
+  `service::TesterAddress::new(address).is_ok()`, or keep the `TesterAddress`.
+- **Breaking:** what the `std` feature enabled besides `MessageError::Std`: the
+  `tracing` dependency, which only `codec` now enables, and `thiserror`'s `std`
+  feature. Migrate: enable `tracing`'s or `thiserror`'s `std` feature yourself if
+  you relied on it through this crate.
 - The `async-trait`, `futures` and `embedded-io` dependencies. The first two served
   only the client and server; for `embedded-io`, see Changed.
 - The `simple_client` and `echo_server` examples, with the types they showed.
@@ -70,9 +78,11 @@ example for each.
     they arrived on, a request is routed by target address, and `close` is the close
     ISO 14229-5 prescribes after a reset or a session change that leaves the running
     software.
-  - `ConnectionEvent` and `EntityEvent`, both exhaustive, so a new event stops the
-    build of the layer that must handle it. An indication longer than the caller's
-    buffer arrives as `IndicationTruncated`.
+  - `ConnectionEvent` and `EntityEvent`, `#[non_exhaustive]` as this crate's own
+    events. An indication longer than the caller's buffer arrives as
+    `IndicationTruncated`. `Refusal`, `ConnectionRefusal` and `Reconnection` are
+    `#[non_exhaustive]` too; the code enums mirroring a table of ISO 13400-2:2019, and
+    `DoIpResult` (8.2.5), are exhaustive.
   - `DoIpResult`, the twelve `DoIP_Result` values of 8.2.5.
   - `request` is a plain function, not a future: it accepts or refuses the PDU when
     it returns, and the outcome of an accepted one arrives later as exactly one
@@ -80,20 +90,26 @@ example for each.
     a connection a `ConnectionRefusal` (`Closed`, or `Refused(Refusal)`), and no
     confirm follows it.
   - `Timestamp`, a wrapping 32-bit millisecond reading of the implementor's clock,
-    which `now` returns and `next_event` takes as its deadline.
+    which `now` returns and `next_event` takes as its deadline. It has the methods of
+    `uds_session::Timestamp`: `after`, `earlier`, `interval_since`, `has_reached`
+    and `until`.
   - `TesterAddress`, a logical address in the tester range, and
     `EntityConfig<TESTERS>`, the testers an entity accepts. `EntityConfig` has no
-    `Default`: every integrator names its testers.
+    `Default`: every integrator names its testers. `with_close_limit` sets how long an
+    entity's orderly close may take before it aborts, in place of
+    `service::ORDERLY_CLOSE_LIMIT`.
 - `tester::Tester` (`connection`): connects to an entity, activates routing, answers
   alive checks, and is then a `TesterConnection`. One request is outstanding at a
   time; a request with no acknowledgement within `A_DoIP_Diagnostic_Message` is
   confirmed `TimeoutA` and its connection given up, so a late response cannot reach
-  a later request. A connection's end is reported once as `Closed`. `reconnect`
+  a later request; `with_ack_timeout` replaces Table 12's 2 s (`ACK_TIMEOUT`). A connection's end is reported once as `Closed`. `reconnect`
   waits `RECONNECT_BACKOFF` (3 s, or `with_reconnect_backoff`) after a loss before
   connecting. Every message it sends carries ISO 13400-2:2019's protocol version
-  (`0x03`), or the `TesterVersion` given to `connect_with_version` (`0x01`, `0x02`)
-  for an entity that implements an earlier edition. Also `ConnectError`, `MIN_N`
-  and `DIAGNOSTIC_MESSAGE_OVERHEAD`.
+  (`0x03`). `connect_with` takes `ConnectOptions`: another `TesterVersion` (`0x01`,
+  `0x02`) for an entity that implements an earlier edition, and the routing
+  activation type and OEM-specific field, so a tester can ask for central security
+  (`0xE0`, REQ 8.DoIP-144). Also `ConnectError`, `MIN_N` and
+  `DIAGNOSTIC_MESSAGE_OVERHEAD`.
 - `tester::discovery` (`connection`): `identify` broadcasts or directs a vehicle
   identification request (all, by EID, or by VIN) and collects every entity that
   answers within `A_DoIP_Ctrl`; `entity_status` and `power_mode` ask one entity.
@@ -102,7 +118,7 @@ example for each.
   socket arbitration and alive checks, the generic header and diagnostic message
   handlers, and the Table 12 timers inside `next_event`, with `MCTS` connections
   plus the reserve socket. Its memory is fixed by its const parameters. Also
-  `EntityAddress`, `AddressError`, `Error` and `ORDERLY_CLOSE_LIMIT`.
+  `EntityAddress`, `AddressError` and `Error`.
 - `entity::Entity::with_discovery`: the entity's `UDP_DISCOVERY` socket as well. It
   announces itself, answers vehicle identification (plain, by EID and by VIN),
   entity status and power mode, and NACKs bad headers, all polled by `next_event`.
@@ -127,6 +143,27 @@ example for each.
 
 ### Changed
 
+- **Breaking:** `MessageCodec`'s `Decoder::Item` is `message_codec::Frame`. A frame
+  whose payload does not decode, such as a vehicle-manufacturer-specific payload type,
+  is `Frame::Undecoded` with its header, payload and error; it used to be dropped. A
+  header declaring a payload longer than `MessageCodec::max_payload_length` is
+  `Frame::TooLarge` and its payload is discarded as it arrives; it used to be
+  buffered whatever its length. The limit defaults to
+  `MessageCodec::DEFAULT_MAX_PAYLOAD_LENGTH` (8 MiB) and is set with
+  `MessageCodec::with_max_payload_length`. Migrate: match `Frame::Message` where the
+  decoder's item was an `OwnedMessage`.
+- **Breaking:** a code enum's variant that carries the wire value is built only by
+  converting the value, so it never holds one a named variant has and `==` agrees with
+  the wire: `ProtocolVersion::ReservedFuture`, `PayloadType::Reserved` and
+  `ReservedVehicleManufacturer`, and the `Reserved` and `VehicleManufacturerSpecific`
+  variants of `NackCode`, `DiagnosticAckCode`, `DiagnosticNackCode`,
+  `ActivationTypeCode`, `RoutingActivationResponseCode`, `EntityStatusNodeType`,
+  `DiagnosticPowerModeCode`, `FurtherActionRequired` and `VinGidSyncStatus`. Migrate:
+  build one with `From`, match it as `Reserved { .. }`, and read the value with `From`.
+- **Breaking:** `VehicleIdentificationResponse::group_id` is `Option<GroupId>`. As
+  `Option<[u8; 6]>` it could hold all `0x00` or all `0xFF`, Table 1's "not set"
+  value, which encoded and decoded back as `None`. Migrate: build it with
+  `GroupId::new(bytes).ok()`, and read the bytes with `GroupId::to_bytes`.
 - **Breaking:** `automotive-wire-codec` is 0.4, and `embedded-io` is no longer a
   dependency. `Encode::encode` writes into `&mut impl wire::Sink` instead of an
   `embedded_io::Write`; to encode into a `&mut [u8]`, wrap it in
@@ -147,9 +184,33 @@ example for each.
   field.
 - **Breaking:** `Payload::decode` keeps what a directed identification request
   names. `0x0002` and `0x0003` decode to `VehicleIdentificationRequestWithEid` and
-  `WithVin` rather than `VehicleIdentificationRequest`, and one shorter than its EID
-  or VIN is `MessageError::Incomplete`. `0x4003` decodes to `PowerModeInfoRequest`
-  where it was `MessageError::UnsupportedPayloadType`.
+  `WithVin` rather than `VehicleIdentificationRequest`, and one not as long as its
+  EID or VIN is `MessageError::InvalidPayloadLength`. `0x4003` decodes to
+  `PowerModeInfoRequest` where it was `MessageError::UnsupportedPayloadType`.
+- **Breaking:** `Message` and `OwnedMessage` hold a `protocol_version` and a
+  `payload`, and no `header`. The header is derived when a message is encoded, its
+  payload type from the new `Payload::payload_type`, so it can no longer name a type
+  other than its payload's; `Message::header` and `OwnedMessage::header` return it.
+  `Header`'s fields are private, read through `protocol_version()`,
+  `payload_type()` and `payload_length()`, and it no longer stores the inverse
+  protocol version, which decode checks and encode derives. The message
+  constructors no longer panic. Migrate: build a `Message` from `protocol_version`
+  and `payload`, read `message.payload.payload_type()` or `message.header()` where
+  you read `message.header`, and call the getter where you read a `Header` field.
+- **Breaking:** `Payload::decode`, and with it `Message::decode`, requires a payload
+  to be exactly as long as its type allows (REQ 7.DoIP-045), and refuses one too
+  short, too long, or with bytes left over with the new
+  `MessageError::InvalidPayloadLength { payload_type, length }`, which
+  `is_framing_fatal` classifies fatal as Table 19 has the socket closed. A body too
+  short was `MessageError::Incomplete`, and trailing bytes were ignored. The rule is
+  public as `PayloadType::allows_payload_length`, which the entity and the tester
+  check headers against. A diagnostic message must carry at least one byte of user
+  data, and `Payload::encode` refuses one that does not with the same error rather
+  than frame bytes no decoder accepts. Migrate: match `InvalidPayloadLength` where you matched `Incomplete` from
+  `Payload::decode`, and send whole payloads.
+- **Breaking:** `MessageError::PayloadLengthTooShort` and
+  `MessageError::UnexpectedPayloadType` are removed: nothing produced them. Migrate:
+  delete the match arms.
 - **Breaking:** the minimum supported Rust version is 1.91, up from 1.88.
 - `simple_doip` is released in lockstep with `uds_protocol`, `uds_session`,
   `uds_services` and `uds_on_ip`: all five share one version, and 0.7.0 is the
@@ -160,6 +221,9 @@ example for each.
 
 ### Fixed
 
+- `Tester::close` returns `Ok` where the stack reports `NotConnected` because the
+  entity closed first, as its contract promises for a tester with no connection. A std
+  stack's shutdown failed that way after an unobserved close, such as after a reset.
 - A negative diagnostic acknowledgement was emitted under the positive
   payload type `0x8002` whatever its code, and a received `0x8003` was decoded
   without its body. The separate types above make a header and its code agree.

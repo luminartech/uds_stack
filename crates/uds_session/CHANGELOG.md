@@ -24,7 +24,14 @@ is released in lockstep with the rest of the `uds_stack` workspace (`uds_protoco
   ends a non-default session, and `ResponseOverrun` when `tP2_Server` is about to
   expire with no response sent. `ServerParams::response_pending_lead` sets how early
   that overrun is reported, so a response-pending message can still go out inside
-  the window. `is_well_formed` checks the lead against both windows.
+  the window. `ServerParams::new` builds the set and panics, or in a `const` fails to
+  compile, where the lead does not fit both windows (`is_well_formed`); `lead_fits`
+  checks it against another pair. Its fields are private and read through getters of
+  the same names, so a set `new` admitted cannot be edited into one it would refuse.
+- The types that follow this crate's requirement set rather than a table of ISO
+  14229-2 are `#[non_exhaustive]`, since the set may grow:
+  `ServerParameter`, `ChannelParameter`, `ServerTx`, `ClientTx`, `ServerRx`,
+  `ClientRx`, `ExpectedResponses`, `Cause` and `Content`.
 - `Client<K, PHYS, FUNC, R>`, the session layer in the client role, with separate
   arrays of physical and functional channel slots (`PhysicalSlot`,
   `FunctionalSlot<R>`, where `R` is the responders tracked per functional channel).
@@ -43,7 +50,13 @@ is released in lockstep with the rest of the `uds_stack` workspace (`uds_protoco
 - Inputs as the ISO 14229-2 service primitives: `s_data_req`, `t_data_som_ind`,
   `t_data_ind`, `t_data_conf` and `tick`, each taking a caller-supplied `Timestamp`,
   plus `Server::completion_report` for a request that was handled with no response.
-  `next_deadline` tells the caller when to call `tick` next.
+  `next_deadline` tells the caller when to call `tick` next. A timer loaded with
+  2^31 − 1 ms (about 24.8 days) or more runs for 2^31 − 1 ms, the longest interval
+  the wrapping `Timestamp` can tell from a deadline already past.
+- `Client::s_data_req` names the channel by the handle `open_physical_channel` or
+  `open_functional_channel` returned, and sends with that channel's addressing, so a
+  request cannot name an addressing no channel has. A request on a withdrawn channel is
+  rejected `NoSuchChannel`.
 - `Reaction`, which each input returns, is drained for its outputs. `Reaction::finish`
   gives a `Finished` with the input's outcome and any outputs not yet drained, so
   none are lost. A refused input reports a `Rejection` that lists every `Cause` and
@@ -53,8 +66,8 @@ is released in lockstep with the rest of the `uds_stack` workspace (`uds_protoco
   (`ClientTx`, `ClientRx`, `ServerTx`, `ServerRx`, `ExpectedResponses`,
   `SessionSelection`, `Solicitation`) and results (`SResult`, `TransportError`).
 - `Timestamp`: a caller-supplied 32-bit millisecond count that wraps.
-  `interval_since`, `has_reached` and `until` handle the wrap; the derived `Ord`
-  does not.
+  `interval_since`, `has_reached`, `until`, `earlier` and `after` handle the wrap.
+  It has no order, because the order of the raw counts is wrong across the wrap.
 - `no_std` with no allocation and no dependencies. Storage is supplied by the caller
   through const generics. No clock is read, no transport is called and no executor
   is needed. `unsafe` is forbidden.

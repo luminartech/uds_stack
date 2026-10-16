@@ -17,13 +17,14 @@ use super::traits::{Decode, Encode};
 pub enum ProtocolVersion {
     /// Reserved by ISO 13400-2; not a valid version for a `DoIP` entity to send.
     Reserved = 0x00,
-    /// ISO 13400-2:2010
+    /// ISO/DIS 13400-2:2010
     V2010 = 0x01,
     /// ISO 13400-2:2012
     V2012 = 0x02,
     /// ISO 13400-2:2019
     V2019 = 0x03,
     /// Client Future Spec Reserved
+    #[non_exhaustive]
     ReservedFuture(u8),
     /// Client Version Value for Vehicle Identification Request
     VehicleIdentificationRequest = 0xFF,
@@ -117,8 +118,10 @@ pub enum PayloadType {
     /// Client Diagnostic Message Negative Acknowledge
     DiagnosticMessageNegativeAcknowledge = 0x8003,
     /// Client Spec Reserved
+    #[non_exhaustive]
     Reserved(u16),
     /// Client Spec Reserved for Vehicle Manufacturer
+    #[non_exhaustive]
     ReservedVehicleManufacturer(u16),
 }
 
@@ -172,6 +175,41 @@ impl From<PayloadType> for u16 {
     }
 }
 
+impl PayloadType {
+    /// Whether a payload of `length` bytes has a length this payload type allows, the
+    /// check REQ 7.DoIP-045 has an entity answer with generic header NACK `0x04`.
+    ///
+    /// The lengths are those of each payload's structure: Tables 2 to 5 and 8 to 11
+    /// for the vehicle identification, power mode and entity status messages, Table 18
+    /// for the generic NACK, Tables 21, 23 and 25 for the diagnostic message and its
+    /// acknowledgements, Tables 27 and 28 for the alive check, and Tables 46 and 48 for
+    /// routing activation. A diagnostic message's user data is mandatory (Table 21),
+    /// which this crate reads as at least one byte. Always `true` for a reserved type,
+    /// whose payload this crate does not model.
+    #[must_use]
+    pub const fn allows_payload_length(self, length: u32) -> bool {
+        match self {
+            PayloadType::VehicleIdentificationRequest
+            | PayloadType::AliveCheckRequest
+            | PayloadType::DoIPEntityStatusRequest
+            | PayloadType::DiagnosticPowerModeInfoRequest => length == 0,
+            PayloadType::NegativeAcknowledge
+            | PayloadType::DiagnosticPowerModeInfoResponse => length == 1,
+            PayloadType::AliveCheckResponse => length == 2,
+            PayloadType::VehicleIdentificationRequestWithEID => length == 6,
+            PayloadType::VehicleIdentificationRequestWithVIN => length == 17,
+            PayloadType::VehicleAnnouncement => matches!(length, 32 | 33),
+            PayloadType::RoutingActivationRequest => matches!(length, 7 | 11),
+            PayloadType::RoutingActivationResponse => matches!(length, 9 | 13),
+            PayloadType::DoIPEntityStatusResponse => matches!(length, 3 | 7),
+            PayloadType::DiagnosticMessage
+            | PayloadType::DiagnosticMessagePositiveAcknowledge
+            | PayloadType::DiagnosticMessageNegativeAcknowledge => length >= 5,
+            PayloadType::Reserved(_) | PayloadType::ReservedVehicleManufacturer(_) => true,
+        }
+    }
+}
+
 impl Debug for PayloadType {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         let val: u16 = (*self).into();
@@ -179,56 +217,61 @@ impl Debug for PayloadType {
     }
 }
 
-/// `DoIP` Message Header
+/// `DoIP` generic header (Table 16), as it was read from the wire or is to be written.
 ///
 /// The header is 8 bytes long and contains the following fields:
 /// * [`ProtocolVersion`] (1 byte)
-/// * Inverse Protocol Version (1 byte)
+/// * Inverse protocol version (1 byte), derived from the protocol version on encode
+///   and checked against it on decode
 /// * [`PayloadType`] (2 bytes)
-/// * Payload Length (4 bytes)
-#[derive(Clone, PartialEq)]
+/// * Payload length (4 bytes)
+///
+/// A [`Message`](crate::messages::Message) derives its header from its payload when
+/// encoded, so a `Header` is built by hand only to frame bytes this crate does not
+/// model.
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub struct Header {
-    /// Client Protocol Version
-    pub protocol_version: ProtocolVersion,
-    /// Bitwise inverse of `protocol_version` for verification
-    pub inverse_protocol_version: u8,
-    /// Client Payload Type
-    pub payload_type: PayloadType,
-    /// Length of payload byte array, does not include header.
-    pub payload_length: u32,
+    protocol_version: ProtocolVersion,
+    payload_type: PayloadType,
+    payload_length: u32,
 }
 
 impl Header {
     /// Size in bytes of an encoded header.
     pub const SIZE: usize = 8;
 
-    /// Create a new `DoIP` message header
+    /// A header for a payload of `payload_type` and `payload_length` bytes, sent in
+    /// `protocol_version`.
     #[must_use]
-    pub fn new(
+    pub const fn new(
         protocol_version: ProtocolVersion,
         payload_type: PayloadType,
         payload_length: u32,
     ) -> Self {
-        let inverse_protocol_version = protocol_version.inverse();
         Header {
             protocol_version,
-            inverse_protocol_version,
             payload_type,
             payload_length,
         }
     }
-    /// Checks that the inverse value of the protocol version is correct
-    /// to ensure a properly formatted DOIP message is received
-    pub(crate) fn version_inverse_correct(&self) -> Result<(), MessageError> {
-        let expected = self.protocol_version.inverse();
-        if expected == self.inverse_protocol_version {
-            Ok(())
-        } else {
-            Err(MessageError::VersionInverseIncorrect {
-                expected,
-                value: self.inverse_protocol_version,
-            })
-        }
+
+    /// The protocol version the message is sent in.
+    #[must_use]
+    pub const fn protocol_version(&self) -> ProtocolVersion {
+        self.protocol_version
+    }
+
+    /// The type of the payload that follows the header.
+    #[must_use]
+    pub const fn payload_type(&self) -> PayloadType {
+        self.payload_type
+    }
+
+    /// The length in bytes of the payload that follows the header, not counting the
+    /// header itself.
+    #[must_use]
+    pub const fn payload_length(&self) -> u32 {
+        self.payload_length
     }
 }
 
@@ -242,19 +285,21 @@ impl<'a> Decode<'a> for Header {
     /// does not match, or [`MessageError::Incomplete`] if `buf` is too short.
     fn decode(buf: &'a [u8]) -> Result<(Self, &'a [u8]), MessageError> {
         let (protocol_version, rest) = read_u8(buf)?;
-        let protocol_version = protocol_version.into();
+        let protocol_version = ProtocolVersion::from(protocol_version);
         let (inverse_protocol_version, rest) = read_u8(rest)?;
         let (payload_type, rest) = read_u16_be(rest)?;
-        let payload_type = payload_type.into();
         let (payload_length, rest) = read_u32_be(rest)?;
-        let header = Header {
-            protocol_version,
-            inverse_protocol_version,
-            payload_type,
-            payload_length,
-        };
-        header.version_inverse_correct()?;
-        Ok((header, rest))
+        let expected = protocol_version.inverse();
+        if inverse_protocol_version != expected {
+            return Err(MessageError::VersionInverseIncorrect {
+                expected,
+                value: inverse_protocol_version,
+            });
+        }
+        Ok((
+            Header::new(protocol_version, payload_type.into(), payload_length),
+            rest,
+        ))
     }
 }
 
@@ -274,7 +319,7 @@ impl Encode for Header {
         writer: &mut impl automotive_wire_codec::Sink,
     ) -> Result<usize, MessageError> {
         write_u8(writer, self.protocol_version.into())?;
-        write_u8(writer, self.inverse_protocol_version)?;
+        write_u8(writer, self.protocol_version.inverse())?;
         write_u16_be(writer, self.payload_type.into())?;
         write_u32_be(writer, self.payload_length)?;
         Ok(Header::SIZE)
@@ -285,10 +330,6 @@ impl Debug for Header {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("Header")
             .field("Version", &self.protocol_version)
-            .field(
-                "inverse_protocol_version",
-                &format_args!("{:#X}", self.inverse_protocol_version),
-            )
             .field("payload_type", &self.payload_type)
             .field("payload_length", &self.payload_length)
             .finish()

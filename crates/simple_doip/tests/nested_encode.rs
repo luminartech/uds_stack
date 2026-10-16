@@ -47,7 +47,7 @@ fn nested_encode_no_staging_buffer() {
     // 3. Frame it back out and decode the payload — full loop.
     let (frame, consumed) = try_frame(&tx_buf[..total]).unwrap().unwrap();
     assert_eq!(consumed, total);
-    let decoded = Payload::decode(frame.payload, frame.header.payload_type).unwrap();
+    let decoded = Payload::decode(frame.payload, frame.header.payload_type()).unwrap();
     match decoded {
         Payload::DiagnosticMessage(d) => assert_eq!(d.user_data, &uds_response[..]),
         other => panic!("wrong payload: {other:?}"),

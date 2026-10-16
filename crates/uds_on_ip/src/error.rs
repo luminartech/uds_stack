@@ -1,12 +1,12 @@
 //! Error taxonomy.
 //!
-//! [`Error`] is a concrete enum, and a short one: this crate is a transport,
+//! [`DoIpTransportError`] is a concrete enum, and a short one: this crate is a transport,
 //! so most of what can go wrong here reaches the driver as a *value* on the
 //! event seam rather than as an error. An exchange's outcome is
 //! `uds_services::TransportEvent::DataConf`'s `SResult`, a message too large
 //! for the driver's buffer is `TransportEvent::DataTooLong`, and a connection
 //! that went away is `TransportEvent::Closed`. Only a failure that leaves
-//! nothing to report at all is an [`Error`].
+//! nothing to report at all is an [`DoIpTransportError`].
 //!
 //! A *closed connection* has no variant: ISO 14229-5:2022 REQ 7.9 and REQ 7.11
 //! make a server-initiated close part of the `DiagnosticSessionControl` and
@@ -17,7 +17,7 @@
 /// with `E`.
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
-pub enum Error<E> {
+pub enum DoIpTransportError<E> {
     /// The `DoIP` entity failed as a whole: its
     /// [`DiagnosticEntity::Error`](simple_doip::service::DiagnosticEntity::Error).
     #[error("the DoIP entity failed: {0:?}")]
@@ -45,7 +45,7 @@ use simple_doip::service::TesterConnection;
 /// [`TesterConnection`] `C`, whose own errors each variant carries.
 #[derive(thiserror::Error)]
 #[non_exhaustive]
-pub enum ClientTransportError<C: TesterConnection> {
+pub enum DoIpClientTransportError<C: TesterConnection> {
     /// The connection failed other than by closing: its
     /// [`DiagnosticConnection::Error`](simple_doip::service::DiagnosticConnection::Error).
     #[error("the DoIP connection failed: {0:?}")]
@@ -79,7 +79,7 @@ pub enum ClientTransportError<C: TesterConnection> {
     PduOutsideBuffer,
 }
 
-impl<C: TesterConnection> core::fmt::Debug for ClientTransportError<C> {
+impl<C: TesterConnection> core::fmt::Debug for DoIpClientTransportError<C> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
             Self::Connection(error) => f.debug_tuple("Connection").field(error).finish(),
@@ -102,8 +102,8 @@ impl<C: TesterConnection> core::fmt::Debug for ClientTransportError<C> {
 const _: () = {
     const fn assert_core_error<T: core::error::Error>() {}
     const fn _for_every_connection<C: TesterConnection>() {
-        assert_core_error::<ClientTransportError<C>>();
+        assert_core_error::<DoIpClientTransportError<C>>();
     }
     assert_core_error::<uds_protocol::Error>();
-    assert_core_error::<Error<core::convert::Infallible>>();
+    assert_core_error::<DoIpTransportError<core::convert::Infallible>>();
 };

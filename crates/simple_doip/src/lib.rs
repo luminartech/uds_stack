@@ -28,7 +28,7 @@
 //! |---|---|
 //! | *(none)* | `no_std` borrowed messages, [`try_frame`] framing, encode/decode |
 //! | `alloc` | Owned mirrors (`messages::OwnedMessage`) that outlive the receive buffer |
-//! | `std` | `std`-backed I/O and error traits |
+//! | `std` | `MessageError::Std`, holding a `std::io::Error`, and `From<std::io::Error>` for `MessageError` |
 //! | `codec` | `message_codec::MessageCodec`, a `tokio-util` `Encoder`/`Decoder` |
 //! | `connection` | The `no_std` connection service over `edge-nal`: `tester::Tester` and `entity::Entity` |
 //!

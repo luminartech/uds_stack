@@ -36,14 +36,11 @@ uds_services = { workspace = true }
 
 thiserror = { workspace = true }
 
-[features]
-# No runtime is named anywhere. An `async fn` implies neither std nor an
-# executor, so the default build is no_std and a bare-metal target — AURIX
-# TC4x is a qualification target — stays reachable. A runtime adapter, when
-# one is written, is additive and lives behind its own feature.
-default = []
-alloc = ["simple_doip/alloc", "uds_protocol/alloc"]
-std = ["alloc", "thiserror/std", "simple_doip/std", "uds_protocol/std"]
+# No [features] table. This crate is no_std and allocation-free in every
+# configuration, and nothing in src/ reads a cfg: an application enables simple_doip's
+# and uds_protocol's features on those crates directly. No runtime is named anywhere. An
+# `async fn` implies neither std nor an executor, so a bare-metal target — AURIX TC4x is
+# a qualification target — stays reachable.
 
 [lints]
 workspace = true

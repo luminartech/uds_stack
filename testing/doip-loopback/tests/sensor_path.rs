@@ -62,7 +62,7 @@ impl DiagnosticSessionControl for Ecu {
     fn timing(&self, _s: S) -> SessionTiming {
         SessionTiming {
             p2_server_max_ms: 50,
-            p2_star_server_max_10ms: 500,
+            p2_star_server_max: uds_services::P2StarServerMax::from_tens_of_millis(500),
         }
     }
     fn on_transition(&mut self, _t: SessionTransition, _entered: S, _relocked: bool) {}
@@ -73,11 +73,7 @@ impl EcuReset for Ecu {
     fn access(&self, _kind: ResetType) -> Option<Access> {
         Some(Access::new(Sessions::ALL))
     }
-    fn reset(
-        &mut self,
-        _kind: ResetType,
-        _out: &mut ResponseSink<'_>,
-    ) -> impl Future<Output = Result<AfterReset, Nrc>> {
+    fn reset(&mut self, _kind: ResetType) -> impl Future<Output = Result<AfterReset, Nrc>> {
         core::future::ready(Ok(AfterReset::Restart))
     }
     fn confirmed(&mut self, _kind: ResetType) {}
@@ -91,15 +87,11 @@ uds_server! {
     Ecu: DiagnosticSessionControl, EcuReset, TesterPresent;
     transport = Transport,
     peers = 1,
+    services = EcuServices,
     server = EcuServer,
 }
 
-const PARAMS: ServerParams = ServerParams {
-    s3_server: 5_000,
-    p2_server_max: 50,
-    p2_star_server_max: 5_000,
-    response_pending_lead: 0,
-};
+const PARAMS: ServerParams = ServerParams::new(5_000, 50, 5_000, 0);
 
 fn server(loopback: &Loopback) -> EcuServer {
     EcuServer::new(
@@ -180,6 +172,29 @@ fn a_reset_is_answered_then_closed_and_the_tester_reconnects() {
                 ask(&mut tester, &[0x11, 0x01]).await,
                 answered(&[0x51, 0x01])
             );
+            assert_eq!(next(&mut tester).await, Then::Closed);
+
+            tester.reconnect(None).await.expect("reconnected");
+            assert_eq!(
+                ask(&mut tester, &[0x3E, 0x00]).await,
+                answered(&[0x7E, 0x00])
+            );
+            tester.close().await.expect("closed");
+        })
+        .await;
+    });
+}
+
+/// A suppressed `ECUReset` sends no response for the close to follow, and the connection
+/// still ends with the restart (ISO 14229-5:2022 REQ 7.11): the tester sees it closed
+/// before anything else, reconnects, and is served as before.
+#[test]
+fn a_suppressed_reset_closes_the_connection_and_the_tester_reconnects() {
+    on_loopback(|loopback| async move {
+        let mut server = server(&loopback);
+        serve_until(&mut server, async {
+            let mut tester = loopback.tester().await.expect("activated");
+            assert_eq!(send(&mut tester, &[0x11, 0x81]).await, DoIpResult::Ok);
             assert_eq!(next(&mut tester).await, Then::Closed);
 
             tester.reconnect(None).await.expect("reconnected");
@@ -391,6 +406,7 @@ uds_server! {
     Reader: ReadDataByIdentifier;
     transport = DoIpTransport<SmallEntity, 2>,
     peers = 1,
+    services = ReaderServices,
     server = ReaderServer,
 }
 
@@ -432,7 +448,7 @@ fn reader(loopback: &Loopback) -> ReaderServer {
 
 /// The longest request [`ReaderServer`] accepts: its in-flight buffer.
 fn reader_limit() -> usize {
-    let mut store = <<Reader as ServiceSet>::Store as Storage>::EMPTY;
+    let mut store = <<ReaderServices as ServiceSet>::Store as Storage>::EMPTY;
     store.split().in_flight.len()
 }
 

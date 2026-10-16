@@ -67,7 +67,7 @@ impl uds_services::DiagnosticSessionControl for Ecu {
     fn timing(&self, _s: S) -> SessionTiming {
         SessionTiming {
             p2_server_max_ms: 50,
-            p2_star_server_max_10ms: 500,
+            p2_star_server_max: uds_services::P2StarServerMax::from_tens_of_millis(500),
         }
     }
     fn on_transition(&mut self, _t: SessionTransition, _entered: S, _r: bool) {}
@@ -128,15 +128,11 @@ uds_server! {
     Ecu: ReadDataByIdentifier, DiagnosticSessionControl;
     transport = Spurious,
     peers = 1,
+    services = Services,
     server = Srv,
 }
 
-const PARAMS: ServerParams = ServerParams {
-    s3_server: 5_000,
-    p2_server_max: 50,
-    p2_star_server_max: 5_000,
-    response_pending_lead: 0,
-};
+const PARAMS: ServerParams = ServerParams::new(5_000, 50, 5_000, 0);
 
 /// A spurious confirmation is rejected by the session layer and the driver carries
 /// on: `step` returns `Ok`, not an error and not a panic.
@@ -204,6 +200,7 @@ uds_server! {
     Slow: ReadDataByIdentifier;
     transport = Script,
     peers = 1,
+    services = SlowServices,
     server = SlowSrv,
 }
 
@@ -228,6 +225,7 @@ uds_server! {
     Patient: ReadDataByIdentifier;
     transport = Script,
     peers = 1,
+    services = PatientServices,
     server = PatientSrv,
 }
 
@@ -640,11 +638,11 @@ impl uds_services::DiagnosticSessionControl for Timed {
         match s {
             S::ExtendedDiagnosticSession => SessionTiming {
                 p2_server_max_ms: 100,
-                p2_star_server_max_10ms: 200,
+                p2_star_server_max: uds_services::P2StarServerMax::from_tens_of_millis(200),
             },
             _ => SessionTiming {
                 p2_server_max_ms: 50,
-                p2_star_server_max_10ms: 500,
+                p2_star_server_max: uds_services::P2StarServerMax::from_tens_of_millis(500),
             },
         }
     }
@@ -655,6 +653,7 @@ uds_server! {
     Timed: ReadDataByIdentifier, DiagnosticSessionControl;
     transport = Script,
     peers = 1,
+    services = TimedServices,
     server = TimedSrv,
 }
 
@@ -696,6 +695,22 @@ fn the_confirmed_sessions_advertised_timing_is_enforced() {
         (pending, 2_100)
     );
     assert_eq!(t.addressed(3).1, POSITIVE);
+}
+
+/// A session whose advertised pair the response-pending lead does not fit panics the
+/// server on the first request it would time: the default session's 50 ms `P2` cannot
+/// hold a 2000 ms lead.
+#[test]
+#[should_panic(expected = "the response-pending lead does not fit")]
+fn a_session_pair_the_lead_does_not_fit_panics() {
+    let params = ServerParams::new(5_000, 5_000, 10_000, 2_000);
+    let mut server = TimedSrv::new(
+        Timed { pends: 0 },
+        Script::new(&[Step::Ind(request_from(TESTER), READ)]),
+        ECU,
+        params,
+    );
+    let _ = block_on(server.step());
 }
 
 /// A request longer than the in-flight buffer, with no service in progress, is checked as

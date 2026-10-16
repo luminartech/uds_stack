@@ -14,7 +14,6 @@ use automotive_wire_codec::{write_bytes, write_u8, write_u16_be};
 #[cfg_attr(feature = "serde", serde(try_from = "u8", into = "u8"))]
 #[cfg_attr(feature = "clap", derive(clap::ValueEnum))]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-#[non_exhaustive]
 pub enum CommunicationControlType {
     /// This value indicates that the reception and transmission of messages
     /// shall be enabled for the specified [`CommunicationType`]
@@ -195,7 +194,6 @@ mod communication_control_type_tests {
 #[cfg_attr(feature = "serde", derive(serde::Deserialize, serde::Serialize))]
 #[cfg_attr(feature = "serde", serde(try_from = "u8", into = "u8"))]
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-#[non_exhaustive]
 pub enum SubnetNumber {
     /// `0x0` — apply to the receiving node, including communication to all connected
     /// networks.
@@ -246,34 +244,24 @@ impl TryFrom<u8> for SubnetNumber {
     }
 }
 
-/// `CommunicationType` is used to specify the type of communication behavior to be
-/// modified.
+/// Which messages the control applies to — the low nibble (bits 3-0) of the
+/// `communicationType` byte.
 ///
-/// This is the low nibble (bits 1-0) of the `communicationType` byte; the high nibble is
-/// the [`SubnetNumber`]. Bits 3-2 are `ISOSAEReserved` and must be zero.
-///
-/// Note:
-///
-/// Conversions from `u8` to `CommunicationType` are fallible and will return an [`Error`]
-/// if the value is not a valid `CommunicationType`
-///
-/// Serializes as its variant name (`"Normal"`), not as a number — unlike the other
-/// single-byte types in this crate.
-//
-// That is deliberate, and the reason belongs here rather than in the rustdoc, because
-// utoipa publishes the rustdoc as the schema description. There is nothing to smuggle: the
-// four variants are in bijection with 0x00..=0x03 and TryFrom<u8> accepts all four. Routing
-// serde through the byte would be *worse*, because TryFrom<u8> reads bits 1-0 of a whole
-// communicationType byte and masks the rest -- so deserializing 17 would silently yield
-// Normal and re-serialize as 1.
+/// ISO 14229-1:2020 Annex B Table B.1 defines bits 1-0 and reserves bits 3-2; the high
+/// nibble of the same byte is the [`SubnetNumber`]. Serializes as the nibble.
 #[cfg_attr(feature = "serde", derive(serde::Deserialize, serde::Serialize))]
-#[cfg_attr(feature = "utoipa", derive(utoipa::ToSchema))]
+#[cfg_attr(feature = "serde", serde(try_from = "u8", into = "u8"))]
 #[cfg_attr(feature = "clap", derive(clap::ValueEnum))]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-#[non_exhaustive]
 pub enum CommunicationType {
-    /// This value is reserved by the ISO 14229-1 Specification
-    IsoSaeReserved,
+    /// A nibble Table B.1 reserves: bits 1-0 clear, or bits 3-2 set.
+    ///
+    /// Holds the nibble, so a request re-encodes the byte it was decoded from. Built by
+    /// [`CommunicationType::try_from`], which keeps the value inside a nibble and away
+    /// from the named variants.
+    #[cfg_attr(feature = "clap", clap(skip))]
+    #[non_exhaustive]
+    IsoSaeReserved(u8),
     /// This value represents all application related communication.
     Normal,
     /// This value represents all network management related communication.
@@ -282,41 +270,40 @@ pub enum CommunicationType {
     NormalAndNetworkManagement,
 }
 
+impl CommunicationType {
+    /// The low nibble of the `communicationType` byte, `0x0..=0xF`.
+    #[must_use]
+    pub const fn value(self) -> u8 {
+        match self {
+            Self::IsoSaeReserved(nibble) => nibble,
+            Self::Normal => 0x01,
+            Self::NetworkManagement => 0x02,
+            Self::NormalAndNetworkManagement => 0x03,
+        }
+    }
+}
+
 impl From<CommunicationType> for u8 {
     fn from(value: CommunicationType) -> Self {
-        match value {
-            CommunicationType::IsoSaeReserved => 0x00,
-            CommunicationType::Normal => 0x01,
-            CommunicationType::NetworkManagement => 0x02,
-            CommunicationType::NormalAndNetworkManagement => 0x03,
-        }
+        value.value()
     }
 }
 
 impl TryFrom<u8> for CommunicationType {
     type Error = Error;
 
-    /// Reads bits 1-0 of a `communicationType` byte, rejecting a byte whose reserved bits
-    /// 3-2 are set. Use [`SubnetNumber::try_from`] on the high nibble for the rest of the
-    /// byte.
+    /// Classifies the low nibble of a `communicationType` byte. Use
+    /// [`SubnetNumber::try_from`] for the high nibble.
     ///
     /// # Errors
-    /// Returns [`Error::InvalidCommunicationType`] if bits 3-2 are non-zero, which Annex B
-    /// Table B.1 marks `ISOSAEReserved`.
+    /// Returns [`Error::InvalidCommunicationType`] if `value` does not fit in a nibble.
     fn try_from(value: u8) -> Result<Self, Error> {
-        if value & RESERVED_BITS_MASK != 0 {
-            return Err(Error::InvalidCommunicationType(value));
-        }
-        match value & MESSAGE_TYPE_MASK {
-            0x00 => Ok(Self::IsoSaeReserved),
-            0x01 => Ok(Self::Normal),
-            0x02 => Ok(CommunicationType::NetworkManagement),
-            // `MESSAGE_TYPE_MASK` is 0b11, so the three arms above and this one are
-            // exhaustive: 0x03 is the only value left. Written as the catch-all rather
-            // than as `0x03` plus an `unreachable!()`, so there is no panic path here
-            // at all -- the match is on a masked integer, not an enum, so no new value
-            // can appear later and be swallowed by it.
-            _ => Ok(CommunicationType::NormalAndNetworkManagement),
+        match value {
+            0x1 => Ok(Self::Normal),
+            0x2 => Ok(Self::NetworkManagement),
+            0x3 => Ok(Self::NormalAndNetworkManagement),
+            0x0 | 0x4..=0xF => Ok(Self::IsoSaeReserved(value)),
+            _ => Err(Error::InvalidCommunicationType(value)),
         }
     }
 }
@@ -324,49 +311,29 @@ impl TryFrom<u8> for CommunicationType {
 #[cfg(test)]
 mod communication_type_tests {
     use super::*;
-    /// Check that we properly decode and encode hex bytes
-    #[test]
-    fn communication_type_from_all_u8_values() {
-        // `CommunicationType` is bits 1-0 of the byte, so the subnet nibble is ignored here
-        // and only the reserved bits 3-2 can make a byte invalid (Annex B Table B.1).
-        for i in 0..=u8::MAX {
-            let msg_type = CommunicationType::try_from(i);
-            if i & RESERVED_BITS_MASK != 0 {
-                assert!(
-                    matches!(msg_type, Err(Error::InvalidCommunicationType(_))),
-                    "{i:#04X} sets a reserved bit but was accepted"
-                );
-                continue;
-            }
-            match i & MESSAGE_TYPE_MASK {
-                0x00 => assert!(matches!(msg_type, Ok(CommunicationType::IsoSaeReserved))),
-                0x01 => assert!(matches!(msg_type, Ok(CommunicationType::Normal))),
-                0x02 => {
-                    assert!(matches!(msg_type, Ok(CommunicationType::NetworkManagement)));
-                }
-                _ => assert!(matches!(
-                    msg_type,
-                    Ok(CommunicationType::NormalAndNetworkManagement)
-                )),
-            }
-        }
-    }
 
     #[test]
-    fn communication_type_round_trip_all_values() {
-        // A full byte round-trips only once the subnet nibble is put back, which is what
-        // `CommunicationControlRequest`'s codec does.
-        for i in 0..=u8::MAX {
-            let message_type = CommunicationType::try_from(i);
-            let subnet = SubnetNumber::try_from((i & SUBNET_MASK) >> 4);
-            match (message_type, subnet) {
-                (Ok(message_type), Ok(subnet)) => {
-                    assert_eq!((subnet.value() << 4) | u8::from(message_type), i);
+    fn every_nibble_classifies_and_round_trips() {
+        for nibble in 0x0..=0xFu8 {
+            let message_type = CommunicationType::try_from(nibble).unwrap();
+            let named = match nibble {
+                0x1 => Some(CommunicationType::Normal),
+                0x2 => Some(CommunicationType::NetworkManagement),
+                0x3 => Some(CommunicationType::NormalAndNetworkManagement),
+                _ => None,
+            };
+            match named {
+                Some(named) => assert_eq!(message_type, named),
+                None => {
+                    assert!(matches!(message_type, CommunicationType::IsoSaeReserved(_)));
                 }
-                (Err(Error::InvalidCommunicationType(value)), _) => assert_eq!(value, i),
-                other => panic!("unexpected result for {i:#04X}: {other:?}"),
             }
+            assert_eq!(u8::from(message_type), nibble);
         }
+        assert!(matches!(
+            CommunicationType::try_from(0x10),
+            Err(Error::InvalidCommunicationType(0x10))
+        ));
     }
 
     #[test]
@@ -380,10 +347,8 @@ mod communication_type_tests {
     }
 }
 
-/// Bits 1-0 of the `communicationType` byte: the message type.
-const MESSAGE_TYPE_MASK: u8 = 0b0000_0011;
-/// Bits 3-2 of the `communicationType` byte, `ISOSAEReserved` per Annex B Table B.1.
-const RESERVED_BITS_MASK: u8 = 0b0000_1100;
+/// Bits 3-0 of the `communicationType` byte: the [`CommunicationType`].
+const COMMUNICATION_TYPE_MASK: u8 = 0b0000_1111;
 /// Bits 7-4 of the `communicationType` byte: the subnet number.
 const SUBNET_MASK: u8 = 0b1111_0000;
 
@@ -558,8 +523,8 @@ impl<'a> Decode<'a> for CommunicationControlRequest {
             }));
         }
         let communication_enable = SuppressablePositiveResponse::try_from(buf[0])?;
-        let communication_type = CommunicationType::try_from(buf[1])
-            .unwrap_or(CommunicationType::IsoSaeReserved);
+        let communication_type =
+            CommunicationType::try_from(buf[1] & COMMUNICATION_TYPE_MASK)?;
         let subnet = SubnetNumber::try_from((buf[1] & SUBNET_MASK) >> 4)?;
         match communication_enable.value() {
             CommunicationControlType::EnableRxAndDisableTxWithEnhancedAddressInfo
@@ -699,32 +664,31 @@ mod request {
         }
     }
 
-    #[test]
-    fn the_reserved_bits_of_the_communication_type_byte_must_be_zero() {
-        // Table B.1 marks bits 2-3 ISOSAEReserved, so a conformant client leaves them
-        // clear.
-        for byte in [0x07u8, 0x0B, 0x0F, 0xFF] {
-            assert!(
-                CommunicationType::try_from(byte).is_err(),
-                "{byte:#04X} sets a reserved bit but was accepted"
-            );
-        }
-    }
-
     /// ISO 14229-1:2020 8.7.5 tests `message_length` before any data parameter, so a
-    /// request whose `communicationType` sets a reserved bit 3-2 decodes, as one clearing
-    /// bits 1-0 does, leaving its length to be judged before its 0x31.
+    /// request whose `communicationType` clears bits 1-0 or sets a reserved bit 3-2
+    /// decodes, leaving its length to be judged before its 0x31. The reserved nibble is
+    /// kept, so the request re-encodes the byte it arrived as.
     #[test]
-    fn a_request_with_reserved_communication_type_bits_decodes_as_reserved() {
-        for byte in [0x04u8, 0x0D, 0xFF] {
-            let wire = [0x00, byte, 0x00];
-            let (request, rest) = <CommunicationControlRequest as Decode>::decode(&wire)
+    fn a_reserved_communication_type_decodes_and_re_encodes_unchanged() {
+        for byte in [0x00u8, 0x04, 0x56, 0x0D, 0xFF] {
+            let wire = [0x28, 0x00, byte];
+            let (request, rest) = crate::Request::decode(&wire)
                 .expect("a reserved communicationType decodes");
+            assert_eq!(rest, [0u8; 0]);
+            let crate::Request::CommunicationControl(inner) = request else {
+                panic!("expected a CommunicationControl request, got {request:?}");
+            };
             assert_eq!(
-                request.communication_type(),
-                CommunicationType::IsoSaeReserved
+                inner.communication_type(),
+                CommunicationType::try_from(byte & 0x0F).unwrap()
             );
-            assert_eq!(rest, [0x00], "{byte:#04X}");
+            assert!(matches!(
+                inner.communication_type(),
+                CommunicationType::IsoSaeReserved(_)
+            ));
+            let mut buf = [0u8; 8];
+            let written = request.encode_to_slice(&mut buf).unwrap();
+            assert_eq!(&buf[..written], &wire, "{byte:#04X}");
         }
     }
 

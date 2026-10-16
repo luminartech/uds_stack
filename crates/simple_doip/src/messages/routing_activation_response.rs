@@ -43,6 +43,7 @@ pub enum RoutingActivationResponseCode {
     DeniedEncryptedConnectionViaTLSRequired = 0x07,
     /// Reserved for future use.
     /// * Ignored by this library.
+    #[non_exhaustive]
     Reserved(u8),
     /// Routing successfully activated.
     /// * Activate routing and register SA on this `TCP_DATA` socket.
@@ -52,6 +53,7 @@ pub enum RoutingActivationResponseCode {
     RoutingSuccessfullyActivatedConfirmationRequired = 0x11,
     /// Vehicle manufacturer specific response code.
     /// * Ignored by this library.
+    #[non_exhaustive]
     VehicleManufacturerSpecific(u8),
 }
 

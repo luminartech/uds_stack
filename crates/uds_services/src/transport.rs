@@ -18,6 +18,7 @@ pub use uds_session::{Address, Ai, Mtype, Reloads, SResult, TaType, Timestamp};
 /// would put that tie in prose: the driver would have to re-slice its own buffer and
 /// defend against a length larger than what it lent.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum TransportEvent<'b> {
     /// A complete inbound message.
     DataInd {
@@ -138,6 +139,7 @@ pub enum TransportEvent<'b> {
 /// restart nothing — so a `DoIP` transport keys that close on the `0x51` itself. Flagging
 /// resets here would make an unconditional close depend on a fact it does not depend on.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum AfterSend {
     /// The server carries on in the software it is running.
     Continue,
@@ -154,7 +156,7 @@ pub enum AfterSend {
 /// inbound event *or* a timer expiry already measures time, so asking it for the clock
 /// adds no capability and avoids two implementors holding two timebases.
 ///
-/// Three obligations the signatures cannot state, which the drivers rely on:
+/// Four obligations the signatures cannot state, which the drivers rely on:
 ///
 /// - **[`Self::next_event`] is cancel-safe.** The driver races it against the handler
 ///   and drops the losing future, often unpolled. A message partly read when the future
@@ -165,6 +167,11 @@ pub enum AfterSend {
 ///   `T_Data.conf` for every `T_Data.req` is an assumption of use: an association whose
 ///   confirmation never arrives has no server exit (``UDSS_LLR_0060``), and the driver
 ///   waits on it.
+/// - **A [`Self::t_data_req`] future dropped before it completes has accepted its
+///   request or done nothing.** An accepted request is owed its
+///   [`TransportEvent::DataConf`] as any other is; one not accepted is never sent. A
+///   transmission begun and then abandoned without either would leave a confirmation
+///   nothing can supply.
 /// - **That [`TransportEvent::DataConf`] comes before any message answering the
 ///   request.** The session layer opens a request's response window at its confirmation,
 ///   so a client takes nothing earlier as its answer. A transmission is complete before
@@ -189,7 +196,9 @@ pub trait UdsTransport {
     /// `T_Data.req` — hand a `T_PDU` to the transport.
     ///
     /// An `Ok` is an acceptance, and obliges exactly one [`TransportEvent::DataConf`]
-    /// for `ai` later — failed, where the connection closed first. See the trait's doc.
+    /// for `ai` later — failed, where the connection closed first. Dropped before it
+    /// completes, the future has accepted the request or done nothing. See the trait's
+    /// doc.
     ///
     /// # Arguments
     ///
@@ -219,9 +228,9 @@ pub trait UdsTransport {
     /// untouched, and the transport is the side that compares it with the clock. The
     /// clock wraps (``UDSS_LLR_0019``), so the comparison is
     /// [`now.has_reached(deadline)`](Timestamp::has_reached) and the time left to wait
-    /// is [`now.until(deadline)`](Timestamp::until); never `now >= deadline`, whose
-    /// derived order is wrong either side of the wrap and either spins or misses the
-    /// deadline by 49.7 days. The deadline may already have been reached when this is
+    /// is [`now.until(deadline)`](Timestamp::until), never a comparison of the raw counts,
+    /// which is wrong either side of the wrap and either spins or misses the deadline by
+    /// 49.7 days. The deadline may already have been reached when this is
     /// called, and `until` is then zero. `None` means no timer is running: wait for an
     /// event alone.
     ///
@@ -266,6 +275,16 @@ pub trait UdsTransport {
 
     /// Monotonic milliseconds, 32-bit and wrapping.
     fn now(&self) -> Timestamp;
+
+    /// The server is restarting: [`crate::Server::step`] is about to return
+    /// [`Stopped::Reset`](crate::Stopped::Reset), its reset's response sent or suppressed.
+    ///
+    /// A transport ends here what the restart ends and no response closed, as a `DoIP`
+    /// transport closes its testers' connections after a suppressed `ECUReset`
+    /// (ISO 14229-5:2022 REQ 7.11). Does nothing unless a transport says otherwise.
+    fn restarting(&mut self) -> impl core::future::Future<Output = ()> {
+        core::future::ready(())
+    }
 }
 
 /// A transport a client sends over: a [`UdsTransport`] whose connection the client can

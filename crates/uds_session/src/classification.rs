@@ -27,6 +27,7 @@ pub enum SessionSelection {
 /// ``UDSS_LLR_0065``. ``UDSS_LLR_0135`` conditions on the count being other than
 /// [`ExpectedResponses::None`], and ``UDSS_LLR_0138`` on the exact number.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum ExpectedResponses {
     /// No response is expected. ``UDSS_LLR_0074`` reports such a request complete.
     None,
@@ -66,6 +67,7 @@ pub enum Solicitation {
 /// ``UDSS_LLR_0065``. Kind is always `request`; ``UDSS_LLR_0031`` rejects a client
 /// transmitting a response, which this type cannot express.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum ClientTx {
     /// A `TesterPresent` sent to keep a non-default session alive.
     ///
@@ -113,6 +115,7 @@ impl ClientTx {
 /// ``UDSS_LLR_0065``. ``UDSS_LLR_0030`` rejects a server transmitting a request, which
 /// this type cannot express.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum ServerTx {
     /// A positive response, or a negative response whose code is not
     /// `requestCorrectlyReceived-ResponsePending`.
@@ -147,6 +150,7 @@ pub enum ServerTx {
 /// ``UDSS_LLR_0065``. ``UDSS_LLR_0031`` rejects a client receiving a request, which this
 /// type cannot express.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum ClientRx {
     /// A final response from a server.
     FinalResponse {
@@ -169,6 +173,7 @@ pub enum ClientRx {
 /// ``UDSS_LLR_0030`` rejects a server receiving a response, which this type cannot
 /// express.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum ServerRx {
     /// The functionally addressed `TesterPresent` whose positive response is suppressed,
     /// which ISO 14229-1:2020 8.7.6 exempts from one-request-at-a-time.

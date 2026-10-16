@@ -19,9 +19,11 @@ lockstep with the rest of the `uds_stack` workspace (`uds_protocol`, `uds_sessio
 ### Added
 
 - `uds_server!`, which builds a server from an application type and the service
-  traits it implements. It emits a `Server<App, Transport, PEERS>` alias and sizes
-  every buffer at compile time from the application's declared maxima and the
-  transport's `MAX_PDU`. It fails to compile when a negative response would not fit.
+  traits it implements. It declares a marker type, named by its `services` key, that
+  the assembly is implemented on, so the application type may come from any crate. It
+  emits a `Server<Assembly, Transport, PEERS>` alias and sizes every buffer at compile
+  time from the application's declared maxima and the transport's `MAX_PDU`. It fails
+  to compile when a negative response would not fit.
 - `Server`, the async server driver. It owns a `uds_session::Server` and the
   transport, applies the clause 8.7 validation sequence, and is driven by `step()`
   or `run()`. Requests for services the application does not implement, or for
@@ -43,13 +45,13 @@ lockstep with the rest of the `uds_stack` workspace (`uds_protocol`, `uds_sessio
   into a `ResponseSink`.
 - `uds_client!`, which builds a client from the same identifier enumeration the
   server's handlers use. Changing that enumeration on only one side fails to
-  compile. `uds_client!` implements `ClientSet` for the identifier type in the
-  crate that invokes it, so an enumeration shared with the server side and defined
-  in another crate is newtyped on the client side. It emits a `Client` alias with
-  the channel counts and keep-alive mode set.
+  compile. It declares a marker type, named by its `vocabulary` key, that `ClientSet`
+  is implemented on, so the enumeration may come from any crate and take any number of
+  clients. It emits a `Client` alias with the channel counts and keep-alive mode set.
 - `Client`, the async client driver over `uds_session`'s client role:
   `read_data_by_identifier` (physical, returning the declared identifier/record
-  pairs as `Records`), `read_data_by_identifier_functional` (a `Responses` stream
+  pairs as `Records`; a reply carrying a record not asked for is malformed),
+  `read_data_by_identifier_functional` (a `Responses` stream
   with one `Answer` per responding server), `diagnostic_session_control`,
   `idle_until` (waits and sends `TesterPresent` keep-alives as they fall due) and
   `close`. Negative responses are returned as values (`Response::Negative`,
@@ -57,8 +59,10 @@ lockstep with the rest of the `uds_stack` workspace (`uds_protocol`, `uds_sessio
   sent, closed, no channel, or a bad request. Keep-alive is configured with
   `KeepAlive` and timing policy with `ClientTiming`.
 - `UdsTransport`, the async interface a transport binding implements for both
-  roles: `t_data_req`, a cancel-safe `next_event` that returns `TransportEvent`,
-  `outbound_max`, `channel_timing`, `now`, and a `MAX_PDU` constant.
+  roles: `t_data_req`, which dropped part-way has accepted its request or done
+  nothing, a cancel-safe `next_event` that returns `TransportEvent`, `outbound_max`,
+  `channel_timing`, `now`, and a `MAX_PDU` constant. Every client call is
+  cancel-safe.
   `ClientTransport` extends it with `close` for the client role. The crate never
   depends on a binding; `uds_on_ip` provides the `DoIP` one.
 - `DataIdentifier` and `RoutineIdentifier`, the traits an application's identifier
@@ -98,30 +102,67 @@ lockstep with the rest of the `uds_stack` workspace (`uds_protocol`, `uds_sessio
   return.
 - `ClientTiming::repeats`, a `Repeats` ceiling on a physically addressed request's
   repeats under which an expired response window is repeated: ISO 14229-2:2021 Table
-  9's two (`Repeats::Twice`) by default, set by `ClientTiming::with_repeats`, read and
+  9's two (`Repeats::Twice`) by default, set by `ClientTiming::repeats`, read and
   changed through `Client::timing` and `Client::timing_mut`. It counts every repeat of
   the request, as Table 9 does. A failed transmission is repeated to two regardless,
   and functionally addressed requests are not under it.
 - `DataTransfer` serves a download: `RequestDownload`, `TransferData` and
   `RequestTransferExit`, with the transfer held in the protocol state.
 - `DataTransfer::SESSIONS`, `DataTransfer::format_supported` and `DataTransfer::access`.
-- `AfterReset`, `EcuReset::confirmed`, `Stepped`, `Stopped`, and `Server::into_parts`.
+- `Client::communication_control_functional`, a functionally addressed
+  `CommunicationControl` with the suppress bit set, and
+  `Client::control_dtc_setting_functional`, a functionally addressed `ControlDTCSetting`.
+  The answers to both come back as `Replies` of `Reply`; for the suppressed
+  `CommunicationControl` that is each server's refusal (ISO 14229-1:2020 Table 5), or a
+  positive from a server that ignored the bit, and none where every server performed it.
+- `KEEP_ALIVE_LEN`, the length of the keep-alive a client sends, for a transport sizing
+  its queue.
+- A reserved `DTCSettingType` (Table 128) is `subFunctionNotSupported` (0x12) before
+  `ControlDtcSetting::access` is asked, as a reserved `communicationType` is 0x31 before
+  `CommunicationControl` is.
+- `AfterReset`, `EcuReset::confirmed`, `Stepped`, `Stopped` and `Server::into_parts`.
+- `UdsTransport::restarting`, which `Server::step` awaits on every restart, a reset's
+  response sent or suppressed, before it returns `Stopped`. It does nothing by default.
 
 ### Changed
 
+- **Breaking:** an enumeration is exhaustive only where ISO 14229 fixes its set
+  (`SessionTransition`, `KeyVerdict`, `Repeats`, `Delay`). The
+  crate's own outcomes and events — `Response`, `Answer`, `TransportEvent`,
+  `AfterSend`, `RecordError` and `Received` — are `#[non_exhaustive]`. Migrate: add a
+  wildcard arm where one of these is matched.
+- **Breaking:** `TransferRequest` is `#[non_exhaustive]` and holds what is served or
+  decoded: `Upload` is gone until `RequestUpload` is served, and `File` carries the
+  decoded `RequestFileTransferRequest`, so each `modeOfOperation` has Table 480's
+  parameters. Migrate: match `Download` and add a wildcard arm.
+- **Breaking:** `TransferRequest`'s `size` and `Client::request_download`'s `size` are
+  `u64`, and a request may declare up to eight bytes each of address and size. A wider
+  declaration is answered `requestOutOfRange` (0x31) before any handler is asked. A
+  client's or a `DataTransfer` server's request buffer holds the 19-byte widest
+  `RequestDownload`, up from 12, and a client's transport must carry it.
 - **Breaking:** `DtcReportKind` is `#[non_exhaustive]` and gains `SnapshotRecords` and
   `ExtDataRecords`, sub-functions `0x04` and `0x06`, bounded in record bytes, so
   `DtcReportKind::record_len` returns `None` for them and `Some` for the rest. A client
   reads them. A server cannot answer them, and `uds_server!` fails to compile where
   `ReadDtcInformation::REPORTS` lists either.
-- **Breaking:** `uds_client!` takes `routines`, `max_dtcs`, `max_dtc_record_len`,
-  `max_seed_len`, `max_key_len`, `max_option_len` and `max_block_len`, and folds the
-  client's buffers from them as `uds_server!` folds a server's from its service traits.
-  `ClientSet` gains `type Routine`, `const MAX_DIDS_PER_REQUEST`, `const MAX_KEY_LEN`,
-  `const MAX_OPTION_LEN` and `const MAX_BLOCK_LEN`, the most data bytes one
-  `TransferData` block carries. Each call refuses an input past its maximum as
-  `ClientError::Request` before sending. A transport whose `MAX_PDU` cannot carry a
-  request of the declared maxima fails to compile, naming the input.
+- **Breaking:** `uds_client!` takes `routines` and `limits`, a `ClientLimits` built in a
+  `const` from `ClientLimits::new()` and setters for the most identifiers per read, DTC
+  records, DTC record bytes, seed, key, option record and `TransferData` block, each
+  defaulting to the least. It folds the client's buffers from them as `uds_server!` folds
+  a server's from its service traits; a limit added later is a new setter. `ClientSet`
+  gains `type Did`, `type Routine` and `const LIMITS`. Each call refuses an input past its
+  limit as `ClientError::Request(RequestError::ExceedsLimit { .. })` before sending. A transport whose `MAX_PDU` cannot carry
+  a request of the declared limits fails to compile, naming the limit.
+- **Breaking:** `ClientTiming::new` takes only the network delay, and the two spacings
+  default to ISO 14229-2:2021 Table 4's minimum for the recommended `P2Server_max`;
+  `physical_spacing`, `functional_spacing` and `repeats` (formerly `with_repeats`) set
+  each. Migrate: `ClientTiming::new(delay).physical_spacing(p).functional_spacing(f)`
+  for `ClientTiming::new(p, f, delay)`.
+- **Breaking:** `ClientError::Request` carries a `RequestError` naming the refusal, and
+  `Client::communication_control` takes a `CommunicationControlRequest`, whose
+  constructors already refuse a node identifier that disagrees with the control type.
+  Migrate: match `ClientError::Request(_)`, and build the request with
+  `CommunicationControlRequest::new` or `new_with_node_id`.
 - **Breaking:** `DataTransfer` requires `SESSIONS`, `format_supported` and `access`.
   Migrate: declare the sessions the three services are served in, accept the formats you
   support, and return the `Access` of each memory interval (`None` for an invalid one).
@@ -129,6 +170,11 @@ lockstep with the rest of the `uds_stack` workspace (`uds_protocol`, `uds_sessio
   `EcuReset::confirmed` is required. Migrate: return `AfterReset::Restart` for a reset that
   restarts the server, `AfterReset::Continue` otherwise; start any post-response action in
   `confirmed`.
+- **Breaking:** `EcuReset::reset` takes no sink. The server writes an
+  `enableRapidPowerShutDown` response's `powerDownTime` from the new
+  `EcuReset::power_down_time`, which defaults to `0xFF` (not available), and writes none
+  for any other reset. Migrate: drop the `out` parameter, and move a written
+  `powerDownTime` into `power_down_time`.
 - **Breaking:** `Server::step` returns `Result<Stepped, _>`, which is `#[must_use]`, and
   `Server::run` returns `Result<Stopped, _>` once a restarting reset is confirmed.
   Migrate: loop on `run`, or match `Stepped::Stopped` in a `step` loop, act on it
@@ -138,8 +184,8 @@ lockstep with the rest of the `uds_stack` workspace (`uds_protocol`, `uds_sessio
 - **Breaking:** `Responded` carries an `Effect` in place of a session and is hidden from the
   documentation; applications never built or read it.
 - **Breaking:** `uds_server!` fails to compile where the transport cannot carry a
-  `TransferData` block of `MAX_BLOCK_LENGTH`, which an assembly may have compiled before.
-  Migrate: raise the transport's message size or lower `MAX_BLOCK_LENGTH`.
+  `TransferData` block of `MAX_BLOCK_LEN`, which an assembly may have compiled before.
+  Migrate: raise the transport's message size or lower `MAX_BLOCK_LEN`.
 
 ### Known limitations
 

@@ -12,8 +12,9 @@ use embassy_time::{Duration, Instant, Timer, with_deadline};
 use embedded_io_async::{Read, Write};
 
 use crate::messages::{
-    DiagnosticAckCode, DiagnosticMessage, Header, Message, NackCode, Payload, PayloadType,
-    ProtocolVersion, RoutingActivationResponse, RoutingActivationResponseCode,
+    ActivationTypeCode, DiagnosticAckCode, DiagnosticMessage, Header, Message, NackCode,
+    Payload, PayloadType, ProtocolVersion, RoutingActivationResponse,
+    RoutingActivationResponseCode,
 };
 use crate::service::{
     ConnectionEvent, ConnectionRefusal, DiagnosticConnection, DoIpResult, Reconnection,
@@ -34,8 +35,10 @@ use tx::{Control, Outgoing, TooLarge};
 /// answered with confirmation required.
 const ROUTING_CONFIRMATION_RETRY: Duration = Duration::from_secs(2);
 
-/// `A_DoIP_Diagnostic_Message`'s timeout (ISO 13400-2:2019 Table 12).
-const ACK_TIMEOUT: Duration =
+/// `A_DoIP_Diagnostic_Message`'s timeout (ISO 13400-2:2019 Table 12): how long a tester
+/// waits for a request's acknowledgement, unless [`Tester::with_ack_timeout`] says
+/// otherwise.
+pub const ACK_TIMEOUT: Duration =
     Duration::from_secs(TIMEOUT_DIAGNOSTIC_MESSAGE_RESPONSE.as_secs());
 
 /// How long [`TesterConnection::reconnect`] waits after a connection is lost before it
@@ -73,6 +76,83 @@ impl TesterVersion {
 impl From<TesterVersion> for ProtocolVersion {
     fn from(version: TesterVersion) -> Self {
         version.protocol_version()
+    }
+}
+
+/// How a [`Tester`] connects: the protocol version it sends and the routing activation
+/// it asks for, on its first connection and on every one
+/// [`TesterConnection::reconnect`] opens.
+///
+/// Built in a `const` from [`Self::new`] and its setters, and read back through the
+/// field each setter sets.
+///
+/// # Examples
+///
+/// ```
+/// use simple_doip::messages::ActivationTypeCode;
+/// use simple_doip::tester::{ConnectOptions, TesterVersion};
+///
+/// // REQ 8.DoIP-144: an entity asking for central security is activated with 0xE0.
+/// const SECURED: ConnectOptions = ConnectOptions::new()
+///     .activation_type(ActivationTypeCode::CentralSecurity)
+///     .vm_specific([0x01, 0x02, 0x03, 0x04]);
+/// assert_eq!(SECURED.version, TesterVersion::V2019);
+/// ```
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct ConnectOptions {
+    /// Set by [`Self::version`].
+    pub version: TesterVersion,
+    /// Set by [`Self::activation_type`].
+    pub activation_type: ActivationTypeCode,
+    /// Set by [`Self::vm_specific`].
+    pub vm_specific: Option<[u8; 4]>,
+}
+
+impl ConnectOptions {
+    /// ISO 13400-2:2019's protocol version, and a default activation with no OEM field.
+    #[must_use]
+    pub const fn new() -> Self {
+        Self {
+            version: TesterVersion::V2019,
+            activation_type: ActivationTypeCode::Default,
+            vm_specific: None,
+        }
+    }
+
+    /// The protocol version every message carries: one the entity implements. An entity
+    /// that does not implement it answers routing activation with
+    /// [`ConnectError::HeaderNack`] carrying [`NackCode::IncorrectPatternFormat`]
+    /// (REQ 7.DoIP-041); answers in any version Table 16 defines are accepted whatever
+    /// this is.
+    #[must_use]
+    pub const fn version(self, version: TesterVersion) -> Self {
+        Self { version, ..self }
+    }
+
+    /// The routing activation type the tester asks for (ISO 13400-2:2019 Table 47).
+    #[must_use]
+    pub const fn activation_type(self, activation_type: ActivationTypeCode) -> Self {
+        Self {
+            activation_type,
+            ..self
+        }
+    }
+
+    /// The four bytes the routing activation request carries for vehicle-manufacturer
+    /// use (ISO 13400-2:2019 Table 47's OEM-specific field).
+    #[must_use]
+    pub const fn vm_specific(self, vm_specific: [u8; 4]) -> Self {
+        Self {
+            vm_specific: Some(vm_specific),
+            ..self
+        }
+    }
+}
+
+impl Default for ConnectOptions {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -131,8 +211,8 @@ pub enum ConnectError<E> {
 /// fails to build, though not to `cargo check`, which stops before the assertion is
 /// evaluated.
 ///
-/// The tester sends ISO 13400-2:2019's protocol version, so an entity that speaks only
-/// an earlier edition refuses it.
+/// The tester sends ISO 13400-2:2019's protocol version unless [`ConnectOptions`] name
+/// another, so an entity that speaks only an earlier edition refuses it.
 ///
 /// The stack is borrowed for `'s` because every socket it opens borrows it, and
 /// [`TesterConnection::reconnect`] opens another.
@@ -150,7 +230,8 @@ pub enum ConnectError<E> {
 ///   before giving its socket to another tester, so an idle caller loses the
 ///   connection. While a request is being written, nothing is read.
 /// - **A new connection after a lost request.** A request not acknowledged within
-///   `A_DoIP_Diagnostic_Message` (Table 12, 2 s) is confirmed
+///   `A_DoIP_Diagnostic_Message` ([`ACK_TIMEOUT`] unless [`Tester::with_ack_timeout`]
+///   set another) is confirmed
 ///   [`DoIpResult::TimeoutA`], and once any of it was written the connection is given
 ///   up and [`ConnectionEvent::Closed`] follows. Past that timeout, Table 12 treats the
 ///   request or its response as lost; keeping the connection would let the late
@@ -257,10 +338,10 @@ impl<C: TcpConnect, const N: usize> fmt::Debug for Tester<'_, C, N> {
 
 impl<'s, C: TcpConnect, const N: usize> Tester<'s, C, N> {
     /// Connects to the entity at `remote` and activates routing for source address `sa`
-    /// (ISO 13400-2:2019 12.5.2), sending ISO 13400-2:2019's protocol version: it is
-    /// [`Self::connect_with_version`] with [`TesterVersion::default`].
+    /// (ISO 13400-2:2019 12.5.2): [`Self::connect_with`] with [`ConnectOptions::new`],
+    /// ISO 13400-2:2019's protocol version and the default activation type.
     ///
-    /// Activation is the default type. An entity answering
+    /// An entity answering
     /// [`RoutingActivationResponseCode::RoutingSuccessfullyActivatedConfirmationRequired`]
     /// is asked again on the same connection every two seconds until it answers
     /// otherwise, as ISO 13400-2:2019 REQ 3.DoIP-063 allows. While it waits for an answer,
@@ -295,35 +376,30 @@ impl<'s, C: TcpConnect, const N: usize> Tester<'s, C, N> {
         remote: SocketAddr,
         sa: TesterAddress,
     ) -> Result<Self, ConnectError<C::Error>> {
-        Self::connect_with_version(stack, remote, sa, TesterVersion::default()).await
+        Self::connect_with(stack, remote, sa, ConnectOptions::new()).await
     }
 
     /// Connects to the entity at `remote` and activates routing for source address `sa`
-    /// (ISO 13400-2:2019 12.5.2), sending `version` in every message on this connection
-    /// and on every one [`TesterConnection::reconnect`] opens.
+    /// (ISO 13400-2:2019 12.5.2) as `options` say, on this connection and on every one
+    /// [`TesterConnection::reconnect`] opens.
     ///
-    /// Everything else is [`Self::connect`]'s, its errors included. An entity that does
-    /// not implement `version` answers the activation request with
-    /// [`ConnectError::HeaderNack`] carrying [`NackCode::IncorrectPatternFormat`]
-    /// (ISO 13400-2:2019 REQ 7.DoIP-041); answers in any version Table 16 defines are
-    /// accepted whatever `version` is.
+    /// Everything else is [`Self::connect`]'s, its errors included.
     ///
     /// # Arguments
     ///
     /// * `stack` - the stack that opens this connection and any later one.
     /// * `remote` - the entity, usually on [`TCP_PORT`](crate::TCP_PORT).
     /// * `sa` - this tester's source address.
-    /// * `version` - the protocol version the entity implements: ISO 13400-2:2019
-    ///   Table 16 allows `0x01`, `0x02` and `0x03`.
+    /// * `options` - the protocol version and routing activation; see [`ConnectOptions`].
     ///
     /// # Errors
     ///
     /// As [`Self::connect`].
-    pub async fn connect_with_version(
+    pub async fn connect_with(
         stack: &'s C,
         remote: SocketAddr,
         sa: TesterAddress,
-        version: TesterVersion,
+        options: ConnectOptions,
     ) -> Result<Self, ConnectError<C::Error>> {
         const {
             assert!(N >= MIN_N, "a Tester's N must be at least MIN_N");
@@ -334,9 +410,10 @@ impl<'s, C: TcpConnect, const N: usize> Tester<'s, C, N> {
             sa,
             socket: None,
             rx: RxBuffer::new(),
-            control: Control::new(version.protocol_version()),
+            control: Control::new(options.version.protocol_version())
+                .activating(options.activation_type, options.vm_specific),
             outgoing: Outgoing::new(),
-            exchange: Exchange::default(),
+            exchange: Exchange::new(ACK_TIMEOUT),
             owed: None,
             closed_reported: false,
             io_error: None,
@@ -357,6 +434,19 @@ impl<'s, C: TcpConnect, const N: usize> Tester<'s, C, N> {
     #[must_use]
     pub const fn with_reconnect_backoff(mut self, backoff: Duration) -> Self {
         self.backoff = backoff;
+        self
+    }
+
+    /// Sets how long a request waits for its acknowledgement before it is confirmed
+    /// [`DoIpResult::TimeoutA`], in place of [`ACK_TIMEOUT`].
+    ///
+    /// # Arguments
+    ///
+    /// * `timeout` - the entity's longest acknowledgement time, with the network's
+    ///   delays.
+    #[must_use]
+    pub const fn with_ack_timeout(mut self, timeout: Duration) -> Self {
+        self.exchange.ack_timeout = timeout;
         self
     }
 
@@ -452,7 +542,7 @@ async fn activate<S: Read + Write + Readable, const N: usize>(
                 }
                 Ok(Next::Oversized { header, .. }) => {
                     if !spoken(&header)
-                        || header.payload_type == PayloadType::RoutingActivationResponse
+                        || header.payload_type() == PayloadType::RoutingActivationResponse
                     {
                         return Err(ConnectError::InvalidMessage);
                     }
@@ -848,22 +938,41 @@ impl<C: TcpConnect, const N: usize> TesterConnection for Tester<'_, C, N> {
     ///
     /// # Errors
     ///
-    /// The socket's error where closing fails; the tester is closed all the same.
+    /// The socket's error where closing fails, other than `NotConnected`, which a stack
+    /// reports once the entity has closed first and is the close with no connection; the
+    /// tester is closed all the same.
     async fn close(&mut self) -> Result<(), Self::CloseError> {
-        match self.give_up() {
-            Some(mut socket) => socket.close(Close::Both).await,
-            None => Ok(()),
+        let Some(mut socket) = self.give_up() else {
+            return Ok(());
+        };
+        match socket.close(Close::Both).await {
+            // The entity closed first: there was no connection left to close.
+            Err(error)
+                if embedded_io_async::Error::kind(&error)
+                    == embedded_io_async::ErrorKind::NotConnected =>
+            {
+                Ok(())
+            }
+            closed => closed,
         }
     }
 }
 
-/// The request awaiting its acknowledgement.
-#[derive(Debug, Default)]
+/// The request awaiting its acknowledgement, and how long it waits for one.
+#[derive(Debug)]
 struct Exchange {
     outstanding: Option<Outstanding>,
+    ack_timeout: Duration,
 }
 
 impl Exchange {
+    const fn new(ack_timeout: Duration) -> Self {
+        Self {
+            outstanding: None,
+            ack_timeout,
+        }
+    }
+
     fn deadline(&self) -> Option<Instant> {
         self.outstanding
             .and_then(|outstanding| outstanding.phase.deadline())
@@ -878,7 +987,7 @@ impl Exchange {
             let started = Instant::now();
             outstanding.phase = Phase::Writing {
                 started,
-                deadline: after(started, ACK_TIMEOUT),
+                deadline: after(started, self.ack_timeout),
             };
             outstanding.stale = buffered;
         }
@@ -891,7 +1000,7 @@ impl Exchange {
         {
             outstanding.phase = Phase::Sent {
                 started,
-                deadline: after(Instant::now(), ACK_TIMEOUT),
+                deadline: after(Instant::now(), self.ack_timeout),
             };
         }
     }
@@ -913,9 +1022,10 @@ impl Exchange {
         answered_at: Option<Instant>,
         result: DoIpResult,
     ) -> Option<ConnectionEvent<'static>> {
-        let outstanding = self
-            .outstanding
-            .take_if(|outstanding| outstanding.acknowledged_by(source, answered_at))?;
+        let ack_timeout = self.ack_timeout;
+        let outstanding = self.outstanding.take_if(|outstanding| {
+            outstanding.acknowledged_by(source, answered_at, ack_timeout)
+        })?;
         Some(outstanding.confirm(sa, result))
     }
 }
@@ -933,12 +1043,13 @@ struct Outstanding {
 impl Outstanding {
     /// Whether an acknowledgement from `source`, or a generic header NACK where `source`
     /// is `None`, is this request's. A header NACK is not where an alive check response
-    /// was written within `A_DoIP_Diagnostic_Message` before the request or since, as
-    /// it may be about that response.
+    /// was written within `ack_timeout` before the request or since, as it may be about
+    /// that response.
     fn acknowledged_by(
         &self,
         source: Option<LogicalAddress>,
         answered_at: Option<Instant>,
+        ack_timeout: Duration,
     ) -> bool {
         if self.stale > 0 {
             return false;
@@ -946,7 +1057,7 @@ impl Outstanding {
         match source {
             Some(source) => self.ta_type != TaType::Physical || source == self.ta,
             None => self.phase.started().is_some_and(|started| {
-                answered_at.is_none_or(|answered| after(answered, ACK_TIMEOUT) <= started)
+                answered_at.is_none_or(|answered| after(answered, ack_timeout) <= started)
             }),
         }
     }
@@ -1065,29 +1176,16 @@ impl Delivered {
 /// `DoIP` messages: ISO/DIS 13400-2:2010's, ISO 13400-2:2012's or its own.
 fn spoken(header: &Header) -> bool {
     matches!(
-        header.protocol_version,
+        header.protocol_version(),
         ProtocolVersion::V2010 | ProtocolVersion::V2012 | ProtocolVersion::V2019
     )
 }
 
-/// Whether `header`'s payload length is one ISO 13400-2:2019 allows its payload type
-/// (Tables 18, 21, 23, 25, 27 and 48).
+/// Whether `header`'s payload length is one its payload type allows.
 fn sized_for_its_type(header: &Header) -> bool {
-    let length = usize::try_from(header.payload_length).unwrap_or(usize::MAX);
-    match header.payload_type {
-        PayloadType::NegativeAcknowledge => length == 1,
-        PayloadType::RoutingActivationResponse => {
-            length == RoutingActivationResponse::PAYLOAD_SIZE
-                || length == RoutingActivationResponse::PAYLOAD_SIZE_WITH_OEM
-        }
-        PayloadType::AliveCheckRequest => length == 0,
-        PayloadType::DiagnosticMessage
-        | PayloadType::DiagnosticMessagePositiveAcknowledge
-        | PayloadType::DiagnosticMessageNegativeAcknowledge => {
-            length > DiagnosticMessage::ADDRESSES_SIZE
-        }
-        _ => true,
-    }
+    header
+        .payload_type()
+        .allows_payload_length(header.payload_length())
 }
 
 /// Acts on one message from the entity, whose `payload` may be only the start of what
@@ -1111,8 +1209,8 @@ fn react(
         None => Reaction::Ignore,
     };
     match (
-        header.payload_type,
-        Payload::decode(payload, header.payload_type),
+        header.payload_type(),
+        Payload::decode(payload, header.payload_type()),
     ) {
         (PayloadType::DiagnosticMessage, _) => {
             let Ok((message, _)) = DiagnosticMessage::decode(payload) else {
@@ -1126,7 +1224,7 @@ fn react(
                 sa: message.source_address,
                 ta,
                 copied: copy(message.user_data, buf),
-                length: usize::try_from(header.payload_length)
+                length: usize::try_from(header.payload_length())
                     .unwrap_or(usize::MAX)
                     .saturating_sub(DiagnosticMessage::ADDRESSES_SIZE),
             })
@@ -1185,7 +1283,7 @@ fn react(
         ) => Reaction::Deliver(Delivered::Unmodelled {
             payload_type,
             copied: copy(payload, buf),
-            length: usize::try_from(header.payload_length).unwrap_or(usize::MAX),
+            length: usize::try_from(header.payload_length()).unwrap_or(usize::MAX),
         }),
         _ => Reaction::Ignore,
     }
@@ -1209,8 +1307,8 @@ fn on_activation_frame<E>(
     }
     let sized = sized_for_its_type(header);
     match (
-        header.payload_type,
-        Payload::decode(payload, header.payload_type),
+        header.payload_type(),
+        Payload::decode(payload, header.payload_type()),
     ) {
         (
             PayloadType::RoutingActivationResponse,

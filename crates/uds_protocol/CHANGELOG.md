@@ -37,6 +37,19 @@ now <https://github.com/luminartech/uds_stack>.
 
 ### Changed
 
+- **Breaking:** `ReadDtcInfoResponse`'s `NumberOfDtcs`, `DtcList` and `DtcSeverityList`
+  carry a `DtcCountReport`, `DtcListReport` or `DtcSeverityReport` in place of a
+  `sub_function_id` byte, so the echo cannot name another layout. Encoding refuses
+  records that are not a whole number of the variant's record length. A valid report type
+  no variant parses decodes as `Unmodeled`, its parameters raw, where it used to fail
+  with `InvalidDtcSubfunctionType`. `ReadDtcInfoReportType` goes through serde as its
+  byte. Migrate: name the report (`DtcListReport::Supported` for `0x0A`) and add an arm
+  for `Unmodeled`.
+- **Breaking:** `DiagnosticSessionControlResponse::p2_server_max` is
+  `p2_server_max_ms`, and `p2_star_server_max` is a `P2StarServerMax`, which holds Table
+  29's count of 10 ms units and reads it back as `tens_of_millis` or `as_millis`. The
+  two timeouts can no longer be passed to `new` in each other's place. Migrate: wrap the
+  count in `P2StarServerMax::from_tens_of_millis`.
 - **Breaking:** the crate now uses `automotive-wire-codec` 0.4. The re-exported
   `Encode`, `Decode` and `DecodeIter` are that version's traits, and
   `Encode::encode` now writes into `&mut impl automotive_wire_codec::Sink` instead
@@ -61,12 +74,89 @@ now <https://github.com/luminartech/uds_stack>.
   which is the suppressPosRspMsgIndicationBit, and that error still maps to 0x12. A
   positive response that echoes a reserved type is still rejected. Because the enum
   now has a data-carrying variant, its variants can no longer be cast with `as`.
+- **Breaking:** `CommunicationType` is the whole low nibble of the
+  `communicationType` byte. `CommunicationType::IsoSaeReserved(u8)` holds a nibble
+  that Annex B Table B.1 reserves (bits 1-0 clear, or bits 3-2 set), so a decoded
+  request re-encodes the byte it arrived as; the unit variant re-encoded `28 0A 56`
+  as `28 0A 50`. `CommunicationType::try_from` takes the nibble, `0x0`–`0xF`, and
+  fails only above it, and `CommunicationType::value` returns it. Match the reserved
+  variant as `CommunicationType::IsoSaeReserved { .. }`. With `serde`, the type
+  serializes as the nibble (`1`) rather than the variant name (`"Normal"`).
+- **Breaking:** with `serde`, `ResetType` and `DiagnosticSessionType` serialize as
+  their sub-function byte (`1`) rather than the variant name (`"HardReset"`), and
+  deserialize through `TryFrom<u8>`, as `SecurityAccessType` and
+  `CommunicationControlType` do. A derived `Deserialize` accepted
+  `{"IsoSaeReserved":129}`, so an `EcuResetRequest` that did not ask for suppression
+  encoded `11 81`, which reads back as suppressed. `ReadDtcInfoSubFunction` does not
+  deserialize its `IsoSaeReserved` variant at all, as `RoutineControlSubFunction`
+  does not; build it with `ReadDtcInfoSubFunction::try_reserved`.
+- **Breaking:** `SecurityAccessLevel` is a level's `requestSeed`/`sendKey` pair,
+  named by its `requestSeed` byte, rather than a raw sub-function byte.
+  `SecurityAccessType::SendKey(level)` encodes `level.send_key()`; it used to encode
+  whatever byte the level held, so a send-key built from level `0x01` went out as
+  `27 01`, a seed request. `SecurityAccessLevel::new` and `value` are replaced by
+  `from_request_seed`, which accepts Table 42's odd values `0x01`–`0x41`, and by
+  `request_seed` and `send_key`. A decoded even sub-function `n` is
+  `SendKey(level n - 1)`. With `serde`, a level is its `requestSeed` byte.
+- **Breaking:** `NegativeResponseCode` is ISO 14229-1:2020 Table A.1 and no longer
+  `#[non_exhaustive]`: the table is fixed, so a match over it is complete. It gains
+  `0x25`, `0x26`, `0x38`–`0x3A`, `0x50`–`0x5D` and `0x94`, which used to classify as
+  reserved; `ExtendedDataLinkSecurityReserved` is gone (`0x3B`–`0x4F` are
+  `IsoSaeReserved`), and `ReservedForSpecificConditionsNotMet` is split into Table A.1's
+  `ReservedForSpecificConditionsNotCorrect` (`0x95`–`0xEF`) and
+  `VehicleManufacturerSpecificConditionsNotCorrect` (`0xF0`–`0xFE`).
+- **Breaking:** an enum that mirrors a table of ISO 14229-1:2020 is exhaustive, since
+  the table assigns every value: `UdsIdentifier` (Table C.1), `UdsRoutineIdentifier`
+  (Table F.1), `DtcFormatIdentifier` (D.14), `FunctionalGroupIdentifier` (D.15),
+  `DtcExtDataRecordNumber` (D.16), `DtcSnapshotRecordNumber` (Table 318),
+  `CommunicationControlType` (Table 54), `SubnetNumber` and `CommunicationType` (B.1),
+  `DtcSettingType` (Table 128), `RoutineControlSubFunction` (Table 426), `ResetType`
+  (Table 34), `DiagnosticSessionType` (Table 25), `SecurityAccessType` (Table 42),
+  `FileOperationMode` (G.1) and `ReadDtcInfoReportType` (Table 317). Enums that cover
+  only part of a table, and error enums, stay `#[non_exhaustive]`. Migrate: a wildcard
+  arm over one of these now warns as unreachable where every variant is matched.
+- **Breaking:** `DtcSettingType` gains `IsoSaeReserved`: Table 128's reserved values
+  `0x00`, `0x03`–`0x3F` and `0x7F` decode rather than fail with
+  `Error::InvalidDtcSetting`, which is now only for a byte with bit 7 set. A server
+  answers a setting it does not support `subFunctionNotSupported` from its own lookup.
+- **Breaking:** variants renamed to Table C.1's and D.16's names:
+  `UdsIdentifier::EcuManufacturingDate` (`0xF18B`, was `EcuManufacturingData`),
+  `UdsIdentifier::RepairShopCodeOrTesterSerialNumber` (`0xF198`), and
+  `DtcExtDataRecordNumber::VehicleManufacturerSpecific` (was `VehicleManufacturer`).
+- **Breaking:** a variant that carries a wire integer is built only by converting the
+  integer, so it never holds one a named variant has and `==` agrees with the wire.
+  That covers `NegativeResponseCode`'s three, and those of `UdsIdentifier`,
+  `UdsRoutineIdentifier`, `DtcSnapshotRecordNumber`, `DtcExtDataRecordNumber`,
+  `DtcFormatIdentifier`, `FunctionalGroupIdentifier` and `FileOperationMode`.
+  Migrate: build one with `From` (or `new`), match it as `Variant { .. }` and read the
+  integer with `value()` or `From`. With `serde`, each of these types is its integer
+  rather than a variant name, and `DtcSnapshotRecordNumber` and `DtcExtDataRecordNumber`
+  gain `From<u8>`.
+- **Breaking:** `RequestDownloadRequest` and `RequestUploadRequest` carry
+  `memoryAddress` and `memorySize` up to eight bytes each, and `memory_size` is a
+  `u64`. `AddressAndLengthFormatIdentifier` accepts each nibble from 1 to 8; it used
+  to stop at 4 and 5, reading Annex H Table H.1, which is informative and marks only
+  a zero nibble "not applicable". A wider nibble is still
+  `Error::InvalidAddressAndLengthFormatIdentifier`, NRC 0x31. `new` derives the
+  narrowest widths and now returns the request rather than a `Result`, since any
+  `u64` fits; `Error::InvalidMemorySize` carries a `u64`. Migrate: drop the `?` or
+  `unwrap` after `new`, and widen whatever holds a size.
+- `SecurityAccessResponse` follows Table 44: a `requestSeed` echo without a seed is
+  `Error::InsufficientData`, and a `sendKey` echo followed by bytes is
+  `Error::IncorrectMessageLengthOrInvalidFormat`. Both used to decode, the second
+  with the trailing bytes as `security_seed`.
 - `CommunicationControlRequest` now decodes a `communicationType` whose reserved
   bits 3-2 are set as `CommunicationType::IsoSaeReserved` and no longer rejects it.
   Clause 8.7.5 checks the message length before any data parameter, so a request
   with a stray trailing byte must reach the length check (0x13) before a server
-  answers the reserved value with 0x31. `CommunicationType::try_from` still rejects
-  such a byte.
+  answers the reserved value with 0x31.
+- `ReadDataByIdentifierResponse` and `Response` reject a `ReadDataByIdentifier`
+  positive response shorter than one identifier and one record byte with
+  `Error::InsufficientData`; it used to decode. `RequestDownloadResponse` and
+  `RequestUploadResponse` reject a `lengthFormatIdentifier` whose high nibble is zero
+  with `Error::IncorrectMessageLengthOrInvalidFormat`, as their `new` rejects an empty
+  `maxNumberOfBlockLength`: ISO 14229-1:2020 Tables 188, 442 and 447 make those bytes
+  mandatory.
 - **Breaking:** the minimum supported Rust version is now 1.91, up from 1.85. It is
   the workspace MSRV, which all five crates share.
 

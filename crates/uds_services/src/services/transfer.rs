@@ -1,26 +1,28 @@
 //! Upload and download — ISO 14229-1:2020 clause 15.
 
 use crate::{Access, ResponseSink, Sessions};
-use uds_protocol::{DataFormatIdentifier, FileOperationMode, NegativeResponseCode};
+use uds_protocol::{
+    DataFormatIdentifier, NegativeResponseCode, RequestFileTransferRequest,
+};
 
 /// What a transfer is being requested for.
 ///
 /// ``UDSSVC_ARCH_0036`` puts direction here rather than in a separate field, because a
-/// repeated block is handled *differently* by direction — a repeated download is answered
-/// without calling the handler, a repeated upload calls it again — and a design that
-/// treats repetition uniformly is wrong in one direction whichever uniform choice it
-/// makes.
+/// repeated block is handled differently by direction: a repeated download is answered
+/// without calling the handler, and a repeated upload will call it again. A
+/// `RequestUpload` variant joins these when that service is served.
 ///
 /// Address and size arrive decoded. Their wire widths are declared by the
 /// `addressAndLengthFormatIdentifier`, which `uds_protocol` reads to size the fields —
 /// so the widths are a decoding concern that is already settled by the time a handler is
-/// called, and the identifier itself never reaches one. The two are [`u64`] and [`u32`]
-/// after ISO 14229-1:2020 Table H.1, which caps `memoryAddress` at five bytes and
-/// `memorySize` at four; being different types, they also cannot be transposed.
+/// called, and the identifier itself never reaches one. Each is up to eight bytes wide,
+/// so each is a [`u64`]; a request declaring a wider one is answered `requestOutOfRange`
+/// (0x31) before any handler is asked.
 ///
-/// Not [`Hash`]: [`FileOperationMode`] is not, and a transfer request is a thing to match
-/// on rather than a key to look one up by.
+/// Not [`Hash`]: [`RequestFileTransferRequest`] is not, and a transfer request is a thing
+/// to match on rather than a key to look one up by.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum TransferRequest<'a> {
     /// `RequestDownload` (0x34) — the client sends data to the server.
     Download {
@@ -30,27 +32,15 @@ pub enum TransferRequest<'a> {
         /// `memoryAddress`, decoded.
         address: u64,
         /// `memorySize`, decoded.
-        size: u32,
+        size: u64,
     },
-    /// `RequestUpload` (0x35) — the server sends data to the client.
-    Upload {
-        /// `dataFormatIdentifier`; see [`DataFormatIdentifier`].
-        data_format: DataFormatIdentifier,
-        /// `memoryAddress`, decoded.
-        address: u64,
-        /// `memorySize`, decoded.
-        size: u32,
-    },
-    /// `RequestFileTransfer` (0x38).
-    File {
-        /// `modeOfOperation`; see [`FileOperationMode`].
-        operation: FileOperationMode,
-        /// `filePathAndName`.
-        path: &'a [u8],
-    },
+    /// `RequestFileTransfer` (0x38), as decoded: each `modeOfOperation` with the
+    /// parameters ISO 14229-1:2020 Table 480 gives it. Not yet served, so never built.
+    File(RequestFileTransferRequest<'a>),
 }
 
-/// The download and upload services (0x34, 0x35, 0x36, 0x37, 0x38).
+/// The download services (0x34, 0x36, 0x37). `RequestUpload` (0x35) and
+/// `RequestFileTransfer` (0x38) are not served: both are `serviceNotSupported` (0x11).
 ///
 /// ``UDSSVC_ARCH_0036`` — the transfer lifecycle is a state machine this crate owns:
 /// which requests are admissible in which order, the block sequence counter and its
@@ -73,12 +63,12 @@ pub trait DataTransfer {
     /// The most data bytes one `TransferData` block carries, excluding the service
     /// identifier and the `blockSequenceCounter`.
     ///
-    /// The `RequestDownload` positive response advertises `MAX_BLOCK_LENGTH + 2` as
+    /// The `RequestDownload` positive response advertises `MAX_BLOCK_LEN + 2` as
     /// `maxNumberOfBlockLength`, the whole `TransferData` request message a server must
     /// accept (ISO 14229-1:2020 15.2.3.2). [`crate::uds_server`] holds the in-flight
-    /// buffer to that length and fails to compile where the transport cannot carry it; a
-    /// client subtracts two to size its blocks.
-    const MAX_BLOCK_LENGTH: usize;
+    /// buffer to that length and fails to compile where the transport cannot carry it, or
+    /// where this is zero; a client subtracts two to size its blocks.
+    const MAX_BLOCK_LEN: usize;
 
     /// The sessions `RequestDownload`, `TransferData` and `RequestTransferExit` are served
     /// in. In any other session each is `serviceNotSupportedInActiveSession` (0x7F)
@@ -119,7 +109,7 @@ pub trait DataTransfer {
     /// Begin a transfer.
     ///
     /// The positive response's `maxNumberOfBlockLength` is composed by this crate from
-    /// [`Self::MAX_BLOCK_LENGTH`], so this returns nothing.
+    /// [`Self::MAX_BLOCK_LEN`], so this returns nothing.
     ///
     /// # Errors
     ///
@@ -130,7 +120,8 @@ pub trait DataTransfer {
         request: TransferRequest<'_>,
     ) -> impl core::future::Future<Output = Result<(), NegativeResponseCode>>;
 
-    /// Accept one block of a download, or produce one block of an upload into `out`.
+    /// Accept one block of a download, writing any `transferResponseParameterRecord` into
+    /// `out`.
     ///
     /// The block sequence counter is **not** a parameter: validating it and answering
     /// `wrongBlockSequenceCounter` (0x73) is this crate's, and a handler that received
@@ -183,7 +174,7 @@ mod tests {
     struct Ecu;
     impl DataTransfer for Ecu {
         const MAY_RESPOND_PENDING: bool = true;
-        const MAX_BLOCK_LENGTH: usize = 1_024;
+        const MAX_BLOCK_LEN: usize = 1_024;
         const SESSIONS: Sessions = Sessions::ALL;
         fn format_supported(&self, _f: DataFormatIdentifier) -> bool {
             true
@@ -214,31 +205,12 @@ mod tests {
     }
 
     /// Decision 4 of the design: the advertised `maxNumberOfBlockLength` is
-    /// `MAX_BLOCK_LENGTH + 2` (15.2.3.2), the length of the in-flight buffer that must hold
+    /// `MAX_BLOCK_LEN + 2` (15.2.3.2), the length of the in-flight buffer that must hold
     /// the block.
     #[test]
     fn the_block_length_gives_both_the_buffer_and_the_advertisement() {
-        const BLOCK: usize = <Ecu as DataTransfer>::MAX_BLOCK_LENGTH;
+        const BLOCK: usize = <Ecu as DataTransfer>::MAX_BLOCK_LEN;
         const ADVERTISED: usize = 2 + BLOCK; // SID + block sequence counter
         assert_eq!((BLOCK, ADVERTISED), (1_024, 1_026));
-    }
-
-    /// ``UDSSVC_ARCH_0036`` — direction is in the request because a repeated block is
-    /// handled differently by direction: a repeated download is answered without calling
-    /// the handler, a repeated upload calls it again. A design treating repetition
-    /// uniformly is wrong in one direction whichever uniform choice it makes.
-    #[test]
-    fn direction_is_carried_by_the_request() {
-        let d = TransferRequest::Download {
-            data_format: DataFormatIdentifier::NONE,
-            address: 0x0800_0000,
-            size: 0x0002_0000,
-        };
-        let u = TransferRequest::Upload {
-            data_format: DataFormatIdentifier::NONE,
-            address: 0x0800_0000,
-            size: 0x0002_0000,
-        };
-        assert_ne!(d, u);
     }
 }

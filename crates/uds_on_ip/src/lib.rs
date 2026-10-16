@@ -88,11 +88,13 @@
 //! the session state machine are `uds_session`'s, and are used from there
 //! rather than redeclared here.
 //!
-//! The one exception is narrow and forced by the standard: clause 8 keys TCP
-//! connection handling on three identifiers of two services. See
+//! The exception is narrow and forced by the standard. Clause 8 keys TCP
+//! connection handling on the positive `DiagnosticSessionControl` and `ECUReset`
+//! responses, and owing an answer depends on a request's suppress bit and on a
+//! response-pending. Those four facts are all this crate reads of a message; see
 //! `profile::service_ids`.
 
-#![cfg_attr(not(feature = "std"), no_std)]
+#![no_std]
 #![forbid(unsafe_code)]
 
 pub mod client;
@@ -101,8 +103,8 @@ pub mod mapping;
 pub mod profile;
 pub mod transport;
 
-pub use client::DoIpClientTransport;
-pub use error::{ClientTransportError, Error};
+pub use client::{DoIpClientTransport, KEEP_ALIVE_LEN, LateReplyGuard};
+pub use error::{DoIpClientTransportError, DoIpTransportError};
 pub use transport::DoIpTransport;
 
 // `TransportEvent` is deliberately not re-exported. It is

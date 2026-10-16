@@ -22,10 +22,9 @@ use automotive_wire_codec::{write_u8, write_u16_be};
 /// Conversions from `u8` to `DiagnosticSessionType` are fallible and will return an
 /// [`Error`] if the Suppress Positive Response bit is set.
 #[cfg_attr(feature = "serde", derive(serde::Deserialize, serde::Serialize))]
-#[cfg_attr(feature = "utoipa", derive(utoipa::ToSchema))]
+#[cfg_attr(feature = "serde", serde(try_from = "u8", into = "u8"))]
 #[cfg_attr(feature = "clap", derive(clap::ValueEnum))]
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-#[non_exhaustive]
 pub enum DiagnosticSessionType {
     /// This value is reserved by the ISO 14229-1 Specification
     ///
@@ -250,6 +249,35 @@ impl<'a> Decode<'a> for DiagnosticSessionControlRequest {
     }
 }
 
+/// `P2*Server_max`, the enhanced response timeout that applies after a
+/// [`NegativeResponseCode::RequestCorrectlyReceivedResponsePending`], held as Table 29's
+/// wire count of 10 ms units.
+#[cfg_attr(feature = "serde", derive(serde::Deserialize, serde::Serialize))]
+#[cfg_attr(feature = "serde", serde(transparent))]
+#[cfg_attr(feature = "utoipa", derive(utoipa::ToSchema))]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, PartialOrd, Ord)]
+pub struct P2StarServerMax(u16);
+
+impl P2StarServerMax {
+    /// A timeout of `count` tens of milliseconds, the wire's own unit.
+    #[must_use]
+    pub const fn from_tens_of_millis(count: u16) -> Self {
+        Self(count)
+    }
+
+    /// The wire count, in tens of milliseconds.
+    #[must_use]
+    pub const fn tens_of_millis(self) -> u16 {
+        self.0
+    }
+
+    /// The timeout in milliseconds.
+    #[must_use]
+    pub fn as_millis(self) -> u32 {
+        u32::from(self.0) * 10
+    }
+}
+
 /// Positive response to a `DiagnosticSessionControlRequest`
 #[cfg_attr(feature = "serde", derive(serde::Deserialize, serde::Serialize))]
 #[cfg_attr(feature = "utoipa", derive(utoipa::ToSchema))]
@@ -258,18 +286,11 @@ impl<'a> Decode<'a> for DiagnosticSessionControlRequest {
 pub struct DiagnosticSessionControlResponse {
     /// The session type that is now active.
     pub session_type: DiagnosticSessionType,
-    /// `P2Server_max`: how long the client should wait for a response, at 1 ms per count.
-    ///
-    /// The stored value *is* the millisecond count (ISO 14229-1:2020 Table 29).
-    pub p2_server_max: u16,
-    /// `P2*Server_max`: the enhanced timeout that applies after a
-    /// [`NegativeResponseCode::RequestCorrectlyReceivedResponsePending`], at **10 ms per
-    /// count**.
-    ///
-    /// Multiply by 10 to get milliseconds: Table 29 gives this parameter a resolution of 10
-    /// ms, so the stored value is milliseconds ÷ 10 and the maximum is 655 350 ms. Reading
-    /// it as a raw millisecond count under-waits by a factor of ten.
-    pub p2_star_server_max: u16,
+    /// `P2Server_max`: how long the client should wait for a response, in milliseconds
+    /// (ISO 14229-1:2020 Table 29).
+    pub p2_server_max_ms: u16,
+    /// `P2*Server_max`: see [`P2StarServerMax`].
+    pub p2_star_server_max: P2StarServerMax,
 }
 
 impl DiagnosticSessionControlResponse {
@@ -277,12 +298,12 @@ impl DiagnosticSessionControlResponse {
     #[must_use]
     pub const fn new(
         session_type: DiagnosticSessionType,
-        p2_server_max: u16,
-        p2_star_server_max: u16,
+        p2_server_max_ms: u16,
+        p2_star_server_max: P2StarServerMax,
     ) -> Self {
         Self {
             session_type,
-            p2_server_max,
+            p2_server_max_ms,
             p2_star_server_max,
         }
     }
@@ -295,8 +316,8 @@ impl Encode for DiagnosticSessionControlResponse {
         writer: &mut impl automotive_wire_codec::Sink,
     ) -> Result<usize, Error> {
         let mut written = write_u8(writer, u8::from(self.session_type))?;
-        written += write_u16_be(writer, self.p2_server_max)?;
-        written += write_u16_be(writer, self.p2_star_server_max)?;
+        written += write_u16_be(writer, self.p2_server_max_ms)?;
+        written += write_u16_be(writer, self.p2_star_server_max.tens_of_millis())?;
         Ok(written)
     }
 }
@@ -312,12 +333,13 @@ impl<'a> Decode<'a> for DiagnosticSessionControlResponse {
             }));
         }
         let session_type = DiagnosticSessionType::try_from(buf[0])?;
-        let p2_server_max = u16::from_be_bytes([buf[1], buf[2]]);
-        let p2_star_server_max = u16::from_be_bytes([buf[3], buf[4]]);
+        let p2_server_max_ms = u16::from_be_bytes([buf[1], buf[2]]);
+        let p2_star_server_max =
+            P2StarServerMax::from_tens_of_millis(u16::from_be_bytes([buf[3], buf[4]]));
         Ok((
             Self {
                 session_type,
-                p2_server_max,
+                p2_server_max_ms,
                 p2_star_server_max,
             },
             &buf[5..],
@@ -360,8 +382,8 @@ mod response {
         let (resp, _) =
             <DiagnosticSessionControlResponse as Decode>::decode(&bytes).unwrap();
         assert_eq!(resp.session_type, DiagnosticSessionType::ProgrammingSession);
-        assert_eq!(resp.p2_server_max, 0x1122);
-        assert_eq!(resp.p2_star_server_max, 0x3344);
+        assert_eq!(resp.p2_server_max_ms, 0x1122);
+        assert_eq!(resp.p2_star_server_max.tens_of_millis(), 0x3344);
 
         let mut buffer = [0u8; 8];
         let written = Encode::encode(

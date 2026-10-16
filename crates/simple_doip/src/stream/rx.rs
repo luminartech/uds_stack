@@ -75,7 +75,7 @@ impl<const N: usize> RxBuffer<N> {
     /// it arrives.
     pub(crate) fn skip_frame(&mut self, header: &Header) {
         let buffered = self.len.saturating_sub(Header::SIZE);
-        self.discard = usize::try_from(header.payload_length)
+        self.discard = usize::try_from(header.payload_length())
             .unwrap_or(usize::MAX)
             .saturating_sub(buffered);
         self.len = 0;
@@ -92,7 +92,7 @@ impl<const N: usize> RxBuffer<N> {
             Header::SIZE
         } else {
             self.header().map_or(self.len, |header| {
-                usize::try_from(header.payload_length)
+                usize::try_from(header.payload_length())
                     .map_or(usize::MAX, |length| Header::SIZE.saturating_add(length))
             })
         };
@@ -200,7 +200,7 @@ mod tests {
         let Next::Frame(frame, consumed) = rx.next().unwrap() else {
             panic!("expected a frame");
         };
-        assert_eq!(frame.header.payload_type, PayloadType::DiagnosticMessage);
+        assert_eq!(frame.header.payload_type(), PayloadType::DiagnosticMessage);
         assert_eq!(frame.payload, part(&wire, 8..len));
         assert_eq!(consumed, len);
     }
@@ -242,7 +242,7 @@ mod tests {
         let Next::Oversized { header, head } = rx.next().unwrap() else {
             panic!("expected an oversized frame");
         };
-        assert_eq!(header.payload_length, 34);
+        assert_eq!(header.payload_length(), 34);
         assert_eq!(head, part(&wire, 8..24));
 
         rx.skip_frame(&header);

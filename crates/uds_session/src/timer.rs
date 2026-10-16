@@ -35,6 +35,12 @@ impl Rule for Exceeds {
     const EXCEEDS: bool = true;
 }
 
+/// The longest a timer is loaded with (``UDSS_LLR_0076``): half the timebase's range, less
+/// one millisecond, so that [`Timestamp::has_reached`] reads the deadline, including the
+/// millisecond [`Exceeds`] adds, as ahead until it arrives. A longer load reported a
+/// deadline already reached, and a caller woken at it found nothing expired, forever.
+pub(crate) const MAX_LOAD: u32 = u32::MAX / 2;
+
 /// A timer: stopped, or running since `start` loaded with `loaded` milliseconds, expiring
 /// under the rule `R`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -56,10 +62,13 @@ impl<R: Rule> Timer<R> {
         rule: PhantomData,
     };
 
-    /// Set running at `now`, loaded with `loaded` (``UDSS_LLR_0076``). A running timer is
-    /// restarted: the standard's "restart" is this call.
+    /// Set running at `now`, loaded with `loaded` (``UDSS_LLR_0076``) but no more than
+    /// [`MAX_LOAD`]. A running timer is restarted: the standard's "restart" is this call.
     pub(crate) fn start(&mut self, now: Timestamp, loaded: u32) {
-        self.running = Some(Running { start: now, loaded });
+        self.running = Some(Running {
+            start: now,
+            loaded: loaded.min(MAX_LOAD),
+        });
     }
 
     /// Stop. Nothing is remembered (``UDSS_LLR_0078``).
@@ -118,16 +127,40 @@ impl<R: Rule> Timer<R> {
     /// earlier, but never before the start.
     pub(crate) fn deadline_by(&self, lead: u32) -> Option<Timestamp> {
         self.running.map(|r| {
-            let at = r.start.0.wrapping_add(r.loaded.saturating_sub(lead));
-            Timestamp(at.wrapping_add(u32::from(R::EXCEEDS)))
+            r.start
+                .after(r.loaded.saturating_sub(lead))
+                .after(u32::from(R::EXCEEDS))
         })
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{Exceeds, Reaches, Timer};
+    use super::{Exceeds, MAX_LOAD, Reaches, Timer};
     use crate::time::Timestamp;
+
+    /// ``UDSS_LLR_0076`` — a load of half the range or more is capped, so the deadline is
+    /// ahead of the start rather than read as already reached, and `until` is a wait.
+    #[test]
+    fn a_load_past_half_the_range_is_capped() {
+        let start = Timestamp(1_000);
+        let mut r = Timer::<Reaches>::STOPPED;
+        let mut x = Timer::<Exceeds>::STOPPED;
+        for loaded in [MAX_LOAD, MAX_LOAD + 1, u32::MAX] {
+            r.start(start, loaded);
+            x.start(start, loaded);
+            assert_eq!(r.deadline(), Some(start.after(MAX_LOAD)));
+            assert_eq!(x.deadline(), Some(start.after(MAX_LOAD).after(1)));
+            for deadline in [r.deadline(), x.deadline()].into_iter().flatten() {
+                assert!(!start.has_reached(deadline), "{loaded}");
+                assert!(start.until(deadline) >= MAX_LOAD, "{loaded}");
+            }
+            assert!(!r.expired(start.after(MAX_LOAD - 1)));
+            assert!(r.expired(start.after(MAX_LOAD)));
+            assert!(!x.expired(start.after(MAX_LOAD)));
+            assert!(x.expired(start.after(MAX_LOAD + 1)));
+        }
+    }
 
     /// ``UDSS_LLR_0075``, ``UDSS_LLR_0078`` — a stopped timer never expires.
     #[test]

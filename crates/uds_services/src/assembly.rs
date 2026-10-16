@@ -7,7 +7,7 @@
 //! The macro does something the rest of the crate cannot. An associated const of a
 //! *generic* parameter is not usable as an array length — `[u8; S::MAX_REQUEST]` is
 //! rejected without the unstable `generic_const_exprs` — but at this macro's expansion
-//! site the types are concrete, so `<Ecu as DataTransfer>::MAX_BLOCK_LENGTH` is an
+//! site the types are concrete, so `<Ecu as DataTransfer>::MAX_BLOCK_LEN` is an
 //! ordinary const and folding a list of them into an array length is stable Rust. That is
 //! why assembly is a macro and not a blanket impl, and it is how [`crate::Storage`]'s
 //! sizes are derived without the application picking a number.
@@ -96,73 +96,43 @@ pub const fn bounded_in_bytes(mut reports: &[crate::DtcReportKind]) -> bool {
 /// The request bound of a client: the widest request among its services.
 ///
 /// `#[doc(hidden)]`: macro plumbing, as [`max_of`] is. The fixed-size requests' widest
-/// is `RequestDownload` at 12: the identifier, two format bytes, a five-byte address
-/// and a four-byte size, the widest the format identifier admits.
+/// is `RequestDownload` at 19: the identifier, two format bytes, and an eight-byte
+/// address and size, the widest the format identifier admits.
 #[doc(hidden)]
 #[must_use]
 pub const fn client_request_bound(
-    max_dids: usize,
+    limits: crate::ClientLimits,
     max_record_len: usize,
-    max_key_len: usize,
-    max_option_len: usize,
-    max_block_len: usize,
 ) -> usize {
     max_of(&[
-        1_usize.saturating_add(max_dids.saturating_mul(2)),
+        1_usize.saturating_add(limits.max_dids_per_request.saturating_mul(2)),
         3_usize.saturating_add(max_record_len),
-        2_usize.saturating_add(max_key_len),
-        4_usize.saturating_add(max_option_len),
-        2_usize.saturating_add(max_block_len),
-        1_usize.saturating_add(max_option_len),
-        12,
+        2_usize.saturating_add(limits.max_key_len),
+        4_usize.saturating_add(limits.max_option_len),
+        2_usize.saturating_add(limits.max_block_len),
+        1_usize.saturating_add(limits.max_option_len),
+        19,
     ])
-}
-
-/// The maxima a client's response bound is folded from, as `uds_client!` declares them.
-///
-/// `#[doc(hidden)]`: macro plumbing, as [`max_of`] is.
-#[doc(hidden)]
-#[derive(Debug, Clone, Copy)]
-pub struct ClientResponseMaxima {
-    /// The most identifiers one read names.
-    pub max_dids: usize,
-    /// The longest record of any identifier.
-    pub max_record_len: usize,
-    /// The most DTC records one list response carries.
-    pub max_dtcs: usize,
-    /// The most record bytes one snapshot or extended data response carries.
-    pub max_dtc_record_len: usize,
-    /// The longest `SecurityAccess` seed.
-    pub max_seed_len: usize,
-    /// The longest routine status record.
-    pub max_status_len: usize,
-    /// The longest transfer-exit parameter record.
-    pub max_option_len: usize,
-    /// The longest `TransferData` block.
-    pub max_block_len: usize,
 }
 
 /// The response bound of a client: the widest response among its services.
 ///
-/// The fixed-size responses' widest is `RequestDownload`'s at 17: the identifier, the
-/// length format byte and up to fifteen bytes of block length.
+/// `#[doc(hidden)]`: macro plumbing, as [`max_of`] is. The fixed-size responses' widest
+/// is `RequestDownload`'s at 17: the identifier, the length format byte and up to
+/// fifteen bytes of block length.
 #[doc(hidden)]
 #[must_use]
-pub const fn client_response_bound(maxima: ClientResponseMaxima) -> usize {
+pub const fn client_response_bound(
+    limits: crate::ClientLimits,
+    max_record_len: usize,
+    max_status_len: usize,
+) -> usize {
     use crate::DtcReportKind as K;
-    let ClientResponseMaxima {
-        max_dids,
-        max_record_len,
-        max_dtcs,
-        max_dtc_record_len,
-        max_seed_len,
-        max_status_len,
-        max_option_len,
-        max_block_len,
-    } = maxima;
     max_of(&[
         1_usize.saturating_add(
-            max_dids.saturating_mul(2_usize.saturating_add(max_record_len)),
+            limits
+                .max_dids_per_request
+                .saturating_mul(2_usize.saturating_add(max_record_len)),
         ),
         dtc_response_bound(
             &[
@@ -174,15 +144,57 @@ pub const fn client_response_bound(maxima: ClientResponseMaxima) -> usize {
                 K::SnapshotRecords,
                 K::ExtDataRecords,
             ],
-            max_dtcs,
-            max_dtc_record_len,
+            limits.max_dtcs,
+            limits.max_dtc_record_len,
         ),
-        2_usize.saturating_add(max_seed_len),
+        2_usize.saturating_add(limits.max_seed_len),
         5_usize.saturating_add(max_status_len),
-        2_usize.saturating_add(max_block_len),
-        1_usize.saturating_add(max_option_len),
+        2_usize.saturating_add(limits.max_block_len),
+        1_usize.saturating_add(limits.max_option_len),
         17,
     ])
+}
+
+/// Fail const evaluation, naming the request, where a transport whose `MAX_PDU` is
+/// `max_pdu` cannot carry a request of `limits` and identifiers of `max_record_len`.
+///
+/// `#[doc(hidden)]`: macro plumbing, as [`max_of`] is. `uds_client!` evaluates it in a
+/// `const`, so a failure is a compile error.
+///
+/// # Panics
+///
+/// Where a request of the declared limits is longer than `max_pdu`.
+#[doc(hidden)]
+pub const fn assert_client_fits(
+    limits: crate::ClientLimits,
+    max_record_len: usize,
+    max_pdu: usize,
+) {
+    assert!(
+        1_usize.saturating_add(2_usize.saturating_mul(limits.max_dids_per_request))
+            <= max_pdu,
+        "the transport's MAX_PDU cannot carry a read of max_dids_per_request identifiers"
+    );
+    assert!(
+        3_usize.saturating_add(max_record_len) <= max_pdu,
+        "the transport's MAX_PDU cannot carry a write of the identifiers' MAX_RECORD_LEN"
+    );
+    assert!(
+        2_usize.saturating_add(limits.max_key_len) <= max_pdu,
+        "the transport's MAX_PDU cannot carry a key of max_key_len"
+    );
+    assert!(
+        4_usize.saturating_add(limits.max_option_len) <= max_pdu,
+        "the transport's MAX_PDU cannot carry an option record of max_option_len"
+    );
+    assert!(
+        2_usize.saturating_add(limits.max_block_len) <= max_pdu,
+        "the transport's MAX_PDU cannot carry a TransferData block of max_block_len"
+    );
+    assert!(
+        19 <= max_pdu,
+        "the transport's MAX_PDU cannot carry the widest RequestDownload request"
+    );
 }
 
 /// Every service a service trait covers, named rather than spelled as a wire byte.
@@ -245,12 +257,12 @@ macro_rules! __uds_sids {
 #[macro_export]
 #[rustfmt::skip]
 macro_rules! __uds_request_bound {
-    // `RequestDownload` is at most 12 bytes: SID, DFI, ALFID, a 5-byte address and a
-    // 4-byte size (Table H.1).
+    // `RequestDownload` is at most 19 bytes: SID, DFI, ALFID, an 8-byte address and an
+    // 8-byte size, the widest `uds_protocol` decodes.
     ($ty:ty, DataTransfer) => {
         $crate::assembly::max_of(&[
-            2 + <$ty as $crate::DataTransfer>::MAX_BLOCK_LENGTH,
-            12,
+            2 + <$ty as $crate::DataTransfer>::MAX_BLOCK_LEN,
+            19,
         ])
     };
     ($ty:ty, ReadDataByIdentifier) => {
@@ -344,7 +356,7 @@ macro_rules! __uds_may_pend {
 #[macro_export]
 macro_rules! __uds_session_hook {
     ($self:ident, $entered:expr, DiagnosticSessionControl) => {
-        <Self as $crate::DiagnosticSessionControl>::on_transition(
+        <<Self as $crate::ServiceSet>::App as $crate::DiagnosticSessionControl>::on_transition(
             $self,
             $entered.transition,
             $entered.session,
@@ -360,7 +372,7 @@ macro_rules! __uds_session_hook {
 #[macro_export]
 macro_rules! __uds_reset_hook {
     ($self:ident, $kind:ident, EcuReset) => {
-        <Self as $crate::EcuReset>::confirmed($self, $kind);
+        <<Self as $crate::ServiceSet>::App as $crate::EcuReset>::confirmed($self, $kind);
     };
     ($self:ident, $kind:ident, $svc:ident) => {};
 }
@@ -384,7 +396,7 @@ macro_rules! __uds_session_timing {
 #[macro_export]
 macro_rules! __uds_leaves {
     ($self:ident, $session:ident, DiagnosticSessionControl) => {
-        return <Self as $crate::DiagnosticSessionControl>::leaves_running_software(
+        return <<Self as $crate::ServiceSet>::App as $crate::DiagnosticSessionControl>::leaves_running_software(
             $self, $session,
         );
     };
@@ -432,28 +444,34 @@ macro_rules! __uds_sub_function_access {
     ($self:ident, $service:ident, $value:ident, $active:ident, EcuReset) => {
         if ::core::matches!($service, $crate::UdsServiceType::EcuReset) {
             return $crate::pipeline::sub_function_access($value, |kind| {
-                <Self as $crate::EcuReset>::access($self, kind)
+                <<Self as $crate::ServiceSet>::App as $crate::EcuReset>::access($self, kind)
             });
         }
     };
     ($self:ident, $service:ident, $value:ident, $active:ident, CommunicationControl) => {
         if ::core::matches!($service, $crate::UdsServiceType::CommunicationControl) {
             return $crate::pipeline::sub_function_access($value, |kind| {
-                <Self as $crate::CommunicationControl>::access($self, kind)
+                <<Self as $crate::ServiceSet>::App as $crate::CommunicationControl>::access(
+                    $self, kind,
+                )
             });
         }
     };
     ($self:ident, $service:ident, $value:ident, $active:ident, ControlDtcSetting) => {
         if ::core::matches!($service, $crate::UdsServiceType::ControlDtcSetting) {
-            return $crate::pipeline::sub_function_access($value, |setting| {
-                <Self as $crate::ControlDtcSetting>::access($self, setting)
+            return $crate::pipeline::dtc_setting_access($value, |setting| {
+                <<Self as $crate::ServiceSet>::App as $crate::ControlDtcSetting>::access(
+                    $self, setting,
+                )
             });
         }
     };
     ($self:ident, $service:ident, $value:ident, $active:ident, ReadDtcInformation) => {
         if ::core::matches!($service, $crate::UdsServiceType::ReadDtcInfo) {
             return $crate::pipeline::sub_function_access($value, |report| {
-                <Self as $crate::ReadDtcInformation>::access($self, report)
+                <<Self as $crate::ServiceSet>::App as $crate::ReadDtcInformation>::access(
+                    $self, report,
+                )
             });
         }
     };
@@ -625,13 +643,17 @@ macro_rules! __uds_assert {
     ($ty:ty, $transport:ty, DataTransfer) => {
         const _: () = ::core::assert!(
             <$transport as $crate::UdsTransport>::MAX_PDU
-                >= 2 + <$ty as $crate::DataTransfer>::MAX_BLOCK_LENGTH,
+                >= 2 + <$ty as $crate::DataTransfer>::MAX_BLOCK_LEN,
             "the transport's MAX_PDU cannot carry a TransferData block of \
-             MAX_BLOCK_LENGTH, which ISO 14229-1:2020 15.2.3.2 obliges the server to accept",
+             MAX_BLOCK_LEN, which ISO 14229-1:2020 15.2.3.2 obliges the server to accept",
         );
         const _: () = ::core::assert!(
-            <$ty as $crate::DataTransfer>::MAX_BLOCK_LENGTH <= 0xFFFF_FFFD,
-            "maxNumberOfBlockLength (MAX_BLOCK_LENGTH + 2) must fit in four bytes",
+            <$ty as $crate::DataTransfer>::MAX_BLOCK_LEN >= 1,
+            "MAX_BLOCK_LEN is zero, so no TransferData block could carry data",
+        );
+        const _: () = ::core::assert!(
+            <$ty as $crate::DataTransfer>::MAX_BLOCK_LEN <= 0xFFFF_FFFD,
+            "maxNumberOfBlockLength (MAX_BLOCK_LEN + 2) must fit in four bytes",
         );
     };
     ($ty:ty, $transport:ty, $svc:ident) => {};
@@ -646,12 +668,14 @@ macro_rules! __uds_assert {
 /// already depends on both crates, so ``UDSSVC_ARCH_0002`` and ``0003`` are untouched.
 ///
 /// `peers = N` sizes the association array of the `uds_session::Server<N>` the driver
-/// owns, and `server = Name` is the alias it is reached through — the macro emits
-/// `type Name = Server<Ecu, Transport, N>`, so the count is written once, where it acts.
+/// owns. `services = Assembly` names the marker type the macro declares and implements
+/// this crate's sealed [`ServiceSet`](crate::ServiceSet) on, with the application as its
+/// [`App`](crate::ServiceSet::App). `server = Name` is the alias the server is reached
+/// through: the macro emits `type Name = Server<Assembly, Transport, N>`, so the count is
+/// written once, where it acts. Both are private to the invoking module.
 ///
-/// The application type must be defined in the crate that invokes the macro, because the
-/// macro implements this crate's sealed [`ServiceSet`](crate::ServiceSet) for it; a type
-/// from another crate needs a local newtype.
+/// The application type may come from any crate: the marker is what is local, so one
+/// application shared by firmware, a simulator and tests is assembled in each.
 ///
 /// **Milestone 1 accepts `peers = 1` only**, and any other count fails to compile. The
 /// driver keeps one slot for a `DiagnosticSessionControl` or `ECUReset` response awaiting
@@ -664,10 +688,10 @@ macro_rules! __uds_assert {
 /// [`ResponseSink::MIN_BOUND`](crate::ResponseSink::MIN_BOUND), because a negative
 /// response would then not fit.
 ///
-/// Where `DataTransfer` is listed, it also fails to compile where the transport's
-/// [`MAX_PDU`](crate::UdsTransport::MAX_PDU) is shorter than `MAX_BLOCK_LENGTH + 2`, the
-/// `TransferData` request length the server advertises and must accept (ISO 14229-1:2020
-/// 15.2.3.2).
+/// Where `DataTransfer` is listed, it also fails to compile where `MAX_BLOCK_LEN` is
+/// zero, or the transport's [`MAX_PDU`](crate::UdsTransport::MAX_PDU) is shorter than
+/// `MAX_BLOCK_LEN + 2`, the `TransferData` request length the server advertises and
+/// must accept (ISO 14229-1:2020 15.2.3.2).
 ///
 /// Where `ReadDtcInformation` is listed, it also fails to compile where
 /// [`REPORTS`](crate::ReadDtcInformation::REPORTS) names a layout whose
@@ -725,7 +749,7 @@ macro_rules! __uds_assert {
 /// #
 /// # impl DataTransfer for Ecu {
 /// #     const MAY_RESPOND_PENDING: bool = true;
-/// #     const MAX_BLOCK_LENGTH: usize = 1 << 20;
+/// #     const MAX_BLOCK_LEN: usize = 1 << 20;
 /// #     const SESSIONS: Sessions = Sessions::ALL;
 /// #     fn format_supported(&self, _format: DataFormatIdentifier) -> bool { true }
 /// #     fn access(&self, _r: &TransferRequest<'_>) -> Option<Access> {
@@ -765,16 +789,12 @@ macro_rules! __uds_assert {
 /// #     fn now(&self) -> Timestamp { Timestamp(0) }
 /// # }
 /// #
-/// # const PARAMS: ServerParams = ServerParams {
-/// #     s3_server: 5_000,
-/// #     p2_server_max: 50,
-/// #     p2_star_server_max: 5_000,
-/// #     response_pending_lead: 0,
-/// # };
+/// # const PARAMS: ServerParams = ServerParams::new(5_000, 50, 5_000, 0);
 /// uds_server! {
 ///     Ecu: ReadDataByIdentifier, DataTransfer;
 ///     transport = DoIpTransport,
 ///     peers = 1,
+///     services = EcuServices,
 ///     server = EcuServer,
 /// }
 ///
@@ -793,7 +813,7 @@ macro_rules! __uds_assert {
 /// let mut cx = core::task::Context::from_waker(core::task::Waker::noop());
 /// assert!(step.as_mut().poll(&mut cx).is_ready());
 ///
-/// let mut store = <<Ecu as ServiceSet>::Store as Storage>::EMPTY;
+/// let mut store = <<EcuServices as ServiceSet>::Store as Storage>::EMPTY;
 /// let buffers = store.split();
 /// assert_eq!(buffers.in_flight.len(), 1_026);
 /// assert_eq!(buffers.response.len(), 77);
@@ -830,11 +850,11 @@ macro_rules! __uds_assert {
 /// # Examples
 ///
 /// Two services, a transport, and the buffer lengths the macro folds from what they
-/// declared. Nothing here picks a size: `1_026` is [`MAX_BLOCK_LENGTH`] plus its service
+/// declared. Nothing here picks a size: `1_026` is [`MAX_BLOCK_LEN`] plus its service
 /// identifier and block sequence counter, and `77` is [`MAX_DIDS_PER_REQUEST`] records of
 /// [`MAX_RECORD_LEN`] plus their identifiers.
 ///
-/// [`MAX_BLOCK_LENGTH`]: crate::DataTransfer::MAX_BLOCK_LENGTH
+/// [`MAX_BLOCK_LEN`]: crate::DataTransfer::MAX_BLOCK_LEN
 /// [`MAX_DIDS_PER_REQUEST`]: crate::ReadDataByIdentifier::MAX_DIDS_PER_REQUEST
 /// [`MAX_RECORD_LEN`]: crate::DataIdentifier::MAX_RECORD_LEN
 ///
@@ -889,7 +909,7 @@ macro_rules! __uds_assert {
 /// #
 /// # impl DataTransfer for Ecu {
 /// #     const MAY_RESPOND_PENDING: bool = true;
-/// #     const MAX_BLOCK_LENGTH: usize = 1_024;
+/// #     const MAX_BLOCK_LEN: usize = 1_024;
 /// #     const SESSIONS: Sessions = Sessions::ALL;
 /// #     fn format_supported(&self, _format: DataFormatIdentifier) -> bool { true }
 /// #     fn access(&self, _r: &TransferRequest<'_>) -> Option<Access> {
@@ -928,16 +948,12 @@ macro_rules! __uds_assert {
 /// #     fn now(&self) -> Timestamp { Timestamp(0) }
 /// # }
 /// #
-/// # const PARAMS: ServerParams = ServerParams {
-/// #     s3_server: 5_000,
-/// #     p2_server_max: 50,
-/// #     p2_star_server_max: 5_000,
-/// #     response_pending_lead: 0,
-/// # };
+/// # const PARAMS: ServerParams = ServerParams::new(5_000, 50, 5_000, 0);
 /// uds_server! {
 ///     Ecu: ReadDataByIdentifier, DataTransfer;
 ///     transport = DoIpTransport,
 ///     peers = 1,
+///     services = EcuServices,
 ///     server = EcuServer,
 /// }
 ///
@@ -956,7 +972,7 @@ macro_rules! __uds_assert {
 /// let mut cx = core::task::Context::from_waker(core::task::Waker::noop());
 /// assert!(step.as_mut().poll(&mut cx).is_ready());
 ///
-/// let mut store = <<Ecu as ServiceSet>::Store as Storage>::EMPTY;
+/// let mut store = <<EcuServices as ServiceSet>::Store as Storage>::EMPTY;
 /// let buffers = store.split();
 /// assert_eq!(buffers.in_flight.len(), 1_026);
 /// assert_eq!(buffers.response.len(), 77);
@@ -967,11 +983,17 @@ macro_rules! uds_server {
         $ty:ty : $($svc:ident),+ $(,)? ;
         transport = $transport:ty,
         peers = $peers:expr,
+        services = $services:ident,
         server = $server:ident $(,)?
     ) => {
+        /// The assembled services of this application, on which `uds_server!`
+        /// implements `ServiceSet`. Never a value: it names the assembly in types.
+        #[derive(Debug)]
+        enum $services {}
+
         /// The assembled server: this application's services, storage, session layer and
         /// transport. Emitted by `uds_server!`.
-        type $server = $crate::Server<$ty, $transport, { $peers }>;
+        type $server = $crate::Server<$services, $transport, { $peers }>;
 
         const _: () = {
             const IN_FLIGHT: usize = $crate::assembly::min2(
@@ -1011,15 +1033,17 @@ macro_rules! uds_server {
                 "milestone 1 supports `peers = 1` only",
             );
 
-            impl $crate::sealed::Sealed for $ty {}
+            impl $crate::sealed::Sealed for $services {}
 
-            impl $crate::ServiceSet for $ty {
+            impl $crate::ServiceSet for $services {
+                type App = $ty;
+
                 type Store = $crate::Store<IN_FLIGHT, CONCURRENT, RESPONSE>;
 
                 type State = $crate::State;
 
                 async fn dispatch(
-                    &mut self,
+                    app: &mut $ty,
                     state: &mut Self::State,
                     // The driver settles, and it is `settle` that reads the addressing.
                     _ai: $crate::Ai,
@@ -1036,7 +1060,7 @@ macro_rules! uds_server {
                                       value: u8,
                                       active: $crate::DiagnosticSessionType| {
                             $( $crate::__uds_sub_function_access!(
-                                self, service, value, active, $svc
+                                app, service, value, active, $svc
                             ); )+
                             ::core::option::Option::Some($crate::Access::new(
                                 $crate::Sessions::ALL,
@@ -1048,14 +1072,14 @@ macro_rules! uds_server {
                                      bytes: &[u8]|
                          -> ::core::option::Option<$crate::NegativeResponseCode> {
                             $( $crate::__uds_ahead_of_decode!(
-                                self, service, active, bytes, $svc
+                                app, service, active, bytes, $svc
                             ); )+
                             ::core::option::Option::None
                         };
                         let (sid, decoded) = match $crate::pipeline::begin_with(
                             state,
                             received.bytes(),
-                            |s| <Self as $crate::ServiceSet>::supports(self, s),
+                            <Self as $crate::ServiceSet>::supports,
                             access,
                             ahead,
                         ) {
@@ -1073,7 +1097,7 @@ macro_rules! uds_server {
                                     $crate::NegativeResponseCode,
                                 > {
                                     $( $crate::__uds_before_length!(
-                                        self, state, request, $svc
+                                        app, state, request, $svc
                                     ); )+
                                     ::core::result::Result::Ok(())
                                 };
@@ -1091,7 +1115,7 @@ macro_rules! uds_server {
                                 .unwrap_or(false),
                         };
                         let outcome = async {
-                            $( $crate::__uds_stage!(self, state, out, decoded, $svc); )+
+                            $( $crate::__uds_stage!(app, state, out, decoded, $svc); )+
                             ::core::result::Result::Err(
                                 $crate::NegativeResponseCode::ServiceNotSupported,
                             )
@@ -1110,71 +1134,82 @@ macro_rules! uds_server {
                               and returns before the fall-through"
                 )]
                 fn leaves_running_software(
-                    &self,
+                    app: &$ty,
                     session: $crate::DiagnosticSessionType,
                 ) -> bool {
-                    $( $crate::__uds_leaves!(self, session, $svc); )+
+                    $( $crate::__uds_leaves!(app, session, $svc); )+
                     false
                 }
 
-                fn start_up(&mut self, _state: &mut Self::State) {
-                    $( $crate::__uds_start_up!(self, $svc); )+
+                #[allow(unused_variables, reason = "only an assembly with SecurityAccess reads it")]
+                fn start_up(app: &mut $ty, _state: &mut Self::State) {
+                    $( $crate::__uds_start_up!(app, $svc); )+
                 }
 
-                fn session_timed_out(&mut self, state: &mut Self::State) {
+                #[allow(
+                    unused_variables,
+                    reason = "only an assembly with DiagnosticSessionControl reads it"
+                )]
+                fn session_timed_out(app: &mut $ty, state: &mut Self::State) {
                     let entered = $crate::pipeline::transition(
                         state,
                         $crate::DiagnosticSessionType::DefaultSession,
                     );
-                    $( $crate::__uds_session_hook!(self, entered, $svc); )+
+                    $( $crate::__uds_session_hook!(app, entered, $svc); )+
                 }
 
+                #[allow(
+                    unused_variables,
+                    reason = "only an assembly with DiagnosticSessionControl reads it"
+                )]
                 fn session_confirmed(
-                    &mut self,
+                    app: &mut $ty,
                     state: &mut Self::State,
                     selected: $crate::DiagnosticSessionType,
                 ) {
                     let entered = $crate::pipeline::transition(state, selected);
-                    $( $crate::__uds_session_hook!(self, entered, $svc); )+
+                    $( $crate::__uds_session_hook!(app, entered, $svc); )+
                 }
 
                 #[allow(unused_variables, reason = "only an assembly with EcuReset reads it")]
                 fn reset_confirmed(
-                    &mut self,
+                    app: &mut $ty,
                     state: &mut Self::State,
                     kind: $crate::ResetType,
                     after: $crate::AfterReset,
                 ) {
-                    $( $crate::__uds_reset_hook!(self, kind, $svc); )+
+                    $( $crate::__uds_reset_hook!(app, kind, $svc); )+
                     if ::core::matches!(after, $crate::AfterReset::Restart) {
                         if let ::core::option::Option::Some(entered) =
                             $crate::pipeline::restart(state)
                         {
-                            $( $crate::__uds_session_hook!(self, entered, $svc); )+
+                            $( $crate::__uds_session_hook!(app, entered, $svc); )+
                         }
                     }
                 }
 
                 #[allow(
                     unreachable_code,
-                    reason = "the arm emitted for DiagnosticSessionControl returns"
+                    unused_variables,
+                    reason = "the arm emitted for DiagnosticSessionControl reads both and \
+                              returns"
                 )]
                 fn session_timing(
-                    &self,
+                    app: &$ty,
                     state: &Self::State,
                 ) -> ::core::option::Option<$crate::SessionTiming> {
-                    $( $crate::__uds_session_timing!(self, state, $svc); )+
+                    $( $crate::__uds_session_timing!(app, state, $svc); )+
                     ::core::option::Option::None
                 }
 
-                fn supports(&self, service: $crate::UdsServiceType) -> bool {
+                fn supports(service: $crate::UdsServiceType) -> bool {
                     $( if $crate::__uds_sids!($svc).contains(&service) {
                         return true;
                     } )+
                     false
                 }
 
-                fn may_respond_pending(&self, service: $crate::UdsServiceType) -> bool {
+                fn may_respond_pending(service: $crate::UdsServiceType) -> bool {
                     $( if $crate::__uds_sids!($svc).contains(&service) {
                         return $crate::__uds_may_pend!($ty, $svc);
                     } )+
@@ -1196,59 +1231,37 @@ macro_rules! uds_server {
 /// are written against names a client's requests, so a vehicle programme that builds both
 /// from one definition gets a compile error when only one was updated.
 ///
-/// The client's buffers are folded from its declared maxima as [`crate::uds_server`]
-/// folds a server's from its service traits: the request buffer holds the widest request
-/// among the client's services, and the response buffer the widest response. The
-/// maxima, after `max_dids_per_request` (the most identifiers one read names):
+/// `vocabulary = Name` names the marker type the macro declares and implements this
+/// crate's sealed [`ClientSet`](crate::ClientSet) on: the leading type is its
+/// [`Did`](crate::ClientSet::Did) and `routines` its
+/// [`Routine`](crate::ClientSet::Routine). The identifier types may come from any crate,
+/// and one identifier type may take any number of invocations, over different
+/// transports or keep-alive modes.
 ///
-/// - `routines`: the [`RoutineIdentifier`](crate::RoutineIdentifier) vocabulary routine
-///   control takes; its `MAX_STATUS_LEN` sizes the routine response.
-/// - `max_dtcs`: the most DTC records one `ReadDTCInformation` list response carries.
-/// - `max_dtc_record_len`: the most record bytes one snapshot or extended data response
-///   carries after its six-byte header.
-/// - `max_seed_len`: sizes the response buffer for a `SecurityAccess` seed of this
-///   length.
-/// - `max_key_len`: the longest `SecurityAccess` key the client sends. It is
-///   [`ClientSet::MAX_KEY_LEN`](crate::ClientSet::MAX_KEY_LEN).
-/// - `max_option_len`: the longest routine control option record, `ControlDTCSetting`
-///   option record and transfer-exit parameter record the client sends, and sizes the
-///   response buffer for a transfer-exit parameter record of this length. It is
-///   [`ClientSet::MAX_OPTION_LEN`](crate::ClientSet::MAX_OPTION_LEN).
-/// - `max_block_len`: the most data bytes one `TransferData` block carries, its service
-///   identifier and block sequence counter not counted; at least the server's
-///   `maxNumberOfBlockLength` minus two, or a full block cannot be sent. It is
-///   [`ClientSet::MAX_BLOCK_LEN`](crate::ClientSet::MAX_BLOCK_LEN).
-///
-/// A maximum a request carries limits it: a call given more than its maximum is
-/// [`ClientError::Request`](crate::ClientError::Request), and nothing is sent, whatever
-/// the other maxima make the request buffer. A response longer than the response buffer
-/// is [`MalformedResponse::Overlong`](crate::MalformedResponse::Overlong).
+/// `limits` is a [`ClientLimits`](crate::ClientLimits), in a `const`: the client's
+/// buffers are folded from it and the identifiers' declared lengths as
+/// [`crate::uds_server`] folds a server's from its service traits. The request buffer
+/// holds the widest request among the client's services, and the response buffer the
+/// widest response.
 ///
 /// Naming the transport lets its [`MAX_PDU`](crate::UdsTransport::MAX_PDU) join the fold.
-/// A transport whose `MAX_PDU` cannot carry a request of the declared maxima fails to
-/// compile, naming the input it cannot carry, as does one with no room for a six-byte
+/// A transport whose `MAX_PDU` cannot carry a request of the declared limits fails to
+/// compile, naming the limit it cannot carry, as does one with no room for a six-byte
 /// `DiagnosticSessionControl` response ([`crate::Client::diagnostic_session_control`]);
 /// six bytes also hold every negative response. The response buffer is capped at
 /// `MAX_PDU`, since no longer response can arrive.
 ///
 /// `client = Name` is the alias the client is reached through, so the channel counts and
 /// the keep-alive mode are written once, here, rather than at every signature that names
-/// a client.
-///
-/// The identifier type must be defined in the crate that invokes the macro, because the
-/// macro implements this crate's sealed [`ClientSet`](crate::ClientSet) for it; a type
-/// from another crate needs a local newtype. For the same reason one identifier type
-/// takes one invocation: a second over the same type is a conflicting implementation
-/// (E0119), so two clients, over two transports or in two keep-alive modes, need a
-/// newtype each.
+/// a client. The marker and the alias are private to the invoking module.
 ///
 /// # Examples
 ///
 /// ```
 /// # use uds_services::{
-/// #     Address, AfterSend, Ai, DataIdentifier, KeepAlive, PhysicalKeepAlive, RecordError,
-/// #     Reloads, RoutineIdentifier, ClientTiming, ClientTransport, Timestamp, TransportEvent,
-/// #     UdsTransport, uds_client,
+/// #     Address, AfterSend, Ai, ClientLimits, ClientTiming, ClientTransport, DataIdentifier,
+/// #     KeepAlive, PhysicalKeepAlive, RecordError, Reloads, RoutineIdentifier, Timestamp,
+/// #     TransportEvent, UdsTransport, uds_client,
 /// # };
 /// # #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 /// # enum Did { VehicleSpeed, VinNumber }
@@ -1303,15 +1316,17 @@ macro_rules! uds_server {
 /// # }
 /// uds_client! {
 ///     Did;
+///     vocabulary = TesterVocabulary,
 ///     transport = DoIpTransport,
-///     max_dids_per_request = 4,
 ///     routines = Rid,
-///     max_dtcs = 4,
-///     max_dtc_record_len = 16,
-///     max_seed_len = 2,
-///     max_key_len = 2,
-///     max_option_len = 4,
-///     max_block_len = 64,
+///     limits = ClientLimits::new()
+///         .max_dids_per_request(4)
+///         .max_dtcs(4)
+///         .max_dtc_record_len(16)
+///         .max_seed_len(2)
+///         .max_key_len(2)
+///         .max_option_len(4)
+///         .max_block_len(64),
 ///     physical = 2,
 ///     functional = 1,
 ///     responders = 4,
@@ -1323,19 +1338,19 @@ macro_rules! uds_server {
 ///     DoIpTransport,
 ///     Address(0x0E00),
 ///     KeepAlive::physical(2_000),
-///     ClientTiming::new(10, 10, 50),
+///     ClientTiming::new(50),
 /// );
 /// # let _ = &TESTER;
 /// ```
 ///
-/// A 32-byte `MAX_PDU` cannot carry the 66-byte `TransferData` request `max_block_len = 64`
-/// declares, so this fails to compile:
+/// A 32-byte `MAX_PDU` cannot carry the 66-byte `TransferData` request a `max_block_len`
+/// of 64 declares, so this fails to compile:
 ///
 /// ```compile_fail,E0080
 /// # use uds_services::{
-/// #     Address, AfterSend, Ai, DataIdentifier, KeepAlive, PhysicalKeepAlive, RecordError,
-/// #     Reloads, RoutineIdentifier, ClientTiming, ClientTransport, Timestamp, TransportEvent,
-/// #     UdsTransport, uds_client,
+/// #     Address, AfterSend, Ai, ClientLimits, ClientTiming, ClientTransport, DataIdentifier,
+/// #     KeepAlive, PhysicalKeepAlive, RecordError, Reloads, RoutineIdentifier, Timestamp,
+/// #     TransportEvent, UdsTransport, uds_client,
 /// # };
 /// # #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 /// # enum Did { VehicleSpeed, VinNumber }
@@ -1391,15 +1406,17 @@ macro_rules! uds_server {
 /// # }
 /// uds_client! {
 ///     Did;
+///     vocabulary = TesterVocabulary,
 ///     transport = DoIpTransport,
-///     max_dids_per_request = 4,
 ///     routines = Rid,
-///     max_dtcs = 4,
-///     max_dtc_record_len = 16,
-///     max_seed_len = 2,
-///     max_key_len = 2,
-///     max_option_len = 4,
-///     max_block_len = 64,
+///     limits = ClientLimits::new()
+///         .max_dids_per_request(4)
+///         .max_dtcs(4)
+///         .max_dtc_record_len(16)
+///         .max_seed_len(2)
+///         .max_key_len(2)
+///         .max_option_len(4)
+///         .max_block_len(64),
 ///     physical = 2,
 ///     functional = 1,
 ///     responders = 4,
@@ -1411,25 +1428,25 @@ macro_rules! uds_server {
 macro_rules! uds_client {
     (
         $did:ty ;
+        vocabulary = $vocabulary:ident,
         transport = $transport:ty,
-        max_dids_per_request = $max_dids:expr,
         routines = $rid:ty,
-        max_dtcs = $max_dtcs:expr,
-        max_dtc_record_len = $max_dtc_record_len:expr,
-        max_seed_len = $max_seed_len:expr,
-        max_key_len = $max_key_len:expr,
-        max_option_len = $max_option_len:expr,
-        max_block_len = $max_block_len:expr,
+        limits = $limits:expr,
         physical = $phys:expr,
         functional = $func:expr,
         responders = $responders:expr,
         keep_alive = $keep_alive:ty,
         client = $client:ident $(,)?
     ) => {
+        /// The vocabulary this client speaks, on which `uds_client!` implements
+        /// `ClientSet`. Never a value: it names the assembly in types.
+        #[derive(Debug)]
+        enum $vocabulary {}
+
         /// The assembled client: this application's identifiers, its buffers, session
         /// layer and transport. Emitted by `uds_client!`.
         type $client = $crate::Client<
-            $did,
+            $vocabulary,
             $transport,
             $keep_alive,
             { $phys },
@@ -1438,68 +1455,33 @@ macro_rules! uds_client {
         >;
 
         const _: () = {
+            const LIMITS: $crate::ClientLimits = $limits;
             const MAX_PDU: usize = <$transport as $crate::UdsTransport>::MAX_PDU;
-            ::core::assert!(
-                1_usize.saturating_add(2_usize.saturating_mul({ $max_dids })) <= MAX_PDU,
-                "the transport's MAX_PDU cannot carry a read of max_dids_per_request identifiers"
-            );
-            ::core::assert!(
-                3_usize.saturating_add(<$did as $crate::DataIdentifier>::MAX_RECORD_LEN)
-                    <= MAX_PDU,
-                "the transport's MAX_PDU cannot carry a write of the identifiers' MAX_RECORD_LEN"
-            );
-            ::core::assert!(
-                2_usize.saturating_add({ $max_key_len }) <= MAX_PDU,
-                "the transport's MAX_PDU cannot carry a key of max_key_len"
-            );
-            ::core::assert!(
-                4_usize.saturating_add({ $max_option_len }) <= MAX_PDU,
-                "the transport's MAX_PDU cannot carry an option record of max_option_len"
-            );
-            ::core::assert!(
-                2_usize.saturating_add({ $max_block_len }) <= MAX_PDU,
-                "the transport's MAX_PDU cannot carry a TransferData block of max_block_len"
-            );
-            ::core::assert!(
-                12 <= MAX_PDU,
-                "the transport's MAX_PDU cannot carry the widest RequestDownload request"
-            );
-            const REQUEST: usize = $crate::assembly::client_request_bound(
-                { $max_dids },
-                <$did as $crate::DataIdentifier>::MAX_RECORD_LEN,
-                { $max_key_len },
-                { $max_option_len },
-                { $max_block_len },
-            );
+            const MAX_RECORD_LEN: usize = <$did as $crate::DataIdentifier>::MAX_RECORD_LEN;
+            const _: () =
+                $crate::assembly::assert_client_fits(LIMITS, MAX_RECORD_LEN, MAX_PDU);
+            const REQUEST: usize =
+                $crate::assembly::client_request_bound(LIMITS, MAX_RECORD_LEN);
             const RESPONSE: usize = $crate::assembly::min2(
                 $crate::assembly::client_response_bound(
-                    $crate::assembly::ClientResponseMaxima {
-                        max_dids: $max_dids,
-                        max_record_len: <$did as $crate::DataIdentifier>::MAX_RECORD_LEN,
-                        max_dtcs: $max_dtcs,
-                        max_dtc_record_len: $max_dtc_record_len,
-                        max_seed_len: $max_seed_len,
-                        max_status_len: <$rid as $crate::RoutineIdentifier>::MAX_STATUS_LEN,
-                        max_option_len: $max_option_len,
-                        max_block_len: $max_block_len,
-                    },
+                    LIMITS,
+                    MAX_RECORD_LEN,
+                    <$rid as $crate::RoutineIdentifier>::MAX_STATUS_LEN,
                 ),
                 MAX_PDU,
             );
-            ::core::assert!(
+            const _: () = ::core::assert!(
                 RESPONSE >= 6,
                 "the transport's MAX_PDU cannot carry a DiagnosticSessionControl response"
             );
 
-            impl $crate::sealed::Sealed for $did {}
+            impl $crate::sealed::Sealed for $vocabulary {}
 
-            impl $crate::ClientSet for $did {
-                type Store = $crate::ClientStore<REQUEST, RESPONSE>;
+            impl $crate::ClientSet for $vocabulary {
+                type Did = $did;
                 type Routine = $rid;
-                const MAX_DIDS_PER_REQUEST: usize = { $max_dids };
-                const MAX_KEY_LEN: usize = { $max_key_len };
-                const MAX_OPTION_LEN: usize = { $max_option_len };
-                const MAX_BLOCK_LEN: usize = { $max_block_len };
+                type Store = $crate::ClientStore<REQUEST, RESPONSE>;
+                const LIMITS: $crate::ClientLimits = LIMITS;
             }
         };
     };
@@ -1508,107 +1490,84 @@ macro_rules! uds_client {
 #[cfg(test)]
 mod tests {
     use super::{
-        ClientResponseMaxima, bounded_in_bytes, client_request_bound,
-        client_response_bound, dtc_response_bound, max_of, min2,
+        bounded_in_bytes, client_request_bound, client_response_bound, dtc_response_bound,
+        max_of, min2,
     };
-    use crate::DtcReportKind;
+    use crate::{ClientLimits, DtcReportKind};
 
     /// One of everything that is sized, and no DTC records.
-    const LEAST: ClientResponseMaxima = ClientResponseMaxima {
-        max_dids: 1,
-        max_record_len: 1,
-        max_dtcs: 0,
-        max_dtc_record_len: 0,
-        max_seed_len: 1,
-        max_status_len: 1,
-        max_option_len: 1,
-        max_block_len: 1,
-    };
+    const LEAST: ClientLimits = ClientLimits::new()
+        .max_seed_len(1)
+        .max_key_len(1)
+        .max_option_len(1)
+        .max_block_len(1);
 
     /// The client's bounds are the widest request and the widest response among its
     /// services: here the transfer block wins both.
     #[test]
     fn the_client_bounds_are_the_widest_service() {
-        const REQUEST: usize = client_request_bound(2, 17, 2, 4, 64);
-        const RESPONSE: usize = client_response_bound(ClientResponseMaxima {
-            max_dids: 2,
-            max_record_len: 17,
-            max_dtcs: 3,
-            max_dtc_record_len: 20,
-            max_seed_len: 2,
-            max_status_len: 1,
-            max_option_len: 4,
-            max_block_len: 64,
-        });
+        const LIMITS: ClientLimits = ClientLimits::new()
+            .max_dids_per_request(2)
+            .max_dtcs(3)
+            .max_dtc_record_len(20)
+            .max_seed_len(2)
+            .max_key_len(2)
+            .max_option_len(4)
+            .max_block_len(64);
+        const REQUEST: usize = client_request_bound(LIMITS, 17);
+        const RESPONSE: usize = client_response_bound(LIMITS, 17, 1);
         assert_eq!(REQUEST, 2 + 64);
         assert_eq!(RESPONSE, 2 + 64);
-        assert_eq!(client_request_bound(1, 1, 1, 1, 1), 12);
-        assert_eq!(client_response_bound(LEAST), 17);
+        assert_eq!(client_request_bound(LEAST, 1), 19);
+        assert_eq!(client_response_bound(LEAST, 1, 1), 17);
     }
 
-    /// Each request term is the bound when its maximum is the large one.
+    /// The defaults fold to the fixed-size floors, so a client declaring nothing costs
+    /// nothing beyond them.
+    #[test]
+    fn the_default_limits_fold_to_the_fixed_floors() {
+        assert_eq!(client_request_bound(ClientLimits::new(), 1), 19);
+        assert_eq!(client_response_bound(ClientLimits::new(), 1, 1), 17);
+    }
+
+    /// Each request term is the bound when its limit is the large one.
     #[test]
     fn each_request_term_can_set_the_bound() {
         // A read of twenty identifiers.
-        assert_eq!(client_request_bound(20, 1, 1, 1, 1), 1 + 2 * 20);
+        assert_eq!(
+            client_request_bound(LEAST.max_dids_per_request(20), 1),
+            1 + 2 * 20
+        );
         // A write of a thirty-byte record.
-        assert_eq!(client_request_bound(1, 30, 1, 1, 1), 3 + 30);
+        assert_eq!(client_request_bound(LEAST, 30), 3 + 30);
         // A twenty-byte key.
-        assert_eq!(client_request_bound(1, 1, 20, 1, 1), 2 + 20);
+        assert_eq!(client_request_bound(LEAST.max_key_len(20), 1), 2 + 20);
         // A routine control with a twenty-byte option record.
-        assert_eq!(client_request_bound(1, 1, 1, 20, 1), 4 + 20);
+        assert_eq!(client_request_bound(LEAST.max_option_len(20), 1), 4 + 20);
     }
 
-    /// Each response term is the bound when its maximum is the large one.
+    /// Each response term is the bound when its limit is the large one.
     #[test]
     fn each_response_term_can_set_the_bound() {
         // A read of two seventeen-byte records.
         assert_eq!(
-            client_response_bound(ClientResponseMaxima {
-                max_dids: 2,
-                max_record_len: 17,
-                ..LEAST
-            }),
+            client_response_bound(LEAST.max_dids_per_request(2), 17, 1),
             1 + 2 * (2 + 17)
         );
         // A DTC list of ten: `SeverityList`'s six-byte records are the widest.
-        assert_eq!(
-            client_response_bound(ClientResponseMaxima {
-                max_dtcs: 10,
-                ..LEAST
-            }),
-            3 + 10 * 6
-        );
+        assert_eq!(client_response_bound(LEAST.max_dtcs(10), 1, 1), 3 + 10 * 6);
         // A snapshot or extended data response of thirty record bytes.
         assert_eq!(
-            client_response_bound(ClientResponseMaxima {
-                max_dtc_record_len: 30,
-                ..LEAST
-            }),
+            client_response_bound(LEAST.max_dtc_record_len(30), 1, 1),
             6 + 30
         );
         // A thirty-byte seed.
-        assert_eq!(
-            client_response_bound(ClientResponseMaxima {
-                max_seed_len: 30,
-                ..LEAST
-            }),
-            2 + 30
-        );
+        assert_eq!(client_response_bound(LEAST.max_seed_len(30), 1, 1), 2 + 30);
         // A routine status record of thirty bytes.
-        assert_eq!(
-            client_response_bound(ClientResponseMaxima {
-                max_status_len: 30,
-                ..LEAST
-            }),
-            5 + 30
-        );
+        assert_eq!(client_response_bound(LEAST, 1, 30), 5 + 30);
         // A transfer exit with a thirty-byte parameter record.
         assert_eq!(
-            client_response_bound(ClientResponseMaxima {
-                max_option_len: 30,
-                ..LEAST
-            }),
+            client_response_bound(LEAST.max_option_len(30), 1, 1),
             1 + 30
         );
     }

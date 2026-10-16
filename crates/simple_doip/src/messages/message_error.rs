@@ -7,8 +7,10 @@
 //! |---|---|---|
 //! | `VersionInverseIncorrect` | framing-fatal | wire decode |
 //! | `Incomplete` | framing-fatal | wire decode |
+//! | `InvalidPayloadLength` | framing-fatal (Table 19 closes the socket) | wire decode |
 //! | `TrailingBytes` | recoverable | wire decode |
-//! | `PayloadLengthTooShort`, `UnexpectedPayloadType`, `UnsupportedPayloadType` | recoverable (body) | wire decode |
+//! | `UnsupportedPayloadType` | recoverable (body) | wire decode |
+//! | `PayloadTooLarge` | recoverable | encode |
 //! | `Io` | recoverable (TX-side short write, e.g. `Io(WriteError::Insufficient(..))` on an undersized stack buffer) | encode / automotive-wire-codec |
 //! | `Std` | not a frame property at all | tokio/codec boundary |
 
@@ -37,19 +39,17 @@ pub enum MessageError {
         /// The inverse protocol version byte actually found in the header.
         value: u8,
     },
-    /// The header's `payload_length` field was smaller than the minimum size
-    /// required for its declared `payload_type`, so the payload cannot contain a
-    /// complete, well-formed body of that type.
-    ///
-    /// Currently never produced by this crate.
-    #[error(
-        "Payload length in header does not match expected payload type length: {value:?}, expected: {expected:?}"
-    )]
-    PayloadLengthTooShort {
-        /// The payload length actually declared in the header.
-        value: usize,
-        /// The minimum payload length required for the header's `payload_type`.
-        expected: u32,
+    /// A payload's length is not one its payload type allows
+    /// ([`PayloadType::allows_payload_length`]), whether too short, too long, or
+    /// between the lengths a type with an optional field allows. An entity answers it
+    /// with generic header NACK `0x04` and closes the socket (Table 19), so
+    /// [`MessageError::is_framing_fatal`] classifies it fatal.
+    #[error("Invalid payload length {length} for payload type {payload_type:?}")]
+    InvalidPayloadLength {
+        /// The payload type the header declared.
+        payload_type: PayloadType,
+        /// The payload's length in bytes.
+        length: usize,
     },
     /// The payload encodes to more bytes than the header's `payload_length`
     /// field can describe. `DoIP` declares that length as a `u32`, so such a
@@ -63,13 +63,6 @@ pub enum MessageError {
         /// The payload's encoded size.
         size: usize,
     },
-    /// A structurally valid, supported [`PayloadType`] was received in a context
-    /// where it is not a legal response (e.g. a request-only type arriving as a
-    /// response). Recoverable: the frame itself decoded fine.
-    ///
-    /// Currently never produced by this crate.
-    #[error("Unexpected payload type found: {0:?}")]
-    UnexpectedPayloadType(PayloadType),
     /// The header declared a [`PayloadType`] this crate does not implement a
     /// decoder for. Recoverable: the frame's header and payload bytes are still
     /// available (via [`crate::try_frame`]) so the caller can skip/resync.
@@ -78,15 +71,18 @@ pub enum MessageError {
     /// `buf` did not contain enough bytes to decode the requested item.
     ///
     /// Always classified framing-fatal by [`MessageError::is_framing_fatal`].
-    /// Note that [`crate::try_frame`] never returns this variant: a buffer too
-    /// short to hold a complete frame yields `Ok(None)` so the caller can wait
-    /// for more bytes. `Incomplete` therefore arises from payload
-    /// [`Decode`](crate::messages::Decode) calls, where the header claimed more
-    /// data than the body actually provided.
+    /// [`crate::try_frame`] never returns this variant: a buffer too short to hold
+    /// a complete frame yields `Ok(None)` so the caller can wait for more bytes.
+    /// [`Payload::decode`](crate::messages::Payload::decode) does not either: a
+    /// payload too short for its type is [`MessageError::InvalidPayloadLength`].
+    /// `Incomplete` arises from a [`Decode`](crate::messages::Decode) call on a
+    /// buffer shorter than the item, such as a message whose header claims more
+    /// bytes than follow it.
     #[error(transparent)]
     Incomplete(#[from] Incomplete),
-    /// `buf` contained more bytes than the item being decoded consumed. Recoverable:
-    /// framing itself succeeded, only the body was longer than expected.
+    /// `buf` contained more bytes than the item being decoded consumed, from
+    /// [`Decode::decode_exact`](crate::messages::Decode::decode_exact). Recoverable:
+    /// the item itself decoded.
     #[error(transparent)]
     TrailingBytes(#[from] TrailingBytes),
     /// A [`Sink`](automotive_wire_codec::Sink) write failed while encoding a message (e.g.
@@ -104,14 +100,17 @@ pub enum MessageError {
 }
 
 impl MessageError {
-    /// Framing-fatal errors mean stream sync is lost (header cannot be trusted);
-    /// the client's only safe move is to close the connection. Everything else is
-    /// frame-recoverable (NACK / ignore / skip).
+    /// Framing-fatal errors leave closing the connection as the only safe move:
+    /// stream sync is lost (the header cannot be trusted), or the payload has a
+    /// length its type does not allow, for which Table 19 has the socket closed.
+    /// Everything else is frame-recoverable (NACK / ignore / skip).
     #[must_use]
     pub fn is_framing_fatal(&self) -> bool {
         matches!(
             self,
-            MessageError::VersionInverseIncorrect { .. } | MessageError::Incomplete(_)
+            MessageError::VersionInverseIncorrect { .. }
+                | MessageError::Incomplete(_)
+                | MessageError::InvalidPayloadLength { .. }
         )
     }
 }

@@ -155,8 +155,10 @@ struct Ecu {
     cleared: Option<(DtcRecord, Option<u8>)>,
     /// The `DTCSettingType` `ControlDtcSetting` last applied.
     dtc_setting: Option<DtcSettingType>,
+    /// Makes `ControlDtcSetting::access` admit every setting it is asked about.
+    any_dtc_setting: bool,
     /// The transfer `DataTransfer::begin` last began.
-    begun: Option<(u64, u32)>,
+    begun: Option<(u64, u64)>,
     /// Each block `DataTransfer::block` accepted.
     blocks: Vec<Vec<u8>>,
     /// What `DataTransfer::block` writes after `76 <counter>`.
@@ -186,7 +188,7 @@ impl uds_services::DiagnosticSessionControl for Ecu {
     fn timing(&self, _s: S) -> SessionTiming {
         SessionTiming {
             p2_server_max_ms: 50,
-            p2_star_server_max_10ms: 500,
+            p2_star_server_max: uds_services::P2StarServerMax::from_tens_of_millis(500),
         }
     }
     fn on_transition(&mut self, _t: SessionTransition, entered: S, relocked: bool) {
@@ -231,16 +233,9 @@ impl EcuReset for Ecu {
             _ => None,
         }
     }
-    async fn reset(
-        &mut self,
-        kind: ResetType,
-        out: &mut ResponseSink<'_>,
-    ) -> Result<AfterReset, Nrc> {
+    async fn reset(&mut self, kind: ResetType) -> Result<AfterReset, Nrc> {
         if core::mem::take(&mut self.refuse) {
             return Err(Nrc::ConditionsNotCorrect);
-        }
-        if matches!(kind, ResetType::EnableRapidPowerShutDown) {
-            let _ = out.write_all(&[0x0A]);
         }
         self.accepted = Some(kind);
         Ok(if matches!(kind, ResetType::EnableRapidPowerShutDown) {
@@ -249,6 +244,10 @@ impl EcuReset for Ecu {
             AfterReset::Restart
         })
     }
+    fn power_down_time(&self) -> u8 {
+        0x0A
+    }
+
     fn confirmed(&mut self, _kind: ResetType) {}
 }
 
@@ -572,6 +571,9 @@ impl ControlDtcSetting for Ecu {
     const MAY_RESPOND_PENDING: bool = false;
     const MAX_OPTION_RECORD_LEN: usize = 3;
     fn access(&self, setting: DtcSettingType) -> Option<Access> {
+        if self.any_dtc_setting {
+            return Some(everywhere());
+        }
         match u8::from(setting) {
             0x01 | 0x02 => Some(everywhere()),
             0x40 => Some(only_in(S::ProgrammingSession)),
@@ -600,7 +602,7 @@ impl ControlDtcSetting for Ecu {
 /// not a valid interval.
 impl DataTransfer for Ecu {
     const MAY_RESPOND_PENDING: bool = true;
-    const MAX_BLOCK_LENGTH: usize = 8;
+    const MAX_BLOCK_LEN: usize = 8;
     const SESSIONS: Sessions = Sessions::NONE
         .with(S::ProgrammingSession)
         .with(S::ExtendedDiagnosticSession);
@@ -694,10 +696,11 @@ uds_server! {
          ClearDiagnosticInformation, ReadDtcInformation, RoutineControl, DataTransfer;
     transport = NoTransport,
     peers = 1,
+    services = EcuServices,
     server = EcuServer,
 }
 
-type State = <Ecu as ServiceSet>::State;
+type State = <EcuServices as ServiceSet>::State;
 
 const PHYSICAL: Ai = Ai {
     mtype: Mtype::Diag,
@@ -711,8 +714,13 @@ const PHYSICAL: Ai = Ai {
 fn exchange(ecu: &mut Ecu, state: &mut State, request: &[u8]) -> Option<Vec<u8>> {
     let mut buf = [0_u8; 64];
     let mut out = ResponseSink::new(&mut buf, None);
-    let unsettled =
-        block_on(ecu.dispatch(state, PHYSICAL, Received::Whole(request), &mut out));
+    let unsettled = block_on(EcuServices::dispatch(
+        ecu,
+        state,
+        PHYSICAL,
+        Received::Whole(request),
+        &mut out,
+    ));
     match settle(PHYSICAL, unsettled, false, &mut out) {
         Responded::Yes { .. } => Some(out.written_bytes().to_vec()),
         Responded::Suppressed { .. } => None,
@@ -724,8 +732,13 @@ fn exchange(ecu: &mut Ecu, state: &mut State, request: &[u8]) -> Option<Vec<u8>>
 fn exchange_truncated(ecu: &mut Ecu, state: &mut State, front: &[u8]) -> Vec<u8> {
     let mut buf = [0_u8; 64];
     let mut out = ResponseSink::new(&mut buf, None);
-    let unsettled =
-        block_on(ecu.dispatch(state, PHYSICAL, Received::Truncated(front), &mut out));
+    let unsettled = block_on(EcuServices::dispatch(
+        ecu,
+        state,
+        PHYSICAL,
+        Received::Truncated(front),
+        &mut out,
+    ));
     let _ = settle(PHYSICAL, unsettled, false, &mut out);
     out.written_bytes().to_vec()
 }
@@ -740,15 +753,20 @@ fn exchange_bounded(
 ) -> Vec<u8> {
     let mut buf = [0_u8; 64];
     let mut out = ResponseSink::new(&mut buf, Some(bound));
-    let unsettled =
-        block_on(ecu.dispatch(state, PHYSICAL, Received::Whole(request), &mut out));
+    let unsettled = block_on(EcuServices::dispatch(
+        ecu,
+        state,
+        PHYSICAL,
+        Received::Whole(request),
+        &mut out,
+    ));
     let _ = settle(PHYSICAL, unsettled, false, &mut out);
     out.written_bytes().to_vec()
 }
 
 fn in_session(ecu: &mut Ecu, session: S) -> State {
     let mut state = State::INITIAL;
-    ecu.session_confirmed(&mut state, session);
+    EcuServices::session_confirmed(ecu, &mut state, session);
     state
 }
 
@@ -1188,9 +1206,9 @@ fn security_access_a_lockout_outlives_a_power_cycle() {
 
     ecu.delay = Delay::Idle;
     let mut state = State::INITIAL;
-    ecu.start_up(&mut state);
+    EcuServices::start_up(&mut ecu, &mut state);
     assert_eq!((ecu.attempts, ecu.delay), (3, Delay::Running));
-    ecu.session_confirmed(&mut state, S::ExtendedDiagnosticSession);
+    EcuServices::session_confirmed(&mut ecu, &mut state, S::ExtendedDiagnosticSession);
     assert_eq!(
         exchange(&mut ecu, &mut state, &[0x27, 0x01]).as_deref(),
         Some(&[0x7F, 0x27, 0x37][..])
@@ -1306,7 +1324,7 @@ fn security_access_a_session_change_locks() {
     let _ = exchange(&mut ecu, &mut state, &[0x27, 0x01]);
     let _ = exchange(&mut ecu, &mut state, &RIGHT_KEY);
     let _ = exchange(&mut ecu, &mut state, &[0x27, 0x03]);
-    ecu.session_confirmed(&mut state, S::ExtendedDiagnosticSession);
+    EcuServices::session_confirmed(&mut ecu, &mut state, S::ExtendedDiagnosticSession);
     assert_eq!(ecu.relocked, Some(true));
     assert_eq!(
         exchange(&mut ecu, &mut state, &[0x27, 0x04, 0xED, 0xCC]).as_deref(),
@@ -1325,9 +1343,9 @@ fn security_access_a_session_timeout_locks() {
     let mut state = extended(&mut ecu);
     let _ = exchange(&mut ecu, &mut state, &[0x27, 0x01]);
     let _ = exchange(&mut ecu, &mut state, &RIGHT_KEY);
-    ecu.session_timed_out(&mut state);
+    EcuServices::session_timed_out(&mut ecu, &mut state);
     assert_eq!(ecu.relocked, Some(true));
-    ecu.session_confirmed(&mut state, S::ExtendedDiagnosticSession);
+    EcuServices::session_confirmed(&mut ecu, &mut state, S::ExtendedDiagnosticSession);
     assert_eq!(ecu.relocked, Some(false));
     assert_eq!(
         exchange(&mut ecu, &mut state, &[0x27, 0x01]).as_deref(),
@@ -1541,6 +1559,26 @@ fn control_dtc_setting_an_unsupported_setting_is_0x12() {
         &[0x85, 0x42][..],
         &[0x85, 0x83, 0x01, 0x02, 0x03, 0x04][..],
     ] {
+        assert_eq!(
+            exchange(&mut ecu, &mut state, request).as_deref(),
+            Some(&[0x7F, 0x85, 0x12][..]),
+            "{request:02X?}"
+        );
+    }
+    assert_eq!(ecu.dtc_setting, None);
+}
+
+/// Clause 10.8.4, Table 128 — a reserved `DTCSettingType` is 0x12 before the handler's
+/// lookup is asked, as a reserved `communicationType` is 0x31: a lookup that admits
+/// every setting is not asked about one, and the handler never sees it.
+#[test]
+fn control_dtc_setting_a_reserved_setting_is_0x12_without_the_lookup_being_asked() {
+    let mut ecu = Ecu {
+        any_dtc_setting: true,
+        ..Ecu::default()
+    };
+    let mut state = extended(&mut ecu);
+    for request in [&[0x85, 0x00][..], &[0x85, 0x03][..], &[0x85, 0x7F][..]] {
         assert_eq!(
             exchange(&mut ecu, &mut state, request).as_deref(),
             Some(&[0x7F, 0x85, 0x12][..]),
@@ -2235,9 +2273,9 @@ fn on_transition_is_told_the_session_entered() {
     let mut ecu = Ecu::default();
     let mut state = extended(&mut ecu);
     assert_eq!(ecu.entered, Some(S::ExtendedDiagnosticSession));
-    ecu.session_confirmed(&mut state, S::ProgrammingSession);
+    EcuServices::session_confirmed(&mut ecu, &mut state, S::ProgrammingSession);
     assert_eq!(ecu.entered, Some(S::ProgrammingSession));
-    ecu.session_timed_out(&mut state);
+    EcuServices::session_timed_out(&mut ecu, &mut state);
     assert_eq!(ecu.entered, Some(S::DefaultSession));
 }
 
@@ -2350,7 +2388,7 @@ fn security_access_a_truncated_key_out_of_sequence_is_0x24() {
 const DOWNLOAD_GATED: [u8; 7] = [0x34, 0x00, 0x22, 0x10, 0x00, 0x00, 0x18];
 /// The same at the ungated 0x2000.
 const DOWNLOAD_2000: [u8; 7] = [0x34, 0x00, 0x22, 0x20, 0x00, 0x00, 0x18];
-/// The positive response: a 1-byte `maxNumberOfBlockLength` of `MAX_BLOCK_LENGTH + 2`.
+/// The positive response: a 1-byte `maxNumberOfBlockLength` of `MAX_BLOCK_LEN + 2`.
 const DOWNLOAD_ACCEPTED: [u8; 3] = [0x74, 0x10, 0x0A];
 
 /// Level 0x03 unlocked in the extended session, where `unlocked_level_3` leaves the
@@ -2364,7 +2402,7 @@ fn downloading(ecu: &mut Ecu, request: &[u8]) -> State {
     state
 }
 
-/// 15.2.3.2 — the positive response advertises `MAX_BLOCK_LENGTH + 2`, the whole
+/// 15.2.3.2 — the positive response advertises `MAX_BLOCK_LEN + 2`, the whole
 /// `TransferData` request message, in the fewest bytes, its `lengthFormatIdentifier` high
 /// nibble that byte count.
 #[test]
@@ -2428,7 +2466,8 @@ fn request_download_shorter_than_five_bytes_is_0x13() {
 
 /// Figure 31 — an unsupported `dataFormatIdentifier` or an invalid
 /// `addressAndLengthFormatIdentifier` is 0x31 before the full length is checked, so a
-/// wrong length does not turn it into 0x13.
+/// wrong length does not turn it into 0x13. A zero width is invalid (Annex H Table H.1),
+/// and so is one wider than the eight bytes `TransferRequest` carries.
 #[test]
 fn request_download_an_invalid_format_is_0x31_before_the_full_length() {
     let mut ecu = Ecu::default();
@@ -2436,6 +2475,8 @@ fn request_download_an_invalid_format_is_0x31_before_the_full_length() {
     for request in [
         &[0x34, 0x77, 0x22, 0x20, 0x00][..],
         &[0x34, 0x00, 0x60, 0x20, 0x00][..],
+        &[0x34, 0x00, 0x19, 0x20, 0x00][..],
+        &[0x34, 0x00, 0x91, 0x20, 0x00][..],
         &[0x34, 0x77, 0x22, 0x20, 0x00, 0x00, 0x18, 0xFF][..],
     ] {
         assert_eq!(
@@ -2573,7 +2614,7 @@ fn an_empty_download_block_is_0x13() {
     );
 }
 
-/// Table 454 — a wrong counter is 0x73; a block longer than `MAX_BLOCK_LENGTH` is 0x31
+/// Table 454 — a wrong counter is 0x73; a block longer than `MAX_BLOCK_LEN` is 0x31
 /// (Figure 33's 0x31 node, after the counter).
 #[test]
 fn a_wrong_counter_is_0x73_and_an_over_long_block_0x31() {
@@ -2798,21 +2839,21 @@ fn truncated_transfer_requests_follow_figures_33_and_34() {
 fn figure_7_decides_what_a_session_or_level_change_leaves_of_a_transfer() {
     let mut ecu = Ecu::default();
     let mut gated = downloading(&mut ecu, &DOWNLOAD_GATED);
-    ecu.session_confirmed(&mut gated, S::ExtendedDiagnosticSession);
+    EcuServices::session_confirmed(&mut ecu, &mut gated, S::ExtendedDiagnosticSession);
     assert_eq!(
         exchange(&mut ecu, &mut gated, &BLOCKS[0]).as_deref(),
         Some(&[0x7F, 0x36, 0x24][..]),
         "key 3(ii)"
     );
     let mut ungated = downloading(&mut ecu, &DOWNLOAD_2000);
-    ecu.session_confirmed(&mut ungated, S::ProgrammingSession);
+    EcuServices::session_confirmed(&mut ecu, &mut ungated, S::ProgrammingSession);
     assert_eq!(
         exchange(&mut ecu, &mut ungated, &BLOCKS[0]).as_deref(),
         Some(&[0x76, 0x01][..]),
         "key 3(iii)"
     );
-    ecu.session_confirmed(&mut ungated, S::DefaultSession);
-    ecu.session_confirmed(&mut ungated, S::ExtendedDiagnosticSession);
+    EcuServices::session_confirmed(&mut ecu, &mut ungated, S::DefaultSession);
+    EcuServices::session_confirmed(&mut ecu, &mut ungated, S::ExtendedDiagnosticSession);
     assert_eq!(
         exchange(&mut ecu, &mut ungated, &BLOCKS[1]).as_deref(),
         Some(&[0x7F, 0x36, 0x24][..]),
@@ -2850,7 +2891,7 @@ fn a_transfer_stays_only_in_the_sessions_both_the_region_and_the_service_allow()
         .as_deref(),
         Some(&DOWNLOAD_ACCEPTED[..])
     );
-    ecu.session_confirmed(&mut state, S::ExtendedDiagnosticSession);
+    EcuServices::session_confirmed(&mut ecu, &mut state, S::ExtendedDiagnosticSession);
     assert_eq!(
         exchange(&mut ecu, &mut state, &BLOCKS[0]).as_deref(),
         Some(&[0x7F, 0x36, 0x24][..]),
@@ -2866,8 +2907,8 @@ fn a_transfer_stays_only_in_the_sessions_both_the_region_and_the_service_allow()
         .as_deref(),
         Some(&DOWNLOAD_ACCEPTED[..])
     );
-    ecu.session_confirmed(&mut state, S::SafetySystemDiagnosticSession);
-    ecu.session_confirmed(&mut state, S::ProgrammingSession);
+    EcuServices::session_confirmed(&mut ecu, &mut state, S::SafetySystemDiagnosticSession);
+    EcuServices::session_confirmed(&mut ecu, &mut state, S::ProgrammingSession);
     assert_eq!(
         exchange(&mut ecu, &mut state, &BLOCKS[0]).as_deref(),
         Some(&[0x7F, 0x36, 0x24][..]),

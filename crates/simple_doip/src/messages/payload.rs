@@ -235,49 +235,131 @@ impl OwnedPayload {
 }
 
 impl<'a> Payload<'a> {
+    /// The payload type a header carries for this payload (Table 17).
+    ///
+    /// [`Payload::VehicleAnnouncement`] and [`Payload::VehicleIdentificationResponse`]
+    /// share [`PayloadType::VehicleAnnouncement`], which decodes as the former.
+    #[must_use]
+    pub const fn payload_type(&self) -> PayloadType {
+        match self {
+            Payload::DoIPNack(_) => PayloadType::NegativeAcknowledge,
+            Payload::AliveCheckRequest => PayloadType::AliveCheckRequest,
+            Payload::AliveCheckResponse(_) => PayloadType::AliveCheckResponse,
+            Payload::DiagnosticMessage(_) => PayloadType::DiagnosticMessage,
+            Payload::DiagnosticMessageAck(_) => {
+                PayloadType::DiagnosticMessagePositiveAcknowledge
+            }
+            Payload::DiagnosticMessageNack(_) => {
+                PayloadType::DiagnosticMessageNegativeAcknowledge
+            }
+            Payload::EntityStatusRequest => PayloadType::DoIPEntityStatusRequest,
+            Payload::EntityStatusResponse(_) => PayloadType::DoIPEntityStatusResponse,
+            Payload::PowerModeInfoRequest => PayloadType::DiagnosticPowerModeInfoRequest,
+            Payload::PowerModeInfoResponse(_) => {
+                PayloadType::DiagnosticPowerModeInfoResponse
+            }
+            Payload::RoutingActivationRequest(_) => PayloadType::RoutingActivationRequest,
+            Payload::RoutingActivationResponse(_) => PayloadType::RoutingActivationResponse,
+            Payload::VehicleAnnouncement(_) | Payload::VehicleIdentificationResponse(_) => {
+                PayloadType::VehicleAnnouncement
+            }
+            Payload::VehicleIdentificationRequest => {
+                PayloadType::VehicleIdentificationRequest
+            }
+            Payload::VehicleIdentificationRequestWithEid(_) => {
+                PayloadType::VehicleIdentificationRequestWithEID
+            }
+            Payload::VehicleIdentificationRequestWithVin(_) => {
+                PayloadType::VehicleIdentificationRequestWithVIN
+            }
+        }
+    }
+
     /// Decode a payload of the given type from exactly the payload bytes of one message.
     ///
     /// # Errors
-    /// Returns a [`MessageError`] if the payload cannot be deserialized
+    /// - [`MessageError::UnsupportedPayloadType`] for a reserved payload type.
+    /// - [`MessageError::InvalidPayloadLength`] where `buf`'s length is not one
+    ///   `payload_type` [allows](PayloadType::allows_payload_length): every byte of
+    ///   `buf` is the payload's, none left over.
     pub fn decode(buf: &'a [u8], payload_type: PayloadType) -> Result<Self, MessageError> {
+        let invalid = MessageError::InvalidPayloadLength {
+            payload_type,
+            length: buf.len(),
+        };
+        let allowed = u32::try_from(buf.len())
+            .is_ok_and(|length| payload_type.allows_payload_length(length));
+        if !allowed {
+            return Err(invalid);
+        }
+        match Self::decode_front(buf, payload_type)? {
+            (payload, []) => Ok(payload),
+            _ => Err(invalid),
+        }
+    }
+
+    /// Decodes a payload of `payload_type` from the front of `buf`, returning the
+    /// bytes after it.
+    fn decode_front(
+        buf: &'a [u8],
+        payload_type: PayloadType,
+    ) -> Result<(Self, &'a [u8]), MessageError> {
         Ok(match payload_type {
             PayloadType::AliveCheckResponse => {
-                Self::AliveCheckResponse(AliveCheckResponse::decode(buf)?.0)
+                let (response, rest) = AliveCheckResponse::decode(buf)?;
+                (Self::AliveCheckResponse(response), rest)
             }
-            PayloadType::NegativeAcknowledge => Self::DoIPNack(NackCode::decode(buf)?.0),
-            PayloadType::VehicleIdentificationRequest => Self::VehicleIdentificationRequest,
+            PayloadType::NegativeAcknowledge => {
+                let (code, rest) = NackCode::decode(buf)?;
+                (Self::DoIPNack(code), rest)
+            }
+            PayloadType::VehicleIdentificationRequest => {
+                (Self::VehicleIdentificationRequest, buf)
+            }
             PayloadType::VehicleIdentificationRequestWithEID => {
-                Self::VehicleIdentificationRequestWithEid(read_array::<6>(buf)?.0)
+                let (eid, rest) = read_array::<6>(buf)?;
+                (Self::VehicleIdentificationRequestWithEid(eid), rest)
             }
             PayloadType::VehicleIdentificationRequestWithVIN => {
-                Self::VehicleIdentificationRequestWithVin(read_array::<17>(buf)?.0)
+                let (vin, rest) = read_array::<17>(buf)?;
+                (Self::VehicleIdentificationRequestWithVin(vin), rest)
             }
-            PayloadType::DiagnosticPowerModeInfoRequest => Self::PowerModeInfoRequest,
+            PayloadType::DiagnosticPowerModeInfoRequest => {
+                (Self::PowerModeInfoRequest, buf)
+            }
             PayloadType::VehicleAnnouncement => {
-                Self::VehicleAnnouncement(VehicleIdentificationResponse::decode(buf)?.0)
+                let (response, rest) = VehicleIdentificationResponse::decode(buf)?;
+                (Self::VehicleAnnouncement(response), rest)
             }
             PayloadType::RoutingActivationRequest => {
-                Self::RoutingActivationRequest(RoutingActivationRequest::decode(buf)?.0)
+                let (request, rest) = RoutingActivationRequest::decode(buf)?;
+                (Self::RoutingActivationRequest(request), rest)
             }
             PayloadType::RoutingActivationResponse => {
-                Self::RoutingActivationResponse(RoutingActivationResponse::decode(buf)?.0)
+                let (response, rest) = RoutingActivationResponse::decode(buf)?;
+                (Self::RoutingActivationResponse(response), rest)
             }
-            PayloadType::AliveCheckRequest => Self::AliveCheckRequest,
-            PayloadType::DoIPEntityStatusRequest => Self::EntityStatusRequest,
+            PayloadType::AliveCheckRequest => (Self::AliveCheckRequest, buf),
+            PayloadType::DoIPEntityStatusRequest => (Self::EntityStatusRequest, buf),
             PayloadType::DoIPEntityStatusResponse => {
-                Self::EntityStatusResponse(EntityStatusResponse::decode(buf)?.0)
+                let (response, rest) = EntityStatusResponse::decode(buf)?;
+                (Self::EntityStatusResponse(response), rest)
             }
             PayloadType::DiagnosticPowerModeInfoResponse => {
-                Self::PowerModeInfoResponse(DiagnosticPowerModeCode::decode(buf)?.0)
+                let (code, rest) = DiagnosticPowerModeCode::decode(buf)?;
+                (Self::PowerModeInfoResponse(code), rest)
             }
             PayloadType::DiagnosticMessage => {
-                Self::DiagnosticMessage(DiagnosticMessage::decode(buf)?.0)
+                let (message, rest) = DiagnosticMessage::decode(buf)?;
+                (Self::DiagnosticMessage(message), rest)
             }
             PayloadType::DiagnosticMessagePositiveAcknowledge => {
-                Self::DiagnosticMessageAck(DiagnosticMessageAck::decode(buf)?.0)
+                let (ack, rest) = DiagnosticMessageAck::decode(buf)?;
+                (Self::DiagnosticMessageAck(ack), rest)
             }
             PayloadType::DiagnosticMessageNegativeAcknowledge => {
-                Self::DiagnosticMessageNack(DiagnosticMessageNack::decode(buf)?.0)
+                let (nack, rest) = DiagnosticMessageNack::decode(buf)?;
+                (Self::DiagnosticMessageNack(nack), rest)
             }
             PayloadType::Reserved(_) | PayloadType::ReservedVehicleManufacturer(_) => {
                 return Err(MessageError::UnsupportedPayloadType(payload_type));
@@ -302,6 +384,7 @@ impl Encode for Payload<'_> {
                 alive_check_response.encoded_size()?
             }
             Payload::DiagnosticMessage(diagnostic_message) => {
+                diagnostic_message.user_data_present()?;
                 diagnostic_message.encoded_size()?
             }
             Payload::DiagnosticMessageAck(diagnostic_message_ack) => {
@@ -333,7 +416,10 @@ impl Encode for Payload<'_> {
     /// Serialize this payload into `writer`
     ///
     /// # Errors
-    /// Returns a [`MessageError`] if the payload cannot be serialized
+    /// Returns a [`MessageError`] if the payload cannot be serialized, and
+    /// [`MessageError::InvalidPayloadLength`], with nothing written, for a diagnostic
+    /// message with no user data, which ISO 13400-2:2019 Table 21 makes mandatory and
+    /// [`Payload::decode`](Decode::decode) refuses.
     fn encode(
         &self,
         writer: &mut impl automotive_wire_codec::Sink,
@@ -356,6 +442,7 @@ impl Encode for Payload<'_> {
                 alive_check_response.encode(writer)?
             }
             Payload::DiagnosticMessage(diagnostic_message) => {
+                diagnostic_message.user_data_present()?;
                 diagnostic_message.encode(writer)?
             }
             Payload::DiagnosticMessageAck(diagnostic_message_ack) => {
@@ -388,8 +475,8 @@ impl Encode for Payload<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::LogicalAddress;
     use crate::messages::{FurtherActionRequired, VinGidSyncStatus};
+    use crate::{GroupId, LogicalAddress};
     use automotive_wire_codec::SliceSink;
 
     /// A peer sending a payload type we cannot decode (e.g. a reserved type) must return
@@ -475,17 +562,90 @@ mod tests {
         }
     }
 
-    /// A directed identification request too short for what it names is incomplete.
+    /// A directed identification request too short for what it names has an invalid
+    /// payload length.
     #[test]
-    fn a_short_directed_identification_request_is_incomplete() {
+    fn a_short_directed_identification_request_has_an_invalid_length() {
         assert!(matches!(
             Payload::decode(&[0; 5], PayloadType::VehicleIdentificationRequestWithEID),
-            Err(MessageError::Incomplete(_))
+            Err(MessageError::InvalidPayloadLength {
+                payload_type: PayloadType::VehicleIdentificationRequestWithEID,
+                length: 5,
+            })
         ));
         assert!(matches!(
             Payload::decode(&[0; 16], PayloadType::VehicleIdentificationRequestWithVIN),
-            Err(MessageError::Incomplete(_))
+            Err(MessageError::InvalidPayloadLength { length: 16, .. })
         ));
+    }
+
+    /// REQ 7.DoIP-045: a payload is exactly as long as its type allows. One byte more
+    /// or less than each length a type allows is refused, whether the type carries no
+    /// data, a fixed body, or an optional field, and the error is framing-fatal, as
+    /// Table 19 closes the socket.
+    #[test]
+    fn a_payload_of_a_length_its_type_does_not_allow_is_refused() {
+        let body = [0x01u8; 40];
+        for (payload_type, lengths) in [
+            (PayloadType::NegativeAcknowledge, &[1][..]),
+            (PayloadType::VehicleIdentificationRequest, &[0]),
+            (PayloadType::VehicleIdentificationRequestWithEID, &[6]),
+            (PayloadType::VehicleIdentificationRequestWithVIN, &[17]),
+            (PayloadType::VehicleAnnouncement, &[32, 33]),
+            (PayloadType::RoutingActivationRequest, &[7, 11]),
+            (PayloadType::RoutingActivationResponse, &[9, 13]),
+            (PayloadType::AliveCheckRequest, &[0]),
+            (PayloadType::AliveCheckResponse, &[2]),
+            (PayloadType::DoIPEntityStatusRequest, &[0]),
+            (PayloadType::DoIPEntityStatusResponse, &[3, 7]),
+            (PayloadType::DiagnosticPowerModeInfoRequest, &[0]),
+            (PayloadType::DiagnosticPowerModeInfoResponse, &[1]),
+        ] {
+            for &length in lengths {
+                assert!(
+                    Payload::decode(&body[..length], payload_type).is_ok(),
+                    "{payload_type:?} of {length} bytes"
+                );
+                for wrong in [length.checked_sub(1), Some(length + 1)]
+                    .into_iter()
+                    .flatten()
+                {
+                    if lengths.contains(&wrong) {
+                        continue;
+                    }
+                    let error = Payload::decode(&body[..wrong], payload_type).unwrap_err();
+                    assert!(
+                        matches!(
+                            error,
+                            MessageError::InvalidPayloadLength { payload_type: declared, length }
+                                if declared == payload_type && length == wrong
+                        ),
+                        "{payload_type:?} of {wrong} bytes: {error:?}"
+                    );
+                    assert!(error.is_framing_fatal());
+                }
+            }
+        }
+    }
+
+    /// Tables 21, 23 and 25: a diagnostic message and its acknowledgements take any
+    /// length from their 5th byte on, and none shorter.
+    #[test]
+    fn a_diagnostic_payload_takes_any_length_from_five_bytes() {
+        let body = [0x00u8; 64];
+        for payload_type in [
+            PayloadType::DiagnosticMessage,
+            PayloadType::DiagnosticMessagePositiveAcknowledge,
+            PayloadType::DiagnosticMessageNegativeAcknowledge,
+        ] {
+            assert!(matches!(
+                Payload::decode(&body[..4], payload_type),
+                Err(MessageError::InvalidPayloadLength { length: 4, .. })
+            ));
+            for length in [5, 6, 64] {
+                assert!(Payload::decode(&body[..length], payload_type).is_ok());
+            }
+        }
     }
 
     /// Table 8: the power mode request carries no data.
@@ -530,7 +690,7 @@ mod tests {
             vin: [0x41; 17],
             logical_address: LogicalAddress(0x0E00),
             entity_id: [0x01, 0x02, 0x03, 0x04, 0x05, 0x06],
-            group_id: Some([0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F]),
+            group_id: GroupId::new([0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F]).ok(),
             further_action: FurtherActionRequired::NoFurtherActionRequired,
             vin_gid_sync_status: Some(VinGidSyncStatus::Synchronized),
         };
@@ -546,5 +706,33 @@ mod tests {
         let decoded =
             Payload::decode(&buf[..written], PayloadType::VehicleAnnouncement).unwrap();
         assert_eq!(decoded, payload);
+    }
+
+    /// ISO 13400-2:2019 Table 21 makes a diagnostic message's user data mandatory and
+    /// `Payload::decode` refuses a payload without it, so encoding one is refused rather
+    /// than framing bytes no decoder accepts.
+    #[test]
+    fn a_diagnostic_message_without_user_data_does_not_encode() {
+        let payload = Payload::DiagnosticMessage(DiagnosticMessage {
+            source_address: LogicalAddress(0x0E00),
+            target_address: LogicalAddress(0x4010),
+            user_data: &[],
+        });
+        let refused = |result: Result<usize, MessageError>| {
+            matches!(
+                result,
+                Err(MessageError::InvalidPayloadLength {
+                    payload_type: PayloadType::DiagnosticMessage,
+                    length: 4,
+                })
+            )
+        };
+        assert!(refused(payload.encoded_size()));
+        let mut buf = [0u8; 8];
+        assert!(refused(payload.encode(&mut SliceSink::new(&mut buf))));
+        assert!(
+            Payload::decode(&[0x0E, 0x00, 0x40, 0x10], PayloadType::DiagnosticMessage)
+                .is_err()
+        );
     }
 }

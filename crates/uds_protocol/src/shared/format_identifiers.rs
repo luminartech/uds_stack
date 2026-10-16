@@ -10,17 +10,16 @@ const NIBBLE_MAX: u8 = 0x0F;
 const MEMORY_SIZE_NIBBLE_MASK: u8 = HIGH_NIBBLE_MASK;
 const MEMORY_ADDRESS_NIBBLE_MASK: u8 = LOW_NIBBLE_MASK;
 
-/// Widest `memorySize` the `addressAndLengthFormatIdentifier` may declare, in bytes.
+/// Widest `memorySize` the `addressAndLengthFormatIdentifier` may declare, in bytes: the
+/// eight a `u64` holds.
 ///
-/// ISO 14229-1:2020 Annex H Table H.1 marks high-nibble values 1 through 4 applicable
-/// (manageable size 256 bytes through 4 GB) and everything else "not applicable".
-pub(crate) const MAX_MEMORY_SIZE_LENGTH: u8 = 4;
+/// ISO 14229-1:2020 Annex H Table H.1 is informative and marks only a zero nibble "not
+/// applicable". A wider declaration is refused by this crate, not by the standard.
+pub(crate) const MAX_MEMORY_SIZE_LENGTH: u8 = 8;
 
-/// Widest `memoryAddress` the `addressAndLengthFormatIdentifier` may declare, in bytes.
-///
-/// Table H.1 marks low-nibble values 1 through 5 applicable (addressable memory 256 bytes
-/// through 1024 GB - 1).
-pub(crate) const MAX_MEMORY_ADDRESS_LENGTH: u8 = 5;
+/// Widest `memoryAddress` the `addressAndLengthFormatIdentifier` may declare, in bytes, for
+/// the reason [`MAX_MEMORY_SIZE_LENGTH`] is.
+pub(crate) const MAX_MEMORY_ADDRESS_LENGTH: u8 = 8;
 
 /// Length format identifier
 const BLOCK_LENGTH_NIBBLE_MASK: u8 = HIGH_NIBBLE_MASK;
@@ -52,25 +51,28 @@ const ENCRYPTION_NIBBLE_MASK: u8 = LOW_NIBBLE_MASK;
 /// ```
 /// use uds_protocol::AddressAndLengthFormatIdentifier as Alfid;
 ///
-/// let alfid = Alfid::try_from(0x44).expect("four bytes each is within Table H.1");
+/// let alfid = Alfid::try_from(0x44).expect("four bytes each");
 /// assert_eq!(alfid.memory_size_length(), 4);
 /// assert_eq!(alfid.memory_address_length(), 4);
 /// assert_eq!(u8::from(alfid), 0x44);
 ///
-/// // Annex H Table H.1 marks a zero nibble, and any size above 4, "not applicable".
+/// // Annex H Table H.1 marks a zero nibble "not applicable", and this crate holds at
+/// // most eight bytes of each.
 /// assert!(Alfid::try_from(0x40).is_err());
-/// assert!(Alfid::try_from(0x54).is_err());
+/// assert!(Alfid::try_from(0x88).is_ok());
+/// assert!(Alfid::try_from(0x98).is_err());
 /// ```
 ///
-/// See ISO 14229-1:2020 Annex H Table H.1 for the applicable widths.
+/// ISO 14229-1:2020 Annex H Table H.1 gives example values. Each width is 1 to 8 bytes
+/// here: a zero nibble is "not applicable" there, and a wider one does not fit the `u64`
+/// that carries an address or size.
 #[cfg_attr(feature = "serde", derive(serde::Deserialize, serde::Serialize))]
 #[cfg_attr(feature = "serde", serde(try_from = "u8", into = "u8"))]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct AddressAndLengthFormatIdentifier {
-    /// Width of `memorySize` in bytes: 1 to 4. Private so it cannot leave Table H.1's
-    /// range.
+    /// Width of `memorySize` in bytes: 1 to 8. Private so it cannot leave that range.
     memory_size_length: u8,
-    /// Width of `memoryAddress` in bytes: 1 to 5. Private for the same reason.
+    /// Width of `memoryAddress` in bytes: 1 to 8. Private for the same reason.
     memory_address_length: u8,
 }
 
@@ -84,9 +86,7 @@ impl AddressAndLengthFormatIdentifier {
     ///
     /// # Errors
     /// Returns [`Error::InvalidAddressAndLengthFormatIdentifier`] carrying the byte the
-    /// widths would have formed if `memory_size_length` is outside 1 to 4 or
-    /// `memory_address_length` is outside 1 to 5, which Annex H Table H.1 marks "not
-    /// applicable".
+    /// widths would have formed if either is outside 1 to 8.
     pub const fn new(
         memory_size_length: u8,
         memory_address_length: u8,
@@ -108,13 +108,30 @@ impl AddressAndLengthFormatIdentifier {
         })
     }
 
-    /// Width of the `memorySize` parameter in bytes, 1 to 4. The high nibble.
+    /// The narrowest widths that hold `memory_address` and `memory_size`, at least one
+    /// byte each.
+    #[allow(
+        clippy::cast_possible_truncation,
+        reason = "a u64 is at most eight bytes"
+    )]
+    pub(crate) const fn narrowest(memory_address: u64, memory_size: u64) -> Self {
+        const fn width(value: u64) -> u8 {
+            let bytes = (u64::BITS - value.leading_zeros()).div_ceil(8) as u8;
+            if bytes == 0 { 1 } else { bytes }
+        }
+        Self {
+            memory_size_length: width(memory_size),
+            memory_address_length: width(memory_address),
+        }
+    }
+
+    /// Width of the `memorySize` parameter in bytes, 1 to 8. The high nibble.
     #[must_use]
     pub const fn memory_size_length(self) -> u8 {
         self.memory_size_length
     }
 
-    /// Width of the `memoryAddress` parameter in bytes, 1 to 5. The low nibble.
+    /// Width of the `memoryAddress` parameter in bytes, 1 to 8. The low nibble.
     #[must_use]
     pub const fn memory_address_length(self) -> u8 {
         self.memory_address_length
@@ -132,12 +149,9 @@ impl PartialEq<u8> for AddressAndLengthFormatIdentifier {
 impl TryFrom<u8> for AddressAndLengthFormatIdentifier {
     type Error = Error;
     fn try_from(value: u8) -> Result<Self, Error> {
-        // High nibble: bytes used for the memorySize parameter. Table H.1 marks 1 through 4
-        // applicable (manageable size 256 bytes to 4 GB); 0 and 5..=15 are "not
-        // applicable".
+        // High nibble: bytes used for the memorySize parameter; low nibble: for the
+        // memoryAddress parameter.
         let memory_size_length = (value & MEMORY_SIZE_NIBBLE_MASK) >> 4;
-        // Low nibble: bytes used for the memoryAddress parameter. Table H.1 marks 1 through
-        // 5 applicable (addressable memory 256 bytes to 1024 GB - 1).
         let memory_address_length = value & MEMORY_ADDRESS_NIBBLE_MASK;
 
         if !matches!(memory_size_length, 1..=MAX_MEMORY_SIZE_LENGTH) {
@@ -167,21 +181,25 @@ impl From<AddressAndLengthFormatIdentifier> for u8 {
 /// long. Derived from the slice length when encoding, so it is not part of either
 /// response's public surface.
 ///
-/// The low nibble is not retained. ISO 14229-1:2020 Tables 443 and 448 both state that bits
-/// 3 to 0 are "reserved by document, to be set to '0'", and that "the lower nibble
-/// **shall** be set to '0'" — the byte range they give is `0x00` to `0xF0`. A non-zero low
-/// nibble is therefore not a value to echo back but a malformed byte, so encoding always
-/// emits zero.
+/// ISO 14229-1:2020 Tables 443 and 448 reserve bits 3 to 0, "to be set to '0'": they are
+/// ignored on decode and encoded as zero. Tables 442 and 447 make the first
+/// `maxNumberOfBlockLength` byte mandatory, so a zero high nibble does not convert.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct LengthFormatIdentifier {
     pub max_number_of_block_length: u8,
 }
 
-impl From<u8> for LengthFormatIdentifier {
-    fn from(value: u8) -> Self {
-        Self {
-            max_number_of_block_length: (value & BLOCK_LENGTH_NIBBLE_MASK) >> 4,
+impl TryFrom<u8> for LengthFormatIdentifier {
+    type Error = Error;
+
+    fn try_from(value: u8) -> Result<Self, Error> {
+        let max_number_of_block_length = (value & BLOCK_LENGTH_NIBBLE_MASK) >> 4;
+        if max_number_of_block_length == 0 {
+            return Err(Error::IncorrectMessageLengthOrInvalidFormat);
         }
+        Ok(Self {
+            max_number_of_block_length,
+        })
     }
 }
 impl From<LengthFormatIdentifier> for u8 {
@@ -332,16 +350,15 @@ mod tests {
     }
 
     #[test]
-    fn every_alfid_legal_per_table_h1_is_accepted() {
-        // ISO 14229-1:2020 Annex H Table H.1 runs from 0x11 to 0x45: the high nibble
-        // (memorySize) is applicable for 1..=4 bytes and the low nibble (memoryAddress) for
-        // 1..=5. Anything outside that is "not applicable" and must be rejected.
-        for size_len in 1..=4u8 {
-            for addr_len in 1..=5u8 {
+    fn every_alfid_of_one_to_eight_bytes_is_accepted() {
+        // Annex H Table H.1 marks only a zero nibble "not applicable"; a u64 carries up to
+        // eight bytes of address and of size.
+        for size_len in 1..=8u8 {
+            for addr_len in 1..=8u8 {
                 let byte = (size_len << 4) | addr_len;
                 let mfi =
                     AddressAndLengthFormatIdentifier::try_from(byte).unwrap_or_else(|e| {
-                        panic!("Table H.1 lists {byte:#04X} as valid, got {e:?}")
+                        panic!("{byte:#04X} declares 1 to 8 bytes, got {e:?}")
                     });
                 assert_eq!(mfi.memory_size_length, size_len, "for {byte:#04X}");
                 assert_eq!(mfi.memory_address_length, addr_len, "for {byte:#04X}");
@@ -351,23 +368,27 @@ mod tests {
     }
 
     #[test]
-    fn alfid_nibbles_outside_table_h1_are_rejected() {
-        // A zero nibble is "not applicable" on either side, and the widths stop at 4 (size)
-        // and 5 (address).
-        for byte in [0x00, 0x01, 0x10, 0x05, 0x50, 0x46, 0x55, 0xF5, 0x5F] {
+    fn a_zero_or_wider_than_eight_nibble_is_rejected() {
+        for byte in [0x00, 0x01, 0x10, 0x08, 0x80, 0x19, 0x91, 0x99, 0xF8, 0x8F] {
             assert!(
                 AddressAndLengthFormatIdentifier::try_from(byte).is_err(),
-                "{byte:#04X} is not applicable per Table H.1 but was accepted"
+                "{byte:#04X} declares a zero width or one wider than eight, but was accepted"
             );
         }
     }
 
     #[test]
     fn length_format_identifier() {
-        let length_format_identifier = LengthFormatIdentifier::from(0xF0);
+        let length_format_identifier = LengthFormatIdentifier::try_from(0xF0).unwrap();
         assert_eq!(length_format_identifier.max_number_of_block_length, 15);
 
         assert_eq!(u8::from(length_format_identifier), 0xF0);
+        for malformed in [0x00, 0x09] {
+            assert!(matches!(
+                LengthFormatIdentifier::try_from(malformed),
+                Err(Error::IncorrectMessageLengthOrInvalidFormat)
+            ));
+        }
     }
 
     #[test]
@@ -415,21 +436,16 @@ mod tests {
 
             #[test]
             fn prop_length_format_identifier_normalizes_the_reserved_nibble(byte in any::<u8>()) {
-                // Tables 443 and 448 require the low nibble to be '0', so re-encoding any
-                // byte must clear it while preserving the block-length nibble. Generating
-                // the full `u8` range rather than `high_nibble << 4` is what makes this a
-                // real property: the narrower generator held trivially whichever way the
-                // impl behaved.
-                let lfi = LengthFormatIdentifier::from(byte);
-                let back: u8 = lfi.into();
+                // Over the full `u8` range: a byte converts exactly when its high nibble is
+                // not zero, and re-encodes with the reserved low nibble cleared.
+                let back = LengthFormatIdentifier::try_from(byte).map_or(0, u8::from);
                 prop_assert_eq!(byte & 0xF0, back);
             }
 
             #[test]
             fn prop_memory_format_identifier_roundtrip(
-                // The full range Annex H Table H.1 declares applicable. Narrowing these to
-                // what the decoder happened to accept is what previously let an off-by-one
-                // in the range checks sit underneath a passing property test.
+                // The full accepted range, so an off-by-one in the range checks cannot sit
+                // underneath a passing property test.
                 size_len in 1u8..=MAX_MEMORY_SIZE_LENGTH,
                 addr_len in 1u8..=MAX_MEMORY_ADDRESS_LENGTH,
             ) {

@@ -8,9 +8,12 @@
 # treats "no releasable package" as an error, which would fail both release jobs on every
 # push to main.
 [workspace]
-# Each crate keeps its own changelog; that is what a crates.io or docs.rs reader of one
-# crate sees.
-changelog_update = true
+# Each crate keeps its own CHANGELOG.md, written by hand under `## [Unreleased]`; that is
+# what a crates.io or docs.rs reader of one crate sees. release-plz does not touch them:
+# generating would put a commit list above the curated text, with other crates' commits
+# mixed in, because the crates share one history. The release PR retitles each
+# `## [Unreleased]` to `## [<version>] — <date>` by hand.
+changelog_update = false
 
 # One tag and one GitHub release per version, both on the anchor package below, never one
 # per crate.
@@ -27,20 +30,17 @@ name = "uds_on_ip"
 git_tag_enable = true
 git_tag_name = "v{{ version }}"
 git_release_enable = true
-# The release is the stack's, so it is named for the stack. release-plz only exposes the
-# releasing package's changelog, so the anchor's entry goes under its own heading rather
-# than reading as the notes for all five.
+# The release is the stack's, so it is named for the stack. The body links each crate's
+# entry rather than quoting one: with `changelog_update = false`, release-plz renders
+# `{{ changelog }}` empty.
 git_release_name = "uds_stack v{{ version }}"
 git_release_body = """
-All five crates released together at {{ version }}:
-[uds_protocol](https://crates.io/crates/uds_protocol/{{ version }}),
-[uds_session](https://crates.io/crates/uds_session/{{ version }}),
-[uds_services](https://crates.io/crates/uds_services/{{ version }}),
-[simple_doip](https://crates.io/crates/simple_doip/{{ version }}),
-[uds_on_ip](https://crates.io/crates/uds_on_ip/{{ version }}).
-Each crate's CHANGELOG.md has its own entry for this version.
+All five crates released together at {{ version }}. Each crate's changelog has its own
+entry for this version:
 
-## uds_on_ip
-
-{{ changelog }}
+- uds_protocol: [crate](https://crates.io/crates/uds_protocol/{{ version }}), [changes](https://github.com/luminartech/uds_stack/blob/v{{ version }}/crates/uds_protocol/CHANGELOG.md)
+- uds_session: [crate](https://crates.io/crates/uds_session/{{ version }}), [changes](https://github.com/luminartech/uds_stack/blob/v{{ version }}/crates/uds_session/CHANGELOG.md)
+- uds_services: [crate](https://crates.io/crates/uds_services/{{ version }}), [changes](https://github.com/luminartech/uds_stack/blob/v{{ version }}/crates/uds_services/CHANGELOG.md)
+- simple_doip: [crate](https://crates.io/crates/simple_doip/{{ version }}), [changes](https://github.com/luminartech/uds_stack/blob/v{{ version }}/crates/simple_doip/CHANGELOG.md)
+- uds_on_ip: [crate](https://crates.io/crates/uds_on_ip/{{ version }}), [changes](https://github.com/luminartech/uds_stack/blob/v{{ version }}/crates/uds_on_ip/CHANGELOG.md)
 """

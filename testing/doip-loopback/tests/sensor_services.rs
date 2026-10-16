@@ -12,19 +12,18 @@ use doip_loopback::{
     ticking,
 };
 use embassy_time::{Duration, Instant};
-use sensor_services::{DTCS, Did, Rid};
+use sensor_services::{DTCS, Did, Ecu, Rid};
 use uds_on_ip::DoIpTransport;
 use uds_on_ip::profile::bench_reloads;
 use uds_services::{
-    Address, CLEAR_ALL_DTCS, ClientTiming, CommunicationControlType, CommunicationType,
-    DataFormatIdentifier, DataIdentifier, DiagnosticSessionType as S, DtcRecord,
-    DtcSettingType, DtcStatusMask, KeepAlive, NegativeResponseCode as Nrc,
-    PhysicalKeepAlive, ReadDtcInfoResponse, ReadDtcInfoSubFunction, RecordError, Reloads,
-    Replaced, ResetType, Response, RoutineControlSubFunction, SecurityLevel, ServerParams,
-    Stopped, SubnetNumber, Timestamp, uds_client, uds_server,
+    Address, CLEAR_ALL_DTCS, ClientLimits, ClientTiming, CommunicationControlRequest,
+    CommunicationControlType, CommunicationType, DataFormatIdentifier,
+    DiagnosticSessionType as S, DtcRecord, DtcSettingType, DtcStatusMask, KeepAlive,
+    NegativeResponseCode as Nrc, PhysicalKeepAlive, ReadDtcInfoResponse,
+    ReadDtcInfoSubFunction, Reloads, Replaced, Reply, ResetType, Response,
+    RoutineControlSubFunction, SecurityLevel, ServerParams, Stopped, SubnetNumber,
+    Timestamp, uds_client, uds_server,
 };
-
-sensor_services::ecu!();
 
 uds_server! {
     Ecu: DiagnosticSessionControl, EcuReset, TesterPresent, SecurityAccess,
@@ -32,38 +31,23 @@ uds_server! {
          ClearDiagnosticInformation, CommunicationControl, ControlDtcSetting, DataTransfer;
     transport = DoIpTransport<SensorEntity<4096>, 2>,
     peers = 1,
+    services = SensorServices,
     server = SensorServer,
 }
 
-/// The sensor's identifiers as the client names them: `uds_client!` implements its
-/// `ClientSet` for the identifier type, which must therefore be local to this crate.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct SdkDid(Did);
-
-impl DataIdentifier for SdkDid {
-    const MAX_RECORD_LEN: usize = Did::MAX_RECORD_LEN;
-    fn as_u16(self) -> u16 {
-        self.0.as_u16()
-    }
-    fn from_u16(value: u16) -> Option<Self> {
-        Did::from_u16(value).map(Self)
-    }
-    fn split_record(self, buf: &[u8]) -> Result<(&[u8], &[u8]), RecordError> {
-        self.0.split_record(buf)
-    }
-}
-
 uds_client! {
-    SdkDid;
+    Did;
+    vocabulary = SdkVocabulary,
     transport = SensorClientTransport,
-    max_dids_per_request = 4,
     routines = Rid,
-    max_dtcs = 8,
-    max_dtc_record_len = 32,
-    max_seed_len = 2,
-    max_key_len = 2,
-    max_option_len = 4,
-    max_block_len = 64,
+    limits = ClientLimits::new()
+        .max_dids_per_request(4)
+        .max_dtcs(8)
+        .max_dtc_record_len(32)
+        .max_seed_len(2)
+        .max_key_len(2)
+        .max_option_len(4)
+        .max_block_len(64),
     physical = 1,
     functional = 1,
     responders = 1,
@@ -72,13 +56,9 @@ uds_client! {
 }
 
 const SERVER: Address = Address(ENTITY.0);
+const GROUP: Address = Address(doip_loopback::FUNCTIONAL.0);
 const TESTER: Address = Address(doip_loopback::TESTER.0);
-const PARAMS: ServerParams = ServerParams {
-    s3_server: 5_000,
-    p2_server_max: 50,
-    p2_star_server_max: 5_000,
-    response_pending_lead: 0,
-};
+const PARAMS: ServerParams = ServerParams::new(5_000, 50, 5_000, 0);
 const RELOADS: Reloads = Reloads {
     default_reload: 100,
     enhanced_reload: 5_000,
@@ -108,7 +88,9 @@ async fn sdk(loopback: &Loopback) -> Sdk {
         transport,
         TESTER,
         KeepAlive::physical(KEEP_ALIVE_MS),
-        ClientTiming::new(0, 0, 0),
+        ClientTiming::new(0)
+            .physical_spacing(0)
+            .functional_spacing(0),
     )
 }
 
@@ -152,21 +134,17 @@ where
 #[test]
 fn a_write_in_the_right_session_is_positive_and_a_forbidden_one_negative() {
     with_sensor(|mut c| async move {
-        let written = c
-            .write_data_by_identifier(SERVER, SdkDid(Did::Mode), &[0x01])
-            .await;
+        let written = c.write_data_by_identifier(SERVER, Did::Mode, &[0x01]).await;
         assert_eq!(written.expect("answered"), Response::Positive(()));
-        let read = c
-            .read_data_by_identifier(SERVER, &[SdkDid(Did::Mode)])
-            .await;
+        let read = c.read_data_by_identifier(SERVER, &[Did::Mode]).await;
         match read {
             Ok(Response::Positive(mut records)) => {
-                assert_eq!(records.next(), Some((SdkDid(Did::Mode), &[0x01][..])));
+                assert_eq!(records.next(), Some((Did::Mode, &[0x01][..])));
             }
             other => panic!("{other:?}"),
         }
         let forbidden = c
-            .write_data_by_identifier(SERVER, SdkDid(Did::VehicleSpeed), &[0x00])
+            .write_data_by_identifier(SERVER, Did::VehicleSpeed, &[0x00])
             .await;
         assert_eq!(
             forbidden.expect("answered"),
@@ -253,9 +231,7 @@ fn a_reset_is_answered_and_its_close_survived() {
         assert_eq!(reset.expect("answered"), Response::Positive(Some(0x0A)));
         let again = c.ecu_reset(SERVER, ResetType::HardReset).await;
         assert_eq!(again.expect("answered"), Response::Positive(None));
-        let read = c
-            .read_data_by_identifier(SERVER, &[SdkDid(Did::Mode)])
-            .await;
+        let read = c.read_data_by_identifier(SERVER, &[Did::Mode]).await;
         assert!(matches!(read, Ok(Response::Positive(_))), "{read:?}");
         c.close().await.expect("closed");
     });
@@ -343,25 +319,23 @@ fn supported_dtcs_need_the_extended_session() {
 fn communication_and_dtc_setting_are_controlled() {
     with_sensor(|mut c| async move {
         extended(&mut c).await;
-        let enabled = c
-            .communication_control(
-                SERVER,
-                CommunicationControlType::EnableRxAndTx,
-                CommunicationType::Normal,
-                SubnetNumber::AllConnectedNetworks,
-                None,
-            )
-            .await;
+        let plain = CommunicationControlRequest::new(
+            false,
+            CommunicationControlType::EnableRxAndTx,
+            CommunicationType::Normal,
+        )
+        .expect("a plain control type takes no node")
+        .with_subnet(SubnetNumber::AllConnectedNetworks);
+        let enabled = c.communication_control(SERVER, plain).await;
         assert_eq!(enabled.expect("answered"), Response::Positive(()));
-        let refused = c
-            .communication_control(
-                SERVER,
-                CommunicationControlType::EnableRxAndDisableTxWithEnhancedAddressInfo,
-                CommunicationType::Normal,
-                SubnetNumber::AllConnectedNetworks,
-                Some(0xFFFF),
-            )
-            .await;
+        let enhanced = CommunicationControlRequest::new_with_node_id(
+            false,
+            CommunicationControlType::EnableRxAndDisableTxWithEnhancedAddressInfo,
+            CommunicationType::Normal,
+            0xFFFF,
+        )
+        .expect("an enhanced-address type takes a node");
+        let refused = c.communication_control(SERVER, enhanced).await;
         assert_eq!(
             refused.expect("answered"),
             Response::Negative(Nrc::RequestOutOfRange)
@@ -413,12 +387,78 @@ fn a_positive_reset_is_reported_as_a_replacement_at_once() {
         assert_eq!(left.expect("asked"), Replaced::SessionLost);
         let again = c.connection_replaced(SERVER).await;
         assert_eq!(again.expect("asked"), Replaced::No);
-        let read = c
-            .read_data_by_identifier(SERVER, &[SdkDid(Did::Mode)])
-            .await;
+        let read = c.read_data_by_identifier(SERVER, &[Did::Mode]).await;
         assert!(matches!(read, Ok(Response::Positive(_))), "{read:?}");
         let after = c.connection_replaced(SERVER).await;
         assert_eq!(after.expect("asked"), Replaced::No);
+        c.close().await.expect("closed");
+    });
+}
+
+/// The flashing sequence's two group-addressed steps: `ControlDTCSetting` sent to the
+/// functional group is answered by the sensor. `CommunicationControl` sent there
+/// suppressed draws nothing where the sensor performs it, and the sensor's refusal where
+/// it does not: this sensor holds `disableRxAndTx` behind level 3, so a locked disable is
+/// answered `securityAccessDenied` (ISO 14229-1:2020 Table 5). The physical channel is
+/// undisturbed: idling past the server's S3, the keep-alive still holds the extended
+/// session.
+#[test]
+fn communication_and_dtc_setting_are_controlled_on_the_group() {
+    with_sensor(|mut c| async move {
+        extended(&mut c).await;
+        for setting in [DtcSettingType::Off, DtcSettingType::On] {
+            let mut replies = c.control_dtc_setting_functional(GROUP, setting, &[]);
+            let first = ticking(replies.next(), STEP).await;
+            assert!(
+                matches!(first, Some(Ok(Reply::Positive { from: SERVER }))),
+                "{setting:?}: {first:?}"
+            );
+            let last = ticking(replies.next(), STEP).await;
+            assert!(last.is_none(), "{setting:?}: {last:?}");
+        }
+        let control = |kind| {
+            CommunicationControlRequest::new(false, kind, CommunicationType::Normal)
+                .expect("a plain control type takes no node")
+        };
+        let mut replies = c.communication_control_functional(
+            GROUP,
+            control(CommunicationControlType::DisableRxAndTx),
+        );
+        let refused = ticking(replies.next(), STEP).await;
+        assert!(
+            matches!(
+                refused,
+                Some(Ok(Reply::Negative {
+                    from: SERVER,
+                    code: Nrc::SecurityAccessDenied,
+                }))
+            ),
+            "{refused:?}"
+        );
+        let last = ticking(replies.next(), STEP).await;
+        assert!(last.is_none(), "{last:?}");
+        drop(replies);
+        let mut replies = c.communication_control_functional(
+            GROUP,
+            control(CommunicationControlType::EnableRxAndTx),
+        );
+        let silent = ticking(replies.next(), STEP).await;
+        assert!(silent.is_none(), "{silent:?}");
+        drop(replies);
+        let idle = u64::from(PARAMS.s3_server()) + 1_000;
+        ticking(c.idle_until(in_ms(idle)), STEP)
+            .await
+            .expect("idled");
+        let inside = c
+            .read_dtc_information(SERVER, ReadDtcInfoSubFunction::ReportSupportedDtc)
+            .await;
+        assert!(
+            matches!(
+                inside,
+                Ok(Response::Positive(ReadDtcInfoResponse::DtcList { .. }))
+            ),
+            "{inside:?}"
+        );
         c.close().await.expect("closed");
     });
 }
@@ -430,7 +470,7 @@ fn a_positive_reset_is_reported_as_a_replacement_at_once() {
 fn the_keep_alive_holds_the_extended_session_past_s3() {
     with_sensor(|mut c| async move {
         extended(&mut c).await;
-        let idle = u64::from(PARAMS.s3_server) + 1_000;
+        let idle = u64::from(PARAMS.s3_server()) + 1_000;
         assert!(idle > 2 * u64::from(KEEP_ALIVE_MS));
         ticking(c.idle_until(in_ms(idle)), STEP)
             .await
@@ -523,9 +563,7 @@ fn a_hard_reset_ends_run_after_the_close() {
         serve_until(&mut server, async {
             let left = c.connection_replaced(SERVER).await;
             assert_eq!(left.expect("asked"), Replaced::SessionLost);
-            let read = c
-                .read_data_by_identifier(SERVER, &[SdkDid(Did::Mode)])
-                .await;
+            let read = c.read_data_by_identifier(SERVER, &[Did::Mode]).await;
             assert!(matches!(read, Ok(Response::Positive(_))), "{read:?}");
             c.close().await.expect("closed");
         })

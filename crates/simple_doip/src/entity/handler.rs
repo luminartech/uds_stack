@@ -40,9 +40,11 @@ pub(super) enum Handled {
     },
 }
 
-/// The sizes a received frame is held to.
+/// The sizes a received frame is held to, and how long a close it causes may take.
 #[derive(Clone, Copy)]
 pub(super) struct Limits {
+    /// How long an orderly close may take before it is aborted.
+    pub(super) close: core::time::Duration,
     /// The entity's largest message, beyond which a frame is refused on any socket.
     pub(super) message: usize,
     /// The largest frame on a socket that has not activated routing, which may have to
@@ -77,13 +79,13 @@ pub(super) fn handle<S, const CAP: usize>(
     } else {
         limits.unregistered.min(CAP)
     };
-    if let Err(handled) = check_header(open, rx, tx, limits.message, memory, now) {
+    if let Err(handled) = check_header(open, rx, tx, limits, memory, now) {
         return handled;
     }
     let Ok(Next::Frame(frame, consumed)) = rx.next() else {
         return Handled::Waiting;
     };
-    let payload_type = frame.header.payload_type;
+    let payload_type = frame.header.payload_type();
     let handled = match (payload_type, Payload::decode(frame.payload, payload_type)) {
         (_, Ok(Payload::RoutingActivationRequest(request))) => {
             if registered.is_none() && !open.activation_received {
@@ -125,7 +127,7 @@ pub(super) fn handle<S, const CAP: usize>(
             };
             if registered != Some(tester) {
                 nack(tx, DiagnosticNackCode::InvalidSourceAddress);
-                open.finalize(false, false, now);
+                open.finalize(false, false, now, limits.close);
                 Handled::Done
             } else if let Some(ta_type) = address.ta_type_of(target) {
                 tx.push(&Message::diagnostic_message_ack(
@@ -160,7 +162,7 @@ fn check_header<S, const CAP: usize>(
     open: &mut Open<S>,
     rx: &mut RxBuffer<CAP>,
     tx: &mut TxQueue<CONTROL_CAP>,
-    max_message: usize,
+    limits: Limits,
     memory: usize,
     now: Instant,
 ) -> Result<(), Handled> {
@@ -168,63 +170,83 @@ fn check_header<S, const CAP: usize>(
         Ok(header) => header,
         Err(MessageError::Incomplete(_)) => return Err(Handled::Waiting),
         Err(_) => {
-            return Err(refuse(open, tx, NackCode::IncorrectPatternFormat, now));
+            return Err(refuse(
+                open,
+                tx,
+                NackCode::IncorrectPatternFormat,
+                now,
+                limits.close,
+            ));
         }
     };
     if !matches!(
-        header.protocol_version,
+        header.protocol_version(),
         ProtocolVersion::V2012 | ProtocolVersion::V2019
     ) {
-        return Err(refuse(open, tx, NackCode::IncorrectPatternFormat, now));
+        return Err(refuse(
+            open,
+            tx,
+            NackCode::IncorrectPatternFormat,
+            now,
+            limits.close,
+        ));
     }
-    open.version = header.protocol_version;
-    let Some(length_ok) = length_rule(header.payload_type) else {
+    open.version = header.protocol_version();
+    if !taken_on_tcp(header.payload_type()) {
         return Err(discard(open, tx, rx, &header, NackCode::UnknownPayloadType));
-    };
+    }
     let fits = |limit: usize| {
-        usize::try_from(header.payload_length)
+        usize::try_from(header.payload_length())
             .is_ok_and(|length| length <= limit.saturating_sub(Header::SIZE))
     };
-    if !fits(max_message) {
+    if !fits(limits.message) {
         return Err(discard(open, tx, rx, &header, NackCode::MessageTooLarge));
     }
     if !fits(memory) {
         return Err(discard(open, tx, rx, &header, NackCode::OutOfMemory));
     }
-    if !length_ok(header.payload_length) {
-        return Err(refuse(open, tx, NackCode::InvalidPayloadLength, now));
+    if !header
+        .payload_type()
+        .allows_payload_length(header.payload_length())
+    {
+        return Err(refuse(
+            open,
+            tx,
+            NackCode::InvalidPayloadLength,
+            now,
+            limits.close,
+        ));
     }
     Ok(())
 }
 
-/// The payload lengths ISO 13400-2:2019 allows each payload type a tester sends on a
-/// `TCP_DATA` socket, or `None` for a type the entity does not take there (Figure 16).
-/// A diagnostic message's user data is mandatory (Table 21), which this crate reads as
-/// at least one byte.
-fn length_rule(payload_type: PayloadType) -> Option<fn(u32) -> bool> {
-    match payload_type {
-        PayloadType::RoutingActivationRequest => Some(|length| matches!(length, 7 | 11)),
-        PayloadType::AliveCheckResponse => Some(|length| length == 2),
-        PayloadType::DiagnosticMessage
-        | PayloadType::DiagnosticMessagePositiveAcknowledge
-        | PayloadType::DiagnosticMessageNegativeAcknowledge => Some(|length| length >= 5),
-        PayloadType::NegativeAcknowledge => Some(|length| length == 1),
-        _ => None,
-    }
+/// Whether the entity takes `payload_type` from a tester on a `TCP_DATA` socket (Table 17,
+/// Figure 16).
+fn taken_on_tcp(payload_type: PayloadType) -> bool {
+    matches!(
+        payload_type,
+        PayloadType::RoutingActivationRequest
+            | PayloadType::AliveCheckResponse
+            | PayloadType::DiagnosticMessage
+            | PayloadType::DiagnosticMessagePositiveAcknowledge
+            | PayloadType::DiagnosticMessageNegativeAcknowledge
+            | PayloadType::NegativeAcknowledge
+    )
 }
 
-/// Generic header NACK `code`, then the socket is closed.
+/// Generic header NACK `code`, then the socket is closed within `close_limit`.
 fn refuse<S>(
     open: &mut Open<S>,
     tx: &mut TxQueue<CONTROL_CAP>,
     code: NackCode,
     now: Instant,
+    close_limit: core::time::Duration,
 ) -> Handled {
     if !tx.has_room_for(HEADER_NACK) {
         return Handled::Waiting;
     }
     tx.push(&header_nack(open.version, code)).ok();
-    open.finalize(false, false, now);
+    open.finalize(false, false, now, close_limit);
     Handled::Done
 }
 
@@ -246,7 +268,7 @@ fn discard<S, const CAP: usize>(
 
 fn header_nack(version: ProtocolVersion, code: NackCode) -> Message<'static> {
     Message {
-        header: Header::new(version, PayloadType::NegativeAcknowledge, 1),
+        protocol_version: version,
         payload: Payload::DoIPNack(code),
     }
 }

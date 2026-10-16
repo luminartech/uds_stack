@@ -10,7 +10,7 @@
 //! CAN binding implements the same methods, so a `DoIP`-shaped seam would be
 //! the wrong seam.
 
-use crate::error::Error;
+use crate::error::DoIpTransportError;
 use crate::mapping::{
     Inbound, PduOutsideBuffer, classify, from_logical, refused, s_result, target_of,
     to_doip_ta_type, to_logical,
@@ -62,8 +62,9 @@ use uds_session::{Ai, Reloads, SResult, Timestamp};
 /// the response ("after sending") and precedes anything done on the
 /// confirmation: `uds_services::Server` executes a session change there. It
 /// executes an accepted reset on that confirmation (`EcuReset::confirmed`, and
-/// `Stopped` for a restart), so the reset follows the close; a suppressed reset
-/// sends nothing and closes nothing. A message whose confirmation fails closes
+/// `Stopped` for a restart), so the reset follows the close. A suppressed reset sends
+/// nothing to close after, so the connection closes when the server says it is
+/// restarting ([`UdsTransport::restarting`]). A message whose confirmation fails closes
 /// nothing.
 ///
 /// The close follows the armed message's own confirmation, told apart from the
@@ -334,6 +335,26 @@ impl<E, const CONNECTIONS: usize> DoIpTransport<E, CONNECTIONS> {
 }
 
 impl<E: DiagnosticEntity, const CONNECTIONS: usize> DoIpTransport<E, CONNECTIONS> {
+    /// Close, in order, the connection of every tester with nothing awaiting
+    /// confirmation. A tester with a message still unconfirmed keeps its connection, since
+    /// its confirmation is owed to the driver.
+    async fn close_testers(&mut self) {
+        for index in 0..CONNECTIONS {
+            let idle = self
+                .testers
+                .get(index)
+                .copied()
+                .flatten()
+                .filter(|tester| tester.unconfirmed == 0);
+            let Some(tester) = idle else {
+                continue;
+            };
+            self.forget(tester.connection);
+            let _ended_either_way: Result<(), E::Error> =
+                self.entity.close(tester.connection).await;
+        }
+    }
+
     async fn close(&mut self, closing: Closing) -> TransportEvent<'static> {
         self.closing = Some(closing);
         self.forget(closing.connection);
@@ -349,9 +370,13 @@ impl<E: DiagnosticEntity, const CONNECTIONS: usize> DoIpTransport<E, CONNECTIONS
     /// It is reported ahead of any confirmation the entity holds for an earlier request:
     /// `uds_session` matches a confirmation to its request by addressing
     /// (`UDSS_LLR_0059`), and has one request per addressing outstanding at most.
-    fn refuse(&mut self, ai: Ai, refusal: Refusal) -> Result<(), Error<E::Error>> {
+    fn refuse(
+        &mut self,
+        ai: Ai,
+        refusal: Refusal,
+    ) -> Result<(), DoIpTransportError<E::Error>> {
         let Some(free) = self.refused.iter_mut().find(|held| held.is_none()) else {
-            return Err(Error::Refused(refusal));
+            return Err(DoIpTransportError::Refused(refusal));
         };
         *free = Some(Confirmation {
             ai,
@@ -366,7 +391,7 @@ impl<E: DiagnosticEntity, const CONNECTIONS: usize> DoIpTransport<E, CONNECTIONS
         ai: Ai,
         data: &[u8],
         after: AfterSend,
-    ) -> Result<(), Error<E::Error>> {
+    ) -> Result<(), DoIpTransportError<E::Error>> {
         let target = target_of(ai)?;
         let accepted = self.entity.request(
             to_logical(ai.sa),
@@ -414,7 +439,7 @@ impl<E: DiagnosticEntity, const CONNECTIONS: usize> DoIpTransport<E, CONNECTIONS
 impl<E: DiagnosticEntity, const CONNECTIONS: usize> UdsTransport
     for DoIpTransport<E, CONNECTIONS>
 {
-    type Error = Error<E::Error>;
+    type Error = DoIpTransportError<E::Error>;
 
     /// The entity's [`DiagnosticEntity::MAX_PDU`], so [`uds_services::uds_server`]
     /// sizes no response past what the entity sends.
@@ -430,17 +455,18 @@ impl<E: DiagnosticEntity, const CONNECTIONS: usize> UdsTransport
     /// [`DoIpTransport`]. The [`TransportEvent::DataConf`] that follows carries `ai`
     /// as given, whatever addressing the entity reports it with.
     ///
-    /// A request the entity refuses, which [`DiagnosticEntity::request`] does not
-    /// confirm, is accepted here all the same and confirmed failed by the next
-    /// [`UdsTransport::next_event`]: ISO 13400-2:2019 8.3.1 confirms every request, and
-    /// a refusal is not the end of the connection. [`Refusal::NoRoom`] and
-    /// [`Refusal::PduTooLarge`] are `DoIP_OUT_OF_MEMORY`, [`Refusal::EmptyPdu`]
-    /// `DoIP_ERROR`. It arms no close.
+    /// Accepted or refused when called, waiting on nothing, so the future cannot be
+    /// dropped part-way. A request the entity refuses, which
+    /// [`DiagnosticEntity::request`] does not confirm, is accepted here all the same
+    /// and confirmed failed by the next [`UdsTransport::next_event`]: ISO 13400-2:2019
+    /// 8.3.1 confirms every request, and a refusal is not the end of the connection.
+    /// [`Refusal::NoRoom`] and [`Refusal::PduTooLarge`] are `DoIP_OUT_OF_MEMORY`,
+    /// [`Refusal::EmptyPdu`] `DoIP_ERROR`. It arms no close.
     ///
     /// # Errors
     ///
-    /// [`Error::Mapping`] if the addressing cannot be carried: the two remote
-    /// message types have no `DoIP` representation. [`Error::Refused`] if the
+    /// [`DoIpTransportError::Mapping`] if the addressing cannot be carried: the two remote
+    /// message types have no `DoIP` representation. [`DoIpTransportError::Refused`] if the
     /// entity refuses the request while this transport already holds as many
     /// refusals as it can, none of them yet reported.
     fn t_data_req(
@@ -471,8 +497,8 @@ impl<E: DiagnosticEntity, const CONNECTIONS: usize> UdsTransport
     ///
     /// # Errors
     ///
-    /// [`Error::Entity`] where the entity fails as a whole, and
-    /// [`Error::PduOutsideBuffer`] where it reports a PDU outside `buffer`.
+    /// [`DoIpTransportError::Entity`] where the entity fails as a whole, and
+    /// [`DoIpTransportError::PduOutsideBuffer`] where it reports a PDU outside `buffer`.
     async fn next_event<'b>(
         &mut self,
         buffer: &'b mut [u8],
@@ -490,9 +516,9 @@ impl<E: DiagnosticEntity, const CONNECTIONS: usize> UdsTransport
                 .entity
                 .next_event(&mut *buffer, deadline.map(|at| service::Timestamp(at.0)))
                 .await
-                .map_err(Error::Entity)?;
+                .map_err(DoIpTransportError::Entity)?;
             let inbound = classify(event, buffer_start)
-                .map_err(|PduOutsideBuffer| Error::PduOutsideBuffer)?;
+                .map_err(|PduOutsideBuffer| DoIpTransportError::PduOutsideBuffer)?;
             match inbound {
                 Inbound::Ind { connection, ai, at } => {
                     break (connection, ai, at, None);
@@ -515,11 +541,12 @@ impl<E: DiagnosticEntity, const CONNECTIONS: usize> UdsTransport
                     }
                 }
                 Inbound::Deadline => return Ok(TransportEvent::Deadline),
+                Inbound::Ignored => {}
             }
         };
         self.register(connection, to_logical(ai.sa));
         let buffer: &'b [u8] = buffer;
-        let data = buffer.get(at).ok_or(Error::PduOutsideBuffer)?;
+        let data = buffer.get(at).ok_or(DoIpTransportError::PduOutsideBuffer)?;
         Ok(match declared {
             None => TransportEvent::DataInd { ai, data },
             Some(declared) => TransportEvent::DataTooLong {
@@ -550,6 +577,14 @@ impl<E: DiagnosticEntity, const CONNECTIONS: usize> UdsTransport
     /// unconverted.
     fn now(&self) -> Timestamp {
         Timestamp(self.entity.now().0)
+    }
+
+    /// Closes every tester's connection with nothing awaiting confirmation: after a
+    /// suppressed `ECUReset`, the close REQ 7.11 owes and no response armed. After a
+    /// positive one the connection closed on the response's confirmation, so there is
+    /// nothing left to close.
+    async fn restarting(&mut self) {
+        self.close_testers().await;
     }
 }
 

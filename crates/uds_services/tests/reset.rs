@@ -14,8 +14,8 @@ use core::future::{Future, ready};
 use uds_protocol::NegativeResponseCode as Nrc;
 use uds_services::{
     Access, Address, AfterReset, Ai, DiagnosticSessionControl, DiagnosticSessionType as S,
-    EcuReset, Mtype, ResetType, ResponseSink, SResult, ServerParams, SessionTiming,
-    SessionTransition, Sessions, Sink, Stepped, Stopped, TaType, TesterPresent, uds_server,
+    EcuReset, Mtype, ResetType, SResult, ServerParams, SessionTiming, SessionTransition,
+    Sessions, Stepped, Stopped, TaType, TesterPresent, uds_server,
 };
 use uds_session::TransportError;
 
@@ -79,7 +79,7 @@ impl DiagnosticSessionControl for Ecu {
     fn timing(&self, _s: S) -> SessionTiming {
         SessionTiming {
             p2_server_max_ms: 50,
-            p2_star_server_max_10ms: 500,
+            p2_star_server_max: uds_services::P2StarServerMax::from_tens_of_millis(500),
         }
     }
     fn on_transition(&mut self, t: SessionTransition, _entered: S, _relocked: bool) {
@@ -102,18 +102,16 @@ impl EcuReset for Ecu {
         )
         .then(|| Access::new(Sessions::ALL))
     }
-    fn reset(
-        &mut self,
-        kind: ResetType,
-        out: &mut ResponseSink<'_>,
-    ) -> impl Future<Output = Result<AfterReset, Nrc>> {
+    fn reset(&mut self, kind: ResetType) -> impl Future<Output = Result<AfterReset, Nrc>> {
         self.accepted.push(kind);
         ready(Ok(if matches!(kind, ResetType::EnableRapidPowerShutDown) {
-            let _ = out.write_all(&[0x0A]);
             AfterReset::Continue
         } else {
             AfterReset::Restart
         }))
+    }
+    fn power_down_time(&self) -> u8 {
+        0x0A
     }
     fn confirmed(&mut self, kind: ResetType) {
         self.confirmed.push(kind);
@@ -124,15 +122,11 @@ uds_server! {
     Ecu: DiagnosticSessionControl, TesterPresent, EcuReset;
     transport = Script,
     peers = 1,
+    services = EcuServices,
     server = EcuServer,
 }
 
-const PARAMS: ServerParams = ServerParams {
-    s3_server: 5_000,
-    p2_server_max: 50,
-    p2_star_server_max: 5_000,
-    response_pending_lead: 0,
-};
+const PARAMS: ServerParams = ServerParams::new(5_000, 50, 5_000, 0);
 
 /// The steps that enter the programming session (`10 03`, then `10 02`, each confirmed),
 /// then `after`.
@@ -185,6 +179,29 @@ fn a_restarting_reset_runs_on_its_confirmation_and_stops() {
     assert_eq!(step(&mut s), None);
     assert_eq!(s.transport().sent_bytes(2), &[0x51, 0x01]);
     assert_eq!(s.transport().sent_bytes(3), &[0x7F, 0x10, 0x7E]);
+}
+
+/// ISO 14229-5:2022 REQ 7.11 — a restarting reset tells the transport it is restarting
+/// as `step` reports it, whether its response was sent or suppressed, so a transport can
+/// close what the restart ends. A reset that does not restart tells it nothing.
+#[test]
+fn a_restart_tells_the_transport_and_a_continuing_reset_does_not() {
+    for (request, restarts) in [
+        (&[0x11, 0x01][..], 1),
+        (&[0x11, 0x81][..], 1),
+        (&[0x11, 0x04][..], 0),
+    ] {
+        let mut s = EcuServer::new(
+            Ecu::default(),
+            script(&[ind(request), conf(SResult::Ok)]),
+            ECU,
+            PARAMS,
+        );
+        for _ in 0..2 {
+            step(&mut s);
+        }
+        assert_eq!(s.transport().restarts, restarts, "{request:02X?}");
+    }
 }
 
 /// A restart from the default session changes no session, so no session hook is called.

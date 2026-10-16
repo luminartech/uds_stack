@@ -119,7 +119,7 @@ impl DiagnosticSessionControl for Ecu {
     fn timing(&self, _s: S) -> SessionTiming {
         SessionTiming {
             p2_server_max_ms: 50,
-            p2_star_server_max_10ms: 500,
+            p2_star_server_max: uds_services::P2StarServerMax::from_tens_of_millis(500),
         }
     }
     fn on_transition(&mut self, t: SessionTransition, entered: S, _relocked: bool) {
@@ -132,11 +132,7 @@ impl EcuReset for Ecu {
     fn access(&self, _kind: ResetType) -> Option<Access> {
         Some(Access::new(Sessions::ALL))
     }
-    async fn reset(
-        &mut self,
-        _kind: ResetType,
-        _out: &mut ResponseSink<'_>,
-    ) -> Result<AfterReset, Nrc> {
+    async fn reset(&mut self, _kind: ResetType) -> Result<AfterReset, Nrc> {
         PendN(core::mem::take(&mut self.reset_slow)).await;
         Ok(AfterReset::Restart)
     }
@@ -150,15 +146,11 @@ uds_server! {
     Ecu: ReadDataByIdentifier, DiagnosticSessionControl, EcuReset, TesterPresent;
     transport = Transport,
     peers = 1,
+    services = EcuServices,
     server = EcuServer,
 }
 
-const PARAMS: ServerParams = ServerParams {
-    s3_server: 5_000,
-    p2_server_max: 50,
-    p2_star_server_max: 5_000,
-    response_pending_lead: 0,
-};
+const PARAMS: ServerParams = ServerParams::new(5_000, 50, 5_000, 0);
 
 fn server(script: impl IntoIterator<Item = Tester>) -> EcuServer {
     server_running(Software::default(), script)

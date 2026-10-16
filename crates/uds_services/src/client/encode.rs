@@ -4,18 +4,18 @@
 //! ``UDSSVC_ARCH_0020`` — the service identifiers and the negative response codes are
 //! `uds_protocol`'s; the bytes between them are this vocabulary's.
 
-use super::{Answer, MalformedResponse, Records, Response};
+use super::{Answer, MalformedResponse, Records, RequestError, Response};
 use crate::{
     DataIdentifier, DiagnosticSessionType, RoutineIdentifier, SecurityLevel, SessionTiming,
     UdsServiceType,
 };
 use uds_protocol::{
-    ClearDiagnosticInfoRequest, CommunicationControlRequest, CommunicationControlType,
-    CommunicationType, ControlDtcSettingRequest, Decode, DtcRecord, DtcSettingType,
-    EcuResetRequest, Encode, NegativeResponseCode, ReadDtcInfoRequest,
-    ReadDtcInfoSubFunction, Request, RequestDownloadRequest, RequestTransferExitRequest,
-    ResetType, RoutineControlRequest, RoutineControlSubFunction, SecurityAccessRequest,
-    SecurityAccessType, SubnetNumber, TransferDataRequest, WriteDataByIdentifierRequest,
+    ClearDiagnosticInfoRequest, CommunicationControlRequest, ControlDtcSettingRequest,
+    Decode, DtcRecord, DtcSettingType, EcuResetRequest, Encode, NegativeResponseCode,
+    ReadDtcInfoRequest, ReadDtcInfoSubFunction, Request, RequestDownloadRequest,
+    RequestTransferExitRequest, ResetType, RoutineControlRequest,
+    RoutineControlSubFunction, SecurityAccessRequest, SecurityAccessType,
+    TransferDataRequest, WriteDataByIdentifierRequest,
 };
 use uds_session::Address;
 use uds_session::{ClientRx, SessionSelection, Solicitation};
@@ -37,50 +37,46 @@ const fn sid(service: UdsServiceType) -> u8 {
 
 /// Encode a `ReadDataByIdentifier` request for `identifiers` into `request`.
 ///
-/// `None` where `identifiers` is empty, names more than `max_dids` (the
-/// `max_dids_per_request` given to [`crate::uds_client`]), or names more than `request`
-/// holds.
+/// Refused where `identifiers` is empty, names more than `max_dids` (the
+/// [`ClientLimits::max_dids_per_request`](crate::ClientLimits::max_dids_per_request)), or
+/// names more than `request` holds.
 pub(super) fn read_data_by_identifier<D: DataIdentifier>(
     request: &mut [u8],
     identifiers: &[D],
     max_dids: usize,
-) -> Option<usize> {
-    if identifiers.is_empty() || identifiers.len() > max_dids {
-        return None;
+) -> Result<usize, RequestError> {
+    if identifiers.is_empty() {
+        return Err(RequestError::NoIdentifiers);
     }
-    let (head, body) = request.split_first_mut()?;
+    if identifiers.len() > max_dids {
+        return Err(RequestError::TooManyIdentifiers { max: max_dids });
+    }
+    let (head, body) = request.split_first_mut().ok_or(RequestError::DoesNotFit)?;
     *head = sid(UdsServiceType::ReadDataByIdentifier);
     let (slots, _) = body.as_chunks_mut::<2>();
     for (slot, did) in slots
-        .get_mut(..identifiers.len())?
+        .get_mut(..identifiers.len())
+        .ok_or(RequestError::DoesNotFit)?
         .iter_mut()
         .zip(identifiers)
     {
         *slot = did.as_u16().to_be_bytes();
     }
-    identifiers.len().checked_mul(2)?.checked_add(1)
+    identifiers
+        .len()
+        .checked_mul(2)
+        .and_then(|bytes| bytes.checked_add(1))
+        .ok_or(RequestError::DoesNotFit)
 }
 
-/// Encode a `CommunicationControl` request into `buffer`. `None` where `node_id`
-/// disagrees with `control`: a plain type takes none, an enhanced-address type needs
-/// one.
+/// Encode `control` into `buffer` with the suppress bit `suppress`, whatever `control`
+/// carries: clear where the call awaits a response, set where it awaits none.
 pub(super) fn communication_control(
     buffer: &mut [u8],
-    control: CommunicationControlType,
-    communication: CommunicationType,
-    subnet: SubnetNumber,
-    node_id: Option<u16>,
-) -> Option<usize> {
-    let built = match node_id {
-        Some(node) => CommunicationControlRequest::new_with_node_id(
-            false,
-            control,
-            communication,
-            node,
-        ),
-        None => CommunicationControlRequest::new(false, control, communication),
-    };
-    let control = built.ok()?.with_subnet(subnet);
+    mut control: CommunicationControlRequest,
+    suppress: bool,
+) -> Result<usize, RequestError> {
+    control.suppress_positive_response = suppress;
     request(buffer, &Request::CommunicationControl(control))
 }
 
@@ -89,33 +85,39 @@ pub(super) fn control_dtc_setting(
     buffer: &mut [u8],
     setting: DtcSettingType,
     option_record: &[u8],
-) -> Option<usize> {
+) -> Result<usize, RequestError> {
     let control =
         ControlDtcSettingRequest::new_with_option_record(false, setting, option_record);
     request(buffer, &Request::ControlDtcSetting(control))
 }
 
-/// Encode `request`, service identifier first, into `buffer`: its length, or `None`
-/// where it does not fit, so nothing is sent.
-pub(super) fn request(buffer: &mut [u8], request: &Request<'_>) -> Option<usize> {
-    request.encode_to_slice(buffer).ok()
+/// Encode `request`, service identifier first, into `buffer`: its length, or
+/// [`RequestError::DoesNotFit`], so nothing is sent.
+pub(super) fn request(
+    buffer: &mut [u8],
+    request: &Request<'_>,
+) -> Result<usize, RequestError> {
+    request
+        .encode_to_slice(buffer)
+        .map_err(|_| RequestError::DoesNotFit)
 }
 
 /// Encode a `WriteDataByIdentifier` request for `did` with `record` into `buffer`.
 ///
-/// `None` for an empty record, which Table 277 makes mandatory, or one that does not
+/// Refused for an empty record, which Table 277 makes mandatory, or one that does not
 /// fit.
 pub(super) fn write_data_by_identifier<D: DataIdentifier>(
     buffer: &mut [u8],
     did: D,
     record: &[u8],
-) -> Option<usize> {
-    let write = WriteDataByIdentifierRequest::new(did.as_u16(), record).ok()?;
+) -> Result<usize, RequestError> {
+    let write = WriteDataByIdentifierRequest::new(did.as_u16(), record)
+        .map_err(|_| RequestError::EmptyRecord)?;
     request(buffer, &Request::WriteDataByIdentifier(write))
 }
 
 /// Encode an `ECUReset` request for `kind` into `buffer`.
-pub(super) fn ecu_reset(buffer: &mut [u8], kind: ResetType) -> Option<usize> {
+pub(super) fn ecu_reset(buffer: &mut [u8], kind: ResetType) -> Result<usize, RequestError> {
     request(
         buffer,
         &Request::EcuReset(EcuResetRequest::new(false, kind)),
@@ -124,15 +126,15 @@ pub(super) fn ecu_reset(buffer: &mut [u8], kind: ResetType) -> Option<usize> {
 
 /// The access type for `sub_function`, one of a level's two, which cannot fail on the
 /// range [`SecurityLevel`] admits.
-fn access_type(sub_function: u8) -> Option<SecurityAccessType> {
-    SecurityAccessType::try_from(sub_function).ok()
+fn access_type(sub_function: u8) -> Result<SecurityAccessType, RequestError> {
+    SecurityAccessType::try_from(sub_function).map_err(|_| RequestError::DoesNotFit)
 }
 
 /// Encode a seed request for `level` into `buffer`: no record, no suppress bit.
 pub(super) fn security_access_seed(
     buffer: &mut [u8],
     level: SecurityLevel,
-) -> Option<usize> {
+) -> Result<usize, RequestError> {
     let access = access_type(level.request_seed())?;
     request(
         buffer,
@@ -145,7 +147,7 @@ pub(super) fn security_access_key(
     buffer: &mut [u8],
     level: SecurityLevel,
     key: &[u8],
-) -> Option<usize> {
+) -> Result<usize, RequestError> {
     let access = access_type(level.send_key())?;
     request(
         buffer,
@@ -159,7 +161,7 @@ pub(super) fn routine_control<R: RoutineIdentifier>(
     control: RoutineControlSubFunction,
     routine: R,
     option_record: &[u8],
-) -> Option<usize> {
+) -> Result<usize, RequestError> {
     let control =
         RoutineControlRequest::new(false, control, routine.as_u16(), option_record);
     request(buffer, &Request::RoutineControl(control))
@@ -169,7 +171,7 @@ pub(super) fn routine_control<R: RoutineIdentifier>(
 pub(super) fn read_dtc_information(
     buffer: &mut [u8],
     report: ReadDtcInfoSubFunction,
-) -> Option<usize> {
+) -> Result<usize, RequestError> {
     request(
         buffer,
         &Request::ReadDtcInfo(ReadDtcInfoRequest::new(false, report)),
@@ -181,7 +183,7 @@ pub(super) fn clear_diagnostic_information(
     buffer: &mut [u8],
     group: DtcRecord,
     memory_selection: Option<u8>,
-) -> Option<usize> {
+) -> Result<usize, RequestError> {
     let clear = match memory_selection {
         Some(memory) => {
             ClearDiagnosticInfoRequest::new_with_memory_selection(group, memory)
@@ -195,13 +197,16 @@ pub(super) fn clear_diagnostic_information(
 pub(super) fn diagnostic_session_control(
     request: &mut [u8],
     session: DiagnosticSessionType,
-) -> Option<usize> {
+) -> Result<usize, RequestError> {
     let encoded = [
         sid(UdsServiceType::DiagnosticSessionControl),
         u8::from(session),
     ];
-    request.get_mut(..encoded.len())?.copy_from_slice(&encoded);
-    Some(encoded.len())
+    request
+        .get_mut(..encoded.len())
+        .ok_or(RequestError::DoesNotFit)?
+        .copy_from_slice(&encoded);
+    Ok(encoded.len())
 }
 
 /// How a message from a server answers the request `expected` describes: its service
@@ -316,11 +321,16 @@ where
     }
 }
 
-/// A `ReadDataByIdentifier` response, read against this vocabulary.
-pub(super) fn records<D: DataIdentifier>(answer: Final<'_>) -> Response<Records<'_, D>> {
+/// A `ReadDataByIdentifier` response to a request for `asked`, read against this
+/// vocabulary.
+pub(super) fn records<'r, D: DataIdentifier>(
+    answer: Final<'r>,
+    asked: &[[u8; 2]],
+) -> Response<Records<'r, D>> {
     match answer {
         Final::Positive(rest) => match Records::validate(rest) {
-            Ok(records) => Response::Positive(records),
+            Ok(records) if answers(&records, asked) => Response::Positive(records),
+            Ok(_) => Response::Malformed(MalformedResponse::Echo),
             Err(error) => Response::Malformed(error),
         },
         Final::Negative(code) => Response::Negative(code),
@@ -328,17 +338,43 @@ pub(super) fn records<D: DataIdentifier>(answer: Final<'_>) -> Response<Records<
     }
 }
 
-/// One server's answer to a functional `ReadDataByIdentifier`, read against this
-/// vocabulary.
-pub(super) fn answer<D: DataIdentifier>(from: Address, answer: Final<'_>) -> Answer<'_, D> {
+/// One server's answer to a functional `ReadDataByIdentifier` for `asked`, read against
+/// this vocabulary.
+pub(super) fn answer<'r, D: DataIdentifier>(
+    from: Address,
+    answer: Final<'r>,
+    asked: &[[u8; 2]],
+) -> Answer<'r, D> {
     match answer {
         Final::Positive(rest) => match Records::validate(rest) {
-            Ok(records) => Answer::Positive { from, records },
+            Ok(records) if answers(&records, asked) => Answer::Positive { from, records },
+            Ok(_) => Answer::Malformed {
+                from,
+                error: MalformedResponse::Echo,
+            },
             Err(error) => Answer::Malformed { from, error },
         },
         Final::Negative(code) => Answer::Negative { from, code },
         Final::Malformed(error) => Answer::Malformed { from, error },
     }
+}
+
+/// Whether `records` answers a request for `asked`: each identifier it carries was asked
+/// for, and no more often than it was asked for.
+///
+/// ISO 14229-1:2020 Table 190 has a server answer `requestOutOfRange` only where it
+/// supports none of the identifiers, so one supporting some answers with those: a
+/// record may be missing, but none may be extra.
+fn answers<D: DataIdentifier>(records: &Records<'_, D>, asked: &[[u8; 2]]) -> bool {
+    records.clone().enumerate().all(|(at, (did, _))| {
+        let identifier = did.as_u16().to_be_bytes();
+        let before = records
+            .clone()
+            .take(at)
+            .filter(|(earlier, _)| earlier.as_u16().to_be_bytes() == identifier)
+            .count();
+        before < asked.iter().filter(|wanted| **wanted == identifier).count()
+    })
 }
 
 /// A `DiagnosticSessionControl` response: the session echo, then ISO 14229-1:2020
@@ -348,7 +384,9 @@ pub(super) fn session_timing(answer: Final<'_>) -> Response<SessionTiming> {
         Final::Positive([_session, p2_hi, p2_lo, star_hi, star_lo, ..]) => {
             Response::Positive(SessionTiming {
                 p2_server_max_ms: u16::from_be_bytes([*p2_hi, *p2_lo]),
-                p2_star_server_max_10ms: u16::from_be_bytes([*star_hi, *star_lo]),
+                p2_star_server_max: crate::P2StarServerMax::from_tens_of_millis(
+                    u16::from_be_bytes([*star_hi, *star_lo]),
+                ),
             })
         }
         Final::Positive(_) => Response::Malformed(MalformedResponse::Short),
@@ -361,12 +399,16 @@ pub(super) fn session_timing(answer: Final<'_>) -> Response<SessionTiming> {
 pub(super) fn request_download(
     buffer: &mut [u8],
     download: RequestDownloadRequest,
-) -> Option<usize> {
+) -> Result<usize, RequestError> {
     request(buffer, &Request::RequestDownload(download))
 }
 
 /// Encode a `TransferData` block into `buffer`.
-pub(super) fn transfer_data(buffer: &mut [u8], counter: u8, data: &[u8]) -> Option<usize> {
+pub(super) fn transfer_data(
+    buffer: &mut [u8],
+    counter: u8,
+    data: &[u8],
+) -> Result<usize, RequestError> {
     request(
         buffer,
         &Request::TransferData(TransferDataRequest::new(counter, data)),
@@ -377,7 +419,7 @@ pub(super) fn transfer_data(buffer: &mut [u8], counter: u8, data: &[u8]) -> Opti
 pub(super) fn request_transfer_exit(
     buffer: &mut [u8],
     parameter_record: &[u8],
-) -> Option<usize> {
+) -> Result<usize, RequestError> {
     let exit = RequestTransferExitRequest::new(parameter_record);
     request(buffer, &Request::RequestTransferExit(exit))
 }
@@ -397,7 +439,7 @@ mod tests {
         Arrived, Final, block_length, classify, decoded, final_response,
         read_data_by_identifier, request, session_timing,
     };
-    use crate::client::{MalformedResponse, Response};
+    use crate::client::{MalformedResponse, RequestError, Response};
     use crate::{DataIdentifier, RecordError, SessionTiming};
     use uds_protocol::NegativeResponseCode;
     use uds_session::{ClientRx, SessionSelection, Solicitation};
@@ -425,17 +467,20 @@ mod tests {
         let mut request = [0; 7];
         assert_eq!(
             read_data_by_identifier(&mut request, &[Did(0xF40D), Did(0xF190)], 2),
-            Some(5)
+            Ok(5)
         );
         assert_eq!(request.get(..5), Some(&[0x22, 0xF4, 0x0D, 0xF1, 0x90][..]));
-        assert_eq!(read_data_by_identifier::<Did>(&mut request, &[], 2), None);
+        assert_eq!(
+            read_data_by_identifier::<Did>(&mut request, &[], 2),
+            Err(RequestError::NoIdentifiers)
+        );
         assert_eq!(
             read_data_by_identifier(&mut request, &[Did(1), Did(2), Did(3)], 2),
-            None
+            Err(RequestError::TooManyIdentifiers { max: 2 })
         );
         assert_eq!(
             read_data_by_identifier(&mut request, &[Did(1), Did(2), Did(3), Did(4)], 4),
-            None
+            Err(RequestError::DoesNotFit)
         );
     }
 
@@ -501,10 +546,10 @@ mod tests {
         use uds_protocol::{EcuResetRequest, Request, ResetType};
         let reset = Request::EcuReset(EcuResetRequest::new(false, ResetType::HardReset));
         let mut buffer = [0; 2];
-        assert_eq!(request(&mut buffer, &reset), Some(2));
+        assert_eq!(request(&mut buffer, &reset), Ok(2));
         assert_eq!(buffer, [0x11, 0x01]);
         let mut short = [0; 1];
-        assert_eq!(request(&mut short, &reset), None);
+        assert_eq!(request(&mut short, &reset), Err(RequestError::DoesNotFit));
     }
 
     /// A positive reply is decoded exactly; a short one is `Short`, trailing bytes are
@@ -547,7 +592,7 @@ mod tests {
             session_timing(final_response(&response, Arrived::Whole)),
             Response::Positive(SessionTiming {
                 p2_server_max_ms: 50,
-                p2_star_server_max_10ms: 500,
+                p2_star_server_max: crate::P2StarServerMax::from_tens_of_millis(500),
             })
         );
         assert!(matches!(

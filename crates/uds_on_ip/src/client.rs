@@ -11,11 +11,36 @@ use simple_doip::service::{
 use uds_services::{AfterSend, ClientTransport, TransportEvent, UdsTransport};
 use uds_session::{Address, Ai, Reloads, SResult, TaType, Timestamp};
 
-use crate::error::ClientTransportError;
+use crate::error::DoIpClientTransportError;
 use crate::mapping::{
     ADDRESSES, PERIODIC_RESPONSE_PAYLOAD_TYPE, ai, awaits_response, from_logical, refused,
     response_pending, s_result, target_of, to_doip_ta_type, to_logical,
 };
+use crate::profile::server_may_close_after;
+
+/// The length of the keep-alive a `uds_services` client sends: what each request waiting
+/// ahead of a call's request takes of a [`DoIpClientTransport`]'s `QUEUE`.
+pub const KEEP_ALIVE_LEN: usize = uds_services::KEEP_ALIVE_LEN;
+
+/// What a physical request that expects an answer does when its server's last such
+/// request was confirmed and never answered: whether that answer, arriving late, may be
+/// taken for this one's.
+///
+/// Neither ISO 14229-5 nor ISO 13400-2 says;
+/// [`DoIpClientTransport::with_late_reply_guard`] chooses.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum LateReplyGuard {
+    /// The request goes on a new connection, so a late answer cannot arrive on it. The
+    /// client sees the old connection's [`TransportEvent::Closed`] and pays a routing
+    /// activation and the connection's reconnect back-off.
+    #[default]
+    Reconnect,
+    /// The request goes on the same connection, for a server known never to answer late,
+    /// or a tester that wants to watch a late answer arrive. A late answer is taken for
+    /// this request's.
+    Off,
+}
 
 /// ISO 14229-5:2022 over a `DoIP` tester connection: the client side of `UDSonIP`, for a
 /// `uds_services::Client`.
@@ -27,9 +52,10 @@ use crate::mapping::{
 ///   waits in the transport, up to `WAITING` of them in up to `QUEUE` bytes, and is sent
 ///   once the one before it is confirmed, so a keep-alive and a call's request never
 ///   collide. `QUEUE` is at least
-///   [`MAX_PDU`](simple_doip::service::DiagnosticConnection::MAX_PDU),
-///   which [`Self::new`] checks at compile time, so a request always finds room behind a
-///   keep-alive.
+///   [`MAX_PDU`](simple_doip::service::DiagnosticConnection::MAX_PDU) plus
+///   [`KEEP_ALIVE_LEN`] for each of the other `WAITING - 1` requests, which
+///   [`Self::new`] checks at compile time, so a request of any length finds room behind
+///   the keep-alives waiting ahead of it.
 /// - **Refusals.** A request the connection refuses is accepted here all the same and
 ///   confirmed failed by the next [`UdsTransport::next_event`], as ISO 13400-2:2019 8.3.1
 ///   confirms every request.
@@ -47,7 +73,8 @@ use crate::mapping::{
 /// - **A late reply.** A physical request that expects a response, to a server whose
 ///   last such request was confirmed and never answered, goes on a new connection, so
 ///   that answer, arriving after the client gave up on it, cannot be taken for this
-///   one's. A response-pending message is not an answer. A request whose positive
+///   one's, unless [`Self::with_late_reply_guard`] turned that off. A response-pending
+///   message is not an answer. A request whose positive
 ///   response is suppressed expects none, so it neither leaves a reply to arrive late
 ///   nor gives up a connection a reply is awaited on.
 /// - **Periodic responses.** A message of ISO 14229-5:2022 REQ 7.16's payload type
@@ -96,6 +123,7 @@ pub struct DoIpClientTransport<
     connection: C,
     reloads: Reloads,
     max_data_size: Option<u32>,
+    late_reply_guard: LateReplyGuard,
     link: Link,
     /// The request the connection carries, awaiting its confirm, as it was made.
     sent: Option<Ai>,
@@ -103,14 +131,6 @@ pub struct DoIpClientTransport<
     owed: Owed<PEERS>,
     peers: [Option<Peer>; PEERS],
 }
-
-/// The first octet of a positive `DiagnosticSessionControl` response, after which a
-/// server leaving its software closes the connection (ISO 14229-5:2022 REQ 7.9).
-const LEAVING_SESSION: u8 = 0x50;
-
-/// The first octet of a positive `ECUReset` response, after which a server closes the
-/// connection (ISO 14229-5:2022 REQ 7.11).
-const RESETTING: u8 = 0x51;
 
 /// Where a server's last request that expects an answer stands.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -184,15 +204,15 @@ impl<C: TesterConnection, const QUEUE: usize, const PEERS: usize, const WAITING:
     /// A transport over `connection`, loading the session layer's response timer with
     /// `reloads`.
     ///
-    /// Does not compile where `QUEUE` is below the connection's
-    /// [`MAX_PDU`](simple_doip::service::DiagnosticConnection::MAX_PDU), or `WAITING`
-    /// below `PEERS + 1`.
+    /// Does not compile where `WAITING` is below `PEERS + 1`, or `QUEUE` is below the
+    /// connection's [`MAX_PDU`](simple_doip::service::DiagnosticConnection::MAX_PDU)
+    /// plus [`KEEP_ALIVE_LEN`] × (`WAITING` − 1).
     ///
     /// # Arguments
     ///
     /// * `connection` - a connected [`TesterConnection`], routing activated. It sends
-    ///   every request, and opens every later connection, in the protocol version it was
-    ///   given (`simple_doip`'s `Tester::connect_with_version`).
+    ///   every request, and opens every later connection, as it was given
+    ///   (`simple_doip`'s `ConnectOptions`).
     /// * `reloads` - the `tP6_Client` pair; see
     ///   [`profile::bench_reloads`](crate::profile::bench_reloads).
     ///
@@ -240,18 +260,22 @@ impl<C: TesterConnection, const QUEUE: usize, const PEERS: usize, const WAITING:
     pub const fn new(connection: C, reloads: Reloads) -> Self {
         const {
             assert!(
-                QUEUE >= C::MAX_PDU,
-                "QUEUE is below the connection's MAX_PDU"
-            );
-            assert!(
                 WAITING > PEERS,
                 "WAITING is below PEERS + 1: a keep-alive per server and a request"
+            );
+            assert!(
+                QUEUE
+                    >= C::MAX_PDU.saturating_add(
+                        KEEP_ALIVE_LEN.saturating_mul(WAITING.saturating_sub(1))
+                    ),
+                "QUEUE is below MAX_PDU plus a keep-alive for each other request waiting"
             );
         };
         Self {
             connection,
             reloads,
             max_data_size: None,
+            late_reply_guard: LateReplyGuard::Reconnect,
             link: Link::Up,
             sent: None,
             waiting: Waiting::EMPTY,
@@ -276,6 +300,18 @@ impl<C, const QUEUE: usize, const PEERS: usize, const WAITING: usize>
     #[must_use]
     pub const fn with_max_data_size(mut self, max_data_size: Option<u32>) -> Self {
         self.max_data_size = max_data_size;
+        self
+    }
+
+    /// The same transport, guarding against a late reply as `guard` says, in place of
+    /// [`LateReplyGuard::Reconnect`].
+    ///
+    /// # Arguments
+    ///
+    /// * `guard` - see [`LateReplyGuard`].
+    #[must_use]
+    pub const fn with_late_reply_guard(mut self, guard: LateReplyGuard) -> Self {
+        self.late_reply_guard = guard;
         self
     }
 
@@ -317,7 +353,7 @@ impl<C, const QUEUE: usize, const PEERS: usize, const WAITING: usize>
     /// Notes what `data`, from `sender`, answers and says of the connection's fate.
     fn heard(&mut self, sender: Address, data: &[u8]) {
         if let Some(peer) = self.peer(sender) {
-            peer.leaving = matches!(data.first(), Some(&(LEAVING_SESSION | RESETTING)));
+            peer.leaving = server_may_close_after(data);
             if !response_pending(data) {
                 peer.awaiting = Awaiting::Nothing;
             }
@@ -328,7 +364,8 @@ impl<C, const QUEUE: usize, const PEERS: usize, const WAITING: usize>
     /// server's last request was confirmed and never answered, and that answer, arriving
     /// late, would be taken for this one's.
     fn late_reply_possible(&self, ai: Ai, expects: bool) -> bool {
-        expects
+        self.late_reply_guard == LateReplyGuard::Reconnect
+            && expects
             && ai.ta_type == TaType::Physical
             && self
                 .peers
@@ -381,17 +418,21 @@ impl<C: TesterConnection, const QUEUE: usize, const PEERS: usize, const WAITING:
     DoIpClientTransport<C, QUEUE, PEERS, WAITING>
 {
     /// Owes `ai`'s failed confirm for `refusal`; `Err` where nothing more can be owed.
-    fn refuse(&mut self, ai: Ai, refusal: Refusal) -> Result<(), ClientTransportError<C>> {
+    fn refuse(
+        &mut self,
+        ai: Ai,
+        refusal: Refusal,
+    ) -> Result<(), DoIpClientTransportError<C>> {
         if self.owed.refuse(ai, s_result(refused(refusal))) {
             Ok(())
         } else {
-            Err(ClientTransportError::Refused(refusal))
+            Err(DoIpClientTransportError::Refused(refusal))
         }
     }
 
     /// Hands `data` to the connection, or holds it until the connection can take it,
     /// reconnected by the next [`UdsTransport::next_event`] where it has ended.
-    fn send(&mut self, ai: Ai, data: &[u8]) -> Result<(), ClientTransportError<C>> {
+    fn send(&mut self, ai: Ai, data: &[u8]) -> Result<(), DoIpClientTransportError<C>> {
         let ta = target_of(ai)?;
         let expects = awaits_response(data);
         if self.late_reply_possible(ai, expects) {
@@ -415,11 +456,13 @@ impl<C: TesterConnection, const QUEUE: usize, const PEERS: usize, const WAITING:
             Err(ConnectionRefusal::Refused(Refusal::NoRoom)) => {
                 self.wait(ai, data, expects)
             }
-            Err(ConnectionRefusal::Closed) => {
+            Err(ConnectionRefusal::Refused(refusal)) => self.refuse(ai, refusal),
+            // Closed, or a refusal this binding does not name: give the connection up and
+            // send on a new one.
+            Err(_) => {
                 self.end();
                 self.wait(ai, data, expects)
             }
-            Err(ConnectionRefusal::Refused(refusal)) => self.refuse(ai, refusal),
         }
     }
 
@@ -428,7 +471,7 @@ impl<C: TesterConnection, const QUEUE: usize, const PEERS: usize, const WAITING:
         ai: Ai,
         data: &[u8],
         expects: bool,
-    ) -> Result<(), ClientTransportError<C>> {
+    ) -> Result<(), DoIpClientTransportError<C>> {
         if self.waiting.push(ai, data) {
             self.requested(ai, expects);
             Ok(())
@@ -444,7 +487,7 @@ impl<C: TesterConnection, const QUEUE: usize, const PEERS: usize, const WAITING:
     async fn reconnect(
         &mut self,
         deadline: Option<Timestamp>,
-    ) -> Result<Reconnection, ClientTransportError<C>> {
+    ) -> Result<Reconnection, DoIpClientTransportError<C>> {
         if self.link == Link::Up || self.waiting.is_empty() {
             return Ok(Reconnection::Connected);
         }
@@ -454,10 +497,10 @@ impl<C: TesterConnection, const QUEUE: usize, const PEERS: usize, const WAITING:
                 self.link = Link::Up;
                 Ok(Reconnection::Connected)
             }
-            Ok(Reconnection::Deadline) => Ok(Reconnection::Deadline),
+            Ok(other) => Ok(other),
             Err(error) => {
                 self.fail_waiting();
-                Err(ClientTransportError::Reconnect(error))
+                Err(DoIpClientTransportError::Reconnect(error))
             }
         }
     }
@@ -490,11 +533,12 @@ impl<C: TesterConnection, const QUEUE: usize, const PEERS: usize, const WAITING:
                 self.waiting.pop();
             }
             Err(ConnectionRefusal::Refused(Refusal::NoRoom)) => {}
-            Err(ConnectionRefusal::Closed) => self.end(),
             Err(ConnectionRefusal::Refused(refusal)) => {
                 self.waiting.fail_front(s_result(refused(refusal)));
                 confirmed(&mut self.peers, ai, refused(refusal));
             }
+            // Closed, or a refusal this binding does not name.
+            Err(_) => self.end(),
         }
     }
 
@@ -503,14 +547,14 @@ impl<C: TesterConnection, const QUEUE: usize, const PEERS: usize, const WAITING:
         &mut self,
         event: ConnectionEvent<'_>,
         start: usize,
-    ) -> Result<Option<Received>, ClientTransportError<C>> {
+    ) -> Result<Option<Received>, DoIpClientTransportError<C>> {
         let own = self.connection.address().address();
-        let span = |pdu: &[u8]| -> Result<Range<usize>, ClientTransportError<C>> {
+        let span = |pdu: &[u8]| -> Result<Range<usize>, DoIpClientTransportError<C>> {
             let at = pdu
                 .as_ptr()
                 .addr()
                 .checked_sub(start)
-                .ok_or(ClientTransportError::PduOutsideBuffer)?;
+                .ok_or(DoIpClientTransportError::PduOutsideBuffer)?;
             Ok(at..at.saturating_add(pdu.len()))
         };
         Ok(match event {
@@ -546,10 +590,6 @@ impl<C: TesterConnection, const QUEUE: usize, const PEERS: usize, const WAITING:
                 }
                 _ => None,
             },
-            ConnectionEvent::Indication { .. }
-            | ConnectionEvent::IndicationTruncated { .. }
-            | ConnectionEvent::Unmodelled { .. }
-            | ConnectionEvent::UnmodelledTruncated { .. } => None,
             ConnectionEvent::Confirm { result, .. } => self.sent.take().map(|ai| {
                 confirmed(&mut self.peers, ai, result);
                 Received::Event(Event::Conf(ai, s_result(result)))
@@ -559,6 +599,12 @@ impl<C: TesterConnection, const QUEUE: usize, const PEERS: usize, const WAITING:
                 None
             }
             ConnectionEvent::Deadline => Some(Received::Event(Event::Deadline)),
+            // Not this tester's, or an event this binding does not name.
+            ConnectionEvent::Indication { .. }
+            | ConnectionEvent::IndicationTruncated { .. }
+            | ConnectionEvent::Unmodelled { .. }
+            | ConnectionEvent::UnmodelledTruncated { .. }
+            | _ => None,
         })
     }
 }
@@ -573,7 +619,7 @@ enum Received {
 impl<C: TesterConnection, const QUEUE: usize, const PEERS: usize, const WAITING: usize>
     UdsTransport for DoIpClientTransport<C, QUEUE, PEERS, WAITING>
 {
-    type Error = ClientTransportError<C>;
+    type Error = DoIpClientTransportError<C>;
 
     /// The connection's
     /// [`MAX_PDU`](simple_doip::service::DiagnosticConnection::MAX_PDU),
@@ -592,9 +638,9 @@ impl<C: TesterConnection, const QUEUE: usize, const PEERS: usize, const WAITING:
     ///
     /// # Errors
     ///
-    /// [`ClientTransportError::Mapping`] if the addressing cannot be carried, and
-    /// [`ClientTransportError::Refused`] if the connection refuses the request while the
-    /// transport already owes as many confirmations as it can hold.
+    /// [`DoIpClientTransportError::Mapping`] if the addressing cannot be carried, and
+    /// [`DoIpClientTransportError::Refused`] if the connection refuses the request while
+    /// the transport already owes as many confirmations as it can hold.
     fn t_data_req(
         &mut self,
         ai: Ai,
@@ -614,10 +660,10 @@ impl<C: TesterConnection, const QUEUE: usize, const PEERS: usize, const WAITING:
     ///
     /// # Errors
     ///
-    /// [`ClientTransportError::Connection`] where the connection fails other than by
-    /// closing, [`ClientTransportError::Reconnect`] where no new connection could be
+    /// [`DoIpClientTransportError::Connection`] where the connection fails other than by
+    /// closing, [`DoIpClientTransportError::Reconnect`] where no new connection could be
     /// opened for a waiting request, which is then confirmed failed, and
-    /// [`ClientTransportError::PduOutsideBuffer`] where the connection reports a PDU
+    /// [`DoIpClientTransportError::PduOutsideBuffer`] where the connection reports a PDU
     /// outside `buffer`.
     async fn next_event<'b>(
         &mut self,
@@ -640,7 +686,7 @@ impl<C: TesterConnection, const QUEUE: usize, const PEERS: usize, const WAITING:
                 .connection
                 .next_event(&mut *buffer, deadline.map(|at| service::Timestamp(at.0)))
                 .await
-                .map_err(ClientTransportError::Connection)?;
+                .map_err(DoIpClientTransportError::Connection)?;
             match self.receive(event, start)? {
                 Some(Received::Event(event)) => return Ok(event.into()),
                 Some(found) => break found,
@@ -648,8 +694,11 @@ impl<C: TesterConnection, const QUEUE: usize, const PEERS: usize, const WAITING:
             }
         };
         let buffer: &'b [u8] = buffer;
-        let data =
-            |at: Range<usize>| buffer.get(at).ok_or(ClientTransportError::PduOutsideBuffer);
+        let data = |at: Range<usize>| {
+            buffer
+                .get(at)
+                .ok_or(DoIpClientTransportError::PduOutsideBuffer)
+        };
         Ok(match found {
             Received::Ind(ai, at, None) => TransportEvent::DataInd {
                 ai,
@@ -701,7 +750,7 @@ impl<C: TesterConnection, const QUEUE: usize, const PEERS: usize, const WAITING:
     ///
     /// # Errors
     ///
-    /// [`ClientTransportError::Close`] where closing fails; the connection is closed
+    /// [`DoIpClientTransportError::Close`] where closing fails; the connection is closed
     /// either way.
     async fn close(&mut self) -> Result<(), Self::Error> {
         self.peers = [None; PEERS];
@@ -710,7 +759,7 @@ impl<C: TesterConnection, const QUEUE: usize, const PEERS: usize, const WAITING:
         self.connection
             .close()
             .await
-            .map_err(ClientTransportError::Close)
+            .map_err(DoIpClientTransportError::Close)
     }
 }
 

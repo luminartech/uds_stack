@@ -39,7 +39,7 @@ use simple_doip::entity::{Entity, EntityAddress};
 use simple_doip::service::{
     ConnectionEvent, DiagnosticConnection, DoIpResult, EntityConfig, TesterAddress,
 };
-use simple_doip::tester::{ConnectError, Tester, TesterVersion};
+use simple_doip::tester::{ConnectError, ConnectOptions, Tester, TesterVersion};
 use simple_doip::{LogicalAddress, TaType};
 use uds_on_ip::DoIpClientTransport;
 
@@ -228,7 +228,7 @@ impl Loopback {
     ///
     /// # Errors
     ///
-    /// Whatever [`Tester::connect_with_version`] returns.
+    /// Whatever [`Tester::connect_with`] returns.
     ///
     /// # Panics
     ///
@@ -239,11 +239,14 @@ impl Loopback {
         backoff: embassy_time::Duration,
     ) -> Result<SensorTester, TesterConnectError> {
         let sa = TesterAddress::new(TESTER).expect("a tester address");
-        Ok(
-            Tester::connect_with_version(self.stack, self.remote, sa, version)
-                .await?
-                .with_reconnect_backoff(backoff),
+        Ok(Tester::connect_with(
+            self.stack,
+            self.remote,
+            sa,
+            ConnectOptions::new().version(version),
         )
+        .await?
+        .with_reconnect_backoff(backoff))
     }
 
     /// The client transport over a tester from [`Self::tester_backing_off`], its
@@ -424,11 +427,7 @@ pub async fn next<C: DiagnosticConnection>(tester: &mut C) -> Then {
                 return Then::Response(sa, pdu.to_vec());
             }
             ConnectionEvent::Closed => return Then::Closed,
-            ConnectionEvent::Confirm { .. }
-            | ConnectionEvent::IndicationTruncated { .. }
-            | ConnectionEvent::Unmodelled { .. }
-            | ConnectionEvent::UnmodelledTruncated { .. }
-            | ConnectionEvent::Deadline => {}
+            _ => {}
         }
     }
 }

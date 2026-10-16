@@ -13,7 +13,7 @@ use crate::params::{ServerParameter, ServerParams, ServerReload};
 use crate::reaction::Reaction;
 use crate::rejection::{Cause, Rejection};
 use crate::result::SResult;
-use crate::time::{Timestamp, earlier};
+use crate::time::Timestamp;
 use crate::timer::{Reaches, Timer};
 
 /// One transmission between its `S_Data.req` and its `T_Data.conf`.
@@ -190,12 +190,7 @@ impl<const A: usize> Server<A> {
     /// ```compile_fail,E0080
     /// use uds_session::{Server, ServerParams};
     ///
-    /// let params = ServerParams {
-    ///     s3_server: 5_000,
-    ///     p2_server_max: 50,
-    ///     p2_star_server_max: 5_000,
-    ///     response_pending_lead: 0,
-    /// };
+    /// let params = ServerParams::new(5_000, 50, 5_000, 0);
     /// let _mute = Server::<0>::new([], params);
     /// ```
     #[must_use]
@@ -677,7 +672,7 @@ impl<const A: usize> Server<A> {
         };
         let p2 = self.service.and_then(|s| s.p2.deadline_by(s.lead));
         match (s3, p2) {
-            (Some(a), Some(b)) => Some(earlier(a, b)),
+            (Some(a), Some(b)) => Some(a.earlier(b)),
             (a, b) => a.or(b),
         }
     }

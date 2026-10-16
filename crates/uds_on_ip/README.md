@@ -53,10 +53,11 @@ session state machine are
 [`uds_session`](https://github.com/luminartech/uds_stack/tree/main/crates/uds_session)'s,
 and are used from there rather than redeclared here.
 
-The one exception is narrow and forced by the standard: clause 8 keys TCP
-connection handling on two services (`DiagnosticSessionControl` and
-`ECUReset`), so this crate recognises their request identifiers and `ECUReset`'s
-positive response identifier, and nothing else about the services.
+The exception is narrow and forced by the standard. Clause 8 keys TCP
+connection handling on the positive `DiagnosticSessionControl` and `ECUReset`
+responses, and whether a request is owed an answer depends on its
+suppressPosRspMsgIndicationBit and on a response-pending negative response. That is
+all this crate reads of a message.
 
 It also names no async runtime. An `async fn` implies neither an executor nor
 `std`, but a runtime *dependency* would compromise the `no_std` build, so
@@ -90,12 +91,9 @@ this compares to the rest of the stack.
 
 ## Feature flags
 
-| Feature | Implies | What it gives you |
-|---------|---------|--------------------|
-| `std` *(off by default)* | `alloc` | `std::error::Error` for `Error`, and `std` on `simple_doip`/`uds_protocol`. |
-| `alloc` | — | The `alloc`-only layers of `simple_doip` and `uds_protocol`. Nothing in this crate's own code needs it. |
-
-`default = []`, so the crate is `no_std` out of the box.
+None. The crate is `no_std` in every configuration, and its errors implement
+`core::error::Error`. Enable `simple_doip`'s and `uds_protocol`'s features on those
+crates directly.
 
 ## `no_std` support
 

@@ -81,15 +81,11 @@ uds_server! {
     Ecu: ReadDataByIdentifier, TesterPresent;
     transport = DoIpTransport<MockEntity<2>, 2>,
     peers = 1,
+    services = EcuServices,
     server = EcuServer,
 }
 
-const PARAMS: ServerParams = ServerParams {
-    s3_server: 5_000,
-    p2_server_max: 50,
-    p2_star_server_max: 5_000,
-    response_pending_lead: 0,
-};
+const PARAMS: ServerParams = ServerParams::new(5_000, 50, 5_000, 0);
 
 /// One tester leaving ends nothing of another's: tester B's slow read, in progress when
 /// tester A's connection closes, is still answered on B's connection.

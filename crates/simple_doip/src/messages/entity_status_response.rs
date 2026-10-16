@@ -13,6 +13,7 @@ pub enum EntityStatusNodeType {
     /// A `DoIP` node: an entity with no vehicle sub-network behind it.
     DoIPNode = 0x01,
     /// A node type value outside the range this crate models.
+    #[non_exhaustive]
     Reserved(u8),
 }
 

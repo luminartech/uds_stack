@@ -10,8 +10,14 @@ use automotive_wire_codec::{write_bytes, write_u8};
 #[cfg_attr(feature = "serde", serde(try_from = "u8", into = "u8"))]
 #[cfg_attr(feature = "clap", derive(clap::ValueEnum))]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-#[non_exhaustive]
 pub enum DtcSettingType {
+    /// ISO/SAE reserved (`0x00`, `0x03`-`0x3F` and `0x7F`, ISO 14229-1:2020 Table 128).
+    ///
+    /// Built only by [`DtcSettingType::try_from`]. A server that supports none answers it
+    /// `subFunctionNotSupported` (Table 132).
+    #[cfg_attr(feature = "clap", clap(skip))]
+    #[non_exhaustive]
+    IsoSaeReserved(u8),
     /// Re-enable DTC status-bit updates.
     On,
     /// Disable DTC status-bit updates.
@@ -38,7 +44,8 @@ impl From<DtcSettingType> for u8 {
         match value {
             DtcSettingType::On => 0x01,
             DtcSettingType::Off => 0x02,
-            DtcSettingType::VehicleManufacturerSpecific(value)
+            DtcSettingType::IsoSaeReserved(value)
+            | DtcSettingType::VehicleManufacturerSpecific(value)
             | DtcSettingType::SystemSupplierSpecific(value) => value,
         }
     }
@@ -47,16 +54,16 @@ impl From<DtcSettingType> for u8 {
 impl TryFrom<u8> for DtcSettingType {
     type Error = Error;
 
-    /// ISO 14229-1:2020 Table 128 defines `0x01`/`0x02` and two manufacturer-defined
-    /// ranges, and reserves `0x00`, `0x03`-`0x3F` and `0x7F`.
+    /// ISO 14229-1:2020 Table 128 assigns every value of the 7-bit sub-function.
     ///
     /// # Errors
-    /// Returns [`Error::InvalidDtcSetting`] for a reserved value, which maps to
-    /// [`NegativeResponseCode::SubFunctionNotSupported`] as Table 132 requires.
+    /// Returns [`Error::InvalidDtcSetting`] for a byte with bit 7 set, which is the
+    /// suppressPosRspMsgIndicationBit rather than part of the setting.
     fn try_from(value: u8) -> Result<Self, Self::Error> {
         match value {
             0x01 => Ok(Self::On),
             0x02 => Ok(Self::Off),
+            0x00 | 0x03..=0x3F | 0x7F => Ok(Self::IsoSaeReserved(value)),
             0x40..=0x5F => Ok(Self::VehicleManufacturerSpecific(value)),
             0x60..=0x7E => Ok(Self::SystemSupplierSpecific(value)),
             _ => Err(Error::InvalidDtcSetting(value)),
@@ -268,21 +275,18 @@ mod request {
     }
 
     #[test]
-    fn reserved_setting_types_are_still_rejected() {
-        // Table 128 reserves 0x00, 0x03-0x3F and 0x7F. ControlDTCSetting and RoutineControl
-        // are the two services that validate their sub-function, so both must answer NRC
-        // 0x12.
+    fn reserved_setting_types_decode_as_reserved() {
+        // Table 128 reserves 0x00, 0x03-0x3F and 0x7F. They classify rather than fail, as
+        // every sibling sub-function's reserved values do; a server answers them 0x12
+        // from its own lookup (Table 132).
         for byte in [0x00u8, 0x03, 0x3F, 0x7F] {
-            let err = <ControlDtcSettingRequest as Decode>::decode(&[byte])
-                .expect_err("a reserved DTCSettingType must be rejected");
+            let wire = [byte];
+            let (req, _) = <ControlDtcSettingRequest as Decode>::decode(&wire).unwrap();
             assert!(
-                matches!(err, Error::InvalidDtcSetting(got) if got == byte),
-                "wrong error for {byte:#04X}: {err:?}"
+                matches!(req.setting, DtcSettingType::IsoSaeReserved(got) if got == byte),
+                "{byte:#04X}"
             );
-            assert_eq!(
-                err.negative_response_code(),
-                Some(NegativeResponseCode::SubFunctionNotSupported)
-            );
+            assert_eq!(u8::from(req.setting), byte);
         }
     }
 
@@ -321,11 +325,13 @@ mod request {
     }
 
     #[test]
-    fn invalid_setting_byte_carries_the_value() {
-        // An unrecognized setting must surface the offending byte, like every other
-        // service's Invalid<Service>Type error, not the generic length/format error.
-        let err = <ControlDtcSettingRequest as Decode>::decode(&[0x09]).unwrap_err();
-        assert!(matches!(err, Error::InvalidDtcSetting(0x09)));
+    fn a_setting_byte_with_bit_7_carries_the_value() {
+        // Bit 7 is the suppressPosRspMsgIndicationBit, not part of the setting, so a byte
+        // with it set is no DTCSettingType and surfaces the offending byte.
+        assert!(matches!(
+            DtcSettingType::try_from(0x81),
+            Err(Error::InvalidDtcSetting(0x81))
+        ));
     }
 
     #[test]

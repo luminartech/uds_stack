@@ -12,13 +12,14 @@ use core::future::Future;
 use core::task::Poll;
 use uds_services::{
     Address, AddressAndLengthFormatIdentifier, Ai, Answer, CLEAR_ALL_DTCS, ClientError,
-    ClientSet, ClientTiming, CommunicationControlType, CommunicationType,
-    DataFormatIdentifier, DataIdentifier, DiagnosticSessionType, DtcExtDataRecordNumber,
-    DtcRecord, DtcSettingType, DtcSnapshotRecordNumber, DtcStatusMask, FunctionalKeepAlive,
-    KeepAlive, MalformedResponse, Mtype, NegativeResponseCode, PhysicalKeepAlive,
-    ReadDtcInfoResponse, ReadDtcInfoSubFunction, RecordError, Reloads, Repeats, Replaced,
-    ResetType, Response, RoutineControlSubFunction, RoutineIdentifier, SResult,
-    SecurityLevel, SessionTiming, SubnetNumber, TaType, Timestamp, uds_client,
+    ClientSet, ClientTiming, CommunicationControlRequest, CommunicationControlType,
+    CommunicationType, DataFormatIdentifier, DataIdentifier, DiagnosticSessionType,
+    DtcExtDataRecordNumber, DtcRecord, DtcSettingType, DtcSnapshotRecordNumber,
+    DtcStatusMask, FunctionalKeepAlive, KeepAlive, MalformedResponse, Mtype,
+    NegativeResponseCode, PhysicalKeepAlive, ReadDtcInfoResponse, ReadDtcInfoSubFunction,
+    RecordError, Reloads, Repeats, Replaced, Reply, RequestError, ResetType, Response,
+    RoutineControlSubFunction, RoutineIdentifier, SResult, SecurityLevel, SessionTiming,
+    SubnetNumber, TaType, Timestamp, uds_client,
 };
 use uds_session::TransportError;
 
@@ -27,7 +28,9 @@ const ECU: Address = Address(0x0010);
 const OTHER_ECU: Address = Address(0x0011);
 const GROUP: Address = Address(0xE400);
 const S3_CLIENT: u32 = 2_000;
-const TIMING: ClientTiming = ClientTiming::new(10, 10, 0);
+const TIMING: ClientTiming = ClientTiming::new(0)
+    .physical_spacing(10)
+    .functional_spacing(10);
 
 /// The request to `ecu`, physically addressed.
 const fn to(ecu: Address) -> Ai {
@@ -59,36 +62,31 @@ const fn from(ecu: Address) -> Ai {
 
 const FAILED: SResult = SResult::Transport(TransportError(1));
 
-/// One identifier vocabulary per client below: `uds_client!` implements its
-/// `ClientSet` on the enumeration, so each mode needs its own.
-macro_rules! vocabulary {
-    ($name:ident) => {
-        #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-        enum $name {
-            Speed,
-            Odometer,
-        }
+/// The identifiers every client below names.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Did {
+    Speed,
+    Odometer,
+}
 
-        impl DataIdentifier for $name {
-            const MAX_RECORD_LEN: usize = 1;
-            fn as_u16(self) -> u16 {
-                match self {
-                    Self::Speed => 0xF40D,
-                    Self::Odometer => 0xF1A0,
-                }
-            }
-            fn from_u16(v: u16) -> Option<Self> {
-                match v {
-                    0xF40D => Some(Self::Speed),
-                    0xF1A0 => Some(Self::Odometer),
-                    _ => None,
-                }
-            }
-            fn split_record(self, buf: &[u8]) -> Result<(&[u8], &[u8]), RecordError> {
-                buf.split_at_checked(1).ok_or(RecordError::Short)
-            }
+impl DataIdentifier for Did {
+    const MAX_RECORD_LEN: usize = 1;
+    fn as_u16(self) -> u16 {
+        match self {
+            Self::Speed => 0xF40D,
+            Self::Odometer => 0xF1A0,
         }
-    };
+    }
+    fn from_u16(v: u16) -> Option<Self> {
+        match v {
+            0xF40D => Some(Self::Speed),
+            0xF1A0 => Some(Self::Odometer),
+            _ => None,
+        }
+    }
+    fn split_record(self, buf: &[u8]) -> Result<(&[u8], &[u8]), RecordError> {
+        buf.split_at_checked(1).ok_or(RecordError::Short)
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -106,23 +104,19 @@ impl RoutineIdentifier for Rid {
     }
 }
 
-vocabulary!(Did);
-vocabulary!(FunctionalDid);
-vocabulary!(WideDid);
-vocabulary!(WideFunctionalDid);
-vocabulary!(NarrowBlockDid);
-
 uds_client! {
     Did;
+    vocabulary = TesterVocabulary,
     transport = Script,
-    max_dids_per_request = 2,
     routines = Rid,
-    max_dtcs = 4,
-    max_dtc_record_len = 16,
-    max_seed_len = 2,
-    max_key_len = 2,
-    max_option_len = 4,
-    max_block_len = 16,
+    limits = uds_services::ClientLimits::new()
+        .max_dids_per_request(2)
+        .max_dtcs(4)
+        .max_dtc_record_len(16)
+        .max_seed_len(2)
+        .max_key_len(2)
+        .max_option_len(4)
+        .max_block_len(16),
     physical = 2,
     functional = 1,
     responders = 1,
@@ -131,16 +125,18 @@ uds_client! {
 }
 
 uds_client! {
-    FunctionalDid;
+    Did;
+    vocabulary = FunctionalTesterVocabulary,
     transport = Script,
-    max_dids_per_request = 2,
     routines = Rid,
-    max_dtcs = 4,
-    max_dtc_record_len = 16,
-    max_seed_len = 2,
-    max_key_len = 2,
-    max_option_len = 4,
-    max_block_len = 16,
+    limits = uds_services::ClientLimits::new()
+        .max_dids_per_request(2)
+        .max_dtcs(4)
+        .max_dtc_record_len(16)
+        .max_seed_len(2)
+        .max_key_len(2)
+        .max_option_len(4)
+        .max_block_len(16),
     physical = 1,
     functional = 1,
     responders = 2,
@@ -149,16 +145,18 @@ uds_client! {
 }
 
 uds_client! {
-    WideDid;
+    Did;
+    vocabulary = WideTesterVocabulary,
     transport = Script,
-    max_dids_per_request = 2,
     routines = Rid,
-    max_dtcs = 4,
-    max_dtc_record_len = 16,
-    max_seed_len = 2,
-    max_key_len = 2,
-    max_option_len = 4,
-    max_block_len = 16,
+    limits = uds_services::ClientLimits::new()
+        .max_dids_per_request(2)
+        .max_dtcs(4)
+        .max_dtc_record_len(16)
+        .max_seed_len(2)
+        .max_key_len(2)
+        .max_option_len(4)
+        .max_block_len(16),
     physical = 3,
     functional = 1,
     responders = 1,
@@ -167,16 +165,18 @@ uds_client! {
 }
 
 uds_client! {
-    WideFunctionalDid;
+    Did;
+    vocabulary = WideFunctionalTesterVocabulary,
     transport = Script,
-    max_dids_per_request = 2,
     routines = Rid,
-    max_dtcs = 4,
-    max_dtc_record_len = 16,
-    max_seed_len = 2,
-    max_key_len = 2,
-    max_option_len = 4,
-    max_block_len = 16,
+    limits = uds_services::ClientLimits::new()
+        .max_dids_per_request(2)
+        .max_dtcs(4)
+        .max_dtc_record_len(16)
+        .max_seed_len(2)
+        .max_key_len(2)
+        .max_option_len(4)
+        .max_block_len(16),
     physical = 2,
     functional = 1,
     responders = 2,
@@ -185,16 +185,18 @@ uds_client! {
 }
 
 uds_client! {
-    NarrowBlockDid;
+    Did;
+    vocabulary = NarrowBlockTesterVocabulary,
     transport = Script,
-    max_dids_per_request = 2,
     routines = Rid,
-    max_dtcs = 4,
-    max_dtc_record_len = 16,
-    max_seed_len = 2,
-    max_key_len = 2,
-    max_option_len = 4,
-    max_block_len = 2,
+    limits = uds_services::ClientLimits::new()
+        .max_dids_per_request(2)
+        .max_dtcs(4)
+        .max_dtc_record_len(16)
+        .max_seed_len(2)
+        .max_key_len(2)
+        .max_option_len(4)
+        .max_block_len(2),
     physical = 1,
     functional = 1,
     responders = 1,
@@ -361,7 +363,7 @@ fn tester_repeating(steps: &[Step], repeats: Repeats) -> Tester {
         Script::new(steps),
         TESTER,
         KeepAlive::physical(S3_CLIENT),
-        TIMING.with_repeats(repeats),
+        TIMING.repeats(repeats),
     )
 }
 
@@ -486,6 +488,119 @@ fn a_failed_transmissions_repeat_counts_against_the_ceiling() {
     assert_eq!(t.transport().sent_count, 2);
 }
 
+/// A functional `CommunicationControl` goes to the group with the suppress bit set in
+/// its second byte. Every server that performed it is silent, so its sequence ends when
+/// the window closes, and a physical read follows.
+#[test]
+fn a_functional_communication_control_is_suppressed_and_its_window_closes_empty()
+-> Result<(), uds_protocol::Error> {
+    let mut t = tester(&[
+        Step::Conf(FUNCTIONAL, SResult::Ok),
+        Step::At(1_000),
+        Step::Conf(to(ECU), SResult::Ok),
+        Step::Ind(from(ECU), SPEED),
+    ]);
+    let control = CommunicationControlRequest::new(
+        false,
+        CommunicationControlType::DisableRxAndTx,
+        CommunicationType::Normal,
+    )?;
+    let mut replies = t.communication_control_functional(GROUP, control);
+    assert_eq!(block_on(replies.next()), None);
+    drop(replies);
+    assert_eq!(
+        t.transport().addressed(0),
+        (Some(FUNCTIONAL), &[0x28, 0x83, 0x01][..])
+    );
+    assert!(matches!(
+        block_on(t.read_data_by_identifier(ECU, &[Did::Speed])),
+        Ok(Response::Positive(_))
+    ));
+    assert_eq!(t.transport().sent_count, 2);
+    assert!(t.transport().finished());
+    Ok(())
+}
+
+/// ISO 14229-1:2020 Table 5 — a server refusing a suppressed functional request still
+/// answers with a negative response, which the sequence lends; a positive from a server
+/// that ignored the suppress bit decodes as a `CommunicationControl` response.
+#[test]
+fn a_functional_communication_control_lends_a_servers_refusal()
+-> Result<(), uds_protocol::Error> {
+    let mut t = tester(&[
+        Step::Conf(FUNCTIONAL, SResult::Ok),
+        Step::Ind(from(ECU), &[0x7F, 0x28, 0x33]),
+        Step::Ind(from(OTHER_ECU), &[0x68, 0x03]),
+        Step::At(1_000),
+    ]);
+    let control = CommunicationControlRequest::new(
+        false,
+        CommunicationControlType::DisableRxAndTx,
+        CommunicationType::Normal,
+    )?;
+    let mut replies = t.communication_control_functional(GROUP, control);
+    assert_eq!(
+        block_on(replies.next()),
+        Some(Ok(Reply::Negative {
+            from: ECU,
+            code: NegativeResponseCode::SecurityAccessDenied,
+        }))
+    );
+    assert_eq!(
+        block_on(replies.next()),
+        Some(Ok(Reply::Positive { from: OTHER_ECU }))
+    );
+    assert_eq!(block_on(replies.next()), None);
+    drop(replies);
+    assert!(t.transport().finished());
+    Ok(())
+}
+
+/// A functional `ControlDTCSetting` goes to the group with the suppress bit clear and
+/// lends each server's reply in turn: a positive, a negative, and a positive echoing
+/// another setting skipped as an earlier request's. The window closes one response
+/// timeout after the last reply.
+#[test]
+fn a_functional_dtc_setting_lends_each_servers_reply() {
+    let mut t = tester(&[
+        Step::Conf(FUNCTIONAL, SResult::Ok),
+        Step::Ind(from(ECU), &[0xC5, 0x02]),
+        Step::Ind(from(OTHER_ECU), &[0xC5, 0x01]),
+        Step::Ind(from(OTHER_ECU), &[0x7F, 0x85, 0x22]),
+        Step::At(1_000),
+    ]);
+    let mut replies = t.control_dtc_setting_functional(GROUP, DtcSettingType::Off, &[]);
+    assert_eq!(
+        block_on(replies.next()),
+        Some(Ok(Reply::Positive { from: ECU }))
+    );
+    assert_eq!(
+        block_on(replies.next()),
+        Some(Ok(Reply::Negative {
+            from: OTHER_ECU,
+            code: NegativeResponseCode::ConditionsNotCorrect,
+        }))
+    );
+    assert_eq!(block_on(replies.next()), None);
+    drop(replies);
+    assert_eq!(
+        t.transport().addressed(0),
+        (Some(FUNCTIONAL), &[0x85, 0x02][..])
+    );
+    assert!(t.transport().finished());
+}
+
+/// A functional `ControlDTCSetting` no server answers ends its sequence when the window
+/// closes.
+#[test]
+fn a_functional_dtc_setting_no_server_answers_ends_empty() {
+    let mut t = tester(&[Step::Conf(FUNCTIONAL, SResult::Ok), Step::At(1_000)]);
+    let mut replies = t.control_dtc_setting_functional(GROUP, DtcSettingType::On, &[]);
+    assert_eq!(block_on(replies.next()), None);
+    drop(replies);
+    assert!(t.transport().finished());
+}
+
 /// A functionally addressed read is not under the ceiling: its window closes and its
 /// answers are collected as before.
 #[test]
@@ -606,12 +721,14 @@ fn a_read_of_nothing_or_too_much_sends_nothing() {
     let mut t = tester(&[]);
     assert_eq!(
         block_on(t.read_data_by_identifier(ECU, &[])).err(),
-        Some(ClientError::Request)
+        Some(ClientError::Request(RequestError::NoIdentifiers))
     );
     let three = [Did::Speed, Did::Odometer, Did::Speed];
     assert_eq!(
         block_on(t.read_data_by_identifier(ECU, &three)).err(),
-        Some(ClientError::Request)
+        Some(ClientError::Request(RequestError::TooManyIdentifiers {
+            max: 2
+        }))
     );
     assert_eq!(t.transport().sent_count, 0);
 }
@@ -763,7 +880,7 @@ fn a_functional_read_of_nothing_is_refused_at_the_first_next() {
     let mut answers = t.read_data_by_identifier_functional(GROUP, &[]);
     assert_eq!(
         block_on(answers.next()).map(Result::err),
-        Some(Some(ClientError::Request))
+        Some(Some(ClientError::Request(RequestError::NoIdentifiers)))
     );
     assert!(block_on(answers.next()).is_none());
 }
@@ -825,7 +942,7 @@ fn entering_a_session_returns_its_timing() {
         .ok(),
         Some(Response::Positive(SessionTiming {
             p2_server_max_ms: 50,
-            p2_star_server_max_10ms: 500,
+            p2_star_server_max: uds_services::P2StarServerMax::from_tens_of_millis(500),
         }))
     );
     assert_eq!(t.transport().sent_bytes(0), ENTER_EXTENDED);
@@ -1024,7 +1141,7 @@ fn a_functional_keep_alive_due_mid_exchange_goes_on_time() {
     let _ = block_on(
         t.diagnostic_session_control(ECU, DiagnosticSessionType::ExtendedDiagnosticSession),
     );
-    let read = block_on(t.read_data_by_identifier(ECU, &[FunctionalDid::Speed]));
+    let read = block_on(t.read_data_by_identifier(ECU, &[Did::Speed]));
     assert!(matches!(read, Ok(Response::Positive(_))), "{read:?}");
     let s = t.transport();
     assert_eq!(s.addressed(1), (Some(to(ECU)), READ));
@@ -1266,7 +1383,7 @@ fn a_held_keep_alive_the_transport_refuses_does_not_lose_the_answer() {
     let _ = block_on(
         t.diagnostic_session_control(ECU, DiagnosticSessionType::ExtendedDiagnosticSession),
     );
-    let read = block_on(t.read_data_by_identifier(ECU, &[FunctionalDid::Speed]));
+    let read = block_on(t.read_data_by_identifier(ECU, &[Did::Speed]));
     assert!(matches!(read, Ok(Response::Positive(_))), "{read:?}");
 }
 
@@ -1411,7 +1528,9 @@ fn the_wait_after_a_response_pending_includes_the_network_delay() {
             }),
             TESTER,
             KeepAlive::physical(S3_CLIENT),
-            ClientTiming::new(10, 10, network_delay),
+            ClientTiming::new(network_delay)
+                .physical_spacing(10)
+                .functional_spacing(10),
         );
         let _ = block_on(t.diagnostic_session_control(
             ECU,
@@ -1457,7 +1576,7 @@ fn a_timeout_found_while_sending_keep_alives_is_still_repeated() {
         ));
         assert!(matches!(entered, Ok(Response::Positive(_))), "{entered:?}");
     }
-    let read = block_on(t.read_data_by_identifier(THIRD_ECU, &[WideDid::Speed]));
+    let read = block_on(t.read_data_by_identifier(THIRD_ECU, &[Did::Speed]));
     assert!(matches!(read, Ok(Response::Positive(_))), "{read:?}");
     let s = t.transport();
     assert_eq!(s.addressed(3), (Some(to(ECU)), KEEP_ALIVE));
@@ -1600,7 +1719,7 @@ fn a_timeout_found_while_a_keep_alive_is_refused_is_not_lost() {
     let _ = block_on(t.diagnostic_session_control(ECU, extended));
     let _ = block_on(t.diagnostic_session_control(THIRD_ECU, extended));
     assert_eq!(block_on(t.idle_until(Timestamp(2_000))), Ok(()));
-    let read = block_on(t.read_data_by_identifier(OTHER_ECU, &[WideDid::Speed]));
+    let read = block_on(t.read_data_by_identifier(OTHER_ECU, &[Did::Speed]));
     assert_eq!(read.map(|_| ()), Err(ClientError::Timeout));
 }
 
@@ -1649,7 +1768,7 @@ fn a_functional_keep_alive_waits_for_a_functional_window() {
     let _ = block_on(
         t.diagnostic_session_control(ECU, DiagnosticSessionType::ExtendedDiagnosticSession),
     );
-    let mut answers = t.read_data_by_identifier_functional(GROUP, &[FunctionalDid::Speed]);
+    let mut answers = t.read_data_by_identifier_functional(GROUP, &[Did::Speed]);
     assert!(matches!(block_on(answers.next()), Some(Ok(_))));
     assert!(block_on(answers.next()).is_none());
     drop(answers);
@@ -1704,7 +1823,7 @@ fn a_session_change_reply_for_another_session_is_not_the_answer() {
         entered,
         Ok(Response::Positive(SessionTiming {
             p2_server_max_ms: 50,
-            p2_star_server_max_10ms: 500,
+            p2_star_server_max: uds_services::P2StarServerMax::from_tens_of_millis(500),
         }))
     );
     assert!(t.transport().finished());
@@ -1982,7 +2101,7 @@ fn a_write_of_nothing_sends_nothing() {
     let mut t = tester(&[]);
     assert_eq!(
         block_on(t.write_data_by_identifier(ECU, Did::Speed, &[])),
-        Err(ClientError::Request)
+        Err(ClientError::Request(RequestError::EmptyRecord))
     );
     assert!(t.transport().finished());
 }
@@ -2090,6 +2209,21 @@ fn a_key_is_sent_on_the_next_sub_function() {
     assert_eq!(
         t.transport().addressed(0),
         (Some(to(ECU)), &[0x27, 0x02, 0xC9, 0xA9][..])
+    );
+}
+
+/// ISO 14229-1:2020 Table 44: a `sendKey` response carries no seed, so bytes after the
+/// echo make it malformed rather than unlocking.
+#[test]
+fn a_key_response_carrying_a_seed_is_malformed() {
+    let mut t = tester(&[
+        Step::Conf(to(ECU), SResult::Ok),
+        Step::Ind(from(ECU), &[0x67, 0x02, 0x00]),
+    ]);
+    let unlocked = block_on(t.security_access_key(ECU, LEVEL_1, &[0xC9, 0xA9]));
+    assert!(
+        matches!(unlocked, Ok(Response::Malformed(MalformedResponse::Decode))),
+        "{unlocked:?}"
     );
 }
 
@@ -2306,31 +2440,31 @@ fn a_clear_is_confirmed_bare() {
 /// `CommunicationControl` (10.5) is its type, the communication type and subnet byte,
 /// and for an enhanced-address type the node identifier; its response echoes the type.
 #[test]
-fn communication_is_controlled_with_or_without_a_node() {
+fn communication_is_controlled_with_or_without_a_node() -> Result<(), uds_protocol::Error> {
     let mut t = tester(&[
         Step::Conf(to(ECU), SResult::Ok),
         Step::Ind(from(ECU), &[0x68, 0x00]),
         Step::Conf(to(ECU), SResult::Ok),
         Step::Ind(from(ECU), &[0x68, 0x04]),
     ]);
+    let plain = CommunicationControlRequest::new(
+        false,
+        CommunicationControlType::EnableRxAndTx,
+        CommunicationType::Normal,
+    )?
+    .with_subnet(SubnetNumber::AllConnectedNetworks);
     assert_eq!(
-        block_on(t.communication_control(
-            ECU,
-            CommunicationControlType::EnableRxAndTx,
-            CommunicationType::Normal,
-            SubnetNumber::AllConnectedNetworks,
-            None,
-        )),
+        block_on(t.communication_control(ECU, plain)),
         Ok(Response::Positive(()))
     );
+    let enhanced = CommunicationControlRequest::new_with_node_id(
+        false,
+        CommunicationControlType::EnableRxAndDisableTxWithEnhancedAddressInfo,
+        CommunicationType::Normal,
+        0x1234,
+    )?;
     assert_eq!(
-        block_on(t.communication_control(
-            ECU,
-            CommunicationControlType::EnableRxAndDisableTxWithEnhancedAddressInfo,
-            CommunicationType::Normal,
-            SubnetNumber::AllConnectedNetworks,
-            Some(0x1234),
-        )),
+        block_on(t.communication_control(ECU, enhanced)),
         Ok(Response::Positive(()))
     );
     assert_eq!(
@@ -2341,34 +2475,7 @@ fn communication_is_controlled_with_or_without_a_node() {
         t.transport().addressed(1),
         (Some(to(ECU)), &[0x28, 0x04, 0x01, 0x12, 0x34][..])
     );
-}
-
-/// A node identifier for a plain type, or none for an enhanced one, cannot be encoded
-/// and sends nothing.
-#[test]
-fn a_node_that_disagrees_with_the_type_sends_nothing() {
-    let mut t = tester(&[]);
-    assert_eq!(
-        block_on(t.communication_control(
-            ECU,
-            CommunicationControlType::EnableRxAndTx,
-            CommunicationType::Normal,
-            SubnetNumber::AllConnectedNetworks,
-            Some(1),
-        )),
-        Err(ClientError::Request)
-    );
-    assert_eq!(
-        block_on(t.communication_control(
-            ECU,
-            CommunicationControlType::EnableRxAndTxWithEnhancedAddressInfo,
-            CommunicationType::Normal,
-            SubnetNumber::AllConnectedNetworks,
-            None,
-        )),
-        Err(ClientError::Request)
-    );
-    assert!(t.transport().finished());
+    Ok(())
 }
 
 /// `ControlDTCSetting` (10.8) is the setting then the option record, echoed by the
@@ -2410,15 +2517,22 @@ fn a_download_is_requested_and_the_block_length_read() {
     );
 }
 
-/// An address wider than five bytes cannot be carried and sends nothing.
+/// The widest address and size, eight bytes each, fit the request buffer and go out
+/// under `addressAndLengthFormatIdentifier` `0x88`.
 #[test]
-fn a_download_of_an_unaddressable_memory_sends_nothing() {
-    let mut t = tester(&[]);
+fn a_download_of_the_widest_address_and_size_is_sent() {
+    let mut t = tester(&[
+        Step::Conf(to(ECU), SResult::Ok),
+        Step::Ind(from(ECU), &[0x74, 0x20, 0x04, 0x00]),
+    ]);
     assert_eq!(
-        block_on(t.request_download(ECU, DataFormatIdentifier::NONE, 0x0100_0000_0000, 1)),
-        Err(ClientError::Request)
+        block_on(t.request_download(ECU, DataFormatIdentifier::NONE, u64::MAX, u64::MAX)),
+        Ok(Response::Positive(0x0400))
     );
-    assert!(t.transport().finished());
+    let (to_ecu, sent) = t.transport().addressed(0);
+    assert_eq!(to_ecu, Some(to(ECU)));
+    assert_eq!(sent.get(..3), Some(&[0x34, 0x00, 0x88][..]));
+    assert_eq!(sent.get(3..), Some(&[0xFF; 16][..]));
 }
 
 /// ISO 14229-1:2020 15.2.2 — a caller-chosen `addressAndLengthFormatIdentifier` fixes
@@ -2469,7 +2583,7 @@ fn a_download_too_wide_for_its_format_sends_nothing() {
             0x0001_0000,
             1
         )),
-        Err(ClientError::Request)
+        Err(ClientError::Request(RequestError::ExceedsFormat))
     );
     assert!(t.transport().finished());
 }
@@ -2477,7 +2591,7 @@ fn a_download_too_wide_for_its_format_sends_nothing() {
 /// The declared block maximum is the client's, readable to clamp a transfer against.
 #[test]
 fn the_declared_block_maximum_is_exposed() {
-    assert_eq!(<Did as ClientSet>::MAX_BLOCK_LEN, 16);
+    assert_eq!(<TesterVocabulary as ClientSet>::LIMITS.max_block_len, 16);
 }
 
 /// A block goes with its counter and the response echoes it; a reply echoing another
@@ -2502,10 +2616,10 @@ fn a_block_is_transferred_and_the_counter_echoed() {
         Ok(Response::Positive(&[][..]))
     );
     let too_long = [0xAA; 17];
-    assert_eq!(
+    assert!(matches!(
         block_on(t.transfer_data(ECU, 0x03, &too_long)),
-        Err(ClientError::Request)
-    );
+        Err(ClientError::Request(RequestError::ExceedsLimit { .. }))
+    ));
     let sent = t.transport().sent_bytes(0);
     assert_eq!(sent.get(..2), Some(&[0x36, 0x01][..]));
     assert_eq!(sent.len(), 18);
@@ -2778,32 +2892,32 @@ fn an_ask_ends_once_the_clock_passes_it() {
 #[test]
 fn a_request_past_its_declared_maximum_is_refused() {
     let mut t = tester(&[]);
-    assert_eq!(
+    assert!(matches!(
         block_on(t.write_data_by_identifier(ECU, Did::Speed, &[0x01, 0x02])),
-        Err(ClientError::Request)
-    );
-    assert_eq!(
+        Err(ClientError::Request(RequestError::ExceedsLimit { .. }))
+    ));
+    assert!(matches!(
         block_on(t.security_access_key(ECU, LEVEL_1, &[0x01, 0x02, 0x03])),
-        Err(ClientError::Request)
-    );
+        Err(ClientError::Request(RequestError::ExceedsLimit { .. }))
+    ));
     let option = [0x01; 5];
-    assert_eq!(
+    assert!(matches!(
         block_on(t.routine_control(
             ECU,
             RoutineControlSubFunction::StartRoutine,
             Rid::SelfTest,
             &option,
         )),
-        Err(ClientError::Request)
-    );
-    assert_eq!(
+        Err(ClientError::Request(RequestError::ExceedsLimit { .. }))
+    ));
+    assert!(matches!(
         block_on(t.control_dtc_setting(ECU, DtcSettingType::Off, &option)),
-        Err(ClientError::Request)
-    );
-    assert_eq!(
+        Err(ClientError::Request(RequestError::ExceedsLimit { .. }))
+    ));
+    assert!(matches!(
         block_on(t.request_transfer_exit(ECU, &option)),
-        Err(ClientError::Request)
-    );
+        Err(ClientError::Request(RequestError::ExceedsLimit { .. }))
+    ));
     assert_eq!(t.transport().sent_count, 0);
 
     let mut narrow = NarrowBlockTester::new(
@@ -2814,7 +2928,10 @@ fn a_request_past_its_declared_maximum_is_refused() {
     );
     assert_eq!(
         block_on(narrow.transfer_data(ECU, 0x01, &[0xAA; 3])),
-        Err(ClientError::Request)
+        Err(ClientError::Request(RequestError::ExceedsLimit {
+            len: 3,
+            max: 2
+        }))
     );
     assert_eq!(narrow.transport().sent_count, 0);
 }

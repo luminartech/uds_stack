@@ -4,28 +4,31 @@ use automotive_wire_codec::write_u8;
 /// The `DtcExtDataRecordNumber` is used in the request message to get a stored
 /// `DTCExtDataRecord` It's used to specify the type of `DTCExtDataRecord` to be reported.
 #[cfg_attr(feature = "serde", derive(serde::Deserialize, serde::Serialize))]
-#[cfg_attr(feature = "utoipa", derive(utoipa::ToSchema))]
+#[cfg_attr(feature = "serde", serde(from = "u8", into = "u8"))]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-#[non_exhaustive]
 pub enum DtcExtDataRecordNumber {
     /// ISO/SAE reserved record numbers (`0x00`, `0xF0-0xFD`).
+    #[non_exhaustive]
     IsoSaeReserved(u8),
 
     /// Vehicle manufacturer-specific stored `DTCExtDataRecord`s
     ///
     /// 0x01-0x8F
-    VehicleManufacturer(u8),
+    #[non_exhaustive]
+    VehicleManufacturerSpecific(u8),
 
     /// Requests the server to report regulated emissions OBD stored
     /// `DTCExtendedDataRecords`. The values are specified in SAE J1979-DA.
     ///
     /// 0x90-0x9F
+    #[non_exhaustive]
     RegulatedEmissionsObdDtcExtDataRecords(u8),
 
     /// The `DtcExtDataRecordNumber` parameter is used to specify the DTC number of the
     /// `DTCExtendedData` record to be reported.
     ///
     /// 0xA0-0xEF
+    #[non_exhaustive]
     RegulatedDtcExtDataRecords(u8),
 
     /// Requests the server to report all regulated emissions OBD stored
@@ -43,7 +46,7 @@ impl DtcExtDataRecordNumber {
     pub const fn new(value: u8) -> Self {
         match value {
             0x00 | 0xF0..=0xFD => Self::IsoSaeReserved(value),
-            0x01..=0x8F => Self::VehicleManufacturer(value),
+            0x01..=0x8F => Self::VehicleManufacturerSpecific(value),
             0x90..=0x9F => Self::RegulatedEmissionsObdDtcExtDataRecords(value),
             0xA0..=0xEF => Self::RegulatedDtcExtDataRecords(value),
             0xFE => Self::AllRegulatedEmissionsObdDtcExtDataRecords,
@@ -57,12 +60,24 @@ impl DtcExtDataRecordNumber {
     pub const fn value(&self) -> u8 {
         match self {
             Self::IsoSaeReserved(value) => *value,
-            Self::VehicleManufacturer(value) => *value,
+            Self::VehicleManufacturerSpecific(value) => *value,
             Self::RegulatedEmissionsObdDtcExtDataRecords(value) => *value,
             Self::RegulatedDtcExtDataRecords(value) => *value,
             Self::AllRegulatedEmissionsObdDtcExtDataRecords => 0xFE,
             Self::AllDtcExtDataRecords => 0xFF,
         }
+    }
+}
+
+impl From<u8> for DtcExtDataRecordNumber {
+    fn from(value: u8) -> Self {
+        Self::new(value)
+    }
+}
+
+impl From<DtcExtDataRecordNumber> for u8 {
+    fn from(value: DtcExtDataRecordNumber) -> Self {
+        value.value()
     }
 }
 

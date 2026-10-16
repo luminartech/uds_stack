@@ -20,7 +20,9 @@ use simple_doip::service::{
     Refusal, TesterAddress, TesterConnection, Timestamp,
 };
 use simple_doip::{LogicalAddress, TaType};
-use uds_on_ip::{ClientTransportError, DoIpClientTransport};
+use uds_on_ip::{
+    DoIpClientTransport, DoIpClientTransportError, KEEP_ALIVE_LEN, LateReplyGuard,
+};
 use uds_services::{AfterSend, ClientTransport, TransportEvent, UdsTransport};
 use uds_session::{Address, Ai, Mtype, Reloads, SResult, TransportError};
 
@@ -360,6 +362,8 @@ const FROM_ENTITY: Ai = Ai {
 const READ: &[u8] = &[0x22, 0xF1, 0x90];
 const ANSWER: &[u8] = &[0x62, 0xF1, 0x90, 0x41];
 const KEEP_ALIVE: &[u8] = &[0x3E, 0x80];
+const _: () = assert!(KEEP_ALIVE.len() == KEEP_ALIVE_LEN);
+const _: () = assert!(KEEP_ALIVE_LEN == uds_services::KEEP_ALIVE_LEN);
 
 /// `DoIP_Result`'s position in ISO 13400-2:2019 8.2.5's order, as `s_result` maps it.
 const fn failed(result: DoIpResult) -> SResult {
@@ -417,6 +421,7 @@ fn next_until<const Q: usize, const P: usize, const W: usize>(
         }
         TransportEvent::Closed { peer, expected } => Seen::Closed(peer, expected),
         TransportEvent::Deadline => Seen::Deadline,
+        other => panic!("an event this test does not model: {other:?}"),
     }
 }
 
@@ -546,6 +551,37 @@ fn one_request_past_waiting_is_refused() {
     );
 }
 
+/// The smallest `QUEUE` that builds with the default `WAITING` of two: the longest
+/// request and one keep-alive ahead of it.
+const AT_THE_BOUND: usize = MAX_PDU + KEEP_ALIVE_LEN;
+
+/// At the smallest `QUEUE` that builds, a request of `MAX_PDU` bytes waits behind a
+/// keep-alive, behind the request the connection carries, rather than being refused.
+#[test]
+fn a_longest_request_fits_behind_a_keep_alive_at_the_bound() {
+    let group = ai(LogicalAddress(0xE400), uds_session::TaType::Functional);
+    let mut t: DoIpClientTransport<Scripted, AT_THE_BOUND> = DoIpClientTransport::new(
+        Scripted::new([
+            Entity::Acks(DoIpResult::Ok),
+            Entity::Acks(DoIpResult::Ok),
+            Entity::Acks(DoIpResult::Ok),
+        ]),
+        RELOADS,
+    );
+    let long = [0x2E; MAX_PDU];
+    run(t.t_data_req(TO_ENTITY, READ, AfterSend::Continue)).unwrap();
+    run(t.t_data_req(group, KEEP_ALIVE, AfterSend::Continue)).unwrap();
+    run(t.t_data_req(TO_ENTITY, &long, AfterSend::Continue)).unwrap();
+
+    assert_eq!(next(&mut t), Seen::Conf(TO_ENTITY, SResult::Ok));
+    assert_eq!(next(&mut t), Seen::Conf(group, SResult::Ok));
+    assert_eq!(next(&mut t), Seen::Conf(TO_ENTITY, SResult::Ok));
+    assert_eq!(
+        t.connection().requests(),
+        [READ.to_vec(), KEEP_ALIVE.to_vec(), long.to_vec()]
+    );
+}
+
 /// A request that failed waiting holds no bytes: the queue it filled takes another
 /// before its failed confirm is reported.
 #[test]
@@ -553,7 +589,7 @@ fn a_failed_request_releases_its_bytes() {
     let mut connection = Scripted::new([Entity::Acks(DoIpResult::Ok)]);
     connection.connected = false;
     connection.closed_reported = true;
-    let mut t: DoIpClientTransport<Scripted, MAX_PDU> =
+    let mut t: DoIpClientTransport<Scripted, AT_THE_BOUND> =
         DoIpClientTransport::new(connection, RELOADS);
     let long = [0x22; MAX_PDU];
     run(t.t_data_req(TO_ENTITY, &long, AfterSend::Continue)).unwrap();
@@ -791,7 +827,7 @@ fn a_failed_reconnect_fails_the_waiting_request_and_the_next_tries_again() {
     let mut buf = [0; 32];
     assert!(matches!(
         run(t.next_event(&mut buf, None)),
-        Err(uds_on_ip::ClientTransportError::Reconnect("refused"))
+        Err(uds_on_ip::DoIpClientTransportError::Reconnect("refused"))
     ));
     assert_eq!(
         next(&mut t),
@@ -823,7 +859,7 @@ fn a_failed_reconnect_frees_the_waiting_requests_server() {
     let mut buf = [0; 32];
     assert!(matches!(
         run(t.next_event(&mut buf, None)),
-        Err(uds_on_ip::ClientTransportError::Reconnect("refused"))
+        Err(uds_on_ip::DoIpClientTransportError::Reconnect("refused"))
     ));
     assert_eq!(
         next(&mut t),
@@ -900,6 +936,19 @@ fn a_request_after_an_unanswered_one_goes_on_a_new_connection() {
             Call::Request(ENTITY, TaType::Physical, READ.to_vec())
         ]
     );
+}
+
+/// With the guard off, the same request goes on the same connection, and nothing closes.
+#[test]
+fn with_the_guard_off_a_request_after_an_unanswered_one_keeps_the_connection() {
+    let mut t = transport([Entity::Acks(DoIpResult::Ok), Entity::Acks(DoIpResult::Ok)])
+        .with_late_reply_guard(LateReplyGuard::Off);
+    send(&mut t, TO_ENTITY, READ);
+    assert_eq!(next(&mut t), Seen::Conf(TO_ENTITY, SResult::Ok));
+
+    send(&mut t, TO_ENTITY, READ);
+    assert_eq!(next(&mut t), Seen::Conf(TO_ENTITY, SResult::Ok));
+    assert_eq!(reconnects(&t), 0);
 }
 
 /// An answered request leaves nothing to arrive late.
@@ -1119,17 +1168,20 @@ fn a_new_server_while_every_tracked_one_is_busy_is_refused() {
 // --- the error type ----------------------------------------------------------------------
 
 /// The transport's error is named by its connection alone: a caller writes
-/// `ClientTransportError<Scripted>`, never the three types the connection already
+/// `DoIpClientTransportError<Scripted>`, never the three types the connection already
 /// determines.
 #[test]
 fn the_error_is_named_by_its_connection() {
     fn transport_error(
         error: <Transport as UdsTransport>::Error,
-    ) -> ClientTransportError<Scripted> {
+    ) -> DoIpClientTransportError<Scripted> {
         error
     }
-    let error = transport_error(ClientTransportError::Reconnect("refused"));
-    assert!(matches!(error, ClientTransportError::Reconnect("refused")));
+    let error = transport_error(DoIpClientTransportError::Reconnect("refused"));
+    assert!(matches!(
+        error,
+        DoIpClientTransportError::Reconnect("refused")
+    ));
     assert_eq!(
         error.to_string(),
         "the DoIP connection could not be reopened: \"refused\""

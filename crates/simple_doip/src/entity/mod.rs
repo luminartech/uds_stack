@@ -38,7 +38,7 @@ use crate::messages::{
 };
 use crate::service::{
     ConnectionId, DiagnosticEntity, DoIpResult, EntityConfig, EntityEvent, Refusal,
-    Timestamp,
+    TesterAddress, Timestamp,
 };
 use crate::stream::tx::Full;
 use crate::stream::{after, caller_deadline, timestamp};
@@ -65,10 +65,6 @@ const INITIAL_INACTIVITY: core::time::Duration = crate::TCP_TIMEOUT_INITIAL_INAC
 const GENERAL_INACTIVITY: core::time::Duration = crate::TCP_TIMEOUT_GENERAL_INACTIVITY;
 /// `T_TCP_Alive_Check` (ISO 13400-2:2019 Table 12).
 const ALIVE_CHECK: core::time::Duration = crate::TCP_TIMEOUT_ALIVE_CHECK;
-/// How long an orderly close may take before the entity aborts it, discarding whatever
-/// the tester has not yet acknowledged. ISO 13400-2 does not bound the close; this is
-/// long enough for what was written before it to be retransmitted.
-pub const ORDERLY_CLOSE_LIMIT: core::time::Duration = core::time::Duration::from_secs(2);
 /// How long an abort may take before the socket is dropped.
 const ABORT_LIMIT: core::time::Duration = ALIVE_CHECK;
 
@@ -127,7 +123,7 @@ impl EntityAddress {
         functional: LogicalAddress,
     ) -> Result<Self, AddressError> {
         if physical.default_ta_type() != TaType::Physical
-            || physical.is_valid_client_address()
+            || TesterAddress::new(physical).is_ok()
         {
             return Err(AddressError::NotPhysical(physical));
         }
@@ -668,13 +664,14 @@ impl<
     }
 
     fn finalize(&mut self, at: SlotRef, abort: bool, now: Instant) {
+        let close_limit = self.config.close_limit();
         match at {
             SlotRef::Connection(index) => {
                 if let Some(slot) = self.connections.get_mut(index) {
-                    slot.finalize(abort, false, now);
+                    slot.finalize(abort, false, now, close_limit);
                 }
             }
-            SlotRef::Reserve => self.reserve.finalize(abort, false, now),
+            SlotRef::Reserve => self.reserve.finalize(abort, false, now, close_limit),
         }
     }
 
@@ -993,6 +990,7 @@ impl<
         let limits = Limits {
             message: MAX_MESSAGE,
             unregistered: RESERVE_CAP,
+            close: self.config.close_limit(),
         };
         for position in 0..=MCTS {
             let at = Self::slot_ref(position);
@@ -1376,9 +1374,9 @@ impl<
 
     /// Writes what is queued on `connection`, then closes it.
     ///
-    /// The close is bounded: a socket that has not closed within [`ORDERLY_CLOSE_LIMIT`]
-    /// is aborted, and one whose abort has not finished within
-    /// [`TCP_TIMEOUT_ALIVE_CHECK`](crate::TCP_TIMEOUT_ALIVE_CHECK) is dropped. Only
+    /// The close is bounded: a socket that has not closed within
+    /// [`EntityConfig::close_limit`] is aborted, and one whose abort has not finished
+    /// within [`TCP_TIMEOUT_ALIVE_CHECK`](crate::TCP_TIMEOUT_ALIVE_CHECK) is dropped. Only
     /// `connection`'s own timer is acted on meanwhile; every other socket's waits for
     /// the next [`DiagnosticEntity::next_event`].
     ///
@@ -1389,6 +1387,7 @@ impl<
     async fn close(&mut self, connection: ConnectionId) -> Result<(), Self::Error> {
         let index = connection.index();
         let at = SlotRef::Connection(index);
+        let close_limit = self.config.close_limit();
         let Some(slot) = self.connections.get_mut(index) else {
             return Ok(());
         };
@@ -1396,7 +1395,7 @@ impl<
         if !slot.open.as_ref().is_some_and(|open| open.named) {
             return Ok(());
         }
-        slot.finalize(false, true, Instant::now());
+        slot.finalize(false, true, Instant::now(), close_limit);
         loop {
             let Some(slot) = self.connections.get_mut(index) else {
                 return Ok(());

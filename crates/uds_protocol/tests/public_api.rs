@@ -156,13 +156,10 @@ fn the_two_length_bounded_payloads_reject_an_unencodable_value() {
 #[cfg(feature = "serde")]
 #[test]
 fn serde_cannot_build_a_reserved_variant_that_aliases_a_named_one() {
-    // This is what the variant seals were supposed to prevent and did not: with a plain
-    // derived `Deserialize`, `{"IsoSaeReserved":1}` produced a value whose `value()` is
-    // 0x01 -- the same byte `Iso14229_1DtcFormat` encodes -- yet compared unequal to it.
-    // `#[non_exhaustive]` on the variant blocked the Rust struct literal and did nothing
-    // about serde, so it bought pattern-matching friction and no guarantee. Routing serde
-    // through `u8` is what actually closes it, for every byte, and it lets the variant be
-    // named and destructured again.
+    // With a plain derived `Deserialize`, `{"IsoSaeReserved":1}` produced a value whose
+    // `value()` is 0x01 -- the same byte `Iso14229_1DtcFormat` encodes -- yet compared
+    // unequal to it. The variant seal does nothing about serde; routing serde through `u8`
+    // closes it, for every byte.
     let round: DtcFormatIdentifier = serde_json::from_str("1").expect("a bare byte");
     assert_eq!(round, DtcFormatIdentifier::Iso14229_1DtcFormat);
     assert_eq!(serde_json::to_string(&round).unwrap(), "1");
@@ -182,18 +179,84 @@ fn serde_cannot_build_a_reserved_variant_that_aliases_a_named_one() {
     }
 }
 
+/// A sub-function byte goes through serde as the byte, so the reserved variants' range
+/// checks hold: `{"IsoSaeReserved":129}` built a `ResetType` that encoded `11 81`, which
+/// reads back as suppressed while the request said it was not.
+#[cfg(feature = "serde")]
 #[test]
-fn a_reserved_variant_is_nameable_and_destructurable_downstream() {
-    // The seal made both `IsoSaeReserved(b)` and `IsoSaeReserved(..)` E0603 out here, so a
-    // downstream could not even read the byte by matching -- only `value()` worked. For an
-    // audience new to Rust that is a compile error whose text says nothing about the way
-    // out.
-    let reserved = DtcFormatIdentifier::from(0xAA);
-    match reserved {
-        DtcFormatIdentifier::IsoSaeReserved(byte) => assert_eq!(byte, 0xAA),
-        other => panic!("0xAA should classify as reserved, got {other:?}"),
+fn serde_cannot_build_a_sub_function_that_sets_the_suppress_bit() {
+    use uds_protocol::{
+        DiagnosticSessionType, ReadDtcInfoSubFunction, ResetType, RoutineControlSubFunction,
+    };
+
+    assert!(serde_json::from_str::<ResetType>(r#"{"IsoSaeReserved":129}"#).is_err());
+    assert!(serde_json::from_str::<ResetType>("129").is_err());
+    assert!(
+        serde_json::from_str::<DiagnosticSessionType>(r#"{"IsoSaeReserved":129}"#).is_err()
+    );
+    assert!(serde_json::from_str::<DiagnosticSessionType>("129").is_err());
+    assert!(
+        serde_json::from_str::<ReadDtcInfoSubFunction>(r#"{"IsoSaeReserved":130}"#)
+            .is_err()
+    );
+    assert!(
+        serde_json::from_str::<RoutineControlSubFunction>(r#"{"IsoSaeReserved":129}"#)
+            .is_err()
+    );
+
+    for byte in 0x00..=0x7Fu8 {
+        let reset: ResetType = serde_json::from_str(&byte.to_string()).unwrap();
+        assert_eq!(reset, ResetType::try_from(byte).unwrap());
+        assert_eq!(serde_json::to_string(&reset).unwrap(), byte.to_string());
+        let session: DiagnosticSessionType =
+            serde_json::from_str(&byte.to_string()).unwrap();
+        assert_eq!(session, DiagnosticSessionType::try_from(byte).unwrap());
+        assert_eq!(serde_json::to_string(&session).unwrap(), byte.to_string());
     }
-    assert_eq!(DtcFormatIdentifier::IsoSaeReserved(0xAA), reserved);
+}
+
+/// A value that carries a wire integer is built only from that integer, so it never holds
+/// one a named variant has, and `==` agrees with the wire. Through `serde` too: a
+/// `{"IsoSaeReserved":49}` would have been a `NegativeResponseCode` unequal to
+/// `RequestOutOfRange` that encoded as `0x31`.
+#[cfg(feature = "serde")]
+#[test]
+fn serde_builds_a_wire_valued_type_only_from_its_integer() {
+    use uds_protocol::{
+        DtcExtDataRecordNumber, DtcSnapshotRecordNumber, NegativeResponseCode,
+        UdsIdentifier, UdsRoutineIdentifier,
+    };
+
+    assert!(
+        serde_json::from_str::<NegativeResponseCode>(r#"{"IsoSaeReserved":49}"#).is_err()
+    );
+    for byte in 0..=u8::MAX {
+        let json = byte.to_string();
+        let nrc: NegativeResponseCode = serde_json::from_str(&json).unwrap();
+        assert_eq!(nrc, NegativeResponseCode::from(byte));
+        assert_eq!(serde_json::to_string(&nrc).unwrap(), json);
+        let ext: DtcExtDataRecordNumber = serde_json::from_str(&json).unwrap();
+        assert_eq!(ext, DtcExtDataRecordNumber::new(byte));
+        let snapshot: DtcSnapshotRecordNumber = serde_json::from_str(&json).unwrap();
+        assert_eq!(snapshot, DtcSnapshotRecordNumber::new(byte));
+    }
+    assert!(serde_json::from_str::<UdsIdentifier>(r#"{"IsoSaeReserved":61840}"#).is_err());
+    let vin: UdsIdentifier = serde_json::from_str("61840").unwrap();
+    assert_eq!(vin, UdsIdentifier::from(0xF190));
+    let erase: UdsRoutineIdentifier = serde_json::from_str("65280").unwrap();
+    assert_eq!(erase, UdsRoutineIdentifier::EraseMemory);
+}
+
+#[test]
+fn a_reserved_variant_is_matched_by_shape_and_read_by_value() {
+    // Sealed, so downstream matches the variant with `{ .. }`, reads the byte through
+    // `u8::from`, and obtains one only through the classifier.
+    let reserved = DtcFormatIdentifier::from(0xAA);
+    assert!(matches!(
+        reserved,
+        DtcFormatIdentifier::IsoSaeReserved { .. }
+    ));
+    assert_eq!(u8::from(reserved), 0xAA);
 }
 
 #[test]
@@ -324,13 +387,16 @@ mod serde_cannot_bypass_validation {
     };
 
     #[test]
-    fn security_access_level_rejects_a_value_that_collides_with_sprmib() {
-        // A level must fit in 0x00..=0x7F, because bit 7 of the sub-function byte is
-        // SPRMIB. Deserializing 0xFF produced a level that encoded to a byte which decoded
-        // back as a *different* level with suppression set — silent semantic corruption.
-        assert!(serde_json::from_str::<SecurityAccessLevel>("255").is_err());
-        let level: SecurityAccessLevel = serde_json::from_str("127").unwrap();
-        assert_eq!(level.value(), 0x7F);
+    fn security_access_level_is_only_a_request_seed() {
+        // A level is the `requestSeed` byte of its pair, so serde admits exactly what
+        // `from_request_seed` does: an even byte would be a key, and one with bit 7 set
+        // would collide with SPRMIB.
+        for rejected in ["2", "67", "127", "255"] {
+            assert!(serde_json::from_str::<SecurityAccessLevel>(rejected).is_err());
+        }
+        let level: SecurityAccessLevel = serde_json::from_str("65").unwrap();
+        assert_eq!(level.request_seed(), 0x41);
+        assert_eq!(level.send_key(), 0x42);
     }
 
     #[test]
@@ -353,8 +419,8 @@ mod serde_cannot_bypass_validation {
         // Each of these has a `try_from` that range-checks the byte; the derived impl let a
         // caller name the reserved variant directly and skip it.
         assert!(serde_json::from_str::<SubnetNumber>("16").is_err());
-        assert!(serde_json::from_str::<DtcSettingType>("0").is_err());
-        assert!(serde_json::from_str::<CommunicationType>("7").is_err());
+        assert!(serde_json::from_str::<DtcSettingType>("128").is_err());
+        assert!(serde_json::from_str::<CommunicationType>("16").is_err());
 
         assert_eq!(
             serde_json::from_str::<SubnetNumber>("15").unwrap(),
@@ -393,19 +459,19 @@ mod serde_cannot_bypass_validation {
         // that encoded to two bytes, which this crate's own decoder then rejected.
         assert!(
             serde_json::from_str::<CommunicationControlRequest>(
-                r#"{"suppress_positive_response":false,"control_type":5,"communication_type":"Normal","subnet":0,"node_id":null}"#
+                r#"{"suppress_positive_response":false,"control_type":5,"communication_type":1,"subnet":0,"node_id":null}"#
             )
             .is_err()
         );
         assert!(
             serde_json::from_str::<CommunicationControlRequest>(
-                r#"{"suppress_positive_response":false,"control_type":3,"communication_type":"Normal","subnet":0,"node_id":10}"#
+                r#"{"suppress_positive_response":false,"control_type":3,"communication_type":1,"subnet":0,"node_id":10}"#
             )
             .is_err()
         );
 
         let req: CommunicationControlRequest = serde_json::from_str(
-            r#"{"suppress_positive_response":false,"control_type":5,"communication_type":"Normal","subnet":15,"node_id":10}"#
+            r#"{"suppress_positive_response":false,"control_type":5,"communication_type":1,"subnet":15,"node_id":10}"#
         )
         .unwrap();
         assert_eq!(req.node_id(), Some(10));
@@ -425,10 +491,9 @@ mod serde_cannot_bypass_validation {
             )
             .is_err()
         );
-        // A width outside Table H.1 is rejected too. The widths arrive as one
-        // addressAndLengthFormatIdentifier byte, so a width outside Table H.1 is rejected
-        // by that type before the request is built: 0x90 declares a 9-byte memorySize and a
-        // 0-byte memoryAddress, both "not applicable".
+        // A width the format identifier refuses is rejected too, by that type before the
+        // request is built: 0x90 declares a 9-byte memorySize, wider than a u64, and a
+        // 0-byte memoryAddress, which Annex H Table H.1 marks "not applicable".
         assert!(
             serde_json::from_str::<RequestDownloadRequest>(
                 r#"{"data_format_identifier":0,"address_and_length_format_identifier":144,"memory_address":16,"memory_size":16}"#
@@ -469,7 +534,7 @@ mod serde_cannot_bypass_validation {
         // The type is now public and serializes as the single ISO-named byte it is on the
         // wire, so the shape matches Table 441 instead of paraphrasing it.
         let download =
-            RequestDownloadRequest::new(DataFormatIdentifier::NONE, 0x1234, 0x10).unwrap();
+            RequestDownloadRequest::new(DataFormatIdentifier::NONE, 0x1234, 0x10);
         let json = serde_json::to_string(&download).unwrap();
         assert_eq!(
             json,
@@ -492,7 +557,12 @@ mod serde_cannot_bypass_validation {
         );
         assert_eq!(serde_json::to_string(&DtcSettingType::Off).unwrap(), "2");
         assert_eq!(
-            serde_json::to_string(&SecurityAccessLevel::new(0x11).unwrap()).unwrap(),
+            serde_json::to_string(&CommunicationType::try_from(0x6).unwrap()).unwrap(),
+            "6"
+        );
+        assert_eq!(
+            serde_json::to_string(&SecurityAccessLevel::from_request_seed(0x11).unwrap())
+                .unwrap(),
             "17"
         );
     }

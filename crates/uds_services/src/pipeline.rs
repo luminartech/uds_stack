@@ -27,11 +27,11 @@ use uds_protocol::{
 };
 use uds_protocol::{
     ClearDiagnosticInfoRequest, CommunicationControlRequest, CommunicationType,
-    ControlDtcSettingRequest, DiagnosticSessionControlRequest, EcuResetRequest,
-    ReadDataByIdentifierRequest, ReadDtcInfoRequest, RequestDownloadRequest,
-    RequestDownloadResponse, RequestTransferExitRequest, RoutineControlRequest,
-    RoutineControlSubFunction, SecurityAccessRequest, TransferDataRequest,
-    WriteDataByIdentifierRequest,
+    ControlDtcSettingRequest, DiagnosticSessionControlRequest, DtcSettingType,
+    EcuResetRequest, ReadDataByIdentifierRequest, ReadDtcInfoRequest,
+    RequestDownloadRequest, RequestDownloadResponse, RequestTransferExitRequest,
+    RoutineControlRequest, RoutineControlSubFunction, SecurityAccessRequest,
+    TransferDataRequest, WriteDataByIdentifierRequest,
 };
 use uds_session::{Ai, TaType};
 
@@ -308,6 +308,20 @@ pub fn sub_function_access<T: TryFrom<u8>>(
     access: impl FnOnce(T) -> Option<Access>,
 ) -> Option<Access> {
     T::try_from(value).ok().and_then(access)
+}
+
+/// ISO 14229-1:2020 clause 10.8.4 — `ControlDTCSetting`'s lookup as [`begin`] asks it: a
+/// `DTCSettingType` Table 128 reserves has no [`Access`], 0x12, and `access` is not asked
+/// about it, as a reserved `communicationType` is 0x31 without the handler being asked.
+#[doc(hidden)]
+pub fn dtc_setting_access(
+    value: u8,
+    access: impl FnOnce(DtcSettingType) -> Option<Access>,
+) -> Option<Access> {
+    match DtcSettingType::try_from(value).ok()? {
+        DtcSettingType::IsoSaeReserved { .. } => None,
+        setting => access(setting),
+    }
 }
 
 /// ISO 14229-1:2020 clause 10.2 — `DiagnosticSessionControl`'s lookups as [`begin`] asks
@@ -595,7 +609,7 @@ impl Routine {
             RoutineControlSubFunction::StartRoutine => Some(Self::Start),
             RoutineControlSubFunction::StopRoutine => Some(Self::Stop),
             RoutineControlSubFunction::RequestRoutineResults => Some(Self::Results),
-            _ => None,
+            RoutineControlSubFunction::IsoSaeReserved { .. } => None,
         }
     }
 }
@@ -728,7 +742,7 @@ pub fn diagnostic_session_control<A: DiagnosticSessionControl>(
     let _ = uds_protocol::DiagnosticSessionControlResponse::new(
         session,
         timing.p2_server_max_ms,
-        timing.p2_star_server_max_10ms,
+        timing.p2_star_server_max,
     )
     .encode(out);
     Ok(Some(session))
@@ -737,8 +751,9 @@ pub fn diagnostic_session_control<A: DiagnosticSessionControl>(
 /// ISO 14229-1:2020 clause 10.3 — `EcuReset`'s own stage. Whether the reset is supported
 /// (0x12) and in the active session (0x7E) was settled by [`begin`], and the exact length
 /// (0x13) by its decode, so only the handler's verdict remains: the positive response is
-/// `51`, the echoed `resetType` (Table 35), then whatever `powerDownTime` the handler
-/// wrote. The reset itself is the application's, after that response.
+/// `51`, the echoed `resetType` (Table 35), then, for `enableRapidPowerShutDown` alone,
+/// the handler's `powerDownTime`. The reset itself is the application's, after that
+/// response.
 #[doc(hidden)]
 pub async fn ecu_reset<A: EcuReset>(
     services: &mut A,
@@ -746,8 +761,11 @@ pub async fn ecu_reset<A: EcuReset>(
     out: &mut ResponseSink<'_>,
 ) -> Result<Effect, NegativeResponseCode> {
     let kind = request.reset_type;
+    let after = services.reset(kind).await?;
     let _ = out.write_all(&[0x51, u8::from(kind)]);
-    let after = services.reset(kind, out).await?;
+    if kind == uds_protocol::ResetType::EnableRapidPowerShutDown {
+        let _ = out.write_all(&[services.power_down_time()]);
+    }
     Ok(Effect::Reset { kind, after })
 }
 
@@ -757,7 +775,7 @@ pub async fn ecu_reset<A: EcuReset>(
 /// `securityAccessDenied` (0x33); a download already in progress is
 /// `conditionsNotCorrect` (0x22, Table 444); then `begin`.
 ///
-/// The positive response's `maxNumberOfBlockLength` is `MAX_BLOCK_LENGTH + 2` (15.2.3.2)
+/// The positive response's `maxNumberOfBlockLength` is `MAX_BLOCK_LEN + 2` (15.2.3.2)
 /// in the fewest bytes, which [`RequestDownloadResponse`] encodes. The transfer opens only
 /// where the response settles positive.
 #[doc(hidden)]
@@ -786,7 +804,7 @@ pub async fn request_download<A: DataTransfer>(
         return Err(NegativeResponseCode::ConditionsNotCorrect);
     }
     services.begin(transfer).await?;
-    let advertised = A::MAX_BLOCK_LENGTH.saturating_add(2).to_be_bytes();
+    let advertised = A::MAX_BLOCK_LEN.saturating_add(2).to_be_bytes();
     let leading = advertised.iter().take_while(|&&byte| byte == 0).count();
     let length = advertised
         .get(leading.min(advertised.len().saturating_sub(1))..)
@@ -810,9 +828,9 @@ pub async fn request_download<A: DataTransfer>(
 /// Figure 33's order: no download in progress, or all of a known `memorySize` received
 /// and the block not a repeat, is `requestSequenceError` (0x24, Table 454); an empty block
 /// is 0x13 (key 1); a repeat of the last accepted block (15.4.4, the 0x73 row) longer than
-/// `MAX_BLOCK_LENGTH` is 0x31, otherwise answered `76 <counter>` without `block`; a block
+/// `MAX_BLOCK_LEN` is 0x31, otherwise answered `76 <counter>` without `block`; a block
 /// passing a known `memorySize` is `transferDataSuspended` (0x71); a counter other than
-/// the expected one is `wrongBlockSequenceCounter` (0x73); more than `MAX_BLOCK_LENGTH`
+/// the expected one is `wrongBlockSequenceCounter` (0x73); more than `MAX_BLOCK_LEN`
 /// data bytes is 0x31; then `block`. The counter advances, and the bytes count, only where
 /// the response settles positive. A 0x71, this stage's or `block`'s, ends the transfer,
 /// so the client starts over with a `RequestDownload`.
@@ -835,7 +853,7 @@ pub async fn transfer_data<A: DataTransfer>(
     if !repeat && transfer.all_received() {
         return Err(NegativeResponseCode::RequestSequenceError);
     }
-    let over_long = data.len() > A::MAX_BLOCK_LENGTH;
+    let over_long = data.len() > A::MAX_BLOCK_LEN;
     if repeat {
         if over_long {
             return Err(NegativeResponseCode::RequestOutOfRange);
@@ -1176,7 +1194,7 @@ pub async fn communication_control<A: CommunicationControl>(
     let control_type = request.control_type();
     if matches!(
         request.communication_type(),
-        CommunicationType::IsoSaeReserved
+        CommunicationType::IsoSaeReserved { .. }
     ) {
         return Err(NegativeResponseCode::RequestOutOfRange);
     }
@@ -1315,7 +1333,7 @@ mod tests {
         fn timing(&self, _s: S) -> crate::SessionTiming {
             crate::SessionTiming {
                 p2_server_max_ms: 50,
-                p2_star_server_max_10ms: 500,
+                p2_star_server_max: crate::P2StarServerMax::from_tens_of_millis(500),
             }
         }
         fn on_transition(&mut self, _t: crate::SessionTransition, _e: S, _r: bool) {}
@@ -1403,7 +1421,7 @@ mod tests {
         fn timing(&self, _s: S) -> crate::SessionTiming {
             crate::SessionTiming {
                 p2_server_max_ms: u16::MAX,
-                p2_star_server_max_10ms: u16::MAX,
+                p2_star_server_max: crate::P2StarServerMax::from_tens_of_millis(u16::MAX),
             }
         }
         fn on_transition(&mut self, _t: crate::SessionTransition, _e: S, _r: bool) {}

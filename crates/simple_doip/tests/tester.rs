@@ -15,12 +15,14 @@ use std::net::SocketAddr;
 use std::pin::pin;
 
 use embassy_time::Duration;
-use simple_doip::messages::{NackCode, RoutingActivationResponseCode};
+use simple_doip::messages::{ActivationTypeCode, NackCode, RoutingActivationResponseCode};
 use simple_doip::service::{
     ConnectionEvent, ConnectionRefusal, DiagnosticConnection, DoIpResult,
     NotATesterAddress, Reconnection, Refusal, TesterAddress, TesterConnection, Timestamp,
 };
-use simple_doip::tester::{ConnectError, MIN_N, RECONNECT_BACKOFF, Tester, TesterVersion};
+use simple_doip::tester::{
+    ConnectError, ConnectOptions, MIN_N, RECONNECT_BACKOFF, Tester, TesterVersion,
+};
 use simple_doip::{LogicalAddress, TaType};
 use support::mock_stack::*;
 
@@ -225,11 +227,11 @@ fn a_tester_sending_2012_reaches_an_entity_that_refuses_2019() {
 
     let stack = MockStack::new(usize::MAX);
     stack.script_next(&versioned(activation_response(0x10), 0x02));
-    let mut tester: ActiveTester<'_> = run(Tester::connect_with_version(
+    let mut tester: ActiveTester<'_> = run(Tester::connect_with(
         &stack,
         REMOTE,
         sa(),
-        TesterVersion::V2012,
+        ConnectOptions::new().version(TesterVersion::V2012),
     ))
     .unwrap();
     assert_eq!(
@@ -254,6 +256,32 @@ fn a_tester_sending_2012_reaches_an_entity_that_refuses_2019() {
     let mut expected = versioned(diagnostic(TESTER, ENTITY, &PDU), 0x02);
     expected.extend(versioned(alive_check_response(), 0x02));
     assert_eq!(stack.latest().take_written(), expected);
+}
+
+/// ISO 13400-2:2019 Table 47 and REQ 8.DoIP-144: a tester can ask for central security,
+/// `0xE0`, with the OEM-specific field, and asks the same way on a reconnection.
+#[test]
+fn a_tester_activates_with_the_type_and_oem_field_it_was_given() {
+    let _clock = clock();
+    let stack = MockStack::new(usize::MAX);
+    stack.script_next(&activation_response(0x10));
+    let options = ConnectOptions::new()
+        .activation_type(ActivationTypeCode::CentralSecurity)
+        .vm_specific([0xDE, 0xAD, 0xBE, 0xEF]);
+    let mut tester: ActiveTester<'_> =
+        run(Tester::connect_with(&stack, REMOTE, sa(), options)).unwrap();
+    let secured = [
+        0x03, 0xFC, 0x00, 0x05, 0x00, 0x00, 0x00, 0x0B, 0x0E, 0x00, 0xE0, 0x00, 0x00, 0x00,
+        0x00, 0xDE, 0xAD, 0xBE, 0xEF,
+    ];
+    assert_eq!(stack.latest().take_written(), secured);
+
+    stack.latest().eof();
+    let mut buf = [0; 16];
+    assert_eq!(next(&mut tester, &mut buf), Ok(ConnectionEvent::Closed));
+    stack.script_next(&activation_response(0x10));
+    reconnect(&mut tester).unwrap();
+    assert_eq!(stack.latest().take_written(), secured);
 }
 
 /// ISO 13400-2:2019 Table 16: a tester sends this document's version unless told
@@ -293,7 +321,10 @@ fn a_refused_connection_is_an_io_error() {
     let stack = MockStack::new(usize::MAX);
     stack.refuse_next_connect();
 
-    assert_eq!(connect(&stack).unwrap_err(), ConnectError::Io(MockError));
+    assert_eq!(
+        connect(&stack).unwrap_err(),
+        ConnectError::Io(MockError::Failed)
+    );
 }
 
 /// ISO 13400-2:2019 Table 13: a tester's source address is in the client range, so
@@ -656,7 +687,7 @@ fn the_cause_of_a_loss_is_readable_through_the_trait() {
         next(&mut tester, &mut buf).unwrap(),
         ConnectionEvent::Closed
     );
-    assert_eq!(cause_of_loss(&tester), Some(&MockError));
+    assert_eq!(cause_of_loss(&tester), Some(&MockError::Failed));
 }
 
 /// A failed read ends the connection, reported as `Closed` rather than as an `Err`; the
@@ -674,7 +705,7 @@ fn a_failed_read_is_closed_and_keeps_its_error() {
         ConnectionEvent::Closed
     );
     assert_quiet_until_the_deadline(&mut tester);
-    assert_eq!(tester.io_error(), Some(&MockError));
+    assert_eq!(tester.io_error(), Some(&MockError::Failed));
     assert!(stack.latest().is_shut());
     assert!(
         !stack.latest().is_aborted(),
@@ -853,6 +884,26 @@ fn no_ack_within_a_doip_diagnostic_message_is_timeout_a() {
 
     assert!(until_stalled(waiting.as_mut()).is_none());
     advance(Duration::from_millis(1999));
+    assert!(until_stalled(waiting.as_mut()).is_none());
+    advance(Duration::from_millis(1));
+    assert_eq!(
+        until_stalled(waiting.as_mut()),
+        Some(Ok(confirm(DoIpResult::TimeoutA)))
+    );
+}
+
+/// An acknowledgement timeout other than Table 12's applies from the next request.
+#[test]
+fn a_shorter_ack_timeout_is_timeout_a_sooner() {
+    let _clock = clock();
+    let stack = MockStack::new(usize::MAX);
+    let mut tester = active(&stack).with_ack_timeout(Duration::from_millis(500));
+    request(&mut tester).unwrap();
+    let mut buf = [0; 16];
+    let mut waiting = pin!(tester.next_event(&mut buf, None));
+
+    assert!(until_stalled(waiting.as_mut()).is_none());
+    advance(Duration::from_millis(499));
     assert!(until_stalled(waiting.as_mut()).is_none());
     advance(Duration::from_millis(1));
     assert_eq!(
@@ -1160,7 +1211,7 @@ fn a_failed_write_confirms_no_socket() {
         ConnectionEvent::Closed
     );
     assert_quiet_until_the_deadline(&mut tester);
-    assert_eq!(tester.io_error(), Some(&MockError));
+    assert_eq!(tester.io_error(), Some(&MockError::Failed));
 }
 
 /// A request that left and was never acknowledged has an unknown outcome, so an I/O
@@ -1453,7 +1504,7 @@ fn a_failed_reconnect_leaves_the_tester_closed() {
 
     assert_eq!(
         reconnect(&mut tester).unwrap_err(),
-        ConnectError::Io(MockError)
+        ConnectError::Io(MockError::Failed)
     );
     assert_eq!(
         next(&mut tester, &mut buf).unwrap(),
@@ -2642,6 +2693,19 @@ fn close_shuts_the_connection_gracefully_and_leaves_it_closed() {
     );
     assert_quiet_until_the_deadline(&mut tester);
     assert_eq!(request(&mut tester).unwrap_err(), ConnectionRefusal::Closed);
+}
+
+/// A close the stack reports `NotConnected`, because the entity closed first, is the
+/// close the contract promises for a tester with no connection: `Ok`.
+#[test]
+fn close_after_the_entity_closed_first_is_ok() {
+    let _clock = clock();
+    let stack = MockStack::new(usize::MAX);
+    let mut tester = active(&stack);
+    stack.latest().close_not_connected();
+
+    assert_eq!(run(tester.close()), Ok(()));
+    assert!(stack.latest().is_closed());
 }
 
 /// A request unconfirmed at the close still gets its one confirm, from the next

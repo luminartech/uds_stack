@@ -520,7 +520,8 @@ pub enum ReadDtcInfoSubFunction {
     ///
     /// The value never has bit 7 set: that bit is SPRMIB and is split off into
     /// [`ReadDtcInfoRequest::suppress_positive_response`] before the sub-function is
-    /// decoded.
+    /// decoded. Built by [`Self::try_reserved`]; `serde` does not deserialize it.
+    #[cfg_attr(feature = "serde", serde(skip_deserializing))]
     #[non_exhaustive]
     IsoSaeReserved(u8),
 }
@@ -664,8 +665,12 @@ impl ReadDtcInfoSubFunction {
 /// length is checked, so it needs the report type apart from the parameters
 /// [`ReadDtcInfoSubFunction`] decodes with it. [`ReadDtcInfoSubFunction::report_type`]
 /// projects one onto the other.
+///
+/// Table 317 gives no row for `0x0F` to `0x13`, which earlier editions assigned; they
+/// classify as `IsoSaeReserved`, as the table's other unassigned values do.
+#[cfg_attr(feature = "serde", derive(serde::Deserialize, serde::Serialize))]
+#[cfg_attr(feature = "serde", serde(try_from = "u8", into = "u8"))]
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-#[non_exhaustive]
 pub enum ReadDtcInfoReportType {
     /// 0x01
     ReportNumberOfDtcByStatusMask,
@@ -1150,6 +1155,126 @@ impl Iterator for WwhObdDtcSeverityIter<'_> {
 
 impl core::iter::FusedIterator for WwhObdDtcSeverityIter<'_> {}
 
+/// The report types whose response is a DTC count (ISO 14229-1:2020 Table 319).
+#[cfg_attr(feature = "serde", derive(serde::Deserialize, serde::Serialize))]
+#[cfg_attr(feature = "utoipa", derive(utoipa::ToSchema))]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum DtcCountReport {
+    /// 0x01, `reportNumberOfDTCByStatusMask`.
+    ByStatusMask,
+    /// 0x07, `reportNumberOfDTCBySeverityMaskRecord`.
+    BySeverityMaskRecord,
+}
+
+impl DtcCountReport {
+    /// The report type `value` names, where it is one of these.
+    #[must_use]
+    pub const fn from_value(value: u8) -> Option<Self> {
+        match value {
+            0x01 => Some(Self::ByStatusMask),
+            0x07 => Some(Self::BySeverityMaskRecord),
+            _ => None,
+        }
+    }
+}
+
+impl From<DtcCountReport> for ReadDtcInfoReportType {
+    fn from(report: DtcCountReport) -> Self {
+        match report {
+            DtcCountReport::ByStatusMask => Self::ReportNumberOfDtcByStatusMask,
+            DtcCountReport::BySeverityMaskRecord => {
+                Self::ReportNumberOfDtcBySeverityMaskRecord
+            }
+        }
+    }
+}
+
+/// The report types whose response is a list of DTCs and their status (ISO 14229-1:2020
+/// Table 320).
+#[cfg_attr(feature = "serde", derive(serde::Deserialize, serde::Serialize))]
+#[cfg_attr(feature = "utoipa", derive(utoipa::ToSchema))]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum DtcListReport {
+    /// 0x02, `reportDTCByStatusMask`.
+    ByStatusMask,
+    /// 0x0A, `reportSupportedDTCs`.
+    Supported,
+    /// 0x0B, `reportFirstTestFailedDTC`.
+    FirstTestFailed,
+    /// 0x0C, `reportFirstConfirmedDTC`.
+    FirstConfirmed,
+    /// 0x0D, `reportMostRecentTestFailedDTC`.
+    MostRecentTestFailed,
+    /// 0x0E, `reportMostRecentConfirmedDTC`.
+    MostRecentConfirmed,
+    /// 0x15, `reportDTCWithPermanentStatus`.
+    WithPermanentStatus,
+}
+
+impl DtcListReport {
+    /// The report type `value` names, where it is one of these.
+    #[must_use]
+    pub const fn from_value(value: u8) -> Option<Self> {
+        match value {
+            0x02 => Some(Self::ByStatusMask),
+            0x0A => Some(Self::Supported),
+            0x0B => Some(Self::FirstTestFailed),
+            0x0C => Some(Self::FirstConfirmed),
+            0x0D => Some(Self::MostRecentTestFailed),
+            0x0E => Some(Self::MostRecentConfirmed),
+            0x15 => Some(Self::WithPermanentStatus),
+            _ => None,
+        }
+    }
+}
+
+impl From<DtcListReport> for ReadDtcInfoReportType {
+    fn from(report: DtcListReport) -> Self {
+        match report {
+            DtcListReport::ByStatusMask => Self::ReportDtcByStatusMask,
+            DtcListReport::Supported => Self::ReportSupportedDtc,
+            DtcListReport::FirstTestFailed => Self::ReportFirstTestFailedDtc,
+            DtcListReport::FirstConfirmed => Self::ReportFirstConfirmedDtc,
+            DtcListReport::MostRecentTestFailed => Self::ReportMostRecentTestFailedDtc,
+            DtcListReport::MostRecentConfirmed => Self::ReportMostRecentConfirmedDtc,
+            DtcListReport::WithPermanentStatus => Self::ReportDtcWithPermanentStatus,
+        }
+    }
+}
+
+/// The report types whose response is a list of DTC severity records (ISO 14229-1:2020
+/// Table 325).
+#[cfg_attr(feature = "serde", derive(serde::Deserialize, serde::Serialize))]
+#[cfg_attr(feature = "utoipa", derive(utoipa::ToSchema))]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum DtcSeverityReport {
+    /// 0x08, `reportDTCBySeverityMaskRecord`.
+    BySeverityMaskRecord,
+    /// 0x09, `reportSeverityInformationOfDTC`.
+    SeverityInformation,
+}
+
+impl DtcSeverityReport {
+    /// The report type `value` names, where it is one of these.
+    #[must_use]
+    pub const fn from_value(value: u8) -> Option<Self> {
+        match value {
+            0x08 => Some(Self::BySeverityMaskRecord),
+            0x09 => Some(Self::SeverityInformation),
+            _ => None,
+        }
+    }
+}
+
+impl From<DtcSeverityReport> for ReadDtcInfoReportType {
+    fn from(report: DtcSeverityReport) -> Self {
+        match report {
+            DtcSeverityReport::BySeverityMaskRecord => Self::ReportDtcBySeverityMaskRecord,
+            DtcSeverityReport::SeverityInformation => Self::ReportSeverityInfoOfDtc,
+        }
+    }
+}
+
 /// Zero-copy parsed response for `ReadDTCInformation` (0x19).
 ///
 /// Stores raw bytes for record collections and provides lazy iterators
@@ -1157,22 +1282,20 @@ impl core::iter::FusedIterator for WwhObdDtcSeverityIter<'_> {}
 ///
 /// # Coverage
 ///
-/// This enum models the sub-functions the library currently parses: `0x01`/`0x07` (number
-/// of DTCs), `0x02`/`0x0A`–`0x0E`/`0x15` (DTC + status lists), `0x14` (fault detection
-/// counters), `0x08`/`0x09` (DTC severity lists), and `0x42` (WWH-OBD by mask).
-/// `ReadDTCInformation` defines further sub-functions that are **not yet modeled**;
-/// [`decode`](Self::decode) returns [`Error::InvalidDtcSubfunctionType`] for those. See the
-/// support table in the crate README. This is the "Partial" coverage noted there, not a
-/// bug.
+/// The variants parse [`DtcCountReport`], [`DtcListReport`] and [`DtcSeverityReport`]'s
+/// report types, `0x04` and `0x06` (one DTC's snapshot or extended data records), `0x14`
+/// (fault detection counters) and `0x42` (WWH-OBD by mask). Any other report type of
+/// [`ReadDtcInfoReportType`] decodes as [`Self::Unmodeled`], its parameters raw; a
+/// reserved one is [`Error::InvalidDtcSubfunctionType`].
 #[cfg_attr(feature = "serde", derive(serde::Deserialize, serde::Serialize))]
 #[cfg_attr(feature = "utoipa", derive(utoipa::ToSchema))]
 #[derive(Clone, Debug, Eq, PartialEq)]
 #[non_exhaustive]
 pub enum ReadDtcInfoResponse<'a> {
-    /// Sub-functions 0x01, 0x07: count of DTCs matching a mask.
+    /// A [`DtcCountReport`]: the count of DTCs matching a mask.
     NumberOfDtcs {
-        /// Sub-function byte echo.
-        sub_function_id: u8,
+        /// The report type echoed.
+        report: DtcCountReport,
         /// Which status bits this server supports reporting. Same representation as
         /// [`DtcStatusMask`], but a bit is 'on' when the server supports that status — a
         /// server that does not support [`DtcStatusMask::WarningIndicatorRequested`] leaves
@@ -1187,10 +1310,10 @@ pub enum ReadDtcInfoResponse<'a> {
         /// Number of matching DTCs.
         count: u16,
     },
-    /// Sub-functions 0x02, 0x0A-0x0E, 0x15: list of `(DtcRecord, DtcStatusMask)` pairs.
+    /// A [`DtcListReport`]: a list of `(DtcRecord, DtcStatusMask)` pairs.
     DtcList {
-        /// Sub-function byte echo.
-        sub_function_id: u8,
+        /// The report type echoed.
+        report: DtcListReport,
         /// Which status bits this server supports reporting. Same representation as
         /// [`DtcStatusMask`], but a bit is 'on' when the server supports that status — a
         /// server that does not support [`DtcStatusMask::WarningIndicatorRequested`] leaves
@@ -1237,10 +1360,10 @@ pub enum ReadDtcInfoResponse<'a> {
         #[cfg_attr(feature = "serde", serde(borrow))]
         raw_records: &'a [u8],
     },
-    /// Sub-functions 0x08, 0x09: list of DTC severity records.
+    /// A [`DtcSeverityReport`]: a list of DTC severity records.
     DtcSeverityList {
-        /// Sub-function byte echo.
-        sub_function_id: u8,
+        /// The report type echoed.
+        report: DtcSeverityReport,
         /// Which status bits this server supports reporting. Same representation as
         /// [`DtcStatusMask`], but a bit is 'on' when the server supports that status — a
         /// server that does not support [`DtcStatusMask::WarningIndicatorRequested`] leaves
@@ -1271,6 +1394,15 @@ pub enum ReadDtcInfoResponse<'a> {
         /// a length that is not a whole number of records.
         #[cfg_attr(feature = "serde", serde(borrow))]
         raw_records: &'a [u8],
+    },
+    /// A report type no other variant parses, with the bytes after its echo raw.
+    Unmodeled {
+        /// The report type echoed. Never a reserved one.
+        #[cfg_attr(feature = "utoipa", schema(value_type = u8))]
+        report_type: ReadDtcInfoReportType,
+        /// Everything after the echo.
+        #[cfg_attr(feature = "serde", serde(borrow))]
+        raw: &'a [u8],
     },
 }
 
@@ -1328,6 +1460,50 @@ impl<'a> ReadDtcInfoResponse<'a> {
 /// stops exhaustive matching, not variant construction, and `Encode` writes `raw_records`
 /// verbatim — so the iterators keep their `Result` item type and their
 /// one-error-then-terminate behaviour.
+/// The echo, DTC and status that open sub-function `0x04` or `0x06`, then its records.
+fn encode_by_dtc_number(
+    writer: &mut impl automotive_wire_codec::Sink,
+    subfunction_id: u8,
+    dtc: DtcRecord,
+    status: DtcStatusMask,
+    raw_records: &[u8],
+) -> Result<usize, Error> {
+    let head = [
+        subfunction_id,
+        dtc.high_byte(),
+        dtc.middle_byte(),
+        dtc.low_byte(),
+        status.bits(),
+    ];
+    let written = write_bytes(writer, &head)?;
+    Ok(written + write_bytes(writer, raw_records)?)
+}
+
+/// A `DTCStatusAvailabilityMask`, then whole records of `record_len` bytes.
+fn masked_records(buf: &[u8], record_len: usize) -> Result<(DtcStatusMask, &[u8]), Error> {
+    let [mask, raw @ ..] = buf else {
+        return Err(Error::InsufficientData(Incomplete {
+            needed: 1,
+            available: 0,
+        }));
+    };
+    Ok((DtcStatusMask::from(*mask), whole_records(raw, record_len)?))
+}
+
+/// The echo and mask that open a masked list, then its whole records of `record_len`
+/// bytes.
+fn encode_masked(
+    writer: &mut impl automotive_wire_codec::Sink,
+    report: ReadDtcInfoReportType,
+    mask: DtcStatusMask,
+    raw_records: &[u8],
+    record_len: usize,
+) -> Result<usize, Error> {
+    let records = whole_records(raw_records, record_len)?;
+    let written = write_bytes(writer, &[report.value(), mask.bits()])?;
+    Ok(written + write_bytes(writer, records)?)
+}
+
 fn whole_records(raw: &[u8], record_len: usize) -> Result<&[u8], Error> {
     if raw.len().is_multiple_of(record_len) {
         Ok(raw)
@@ -1337,6 +1513,46 @@ fn whole_records(raw: &[u8], record_len: usize) -> Result<&[u8], Error> {
 }
 
 impl<'a> ReadDtcInfoResponse<'a> {
+    /// Decode the bytes after a [`DtcCountReport`]'s echo (Table 319): the
+    /// `DTCStatusAvailabilityMask`, the `DTCFormatIdentifier`, then a 2-byte count.
+    fn decode_count(
+        report: DtcCountReport,
+        buf: &'a [u8],
+    ) -> Result<(Self, &'a [u8]), Error> {
+        let [mask, format, hi, lo, rest @ ..] = buf else {
+            return Err(Error::InsufficientData(Incomplete {
+                needed: 4,
+                available: buf.len(),
+            }));
+        };
+        let count = Self::NumberOfDtcs {
+            report,
+            status_availability_mask: DtcStatusMask::from(*mask),
+            format_identifier: DtcFormatIdentifier::from(*format),
+            count: u16::from_be_bytes([*hi, *lo]),
+        };
+        Ok((count, rest))
+    }
+
+    /// Decode the bytes after sub-function `0x42`: four masks and identifiers, then
+    /// 5-byte records.
+    fn decode_wwh_obd(buf: &'a [u8]) -> Result<(Self, &'a [u8]), Error> {
+        let [group, status, severity, format, raw_records @ ..] = buf else {
+            return Err(Error::InsufficientData(Incomplete {
+                needed: 4,
+                available: buf.len(),
+            }));
+        };
+        let record = Self::WwhObdDtcByMaskRecord {
+            functional_group_identifier: FunctionalGroupIdentifier::from(*group),
+            status_availability_mask: DtcStatusMask::from(*status),
+            severity_availability_mask: DtcSeverityMask::from(*severity),
+            format_identifier: DtcFormatIdentifier::from(*format),
+            raw_records: whole_records(raw_records, 5)?,
+        };
+        Ok((record, &[]))
+    }
+
     /// Decode the bytes after sub-function `0x04` or `0x06`: a DTC, its status, then the
     /// records, left raw.
     fn decode_by_dtc_number(
@@ -1372,102 +1588,55 @@ impl<'a> Decode<'a> for ReadDtcInfoResponse<'a> {
     type Error = crate::Error;
 
     fn decode(buf: &'a [u8]) -> Result<(Self, &'a [u8]), Error> {
-        if buf.is_empty() {
+        let [subfunction_id, buf @ ..] = buf else {
             return Err(Error::InsufficientData(Incomplete {
                 needed: 1,
-                available: buf.len(),
+                available: 0,
             }));
+        };
+        let subfunction_id = *subfunction_id;
+        if let Some(report) = DtcCountReport::from_value(subfunction_id) {
+            return Self::decode_count(report, buf);
         }
-        let subfunction_id = buf[0];
-        let buf = &buf[1..];
-
+        if let Some(report) = DtcListReport::from_value(subfunction_id) {
+            let (status_availability_mask, raw_records) = masked_records(buf, 4)?;
+            let list = Self::DtcList {
+                report,
+                status_availability_mask,
+                raw_records,
+            };
+            return Ok((list, &[]));
+        }
+        if let Some(report) = DtcSeverityReport::from_value(subfunction_id) {
+            let (status_availability_mask, raw_records) = masked_records(buf, 6)?;
+            let list = Self::DtcSeverityList {
+                report,
+                status_availability_mask,
+                raw_records,
+            };
+            return Ok((list, &[]));
+        }
         match subfunction_id {
-            0x01 | 0x07 => {
-                // Table 319: DTCStatusAvailabilityMask, DTCFormatIdentifier, then a 2-byte
-                // DTCCount -- four mandatory bytes after the sub-function echo.
-                if buf.len() < 4 {
-                    return Err(Error::InsufficientData(Incomplete {
-                        needed: 4,
-                        available: buf.len(),
-                    }));
-                }
-                let status_availability_mask = DtcStatusMask::from(buf[0]);
-                let format_identifier = DtcFormatIdentifier::from(buf[1]);
-                let count = u16::from_be_bytes([buf[2], buf[3]]);
-                Ok((
-                    Self::NumberOfDtcs {
-                        sub_function_id: subfunction_id,
-                        status_availability_mask,
-                        format_identifier,
-                        count,
-                    },
-                    &buf[4..],
-                ))
-            }
-            0x02 | 0x0A | 0x0B | 0x0C | 0x0D | 0x0E | 0x15 => {
-                if buf.is_empty() {
-                    return Err(Error::InsufficientData(Incomplete {
-                        needed: 1,
-                        available: buf.len(),
-                    }));
-                }
-                let status_availability_mask = DtcStatusMask::from(buf[0]);
-                Ok((
-                    Self::DtcList {
-                        sub_function_id: subfunction_id,
-                        status_availability_mask,
-                        raw_records: whole_records(&buf[1..], 4)?,
-                    },
-                    &[],
-                ))
-            }
             0x14 => Ok((
                 Self::DtcFaultDetectionCounterList {
                     raw_records: whole_records(buf, 4)?,
                 },
                 &[],
             )),
-            0x08 | 0x09 => {
-                if buf.is_empty() {
-                    return Err(Error::InsufficientData(Incomplete {
-                        needed: 1,
-                        available: buf.len(),
-                    }));
-                }
-                let status_availability_mask = DtcStatusMask::from(buf[0]);
-                Ok((
-                    Self::DtcSeverityList {
-                        sub_function_id: subfunction_id,
-                        status_availability_mask,
-                        raw_records: whole_records(&buf[1..], 6)?,
-                    },
-                    &[],
-                ))
-            }
-            0x42 => {
-                if buf.len() < 4 {
-                    return Err(Error::InsufficientData(Incomplete {
-                        needed: 4,
-                        available: buf.len(),
-                    }));
-                }
-                let functional_group_identifier = FunctionalGroupIdentifier::from(buf[0]);
-                let status_availability_mask = DtcStatusMask::from(buf[1]);
-                let severity_availability_mask = DtcSeverityMask::from(buf[2]);
-                let format_identifier = DtcFormatIdentifier::from(buf[3]);
-                Ok((
-                    Self::WwhObdDtcByMaskRecord {
-                        functional_group_identifier,
-                        status_availability_mask,
-                        severity_availability_mask,
-                        format_identifier,
-                        raw_records: whole_records(&buf[4..], 5)?,
-                    },
-                    &[],
-                ))
-            }
+            0x42 => Self::decode_wwh_obd(buf),
             0x04 | 0x06 => Self::decode_by_dtc_number(subfunction_id, buf),
-            _ => Err(Error::InvalidDtcSubfunctionType(subfunction_id)),
+            _ => match ReadDtcInfoReportType::try_from(subfunction_id)? {
+                ReadDtcInfoReportType::IsoSaeReserved(_) => {
+                    Err(Error::InvalidDtcSubfunctionType(subfunction_id))
+                }
+                report_type => Ok((
+                    Self::Unmodeled {
+                        report_type,
+                        raw: buf,
+                    },
+                    &[],
+                )),
+            },
         }
     }
 }
@@ -1482,7 +1651,7 @@ impl Encode for ReadDtcInfoResponse<'_> {
         let mut written = 0;
         match self {
             Self::NumberOfDtcs {
-                sub_function_id,
+                report,
                 status_availability_mask,
                 format_identifier,
                 count,
@@ -1490,7 +1659,7 @@ impl Encode for ReadDtcInfoResponse<'_> {
                 written += write_bytes(
                     writer,
                     &[
-                        *sub_function_id,
+                        ReadDtcInfoReportType::from(*report).value(),
                         status_availability_mask.bits(),
                         u8::from(*format_identifier),
                     ],
@@ -1498,24 +1667,41 @@ impl Encode for ReadDtcInfoResponse<'_> {
                 written += write_u16_be(writer, *count)?;
             }
             Self::DtcList {
-                sub_function_id,
-                status_availability_mask,
-                raw_records,
-            }
-            | Self::DtcSeverityList {
-                sub_function_id,
+                report,
                 status_availability_mask,
                 raw_records,
             } => {
-                written += write_bytes(
+                let report = ReadDtcInfoReportType::from(*report);
+                written += encode_masked(
                     writer,
-                    &[*sub_function_id, status_availability_mask.bits()],
+                    report,
+                    *status_availability_mask,
+                    raw_records,
+                    4,
                 )?;
-                written += write_bytes(writer, raw_records)?;
+            }
+            Self::DtcSeverityList {
+                report,
+                status_availability_mask,
+                raw_records,
+            } => {
+                let report = ReadDtcInfoReportType::from(*report);
+                written += encode_masked(
+                    writer,
+                    report,
+                    *status_availability_mask,
+                    raw_records,
+                    6,
+                )?;
             }
             Self::DtcFaultDetectionCounterList { raw_records } => {
+                let records = whole_records(raw_records, 4)?;
                 written += write_u8(writer, 0x14)?;
-                written += write_bytes(writer, raw_records)?;
+                written += write_bytes(writer, records)?;
+            }
+            Self::Unmodeled { report_type, raw } => {
+                written += write_u8(writer, report_type.value())?;
+                written += write_bytes(writer, raw)?;
             }
             Self::WwhObdDtcByMaskRecord {
                 functional_group_identifier,
@@ -1534,41 +1720,21 @@ impl Encode for ReadDtcInfoResponse<'_> {
                         u8::from(*format_identifier),
                     ],
                 )?;
-                written += write_bytes(writer, raw_records)?;
+                written += write_bytes(writer, whole_records(raw_records, 5)?)?;
             }
             Self::DtcSnapshotRecords {
                 dtc,
                 status,
                 raw_records,
             } => {
-                written += write_bytes(
-                    writer,
-                    &[
-                        0x04,
-                        dtc.high_byte(),
-                        dtc.middle_byte(),
-                        dtc.low_byte(),
-                        status.bits(),
-                    ],
-                )?;
-                written += write_bytes(writer, raw_records)?;
+                written += encode_by_dtc_number(writer, 0x04, *dtc, *status, raw_records)?;
             }
             Self::DtcExtDataRecords {
                 dtc,
                 status,
                 raw_records,
             } => {
-                written += write_bytes(
-                    writer,
-                    &[
-                        0x06,
-                        dtc.high_byte(),
-                        dtc.middle_byte(),
-                        dtc.low_byte(),
-                        status.bits(),
-                    ],
-                )?;
-                written += write_bytes(writer, raw_records)?;
+                written += encode_by_dtc_number(writer, 0x06, *dtc, *status, raw_records)?;
             }
         }
         Ok(written)
@@ -1616,7 +1782,7 @@ mod response_decode_tests {
         let wire = [0x59, 0x01, 0x2F, 0x01, 0x00, 0x01];
         let (resp, _) = Response::decode(&wire).unwrap();
         let Response::ReadDtcInfo(ReadDtcInfoResponse::NumberOfDtcs {
-            sub_function_id,
+            report,
             status_availability_mask,
             format_identifier,
             count,
@@ -1624,7 +1790,7 @@ mod response_decode_tests {
         else {
             panic!("expected a NumberOfDtcs response, got {resp:?}");
         };
-        assert_eq!(sub_function_id, 0x01);
+        assert_eq!(report, DtcCountReport::ByStatusMask);
         assert_eq!(status_availability_mask.bits(), 0x2F);
         assert_eq!(
             format_identifier,
@@ -2132,5 +2298,70 @@ mod by_dtc_number {
         assert!(decoded.dtc_and_status_iter().is_none());
         assert!(decoded.dtc_fault_detection_iter().is_none());
         assert!(decoded.wwh_obd_dtc_severity_iter().is_none());
+    }
+}
+
+#[cfg(test)]
+mod response_shape_tests {
+    use super::*;
+    use crate::{Decode, Encode, Response};
+
+    /// A valid report type no variant parses decodes raw rather than failing, and
+    /// re-encodes to the same bytes.
+    #[test]
+    fn an_unmodeled_report_type_decodes_raw() {
+        // 0x03, reportDTCSnapshotIdentification: DTC 12 34 56, record number 01.
+        let wire = [0x59, 0x03, 0x12, 0x34, 0x56, 0x01];
+        let (resp, trailing) = Response::decode(&wire).unwrap();
+        assert_eq!(trailing, &[] as &[u8]);
+        let Response::ReadDtcInfo(ReadDtcInfoResponse::Unmodeled { report_type, raw }) =
+            resp
+        else {
+            panic!("expected Unmodeled, got {resp:?}");
+        };
+        assert_eq!(
+            report_type,
+            ReadDtcInfoReportType::ReportDtcSnapshotIdentification
+        );
+        assert_eq!(raw, &wire[2..]);
+        let mut out = [0u8; 8];
+        let n = resp
+            .encode(&mut automotive_wire_codec::SliceSink::new(&mut out))
+            .unwrap();
+        assert_eq!(&out[..n], &wire[..]);
+    }
+
+    /// A reserved report type still fails.
+    #[test]
+    fn a_reserved_report_type_is_rejected() {
+        assert!(matches!(
+            ReadDtcInfoResponse::decode(&[0x7F]),
+            Err(Error::InvalidDtcSubfunctionType(0x7F))
+        ));
+    }
+
+    /// Each list report encodes its own echo, and records that are not whole do not encode.
+    #[test]
+    fn a_list_encodes_its_report_and_only_whole_records() {
+        let list = ReadDtcInfoResponse::DtcList {
+            report: DtcListReport::Supported,
+            status_availability_mask: DtcStatusMask::from(0xFF),
+            raw_records: &[0x12, 0x34, 0x56, 0x08],
+        };
+        let mut out = [0u8; 8];
+        let n = list
+            .encode(&mut automotive_wire_codec::SliceSink::new(&mut out))
+            .unwrap();
+        assert_eq!(&out[..n], &[0x0A, 0xFF, 0x12, 0x34, 0x56, 0x08]);
+        let ragged = ReadDtcInfoResponse::DtcList {
+            report: DtcListReport::Supported,
+            status_availability_mask: DtcStatusMask::from(0xFF),
+            raw_records: &[0x12, 0x34, 0x56],
+        };
+        assert!(
+            ragged
+                .encode(&mut automotive_wire_codec::SliceSink::new(&mut out))
+                .is_err()
+        );
     }
 }
