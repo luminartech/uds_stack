@@ -8,7 +8,7 @@ use core::fmt;
 use core::net::SocketAddr;
 
 use edge_nal::{Close, Readable, TcpConnect, TcpShutdown};
-use embassy_time::{Duration, Instant, Timer, with_deadline};
+use embassy_time::{Duration, Instant, Timer, with_deadline, with_timeout};
 use embedded_io_async::{Read, Write};
 
 use crate::messages::{
@@ -200,6 +200,10 @@ pub enum ConnectError<E> {
     /// routing activation response of the wrong length (Table 48).
     #[error("invalid message during routing activation")]
     InvalidMessage,
+    /// A reconnect did not connect and activate routing within the time
+    /// [`Tester::with_reconnect_timeout`] gave it.
+    #[error("reconnect timed out")]
+    Timeout,
 }
 
 /// A `DoIP` tester: one TCP connection to one entity, with routing activated on it.
@@ -324,6 +328,7 @@ pub struct Tester<'s, C: TcpConnect + 's, const N: usize> {
     io_error: Option<C::Error>,
     lost_at: Option<Instant>,
     backoff: Duration,
+    reconnect_timeout: Option<Duration>,
 }
 
 impl<C: TcpConnect, const N: usize> fmt::Debug for Tester<'_, C, N> {
@@ -419,6 +424,7 @@ impl<'s, C: TcpConnect, const N: usize> Tester<'s, C, N> {
             io_error: None,
             lost_at: None,
             backoff: RECONNECT_BACKOFF,
+            reconnect_timeout: None,
         };
         tester.establish().await?;
         Ok(tester)
@@ -434,6 +440,21 @@ impl<'s, C: TcpConnect, const N: usize> Tester<'s, C, N> {
     #[must_use]
     pub const fn with_reconnect_backoff(mut self, backoff: Duration) -> Self {
         self.backoff = backoff;
+        self
+    }
+
+    /// Sets how long [`TesterConnection::reconnect`] may take to connect and activate
+    /// routing once its back-off has passed, before it fails with
+    /// [`ConnectError::Timeout`]. Without it a reconnect waits as long as the entity
+    /// takes, bounded only by the deadline it is given: ISO 13400-2 gives routing
+    /// activation no timer.
+    ///
+    /// # Arguments
+    ///
+    /// * `timeout` - the longest connect and routing activation the entity is allowed.
+    #[must_use]
+    pub const fn with_reconnect_timeout(mut self, timeout: Duration) -> Self {
+        self.reconnect_timeout = Some(timeout);
         self
     }
 
@@ -889,7 +910,9 @@ impl<C: TcpConnect, const N: usize> TesterConnection for Tester<'_, C, N> {
     ///
     /// # Errors
     ///
-    /// As for [`Tester::connect`]. After an error the tester is closed:
+    /// As for [`Tester::connect`], and [`ConnectError::Timeout`] where the connect and
+    /// routing activation outrun [`Tester::with_reconnect_timeout`]'s limit, which is
+    /// timed from the end of the back-off. After an error the tester is closed:
     /// [`next_event`](DiagnosticConnection::next_event) reports
     /// [`ConnectionEvent::Closed`] for the connection the reconnect gave up, if one was
     /// open and its end not yet reported, and [`request`](DiagnosticConnection::request)
@@ -900,11 +923,17 @@ impl<C: TcpConnect, const N: usize> TesterConnection for Tester<'_, C, N> {
     ) -> Result<Reconnection, Self::ReconnectError> {
         let until = deadline.map(|deadline| caller_deadline(deadline, Instant::now()));
         self.lose_connection(true, until).await;
+        let limit = self.reconnect_timeout;
         let attempt = async {
             if let Some(lost_at) = self.lost_at {
                 Timer::at(after(lost_at, self.backoff)).await;
             }
-            self.establish().await
+            match limit {
+                Some(limit) => with_timeout(limit, self.establish())
+                    .await
+                    .unwrap_or(Err(ConnectError::Timeout)),
+                None => self.establish().await,
+            }
         };
         let Some(until) = until else {
             return attempt.await.map(|()| Reconnection::Connected);

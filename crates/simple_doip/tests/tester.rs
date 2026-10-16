@@ -2893,6 +2893,47 @@ fn a_reconnect_backs_off_for_as_long_as_the_tester_was_given() {
     assert_eq!(stack.connects(), 2);
 }
 
+/// A reconnect given a timeout fails with `Timeout` where the entity takes the
+/// connection and never answers routing activation, timed from the end of the back-off,
+/// and leaves the tester closed.
+#[test]
+fn a_reconnect_the_entity_never_activates_times_out() {
+    let _clock = clock();
+    let stack = MockStack::new(usize::MAX);
+    let timeout = Duration::from_millis(500);
+    let mut tester = active(&stack).with_reconnect_timeout(timeout);
+    {
+        let mut reconnecting = pin!(tester.reconnect(None));
+        assert!(until_stalled(reconnecting.as_mut()).is_none());
+        advance(RECONNECT_BACKOFF);
+        assert!(until_stalled(reconnecting.as_mut()).is_none());
+        assert_eq!(stack.connects(), 2, "connected, awaiting activation");
+        advance(timeout - Duration::from_millis(1));
+        assert!(until_stalled(reconnecting.as_mut()).is_none());
+        advance(Duration::from_millis(1));
+
+        assert_eq!(
+            until_stalled(reconnecting.as_mut()),
+            Some(Err(ConnectError::Timeout))
+        );
+    }
+    assert_eq!(request(&mut tester).unwrap_err(), ConnectionRefusal::Closed);
+}
+
+/// A reconnect activated within its timeout connects as one without.
+#[test]
+fn a_reconnect_activated_within_its_timeout_connects() {
+    let _clock = clock();
+    let stack = MockStack::new(usize::MAX);
+    let mut tester = active(&stack).with_reconnect_timeout(Duration::from_millis(500));
+    stack.script_next(&activation_response(0x10));
+
+    reconnect(&mut tester).unwrap();
+
+    assert_eq!(stack.connects(), 2);
+    request(&mut tester).unwrap();
+}
+
 /// The back-off runs from when the old connection was lost: a reconnect made long after
 /// does not wait again.
 #[test]
