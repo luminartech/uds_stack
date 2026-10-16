@@ -11,7 +11,7 @@ This file was reconstructed from the commit and pull-request history when the
 crate was prepared for publication, so entries before that point describe what
 changed rather than what was announced at the time.
 
-## [Unreleased]
+## [0.7.0] — 2026-10-16
 
 0.7.0 replaces the async client, the async server and the bare-metal entity with a
 `no_std`, allocation-free tester and entity behind the new `connection` feature, and
@@ -359,3 +359,4 @@ server over tokio.
 [0.5.1]: https://github.com/luminartech/simple_doip/compare/v0.1.0...v0.5.1
 [0.5.2]: https://github.com/luminartech/simple_doip/compare/v0.5.1...v0.5.2
 [0.6.0]: https://github.com/luminartech/simple_doip/compare/v0.5.2...v0.6.0
+[0.7.0]: https://github.com/luminartech/uds_stack/releases/tag/v0.7.0
