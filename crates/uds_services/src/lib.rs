@@ -29,9 +29,9 @@
 //! # Status
 //!
 //! The server role runs end to end over any `UdsTransport` (see
-//! `tests/end_to_end.rs`), and every service trait but `DataTransfer` has a pipeline
-//! stage (see `tests/stages.rs`). A listed `DataTransfer` answers
-//! `serviceNotSupported` until its design problems are settled (#50). The client role
+//! `tests/end_to_end.rs`), and every service trait has a pipeline stage (see
+//! `tests/stages.rs`); `DataTransfer` stages the download, and its upload and file
+//! transfer are not supported (0x11). The client role
 //! runs end to end over any `ClientTransport`, a `UdsTransport` it can close (see
 //! `tests/client.rs`).
 //! `tests/composition.rs` assembles a server against the whole surface.
@@ -98,7 +98,7 @@ pub use client::{
 };
 
 pub mod server;
-pub use server::{Server, ServerParams};
+pub use server::{Server, ServerParams, Stepped, Stopped};
 
 pub mod storage;
 pub use storage::{Buffers, ClientBuffers, ClientStorage, ClientStore, Storage, Store};
@@ -178,11 +178,12 @@ pub use identifier::{DataIdentifier, RecordError, RoutineIdentifier};
 
 pub mod services;
 pub use services::{
-    ClearDiagnosticInformation, CommunicationControl, ControlDtcSetting, DataTransfer,
-    Delay, DiagnosticSessionControl, DtcReportKind, EcuReset, KeyVerdict,
-    ReadDataByIdentifier, ReadDtcInformation, Received, Responded, RoutineControl,
-    SecurityAccess, SecurityLevel, SecurityPolicy, ServiceSet, SessionTiming,
-    SessionTransition, TesterPresent, TransferRequest, Unsettled, WriteDataByIdentifier,
+    AfterReset, ClearDiagnosticInformation, CommunicationControl, ControlDtcSetting,
+    DataTransfer, Delay, DiagnosticSessionControl, DtcReportKind, EcuReset, Effect,
+    KeyVerdict, ReadDataByIdentifier, ReadDtcInformation, Received, Responded,
+    RoutineControl, SecurityAccess, SecurityLevel, SecurityPolicy, ServiceSet,
+    SessionTiming, SessionTransition, TesterPresent, TransferRequest, Unsettled,
+    WriteDataByIdentifier,
 };
 
 /// The protocol vocabulary this crate's handler signatures are written in.

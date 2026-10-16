@@ -544,6 +544,38 @@ impl<U: UdpSplit, I: VehicleIdentity> sealed::Discover for Discovery<U, I> {
     }
 }
 
+/// Discovery that may be absent: `Some` serves it, `None` is [`NoDiscovery`], so one
+/// entity type serves both. Built by
+/// [`Entity::with_optional_discovery`](super::Entity::with_optional_discovery).
+impl<U: UdpSplit, I: VehicleIdentity> Discover for Option<Discovery<U, I>> {}
+
+impl<U: UdpSplit, I: VehicleIdentity> sealed::Discover for Option<Discovery<U, I>> {
+    type Io = <Discovery<U, I> as sealed::Discover>::Io;
+
+    fn tick(&mut self, now: Instant) {
+        if let Some(discovery) = self {
+            discovery.tick(now);
+        }
+    }
+
+    fn next_wake(&self, now: Instant) -> Option<Instant> {
+        self.as_ref().and_then(|discovery| discovery.next_wake(now))
+    }
+
+    async fn drive(&mut self, now: Instant, facts: Facts) -> Self::Io {
+        match self {
+            Some(discovery) => discovery.drive(now, facts).await,
+            None => pending().await,
+        }
+    }
+
+    fn apply(&mut self, io: Self::Io, now: Instant, facts: Facts) {
+        if let Some(discovery) = self {
+            discovery.apply(io, now, facts);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

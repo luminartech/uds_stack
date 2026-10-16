@@ -23,8 +23,8 @@ This crate never depends on a binding: the Cargo edge runs the other way.
 ## Status
 
 **Alpha, not yet published.** The server and client roles run end to end over
-any `UdsTransport`; a listed `DataTransfer` answers `serviceNotSupported` until
-its design is settled (#50). It releases in lockstep with the rest
+any `UdsTransport`; `DataTransfer` stages the download, and its upload and file
+transfer are not supported (0x11). It releases in lockstep with the rest
 of the stack, at 0.7.0, once the stack's functionality has been verified. See
 the
 [workspace README](https://github.com/luminartech/uds_stack#status) for how
@@ -34,7 +34,7 @@ The architecture is authored as a sphinx-needs set under
 [`docs/architecture/`](https://github.com/luminartech/uds_stack/tree/main/docs/architecture)
 at the workspace root — not inside this crate's own directory — and is meant to
 be read rendered, at <https://luminartech.github.io/uds_stack/>. It carries
-forty-two architecture elements (`UDSSVC_ARCH_####`), each recording either
+forty-five architecture elements (`UDSSVC_ARCH_####`), each recording either
 the clause that forces it or the reasoning behind choosing it, and an
 [open questions](https://github.com/luminartech/uds_stack/blob/main/docs/architecture/open-questions.rst)
 page for what is still unsettled. That set is provisional in the same sense as

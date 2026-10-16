@@ -18,10 +18,10 @@ use uds_on_ip::DoIpTransport;
 use uds_on_ip::profile::bench_reloads;
 use uds_protocol::NegativeResponseCode as Nrc;
 use uds_services::{
-    Access, Address, DataIdentifier, DiagnosticSessionControl, DiagnosticSessionType as S,
-    EcuReset, ReadDataByIdentifier, RecordError, ResetType, ResponseSink, ServerParams,
-    SessionTiming, SessionTransition, Sessions, Sink, TesterPresent, UdsTransport,
-    uds_server,
+    Access, Address, AfterReset, DataIdentifier, DiagnosticSessionControl,
+    DiagnosticSessionType as S, EcuReset, ReadDataByIdentifier, RecordError, ResetType,
+    ResponseSink, ServerParams, SessionTiming, SessionTransition, Sessions, Sink,
+    TesterPresent, UdsTransport, uds_server,
 };
 
 const ECU: Address = Address(0x0001);
@@ -136,10 +136,11 @@ impl EcuReset for Ecu {
         &mut self,
         _kind: ResetType,
         _out: &mut ResponseSink<'_>,
-    ) -> Result<(), Nrc> {
+    ) -> Result<AfterReset, Nrc> {
         PendN(core::mem::take(&mut self.reset_slow)).await;
-        Ok(())
+        Ok(AfterReset::Restart)
     }
+    fn confirmed(&mut self, _kind: ResetType) {}
 }
 impl TesterPresent for Ecu {
     fn on_tester_present(&mut self) {}

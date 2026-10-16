@@ -51,7 +51,7 @@ impl Sessions {
     ///
     /// * `session` - the session added; see [`DiagnosticSessionType`].
     #[must_use]
-    pub fn with(self, session: DiagnosticSessionType) -> Self {
+    pub const fn with(self, session: DiagnosticSessionType) -> Self {
         Self(self.0 | Self::bit(session))
     }
 
@@ -71,8 +71,13 @@ impl Sessions {
         self.0 == 0
     }
 
-    fn bit(session: DiagnosticSessionType) -> u128 {
-        1 << (u8::from(session) & 0x7F)
+    const fn bit(session: DiagnosticSessionType) -> u128 {
+        1 << (session.value() & 0x7F)
+    }
+
+    /// The sessions in both sets.
+    pub(crate) const fn intersection(self, other: Self) -> Self {
+        Self(self.0 & other.0)
     }
 }
 

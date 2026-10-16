@@ -21,7 +21,9 @@ use crate::pipeline::Settling;
 use crate::state::ProtocolState;
 use crate::storage::Storage;
 use crate::{Ai, ResponseSink};
-use uds_protocol::{DiagnosticSessionType, NegativeResponseCode, UdsServiceType};
+use uds_protocol::{
+    DiagnosticSessionType, NegativeResponseCode, ResetType, UdsServiceType,
+};
 
 pub mod data;
 pub mod dtc;
@@ -35,39 +37,66 @@ pub use dtc::{ClearDiagnosticInformation, DtcReportKind, ReadDtcInformation};
 pub use routine::RoutineControl;
 pub use security::{Delay, KeyVerdict, SecurityAccess, SecurityLevel, SecurityPolicy};
 pub use session::{
-    CommunicationControl, ControlDtcSetting, DiagnosticSessionControl, EcuReset,
-    SessionTiming, TesterPresent,
+    AfterReset, CommunicationControl, ControlDtcSetting, DiagnosticSessionControl,
+    EcuReset, SessionTiming, TesterPresent,
 };
 pub use transfer::{DataTransfer, TransferRequest};
 
-/// What clause 8.7 decided, and which session the response selected.
+/// What a positive outcome does once its response is sent, or its suppression
+/// completed: nothing, a change of session, or a reset (``UDSS_LLR_0085``/``0086``).
+///
+/// Public only because [`Responded`] names it; an application never builds or reads one.
+#[doc(hidden)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Effect {
+    /// Nothing follows the response.
+    None,
+    /// The response selected this session.
+    Session(DiagnosticSessionType),
+    /// An accepted `ECUReset`, performed on the confirmation (``UDSSVC_ARCH_0045``).
+    Reset {
+        /// The reset accepted.
+        kind: ResetType,
+        /// What follows it.
+        after: AfterReset,
+    },
+}
+
+impl From<Option<DiagnosticSessionType>> for Effect {
+    fn from(selected: Option<DiagnosticSessionType>) -> Self {
+        selected.map_or(Self::None, Self::Session)
+    }
+}
+
+/// What clause 8.7 decided, and which effect the response carries.
 ///
 /// ``UDSSVC_ARCH_0016`` — a negative response is written bytes and arrives as
 /// [`Responded::Yes`]; silence is a distinguishable outcome because only it is a reason
-/// not to transmit. The session rides on both arms because a suppressed
+/// not to transmit. The effect rides on both arms because a suppressed
 /// `DiagnosticSessionControl` still changes session, through the completion report
 /// (``UDSS_LLR_0086``, ``UDSS_LLR_0098``).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[doc(hidden)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Responded {
     /// Bytes were written and are to be transmitted.
     Yes {
-        /// The session a positive `DiagnosticSessionControl` response selected.
-        session: Option<DiagnosticSessionType>,
+        /// What follows the response once it is confirmed sent.
+        effect: Effect,
     },
     /// Clause 8.7 requires no response; the request is nonetheless complete, and the
     /// driver reports its completion to the session layer (``UDSS_LLR_0074``).
     Suppressed {
-        /// The session a suppressed `DiagnosticSessionControl` selected.
-        session: Option<DiagnosticSessionType>,
+        /// What follows the completion report.
+        effect: Effect,
     },
 }
 
 impl Responded {
-    /// The selected session, whichever arm.
+    /// The effect, whichever arm.
     #[must_use]
-    pub const fn session(self) -> Option<DiagnosticSessionType> {
+    pub const fn effect(self) -> Effect {
         match self {
-            Self::Yes { session } | Self::Suppressed { session } => session,
+            Self::Yes { effect } | Self::Suppressed { effect } => effect,
         }
     }
 }
@@ -110,14 +139,14 @@ enum Shape {
     Handled {
         /// The service byte and the suppress bit.
         settling: Settling,
-        /// What the stage returned: the selected session, or a code.
-        outcome: Result<Option<DiagnosticSessionType>, NegativeResponseCode>,
+        /// What the stage returned: its effect, or a code.
+        outcome: Result<Effect, NegativeResponseCode>,
     },
 }
 
 impl Unsettled {
     /// A request with no service identifier: `settle` reports it [`Responded::Suppressed`]
-    /// with no session, as it does a link closed mid-handler.
+    /// with no effect, as it does a link closed mid-handler.
     #[doc(hidden)]
     #[must_use]
     pub const fn empty() -> Self {
@@ -136,7 +165,7 @@ impl Unsettled {
     #[must_use]
     pub const fn handled(
         settling: Settling,
-        outcome: Result<Option<DiagnosticSessionType>, NegativeResponseCode>,
+        outcome: Result<Effect, NegativeResponseCode>,
     ) -> Self {
         Self(Shape::Handled { settling, outcome })
     }
@@ -145,10 +174,7 @@ impl Unsettled {
     /// [`Settling`] and its outcome, a refusal being an `Err` with no suppress bit.
     pub(crate) const fn parts(
         self,
-    ) -> Option<(
-        Settling,
-        Result<Option<DiagnosticSessionType>, NegativeResponseCode>,
-    )> {
+    ) -> Option<(Settling, Result<Effect, NegativeResponseCode>)> {
         match self.0 {
             Shape::Empty => None,
             Shape::Refused { sid, nrc } => Some((
@@ -261,11 +287,11 @@ pub trait ServiceSet: crate::sealed::Sealed {
 
     /// The server is starting: what Annex I transition 1 owes at start-up.
     ///
-    /// [`crate::Server`] calls it once, on its first step, because
-    /// [`Server::new`](crate::Server::new) is a `const fn` and cannot call into the
-    /// application. Emitted by the assembly; where `SecurityAccess` is listed, it starts
-    /// the delay of every level whose stored attempt count is at its limit (see
-    /// [`crate::SecurityAccess::delay`]), and otherwise it does
+    /// [`crate::Server`] calls it on its first step and on the first step after a
+    /// [`Stopped`](crate::Stopped), because [`Server::new`](crate::Server::new) is a
+    /// `const fn` and cannot call into the application. Emitted by the assembly; where
+    /// `SecurityAccess` is listed, it starts the delay of every level whose stored attempt
+    /// count is at its limit (see [`crate::SecurityAccess::delay`]), and otherwise it does
     /// nothing.
     ///
     /// # Arguments
@@ -299,6 +325,24 @@ pub trait ServiceSet: crate::sealed::Sealed {
         &mut self,
         state: &mut Self::State,
         selected: DiagnosticSessionType,
+    );
+
+    /// The response accepting the reset `kind` was confirmed sent, or its suppression
+    /// completed: tell the application, and for [`AfterReset::Restart`] return to the
+    /// default session (telling the application, Figure 7 key 4) and then to
+    /// [`ProtocolState::INITIAL`]. ``UDSSVC_ARCH_0045``. Emitted by the assembly; called
+    /// only where `EcuReset` is listed.
+    ///
+    /// # Arguments
+    ///
+    /// * `state` - the [`ProtocolState`] of this assembly, held by [`crate::Server`]
+    /// * `kind` - the reset accepted; see [`ResetType`]
+    /// * `after` - what [`crate::EcuReset::reset`] said follows it
+    fn reset_confirmed(
+        &mut self,
+        state: &mut Self::State,
+        kind: ResetType,
+        after: AfterReset,
     );
 
     /// The `P2` pair of the session `state` is in, which [`crate::Server`] enforces for
@@ -362,7 +406,7 @@ pub trait ServiceSet: crate::sealed::Sealed {
 
 #[cfg(test)]
 mod tests {
-    use super::Responded;
+    use super::{Effect, Responded};
 
     /// ``UDSSVC_ARCH_0016`` — silence must be distinguishable from an empty response,
     /// because only one of them is a reason not to transmit. A `bool` would leave the
@@ -370,8 +414,12 @@ mod tests {
     #[test]
     fn silence_and_an_empty_response_are_different_outcomes() {
         assert_ne!(
-            Responded::Yes { session: None },
-            Responded::Suppressed { session: None }
+            Responded::Yes {
+                effect: Effect::None
+            },
+            Responded::Suppressed {
+                effect: Effect::None
+            }
         );
     }
 }

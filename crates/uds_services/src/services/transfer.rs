@@ -1,6 +1,6 @@
 //! Upload and download — ISO 14229-1:2020 clause 15.
 
-use crate::ResponseSink;
+use crate::{Access, ResponseSink, Sessions};
 use uds_protocol::{DataFormatIdentifier, FileOperationMode, NegativeResponseCode};
 
 /// What a transfer is being requested for.
@@ -57,28 +57,64 @@ pub enum TransferRequest<'a> {
 /// `wrongBlockSequenceCounter` (0x73), the `0xFF → 0x00` roll, and rejecting a
 /// `TransferData` with no transfer in progress. One trait rather than four, because the
 /// services are one state machine and implementing three of them would be meaningless.
+///
+/// A response lost after it settled is not undone: the client's repeat is answered from
+/// the state the lost response left. ``UDSSVC_ARCH_0036`` draws the transfer's states and
+/// tabulates each lost response's repeat.
+///
+/// Unless another listed service needs more, the response buffer is 6 bytes, so the
+/// `transferResponseParameterRecord` [`Self::block`] writes after `76 <counter>` is at
+/// most 4 bytes and the one [`Self::exit`] writes after `77` at most 5; a longer one is
+/// `responseTooLong` (0x14).
 pub trait DataTransfer {
     /// ``UDSSVC_ARCH_0033`` — erasing flash before a download usually needs one.
     const MAY_RESPOND_PENDING: bool;
 
-    /// The largest block this server accepts or produces, excluding the service
-    /// identifier and the block sequence counter.
+    /// The most data bytes one `TransferData` block carries, excluding the service
+    /// identifier and the `blockSequenceCounter`.
     ///
-    /// **This constant serves two purposes deliberately.** Clause 15.2.3.2 obliges the
-    /// server to report `maxNumberOfBlockLength` in its `RequestDownload` positive
-    /// response, and that value is derived from this one; it is also what
-    /// [`crate::uds_server`] folds into the in-flight buffer. Declaring it once means the
-    /// advertised number and the buffer that must hold the block cannot disagree.
-    /// 15.2.3.2's value counts the service identifier and the block sequence counter,
-    /// which this one excludes, so the two differ by those two bytes; settling that is
-    /// one of the problems that keep `DataTransfer` unstaged (#50).
+    /// The `RequestDownload` positive response advertises `MAX_BLOCK_LENGTH + 2` as
+    /// `maxNumberOfBlockLength`, the whole `TransferData` request message a server must
+    /// accept (ISO 14229-1:2020 15.2.3.2). [`crate::uds_server`] holds the in-flight
+    /// buffer to that length and fails to compile where the transport cannot carry it; a
+    /// client subtracts two to size its blocks.
     const MAX_BLOCK_LENGTH: usize;
 
-    /// Whether this server answers `RequestUpload`.
+    /// The sessions `RequestDownload`, `TransferData` and `RequestTransferExit` are served
+    /// in. In any other session each is `serviceNotSupportedInActiveSession` (0x7F)
+    /// (Figure 5); ISO 14229-1:2020 Table 23's refusal of all three in the default session
+    /// applies first, whatever this says.
     ///
-    /// A download-only server — the flashing case — never puts a block in a *response*,
-    /// so it must not carry a response buffer sized for one.
-    const SUPPORTS_UPLOAD: bool;
+    /// This is the service's session set, asked before a request is decoded. A memory
+    /// interval's [`Access::sessions`] is asked of a `RequestDownload` after it, and
+    /// answers 0x31 (Figure 31). `TransferData` and `RequestTransferExit` name no
+    /// interval, so this is their only session check. An open transfer is served in the
+    /// sessions both allow, and ends in any other (Figure 7 key 3(iii)).
+    const SESSIONS: Sessions;
+
+    /// Whether `format` is a `dataFormatIdentifier` this server accepts. Figure 31 asks it
+    /// before the request's full length; `false` is `requestOutOfRange` (0x31).
+    ///
+    /// # Arguments
+    ///
+    /// * `format` - the request's [`DataFormatIdentifier`]; [`DataFormatIdentifier::NONE`]
+    ///   is uncompressed and unencrypted.
+    fn format_supported(&self, format: DataFormatIdentifier) -> bool;
+
+    /// Where the memory interval `request` names may be transferred and which levels
+    /// unlock it, or `None` where its `memoryAddress` or `memorySize` is not valid
+    /// (``UDSSVC_ARCH_0044``).
+    ///
+    /// ISO 14229-1:2020 Figure 31, in its order: `None` is `requestOutOfRange` (0x31), an
+    /// active session outside [`Access::sessions`] is 0x31 too, as for an identifier
+    /// (Figures 26 and 30), and none of [`Access::levels`] unlocked is
+    /// `securityAccessDenied` (0x33).
+    /// [`Self::begin`] is asked only after all three pass.
+    ///
+    /// # Arguments
+    ///
+    /// * `request` - the transfer requested; see [`TransferRequest`].
+    fn access(&self, request: &TransferRequest<'_>) -> Option<Access>;
 
     /// Begin a transfer.
     ///
@@ -103,7 +139,8 @@ pub trait DataTransfer {
     /// # Errors
     ///
     /// The [`NegativeResponseCode`] — `generalProgrammingFailure` (0x72) where the write
-    /// failed, `transferDataSuspended` (0x71) where it cannot continue.
+    /// failed, `transferDataSuspended` (0x71) where it cannot continue, which ends the
+    /// transfer.
     ///
     /// A refused write to `out` needs no handling: the sink records the refusal and the
     /// pipeline answers `responseTooLong` (0x14) in place of the response, so the write's
@@ -140,14 +177,20 @@ pub trait DataTransfer {
 )]
 mod tests {
     use super::{DataFormatIdentifier, DataTransfer, TransferRequest};
-    use crate::ResponseSink;
+    use crate::{Access, ResponseSink, Sessions};
     use uds_protocol::NegativeResponseCode;
 
     struct Ecu;
     impl DataTransfer for Ecu {
         const MAY_RESPOND_PENDING: bool = true;
         const MAX_BLOCK_LENGTH: usize = 1_024;
-        const SUPPORTS_UPLOAD: bool = false;
+        const SESSIONS: Sessions = Sessions::ALL;
+        fn format_supported(&self, _f: DataFormatIdentifier) -> bool {
+            true
+        }
+        fn access(&self, _r: &TransferRequest<'_>) -> Option<Access> {
+            Some(Access::new(Sessions::ALL))
+        }
         async fn begin(
             &mut self,
             _r: TransferRequest<'_>,
@@ -170,30 +213,14 @@ mod tests {
         }
     }
 
-    /// One constant sizes the in-flight buffer and gives the value clause 15.2.3.2
-    /// obliges the server to advertise as maxNumberOfBlockLength, so the two cannot
-    /// disagree — and a disagreement there is a buffer overrun on the next
-    /// `TransferData`. They differ by two bytes: `MAX_BLOCK_LENGTH` is the block alone,
-    /// and 15.2.3.2's value, like the buffer, also counts the service identifier and the
-    /// block sequence counter. Deriving the advertisement is open question 8 (#50).
+    /// Decision 4 of the design: the advertised `maxNumberOfBlockLength` is
+    /// `MAX_BLOCK_LENGTH + 2` (15.2.3.2), the length of the in-flight buffer that must hold
+    /// the block.
     #[test]
     fn the_block_length_gives_both_the_buffer_and_the_advertisement() {
         const BLOCK: usize = <Ecu as DataTransfer>::MAX_BLOCK_LENGTH;
         const ADVERTISED: usize = 2 + BLOCK; // SID + block sequence counter
         assert_eq!((BLOCK, ADVERTISED), (1_024, 1_026));
-    }
-
-    /// A download-only server never puts a block in a *response*, so it must not carry a
-    /// response buffer sized for one. 949 bytes on a 1 KiB block, which is the common
-    /// flashing case.
-    #[test]
-    fn a_download_only_server_does_not_pay_for_an_upload_block() {
-        const RSP: usize = if <Ecu as DataTransfer>::SUPPORTS_UPLOAD {
-            2 + <Ecu as DataTransfer>::MAX_BLOCK_LENGTH
-        } else {
-            6
-        };
-        assert_eq!(RSP, 6);
     }
 
     /// ``UDSSVC_ARCH_0036`` — direction is in the request because a repeated block is

@@ -26,10 +26,10 @@ use uds_on_ip::DoIpTransport;
 use uds_on_ip::profile::bench_reloads;
 use uds_protocol::NegativeResponseCode as Nrc;
 use uds_services::{
-    Access, Address, DataIdentifier, DiagnosticSessionControl, DiagnosticSessionType as S,
-    EcuReset, ReadDataByIdentifier, RecordError, ResetType, ResponseSink, ServerParams,
-    ServiceSet, SessionTiming, SessionTransition, Sessions, Sink, Storage, TesterPresent,
-    uds_server,
+    Access, Address, AfterReset, DataIdentifier, DiagnosticSessionControl,
+    DiagnosticSessionType as S, EcuReset, ReadDataByIdentifier, RecordError, ResetType,
+    ResponseSink, ServerParams, ServiceSet, SessionTiming, SessionTransition, Sessions,
+    Sink, Storage, TesterPresent, uds_server,
 };
 
 /// The sensor's message size.
@@ -77,9 +77,10 @@ impl EcuReset for Ecu {
         &mut self,
         _kind: ResetType,
         _out: &mut ResponseSink<'_>,
-    ) -> impl Future<Output = Result<(), Nrc>> {
-        core::future::ready(Ok(()))
+    ) -> impl Future<Output = Result<AfterReset, Nrc>> {
+        core::future::ready(Ok(AfterReset::Restart))
     }
+    fn confirmed(&mut self, _kind: ResetType) {}
 }
 
 impl TesterPresent for Ecu {

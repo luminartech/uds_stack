@@ -52,7 +52,7 @@ sensor_services::ecu!();
 uds_server! {
     Ecu: DiagnosticSessionControl, EcuReset, TesterPresent, SecurityAccess,
          ReadDataByIdentifier, WriteDataByIdentifier, RoutineControl, ReadDtcInformation,
-         ClearDiagnosticInformation, CommunicationControl, ControlDtcSetting;
+         ClearDiagnosticInformation, CommunicationControl, ControlDtcSetting, DataTransfer;
     transport = Transport,
     peers = 1,
     server = EcuServer,

@@ -21,14 +21,15 @@ use uds_services::pipeline::settle;
 use uds_services::{
     Access, Address, AfterSend, Ai, Answer, ClearDiagnosticInformation, ClientError,
     ClientSet, ClientStorage, ClientTiming, ClientTransport, CommunicationControl,
-    CommunicationControlType, CommunicationType, DataIdentifier, DataTransfer, Delay,
-    DiagnosticSessionType, DtcRecord, DtcReportKind, DtcStatusMask, KeepAlive, KeyVerdict,
-    Mtype, PhysicalKeepAlive, ReadDataByIdentifier, ReadDtcInfoReportType,
-    ReadDtcInfoSubFunction, ReadDtcInformation, Received, RecordError, Reloads, Response,
-    ResponseSink, RoutineIdentifier, SecurityAccess, SecurityLevel, SecurityPolicy,
-    ServerParams, ServiceSet, SessionTiming, SessionTransition, Sessions, Sink, Storage,
-    SubnetNumber, TaType, TesterPresent, Timestamp, TransferRequest, TransportEvent,
-    UdsServiceType, UdsTransport, uds_client, uds_server,
+    CommunicationControlType, CommunicationType, DataFormatIdentifier, DataIdentifier,
+    DataTransfer, Delay, DiagnosticSessionType, DtcRecord, DtcReportKind, DtcStatusMask,
+    KeepAlive, KeyVerdict, Mtype, PhysicalKeepAlive, ReadDataByIdentifier,
+    ReadDtcInfoReportType, ReadDtcInfoSubFunction, ReadDtcInformation, Received,
+    RecordError, Reloads, Response, ResponseSink, RoutineIdentifier, SecurityAccess,
+    SecurityLevel, SecurityPolicy, ServerParams, ServiceSet, SessionTiming,
+    SessionTransition, Sessions, Sink, Storage, SubnetNumber, TaType, TesterPresent,
+    Timestamp, TransferRequest, TransportEvent, UdsServiceType, UdsTransport, uds_client,
+    uds_server,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -173,7 +174,13 @@ impl CommunicationControl for Ecu {
 impl DataTransfer for Ecu {
     const MAY_RESPOND_PENDING: bool = true;
     const MAX_BLOCK_LENGTH: usize = 1_024;
-    const SUPPORTS_UPLOAD: bool = false;
+    const SESSIONS: Sessions = Sessions::ALL;
+    fn format_supported(&self, _format: DataFormatIdentifier) -> bool {
+        true
+    }
+    fn access(&self, _r: &TransferRequest<'_>) -> Option<Access> {
+        Some(Access::new(Sessions::ALL))
+    }
     async fn begin(&mut self, _r: TransferRequest<'_>) -> Result<(), Nrc> {
         Ok(())
     }
@@ -460,7 +467,10 @@ fn the_server_in_a_static_can_be_stepped() {
     let server: &'static mut EcuServer = SERVER.take();
     let mut step = core::pin::pin!(server.step());
     let mut cx = core::task::Context::from_waker(core::task::Waker::noop());
-    assert_eq!(step.as_mut().poll(&mut cx), core::task::Poll::Ready(Ok(())));
+    assert_eq!(
+        step.as_mut().poll(&mut cx),
+        core::task::Poll::Ready(Ok(uds_services::Stepped::Continue))
+    );
 }
 
 /// The handler seam speaks `uds_protocol`'s vocabulary, so a sub-function is a named
@@ -644,13 +654,18 @@ fn the_assembled_dispatch_answers_a_read() {
         &mut out,
     ));
     let r = settle(ai, unsettled, false, &mut out);
-    assert_eq!(r, uds_services::Responded::Yes { session: None });
+    assert_eq!(
+        r,
+        uds_services::Responded::Yes {
+            effect: uds_services::Effect::None
+        }
+    );
     assert_eq!(out.written_bytes(), &[0x62, 0xF4, 0x0D, 0x40]);
 }
 
-/// A listed service whose stage is not yet written (`DataTransfer`), and an unlisted one,
-/// both settle 0x11 — physically; functionally they are silenced (``UDSSVC_ARCH_0009``
-/// rule 1).
+/// An unlisted service settles 0x11 — physically; functionally it is silenced
+/// (``UDSSVC_ARCH_0009`` rule 1). A listed `DataTransfer` serves `TransferData`: with no
+/// download in progress it is 0x24 (Table 454).
 #[test]
 fn unsupported_services_settle_0x11_or_silence() {
     let mut ecu = Ecu::new();
@@ -666,9 +681,14 @@ fn unsupported_services_settle_0x11_or_silence() {
     let unsettled =
         block_on(ecu.dispatch(&mut state, phys, Received::Whole(&[0x11, 0x01]), &mut out));
     let r = settle(phys, unsettled, false, &mut out);
-    assert_eq!(r, uds_services::Responded::Yes { session: None });
+    assert_eq!(
+        r,
+        uds_services::Responded::Yes {
+            effect: uds_services::Effect::None
+        }
+    );
     assert_eq!(out.written_bytes(), &[0x7F, 0x11, 0x11]);
-    // Listed, so `begin` passes it; no stage, so the fall-through settles it. Table 23
+    // Listed, so `begin` passes it; its stage finds no download open. Table 23
     // refuses the transfer services in the default session, so it is asked from another.
     let mut extended = <<Ecu as ServiceSet>::State as uds_services::ProtocolState>::INITIAL;
     ecu.session_confirmed(
@@ -679,8 +699,13 @@ fn unsupported_services_settle_0x11_or_silence() {
     let unsettled =
         block_on(ecu.dispatch(&mut extended, phys, Received::Whole(&request), &mut out));
     let r = settle(phys, unsettled, false, &mut out);
-    assert_eq!(r, uds_services::Responded::Yes { session: None });
-    assert_eq!(out.written_bytes(), &[0x7F, 0x36, 0x11]);
+    assert_eq!(
+        r,
+        uds_services::Responded::Yes {
+            effect: uds_services::Effect::None
+        }
+    );
+    assert_eq!(out.written_bytes(), &[0x7F, 0x36, 0x24]);
     let func = Ai {
         ta_type: TaType::Functional,
         ..phys
@@ -688,7 +713,12 @@ fn unsupported_services_settle_0x11_or_silence() {
     let unsettled =
         block_on(ecu.dispatch(&mut state, func, Received::Whole(&[0x11, 0x01]), &mut out));
     let r = settle(func, unsettled, false, &mut out);
-    assert_eq!(r, uds_services::Responded::Suppressed { session: None });
+    assert_eq!(
+        r,
+        uds_services::Responded::Suppressed {
+            effect: uds_services::Effect::None
+        }
+    );
 }
 
 /// Figure 5's `serviceNotSupportedInActiveSession` (0x7F) precedes
@@ -710,6 +740,11 @@ fn an_over_long_request_for_a_service_not_in_this_session_is_refused_0x7f() {
     let truncated = Received::Truncated(&[0x27, 0x02, 0, 0, 0, 0]);
     let unsettled = block_on(ecu.dispatch(&mut state, phys, truncated, &mut out));
     let r = settle(phys, unsettled, false, &mut out);
-    assert_eq!(r, uds_services::Responded::Yes { session: None });
+    assert_eq!(
+        r,
+        uds_services::Responded::Yes {
+            effect: uds_services::Effect::None
+        }
+    );
     assert_eq!(out.written_bytes(), &[0x7F, 0x27, 0x7F]);
 }

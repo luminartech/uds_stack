@@ -366,23 +366,53 @@ Protocol state
    all of it is this crate's under ``UDSSVC_ARCH_0034``, held in the state of
    ``UDSSVC_ARCH_0035``.
 
+   The download half is staged. The transfer lives in the protocol state: ``RequestDownload``
+   opens it, ``TransferData`` runs it (the counter from 1, ``FF`` to ``00``, a repeat of the
+   last block answered without the handler) and ``RequestTransferExit`` closes it, kept open
+   after 0x24. A session or level change ends it as Figure 7 says. Upload and file transfer
+   remain unstaged.
+
    .. uml::
       :align: center
-      :caption: The transfer state machine. Every transition labelled with a code is
-                settled by this crate; the handler is not called.
+      :caption: The download's state machine. Every transition labelled with a code is
+                settled by this crate unless it names the handler.
 
       @startuml
       hide empty description
       [*] --> Idle
-      Idle --> Active : RequestDownload / RequestUpload /\nRequestFileTransfer accepted\nblockSequenceCounter := 0x01
       Idle --> Idle : TransferData → 0x24\nRequestTransferExit → 0x24
-      Active --> Active : TransferData, expected counter\n→ handler
-      Active --> Active : TransferData, previous counter\n→ repeat (15.4.1)
+      Idle --> Active : RequestDownload accepted → 74\nblockSequenceCounter := 0x01
+      Active --> Active : TransferData, expected counter\n→ handler → 76
+      Active --> Active : TransferData, previous counter\n→ 76, handler not called (15.4.4)
       Active --> Active : TransferData, any other counter → 0x73
       Active --> Active : TransferData after memorySize reached → 0x24
-      Active --> Active : RequestDownload / RequestUpload /\nRequestFileTransfer → 0x22
-      Active --> Idle : RequestTransferExit accepted
+      Active --> Active : RequestDownload → 0x22 (Table 444)
+      Active --> Active : RequestTransferExit → 0x24\n(memorySize not reached, or the handler's)
+      Active --> Idle : TransferData → 0x71\n(this crate's or the handler's)
+      Active --> Idle : RequestTransferExit, any other answer
+      Active --> Idle : default session; a session outside\nthe transfer's; a gated transfer's\nlevel relocked (Figure 7 keys 1, 3, 4)
       @enduml
+
+   **A response lost after it settled is not undone.** The client's repeat is answered from
+   the state the lost response left:
+
+   .. list-table::
+      :header-rows: 1
+
+      * - Lost
+        - The client repeats
+        - Answered
+      * - ``74``
+        - ``RequestDownload``
+        - 0x22, the download being ``Active``. The client sends its blocks from ``0x01``,
+          or ends the download by a session change.
+      * - ``76``
+        - the block
+        - ``76 <counter>``, without the handler, so without any
+          ``transferResponseParameterRecord`` the first answer carried.
+      * - ``77``
+        - ``RequestTransferExit``
+        - 0x24, the transfer being ``Idle`` although it succeeded (Table 459, Figure 34).
 
    **The counter is arithmetic, and the wrap is the part to get right.** Clause 15.4.1
    initialises it to one on ``RequestDownload`` (0x34), ``RequestUpload`` (0x35) or
@@ -420,12 +450,9 @@ Protocol state
    — with nothing obliging them to match, and a handler advertising more than the buffer
    holds produces a client that sends a block the server structurally cannot receive. As
    ``DataTransfer::MAX_BLOCK_LENGTH`` the fact is declared once and folded into the buffer,
-   so ``begin`` returns nothing. Deriving the advertised value from it is still to be done:
-   15.2.3.2's number counts the service identifier and the block sequence counter, which the
-   const excludes, and that is one of the problems open question 8 records (#50).
-   ``SUPPORTS_UPLOAD`` sits beside it for the same kind of reason: a download-only server
-   never puts a block in a *response*, so it must not pay for a response buffer sized to
-   hold one.
+   so ``begin`` returns nothing. The ``RequestDownload`` response advertises
+   ``MAX_BLOCK_LENGTH + 2``, because 15.2.3.2's number counts the service identifier and
+   the block sequence counter, which the const excludes.
 
    **Direction is carried by ``TransferRequest`` rather than by a separate field**, which is
    what makes the paragraph above structural instead of advisory. The repeated-block rule
@@ -449,6 +476,34 @@ Protocol state
    clause 17's programming process, the condition belongs to a layer this crate does not yet
    have, and the element changes. It is worth settling against a reviewer who has run a
    programming sequence in anger.
+
+.. arch:: A transfer is admitted by its memory interval
+   :id: UDSSVC_ARCH_0044
+   :depends_on: UDSSVC_ARCH_0036
+   :status: draft
+   :origin: application-layer-standard
+   :source: ISO 14229-1:2020 15.2 Figure 31; ISO 14229-1:2020 15.2 Table 441; ISO 14229-1:2020 Figure 5
+   :tags: api; traits; security
+
+   Figure 31's security node is per requested interval, so ``DataTransfer::access`` answers
+   address, size and security for the request in one ``Access``. ``format_supported``
+   answers Figure 31's second node ahead of the full length. ``SESSIONS`` gives Figure 5's
+   0x7F. The crate counts bytes against ``memorySize`` only for format ``0x00``, because
+   Table 441 leaves the compressed case to the manufacturer.
+
+.. arch:: The application says what a reset does; the server performs it on confirmation and stops
+   :id: UDSSVC_ARCH_0045
+   :depends_on: UDSSVC_ARCH_0038
+   :status: draft
+   :origin: application-layer-standard
+   :source: ISO 14229-1:2020 10.3.1; ISO 14229-1:2020 Figure 7
+   :tags: api; traits; state
+
+   ``EcuReset::reset`` returns ``AfterReset``. On the confirmation, or the suppressed
+   request's completion report, ``confirmed`` is called, and a ``Restart`` returns the
+   protocol state to the power-up one through Figure 7 key 4, re-arms start-up, and ends
+   ``run`` with ``Stopped``. No request is served between a restart's response and its
+   confirmation (10.3.1).
 
 .. arch:: The security access sequence is a state machine this crate owns
    :id: UDSSVC_ARCH_0037

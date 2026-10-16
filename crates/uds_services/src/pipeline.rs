@@ -10,8 +10,9 @@
 //! `uds_session::Ai`, which ISO 14229-1:2020 clause 7.4.1 makes a mandatory parameter of
 //! every application layer service primitive anyway.
 
-use crate::services::SessionTransition;
-use crate::state::State;
+use crate::services::transfer::{DataTransfer, TransferRequest};
+use crate::services::{Effect, SessionTransition};
+use crate::state::{State, Transfer};
 use crate::{Access, Responded, ResponseSink, Sessions, Unsettled};
 use crate::{
     ClearDiagnosticInformation, CommunicationControl, ControlDtcSetting, DataIdentifier,
@@ -21,14 +22,16 @@ use crate::{
 };
 use automotive_wire_codec::Sink;
 use uds_protocol::{
-    ClearDiagnosticInfoRequest, CommunicationControlRequest, CommunicationType,
-    ControlDtcSettingRequest, DiagnosticSessionControlRequest, EcuResetRequest,
-    ReadDataByIdentifierRequest, ReadDtcInfoRequest, RoutineControlRequest,
-    RoutineControlSubFunction, SecurityAccessRequest, WriteDataByIdentifierRequest,
+    AddressAndLengthFormatIdentifier, DataFormatIdentifier, Decode, DiagnosticSessionType,
+    Encode, NegativeResponse, NegativeResponseCode, Request, UdsServiceType,
 };
 use uds_protocol::{
-    Decode, DiagnosticSessionType, Encode, NegativeResponse, NegativeResponseCode, Request,
-    UdsServiceType,
+    ClearDiagnosticInfoRequest, CommunicationControlRequest, CommunicationType,
+    ControlDtcSettingRequest, DiagnosticSessionControlRequest, EcuResetRequest,
+    ReadDataByIdentifierRequest, ReadDtcInfoRequest, RequestDownloadRequest,
+    RequestDownloadResponse, RequestTransferExitRequest, RoutineControlRequest,
+    RoutineControlSubFunction, SecurityAccessRequest, TransferDataRequest,
+    WriteDataByIdentifierRequest,
 };
 use uds_session::{Ai, TaType};
 
@@ -44,19 +47,39 @@ pub struct Entered {
     pub security_relocked: bool,
 }
 
-/// Enter `to`, locking every security level (ISO 14229-1:2020 Annex I transition 6), and
-/// say what that did. The one place the session field is written; the macro's hooks call
-/// this and nothing else, so `State`'s accessors stay crate-private and no clause 10.2
-/// logic is emitted into the application's crate.
+/// Enter `to`, locking every security level (ISO 14229-1:2020 Annex I transition 6) and
+/// ending a transfer Figure 7 does not keep, and say what that did. With [`restart`], the
+/// only places the session field is written; the macro's hooks call these and nothing
+/// else, so `State`'s accessors stay crate-private and no clause 10.2 logic is emitted
+/// into the application's crate.
 #[doc(hidden)]
 pub fn transition(state: &mut State, to: DiagnosticSessionType) -> Entered {
     let from = state.session();
     state.set_session(to);
+    let security_relocked = state.lock();
+    // Figure 7 keys 1 and 4 end it in the default session; key 3(iii) keeps it only
+    // where it is supported in the new one. Key 3(ii) is `lock`'s.
+    if matches!(to, DiagnosticSessionType::DefaultSession)
+        || state.transfer().is_some_and(|t| !t.sessions.contains(to))
+    {
+        state.close_transfer();
+    }
     Entered {
         transition: SessionTransition::classify(from, to),
         session: to,
-        security_relocked: state.lock(),
+        security_relocked,
     }
+}
+
+/// ISO 14229-1:2020 10.3, Annex I transition 1: leave the protocol state a restarting
+/// reset leaves, the power-up one, and say what entering its default session did, where
+/// the server was in another. With [`transition`], the only writes of the session field.
+#[doc(hidden)]
+pub fn restart(state: &mut State) -> Option<Entered> {
+    let entered = (state.session() != DiagnosticSessionType::DefaultSession)
+        .then(|| transition(state, DiagnosticSessionType::DefaultSession));
+    *state = <State as crate::state::ProtocolState>::INITIAL;
+    entered
 }
 
 /// The `P2` pair of the session `state` is in, as `services` states it. Read through here
@@ -100,6 +123,10 @@ pub enum Stage<'a> {
 ///    does not name, settles `serviceNotSupported` (0x11).
 /// 3. Supported in the active session? Table 23's refusals settle
 ///    `serviceNotSupportedInActiveSession` (0x7F).
+/// 3a. The service's checks ahead of its decode (`ahead`): `DataTransfer::SESSIONS`'s
+///    0x7F for the three staged transfer services, and Figure 31's minimum length (0x13)
+///    and format checks (0x31) for `RequestDownload`, both before its full length (see
+///    [`transfer_ahead_of_decode`]).
 /// 4. For a service with a sub-function, other than 0x31, Figure 6's sub-function checks
 ///    (``UDSSVC_ARCH_0007``), in its order, from the one [`Access`] `access` returns: no
 ///    access settles `subFunctionNotSupported` (0x12) (row 2); an active session outside
@@ -128,15 +155,17 @@ pub enum Stage<'a> {
 /// identifier in its data-parameters checks it in its own stage.
 #[doc(hidden)]
 #[must_use]
-pub fn begin<'a, F, G>(
+pub fn begin_with<'a, F, G, H>(
     state: &State,
     request: &'a [u8],
     supports: F,
     access: G,
+    ahead: H,
 ) -> Stage<'a>
 where
     F: Fn(UdsServiceType) -> bool,
     G: Fn(UdsServiceType, u8, DiagnosticSessionType) -> Option<Access>,
+    H: Fn(UdsServiceType, DiagnosticSessionType, &[u8]) -> Option<NegativeResponseCode>,
 {
     let Some((&sid, parameters)) = request.split_first() else {
         return Stage::Empty;
@@ -154,6 +183,11 @@ where
             sid,
             nrc: NegativeResponseCode::ServiceNotSupportedInActiveSession,
         };
+    }
+    // Checks a service asks of the raw request between Table 23 and its decode:
+    // `DataTransfer::SESSIONS`'s 0x7F, and Figure 31's first two nodes.
+    if let Some(nrc) = ahead(service, state.session(), request) {
+        return Stage::Settle { sid, nrc };
     }
     if enters_sub_function_stage(service)
         && let Some(&byte) = parameters.first()
@@ -200,6 +234,55 @@ where
                 .unwrap_or(NegativeResponseCode::IncorrectMessageLengthOrInvalidFormat),
         },
     }
+}
+
+/// [`begin_with`] with no service-specific checks ahead of the decode.
+#[doc(hidden)]
+#[must_use]
+pub fn begin<'a, F, G>(
+    state: &State,
+    request: &'a [u8],
+    supports: F,
+    access: G,
+) -> Stage<'a>
+where
+    F: Fn(UdsServiceType) -> bool,
+    G: Fn(UdsServiceType, u8, DiagnosticSessionType) -> Option<Access>,
+{
+    begin_with(state, request, supports, access, |_, _, _| None)
+}
+
+/// ISO 14229-1:2020 Figure 5's 0x7F for `DataTransfer::SESSIONS`, then Figure 31's two
+/// nodes ahead of the full length for `RequestDownload`: shorter than 5 bytes (key 1) is
+/// 0x13, and an unsupported
+/// `dataFormatIdentifier` or an invalid `addressAndLengthFormatIdentifier` is 0x31.
+#[doc(hidden)]
+pub fn transfer_ahead_of_decode<A: DataTransfer>(
+    services: &A,
+    service: UdsServiceType,
+    active: DiagnosticSessionType,
+    request: &[u8],
+) -> Option<NegativeResponseCode> {
+    if !matches!(
+        service,
+        UdsServiceType::RequestDownload
+            | UdsServiceType::TransferData
+            | UdsServiceType::RequestTransferExit
+    ) {
+        return None;
+    }
+    if !A::SESSIONS.contains(active) {
+        return Some(NegativeResponseCode::ServiceNotSupportedInActiveSession);
+    }
+    if !matches!(service, UdsServiceType::RequestDownload) {
+        return None;
+    }
+    let [_, format, alfid, _, _, ..] = *request else {
+        return Some(NegativeResponseCode::IncorrectMessageLengthOrInvalidFormat);
+    };
+    let valid = services.format_supported(DataFormatIdentifier::from(format))
+        && AddressAndLengthFormatIdentifier::try_from(alfid).is_ok();
+    (!valid).then_some(NegativeResponseCode::RequestOutOfRange)
 }
 
 /// The sub-function's value bits: bit 7 of the byte is `suppressPosRspMsgIndicationBit`
@@ -363,7 +446,9 @@ pub fn settle(
 ) -> Responded {
     // ``UDSSVC_ARCH_0005`` — no service identifier: complete, and no rule reaches it.
     let Some((settling, outcome)) = unsettled.parts() else {
-        return Responded::Suppressed { session: None };
+        return Responded::Suppressed {
+            effect: Effect::None,
+        };
     };
     let Settling { sid, suppress_bit } = settling;
     let outcome = if out.refused() {
@@ -372,18 +457,20 @@ pub fn settle(
         outcome
     };
     match outcome {
-        Ok(session) => {
+        Ok(effect) => {
             // Rule 2: the bit silences positive responses; rule 3: not after a 0x78.
             if suppress_bit && !pending_sent {
-                Responded::Suppressed { session }
+                Responded::Suppressed { effect }
             } else {
-                Responded::Yes { session }
+                Responded::Yes { effect }
             }
         }
         Err(nrc) => {
             // Rule 1, overridden by rule 3.
             if suppresses(nrc, ai) && !pending_sent {
-                return Responded::Suppressed { session: None };
+                return Responded::Suppressed {
+                    effect: Effect::None,
+                };
             }
             out.rewind();
             // `NegativeResponse::encode` writes `[sid, nrc]`; the 0x7F service byte is
@@ -392,7 +479,9 @@ pub fn settle(
             // `ResponseSink::new` holds the bound to it.
             let _ = out.write_all(&[0x7F]);
             let _ = NegativeResponse::new_with_sid(sid, nrc).encode(out);
-            Responded::Yes { session: None }
+            Responded::Yes {
+                effect: Effect::None,
+            }
         }
     }
 }
@@ -655,11 +744,193 @@ pub async fn ecu_reset<A: EcuReset>(
     services: &mut A,
     request: &EcuResetRequest,
     out: &mut ResponseSink<'_>,
-) -> Result<Option<DiagnosticSessionType>, NegativeResponseCode> {
+) -> Result<Effect, NegativeResponseCode> {
     let kind = request.reset_type;
     let _ = out.write_all(&[0x51, u8::from(kind)]);
-    services.reset(kind, out).await?;
-    Ok(None)
+    let after = services.reset(kind, out).await?;
+    Ok(Effect::Reset { kind, after })
+}
+
+/// ISO 14229-1:2020 clause 15.2 — `RequestDownload`'s own stage (``UDSSVC_ARCH_0036``,
+/// ``UDSSVC_ARCH_0044``), Figure 31 after the decode: `access` `None` or an active session
+/// outside its sessions is `requestOutOfRange` (0x31); none of its levels unlocked is
+/// `securityAccessDenied` (0x33); a download already in progress is
+/// `conditionsNotCorrect` (0x22, Table 444); then `begin`.
+///
+/// The positive response's `maxNumberOfBlockLength` is `MAX_BLOCK_LENGTH + 2` (15.2.3.2)
+/// in the fewest bytes, which [`RequestDownloadResponse`] encodes. The transfer opens only
+/// where the response settles positive.
+#[doc(hidden)]
+pub async fn request_download<A: DataTransfer>(
+    services: &mut A,
+    state: &mut State,
+    request: &RequestDownloadRequest,
+    out: &mut ResponseSink<'_>,
+) -> Result<Effect, NegativeResponseCode> {
+    let data_format = request.data_format_identifier();
+    let transfer = TransferRequest::Download {
+        data_format,
+        address: request.memory_address(),
+        size: request.memory_size(),
+    };
+    let Some(access) = services.access(&transfer) else {
+        return Err(NegativeResponseCode::RequestOutOfRange);
+    };
+    if !access.sessions().contains(state.session()) {
+        return Err(NegativeResponseCode::RequestOutOfRange);
+    }
+    if !access.admits(state.unlocked()) {
+        return Err(NegativeResponseCode::SecurityAccessDenied);
+    }
+    if state.transfer().is_some() {
+        return Err(NegativeResponseCode::ConditionsNotCorrect);
+    }
+    services.begin(transfer).await?;
+    let advertised = A::MAX_BLOCK_LENGTH.saturating_add(2).to_be_bytes();
+    let leading = advertised.iter().take_while(|&&byte| byte == 0).count();
+    let length = advertised
+        .get(leading.min(advertised.len().saturating_sub(1))..)
+        .unwrap_or(&advertised);
+    let _ = out.write_all(&[0x74]);
+    // A `usize`'s bytes always fit the nibble `new` bounds them to.
+    if let Ok(response) = RequestDownloadResponse::new(length) {
+        let _ = response.encode(out);
+    }
+    if !out.refused() {
+        let gated_by = access.levels().and(state.unlocked());
+        let size =
+            (data_format == DataFormatIdentifier::NONE).then_some(request.memory_size());
+        let sessions = access.sessions().intersection(A::SESSIONS);
+        state.open_transfer(Transfer::new(sessions, gated_by, size));
+    }
+    Ok(Effect::None)
+}
+
+/// ISO 14229-1:2020 clause 15.4 — `TransferData`'s own stage (``UDSSVC_ARCH_0036``), in
+/// Figure 33's order: no download in progress, or all of a known `memorySize` received
+/// and the block not a repeat, is `requestSequenceError` (0x24, Table 454); an empty block
+/// is 0x13 (key 1); a repeat of the last accepted block (15.4.4, the 0x73 row) longer than
+/// `MAX_BLOCK_LENGTH` is 0x31, otherwise answered `76 <counter>` without `block`; a block
+/// passing a known `memorySize` is `transferDataSuspended` (0x71); a counter other than
+/// the expected one is `wrongBlockSequenceCounter` (0x73); more than `MAX_BLOCK_LENGTH`
+/// data bytes is 0x31; then `block`. The counter advances, and the bytes count, only where
+/// the response settles positive. A 0x71, this stage's or `block`'s, ends the transfer,
+/// so the client starts over with a `RequestDownload`.
+#[doc(hidden)]
+pub async fn transfer_data<A: DataTransfer>(
+    services: &mut A,
+    state: &mut State,
+    request: &TransferDataRequest<'_>,
+    out: &mut ResponseSink<'_>,
+) -> Result<Effect, NegativeResponseCode> {
+    let Some(transfer) = state.transfer() else {
+        return Err(NegativeResponseCode::RequestSequenceError);
+    };
+    let counter = request.block_sequence_counter;
+    let data = request.data;
+    if data.is_empty() {
+        return Err(NegativeResponseCode::IncorrectMessageLengthOrInvalidFormat);
+    }
+    let repeat = transfer.is_repeat(counter);
+    if !repeat && transfer.all_received() {
+        return Err(NegativeResponseCode::RequestSequenceError);
+    }
+    let over_long = data.len() > A::MAX_BLOCK_LENGTH;
+    if repeat {
+        if over_long {
+            return Err(NegativeResponseCode::RequestOutOfRange);
+        }
+        let _ = out.write_all(&[0x76, counter]);
+        return Ok(Effect::None);
+    }
+    if transfer.would_exceed(data.len()) {
+        state.close_transfer();
+        return Err(NegativeResponseCode::TransferDataSuspended);
+    }
+    if counter != transfer.next {
+        return Err(NegativeResponseCode::WrongBlockSequenceCounter);
+    }
+    if over_long {
+        return Err(NegativeResponseCode::RequestOutOfRange);
+    }
+    let _ = out.write_all(&[0x76, counter]);
+    let blocked = services.block(data, out).await;
+    if blocked == Err(NegativeResponseCode::TransferDataSuspended) {
+        state.close_transfer();
+    }
+    blocked?;
+    if !out.refused() {
+        state.accept_block(data.len());
+    }
+    Ok(Effect::None)
+}
+
+/// ISO 14229-1:2020 clause 15.5 — `RequestTransferExit`'s own stage, in Figure 34's order:
+/// no download in progress, or less than a known `memorySize` received (Table 459), is
+/// `requestSequenceError` (0x24); then `exit`.
+/// After a 0x24, whoever answered it, the transfer stays open so the client can send what
+/// is missing; after any other answer it closes, except a positive one that settles 0x14.
+#[doc(hidden)]
+pub async fn request_transfer_exit<A: DataTransfer>(
+    services: &mut A,
+    state: &mut State,
+    request: &RequestTransferExitRequest<'_>,
+    out: &mut ResponseSink<'_>,
+) -> Result<Effect, NegativeResponseCode> {
+    let Some(transfer) = state.transfer() else {
+        return Err(NegativeResponseCode::RequestSequenceError);
+    };
+    if transfer.incomplete() {
+        return Err(NegativeResponseCode::RequestSequenceError);
+    }
+    let _ = out.write_all(&[0x77]);
+    let exited = services.exit(request.parameter_record, out).await;
+    let keep = match exited {
+        Err(NegativeResponseCode::RequestSequenceError) => true,
+        Ok(()) => out.refused(),
+        Err(_) => false,
+    };
+    if !keep {
+        state.close_transfer();
+    }
+    exited.map(|()| Effect::None)
+}
+
+/// Figures 33 and 34 for a transfer request too long for the in-flight buffer: a block is
+/// 0x24 under [`transfer_data`]'s conditions, 0x73 where its counter is neither the
+/// expected one nor a repeat, and otherwise 0x31, repeats included (the transport drops the
+/// declared length, so 0x71 is not asked); an exit is 0x24 with no download in progress.
+/// Anything else passes to the 0x13 every truncated request ends with.
+///
+/// # Errors
+///
+/// `requestSequenceError` (0x24), `wrongBlockSequenceCounter` (0x73) or
+/// `requestOutOfRange` (0x31), as above.
+#[doc(hidden)]
+pub fn transfer_before_length(
+    state: &State,
+    request: &Request<'_>,
+) -> Result<(), NegativeResponseCode> {
+    match request {
+        Request::TransferData(block) => {
+            let Some(transfer) = state.transfer() else {
+                return Err(NegativeResponseCode::RequestSequenceError);
+            };
+            let counter = block.block_sequence_counter;
+            let repeat = transfer.is_repeat(counter);
+            if !repeat && transfer.all_received() {
+                return Err(NegativeResponseCode::RequestSequenceError);
+            }
+            if !repeat && counter != transfer.next {
+                return Err(NegativeResponseCode::WrongBlockSequenceCounter);
+            }
+            Err(NegativeResponseCode::RequestOutOfRange)
+        }
+        Request::RequestTransferExit(_) if state.transfer().is_none() => {
+            Err(NegativeResponseCode::RequestSequenceError)
+        }
+        _ => Ok(()),
+    }
 }
 
 /// ISO 14229-1:2020 clause 10.4 and Annex I — `SecurityAccess`'s own stage
@@ -969,6 +1240,7 @@ mod tests {
         Settling, Stage, allowed_in_session, begin, session_access, settle, suppresses,
         zero_sub_function,
     };
+    use crate::services::Effect;
     use crate::state::{ProtocolState, State};
     use crate::{Access, Sessions};
     use crate::{Responded, ResponseSink, Unsettled};
@@ -1613,7 +1885,12 @@ mod tests {
             false,
             &mut out,
         );
-        assert_eq!(r, Responded::Suppressed { session: None });
+        assert_eq!(
+            r,
+            Responded::Suppressed {
+                effect: Effect::None
+            }
+        );
         assert_eq!(out.written_bytes(), &[0_u8; 0]);
         let r = settle(
             ai(TaType::Physical),
@@ -1621,7 +1898,12 @@ mod tests {
             false,
             &mut out,
         );
-        assert_eq!(r, Responded::Yes { session: None });
+        assert_eq!(
+            r,
+            Responded::Yes {
+                effect: Effect::None
+            }
+        );
         assert_eq!(out.written_bytes(), &[0x7F, 0x10, 0x7E]);
     }
 
@@ -1670,7 +1952,12 @@ mod tests {
             false,
             &mut out,
         );
-        assert_eq!(r, Responded::Yes { session: None });
+        assert_eq!(
+            r,
+            Responded::Yes {
+                effect: Effect::None
+            }
+        );
         assert_eq!(out.written_bytes(), &[0x7F, 0x22, 0x31]);
     }
 
@@ -1685,14 +1972,24 @@ mod tests {
             false,
             &mut out,
         );
-        assert_eq!(r, Responded::Suppressed { session: None });
+        assert_eq!(
+            r,
+            Responded::Suppressed {
+                effect: Effect::None
+            }
+        );
         let r = settle(
             ai(TaType::Functional),
             Unsettled::handled(sid(0x22), Err(N::RequestOutOfRange)),
             true,
             &mut out,
         );
-        assert_eq!(r, Responded::Yes { session: None });
+        assert_eq!(
+            r,
+            Responded::Yes {
+                effect: Effect::None
+            }
+        );
     }
 
     /// `settle`: rule 2 — the suppress bit silences a positive response only.
@@ -1707,14 +2004,14 @@ mod tests {
         };
         let r = settle(
             ai(TaType::Physical),
-            Unsettled::handled(bit, Ok(Some(S::ExtendedDiagnosticSession))),
+            Unsettled::handled(bit, Ok(Effect::Session(S::ExtendedDiagnosticSession))),
             false,
             &mut out,
         );
         assert_eq!(
             r,
             Responded::Suppressed {
-                session: Some(S::ExtendedDiagnosticSession)
+                effect: Effect::Session(S::ExtendedDiagnosticSession)
             }
         );
         let r = settle(
@@ -1723,7 +2020,12 @@ mod tests {
             false,
             &mut out,
         );
-        assert_eq!(r, Responded::Yes { session: None });
+        assert_eq!(
+            r,
+            Responded::Yes {
+                effect: Effect::None
+            }
+        );
     }
 
     /// ``UDSSVC_ARCH_0017`` — a refused write becomes 0x14 whatever the handler said.
@@ -1734,11 +2036,16 @@ mod tests {
         let _ = out.write_all(&[0x62, 0xF1, 0x90, 1, 2]);
         let r = settle(
             ai(TaType::Physical),
-            Unsettled::handled(sid(0x22), Ok(None)),
+            Unsettled::handled(sid(0x22), Ok(Effect::None)),
             false,
             &mut out,
         );
-        assert_eq!(r, Responded::Yes { session: None });
+        assert_eq!(
+            r,
+            Responded::Yes {
+                effect: Effect::None
+            }
+        );
         assert_eq!(out.written_bytes(), &[0x7F, 0x22, 0x14]);
     }
 
@@ -1753,7 +2060,7 @@ mod tests {
             sid: 0x10,
             suppress_bit: true,
         };
-        let outcome = Ok(Some(S::ExtendedDiagnosticSession));
+        let outcome = Ok(Effect::Session(S::ExtendedDiagnosticSession));
         let r = settle(
             ai(TaType::Physical),
             Unsettled::handled(bit, outcome),
@@ -1763,7 +2070,7 @@ mod tests {
         assert_eq!(
             r,
             Responded::Yes {
-                session: Some(S::ExtendedDiagnosticSession)
+                effect: Effect::Session(S::ExtendedDiagnosticSession)
             }
         );
         assert_eq!(out.written_bytes(), &[0x50, 0x03, 0, 50, 1, 244]);
@@ -1782,7 +2089,12 @@ mod tests {
                 pending_sent,
                 &mut out,
             );
-            assert_eq!(r, Responded::Suppressed { session: None });
+            assert_eq!(
+                r,
+                Responded::Suppressed {
+                    effect: Effect::None
+                }
+            );
             assert_eq!(out.written_bytes(), &[0_u8; 0]);
         }
     }
@@ -1795,9 +2107,45 @@ mod tests {
         let mut out = ResponseSink::new(&mut buf, None);
         let refused = Unsettled::refused(0x11, N::ServiceNotSupported);
         let r = settle(ai(TaType::Functional), refused, false, &mut out);
-        assert_eq!(r, Responded::Suppressed { session: None });
+        assert_eq!(
+            r,
+            Responded::Suppressed {
+                effect: Effect::None
+            }
+        );
         let r = settle(ai(TaType::Physical), refused, false, &mut out);
-        assert_eq!(r, Responded::Yes { session: None });
+        assert_eq!(
+            r,
+            Responded::Yes {
+                effect: Effect::None
+            }
+        );
         assert_eq!(out.written_bytes(), &[0x7F, 0x11, 0x11]);
+    }
+
+    /// Figure 7 — a transfer is ended on entering the default session (keys 1 and 4) and
+    /// on entering a session it is not available in (key 3(iii)); otherwise it survives.
+    #[test]
+    fn a_session_change_keeps_a_transfer_only_where_figure_7_does() {
+        use crate::state::Transfer;
+        let both = Sessions::of(&[S::ProgrammingSession, S::ExtendedDiagnosticSession]);
+        let opened = || {
+            let mut s = State::INITIAL;
+            let _ = super::transition(&mut s, S::ExtendedDiagnosticSession);
+            s.open_transfer(Transfer::new(both, None, None));
+            s
+        };
+        let mut s = opened();
+        let _ = super::transition(&mut s, S::ProgrammingSession);
+        assert!(
+            s.transfer().is_some(),
+            "available in the new session, ungated"
+        );
+        let mut s = opened();
+        let _ = super::transition(&mut s, S::SafetySystemDiagnosticSession);
+        assert_eq!(s.transfer(), None, "not available in the new session");
+        let mut s = opened();
+        let _ = super::transition(&mut s, S::DefaultSession);
+        assert_eq!(s.transfer(), None, "the default session");
     }
 }

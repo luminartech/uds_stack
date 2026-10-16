@@ -92,6 +92,14 @@ Contents of section .rodata:
  d140 58310000 00000000 00000000 5756575a  X1..........WVWZ
 """
 
+# A section starting 8-aligned, so no line starts 16-aligned.
+RODATA_8_ALIGNED = """
+target/embedded-probe:	file format elf32-littlearm
+Contents of section .rodata:
+ d078 88130000 32000000 88130000 00000000  ....2...........
+ d088 00000000 58310000 00000000 5756575a  ....X1......WVWZ
+"""
+
 
 class TheClientTransportsSizeIsReadFromTheImage(unittest.TestCase):
     def test_the_symbol_is_found_with_its_hash_and_section(self) -> None:
@@ -115,6 +123,14 @@ class TheClientTransportsSizeIsReadFromTheImage(unittest.TestCase):
 
     def test_a_word_within_a_line_is_read(self) -> None:
         self.assertEqual(parse_word(RODATA, 0xD134), 0x32)
+
+    def test_a_word_is_read_where_lines_are_not_16_aligned(self) -> None:
+        self.assertEqual(parse_word(RODATA_8_ALIGNED, 0xD08C), 0x3158)
+        self.assertEqual(parse_word(RODATA_8_ALIGNED, 0xD07C), 0x32)
+
+    def test_an_address_off_a_word_is_refused(self) -> None:
+        with self.assertRaises(ValueError):
+            parse_word(RODATA_8_ALIGNED, 0xD08A)
 
     def test_an_address_the_dump_lacks_is_refused(self) -> None:
         with self.assertRaises(ValueError):

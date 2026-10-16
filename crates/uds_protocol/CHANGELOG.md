@@ -17,6 +17,7 @@ now <https://github.com/luminartech/uds_stack>.
 
 ### Added
 
+- `DiagnosticSessionType::value`, the session byte as a `const fn`.
 - `ReadDtcInfoResponse::DtcSnapshotRecords` and `DtcExtDataRecords`, the responses to
   sub-functions `0x04` and `0x06`: the DTC, its status, and the records raw, whose
   widths are the application's identifiers' to know.

@@ -19,6 +19,11 @@ reshapes several protocol-core messages to match ISO 13400-2:2019.
 [MIGRATING.md](MIGRATING.md) maps each removed type to its replacement, with an
 example for each.
 
+### Added
+
+- `Entity::with_optional_discovery` and `Discover` for `Option<Discovery<U, I>>`: one entity
+  type with or without discovery.
+
 ### Removed
 
 - **Breaking:** the `bare_metal_entity` module: `Entity`, `EntityConfig`,

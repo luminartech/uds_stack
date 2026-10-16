@@ -12,7 +12,7 @@ use common::{PendN, STEPS, Script, Step, block_on};
 use uds_services::{
     Address, AfterSend, Ai, DiagnosticSessionType as S, Mtype, NegativeResponseCode as Nrc,
     Reloads, ResponseSink, SResult, ServerParams, SessionTiming, SessionTransition, Sink,
-    TaType, Timestamp, TransportEvent, UdsTransport, uds_server,
+    Stepped, TaType, Timestamp, TransportEvent, UdsTransport, uds_server,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -143,7 +143,7 @@ const PARAMS: ServerParams = ServerParams {
 #[test]
 fn a_spurious_confirmation_is_survived() {
     let mut server = Srv::new(Ecu, Spurious { done: false }, Address(0x10), PARAMS);
-    assert_eq!(block_on(server.step()), Ok(()));
+    assert_eq!(block_on(server.step()), Ok(Stepped::Continue));
     assert!(server.transport().done);
     assert_eq!(block_on(server.step()), Err(()));
 }
@@ -246,7 +246,7 @@ macro_rules! run {
                     break;
                 }
             }
-            if result != Some(Ok(())) {
+            if result != Some(Ok(uds_services::Stepped::Continue)) {
                 break;
             }
         }

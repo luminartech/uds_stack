@@ -60,10 +60,11 @@ use uds_session::{Ai, Reloads, SResult, Timestamp};
 /// with [`DiagnosticEntity::close`] once the entity confirms the message was
 /// sent, and only then reports that confirmation. The close therefore follows
 /// the response ("after sending") and precedes anything done on the
-/// confirmation: `uds_services::Server` executes a session change there. It has
-/// no hook yet that executes a reset on its confirmation, so an `ECUReset`
-/// handler that resets on its own does so before the close. A message whose
-/// confirmation fails closes nothing.
+/// confirmation: `uds_services::Server` executes a session change there. It
+/// executes an accepted reset on that confirmation (`EcuReset::confirmed`, and
+/// `Stopped` for a restart), so the reset follows the close; a suppressed reset
+/// sends nothing and closes nothing. A message whose confirmation fails closes
+/// nothing.
 ///
 /// The close follows the armed message's own confirmation, told apart from the
 /// tester's others by the order the entity confirms them in. A message sent to the

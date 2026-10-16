@@ -13,15 +13,16 @@ use common::block_on;
 use uds_protocol::NegativeResponseCode as Nrc;
 use uds_services::pipeline::settle;
 use uds_services::{
-    Access, Address, AfterSend, Ai, ClearDiagnosticInformation, CommunicationControl,
-    CommunicationControlType, CommunicationType, ControlDtcSetting, DataIdentifier, Delay,
-    DiagnosticSessionType as S, DtcRecord, DtcReportKind, DtcSettingType, DtcStatusMask,
-    EcuReset, KeyVerdict, Levels, Mtype, ProtocolState, ReadDtcInfoReportType,
-    ReadDtcInfoSubFunction, ReadDtcInformation, Received, RecordError, ResetType,
-    Responded, ResponseSink, RoutineControl, RoutineControlSubFunction, RoutineIdentifier,
-    SecurityAccess, SecurityLevel, SecurityPolicy, ServiceSet, SessionTiming,
-    SessionTransition, Sessions, Sink, SubnetNumber, TaType, TesterPresent,
-    WriteDataByIdentifier, uds_server,
+    Access, Address, AfterReset, AfterSend, Ai, ClearDiagnosticInformation,
+    CommunicationControl, CommunicationControlType, CommunicationType, ControlDtcSetting,
+    DataFormatIdentifier, DataIdentifier, DataTransfer, Delay, DiagnosticSessionType as S,
+    DtcRecord, DtcReportKind, DtcSettingType, DtcStatusMask, EcuReset, KeyVerdict, Levels,
+    Mtype, ProtocolState, ReadDtcInfoReportType, ReadDtcInfoSubFunction,
+    ReadDtcInformation, Received, RecordError, ResetType, Responded, ResponseSink,
+    RoutineControl, RoutineControlSubFunction, RoutineIdentifier, SecurityAccess,
+    SecurityLevel, SecurityPolicy, ServiceSet, SessionTiming, SessionTransition, Sessions,
+    Sink, SubnetNumber, TaType, TesterPresent, TransferRequest, WriteDataByIdentifier,
+    uds_server,
 };
 
 /// The test server's data identifiers.
@@ -118,7 +119,8 @@ enum SeedFault {
 struct Ecu {
     /// The reset `EcuReset::reset` last accepted.
     accepted: Option<ResetType>,
-    /// Makes the next handler that can refuse answer `conditionsNotCorrect` (0x22).
+    /// Makes the next handler that can refuse answer `conditionsNotCorrect` (0x22), or
+    /// `uploadDownloadNotAccepted` (0x70) from `DataTransfer::begin`.
     refuse: bool,
     /// Level 0x01's stored attempt count.
     attempts: u8,
@@ -153,6 +155,18 @@ struct Ecu {
     cleared: Option<(DtcRecord, Option<u8>)>,
     /// The `DTCSettingType` `ControlDtcSetting` last applied.
     dtc_setting: Option<DtcSettingType>,
+    /// The transfer `DataTransfer::begin` last began.
+    begun: Option<(u64, u32)>,
+    /// Each block `DataTransfer::block` accepted.
+    blocks: Vec<Vec<u8>>,
+    /// What `DataTransfer::block` writes after `76 <counter>`.
+    block_record: Vec<u8>,
+    /// Makes the next `block` answer this code.
+    block_refusal: Option<Nrc>,
+    /// The parameter records `DataTransfer::exit` was called with.
+    exits: Vec<Vec<u8>>,
+    /// Makes the next `exit` answer this code.
+    exit_refusal: Option<Nrc>,
 }
 
 impl uds_services::DiagnosticSessionControl for Ecu {
@@ -221,7 +235,7 @@ impl EcuReset for Ecu {
         &mut self,
         kind: ResetType,
         out: &mut ResponseSink<'_>,
-    ) -> Result<(), Nrc> {
+    ) -> Result<AfterReset, Nrc> {
         if core::mem::take(&mut self.refuse) {
             return Err(Nrc::ConditionsNotCorrect);
         }
@@ -229,8 +243,13 @@ impl EcuReset for Ecu {
             let _ = out.write_all(&[0x0A]);
         }
         self.accepted = Some(kind);
-        Ok(())
+        Ok(if matches!(kind, ResetType::EnableRapidPowerShutDown) {
+            AfterReset::Continue
+        } else {
+            AfterReset::Restart
+        })
     }
+    fn confirmed(&mut self, _kind: ResetType) {}
 }
 
 /// Level 0x01 counts attempts, three before a delay; level 0x03 counts none; level 0x05
@@ -576,6 +595,65 @@ impl ControlDtcSetting for Ecu {
     }
 }
 
+/// Download regions (Figure 31): `1000`, by level 0x03 everywhere; `2000`, ungated, in the
+/// programming and extended sessions; `3000`, ungated, programming only. Anything else is
+/// not a valid interval.
+impl DataTransfer for Ecu {
+    const MAY_RESPOND_PENDING: bool = true;
+    const MAX_BLOCK_LENGTH: usize = 8;
+    const SESSIONS: Sessions = Sessions::NONE
+        .with(S::ProgrammingSession)
+        .with(S::ExtendedDiagnosticSession);
+    fn format_supported(&self, format: DataFormatIdentifier) -> bool {
+        matches!(format.value(), 0x00 | 0x11)
+    }
+    fn access(&self, request: &TransferRequest<'_>) -> Option<Access> {
+        match *request {
+            TransferRequest::Download {
+                address: 0x1000, ..
+            } => Some(by_level_3(everywhere())),
+            TransferRequest::Download {
+                address: 0x2000, ..
+            } => Some(Access::new(Sessions::of(&[
+                S::ProgrammingSession,
+                S::ExtendedDiagnosticSession,
+            ]))),
+            TransferRequest::Download {
+                address: 0x3000, ..
+            } => Some(only_in(S::ProgrammingSession)),
+            TransferRequest::Download {
+                address: 0x5000, ..
+            } => Some(everywhere()),
+            _ => None,
+        }
+    }
+    async fn begin(&mut self, request: TransferRequest<'_>) -> Result<(), Nrc> {
+        if core::mem::take(&mut self.refuse) {
+            return Err(Nrc::UploadDownloadNotAccepted);
+        }
+        if let TransferRequest::Download { address, size, .. } = request {
+            self.begun = Some((address, size));
+        }
+        Ok(())
+    }
+    async fn block(&mut self, data: &[u8], out: &mut ResponseSink<'_>) -> Result<(), Nrc> {
+        if let Some(code) = self.block_refusal.take() {
+            return Err(code);
+        }
+        let _ = out.write_all(&self.block_record);
+        self.blocks.push(data.to_vec());
+        Ok(())
+    }
+    async fn exit(
+        &mut self,
+        record: &[u8],
+        _out: &mut ResponseSink<'_>,
+    ) -> Result<(), Nrc> {
+        self.exits.push(record.to_vec());
+        self.exit_refusal.take().map_or(Ok(()), Err)
+    }
+}
+
 #[derive(Debug)]
 struct NoTransport;
 
@@ -613,7 +691,7 @@ impl uds_services::UdsTransport for NoTransport {
 uds_server! {
     Ecu: DiagnosticSessionControl, TesterPresent, EcuReset, SecurityAccess,
          CommunicationControl, ControlDtcSetting, WriteDataByIdentifier,
-         ClearDiagnosticInformation, ReadDtcInformation, RoutineControl;
+         ClearDiagnosticInformation, ReadDtcInformation, RoutineControl, DataTransfer;
     transport = NoTransport,
     peers = 1,
     server = EcuServer,
@@ -2262,5 +2340,537 @@ fn security_access_a_truncated_key_out_of_sequence_is_0x24() {
     assert_eq!(
         exchange(&mut ecu, &mut state, &RIGHT_KEY).as_deref(),
         Some(&[0x7F, 0x27, 0x24][..])
+    );
+}
+
+// --- RequestDownload (0x34), ISO 14229-1:2020 clause 15.2 -----------------------------
+
+/// `34 00 22 1000 0018`: uncompressed, a 2-byte address and a 2-byte size, 24 bytes at
+/// 0x1000.
+const DOWNLOAD_GATED: [u8; 7] = [0x34, 0x00, 0x22, 0x10, 0x00, 0x00, 0x18];
+/// The same at the ungated 0x2000.
+const DOWNLOAD_2000: [u8; 7] = [0x34, 0x00, 0x22, 0x20, 0x00, 0x00, 0x18];
+/// The positive response: a 1-byte `maxNumberOfBlockLength` of `MAX_BLOCK_LENGTH + 2`.
+const DOWNLOAD_ACCEPTED: [u8; 3] = [0x74, 0x10, 0x0A];
+
+/// Level 0x03 unlocked in the extended session, where `unlocked_level_3` leaves the
+/// server, and `request` accepted.
+fn downloading(ecu: &mut Ecu, request: &[u8]) -> State {
+    let mut state = unlocked_level_3(ecu);
+    assert_eq!(
+        exchange(ecu, &mut state, request).as_deref(),
+        Some(&DOWNLOAD_ACCEPTED[..])
+    );
+    state
+}
+
+/// 15.2.3.2 — the positive response advertises `MAX_BLOCK_LENGTH + 2`, the whole
+/// `TransferData` request message, in the fewest bytes, its `lengthFormatIdentifier` high
+/// nibble that byte count.
+#[test]
+fn request_download_advertises_the_whole_message_length() {
+    let mut ecu = Ecu::default();
+    let _ = downloading(&mut ecu, &DOWNLOAD_GATED);
+    assert_eq!(ecu.begun, Some((0x1000, 0x18)));
+}
+
+/// Table 23 and `DataTransfer::SESSIONS` (Figure 5) — 0x7F in the default session and in
+/// a non-default session outside `SESSIONS`, for each of the three staged services.
+#[test]
+fn transfer_services_outside_their_sessions_are_0x7f() {
+    let mut ecu = Ecu::default();
+    let mut default = State::INITIAL;
+    let mut safety = in_session(&mut ecu, S::SafetySystemDiagnosticSession);
+    for (request, sid) in [
+        (&DOWNLOAD_2000[..], 0x34),
+        (&[0x36, 0x01, 0xAA][..], 0x36),
+        (&[0x37][..], 0x37),
+    ] {
+        for state in [&mut default, &mut safety] {
+            assert_eq!(
+                exchange(&mut ecu, state, request).as_deref(),
+                Some(&[0x7F, sid, 0x7F][..]),
+                "{request:02X?}"
+            );
+        }
+    }
+}
+
+/// `RequestUpload` and `RequestFileTransfer` are not staged: 0x11 whatever the session.
+#[test]
+fn upload_and_file_transfer_are_0x11() {
+    let mut ecu = Ecu::default();
+    let mut state = extended(&mut ecu);
+    for (request, sid) in [
+        (&[0x35, 0x00, 0x22, 0x20, 0x00, 0x00, 0x18][..], 0x35),
+        (&[0x38, 0x01][..], 0x38),
+    ] {
+        assert_eq!(
+            exchange(&mut ecu, &mut state, request).as_deref(),
+            Some(&[0x7F, sid, 0x11][..])
+        );
+    }
+}
+
+/// Figure 31 key 1 — shorter than 5 bytes is 0x13, before the format is looked at.
+#[test]
+fn request_download_shorter_than_five_bytes_is_0x13() {
+    let mut ecu = Ecu::default();
+    let mut state = extended(&mut ecu);
+    for request in [&[0x34, 0x00, 0x00][..], &[0x34, 0x77, 0x22, 0x20][..]] {
+        assert_eq!(
+            exchange(&mut ecu, &mut state, request).as_deref(),
+            Some(&[0x7F, 0x34, 0x13][..]),
+            "{request:02X?}"
+        );
+    }
+}
+
+/// Figure 31 — an unsupported `dataFormatIdentifier` or an invalid
+/// `addressAndLengthFormatIdentifier` is 0x31 before the full length is checked, so a
+/// wrong length does not turn it into 0x13.
+#[test]
+fn request_download_an_invalid_format_is_0x31_before_the_full_length() {
+    let mut ecu = Ecu::default();
+    let mut state = extended(&mut ecu);
+    for request in [
+        &[0x34, 0x77, 0x22, 0x20, 0x00][..],
+        &[0x34, 0x00, 0x60, 0x20, 0x00][..],
+        &[0x34, 0x77, 0x22, 0x20, 0x00, 0x00, 0x18, 0xFF][..],
+    ] {
+        assert_eq!(
+            exchange(&mut ecu, &mut state, request).as_deref(),
+            Some(&[0x7F, 0x34, 0x31][..]),
+            "{request:02X?}"
+        );
+    }
+    assert_eq!(
+        exchange(&mut ecu, &mut state, &[0x34, 0x11, 0x22, 0x20, 0x00, 0x00]).as_deref(),
+        Some(&[0x7F, 0x34, 0x13][..]),
+        "a supported format, short by one"
+    );
+}
+
+/// Figure 31 — an interval `access` has no answer for, or one not available in the active
+/// session, is 0x31; one whose level is locked is 0x33; none reaches `begin`.
+#[test]
+fn request_download_checks_the_interval_then_its_security() {
+    let mut ecu = Ecu::default();
+    let mut state = extended(&mut ecu);
+    for (request, nrc) in [
+        (&[0x34, 0x00, 0x22, 0x40, 0x00, 0x00, 0x18][..], 0x31),
+        (&[0x34, 0x00, 0x22, 0x30, 0x00, 0x00, 0x18][..], 0x31),
+        (&DOWNLOAD_GATED[..], 0x33),
+    ] {
+        assert_eq!(
+            exchange(&mut ecu, &mut state, request).as_deref(),
+            Some(&[0x7F, 0x34, nrc][..]),
+            "{request:02X?}"
+        );
+    }
+    assert_eq!(ecu.begun, None);
+}
+
+/// Table 444 — a `RequestDownload` while a download is in progress is 0x22; `begin` is
+/// not asked again.
+#[test]
+fn request_download_with_a_transfer_open_is_0x22() {
+    let mut ecu = Ecu::default();
+    let mut state = downloading(&mut ecu, &DOWNLOAD_2000);
+    ecu.begun = None;
+    assert_eq!(
+        exchange(&mut ecu, &mut state, &DOWNLOAD_2000).as_deref(),
+        Some(&[0x7F, 0x34, 0x22][..])
+    );
+    assert_eq!(ecu.begun, None);
+}
+
+/// `begin`'s refusal is its code, and opens nothing: the same request again is accepted,
+/// not 0x22.
+#[test]
+fn request_download_a_refused_begin_opens_nothing() {
+    let mut ecu = Ecu::default();
+    let mut state = extended(&mut ecu);
+    ecu.refuse = true;
+    assert_eq!(
+        exchange(&mut ecu, &mut state, &DOWNLOAD_2000).as_deref(),
+        Some(&[0x7F, 0x34, 0x70][..])
+    );
+    assert_eq!(
+        exchange(&mut ecu, &mut state, &DOWNLOAD_2000).as_deref(),
+        Some(&DOWNLOAD_ACCEPTED[..])
+    );
+}
+
+// --- TransferData (0x36) and RequestTransferExit (0x37), clauses 15.4 and 15.5 --------
+
+/// Three 8-byte blocks, the 24 bytes `DOWNLOAD_GATED`/`DOWNLOAD_2000` announce.
+const BLOCKS: [[u8; 10]; 3] = [
+    [0x36, 0x01, 1, 2, 3, 4, 5, 6, 7, 8],
+    [0x36, 0x02, 9, 10, 11, 12, 13, 14, 15, 16],
+    [0x36, 0x03, 17, 18, 19, 20, 21, 22, 23, 24],
+];
+
+/// Table 451, 15.4.4 the 0x73 row — three blocks reach `block` once each; the last,
+/// repeated, is answered `76 03` without a second call; the exit closes the transfer.
+#[test]
+fn a_download_of_three_blocks_and_a_repeat() {
+    let mut ecu = Ecu::default();
+    let mut state = downloading(&mut ecu, &DOWNLOAD_GATED);
+    for (n, block) in BLOCKS.iter().enumerate() {
+        assert_eq!(
+            exchange(&mut ecu, &mut state, block).as_deref(),
+            Some(&[0x76, block[1]][..]),
+            "block {n}"
+        );
+    }
+    assert_eq!(
+        exchange(&mut ecu, &mut state, &BLOCKS[2]).as_deref(),
+        Some(&[0x76, 0x03][..])
+    );
+    assert_eq!(ecu.blocks.len(), 3);
+    assert_eq!(ecu.blocks.get(2).map(Vec::as_slice), BLOCKS[2].get(2..));
+    assert_eq!(
+        exchange(&mut ecu, &mut state, &[0x37, 0xC5]).as_deref(),
+        Some(&[0x77][..])
+    );
+    assert_eq!(ecu.exits, [vec![0xC5]]);
+    assert_eq!(
+        exchange(&mut ecu, &mut state, &BLOCKS[0]).as_deref(),
+        Some(&[0x7F, 0x36, 0x24][..]),
+        "closed"
+    );
+}
+
+/// Figure 33 — with no download in progress a block is 0x24 (Table 454), and so is an
+/// exit (Figure 34).
+#[test]
+fn a_block_or_an_exit_with_no_transfer_open_is_0x24() {
+    let mut ecu = Ecu::default();
+    let mut state = extended(&mut ecu);
+    assert_eq!(
+        exchange(&mut ecu, &mut state, &BLOCKS[0]).as_deref(),
+        Some(&[0x7F, 0x36, 0x24][..])
+    );
+    assert_eq!(
+        exchange(&mut ecu, &mut state, &[0x37]).as_deref(),
+        Some(&[0x7F, 0x37, 0x24][..])
+    );
+}
+
+/// Figure 33 key 1 — an empty block is 0x13 and advances nothing.
+#[test]
+fn an_empty_download_block_is_0x13() {
+    let mut ecu = Ecu::default();
+    let mut state = downloading(&mut ecu, &DOWNLOAD_2000);
+    assert_eq!(
+        exchange(&mut ecu, &mut state, &[0x36, 0x01]).as_deref(),
+        Some(&[0x7F, 0x36, 0x13][..])
+    );
+    assert_eq!(
+        exchange(&mut ecu, &mut state, &BLOCKS[0]).as_deref(),
+        Some(&[0x76, 0x01][..])
+    );
+}
+
+/// Table 454 — a wrong counter is 0x73; a block longer than `MAX_BLOCK_LENGTH` is 0x31
+/// (Figure 33's 0x31 node, after the counter).
+#[test]
+fn a_wrong_counter_is_0x73_and_an_over_long_block_0x31() {
+    let mut ecu = Ecu::default();
+    let mut state = downloading(&mut ecu, &DOWNLOAD_2000);
+    assert_eq!(
+        exchange(&mut ecu, &mut state, &BLOCKS[1]).as_deref(),
+        Some(&[0x7F, 0x36, 0x73][..])
+    );
+    assert_eq!(
+        exchange(
+            &mut ecu,
+            &mut state,
+            &[0x36, 0x01, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+        )
+        .as_deref(),
+        Some(&[0x7F, 0x36, 0x31][..])
+    );
+    assert_eq!(ecu.blocks.len(), 0);
+}
+
+/// Table 454 — with an uncompressed format, a block past `memorySize` is 0x71; once all
+/// of it is received a new block is 0x24 and a repeat is still accepted; an exit before
+/// all of it is 0x24 (Table 459) and leaves the transfer open.
+#[test]
+fn memory_size_is_held_for_an_uncompressed_download() {
+    let mut ecu = Ecu::default();
+    let mut state = downloading(&mut ecu, &DOWNLOAD_2000);
+    let _ = exchange(&mut ecu, &mut state, &BLOCKS[0]);
+    assert_eq!(
+        exchange(&mut ecu, &mut state, &[0x37]).as_deref(),
+        Some(&[0x7F, 0x37, 0x24][..]),
+        "16 of 24 bytes missing"
+    );
+    let _ = exchange(&mut ecu, &mut state, &BLOCKS[1]);
+    let _ = exchange(&mut ecu, &mut state, &BLOCKS[2]);
+    assert_eq!(
+        exchange(&mut ecu, &mut state, &[0x36, 0x04, 0xAA]).as_deref(),
+        Some(&[0x7F, 0x36, 0x24][..])
+    );
+    assert_eq!(
+        exchange(&mut ecu, &mut state, &BLOCKS[2]).as_deref(),
+        Some(&[0x76, 0x03][..])
+    );
+    assert_eq!(ecu.exits.len(), 0, "the crate answered the early exit");
+}
+
+/// Figure 33's 0x71 node — a block that would pass `memorySize` is 0x71, which ends the
+/// transfer: a further block or an exit is 0x24, and a new download is accepted.
+#[test]
+fn a_block_past_memory_size_is_0x71_and_ends_the_transfer() {
+    let mut ecu = Ecu::default();
+    // 4 bytes at 0x2000.
+    let short = [0x34, 0x00, 0x22, 0x20, 0x00, 0x00, 0x04];
+    let mut state = downloading(&mut ecu, &short);
+    assert_eq!(
+        exchange(&mut ecu, &mut state, &BLOCKS[0]).as_deref(),
+        Some(&[0x7F, 0x36, 0x71][..])
+    );
+    assert_eq!(
+        exchange(&mut ecu, &mut state, &[0x36, 0x01, 0xAA]).as_deref(),
+        Some(&[0x7F, 0x36, 0x24][..])
+    );
+    assert_eq!(
+        exchange(&mut ecu, &mut state, &[0x37]).as_deref(),
+        Some(&[0x7F, 0x37, 0x24][..])
+    );
+    assert_eq!(
+        exchange(&mut ecu, &mut state, &short).as_deref(),
+        Some(&DOWNLOAD_ACCEPTED[..])
+    );
+}
+
+/// A 0x71 from `block` ends the transfer as the stage's own does.
+#[test]
+fn a_handler_0x71_ends_the_transfer() {
+    let mut ecu = Ecu::default();
+    let mut state = downloading(&mut ecu, &DOWNLOAD_GATED);
+    let _ = exchange(&mut ecu, &mut state, &BLOCKS[0]);
+    ecu.block_refusal = Some(Nrc::TransferDataSuspended);
+    assert_eq!(
+        exchange(&mut ecu, &mut state, &BLOCKS[1]).as_deref(),
+        Some(&[0x7F, 0x36, 0x71][..])
+    );
+    assert_eq!(
+        exchange(&mut ecu, &mut state, &BLOCKS[1]).as_deref(),
+        Some(&[0x7F, 0x36, 0x24][..])
+    );
+    assert_eq!(
+        exchange(&mut ecu, &mut state, &[0x37]).as_deref(),
+        Some(&[0x7F, 0x37, 0x24][..])
+    );
+    assert_eq!(
+        exchange(&mut ecu, &mut state, &DOWNLOAD_GATED).as_deref(),
+        Some(&DOWNLOAD_ACCEPTED[..])
+    );
+}
+
+/// Table 441 — with a compressed format the crate counts nothing: a fourth block is
+/// accepted, and an exit reaches the handler, whose 0x24 leaves the transfer open and
+/// whose 0x72 closes it.
+#[test]
+fn a_compressed_download_leaves_memory_size_to_the_handler() {
+    let mut ecu = Ecu::default();
+    let mut state = downloading(&mut ecu, &[0x34, 0x11, 0x22, 0x20, 0x00, 0x00, 0x04]);
+    for block in &BLOCKS {
+        let _ = exchange(&mut ecu, &mut state, block);
+    }
+    assert_eq!(ecu.blocks.len(), 3);
+    ecu.exit_refusal = Some(Nrc::RequestSequenceError);
+    assert_eq!(
+        exchange(&mut ecu, &mut state, &[0x37]).as_deref(),
+        Some(&[0x7F, 0x37, 0x24][..])
+    );
+    assert_eq!(
+        exchange(&mut ecu, &mut state, &[0x36, 0x04, 0xAA]).as_deref(),
+        Some(&[0x76, 0x04][..]),
+        "still open"
+    );
+    ecu.exit_refusal = Some(Nrc::GeneralProgrammingFailure);
+    assert_eq!(
+        exchange(&mut ecu, &mut state, &[0x37]).as_deref(),
+        Some(&[0x7F, 0x37, 0x72][..])
+    );
+    assert_eq!(
+        exchange(&mut ecu, &mut state, &[0x36, 0x05, 0xAA]).as_deref(),
+        Some(&[0x7F, 0x36, 0x24][..]),
+        "closed"
+    );
+}
+
+/// A refused block, or one whose record does not fit (0x14), advances nothing: the same
+/// block sent again is a new block, not a repeat.
+#[test]
+fn a_refused_block_advances_nothing() {
+    let mut ecu = Ecu::default();
+    let mut state = downloading(&mut ecu, &DOWNLOAD_2000);
+    ecu.block_refusal = Some(Nrc::GeneralProgrammingFailure);
+    assert_eq!(
+        exchange(&mut ecu, &mut state, &BLOCKS[0]).as_deref(),
+        Some(&[0x7F, 0x36, 0x72][..])
+    );
+    ecu.block_record = vec![0xEE; 8];
+    assert_eq!(
+        exchange_bounded(&mut ecu, &mut state, &BLOCKS[0], 6),
+        [0x7F, 0x36, 0x14]
+    );
+    ecu.block_record.clear();
+    assert_eq!(
+        exchange(&mut ecu, &mut state, &BLOCKS[0]).as_deref(),
+        Some(&[0x76, 0x01][..])
+    );
+    assert_eq!(
+        ecu.blocks.len(),
+        2,
+        "the 0x14'd block reached the handler, then this"
+    );
+}
+
+/// Table 451 — the counter rolls `FF` to `00`, and the block after the roll repeated is a
+/// repeat.
+#[test]
+fn the_counter_rolls_over_and_a_repeat_after_the_roll_is_recognised() {
+    let mut ecu = Ecu::default();
+    // 4 KiB at 0x2000, uncompressed: room for 300 one-byte blocks.
+    let mut state = downloading(&mut ecu, &[0x34, 0x00, 0x22, 0x20, 0x00, 0x10, 0x00]);
+    for n in 1..=256_u16 {
+        let counter = u8::try_from(n & 0xFF).unwrap_or_default();
+        assert_eq!(
+            exchange(&mut ecu, &mut state, &[0x36, counter, 0xAA]).as_deref(),
+            Some(&[0x76, counter][..]),
+            "block {n}"
+        );
+    }
+    assert_eq!(
+        exchange(&mut ecu, &mut state, &[0x36, 0x00, 0xAA]).as_deref(),
+        Some(&[0x76, 0x00][..])
+    );
+    assert_eq!(ecu.blocks.len(), 256);
+}
+
+/// Truncated requests (longer than the in-flight buffer): a block is 0x24 with no transfer
+/// open, 0x73 for a wrong counter, 0x31 for the right counter and for a repeat; an exit
+/// with no transfer open is 0x24 (Figure 34 puts sequence before length).
+#[test]
+fn truncated_transfer_requests_follow_figures_33_and_34() {
+    let mut ecu = Ecu::default();
+    let mut state = extended(&mut ecu);
+    assert_eq!(
+        exchange_truncated(&mut ecu, &mut state, &[0x36, 0x01, 0xAA]),
+        [0x7F, 0x36, 0x24]
+    );
+    assert_eq!(
+        exchange_truncated(&mut ecu, &mut state, &[0x37, 0xAA]),
+        [0x7F, 0x37, 0x24]
+    );
+    let mut state = downloading(&mut ecu, &DOWNLOAD_2000);
+    assert_eq!(
+        exchange_truncated(&mut ecu, &mut state, &[0x36, 0x02, 0xAA]),
+        [0x7F, 0x36, 0x73]
+    );
+    assert_eq!(
+        exchange_truncated(&mut ecu, &mut state, &[0x36, 0x01, 0xAA]),
+        [0x7F, 0x36, 0x31]
+    );
+    let _ = exchange(&mut ecu, &mut state, &BLOCKS[0]);
+    assert_eq!(
+        exchange_truncated(&mut ecu, &mut state, &[0x36, 0x01, 0xAA]),
+        [0x7F, 0x36, 0x31],
+        "a repeat"
+    );
+    assert_eq!(
+        exchange_truncated(&mut ecu, &mut state, &[0x37, 0xAA]),
+        [0x7F, 0x37, 0x13]
+    );
+}
+
+/// Figure 7 — a transfer gated by a level ends when a session change relocks it; an
+/// ungated one available in the new non-default session survives; any ends in the default
+/// session; unlocking another level ends one gated by the level it locks.
+#[test]
+fn figure_7_decides_what_a_session_or_level_change_leaves_of_a_transfer() {
+    let mut ecu = Ecu::default();
+    let mut gated = downloading(&mut ecu, &DOWNLOAD_GATED);
+    ecu.session_confirmed(&mut gated, S::ExtendedDiagnosticSession);
+    assert_eq!(
+        exchange(&mut ecu, &mut gated, &BLOCKS[0]).as_deref(),
+        Some(&[0x7F, 0x36, 0x24][..]),
+        "key 3(ii)"
+    );
+    let mut ungated = downloading(&mut ecu, &DOWNLOAD_2000);
+    ecu.session_confirmed(&mut ungated, S::ProgrammingSession);
+    assert_eq!(
+        exchange(&mut ecu, &mut ungated, &BLOCKS[0]).as_deref(),
+        Some(&[0x76, 0x01][..]),
+        "key 3(iii)"
+    );
+    ecu.session_confirmed(&mut ungated, S::DefaultSession);
+    ecu.session_confirmed(&mut ungated, S::ExtendedDiagnosticSession);
+    assert_eq!(
+        exchange(&mut ecu, &mut ungated, &BLOCKS[1]).as_deref(),
+        Some(&[0x7F, 0x36, 0x24][..]),
+        "key 4"
+    );
+    // Level 0x03's seed is fresh each time, so the key `unlocked_level_3` sends fits only
+    // the first unlock of an `Ecu`.
+    let mut ecu = Ecu::default();
+    let mut locked = downloading(&mut ecu, &DOWNLOAD_GATED);
+    let _ = exchange(&mut ecu, &mut locked, &[0x27, 0x01]);
+    let _ = exchange(&mut ecu, &mut locked, &RIGHT_KEY);
+    assert_eq!(
+        exchange(&mut ecu, &mut locked, &BLOCKS[0]).as_deref(),
+        Some(&[0x7F, 0x36, 0x24][..]),
+        "Annex I transition 10"
+    );
+}
+
+/// Figure 7 key 3(iii) — a transfer stays only in the sessions of `Access::sessions`
+/// intersected with `DataTransfer::SESSIONS`. A region available only in the programming
+/// session ends when the session changes to the extended one, though a session change
+/// to a session the service allows would otherwise leave an ungated transfer open; and a
+/// region available everywhere ends on entering the safety system session, which
+/// `SESSIONS` excludes, so it is gone on returning to the programming session.
+#[test]
+fn a_transfer_stays_only_in_the_sessions_both_the_region_and_the_service_allow() {
+    let mut ecu = Ecu::default();
+    let mut state = in_session(&mut ecu, S::ProgrammingSession);
+    assert_eq!(
+        exchange(
+            &mut ecu,
+            &mut state,
+            &[0x34, 0x00, 0x22, 0x30, 0x00, 0x00, 0x18]
+        )
+        .as_deref(),
+        Some(&DOWNLOAD_ACCEPTED[..])
+    );
+    ecu.session_confirmed(&mut state, S::ExtendedDiagnosticSession);
+    assert_eq!(
+        exchange(&mut ecu, &mut state, &BLOCKS[0]).as_deref(),
+        Some(&[0x7F, 0x36, 0x24][..]),
+        "0x3000 is the programming session's only"
+    );
+    let mut state = extended(&mut ecu);
+    assert_eq!(
+        exchange(
+            &mut ecu,
+            &mut state,
+            &[0x34, 0x00, 0x22, 0x50, 0x00, 0x00, 0x18]
+        )
+        .as_deref(),
+        Some(&DOWNLOAD_ACCEPTED[..])
+    );
+    ecu.session_confirmed(&mut state, S::SafetySystemDiagnosticSession);
+    ecu.session_confirmed(&mut state, S::ProgrammingSession);
+    assert_eq!(
+        exchange(&mut ecu, &mut state, &BLOCKS[0]).as_deref(),
+        Some(&[0x7F, 0x36, 0x24][..]),
+        "SESSIONS narrows an everywhere region"
     );
 }

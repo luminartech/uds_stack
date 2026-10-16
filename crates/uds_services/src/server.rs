@@ -13,14 +13,14 @@
 use crate::pipeline::settle;
 use crate::select::{Either, select2};
 use crate::services::session::selection_of;
-use crate::services::{Responded, ServiceSet};
+use crate::services::{AfterReset, Effect, Responded, ServiceSet};
 use crate::state::ProtocolState;
 use crate::storage::{Buffers, Storage};
 use crate::transport::{TransportEvent, UdsTransport};
 use crate::{AfterSend, Received, ResponseSink, Unsettled};
 use core::future::Future;
 use core::pin::Pin;
-use uds_protocol::{DiagnosticSessionType, NegativeResponseCode, UdsServiceType};
+use uds_protocol::{NegativeResponseCode, ResetType, UdsServiceType};
 pub use uds_session::ServerParams;
 use uds_session::{
     Address, Ai, Association, Cause, Rejection, SResult, Server as SessionServer,
@@ -48,12 +48,13 @@ pub struct Server<A: ServiceSet, T: UdsTransport, const PEERS: usize> {
     transport: T,
     /// The address every response is sent from (its `S_SA`, ``UDSS_LLR_0051``).
     own: Address,
-    /// The `DiagnosticSessionControl` response awaiting its confirmation, if any.
+    /// The response awaiting its confirmation, if any: a `DiagnosticSessionControl`
+    /// response or an `ECUReset` one.
     pending: Option<Pending>,
     /// The parameters the server was built with, against which each session's `P2` pair is
     /// checked in debug builds.
     params: ServerParams,
-    /// Whether [`ServiceSet::start_up`] has run.
+    /// Whether [`ServiceSet::start_up`] has run since the server was built or last stopped.
     started: bool,
 }
 
@@ -133,22 +134,24 @@ impl<A: ServiceSet, T: UdsTransport, const PEERS: usize> Server<A, T, PEERS> {
         &self.transport
     }
 
-    /// Run [`ServiceSet::start_up`] the first time it is called, and never again.
+    /// Run [`ServiceSet::start_up`] on the first step, and again on the first step after a
+    /// [`Stopped`].
     fn start_up(&mut self) {
         if !core::mem::replace(&mut self.started, true) {
             self.services.start_up(&mut self.state);
         }
     }
 
-    /// Handle one transport event.
+    /// Handle one transport event. Returns [`Stepped::Stopped`] where a restarting reset
+    /// was confirmed during this step, which the caller acts on before stepping again.
     ///
     /// **An `Err` is terminal for this server instance** (``UDSSVC_ARCH_0040``, a
     /// milestone-1 limit). A transport error unwinds through the drains with `?`, so a
     /// session-hook decision a drain already recorded — a `tS3_Server` expiry, a
     /// confirmed session — may not have been applied, and the application's state and
     /// the session layer may disagree afterwards. Do not call `step` on this instance
-    /// again. Nothing here recovers it in place: the transport and the services cannot be
-    /// taken back out of it.
+    /// again. Nothing here recovers it in place; [`Self::into_parts`] takes the services
+    /// and the transport back out.
     ///
     /// # Cancel safety
     ///
@@ -165,7 +168,17 @@ impl<A: ServiceSet, T: UdsTransport, const PEERS: usize> Server<A, T, PEERS> {
     ///
     /// [`UdsTransport::Error`] where the transport failed. A negative response is not an
     /// error: it is a response, written into the sink.
-    pub async fn step(&mut self) -> Result<(), T::Error> {
+    pub async fn step(&mut self) -> Result<Stepped, T::Error> {
+        let Some(stopped) = self.handle().await? else {
+            return Ok(Stepped::Continue);
+        };
+        // Annex I transition 1 owes start-up again after a restart.
+        self.started = false;
+        Ok(Stepped::Stopped(stopped))
+    }
+
+    /// The body of [`Self::step`].
+    async fn handle(&mut self) -> Result<Option<Stopped>, T::Error> {
         self.start_up();
         let Buffers {
             in_flight,
@@ -190,24 +203,22 @@ impl<A: ServiceSet, T: UdsTransport, const PEERS: usize> Server<A, T, PEERS> {
                 let reaction = self.session.t_data_conf(now, ai, result);
                 let d =
                     drain(reaction, &mut self.transport, &mut self.pending, None).await?;
-                apply(&mut self.services, &mut self.state, d.deferred);
-                return Ok(());
+                return Ok(apply(&mut self.services, &mut self.state, d.deferred));
             }
             TransportEvent::Deadline => {
                 let reaction = self.session.tick(now);
                 let d =
                     drain(reaction, &mut self.transport, &mut self.pending, None).await?;
-                apply(&mut self.services, &mut self.state, d.deferred);
-                return Ok(());
+                return Ok(apply(&mut self.services, &mut self.state, d.deferred));
             }
             // Periodic has no consumer; a Closed outside a handler ends nothing here.
             TransportEvent::Periodic { .. } | TransportEvent::Closed { .. } => {
-                return Ok(());
+                return Ok(None);
             }
         };
 
         let outbound_max = self.transport.outbound_max();
-        retime(
+        let mut stopped = retime(
             &mut self.services,
             &mut self.state,
             &mut self.session,
@@ -227,10 +238,17 @@ impl<A: ServiceSet, T: UdsTransport, const PEERS: usize> Server<A, T, PEERS> {
         // Dispatched only once indicated: the indication is what starts `tP2_Server`
         // (UDSS_LLR_0113), without which the 0x78 window does not exist.
         let d = drain(reaction, &mut self.transport, &mut self.pending, None).await?;
-        apply(&mut self.services, &mut self.state, d.deferred);
+        stopped = stopped.or(apply(&mut self.services, &mut self.state, d.deferred));
         let Some((ai, _)) = d.indication else {
-            return Ok(());
+            return Ok(stopped);
         };
+        // 10.3.1: no request is served between a restart's response and its confirmation,
+        // nor after the restart within this step. `stopped` is `None` here for as long as
+        // uds_session yields no `Confirm` from a tick, a parameter change or an
+        // indication; the check keeps 10.3.1 if one ever confirms a restart.
+        if stopped.is_some() || restarting(self.pending) {
+            return Ok(stopped.or(self.unanswered(ai).await?));
+        }
         // The byte is kept as received because a negative response echoes it
         // (ISO 14229-1:2020 Table 21, SIDRQ). An empty request is the pipeline's to
         // settle, and settles without pending, so the 0 is never transmitted.
@@ -258,7 +276,13 @@ impl<A: ServiceSet, T: UdsTransport, const PEERS: usize> Server<A, T, PEERS> {
             .await?
         };
         // Recorded mid-handler, applied now that `&mut services`/`&mut state` are free.
-        apply(&mut self.services, &mut self.state, served.deferred);
+        stopped = stopped.or(apply(&mut self.services, &mut self.state, served.deferred));
+        // `stopped` is `None` here for as long as `pending` is no restart while a handler
+        // runs, which the check before dispatch ensures and only `answer` changes. A
+        // restart confirmed under the handler would end its request with no response.
+        if stopped.is_some() {
+            return Ok(stopped.or(self.unanswered(serving.ai).await?));
+        }
         let serving = serving.leaving_if(&self.services, &served);
         let deferred = conclude::<A, _, PEERS>(
             &mut self.session,
@@ -270,18 +294,31 @@ impl<A: ServiceSet, T: UdsTransport, const PEERS: usize> Server<A, T, PEERS> {
             &mut sink,
         )
         .await?;
-        apply(&mut self.services, &mut self.state, deferred);
-        Ok(())
+        Ok(stopped.or(apply(&mut self.services, &mut self.state, deferred)))
     }
 
-    /// Run until the transport fails.
+    /// ``UDSS_LLR_0074`` — end the request `ai` with no response, and apply what its
+    /// completion report's drain recorded.
+    async fn unanswered(&mut self, ai: Ai) -> Result<Option<Stopped>, T::Error> {
+        let d = complete(
+            &mut self.session,
+            &mut self.transport,
+            &mut self.pending,
+            ai,
+            Effect::None,
+        )
+        .await?;
+        Ok(apply(&mut self.services, &mut self.state, d))
+    }
+
+    /// Run until a restarting reset is confirmed, or the transport fails.
     ///
     /// **The `Err` this returns is terminal for this server instance**
     /// (``UDSSVC_ARCH_0040``, a milestone-1 limit), as an `Err` from [`Self::step`] is: a
     /// session-hook decision already recorded may not have been applied, so the
     /// application's state and the session layer may disagree afterwards. Do not call
-    /// `run` or `step` on this instance again. Nothing here recovers it in place: the
-    /// transport and the services cannot be taken back out of it.
+    /// `run` or `step` on this instance again. Nothing here recovers it in place;
+    /// [`Self::into_parts`] takes the services and the transport back out.
     ///
     /// # Cancel safety
     ///
@@ -293,11 +330,46 @@ impl<A: ServiceSet, T: UdsTransport, const PEERS: usize> Server<A, T, PEERS> {
     /// # Errors
     ///
     /// Whatever [`Self::step`] returned.
-    pub async fn run(&mut self) -> Result<core::convert::Infallible, T::Error> {
+    pub async fn run(&mut self) -> Result<Stopped, T::Error> {
         loop {
-            self.step().await?;
+            if let Stepped::Stopped(stopped) = self.step().await? {
+                return Ok(stopped);
+            }
         }
     }
+
+    /// The services and the transport, for a caller that rebuilds the server after
+    /// [`Stopped`] (to bind again with a new identity, say) without losing the services'
+    /// state. The caller holds the `own` address and [`ServerParams`] it built this with.
+    ///
+    /// A server in a `ConstStaticCell`/`StaticCell` cannot be moved out of; it is stepped
+    /// again instead. After an `Err` from [`Self::step`], this is the only supported use.
+    #[must_use]
+    pub fn into_parts(self) -> (A, T) {
+        (self.services, self.transport)
+    }
+}
+
+/// What one [`Server::step`] ended with.
+#[must_use = "a `Stepped::Stopped` asks the caller to act on a restart before stepping again"]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Stepped {
+    /// The event was handled, and the server serves on.
+    Continue,
+    /// The server handed control back; see [`Stopped`].
+    Stopped(Stopped),
+}
+
+/// Why [`Server::step`] or [`Server::run`] handed control back (``UDSSVC_ARCH_0045``).
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Stopped {
+    /// A reset whose [`EcuReset::reset`](crate::EcuReset::reset) said
+    /// [`AfterReset::Restart`] was confirmed: the protocol state is the power-up one, and
+    /// what follows (a reboot delay, binding again, a new identity) is the caller's. The
+    /// server may be stepped again, which runs start-up again, or taken apart with
+    /// [`Server::into_parts`].
+    Reset(ResetType),
 }
 
 /// Load the `P2` pair of the session in force into the session layer, so the request about
@@ -318,11 +390,11 @@ async fn retime<A: ServiceSet, T: UdsTransport, const PEERS: usize>(
     pending: &mut Option<Pending>,
     params: ServerParams,
     now: Timestamp,
-) -> Result<(), T::Error> {
+) -> Result<Option<Stopped>, T::Error> {
     let tick = drain(session.tick(now), transport, pending, None).await?;
-    apply(services, state, tick.deferred);
+    let mut stopped = apply(services, state, tick.deferred);
     let Some(timing) = services.session_timing(state) else {
-        return Ok(());
+        return Ok(stopped);
     };
     debug_assert!(
         ServerParams {
@@ -345,15 +417,15 @@ async fn retime<A: ServiceSet, T: UdsTransport, const PEERS: usize>(
             None,
         )
         .await?;
-        apply(services, state, d.deferred);
+        stopped = stopped.or(apply(services, state, d.deferred));
     }
-    Ok(())
+    Ok(stopped)
 }
 
-/// The `DiagnosticSessionControl` response in flight: its session takes effect on the
-/// `Confirm` that reports it sent (``UDSS_LLR_0085``). One slot: a server
-/// answers one request at a time (``UDSS_LLR_0108``), so with one peer one selecting
-/// response is in flight at most.
+/// The response in flight that carries an effect, such as a `DiagnosticSessionControl`
+/// response's session: the effect takes place on the `Confirm` that reports it sent
+/// (``UDSS_LLR_0085``). One slot: a server answers one request at a time
+/// (``UDSS_LLR_0108``), so with one peer one such response is in flight at most.
 ///
 /// **Milestone 1 accepts `peers = 1` only** ([`Server::new`] fails to compile for any
 /// other `PEERS`). A server answers one request at a time, but a response awaiting its
@@ -365,8 +437,8 @@ async fn retime<A: ServiceSet, T: UdsTransport, const PEERS: usize>(
 struct Pending {
     /// The response's addressing, exactly as submitted: `t_data_conf` matches by it.
     ai: Ai,
-    /// The session the response selected.
-    selected: DiagnosticSessionType,
+    /// What the response does once confirmed.
+    effect: Effect,
 }
 
 /// Where a response to `request` goes: the request went tester -> ECU, the response goes
@@ -395,8 +467,8 @@ const fn reply_address(own: Address, request: Ai) -> Ai {
 struct Deferred {
     /// `tS3_Server` expired (``UDSS_LLR_0100``).
     timed_out: bool,
-    /// A selecting response was confirmed sent, or its suppression completed.
-    confirmed: Option<DiagnosticSessionType>,
+    /// A response with an effect was confirmed sent, or its suppression completed.
+    confirmed: Option<Effect>,
 }
 
 impl Deferred {
@@ -407,16 +479,21 @@ impl Deferred {
 
     /// Both records, in arrival order: `self` was recorded first.
     ///
-    /// A later timeout clears an earlier confirmation. [`apply`] runs the timeout before
-    /// the confirmation, so keeping both would leave the application in the confirmed
-    /// session while the session layer, which expired it afterwards, is in the default
-    /// one. A later confirmation after an earlier timeout keeps both, which is already
-    /// the order `apply` runs them in; of two confirmations the later wins.
+    /// A later timeout clears an earlier session confirmation. [`apply`] runs the timeout
+    /// before the confirmation, so keeping both would leave the application in the
+    /// confirmed session while the session layer, which expired it afterwards, is in the
+    /// default one. A confirmed reset is kept: its response was sent, and both end in the
+    /// default session. A later confirmation after an earlier timeout keeps both, which is
+    /// already the order `apply` runs them in; of two confirmations the later wins.
     fn merge(self, later: Self) -> Self {
         Self {
             timed_out: self.timed_out || later.timed_out,
             confirmed: if later.timed_out {
-                later.confirmed
+                // A confirmed reset happened whatever expired after it: its response was
+                // sent, and both end in the default session.
+                later
+                    .confirmed
+                    .or(self.confirmed.filter(|e| matches!(e, Effect::Reset { .. })))
             } else {
                 later.confirmed.or(self.confirmed)
             },
@@ -494,7 +571,7 @@ async fn drain<'d, T: UdsTransport, const PEERS: usize>(
                 {
                     *pending = None;
                     if result == SResult::Ok {
-                        found.deferred.confirmed = Some(p.selected);
+                        found.deferred.confirmed = Some(p.effect);
                     }
                 }
             }
@@ -515,21 +592,51 @@ async fn drain<'d, T: UdsTransport, const PEERS: usize>(
 
 /// Act on what a drain recorded: the timeout, then the confirmation. The only caller of
 /// the session hooks, so the protocol state's session is written only here: when
-/// `tS3_Server` times out, and when the response that selected a session is confirmed
-/// or its completion is reported (``UDSSVC_ARCH_0002``, ``UDSSVC_ARCH_0038``).
+/// `tS3_Server` times out, and when the response that selected a session or accepted a
+/// restarting reset is confirmed or its completion is reported (``UDSSVC_ARCH_0002``,
+/// ``UDSSVC_ARCH_0038``, ``UDSSVC_ARCH_0045``). Returns `Some` where that reset restarts.
 ///
 /// That fixed order is the arrival order. Within one drain, ``UDSS_LLR_0081`` puts the
 /// expiry snapshots ahead of the input's own outputs, so a `SessionTimeout` always
-/// precedes the `Confirm` beside it. Across drains, [`Deferred::merge`] drops a
-/// confirmation that a later timeout overtook, so whatever survives to here is a
-/// timeout followed by a confirmation, or only one of them.
-fn apply<A: ServiceSet>(services: &mut A, state: &mut A::State, d: Deferred) {
+/// precedes the `Confirm` beside it. Across drains, [`Deferred::merge`] drops a session
+/// confirmation that a later timeout overtook, so a surviving session confirmation is
+/// one a timeout preceded. A reset confirmation is kept, since its response was sent,
+/// and running it after a timeout that overtook it ends in the same state: a restart
+/// ends in the default session either way, and a continuing reset changes no session.
+fn apply<A: ServiceSet>(
+    services: &mut A,
+    state: &mut A::State,
+    d: Deferred,
+) -> Option<Stopped> {
     if d.timed_out {
         services.session_timed_out(state);
     }
-    if let Some(selected) = d.confirmed {
-        services.session_confirmed(state, selected);
+    match d.confirmed {
+        Some(Effect::Session(selected)) => {
+            services.session_confirmed(state, selected);
+            None
+        }
+        Some(Effect::Reset { kind, after }) => {
+            services.reset_confirmed(state, kind, after);
+            matches!(after, AfterReset::Restart).then_some(Stopped::Reset(kind))
+        }
+        Some(Effect::None) | None => None,
     }
+}
+
+/// Whether a `Restart` response is awaiting its confirmation, during which 10.3.1
+/// recommends the server accept no request.
+const fn restarting(pending: Option<Pending>) -> bool {
+    matches!(
+        pending,
+        Some(Pending {
+            effect: Effect::Reset {
+                after: AfterReset::Restart,
+                ..
+            },
+            ..
+        })
+    )
 }
 
 /// The request in progress, as its responses and its completion report name it.
@@ -573,10 +680,12 @@ impl Serving {
     /// `services` leave the running software to enter.
     fn leaving_if<A: ServiceSet>(self, services: &A, served: &Served) -> Self {
         Self {
-            leaving: served
-                .selected()
-                .filter(|&selected| services.leaves_running_software(selected))
-                .map(|_| self.reply_to),
+            leaving: match served.effect() {
+                Effect::Session(selected) if services.leaves_running_software(selected) => {
+                    Some(self.reply_to)
+                }
+                _ => None,
+            },
             ..self
         }
     }
@@ -592,13 +701,14 @@ enum Ended {
 }
 
 impl Served {
-    /// The session the handler's outcome selects, where it finished and selects one.
-    fn selected(&self) -> Option<DiagnosticSessionType> {
+    /// The handler's effect, where it finished positively.
+    fn effect(&self) -> Effect {
         match self.ended {
             Ended::Finished(unsettled) => unsettled
                 .parts()
-                .and_then(|(_, outcome)| outcome.ok().flatten()),
-            Ended::Closed => None,
+                .and_then(|(_, outcome)| outcome.ok())
+                .unwrap_or(Effect::None),
+            Ended::Closed => Effect::None,
         }
     }
 }
@@ -799,7 +909,9 @@ async fn conclude<A: ServiceSet, T: UdsTransport, const PEERS: usize>(
             )
             .await
         }
-        Ended::Closed => complete(session, transport, pending, serving.ai, None).await,
+        Ended::Closed => {
+            complete(session, transport, pending, serving.ai, Effect::None).await
+        }
     }
 }
 
@@ -825,14 +937,13 @@ async fn answer<A: ServiceSet, T: UdsTransport, const PEERS: usize>(
     serving: Serving,
     response: &[u8],
 ) -> Result<Deferred, T::Error> {
-    let selected = match outcome {
-        Responded::Yes { session: selected } => selected,
-        Responded::Suppressed { session: selected } => {
-            return complete(session, transport, pending, serving.ai, selected).await;
-        }
-    };
+    let effect = outcome.effect();
+    if let Responded::Suppressed { .. } = outcome {
+        return complete(session, transport, pending, serving.ai, effect).await;
+    }
     let now = transport.now();
-    let reaction = final_response(session, now, serving.reply_to, response, selected);
+    let reaction =
+        final_response(session, now, serving.reply_to, response, selection(effect));
     // milestone-1 limit: an `Err` at any `?` below drops what was recorded; see
     // `Server::step`'s doc.
     let mut d = drain(reaction, transport, pending, serving.leaving).await?;
@@ -850,12 +961,14 @@ async fn answer<A: ServiceSet, T: UdsTransport, const PEERS: usize>(
         );
         let Some(waited) = waited.await? else {
             // The link closed first, as in `serve`'s `Ended::Closed`.
-            let closed = complete(session, transport, pending, serving.ai, None).await?;
+            let closed =
+                complete(session, transport, pending, serving.ai, Effect::None).await?;
             return Ok(deferred.merge(closed));
         };
         deferred = deferred.merge(waited);
         let now = transport.now();
-        let reaction = final_response(session, now, serving.reply_to, response, selected);
+        let reaction =
+            final_response(session, now, serving.reply_to, response, selection(effect));
         d = drain(reaction, transport, pending, serving.leaving).await?;
         deferred = deferred.merge(d.deferred);
     }
@@ -864,10 +977,10 @@ async fn answer<A: ServiceSet, T: UdsTransport, const PEERS: usize>(
         // leaves a pending selection behind, and never disturbs one already in
         // flight. `reply_to` is the association `t_data_conf` will match.
         None => {
-            if let Some(selected) = selected {
+            if effect != Effect::None {
                 *pending = Some(Pending {
                     ai: serving.reply_to,
-                    selected,
+                    effect,
                 });
             }
         }
@@ -886,7 +999,7 @@ fn final_response<'s, 'd, const PEERS: usize>(
     now: Timestamp,
     reply_to: Ai,
     response: &'d [u8],
-    selected: Option<DiagnosticSessionType>,
+    selection: Option<uds_session::SessionSelection>,
 ) -> uds_session::ServerReaction<'s, 'd, PEERS> {
     session.s_data_req(
         now,
@@ -894,9 +1007,22 @@ fn final_response<'s, 'd, const PEERS: usize>(
         response,
         ServerTx::FinalResponse {
             solicitation: Solicitation::Solicited,
-            session: selected.map(selection_of),
+            session: selection,
         },
     )
+}
+
+/// The session the session layer is told a response or completion report selects
+/// (``UDSS_LLR_0085``/``0086``).
+fn selection(effect: Effect) -> Option<uds_session::SessionSelection> {
+    match effect {
+        Effect::Session(session) => Some(selection_of(session)),
+        Effect::Reset {
+            after: AfterReset::Restart,
+            ..
+        } => Some(uds_session::SessionSelection::Default),
+        Effect::Reset { .. } | Effect::None => None,
+    }
 }
 
 /// ``UDSS_LLR_0074`` — report a request complete with no response, and with it the
@@ -909,17 +1035,17 @@ async fn complete<T: UdsTransport, const PEERS: usize>(
     transport: &mut T,
     pending: &mut Option<Pending>,
     ai: Ai,
-    selected: Option<DiagnosticSessionType>,
+    effect: Effect,
 ) -> Result<Deferred, T::Error> {
     let now = transport.now();
     let class = ServerRx::Request {
-        session: selected.map(selection_of),
+        session: selection(effect),
     };
     let reaction = session.completion_report(now, ai, class);
     let d = drain(reaction, transport, pending, None).await?;
     Ok(d.deferred.merge(Deferred {
         timed_out: false,
-        confirmed: selected,
+        confirmed: (effect != Effect::None).then_some(effect),
     }))
 }
 
@@ -1098,6 +1224,7 @@ async fn submit_pending<T: UdsTransport, const PEERS: usize>(
 mod tests {
     use super::{Deferred, after_send};
     use crate::AfterSend;
+    use crate::services::Effect;
     use uds_protocol::DiagnosticSessionType as S;
     use uds_session::{Address, Ai, Mtype, TaType};
 
@@ -1148,7 +1275,7 @@ mod tests {
     const fn confirm(session: S) -> Deferred {
         Deferred {
             timed_out: false,
-            confirmed: Some(session),
+            confirmed: Some(Effect::Session(session)),
         }
     }
 
@@ -1169,7 +1296,10 @@ mod tests {
     fn a_later_confirmation_after_a_timeout_keeps_both() {
         let merged = TIMEOUT.merge(confirm(S::ExtendedDiagnosticSession));
         assert!(merged.timed_out);
-        assert_eq!(merged.confirmed, Some(S::ExtendedDiagnosticSession));
+        assert_eq!(
+            merged.confirmed,
+            Some(Effect::Session(S::ExtendedDiagnosticSession))
+        );
     }
 
     /// Of two confirmations, the later is the session in force.
@@ -1178,6 +1308,6 @@ mod tests {
         let merged =
             confirm(S::ExtendedDiagnosticSession).merge(confirm(S::DefaultSession));
         assert!(!merged.timed_out);
-        assert_eq!(merged.confirmed, Some(S::DefaultSession));
+        assert_eq!(merged.confirmed, Some(Effect::Session(S::DefaultSession)));
     }
 }
