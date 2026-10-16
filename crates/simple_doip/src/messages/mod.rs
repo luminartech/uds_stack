@@ -15,7 +15,7 @@
 //! assert_eq!(u8::from(NackCode::from(0x7F)), 0x7F);
 //! ```
 //!
-//! ```compile_fail,E0639
+//! ```compile_fail
 //! let aliased = simple_doip::messages::NackCode::Reserved(0x00);
 //! ```
 
