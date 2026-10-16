@@ -49,6 +49,18 @@ impl DiagnosticMessage<'_> {
     /// The source and target addresses ahead of the user data (ISO 13400-2:2019
     /// Table 21).
     pub(crate) const ADDRESSES_SIZE: usize = 4;
+
+    /// Table 21 makes the user data mandatory, so as a payload a message without it has no
+    /// wire form: `Payload::decode` refuses one.
+    pub(crate) fn user_data_present(&self) -> Result<(), MessageError> {
+        if self.user_data.is_empty() {
+            return Err(MessageError::InvalidPayloadLength {
+                payload_type: super::PayloadType::DiagnosticMessage,
+                length: Self::ADDRESSES_SIZE,
+            });
+        }
+        Ok(())
+    }
 }
 
 #[cfg(feature = "alloc")]

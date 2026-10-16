@@ -41,18 +41,37 @@ pub enum ChannelReload {
 /// advertised values equal to these is the obligation of whatever composes that response,
 /// and [`Server::set_parameter`] is how a caller changes them afterwards.
 ///
-/// Built by [`Self::new`], which checks [`Self::is_well_formed`]; read through the fields.
+/// Built by [`Self::new`], which checks [`Self::is_well_formed`], and read through the
+/// getters; the fields are private, so a set that passed stays well formed.
 ///
 /// [`Server::set_parameter`]: crate::Server::set_parameter
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-#[non_exhaustive]
 pub struct ServerParams {
+    pub(crate) s3_server: u32,
+    pub(crate) p2_server_max: u32,
+    pub(crate) p2_star_server_max: u32,
+    pub(crate) response_pending_lead: u32,
+}
+
+impl ServerParams {
     /// `tS3_Server` — how long a non-default session survives without a request.
-    pub s3_server: u32,
+    #[must_use]
+    pub const fn s3_server(&self) -> u32 {
+        self.s3_server
+    }
+
     /// `tP2_Server_Max` — the default response window.
-    pub p2_server_max: u32,
+    #[must_use]
+    pub const fn p2_server_max(&self) -> u32 {
+        self.p2_server_max
+    }
+
     /// `tP2*_Server_Max` — the enhanced response window.
-    pub p2_star_server_max: u32,
+    #[must_use]
+    pub const fn p2_star_server_max(&self) -> u32 {
+        self.p2_star_server_max
+    }
+
     /// How long before `tP2_Server` closes its overrun is indicated (``UDSS_LLR_0186``):
     /// the server's own latency from that indication to a response-pending message
     /// leaving, the server-side counterpart of a client's `ΔP2`.
@@ -71,10 +90,11 @@ pub struct ServerParams {
     /// and one above seven tenths of `p2_star_server_max` indicates the enhanced overrun
     /// before ``UDSS_LLR_0119`` admits the next response-pending message;
     /// [`ServerParams::is_well_formed`] checks both.
-    pub response_pending_lead: u32,
-}
+    #[must_use]
+    pub const fn response_pending_lead(&self) -> u32 {
+        self.response_pending_lead
+    }
 
-impl ServerParams {
     /// The parameters a server is created with, all in milliseconds.
     ///
     /// # Arguments
@@ -95,7 +115,7 @@ impl ServerParams {
     /// use uds_session::ServerParams;
     ///
     /// const PARAMS: ServerParams = ServerParams::new(5_000, 50, 5_000, 10);
-    /// assert_eq!(PARAMS.p2_server_max, 50);
+    /// assert_eq!(PARAMS.p2_server_max(), 50);
     /// ```
     ///
     /// A lead as long as the default window would indicate its overrun on the request's
@@ -105,6 +125,16 @@ impl ServerParams {
     /// use uds_session::ServerParams;
     ///
     /// const PARAMS: ServerParams = ServerParams::new(5_000, 50, 5_000, 50);
+    /// ```
+    ///
+    /// Nor can a set that passed be changed into one that would not: the fields are read
+    /// through their getters and set through [`crate::Server::set_parameter`] alone.
+    ///
+    /// ```compile_fail
+    /// use uds_session::ServerParams;
+    ///
+    /// let mut params = ServerParams::new(5_000, 50, 5_000, 10);
+    /// params.response_pending_lead = 50;
     /// ```
     #[must_use]
     pub const fn new(

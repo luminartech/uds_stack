@@ -459,7 +459,7 @@ macro_rules! __uds_sub_function_access {
     };
     ($self:ident, $service:ident, $value:ident, $active:ident, ControlDtcSetting) => {
         if ::core::matches!($service, $crate::UdsServiceType::ControlDtcSetting) {
-            return $crate::pipeline::sub_function_access($value, |setting| {
+            return $crate::pipeline::dtc_setting_access($value, |setting| {
                 <<Self as $crate::ServiceSet>::App as $crate::ControlDtcSetting>::access(
                     $self, setting,
                 )

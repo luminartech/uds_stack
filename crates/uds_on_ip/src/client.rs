@@ -18,9 +18,9 @@ use crate::mapping::{
 };
 use crate::profile::server_may_close_after;
 
-/// The length of the keep-alive a `uds_services` client sends, `3E 80`: what each request
-/// waiting ahead of a call's request takes of a [`DoIpClientTransport`]'s `QUEUE`.
-pub const KEEP_ALIVE_LEN: usize = 2;
+/// The length of the keep-alive a `uds_services` client sends: what each request waiting
+/// ahead of a call's request takes of a [`DoIpClientTransport`]'s `QUEUE`.
+pub const KEEP_ALIVE_LEN: usize = uds_services::KEEP_ALIVE_LEN;
 
 /// What a physical request that expects an answer does when its server's last such
 /// request was confirmed and never answered: whether that answer, arriving late, may be

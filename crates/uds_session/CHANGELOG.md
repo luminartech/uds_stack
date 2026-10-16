@@ -26,9 +26,10 @@ is released in lockstep with the rest of the `uds_stack` workspace (`uds_protoco
   that overrun is reported, so a response-pending message can still go out inside
   the window. `ServerParams::new` builds the set and panics, or in a `const` fails to
   compile, where the lead does not fit both windows (`is_well_formed`); `lead_fits`
-  checks it against another pair.
+  checks it against another pair. Its fields are private and read through getters of
+  the same names, so a set `new` admitted cannot be edited into one it would refuse.
 - The types that follow this crate's requirement set rather than a table of ISO
-  14229-2 are `#[non_exhaustive]`, since the set may grow: `ServerParams`,
+  14229-2 are `#[non_exhaustive]`, since the set may grow:
   `ServerParameter`, `ChannelParameter`, `ServerTx`, `ClientTx`, `ServerRx`,
   `ClientRx`, `ExpectedResponses`, `Cause` and `Content`.
 - `Client<K, PHYS, FUNC, R>`, the session layer in the client role, with separate

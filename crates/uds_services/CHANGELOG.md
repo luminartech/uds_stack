@@ -110,9 +110,16 @@ lockstep with the rest of the `uds_stack` workspace (`uds_protocol`, `uds_sessio
   `RequestTransferExit`, with the transfer held in the protocol state.
 - `DataTransfer::SESSIONS`, `DataTransfer::format_supported` and `DataTransfer::access`.
 - `Client::communication_control_functional`, a functionally addressed
-  `CommunicationControl` with the suppress bit set, complete on its confirmation, and
-  `Client::control_dtc_setting_functional`, a functionally addressed `ControlDTCSetting`
-  whose answers come back as `Replies` of `Reply`.
+  `CommunicationControl` with the suppress bit set, and
+  `Client::control_dtc_setting_functional`, a functionally addressed `ControlDTCSetting`.
+  The answers to both come back as `Replies` of `Reply`; for the suppressed
+  `CommunicationControl` that is each server's refusal (ISO 14229-1:2020 Table 5), or a
+  positive from a server that ignored the bit, and none where every server performed it.
+- `KEEP_ALIVE_LEN`, the length of the keep-alive a client sends, for a transport sizing
+  its queue.
+- A reserved `DTCSettingType` (Table 128) is `subFunctionNotSupported` (0x12) before
+  `ControlDtcSetting::access` is asked, as a reserved `communicationType` is 0x31 before
+  `CommunicationControl` is.
 - `AfterReset`, `EcuReset::confirmed`, `Stepped`, `Stopped`, `Server::into_parts`, and
   `Server::transport_mut`.
 

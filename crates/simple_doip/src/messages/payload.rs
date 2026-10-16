@@ -384,6 +384,7 @@ impl Encode for Payload<'_> {
                 alive_check_response.encoded_size()?
             }
             Payload::DiagnosticMessage(diagnostic_message) => {
+                diagnostic_message.user_data_present()?;
                 diagnostic_message.encoded_size()?
             }
             Payload::DiagnosticMessageAck(diagnostic_message_ack) => {
@@ -415,7 +416,10 @@ impl Encode for Payload<'_> {
     /// Serialize this payload into `writer`
     ///
     /// # Errors
-    /// Returns a [`MessageError`] if the payload cannot be serialized
+    /// Returns a [`MessageError`] if the payload cannot be serialized, and
+    /// [`MessageError::InvalidPayloadLength`], with nothing written, for a diagnostic
+    /// message with no user data, which ISO 13400-2:2019 Table 21 makes mandatory and
+    /// [`Payload::decode`](Decode::decode) refuses.
     fn encode(
         &self,
         writer: &mut impl automotive_wire_codec::Sink,
@@ -438,6 +442,7 @@ impl Encode for Payload<'_> {
                 alive_check_response.encode(writer)?
             }
             Payload::DiagnosticMessage(diagnostic_message) => {
+                diagnostic_message.user_data_present()?;
                 diagnostic_message.encode(writer)?
             }
             Payload::DiagnosticMessageAck(diagnostic_message_ack) => {
@@ -701,5 +706,33 @@ mod tests {
         let decoded =
             Payload::decode(&buf[..written], PayloadType::VehicleAnnouncement).unwrap();
         assert_eq!(decoded, payload);
+    }
+
+    /// ISO 13400-2:2019 Table 21 makes a diagnostic message's user data mandatory and
+    /// `Payload::decode` refuses a payload without it, so encoding one is refused rather
+    /// than framing bytes no decoder accepts.
+    #[test]
+    fn a_diagnostic_message_without_user_data_does_not_encode() {
+        let payload = Payload::DiagnosticMessage(DiagnosticMessage {
+            source_address: LogicalAddress(0x0E00),
+            target_address: LogicalAddress(0x4010),
+            user_data: &[],
+        });
+        let refused = |result: Result<usize, MessageError>| {
+            matches!(
+                result,
+                Err(MessageError::InvalidPayloadLength {
+                    payload_type: PayloadType::DiagnosticMessage,
+                    length: 4,
+                })
+            )
+        };
+        assert!(refused(payload.encoded_size()));
+        let mut buf = [0u8; 8];
+        assert!(refused(payload.encode(&mut SliceSink::new(&mut buf))));
+        assert!(
+            Payload::decode(&[0x0E, 0x00, 0x40, 0x10], PayloadType::DiagnosticMessage)
+                .is_err()
+        );
     }
 }

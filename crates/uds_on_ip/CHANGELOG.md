@@ -30,8 +30,8 @@ transport for both roles. It is released in lockstep with the rest of the
   `uds_services::UdsTransport` and `ClientTransport` over any
   `simple_doip::service::TesterConnection`. It queues up to `WAITING` requests in
   `QUEUE` bytes behind the one the connection carries; `QUEUE` must be at least
-  the connection's `MAX_PDU` plus `KEEP_ALIVE_LEN` for each other request waiting,
-  which is checked at compile time. It turns a refused request into a failed
+  the connection's `MAX_PDU` plus `KEEP_ALIVE_LEN`, `uds_services::KEEP_ALIVE_LEN`, for
+  each other request waiting, which is checked at compile time. It turns a refused request into a failed
   confirmation, and reconnects and
   re-activates routing after a server closes the connection (REQ 7.8, REQ 7.10).
   It reports each close as expected or unexpected, and sends a request on a new

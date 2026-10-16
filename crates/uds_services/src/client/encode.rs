@@ -73,26 +73,11 @@ pub(super) fn read_data_by_identifier<D: DataIdentifier>(
 /// carries: clear where the call awaits a response, set where it awaits none.
 pub(super) fn communication_control(
     buffer: &mut [u8],
-    control: CommunicationControlRequest,
+    mut control: CommunicationControlRequest,
     suppress: bool,
 ) -> Result<usize, RequestError> {
-    let kind = control.control_type();
-    let communication = control.communication_type();
-    // Rebuilt from a request its constructors already admitted, so neither can refuse.
-    let rebuilt = match control.node_id() {
-        Some(node) => CommunicationControlRequest::new_with_node_id(
-            suppress,
-            kind,
-            communication,
-            node,
-        ),
-        None => CommunicationControlRequest::new(suppress, kind, communication),
-    };
-    let rebuilt = rebuilt.map_err(|_| RequestError::DoesNotFit)?;
-    request(
-        buffer,
-        &Request::CommunicationControl(rebuilt.with_subnet(control.subnet())),
-    )
+    control.suppress_positive_response = suppress;
+    request(buffer, &Request::CommunicationControl(control))
 }
 
 /// Encode a `ControlDTCSetting` request into `buffer`.

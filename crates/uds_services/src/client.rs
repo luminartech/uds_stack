@@ -60,6 +60,10 @@ use uds_session::{
     PhysicalKeepAlive, Rejection, Reloads, Timestamp,
 };
 
+/// The length of the keep-alive a client sends, a `TesterPresent` with its positive
+/// response suppressed: what a transport sets aside for one behind each request.
+pub const KEEP_ALIVE_LEN: usize = encode::KEEP_ALIVE.len();
+
 /// One application's identifier vocabulary, with the storage derived from it.
 ///
 /// ``UDSSVC_ARCH_0013`` for the client half — implemented by [`crate::uds_client`],
@@ -824,7 +828,8 @@ impl Reply {
 }
 
 /// The replies to one functionally addressed request whose positive response carries
-/// nothing to read; [`Responses`]' counterpart for such a service.
+/// nothing to read; [`Responses`]' counterpart for such a service. Each reply is read
+/// against the service the call that made this sequence sent.
 ///
 /// The request goes out on the first [`Self::next`]. The request in progress is recorded
 /// in the [`Client`], not here, so dropping this part-way is safe: the client's next call
@@ -843,6 +848,8 @@ pub struct Replies<
     client: &'c mut Client<C, T, K, PHYS, FUNC, R>,
     /// Why the request could not be made, reported by the first [`Self::next`].
     refused: Option<ClientError<T::Error>>,
+    /// Reads a positive response as the request's service.
+    decode: fn(encode::Final<'_>) -> Response<()>,
 }
 
 impl<
@@ -883,15 +890,21 @@ impl<
         };
         let from = answered.from;
         let message = answered_bytes(&mut self.client.store, &answered);
-        let reply = match encode::decoded::<ControlDtcSettingResponse>(
-            encode::final_response(message, answered.arrived),
-        ) {
-            Response::Positive(_) => Reply::Positive { from },
+        let reply = match (self.decode)(encode::final_response(message, answered.arrived)) {
+            Response::Positive(()) => Reply::Positive { from },
             Response::Negative(code) => Reply::Negative { from, code },
             Response::Malformed(error) => Reply::Malformed { from, error },
         };
         Some(Ok(reply))
     }
+}
+
+/// [`Replies`]' reading of a positive response as `R`.
+fn reply_as<R>(answer: encode::Final<'_>) -> Response<()>
+where
+    for<'d> R: uds_protocol::Decode<'d, Error = uds_protocol::Error>,
+{
+    encode::decoded::<R>(answer).map(|_| ())
 }
 
 /// The identifier/record pairs in one `ReadDataByIdentifier` response.
@@ -1975,46 +1988,33 @@ impl<
     /// the suppress bit set so that none answers (ISO 14229-1:2020 9.2.2), and awaiting
     /// nothing beyond the transmission's confirmation.
     ///
-    /// ``UDSSVC_ARCH_0009`` — a server that does not support the request is silent, as is
-    /// one that performed it, so success cannot be told from silent non-support. The
-    /// request is never repeated for want of a response, since none is awaited; a failed
-    /// transmission is repeated as any request's is.
+    /// ``UDSSVC_ARCH_0009`` and ISO 14229-1:2020 Table 5 — a server that performed the
+    /// request is silent, as is one that does not support it, so success cannot be told
+    /// from silent non-support; a server that refuses it for any other reason still
+    /// answers with a negative response, which the [`Replies`] sequence lends, as it
+    /// does a positive from a server that ignored the suppress bit. The request is never
+    /// repeated for want of a response; a failed transmission is repeated as any
+    /// request's is.
     ///
     /// # Arguments
     ///
     /// * `group` - the functional address, `S_AI[TA]`.
     /// * `control` - as for [`Self::communication_control`]; its suppress bit is set
     ///   whatever it carries.
-    ///
-    /// # Errors
-    ///
-    /// [`ClientError::NotSent`] where the transmission failed after its repeats,
-    /// [`ClientError::NoChannel`] where no channel could be opened to `group`, and
-    /// [`ClientError::Transport`] where the transport failed.
-    ///
-    /// # Cancel safety
-    ///
-    /// As [`Self::read_data_by_identifier`]'s.
-    pub async fn communication_control_functional(
+    pub fn communication_control_functional(
         &mut self,
         group: Address,
         control: CommunicationControlRequest,
-    ) -> Result<(), ClientError<T::Error>> {
-        if let Some(refused) = self.functional(
+    ) -> Replies<'_, C, T, K, PHYS, FUNC, R> {
+        let refused = self.functional(
             group,
             |request| encode::communication_control(request, control, true),
-            ExpectedResponses::None,
-        ) {
-            return Err(refused);
-        }
-        if let Err(error) = self.drain_window().await {
-            self.exchange = None;
-            return Err(error);
-        }
-        match self.advance().await {
-            // No server answers a suppressed request; what arrives is someone else's.
-            None | Some(Ok(_)) => Ok(()),
-            Some(Err(error)) => Err(error),
+            ExpectedResponses::Unknown,
+        );
+        Replies {
+            client: self,
+            refused,
+            decode: reply_as::<CommunicationControlResponse>,
         }
     }
 
@@ -2049,6 +2049,7 @@ impl<
         Replies {
             client: self,
             refused,
+            decode: reply_as::<ControlDtcSettingResponse>,
         }
     }
 

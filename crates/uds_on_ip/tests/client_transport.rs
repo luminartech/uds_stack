@@ -363,6 +363,7 @@ const READ: &[u8] = &[0x22, 0xF1, 0x90];
 const ANSWER: &[u8] = &[0x62, 0xF1, 0x90, 0x41];
 const KEEP_ALIVE: &[u8] = &[0x3E, 0x80];
 const _: () = assert!(KEEP_ALIVE.len() == KEEP_ALIVE_LEN);
+const _: () = assert!(KEEP_ALIVE_LEN == uds_services::KEEP_ALIVE_LEN);
 
 /// `DoIP_Result`'s position in ISO 13400-2:2019 8.2.5's order, as `s_result` maps it.
 const fn failed(result: DoIpResult) -> SResult {

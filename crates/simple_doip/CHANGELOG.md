@@ -205,7 +205,8 @@ example for each.
   short was `MessageError::Incomplete`, and trailing bytes were ignored. The rule is
   public as `PayloadType::allows_payload_length`, which the entity and the tester
   check headers against. A diagnostic message must carry at least one byte of user
-  data. Migrate: match `InvalidPayloadLength` where you matched `Incomplete` from
+  data, and `Payload::encode` refuses one that does not with the same error rather
+  than frame bytes no decoder accepts. Migrate: match `InvalidPayloadLength` where you matched `Incomplete` from
   `Payload::decode`, and send whole payloads.
 - **Breaking:** `MessageError::PayloadLengthTooShort` and
   `MessageError::UnexpectedPayloadType` are removed: nothing produced them. Migrate:

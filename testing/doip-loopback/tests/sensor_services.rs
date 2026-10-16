@@ -396,9 +396,12 @@ fn a_positive_reset_is_reported_as_a_replacement_at_once() {
 }
 
 /// The flashing sequence's two group-addressed steps: `ControlDTCSetting` sent to the
-/// functional group is answered by the sensor, and `CommunicationControl` sent there
-/// suppressed completes on its confirmation. The physical channel is undisturbed: idling
-/// past the server's S3, the keep-alive still holds the extended session.
+/// functional group is answered by the sensor. `CommunicationControl` sent there
+/// suppressed draws nothing where the sensor performs it, and the sensor's refusal where
+/// it does not: this sensor holds `disableRxAndTx` behind level 3, so a locked disable is
+/// answered `securityAccessDenied` (ISO 14229-1:2020 Table 5). The physical channel is
+/// undisturbed: idling past the server's S3, the keep-alive still holds the extended
+/// session.
 #[test]
 fn communication_and_dtc_setting_are_controlled_on_the_group() {
     with_sensor(|mut c| async move {
@@ -413,18 +416,36 @@ fn communication_and_dtc_setting_are_controlled_on_the_group() {
             let last = ticking(replies.next(), STEP).await;
             assert!(last.is_none(), "{setting:?}: {last:?}");
         }
-        for control in [
-            CommunicationControlType::DisableRxAndTx,
-            CommunicationControlType::EnableRxAndTx,
-        ] {
-            let request =
-                CommunicationControlRequest::new(false, control, CommunicationType::Normal)
-                    .expect("a plain control type takes no node");
-            let sent =
-                ticking(c.communication_control_functional(GROUP, request), STEP).await;
-            assert!(sent.is_ok(), "{control:?}: {sent:?}");
-        }
-        let idle = u64::from(PARAMS.s3_server) + 1_000;
+        let control = |kind| {
+            CommunicationControlRequest::new(false, kind, CommunicationType::Normal)
+                .expect("a plain control type takes no node")
+        };
+        let mut replies = c.communication_control_functional(
+            GROUP,
+            control(CommunicationControlType::DisableRxAndTx),
+        );
+        let refused = ticking(replies.next(), STEP).await;
+        assert!(
+            matches!(
+                refused,
+                Some(Ok(Reply::Negative {
+                    from: SERVER,
+                    code: Nrc::SecurityAccessDenied,
+                }))
+            ),
+            "{refused:?}"
+        );
+        let last = ticking(replies.next(), STEP).await;
+        assert!(last.is_none(), "{last:?}");
+        drop(replies);
+        let mut replies = c.communication_control_functional(
+            GROUP,
+            control(CommunicationControlType::EnableRxAndTx),
+        );
+        let silent = ticking(replies.next(), STEP).await;
+        assert!(silent.is_none(), "{silent:?}");
+        drop(replies);
+        let idle = u64::from(PARAMS.s3_server()) + 1_000;
         ticking(c.idle_until(in_ms(idle)), STEP)
             .await
             .expect("idled");
@@ -449,7 +470,7 @@ fn communication_and_dtc_setting_are_controlled_on_the_group() {
 fn the_keep_alive_holds_the_extended_session_past_s3() {
     with_sensor(|mut c| async move {
         extended(&mut c).await;
-        let idle = u64::from(PARAMS.s3_server) + 1_000;
+        let idle = u64::from(PARAMS.s3_server()) + 1_000;
         assert!(idle > 2 * u64::from(KEEP_ALIVE_MS));
         ticking(c.idle_until(in_ms(idle)), STEP)
             .await

@@ -27,11 +27,11 @@ use uds_protocol::{
 };
 use uds_protocol::{
     ClearDiagnosticInfoRequest, CommunicationControlRequest, CommunicationType,
-    ControlDtcSettingRequest, DiagnosticSessionControlRequest, EcuResetRequest,
-    ReadDataByIdentifierRequest, ReadDtcInfoRequest, RequestDownloadRequest,
-    RequestDownloadResponse, RequestTransferExitRequest, RoutineControlRequest,
-    RoutineControlSubFunction, SecurityAccessRequest, TransferDataRequest,
-    WriteDataByIdentifierRequest,
+    ControlDtcSettingRequest, DiagnosticSessionControlRequest, DtcSettingType,
+    EcuResetRequest, ReadDataByIdentifierRequest, ReadDtcInfoRequest,
+    RequestDownloadRequest, RequestDownloadResponse, RequestTransferExitRequest,
+    RoutineControlRequest, RoutineControlSubFunction, SecurityAccessRequest,
+    TransferDataRequest, WriteDataByIdentifierRequest,
 };
 use uds_session::{Ai, TaType};
 
@@ -308,6 +308,20 @@ pub fn sub_function_access<T: TryFrom<u8>>(
     access: impl FnOnce(T) -> Option<Access>,
 ) -> Option<Access> {
     T::try_from(value).ok().and_then(access)
+}
+
+/// ISO 14229-1:2020 clause 10.8.4 — `ControlDTCSetting`'s lookup as [`begin`] asks it: a
+/// `DTCSettingType` Table 128 reserves has no [`Access`], 0x12, and `access` is not asked
+/// about it, as a reserved `communicationType` is 0x31 without the handler being asked.
+#[doc(hidden)]
+pub fn dtc_setting_access(
+    value: u8,
+    access: impl FnOnce(DtcSettingType) -> Option<Access>,
+) -> Option<Access> {
+    match DtcSettingType::try_from(value).ok()? {
+        DtcSettingType::IsoSaeReserved { .. } => None,
+        setting => access(setting),
+    }
 }
 
 /// ISO 14229-1:2020 clause 10.2 — `DiagnosticSessionControl`'s lookups as [`begin`] asks

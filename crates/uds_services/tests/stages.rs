@@ -155,6 +155,8 @@ struct Ecu {
     cleared: Option<(DtcRecord, Option<u8>)>,
     /// The `DTCSettingType` `ControlDtcSetting` last applied.
     dtc_setting: Option<DtcSettingType>,
+    /// Makes `ControlDtcSetting::access` admit every setting it is asked about.
+    any_dtc_setting: bool,
     /// The transfer `DataTransfer::begin` last began.
     begun: Option<(u64, u64)>,
     /// Each block `DataTransfer::block` accepted.
@@ -569,6 +571,9 @@ impl ControlDtcSetting for Ecu {
     const MAY_RESPOND_PENDING: bool = false;
     const MAX_OPTION_RECORD_LEN: usize = 3;
     fn access(&self, setting: DtcSettingType) -> Option<Access> {
+        if self.any_dtc_setting {
+            return Some(everywhere());
+        }
         match u8::from(setting) {
             0x01 | 0x02 => Some(everywhere()),
             0x40 => Some(only_in(S::ProgrammingSession)),
@@ -1554,6 +1559,26 @@ fn control_dtc_setting_an_unsupported_setting_is_0x12() {
         &[0x85, 0x42][..],
         &[0x85, 0x83, 0x01, 0x02, 0x03, 0x04][..],
     ] {
+        assert_eq!(
+            exchange(&mut ecu, &mut state, request).as_deref(),
+            Some(&[0x7F, 0x85, 0x12][..]),
+            "{request:02X?}"
+        );
+    }
+    assert_eq!(ecu.dtc_setting, None);
+}
+
+/// Clause 10.8.4, Table 128 — a reserved `DTCSettingType` is 0x12 before the handler's
+/// lookup is asked, as a reserved `communicationType` is 0x31: a lookup that admits
+/// every setting is not asked about one, and the handler never sees it.
+#[test]
+fn control_dtc_setting_a_reserved_setting_is_0x12_without_the_lookup_being_asked() {
+    let mut ecu = Ecu {
+        any_dtc_setting: true,
+        ..Ecu::default()
+    };
+    let mut state = extended(&mut ecu);
+    for request in [&[0x85, 0x00][..], &[0x85, 0x03][..], &[0x85, 0x7F][..]] {
         assert_eq!(
             exchange(&mut ecu, &mut state, request).as_deref(),
             Some(&[0x7F, 0x85, 0x12][..]),

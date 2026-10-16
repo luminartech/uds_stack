@@ -10,9 +10,9 @@ const PARAMS: ServerParams = ServerParams::new(5_000, 50, 5_000, 0);
 
 /// [`PARAMS`] with a response-pending lead of 10 ms (``UDSS_LLR_0186``).
 const PARAMS_LEAD: ServerParams = ServerParams::new(
-    PARAMS.s3_server,
-    PARAMS.p2_server_max,
-    PARAMS.p2_star_server_max,
+    PARAMS.s3_server(),
+    PARAMS.p2_server_max(),
+    PARAMS.p2_star_server_max(),
     10,
 );
 
@@ -98,9 +98,9 @@ mod expiry {
             [Association::EMPTY, Association::EMPTY],
             ServerParams::new(
                 u32::MAX,
-                PARAMS.p2_server_max,
-                PARAMS.p2_star_server_max,
-                PARAMS.response_pending_lead,
+                PARAMS.p2_server_max(),
+                PARAMS.p2_star_server_max(),
+                PARAMS.response_pending_lead(),
             ),
         );
         let now = Timestamp(1_000);

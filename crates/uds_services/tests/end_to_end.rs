@@ -507,9 +507,9 @@ fn a_response_pending_lead_sends_the_0x78_within_the_window() {
         ]),
         ECU,
         ServerParams::new(
-            PARAMS.s3_server,
-            PARAMS.p2_server_max,
-            PARAMS.p2_star_server_max,
+            PARAMS.s3_server(),
+            PARAMS.p2_server_max(),
+            PARAMS.p2_star_server_max(),
             10,
         ),
     );

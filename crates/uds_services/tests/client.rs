@@ -489,13 +489,14 @@ fn a_failed_transmissions_repeat_counts_against_the_ceiling() {
 }
 
 /// A functional `CommunicationControl` goes to the group with the suppress bit set in
-/// its second byte, completes on its confirmation, and opens no response window: a
-/// physical read that follows is sent at once, with nothing drained first.
+/// its second byte. Every server that performed it is silent, so its sequence ends when
+/// the window closes, and a physical read follows.
 #[test]
-fn a_functional_communication_control_is_suppressed_and_completes_on_confirmation()
+fn a_functional_communication_control_is_suppressed_and_its_window_closes_empty()
 -> Result<(), uds_protocol::Error> {
     let mut t = tester(&[
         Step::Conf(FUNCTIONAL, SResult::Ok),
+        Step::At(1_000),
         Step::Conf(to(ECU), SResult::Ok),
         Step::Ind(from(ECU), SPEED),
     ]);
@@ -504,10 +505,9 @@ fn a_functional_communication_control_is_suppressed_and_completes_on_confirmatio
         CommunicationControlType::DisableRxAndTx,
         CommunicationType::Normal,
     )?;
-    assert_eq!(
-        block_on(t.communication_control_functional(GROUP, control)),
-        Ok(())
-    );
+    let mut replies = t.communication_control_functional(GROUP, control);
+    assert_eq!(block_on(replies.next()), None);
+    drop(replies);
     assert_eq!(
         t.transport().addressed(0),
         (Some(FUNCTIONAL), &[0x28, 0x83, 0x01][..])
@@ -517,6 +517,41 @@ fn a_functional_communication_control_is_suppressed_and_completes_on_confirmatio
         Ok(Response::Positive(_))
     ));
     assert_eq!(t.transport().sent_count, 2);
+    assert!(t.transport().finished());
+    Ok(())
+}
+
+/// ISO 14229-1:2020 Table 5 — a server refusing a suppressed functional request still
+/// answers with a negative response, which the sequence lends; a positive from a server
+/// that ignored the suppress bit decodes as a `CommunicationControl` response.
+#[test]
+fn a_functional_communication_control_lends_a_servers_refusal()
+-> Result<(), uds_protocol::Error> {
+    let mut t = tester(&[
+        Step::Conf(FUNCTIONAL, SResult::Ok),
+        Step::Ind(from(ECU), &[0x7F, 0x28, 0x33]),
+        Step::Ind(from(OTHER_ECU), &[0x68, 0x03]),
+        Step::At(1_000),
+    ]);
+    let control = CommunicationControlRequest::new(
+        false,
+        CommunicationControlType::DisableRxAndTx,
+        CommunicationType::Normal,
+    )?;
+    let mut replies = t.communication_control_functional(GROUP, control);
+    assert_eq!(
+        block_on(replies.next()),
+        Some(Ok(Reply::Negative {
+            from: ECU,
+            code: NegativeResponseCode::SecurityAccessDenied,
+        }))
+    );
+    assert_eq!(
+        block_on(replies.next()),
+        Some(Ok(Reply::Positive { from: OTHER_ECU }))
+    );
+    assert_eq!(block_on(replies.next()), None);
+    drop(replies);
     assert!(t.transport().finished());
     Ok(())
 }

@@ -60,12 +60,9 @@ pub enum NegativeResponseCode {
     /// client. This may occur when sequence sensitive requests are issued in the wrong
     /// order.
     RequestSequenceError,
-    /// The server received the request but the requested action could not be performed
-    /// by the server, as a subnet component which is necessary to supply the requested
-    /// information did not respond within the specified time (`0x25`).
+    /// A subnet component the action needed did not answer in time (`0x25`, Table A.1).
     NoResponseFromSubnetComponent,
-    /// A failure condition, identified by a DTC, has occurred and prevents the
-    /// execution of the requested action (`0x26`).
+    /// A fault the server holds as a DTC prevents the action (`0x26`, Table A.1).
     FailurePreventsExecutionOfRequestedAction,
     /// This response code indicates that the requested action will not be taken because the
     /// server has detected that the request message contains a parameter which attempts to
@@ -104,11 +101,11 @@ pub enum NegativeResponseCode {
     /// client's latest attempt to gain security access was initiated before the server's
     /// required timeout period had elapsed.
     RequiredTimeDelayNotExpired,
-    /// The requested action requires a secure data transmission (`0x38`).
+    /// The request must arrive over secured transmission (`0x38`, Table A.1).
     SecureDataTransmissionRequired,
-    /// The requested action is not allowed in a secure data transmission (`0x39`).
+    /// The request may not arrive over secured transmission (`0x39`, Table A.1).
     SecureDataTransmissionNotAllowed,
-    /// The message failed in the security sub-layer (`0x3A`).
+    /// The security sub-layer rejected the message (`0x3A`, Table A.1).
     SecureDataVerificationFailed,
     /// Certificate verification failed: the server's date and time are outside the
     /// certificate's validity period (`0x50`).
@@ -130,7 +127,7 @@ pub enum NegativeResponseCode {
     CertificateVerificationFailedInvalidCertificate,
     /// The ownership verification failed (`0x58`).
     OwnershipVerificationFailed,
-    /// The challenge could not be calculated (`0x59`).
+    /// Authentication could not compute its challenge (`0x59`, Table A.1).
     ChallengeCalculationFailed,
     /// The access rights could not be set (`0x5A`).
     SettingAccessRightsFailed,
@@ -257,9 +254,8 @@ pub enum NegativeResponseCode {
     /// server prerequisite condition for voltage at the primary pin of the server (ECU) is
     /// not met (current voltage is below a pre-programmed maximum threshold).
     VoltageTooLow,
-    /// The server has received the request but the requested action could not be
-    /// performed, as a server resource is temporarily unavailable (`0x94`). Supported by
-    /// every service, as response-pending is.
+    /// A resource the action needs is briefly unavailable; the client may retry
+    /// (`0x94`, Table A.1). Any service may answer it, as any may answer response-pending.
     ResourceTemporarilyNotAvailable,
     /// A byte Table A.1 reserves for specific conditions not correct, `0x95`–`0xEF`.
     #[cfg_attr(feature = "clap", clap(skip))]

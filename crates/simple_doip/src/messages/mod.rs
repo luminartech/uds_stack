@@ -157,7 +157,8 @@ impl<'a> Message<'a> {
         }
     }
 
-    /// Construct a diagnostic message carrying opaque user data
+    /// Construct a diagnostic message carrying opaque user data, at least one byte of
+    /// it: an empty `user_data` does not encode (ISO 13400-2:2019 Table 21).
     #[must_use]
     pub fn diagnostic_message(
         protocol_version: ProtocolVersion,
@@ -392,7 +393,8 @@ impl OwnedMessage {
         .to_owned_message()
     }
 
-    /// Construct a diagnostic message carrying owned user data
+    /// Construct a diagnostic message carrying owned user data, at least one byte of
+    /// it: an empty `user_data` does not encode (ISO 13400-2:2019 Table 21).
     #[must_use]
     pub fn diagnostic_message(
         protocol_version: ProtocolVersion,
