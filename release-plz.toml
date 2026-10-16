@@ -2,11 +2,6 @@
 # five at the same version, which lives once, in the root Cargo.toml's [workspace.package].
 # A shared field rather than release-plz's `version_group`, because a version group only
 # moves the members that changed, and an untouched member would be left behind.
-#
-# Releases are currently HELD in .github/workflows/ci.yml (`use-release-plz: false`), not
-# here. A workspace-level `release = false` looks like the natural hold, but release-plz
-# treats "no releasable package" as an error, which would fail both release jobs on every
-# push to main.
 [workspace]
 # Each crate keeps its own CHANGELOG.md, written by hand under `## [Unreleased]`; that is
 # what a crates.io or docs.rs reader of one crate sees. release-plz does not touch them:

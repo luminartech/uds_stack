@@ -47,12 +47,7 @@ maturities.
 | `uds_services` | Alpha: the server stages every service; `DataTransfer` stages the download. |
 
 The five crates release in lockstep: one version for the whole stack, every
-crate published at it together, one `v<version>` tag. The stack is at 0.7.0,
-and 0.7.0 is not released yet; it will be once the stack's functionality has
-been verified. Until then, the last releases on crates.io are the standalone
-ones from before the consolidation:
-[`uds_protocol` 0.1.0](https://crates.io/crates/uds_protocol/0.1.0) and
-[`simple_doip` 0.6.0](https://crates.io/crates/simple_doip/0.6.0).
+crate published at it together, one `v<version>` tag.
 
 ## Documentation
 

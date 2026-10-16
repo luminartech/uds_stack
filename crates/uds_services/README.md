@@ -22,10 +22,10 @@ This crate never depends on a binding: the Cargo edge runs the other way.
 
 ## Status
 
-**Alpha, not yet published.** The server and client roles run end to end over
+**Alpha.** The server and client roles run end to end over
 any `UdsTransport`; `DataTransfer` stages the download, and its upload and file
 transfer are not supported (0x11). It releases in lockstep with the rest
-of the stack, at 0.7.0, once the stack's functionality has been verified. See
+of the stack, at one shared version. See
 the
 [workspace README](https://github.com/luminartech/uds_stack#status) for how
 that compares to the rest of the stack.
