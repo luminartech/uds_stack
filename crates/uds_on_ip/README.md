@@ -66,10 +66,9 @@ with no I/O in it — and the sockets, on whatever runtime, are the entity's.
 
 ## Status
 
-**Alpha, not yet published** (it releases in lockstep with the rest of the
-stack, at 0.7.0, once the stack's functionality has been verified). The public
-API shape is
-settled — `DoIpTransport<E: DiagnosticEntity, CONNECTIONS>` implements
+**Alpha.** It releases in lockstep with the rest of the stack, at one shared
+version. The public API shape is settled —
+`DoIpTransport<E: DiagnosticEntity, CONNECTIONS>` implements
 `uds_services::UdsTransport` — and the server role is implemented: requests
 and responses map onto `DoIP_Data` (ISO 14229-5:2022 REQ 4.3, REQ 4.4), and the
 connection is closed after a positive `ECUReset` response (REQ 7.11) and after

@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/) (treating
 `0.x` breaking changes as minor bumps, per the Cargo/SemVer convention for
 pre-1.0 crates).
 
-## [Unreleased]
+## [0.7.0] — 2026-10-16
 
 The version moves from 0.1.0 to 0.7.0 because `uds_protocol` now releases in lockstep
 with the rest of the `uds_stack` workspace (`uds_session`, `uds_services`,
