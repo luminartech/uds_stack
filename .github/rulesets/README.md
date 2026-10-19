@@ -44,6 +44,7 @@ publishing `uds_on_ip`, the crate that is always published last (see `release-pl
 A `v*` tag therefore appears only once all five crates are on crates.io, and a tag over a
 partial or rewritten release would misstate what is there.
 
-It has no bypass while releases are held. Lifting the hold adds the release-plz GitHub
-App as the one bypass actor (`{"actor_type": "Integration", "actor_id": <app id>, "bypass_mode": "always"}`),
-in the same change that sets `use-release-plz: true`.
+Its one bypass actor is the release-plz GitHub App, which pushes the tag:
+`{"actor_type": "Integration", "actor_id": <app id>, "bypass_mode": "always"}`. The App
+is not installed on this repository yet, so the list is empty. Do not apply this ruleset
+until the App's entry is in it: with no bypass, release-plz cannot push the release tag.

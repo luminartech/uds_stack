@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/) (treating
 `0.x` breaking changes as minor bumps, per the Cargo/SemVer convention for
 pre-1.0 crates).
 
-## [Unreleased]
+## [0.7.0] — 2026-10-16
 
 First release. `uds_on_ip` implements ISO 14229-5:2022 (`UDSonIP`), which binds UDS to
 a `DoIP` transport. It covers clause 8, the application profile, and clause 11, the

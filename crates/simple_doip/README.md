@@ -37,8 +37,7 @@ concerns, and this crate has no dependency on any of them.
 
 ## Status
 
-Released in lockstep with the rest of the stack, at one shared version; 0.7.0
-is not released yet, and 0.6.0 is the last release on crates.io. 0.7.0 removes
+Released in lockstep with the rest of the stack, at one shared version. 0.7.0 removes
 the async client, the async server and `bare_metal_entity`;
 [`MIGRATING.md`](MIGRATING.md) maps each to what replaces it. See the
 [workspace README](https://github.com/luminartech/uds_stack#status) for where
