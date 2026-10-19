@@ -365,6 +365,15 @@ fn active(stack: &MockStack) -> ActiveTester<'_> {
     tester
 }
 
+/// A tester with routing active over `stack` as `options` say, its activation request
+/// already taken.
+fn active_with(stack: &MockStack, options: ConnectOptions) -> ActiveTester<'_> {
+    stack.script_next(&activation_response(0x10));
+    let tester = run(Tester::connect_with(stack, REMOTE, sa(), options)).unwrap();
+    stack.latest().take_written();
+    tester
+}
+
 /// Reconnects, letting [`RECONNECT_BACKOFF`] pass on the mock clock.
 fn reconnect(tester: &mut ActiveTester<'_>) -> Result<(), ConnectError<MockError>> {
     let mut reconnecting = pin!(tester.reconnect(None));
@@ -2901,7 +2910,7 @@ fn a_reconnect_the_entity_never_activates_times_out() {
     let _clock = clock();
     let stack = MockStack::new(usize::MAX);
     let timeout = Duration::from_millis(500);
-    let mut tester = active(&stack).with_reconnect_timeout(timeout);
+    let mut tester = active_with(&stack, ConnectOptions::new().timeout(timeout));
     {
         let mut reconnecting = pin!(tester.reconnect(None));
         assert!(until_stalled(reconnecting.as_mut()).is_none());
@@ -2920,12 +2929,37 @@ fn a_reconnect_the_entity_never_activates_times_out() {
     assert_eq!(request(&mut tester).unwrap_err(), ConnectionRefusal::Closed);
 }
 
+/// A first connect whose routing activation goes unanswered fails with `Timeout` at
+/// the options' timeout.
+#[test]
+fn a_first_connect_the_entity_never_activates_times_out() {
+    let _clock = clock();
+    let stack = MockStack::new(usize::MAX);
+    let timeout = Duration::from_millis(500);
+    let options = ConnectOptions::new().timeout(timeout);
+    let mut connecting = pin!(Tester::<_, N>::connect_with(&stack, REMOTE, sa(), options));
+
+    assert!(until_stalled(connecting.as_mut()).is_none());
+    assert_eq!(stack.connects(), 1, "connected, awaiting activation");
+    advance(timeout - Duration::from_millis(1));
+    assert!(until_stalled(connecting.as_mut()).is_none());
+    advance(Duration::from_millis(1));
+
+    assert!(matches!(
+        until_stalled(connecting.as_mut()),
+        Some(Err(ConnectError::Timeout))
+    ));
+}
+
 /// A reconnect activated within its timeout connects as one without.
 #[test]
 fn a_reconnect_activated_within_its_timeout_connects() {
     let _clock = clock();
     let stack = MockStack::new(usize::MAX);
-    let mut tester = active(&stack).with_reconnect_timeout(Duration::from_millis(500));
+    let mut tester = active_with(
+        &stack,
+        ConnectOptions::new().timeout(Duration::from_millis(500)),
+    );
     stack.script_next(&activation_response(0x10));
 
     reconnect(&mut tester).unwrap();
