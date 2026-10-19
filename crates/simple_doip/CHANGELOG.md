@@ -104,7 +104,10 @@ example for each.
   confirmed `TimeoutA` and its connection given up, so a late response cannot reach
   a later request; `with_ack_timeout` replaces Table 12's 2 s (`ACK_TIMEOUT`). A connection's end is reported once as `Closed`. `reconnect`
   waits `RECONNECT_BACKOFF` (3 s, or `with_reconnect_backoff`) after a loss before
-  connecting. Every message it sends carries ISO 13400-2:2019's protocol version
+  connecting. `ConnectOptions::timeout` bounds the connect and routing activation, on
+  the first connection and after each reconnect's back-off, failing with
+  `ConnectError::Timeout`; without it ISO 13400-2 gives routing activation no timer.
+  Every message it sends carries ISO 13400-2:2019's protocol version
   (`0x03`). `connect_with` takes `ConnectOptions`: another `TesterVersion` (`0x01`,
   `0x02`) for an entity that implements an earlier edition, and the routing
   activation type and OEM-specific field, so a tester can ask for central security

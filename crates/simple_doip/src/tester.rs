@@ -8,7 +8,7 @@ use core::fmt;
 use core::net::SocketAddr;
 
 use edge_nal::{Close, Readable, TcpConnect, TcpShutdown};
-use embassy_time::{Duration, Instant, Timer, with_deadline};
+use embassy_time::{Duration, Instant, Timer, with_deadline, with_timeout};
 use embedded_io_async::{Read, Write};
 
 use crate::messages::{
@@ -107,6 +107,8 @@ pub struct ConnectOptions {
     pub activation_type: ActivationTypeCode,
     /// Set by [`Self::vm_specific`].
     pub vm_specific: Option<[u8; 4]>,
+    /// Set by [`Self::timeout`].
+    pub timeout: Option<Duration>,
 }
 
 impl ConnectOptions {
@@ -117,6 +119,7 @@ impl ConnectOptions {
             version: TesterVersion::V2019,
             activation_type: ActivationTypeCode::Default,
             vm_specific: None,
+            timeout: None,
         }
     }
 
@@ -145,6 +148,18 @@ impl ConnectOptions {
     pub const fn vm_specific(self, vm_specific: [u8; 4]) -> Self {
         Self {
             vm_specific: Some(vm_specific),
+            ..self
+        }
+    }
+
+    /// The longest the connect and routing activation may take, on the first connection
+    /// and on each one [`TesterConnection::reconnect`] opens once its back-off has
+    /// passed, before it fails with [`ConnectError::Timeout`]. Without one they take as
+    /// long as the entity takes: ISO 13400-2 gives routing activation no timer.
+    #[must_use]
+    pub const fn timeout(self, timeout: Duration) -> Self {
+        Self {
+            timeout: Some(timeout),
             ..self
         }
     }
@@ -200,6 +215,9 @@ pub enum ConnectError<E> {
     /// routing activation response of the wrong length (Table 48).
     #[error("invalid message during routing activation")]
     InvalidMessage,
+    /// The connect and routing activation outran [`ConnectOptions::timeout`].
+    #[error("connect and routing activation timed out")]
+    Timeout,
 }
 
 /// A `DoIP` tester: one TCP connection to one entity, with routing activated on it.
@@ -324,6 +342,7 @@ pub struct Tester<'s, C: TcpConnect + 's, const N: usize> {
     io_error: Option<C::Error>,
     lost_at: Option<Instant>,
     backoff: Duration,
+    timeout: Option<Duration>,
 }
 
 impl<C: TcpConnect, const N: usize> fmt::Debug for Tester<'_, C, N> {
@@ -350,9 +369,9 @@ impl<'s, C: TcpConnect, const N: usize> Tester<'s, C, N> {
     ///
     /// # Cancel safety
     ///
-    /// Waits as long as the entity takes, with no timer of its own: ISO 13400-2 gives a
-    /// tester none for routing activation. Bound it by dropping the future, for example
-    /// with [`embassy_time::with_timeout`]; dropping it closes the connection.
+    /// Waits as long as the entity takes: ISO 13400-2 gives a tester no timer for
+    /// routing activation. [`Self::connect_with`] takes a [`ConnectOptions::timeout`];
+    /// dropping the future also ends the wait, and closes the connection.
     ///
     /// # Arguments
     ///
@@ -390,11 +409,13 @@ impl<'s, C: TcpConnect, const N: usize> Tester<'s, C, N> {
     /// * `stack` - the stack that opens this connection and any later one.
     /// * `remote` - the entity, usually on [`TCP_PORT`](crate::TCP_PORT).
     /// * `sa` - this tester's source address.
-    /// * `options` - the protocol version and routing activation; see [`ConnectOptions`].
+    /// * `options` - the protocol version, routing activation and timeout; see
+    ///   [`ConnectOptions`].
     ///
     /// # Errors
     ///
-    /// As [`Self::connect`].
+    /// As [`Self::connect`], and [`ConnectError::Timeout`] where the connect and routing
+    /// activation outrun [`ConnectOptions::timeout`].
     pub async fn connect_with(
         stack: &'s C,
         remote: SocketAddr,
@@ -419,8 +440,9 @@ impl<'s, C: TcpConnect, const N: usize> Tester<'s, C, N> {
             io_error: None,
             lost_at: None,
             backoff: RECONNECT_BACKOFF,
+            timeout: options.timeout,
         };
-        tester.establish().await?;
+        tester.establish_within_timeout().await?;
         Ok(tester)
     }
 
@@ -448,6 +470,17 @@ impl<'s, C: TcpConnect, const N: usize> Tester<'s, C, N> {
     pub const fn with_ack_timeout(mut self, timeout: Duration) -> Self {
         self.exchange.ack_timeout = timeout;
         self
+    }
+
+    /// [`Self::establish`], failing with [`ConnectError::Timeout`] where it outruns the
+    /// options' timeout.
+    async fn establish_within_timeout(&mut self) -> Result<(), ConnectError<C::Error>> {
+        match self.timeout {
+            Some(limit) => with_timeout(limit, self.establish())
+                .await
+                .unwrap_or(Err(ConnectError::Timeout)),
+            None => self.establish().await,
+        }
     }
 
     /// Opens a new connection and activates routing on it, keeping it only on success.
@@ -889,7 +922,8 @@ impl<C: TcpConnect, const N: usize> TesterConnection for Tester<'_, C, N> {
     ///
     /// # Errors
     ///
-    /// As for [`Tester::connect`]. After an error the tester is closed:
+    /// As for [`Tester::connect_with`], [`ConnectError::Timeout`] included, timed from
+    /// the end of the back-off. After an error the tester is closed:
     /// [`next_event`](DiagnosticConnection::next_event) reports
     /// [`ConnectionEvent::Closed`] for the connection the reconnect gave up, if one was
     /// open and its end not yet reported, and [`request`](DiagnosticConnection::request)
@@ -904,7 +938,7 @@ impl<C: TcpConnect, const N: usize> TesterConnection for Tester<'_, C, N> {
             if let Some(lost_at) = self.lost_at {
                 Timer::at(after(lost_at, self.backoff)).await;
             }
-            self.establish().await
+            self.establish_within_timeout().await
         };
         let Some(until) = until else {
             return attempt.await.map(|()| Reconnection::Connected);
