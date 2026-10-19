@@ -8,17 +8,17 @@ bare-metal ECU and for a host-side diagnostic tool.
 
 ## The crates
 
-Each crate is scoped by which standard specifies its behaviour, not by
+Each crate is scoped by which standard specifies its behavior, not by
 convenience. That rule is what keeps the layering honest: a crate that would
 have to read another standard to do its job has the wrong boundary.
 
-| Crate                                 | Standard                | What it owns                                                                                                                                                                                          |
-| ------------------------------------- | ----------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| [`uds_protocol`](crates/uds_protocol) | ISO 14229-1 (format)    | The message format. Encodes and decodes UDS requests and responses; no dispatch, no policy, no session state.                                                                                         |
-| [`uds_session`](crates/uds_session)   | ISO 14229-2             | The session layer, as a sans-io state machine. Never learns its transport, and never reads a clock.                                                                                                   |
-| [`uds_services`](crates/uds_services) | ISO 14229-1 (behaviour) | Everything in ISO 14229-1 that is not the format: typed service dispatch over caller-defined identifiers, and the clause 8.7 response rules. Declares the transport seam and implements no transport. |
-| [`simple_doip`](crates/simple_doip)   | ISO 13400-2             | DoIP. A `no_std`, zero-copy protocol core, and a `no_std` tester and entity over `edge-nal` sockets.                                                                                                  |
-| [`uds_on_ip`](crates/uds_on_ip)       | ISO 14229-5             | The UDSonIP application profile, and the mapping of UDS onto DoIP.                                                                                                                                    |
+| Crate                                 | Standard               | What it owns                                                                                                                                                                                          |
+| ------------------------------------- | ---------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [`uds_protocol`](crates/uds_protocol) | ISO 14229-1 (format)   | The message format. Encodes and decodes UDS requests and responses; no dispatch, no policy, no session state.                                                                                         |
+| [`uds_session`](crates/uds_session)   | ISO 14229-2            | The session layer, as a sans-io state machine. Never learns its transport, and never reads a clock.                                                                                                   |
+| [`uds_services`](crates/uds_services) | ISO 14229-1 (behavior) | Everything in ISO 14229-1 that is not the format: typed service dispatch over caller-defined identifiers, and the clause 8.7 response rules. Declares the transport seam and implements no transport. |
+| [`simple_doip`](crates/simple_doip)   | ISO 13400-2            | DoIP. A `no_std`, zero-copy protocol core, and a `no_std` tester and entity over `edge-nal` sockets.                                                                                                  |
+| [`uds_on_ip`](crates/uds_on_ip)       | ISO 14229-5            | The UDSonIP application profile, and the mapping of UDS onto DoIP.                                                                                                                                    |
 
 ISO 14229-1 is the one document too large for that rule to settle on its own,
 so it is the stack's only split: `uds_protocol` owns its format, `uds_services`
@@ -100,7 +100,7 @@ $ just html        # browsable output
 See [CONTRIBUTING.md](CONTRIBUTING.md). Security issues go through
 [SECURITY.md](SECURITY.md), not the public issue tracker.
 
-## Licence
+## License
 
 Dual licensed under [MIT](LICENSE-MIT) or [Apache-2.0](LICENSE-APACHE), at your
 option. Apache-2.0 carries an express patent grant, which matters for an
@@ -114,7 +114,7 @@ and crate docs name first, and `docs/index.rst` lists. From there on, a table,
 figure, clause or requirement cited with no document named is that one's, and
 any other document is named where it is cited.
 
-Neither licence grants any right in the ISO standards this code implements,
+Neither license grants any right in the ISO standards this code implements,
 which remain ISO's. The requirement set cites clauses so that a reader holding
 the standard can check the transcription; it does not reproduce them. You need
 your own copy of ISO 14229 and ISO 13400 to verify conformance.
