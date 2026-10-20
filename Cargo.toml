@@ -19,6 +19,9 @@ version = "0.7.0"
 # dependency the workspace builds: smoltcp 0.13's 1.91, which embassy-net 0.9 brings in for
 # the embassy-net entity adapter.
 rust-version = "1.91"
+# crates.io links each crate to the source and to the published documentation set.
+repository = "https://github.com/luminartech/uds_stack"
+homepage = "https://luminartech.github.io/uds_stack/"
 
 # Shared dependency versions. Declared once so a bump is one edit, and so the five
 # crates cannot silently drift onto different majors of the same library.
