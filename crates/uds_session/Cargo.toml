@@ -14,7 +14,8 @@ categories = ["no-std", "embedded", "network-programming"]
 # Neither licence grants any right in the ISO standards the requirements cite, which remain
 # ISO's. See "Relationship to the standards" in README.md.
 license = "MIT OR Apache-2.0"
-repository = "https://github.com/luminartech/uds_stack"
+repository.workspace = true
+homepage.workspace = true
 readme = "README.md"
 
 [dependencies]
