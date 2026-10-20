@@ -493,13 +493,11 @@ pub struct ClientTiming {
     /// 15.4); set it, call, and restore it where that repeat is wanted.
     pub repeats: Repeats,
     /// The ceiling on a request's repeats after a failed transmission, physical or
-    /// functional, under which the request is sent again rather than reported as
-    /// [`ClientError::NotSent`]. [`Self::new`] sets [`Repeats::Twice`], ISO 14229-2:2021
-    /// 9.7 Table 9's cell for the link. [`Repeats::Never`] is for a link whose failed
-    /// transmission may still have reached the server, as a `DoIP` message whose
-    /// acknowledgement was lost may have; with [`Self::repeats`] at `Never` as well, no
-    /// request is ever sent twice. The one count of a request's repeats covers both
-    /// cells. A keep-alive stays under Table 9's two.
+    /// functional; past it the request is [`ClientError::NotSent`]. [`Self::new`] sets
+    /// [`Repeats::Twice`], ISO 14229-2:2021 9.7 Table 9's cell for the link.
+    /// [`Repeats::Never`] is for a link where a failed transmission may still have
+    /// arrived; with [`Self::repeats`] at `Never` too, no request is sent twice. A
+    /// keep-alive stays under Table 9's two.
     pub transmission_repeats: Repeats,
 }
 
