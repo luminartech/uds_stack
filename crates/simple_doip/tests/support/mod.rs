@@ -4,7 +4,7 @@ pub mod mock_stack;
 
 use simple_doip::service::{EntityConfig, TesterAddress};
 
-/// The sensor's configuration: routing activation from [`mock_stack::TESTER`] only.
+/// An entity configuration accepting routing activation from [`mock_stack::TESTER`] only.
 #[allow(
     dead_code,
     reason = "each test binary that includes this uses a different part"

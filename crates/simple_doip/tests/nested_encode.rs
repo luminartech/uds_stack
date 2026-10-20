@@ -1,11 +1,8 @@
-//! The embedded-server TX hot path: encode a `DoIP` header + diagnostic payload into ONE
-//! stack buffer, no staging buffer, using `encoded_size` to pre-size the header.
+//! The embedded server's transmit path: a `DoIP` header and a diagnostic payload encoded
+//! into one stack buffer, no staging buffer, with `encoded_size` sizing the header.
 
-// Test code. `unwrap`, `expect` and `panic` are the failure mechanism here, and a
-// test that indexes a known-length golden vector reads better than one that does
-// not. The workspace lint standard in the root Cargo.toml reaches this target too --
-// an integration test is its own crate, so lib.rs cannot speak for it -- which is why
-// the relaxation is stated here rather than left implicit.
+// Test code: `unwrap`, `expect`, `panic` and indexing are the failure mechanism here.
+// An integration test is its own crate, so the lib's relaxation does not reach it.
 #![allow(
     clippy::unwrap_used,
     clippy::expect_used,
@@ -44,7 +41,7 @@ fn nested_encode_no_staging_buffer() {
     total += dm.encode(&mut writer).unwrap();
     assert_eq!(total, Header::SIZE + payload_len);
 
-    // 3. Frame it back out and decode the payload — full loop.
+    // 3. Frame it back out and decode the payload: the full loop.
     let (frame, consumed) = try_frame(&tx_buf[..total]).unwrap().unwrap();
     assert_eq!(consumed, total);
     let decoded = Payload::decode(frame.payload, frame.header.payload_type()).unwrap();
@@ -53,13 +50,10 @@ fn nested_encode_no_staging_buffer() {
         other => panic!("wrong payload: {other:?}"),
     }
 
-    // 4. Too-small buffer errors recoverably (no panic): a `SliceSink` surfaces
-    //    exhaustion as `Io(WriteError::Insufficient(..))` with counts attached
-    //    — recoverable per the tier classifier. Pinned here so a future change
-    //    cannot turn buffer exhaustion on this path into a panic or a
-    //    framing-fatal error. `needed_at_least` (8) is a lower bound: 4 bytes
-    //    already written plus the 4-byte `write_u32_be` that failed, not the
-    //    header's full 8-byte size (which happens to coincide here).
+    // 4. A too-small buffer errors recoverably: a `SliceSink` reports exhaustion as
+    //    `Io(WriteError::Insufficient(..))`, which is not framing-fatal.
+    //    `needed_at_least` (8) is a lower bound: the 4 bytes written plus the 4-byte
+    //    `write_u32_be` that failed, which here coincides with the header's size.
     let mut small = [0u8; 4];
     let mut w = SliceSink::new(&mut small);
     let err = header.encode(&mut w).unwrap_err();

@@ -598,11 +598,11 @@ fn a_frame_that_fills_the_buffer_is_taken_and_one_a_byte_longer_is_nacked_0x02()
     assert!(!peer.is_shut());
 }
 
-/// An acknowledgement still queued when the response to its request is requested leaves
+/// An acknowledgment still queued when the response to its request is requested leaves
 /// with it in one write, which Nagle's algorithm sends at once where it would hold back
 /// a second write until the tester acknowledges the first.
 #[test]
-fn an_acknowledgement_and_its_response_leave_in_one_write() {
+fn an_acknowledgment_and_its_response_leave_in_one_write() {
     let _clock = clock();
     let stack = MockStack::new(4096);
     let mut entity = OneSocket::new(&stack, address(), two_testers());
@@ -1914,10 +1914,10 @@ fn the_largest_pdu_is_requested_and_written() {
 }
 
 /// The largest PDU a request takes is written whole when it answers a request at once,
-/// with that request's acknowledgement still queued ahead of it (ISO 13400-2:2019 REQ
-/// 7.DoIP-067 sends the acknowledgement first): a response is always preceded by one.
+/// with that request's acknowledgment still queued ahead of it (ISO 13400-2:2019 REQ
+/// 7.DoIP-067 sends the acknowledgment first): a response is always preceded by one.
 #[test]
-fn the_largest_pdu_answering_a_request_is_written_after_its_acknowledgement() {
+fn the_largest_pdu_answering_a_request_is_written_after_its_acknowledgment() {
     let _clock = clock();
     let stack = MockStack::new(4096);
     let mut entity = Small::new(&stack, address(), two_testers());
@@ -1939,9 +1939,9 @@ fn the_largest_pdu_answering_a_request_is_written_after_its_acknowledgement() {
 }
 
 /// The largest PDU is written whole behind any number of the entity's own frames: two
-/// requests the tester pipelined have both acknowledgements queued when it is requested.
+/// requests the tester pipelined have both acknowledgments queued when it is requested.
 #[test]
-fn the_largest_pdu_is_written_behind_two_acknowledgements() {
+fn the_largest_pdu_is_written_behind_two_acknowledgments() {
     let _clock = clock();
     let stack = MockStack::new(4096);
     let mut entity = Small::new(&stack, address(), two_testers());
@@ -1966,7 +1966,7 @@ fn the_largest_pdu_is_written_behind_two_acknowledgements() {
     assert_eq!(peer.take_written(), written);
 }
 
-/// REQ 3.DoIP-092: a tester that has stopped reading is replaced by one activating its
+/// REQ 3.DoIP-092: a tester that has stopped reading gives way to one activating its
 /// address once `T_TCP_Alive_Check` elapses, however full its queue. Its requests are
 /// confirmed in order: the one it never read `NoSocket`, the one with no room
 /// `OutOfMemory`.

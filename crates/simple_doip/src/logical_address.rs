@@ -1,14 +1,14 @@
-//! `DoIP` logical addressing ([`LogicalAddress`]), the identifier space used to
-//! address testers, ECUs, and gateways on a `DoIP` network, per ISO 13400-2.
+//! `DoIP` logical addressing ([`LogicalAddress`]): the addresses of testers, ECUs and
+//! gateways on a `DoIP` network (ISO 13400-2:2019 Table 13).
 
 use core::fmt::{Debug, Display, LowerHex, UpperHex};
 
 #[derive(Clone, Copy, Eq)]
-/// Logical addressing is used to identify the ECU
+/// A `DoIP` logical address (ISO 13400-2:2019 Table 13).
 ///
-/// A physical logical address uniquely represents a diagnostic application
-/// layer entity within any `DoIP` entity or on any server of the in-vehicle networks
-/// connected via `DoIP` gateways.
+/// A physical address identifies one diagnostic application layer entity, in a `DoIP`
+/// entity or on a server of an in-vehicle network behind a `DoIP` gateway; a
+/// functional address identifies a group of them.
 pub struct LogicalAddress(
     /// The 16-bit address value, as transmitted on the wire.
     pub u16,

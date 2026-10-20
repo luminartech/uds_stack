@@ -1,7 +1,5 @@
-//! Represents the header of a `DoIP` message
-//!
-//! Will check the protocol version and inverse protocol version to ensure
-//! the message is valid.
+//! The `DoIP` generic header (Table 16): [`Header`], its [`ProtocolVersion`] and its
+//! [`PayloadType`]. Decoding checks the inverse protocol version against the version.
 use core::fmt::Debug;
 
 use automotive_wire_codec::{
@@ -11,7 +9,7 @@ use automotive_wire_codec::{
 use super::message_error::MessageError;
 use super::traits::{Decode, Encode};
 
-/// `DoIP` Protocol Version
+/// The protocol version a `DoIP` header carries (Table 16).
 #[derive(Clone, Copy, strum::Display, Eq, PartialEq)]
 #[repr(u8)]
 pub enum ProtocolVersion {
@@ -23,16 +21,16 @@ pub enum ProtocolVersion {
     V2012 = 0x02,
     /// ISO 13400-2:2019
     V2019 = 0x03,
-    /// Client Future Spec Reserved
+    /// Reserved for future editions, `0x04` to `0xFE`.
     #[non_exhaustive]
     ReservedFuture(u8),
-    /// Client Version Value for Vehicle Identification Request
+    /// The default value a vehicle identification request carries, `0xFF`.
     VehicleIdentificationRequest = 0xFF,
 }
 
 impl ProtocolVersion {
-    /// Returns the expected inverse value of the protocol version
-    /// for verification of the message
+    /// The inverse protocol version a header with this version carries: its bitwise
+    /// complement.
     #[must_use]
     pub fn inverse(&self) -> u8 {
         match self {
@@ -79,48 +77,46 @@ impl Debug for ProtocolVersion {
     }
 }
 
-/// `DoIP` Message Payload Type
+/// The payload type a `DoIP` header carries (Table 17).
 #[derive(Clone, Copy, strum::Display, Eq, PartialEq)]
 #[repr(u16)]
 pub enum PayloadType {
-    /// Negative Acknowledge
-    /// Ignore packets with multi- or broadcast address as source IP address
-    /// One message per UDP datagram
+    /// Generic `DoIP` header negative acknowledge.
     NegativeAcknowledge = 0x0000,
-    /// Client Vehicle Identification Request
+    /// Vehicle identification request.
     VehicleIdentificationRequest = 0x0001,
-    /// Client Vehicle Identification Request with Entity ID (EID)
+    /// Vehicle identification request with entity ID (EID).
     VehicleIdentificationRequestWithEID = 0x0002,
-    /// Client Vehicle Identification Request with Vehicle Identification Number (VIN)
+    /// Vehicle identification request with vehicle identification number (VIN).
     VehicleIdentificationRequestWithVIN = 0x0003,
-    /// Client Vehicle Announcement Message
+    /// Vehicle announcement, and vehicle identification response.
     VehicleAnnouncement = 0x0004,
-    /// Client Routing Activation Request Message
+    /// Routing activation request.
     RoutingActivationRequest = 0x0005,
-    /// Client Routing Activation Response Message
+    /// Routing activation response.
     RoutingActivationResponse = 0x0006,
-    /// Client Alive Check Request Message
+    /// Alive check request.
     AliveCheckRequest = 0x0007,
-    /// Client Alive Check Response Message
+    /// Alive check response.
     AliveCheckResponse = 0x0008,
-    /// Client Entity Status Request Message
+    /// `DoIP` entity status request.
     DoIPEntityStatusRequest = 0x4001,
-    /// Client Entity Status Response Message
+    /// `DoIP` entity status response.
     DoIPEntityStatusResponse = 0x4002,
-    /// Client Diagnostic Power Mode Info Request Message
+    /// Diagnostic power mode information request.
     DiagnosticPowerModeInfoRequest = 0x4003,
-    /// Client Diagnostic Power Mode Info Response Message
+    /// Diagnostic power mode information response.
     DiagnosticPowerModeInfoResponse = 0x4004,
-    /// Client Diagnostic Message
+    /// Diagnostic message.
     DiagnosticMessage = 0x8001,
-    /// Client Diagnostic Message Positive Acknowledge
+    /// Diagnostic message positive acknowledge.
     DiagnosticMessagePositiveAcknowledge = 0x8002,
-    /// Client Diagnostic Message Negative Acknowledge
+    /// Diagnostic message negative acknowledge.
     DiagnosticMessageNegativeAcknowledge = 0x8003,
-    /// Client Spec Reserved
+    /// Reserved by ISO 13400-2.
     #[non_exhaustive]
     Reserved(u16),
-    /// Client Spec Reserved for Vehicle Manufacturer
+    /// Reserved for the vehicle manufacturer, `0xF000` to `0xFFFF`.
     #[non_exhaustive]
     ReservedVehicleManufacturer(u16),
 }
@@ -182,7 +178,7 @@ impl PayloadType {
     /// The lengths are those of each payload's structure: Tables 2 to 5 and 8 to 11
     /// for the vehicle identification, power mode and entity status messages, Table 18
     /// for the generic NACK, Tables 21, 23 and 25 for the diagnostic message and its
-    /// acknowledgements, Tables 27 and 28 for the alive check, and Tables 46 and 48 for
+    /// acknowledgments, Tables 27 and 28 for the alive check, and Tables 46 and 48 for
     /// routing activation. A diagnostic message's user data is mandatory (Table 21),
     /// which this crate reads as at least one byte. Always `true` for a reserved type,
     /// whose payload this crate does not model.
@@ -217,16 +213,11 @@ impl Debug for PayloadType {
     }
 }
 
-/// `DoIP` generic header (Table 16), as it was read from the wire or is to be written.
+/// `DoIP` generic header (Table 16): 8 bytes, as read from the wire or to be written.
 ///
-/// The header is 8 bytes long and contains the following fields:
-/// * [`ProtocolVersion`] (1 byte)
-/// * Inverse protocol version (1 byte), derived from the protocol version on encode
-///   and checked against it on decode
-/// * [`PayloadType`] (2 bytes)
-/// * Payload length (4 bytes)
-///
-/// A [`Message`](crate::messages::Message) derives its header from its payload when
+/// [`ProtocolVersion`] (1 byte), its inverse (1 byte, derived on encode and checked on
+/// decode), [`PayloadType`] (2 bytes) and the payload length (4 bytes). A
+/// [`Message`](crate::messages::Message) derives its header from its payload when
 /// encoded, so a `Header` is built by hand only to frame bytes this crate does not
 /// model.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -278,7 +269,7 @@ impl Header {
 impl<'a> Decode<'a> for Header {
     type Error = MessageError;
 
-    /// Deserialize a `DoIP` header from a byte slice
+    /// Decodes a `DoIP` header from the front of `buf`.
     ///
     /// # Errors
     /// Returns [`MessageError::VersionInverseIncorrect`] if the inverse protocol version
@@ -310,7 +301,7 @@ impl Encode for Header {
         Ok(Header::SIZE)
     }
 
-    /// Serialize this header into `writer`
+    /// Encodes this header into `writer`.
     ///
     /// # Errors
     /// Returns [`MessageError::Io`] if the writer fails.

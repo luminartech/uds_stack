@@ -10,11 +10,8 @@
 // isolation refuses the `open`. Nothing is lost by skipping it: these tests compare bytes
 // against a file, and the encode paths they exercise run under Miri through the lib tests.
 #![cfg(not(miri))]
-// Test code. `unwrap`, `expect` and `panic` are the failure mechanism here, and a
-// test that indexes a known-length golden vector reads better than one that does
-// not. The workspace lint standard in the root Cargo.toml reaches this target too --
-// an integration test is its own crate, so lib.rs cannot speak for it -- which is why
-// the relaxation is stated here rather than left implicit.
+// Test code: `unwrap`, `expect`, `panic` and indexing are the failure mechanism here.
+// An integration test is its own crate, so the lib's relaxation does not reach it.
 #![allow(
     clippy::unwrap_used,
     clippy::expect_used,
@@ -400,9 +397,8 @@ fn golden_vehicle_identification_response() {
     );
 }
 
-/// Full frames (header + payload as one buffer) — covers `Payload`/`Message` level
-/// composition, including the header-length arithmetic the routing-activation
-/// regression test in `src/messages/mod.rs` exists for.
+/// Full frames, header and payload in one buffer: `Payload` and `Message` composition,
+/// including the header-length arithmetic.
 #[test]
 fn golden_full_frames() {
     check_frame(
@@ -436,8 +432,8 @@ fn golden_full_frames() {
     );
 }
 
-/// The diagnostic message acknowledgement constructors stamp the payload type of their
-/// own kind: ISO 13400-2:2019 Table 17 gives the positive acknowledgement `0x8002` and
+/// The diagnostic message acknowledgment constructors stamp the payload type of their
+/// own kind: ISO 13400-2:2019 Table 17 gives the positive acknowledgment `0x8002` and
 /// the negative `0x8003`, with the Table 23 and Table 25 bodies. The fixtures were
 /// written by hand from those tables, not captured from the encoder.
 #[test]
@@ -465,7 +461,7 @@ fn golden_diagnostic_message_ack_frames() {
 
 /// Compile-time check that an external consumer can name the codec's error payload types
 /// through `simple_doip::wire`, without taking their own `automotive-wire-codec`
-/// dependency. Fails the build, not a test, if the re-export is removed or renamed.
+/// dependency. A build failure, not a test failure, where the re-export is missing.
 const _WIRE_TYPES_ARE_REACHABLE: fn(
     simple_doip::wire::Incomplete,
     simple_doip::wire::TrailingBytes,

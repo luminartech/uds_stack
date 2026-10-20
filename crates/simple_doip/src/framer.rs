@@ -3,7 +3,7 @@
 
 use crate::messages::{Decode, Header, MessageError};
 
-/// A delimited, header-validated `DoIP` frame whose payload is NOT yet interpreted.
+/// A delimited, header-validated `DoIP` frame whose payload is not yet interpreted.
 #[derive(Debug, PartialEq)]
 pub struct RawFrame<'a> {
     /// The decoded 8-byte `DoIP` generic header (protocol version, its inverse,
@@ -14,18 +14,18 @@ pub struct RawFrame<'a> {
     pub payload: &'a [u8],
 }
 
-/// Framing only: validate the 8-byte header and delimit one frame from the front of
-/// `buf`. `Ok(None)` = need more bytes. Never interprets the payload.
+/// Delimits one frame from the front of `buf`, validating its 8-byte header and leaving
+/// its payload uninterpreted. `Ok(None)` means more bytes are needed.
 ///
-/// On success the caller holds the frame's header, its raw payload bytes, and the
-/// consumed count — enough to apply NACK/ignore/skip policy itself if the subsequent
-/// [`Payload::decode`](crate::messages::Payload::decode) call fails. Errors from this
-/// function are framing-fatal ([`MessageError::is_framing_fatal`] returns `true`):
-/// stream sync is lost and the connection should be closed.
+/// The caller holds the frame's header, its payload bytes and the consumed count, so it
+/// can NACK, ignore or skip the frame itself if
+/// [`Payload::decode`](crate::messages::Payload::decode) then fails.
 ///
 /// # Errors
-/// Returns a [`MessageError`] if `buf` contains a malformed header (e.g. an incorrect
-/// inverse protocol version).
+///
+/// A [`MessageError`] for a malformed header, such as an incorrect inverse protocol
+/// version. Every error is [framing-fatal](MessageError::is_framing_fatal): stream sync
+/// is lost and the connection should be closed.
 ///
 /// # Examples
 ///
@@ -50,8 +50,8 @@ pub fn try_frame(buf: &[u8]) -> Result<Option<(RawFrame<'_>, usize)>, MessageErr
     }
     let (header, _) = Header::decode(&buf[..Header::SIZE])?;
     let payload_len = header.payload_length() as usize;
-    // Preserve the 32-bit overflow guard: compare available bytes, never compute
-    // Header::SIZE + payload_len before proving it fits.
+    // Compares the bytes available rather than computing `Header::SIZE + payload_len`,
+    // which can overflow on a 32-bit target.
     if buf.len() - Header::SIZE < payload_len {
         return Ok(None);
     }
@@ -106,14 +106,10 @@ mod tests {
         ));
     }
 
-    /// Exercises the intended client loop end-to-end: `try_frame` delimits the frame,
-    /// then the client separately calls `Payload::decode`. Covers both halves of the
-    /// recoverability property:
-    /// (a) a valid frame decodes normally;
-    /// (b) a frame with a valid header but an unmodeled payload type still frames
-    ///     successfully — the payload-decode error does not swallow `frame.payload`
-    ///     or `consumed`, so the client can skip/resync using data `try_frame` handed
-    ///     back, even though the body itself failed to decode.
+    /// `try_frame` delimits a frame whether or not `Payload::decode` then accepts its
+    /// body: a frame of a payload type this crate does not model still frames, and its
+    /// recoverable decode error leaves the caller the payload and the consumed count to
+    /// skip it with.
     #[test]
     fn frame_then_decode_recoverability() {
         // (a) valid NACK frame: framing succeeds, payload decode succeeds.

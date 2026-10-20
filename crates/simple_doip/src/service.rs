@@ -8,8 +8,8 @@
 //! as `entity::Entity` does from its `EntityAddress`, and an implementor with no better
 //! knowledge derives it with [`LogicalAddress::default_ta_type`].
 //!
-//! [`DiagnosticEntity`] is a whole `DoIP` entity — every connection it has accepted —
-//! as the layer above drives it: events tagged with the [`ConnectionId`] they arrived
+//! [`DiagnosticEntity`] is a whole `DoIP` entity, every connection it has accepted, as
+//! the layer above drives it: events tagged with the [`ConnectionId`] they arrived
 //! on, requests routed by target address, and the close the diagnostic protocol
 //! prescribes. [`EntityConfig`] is what an entity is told about its testers.
 //!
@@ -37,15 +37,13 @@ use crate::{LogicalAddress, TaType};
 /// standard's list is: an edition that adds a value is a change every caller must
 /// handle.
 ///
-/// The standard names the values and points to its diagnostic message handler
-/// (Figure 17) for their meaning, but pairs none with an acknowledgement code. This
-/// crate pairs seven of them, by name, with the diagnostic message acknowledgement
-/// code a requirement defines, and each says which; each of the rest says what this
-/// crate produces it for.
+/// The standard names the values and leaves their meaning to its diagnostic message
+/// handler (Figure 17); each variant here says which acknowledgment code or condition
+/// this crate produces it for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum DoIpResult {
     /// `DoIP_OK`: the service completed. A tester's request is confirmed so on the
-    /// entity's positive acknowledgement (code `0x00`, REQ 7.DoIP-067), an entity's
+    /// entity's positive acknowledgment (code `0x00`, REQ 7.DoIP-067), an entity's
     /// response once its last byte is written.
     Ok,
     /// `DoIP_HDR_ERROR`, defined by name only. A tester's request is confirmed so on a
@@ -53,7 +51,7 @@ pub enum DoIpResult {
     /// invalid payload length (`0x00`, `0x01`, `0x04`, Table 19).
     HdrError,
     /// `DoIP_TIMEOUT_A`, defined by name only. A tester's request is confirmed so when
-    /// no acknowledgement came within `A_DoIP_Diagnostic_Message`
+    /// no acknowledgment came within `A_DoIP_Diagnostic_Message`
     /// ([`crate::TIMEOUT_DIAGNOSTIC_MESSAGE_RESPONSE`], Table 12) of its last byte, or
     /// when its bytes could not all be written within that time, so local backpressure
     /// reads the same as an entity that never answered. The request then counts as
@@ -239,9 +237,8 @@ impl Timestamp {
 ///
 /// **The lifetime is the caller's buffer, never the connection.** A PDU arrives as the
 /// subslice of the buffer passed to [`DiagnosticConnection::next_event`] that it
-/// occupies, so the connection is free to be used again while the PDU is still live —
+/// occupies, so the connection is free to be used again while the PDU is still live,
 /// which is what lets a server answer the request it has just received.
-///
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum ConnectionEvent<'b> {
@@ -282,7 +279,7 @@ pub enum ConnectionEvent<'b> {
     /// (ISO 13400-2:2019 8.3.2).
     ///
     /// A tester's request is confirmed by the entity's diagnostic message
-    /// acknowledgement, positive or negative. An entity's is confirmed when it has been
+    /// acknowledgment, positive or negative. An entity's is confirmed when it has been
     /// written, because a tester does not acknowledge diagnostic messages
     /// (ISO 13400-2:2019 9.5).
     Confirm {
@@ -332,23 +329,18 @@ pub enum ConnectionEvent<'b> {
 ///
 /// The signatures cannot state these, and the layer above relies on each:
 ///
-/// - **[`Self::next_event`] is cancel-safe.** A caller races it against other work and
-///   drops the losing future, often unpolled, and calls it again later — with a
-///   different buffer. Dropping it must lose nothing. So a message is assembled in a
-///   receive buffer the connection owns, sized to the largest message it accepts, and
-///   copied into the caller's buffer only once complete; and anything the connection
-///   writes from inside `next_event` (an acknowledgement, a routing activation
-///   response, an alive check) is queued in the connection with its progress and
-///   flushed first by the next call. Neither path may use a read or write that loses
-///   progress when dropped, such as `read_exact` or `write_all`.
-///
-///   This holds only if the underlying socket's own reads and writes have no effect
-///   when cancelled before completing. That is an obligation the implementor passes
-///   on to whoever supplies the socket, and states.
+/// - **[`Self::next_event`] is cancel-safe.** A caller races it against other work,
+///   drops the losing future, often unpolled, and calls it again later with a different
+///   buffer; dropping it must lose nothing. So a message is assembled in a receive
+///   buffer the connection owns and copied into the caller's only once complete, and
+///   anything the connection writes from inside `next_event` is queued with its
+///   progress and flushed first by the next call; neither path may use a read or write
+///   that loses progress when dropped, such as `read_exact` or `write_all`. This holds
+///   only if the socket's own reads and writes have no effect when canceled, an
+///   obligation the implementor passes on to whoever supplies the socket, and states.
 /// - **Every accepted [`Self::request`] is followed by exactly one
 ///   [`ConnectionEvent::Confirm`]** with that request's addressing, including a failed
-///   one where the connection closes before the request completed. The layer above
-///   waits on that confirm.
+///   one where the connection closes first. The layer above waits on that confirm.
 pub trait DiagnosticConnection {
     /// What this connection's failures are, other than a refusal. Never interpreted by
     /// the layer above, which can only report it.
@@ -555,7 +547,7 @@ pub enum EntityEvent<'b> {
     ///
     /// The entity has acknowledged it positively, as it does every message it indicates,
     /// rather than refusing it with ISO 13400-2:2019 REQ 7.DoIP-073's negative
-    /// acknowledgement 0x05: whether a message the caller cannot hold is an error is the
+    /// acknowledgment 0x05: whether a message the caller cannot hold is an error is the
     /// caller's to answer. A UDS server busy with a request owes it `busyRepeatRequest`,
     /// composed from the service identifier and addressing this event carries.
     IndicationTruncated {
@@ -604,8 +596,8 @@ pub enum EntityEvent<'b> {
 /// A whole `DoIP` entity, as the layer above it drives it: every connection it has
 /// accepted, behind one event stream.
 ///
-/// The entity runs its own socket handling — accepting connections, routing
-/// activation, alive checks and inactivity timeouts — inside [`Self::next_event`], and
+/// The entity runs its own socket handling, accepting connections, routing
+/// activation, alive checks and inactivity timeouts, inside [`Self::next_event`], and
 /// reports none of it. An event names a connection only once routing is active on it,
 /// so nothing arrives from a tester that has not activated routing.
 ///
@@ -617,7 +609,7 @@ pub enum EntityEvent<'b> {
 ///   [`DiagnosticConnection::next_event`]: a receive buffer per connection, and writes
 ///   made inside `next_event` queued and flushed first by the next call.
 /// - **Every accepted [`Self::request`] is followed by exactly one
-///   [`EntityEvent::Confirm`]** with that request's addressing — including a request
+///   [`EntityEvent::Confirm`]** with that request's addressing, including a request
 ///   whose target no connection registered, confirmed with [`DoIpResult::NoSocket`],
 ///   and one whose connection closed before it was written.
 ///
@@ -725,8 +717,8 @@ pub trait DiagnosticEntity {
     /// response already confirmed. The connection then leaves the
     /// table, no [`EntityEvent::Closed`] is reported for it, and a tester that wants to
     /// continue arrives as a new connection. Closing a [`ConnectionId`] that names no
-    /// connection in the table — one that has already gone, or one the entity never
-    /// issued — does nothing.
+    /// connection in the table, one that has already gone or one the entity never
+    /// issued, does nothing.
     ///
     /// This is the only close the caller can ask for. A close on an error is the
     /// entity's own decision, reported as [`EntityEvent::Closed`].
@@ -952,8 +944,8 @@ mod tests {
         }
     }
 
-    /// The indicated PDU is still borrowed when the connection is used to answer it,
-    /// which compiles only because the event borrows the buffer, not the connection.
+    /// The indicated PDU is still borrowed when the connection answers it, which
+    /// compiles only because the event borrows the buffer, not the connection.
     #[tokio::test]
     async fn an_indication_can_be_answered_while_it_is_borrowed() {
         let mut connection = Echo::default();
@@ -1010,8 +1002,8 @@ mod tests {
         assert!(!now.has_reached(Timestamp(0_u32.wrapping_sub(u32::MAX / 2 + 1))));
     }
 
-    /// The sensor's configuration: routing activation from `0x0E00` and no other
-    /// tester.
+    /// An entity configured for `0x0E00` accepts routing activation from that tester
+    /// and no other.
     #[test]
     fn a_one_tester_entity_accepts_that_tester_only() {
         let config =
@@ -1021,9 +1013,8 @@ mod tests {
         assert!(!config.accepts(LogicalAddress(0x0FFF)));
     }
 
-    /// A functional group address, like the `0xE400` this crate once offered as a tester
-    /// address, is not a tester's, nor is anything else outside the client range at
-    /// either edge.
+    /// A functional group address such as `0xE400` is not a tester's, nor is anything
+    /// else outside the client range at either edge.
     #[test]
     fn a_tester_address_is_one_in_the_client_range() {
         for address in [0xE400, 0x0DFF, 0x1000] {

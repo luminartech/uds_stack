@@ -1,14 +1,11 @@
-//! Bare-metal-style codec usage: no `alloc`, no `std` collections in the
-//! message-handling path — everything lives on the stack.
+//! Bare-metal-style codec usage: no `alloc` and no `std` collections in the
+//! message-handling path; everything lives on the stack.
 //!
-//! This example is compiled and run on the host (so `println!` is available
-//! for reporting results), but the encode/decode/framing logic below only
-//! touches the `core`-only API surface of `simple_doip`. It compiles cleanly
-//! with `cargo build --example bare_metal_codec --no-default-features`.
+//! The example runs on the host, so `println!` reports the results, but the encode,
+//! decode and framing calls touch only `simple_doip`'s `core`-only API. It builds with
+//! `cargo build --example bare_metal_codec --no-default-features`.
 
-// Example code, kept close to what a reader would write: the error handling is
-// deliberately blunt so the DoIP calls stay legible. See the crate's own sources for
-// the standard the library holds itself to.
+// Example code: the error handling is blunt so the DoIP calls stay legible.
 #![allow(
     clippy::unwrap_used,
     clippy::expect_used,

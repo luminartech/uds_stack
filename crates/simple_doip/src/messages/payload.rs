@@ -13,7 +13,7 @@ use automotive_wire_codec::{read_array, write_bytes};
 #[derive(Clone, Debug, Eq, PartialEq)]
 #[non_exhaustive]
 pub enum Payload<'a> {
-    /// Generic negative acknowledgement (`PayloadType::NegativeAcknowledge`, 0x0000):
+    /// Generic negative acknowledgment (`PayloadType::NegativeAcknowledge`, 0x0000):
     /// the header itself was rejected (e.g. bad payload type or length) rather than
     /// the diagnostic content within a valid message.
     DoIPNack(NackCode),
@@ -27,10 +27,10 @@ pub enum Payload<'a> {
     /// UDS/diagnostic payload between tester and ECU, addressed by source and
     /// target logical address.
     DiagnosticMessage(DiagnosticMessage<'a>),
-    /// Positive acknowledgement of a diagnostic message
+    /// Positive acknowledgment of a diagnostic message
     /// ([`PayloadType::DiagnosticMessagePositiveAcknowledge`]).
     DiagnosticMessageAck(DiagnosticMessageAck<'a>),
-    /// Negative acknowledgement of a diagnostic message
+    /// Negative acknowledgment of a diagnostic message
     /// ([`PayloadType::DiagnosticMessageNegativeAcknowledge`]): it was rejected, and
     /// why.
     DiagnosticMessageNack(DiagnosticMessageNack<'a>),
@@ -70,13 +70,11 @@ pub enum Payload<'a> {
     /// Request for vehicle identification from the entities of the vehicle with this
     /// VIN ([`PayloadType::VehicleIdentificationRequestWithVIN`]).
     VehicleIdentificationRequestWithVin([u8; 17]),
-    /// A directed reply to a specific vehicle identification request, as opposed
-    /// to the unsolicited [`Payload::VehicleAnnouncement`]. ISO 13400-2 defines a
-    /// single wire payload type (0x0004, "vehicle announcement/identification
-    /// response message") for both uses, so this variant encodes identically to
-    /// `VehicleAnnouncement` and [`Payload::decode`] never produces it directly —
-    /// it exists for callers that want to express "this is a reply to a request"
-    /// at construction time.
+    /// A directed reply to a vehicle identification request, as opposed to the
+    /// unsolicited [`Payload::VehicleAnnouncement`]. ISO 13400-2 gives both one payload
+    /// type, `0x0004`, so this variant encodes exactly as `VehicleAnnouncement` does and
+    /// [`Payload::decode`] never produces it: it lets a caller say, when building the
+    /// message, that it answers a request.
     VehicleIdentificationResponse(VehicleIdentificationResponse),
 }
 
@@ -479,8 +477,8 @@ mod tests {
     use crate::{GroupId, LogicalAddress};
     use automotive_wire_codec::SliceSink;
 
-    /// A peer sending a payload type we cannot decode (e.g. a reserved type) must return
-    /// an error, never panic (regression test for `todo!()` decode arms).
+    /// A payload type this crate does not model decodes to
+    /// `MessageError::UnsupportedPayloadType`, never a panic.
     #[test]
     fn unsupported_payload_type_errors_not_panics() {
         // 0x0009 falls in the reserved range -> `PayloadType::Reserved`.
@@ -494,12 +492,12 @@ mod tests {
     }
 
     /// ISO 13400-2:2019 Tables 24 and 26 give the positive and negative
-    /// acknowledgements separate code tables, so the payload type alone says which
+    /// acknowledgments separate code tables, so the payload type alone says which
     /// one arrived and its code is read against that type's table: `0x00` under
     /// `0x8003` is a reserved negative code, and `0x03` under `0x8002` a reserved
     /// positive one.
     #[test]
-    fn the_payload_type_decides_whether_an_acknowledgement_is_negative() {
+    fn the_payload_type_decides_whether_an_acknowledgment_is_negative() {
         use crate::messages::{
             DiagnosticAckCode, DiagnosticMessageAck, DiagnosticMessageNack,
             DiagnosticNackCode,
@@ -528,8 +526,7 @@ mod tests {
         ));
     }
 
-    /// Previously-`todo!()` decode arms are now implemented; verify they decode instead of
-    /// panicking.
+    /// An entity status request has an empty body.
     #[test]
     fn entity_status_request_decodes_empty() {
         let payload = Payload::decode(&[], PayloadType::DoIPEntityStatusRequest).unwrap();
@@ -628,7 +625,7 @@ mod tests {
         }
     }
 
-    /// Tables 21, 23 and 25: a diagnostic message and its acknowledgements take any
+    /// Tables 21, 23 and 25: a diagnostic message and its acknowledgments take any
     /// length from their 5th byte on, and none shorter.
     #[test]
     fn a_diagnostic_payload_takes_any_length_from_five_bytes() {
@@ -682,8 +679,8 @@ mod tests {
         ));
     }
 
-    /// `VehicleAnnouncement` must round-trip encode -> decode (regression test for the
-    /// `todo!()` encode arms that panicked on a value decode had produced).
+    /// A `VehicleAnnouncement` with its optional fields set survives an encode and
+    /// decode round trip.
     #[test]
     fn vehicle_announcement_round_trips() {
         let response = VehicleIdentificationResponse {

@@ -884,7 +884,7 @@ pub fn diagnostic(sa: LogicalAddress, ta: LogicalAddress, pdu: &[u8]) -> Vec<u8>
     ))
 }
 
-/// A positive diagnostic message acknowledgement from `sa` to `ta`.
+/// A positive diagnostic message acknowledgment from `sa` to `ta`.
 pub fn ack(sa: LogicalAddress, ta: LogicalAddress) -> Vec<u8> {
     encode(&Message::diagnostic_message_ack(
         ProtocolVersion::V2019,
@@ -894,7 +894,7 @@ pub fn ack(sa: LogicalAddress, ta: LogicalAddress) -> Vec<u8> {
     ))
 }
 
-/// A negative diagnostic message acknowledgement from `sa` to `ta`.
+/// A negative diagnostic message acknowledgment from `sa` to `ta`.
 pub fn nack(sa: LogicalAddress, ta: LogicalAddress, code: u8) -> Vec<u8> {
     encode(&Message::diagnostic_message_nack(
         ProtocolVersion::V2019,
@@ -918,7 +918,7 @@ pub fn alive_check_response() -> Vec<u8> {
     ))
 }
 
-/// A generic header negative acknowledgement.
+/// A generic header negative acknowledgment.
 pub fn header_nack(code: u8) -> Vec<u8> {
     let mut frame = vec![0x03, 0xFC, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01];
     frame.push(u8::from(NackCode::from(code)));

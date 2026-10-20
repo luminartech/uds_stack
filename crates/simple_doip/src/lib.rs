@@ -52,9 +52,9 @@
 //!    missing either is a *link* error, not a compile error. On a host:
 //!    `embassy-time = { version = "0.5", features = ["std", "generic-queue-8"] }`. On
 //!    bare metal the driver usually comes with the HAL. Tests can use its `mock-driver`.
-//! 3. **Reads, writes, readiness and accepts that do nothing when cancelled.** The
-//!    event methods of this feature are cancel-safe — a caller may drop them at any
-//!    await and call again — only if the backend's `embedded_io_async::Read::read`,
+//! 3. **Reads, writes, readiness and accepts that do nothing when canceled.** The
+//!    event methods of this feature are cancel-safe (a caller may drop them at any
+//!    await and call again) only if the backend's `embedded_io_async::Read::read`,
 //!    `embedded_io_async::Write::write`, `edge_nal::Readable::readable` and, for an
 //!    entity, `edge_nal::TcpAccept::accept` move no data and change no connection state
 //!    when dropped before completing, nor do a UDP socket's
@@ -70,7 +70,7 @@
 //!    - `edge-nal-embassy` 0.9.0 meets it for `read`, `write`, `readable`, `close` and
 //!      `abort`, but its read half's `readable` misses an end of stream with nothing
 //!      buffered, and **its `accept` is not cancel-safe**: it creates its socket inside
-//!      the future, so a cancelled `accept` drops a connection that may already be
+//!      the future, so a canceled `accept` drops a connection that may already be
 //!      established. An entity on embassy-net accepts through an adapter over
 //!      embassy-net's own `TcpSocket` instead; the repository's
 //!      `examples/embassy-net-entity` crate is one. Its UDP socket was not checked, and
@@ -143,57 +143,42 @@ pub mod tester;
 
 use core::time::Duration;
 
-/// Default TCP port for `DoIP`
-/// This is the port used for unencrypted connections
-/// Used for:
-///  * Vehicle information services
-///  * Control commands
-///
+/// The TCP port for `DoIP` in the clear, `TCP_DATA`: vehicle information services and
+/// control commands.
 pub const TCP_PORT: u16 = 13400;
 
-/// Default UDP port for `DoIP`
-/// This is the port used for discovery
+/// The UDP port for `DoIP` discovery, `UDP_DISCOVERY`.
 pub const UDP_DISCOVERY_PORT: u16 = 13400;
 
-/// TCP port for `DoIP` over TLS, per ISO 13400-2. Not currently used by this
-/// crate: connections are established in the clear via [`TCP_PORT`]; there is no
-/// TLS support yet.
+/// The TCP port for `DoIP` over TLS. This crate does not use it: connections are in
+/// the clear on [`TCP_PORT`].
 pub const TCP_TLS_PORT: u16 = 3496;
 
 // DoIP timing and communication parameters
 
-/// Initial inactivity timeout in seconds for TCP connections directly after a `TCP_DATA`
-/// socket is established. Timeout is 2 seconds.
-///
-/// Must complete routing activation within this time otherwise the socket is closed by the
-/// `DoIP` entity
+/// `T_TCP_Initial_Inactivity` (Table 12): how long a `TCP_DATA` socket has to activate
+/// routing once established, before the entity closes it.
 pub const TCP_TIMEOUT_INITIAL_INACTIVITY: Duration = Duration::from_secs(2);
 
-/// General inactivity timeout for TCP connections. Timeout is 300 seconds (5 minutes).
-///
-/// If no data is sent or received for this duration, the connection is closed by the `DoIP`
-/// entity
+/// `T_TCP_General_Inactivity` (Table 12): how long a registered `TCP_DATA` socket may
+/// carry no data in either direction before the entity closes it.
 pub const TCP_TIMEOUT_GENERAL_INACTIVITY: Duration = Duration::from_secs(300);
 
 /// `T_TCP_Alive_Check`: how long an entity waits for an alive check response after
 /// writing an alive check request on a `TCP_DATA` socket (ISO 13400-2:2019 Table 12).
 pub const TCP_TIMEOUT_ALIVE_CHECK: Duration = Duration::from_millis(500);
 
-/// Time between receipt of the last byte of a `DoIP` Diagnostic Message and transmission of
-/// the ACK or NACK.
+/// How long an entity has between the last byte of a diagnostic message and its
+/// acknowledgment.
 ///
-/// This is a performance requirement on the **entity emitting the ACK**, not a
-/// deadline for a tester waiting on one. Do not use it to time out a send:
-/// it allows nothing for network transit or for an entity that ACKs after
-/// running its handler, and an entity that is merely slow is not an entity
-/// that failed. [`TIMEOUT_DIAGNOSTIC_MESSAGE_RESPONSE`] is the parameter that
-/// governs when a message may be considered lost.
+/// A performance requirement on the entity sending the acknowledgment, not a deadline
+/// for a tester waiting on one: it allows nothing for network transit. A tester times a
+/// request out with [`TIMEOUT_DIAGNOSTIC_MESSAGE_RESPONSE`].
 pub const TIMEOUT_DIAGNOSTIC_MESSAGE_INITIAL: Duration = Duration::from_millis(50);
 
-/// After the timeout has elapsed, the request or response is considered to be lost and the
-/// request may be repeated
-///
-/// Ref: `A_DoIP_Diagnostic_Message`
+/// `A_DoIP_Diagnostic_Message`'s timeout (Table 12): once it has elapsed without an
+/// acknowledgment, the request or its response counts as lost and the request may be
+/// repeated.
 pub const TIMEOUT_DIAGNOSTIC_MESSAGE_RESPONSE: Duration = Duration::from_secs(2);
 
 /// `A_DoIP_Ctrl`: how long a tester waits for the answers to a UDP request (Table 12).

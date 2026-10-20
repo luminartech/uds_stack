@@ -134,7 +134,7 @@ stateDiagram-v2
   was not kept, so a reconnect long after a loss does not wait.
 - **A request is lost once `A_DoIP_Diagnostic_Message` passes** (ISO 13400-2:2019
   Table 12). Once any of it was written the connection is given up, so its late
-  acknowledgement or response cannot be taken for a later request's (issue #17
+  acknowledgment or response cannot be taken for a later request's (issue #17
   item 3).
 
 ### 2.3 An entity's sockets
@@ -222,13 +222,13 @@ stateDiagram-v2
   first, `UnknownSa` from a source address not the entity's, and `OutOfMemory` where
   the connection's queue has no room (ISO 13400-2:2019 8.3.1, 8.3.2). Requests to one
   target are confirmed in the order they were made. A response queues apart from the
-  entity's own frames (acknowledgements, NACKs, routing activation responses and alive
+  entity's own frames (acknowledgments, NACKs, routing activation responses and alive
   check requests), which go first between frames, so a response of `MAX_PDU` fits
   however many of them are waiting. A response queued while nothing is being written
   and no other response waits takes the entity's frames queued ahead of it along, room
-  permitting, so an acknowledgement and the response to its request leave in one
+  permitting, so an acknowledgment and the response to its request leave in one
   write: neither backend disables Nagle's algorithm, and a second small write would
-  wait about 40 ms on the tester's delayed acknowledgement of the first. A request is
+  wait about 40 ms on the tester's delayed acknowledgment of the first. A request is
   refused, with no confirm, only for a `service::Refusal`: an empty PDU, one over
   `MAX_PDU`, or a full confirm queue. `uds_on_ip` confirms a refused request failed
   itself.
@@ -271,9 +271,9 @@ which is not the same as one it refused: a diagnostic message in error is ignore
 no indication raised (8.3.3). The entity answers a payload type it does not take with
 NACK `0x01` instead (§2.3), so it has nothing to report.
 
-**No `sa` on `request`, and `request` does not wait for its acknowledgement.**
+**No `sa` on `request`, and `request` does not wait for its acknowledgment.**
 Routing activation fixes the source address per connection (REQ 3.DoIP-089, 090), so
-a per-call `sa` could only disagree with it. The acknowledgement arrives as `Confirm`,
+a per-call `sa` could only disagree with it. The acknowledgment arrives as `Confirm`,
 because ISO 14229-2:2021 REQ 5.9 starts `tP_Client` on the confirm, and a caller
 blocked inside `request` could not start it.
 
@@ -358,11 +358,11 @@ tester, from `0x0E00` only, so `MCTS = 1` is what is built and tested, though `M
 **Cancel safety is held in the entity, and costs a buffer per connection.**
 `uds_services` races `next_event` against a running handler and drops the loser, and
 it lends different buffers at different call sites.
-- **A frame cancelled half-read cannot resume in the caller's buffer.** So each
+- **A frame canceled half-read cannot resume in the caller's buffer.** So each
   connection assembles frames in a receive buffer of its own, sized to the largest it
   takes, and copies a finished one out.
 - **Writes made inside `next_event` are queued in the connection**, with how much of
-  each was written. Those are acknowledgements, routing activation responses and alive
+  each was written. Those are acknowledgments, routing activation responses and alive
   checks.
 - **A pending wait is entity state, never a future.** An arbitration's
   `T_TCP_Alive_Check` is one example, so a dropped call resumes it.
@@ -435,7 +435,7 @@ Every UDP message carries the generic header and goes through Figure 16's handle
 | 8.DoIP-125, Table 20 note 1, 4.DoIP-009 | An announcement goes to the IPv4 limited broadcast address, port `UDP_DISCOVERY` (13400) | Yes |
 | 8.DoIP-155 | On IPv6, to `FF02::1` | No: the sensor is IPv4 |
 | 8.DoIP-051, Table 12 | Delay an identification response by `A_DoIP_Announce_Wait`, random in 0–500 ms | Yes |
-| 8.DoIP-123, 142, 143 (7.3) | Identifiable by VIN or EID at any time; EID and GID where a VIN cannot be guaranteed; GID synchronisation where several entities share a vehicle without a guaranteed VIN. The synchronisation itself is left to the VM | EID and GID carried; synchronisation out of scope |
+| 8.DoIP-123, 142, 143 (7.3) | Identifiable by VIN or EID at any time; EID and GID where a VIN cannot be guaranteed; GID synchronization where several entities share a vehicle without a guaranteed VIN. The synchronization itself is left to the VM | EID and GID carried; synchronization out of scope |
 | 8.DoIP-116 to 118, Tables 8, 9 | Power mode `0x4003` (empty) answered `0x4004` (1 byte: `0x00` not ready, `0x01` ready, `0x02` not supported) within `A_DoIP_Ctrl` (2 s). Mandatory (Table 17) | Yes |
 | 8.DoIP-119 to 121, Tables 10, 11 | *If supported*, entity status `0x4001` (empty) answered `0x4002` within `A_DoIP_Ctrl`: node type, MCTS, open sockets (NCTS), and optionally MDS (4 bytes) | Yes: the only place a tester learns MDS |
 | 4.DoIP-006 to 008, Table 41 | Listen on UDP 13400 | Yes |
@@ -674,7 +674,7 @@ Two properties fall out of this split:
 1. **A caller can apply its own policy.** When `Payload::decode` fails, the
    caller still holds the header, the raw payload bytes, and the consumed
    count, and can NACK, ignore, log, or skip and resync.
-2. **DoIP never decides for the caller.** An unrecognised payload type is
+2. **DoIP never decides for the caller.** An unrecognized payload type is
    reported as a typed `Err(MessageError::UnsupportedPayloadType(..))` rather
    than passed through as an opaque variant, but *error ≠ fatal*: whether to
    NACK, drop the connection, or skip the frame is a policy question the
@@ -733,7 +733,7 @@ drives real behavior: a frame that fails to decode is handed to the caller as
 `Frame::Undecoded`, with its header, payload bytes and error, when the error is
 recoverable, and propagated (buffer left untouched) when `is_framing_fatal()`.
 So one unsupported payload type does not tear down a connection, and the caller
-decides what to do with it; `an_unmodelled_payload_type_is_handed_over_undecoded`
+decides what to do with it; `an_unmodeled_payload_type_is_handed_over_undecoded`
 locks that. A header declaring a payload past `MessageCodec::max_payload_length`
 is `Frame::TooLarge`, and its payload is discarded as it arrives rather than
 buffered.
@@ -836,7 +836,7 @@ the seam described in section 3 usable.
 - `tests/golden_vectors.rs` + `tests/golden/` — frozen hex fixtures of the
   exact encoded bytes of every wire type. **Do not regenerate them.** They
   cover bodies, plus whole frames where the payload chooses the header's type
-  (the diagnostic message acknowledgements' `0x8002`/`0x8003`).
+  (the diagnostic message acknowledgments' `0x8002`/`0x8003`).
 - `tests/nested_encode.rs` — permanent regression test for the encode hot path.
 - `examples/bare_metal_codec.rs` — encode/frame/decode into a `[u8; N]`, no
   allocator; builds and runs with `--no-default-features` as proof the core is

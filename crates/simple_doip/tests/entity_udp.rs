@@ -489,7 +489,7 @@ fn entity_status_counts_the_open_sockets() {
 
 // --- the generic header handler on UDP (Figure 16) ---------------------------------------
 
-/// REQ 7.DoIP-041: a wrong synchronisation pattern, or a protocol version the entity does
+/// REQ 7.DoIP-041: a wrong synchronization pattern, or a protocol version the entity does
 /// not take, `0xFF` on anything but an identification request among them, is answered
 /// NACK `0x00`, and the port keeps listening.
 #[test]

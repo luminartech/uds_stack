@@ -1,21 +1,20 @@
 //! What a slot sends, in two queues: the entity's own frames, and the diagnostic
 //! messages the layer above requests.
 //!
-//! A response the size of the whole data queue still fits however many
-//! acknowledgements, negative acknowledgements and alive check requests the socket
-//! handler has queued ahead of it, because they queue apart. A frame once started is
-//! written whole before the other queue is served, and between frames the entity's own
-//! go first, so an acknowledgement still precedes the response to its request (ISO
-//! 13400-2:2019 REQ 7.DoIP-067).
+//! The queues are separate so that a response the size of the whole data queue still fits
+//! behind however many acknowledgments and alive check requests are queued. A frame
+//! once started is written whole before the other queue is served, and between frames
+//! the entity's own go first, so an acknowledgment precedes the response to its
+//! request (ISO 13400-2:2019 REQ 7.DoIP-067).
 //!
-//! A write carries every whole frame queued in one queue, and a response queued while
-//! nothing is being written and the data queue is empty takes the entity's own frames
-//! queued ahead of it along, room permitting. An acknowledgement and the response to
-//! its request so leave in one write. Two would cost a round trip: the backends cannot
-//! disable Nagle's algorithm, so the second small write waits for the tester to
-//! acknowledge the first, which a delayed acknowledgement holds back about 40 ms, most
-//! of `P2_server`. A response within the entity's own frames' length of the data
-//! queue's capacity still leaves in a second write.
+//! A write carries every whole frame in one queue. A response queued while nothing is
+//! being written and the data queue is empty takes the entity's own frames ahead of it
+//! along, room permitting, so that an acknowledgment and its response leave in one
+//! write. The socket backends cannot disable Nagle's algorithm, so a second small write
+//! would wait for the tester's TCP acknowledgment of the first, which a tester that
+//! delays its acknowledgments holds back about 40 ms, most of `P2_server`. A response
+//! within the entity's own frames' length of the data queue's capacity still leaves in
+//! a second write.
 
 use crate::messages::{Header, Message, MessageError};
 use crate::stream::DoesNotFit;
@@ -29,7 +28,7 @@ pub(super) const CONTROL_CAP: usize = 64;
 
 /// A slot's two transmit queues, and the frame being written from one of them.
 pub(super) struct Outbox<const CAP: usize> {
-    /// Acknowledgements, negative acknowledgements, routing activation responses and
+    /// Acknowledgments, negative acknowledgments, routing activation responses and
     /// alive check requests.
     pub(super) control: TxQueue<CONTROL_CAP>,
     /// The diagnostic messages [`crate::service::DiagnosticEntity::request`] queues,
@@ -238,10 +237,10 @@ mod tests {
         queue.pending().to_vec()
     }
 
-    /// An acknowledgement and the response queued behind it leave in one write, and the
-    /// response's position counts the acknowledgement's bytes moved in front of it.
+    /// An acknowledgment and the response queued behind it leave in one write, and the
+    /// response's position counts the acknowledgment's bytes moved in front of it.
     #[test]
-    fn an_acknowledgement_and_its_response_leave_in_one_write() {
+    fn an_acknowledgment_and_its_response_leave_in_one_write() {
         let mut outbox = Outbox::<64>::new();
         outbox.control.push(&ack()).ok();
         let end = outbox.push(&response(4)).ok();
@@ -252,10 +251,10 @@ mod tests {
         assert!(outbox.data.written_through(end.unwrap_or(u64::MAX)));
     }
 
-    /// A response filling the whole data queue is queued beside acknowledgements, which
+    /// A response filling the whole data queue is queued beside acknowledgments, which
     /// go first, in a write of their own.
     #[test]
-    fn a_full_response_queues_beside_acknowledgements_which_go_first() {
+    fn a_full_response_queues_beside_acknowledgments_which_go_first() {
         let mut outbox = Outbox::<32>::new();
         outbox.control.push(&ack()).ok();
         outbox.control.push(&ack()).ok();

@@ -64,7 +64,7 @@ pub trait VehicleIdentity {
     /// What a tester must do before diagnostics can proceed.
     fn further_action(&self) -> FurtherActionRequired;
 
-    /// Whether the VIN and GID are synchronised, or `None` to omit the field.
+    /// Whether the VIN and GID are synchronized, or `None` to omit the field.
     fn sync_status(&self) -> Option<VinGidSyncStatus>;
 
     /// The diagnostic power mode.

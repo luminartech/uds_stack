@@ -176,7 +176,7 @@ impl<'a> Message<'a> {
         }
     }
 
-    /// Construct a diagnostic message positive acknowledgement, with the
+    /// Construct a diagnostic message positive acknowledgment, with the
     /// [`DiagnosticAckCode::RoutingConfirmationAck`] code.
     #[must_use]
     pub fn diagnostic_message_ack(
@@ -196,7 +196,7 @@ impl<'a> Message<'a> {
         }
     }
 
-    /// Construct a diagnostic message negative acknowledgement.
+    /// Construct a diagnostic message negative acknowledgment.
     #[must_use]
     pub fn diagnostic_message_nack(
         protocol_version: ProtocolVersion,
@@ -412,7 +412,7 @@ impl OwnedMessage {
         }
     }
 
-    /// Construct a diagnostic message positive acknowledgement carrying owned data,
+    /// Construct a diagnostic message positive acknowledgment carrying owned data,
     /// with the [`DiagnosticAckCode::RoutingConfirmationAck`] code.
     #[must_use]
     pub fn diagnostic_message_ack(
@@ -432,7 +432,7 @@ impl OwnedMessage {
         }
     }
 
-    /// Construct a diagnostic message negative acknowledgement carrying owned data.
+    /// Construct a diagnostic message negative acknowledgment carrying owned data.
     #[must_use]
     pub fn diagnostic_message_nack(
         protocol_version: ProtocolVersion,
@@ -469,10 +469,8 @@ impl OwnedMessage {
     }
 }
 
-/// Encode delegates through the borrowed view so there is exactly one wire
-/// implementation (`Message<'_>: Encode`). This is the impl `message_codec.rs`'s
-/// `Encoder<&OwnedMessage>` relies on: adding a second, independent serializer here
-/// would let the owned and borrowed wire formats drift apart silently.
+/// Encodes through the borrowed view, `Message<'_>: Encode`, so the owned and borrowed
+/// forms share one wire implementation.
 #[cfg(feature = "alloc")]
 impl Encode for OwnedMessage {
     type Error = MessageError;
@@ -495,7 +493,7 @@ mod tests {
     use automotive_wire_codec::SliceSink;
     use header::{PayloadType, ProtocolVersion};
 
-    /// Check that we properly decode and encode hex bytes
+    /// Known frames decode to their protocol version and payload type.
     #[test]
     fn test_valid_messages() {
         let buf: [u8; 9] = [0x02, 0xFD, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x03];

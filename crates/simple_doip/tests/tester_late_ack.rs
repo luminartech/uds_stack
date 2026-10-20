@@ -1,5 +1,5 @@
 //! A request lost to `A_DoIP_Diagnostic_Message` over real loopback sockets, through
-//! `edge-nal-std`, whose acknowledgement and response were already in the socket: the
+//! `edge-nal-std`, whose acknowledgment and response were already in the socket: the
 //! retry on a new connection sees only its own.
 //!
 //! A test binary of its own because it moves `embassy-time`'s mock clock, which is
@@ -76,7 +76,7 @@ fn entity(
 }
 
 /// ISO 13400-2:2019 Table 12: a request the caller comes back to after
-/// `A_DoIP_Diagnostic_Message` is lost, even though its acknowledgement already sits in
+/// `A_DoIP_Diagnostic_Message` is lost, even though its acknowledgment already sits in
 /// the socket. The tester gives the connection up, so the next request, on a new
 /// connection, is confirmed and answered by its own.
 #[tokio::test(flavor = "current_thread")]

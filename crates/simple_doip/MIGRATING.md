@@ -14,7 +14,7 @@ carries `uds_services` clients and servers over DoIP.
 
 The protocol core (`messages`, `try_frame`, `wire`) and the `alloc`, `std` and `codec`
 features stay, with breaking changes of their own since 0.6.0: among them, a message
-encodes into a `wire::Sink`, and a negative diagnostic message acknowledgement is a
+encodes into a `wire::Sink`, and a negative diagnostic message acknowledgment is a
 message of its own. [`CHANGELOG.md`](CHANGELOG.md) lists each.
 
 On a host, the examples below take `edge-nal-std` as the backend and `embassy-time` with
@@ -47,7 +47,7 @@ embassy-time = { version = "0.5", features = ["std", "generic-queue-8"] }
 | `Error`                                                            | `ConnectError` from `connect`, `service::ConnectionRefusal` from `request`, a `DoIpResult` in each confirm, and `ConnectionEvent::Closed` with `io_error()` for a lost connection                               |
 
 Unlike `Client`, a `Tester` does nothing between calls: everything it reads or writes
-happens inside `next_event`, which a caller keeps calling. A request's acknowledgement is
+happens inside `next_event`, which a caller keeps calling. A request's acknowledgment is
 its confirm, so a response that arrives before it is still indicated.
 
 ```rust,no_run

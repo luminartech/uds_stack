@@ -7,7 +7,7 @@ use automotive_wire_codec::{read_u8, read_u16_be, write_bytes, write_u8, write_u
 use super::message_error::MessageError;
 use super::traits::{Decode, Encode};
 
-/// The code of a diagnostic message positive acknowledgement
+/// The code of a diagnostic message positive acknowledgment
 /// (ISO 13400-2:2019 Table 24).
 #[derive(Clone, Copy, strum::Display, Eq, PartialEq)]
 pub enum DiagnosticAckCode {
@@ -43,7 +43,7 @@ impl fmt::Debug for DiagnosticAckCode {
     }
 }
 
-/// The code of a diagnostic message negative acknowledgement: why the message was
+/// The code of a diagnostic message negative acknowledgment: why the message was
 /// rejected (ISO 13400-2:2019 Table 26).
 #[derive(Clone, Copy, strum::Display, Eq, PartialEq)]
 pub enum DiagnosticNackCode {
@@ -104,22 +104,22 @@ impl fmt::Debug for DiagnosticNackCode {
     }
 }
 
-/// A diagnostic message positive acknowledgement ([`PayloadType`] `0x8002`,
+/// A diagnostic message positive acknowledgment ([`PayloadType`] `0x8002`,
 /// ISO 13400-2:2019 Table 23), sent back to whoever transmitted the original
 /// [`DiagnosticMessage`](super::DiagnosticMessage).
 ///
 /// [`PayloadType`]: super::PayloadType::DiagnosticMessagePositiveAcknowledge
 #[derive(Clone, Copy, Eq, PartialEq)]
 pub struct DiagnosticMessageAck<'a> {
-    /// Logical address of the entity sending this acknowledgement.
+    /// Logical address of the entity sending this acknowledgment.
     pub source_address: LogicalAddress,
-    /// Logical address of the entity this acknowledgement is addressed to (the
+    /// Logical address of the entity this acknowledgment is addressed to (the
     /// original diagnostic message's sender).
     pub target_address: LogicalAddress,
-    /// The acknowledgement code.
+    /// The acknowledgment code.
     pub ack_code: DiagnosticAckCode,
     /// The first bytes of the diagnostic message being acknowledged, echoed back
-    /// so the sender can correlate this acknowledgement with its request.
+    /// so the sender can correlate this acknowledgment with its request.
     pub previous_message_data: &'a [u8],
 }
 
@@ -127,15 +127,15 @@ pub struct DiagnosticMessageAck<'a> {
 #[cfg(feature = "alloc")]
 #[derive(Clone, Eq, PartialEq)]
 pub struct OwnedDiagnosticMessageAck {
-    /// Logical address of the entity sending this acknowledgement.
+    /// Logical address of the entity sending this acknowledgment.
     pub source_address: LogicalAddress,
-    /// Logical address of the entity this acknowledgement is addressed to (the
+    /// Logical address of the entity this acknowledgment is addressed to (the
     /// original diagnostic message's sender).
     pub target_address: LogicalAddress,
-    /// The acknowledgement code.
+    /// The acknowledgment code.
     pub ack_code: DiagnosticAckCode,
     /// The first bytes of the diagnostic message being acknowledged, echoed back
-    /// so the sender can correlate this acknowledgement with its request.
+    /// so the sender can correlate this acknowledgment with its request.
     pub previous_message_data: alloc::vec::Vec<u8>,
 }
 
@@ -156,7 +156,7 @@ impl OwnedDiagnosticMessageAck {
 #[cfg(feature = "alloc")]
 impl DiagnosticMessageAck<'_> {
     /// Copy the borrowed `previous_message_data` into an owned buffer, detaching
-    /// this acknowledgement from the RX buffer it was decoded from.
+    /// this acknowledgment from the RX buffer it was decoded from.
     #[must_use]
     pub fn to_owned_message(&self) -> OwnedDiagnosticMessageAck {
         OwnedDiagnosticMessageAck {
@@ -171,7 +171,7 @@ impl DiagnosticMessageAck<'_> {
 impl<'a> Decode<'a> for DiagnosticMessageAck<'a> {
     type Error = MessageError;
 
-    /// Deserialize a diagnostic message acknowledgement from a byte slice. Consumes the
+    /// Deserialize a diagnostic message acknowledgment from a byte slice. Consumes the
     /// entire buffer; all bytes after the fixed fields are treated as the previous
     /// message data.
     ///
@@ -209,7 +209,7 @@ impl Encode for DiagnosticMessageAck<'_> {
         Ok(5 + self.previous_message_data.len())
     }
 
-    /// Serialize this diagnostic message acknowledgement into `writer`
+    /// Serialize this diagnostic message acknowledgment into `writer`
     ///
     /// # Errors
     /// Returns [`MessageError::Io`] if the writer fails.
@@ -252,22 +252,22 @@ impl fmt::Debug for OwnedDiagnosticMessageAck {
     }
 }
 
-/// A diagnostic message negative acknowledgement ([`PayloadType`] `0x8003`,
+/// A diagnostic message negative acknowledgment ([`PayloadType`] `0x8003`,
 /// ISO 13400-2:2019 Table 25): the original
 /// [`DiagnosticMessage`](super::DiagnosticMessage) was rejected, and why.
 ///
 /// [`PayloadType`]: super::PayloadType::DiagnosticMessageNegativeAcknowledge
 #[derive(Clone, Copy, Eq, PartialEq)]
 pub struct DiagnosticMessageNack<'a> {
-    /// Logical address of the entity sending this acknowledgement.
+    /// Logical address of the entity sending this acknowledgment.
     pub source_address: LogicalAddress,
-    /// Logical address of the entity this acknowledgement is addressed to (the
+    /// Logical address of the entity this acknowledgment is addressed to (the
     /// original diagnostic message's sender).
     pub target_address: LogicalAddress,
     /// Why the diagnostic message was rejected.
     pub nack_code: DiagnosticNackCode,
     /// The first bytes of the diagnostic message being acknowledged, echoed back
-    /// so the sender can correlate this acknowledgement with its request.
+    /// so the sender can correlate this acknowledgment with its request.
     pub previous_message_data: &'a [u8],
 }
 
@@ -275,15 +275,15 @@ pub struct DiagnosticMessageNack<'a> {
 #[cfg(feature = "alloc")]
 #[derive(Clone, Eq, PartialEq)]
 pub struct OwnedDiagnosticMessageNack {
-    /// Logical address of the entity sending this acknowledgement.
+    /// Logical address of the entity sending this acknowledgment.
     pub source_address: LogicalAddress,
-    /// Logical address of the entity this acknowledgement is addressed to (the
+    /// Logical address of the entity this acknowledgment is addressed to (the
     /// original diagnostic message's sender).
     pub target_address: LogicalAddress,
     /// Why the diagnostic message was rejected.
     pub nack_code: DiagnosticNackCode,
     /// The first bytes of the diagnostic message being acknowledged, echoed back
-    /// so the sender can correlate this acknowledgement with its request.
+    /// so the sender can correlate this acknowledgment with its request.
     pub previous_message_data: alloc::vec::Vec<u8>,
 }
 
@@ -304,7 +304,7 @@ impl OwnedDiagnosticMessageNack {
 #[cfg(feature = "alloc")]
 impl DiagnosticMessageNack<'_> {
     /// Copy the borrowed `previous_message_data` into an owned buffer, detaching
-    /// this acknowledgement from the RX buffer it was decoded from.
+    /// this acknowledgment from the RX buffer it was decoded from.
     #[must_use]
     pub fn to_owned_message(&self) -> OwnedDiagnosticMessageNack {
         OwnedDiagnosticMessageNack {
@@ -319,7 +319,7 @@ impl DiagnosticMessageNack<'_> {
 impl<'a> Decode<'a> for DiagnosticMessageNack<'a> {
     type Error = MessageError;
 
-    /// Deserialize a diagnostic message negative acknowledgement from a byte slice.
+    /// Deserialize a diagnostic message negative acknowledgment from a byte slice.
     /// Consumes the entire buffer; all bytes after the fixed fields are treated as
     /// the previous message data.
     ///
@@ -357,7 +357,7 @@ impl Encode for DiagnosticMessageNack<'_> {
         Ok(5 + self.previous_message_data.len())
     }
 
-    /// Serialize this diagnostic message negative acknowledgement into `writer`
+    /// Serialize this diagnostic message negative acknowledgment into `writer`
     ///
     /// # Errors
     /// Returns [`MessageError::Io`] if the writer fails.
