@@ -457,6 +457,48 @@ fn a_transmission_ceiling_of_zero_reports_the_first_failed_transmission() {
     );
 }
 
+/// One count covers both cells in this direction too: at `transmission_repeats` of one,
+/// a repeat for an expired window uses it, and the failed transmission after that is
+/// reported.
+#[test]
+fn a_timeout_repeat_counts_against_the_transmission_ceiling() {
+    let mut t = Tester::new(
+        Script::new(&[
+            Step::Conf(to(ECU), SResult::Ok),
+            Step::At(100), // the window expires: repeated
+            Step::At(160),
+            Step::Conf(to(ECU), FAILED),
+        ]),
+        TESTER,
+        KeepAlive::physical(S3_CLIENT),
+        TIMING.transmission_repeats(Repeats::Once),
+    );
+    assert_eq!(
+        block_on(t.read_data_by_identifier(ECU, &[Did::Speed])).err(),
+        Some(ClientError::NotSent)
+    );
+    assert_eq!(t.transport().sent_count, 2);
+}
+
+/// A functionally addressed request is under the transmission ceiling too: at `Never`
+/// its failed transmission ends the sequence at once.
+#[test]
+fn a_functional_request_under_a_transmission_ceiling_of_zero_is_not_sent_again() {
+    let mut t = Tester::new(
+        Script::new(&[Step::Conf(FUNCTIONAL, FAILED)]),
+        TESTER,
+        KeepAlive::physical(S3_CLIENT),
+        TIMING.transmission_repeats(Repeats::Never),
+    );
+    let mut answers = t.read_data_by_identifier_functional(GROUP, &[Did::Speed]);
+    assert_eq!(
+        block_on(answers.next()).map(Result::err),
+        Some(Some(ClientError::NotSent))
+    );
+    assert!(block_on(answers.next()).is_none());
+    assert_eq!(t.transport().sent_count, 1);
+}
+
 /// Table 9's transmission-failure cell is the link's, not the request's: a failed
 /// transmission is repeated twice whatever the response-timeout ceiling.
 #[test]

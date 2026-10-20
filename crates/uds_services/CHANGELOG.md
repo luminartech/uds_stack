@@ -12,10 +12,12 @@ pre-1.0 crates).
 ### Added
 
 - `ClientTiming::transmission_repeats`: the ceiling on a request's repeats after a
-  failed transmission, with its builder. `Repeats::Twice`, the default, is ISO 14229-2
-  Table 9's cell for the link, as before; `Repeats::Never` is for a link where a failed
-  transmission may still have reached the server, so a write, a clear or a key is never
-  sent twice. `ClientTiming::repeats` still bounds the expired-window cell alone.
+  failed transmission, physical or functional, with its builder. `Repeats::Twice`, the
+  default, is ISO 14229-2 Table 9's cell for the link, as before; `Repeats::Never` is
+  for a link where a failed transmission may still have reached the server, and with
+  `repeats` at `Never` as well no request is ever sent twice. A keep-alive's failed
+  transmission stays under Table 9's two. `ClientTiming::repeats` still bounds the
+  expired-window cell alone.
 
 ## [0.7.0] — 2026-10-16
 

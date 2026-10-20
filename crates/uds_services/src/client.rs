@@ -237,9 +237,10 @@ pub enum ClientError<E> {
     /// No response came within `tP_Client`, after the repeats [`ClientTiming::repeats`]
     /// allows (ISO 14229-2:2021 9.7 Table 9's two by default).
     Timeout,
-    /// The request's last transmission was confirmed failed, after
-    /// ISO 14229-2:2021 Table 9's repeats, or the session layer refused the request
-    /// outright, which is not repeated.
+    /// The request's last transmission was confirmed failed, after the repeats
+    /// [`ClientTiming::transmission_repeats`] allows (ISO 14229-2:2021 Table 9's two by
+    /// default), or the session layer refused the request outright, which is not
+    /// repeated.
     NotSent,
     /// The connection to the server closed before it answered.
     Closed,
@@ -455,8 +456,8 @@ impl KeepAlive<FunctionalKeepAlive> {
 }
 
 /// The client's timing policy: what ISO 14229-2:2021 9.2 Tables 3 and 4 leave to the
-/// client rather than the transport, in milliseconds, and the ceiling on 9.7 Table 9's
-/// response-timeout repeat.
+/// client rather than the transport, in milliseconds, and the ceilings on 9.7 Table 9's
+/// two repeat cells.
 ///
 /// Built with [`Self::new`] and the same-named setters; it may gain fields.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -484,21 +485,21 @@ pub struct ClientTiming {
     /// handling "for a maximum of two times" whatever the error, so the ceiling counts
     /// every repeat of the request: a failed transmission's repeat leaves one fewer for
     /// an expired window. A failed transmission is itself repeated under
-    /// [`Self::transmission_repeats`], that cell being the link's, not the request's;
-    /// functionally addressed requests are not under it. [`Self::new`] sets
-    /// [`Repeats::Twice`].
+    /// [`Self::transmission_repeats`], that cell being the link's, not the request's.
+    /// A functionally addressed request's window is not repeated, so this ceiling does
+    /// not reach it. [`Self::new`] sets [`Repeats::Twice`].
     /// [`Repeats::Never`] also forgoes the one repeat the standard designs a server to
     /// absorb, a [`Client::transfer_data`] block with the same counter (ISO 14229-1:2020
     /// 15.4); set it, call, and restore it where that repeat is wanted.
     pub repeats: Repeats,
-    /// The ceiling on a request's repeats after a failed transmission, under which the
-    /// request is sent again rather than reported as [`ClientError::NotSent`].
-    /// [`Self::new`] sets [`Repeats::Twice`], ISO 14229-2:2021 9.7 Table 9's cell for the
-    /// link. [`Repeats::Never`] is for an integration over a link whose failed
+    /// The ceiling on a request's repeats after a failed transmission, physical or
+    /// functional, under which the request is sent again rather than reported as
+    /// [`ClientError::NotSent`]. [`Self::new`] sets [`Repeats::Twice`], ISO 14229-2:2021
+    /// 9.7 Table 9's cell for the link. [`Repeats::Never`] is for a link whose failed
     /// transmission may still have reached the server, as a `DoIP` message whose
-    /// acknowledgement was lost may have: a write, a clear or a key sent again would act
-    /// twice. The one count of a request's repeats covers both cells, so a repeat under
-    /// this ceiling leaves one fewer under [`Self::repeats`].
+    /// acknowledgement was lost may have; with [`Self::repeats`] at `Never` as well, no
+    /// request is ever sent twice. The one count of a request's repeats covers both
+    /// cells. A keep-alive stays under Table 9's two.
     pub transmission_repeats: Repeats,
 }
 
@@ -563,16 +564,17 @@ impl ClientTiming {
     }
 }
 
-/// A ceiling on a request's repeats, within ISO 14229-2:2021 9.7 Table 9's two; see
-/// [`ClientTiming::repeats`].
+/// A ceiling on a request's repeats, within ISO 14229-2:2021 9.7 Table 9's two: on an
+/// expired window as [`ClientTiming::repeats`], on a failed transmission as
+/// [`ClientTiming::transmission_repeats`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum Repeats {
-    /// No expired window is repeated: the first is reported.
+    /// The request is not repeated: the first failure is reported.
     Never,
-    /// An expired window is repeated only where the request has not been repeated yet.
+    /// The request is repeated only where it has not been repeated yet.
     Once,
-    /// An expired window is repeated while the request has been repeated fewer than two
-    /// times: Table 9's ceiling.
+    /// The request is repeated while it has been repeated fewer than two times: Table
+    /// 9's ceiling.
     Twice,
 }
 
@@ -1109,6 +1111,8 @@ impl<
 
     /// This client's timing policy, to change between calls. When a change takes effect:
     /// [`ClientTiming::repeats`] on the next request whose response window expires;
+    /// [`ClientTiming::transmission_repeats`] on the next request whose transmission is
+    /// confirmed failed;
     /// [`ClientTiming::network_delay`] on the next session the client enters, which sets
     /// the response windows; [`ClientTiming::physical_spacing`] and
     /// [`ClientTiming::functional_spacing`] on channels opened afterwards, a channel
@@ -1146,8 +1150,8 @@ impl<
     /// - [`ClientError::Request`] where `identifiers` is empty or too long; nothing is
     ///   sent.
     /// - [`ClientError::Timeout`] or [`ClientError::NotSent`] where the repeats were spent:
-    ///   [`ClientTiming::repeats`] for an expired window, ISO 14229-2:2021 9.7 Table 9's
-    ///   two for a failed transmission.
+    ///   [`ClientTiming::repeats`] for an expired window,
+    ///   [`ClientTiming::transmission_repeats`] for a failed transmission.
     /// - [`ClientError::Closed`] where the connection closed first.
     /// - [`ClientError::NoChannel`] where no channel could be opened to `target`.
     /// - [`ClientError::Transport`] where the transport failed.
@@ -2013,8 +2017,8 @@ impl<
     /// from silent non-support; a server that refuses it for any other reason still
     /// answers with a negative response, which the [`Replies`] sequence lends, as it
     /// does a positive from a server that ignored the suppress bit. The request is never
-    /// repeated for want of a response; a failed transmission is repeated as any
-    /// request's is.
+    /// repeated for want of a response; a failed transmission is repeated under
+    /// [`ClientTiming::transmission_repeats`], as any request's is.
     ///
     /// # Arguments
     ///

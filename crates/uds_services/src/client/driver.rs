@@ -25,7 +25,8 @@ use uds_session::{
     PhysicalChannelId, Rejection, SResult, TaType, Timestamp, TransportError,
 };
 
-/// ISO 14229-2:2021 9.7 Table 9: a request is transmitted at most three times.
+/// ISO 14229-2:2021 9.7 Table 9: a keep-alive whose transmission failed is sent again
+/// up to two times. A request's repeats are under [`ClientTiming`]'s two ceilings.
 const REPEATS: u8 = 2;
 
 /// What the client confirms to the session layer for a request the transport refused,
@@ -656,11 +657,11 @@ impl<
     /// Take the exchange one answer further: the next response that answers it, or
     /// `None` once a functional window has closed.
     ///
-    /// Sends the request first if it is unsent. A failed transmission is repeated up to
-    /// ISO 14229-2:2021 Table 9's two times, and, physically, an expired response window
-    /// while the request's repeats are under `ClientTiming::repeats`; after the last, the
-    /// channel is reset and the failure returned. A physical exchange ends at its answer,
-    /// a functional one at its window closing.
+    /// Sends the request first if it is unsent. A failed transmission is repeated while
+    /// the request's repeats are under `ClientTiming::transmission_repeats`, and,
+    /// physically, an expired response window while under `ClientTiming::repeats`;
+    /// after the last, the channel is reset and the failure returned. A physical
+    /// exchange ends at its answer, a functional one at its window closing.
     pub(super) async fn advance(
         &mut self,
     ) -> Option<Result<Answered, ClientError<T::Error>>> {
