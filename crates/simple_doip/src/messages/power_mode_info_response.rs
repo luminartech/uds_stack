@@ -1,3 +1,4 @@
+use super::reserved::ReservedCode;
 use automotive_wire_codec::{read_u8, write_u8};
 
 use super::message_error::MessageError;
@@ -16,7 +17,7 @@ pub enum DiagnosticPowerModeCode {
     NotSupported = 0x02,
     /// A power mode value outside the range this crate models.
     #[non_exhaustive]
-    Reserved(u8),
+    Reserved(ReservedCode),
 }
 
 impl From<u8> for DiagnosticPowerModeCode {
@@ -25,7 +26,7 @@ impl From<u8> for DiagnosticPowerModeCode {
             0x00 => DiagnosticPowerModeCode::NotReady,
             0x01 => DiagnosticPowerModeCode::Ready,
             0x02 => DiagnosticPowerModeCode::NotSupported,
-            _ => DiagnosticPowerModeCode::Reserved(value),
+            _ => DiagnosticPowerModeCode::Reserved(ReservedCode::new(value)),
         }
     }
 }
@@ -35,7 +36,7 @@ impl From<DiagnosticPowerModeCode> for u8 {
             DiagnosticPowerModeCode::NotReady => 0x00,
             DiagnosticPowerModeCode::Ready => 0x01,
             DiagnosticPowerModeCode::NotSupported => 0x02,
-            DiagnosticPowerModeCode::Reserved(value) => value,
+            DiagnosticPowerModeCode::Reserved(code) => code.get(),
         }
     }
 }

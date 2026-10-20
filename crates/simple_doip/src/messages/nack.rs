@@ -1,3 +1,4 @@
+use super::reserved::ReservedCode;
 use automotive_wire_codec::{read_u8, write_u8};
 
 use super::message_error::MessageError;
@@ -38,7 +39,7 @@ pub enum NackCode {
     InvalidPayloadLength = 0x04,
     /// A NACK code value outside the range this crate models.
     #[non_exhaustive]
-    Reserved(u8),
+    Reserved(ReservedCode),
 }
 
 impl From<u8> for NackCode {
@@ -49,7 +50,7 @@ impl From<u8> for NackCode {
             0x02 => NackCode::MessageTooLarge,
             0x03 => NackCode::OutOfMemory,
             0x04 => NackCode::InvalidPayloadLength,
-            _ => NackCode::Reserved(value),
+            _ => NackCode::Reserved(ReservedCode::new(value)),
         }
     }
 }
@@ -62,7 +63,7 @@ impl From<NackCode> for u8 {
             NackCode::MessageTooLarge => 0x02,
             NackCode::OutOfMemory => 0x03,
             NackCode::InvalidPayloadLength => 0x04,
-            NackCode::Reserved(value) => value,
+            NackCode::Reserved(code) => code.get(),
         }
     }
 }

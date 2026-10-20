@@ -11,6 +11,19 @@ This file was reconstructed from the commit and pull-request history when the
 crate was prepared for publication, so entries before that point describe what
 changed rather than what was announced at the time.
 
+## [Unreleased]
+
+### Changed
+
+- **Breaking.** The `Reserved` variant of every single-byte code enum
+  (`DiagnosticAckCode`, `DiagnosticNackCode`, `NackCode`,
+  `RoutingActivationResponseCode`, `ActivationTypeCode`, `FurtherActionRequired`,
+  `VinGidSyncStatus`, `EntityStatusNodeType`, `DiagnosticPowerModeCode`) carries a
+  `ReservedCode` instead of a bare `u8`. Only decoding builds one, so a `Reserved`
+  value can no longer hold a byte the table names, two values of one wire byte are
+  never unequal, and `From<u8>` followed by `From<_> for u8` is the identity. Read the
+  byte with `ReservedCode::get`; build a code from a byte with `From<u8>`, as before.
+
 ## [0.7.0] — 2026-10-16
 
 0.7.0 replaces the async client, the async server and the bare-metal entity with a

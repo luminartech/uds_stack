@@ -38,7 +38,10 @@ pub use header::{Header, PayloadType, ProtocolVersion};
 mod message_error;
 pub use message_error::MessageError;
 mod nack;
+mod reserved;
 pub use nack::NackCode;
+
+pub use reserved::ReservedCode;
 mod payload;
 #[cfg(feature = "alloc")]
 pub use payload::OwnedPayload;

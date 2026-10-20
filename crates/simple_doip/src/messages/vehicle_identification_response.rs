@@ -1,3 +1,4 @@
+use super::reserved::ReservedCode;
 use crate::identifiers::GroupId;
 use crate::logical_address::LogicalAddress;
 
@@ -17,7 +18,7 @@ pub enum FurtherActionRequired {
     NoFurtherActionRequired,
     /// A further-action value outside the range this crate models.
     #[non_exhaustive]
-    Reserved(u8),
+    Reserved(ReservedCode),
     /// The tester must send a routing activation request with a `CentralSecurity`
     /// activation type before diagnostics can proceed.
     RoutingActivationRequiredToInitiateCentralSecurity,
@@ -30,7 +31,7 @@ impl From<u8> for FurtherActionRequired {
     fn from(value: u8) -> Self {
         match value {
             0x00 => FurtherActionRequired::NoFurtherActionRequired,
-            0x01..=0x0F => FurtherActionRequired::Reserved(value),
+            0x01..=0x0F => FurtherActionRequired::Reserved(ReservedCode::new(value)),
             0x10 => {
                 FurtherActionRequired::RoutingActivationRequiredToInitiateCentralSecurity
             }
@@ -46,8 +47,8 @@ impl From<FurtherActionRequired> for u8 {
             FurtherActionRequired::RoutingActivationRequiredToInitiateCentralSecurity => {
                 0x10
             }
-            FurtherActionRequired::Reserved(value)
-            | FurtherActionRequired::VehicleManufacturerSpecific(value) => value,
+            FurtherActionRequired::Reserved(code) => code.get(),
+            FurtherActionRequired::VehicleManufacturerSpecific(value) => value,
         }
     }
 }
@@ -61,7 +62,7 @@ pub enum VinGidSyncStatus {
     Synchronized,
     /// A sync-status value outside the range this crate models.
     #[non_exhaustive]
-    Reserved(u8),
+    Reserved(ReservedCode),
     /// VIN and GID are NOT synchronized
     Incomplete,
 }
@@ -72,7 +73,7 @@ impl From<u8> for VinGidSyncStatus {
             0x00 => VinGidSyncStatus::Synchronized,
             0x10 => VinGidSyncStatus::Incomplete,
             // 0x01..=0x0F and 0x11..=0xFF
-            _ => VinGidSyncStatus::Reserved(value),
+            _ => VinGidSyncStatus::Reserved(ReservedCode::new(value)),
         }
     }
 }
@@ -82,7 +83,7 @@ impl From<VinGidSyncStatus> for u8 {
         match value {
             VinGidSyncStatus::Synchronized => 0x00,
             VinGidSyncStatus::Incomplete => 0x10,
-            VinGidSyncStatus::Reserved(value) => value,
+            VinGidSyncStatus::Reserved(code) => code.get(),
         }
     }
 }

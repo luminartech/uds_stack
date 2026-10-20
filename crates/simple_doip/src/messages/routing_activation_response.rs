@@ -1,3 +1,4 @@
+use super::reserved::ReservedCode;
 use crate::logical_address::LogicalAddress;
 
 use automotive_wire_codec::{
@@ -44,7 +45,7 @@ pub enum RoutingActivationResponseCode {
     /// Reserved for future use.
     /// * Ignored by this library.
     #[non_exhaustive]
-    Reserved(u8),
+    Reserved(ReservedCode),
     /// Routing successfully activated.
     /// * Activate routing and register SA on this `TCP_DATA` socket.
     RoutingSuccessfullyActivated = 0x10,
@@ -71,7 +72,7 @@ impl From<u8> for RoutingActivationResponseCode {
             0x10 => RoutingActivationResponseCode::RoutingSuccessfullyActivated,
             0x11 => RoutingActivationResponseCode::RoutingSuccessfullyActivatedConfirmationRequired,
             0xE0..=0xFE => RoutingActivationResponseCode::VehicleManufacturerSpecific(value),
-            _ => RoutingActivationResponseCode::Reserved(value),
+            _ => RoutingActivationResponseCode::Reserved(ReservedCode::new(value)),
         }
     }
 }
@@ -89,8 +90,8 @@ impl From<RoutingActivationResponseCode> for u8 {
             RoutingActivationResponseCode::DeniedEncryptedConnectionViaTLSRequired => 0x07,
             RoutingActivationResponseCode::RoutingSuccessfullyActivated => 0x10,
             RoutingActivationResponseCode::RoutingSuccessfullyActivatedConfirmationRequired => 0x11,
-            RoutingActivationResponseCode::Reserved(value)
-            | RoutingActivationResponseCode::VehicleManufacturerSpecific(value) => value,
+            RoutingActivationResponseCode::Reserved(code) => code.get(),
+            RoutingActivationResponseCode::VehicleManufacturerSpecific(value) => value,
         }
     }
 }

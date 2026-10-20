@@ -1,3 +1,4 @@
+use super::reserved::ReservedCode;
 use automotive_wire_codec::{read_u8, read_u32_be, write_u8, write_u32_be};
 
 use super::message_error::MessageError;
@@ -14,7 +15,7 @@ pub enum EntityStatusNodeType {
     DoIPNode = 0x01,
     /// A node type value outside the range this crate models.
     #[non_exhaustive]
-    Reserved(u8),
+    Reserved(ReservedCode),
 }
 
 impl From<u8> for EntityStatusNodeType {
@@ -22,7 +23,7 @@ impl From<u8> for EntityStatusNodeType {
         match value {
             0x00 => EntityStatusNodeType::DoIPGateway,
             0x01 => EntityStatusNodeType::DoIPNode,
-            0x02..=0xFF => EntityStatusNodeType::Reserved(value),
+            0x02..=0xFF => EntityStatusNodeType::Reserved(ReservedCode::new(value)),
         }
     }
 }
@@ -31,7 +32,7 @@ impl From<EntityStatusNodeType> for u8 {
         match value {
             EntityStatusNodeType::DoIPGateway => 0x00,
             EntityStatusNodeType::DoIPNode => 0x01,
-            EntityStatusNodeType::Reserved(value) => value,
+            EntityStatusNodeType::Reserved(code) => code.get(),
         }
     }
 }

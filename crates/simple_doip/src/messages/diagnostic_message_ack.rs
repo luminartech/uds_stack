@@ -1,3 +1,4 @@
+use super::reserved::ReservedCode;
 use core::fmt;
 
 use crate::logical_address::LogicalAddress;
@@ -16,14 +17,14 @@ pub enum DiagnosticAckCode {
     RoutingConfirmationAck,
     /// A value Table 24 reserves.
     #[non_exhaustive]
-    Reserved(u8),
+    Reserved(ReservedCode),
 }
 
 impl From<u8> for DiagnosticAckCode {
     fn from(value: u8) -> Self {
         match value {
             0x00 => DiagnosticAckCode::RoutingConfirmationAck,
-            _ => DiagnosticAckCode::Reserved(value),
+            _ => DiagnosticAckCode::Reserved(ReservedCode::new(value)),
         }
     }
 }
@@ -32,7 +33,7 @@ impl From<DiagnosticAckCode> for u8 {
     fn from(value: DiagnosticAckCode) -> Self {
         match value {
             DiagnosticAckCode::RoutingConfirmationAck => 0x00,
-            DiagnosticAckCode::Reserved(value) => value,
+            DiagnosticAckCode::Reserved(code) => code.get(),
         }
     }
 }
@@ -65,7 +66,7 @@ pub enum DiagnosticNackCode {
     TransportProtocolError,
     /// A value Table 26 reserves.
     #[non_exhaustive]
-    Reserved(u8),
+    Reserved(ReservedCode),
 }
 
 impl From<u8> for DiagnosticNackCode {
@@ -78,7 +79,7 @@ impl From<u8> for DiagnosticNackCode {
             0x06 => DiagnosticNackCode::TargetUnreachable,
             0x07 => DiagnosticNackCode::UnknownNetwork,
             0x08 => DiagnosticNackCode::TransportProtocolError,
-            _ => DiagnosticNackCode::Reserved(value),
+            _ => DiagnosticNackCode::Reserved(ReservedCode::new(value)),
         }
     }
 }
@@ -93,7 +94,7 @@ impl From<DiagnosticNackCode> for u8 {
             DiagnosticNackCode::TargetUnreachable => 0x06,
             DiagnosticNackCode::UnknownNetwork => 0x07,
             DiagnosticNackCode::TransportProtocolError => 0x08,
-            DiagnosticNackCode::Reserved(value) => value,
+            DiagnosticNackCode::Reserved(code) => code.get(),
         }
     }
 }
@@ -430,7 +431,7 @@ mod tests {
         let ack = DiagnosticMessageAck {
             source_address: LogicalAddress(0x1234),
             target_address: LogicalAddress(0x5678),
-            ack_code: DiagnosticAckCode::Reserved(8),
+            ack_code: DiagnosticAckCode::from(8),
             previous_message_data: &[0x01, 0x02, 0x03][..],
         };
         let mut out = FixedBuf {

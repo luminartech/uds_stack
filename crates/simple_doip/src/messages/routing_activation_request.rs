@@ -1,3 +1,4 @@
+use super::reserved::ReservedCode;
 use core::fmt;
 use core::fmt::UpperHex;
 
@@ -22,7 +23,7 @@ pub enum ActivationTypeCode {
     RegulationRequired,
     /// ISO/SAE reserved
     #[non_exhaustive]
-    Reserved(u8),
+    Reserved(ReservedCode),
     /// Vehicle manufacturer specific authentication,
     CentralSecurity,
     /// Available for additional VM-specific use
@@ -35,7 +36,7 @@ impl From<u8> for ActivationTypeCode {
         match value {
             0x00 => ActivationTypeCode::Default,
             0x01 => ActivationTypeCode::RegulationRequired,
-            0x02..=0xDF => ActivationTypeCode::Reserved(value),
+            0x02..=0xDF => ActivationTypeCode::Reserved(ReservedCode::new(value)),
             0xE0 => ActivationTypeCode::CentralSecurity,
             0xE1..=0xFF => ActivationTypeCode::VehicleManufacturerSpecific(value),
         }
@@ -48,8 +49,8 @@ impl From<ActivationTypeCode> for u8 {
             ActivationTypeCode::Default => 0x00,
             ActivationTypeCode::RegulationRequired => 0x01,
             ActivationTypeCode::CentralSecurity => 0xE0,
-            ActivationTypeCode::Reserved(value)
-            | ActivationTypeCode::VehicleManufacturerSpecific(value) => value,
+            ActivationTypeCode::Reserved(code) => code.get(),
+            ActivationTypeCode::VehicleManufacturerSpecific(value) => value,
         }
     }
 }

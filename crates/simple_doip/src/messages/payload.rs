@@ -512,9 +512,9 @@ mod tests {
                 PayloadType::DiagnosticMessageNegativeAcknowledge
             ),
             Ok(Payload::DiagnosticMessageNack(DiagnosticMessageNack {
-                nack_code: DiagnosticNackCode::Reserved(0x00),
+                nack_code: DiagnosticNackCode::Reserved(code),
                 ..
-            }))
+            })) if code.get() == 0x00
         ));
         assert!(matches!(
             Payload::decode(
@@ -522,9 +522,9 @@ mod tests {
                 PayloadType::DiagnosticMessagePositiveAcknowledge
             ),
             Ok(Payload::DiagnosticMessageAck(DiagnosticMessageAck {
-                ack_code: DiagnosticAckCode::Reserved(0x03),
+                ack_code: DiagnosticAckCode::Reserved(code),
                 ..
-            }))
+            })) if code.get() == 0x03
         ));
     }
 
