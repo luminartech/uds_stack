@@ -106,6 +106,25 @@ jobs:
       comprehensive-tests: ${{ inputs.enable-comprehensive-tests || false }}
 
   # ===================================================================================
+  # Comment prose (hand-rolled: the reusable workflow has no step for it)
+  # ===================================================================================
+  # CONTRIBUTING's "Writing for the reader" rules, over every comment in the tree. A
+  # hard-fail phrase fails the job under each `--strict` path, the ones that have had
+  # their writing pass; everywhere else the counts are reported in the job summary.
+  prose:
+    name: Comment prose
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - run: python3 -m unittest tools/test_prose_lint.py
+      - run: >-
+          python3 tools/prose_lint.py . --show 10 --summary "$GITHUB_STEP_SUMMARY"
+
+  # ===================================================================================
   # Fuzz Tests (hand-rolled: the reusable workflow's fuzz-tests job cannot reach these)
   # ===================================================================================
   # Each job mirrors rust-ci.yml's own fuzz-tests job (nightly toolchain, cargo-fuzz,

@@ -197,6 +197,13 @@ miri:
 test-tools:
     python3 -m unittest discover --start-directory tools --pattern 'test_*.py'
 
+# Comment prose written for the author rather than the reader: history, voice, editor
+# notes, the phrases CONTRIBUTING's "Writing for the reader" excludes. A hard-fail phrase
+# fails the recipe under a path that has had its writing pass; elsewhere it is reported.
+[doc("Check comment prose against the writing rules in CONTRIBUTING.md")]
+prose:
+    python3 tools/prose_lint.py . --show 10
+
 # --- aggregate --------------------------------------------------------------------------
 
 # Every hook, over every file, in configured order. Run this before pushing: CI builds the
@@ -207,7 +214,7 @@ check:
     pre-commit run --all-files
 
 [doc("The fast subset a documentation change needs; use `check` before pushing")]
-check-docs: test-tools validate governance docs
+check-docs: test-tools validate governance prose docs
 
 [doc("The full gate: crates and docs")]
 check-all: check-docs test clippy embedded doc
