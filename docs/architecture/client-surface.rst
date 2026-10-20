@@ -170,8 +170,8 @@ The elements
    This mirrors ``Responded::Suppressed`` on the server side (``UDSSVC_ARCH_0016``). The
    faults are the client's ``ClientError``: a response window that expired after the
    repeats the integration's ceiling allows, Table 9's two by default
-   (``UDSSVC_ARCH_0043``), a transmission that failed after Table 9's two, and a
-   connection that closed first.
+   (``UDSSVC_ARCH_0043``), a transmission that failed after the repeats the integration's
+   other ceiling allows, Table 9's two by default, and a connection that closed first.
 
 .. arch:: One identifier vocabulary serves both roles
    :id: UDSSVC_ARCH_0024
@@ -204,15 +204,20 @@ The elements
    response window expired, at most twice, and the session layer leaves performing the
    repeat to the application (``UDSS_LLR_0177`` caps it). ``uds_services::Client`` is the
    application's proxy for it: it performs the repeat, under a ceiling the integration
-   sets in ``ClientTiming::repeats``, Table 9's two by default.
+   sets in ``ClientTiming::repeats``, Table 9's two by default. Table 9's other cell, a
+   request whose transmission failed, is under ``ClientTiming::transmission_repeats``,
+   Table 9's two by default.
 
    The ceiling exists because a repeat is not free on every transport and not harmless for
    every service: over ``DoIP`` each repeat goes on a new connection after the tester's
    back-off, and a repeated ``SecurityAccess`` key reaches an unlocked server as a sequence
    error. Which requests to repeat is the integration's knowledge, not the crate's, so the
-   crate ships the standard's figure and the knob, and decides nothing further. A failed
-   transmission is repeated to Table 9's two regardless, that cell being the link's; a
-   functionally addressed request is not under the ceiling.
+   crate ships the standard's figure and the knobs, and decides nothing further. The
+   transmission cell has its own ceiling because over ``DoIP`` a failed transmission is a
+   message the entity did not acknowledge in time, which it may still have received: a
+   write, a clear or a key sent again would act twice. A functionally addressed request's
+   window is not repeated, so only the transmission ceiling reaches it; a keep-alive stays
+   under Table 9's two.
 
    A per-service repeat class, set where the client is assembled and read under this
    ceiling, is the next step and is not designed here.
