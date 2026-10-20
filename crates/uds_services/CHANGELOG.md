@@ -19,10 +19,11 @@ pre-1.0 crates).
   transmission stays under Table 9's two. `ClientTiming::repeats` still bounds the
   expired-window cell alone.
 - `ClientTiming::max_response_pending`: the most `responsePending` messages one
-  transmission of a request accepts before it fails with the new
-  `ClientError::ResponsePendingExceeded`, which carries the limit; a count, not a
-  time. `None`, the default, accepts every one, as before. A failed request's channel is
-  reset, as after a timeout; a functional window counts every server's together.
+  transmission of a physically addressed request accepts; the next fails the request,
+  without a repeat, with the new `ClientError::ResponsePendingExceeded`, which carries
+  the limit. `Some(0)` accepts none; `None`, the default, accepts every one, as before.
+  The failed request's channel is reset, as after a timeout. Functionally addressed
+  requests are not under it.
 
 ## [0.7.0] — 2026-10-16
 
