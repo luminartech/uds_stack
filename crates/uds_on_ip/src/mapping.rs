@@ -56,9 +56,10 @@ pub(crate) const fn from_logical(addr: simple_doip::LogicalAddress) -> Address {
 /// diagnostic payload types stop at `0x8003`. It is therefore this crate's to
 /// interpret rather than `simple_doip`'s to name — see `ARCHITECTURE.md` §1.
 ///
-/// # Nothing in this crate sends or decodes it
+/// # A tester decodes it; a server cannot send it
 ///
-/// Published as vocabulary, not as a capability. A server sends periodic
+/// [`DoIpClientTransport`](crate::DoIpClientTransport) reports one addressed to
+/// its tester as a `TransportEvent::Periodic`. A server sends periodic
 /// responses with it (REQ 7.7, REQ 7.16), but neither
 /// `uds_services::UdsTransport::t_data_req` nor
 /// [`DiagnosticEntity::request`](simple_doip::service::DiagnosticEntity::request)

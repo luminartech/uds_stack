@@ -130,8 +130,11 @@ Several questions about where a behaviour belongs have the same answer:
   REQ 7.9's follows a positive ``DiagnosticSessionControl`` response only where the server
   leaves the software it is running. That fact is the server's own, so ``uds_services``
   states it and ``uds_on_ip`` decides what follows.
-- **Periodic responses** (REQ 7.7, REQ 7.16): ``uds_on_ip`` chooses payload type
-  ``0x8004``, which ISO 13400-2:2019 does not define, and ``simple_doip`` sends it.
+- **Periodic responses** (ISO 14229-5:2022 REQ 7.7, REQ 7.16): payload type ``0x8004``,
+  which ISO 13400-2:2019 does not define, so ``uds_on_ip`` interprets it and
+  ``simple_doip`` carries it unread. A tester built on ``uds_on_ip`` receives one. A server
+  cannot yet send one: neither ``UdsTransport`` nor ``DiagnosticEntity`` lets a sender
+  choose a payload type.
 
 The rule also says what must not happen. ``uds_services`` never decides when a connection
 closes, because knowing that REQ 7.9 or REQ 7.11 requires a close is ISO 14229-5 knowledge.
