@@ -1,9 +1,8 @@
 Architecture
 ============
 
-How the stack's crates are put together, and where their boundaries fall. The set so far
-describes ``uds_services``; the other crates' architecture lives with each crate, listed
-below.
+The architecture of ``uds_services``: how it is put together, and where its boundaries
+fall.
 
 **What it covers so far.** The set will hold the architecture of every crate in the stack.
 It began with ``uds_services``, the one wholly new component, because working out its
@@ -82,8 +81,8 @@ Clause 8.7.2 classifies validation steps as *mandatory*, *optional*, or
 checks attach, and :doc:`dispatch` treats it as a first-class part of the design rather
 than as an aside.
 
-What the crate is for
----------------------
+What ``uds_services`` is for
+----------------------------
 
 Anyone can write a match on a service identifier. What is worth centralising is clause
 8.7's validation order and its response/silence rules, because they are easy to get subtly
