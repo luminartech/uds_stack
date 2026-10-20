@@ -1,17 +1,13 @@
 //! Error taxonomy.
 //!
-//! [`DoIpTransportError`] is a concrete enum, and a short one: this crate is a transport,
-//! so most of what can go wrong here reaches the driver as a *value* on the
-//! event seam rather than as an error. An exchange's outcome is
-//! `uds_services::TransportEvent::DataConf`'s `SResult`, a message too large
-//! for the driver's buffer is `TransportEvent::DataTooLong`, and a connection
-//! that went away is `TransportEvent::Closed`. Only a failure that leaves
-//! nothing to report at all is an [`DoIpTransportError`].
-//!
-//! A *closed connection* has no variant: ISO 14229-5:2022 REQ 7.9 and REQ 7.11
-//! make a server-initiated close part of the `DiagnosticSessionControl` and
-//! `ECUReset` flows, so an expected close arriving as an `Err` would have a
-//! driver treat a conformant flow as a failure.
+//! [`DoIpTransportError`] is a short concrete enum: most of what can go wrong in a
+//! transport reaches the driver as a *value* on the event seam rather than as an error.
+//! An exchange's outcome is `uds_services::TransportEvent::DataConf`'s `SResult`, a
+//! message too large for the driver's buffer is `TransportEvent::DataTooLong`, and a
+//! connection that went away is `TransportEvent::Closed`. Only a failure that leaves
+//! nothing to report at all is an error. A closed connection has no variant:
+//! ISO 14229-5:2022 REQ 7.9 and REQ 7.11 make a server-initiated close part of the
+//! `DiagnosticSessionControl` and `ECUReset` flows, so a conformant flow is not a failure.
 
 /// Errors raised by [`DoIpTransport`](crate::DoIpTransport), whose entity fails
 /// with `E`.
@@ -92,13 +88,10 @@ impl<C: TesterConnection> core::fmt::Debug for DoIpClientTransportError<C> {
     }
 }
 
-/// Compile-time proof that this crate's errors, and the upstream errors it
-/// composes, implement [`core::error::Error`] rather than `std::error::Error`.
-///
-/// Since Rust 1.81 `std::error::Error` is a re-export of `core::error::Error`,
-/// so a bound like this cannot distinguish them on a hosted target. It only
-/// means something when compiled for a `*-none` target, where `std` does not
-/// exist — which is where a `*-none` target build would exercise it.
+/// This crate's errors, and the upstream errors they compose, implement
+/// [`core::error::Error`]. On a hosted target `std::error::Error` is the same trait
+/// (since Rust 1.81), so the assertion distinguishes them only when compiled for a
+/// `*-none` target.
 const _: () = {
     const fn assert_core_error<T: core::error::Error>() {}
     const fn _for_every_connection<C: TesterConnection>() {

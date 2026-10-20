@@ -1,23 +1,10 @@
 //! Every `ARCHITECTURE.md` section this crate cites exists.
 //!
-//! `ARCHITECTURE.md` ships with the package, so a reader can follow these —
-//! which is why they survived when references to documents outside the package
-//! were removed. Section numbers move when a document is edited, and nothing
-//! checked them; this is the cheapest thing that notices.
-//!
-//! # What this does not catch, and the case that proves it
-//!
-//! It checks that a cited section *exists*, not that it says what the citing
-//! sentence claims. Were `profile::service_ids` to cite "§8" for the invariant
-//! that `uds_on_ip` never learns what a service is, this test would pass: §8
-//! exists — it is "`no_std` scope" — while the invariant is §10.
-//!
-//! That limit is worth stating rather than papering over: a wrong-but-existing
-//! citation is the more likely defect of the two, because section numbers shift
-//! under edits while the prose around them stays. Only a reader catches it, and
-//! a neighbouring crate caught this one. What the test buys is the other half —
-//! a number that has gone off the end of the document — which is cheap and
-//! which no reader reliably notices.
+//! `ARCHITECTURE.md` ships with the package, so a reader can follow these citations.
+//! Section numbers move when a document is edited; this notices a number that has gone
+//! off the end of the document. It checks that a cited section *exists*, not that it
+//! says what the citing sentence claims: a wrong-but-existing citation passes, and only
+//! a reader catches it.
 
 use std::collections::BTreeSet;
 
@@ -77,9 +64,8 @@ fn every_cited_architecture_section_exists() {
 
 #[test]
 fn the_check_can_fail() {
-    // Guarding against the reintroduction of a stale number is this file's
-    // whole purpose, so the extractor must see a citation and the heading
-    // reader must not invent one.
+    // The extractor must see a citation and the heading reader must not invent one,
+    // or the check above passes vacuously.
     assert!(cited_sections("see `ARCHITECTURE.md` §10, invariant 1").contains("10"));
     assert!(cited_sections("see `ARCHITECTURE.md` §2.1.").contains("2.1"));
     assert!(cited_sections("no citation here").is_empty());

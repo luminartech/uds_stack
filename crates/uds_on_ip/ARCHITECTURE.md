@@ -59,7 +59,7 @@ This crate owns three things:
    (ISO 14229-5:2022 REQ 4.3, REQ 4.4, Tables 4 and 5): `T_Data.conf` is
    `DoIP_Data.confirm`, whose `DoIP_Result` becomes the `T_Result`. For a
    tester's request `simple_doip` raises that confirm from the DoIP
-   **acknowledgement** (`0x8002`/`0x8003`), not from the act of sending —
+   **acknowledgment** (`0x8002`/`0x8003`), not from the act of sending —
    because `tP_Client` starts on `T_Data.conf` (ISO 14229-2:2021 REQ 5.9); for
    an entity's response, which a tester does not acknowledge, from the
    completed write.
@@ -224,7 +224,7 @@ access that cannot fail and neither crate learns about the other.
 ### 2.3 `uds_session` is vocabulary, not a seam
 
 This crate names `Ai`, `Address`, `Mtype`, `TaType`, `SResult`, `Timestamp` and
-`Reloads`, all `uds_session`'s, and calls none of its behaviour. It does not
+`Reloads`, all `uds_session`'s, and calls none of its behavior. It does not
 drive the session layer, hold a `Client` or a `Server`, or feed it primitives.
 `uds_services` does all of that ([the stack architecture][stack-seams]).
 
@@ -232,8 +232,8 @@ This is worth stating because the protocol layering of
 [§5](#5-protocol-layering) invites the opposite reading: that this crate
 *wraps* the session layer, driving it from both edges through a `SessionLayer`
 trait declared here. The layering is real, but it is not a crate boundary.
-`tests/no_upward_seam.rs` fails the build if a `SessionLayer` or
-`RequestHandler` trait is declared here.
+`tests/no_upward_seam.rs` fails the build if this crate declares a trait, so
+every trait at its seams stays a neighbor's.
 
 
 ## 3. Timing
@@ -256,7 +256,7 @@ A server's response-pending reaches this crate as an ordinary `T_Data.req`;
 
 ### 4.1 Client, physically addressed
 
-The canonical path, and where `uds_on_ip` meets its two neighbours. Every
+The canonical path, and where `uds_on_ip` meets its two neighbors. Every
 participant is a distinct crate
 ([§2.3](#23-uds_session-is-vocabulary-not-a-seam)).
 
@@ -287,17 +287,17 @@ sequenceDiagram
 ```
 
 The step worth dwelling on is 6→7: `tP_Client` starts on the
-**acknowledgement**, not on the send. Getting that wrong shortens every timeout
+**acknowledgment**, not on the send. Getting that wrong shortens every timeout
 in the stack by one network round trip.
 
 That is why `DataConf` is a distinct event rather than `t_data_req` returning
 `Ok(())`. Fusing send and confirm into one future leaves no `T_Data.conf` to name, no separate timestamp to
-attach to it, and turns a negative acknowledgement into a send *error* rather
+attach to it, and turns a negative acknowledgment into a send *error* rather
 than a negative confirm. A session layer cannot then distinguish "the peer
 refused the message" from "the socket broke".
 
-The acknowledgement's outcome is which acknowledgement arrived. ISO 13400-2:2019
-Table 17 gives the positive and negative acknowledgements their own payload
+The acknowledgment's outcome is which acknowledgment arrived. ISO 13400-2:2019
+Table 17 gives the positive and negative acknowledgments their own payload
 types, and Tables 24 and 26 their own codes, so `simple_doip` decodes them to
 separate variants and a rejection cannot be read as an acceptance.
 
@@ -316,7 +316,7 @@ yields a stream of responses, not one.
 **Client, session change or ECU reset.** The server closes the TCP connection
 after its positive response and before executing the service. A new connection
 and a repeated routing activation follow, before diagnostic communication
-continues (REQ 7.8–7.11). This is specified behaviour, not error recovery.
+continues (REQ 7.8–7.11). This is specified behavior, not error recovery.
 `DoIpClientTransport` reports the close as expected where the server's last
 message was a positive `DiagnosticSessionControl` or `ECUReset` response, and
 reconnects, through `TesterConnection::reconnect`, for the next request; what
@@ -338,7 +338,7 @@ request whose positive response is suppressed neither arms this nor triggers it.
 **Server, session change or ECU reset.** The mirror image, and the direction
 that is easy to miss: REQ 7.9 and REQ 7.11 require the *server* to initiate the
 close, after sending the positive response and before executing the service.
-`uds_on_ip` recognises a positive `ECUReset` response going out, or is told by
+`uds_on_ip` recognizes a positive `ECUReset` response going out, or is told by
 `AfterSend::ServerLeaves` that the server leaves its running software after
 this `DiagnosticSessionControl` response, and once that response is confirmed
 sent, closes the connection before reporting the confirmation. `uds_services`
@@ -373,7 +373,7 @@ periodic response to its own address as `TransportEvent::Periodic`, never as
 
 ### 4.3 Client transport: the connection's states
 
-`DoIpClientTransport` is where the client's REQ 7.8–7.11 behaviour lives, and it
+`DoIpClientTransport` is where the client's REQ 7.8–7.11 behavior lives, and it
 is one state machine over the connection. The state is the link; the events owed
 on the edge into `Closed` are what the session layer sees of it.
 
@@ -402,7 +402,7 @@ What each edge means, and where it comes from:
 
 - **Connection reports `Closed`.** The entity closed after a session change or
   reset (REQ 7.9, REQ 7.11), the socket failed, or the tester gave the
-  connection up on a lost acknowledgement; `simple_doip` reports each once.
+  connection up on a lost acknowledgment; `simple_doip` reports each once.
   Which one it was is in `expected`.
 - **Request refused `Closed`.** The connection had ended and its `Closed` was
   not yet read, which is the common case for the prescribed close: the next
@@ -422,7 +422,7 @@ What each edge means, and where it comes from:
   waiting requests are confirmed failed and the next request tries again.
 
 A request's fate is the same in either state. It is accepted on the spot and
-confirmed later, by the connection's acknowledgement or by the transport, failed:
+confirmed later, by the connection's acknowledgment or by the transport, failed:
 `NoRoom` from the connection means it waits, any other refusal is its failed
 confirm, and `WAITING` such requests fit behind the one carried.
 
@@ -521,7 +521,7 @@ None.
 ### 6.3 What the prose still asserts that nothing checks
 
 This crate has a recurring defect class worth naming: a sentence asserting a
-fact about a neighbouring crate, true when written and unchecked thereafter.
+fact about a neighboring crate, true when written and unchecked thereafter.
 
 The claims of this kind in this document were verified by hand on 2026-09-19,
 across `simple_doip`'s and `uds_protocol`'s migration to `automotive-wire-codec`

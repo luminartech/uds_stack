@@ -2,7 +2,7 @@
 
 `uds_on_ip` owns **ISO 14229-5:2022 (`UDSonIP`)**: the application profile that
 binds Unified Diagnostic Services to a `DoIP` transport. It owns two layers of
-that standard — clause 8, the application profile (the `A_PDU` format, TCP
+that standard: clause 8, the application profile (the `A_PDU` format, TCP
 connection handling around `DiagnosticSessionControl` and `ECUReset`, and which
 timing parameters apply), and clause 11, the mapping of `T_PDU` service
 primitives onto `DoIP`'s. In its documentation, a table, figure, clause or
@@ -14,7 +14,7 @@ document is named where it is cited.
 ```text
   consuming application
        ↕  typed service traits / typed client calls
-  uds_services      the driver — owns Client/Server, declares UdsTransport
+  uds_services      the driver: owns Client/Server, declares UdsTransport
        ↓  UdsTransport
   uds_on_ip         ISO 14229-5 profile + DoIP mapping  ← this crate
        ↓
@@ -30,48 +30,42 @@ driver, calls nothing upward, and knows nothing about services. It implements
 on [`uds_protocol`](https://crates.io/crates/uds_protocol) and
 [`uds_session`](https://github.com/luminartech/uds_stack/tree/main/crates/uds_session)
 for their shared vocabulary. The dependency edge runs from here to
-`uds_services`, never the other way — `uds_services` never names a transport,
+`uds_services`, never the other way: `uds_services` never names a transport,
 which is what keeps a binding additive at the application.
 
 [`ARCHITECTURE.md`](ARCHITECTURE.md) has this crate's design, including its
 seams to `simple_doip` and `uds_services` and the standard's own citations. How
 the five crates fit together is the
 [stack architecture](https://luminartech.github.io/uds_stack/architecture/index.html).
-**Provisional**: it is a design document that predates parts of the current
-code and is being replaced by the sphinx-needs set under
+Where it and the sphinx-needs set under
 [`docs/`](https://github.com/luminartech/uds_stack/tree/main/docs) at the
-workspace root; where the two disagree, `docs/` wins, and corrections found
-in the meantime are marked in place in the file itself.
+workspace root disagree, `docs/` wins.
 
-## What this crate deliberately does not do
+## Scope
 
-It does not decode UDS messages — that is
-[`uds_protocol`](https://crates.io/crates/uds_protocol) — and it does not
-dispatch services, choose negative response codes, or know what a data
-identifier is; those are ISO 14229-1 behaviour and belong to
-[`uds_services`](https://github.com/luminartech/uds_stack/tree/main/crates/uds_services).
-It holds no ISO 14229-2 vocabulary: addressing, the service primitives and the
-session state machine are
-[`uds_session`](https://github.com/luminartech/uds_stack/tree/main/crates/uds_session)'s,
-and are used from there rather than redeclared here.
+Of a UDS message, this crate reads what the standard requires it to: whether a
+response is a positive `DiagnosticSessionControl` or a positive `ECUReset`,
+which clause 8 keys TCP connection handling on, and a request's
+suppressPosRspMsgIndicationBit and a response-pending negative response, which
+decide whether the request is owed an answer. Decoding the rest is
+[`uds_protocol`](https://crates.io/crates/uds_protocol)'s; dispatching
+services, choosing negative response codes and the data identifiers themselves
+are ISO 14229-1 behavior, and
+[`uds_services`](https://github.com/luminartech/uds_stack/tree/main/crates/uds_services)'s.
+Addressing, the service primitives and the session state machine are
+[`uds_session`](https://github.com/luminartech/uds_stack/tree/main/crates/uds_session)'s
+ISO 14229-2 vocabulary, used from there rather than redeclared here.
 
-The exception is narrow and forced by the standard. Clause 8 keys TCP
-connection handling on the positive `DiagnosticSessionControl` and `ECUReset`
-responses, and whether a request is owed an answer depends on its
-suppressPosRspMsgIndicationBit and on a response-pending negative response. That is
-all this crate reads of a message.
-
-It also names no async runtime. An `async fn` implies neither an executor nor
-`std`, but a runtime *dependency* would compromise the `no_std` build, so
-`DoIpTransport` is generic over `simple_doip`'s `DiagnosticEntity` — a trait
-with no I/O in it — and the sockets, on whatever runtime, are the entity's.
+The crate is async without naming a runtime. `DoIpTransport` is generic over
+`simple_doip`'s `DiagnosticEntity`, a trait with no I/O in it, and the sockets,
+and whatever runtime drives them, are the entity's; a runtime dependency would
+compromise the `no_std` build.
 
 ## Status
 
 **Alpha.** It releases in lockstep with the rest of the stack, at one shared
-version. The public API shape is settled —
-`DoIpTransport<E: DiagnosticEntity, CONNECTIONS>` implements
-`uds_services::UdsTransport` — and the server role is implemented: requests
+version. `DoIpTransport<E: DiagnosticEntity, CONNECTIONS>` implements
+`uds_services::UdsTransport`, and the server role is implemented: requests
 and responses map onto `DoIP_Data` (ISO 14229-5:2022 REQ 4.3, REQ 4.4), and the
 connection is closed after a positive `ECUReset` response (REQ 7.11) and after
 the positive `DiagnosticSessionControl` response to a session change the server
@@ -105,8 +99,8 @@ stack, which is why no feature here ever names a runtime.
 
 ## Usage
 
-A transport wraps your `DoIP` entity — anything implementing
-`simple_doip::service::DiagnosticEntity` — and is handed to a `uds_server!`
+A transport wraps your `DoIP` entity, anything implementing
+`simple_doip::service::DiagnosticEntity`, and is handed to a `uds_server!`
 assembly as its `transport`:
 
 ```rust
@@ -128,12 +122,45 @@ serving one tester runs `simple_doip`'s `Entity` with `MCTS` 1, so its table,
 and the transport's, is 2: `DoIpTransport<Entity<'_, A, 1, MAX_MESSAGE>, 2>`. Its
 `uds_server!` still declares `peers = 1`, the one tester it keeps a session for.
 
-`bench_reloads()` gives the conventional `tP6` reload pair for a desk setup —
-see its documentation for why it is not a configuration for a vehicle.
+`bench_reloads()` gives the conventional `tP6` reload pair for a desk setup;
+its documentation says why it is not a configuration for a vehicle.
+
+### On bare metal
+
+`uds_services::Server::step` takes `&mut self`, and this stack forbids `unsafe`,
+so a server built in place in a `static` is reached in one of two ways. Where
+one task owns it, a `static_cell` cell yields the `&'static mut` once. Where
+anything else must reach it too, an interrupt handler or a second task, it
+lives in a `critical_section::Mutex<core::cell::RefCell<..>>`.
+
+A transport over `simple_doip`'s `entity::Entity` is built at run time, because
+the entity borrows an acceptor the network stack creates then, and `Entity::new`
+is not `const`. So the cell is a `static_cell::StaticCell`, filled with
+`init_with(|| Server::new(..))`; `static_cell::ConstStaticCell`, which
+`uds_services::Server::new` shows, serves only a transport with a `const`
+constructor. `Entity::new` returns the entity by value, its buffers included, so
+the server is built on the caller's stack and then copied into the cell: the
+stack needs room for the whole server once, while it is built. The entity holds
+a receive buffer and a transmit queue of `MAX_MESSAGE` bytes for each of its
+`MCTS` connections.
+
+The integrator supplies, for the target:
+
+- a `critical-section` implementation, such as `cortex-m`'s
+  `critical-section-single-core` feature on a single-core Cortex-M;
+- an `embassy-time` driver, which the entity's timers read: an
+  `embassy_time_driver::Driver` registered with `time_driver_impl!`;
+- an `embassy-time` timer queue, which wakes those timers: an executor's
+  integrated queue, or `embassy-time-queue-utils`' generic one (its
+  `generic-queue-N` feature) held in the driver and woken from its alarm.
+
+The workspace's unpublished `testing/embedded-probe` assembles all of it for
+bare metal: a `SysTick` driver with a generic queue, `cortex-m`'s critical
+section, and the sensor's server in a `StaticCell`.
 
 ## Relationship to the standards
 
-Neither licence below grants any right in ISO 14229-5, which remains ISO's,
+Neither license below grants any right in ISO 14229-5, which remains ISO's,
 and no text of the standard is reproduced here or in `ARCHITECTURE.md`. See
 ["Relationship to the standards"](https://github.com/luminartech/uds_stack#relationship-to-the-standards)
 in the workspace README for the fuller statement that applies to every crate
@@ -141,12 +168,12 @@ in this stack.
 
 ## Contributing
 
-Pull requests, bug reports and questions are welcome — see
+Pull requests, bug reports and questions are welcome; see
 [`CONTRIBUTING.md`](https://github.com/luminartech/uds_stack/blob/main/CONTRIBUTING.md).
 Security reports go through GitHub's private vulnerability reporting; see
 [`SECURITY.md`](https://github.com/luminartech/uds_stack/blob/main/SECURITY.md).
 
-## Licence
+## License
 
 Licensed under either of [MIT](LICENSE-MIT) or [Apache-2.0](LICENSE-APACHE)
 at your option. Both files are the workspace's, shared by every crate here.

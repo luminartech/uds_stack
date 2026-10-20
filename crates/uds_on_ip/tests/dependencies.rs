@@ -37,22 +37,21 @@ fn the_codec_vocabulary_comes_through_the_layer_below() {
     let manifest = include_str!("../Cargo.toml");
     assert!(
         !declares_dependency(manifest, "embedded-io"),
-        "embedded-io left this crate's dependency list and has not been readmitted"
+        "embedded-io is not a dependency: the codec vocabulary arrives through simple_doip"
     );
     assert!(
         !declares_dependency(manifest, "automotive-wire-codec"),
         "Encode and Decode are re-exported by simple_doip::messages, and \
-         Encode::encode_to_slice needs no sink named here — so a direct awc \
-         dependency means something new is wanted from it. Say what, in the \
-         manifest comment, and change this assertion deliberately."
+         Encode::encode_to_slice needs no sink named here, so a direct awc \
+         dependency means something new is wanted from it: say what in the \
+         manifest comment"
     );
 }
 
 #[test]
 fn a_section_header_dependency_is_detected() {
-    // The form the plain prefix check missed. Guarding against reintroduction
-    // is this file's whole purpose, so the check must see every way a
-    // dependency can be spelled.
+    // A section header spells a dependency without its name at the start of a
+    // line, so the check must see every way a dependency can be spelled.
     assert!(declares_dependency("[dependencies.tokio]", "tokio"));
     assert!(declares_dependency(
         "[target.'cfg(unix)'.dependencies.tokio]",

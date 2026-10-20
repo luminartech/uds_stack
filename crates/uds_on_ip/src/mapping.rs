@@ -1,18 +1,14 @@
 //! Transport layer: the `T_PDU` ↔ `DoIP_PDU` mapping.
 //!
-//! ISO 14229-5:2022 clause 11. REQ 4.3 Table 4 maps the service primitives
-//! one-for-one (`T_Data.request` ↔ `DoIP_Data.request`, and so on), and REQ 4.4
-//! Table 5 maps the parameters (`T_SA` ↔ `DoIP_SA`, `T_TA` ↔ `DoIP_TA`, …) with
-//! `T_AE` marked not applicable because `DoIP` has no address extension.
+//! ISO 14229-5:2022 clause 11. REQ 4.3 Table 4 maps the service primitives one-for-one
+//! (`T_Data.request` ↔ `DoIP_Data.request`, and so on), and REQ 4.4 Table 5 maps the
+//! parameters (`T_SA` ↔ `DoIP_SA`, `T_TA` ↔ `DoIP_TA`, …) with `T_AE` marked not
+//! applicable because `DoIP` has no address extension.
 //!
-//! The mapping is nearly an identity, so this module is thin, and what it
-//! publishes is thinner still: the address conversions and the one constant
-//! ISO 14229-5 adds to ISO 13400-2's payload types.
-//!
-//! Classifying what a `DoIP` entity reports onto the transport seam happens here
-//! too, but privately. It produces vocabulary the driver never sees, and
-//! publishing it would leave a caller two event types and only prose to say which
-//! was theirs.
+//! The mapping is nearly an identity, so this module publishes little: the address
+//! conversions and the one constant ISO 14229-5 adds to ISO 13400-2's payload types.
+//! Classifying what a `DoIP` entity reports onto the transport seam happens here too,
+//! privately: the driver's one event type is `uds_services::TransportEvent`.
 
 use core::ops::Range;
 
@@ -25,11 +21,9 @@ use uds_session::{Address, Ai, Mtype, SResult, TaType, TransportError};
 #[non_exhaustive]
 pub enum MappingError {
     /// ISO 14229-5:2022 REQ 4.4 Table 5 records `T_AE` as not applicable to
-    /// `DoIP`, so `Mtype::RDiag` and `Mtype::SecureRDiag` cannot be carried.
-    ///
-    /// Expressible in `uds_session` and rejected here is the correct
-    /// arrangement: the session layer keeps all four of the standard's
-    /// message types, and the transport that cannot carry two of them says so.
+    /// `DoIP`, so `Mtype::RDiag` and `Mtype::SecureRDiag` cannot be carried. The
+    /// session layer keeps all four of the standard's message types, and the
+    /// transport that cannot carry two of them says so.
     #[error("DoIP has no address extension (ISO 14229-5 REQ 4.4 Table 5)")]
     AddressExtensionUnsupported,
 }
@@ -50,27 +44,18 @@ pub(crate) const fn from_logical(addr: simple_doip::LogicalAddress) -> Address {
     Address(addr.0)
 }
 
-/// The `DoIP` payload type carrying UDS periodic responses.
+/// The `DoIP` payload type carrying UDS periodic responses: ISO 14229-5:2022 REQ 7.16's,
+/// **not** ISO 13400-2:2019's, whose diagnostic payload types stop at `0x8003`
+/// (`ARCHITECTURE.md` §1).
 ///
-/// Introduced by ISO 14229-5:2022 REQ 7.16, **not** by ISO 13400-2:2019, whose
-/// diagnostic payload types stop at `0x8003`. It is therefore this crate's to
-/// interpret rather than `simple_doip`'s to name — see `ARCHITECTURE.md` §1.
-///
-/// # A tester decodes it; a server cannot send it
-///
-/// [`DoIpClientTransport`](crate::DoIpClientTransport) reports one addressed to
-/// its tester as a `TransportEvent::Periodic`. A server sends periodic
-/// responses with it (REQ 7.7, REQ 7.16), but neither
-/// `uds_services::UdsTransport::t_data_req` nor
-/// [`DiagnosticEntity::request`](simple_doip::service::DiagnosticEntity::request)
-/// can choose a payload type, so a server built on this crate cannot. One that
-/// a tester sends never reaches this crate: [`EntityEvent`] has no event for it, and
-/// the entity answers it with a generic header NACK (ISO 13400-2:2019
-/// REQ 7.DoIP-042).
-///
-/// REQ 7.17's length bound — a periodic data record must not exceed the
-/// non-segmented `UDSonIP` message limit — has no home here either. It belongs
-/// where a periodic record is accepted, and none is. See `ARCHITECTURE.md` §6.2.
+/// A client ([`DoIpClientTransport`](crate::DoIpClientTransport)) receives one as
+/// [`uds_services::TransportEvent::Periodic`]. A server built on this crate cannot send
+/// one, since neither `uds_services::UdsTransport::t_data_req` nor
+/// [`DiagnosticEntity::request`](simple_doip::service::DiagnosticEntity::request) chooses
+/// a payload type, and one a tester sends never reaches the server side: [`EntityEvent`]
+/// has no event for it, and the entity answers it with a generic header NACK
+/// (ISO 13400-2:2019 REQ 7.DoIP-042). REQ 7.17's length bound on a periodic data record
+/// applies where a record is accepted, and none is here (`ARCHITECTURE.md` §6.2).
 pub const PERIODIC_RESPONSE_PAYLOAD_TYPE: u16 = 0x8004;
 
 /// The `DoIP` target address for this addressing triple, or why it has none.
@@ -184,7 +169,7 @@ pub(crate) const fn ai(
 }
 
 /// An [`EntityEvent`] as the transport seam needs it, with a PDU held as its place in
-/// the caller's buffer so that the event no longer borrows it.
+/// the caller's buffer so that the event does not borrow it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum Inbound {
     /// `T_Data.ind` (REQ 4.3 Table 4: `DoIP_Data.indication`).
@@ -299,9 +284,8 @@ mod tests {
         }
     }
 
-    /// ISO 14229-5:2022 REQ 4.4 Table 5 marks `T_AE` not applicable to `DoIP`.
-    /// The constraint lands here, where it is true, rather than deforming
-    /// `uds_session::Mtype` into two variants.
+    /// ISO 14229-5:2022 REQ 4.4 Table 5 marks `T_AE` not applicable to `DoIP`, so the
+    /// two remote message types are rejected here, and `uds_session::Mtype` keeps them.
     #[test]
     fn a_remote_message_type_is_rejected() {
         let ae = AddressExtension(0x0001);

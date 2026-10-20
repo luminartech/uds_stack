@@ -1,64 +1,51 @@
-//! This crate declares no trait that a layer above it implements.
+//! Every trait at this crate's seams is a neighbor's (`ARCHITECTURE.md` §2.3).
 //!
-//! `SessionLayer` and `RequestHandler` were deleted rather than relocated:
-//! with `uds_services` driving, there is no binding-side driver to call
-//! anything upward, and no seam for a response-pending to cross. The reasoning
-//! is `ARCHITECTURE.md` §2.3's; the names must not come back either way.
-//!
-//! The scan below is scoped to declarations, not prose: documentation may
-//! still name what was deleted (and Task 7 rewrites this crate's prose in
-//! full), but neither name may reappear as a live declaration.
+//! The crate implements `uds_services`' `UdsTransport` and `ClientTransport`, and is
+//! generic over `simple_doip`'s `DiagnosticEntity` and `TesterConnection`. Every trait
+//! it names is declared by one of those two crates, so a layer above has nothing of
+//! this crate's to implement.
+
+/// True if `code`, a line with its indentation removed, declares a trait.
+fn declares_trait(code: &str) -> bool {
+    let mut rest = code;
+    if let Some(after_pub) = rest.strip_prefix("pub") {
+        rest = after_pub
+            .strip_prefix('(')
+            .and_then(|scoped| scoped.split_once(')'))
+            .map_or(after_pub, |(_, after_scope)| after_scope)
+            .trim_start();
+    }
+    let rest = rest.strip_prefix("unsafe ").unwrap_or(rest);
+    rest.starts_with("trait ")
+}
 
 #[test]
-fn the_crate_declares_no_upward_trait() {
-    for line in include_str!("../src/lib.rs").lines() {
-        let code = line.trim_start();
-        if code.starts_with("//") {
-            // Documentation may name what was deleted, and Task 7 rewrites
-            // this crate's prose in full. Only declarations are the subject.
-            continue;
+fn every_trait_is_a_neighbors() {
+    let sources = [
+        ("client.rs", include_str!("../src/client.rs")),
+        ("lib.rs", include_str!("../src/lib.rs")),
+        ("error.rs", include_str!("../src/error.rs")),
+        ("mapping.rs", include_str!("../src/mapping.rs")),
+        ("profile.rs", include_str!("../src/profile.rs")),
+        ("transport.rs", include_str!("../src/transport.rs")),
+    ];
+    for (file, source) in sources {
+        for (index, line) in source.lines().enumerate() {
+            assert!(
+                !declares_trait(line.trim_start()),
+                "src/{file}:{}: the traits at this crate's seams are its neighbors'",
+                index + 1
+            );
         }
-        assert!(
-            !code.contains("SessionLayer"),
-            "SessionLayer is deleted, not relocated: nothing above this crate is called from it"
-        );
-        assert!(
-            !code.contains("RequestHandler"),
-            "RequestHandler is deleted, not relocated: nothing hands this crate a request"
-        );
     }
 }
 
-/// The "this crate appears twice / wraps the session layer" sandwich no longer
-/// describes the design: the driver is above the session layer and this crate
-/// is wholly below it (`ARCHITECTURE.md` §2.3).
 #[test]
-fn the_crate_docs_do_not_describe_the_reversed_design() {
-    let source = include_str!("../src/lib.rs");
-    assert!(
-        !source.contains("appears twice"),
-        "this crate is wholly below the session layer now"
-    );
-    assert!(
-        !source.contains("wraps the session layer"),
-        "the driver is above the session layer; this crate is below it"
-    );
-}
-
-/// The crate is wholly below the session layer; only the *driver* sits above
-/// it. Keying on that invariant, rather than on any particular phrasing,
-/// is deliberate: the previous guard matched one exact substring and would
-/// have passed "this half of the crate sits above the session layer" — the
-/// very wording it was written to catch.
-#[test]
-fn only_the_driver_is_claimed_to_sit_above_the_session_layer() {
-    let source = include_str!("../src/profile.rs");
-    for (i, _) in source.match_indices("above the session layer") {
-        let context = &source[i.saturating_sub(40)..i];
-        assert!(
-            context.contains("driver"),
-            "a claim of sitting above the session layer must be about the \
-             driver, not this crate — the crate is wholly below it"
-        );
-    }
+fn a_trait_declaration_is_recognized_at_any_visibility() {
+    assert!(declares_trait("trait Seam {"));
+    assert!(declares_trait("pub trait Seam {"));
+    assert!(declares_trait("pub(crate) trait Seam {"));
+    assert!(declares_trait("pub unsafe trait Seam {"));
+    assert!(!declares_trait("/// A trait the layer above implements."));
+    assert!(!declares_trait("pub fn traits() {}"));
 }

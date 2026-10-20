@@ -1,14 +1,9 @@
-//! The crate's outward interface.
+//! The server side of the seam.
 //!
-//! [`DoIpTransport`] implements [`uds_services::UdsTransport`], which is the
-//! whole of what this crate owes the stack. The trait and its
-//! [`TransportEvent`] arrive from `uds_services`
-//! rather than being mirrored here: a mirror is two vocabularies for one seam,
-//! and the two drifted apart within a day of being written.
-//!
-//! Nothing here is shaped by `uds_services`: the trait's own test is that a
-//! CAN binding implements the same methods, so a `DoIP`-shaped seam would be
-//! the wrong seam.
+//! [`DoIpTransport`] implements [`uds_services::UdsTransport`], which is the whole of
+//! what this crate owes the stack. The trait and its [`TransportEvent`] arrive from
+//! `uds_services` rather than being mirrored here: a mirror is two vocabularies for
+//! one seam. The trait is not `DoIP`-shaped; a CAN binding implements the same methods.
 
 use crate::error::DoIpTransportError;
 use crate::mapping::{
@@ -23,19 +18,16 @@ use uds_session::{Ai, Reloads, SResult, Timestamp};
 
 /// ISO 14229-5 over a `DoIP` entity: the server side of `UDSonIP`.
 ///
-/// One transport drives the whole [`DiagnosticEntity`] — every connection it has
-/// accepted — and feeds one `uds_services::Server`, because the session, the
-/// security state and `tS3_Server` are the server's rather than a connection's.
-/// Responses are routed by their target address, which routing activation
-/// registers on one connection only.
+/// One transport drives the whole [`DiagnosticEntity`], every connection it has
+/// accepted, and feeds one `uds_services::Server`: the session, the security state and
+/// `tS3_Server` are the server's rather than a connection's. Responses are routed by
+/// their target address, which routing activation registers on one connection only.
 ///
-/// `CONNECTIONS` sizes the table in which the transport remembers which tester arrived
-/// on which connection, so that it can close the right one when
-/// ISO 14229-5:2022 REQ 7.9 or REQ 7.11 requires it. It must be at least the
-/// entity's [`DiagnosticEntity::CONNECTIONS`], which [`DoIpTransport::new`] checks
-/// at compile time, and has no default: no one value is right for every entity.
-///
-/// Three numbers meet here, and are not the same number. At a sensor serving one tester:
+/// `CONNECTIONS` sizes the table of which tester arrived on which connection, so that
+/// the transport closes the right one when ISO 14229-5:2022 REQ 7.9 or REQ 7.11
+/// requires it. It must be at least the entity's [`DiagnosticEntity::CONNECTIONS`],
+/// which [`DoIpTransport::new`] checks at compile time, and has no default. Three
+/// numbers meet here. At a sensor serving one tester:
 ///
 /// - the entity's `MCTS`, the testers it serves at once (ISO 13400-2:2019 Table 11),
 ///   is 1;
@@ -49,23 +41,20 @@ use uds_session::{Ai, Reloads, SResult, Timestamp};
 /// # The prescribed close
 ///
 /// Two messages are followed by a close: every positive `ECUReset` response
-/// (REQ 7.11), and a message handed over with [`AfterSend::ServerLeaves`] — the
-/// positive `DiagnosticSessionControl` response to a session change that leaves
-/// the software the server is running, as an application entering its
-/// bootloader does (REQ 7.9). Any other positive `DiagnosticSessionControl`
-/// response closes nothing: the octet cannot say whether the change disconnects,
-/// and only the server knows.
+/// (REQ 7.11), and a message handed over with [`AfterSend::ServerLeaves`], the positive
+/// `DiagnosticSessionControl` response to a session change that leaves the software
+/// the server is running, as an application entering its bootloader does (REQ 7.9).
+/// Any other positive `DiagnosticSessionControl` response closes nothing: the octet
+/// cannot say whether the change disconnects, and only the server knows.
 ///
-/// After sending one, the transport closes the connection the tester arrived on
-/// with [`DiagnosticEntity::close`] once the entity confirms the message was
-/// sent, and only then reports that confirmation. The close therefore follows
-/// the response ("after sending") and precedes anything done on the
-/// confirmation: `uds_services::Server` executes a session change there. It
-/// executes an accepted reset on that confirmation (`EcuReset::confirmed`, and
-/// `Stopped` for a restart), so the reset follows the close. A suppressed reset sends
-/// nothing to close after, so the connection closes when the server says it is
-/// restarting ([`UdsTransport::restarting`]). A message whose confirmation fails closes
-/// nothing.
+/// After sending one, the transport closes the connection the tester arrived on with
+/// [`DiagnosticEntity::close`] once the entity confirms the message was sent, and only
+/// then reports that confirmation. The close therefore follows the response and
+/// precedes anything done on the confirmation: `uds_services::Server` executes a
+/// session change there, and an accepted reset (`EcuReset::confirmed`, and `Stopped`
+/// for a restart), so the reset follows the close. A suppressed reset sends nothing to
+/// close after, so the connection closes when the server says it is restarting
+/// ([`UdsTransport::restarting`]). A message whose confirmation fails closes nothing.
 ///
 /// The close follows the armed message's own confirmation, told apart from the
 /// tester's others by the order the entity confirms them in. A message sent to the
@@ -73,44 +62,11 @@ use uds_session::{Ai, Reloads, SResult, Timestamp};
 /// [`DiagnosticEntity::close`] requires, and its confirmation is reported after the
 /// armed one's.
 ///
-/// # Integrating on bare metal
-///
-/// [`uds_services::Server::step`] takes `&mut self`, and this stack forbids
-/// `unsafe`, so a server built in place in a `static` is reached in one of two
-/// ways. Where one task owns it, a `static_cell` cell yields the `&'static mut`
-/// once. Where anything else must reach it too — an interrupt handler, a second
-/// task — it lives in a `critical_section::Mutex<core::cell::RefCell<..>>`.
-///
-/// A transport over `simple_doip`'s `entity::Entity` is built at run time, because
-/// the entity borrows an acceptor the network stack creates then, and
-/// `Entity::new` is not `const`. So the cell is a `static_cell::StaticCell`, filled
-/// with `init_with(|| Server::new(..))`; `static_cell::ConstStaticCell`, which
-/// `uds_services::Server::new` shows, serves only a transport with a `const`
-/// constructor.
-///
-/// `Entity::new` returns the entity by value, its buffers included, so the server is
-/// built on the caller's stack and then copied into the cell: the stack needs room for
-/// the whole server once, while it is built. The entity holds a receive buffer and a
-/// transmit queue of `MAX_MESSAGE` bytes for each of its `MCTS` connections. In the
-/// probe below, one connection of 4096 bytes makes `main`'s frame 8,824 bytes on
-/// `thumbv7em-none-eabihf`.
-///
-/// The integrator supplies, for the target:
-///
-/// - a `critical-section` implementation, such as `cortex-m`'s
-///   `critical-section-single-core` feature on a single-core Cortex-M;
-/// - an `embassy-time` driver, which the entity's timers read: an
-///   `embassy_time_driver::Driver` registered with `time_driver_impl!`;
-/// - an `embassy-time` timer queue, which wakes those timers: an executor's
-///   integrated queue, or `embassy-time-queue-utils`' generic one (its
-///   `generic-queue-N` feature) held in the driver and woken from its alarm.
-///
-/// The workspace's unpublished `testing/embedded-probe` assembles all of it for bare
-/// metal: a `SysTick` driver with a generic queue, `cortex-m`'s critical section, and
-/// the sensor's server in a `StaticCell`.
-///
 /// Time is the entity's: [`UdsTransport::now`] is [`DiagnosticEntity::now`], so a
 /// deadline the session layer computes means the same instant to the entity.
+///
+/// Building a server over this transport in a `static` on bare metal is described in
+/// the crate README.
 pub struct DoIpTransport<E, const CONNECTIONS: usize> {
     entity: E,
     reloads: Reloads,
@@ -183,8 +139,8 @@ impl<E: DiagnosticEntity, const CONNECTIONS: usize> DoIpTransport<E, CONNECTIONS
     /// * `entity` - the [`DiagnosticEntity`] whose connections this transport
     ///   serves.
     /// * `reloads` - the `tP6` pair; see
-    ///   [`profile::bench_reloads`](crate::profile::bench_reloads) for values
-    ///   suitable for a bench, and why they are not suitable for a vehicle.
+    ///   [`profile::bench_reloads`](crate::profile::bench_reloads) for bench values,
+    ///   and why they are not a vehicle's.
     ///
     /// # Examples
     ///
@@ -367,8 +323,8 @@ impl<E: DiagnosticEntity, const CONNECTIONS: usize> DoIpTransport<E, CONNECTIONS
     /// Holds the failed confirmation of a request the entity refused for `refusal`;
     /// `Err` where [`REFUSALS`] are already held.
     ///
-    /// It is reported ahead of any confirmation the entity holds for an earlier request:
-    /// `uds_session` matches a confirmation to its request by addressing
+    /// It is reported ahead of any confirmation the entity still holds for another
+    /// request: `uds_session` matches a confirmation to its request by addressing
     /// (`UDSS_LLR_0059`), and has one request per addressing outstanding at most.
     fn refuse(
         &mut self,
@@ -445,30 +401,28 @@ impl<E: DiagnosticEntity, const CONNECTIONS: usize> UdsTransport
     /// sizes no response past what the entity sends.
     const MAX_PDU: usize = E::MAX_PDU;
 
-    /// `T_Data.req` as `DoIP_Data.request` (ISO 14229-5:2022 REQ 4.3 Table 4),
-    /// routed by the target address to the connection that activated it. `ai`'s
-    /// source address is the message's (REQ 4.4 Table 5), and the entity confirms
-    /// one it does not own as failed.
+    /// `T_Data.req` as `DoIP_Data.request` (ISO 14229-5:2022 REQ 4.3 Table 4), routed by
+    /// the target address to the connection that activated it. `ai`'s source address is
+    /// the message's (REQ 4.4 Table 5); the entity confirms one it does not own as failed.
     ///
-    /// A positive `ECUReset` response, or a message `after` says the server leaves
-    /// its running software on, arms the prescribed close described on
-    /// [`DoIpTransport`]. The [`TransportEvent::DataConf`] that follows carries `ai`
-    /// as given, whatever addressing the entity reports it with.
+    /// A positive `ECUReset` response, or a message `after` says the server leaves its
+    /// running software on, arms the prescribed close described on [`DoIpTransport`].
+    /// The [`TransportEvent::DataConf`] that follows carries `ai` as given, whatever
+    /// addressing the entity reports it with.
     ///
     /// Accepted or refused when called, waiting on nothing, so the future cannot be
-    /// dropped part-way. A request the entity refuses, which
-    /// [`DiagnosticEntity::request`] does not confirm, is accepted here all the same
-    /// and confirmed failed by the next [`UdsTransport::next_event`]: ISO 13400-2:2019
-    /// 8.3.1 confirms every request, and a refusal is not the end of the connection.
-    /// [`Refusal::NoRoom`] and [`Refusal::PduTooLarge`] are `DoIP_OUT_OF_MEMORY`,
-    /// [`Refusal::EmptyPdu`] `DoIP_ERROR`. It arms no close.
+    /// dropped part-way. A request the entity refuses, which [`DiagnosticEntity::request`]
+    /// does not confirm, is accepted here all the same and confirmed failed by the next
+    /// [`UdsTransport::next_event`], since ISO 13400-2:2019 8.3.1 confirms every request:
+    /// [`Refusal::NoRoom`] and [`Refusal::PduTooLarge`] as `DoIP_OUT_OF_MEMORY`,
+    /// [`Refusal::EmptyPdu`] as `DoIP_ERROR`. It arms no close.
     ///
     /// # Errors
     ///
     /// [`DoIpTransportError::Mapping`] if the addressing cannot be carried: the two remote
     /// message types have no `DoIP` representation. [`DoIpTransportError::Refused`] if the
-    /// entity refuses the request while this transport already holds as many
-    /// refusals as it can, none of them yet reported.
+    /// entity refuses the request while this transport already holds as many unreported
+    /// refusals as it can.
     fn t_data_req(
         &mut self,
         ai: Ai,
@@ -479,7 +433,8 @@ impl<E: DiagnosticEntity, const CONNECTIONS: usize> UdsTransport
     }
 
     /// The next `T_Data.ind` or `T_Data.conf`, a closed connection, or
-    /// [`TransportEvent::Deadline`] when `deadline` passes first.
+    /// [`TransportEvent::Deadline`] when `deadline` passes first. Cancel-safe, as
+    /// [`DiagnosticEntity`]'s obligations make its `next_event` and `close`.
     ///
     /// A message longer than `buffer` is [`TransportEvent::DataTooLong`] with `declared`
     /// always `Some`: `DoIP`'s generic header carries the length.
@@ -488,12 +443,10 @@ impl<E: DiagnosticEntity, const CONNECTIONS: usize> UdsTransport
     /// is true only for a tester owed a prescribed close. The prescribed close this
     /// transport makes itself is reported by no `Closed`, only by the
     /// [`TransportEvent::DataConf`] it held back. While that close is in progress,
-    /// `deadline` is not honoured: the call returns once the entity has closed. A close
+    /// `deadline` is not honored: the call returns once the entity has closed. A close
     /// that fails has still ended the connection ([`DiagnosticEntity::close`]), so the
-    /// confirmation is reported all the same and the entity's error is not; the entity,
+    /// confirmation is reported all the same and the entity's error is not: the entity,
     /// which knows what failed, is the one to record it.
-    /// Cancel-safe, as [`DiagnosticEntity`]'s obligations make its `next_event` and
-    /// `close`.
     ///
     /// # Errors
     ///
