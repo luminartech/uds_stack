@@ -11,9 +11,11 @@ edition.
 The organising idea
 -------------------
 
-ISO 14229 is not one standard but a series, and it is already layered. The stack mirrors
-that layering with one crate per document, so "does this belong here?" is answered by
-asking which document specifies the behaviour.
+ISO 14229 is not one standard but a series, and it is already layered. The stack follows
+that series with one crate per document, so "does this belong here?" is answered by
+asking which document specifies the behaviour. ISO 14229-1 is the one exception: it is
+split into its wire format, ``uds_protocol``, and its application behaviour,
+``uds_services``.
 
 The result is reuse. A session layer that reads no clock and calls no transport serves
 CAN, DoIP, K-line and simulation alike; a service dispatcher that knows how to fetch a
@@ -161,8 +163,7 @@ the one seam declared by the callee, because ``uds_on_ip`` already consumes
 **``uds_session`` is vocabulary, not a seam.** ``uds_on_ip`` names ``uds_session``'s
 addressing, ``SResult``, ``Timestamp`` and ``Reloads``, and calls none of its behaviour.
 ``uds_services`` holds the session layer by value, supplies its inputs and drains its
-actions. ISO 14229-5:2022 specifies content above and below the session layer, but the
-crate implementing both halves sits wholly below it.
+actions.
 
 The seams in detail, and the design of the two bindings, are in each crate's architecture.
 
@@ -211,21 +212,29 @@ cannot also watch a clock. ``uds_session`` owns ``tP2_Server`` and decides when 
 response-pending is due; ``uds_on_ip`` transmits it; ``uds_services`` runs the handler
 alongside the event loop, so the timer fires while the handler works.
 
-Two graphs
-----------
+Standards and crates
+--------------------
 
-The protocol layering and the Cargo dependency graph are not the same shape. Reading one
-as the other is the easiest way to misread the design.
+The standards' layers and the crate boundaries do not line up one-to-one:
 
-The layering is the standards': ISO 14229-5 specifies an application profile above the
-session layer and a transport mapping below it, and ``uds_on_ip`` implements both. The
-Cargo graph has the driver, ``uds_services``, above all three, which is why it has no
-cycle and needs no feature gate to avoid one.
+- ISO 14229-1:2020 is two crates: ``uds_protocol`` is its wire format, and
+  ``uds_services`` everything else in it.
+- ISO 14229-5:2022 specifies an application profile above the session layer and a
+  transport mapping below it. ``uds_on_ip`` implements both, and sits wholly below the
+  session layer in the call order.
+- The session layer's service user is the ISO 14229-1 layer, which is ``uds_services``;
+  that crate is also the driver that supplies the session layer's time and drains its
+  outputs.
+
+The Cargo graph follows the seams rather than either picture. ``uds_on_ip`` depends on
+``uds_services``, whose seam it implements, while ``uds_services`` calls it, and no crate
+names a binding. The graph therefore has no cycle and needs no feature gate to avoid one.
 
 .. uml::
    :align: center
-   :caption: Cargo dependencies, read left to right in publication order. Every edge is
-             unconditional, and ``uds_on_ip`` is a leaf.
+   :caption: Cargo dependencies. An arrow points from a crate to a crate that depends on
+             it, so left to right is publication order. Every edge is unconditional, and
+             ``uds_on_ip`` is a leaf.
 
    @startuml
    left to right direction

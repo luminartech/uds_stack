@@ -543,18 +543,16 @@ inspecting the request bytes would reveal.
    session actions while a slow handler runs, and ``UDSSVC_ARCH_0028`` on the client side,
    where awaiting is what makes one typed call possible instead of three.
 
-One graph, and it is worth saying so
-------------------------------------
+Calls and dependencies
+----------------------
 
-This page used to carry a section warning that the layering diagram and the Cargo dependency
-graph were different shapes, and that confusing them was the most common way to misread the
-stack. Under ``UDSSVC_ARCH_0040`` they are the same shape, and the warning is retired rather
-than deleted because the arrangement it described was deliberate and is worth knowing was
-left behind.
+Under ``UDSSVC_ARCH_0040``, every interface between this crate, ``uds_session`` and a
+binding is owned by one of the two crates it joins, never by a third. Where the standards'
+layers and the crate boundaries part is :doc:`../index`'s.
 
 .. uml::
    :align: center
-   :caption: Processing order and Cargo dependency now point the same way at every edge.
+   :caption: Each call has one Cargo edge between its two ends.
 
    @startuml
    [uds_services] as SVC
@@ -572,14 +570,8 @@ left behind.
    endlegend
    @enduml
 
-A caller and its callee are still opposite ends of one Cargo edge — ``uds_services`` calls
+A caller and its callee are opposite ends of one Cargo edge — ``uds_services`` calls
 ``uds_on_ip`` and ``uds_on_ip`` names ``uds_services`` — which is the ordinary
-trait-inversion shape, not a peculiarity of this stack. What has gone is the case where
-*neither* crate named the other and both met at an interface owned by a third crate below
-them both.
-
-The retired arrangement, for the record: ``uds_on_ip`` called ``uds_services`` across a
-``RequestHandler`` that ``uds_session`` declared, so the caller and the callee met at an
-interface owned by a crate below both of them, and neither named the other in its manifest.
-That followed from a binding hosting the driver. ``UDSSVC_ARCH_0018`` records why nothing
-calls into this crate now, and ``UDSSVC_ARCH_0029`` why the one seam below it is its own.
+trait-inversion shape, not a peculiarity of this stack. ``UDSSVC_ARCH_0018`` records why
+nothing calls into this crate, and ``UDSSVC_ARCH_0029`` why the one seam below it is its
+own.

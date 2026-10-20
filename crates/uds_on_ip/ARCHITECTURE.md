@@ -597,4 +597,4 @@ The rules every crate keeps are in the
 [stack-when]: https://luminartech.github.io/uds_stack/architecture/index.html#when-and-what
 [stack-crates]: https://luminartech.github.io/uds_stack/architecture/index.html#the-crates
 [stack-timing]: https://luminartech.github.io/uds_stack/architecture/index.html#timing-ownership
-[stack-graphs]: https://luminartech.github.io/uds_stack/architecture/index.html#two-graphs
+[stack-graphs]: https://luminartech.github.io/uds_stack/architecture/index.html#standards-and-crates
