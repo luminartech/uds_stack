@@ -430,8 +430,35 @@ fn a_ceiling_caps_the_repeats_under_table_9s_two() {
     assert_eq!(t.transport().sent_count, 3);
 }
 
+/// `ClientTiming::transmission_repeats` at `Repeats::Never` — a failed transmission is
+/// not sent again, for an integration over a link where it may still have arrived.
+#[test]
+fn a_transmission_ceiling_of_zero_reports_the_first_failed_transmission() {
+    let mut t = Tester::new(
+        Script::new(&[
+            Step::Conf(to(ECU), FAILED),
+            Step::At(10),
+            Step::Conf(to(ECU), SResult::Ok),
+            Step::Ind(from(ECU), SPEED),
+        ]),
+        TESTER,
+        KeepAlive::physical(S3_CLIENT),
+        TIMING.transmission_repeats(Repeats::Never),
+    );
+    assert_eq!(
+        block_on(t.read_data_by_identifier(ECU, &[Did::Speed])).err(),
+        Some(ClientError::NotSent)
+    );
+    assert_eq!(t.transport().sent_count, 1);
+    assert_eq!(
+        speed(block_on(t.read_data_by_identifier(ECU, &[Did::Speed]))),
+        0x40,
+        "the channel was reset, so the next request is sent"
+    );
+}
+
 /// Table 9's transmission-failure cell is the link's, not the request's: a failed
-/// transmission is repeated twice whatever the ceiling.
+/// transmission is repeated twice whatever the response-timeout ceiling.
 #[test]
 fn a_ceiling_of_zero_still_repeats_a_failed_transmission() {
     let mut t = tester_repeating(

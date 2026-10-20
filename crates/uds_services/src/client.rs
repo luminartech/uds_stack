@@ -483,13 +483,23 @@ pub struct ClientTiming {
     /// repeat to the application (``UDSS_LLR_0177`` caps it). Table 9 performs its error
     /// handling "for a maximum of two times" whatever the error, so the ceiling counts
     /// every repeat of the request: a failed transmission's repeat leaves one fewer for
-    /// an expired window. A failed transmission is itself repeated up to Table 9's two
-    /// whatever this is, that cell being the link's, not the request's; functionally
-    /// addressed requests are not under it. [`Self::new`] sets [`Repeats::Twice`].
+    /// an expired window. A failed transmission is itself repeated under
+    /// [`Self::transmission_repeats`], that cell being the link's, not the request's;
+    /// functionally addressed requests are not under it. [`Self::new`] sets
+    /// [`Repeats::Twice`].
     /// [`Repeats::Never`] also forgoes the one repeat the standard designs a server to
     /// absorb, a [`Client::transfer_data`] block with the same counter (ISO 14229-1:2020
     /// 15.4); set it, call, and restore it where that repeat is wanted.
     pub repeats: Repeats,
+    /// The ceiling on a request's repeats after a failed transmission, under which the
+    /// request is sent again rather than reported as [`ClientError::NotSent`].
+    /// [`Self::new`] sets [`Repeats::Twice`], ISO 14229-2:2021 9.7 Table 9's cell for the
+    /// link. [`Repeats::Never`] is for an integration over a link whose failed
+    /// transmission may still have reached the server, as a `DoIP` message whose
+    /// acknowledgement was lost may have: a write, a clear or a key sent again would act
+    /// twice. The one count of a request's repeats covers both cells, so a repeat under
+    /// this ceiling leaves one fewer under [`Self::repeats`].
+    pub transmission_repeats: Repeats,
 }
 
 impl ClientTiming {
@@ -515,6 +525,7 @@ impl ClientTiming {
             functional_spacing: spacing,
             network_delay,
             repeats: Repeats::Twice,
+            transmission_repeats: Repeats::Twice,
         }
     }
 
@@ -540,6 +551,15 @@ impl ClientTiming {
     #[must_use]
     pub const fn repeats(self, repeats: Repeats) -> Self {
         Self { repeats, ..self }
+    }
+
+    /// This policy with [`Self::transmission_repeats`] set to `repeats`.
+    #[must_use]
+    pub const fn transmission_repeats(self, repeats: Repeats) -> Self {
+        Self {
+            transmission_repeats: repeats,
+            ..self
+        }
     }
 }
 

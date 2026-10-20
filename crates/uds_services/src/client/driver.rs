@@ -727,12 +727,11 @@ impl<
             } else {
                 continue;
             };
-            // Table 9 caps the error handling at two times, whatever the error; the
-            // response-timeout repeat is also under the integration's ceiling
-            // (`ClientTiming::repeats`), the transmission-failure repeat is not.
+            // Table 9 caps the error handling at two times, whatever the error; each of
+            // its two cells is under the integration's own ceiling as well.
             let allowed = match failure {
                 ClientError::Timeout => self.timing.repeats.count(),
-                _ => REPEATS,
+                _ => self.timing.transmission_repeats.count(),
             };
             if e.repeats >= allowed {
                 return Some(self.fail(e, failure));

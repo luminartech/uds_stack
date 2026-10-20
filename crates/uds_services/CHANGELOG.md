@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/) (treating
 `0.x` breaking changes as minor bumps, per the Cargo/SemVer convention for
 pre-1.0 crates).
 
+## [Unreleased]
+
+### Added
+
+- `ClientTiming::transmission_repeats`: the ceiling on a request's repeats after a
+  failed transmission, with its builder. `Repeats::Twice`, the default, is ISO 14229-2
+  Table 9's cell for the link, as before; `Repeats::Never` is for a link where a failed
+  transmission may still have reached the server, so a write, a clear or a key is never
+  sent twice. `ClientTiming::repeats` still bounds the expired-window cell alone.
+
 ## [0.7.0] — 2026-10-16
 
 First release. `uds_services` implements the behaviour of ISO 14229-1:2020, meaning
