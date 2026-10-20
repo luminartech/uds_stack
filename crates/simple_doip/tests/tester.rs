@@ -2984,6 +2984,24 @@ fn a_first_connect_the_entity_never_activates_times_out() {
     ));
 }
 
+/// A connect timeout past the clock's longest is the clock's longest: the connect waits
+/// for the entity, and connects when it activates.
+#[test]
+fn a_connect_timeout_past_the_clocks_longest_waits_for_the_entity() {
+    let _clock = clock();
+    advance(Duration::from_secs(1));
+    let stack = MockStack::new(usize::MAX);
+    let options = ConnectOptions::new().timeout(core::time::Duration::MAX);
+    let mut connecting = pin!(Tester::<_, N>::connect_with(&stack, REMOTE, sa(), options));
+
+    assert!(until_stalled(connecting.as_mut()).is_none());
+    advance(Duration::from_secs(1 << 40));
+    assert!(until_stalled(connecting.as_mut()).is_none());
+    stack.latest().send(&activation_response(0x10));
+
+    assert!(until_stalled(connecting.as_mut()).is_some_and(|connected| connected.is_ok()));
+}
+
 /// A reconnect activated within its timeout connects as one without.
 #[test]
 fn a_reconnect_activated_within_its_timeout_connects() {

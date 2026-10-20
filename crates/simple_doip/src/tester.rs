@@ -8,7 +8,7 @@ use core::fmt;
 use core::net::SocketAddr;
 
 use edge_nal::{Close, Readable, TcpConnect, TcpShutdown};
-use embassy_time::{Duration, Instant, Timer, with_deadline, with_timeout};
+use embassy_time::{Duration, Instant, Timer, with_deadline};
 use embedded_io_async::{Read, Write};
 
 use crate::messages::{
@@ -473,9 +473,11 @@ impl<'s, C: TcpConnect, const N: usize> Tester<'s, C, N> {
     /// options' timeout.
     async fn establish_within_timeout(&mut self) -> Result<(), ConnectError<C::Error>> {
         match self.timeout {
-            Some(limit) => with_timeout(ticks(limit), self.establish())
-                .await
-                .unwrap_or(Err(ConnectError::Timeout)),
+            Some(limit) => {
+                with_deadline(after(Instant::now(), ticks(limit)), self.establish())
+                    .await
+                    .unwrap_or(Err(ConnectError::Timeout))
+            }
             None => self.establish().await,
         }
     }
