@@ -330,35 +330,67 @@ fn response_pending_is_followed_without_a_ceiling() {
     );
 }
 
-/// `ClientTiming::response_pending_ceiling` — the request fails once the server has
-/// extended it more times than the ceiling allows, the channel is reset so the next
-/// request is sent, and a final response arriving after the failure answers nothing.
+/// `ClientTiming::max_response_pending` — one transmission accepts that many
+/// `responsePending` messages and fails on the next, with the channel reset: the next
+/// request goes out, draws the limit's worth again and is answered, so the count is each
+/// transmission's own.
 #[test]
-fn response_pending_past_the_ceiling_fails_the_request() {
-    let ceiling = core::num::NonZeroU16::MIN.saturating_add(1);
+fn response_pending_past_the_limit_fails_that_transmission() {
+    let limit = core::num::NonZeroU16::MIN.saturating_add(1);
     let mut t = Tester::new(
         Script::new(&[
             Step::Conf(to(ECU), SResult::Ok),
             Step::IndAt(40, from(ECU), &[0x7F, 0x22, 0x78]),
             Step::IndAt(4_000, from(ECU), &[0x7F, 0x22, 0x78]),
             Step::IndAt(8_000, from(ECU), &[0x7F, 0x22, 0x78]),
-            Step::IndAt(8_100, from(ECU), SPEED),
+            Step::At(8_100), // the spacing the reset started has run out
             Step::Conf(to(ECU), SResult::Ok),
-            Step::Ind(from(ECU), SPEED),
+            Step::IndAt(8_140, from(ECU), &[0x7F, 0x22, 0x78]),
+            Step::IndAt(12_000, from(ECU), &[0x7F, 0x22, 0x78]),
+            Step::IndAt(16_000, from(ECU), SPEED),
         ]),
         TESTER,
         KeepAlive::physical(S3_CLIENT),
-        TIMING.response_pending_ceiling(ceiling),
+        TIMING.max_response_pending(limit),
     );
     assert_eq!(
         block_on(t.read_data_by_identifier(ECU, &[Did::Speed])).err(),
-        Some(ClientError::ResponsePendingCeiling { ceiling })
+        Some(ClientError::ResponsePendingExceeded { limit })
     );
     assert_eq!(
         speed(block_on(t.read_data_by_identifier(ECU, &[Did::Speed]))),
         0x40
     );
     assert_eq!(t.transport().sent_count, 2, "one request per call");
+    assert!(t.transport().finished());
+}
+
+/// A repeat after an expired window is a new transmission: the `responsePending`
+/// messages the first drew do not count against it.
+#[test]
+fn a_repeated_request_starts_its_response_pending_count_afresh() {
+    let limit = core::num::NonZeroU16::MIN.saturating_add(1);
+    let mut t = Tester::new(
+        Script::new(&[
+            Step::Conf(to(ECU), SResult::Ok),
+            Step::IndAt(40, from(ECU), &[0x7F, 0x22, 0x78]),
+            Step::IndAt(4_000, from(ECU), &[0x7F, 0x22, 0x78]),
+            Step::At(9_100), // the enhanced window runs out: repeated
+            Step::At(9_200), // after the spacing the expiry started
+            Step::Conf(to(ECU), SResult::Ok),
+            Step::IndAt(9_240, from(ECU), &[0x7F, 0x22, 0x78]),
+            Step::IndAt(13_000, from(ECU), SPEED),
+        ]),
+        TESTER,
+        KeepAlive::physical(S3_CLIENT),
+        TIMING.repeats(Repeats::Once).max_response_pending(limit),
+    );
+    assert_eq!(
+        speed(block_on(t.read_data_by_identifier(ECU, &[Did::Speed]))),
+        0x40
+    );
+    assert_eq!(t.transport().sent_count, 2);
+    assert!(t.transport().finished());
 }
 
 /// ``UDSSVC_ARCH_0023``, ISO 14229-2:2021 9.7 Table 9 — an unanswered request is sent

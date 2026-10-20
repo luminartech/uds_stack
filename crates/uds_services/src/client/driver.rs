@@ -50,6 +50,8 @@ pub(super) struct Exchange {
     pub(super) class: ClientTx,
     /// How many times it has been repeated.
     pub(super) repeats: u8,
+    /// How many `responsePending` messages this transmission has drawn.
+    pub(super) extensions: u16,
     pub(super) phase: Phase,
 }
 
@@ -83,6 +85,7 @@ impl Exchange {
             echo,
             class,
             repeats: 0,
+            extensions: 0,
             phase: Phase::Unsent,
         }
     }
@@ -326,6 +329,8 @@ pub(super) struct Seen {
     pub(super) confirmed: Option<bool>,
     /// The exchange's response window expired.
     pub(super) timed_out: bool,
+    /// `responsePending` messages answering the exchange: one, or none.
+    pub(super) extensions: u16,
     /// A response answering the exchange.
     pub(super) answer: Option<Answered>,
     /// The connection the exchange ran over closed.
@@ -695,10 +700,13 @@ impl<
             };
             // A keep-alive the transport fails to take stays owed; the exchange goes on.
             seen.timed_out |= self.send_owed().await.expired;
-            if let Some(ceiling) = self.timing.response_pending_ceiling
-                && self.pending > ceiling.get()
+            // A count of responsePending messages, not a time: each one restarted the
+            // window, which is the session layer's to run out.
+            e.extensions = e.extensions.saturating_add(seen.extensions);
+            if let Some(limit) = self.timing.max_response_pending
+                && e.extensions > limit.get()
             {
-                return Some(self.fail(e, ClientError::ResponsePendingCeiling { ceiling }));
+                return Some(self.fail(e, ClientError::ResponsePendingExceeded { limit }));
             }
             if seen.confirmed == Some(true) {
                 e.phase = Phase::Open;
@@ -743,6 +751,7 @@ impl<
                 return Some(self.fail(e, failure));
             }
             e.repeats = e.repeats.saturating_add(1);
+            e.extensions = 0;
             e.phase = Phase::Unsent;
             self.exchange = Some(e);
         }
@@ -909,6 +918,7 @@ impl<
         let mut answer = None;
         let mut closed = false;
         let mut left = false;
+        let mut extensions = 0;
         let inbound = match event {
             TransportEvent::DataInd { ai, data } => Ok((ai, data, Arrived::Whole)),
             TransportEvent::DataTooLong { ai, data, declared } => {
@@ -926,9 +936,8 @@ impl<
                 let selection = answering.and_then(|e| e.class.session_selection());
                 let expected = answering.map(|e| (e.sid, e.echo));
                 let class = encode::classify(expected, data, selection);
-                if answering.is_some() && class == ClientRx::ResponsePending {
-                    self.pending = self.pending.saturating_add(1);
-                }
+                extensions =
+                    u16::from(answering.is_some() && class == ClientRx::ResponsePending);
                 if answering.is_some() && encode::solicited_final(class) {
                     answer = Some(Answered {
                         from: ai.sa,
@@ -981,6 +990,7 @@ impl<
             return Err(ClientError::Transport(error));
         }
         Ok(Seen {
+            extensions,
             answer,
             closed,
             quiet,
