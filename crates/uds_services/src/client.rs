@@ -242,6 +242,15 @@ pub enum ClientError<E> {
     /// default), or the session layer refused the request outright, which is not
     /// repeated.
     NotSent,
+    /// The server answered a physically addressed request with more `responsePending`
+    /// messages than [`ClientTiming::max_response_pending`] allows. The request is not
+    /// repeated, and its channel is reset as after a [`Self::Timeout`]. The server may
+    /// still answer it: a request of the same service sent before that answer arrives
+    /// can take it as its own.
+    ResponsePendingExceeded {
+        /// The limit the request ran past.
+        limit: u16,
+    },
     /// The connection to the server closed before it answered.
     Closed,
     /// Every channel slot was in use, and none was idle enough to withdraw.
@@ -307,6 +316,12 @@ impl<E: core::fmt::Debug> core::fmt::Display for ClientError<E> {
             Self::Transport(error) => write!(f, "the transport failed: {error:?}"),
             Self::Timeout => f.write_str("no response within the response window"),
             Self::NotSent => f.write_str("the request could not be sent"),
+            Self::ResponsePendingExceeded { limit } => {
+                write!(
+                    f,
+                    "the server answered responsePending more than {limit} times"
+                )
+            }
             Self::Closed => f.write_str("the connection closed before the response"),
             Self::NoChannel => f.write_str("no channel slot is free"),
             Self::Request(error) => write!(f, "the request could not be formed: {error}"),
@@ -456,8 +471,9 @@ impl KeepAlive<FunctionalKeepAlive> {
 }
 
 /// The client's timing policy: what ISO 14229-2:2021 9.2 Tables 3 and 4 leave to the
-/// client rather than the transport, in milliseconds, and the ceilings on 9.7 Table 9's
-/// two repeat cells.
+/// client rather than the transport, in milliseconds, the ceilings on 9.7 Table 9's
+/// two repeat cells, and the ceiling on the `responsePending` messages a request
+/// accepts.
 ///
 /// Built with [`Self::new`] and the same-named setters; it may gain fields.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -499,6 +515,12 @@ pub struct ClientTiming {
     /// arrived; with [`Self::repeats`] at `Never` too, no request is sent twice. A
     /// keep-alive stays under Table 9's two.
     pub transmission_repeats: Repeats,
+    /// The most `responsePending` messages one transmission of a physically addressed
+    /// request accepts; the next fails the request with
+    /// [`ClientError::ResponsePendingExceeded`]. `Some(0)` accepts none. `None` accepts
+    /// every one, as ISO 14229-2:2021 leaves the number to the server; [`Self::new`]
+    /// sets it. Functionally addressed requests are not under it.
+    pub max_response_pending: Option<u16>,
 }
 
 impl ClientTiming {
@@ -510,8 +532,9 @@ impl ClientTiming {
     ///
     /// Each spacing is Table 4's minimum for a server answering in the recommended
     /// window, [`Self::RECOMMENDED_P2_SERVER_MAX`] plus `network_delay`;
-    /// [`Self::physical_spacing`] and [`Self::functional_spacing`] set another. And
-    /// [`Self::repeats`] is [`Repeats::Twice`].
+    /// [`Self::physical_spacing`] and [`Self::functional_spacing`] set another.
+    /// [`Self::repeats`] and [`Self::transmission_repeats`] are [`Repeats::Twice`], and
+    /// [`Self::max_response_pending`] is `None`.
     ///
     /// # Arguments
     ///
@@ -525,6 +548,7 @@ impl ClientTiming {
             network_delay,
             repeats: Repeats::Twice,
             transmission_repeats: Repeats::Twice,
+            max_response_pending: None,
         }
     }
 
@@ -557,6 +581,15 @@ impl ClientTiming {
     pub const fn transmission_repeats(self, repeats: Repeats) -> Self {
         Self {
             transmission_repeats: repeats,
+            ..self
+        }
+    }
+
+    /// This policy with [`Self::max_response_pending`] set to `limit`.
+    #[must_use]
+    pub const fn max_response_pending(self, limit: Option<u16>) -> Self {
+        Self {
+            max_response_pending: limit,
             ..self
         }
     }
@@ -1150,6 +1183,8 @@ impl<
     /// - [`ClientError::Timeout`] or [`ClientError::NotSent`] where the repeats were spent:
     ///   [`ClientTiming::repeats`] for an expired window,
     ///   [`ClientTiming::transmission_repeats`] for a failed transmission.
+    /// - [`ClientError::ResponsePendingExceeded`] where the server sent more
+    ///   `responsePending` messages than [`ClientTiming::max_response_pending`] allows.
     /// - [`ClientError::Closed`] where the connection closed first.
     /// - [`ClientError::NoChannel`] where no channel could be opened to `target`.
     /// - [`ClientError::Transport`] where the transport failed.

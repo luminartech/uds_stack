@@ -21,8 +21,8 @@ use crate::{AfterSend, ClientTransport, TransportEvent};
 use core::ops::Range;
 use uds_session::{
     Address, Ai, Cause, ChannelAddressing, ChannelId, ChannelParams, ClientOutput,
-    ClientReaction, ClientTx, ExpectedResponses, Finished, FunctionalChannelId, Mtype,
-    PhysicalChannelId, Rejection, SResult, TaType, Timestamp, TransportError,
+    ClientReaction, ClientRx, ClientTx, ExpectedResponses, Finished, FunctionalChannelId,
+    Mtype, PhysicalChannelId, Rejection, SResult, TaType, Timestamp, TransportError,
 };
 
 /// ISO 14229-2:2021 9.7 Table 9: a keep-alive whose transmission failed is sent again
@@ -50,6 +50,9 @@ pub(super) struct Exchange {
     pub(super) class: ClientTx,
     /// How many times it has been repeated.
     pub(super) repeats: u8,
+    /// How many `responsePending` messages this transmission has drawn, counted where
+    /// `ClientTiming::max_response_pending` bounds them.
+    pub(super) response_pending: u16,
     pub(super) phase: Phase,
 }
 
@@ -83,6 +86,7 @@ impl Exchange {
             echo,
             class,
             repeats: 0,
+            response_pending: 0,
             phase: Phase::Unsent,
         }
     }
@@ -111,6 +115,15 @@ pub(super) struct Answered {
     pub(super) from: Address,
     pub(super) range: Range<usize>,
     pub(super) arrived: Arrived,
+}
+
+/// What a message from a server said to the exchange it answers.
+#[derive(Debug)]
+pub(super) enum Heard {
+    /// A `responsePending` message.
+    Pending,
+    /// The response.
+    Final(Answered),
 }
 
 /// One open channel, as this driver books it.
@@ -326,8 +339,8 @@ pub(super) struct Seen {
     pub(super) confirmed: Option<bool>,
     /// The exchange's response window expired.
     pub(super) timed_out: bool,
-    /// A response answering the exchange.
-    pub(super) answer: Option<Answered>,
+    /// A message answering the exchange.
+    pub(super) heard: Option<Heard>,
     /// The connection the exchange ran over closed.
     pub(super) closed: bool,
     /// The transport reported its deadline: it held nothing more to report.
@@ -695,6 +708,20 @@ impl<
             };
             // A keep-alive the transport fails to take stays owed; the exchange goes on.
             seen.timed_out |= self.send_owed().await.expired;
+            // One arriving as the window expires answers nothing: the session layer
+            // timed the request out first.
+            if matches!(seen.heard, Some(Heard::Pending))
+                && !seen.timed_out
+                && !e.functional()
+                && let Some(limit) = self.timing.max_response_pending
+            {
+                if e.response_pending >= limit {
+                    return Some(
+                        self.fail(e, ClientError::ResponsePendingExceeded { limit }),
+                    );
+                }
+                e.response_pending = e.response_pending.saturating_add(1);
+            }
             if seen.confirmed == Some(true) {
                 e.phase = Phase::Open;
                 // A request expecting no response is complete on its confirmation
@@ -705,7 +732,7 @@ impl<
                 }
             }
             self.exchange = Some(e);
-            if let Some(answered) = seen.answer {
+            if let Some(Heard::Final(answered)) = seen.heard {
                 if !e.functional() {
                     self.exchange = None;
                 } else if seen.timed_out {
@@ -738,6 +765,7 @@ impl<
                 return Some(self.fail(e, failure));
             }
             e.repeats = e.repeats.saturating_add(1);
+            e.response_pending = 0;
             e.phase = Phase::Unsent;
             self.exchange = Some(e);
         }
@@ -901,7 +929,7 @@ impl<
             .map_err(ClientError::Transport)?;
         let now = self.transport.now();
         let quiet = matches!(event, TransportEvent::Deadline);
-        let mut answer = None;
+        let mut heard = None;
         let mut closed = false;
         let mut left = false;
         let inbound = match event {
@@ -921,12 +949,16 @@ impl<
                 let selection = answering.and_then(|e| e.class.session_selection());
                 let expected = answering.map(|e| (e.sid, e.echo));
                 let class = encode::classify(expected, data, selection);
-                if answering.is_some() && encode::solicited_final(class) {
-                    answer = Some(Answered {
-                        from: ai.sa,
-                        range: locate(base, data),
-                        arrived,
-                    });
+                if answering.is_some() {
+                    if class == ClientRx::ResponsePending {
+                        heard = Some(Heard::Pending);
+                    } else if encode::solicited_final(class) {
+                        heard = Some(Heard::Final(Answered {
+                            from: ai.sa,
+                            range: locate(base, data),
+                            arrived,
+                        }));
+                    }
                 }
                 self.session
                     .t_data_ind(now, channel, ai, data, SResult::Ok, Some(class))
@@ -973,7 +1005,7 @@ impl<
             return Err(ClientError::Transport(error));
         }
         Ok(Seen {
-            answer,
+            heard,
             closed,
             quiet,
             ..drained.seen

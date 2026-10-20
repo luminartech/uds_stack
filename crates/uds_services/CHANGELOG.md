@@ -18,6 +18,12 @@ pre-1.0 crates).
   `repeats` at `Never` as well no request is ever sent twice. A keep-alive's failed
   transmission stays under Table 9's two. `ClientTiming::repeats` still bounds the
   expired-window cell alone.
+- `ClientTiming::max_response_pending`: the most `responsePending` messages one
+  transmission of a physically addressed request accepts; the next fails the request,
+  without a repeat, with the new `ClientError::ResponsePendingExceeded`, which carries
+  the limit. `Some(0)` accepts none; `None`, the default, accepts every one, as before.
+  The failed request's channel is reset, as after a timeout. Functionally addressed
+  requests are not under it.
 
 ## [0.7.0] — 2026-10-16
 

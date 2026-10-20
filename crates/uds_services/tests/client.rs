@@ -313,6 +313,218 @@ fn a_response_pending_then_the_answer() {
     assert_eq!(t.transport().deadlines, 0);
 }
 
+/// Without a ceiling, the client follows the server through as many response-pending
+/// messages as it sends, as ISO 14229-2:2021 leaves to the server.
+#[test]
+fn response_pending_is_followed_without_a_ceiling() {
+    let mut t = tester(&[
+        Step::Conf(to(ECU), SResult::Ok),
+        Step::IndAt(40, from(ECU), &[0x7F, 0x22, 0x78]),
+        Step::IndAt(4_000, from(ECU), &[0x7F, 0x22, 0x78]),
+        Step::IndAt(8_000, from(ECU), &[0x7F, 0x22, 0x78]),
+        Step::IndAt(12_000, from(ECU), SPEED),
+    ]);
+    assert_eq!(
+        speed(block_on(t.read_data_by_identifier(ECU, &[Did::Speed]))),
+        0x40
+    );
+}
+
+/// A tester whose physically addressed requests accept `limit` `responsePending`
+/// messages a transmission.
+fn tester_pending(steps: &[Step], limit: u16, repeats: Repeats) -> Tester {
+    Tester::new(
+        Script::new(steps),
+        TESTER,
+        KeepAlive::physical(S3_CLIENT),
+        TIMING.repeats(repeats).max_response_pending(Some(limit)),
+    )
+}
+
+/// `ClientTiming::max_response_pending` — one transmission accepts that many
+/// `responsePending` messages and fails on the next, with the channel reset: the next
+/// request goes out, draws the limit's worth again and is answered, so the count is each
+/// transmission's own.
+#[test]
+fn response_pending_past_the_limit_fails_that_transmission() {
+    let mut t = tester_pending(
+        &[
+            Step::Conf(to(ECU), SResult::Ok),
+            Step::IndAt(40, from(ECU), &[0x7F, 0x22, 0x78]),
+            Step::IndAt(4_000, from(ECU), &[0x7F, 0x22, 0x78]),
+            Step::IndAt(8_000, from(ECU), &[0x7F, 0x22, 0x78]),
+            Step::At(8_100), // the spacing the reset started has run out
+            Step::Conf(to(ECU), SResult::Ok),
+            Step::IndAt(8_140, from(ECU), &[0x7F, 0x22, 0x78]),
+            Step::IndAt(12_000, from(ECU), &[0x7F, 0x22, 0x78]),
+            Step::IndAt(16_000, from(ECU), SPEED),
+        ],
+        2,
+        Repeats::Twice,
+    );
+    assert_eq!(
+        block_on(t.read_data_by_identifier(ECU, &[Did::Speed])).err(),
+        Some(ClientError::ResponsePendingExceeded { limit: 2 })
+    );
+    assert_eq!(
+        speed(block_on(t.read_data_by_identifier(ECU, &[Did::Speed]))),
+        0x40
+    );
+    assert_eq!(t.transport().sent_count, 2, "one request per call");
+    assert!(t.transport().finished());
+}
+
+/// A limit of one accepts one `responsePending` message, and the answer after it.
+#[test]
+fn a_response_pending_within_the_limit_then_the_answer() {
+    let mut t = tester_pending(
+        &[
+            Step::Conf(to(ECU), SResult::Ok),
+            Step::IndAt(40, from(ECU), &[0x7F, 0x22, 0x78]),
+            Step::IndAt(4_000, from(ECU), SPEED),
+        ],
+        1,
+        Repeats::Twice,
+    );
+    assert_eq!(
+        speed(block_on(t.read_data_by_identifier(ECU, &[Did::Speed]))),
+        0x40
+    );
+    assert!(t.transport().finished());
+}
+
+/// A limit of zero accepts no `responsePending` message: the first fails the request.
+#[test]
+fn a_response_pending_limit_of_zero_accepts_none() {
+    let mut t = tester_pending(
+        &[
+            Step::Conf(to(ECU), SResult::Ok),
+            Step::IndAt(40, from(ECU), &[0x7F, 0x22, 0x78]),
+        ],
+        0,
+        Repeats::Twice,
+    );
+    assert_eq!(
+        block_on(t.read_data_by_identifier(ECU, &[Did::Speed])).err(),
+        Some(ClientError::ResponsePendingExceeded { limit: 0 })
+    );
+    assert_eq!(t.transport().sent_count, 1);
+    assert!(t.transport().finished());
+}
+
+/// A repeat after an expired window is a new transmission: the `responsePending`
+/// messages the first drew do not count against it.
+#[test]
+fn a_repeated_request_starts_its_response_pending_count_afresh() {
+    let mut t = tester_pending(
+        &[
+            Step::Conf(to(ECU), SResult::Ok),
+            Step::IndAt(40, from(ECU), &[0x7F, 0x22, 0x78]),
+            Step::IndAt(4_000, from(ECU), &[0x7F, 0x22, 0x78]),
+            Step::At(9_100), // the enhanced window runs out: repeated
+            Step::At(9_200), // after the spacing the expiry started
+            Step::Conf(to(ECU), SResult::Ok),
+            Step::IndAt(9_240, from(ECU), &[0x7F, 0x22, 0x78]),
+            Step::IndAt(13_000, from(ECU), SPEED),
+        ],
+        2,
+        Repeats::Once,
+    );
+    assert_eq!(
+        speed(block_on(t.read_data_by_identifier(ECU, &[Did::Speed]))),
+        0x40
+    );
+    assert_eq!(t.transport().sent_count, 2);
+    assert!(t.transport().finished());
+}
+
+/// A repeat that draws more `responsePending` messages than the limit fails, and is not
+/// repeated again.
+#[test]
+fn a_repeated_request_past_the_limit_fails() {
+    let mut t = tester_pending(
+        &[
+            Step::Conf(to(ECU), SResult::Ok),
+            Step::IndAt(40, from(ECU), &[0x7F, 0x22, 0x78]),
+            Step::At(5_100), // the enhanced window runs out: repeated
+            Step::At(5_200), // after the spacing the expiry started
+            Step::Conf(to(ECU), SResult::Ok),
+            Step::IndAt(5_240, from(ECU), &[0x7F, 0x22, 0x78]),
+            Step::IndAt(9_000, from(ECU), &[0x7F, 0x22, 0x78]),
+        ],
+        1,
+        Repeats::Twice,
+    );
+    assert_eq!(
+        block_on(t.read_data_by_identifier(ECU, &[Did::Speed])).err(),
+        Some(ClientError::ResponsePendingExceeded { limit: 1 })
+    );
+    assert_eq!(t.transport().sent_count, 2);
+    assert!(t.transport().finished());
+}
+
+/// A `responsePending` message arriving as the window expires answers nothing: the
+/// session layer times the request out first, so it is repeated rather than failed on
+/// the limit.
+#[test]
+fn a_response_pending_as_the_window_expires_is_a_timeout() {
+    let mut t = tester_pending(
+        &[
+            Step::Conf(to(ECU), SResult::Ok),
+            Step::IndAt(40, from(ECU), &[0x7F, 0x22, 0x78]),
+            Step::IndAt(5_041, from(ECU), &[0x7F, 0x22, 0x78]), // the enhanced window has run out
+            Step::At(5_100),
+            Step::Conf(to(ECU), SResult::Ok),
+            Step::IndAt(5_200, from(ECU), SPEED),
+        ],
+        1,
+        Repeats::Once,
+    );
+    assert_eq!(
+        speed(block_on(t.read_data_by_identifier(ECU, &[Did::Speed]))),
+        0x40
+    );
+    assert_eq!(t.transport().sent_count, 2);
+    assert!(t.transport().finished());
+}
+
+/// Functionally addressed requests are not under `ClientTiming::max_response_pending`:
+/// a server's `responsePending` messages hold the window open past a limit of zero, and
+/// every answer is lent.
+#[test]
+fn a_functional_request_is_not_under_the_response_pending_limit() {
+    let mut t = tester_pending(
+        &[
+            Step::Conf(FUNCTIONAL, SResult::Ok),
+            Step::IndAt(40, from(ECU), &[0x7F, 0x22, 0x78]),
+            Step::IndAt(1_000, from(ECU), &[0x7F, 0x22, 0x78]),
+            Step::IndAt(2_000, from(ECU), SPEED),
+            Step::IndAt(2_010, from(OTHER_ECU), &[0x7F, 0x22, 0x31]),
+            Step::At(3_000),
+        ],
+        0,
+        Repeats::Twice,
+    );
+    let mut answers = t.read_data_by_identifier_functional(GROUP, &[Did::Speed]);
+    match block_on(answers.next()) {
+        Some(Ok(Answer::Positive { from, mut records })) => {
+            assert_eq!(from, ECU);
+            assert_eq!(records.next(), Some((Did::Speed, &[0x40][..])));
+        }
+        other => panic!("expected the first server's answer, got {other:?}"),
+    }
+    assert!(matches!(
+        block_on(answers.next()),
+        Some(Ok(Answer::Negative {
+            from: OTHER_ECU,
+            code: NegativeResponseCode::RequestOutOfRange
+        }))
+    ));
+    assert!(block_on(answers.next()).is_none());
+    drop(answers);
+    assert!(t.transport().finished());
+}
+
 /// ``UDSSVC_ARCH_0023``, ISO 14229-2:2021 9.7 Table 9 — an unanswered request is sent
 /// three times in all, and then the timeout is reported as the fault it is.
 #[test]
