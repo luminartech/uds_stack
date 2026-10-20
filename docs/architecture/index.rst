@@ -74,19 +74,20 @@ The crates
        ``Response<'a>`` borrow from the caller's buffer.
    * - ``uds_session``
      - ISO 14229-2:2021
-     - The session layer: the ``S_Data`` primitives, the ``tP_Client``, ``tP3`` and
-       ``tS3`` timers, and response-pending handling. It is sans-io: it takes a
+     - The session layer: the ``S_Data`` primitives and the ``tP_Client``,
+       ``tP2_Server``, ``tP3`` and ``tS3`` timers. It is sans-io: it takes a
        caller-supplied timestamp and returns actions to drain.
    * - ``uds_services``
      - ISO 14229-1:2020, everything but the message format
      - The point where an application meets the stack: per-service handler traits, the
-       dispatch and negative-response rules of clause 8.7, the typed client calls, and the
-       driver that holds the session layer and calls a transport.
+       dispatch and negative-response rules of ISO 14229-1:2020 clause 8.7, the typed
+       client calls and the client's timing policy, and the driver that holds the
+       session layer and calls a transport.
    * - ``uds_on_ip``
      - ISO 14229-5:2022
      - The UDSonIP binding: the ``T_Data`` to ``DoIP_Data`` mapping, the ``tP6`` reload
-       values the session layer runs on, and the profile's connection handling around a
-       session change or a reset.
+       pair the session layer runs on at the least, and the profile's connection handling
+       around a session change or a reset.
    * - ``simple_doip``
      - ISO 13400-2:2019
      - DoIP: framing, the TCP and UDP sockets, routing activation, alive check, vehicle
@@ -96,9 +97,9 @@ Each also has something it must not acquire, and that is the more useful half:
 
 - ``uds_protocol`` stays a codec: no dispatch, no policy, no session state.
 - ``uds_session`` never learns which transport it runs over, and never reads a clock.
-  ISO 14229-2:2021 9.1.2 splits ``tP_Client``'s reload parameters by whether the transport
-  offers ``T_DataSOM.ind``; the session layer holds a *default* and an *enhanced* pair, and
-  the binding decides which values those are.
+  ISO 14229-2:2021 9.1.2 splits ``tP_Client``'s reload parameters four ways by whether the
+  transport offers ``T_DataSOM.ind``; the session layer holds a *default* and an
+  *enhanced* pair, and its caller decides which values those are.
 - ``uds_services`` declares the transport seam and implements no transport. Nothing on that
   seam is DoIP-shaped, so a CAN binding implements the same methods.
 - ``uds_on_ip`` never learns what a service is. It reads exactly four things of a message:
@@ -131,8 +132,6 @@ Several questions about where a behaviour belongs have the same answer:
   states it and ``uds_on_ip`` decides what follows.
 - **Periodic responses** (REQ 7.7, REQ 7.16): ``uds_on_ip`` chooses payload type
   ``0x8004``, which ISO 13400-2:2019 does not define, and ``simple_doip`` sends it.
-- **Which ``tP_Client`` reload pair** (ISO 14229-2:2021 REQ 5.11): ``uds_on_ip`` chooses
-  and ``uds_session`` runs the timer.
 
 The rule also says what must not happen. ``uds_services`` never decides when a connection
 closes, because knowing that REQ 7.9 or REQ 7.11 requires a close is ISO 14229-5 knowledge.
@@ -170,29 +169,34 @@ The seams in detail, and the design of the two bindings, are in each crate's arc
 Timing ownership
 ----------------
 
-Every timer has exactly one owner, and every timing rule exactly one decider.
+Every timer has one owner, the crate that runs it. Where its value is policy rather than
+a fixed parameter, the table also says who sets it.
 
 .. list-table::
    :header-rows: 1
-   :widths: 30 18 52
+   :widths: 26 16 58
 
    * - Timer
      - Owner
-     - Notes
+     - Values, and notes
    * - ``tP_Client``
      - ``uds_session``
      - One per logical channel, physical and functional alike (ISO 14229-2:2021 REQ 5.26,
        Table 7). Starts on ``T_Data.conf`` and stops on ``T_Data.ind``
        (ISO 14229-2:2021 REQ 5.9, REQ 5.10), so over DoIP it starts on the entity's
-       acknowledgement, not on the send.
-   * - Default and enhanced reload values
-     - ``uds_on_ip``
-     - ``tP6_Client_Max`` and ``tP6*_Client_Max``, because DoIP has no ``T_DataSOM.ind``
-       (ISO 14229-2:2021 REQ 5.11).
+       acknowledgement, not on the send. Its default and enhanced reloads start as the
+       transport's pair: over DoIP, the ``tP6_Client_Max`` and ``tP6*_Client_Max`` the
+       integrator gives ``uds_on_ip``, because DoIP has no ``T_DataSOM.ind``
+       (ISO 14229-2:2021 REQ 5.11). After a positive ``DiagnosticSessionControl``
+       response, ``uds_services`` raises them for that server to the ``P2Server_max`` and
+       ``P2*Server_max`` it advertised plus ``ClientTiming::network_delay``, never below
+       the transport's pair (ISO 14229-2:2021 Table 4).
    * - ``tP3_Client_Phys``, ``tP3_Client_Func``
      - ``uds_session``
      - One per physical and per functional channel (ISO 14229-2:2021 REQ 5.26, Table 7).
        The minimum spacing before the next request when none is required.
+       ``uds_services`` sets the values, from ``ClientTiming::physical_spacing`` and
+       ``functional_spacing``.
    * - ``tS3_Client``, ``tS3_Server``
      - ``uds_session``
      - One ``tS3_Server`` per server; a client needs one per point-to-point
@@ -200,17 +204,46 @@ Every timer has exactly one owner, and every timing rule exactly one decider.
    * - ``tP2_Server``, ``tP2*_Server``
      - ``uds_session``
      - Session timers, kept with the others rather than with the service that is slow.
+       The session layer reports their expiry and does not answer it; see below.
    * - ``tP4_Server``
+     - ``uds_services``, not as a timer
+     - ISO 14229-2:2021 types it a performance requirement on the server's application,
+       not a timer to run.
+   * - Request repeats
      - ``uds_services``
-     - A performance requirement on the application, not a timer to run.
-   * - TCP connect and routing-activation timeouts
+     - ISO 14229-2:2021 9.7 Table 9 has the client repeat a request whose response window
+       expired or whose transmission failed, at most twice. ``uds_session`` refuses a
+       third repeat (``UDSS_LLR_0177``); ``uds_services`` performs the repeats, under the
+       ceilings ``ClientTiming::repeats`` and ``ClientTiming::transmission_repeats``.
+   * - Response-pending extensions
+     - ``uds_services``
+     - ``ClientTiming::max_response_pending`` caps how many response-pending messages one
+       transmission of a physically addressed request accepts. ISO 14229-2:2021 leaves
+       the number to the server, and the default accepts every one.
+   * - ``A_DoIP_Diagnostic_Message``
      - ``simple_doip``
-     - Transport-level, with no UDS meaning.
+     - How long a tester waits for a request's acknowledgement (ISO 13400-2:2019
+       Table 12), set with ``Tester::with_ack_timeout``. Its expiry fails the request's
+       ``T_Data.conf``, which is the failed transmission ``transmission_repeats`` counts.
+   * - Connect and routing activation
+     - ``simple_doip``
+     - ``ConnectOptions::timeout`` bounds a tester's connect and routing activation
+       together. A reconnect also stops at the deadline of the ``uds_services`` call it
+       serves, which ``uds_on_ip`` passes to ``TesterConnection::reconnect``.
+   * - DoIP connection and announcement timers
+     - ``simple_doip``
+     - ``T_TCP_Initial_Inactivity``, ``T_TCP_General_Inactivity``, ``T_TCP_Alive_Check``,
+       ``A_DoIP_Ctrl`` and the ``A_DoIP_Announce`` timers (ISO 13400-2:2019 Table 12).
+       Transport-level, with no UDS meaning.
 
-**Who emits response-pending.** A handler that is still working is not returning, so it
-cannot also watch a clock. ``uds_session`` owns ``tP2_Server`` and decides when a
-response-pending is due; ``uds_on_ip`` transmits it; ``uds_services`` runs the handler
-alongside the event loop, so the timer fires while the handler works.
+**Who sends response-pending.** A server that will not answer within ``tP2_Server`` sends a
+response-pending negative response before it expires, which gives it ``tP2*_Server``.
+``uds_session`` runs the timer and reports the coming expiry as an overrun, ahead of it by
+the lead of ``UDSS_LLR_0186``; ISO 14229-2:2021 states no session layer action, so the
+session layer sends nothing itself. ``uds_services`` runs the handler alongside the event
+loop, so the report arrives while the handler works; it decides whether a
+response-pending is admissible, builds it and submits it through the session layer.
+``uds_on_ip`` sends it like any other ``T_Data.req``.
 
 Standards and crates
 --------------------

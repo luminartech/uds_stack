@@ -47,8 +47,9 @@ This crate owns three things:
 
 1. **Timing parameter supply.** DoIP has no `T_DataSOM.ind`, so `uds_on_ip`
    supplies `tP6_Client_Max` / `tP6*_Client_Max` as the session layer's default
-   and enhanced reload parameters (ISO 14229-2:2021 REQ 5.11). It supplies the
-   *values*; `uds_session::Reloads` is the type, and is not redeclared here.
+   and enhanced reload parameters (ISO 14229-2:2021 REQ 5.11), the floor a
+   client raises per server ([§3](#3-timing)). It supplies the *values*;
+   `uds_session::Reloads` is the type, and is not redeclared here.
 2. **Primitive adaptation.** The `T_PDU` ↔ `DoIP_PDU` parameter mapping
    (ISO 14229-5:2022 REQ 4.3, REQ 4.4, Tables 4 and 5): `T_Data.conf` is
    `DoIP_Data.confirm`, whose `DoIP_Result` becomes the `T_Result`. For a
@@ -65,7 +66,7 @@ This crate owns three things:
    a server cannot yet send one ([§6.2](#62-design-gaps-in-this-crate)). REQ 7.20,
    that an unsolicited
    response does not reset `tS3_Server`, constrains that send path, but the
-   timer it protects belongs to `uds_session` ([§3](#3-timing)).
+   timer it protects belongs to `uds_session` ([timing ownership][stack-timing]).
 
 **It does not own channel storage.** `uds_session` requires per-channel storage
 from its caller, and the caller is `uds_services::Server`, which holds the
@@ -231,15 +232,17 @@ trait declared here. The layering is real, but it is not a crate boundary.
 
 The stack architecture's
 [timing ownership][stack-timing]
-gives every timer its owner. Two rows are this crate's:
+gives every timer its owner. This crate runs none of them. It supplies one
+value, `tP_Client`'s reload pair, as the transport's floor: `tP6_Client_Max` and
+`tP6*_Client_Max`, because DoIP has no `T_DataSOM.ind` (ISO 14229-2:2021
+REQ 5.11), taken from the integrator when the transport is built
+(`profile::bench_reloads` is a bench value). This crate names them as ISO
+14229-2 does. ISO 14229-5:2022 clause 11's Figures 8 and 9 name only the
+default, `tP6_DoIP_Client_Max`, and nothing there corresponds to
+`tP6*_Client_Max`.
 
-- **The default and enhanced reload values.** `tP6_Client_Max` and
-  `tP6*_Client_Max`, because DoIP has no `T_DataSOM.ind` (ISO 14229-2:2021
-  REQ 5.11). This crate names them as ISO 14229-2 does. ISO 14229-5:2022 clause
-  11's Figures 8 and 9 name only the default, `tP6_DoIP_Client_Max`, and nothing
-  there corresponds to `tP6*_Client_Max`.
-- **Transmitting response-pending.** `uds_session` decides when a server's
-  response-pending is due, and this crate transmits it.
+A server's response-pending reaches this crate as an ordinary `T_Data.req`;
+`uds_services` decides that one is due.
 
 ## 4. Data flow
 
